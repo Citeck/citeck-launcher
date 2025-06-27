@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="30" height="30">
+    <g class="layer" transform="matrix(1.17318,0,0,1.17318,-2.5864,-2.63849)">
+        <path fill="#7396CD" fill-rule="evenodd"
+              d="M27.6 13.15h-2.64c-.57 0-1.12-.23-1.52-.63l-6.31-6.28a3.12 3.12 0 0 0-4.4 0l-6.63 6.6a3.108 3.108 0 0 0 0 4.42l6.63 6.6a3.12 3.12 0 0 0 4.4 0l6.31-6.27c.4-.41.95-.63 1.52-.63h2.62c-.94 6.03-6.19 10.64-12.51 10.64-7 0-12.67-5.64-12.67-12.6S8.07 2.4 15.07 2.4c6.36 0 11.63 4.67 12.53 10.75z"
+              clip-rule="evenodd"/>
+        <rect width="9" height="9" fill="#7396CD" rx=".86"
+              transform="rotate(44.846 -3.658 22.857) skewX(-.307)"/>
+    </g>
+</svg>

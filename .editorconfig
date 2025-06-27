@@ -1,0 +1,43 @@
+# EditorConfig helps developers define and maintain consistent
+# coding styles between different editors and IDEs
+# editorconfig.org
+
+root = true
+
+[*]
+
+# Change these settings to your own preference
+indent_style = space
+indent_size = 4
+
+# We recommend you to keep these unchanged
+end_of_line = lf
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.md]
+
+trim_trailing_whitespace = false
+
+[*.json]
+
+indent_size = 2
+insert_final_newline = false
+
+[{*.yaml,*.yml,Jenkinsfile}]
+
+indent_size = 2
+
+[*.{kt,kts}]
+
+ktlint_code_style = intellij_idea
+ktlint_standard_no-wildcard-imports = disabled
+ktlint_standard_no-empty-first-line-in-method-block = disabled
+ktlint_standard_trailing-comma-on-declaration-site = disabled
+ktlint_standard_trailing-comma-on-call-site = disabled
+ktlint_standard_no-empty-first-line-in-method-block = disabled
+ktlint_standard_no-empty-first-line-in-class-body = disabled
+ktlint_standard_function-expression-body = disabled
+ktlint_standard_multiline-expression-wrapping = disabled
+ktlint_standard_spacing-between-declarations-with-annotations = disabled
