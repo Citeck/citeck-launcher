@@ -10,6 +10,8 @@ import com.github.dockerjava.api.model.Frame
 import com.github.dockerjava.api.model.Network
 import io.github.oshai.kotlinlogging.KotlinLogging
 import ru.citeck.launcher.core.namespace.NamespaceRef
+import java.time.Duration
+import java.util.concurrent.TimeUnit
 
 class DockerApi(
     private val client: DockerClient
@@ -231,6 +233,33 @@ class DockerApi(
             .exec(LogsWatchCallback { logsCallback.invoke(it) })
 
         return callback
+    }
+
+    /**
+     * @return function to cancel watching
+     */
+    fun consumeLogs(
+        containerId: String,
+        tail: Int,
+        timeout: Duration,
+        logsCallback: (String) -> Unit
+    ) {
+
+        val callback = LogsWatchCallback { logsCallback.invoke(it) }
+        val closeable = logContainerCmd(containerId)
+            .withTail(tail)
+            .withStdErr(true)
+            .withStdOut(true)
+            .withFollowStream(false)
+            .exec(callback)
+
+        try {
+            callback.awaitCompletion(timeout.toSeconds(), TimeUnit.SECONDS)
+        } catch (e: Throwable) {
+            log.warn(e) { "Logs consuming cancelled by timeout" }
+        } finally {
+            closeable.close()
+        }
     }
 
     private class LogsWatchCallback(

@@ -1,7 +1,10 @@
 package ru.citeck.launcher.view.utils
 
+import io.github.oshai.kotlinlogging.KotlinLogging
 import ru.citeck.launcher.core.LauncherServices
+import ru.citeck.launcher.core.config.AppDir
 import ru.citeck.launcher.core.logs.AppLogUtils
+import ru.citeck.launcher.core.namespace.runtime.docker.DockerLabels
 import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.json.Json
 import java.awt.Desktop
@@ -11,6 +14,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.nio.file.attribute.BasicFileAttributes
+import java.time.Duration
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.zip.ZipEntry
@@ -23,6 +27,8 @@ import kotlin.io.path.outputStream
 import kotlin.io.path.visitFileTree
 
 object FeedbackUtils {
+
+    private val log = KotlinLogging.logger {}
 
     private var services: LauncherServices? = null
 
@@ -53,9 +59,20 @@ object FeedbackUtils {
 
         val runtimeInfo = DataValue.createObj()
 
-        runtimeInfo["totalMemoryMb"] = totalMemory / (1024f * 1024f)
-        runtimeInfo["freeMemoryMb"] = freeMemory / (1024f * 1024f)
-        runtimeInfo["usedMemoryMb"] = usedMemory / (1024f * 1024f)
+        val ramInfo = DataValue.createObj()
+
+        ramInfo["totalMemoryMb"] = totalMemory / (1024f * 1024f)
+        ramInfo["freeMemoryMb"] = freeMemory / (1024f * 1024f)
+        ramInfo["usedMemoryMb"] = usedMemory / (1024f * 1024f)
+
+        runtimeInfo["RAM"] = ramInfo
+
+        val appDirRomInfo = DataValue.createObj()
+        val appDirFile = AppDir.PATH.toFile()
+        appDirRomInfo["totalSpace"] = appDirFile.totalSpace
+        appDirRomInfo["freeSpace"] = appDirFile.freeSpace
+        appDirRomInfo["usableSpace"] = appDirFile.usableSpace
+        runtimeInfo["appDirROM"] = appDirRomInfo
 
         val availableProcessors = runtime.availableProcessors()
         runtimeInfo["availableProcessors"] = availableProcessors
@@ -63,6 +80,73 @@ object FeedbackUtils {
         sysInfo["runtime"] = runtimeInfo
 
         return sysInfo
+    }
+
+    private fun exportNamespaceInfo(targetDir: Path) {
+        val services = services ?: return
+
+        if (!targetDir.exists()) {
+            targetDir.toFile().mkdirs()
+        }
+
+        val workspace = services.getWorkspaceServices()
+        val meta = DataValue.createObj()
+        meta["workspaceId"] = workspace.workspace.id
+        val selectedNs = workspace.selectedNamespace.value
+        if (selectedNs == null) {
+            meta["selectedNs"] = null
+        } else {
+            meta["selectedNs"] = selectedNs.id
+            meta["bundleRef"] = selectedNs.bundleRef
+
+            val nsRuntimeData = DataValue.createObj()
+            val runtime = workspace.getCurrentNsRuntime()
+            if (runtime != null) {
+
+                nsRuntimeData["status"] = runtime.status.value
+                val logsDir = targetDir.resolve("logs")
+                logsDir.toFile().mkdirs()
+
+                val containers = services.dockerApi.getContainers(runtime.namespaceRef)
+
+                nsRuntimeData["containers"] = containers.map {
+                    val containerInfo = DataValue.createObj()
+                    containerInfo["id"] = it.id
+                    val container = services.dockerApi.inspectContainerOrNull(it.id)
+                    if (container != null) {
+                        val labels = container.config?.labels ?: emptyMap()
+
+                        containerInfo["name"] = container.name
+                        containerInfo["state"] = container.state
+                        containerInfo["labels"] = labels
+                        containerInfo["image"] = container.config.image
+
+                        val appName = labels[DockerLabels.APP_NAME] ?: "unknown"
+                        try {
+                            val logsFileName = appName + "_" + container.id.substring(0, 12) + ".log"
+                            logsDir.resolve(logsFileName).outputStream().use { out ->
+                                val lineBreak = "\n".toByteArray(Charsets.UTF_8)
+                                services.dockerApi.consumeLogs(
+                                    container.id,
+                                    100_000,
+                                    Duration.ofSeconds(5)
+                                ) { logMsg ->
+                                    out.write(LogsUtils.normalizeMessage(logMsg).toByteArray(Charsets.UTF_8))
+                                    out.write(lineBreak)
+                                }
+                            }
+                        } catch (e: Throwable) {
+                            log.error(e) { "Error while logs consuming for $appName" }
+                        }
+                    }
+                    containerInfo
+                }
+            }
+            meta["nsRuntime"] = nsRuntimeData
+        }
+        targetDir.resolve("meta.json").outputStream().use {
+            Json.writePretty(it, meta)
+        }
     }
 
     fun exportSystemInfo() {
@@ -99,8 +183,9 @@ object FeedbackUtils {
             }
             val outDir = Files.createTempDirectory("citeck-launcher-feedback")
             outDir.resolve("sysinfo.json").outputStream().use {
-                Json.write(it, getSystemInfo())
+                Json.writePretty(it, getSystemInfo())
             }
+            exportNamespaceInfo(outDir.resolve("namespace"))
             try {
                 val logsTargetPath = outDir.resolve("launcher-logs.txt")
                 if (AppLogUtils.getAppLogFilePath().exists()) {

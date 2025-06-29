@@ -17,6 +17,7 @@ import androidx.compose.ui.text.platform.Font
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import kotlinx.coroutines.delay
+import ru.citeck.launcher.view.utils.LogsUtils
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.min
@@ -213,8 +214,7 @@ class LogsState(
             message.split('\n').forEach { addMsg(it) }
             return
         }
-        val fixedMessage = message.replace("\u001B\\[[\\d;]+m".toRegex(), "")
-            .replace("\t", "    ")
+        val fixedMessage = LogsUtils.normalizeMessage(message)
 
         messagesQueue.add(LogMessage(msgIdCounter.getAndIncrement(), fixedMessage))
     }
