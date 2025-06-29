@@ -96,6 +96,7 @@ private fun renderIcon(icon: ActionIcon, description: String, enabled: Boolean) 
         ActionIcon.ARROW_LEFT -> renderIconFromClasspath("arrow-left.svg", description, enabled = enabled)
         ActionIcon.KEY -> renderIconFromClasspath("key.svg", description, enabled = enabled)
         ActionIcon.STORAGE -> renderIconFromClasspath("storage.svg", description, enabled = enabled)
+        ActionIcon.EXCLAMATION_TRIANGLE -> renderIconFromClasspath("exclamation-triangle.svg", description, enabled = enabled)
     }
 }
 

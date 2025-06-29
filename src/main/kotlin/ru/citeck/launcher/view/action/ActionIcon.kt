@@ -17,5 +17,6 @@ enum class ActionIcon {
     OPEN_DIR,
     ARROW_LEFT,
     KEY,
-    STORAGE
+    STORAGE,
+    EXCLAMATION_TRIANGLE
 }

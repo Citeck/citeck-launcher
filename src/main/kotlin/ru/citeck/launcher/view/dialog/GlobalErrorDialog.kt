@@ -1,9 +1,6 @@
 package ru.citeck.launcher.view.dialog
 
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -21,6 +18,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.apache.commons.lang3.exception.ExceptionUtils
+import ru.citeck.launcher.view.utils.FeedbackUtils
 import kotlin.math.min
 
 object GlobalErrorDialog {
@@ -59,7 +57,10 @@ object GlobalErrorDialog {
     }
 
     @Composable
-    fun ErrorDialog(statesList: SnapshotStateList<CiteckDialogState>, initParams: Params? = null) {
+    fun ErrorDialog(
+        statesList: SnapshotStateList<CiteckDialogState>,
+        initParams: Params? = null
+    ) {
         showDialog = CiteckDialog(statesList, initParams) { params, closeDialog ->
 
             val rootCause = ExceptionUtils.getRootCause(params.error)
@@ -103,6 +104,14 @@ object GlobalErrorDialog {
                             SelectionContainer { Text(message.toString()) }
                         }
                         Row(modifier = Modifier.align(Alignment.End)) {
+                            Button(
+                                onClick = {
+                                    FeedbackUtils.exportSystemInfo()
+                                }
+                            ) {
+                                Text("Export System Info")
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
                             Button(
                                 onClick = {
                                     closeDialog()

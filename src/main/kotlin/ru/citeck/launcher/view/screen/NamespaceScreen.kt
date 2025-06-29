@@ -42,6 +42,7 @@ import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog
 import ru.citeck.launcher.view.image.CpImage
 import ru.citeck.launcher.view.logs.GlobalLogsWindow
 import ru.citeck.launcher.view.logs.LogsDialogParams
+import ru.citeck.launcher.view.utils.FeedbackUtils
 import ru.citeck.launcher.view.utils.rememberMutProp
 import java.awt.Desktop
 import java.awt.Toolkit
@@ -310,6 +311,19 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
                                     selectable = false
                                 )
                             )
+                        }
+                    }
+                )
+                CiteckIconAction(
+                    coroutineScope,
+                    modifier = Modifier.fillMaxHeight(),
+                    actionDesc = ActionDesc(
+                        "feedback",
+                        ActionIcon.EXCLAMATION_TRIANGLE,
+                        "Export System Info"
+                    ) {
+                        runCatching {
+                            FeedbackUtils.exportSystemInfo()
                         }
                     }
                 )

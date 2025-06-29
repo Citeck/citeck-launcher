@@ -1,12 +1,8 @@
 package ru.citeck.launcher
 
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Typography
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.*
@@ -27,6 +23,7 @@ import ru.citeck.launcher.view.screen.NamespaceScreen
 import ru.citeck.launcher.view.screen.WelcomeScreen
 import ru.citeck.launcher.view.theme.LauncherTheme
 import ru.citeck.launcher.view.tray.CiteckSystemTray
+import ru.citeck.launcher.view.utils.FeedbackUtils
 import ru.citeck.launcher.view.utils.ImageUtils
 import ru.citeck.launcher.view.utils.rememberMutProp
 import ru.citeck.launcher.view.window.AdditionalWindowState
@@ -127,6 +124,7 @@ fun main(@Suppress("UNUSED_PARAMETER") args: Array<String>) {
                     GlobalConfirmDialog.ConfirmDialog(dialogStates)
                     GlobalErrorDialog.ErrorDialog(dialogStates)
                     val servicesVal = services.getOrThrow()
+
                     GlobalFormDialog.FormDialog(dialogStates, servicesVal.entitiesService)
                     JournalSelectDialog.JournalDialog(dialogStates, servicesVal.entitiesService)
                     GlobalMessageDialog.MessageDialog(dialogStates)
@@ -134,6 +132,7 @@ fun main(@Suppress("UNUSED_PARAMETER") args: Array<String>) {
                     CreateMasterPasswordDialog.CreateMasterPwd(dialogStates)
                     GlobalLogsWindow.LogsDialog(additionalWindowStates, logo)
                     remember {
+                        FeedbackUtils.init(servicesVal)
                         fun takeFocus() {
                             windowVisible.value = true
                             window.isMinimized = false
