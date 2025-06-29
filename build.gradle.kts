@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "ru.citeck.launcher"
-version = "1.0.0"
+version = "1.0.1"
 
 repositories {
     mavenCentral()
@@ -64,7 +64,7 @@ compose.desktop {
                 TargetFormat.Deb
             )
             jvmArgs("-Xmx128m")
-            description = "This application is designed to launch the Citeck platform for development, testing, and exploring its capabilities."
+            description = "Citeck Launcher"
             copyright = "© 2025 Citeck LLC. All Rights Reserved"
             packageName = "citeck-launcher"
             vendor = "Citeck LLC"
@@ -86,6 +86,17 @@ compose.desktop {
             macOS {
                 //iconFile.set(project.file("icons/logo.icns")) //todo
             }
+
+            // ./gradlew suggestRuntimeModules
+            modules(
+                "java.compiler",
+                "java.instrument",
+                "java.management",
+                "java.naming",
+                "java.scripting",
+                "java.security.jgss",
+                "java.sql"
+            )
         }
     }
 }

@@ -24,7 +24,6 @@ sealed class AuthSecret(val id: String, val version: Long) {
         val token: String
     ) : AuthSecret(id, version) {
 
-
         override fun isValid(): Boolean {
             return token.isNotEmpty()
         }
@@ -43,20 +42,6 @@ sealed class AuthSecret(val id: String, val version: Long) {
             return true
         }
     }
-/*
-    class GitlabOAuth2(
-        val accessToken: String,
-        val tokenType: String,
-        val refreshToken: String,
-        val validUntilMs: Long
-    ) : AuthSecret() {
-        companion object {
-            const val TYPE = "gitlab-oauth2"
-        }
-        override fun isValid(): Boolean {
-            return System.currentTimeMillis() < validUntilMs
-        }
-    }*/
 }
 
 

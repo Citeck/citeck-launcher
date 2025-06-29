@@ -1,4 +1,4 @@
-package ru.citeck.launcher.view.dialog.form.components.journal
+package ru.citeck.launcher.view.form.components.journal
 
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -26,7 +26,7 @@ import ru.citeck.launcher.view.action.CiteckIconAction
 import ru.citeck.launcher.view.commons.LimitedText
 import ru.citeck.launcher.view.dialog.CiteckDialog
 import ru.citeck.launcher.view.dialog.CiteckDialogState
-import ru.citeck.launcher.view.dialog.form.exception.FormCancelledException
+import ru.citeck.launcher.view.form.exception.FormCancelledException
 import ru.citeck.launcher.view.table.table.DataTable
 import java.util.concurrent.CompletableFuture
 import kotlin.coroutines.resume

@@ -19,7 +19,7 @@ import ru.citeck.launcher.core.secrets.auth.AuthType
 import ru.citeck.launcher.core.secrets.auth.SecretDef
 import ru.citeck.launcher.core.utils.promise.Promise
 import ru.citeck.launcher.core.workspace.WorkspaceConfig
-import ru.citeck.launcher.view.dialog.form.exception.FormCancelledException
+import ru.citeck.launcher.view.form.exception.FormCancelledException
 import java.time.Duration
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.LinkedBlockingQueue

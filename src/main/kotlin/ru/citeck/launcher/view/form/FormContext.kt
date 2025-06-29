@@ -1,4 +1,4 @@
-package ru.citeck.launcher.view.dialog.form
+package ru.citeck.launcher.view.form
 
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.Stable
@@ -6,8 +6,8 @@ import androidx.compose.runtime.mutableStateOf
 import ru.citeck.launcher.core.WorkspaceServices
 import ru.citeck.launcher.core.entity.EntitiesService
 import ru.citeck.launcher.core.utils.data.DataValue
-import ru.citeck.launcher.view.dialog.form.spec.ComponentSpec
-import ru.citeck.launcher.view.dialog.form.spec.FormSpec
+import ru.citeck.launcher.view.form.spec.ComponentSpec
+import ru.citeck.launcher.view.form.spec.FormSpec
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.reflect.KClass

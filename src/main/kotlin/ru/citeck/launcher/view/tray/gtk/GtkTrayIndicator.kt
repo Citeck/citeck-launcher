@@ -2,6 +2,7 @@ package ru.citeck.launcher.view.tray.gtk
 
 import com.sun.jna.Native
 import com.sun.jna.Pointer
+import ru.citeck.launcher.view.tray.CiteckSystemTray
 import kotlin.system.exitProcess
 
 object GtkTrayIndicator {
@@ -25,7 +26,7 @@ object GtkTrayIndicator {
 
         val menu: Pointer = gtk.gtk_menu_new()
         references.add(menu)
-        val exitItem: Pointer = gtk.gtk_menu_item_new_with_label("Exit")
+        val exitItem: Pointer = gtk.gtk_menu_item_new_with_label(CiteckSystemTray.BTN_EXIT)
         references.add(exitItem)
         val exitCallback = object : ActivateCallback {
             override fun invoke(widget: Pointer?, data: Pointer?) {

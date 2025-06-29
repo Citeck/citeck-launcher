@@ -4,8 +4,8 @@ import ru.citeck.launcher.core.entity.EntityDef
 import ru.citeck.launcher.core.entity.EntityIdType
 import ru.citeck.launcher.core.entity.EntityRef
 import ru.citeck.launcher.core.secrets.auth.AuthType
-import ru.citeck.launcher.view.dialog.form.spec.ComponentSpec.*
-import ru.citeck.launcher.view.dialog.form.spec.FormSpec
+import ru.citeck.launcher.view.form.spec.ComponentSpec.*
+import ru.citeck.launcher.view.form.spec.FormSpec
 
 object WorkspaceEntityDef {
 

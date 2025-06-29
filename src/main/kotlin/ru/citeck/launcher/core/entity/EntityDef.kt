@@ -2,7 +2,7 @@ package ru.citeck.launcher.core.entity
 
 import ru.citeck.launcher.core.database.Repository
 import ru.citeck.launcher.core.utils.data.DataValue
-import ru.citeck.launcher.view.dialog.form.spec.FormSpec
+import ru.citeck.launcher.view.form.spec.FormSpec
 import kotlin.reflect.KClass
 
 class EntityDef<K : Any, T : Any>(

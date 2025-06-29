@@ -289,6 +289,9 @@ class AppRunAction(
                         break
                     }
                     Thread.sleep(probe.periodSeconds * 1000L)
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    throw e
                 } catch (e: Throwable) {
                     if (e is NotFoundException && e.message?.contains("No such container") == true) {
                         throw e
@@ -347,6 +350,9 @@ class AppRunAction(
         return try {
             httpConnection.requestMethod = "GET"
             httpConnection.responseCode == 200
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw e
         } catch (e: Throwable) {
             false
         } finally {
@@ -437,6 +443,4 @@ class AppRunAction(
             }
         }
     }
-
-
 }

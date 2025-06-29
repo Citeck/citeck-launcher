@@ -1,9 +1,9 @@
-package ru.citeck.launcher.view.dialog.form.components.select
+package ru.citeck.launcher.view.form.components.select
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import ru.citeck.launcher.view.dialog.form.FormContext
-import ru.citeck.launcher.view.dialog.form.spec.ComponentSpec
+import ru.citeck.launcher.view.form.FormContext
+import ru.citeck.launcher.view.form.spec.ComponentSpec
 import ru.citeck.launcher.view.select.CiteckSelect
 import ru.citeck.launcher.view.select.CiteckSelectState
 import ru.citeck.launcher.view.select.SelectOption

@@ -1,10 +1,10 @@
-package ru.citeck.launcher.view.dialog.form.spec
+package ru.citeck.launcher.view.form.spec
 
 import com.fasterxml.jackson.annotation.JsonSubTypes
 import com.fasterxml.jackson.annotation.JsonTypeInfo
 import ru.citeck.launcher.core.entity.EntityIdType
-import ru.citeck.launcher.view.dialog.form.FormContext
-import ru.citeck.launcher.view.dialog.form.FormMode
+import ru.citeck.launcher.view.form.FormContext
+import ru.citeck.launcher.view.form.FormMode
 import kotlin.reflect.KClass
 
 @JsonTypeInfo(
@@ -17,20 +17,8 @@ import kotlin.reflect.KClass
     JsonSubTypes.Type(value = ComponentSpec.PasswordField::class, name = "password")
 )
 sealed class ComponentSpec {
-/*
-    val visibleConditions: MutableList<(context: FormContext) -> Boolean> = mutableListOf()
 
-    fun visibleWhen(condition: (context: FormContext) -> Boolean): ComponentSpec {
-        visibleConditions.add(condition)
-        return this
-    }*/
-
-    sealed class NonField : ComponentSpec() {
-
-        val validations: MutableList<(context: FormContext) -> String> = mutableListOf()
-        //val enabledConditions: MutableList<(context: FormContext) -> Boolean> = mutableListOf()
-
-    }
+    sealed class NonField : ComponentSpec()
 
     class Button(val text: String, val onClick: suspend (FormContext) -> Unit) : NonField()
 
@@ -56,13 +44,6 @@ sealed class ComponentSpec {
             return this
         }
     }
-
-/*    class Container(key: String, val components: List<ComponentSpec>) : Field<DataValue>(
-        key,
-        "",
-        DataValue.createObj(),
-        DataValue::class
-    )*/
 
     open class IdField : Field<String>("id", "Identifier", "", String::class) {
         init {

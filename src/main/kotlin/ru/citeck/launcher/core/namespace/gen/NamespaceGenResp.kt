@@ -2,8 +2,6 @@ package ru.citeck.launcher.core.namespace.gen
 
 import ru.citeck.launcher.core.appdef.ApplicationDef
 import ru.citeck.launcher.core.config.cloud.CloudConfig
-import ru.citeck.launcher.core.secrets.auth.SecretDef
-import ru.citeck.launcher.core.workspace.WorkspaceConfig
 
 class NamespaceGenResp(
     /**

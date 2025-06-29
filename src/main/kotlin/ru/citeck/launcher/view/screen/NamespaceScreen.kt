@@ -38,7 +38,7 @@ import ru.citeck.launcher.view.action.ActionDesc
 import ru.citeck.launcher.view.action.ActionIcon
 import ru.citeck.launcher.view.action.CiteckIconAction
 import ru.citeck.launcher.view.dialog.GlobalErrorDialog
-import ru.citeck.launcher.view.dialog.form.components.journal.JournalSelectDialog
+import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog
 import ru.citeck.launcher.view.image.CpImage
 import ru.citeck.launcher.view.logs.GlobalLogsWindow
 import ru.citeck.launcher.view.logs.LogsDialogParams
@@ -398,6 +398,7 @@ private fun renderApps(
                         Text(statusText.value, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     TooltipArea(
+                        delayMillis = 1000,
                         modifier = Modifier.width(200.dp)/*.weight(0.5f)*/,
                         tooltip = {
                             Surface(shadowElevation = 4.dp, shape = RoundedCornerShape(4.dp)) {

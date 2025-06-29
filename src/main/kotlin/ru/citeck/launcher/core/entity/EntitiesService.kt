@@ -15,10 +15,10 @@ import ru.citeck.launcher.core.workspace.WorkspaceDto
 import ru.citeck.launcher.view.action.ActionDesc
 import ru.citeck.launcher.view.action.ActionIcon
 import ru.citeck.launcher.view.dialog.GlobalConfirmDialog
-import ru.citeck.launcher.view.dialog.form.FormMode
-import ru.citeck.launcher.view.dialog.form.GlobalFormDialog
-import ru.citeck.launcher.view.dialog.form.WorkspaceFormDialog
-import ru.citeck.launcher.view.dialog.form.exception.FormCancelledException
+import ru.citeck.launcher.view.form.FormMode
+import ru.citeck.launcher.view.form.GlobalFormDialog
+import ru.citeck.launcher.view.form.WorkspaceFormDialog
+import ru.citeck.launcher.view.form.exception.FormCancelledException
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException

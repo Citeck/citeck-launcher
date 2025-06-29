@@ -1,4 +1,4 @@
-package ru.citeck.launcher.view.dialog.form
+package ru.citeck.launcher.view.form
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -28,11 +28,11 @@ import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.json.Json
 import ru.citeck.launcher.view.commons.LimitedText
 import ru.citeck.launcher.view.dialog.*
-import ru.citeck.launcher.view.dialog.form.components.journal.JournalSelectComponent
-import ru.citeck.launcher.view.dialog.form.components.select.SelectComponent
-import ru.citeck.launcher.view.dialog.form.exception.FormCancelledException
-import ru.citeck.launcher.view.dialog.form.spec.ComponentSpec
-import ru.citeck.launcher.view.dialog.form.spec.FormSpec
+import ru.citeck.launcher.view.form.components.journal.JournalSelectComponent
+import ru.citeck.launcher.view.form.components.select.SelectComponent
+import ru.citeck.launcher.view.form.exception.FormCancelledException
+import ru.citeck.launcher.view.form.spec.ComponentSpec
+import ru.citeck.launcher.view.form.spec.FormSpec
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 

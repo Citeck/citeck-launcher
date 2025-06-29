@@ -52,25 +52,10 @@ fun CiteckSelect(state: CiteckSelectState, onSelected: (String) -> Unit) {
                             onSelected(option.value)
                         }
                     }
-                )/* {
-                Column(modifier = Modifier.weight(1f)) {}
-                option.actions.forEach {
-                    CiteckIconAction(
-                        modifier = Modifier.padding(top = 5.dp, bottom = 5.dp, start = 10.dp),
-                        actionsCoroutineScope = coroutineScope,
-                        actionDesc = it,
-                        actionParam = option.value,
-                        afterAction = {
-                            menuState.status = Status.Closed
-                        }
-                    )
-                }
-            }*/
+                )
             }
         }
     }
-
-
 }
 
 class SelectOption(
@@ -87,10 +72,5 @@ class CiteckSelectState(
     constructor(options: List<SelectOption>, selected: String): this(
         mutableStateOf(options),
         mutableStateOf(selected)
-    )
-
-    constructor(options: List<SelectOption>): this(
-        mutableStateOf(options),
-        mutableStateOf(options.first().value)
     )
 }

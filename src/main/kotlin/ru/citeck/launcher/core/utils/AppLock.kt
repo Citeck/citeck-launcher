@@ -43,7 +43,7 @@ object AppLock {
             val lockFile = AppDir.PATH.resolve(APP_LOCK_FILE).toFile()
             val lockStream = RandomAccessFile(lockFile, "rw")
             val lockChannel = lockStream.channel
-            val lock = lockChannel.tryLock()
+            var lock = lockChannel.tryLock()
             if (lock == null) {
                 false
             } else {
@@ -51,6 +51,8 @@ object AppLock {
                 lockStream.writeBytes(
                     ProcessHandle.current().pid().toString() + "|" + AppLocalSocket.run()
                 )
+                lock.release()
+                lock = lockChannel.lock(0, Long.MAX_VALUE, true)
                 Runtime.getRuntime().addShutdownHook(Thread {
                     lock.release()
                     lockChannel.close()

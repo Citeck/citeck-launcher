@@ -22,7 +22,7 @@ import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.workspace.WorkspaceDto
 import ru.citeck.launcher.core.workspace.WorkspaceEntityDef
 import ru.citeck.launcher.view.dialog.GlobalMessageDialog
-import ru.citeck.launcher.view.dialog.form.components.journal.JournalSelectDialog
+import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog
 import ru.citeck.launcher.view.image.CpImage
 import java.util.concurrent.Executors
 

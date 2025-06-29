@@ -1,4 +1,4 @@
-package ru.citeck.launcher.view.dialog.form.spec
+package ru.citeck.launcher.view.form.spec
 
 data class FormSpec(
     val label: String,

@@ -1,4 +1,4 @@
-package ru.citeck.launcher.view.dialog.form.components.journal
+package ru.citeck.launcher.view.form.components.journal
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.*
@@ -9,8 +9,8 @@ import ru.citeck.launcher.core.entity.EntitiesService
 import ru.citeck.launcher.core.entity.EntityInfo
 import ru.citeck.launcher.core.entity.EntityRef
 import ru.citeck.launcher.view.commons.LimitedText
-import ru.citeck.launcher.view.dialog.form.spec.ComponentSpec
-import ru.citeck.launcher.view.dialog.form.FormContext
+import ru.citeck.launcher.view.form.spec.ComponentSpec
+import ru.citeck.launcher.view.form.FormContext
 
 @Composable
 fun JournalSelectComponent(

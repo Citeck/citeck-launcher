@@ -5,9 +5,9 @@ import ru.citeck.launcher.core.entity.EntityDef
 import ru.citeck.launcher.core.entity.EntityIdType
 import ru.citeck.launcher.core.entity.EntityRef
 import ru.citeck.launcher.core.utils.data.DataValue
-import ru.citeck.launcher.view.dialog.form.spec.ComponentSpec.NameField
-import ru.citeck.launcher.view.dialog.form.spec.ComponentSpec.SelectField
-import ru.citeck.launcher.view.dialog.form.spec.FormSpec
+import ru.citeck.launcher.view.form.spec.ComponentSpec.NameField
+import ru.citeck.launcher.view.form.spec.ComponentSpec.SelectField
+import ru.citeck.launcher.view.form.spec.FormSpec
 
 object NamespaceEntityDef {
 

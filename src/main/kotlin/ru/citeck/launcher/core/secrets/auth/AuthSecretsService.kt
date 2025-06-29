@@ -8,10 +8,10 @@ import ru.citeck.launcher.core.entity.EntityIdType
 import ru.citeck.launcher.core.namespace.runtime.actions.AuthenticationCancelled
 import ru.citeck.launcher.core.secrets.storage.SecretsStorage
 import ru.citeck.launcher.core.utils.json.Json
-import ru.citeck.launcher.view.dialog.form.GlobalFormDialog
-import ru.citeck.launcher.view.dialog.form.exception.FormCancelledException
-import ru.citeck.launcher.view.dialog.form.spec.ComponentSpec
-import ru.citeck.launcher.view.dialog.form.spec.FormSpec
+import ru.citeck.launcher.view.form.GlobalFormDialog
+import ru.citeck.launcher.view.form.exception.FormCancelledException
+import ru.citeck.launcher.view.form.spec.ComponentSpec
+import ru.citeck.launcher.view.form.spec.FormSpec
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 

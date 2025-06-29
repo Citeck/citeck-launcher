@@ -16,11 +16,11 @@ object AppName {
     // enterprise
     const val CONTENT = "content"
     const val INTEGRATIONS = "integrations"
+    const val EDI = "edi"
 
     // other
     const val ECOM = "ecom"
     const val SERVICE_DESK = "service-desk"
-    const val EDI = "edi"
     const val PROJECT_TRACKER = "ecos-project-tracker"
 
     // infrastructure

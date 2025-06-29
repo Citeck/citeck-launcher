@@ -1,16 +1,12 @@
 package ru.citeck.launcher
 
-import androidx.compose.desktop.ui.tooling.preview.Preview
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.*
@@ -22,78 +18,28 @@ import ru.citeck.launcher.core.socket.AppLocalSocket
 import ru.citeck.launcher.core.utils.AppLock
 import ru.citeck.launcher.core.workspace.WorkspaceDto
 import ru.citeck.launcher.view.dialog.*
-import ru.citeck.launcher.view.dialog.form.GlobalFormDialog
-import ru.citeck.launcher.view.dialog.form.WorkspaceFormDialog
-import ru.citeck.launcher.view.dialog.form.components.journal.JournalSelectDialog
+import ru.citeck.launcher.view.form.GlobalFormDialog
+import ru.citeck.launcher.view.form.WorkspaceFormDialog
+import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog
 import ru.citeck.launcher.view.logs.GlobalLogsWindow
 import ru.citeck.launcher.view.screen.LoadingScreen
 import ru.citeck.launcher.view.screen.NamespaceScreen
 import ru.citeck.launcher.view.screen.WelcomeScreen
+import ru.citeck.launcher.view.theme.LauncherTheme
 import ru.citeck.launcher.view.tray.CiteckSystemTray
 import ru.citeck.launcher.view.utils.ImageUtils
 import ru.citeck.launcher.view.utils.rememberMutProp
 import ru.citeck.launcher.view.window.AdditionalWindowState
-import java.awt.MenuItem
-import java.awt.PopupMenu
-import java.awt.TrayIcon
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.concurrent.atomic.AtomicBoolean
-import javax.swing.ImageIcon
 import kotlin.system.exitProcess
 
 private val log = KotlinLogging.logger {}
 
-@Composable
-fun LauncherTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = lightColorScheme(
-            primary = Color(90, 120, 170)
-        ),
-        typography = Typography(),
-        content = content
-    )
-}
-
-@Composable
-@Preview
-fun App(services: LauncherServices, dialogStates: SnapshotStateList<CiteckDialogState>) {
-
-    val selectedWorkspace = remember {
-
-        val wsDataState = mutableStateOf<WorkspaceDto?>(null)
-        val entitiesService = services.entitiesService
-
-        Thread.ofPlatform().start {
-            val selectedWsId = services.launcherStateService.getSelectedWorkspace()
-            var selectedWs = entitiesService.getById(WorkspaceDto::class, selectedWsId)?.entity
-            if (selectedWs == null) {
-                selectedWs = entitiesService.getFirst(WorkspaceDto::class)!!.entity
-            }
-            services.setWorkspace(selectedWs.id)
-            wsDataState.value = selectedWs
-        }
-
-        wsDataState
-    }
-
-    if (selectedWorkspace.value == null) {
-        LoadingScreen()
-    } else {
-        val workspaceServices = services.getWorkspaceServices()
-        WorkspaceFormDialog.FormDialog(dialogStates, workspaceServices.entitiesService, workspaceServices)
-        val selectedNamespace = rememberMutProp(workspaceServices, workspaceServices.selectedNamespace)
-        if (selectedNamespace.value == null) {
-            WelcomeScreen(services, selectedWorkspace)
-        } else {
-            NamespaceScreen(workspaceServices, selectedNamespace)
-        }
-    }
-}
-
-//@OptIn(ExperimentalResourceApi::class)
 fun main(@Suppress("UNUSED_PARAMETER") args: Array<String>) {
     // initial phase messages printed without logging framework
+    // to avoid conflicts with logging to same file from two apps
     printLogMsg("Application starting. Try to take app lock")
     var tryToLockError: Throwable? = null
     try {
@@ -215,37 +161,49 @@ fun main(@Suppress("UNUSED_PARAMETER") args: Array<String>) {
     }
 }
 
-object TrayIcon : Painter() {
-    override val intrinsicSize = Size(256f, 256f)
+@Composable
+fun App(services: LauncherServices, dialogStates: SnapshotStateList<CiteckDialogState>) {
 
-    override fun DrawScope.onDraw() {
-        drawOval(Color(0xFFFFA500))
-    }
-}
+    val error = remember { mutableStateOf<Throwable?>(null) }
 
-private fun createTrayIcon(windowVisible: MutableState<Boolean>): TrayIcon? {
-/*    if (!SystemTray.isSupported()) {
-        return null
-    }*/
-    val image = ImageIcon(ImageUtils.loadPng("classpath:logo.svg", 32f)).image
-    val popupMenu = PopupMenu().apply {
-        add(MenuItem("Open").apply {
-            addActionListener {
-                windowVisible.value = true
+    val selectedWorkspace = remember {
+
+        val wsDataState = mutableStateOf<WorkspaceDto?>(null)
+        val entitiesService = services.entitiesService
+
+        Thread.ofPlatform().start {
+            try {
+                val selectedWsId = services.launcherStateService.getSelectedWorkspace()
+                var selectedWs = entitiesService.getById(WorkspaceDto::class, selectedWsId)?.entity
+                if (selectedWs == null) {
+                    selectedWs = entitiesService.getFirst(WorkspaceDto::class)!!.entity
+                }
+                services.setWorkspace(selectedWs.id)
+                wsDataState.value = selectedWs
+            } catch (e: Throwable) {
+                log.error(e) { "Exception while selected namespace loading" }
+                error.value = e
             }
-        })
-        add(MenuItem("Exit").apply {
-            addActionListener {
-                exitProcess(0)
-            }
-        })
-    }
-    return TrayIcon(image, "Citeck Launcher", popupMenu).apply {
-        isImageAutoSize = true
-        addActionListener {
-            windowVisible.value = true
         }
-        //SystemTray.getSystemTray().add(this)
+
+        wsDataState
+    }
+
+    if (error.value != null) {
+        GlobalErrorDialog.ErrorDialog(dialogStates, GlobalErrorDialog.Params(error.value!!) {
+            exitProcess(0)
+        })
+    } else if (selectedWorkspace.value == null) {
+        LoadingScreen()
+    } else {
+        val workspaceServices = services.getWorkspaceServices()
+        WorkspaceFormDialog.FormDialog(dialogStates, workspaceServices.entitiesService, workspaceServices)
+        val selectedNamespace = rememberMutProp(workspaceServices, workspaceServices.selectedNamespace)
+        if (selectedNamespace.value == null) {
+            WelcomeScreen(services, selectedWorkspace)
+        } else {
+            NamespaceScreen(workspaceServices, selectedNamespace)
+        }
     }
 }
 
