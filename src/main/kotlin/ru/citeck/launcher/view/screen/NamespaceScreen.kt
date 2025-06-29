@@ -30,6 +30,7 @@ import ru.citeck.launcher.core.namespace.NamespaceEntityDef
 import ru.citeck.launcher.core.namespace.runtime.AppRuntime
 import ru.citeck.launcher.core.namespace.runtime.AppRuntimeStatus
 import ru.citeck.launcher.core.namespace.runtime.NamespaceRuntime
+import ru.citeck.launcher.core.namespace.runtime.NsRuntimeStatus
 import ru.citeck.launcher.core.namespace.runtime.NsRuntimeStatus.*
 import ru.citeck.launcher.core.namespace.volume.VolumeInfo
 import ru.citeck.launcher.core.secrets.auth.AuthSecret
@@ -328,16 +329,19 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
                     appsByKind
                 }
                 renderApps(
+                    runtimeStatus,
                     "Citeck Core",
                     appsByKind.value[ApplicationKind.CITECK_CORE],
                     coroutineScope
                 )
                 renderApps(
+                    runtimeStatus,
                     "Citeck Additional",
                     appsByKind.value[ApplicationKind.CITECK_ADDITIONAL],
                     coroutineScope
                 )
                 renderApps(
+                    runtimeStatus,
                     "Third Party",
                     appsByKind.value[ApplicationKind.THIRD_PARTY],
                     coroutineScope
@@ -348,7 +352,12 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
 }
 
 @Composable
-private fun renderApps(header: String, applications: List<AppRuntime>?, coroutineScope: CoroutineScope) {
+private fun renderApps(
+    runtimeStatus: MutableState<NsRuntimeStatus>,
+    header: String,
+    applications: List<AppRuntime>?,
+    coroutineScope: CoroutineScope
+) {
     Text(
         header,
         fontSize = 1.1.em,
@@ -361,7 +370,7 @@ private fun renderApps(header: String, applications: List<AppRuntime>?, coroutin
         Row(modifier = Modifier.fillMaxWidth()) {
             Text("Name", modifier = Modifier.weight(0.8f), maxLines = 1)
             Text("Status", modifier = Modifier.weight(1f), maxLines = 1)
-            Text("Tag", modifier = Modifier.weight(0.5f), maxLines = 1)
+            Text("Tag", modifier = Modifier.width(200.dp), maxLines = 1)
             Text("Actions", modifier = Modifier.weight(0.5f), maxLines = 1)
         }
 
@@ -389,7 +398,7 @@ private fun renderApps(header: String, applications: List<AppRuntime>?, coroutin
                         Text(statusText.value, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     TooltipArea(
-                        modifier = Modifier.weight(0.5f),
+                        modifier = Modifier.width(200.dp)/*.weight(0.5f)*/,
                         tooltip = {
                             Surface(shadowElevation = 4.dp, shape = RoundedCornerShape(4.dp)) {
                                 Text(
@@ -427,7 +436,7 @@ private fun renderApps(header: String, applications: List<AppRuntime>?, coroutin
                                     application.stop(manual = true)
                                 }
                             )
-                        } else {
+                        } else if (!runtimeStatus.value.isStoppingState()) {
                             CiteckIconAction(
                                 coroutineScope,
                                 modifier = Modifier.fillMaxHeight(),

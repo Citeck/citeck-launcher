@@ -5,5 +5,9 @@ enum class NsRuntimeStatus {
     STOPPED,
     STARTING,
     STALLED,
-    RUNNING
+    RUNNING;
+
+    fun isStoppingState(): Boolean {
+        return this == STOPPING || this == STOPPED
+    }
 }
