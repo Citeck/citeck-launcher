@@ -89,6 +89,10 @@ class NamespaceGenerator {
                     "1025:1025",
                     "8025:8025/tcp"
                 )
+            ).withResources(
+                AppResourcesDef(
+                    AppResourcesDef.LimitsDef("128m")
+                )
             )
     }
 
