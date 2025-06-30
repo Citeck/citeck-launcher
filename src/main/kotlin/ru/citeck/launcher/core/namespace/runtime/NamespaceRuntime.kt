@@ -297,6 +297,7 @@ class NamespaceRuntime(
 
                     NsRuntimeStatus.STOPPING -> {
                         if (appRuntimes.value.all { it.status.value == AppRuntimeStatus.STOPPED }) {
+                            dockerApi.deleteNetwork(networkName)
                             status.value = NsRuntimeStatus.STOPPED
                             resetCurrentActionState()
                         }

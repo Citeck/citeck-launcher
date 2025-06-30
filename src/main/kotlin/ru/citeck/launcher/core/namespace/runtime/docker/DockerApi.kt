@@ -209,6 +209,11 @@ class DockerApi(
             .exec().firstOrNull()
     }
 
+    fun deleteNetwork(name: String) {
+        val network = getNetworkByName(name) ?: return
+        client.removeNetworkCmd(network.id).exec()
+    }
+
     fun createBridgeNetwork(name: String): CreateNetworkResponse {
         return client.createNetworkCmd()
             .withDriver("bridge")
