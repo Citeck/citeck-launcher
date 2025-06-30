@@ -18,5 +18,6 @@ enum class ActionIcon {
     ARROW_LEFT,
     KEY,
     STORAGE,
-    EXCLAMATION_TRIANGLE
+    EXCLAMATION_TRIANGLE,
+    COG_6_TOOTH,
 }

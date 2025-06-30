@@ -41,6 +41,7 @@ class AppRuntime(
 
     val name: String get() = def.value.name
     val image: String get() = def.value.image
+    val editedDef = MutProp(false)
 
     @Volatile
     var containers: List<Container> = emptyList()
@@ -65,12 +66,13 @@ class AppRuntime(
         }.associateBy { it.exposedPort }
 
         this.def.watch { before, after ->
-            if (status.value != AppRuntimeStatus.STOPPED) {
+            if (!status.value.isStoppingState()) {
                 if (before.image != after.image) {
                     status.value = AppRuntimeStatus.READY_TO_PULL
                 } else {
-                    status.value = AppRuntimeStatus.STARTING
+                    status.value = AppRuntimeStatus.READY_TO_START
                 }
+                activeActionPromise.cancel(true)
             }
         }
         status.watch { before, after ->
@@ -111,6 +113,7 @@ class AppRuntime(
             manualStop = true
         }
         status.value = AppRuntimeStatus.READY_TO_STOP
+        activeActionPromise.cancel(true)
     }
 
     fun watchLogs(tail: Int, logsCallback: (String) -> Unit): AutoCloseable {
@@ -142,13 +145,6 @@ class AppRuntime(
                 ServerSocket(hostPort)
             } catch (e: BindException) {
                 val appsOccupiedPort = HashSet<String>()
-                /*appsByNs.entries.forEach { entry ->
-                    for (binding in entry.value.bindings) {
-                        if (hostPort == binding.hostPort) {
-                            appsOccupiedPort.add(entry.key)
-                        }
-                    }
-                }*/
                 var msg = "Server socket bind failed for port $hostPort of app $appName. "
                 msg += if (appsOccupiedPort.isEmpty()) {
                     "Port owners doesn't found in launcher apps"
@@ -225,13 +221,13 @@ class AppRuntime(
                                     targetToSourceThread = moveBytes("targetToSource", targetSocket, sourceSocket)
                                     sourceToTargetThread = moveBytes("sourceToTarget", sourceSocket, targetSocket)
 
-                                    targetToSourceThread?.start()
-                                    sourceToTargetThread?.start()
+                                    targetToSourceThread.start()
+                                    sourceToTargetThread.start()
 
-                                    targetToSourceThread?.join()
-                                    sourceToTargetThread?.join()
+                                    targetToSourceThread.join()
+                                    sourceToTargetThread.join()
                                 }
-                            } catch (e: Throwable) {
+                            } catch (_: Throwable) {
                                 targetToSourceThread?.interrupt()
                                 sourceToTargetThread?.interrupt()
                             } finally {

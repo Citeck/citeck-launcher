@@ -12,7 +12,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.*
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -37,8 +36,10 @@ import ru.citeck.launcher.core.secrets.auth.AuthSecret
 import ru.citeck.launcher.view.action.ActionDesc
 import ru.citeck.launcher.view.action.ActionIcon
 import ru.citeck.launcher.view.action.CiteckIconAction
+import ru.citeck.launcher.view.dialog.AppDefEditDialog
 import ru.citeck.launcher.view.dialog.GlobalErrorDialog
 import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog
+import ru.citeck.launcher.view.form.exception.FormCancelledException
 import ru.citeck.launcher.view.image.CpImage
 import ru.citeck.launcher.view.logs.GlobalLogsWindow
 import ru.citeck.launcher.view.logs.LogsDialogParams
@@ -204,7 +205,8 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
                         },
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    CpImage("logo.svg",
+                    CpImage(
+                        "logo.svg",
                         modifier = Modifier.padding(start = 7.dp, top = 5.dp, bottom = 5.dp)
                             .requiredSize(40.dp)
                     )
@@ -394,6 +396,8 @@ private fun renderApps(
             for (application in applications) {
                 val statusText = rememberMutProp(application, application.statusText)
                 val appStatus = rememberMutProp(application, application.status)
+                val editedDef = rememberMutProp(application, application.editedDef)
+                val appDef = rememberMutProp(application, application.def)
                 Row(modifier = Modifier.fillMaxWidth().height(30.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(application.name, modifier = Modifier.weight(0.8f), maxLines = 1)
                     Row(
@@ -413,7 +417,7 @@ private fun renderApps(
                     }
                     TooltipArea(
                         delayMillis = 1000,
-                        modifier = Modifier.width(200.dp)/*.weight(0.5f)*/,
+                        modifier = Modifier.width(200.dp),
                         tooltip = {
                             Surface(shadowElevation = 4.dp, shape = RoundedCornerShape(4.dp)) {
                                 Text(
@@ -423,13 +427,14 @@ private fun renderApps(
                             }
                         }
                     ) {
+                        val image = appDef.value.image
                         Text(
-                            text = application.image.substringAfterLast(":", "unknown"),
+                            text = image.substringAfterLast(":", "unknown"),
                             modifier = Modifier.clickable(onClick = {
                                 Toolkit.getDefaultToolkit()
                                     .systemClipboard
-                                    .setContents(StringSelection(application.image), null)
-                                }
+                                    .setContents(StringSelection(image), null)
+                            }
                             ),
                             maxLines = 1
                         )
@@ -484,6 +489,42 @@ private fun renderApps(
                                     }
                                 }
                             )
+                        }
+                        Box {
+                            CiteckIconAction(
+                                coroutineScope,
+                                modifier = Modifier.fillMaxHeight(),
+                                actionDesc = ActionDesc(
+                                    "edit-app",
+                                    ActionIcon.COG_6_TOOTH,
+                                    "Edit App"
+                                ) {
+                                    runCatching {
+                                        val appDef = application.def.value
+                                        try {
+                                            val editRes = AppDefEditDialog.show(
+                                                appDef,
+                                                application.nsRuntime.isEditedAndLockedApp(appDef.name)
+                                            )
+                                            if (editRes == null) {
+                                                application.nsRuntime.resetAppDef(appDef.name)
+                                            } else {
+                                                application.nsRuntime.updateAppDef(appDef, editRes.appDef, editRes.locked)
+                                            }
+                                        } catch (_: FormCancelledException) {
+                                            // do nothing
+                                        }
+                                    }
+                                }
+                            )
+                            if (editedDef.value) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(10.dp)
+                                        .align(Alignment.TopEnd)
+                                        .background(Color.Blue, CircleShape)
+                                )
+                            }
                         }
                     }
                 }

@@ -2,15 +2,16 @@ package ru.citeck.launcher.core.namespace.runtime
 
 import io.github.oshai.kotlinlogging.KotlinLogging
 import ru.citeck.launcher.core.actions.ActionsService
+import ru.citeck.launcher.core.appdef.ApplicationDef
 import ru.citeck.launcher.core.config.cloud.CloudConfigServer
 import ru.citeck.launcher.core.database.DataRepo
 import ru.citeck.launcher.core.namespace.NamespaceDto
+import ru.citeck.launcher.core.namespace.NamespaceRef
+import ru.citeck.launcher.core.namespace.NamespacesService
 import ru.citeck.launcher.core.namespace.gen.NamespaceGenResp
 import ru.citeck.launcher.core.namespace.gen.NamespaceGenerator
 import ru.citeck.launcher.core.namespace.runtime.actions.AppImagePullAction
 import ru.citeck.launcher.core.namespace.runtime.actions.AppRunAction
-import ru.citeck.launcher.core.namespace.NamespaceRef
-import ru.citeck.launcher.core.namespace.NamespacesService
 import ru.citeck.launcher.core.namespace.runtime.actions.AppStopAction
 import ru.citeck.launcher.core.namespace.runtime.docker.DockerApi
 import ru.citeck.launcher.core.namespace.runtime.docker.DockerConstants
@@ -26,10 +27,8 @@ import java.util.*
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
-import kotlin.collections.ArrayList
 import kotlin.concurrent.thread
 import kotlin.io.path.*
 import kotlin.math.min
@@ -50,6 +49,8 @@ class NamespaceRuntime(
 
         private const val STATE_STATUS = "status"
         private const val STATE_MANUAL_STOPPED_APPS = "manualStoppedApps"
+        private const val STATE_EDITED_APPS = "editedApps" // map<name, config>
+        private const val STATE_EDITED_AND_LOCKED_APPS = "editedAndLockedApps" // set<name>
 
         private const val NAME_PREFIX = "citeck${DockerConstants.NAME_DELIM}"
 
@@ -65,6 +66,7 @@ class NamespaceRuntime(
     var status = MutProp(NsRuntimeStatus.STOPPED)
 
     private var namespaceGenResp: NamespaceGenResp? = null
+
     @Volatile
     private var runtimeFilesHash: Map<Path, String> = emptyMap()
 
@@ -73,6 +75,7 @@ class NamespaceRuntime(
 
     @Volatile
     private var runtimeThread: Thread? = null
+
     @Volatile
     private var isRuntimeThreadRunning = false
 
@@ -93,8 +96,14 @@ class NamespaceRuntime(
 
     private val manualStoppedAtts = Collections.newSetFromMap<String>(ConcurrentHashMap())
 
+    private val editedAndLockedApps = Collections.newSetFromMap<String>(ConcurrentHashMap())
+    private val editedApps = ConcurrentHashMap<String, ApplicationDef>()
+
     init {
+        editedApps.putAll(nsRuntimeDataRepo[STATE_EDITED_APPS].asMap(String::class, ApplicationDef::class))
+        editedAndLockedApps.addAll(nsRuntimeDataRepo[STATE_EDITED_AND_LOCKED_APPS].asStrList())
         manualStoppedAtts.addAll(nsRuntimeDataRepo[STATE_MANUAL_STOPPED_APPS].asStrList())
+
         status.watch { _, after ->
             if (after != NsRuntimeStatus.STOPPED && runtimeThread == null) {
                 isRuntimeThreadRunning = true
@@ -108,7 +117,11 @@ class NamespaceRuntime(
                                     val delaySeconds = RT_THREAD_IDLE_DELAY_SECONDS.let {
                                         it[min(idleIterationsCounter++, it.lastIndex)]
                                     }
-                                    if (runtimeThreadSignalQueue.poll(delaySeconds.toLong(), TimeUnit.SECONDS) != null) {
+                                    if (runtimeThreadSignalQueue.poll(
+                                            delaySeconds.toLong(),
+                                            TimeUnit.SECONDS
+                                        ) != null
+                                    ) {
                                         for (i in 0..3) {
                                             // add small delay to catch other "flush" commands and process it in one pass
                                             if (runtimeThreadSignalQueue.poll(250, TimeUnit.MILLISECONDS) == null) {
@@ -141,7 +154,7 @@ class NamespaceRuntime(
         if (statusBefore.isNotBlank()) {
             try {
                 status.value = NsRuntimeStatus.valueOf(statusBefore)
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 log.warn { "Invalid status from db: '$statusBefore'" }
             }
         }
@@ -186,6 +199,7 @@ class NamespaceRuntime(
         this.currentActionFuture = currentActionFuture
         when (actionType) {
             NsRuntimeActionType.START -> {
+                cleanEditedNonLockedApps()
                 generateNs()
                 appRuntimes.value.forEach {
                     if (!it.manualStop) {
@@ -196,6 +210,7 @@ class NamespaceRuntime(
                 status.value = NsRuntimeStatus.STARTING
                 boundedNs.value = true
             }
+
             NsRuntimeActionType.STOP -> {
                 status.value = NsRuntimeStatus.STOPPING
                 appRuntimes.value.forEach {
@@ -204,6 +219,7 @@ class NamespaceRuntime(
                 }
                 flushRuntimeThread()
             }
+
             else -> error("Unsupported actionm type: $actionType")
         }
         return Promises.create(currentActionFuture)
@@ -215,6 +231,19 @@ class NamespaceRuntime(
 
     private fun runtimeThreadAction(): Boolean {
         var somethingChanged = false
+
+        if (runtimesToRemove.isNotEmpty()) {
+            val runtimesToRemoveIt = runtimesToRemove.iterator()
+            while (runtimesToRemoveIt.hasNext()) {
+                val runtimeToRemove = runtimesToRemoveIt.next()
+                val status = runtimeToRemove.status.value
+                if (!status.isStoppingState()) {
+                    runtimeToRemove.stop(false)
+                } else if (status == AppRuntimeStatus.STOPPED) {
+                    runtimesToRemoveIt.remove()
+                }
+            }
+        }
 
         for (application in appRuntimes.value) {
             if (!application.activeActionPromise.isDone()) {
@@ -240,10 +269,13 @@ class NamespaceRuntime(
                         application.status.value = AppRuntimeStatus.READY_TO_START
                         flushRuntimeThread()
                     }.catch {
-                        application.status.value = AppRuntimeStatus.PULL_FAILED
+                        if (application.status.value == AppRuntimeStatus.PULLING) {
+                            application.status.value = AppRuntimeStatus.PULL_FAILED
+                        }
                     }
                     somethingChanged = true
                 }
+
                 AppRuntimeStatus.READY_TO_START -> {
                     application.status.value = AppRuntimeStatus.STARTING
                     val promise = AppRunAction.execute(actionsService, application, runtimeFilesHash)
@@ -252,10 +284,13 @@ class NamespaceRuntime(
                         application.status.value = AppRuntimeStatus.RUNNING
                         flushRuntimeThread()
                     }.catch {
-                        application.status.value = AppRuntimeStatus.START_FAILED
+                        if (application.status.value == AppRuntimeStatus.STARTING) {
+                            application.status.value = AppRuntimeStatus.START_FAILED
+                        }
                     }
                     somethingChanged = true
                 }
+
                 AppRuntimeStatus.READY_TO_STOP -> {
                     if (application.manualStop) {
                         if (manualStoppedAtts.add(application.name)) {
@@ -269,10 +304,13 @@ class NamespaceRuntime(
                         application.status.value = AppRuntimeStatus.STOPPED
                         flushRuntimeThread()
                     }.catch {
-                        application.status.value = AppRuntimeStatus.STOPPING_FAILED
+                        if (application.status.value == AppRuntimeStatus.STOPPING) {
+                            application.status.value = AppRuntimeStatus.STOPPING_FAILED
+                        }
                     }
                     somethingChanged = true
                 }
+
                 else -> {}
             }
         }
@@ -288,7 +326,7 @@ class NamespaceRuntime(
                     NsRuntimeStatus.STARTING -> {
                         if (appRuntimes.value.all {
                                 it.manualStop || it.status.value == AppRuntimeStatus.RUNNING
-                        }) {
+                            }) {
                             status.value = NsRuntimeStatus.RUNNING
                             currentActionFuture?.complete(Unit)
                             resetCurrentActionState()
@@ -302,6 +340,7 @@ class NamespaceRuntime(
                             resetCurrentActionState()
                         }
                     }
+
                     else -> {}
                 }
             }
@@ -337,6 +376,80 @@ class NamespaceRuntime(
         return localPath + volume.substring(delimIdx)
     }
 
+    private fun cleanEditedNonLockedApps() {
+
+        val editedAppsIt = editedApps.iterator()
+        var changed = false
+        while (editedAppsIt.hasNext()) {
+            val entry = editedAppsIt.next()
+            if (!editedAndLockedApps.contains(entry.key)) {
+                editedAppsIt.remove()
+                appRuntimes.value.find { it.name == entry.key }?.editedDef?.value = false
+                changed = true
+            }
+        }
+        if (changed) {
+            nsRuntimeDataRepo[STATE_EDITED_APPS] = editedApps
+        }
+    }
+
+    fun isEditedAndLockedApp(appName: String): Boolean {
+        return editedAndLockedApps.contains(appName)
+    }
+
+    fun resetAppDef(name: String) {
+
+        editedAndLockedApps.remove(name)
+        editedApps.remove(name)
+
+        val genRespDef = namespaceGenResp?.applications?.find { it.name == name }
+        if (genRespDef == null) {
+            log.error { "Generated app def doesn't found for app '$name'. Reset can't be performed" }
+            return
+        }
+        val runtime = appRuntimes.value.find { it.name == name } ?: return
+        runtime.def.value = normalizeGeneratedAppDef(genRespDef)
+        runtime.editedDef.value = false
+    }
+
+    fun updateAppDef(appDefBefore: ApplicationDef, appDefAfter: ApplicationDef, locked: Boolean) {
+        val appName = appDefBefore.name
+        if (appDefBefore == appDefAfter && locked == editedAndLockedApps.contains(appName)) {
+            return
+        }
+        log.info { "Update app def for '${appDefBefore.name}'. Locked: $locked" }
+        val runtime = appRuntimes.value.find { it.name == appName } ?: error("Runtime is not found for app '$appName'")
+        if (locked) {
+            if (editedAndLockedApps.add(appDefBefore.name)) {
+                nsRuntimeDataRepo[STATE_EDITED_AND_LOCKED_APPS] = editedAndLockedApps
+            }
+        } else {
+            if (editedAndLockedApps.remove(appDefBefore.name)) {
+                nsRuntimeDataRepo[STATE_EDITED_AND_LOCKED_APPS] = editedAndLockedApps
+            }
+        }
+        val fixedDef = appDefAfter.copy()
+            .withKind(appDefBefore.kind)
+            .withReplicas(appDefBefore.replicas)
+            .withScalable(appDefBefore.scalable)
+            .build()
+
+        if (fixedDef != appDefBefore) {
+            editedApps[appName] = fixedDef
+            nsRuntimeDataRepo[STATE_EDITED_APPS] = editedApps
+            runtime.def.value = fixedDef
+        }
+        runtime.editedDef.value = editedApps.containsKey(appName)
+    }
+
+    private fun normalizeGeneratedAppDef(appDef: ApplicationDef): ApplicationDef {
+        return appDef.copy()
+            .withVolumes(appDef.volumes.map(this::fixVolume))
+            .withInitContainers(appDef.initContainers.map { ic ->
+                ic.copy().withVolumes(ic.volumes.map(this::fixVolume)).build()
+            }).build()
+    }
+
     private fun generateNs() {
 
         val newGenRes = namespaceGenerator.generate(namespaceDto)
@@ -347,14 +460,7 @@ class NamespaceRuntime(
 
             val currentRuntime = currentRuntimesByName.remove(appDef.name)
 
-            var updatedAppDef = appDef
-
-            updatedAppDef = updatedAppDef.copy()
-                .withVolumes(appDef.volumes.map(this::fixVolume))
-                .withInitContainers(appDef.initContainers.map { ic ->
-                    ic.copy().withVolumes(ic.volumes.map(this::fixVolume)).build()
-                }).build()
-
+            val updatedAppDef = editedApps[appDef.name] ?: normalizeGeneratedAppDef(appDef)
             if (currentRuntime == null) {
                 newRuntimes.add(AppRuntime(this, updatedAppDef, dockerApi))
             } else {
@@ -376,6 +482,7 @@ class NamespaceRuntime(
                     }
                     flushRuntimeThread()
                 }
+                it.editedDef.value = editedApps.containsKey(it.name)
             }
         }
         runtimesToRemove.addAll(currentRuntimesByName.values)
@@ -399,8 +506,8 @@ class NamespaceRuntime(
                 } catch (writeEx: Throwable) {
                     throw RuntimeException(
                         "File write failed. " +
-                        "File path: '$path' " +
-                        "Content: ${Base64.getEncoder().encodeToString(bytes)}",
+                            "File path: '$path' " +
+                            "Content: ${Base64.getEncoder().encodeToString(bytes)}",
                         writeEx
                     )
                 }

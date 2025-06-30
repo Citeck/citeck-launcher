@@ -34,10 +34,6 @@ object Yaml {
         return Json.convert(value, type)
     }
 
-    fun toNonDefaultString(value: Any) {
-        TODO()
-    }
-
     fun toString(value: Any): String {
         val dump = Dump(
             DumpSettings.builder()

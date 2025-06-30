@@ -130,6 +130,7 @@ fun main(@Suppress("UNUSED_PARAMETER") args: Array<String>) {
                     GlobalMessageDialog.MessageDialog(dialogStates)
                     AskMasterPasswordDialog.AskMasterPwd(dialogStates)
                     CreateMasterPasswordDialog.CreateMasterPwd(dialogStates)
+                    AppDefEditDialog.EditDialog(dialogStates)
                     GlobalLogsWindow.LogsDialog(additionalWindowStates, logo)
                     remember {
                         FeedbackUtils.init(servicesVal)
