@@ -21,4 +21,8 @@ enum class AppRuntimeStatus {
     fun isStoppingState(): Boolean {
         return this == READY_TO_STOP || this == STOPPING || this == STOPPED
     }
+
+    fun isStalledState(): Boolean {
+        return this == PULL_FAILED || this == START_FAILED || this == STOPPING_FAILED
+    }
 }

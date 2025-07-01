@@ -5,6 +5,7 @@ import com.github.dockerjava.api.async.ResultCallbackTemplate
 import com.github.dockerjava.api.command.*
 import com.github.dockerjava.api.exception.DockerException
 import com.github.dockerjava.api.exception.NotFoundException
+import com.github.dockerjava.api.exception.NotModifiedException
 import com.github.dockerjava.api.model.Container
 import com.github.dockerjava.api.model.Frame
 import com.github.dockerjava.api.model.Network
@@ -135,6 +136,8 @@ class DockerApi(
                         "proceeding with force removal"
                 }
             }
+        } catch (_: NotModifiedException) {
+            log.debug { "Container already stopped '$containerName' ($containerId)" }
         } catch (e: DockerException) {
             log.error(e) { "Failed to stop container '$containerName' ($containerId)" }
         }

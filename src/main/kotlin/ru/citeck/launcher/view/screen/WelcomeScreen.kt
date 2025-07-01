@@ -23,7 +23,7 @@ import ru.citeck.launcher.core.workspace.WorkspaceDto
 import ru.citeck.launcher.core.workspace.WorkspaceEntityDef
 import ru.citeck.launcher.view.dialog.GlobalMessageDialog
 import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog
-import ru.citeck.launcher.view.image.CpImage
+import ru.citeck.launcher.view.drawable.CpImage
 import java.util.concurrent.Executors
 
 val coroutineContext = Executors.newFixedThreadPool(1).asCoroutineDispatcher()

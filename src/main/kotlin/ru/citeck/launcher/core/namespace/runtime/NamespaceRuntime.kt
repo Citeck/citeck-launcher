@@ -28,6 +28,7 @@ import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.concurrent.thread
 import kotlin.io.path.*
@@ -55,12 +56,6 @@ class NamespaceRuntime(
         private const val NAME_PREFIX = "citeck${DockerConstants.NAME_DELIM}"
 
         private val RT_THREAD_IDLE_DELAY_SECONDS = listOf(1, 2, 3, 5, 8, 10)
-
-        val STALLED_APP_STATUSES = setOf(
-            AppRuntimeStatus.PULL_FAILED,
-            AppRuntimeStatus.START_FAILED,
-            AppRuntimeStatus.STOPPING_FAILED
-        )
     }
 
     var status = MutProp(NsRuntimeStatus.STOPPED)
@@ -77,7 +72,7 @@ class NamespaceRuntime(
     private var runtimeThread: Thread? = null
 
     @Volatile
-    private var isRuntimeThreadRunning = false
+    private var isRuntimeThreadRunning = AtomicBoolean()
 
     val namePrefix = NAME_PREFIX
     val nameSuffix = DockerConstants.getNameSuffix(namespaceRef)
@@ -104,13 +99,20 @@ class NamespaceRuntime(
         editedAndLockedApps.addAll(nsRuntimeDataRepo[STATE_EDITED_AND_LOCKED_APPS].asStrList())
         manualStoppedAtts.addAll(nsRuntimeDataRepo[STATE_MANUAL_STOPPED_APPS].asStrList())
 
-        status.watch { _, after ->
-            if (after != NsRuntimeStatus.STOPPED && runtimeThread == null) {
-                isRuntimeThreadRunning = true
+        status.watch { before, after ->
+            log.info {
+                "[${namespaceDto.name} (${namespaceRef.namespace})] Namespace runtime " +
+                "status was changed: $before -> $after"
+            }
+            if (before == NsRuntimeStatus.STOPPED) {
+                isRuntimeThreadRunning.set(false)
+                runtimeThread?.interrupt()
+                isRuntimeThreadRunning = AtomicBoolean(true)
                 createNetworkIfNotExists(networkName)
-                runtimeThread = thread(name = "nsrt$nameSuffix") {
+                runtimeThread = thread(start = false, name = "nsrt$nameSuffix") {
+                    log.info { "(+) Namespace runtime thread was started" }
                     try {
-                        while (isRuntimeThreadRunning) {
+                        while (isRuntimeThreadRunning.get()) {
                             var idleIterationsCounter = 0
                             try {
                                 if (!runtimeThreadAction()) {
@@ -138,12 +140,17 @@ class NamespaceRuntime(
                                 }
                             }
                         }
-                        runtimeThread = null
                     } finally {
-                        isRuntimeThreadRunning = false
+                        isRuntimeThreadRunning.set(false)
                         flushRuntimeThread()
+                        runtimeThread = null
+                        log.info { "(-) Namespace runtime thread was stopped" }
                     }
                 }
+                runtimeThread?.start()
+            }
+            if (after == NsRuntimeStatus.STOPPED) {
+                isRuntimeThreadRunning.set(false)
             }
             nsRuntimeDataRepo[STATE_STATUS] = after.toString()
             flushRuntimeThread()
@@ -317,7 +324,7 @@ class NamespaceRuntime(
         val statusChangesCount = this.appsStatusChangesCount.get()
         if (status.value != NsRuntimeStatus.STALLED && appsStatusChangesCountProcessed != statusChangesCount) {
 
-            if (appRuntimes.value.any { STALLED_APP_STATUSES.contains(it.status.value) }) {
+            if (appRuntimes.value.any { it.status.value.isStalledState() }) {
                 status.value = NsRuntimeStatus.STALLED
                 currentActionFuture?.completeExceptionally(RuntimeException("Namespace stalled"))
                 resetCurrentActionState()
@@ -399,8 +406,12 @@ class NamespaceRuntime(
 
     fun resetAppDef(name: String) {
 
-        editedAndLockedApps.remove(name)
-        editedApps.remove(name)
+        if (editedAndLockedApps.remove(name)) {
+            nsRuntimeDataRepo[STATE_EDITED_AND_LOCKED_APPS] = editedAndLockedApps
+        }
+        if (editedApps.remove(name) != null) {
+            nsRuntimeDataRepo[STATE_EDITED_APPS] = editedApps
+        }
 
         val genRespDef = namespaceGenResp?.applications?.find { it.name == name }
         if (genRespDef == null) {
@@ -528,7 +539,7 @@ class NamespaceRuntime(
     }
 
     override fun dispose() {
-        isRuntimeThreadRunning = false
+        isRuntimeThreadRunning.set(false)
         flushRuntimeThread()
         runtimeThread?.interrupt()
         runtimeThread = null

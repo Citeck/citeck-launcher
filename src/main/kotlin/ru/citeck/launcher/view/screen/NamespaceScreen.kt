@@ -40,7 +40,7 @@ import ru.citeck.launcher.view.dialog.AppDefEditDialog
 import ru.citeck.launcher.view.dialog.GlobalErrorDialog
 import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog
 import ru.citeck.launcher.view.form.exception.FormCancelledException
-import ru.citeck.launcher.view.image.CpImage
+import ru.citeck.launcher.view.drawable.CpImage
 import ru.citeck.launcher.view.logs.GlobalLogsWindow
 import ru.citeck.launcher.view.logs.LogsDialogParams
 import ru.citeck.launcher.view.utils.FeedbackUtils
@@ -404,7 +404,7 @@ private fun renderApps(
                         modifier = Modifier.weight(1f).fillMaxHeight(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        val statusColor = if (NamespaceRuntime.STALLED_APP_STATUSES.contains(appStatus.value)) {
+                        val statusColor = if (appStatus.value.isStalledState()) {
                             STALLED_COLOR
                         } else when (appStatus.value) {
                             AppRuntimeStatus.STOPPED -> STOPPED_COLOR

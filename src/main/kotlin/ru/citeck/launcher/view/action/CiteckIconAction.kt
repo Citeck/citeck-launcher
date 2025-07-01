@@ -14,7 +14,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import ru.citeck.launcher.view.dialog.GlobalErrorDialog
-import ru.citeck.launcher.view.image.CpImage
+import ru.citeck.launcher.view.drawable.CpImage
 import ru.citeck.launcher.view.table.CiteckIconButton
 
 @Composable
@@ -122,8 +122,3 @@ private fun renderIconFromClasspath(path: String, description: String, size: Int
         modifier = Modifier.padding(0.dp).requiredSize(size.dp),
     )
 }
-
-private object ResourceLoader
-
-private fun readResourceBytes(resourcePath: String) =
-    ResourceLoader.javaClass.classLoader.getResourceAsStream(resourcePath)!!.readAllBytes()
