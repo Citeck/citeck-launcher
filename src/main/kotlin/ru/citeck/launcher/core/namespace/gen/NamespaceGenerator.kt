@@ -2,6 +2,7 @@ package ru.citeck.launcher.core.namespace.gen
 
 import ru.citeck.launcher.core.WorkspaceServices
 import ru.citeck.launcher.core.appdef.*
+import ru.citeck.launcher.core.git.GitUpdatePolicy
 import ru.citeck.launcher.core.namespace.AppName
 import ru.citeck.launcher.core.namespace.NamespaceDto
 import ru.citeck.launcher.core.namespace.init.ExecShell
@@ -10,7 +11,6 @@ import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.file.CiteckFiles
 import ru.citeck.launcher.core.utils.json.Json
 import ru.citeck.launcher.core.utils.json.Yaml
-import kotlin.collections.HashMap
 
 class NamespaceGenerator {
 
@@ -45,7 +45,7 @@ class NamespaceGenerator {
 
         val context = NsGenContext(
             props,
-            services.bundlesService.getBundleByRef(props.bundleRef),
+            services.bundlesService.getBundleByRef(props.bundleRef, GitUpdatePolicy.ALLOWED),
             services.workspaceConfig,
             HashMap(defaultAppFiles)
         )

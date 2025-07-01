@@ -4,5 +4,6 @@ import java.nio.file.Path
 
 class GitRepoInfo(
     val root: Path,
-    val hash: String
+    val hash: String,
+    val nextUpdateMs: Long
 )

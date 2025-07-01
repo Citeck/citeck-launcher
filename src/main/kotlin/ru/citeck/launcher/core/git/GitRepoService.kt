@@ -46,15 +46,15 @@ class GitRepoService {
         )
     }
 
-    fun initRepo(repoProps: GitRepoProps): GitRepoInfo {
+    fun initRepo(repoProps: GitRepoProps, updatePolicy: GitUpdatePolicy = GitUpdatePolicy.ALLOWED): GitRepoInfo {
         try {
-            return initRepoImpl(repoProps, false)
+            return initRepoImpl(repoProps, updatePolicy, false)
         } catch (e: Throwable) {
             if (isUnauthorizedException(e)) {
                 var exception: Throwable
                 do {
                     try {
-                        return initRepoImpl(repoProps, true)
+                        return initRepoImpl(repoProps, updatePolicy, true)
                     } catch (e: Throwable) {
                         exception = e
                     }
@@ -77,7 +77,11 @@ class GitRepoService {
             || message.contains("403")
     }
 
-    private fun initRepoImpl(repoProps: GitRepoProps, resetSecret: Boolean): GitRepoInfo {
+    private fun initRepoImpl(
+        repoProps: GitRepoProps,
+        updatePolicy: GitUpdatePolicy = GitUpdatePolicy.ALLOWED,
+        resetSecret: Boolean
+    ): GitRepoInfo {
 
         val relativePath = AppDir.PATH.relativize(repoProps.path).toString().replace(File.separator, "/")
 
@@ -87,7 +91,7 @@ class GitRepoService {
         if (existingRepo != null && existingRepo.props != repoProps) {
             log.warn {
                 "Found existing repo for path $relativePath and props ${existingRepo.props}. " +
-                "Repo will be replaced with data from $repoProps"
+                    "Repo will be replaced with data from $repoProps"
             }
             if (repoProps.path.exists()) {
                 repoProps.path.toFile().deleteRecursively()
@@ -100,15 +104,17 @@ class GitRepoService {
                 authSecretsService.getSecret(
                     SecretDef(
                         repoProps.authId,
-                        repoProps.authType),
-                        repoProps.url,
-                        resetSecret
-                    )
+                        repoProps.authType
+                    ),
+                    repoProps.url,
+                    resetSecret
+                )
             }
             when (secret) {
                 is AuthSecret.Token -> {
                     UsernamePasswordCredentialsProvider("", secret.token)
                 }
+
                 is AuthSecret.Basic -> {
                     UsernamePasswordCredentialsProvider(secret.username, secret.password)
                 }
@@ -118,11 +124,15 @@ class GitRepoService {
         }
 
         val repoDir = repoProps.path
-        var hashOfLastCommit: String
+        var repoInfo: GitRepoInstance
         if (existingRepo == null || !repoDir.resolve(".git").exists()) {
+            if (updatePolicy == GitUpdatePolicy.DISABLED) {
+                error("Repo doesn't exists and update is disabled")
+            }
             log.info { "[$relativePath] Repo directory doesn't exists. Clone repo." }
             val totalMs = measureTimeMillis {
                 FileUtils.deleteDirectory(repoDir.toFile())
+                var hashOfLastCommit = ""
                 Git.cloneRepository()
                     .setURI(repoProps.url)
                     .setDirectory(repoDir.toFile())
@@ -135,9 +145,11 @@ class GitRepoService {
                         override fun initializedSubmodules(submodules: MutableCollection<String>?) {
                             log.info { "initializedSubmodules: $submodules" }
                         }
+
                         override fun cloningSubmodule(path: String?) {
                             log.info { "cloningSubmodule: $path" }
                         }
+
                         override fun checkingOut(commit: AnyObjectId?, path: String?) {
                             log.info { "checkingOut. Commit: $commit Path: $path" }
                         }
@@ -145,19 +157,25 @@ class GitRepoService {
                     .setNoTags()
                     .setTimeout(15)
                     .call()
-                    .use {
-                        hashOfLastCommit = it.getLastCommitHash()
-                    }
-                val newRepoMeta = GitRepoInstance(repoProps, System.currentTimeMillis(), hashOfLastCommit)
-                repositoriesInfo[relativePath] = newRepoMeta
+                    .use { hashOfLastCommit = it.getLastCommitHash() }
+
+                repoInfo = GitRepoInstance(repoProps, System.currentTimeMillis(), hashOfLastCommit)
+                repositoriesInfo[relativePath] = repoInfo
             }
             log.info { "[$relativePath] Repo successfully cloned. Elapsed time: ${totalMs}ms" }
         } else {
             val currentTimeMs = System.currentTimeMillis()
             val lastSyncDiffMs = currentTimeMs - existingRepo.lastSyncTimeMs
+            repoInfo = existingRepo
 
-            if (lastSyncDiffMs > repoProps.pullPeriod.toMillis()) {
+            if (updatePolicy == GitUpdatePolicy.DISABLED || updatePolicy == GitUpdatePolicy.ALLOWED_IF_NOT_EXISTS) {
+                log.debug { "[$relativePath] Repo exists and update is disabled" }
+            } else if (
+                updatePolicy == GitUpdatePolicy.REQUIRED ||
+                updatePolicy == GitUpdatePolicy.ALLOWED && lastSyncDiffMs > repoProps.pullPeriod.toMillis()
+            ) {
                 log.info { "[$relativePath] Repo directory exists. Pull repo." }
+                var hashOfLastCommit = ""
                 val totalMs = measureTimeMillis {
                     Git.open(repoDir.toFile()).use {
                         it.pull()
@@ -167,10 +185,10 @@ class GitRepoService {
                         hashOfLastCommit = it.getLastCommitHash()
                     }
                 }
-                repositoriesInfo[relativePath] = existingRepo.withLastSync(currentTimeMs, hashOfLastCommit)
+                repoInfo = existingRepo.withLastSync(currentTimeMs, hashOfLastCommit)
+                repositoriesInfo[relativePath] = repoInfo
                 log.info { "[$relativePath] Repo successfully pulled. Elapsed time: ${totalMs}ms" }
             } else {
-                hashOfLastCommit = existingRepo.lastCommitHash
                 log.info {
                     "[$relativePath] Repo already in sync. " +
                         "Current time: ${currentTimeMs.timestampMsToCurrentTime()} " +
@@ -179,7 +197,11 @@ class GitRepoService {
                 }
             }
         }
-        return GitRepoInfo(repoDir, hashOfLastCommit)
+        return GitRepoInfo(
+            repoDir,
+            repoInfo.lastCommitHash,
+            repoInfo.lastSyncTimeMs + repoProps.pullPeriod.toMillis()
+        )
     }
 
     private fun Long.timestampMsToCurrentTime(): OffsetTime {
