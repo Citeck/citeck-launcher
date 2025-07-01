@@ -63,7 +63,7 @@ compose.desktop {
                 TargetFormat.Msi,
                 TargetFormat.Deb
             )
-            jvmArgs("-Xmx128m")
+            jvmArgs("-Xmx200m")
             description = "Citeck Launcher"
             copyright = "© 2025 Citeck LLC. All Rights Reserved"
             packageName = "citeck-launcher"
