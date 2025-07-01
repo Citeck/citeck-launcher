@@ -73,7 +73,7 @@ compose.desktop {
             linux {
                 iconFile.set(project.file("icons/logo.png"))
                 debMaintainer = "info@citeck.ru"
-                appCategory = "Development;Utility"
+                appCategory = "Utility"
                 shortcut = true
             }
             windows {
@@ -84,6 +84,7 @@ compose.desktop {
                 upgradeUuid = "3fa61060-0739-4463-985e-c58d1bc4e9b2"
             }
             macOS {
+                appCategory = "public.app-category.utilities"
                 //iconFile.set(project.file("icons/logo.icns")) //todo
             }
 
