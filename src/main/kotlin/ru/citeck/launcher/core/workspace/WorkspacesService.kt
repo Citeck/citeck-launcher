@@ -51,7 +51,6 @@ class WorkspacesService {
         }
     }
 
-
     fun getWorkspaceConfig(workspace: WorkspaceDto): WorkspaceConfig {
         var config = workspacesConfigs[workspace.id]
         if (config == null) {

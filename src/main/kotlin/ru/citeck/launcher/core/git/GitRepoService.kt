@@ -50,8 +50,9 @@ class GitRepoService {
         try {
             return initRepoImpl(repoProps, updatePolicy, false)
         } catch (e: Throwable) {
+            var exception = e
             if (isUnauthorizedException(e)) {
-                var exception: Throwable
+                log.error { "Git repo initialization failed by unauthorized error. Repo url: ${repoProps.url}" }
                 do {
                     try {
                         return initRepoImpl(repoProps, updatePolicy, true)
@@ -60,7 +61,9 @@ class GitRepoService {
                     }
                 } while (isUnauthorizedException(exception))
             }
-            throw RuntimeException("Repo initialization failed: ${repoProps.url}", e)
+            val msg = "Repo initialization failed. Props: $repoProps. Update policy: $updatePolicy"
+            log.error(e) { msg }
+            throw RuntimeException(msg, exception)
         }
     }
 
