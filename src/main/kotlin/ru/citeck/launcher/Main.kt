@@ -122,6 +122,7 @@ fun main(@Suppress("UNUSED_PARAMETER") args: Array<String>) {
                     LoadingScreen()
                 } else if (services.isSuccess) {
                     GlobalConfirmDialog.ConfirmDialog(dialogStates)
+                    GlobalLoadingDialog.LoadingDialog(dialogStates)
                     GlobalErrorDialog.ErrorDialog(dialogStates)
                     val servicesVal = services.getOrThrow()
 

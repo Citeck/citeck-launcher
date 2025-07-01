@@ -370,9 +370,7 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
                         ActionIcon.EXCLAMATION_TRIANGLE,
                         "Export System Info"
                     ) {
-                        runCatching {
-                            FeedbackUtils.exportSystemInfo()
-                        }
+                        FeedbackUtils.dumpSystemInfo()
                     }
                 )
             }

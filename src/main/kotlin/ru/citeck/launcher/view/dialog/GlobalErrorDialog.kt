@@ -106,7 +106,7 @@ object GlobalErrorDialog {
                         Row(modifier = Modifier.align(Alignment.End)) {
                             Button(
                                 onClick = {
-                                    FeedbackUtils.exportSystemInfo()
+                                    FeedbackUtils.dumpSystemInfo()
                                 }
                             ) {
                                 Text("Export System Info")
