@@ -88,6 +88,7 @@ object FeedbackUtils {
         runtimeInfo["availableProcessors"] = availableProcessors
 
         sysInfo["runtime"] = runtimeInfo
+        sysInfo["time"] = Instant.now()
 
         return sysInfo
     }
