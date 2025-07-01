@@ -12,6 +12,7 @@ import org.jetbrains.compose.resources.decodeToSvgPainter
 import ru.citeck.launcher.core.LauncherServices
 import ru.citeck.launcher.core.socket.AppLocalSocket
 import ru.citeck.launcher.core.utils.AppLock
+import ru.citeck.launcher.core.utils.StdOutLog
 import ru.citeck.launcher.core.workspace.WorkspaceDto
 import ru.citeck.launcher.view.dialog.*
 import ru.citeck.launcher.view.form.GlobalFormDialog
@@ -27,8 +28,6 @@ import ru.citeck.launcher.view.utils.FeedbackUtils
 import ru.citeck.launcher.view.utils.ImageUtils
 import ru.citeck.launcher.view.utils.rememberMutProp
 import ru.citeck.launcher.view.window.AdditionalWindowState
-import java.time.Instant
-import java.time.temporal.ChronoUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.system.exitProcess
 
@@ -37,15 +36,15 @@ private val log = KotlinLogging.logger {}
 fun main(@Suppress("UNUSED_PARAMETER") args: Array<String>) {
     // initial phase messages printed without logging framework
     // to avoid conflicts with logging to same file from two apps
-    printLogMsg("Application starting. Try to take app lock")
+    StdOutLog.info("Application starting. Try to take app lock")
     var tryToLockError: Throwable? = null
     try {
         if (!AppLock.tryToLock()) {
             exitProcess(0)
         }
-        printLogMsg("App lock was successfully acquired.")
+        StdOutLog.info("App lock was successfully acquired.")
     } catch (e: Throwable) {
-        printLogMsg("Exception occurred while app lock acquisition")
+        StdOutLog.info("Exception occurred while app lock acquisition")
         e.printStackTrace()
         tryToLockError = e
     }
@@ -206,9 +205,4 @@ fun App(services: LauncherServices, dialogStates: SnapshotStateList<CiteckDialog
             NamespaceScreen(workspaceServices, selectedNamespace)
         }
     }
-}
-
-private fun printLogMsg(msg: String) {
-    val time = Instant.now().truncatedTo(ChronoUnit.MILLIS).toString()
-    println("${time.substring(0, time.length - 1)} [${Thread.currentThread().name}] INFO - $msg")
 }

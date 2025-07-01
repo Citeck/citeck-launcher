@@ -1,6 +1,5 @@
 package ru.citeck.launcher.core.utils
 
-import io.github.oshai.kotlinlogging.KotlinLogging
 import ru.citeck.launcher.core.config.AppDir
 import ru.citeck.launcher.core.socket.AppLocalSocket
 import java.io.RandomAccessFile
@@ -9,8 +8,6 @@ import java.nio.channels.OverlappingFileLockException
 object AppLock {
 
     private const val APP_LOCK_FILE = "app.lock"
-
-    private val log = KotlinLogging.logger {}
 
     fun tryToLock(): Boolean {
         return if (tryToLockImpl()) {
@@ -25,17 +22,17 @@ object AppLock {
         val lockFile = AppDir.PATH.resolve(APP_LOCK_FILE).toFile()
         val pidAndPort = try {
             lockFile.readLines().first().split("|").map { it.toLong() }
-        } catch (e: Throwable) {
+        } catch (_: Throwable) {
             null
         } ?: listOf(-1L, -1L)
         if (pidAndPort.size == 2 && pidAndPort[1] != -1L) {
             try {
                 AppLocalSocket.sendCommand(pidAndPort[1].toInt(), AppLocalSocket.TakeFocusCommand, Unit::class)
             } catch (e: Throwable) {
-                log.error(e) { "Command send failed" }
+                StdOutLog.error(e, "Command send failed")
             }
         }
-        log.warn { "Application already started. PID and port - $pidAndPort" }
+        StdOutLog.info("Application already started. PID and port - $pidAndPort")
     }
 
     private fun tryToLockImpl(): Boolean {
@@ -60,10 +57,10 @@ object AppLock {
                 })
                 true
             }
-        } catch (e: OverlappingFileLockException) {
+        } catch (_: OverlappingFileLockException) {
             false
         } catch (e: Throwable) {
-            log.error(e) { "Exception occurred while locking" }
+            StdOutLog.error(e, "Exception occurred while locking")
             false
         }
     }

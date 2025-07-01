@@ -7,7 +7,6 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.node.*
 import io.github.oshai.kotlinlogging.KotlinLogging
 import ru.citeck.launcher.core.utils.json.Json
-import java.lang.RuntimeException
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.time.Instant
