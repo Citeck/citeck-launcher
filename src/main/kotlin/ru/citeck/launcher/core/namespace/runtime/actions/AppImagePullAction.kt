@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 class AppImagePullAction(
     private val dockerApi: DockerApi,
@@ -97,10 +98,9 @@ class AppImagePullAction(
         if (!pullSemaphore.tryAcquire(1, TimeUnit.MINUTES)) {
             error("Pull semaphore waiting timeout")
         }
+        val params = context.params
+        val appRuntime = params.appRuntime
         try {
-            val params = context.params
-            val appRuntime = params.appRuntime
-
             while (params.currentPulledImage != null || params.imagesToPull.isNotEmpty()) {
                 var imageToPull = params.currentPulledImage
                 if (imageToPull == null) {
@@ -113,9 +113,11 @@ class AppImagePullAction(
                 pullImage(params, imageToPull.image, imageToPull.kind, appRuntime, context.retryIdx, context.lastError)
                 context.retryIdx = -1
                 params.currentPulledImage = null
+                params.pulledImagesCount++
             }
         } finally {
             pullSemaphore.release()
+            appRuntime.statusText.value = ""
         }
     }
 
@@ -212,7 +214,7 @@ class AppImagePullAction(
         }
         val pullInProgress = AtomicBoolean(true)
         Thread.ofVirtual().name("pull-watcher-${appRuntime.name}").start {
-            var mbLen = 7
+            var mbLen = 3
             while (pullInProgress.get()) {
                 val details = lastPullInfo.get()?.progressDetail
                 var totalBytes = 0L
@@ -222,13 +224,16 @@ class AppImagePullAction(
                     totalBytes = details.total ?: 0L
                 }
                 var statusText = if (totalBytes > 0) {
-                    val percents = Math.round(actualBytes * 100f / totalBytes)
-                    var megabytes = (Math.round(totalBytes * 10f / 1024f / 1024f) / 10f).toString()
+                    val percents = (actualBytes * 100f / totalBytes).roundToInt()
+                    var megabytes = ((totalBytes * 10f / 1024f / 1024f).roundToInt() / 10f).toString()
                     mbLen = max(megabytes.length, mbLen)
                     megabytes = megabytes.padStart(mbLen)
                     "" + megabytes + "mb " + percents + "%"
                 } else {
                     "--mb".padStart(mbLen) + " --%"
+                }
+                if (params.totalImagesToPull > 1) {
+                    statusText = "(" + params.pulledImagesCount + "/" + params.totalImagesToPull + ") " + statusText
                 }
                 if (retryIdx >= 0) {
                     statusText += " (" + (retryIdx + 1) + ")"
@@ -239,7 +244,6 @@ class AppImagePullAction(
                     pullCallback.onError(RuntimeException("No pull updates during ${LAST_PULL_RESPONSE_TIMEOUT_MS}ms"))
                 }
             }
-            appRuntime.statusText.value = ""
         }
         try {
             pullFuture.get(1, TimeUnit.HOURS)
@@ -256,6 +260,9 @@ class AppImagePullAction(
         @Volatile
         internal var currentPulledImage: ImageToPull? = null
         internal val imagesToPull: LinkedBlockingQueue<ImageToPull>
+        val totalImagesToPull: Int
+        @Volatile
+        var pulledImagesCount: Int = 0
 
         init {
             val imagesToPullSet = HashSet<ImageToPull>()
@@ -263,6 +270,7 @@ class AppImagePullAction(
             imagesToPullSet.add(ImageToPull(def.value.image, def.value.kind))
             def.value.initContainers.forEach { imagesToPullSet.add(ImageToPull(it.image, it.kind)) }
             this.imagesToPull = LinkedBlockingQueue(imagesToPullSet)
+            totalImagesToPull = this.imagesToPull.size
         }
     }
 

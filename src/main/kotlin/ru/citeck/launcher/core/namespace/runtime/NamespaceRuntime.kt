@@ -5,6 +5,7 @@ import ru.citeck.launcher.core.actions.ActionsService
 import ru.citeck.launcher.core.appdef.ApplicationDef
 import ru.citeck.launcher.core.config.cloud.CloudConfigServer
 import ru.citeck.launcher.core.database.DataRepo
+import ru.citeck.launcher.core.git.GitUpdatePolicy
 import ru.citeck.launcher.core.namespace.NamespaceDto
 import ru.citeck.launcher.core.namespace.NamespaceRef
 import ru.citeck.launcher.core.namespace.NamespacesService
@@ -155,7 +156,7 @@ class NamespaceRuntime(
             nsRuntimeDataRepo[STATE_STATUS] = after.toString()
             flushRuntimeThread()
         }
-        generateNs()
+        generateNs(GitUpdatePolicy.ALLOWED)
 
         val statusBefore = nsRuntimeDataRepo[STATE_STATUS].asText()
         if (statusBefore.isNotBlank()) {
@@ -205,9 +206,14 @@ class NamespaceRuntime(
         }
         this.currentActionFuture = currentActionFuture
         when (actionType) {
-            NsRuntimeActionType.START -> {
+            NsRuntimeActionType.UPDATE_START, NsRuntimeActionType.FORCE_UPDATE_START -> {
                 cleanEditedNonLockedApps()
-                generateNs()
+                val gitUpdatePolicy = if (actionType == NsRuntimeActionType.FORCE_UPDATE_START) {
+                    GitUpdatePolicy.REQUIRED
+                } else {
+                    GitUpdatePolicy.ALLOWED
+                }
+                generateNs(gitUpdatePolicy)
                 appRuntimes.value.forEach {
                     if (!it.manualStop) {
                         it.activeActionPromise.cancel(true)
@@ -361,8 +367,12 @@ class NamespaceRuntime(
         currentActionFuture = null
     }
 
-    fun start(): Promise<Unit> {
-        return runNamespaceAction(NsRuntimeActionType.START)
+    fun updateAndStart(forceUpdate: Boolean = false): Promise<Unit> {
+        return if (forceUpdate) {
+            runNamespaceAction(NsRuntimeActionType.FORCE_UPDATE_START)
+        } else {
+            runNamespaceAction(NsRuntimeActionType.UPDATE_START)
+        }
     }
 
     fun stop(): Promise<Unit> {
@@ -461,9 +471,9 @@ class NamespaceRuntime(
             }).build()
     }
 
-    private fun generateNs() {
+    private fun generateNs(updatePolicy: GitUpdatePolicy) {
 
-        val newGenRes = namespaceGenerator.generate(namespaceDto)
+        val newGenRes = namespaceGenerator.generate(namespaceDto, updatePolicy)
         val currentRuntimesByName = appRuntimes.value.associateByTo(mutableMapOf()) { it.name }
         val newRuntimes = ArrayList<AppRuntime>()
 
@@ -553,7 +563,7 @@ class NamespaceRuntime(
     }
 
     private enum class NsRuntimeActionType {
-        START, STOP, NONE
+        FORCE_UPDATE_START, UPDATE_START, STOP, NONE
     }
 }
 

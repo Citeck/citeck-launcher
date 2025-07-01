@@ -108,7 +108,7 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                                         GlobalMessageDialog.show("Namespace runtime is null")
                                     }
                                 } else {
-                                    runtime.start()
+                                    runtime.updateAndStart()
                                 }
                             }
                         }

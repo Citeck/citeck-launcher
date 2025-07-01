@@ -11,10 +11,14 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import kotlinx.coroutines.CoroutineScope
@@ -28,7 +32,6 @@ import ru.citeck.launcher.core.namespace.NamespaceDto
 import ru.citeck.launcher.core.namespace.NamespaceEntityDef
 import ru.citeck.launcher.core.namespace.runtime.AppRuntime
 import ru.citeck.launcher.core.namespace.runtime.AppRuntimeStatus
-import ru.citeck.launcher.core.namespace.runtime.NamespaceRuntime
 import ru.citeck.launcher.core.namespace.runtime.NsRuntimeStatus
 import ru.citeck.launcher.core.namespace.runtime.NsRuntimeStatus.*
 import ru.citeck.launcher.core.namespace.volume.VolumeInfo
@@ -38,9 +41,9 @@ import ru.citeck.launcher.view.action.ActionIcon
 import ru.citeck.launcher.view.action.CiteckIconAction
 import ru.citeck.launcher.view.dialog.AppDefEditDialog
 import ru.citeck.launcher.view.dialog.GlobalErrorDialog
+import ru.citeck.launcher.view.drawable.CpImage
 import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog
 import ru.citeck.launcher.view.form.exception.FormCancelledException
-import ru.citeck.launcher.view.drawable.CpImage
 import ru.citeck.launcher.view.logs.GlobalLogsWindow
 import ru.citeck.launcher.view.logs.LogsDialogParams
 import ru.citeck.launcher.view.utils.FeedbackUtils
@@ -129,15 +132,37 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
             }
             HorizontalDivider()
             Row(modifier = Modifier.height(30.dp), verticalAlignment = Alignment.CenterVertically) {
+                val rmbStartDropDownShow = remember { mutableStateOf(false) }
+                var rmbStartDropDownOffset by remember { mutableStateOf(DpOffset.Zero) }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.weight(0.7f).fillMaxHeight()
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    val pointer = event.changes.firstOrNull()
+                                    if (nsActionInProgress.value) {
+                                        continue
+                                    }
+                                    if (event.type == PointerEventType.Press &&
+                                        event.buttons.isSecondaryPressed &&
+                                        pointer != null
+                                    ) {
+                                        val position = pointer.position
+                                        rmbStartDropDownOffset = DpOffset(position.x.dp, position.y.dp)
+                                        rmbStartDropDownShow.value = true
+                                        pointer.consume()
+                                    }
+                                }
+                            }
+                        }
                         .clickable(enabled = !nsActionInProgress.value) {
                             nsActionInProgress.value = true
                             Thread.ofPlatform().start {
                                 runBlocking {
                                     GlobalErrorDialog.doActionSafe({
-                                        nsRuntime.start()
+                                        nsRuntime.updateAndStart(false)
                                     }, { "Namespace start error" }, {})
                                 }
                                 nsActionInProgress.value = false
@@ -151,6 +176,27 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
                         contentScale = ContentScale.FillHeight
                     )
                     Text("Update&Start", modifier = Modifier.padding(start = 5.dp))
+                }
+                DropdownMenu(
+                    expanded = rmbStartDropDownShow.value,
+                    offset = rmbStartDropDownOffset,
+                    onDismissRequest = { rmbStartDropDownShow.value = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Force Update And Start") },
+                        onClick = {
+                            nsActionInProgress.value = true
+                            rmbStartDropDownShow.value = false
+                            Thread.ofPlatform().start {
+                                runBlocking {
+                                    GlobalErrorDialog.doActionSafe({
+                                        nsRuntime.updateAndStart(true)
+                                    }, { "Namespace start error" }, {})
+                                }
+                                nsActionInProgress.value = false
+                            }
+                        }
+                    )
                 }
                 VerticalDivider()
                 Row(
@@ -509,7 +555,11 @@ private fun renderApps(
                                             if (editRes == null) {
                                                 application.nsRuntime.resetAppDef(appDef.name)
                                             } else {
-                                                application.nsRuntime.updateAppDef(appDef, editRes.appDef, editRes.locked)
+                                                application.nsRuntime.updateAppDef(
+                                                    appDef,
+                                                    editRes.appDef,
+                                                    editRes.locked
+                                                )
                                             }
                                         } catch (_: FormCancelledException) {
                                             // do nothing
