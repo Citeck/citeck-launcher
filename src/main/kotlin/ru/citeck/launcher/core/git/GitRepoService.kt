@@ -24,6 +24,7 @@ import java.time.OffsetDateTime
 import java.time.OffsetTime
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.io.path.exists
 import kotlin.system.measureTimeMillis
 
@@ -47,6 +48,35 @@ class GitRepoService {
     }
 
     fun initRepo(repoProps: GitRepoProps, updatePolicy: GitUpdatePolicy = GitUpdatePolicy.ALLOWED): GitRepoInfo {
+        val initThread = Thread.currentThread()
+        val initializationInProgress = AtomicBoolean(true)
+        val initializationWatcherThread = Thread.ofVirtual().start {
+            val startedAt = System.currentTimeMillis()
+            var nextReportLogTime = System.currentTimeMillis() + 10_000
+            var nextReportThreadTime = System.currentTimeMillis() + 30_000
+            while (initializationInProgress.get()) {
+                val currentTime = System.currentTimeMillis()
+                if (currentTime > nextReportLogTime) {
+                    log.warn {
+                        "Repo initialization still in progress. " +
+                        "Elapsed time: " + (currentTime - startedAt) + "ms. Repo URL: ${repoProps.url}"
+                    }
+                    nextReportLogTime = currentTime + 10_000
+                }
+                if (currentTime > nextReportThreadTime) {
+                    log.warn {
+                        "Init thread trace: \n" +
+                        initThread.stackTrace.joinToString("\n") { "  $it" }
+                    }
+                    nextReportThreadTime = currentTime + 30_000
+                }
+                try {
+                    Thread.sleep(1000)
+                } catch (_: InterruptedException) {
+                    // do nothing
+                }
+            }
+        }
         try {
             return initRepoImpl(repoProps, updatePolicy, false)
         } catch (e: Throwable) {
@@ -64,6 +94,9 @@ class GitRepoService {
             val msg = "Repo initialization failed. Props: $repoProps. Update policy: $updatePolicy"
             log.error(e) { msg }
             throw RuntimeException(msg, exception)
+        } finally {
+            initializationInProgress.set(false)
+            initializationWatcherThread.interrupt()
         }
     }
 
