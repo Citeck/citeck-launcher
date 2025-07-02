@@ -1,9 +1,7 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import groovy.json.JsonOutput
-import java.text.SimpleDateFormat
 import java.time.Instant
-import java.util.Date
 
 plugins {
     kotlin("jvm")
@@ -12,7 +10,7 @@ plugins {
 }
 
 group = "ru.citeck.launcher"
-version = "1.0.3"
+version = "1.0.4"
 
 repositories {
     mavenCentral()

@@ -18,7 +18,7 @@ import ru.citeck.launcher.core.secrets.auth.AuthSecretsService
 import ru.citeck.launcher.core.secrets.auth.AuthType
 import ru.citeck.launcher.core.secrets.auth.SecretDef
 import ru.citeck.launcher.core.utils.promise.Promise
-import ru.citeck.launcher.core.workspace.WorkspaceConfig
+import ru.citeck.launcher.core.workspace.WorkspaceConfig.ImageRepoAuth
 import java.time.Duration
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.LinkedBlockingQueue
@@ -142,20 +142,20 @@ class AppImagePullAction(
         val pullCmd = dockerApi.pullImage(image)
 
         val imageRepoHost = image.substringBefore("/")
-        val repoInfo = appRuntime.nsRuntime.workspaceConfig.value.imageReposByHost[imageRepoHost]
-        val secretId = "images-repo:$imageRepoHost"
-        val secretDef: SecretDef? = if (repoInfo == null) {
-            if (lastError is RepoUnauthorizedException) {
-                // repo is not registered, but last pull completed with unauthorized exception
-                SecretDef(secretId, AuthType.BASIC)
-            } else {
-                null
-            }
-        } else if (repoInfo.authType == WorkspaceConfig.ImageRepoAuth.BASIC) {
-            SecretDef(secretId, AuthType.BASIC)
-        } else {
-            null
+
+        var secretDef: SecretDef? = params.secretDef
+        if (secretDef != null && lastError is RepoUnauthorizedException) {
+            secretDef = null
         }
+        if (secretDef == null) {
+            val secretId = "images-repo:$imageRepoHost"
+            val repoInfo = appRuntime.nsRuntime.workspaceConfig.value.imageReposByHost[imageRepoHost]
+            if (lastError is RepoUnauthorizedException || repoInfo?.authType == ImageRepoAuth.BASIC) {
+                secretDef = SecretDef(secretId, AuthType.BASIC)
+            }
+        }
+        params.secretDef = secretDef
+
         val secret: AuthSecret.Basic? = secretDef?.let {
             runBlocking {
                 authSecretsService.getSecret(
@@ -168,6 +168,7 @@ class AppImagePullAction(
         if (secret != null) {
             pullCmd.withAuthConfig(
                 AuthConfig()
+                    .withRegistryAddress("https://$imageRepoHost")
                     .withUsername(secret.username)
                     .withPassword(String(secret.password))
             )
@@ -202,7 +203,8 @@ class AppImagePullAction(
             }
             override fun onError(throwable: Throwable?) {
                 lastPullResponseTime.set(System.currentTimeMillis())
-                val exception = if (throwable?.message?.contains("unauthorized", true) == true) {
+
+                val exception = if (isUnauthorizedException(throwable)) {
                     RepoUnauthorizedException(secret?.version ?: 0L)
                 } else {
                     DockerClientException("Could not pull image. " + getMsgFromPullResult())
@@ -259,6 +261,14 @@ class AppImagePullAction(
         }
     }
 
+    private fun isUnauthorizedException(throwable: Throwable?): Boolean {
+        throwable ?: return false
+        val message = throwable.message ?: ""
+        return message.contains("unauthorized", true)
+            || message.contains("authorization failed", true)
+            || message.contains("no basic auth", true)
+    }
+
     class Params(
         val appRuntime: AppRuntime,
         val pullIfPresent: Boolean
@@ -270,6 +280,8 @@ class AppImagePullAction(
         val totalImagesToPull: Int
         @Volatile
         var pulledImagesCount: Int = 0
+        @Volatile
+        var secretDef: SecretDef? = null
 
         init {
             val imagesToPullSet = HashSet<ImageToPull>()
