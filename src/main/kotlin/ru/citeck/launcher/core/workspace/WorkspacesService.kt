@@ -6,6 +6,7 @@ import ru.citeck.launcher.core.database.Database
 import ru.citeck.launcher.core.entity.EntitiesService
 import ru.citeck.launcher.core.git.GitRepoProps
 import ru.citeck.launcher.core.git.GitRepoService
+import ru.citeck.launcher.core.git.GitUpdatePolicy
 import ru.citeck.launcher.core.utils.json.Yaml
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
@@ -51,10 +52,13 @@ class WorkspacesService {
         }
     }
 
-    fun getWorkspaceConfig(workspace: WorkspaceDto): WorkspaceConfig {
+    fun getWorkspaceConfig(
+        workspace: WorkspaceDto,
+        updatePolicy: GitUpdatePolicy = GitUpdatePolicy.ALLOWED
+    ): WorkspaceConfig {
         var config = workspacesConfigs[workspace.id]
-        if (config == null) {
-            config = loadWorkspaceConfig(workspace)
+        if (config == null || updatePolicy == GitUpdatePolicy.REQUIRED) {
+            config = loadWorkspaceConfig(workspace, updatePolicy)
             workspacesConfigs[workspace.id] = config
             database.getTxnContext().doAfterRollback {
                 workspacesConfigs.remove(workspace.id)
@@ -63,7 +67,10 @@ class WorkspacesService {
         return config
     }
 
-    private fun loadWorkspaceConfig(workspace: WorkspaceDto): WorkspaceConfig {
+    private fun loadWorkspaceConfig(
+        workspace: WorkspaceDto,
+        updatePolicy: GitUpdatePolicy = GitUpdatePolicy.ALLOWED
+    ): WorkspaceConfig {
 
         val txnContext = database.getTxnContext()
 
@@ -85,7 +92,7 @@ class WorkspacesService {
                 workspace.repoPullPeriod,
                 "ws:${workspace.id}:repo",
                 workspace.authType
-            )
+            ), updatePolicy
         ).root
 
         val wsConfigFile = repoRoot.resolve(WS_CONFIG_FILE)

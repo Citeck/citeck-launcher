@@ -81,7 +81,8 @@ class BundlesService {
         updatePolicy: GitUpdatePolicy = GitUpdatePolicy.ALLOWED_IF_NOT_EXISTS
     ): BundlesRepoInfo {
 
-        val repo = services.workspaceConfig.bundleReposById[repoId]
+        val workspaceConfig = services.workspaceConfig.value
+        val repo = workspaceConfig.bundleReposById[repoId]
             ?: error("Can't find repo with id '$repoId'")
 
         val repoInfo = services.gitRepoService.initRepo(
@@ -102,7 +103,7 @@ class BundlesService {
         return BundlesRepoInfo(
             BundleUtils.loadBundles(
                 repoInfo.root.resolve(path),
-                services.workspaceConfig
+                workspaceConfig
             ).ifEmpty { listOf(BundleDef.EMPTY) },
             nextPlannedUpdateMs = repoInfo.nextUpdateMs
         )

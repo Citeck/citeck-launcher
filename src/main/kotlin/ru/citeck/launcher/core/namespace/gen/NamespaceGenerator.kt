@@ -43,10 +43,12 @@ class NamespaceGenerator {
 
     fun generate(props: NamespaceDto, updatePolicy: GitUpdatePolicy): NamespaceGenResp {
 
+        services.updateConfig(updatePolicy)
+
         val context = NsGenContext(
             props,
             services.bundlesService.getBundleByRef(props.bundleRef, updatePolicy),
-            services.workspaceConfig,
+            services.workspaceConfig.value,
             HashMap(defaultAppFiles)
         )
 

@@ -4,7 +4,6 @@ import androidx.compose.runtime.Stable
 import io.github.oshai.kotlinlogging.KotlinLogging
 import ru.citeck.launcher.core.actions.ActionsService
 import ru.citeck.launcher.core.config.cloud.CloudConfigServer
-import ru.citeck.launcher.core.namespace.gen.NamespaceGenerator
 import ru.citeck.launcher.core.config.bundle.BundlesService
 import ru.citeck.launcher.core.database.DataRepo
 import ru.citeck.launcher.core.database.Database
@@ -12,6 +11,7 @@ import ru.citeck.launcher.core.entity.EntitiesService
 import ru.citeck.launcher.core.entity.EntityDef
 import ru.citeck.launcher.core.entity.EntityIdType
 import ru.citeck.launcher.core.git.GitRepoService
+import ru.citeck.launcher.core.git.GitUpdatePolicy
 import ru.citeck.launcher.core.license.LicenseService
 import ru.citeck.launcher.core.namespace.NamespaceDto
 import ru.citeck.launcher.core.namespace.NamespaceEntityDef
@@ -20,8 +20,6 @@ import ru.citeck.launcher.core.namespace.runtime.NamespaceRuntime
 import ru.citeck.launcher.core.namespace.runtime.docker.DockerApi
 import ru.citeck.launcher.core.namespace.volume.VolumeInfo
 import ru.citeck.launcher.core.namespace.volume.VolumesRepo
-import ru.citeck.launcher.core.secrets.auth.AuthSecretsService
-import ru.citeck.launcher.core.secrets.storage.SecretsStorage
 import ru.citeck.launcher.core.utils.prop.MutProp
 import ru.citeck.launcher.core.workspace.WorkspaceConfig
 import ru.citeck.launcher.core.workspace.WorkspaceDto
@@ -30,7 +28,7 @@ import ru.citeck.launcher.core.workspace.WorkspaceDto
 class WorkspaceServices(
     private val launcherServices: LauncherServices,
     val workspace: WorkspaceDto,
-    val workspaceConfig: WorkspaceConfig
+    workspaceConfig: WorkspaceConfig
 ) {
 
     companion object {
@@ -55,6 +53,8 @@ class WorkspaceServices(
     private lateinit var workspaceStateRepo: DataRepo
     val selectedNamespace = MutProp<NamespaceDto?>(null)
 
+    val workspaceConfig = MutProp(workspaceConfig)
+
     fun init() {
 
         entitiesService.init(launcherServices)
@@ -69,6 +69,10 @@ class WorkspaceServices(
             .getDataRepo("workspace-state", workspace.id)
 
         setSelectedNamespace(workspaceStateRepo[SELECTED_NS_PROP].asText())
+    }
+
+    fun updateConfig(updatePolicy: GitUpdatePolicy) {
+        workspaceConfig.value = launcherServices.workspacesService.getWorkspaceConfig(workspace, updatePolicy)
     }
 
     private fun getVolumeEntityDef(): EntityDef<String, VolumeInfo> {

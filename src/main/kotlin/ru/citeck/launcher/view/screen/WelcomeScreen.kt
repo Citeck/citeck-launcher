@@ -75,7 +75,7 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 val workspaceServices = launcherServices.getWorkspaceServices()
-                var defaultBundleRef = workspaceServices.workspaceConfig.defaultBundleRef
+                var defaultBundleRef = workspaceServices.workspaceConfig.value.defaultBundleRef
                 if (defaultBundleRef.key == "LATEST") {
                     defaultBundleRef = workspaceServices.bundlesService
                         .getLatestRepoBundle(defaultBundleRef.repo)

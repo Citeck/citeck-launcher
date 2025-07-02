@@ -17,6 +17,7 @@ import ru.citeck.launcher.core.secrets.auth.AuthSecret
 import ru.citeck.launcher.core.secrets.auth.AuthSecretsService
 import ru.citeck.launcher.core.secrets.auth.AuthType
 import ru.citeck.launcher.core.secrets.auth.SecretDef
+import ru.citeck.launcher.core.utils.LongTaskUtils
 import ru.citeck.launcher.core.utils.json.Json
 import java.io.File
 import java.time.Instant
@@ -24,7 +25,6 @@ import java.time.OffsetDateTime
 import java.time.OffsetTime
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.io.path.exists
 import kotlin.system.measureTimeMillis
 
@@ -48,55 +48,26 @@ class GitRepoService {
     }
 
     fun initRepo(repoProps: GitRepoProps, updatePolicy: GitUpdatePolicy = GitUpdatePolicy.ALLOWED): GitRepoInfo {
-        val initThread = Thread.currentThread()
-        val initializationInProgress = AtomicBoolean(true)
-        val initializationWatcherThread = Thread.ofVirtual().start {
-            val startedAt = System.currentTimeMillis()
-            var nextReportLogTime = System.currentTimeMillis() + 10_000
-            var nextReportThreadTime = System.currentTimeMillis() + 30_000
-            while (initializationInProgress.get()) {
-                val currentTime = System.currentTimeMillis()
-                if (currentTime > nextReportLogTime) {
-                    log.warn {
-                        "Repo initialization still in progress. " +
-                        "Elapsed time: " + (currentTime - startedAt) + "ms. Repo URL: ${repoProps.url}"
-                    }
-                    nextReportLogTime = currentTime + 10_000
+        Thread.sleep(100000)
+        return LongTaskUtils.doWithWatcher(actionName = "Init repo ${repoProps.url}") {
+            try {
+                initRepoImpl(repoProps, updatePolicy, false)
+            } catch (e: Throwable) {
+                var exception = e
+                if (isUnauthorizedException(e)) {
+                    log.error { "Git repo initialization failed by unauthorized error. Repo url: ${repoProps.url}" }
+                    do {
+                        try {
+                            return@doWithWatcher initRepoImpl(repoProps, updatePolicy, true)
+                        } catch (e: Throwable) {
+                            exception = e
+                        }
+                    } while (isUnauthorizedException(exception))
                 }
-                if (currentTime > nextReportThreadTime) {
-                    log.warn {
-                        "Init thread trace: \n" +
-                        initThread.stackTrace.joinToString("\n") { "  $it" }
-                    }
-                    nextReportThreadTime = currentTime + 30_000
-                }
-                try {
-                    Thread.sleep(1000)
-                } catch (_: InterruptedException) {
-                    // do nothing
-                }
+                val msg = "Repo initialization failed. Props: $repoProps. Update policy: $updatePolicy"
+                log.error(e) { msg }
+                throw RuntimeException(msg, exception)
             }
-        }
-        try {
-            return initRepoImpl(repoProps, updatePolicy, false)
-        } catch (e: Throwable) {
-            var exception = e
-            if (isUnauthorizedException(e)) {
-                log.error { "Git repo initialization failed by unauthorized error. Repo url: ${repoProps.url}" }
-                do {
-                    try {
-                        return initRepoImpl(repoProps, updatePolicy, true)
-                    } catch (e: Throwable) {
-                        exception = e
-                    }
-                } while (isUnauthorizedException(exception))
-            }
-            val msg = "Repo initialization failed. Props: $repoProps. Update policy: $updatePolicy"
-            log.error(e) { msg }
-            throw RuntimeException(msg, exception)
-        } finally {
-            initializationInProgress.set(false)
-            initializationWatcherThread.interrupt()
         }
     }
 

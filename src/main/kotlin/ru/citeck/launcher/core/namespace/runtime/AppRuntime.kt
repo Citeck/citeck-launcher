@@ -18,8 +18,6 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
-import kotlin.collections.ArrayList
-import kotlin.collections.HashSet
 
 class AppRuntime(
     val nsRuntime: NamespaceRuntime,
@@ -252,7 +250,7 @@ class AppRuntime(
                 } finally {
                     try {
                         serverSocket.close()
-                    } catch (e: Throwable) {
+                    } catch (_: Throwable) {
                         // do nothing
                     }
                 }

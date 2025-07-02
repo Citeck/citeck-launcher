@@ -141,10 +141,18 @@ class AppImagePullAction(
 
         val pullCmd = dockerApi.pullImage(image)
 
-        val imageRepoUrl = image.substringBefore("/")
-        val repoInfo = appRuntime.nsRuntime.workspaceConfig.imageReposByHost[imageRepoUrl]
-        val secretDef: SecretDef? = if (repoInfo?.authType == WorkspaceConfig.ImageRepoAuth.BASIC) {
-            SecretDef("images-repo:$imageRepoUrl", AuthType.BASIC)
+        val imageRepoHost = image.substringBefore("/")
+        val repoInfo = appRuntime.nsRuntime.workspaceConfig.value.imageReposByHost[imageRepoHost]
+        val secretId = "images-repo:$imageRepoHost"
+        val secretDef: SecretDef? = if (repoInfo == null) {
+            if (lastError is RepoUnauthorizedException) {
+                // repo is not registered, but last pull completed with unauthorized exception
+                SecretDef(secretId, AuthType.BASIC)
+            } else {
+                null
+            }
+        } else if (repoInfo.authType == WorkspaceConfig.ImageRepoAuth.BASIC) {
+            SecretDef(secretId, AuthType.BASIC)
         } else {
             null
         }
@@ -152,7 +160,7 @@ class AppImagePullAction(
             runBlocking {
                 authSecretsService.getSecret(
                     it,
-                    imageRepoUrl,
+                    imageRepoHost,
                     (lastError as? RepoUnauthorizedException)?.secretVersion ?: 0L
                 ) as? AuthSecret.Basic
             }

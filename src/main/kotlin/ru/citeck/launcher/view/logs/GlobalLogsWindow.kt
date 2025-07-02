@@ -3,22 +3,26 @@ package ru.citeck.launcher.view.logs
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.*
 import ru.citeck.launcher.view.window.AdditionalWindow
 import ru.citeck.launcher.view.window.AdditionalWindowState
 import java.awt.GraphicsEnvironment
+import java.awt.Toolkit
 
 object GlobalLogsWindow {
 
+    private var screenSize: DpSize = DpSize(400.dp, 400.dp)
     private lateinit var statesList: SnapshotStateList<AdditionalWindowState>
     private lateinit var showDialog: (InternalParams, MutableState<Boolean>) -> (() -> Unit)
 
     fun show(params: LogsDialogParams) {
-        val dispMode = GraphicsEnvironment.getLocalGraphicsEnvironment().defaultScreenDevice.displayMode
 
         var prevStateParams: InternalParams? = null
         for (idx in statesList.lastIndex downTo 0) {
@@ -31,8 +35,8 @@ object GlobalLogsWindow {
 
         val windowState = if (prevStateParams == null) {
             WindowState(
-                width = (dispMode.width * 0.90).dp,
-                height = (dispMode.height * 0.7).dp,
+                width = screenSize.width * 0.9f,
+                height = screenSize.height * 0.7f,
                 position = WindowPosition(Alignment.Center)
             )
         } else {
@@ -65,6 +69,18 @@ object GlobalLogsWindow {
                 icon = icon
             ) {
                 LogsViewer(params.logsState)
+            }
+        }
+        val density = LocalDensity.current
+        screenSize = remember(density) {
+            val screenSize = Toolkit.getDefaultToolkit().screenSize
+            val screenWidthPx = screenSize.width
+            val screenHeightPx = screenSize.height
+            with(density) {
+                DpSize(
+                    screenWidthPx.toDp(),
+                    screenHeightPx.toDp()
+                )
             }
         }
     }

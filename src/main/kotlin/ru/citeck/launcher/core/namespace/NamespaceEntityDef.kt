@@ -25,6 +25,7 @@ object NamespaceEntityDef {
                 options = { ctx ->
                     ctx.workspaceServices
                         ?.workspaceConfig
+                        ?.value
                         ?.bundleRepos
                         ?.map { SelectField.Option(it.id, it.name) } ?: emptyList()
                 }

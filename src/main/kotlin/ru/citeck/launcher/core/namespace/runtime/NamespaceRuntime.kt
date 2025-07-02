@@ -38,7 +38,7 @@ import kotlin.math.min
 class NamespaceRuntime(
     val namespaceRef: NamespaceRef,
     val namespaceDto: NamespaceDto,
-    val workspaceConfig: WorkspaceConfig,
+    val workspaceConfig: MutProp<WorkspaceConfig>,
     private val namespaceGenerator: NamespaceGenerator,
     private val actionsService: ActionsService,
     private val dockerApi: DockerApi,
