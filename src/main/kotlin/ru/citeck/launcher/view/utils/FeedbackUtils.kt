@@ -6,6 +6,7 @@ import ru.citeck.launcher.core.config.AppDir
 import ru.citeck.launcher.core.logs.AppLogUtils
 import ru.citeck.launcher.core.namespace.runtime.docker.DockerLabels
 import ru.citeck.launcher.core.utils.data.DataValue
+import ru.citeck.launcher.core.utils.file.CiteckFiles
 import ru.citeck.launcher.core.utils.json.Json
 import ru.citeck.launcher.view.dialog.GlobalLoadingDialog
 import java.awt.Desktop
@@ -77,6 +78,12 @@ object FeedbackUtils {
             logsTargetPath.toFile().writeText("NO LOGS")
         }
 
+        try {
+            val buildInfoData = CiteckFiles.getFile("classpath:build-info.json").readBytes()
+            outDir.resolve("build-info.json").outputStream().use { it.write(buildInfoData) }
+        } catch (e: Throwable) {
+            log.warn(e) { "No build info" }
+        }
         try {
             saveZip(outDir, reportTargetFile)
         } finally {

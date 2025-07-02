@@ -48,7 +48,6 @@ class GitRepoService {
     }
 
     fun initRepo(repoProps: GitRepoProps, updatePolicy: GitUpdatePolicy = GitUpdatePolicy.ALLOWED): GitRepoInfo {
-        Thread.sleep(100000)
         return LongTaskUtils.doWithWatcher(actionName = "Init repo ${repoProps.url}") {
             try {
                 initRepoImpl(repoProps, updatePolicy, false)

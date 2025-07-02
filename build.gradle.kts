@@ -1,5 +1,9 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import groovy.json.JsonOutput
+import java.text.SimpleDateFormat
+import java.time.Instant
+import java.util.Date
 
 plugins {
     kotlin("jvm")
@@ -8,7 +12,7 @@ plugins {
 }
 
 group = "ru.citeck.launcher"
-version = "1.0.2"
+version = "1.0.3"
 
 repositories {
     mavenCentral()
@@ -50,6 +54,31 @@ dependencies {
 
 tasks.withType(Test::class.java) {
     useJUnitPlatform()
+}
+
+val generatedResources by lazy {
+    val resourcesDir = layout.buildDirectory.file("generated/resources").get().asFile
+    if (!resourcesDir.exists()) {
+        resourcesDir.mkdirs()
+    }
+    resourcesDir
+}
+val generateBuildInfo by tasks.registering {
+    val outputFile = generatedResources.resolve("build-info.json")
+    outputs.file(outputFile)
+    doLast {
+        val buildInfo = mapOf(
+            "version" to (project.version.toString()),
+            "buildTime" to Instant.now().toString(),
+            "javaVersion" to System.getProperty("java.version")
+        )
+        outputFile.writeText(JsonOutput.prettyPrint(JsonOutput.toJson(buildInfo)))
+    }
+}
+
+sourceSets["main"].resources.srcDir(generatedResources)
+tasks.named("processResources") {
+    dependsOn(generateBuildInfo)
 }
 
 compose.desktop {

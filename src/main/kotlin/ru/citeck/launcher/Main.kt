@@ -13,6 +13,9 @@ import ru.citeck.launcher.core.LauncherServices
 import ru.citeck.launcher.core.socket.AppLocalSocket
 import ru.citeck.launcher.core.utils.AppLock
 import ru.citeck.launcher.core.utils.StdOutLog
+import ru.citeck.launcher.core.utils.data.DataValue
+import ru.citeck.launcher.core.utils.file.CiteckFiles
+import ru.citeck.launcher.core.utils.json.Json
 import ru.citeck.launcher.core.workspace.WorkspaceDto
 import ru.citeck.launcher.view.dialog.*
 import ru.citeck.launcher.view.form.GlobalFormDialog
@@ -77,6 +80,18 @@ fun main(@Suppress("UNUSED_PARAMETER") args: Array<String>) {
         val dialogStates: SnapshotStateList<CiteckDialogState> = remember { mutableStateListOf() }
         val additionalWindowStates: SnapshotStateList<AdditionalWindowState> = remember { mutableStateListOf() }
 
+        var launcherVersion: String = remember {
+            var version = "unknown"
+            try {
+                val buildInfoData = CiteckFiles.getFile("classpath:build-info.json").readBytes()
+                val buildInfo = Json.read(buildInfoData, DataValue::class)
+                version = buildInfo["version"].asText().ifBlank { "unknown" }
+            } catch (e: Throwable) {
+                log.warn(e) { "Launcher version reading failed" }
+            }
+            version
+        }
+
         LauncherTheme {
             Window(
                 onCloseRequest = {
@@ -87,7 +102,7 @@ fun main(@Suppress("UNUSED_PARAMETER") args: Array<String>) {
                         exitApplication()
                     }
                 },
-                title = "Citeck Launcher",
+                title = "Citeck Launcher v$launcherVersion",
                 state = state,
                 icon = logo,
                 visible = windowVisible.value
