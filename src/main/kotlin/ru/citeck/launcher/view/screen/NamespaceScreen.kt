@@ -418,6 +418,8 @@ private fun renderApps(
     applications: List<AppRuntime>?,
     coroutineScope: CoroutineScope
 ) {
+    val portsWidth = 80.dp
+    val tagWidth = 180.dp
     Text(
         header,
         fontSize = 1.1.em,
@@ -430,7 +432,8 @@ private fun renderApps(
         Row(modifier = Modifier.fillMaxWidth()) {
             Text("Name", modifier = Modifier.weight(0.8f), maxLines = 1)
             Text("Status", modifier = Modifier.weight(1f), maxLines = 1)
-            Text("Tag", modifier = Modifier.width(200.dp), maxLines = 1)
+            Text("Ports", modifier = Modifier.width(portsWidth), maxLines = 1)
+            Text("Tag", modifier = Modifier.width(tagWidth), maxLines = 1)
             Text("Actions", modifier = Modifier.weight(0.5f), maxLines = 1)
         }
 
@@ -442,6 +445,7 @@ private fun renderApps(
                 val appStatus = rememberMutProp(application, application.status)
                 val editedDef = rememberMutProp(application, application.editedDef)
                 val appDef = rememberMutProp(application, application.def)
+                val ports = remember(application) { application.getPorts() }
                 Row(modifier = Modifier.fillMaxWidth().height(30.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(application.name, modifier = Modifier.weight(0.8f), maxLines = 1)
                     Row(
@@ -459,9 +463,32 @@ private fun renderApps(
                         Spacer(Modifier.width(5.dp))
                         Text(statusText.value, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
+                    if (ports.isEmpty()) {
+                        Row(modifier = Modifier.width(portsWidth)) {}
+                    } else if (ports.size == 1) {
+                        Text(text = ports.first().toString(), modifier = Modifier.width(portsWidth))
+                    } else {
+                        TooltipArea(
+                            delayMillis = 1000,
+                            modifier = Modifier.width(portsWidth),
+                            tooltip = {
+                                Surface(shadowElevation = 4.dp, shape = RoundedCornerShape(4.dp)) {
+                                    Text(
+                                        text = ports.joinToString("\n"),
+                                        modifier = Modifier.padding(8.dp)
+                                    )
+                                }
+                            }
+                        ) {
+                            Text(
+                                text = ports.first().toString() + "...",
+                                maxLines = 1
+                            )
+                        }
+                    }
                     TooltipArea(
                         delayMillis = 1000,
-                        modifier = Modifier.width(200.dp),
+                        modifier = Modifier.width(tagWidth),
                         tooltip = {
                             Surface(shadowElevation = 4.dp, shape = RoundedCornerShape(4.dp)) {
                                 Text(

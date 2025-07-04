@@ -63,7 +63,9 @@ class NamespaceGenerator {
             if (!context.workspaceConfig.webappsById.contains(app.key)) {
                 continue
             }
-            generateWebapp(app.key, context)
+            if (app.key != AppName.PROXY) {
+                generateWebapp(app.key, context)
+            }
         }
         generateProxyApp(context)
         generateOnlyOffice(context)
@@ -157,7 +159,7 @@ class NamespaceGenerator {
             app.addEnv("ONLYOFFICE_TARGET", NsGenContext.ONLY_OFFICE_HOST)
                 .addDependsOn(AppName.ONLY_OFFICE)
         }
-        val proxyProps = context.props.proxy
+        val proxyProps = context.props.citeckProxy
 
         app.withImage(proxyProps.image.ifBlank {
             context.bundle.applications[AppName.PROXY]?.image ?: ""
@@ -363,8 +365,8 @@ class NamespaceGenerator {
             .withImage("bitnami/rabbitmq:4.0.3-debian-12-r1")
             .withScalable(false)
             .withReplicas(1)
-            .addPort("15672:15672")
             .addPort("5672:${NsGenContext.RMQ_PORT}")
+            .addPort("15672:15672")
             .addEnv("RABBITMQ_USERNAME", "admin")
             .addEnv("RABBITMQ_PASSWORD", "admin")
             .addEnv("RABBITMQ_VHOST", "/")

@@ -70,7 +70,7 @@ object BundleUtils {
             return BundleDef.EMPTY
         }
 
-        val applications = LinkedHashMap<String, BundleDef.BundleAppDef>()
+        val applications = LinkedHashMap<String, BundleAppDef>()
         val citeckApps = ArrayList<BundleAppDef>()
 
         val eappsAppNames = mutableSetOf(AppName.EAPPS)
@@ -80,6 +80,9 @@ object BundleUtils {
         val appNameByAliases = HashMap<String, String>()
         workspaceConfig.webapps.forEach { app ->
             app.aliases.forEach { appNameByAliases[it] = app.id }
+        }
+        workspaceConfig.citeckProxy.aliases.forEach {
+            appNameByAliases.put(it, AppName.PROXY)
         }
 
         var isEnterpriseBundle = false
@@ -103,7 +106,7 @@ object BundleUtils {
         data.forEach { appName, value ->
             val image = getImageUrl(value["/image/repository"].asText(), value["/image/tag"].asText())
             if (image.isNotBlank())  {
-                applications[appNameByAliases[appName] ?: appName] = BundleDef.BundleAppDef(image)
+                applications[appNameByAliases[appName] ?: appName] = BundleAppDef(image)
             }
             if (eappsAppNames.contains(appName)) {
                 for (app in value["/ecosAppsImages"]) {

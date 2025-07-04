@@ -248,7 +248,7 @@ object SystemDumpUtils {
                 sourceDir.visitFileTree {
                     onVisitFile { file, _ ->
                         val zipPath = sourceDir.relativize(file)
-                        val entry = ZipEntry(zipPath.toString())
+                        val entry = ZipEntry(zipPath.toString().replace(File.separator, "/"))
 
                         val attrs = Files.readAttributes(file, BasicFileAttributes::class.java)
                         entry.lastModifiedTime = attrs.lastModifiedTime()

@@ -10,6 +10,7 @@ import ru.citeck.launcher.core.utils.prop.MutProp
 import ru.citeck.launcher.core.utils.promise.Promise
 import ru.citeck.launcher.core.utils.promise.Promises
 import java.net.BindException
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
@@ -96,6 +97,10 @@ class AppRuntime(
         }
     }
 
+    fun getPorts(): Set<Int> {
+        return portsBindings.keys
+    }
+
     fun start() {
         pullImageIfPresent = if (def.value.kind == ApplicationKind.THIRD_PARTY) {
             false
@@ -140,7 +145,10 @@ class AppRuntime(
                 return
             }
             val serverSocket = try {
-                ServerSocket(hostPort)
+                ServerSocket().apply {
+                    reuseAddress = true
+                    bind(InetSocketAddress(hostPort))
+                }
             } catch (e: BindException) {
                 val appsOccupiedPort = HashSet<String>()
                 var msg = "Server socket bind failed for port $hostPort of app $appName. "

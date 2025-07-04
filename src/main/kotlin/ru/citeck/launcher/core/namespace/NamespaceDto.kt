@@ -14,7 +14,7 @@ class NamespaceDto(
     val pgAdmin: PgAdminProps,
     val onlyOffice: OnlyOfficeProps,
     val mongodb: MongoDbProps,
-    val proxy: ProxyProps,
+    val citeckProxy: ProxyProps,
     val alfresco: AlfrescoProps,
     val webapps: Map<String, WebappProps>
 ) {
@@ -48,7 +48,7 @@ class NamespaceDto(
             pgAdmin = props.pgAdmin
             onlyOffice = props.onlyOffice
             mongodb = props.mongodb
-            proxy = props.proxy
+            proxy = props.citeckProxy
             alfresco = props.alfresco
             webapps = props.webapps
         }
@@ -84,7 +84,7 @@ class NamespaceDto(
         }
 
         fun withProxy(proxy: ProxyProps?): Builder {
-            this.proxy = proxy ?: DEFAULT.proxy
+            this.proxy = proxy ?: DEFAULT.citeckProxy
             return this
         }
 
@@ -111,7 +111,7 @@ class NamespaceDto(
                 pgAdmin = pgAdmin,
                 onlyOffice = onlyOffice,
                 mongodb = mongodb,
-                proxy = proxy,
+                citeckProxy = proxy,
                 alfresco = alfresco,
                 webapps = webapps
             )

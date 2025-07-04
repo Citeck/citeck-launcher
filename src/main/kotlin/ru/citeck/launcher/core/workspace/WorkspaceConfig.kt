@@ -11,6 +11,7 @@ data class WorkspaceConfig(
     val bundleRepos: List<BundlesRepo>,
     val defaultWebappProps: NamespaceDto.WebappProps = NamespaceDto.WebappProps.DEFAULT,
     val webapps: List<AppConfig>,
+    val citeckProxy: CiteckProxy = CiteckProxy(),
     val licenses: List<LicenseInstance> = emptyList()
 ) {
 
@@ -38,6 +39,10 @@ data class WorkspaceConfig(
         val id: String,
         val aliases: Set<String> = emptySet(),
         val defaultProps: NamespaceDto.WebappProps = NamespaceDto.WebappProps.DEFAULT
+    )
+
+    class CiteckProxy(
+        val aliases: Set<String> = setOf("EcosProxyApp")
     )
 
     enum class ImageRepoAuth {
