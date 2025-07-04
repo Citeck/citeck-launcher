@@ -17,7 +17,7 @@ import kotlinx.coroutines.delay
 import ru.citeck.launcher.core.logs.AppLogUtils
 import ru.citeck.launcher.view.logs.GlobalLogsWindow
 import ru.citeck.launcher.view.logs.LogsDialogParams
-import ru.citeck.launcher.view.utils.FeedbackUtils
+import ru.citeck.launcher.view.utils.SystemDumpUtils
 
 private val log = KotlinLogging.logger { }
 
@@ -65,7 +65,7 @@ fun LoadingScreen() {
                 text = "Dump System Info",
                 fontSize = 0.8.em,
                 modifier = Modifier.clickable {
-                    FeedbackUtils.dumpSystemInfo(true)
+                    SystemDumpUtils.dumpSystemInfo(true)
                 }
             )
         }

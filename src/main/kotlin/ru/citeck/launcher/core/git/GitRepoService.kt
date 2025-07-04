@@ -19,6 +19,8 @@ import ru.citeck.launcher.core.secrets.auth.AuthType
 import ru.citeck.launcher.core.secrets.auth.SecretDef
 import ru.citeck.launcher.core.utils.LongTaskUtils
 import ru.citeck.launcher.core.utils.json.Json
+import ru.citeck.launcher.view.dialog.GitPullRepoDialogRes
+import ru.citeck.launcher.view.dialog.GlobalGitPullErrorDialog
 import java.io.File
 import java.time.Instant
 import java.time.OffsetDateTime
@@ -32,6 +34,9 @@ class GitRepoService {
 
     companion object {
         private val log = KotlinLogging.logger {}
+
+        private const val FEEDBACK_REPEATS_COUNT = 5
+        private const val FEEDBACK_TIMEOUT_MS = 10_000
     }
 
     private lateinit var authSecretsService: AuthSecretsService
@@ -48,25 +53,47 @@ class GitRepoService {
     }
 
     fun initRepo(repoProps: GitRepoProps, updatePolicy: GitUpdatePolicy = GitUpdatePolicy.ALLOWED): GitRepoInfo {
+        val relativePath = AppDir.PATH.relativize(repoProps.path).toString().replace(File.separator, "/")
+        var updatePolicy = updatePolicy
+        var nextFeedbackRepeats = FEEDBACK_REPEATS_COUNT
+        var nextFeedbackTime = System.currentTimeMillis() + FEEDBACK_TIMEOUT_MS
         return LongTaskUtils.doWithWatcher(actionName = "Init repo ${repoProps.url}") {
-            try {
-                initRepoImpl(repoProps, updatePolicy, false)
-            } catch (e: Throwable) {
-                var exception = e
-                if (isUnauthorizedException(e)) {
-                    log.error { "Git repo initialization failed by unauthorized error. Repo url: ${repoProps.url}" }
-                    do {
-                        try {
-                            return@doWithWatcher initRepoImpl(repoProps, updatePolicy, true)
-                        } catch (e: Throwable) {
-                            exception = e
+            var exception: Throwable? = null
+            while (true) {
+                try {
+                    return@doWithWatcher initRepoImpl(
+                        relativePath,
+                        repoProps,
+                        updatePolicy,
+                        isUnauthorizedException(exception)
+                    )
+                } catch (e: Throwable) {
+                    exception = e
+                    if (nextFeedbackRepeats-- > 0 && isUnauthorizedException(e)) {
+                        log.error { "Repo unauthorized: " + repoProps.url }
+                        continue
+                    }
+                    log.error(e) { "Repo initialization failed. Props: $repoProps. Update policy: $updatePolicy" }
+                    if (nextFeedbackRepeats <= 0 || System.currentTimeMillis() >= nextFeedbackTime) {
+                        val allowSkip = (repositoriesInfo[relativePath]?.lastSyncTimeMs ?: 0L) > 0L
+                        val dialogRes = runBlocking {
+                            GlobalGitPullErrorDialog.showSuspend(
+                                repoProps.url,
+                                ExceptionUtils.getRootCauseMessage(e) ?: "no-msg",
+                                allowSkip
+                            )
                         }
-                    } while (isUnauthorizedException(exception))
+                        if (dialogRes == GitPullRepoDialogRes.SKIP_IF_POSSIBLE) {
+                            updatePolicy = GitUpdatePolicy.ALLOWED_IF_NOT_EXISTS
+                        }
+                        nextFeedbackRepeats = FEEDBACK_REPEATS_COUNT
+                        nextFeedbackTime = System.currentTimeMillis() + FEEDBACK_TIMEOUT_MS
+                    } else {
+                        Thread.sleep(1000)
+                    }
                 }
-                val msg = "Repo initialization failed. Props: $repoProps. Update policy: $updatePolicy"
-                log.error(e) { msg }
-                throw RuntimeException(msg, exception)
             }
+            error("Invalid state. Repo: ${repoProps.url}")
         }
     }
 
@@ -83,18 +110,21 @@ class GitRepoService {
             || message.contains("403")
     }
 
+    private fun isRepoShouldBeRecreated(propsBefore: GitRepoProps, propsAfter: GitRepoProps): Boolean {
+        return propsBefore.url != propsAfter.url || propsBefore.branch != propsAfter.branch
+    }
+
     private fun initRepoImpl(
+        relativePath: String,
         repoProps: GitRepoProps,
         updatePolicy: GitUpdatePolicy = GitUpdatePolicy.ALLOWED,
         resetSecret: Boolean
     ): GitRepoInfo {
 
-        val relativePath = AppDir.PATH.relativize(repoProps.path).toString().replace(File.separator, "/")
-
         log.info { "[$relativePath] Init repo ${repoProps.url} with branch '${repoProps.branch}'" }
 
         val existingRepo = repositoriesInfo[relativePath]
-        if (existingRepo != null && existingRepo.props != repoProps) {
+        if (existingRepo != null && isRepoShouldBeRecreated(existingRepo.props, repoProps)) {
             log.warn {
                 "Found existing repo for path $relativePath and props ${existingRepo.props}. " +
                     "Repo will be replaced with data from $repoProps"
@@ -102,6 +132,7 @@ class GitRepoService {
             if (repoProps.path.exists()) {
                 repoProps.path.toFile().deleteRecursively()
             }
+            repositoriesInfo.delete(relativePath)
         }
 
         val credentialsProvider = if (repoProps.authType != AuthType.NONE) {

@@ -18,7 +18,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.apache.commons.lang3.exception.ExceptionUtils
-import ru.citeck.launcher.view.utils.FeedbackUtils
+import ru.citeck.launcher.view.utils.SystemDumpUtils
 import kotlin.math.min
 
 object GlobalErrorDialog {
@@ -106,7 +106,7 @@ object GlobalErrorDialog {
                         Row(modifier = Modifier.align(Alignment.End)) {
                             Button(
                                 onClick = {
-                                    FeedbackUtils.dumpSystemInfo()
+                                    SystemDumpUtils.dumpSystemInfo()
                                 }
                             ) {
                                 Text("Export System Info")

@@ -27,7 +27,7 @@ import ru.citeck.launcher.view.screen.NamespaceScreen
 import ru.citeck.launcher.view.screen.WelcomeScreen
 import ru.citeck.launcher.view.theme.LauncherTheme
 import ru.citeck.launcher.view.tray.CiteckSystemTray
-import ru.citeck.launcher.view.utils.FeedbackUtils
+import ru.citeck.launcher.view.utils.SystemDumpUtils
 import ru.citeck.launcher.view.utils.ImageUtils
 import ru.citeck.launcher.view.utils.rememberMutProp
 import ru.citeck.launcher.view.window.AdditionalWindowState
@@ -146,9 +146,10 @@ fun main(@Suppress("UNUSED_PARAMETER") args: Array<String>) {
                     AskMasterPasswordDialog.AskMasterPwd(dialogStates)
                     CreateMasterPasswordDialog.CreateMasterPwd(dialogStates)
                     AppDefEditDialog.EditDialog(dialogStates)
+                    GlobalGitPullErrorDialog.PullErrorDialog(dialogStates)
                     GlobalLogsWindow.LogsDialog(additionalWindowStates, logo)
                     remember {
-                        FeedbackUtils.init(servicesVal)
+                        SystemDumpUtils.init(servicesVal)
                         fun takeFocus() {
                             windowVisible.value = true
                             window.isMinimized = false

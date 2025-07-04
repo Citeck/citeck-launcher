@@ -8,13 +8,12 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import ru.citeck.launcher.view.dialog.GlobalErrorDialog
-import ru.citeck.launcher.view.drawable.CpImage
+import ru.citeck.launcher.view.drawable.CpIcon
 import ru.citeck.launcher.view.table.CiteckIconButton
 
 @Composable
@@ -112,12 +111,12 @@ private fun renderDefaultIcon(image: ImageVector, description: String) {
 
 @Composable
 private fun renderIconFromClasspath(path: String, description: String, size: Int = 28, enabled: Boolean) {
-    CpImage(
+    CpIcon(
         "icons/$path",
-        colorFilter = if (!enabled) {
-            ColorFilter.lighting(Color.Gray, Color.Black)
+        tint = if (!enabled) {
+            Color.Gray
         } else {
-            null
+            Color.Unspecified
         },
         modifier = Modifier.padding(0.dp).requiredSize(size.dp),
     )

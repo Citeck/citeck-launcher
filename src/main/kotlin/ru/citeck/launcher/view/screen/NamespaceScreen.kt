@@ -46,7 +46,7 @@ import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog
 import ru.citeck.launcher.view.form.exception.FormCancelledException
 import ru.citeck.launcher.view.logs.GlobalLogsWindow
 import ru.citeck.launcher.view.logs.LogsDialogParams
-import ru.citeck.launcher.view.utils.FeedbackUtils
+import ru.citeck.launcher.view.utils.SystemDumpUtils
 import ru.citeck.launcher.view.utils.rememberMutProp
 import java.awt.Desktop
 import java.awt.Toolkit
@@ -370,7 +370,7 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
                         ActionIcon.EXCLAMATION_TRIANGLE,
                         "Export System Info"
                     ) {
-                        FeedbackUtils.dumpSystemInfo()
+                        SystemDumpUtils.dumpSystemInfo()
                     }
                 )
             }

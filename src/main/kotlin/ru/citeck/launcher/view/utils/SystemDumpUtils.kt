@@ -29,7 +29,7 @@ import kotlin.io.path.inputStream
 import kotlin.io.path.outputStream
 import kotlin.io.path.visitFileTree
 
-object FeedbackUtils {
+object SystemDumpUtils {
 
     private val log = KotlinLogging.logger {}
 
@@ -62,7 +62,7 @@ object FeedbackUtils {
 
         val reportTargetFile = reportDir.resolve(reportFileName).toFile()
 
-        val outDir = Files.createTempDirectory("citeck-launcher-feedback")
+        val outDir = Files.createTempDirectory("citeck-launcher-dump")
         outDir.resolve("sysinfo.json").outputStream().use {
             Json.writePretty(it, getSystemInfo())
         }
@@ -84,6 +84,7 @@ object FeedbackUtils {
         } catch (e: Throwable) {
             log.warn(e) { "No build info" }
         }
+
         try {
             saveZip(outDir, reportTargetFile)
         } finally {
