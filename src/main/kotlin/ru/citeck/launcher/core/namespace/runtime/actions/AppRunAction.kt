@@ -12,6 +12,7 @@ import ru.citeck.launcher.core.actions.ActionsService
 import ru.citeck.launcher.core.appdef.ExecProbeDef
 import ru.citeck.launcher.core.appdef.InitContainerDef
 import ru.citeck.launcher.core.appdef.StartupCondition
+import ru.citeck.launcher.core.namespace.NamespaceRef
 import ru.citeck.launcher.core.namespace.init.ExecShell
 import ru.citeck.launcher.core.namespace.runtime.AppRuntime
 import ru.citeck.launcher.core.namespace.runtime.docker.DockerApi
@@ -122,7 +123,7 @@ class AppRunAction(
         while (validContainersNames.size < appDef.replicas) {
 
             appDef.initContainers.forEach {
-                runInitContainer(appDef.name, it)
+                runInitContainer(namespaceRef, appDef.name, it)
             }
 
             var containerName = containerBaseName
@@ -143,7 +144,8 @@ class AppRunAction(
                         DockerLabels.APP_NAME to appDef.name,
                         DockerLabels.APP_HASH to deploymentHash,
                         DockerLabels.NAMESPACE to namespaceId,
-                        DockerLabels.WORKSPACE to workspaceId
+                        DockerLabels.WORKSPACE to workspaceId,
+                        DockerLabels.LAUNCHER_LABEL_PAIR
                     )
                 ).withHostConfig(run {
                     val config = HostConfig.newHostConfig()
@@ -204,15 +206,21 @@ class AppRunAction(
         }
     }
 
-    private fun runInitContainer(appName: String, initContainerDef: InitContainerDef) {
+    private fun runInitContainer(namespaceRef: NamespaceRef, appName: String, initContainerDef: InitContainerDef) {
         log.info { "Run init container '${initContainerDef.image}' for app '$appName'" }
         val startedAt = System.currentTimeMillis()
         val createCmd = dockerApi.createContainerCmd(initContainerDef.image)
+            .withLabels(mapOf(
+                DockerLabels.WORKSPACE to namespaceRef.workspace,
+                DockerLabels.NAMESPACE to namespaceRef.namespace,
+                DockerLabels.LAUNCHER_LABEL_PAIR
+            ))
             .withEnv(initContainerDef.environments.entries.map {
                 "${it.key}=${it.value}"
             }).withHostConfig(run {
                 val config = HostConfig.newHostConfig()
                     .withRestartPolicy(RestartPolicy.noRestart())
+                    .withAutoRemove(true)
 
                 if (initContainerDef.volumes.isNotEmpty()) {
                     config.withBinds(initContainerDef.volumes.mapNotNull { Bind.parse(it) })
@@ -228,7 +236,6 @@ class AppRunAction(
             containerId = createCmd.exec().id
             dockerApi.startContainer(containerId)
             dockerApi.waitContainer(containerId).awaitCompletion(30, TimeUnit.SECONDS)
-            dockerApi.removeContainer(containerId)
         } catch (exception: Throwable) {
             val container = dockerApi.inspectContainerOrNull(containerId)
             if (container != null) {
@@ -403,16 +410,16 @@ class AppRunAction(
             DockerConstants.NAME_DELIM +
             srcName +
             nsRuntime.nameSuffix
-        createVolumeIfNotExists(runtime, volumeNameInNamespace)
+        createVolumeIfNotExists(runtime, srcName, volumeNameInNamespace)
 
         return Bind.parse(volume.replaceFirst(srcName, volumeNameInNamespace))
     }
 
-    private fun createVolumeIfNotExists(runtime: AppRuntime, name: String): String {
+    private fun createVolumeIfNotExists(runtime: AppRuntime, srcName: String, name: String): String {
         val volumeExists = dockerApi.getVolumeByName(name) != null
         if (!volumeExists) {
             log.info { "Create new volume '$name'" }
-            dockerApi.createVolume(runtime.nsRuntime.namespaceRef, name)
+            dockerApi.createVolume(runtime.nsRuntime.namespaceRef, srcName, name)
         } else {
             log.info { "Volume $name already exists. Do nothing." }
         }

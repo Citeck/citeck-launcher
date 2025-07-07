@@ -1,11 +1,8 @@
-@file:OptIn(ExperimentalFoundationApi::class)
-
 package ru.citeck.launcher.view.screen
 
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,6 +18,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -30,17 +28,22 @@ import ru.citeck.launcher.core.config.AppDir
 import ru.citeck.launcher.core.logs.AppLogUtils
 import ru.citeck.launcher.core.namespace.NamespaceDto
 import ru.citeck.launcher.core.namespace.NamespaceEntityDef
+import ru.citeck.launcher.core.namespace.NamespacesService
 import ru.citeck.launcher.core.namespace.runtime.AppRuntime
 import ru.citeck.launcher.core.namespace.runtime.AppRuntimeStatus
 import ru.citeck.launcher.core.namespace.runtime.NsRuntimeStatus
 import ru.citeck.launcher.core.namespace.runtime.NsRuntimeStatus.*
 import ru.citeck.launcher.core.namespace.volume.VolumeInfo
 import ru.citeck.launcher.core.secrets.auth.AuthSecret
+import ru.citeck.launcher.core.utils.ActionStatus
+import ru.citeck.launcher.core.utils.CompressionAlg
 import ru.citeck.launcher.view.action.ActionDesc
 import ru.citeck.launcher.view.action.ActionIcon
 import ru.citeck.launcher.view.action.CiteckIconAction
+import ru.citeck.launcher.view.commons.CiteckTooltipArea
 import ru.citeck.launcher.view.dialog.AppDefEditDialog
 import ru.citeck.launcher.view.dialog.GlobalErrorDialog
+import ru.citeck.launcher.view.dialog.GlobalLoadingDialog
 import ru.citeck.launcher.view.drawable.CpImage
 import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog
 import ru.citeck.launcher.view.form.exception.FormCancelledException
@@ -52,11 +55,16 @@ import java.awt.Desktop
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import java.net.URI
+import java.text.SimpleDateFormat
+import java.time.Instant
+import java.util.Date
 
 private val STARTING_STOPPING_COLOR = Color(0xFFF4E909)
 private val RUNNING_COLOR = Color(0xFF33AB50)
 private val STOPPED_COLOR = Color(0xFF424242)
 private val STALLED_COLOR = Color(0xFFDB831D)
+
+private val log = KotlinLogging.logger {}
 
 @Composable
 fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState<NamespaceDto?>) {
@@ -95,19 +103,11 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
                         }
                     }, verticalAlignment = Alignment.CenterVertically
             ) {
-                TooltipArea(
-                    tooltip = {
-                        if (runtimeStatus.value != STOPPED) {
-                            Surface(shadowElevation = 4.dp, shape = RoundedCornerShape(4.dp)) {
-                                Text(
-                                    text = "Please stop all running apps before namespace changing",
-                                    modifier = Modifier.padding(8.dp)
-                                )
-                            }
-                        }
-                    }
+                CiteckTooltipArea(
+                    tooltip = "Please stop all running apps before namespace changing",
+                    enabled = runtimeStatus.value != STOPPED
                 ) {
-                    Column(modifier = Modifier.padding(start = 10.dp, top = 2.dp/*, bottom = 5.dp*/)) {
+                    Column(modifier = Modifier.padding(start = 10.dp, top = 2.dp)) {
                         Text(
                             selectedNsValue.name + " (" + selectedNsValue.id + ")",
                             color = MaterialTheme.colorScheme.scrim
@@ -222,27 +222,14 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
                     Text("Stop", modifier = Modifier.padding(start = 5.dp))
                 }
             }
-            /*val logoPainter = remember {
-                ImageUtils.loadPng("classpath:logo.svg", 512f)
-                    .decodeToImageBitmap()
-                    .asSkiaBitmap()
-                    .asImage()
-                    .asPainter(PlatformContext.INSTANCE)
-            }*/
-            TooltipArea(
-                tooltip = {
-                    val text = when (runtimeStatus.value) {
-                        STARTING -> "The application is starting. Please wait..."
-                        STOPPING, STOPPED -> "The application is not running. Start it to open in the browser."
-                        STALLED -> "The application is stalled. Please try to start it again."
-                        RUNNING -> ""
-                    }
-                    if (text.isNotEmpty()) {
-                        Surface(shadowElevation = 4.dp, shape = RoundedCornerShape(4.dp)) {
-                            Text(text = text, modifier = Modifier.padding(8.dp))
-                        }
-                    }
-                }
+            val tooltipText = when (runtimeStatus.value) {
+                STARTING -> "The application is starting. Please wait..."
+                STOPPING, STOPPED -> "The application is not running. Start it to open in the browser."
+                STALLED -> "The application is stalled. Please try to start it again."
+                RUNNING -> ""
+            }
+            CiteckTooltipArea(
+                tooltip = tooltipText
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth().border(1.dp, Color.LightGray)
@@ -263,18 +250,10 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
             HorizontalDivider()
             Spacer(modifier = Modifier.height(14.dp))
             Row(modifier = Modifier.height(30.dp).padding(start = 10.dp, bottom = 15.dp)) {
-                TooltipArea(
-                    modifier = Modifier.fillMaxHeight(),
-                    tooltip = {
-                        if (runtimeStatus.value != STOPPED) {
-                            Surface(shadowElevation = 4.dp, shape = RoundedCornerShape(4.dp)) {
-                                Text(
-                                    text = "Please stop all running apps before returning to the welcome screen",
-                                    modifier = Modifier.padding(8.dp)
-                                )
-                            }
-                        }
-                    }
+                CiteckTooltipArea(
+                    tooltip = "Please stop all running apps before returning to the welcome screen",
+                    enabled = runtimeStatus.value != STOPPED,
+                    modifier = Modifier.fillMaxHeight()
                 ) {
                     CiteckIconAction(
                         coroutineScope,
@@ -373,6 +352,33 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
                         SystemDumpUtils.dumpSystemInfo()
                     }
                 )
+                /*CiteckIconAction(
+                    coroutineScope,
+                    modifier = Modifier.fillMaxHeight(),
+                    actionDesc = ActionDesc(
+                        "deploy",
+                        ActionIcon.DEPLOY,
+                        "Create snapshot"
+                    ) {
+                        val status = ActionStatus.Mut()
+                        val closeLoading = GlobalLoadingDialog.show(status)
+                        Thread.ofPlatform().start {
+                            try {
+                                services.dockerApi.exportSnapshot(
+                                    nsRuntime.namespaceRef,
+                                    NamespacesService.getNamespaceDir(nsRuntime.namespaceRef)
+                                        .resolve("snapshots")
+                                        .resolve(SimpleDateFormat("yy-MM-dd_HH-mm").format(Date.from(Instant.now()))),
+                                    CompressionAlg.XZ,
+                                    status
+                                )
+                            } catch (e: Throwable) {
+                                log.error(e) { "Error occurred while snapshot creation" }
+                            }
+                            closeLoading()
+                        }
+                    }
+                )*/
             }
         }
         Column(modifier = Modifier.fillMaxHeight().border(1.dp, Color.Black)) {
@@ -392,6 +398,12 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
                     runtimeStatus,
                     "Citeck Core",
                     appsByKind.value[ApplicationKind.CITECK_CORE],
+                    coroutineScope
+                )
+                renderApps(
+                    runtimeStatus,
+                    "Citeck Core Extensions",
+                    appsByKind.value[ApplicationKind.CITECK_CORE_EXTENSION],
                     coroutineScope
                 )
                 renderApps(
@@ -418,6 +430,10 @@ private fun renderApps(
     applications: List<AppRuntime>?,
     coroutineScope: CoroutineScope
 ) {
+    if (applications.isNullOrEmpty()) {
+        return
+    }
+
     val portsWidth = 80.dp
     val tagWidth = 180.dp
     Text(
@@ -439,172 +455,158 @@ private fun renderApps(
 
         HorizontalDivider()
 
-        if (applications != null) {
-            for (application in applications) {
-                val statusText = rememberMutProp(application, application.statusText)
-                val appStatus = rememberMutProp(application, application.status)
-                val editedDef = rememberMutProp(application, application.editedDef)
-                val appDef = rememberMutProp(application, application.def)
-                val ports = remember(application) { application.getPorts() }
-                Row(modifier = Modifier.fillMaxWidth().height(30.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(application.name, modifier = Modifier.weight(0.8f), maxLines = 1)
-                    Row(
-                        modifier = Modifier.weight(1f).fillMaxHeight(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        val statusColor = if (appStatus.value.isStalledState()) {
-                            STALLED_COLOR
-                        } else when (appStatus.value) {
-                            AppRuntimeStatus.STOPPED -> STOPPED_COLOR
-                            AppRuntimeStatus.RUNNING -> RUNNING_COLOR
-                            else -> STARTING_STOPPING_COLOR
-                        }
-                        Text(appStatus.value.toString(), color = statusColor, maxLines = 1)
-                        Spacer(Modifier.width(5.dp))
-                        Text(statusText.value, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        for (application in applications) {
+            val statusText = rememberMutProp(application, application.statusText)
+            val appStatus = rememberMutProp(application, application.status)
+            val editedDef = rememberMutProp(application, application.editedDef)
+            val appDef = rememberMutProp(application, application.def)
+            val ports = remember(appDef) {
+                appDef.value.ports.mapNotNull {
+                    it.substringBefore(":", "").ifEmpty { null }
+                }
+            }
+            Row(modifier = Modifier.fillMaxWidth().height(30.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(application.name, modifier = Modifier.weight(0.8f), maxLines = 1)
+                Row(
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val statusColor = if (appStatus.value.isStalledState()) {
+                        STALLED_COLOR
+                    } else when (appStatus.value) {
+                        AppRuntimeStatus.STOPPED -> STOPPED_COLOR
+                        AppRuntimeStatus.RUNNING -> RUNNING_COLOR
+                        else -> STARTING_STOPPING_COLOR
                     }
-                    if (ports.isEmpty()) {
-                        Row(modifier = Modifier.width(portsWidth)) {}
-                    } else if (ports.size == 1) {
-                        Text(text = ports.first().toString(), modifier = Modifier.width(portsWidth))
-                    } else {
-                        TooltipArea(
-                            delayMillis = 1000,
-                            modifier = Modifier.width(portsWidth),
-                            tooltip = {
-                                Surface(shadowElevation = 4.dp, shape = RoundedCornerShape(4.dp)) {
-                                    Text(
-                                        text = ports.joinToString("\n"),
-                                        modifier = Modifier.padding(8.dp)
-                                    )
-                                }
-                            }
-                        ) {
-                            Text(
-                                text = ports.first().toString() + "...",
-                                maxLines = 1
-                            )
-                        }
-                    }
-                    TooltipArea(
-                        delayMillis = 1000,
-                        modifier = Modifier.width(tagWidth),
-                        tooltip = {
-                            Surface(shadowElevation = 4.dp, shape = RoundedCornerShape(4.dp)) {
-                                Text(
-                                    text = application.image,
-                                    modifier = Modifier.padding(8.dp)
-                                )
-                            }
-                        }
+                    Text(appStatus.value.toString(), color = statusColor, maxLines = 1)
+                    Spacer(Modifier.width(5.dp))
+                    Text(statusText.value, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                if (ports.isEmpty()) {
+                    Row(modifier = Modifier.width(portsWidth)) {}
+                } else if (ports.size == 1) {
+                    Text(text = ports.first().toString(), modifier = Modifier.width(portsWidth))
+                } else {
+                    CiteckTooltipArea(
+                        tooltip = ports.joinToString("\n"),
+                        modifier = Modifier.width(portsWidth)
                     ) {
-                        val image = appDef.value.image
                         Text(
-                            text = image.substringAfterLast(":", "unknown"),
-                            modifier = Modifier.clickable(onClick = {
-                                Toolkit.getDefaultToolkit()
-                                    .systemClipboard
-                                    .setContents(StringSelection(image), null)
-                            }
-                            ),
+                            text = ports.first().toString() + "...",
                             maxLines = 1
                         )
                     }
-                    Row(
-                        modifier = Modifier.weight(0.5f).fillMaxHeight(),
-                        horizontalArrangement = Arrangement.Start,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (!appStatus.value.isStoppingState()) {
-                            CiteckIconAction(
-                                coroutineScope,
-                                modifier = Modifier.fillMaxHeight(),
-                                actionDesc = ActionDesc(
-                                    "stop-app",
-                                    ActionIcon.STOP,
-                                    "Stop application"
-                                ) {
-                                    application.stop(manual = true)
-                                }
-                            )
-                        } else if (!runtimeStatus.value.isStoppingState()) {
-                            CiteckIconAction(
-                                coroutineScope,
-                                modifier = Modifier.fillMaxHeight(),
-                                actionDesc = ActionDesc(
-                                    "start-app",
-                                    ActionIcon.START,
-                                    "Start application"
-                                ) {
-                                    application.start()
-                                }
-                            )
+                }
+                CiteckTooltipArea(
+                    tooltip = application.image,
+                    modifier = Modifier.width(tagWidth),
+                ) {
+                    val image = appDef.value.image
+                    Text(
+                        text = image.substringAfterLast(":", "unknown"),
+                        modifier = Modifier.clickable(onClick = {
+                            Toolkit.getDefaultToolkit()
+                                .systemClipboard
+                                .setContents(StringSelection(image), null)
                         }
-                        if (appStatus.value != AppRuntimeStatus.STOPPED) {
-                            CiteckIconAction(
-                                coroutineScope,
-                                modifier = Modifier.fillMaxHeight(),
-                                actionDesc = ActionDesc(
-                                    "show-logs",
-                                    ActionIcon.LOGS,
-                                    "Show Logs"
-                                ) {
-                                    runCatching {
-                                        GlobalLogsWindow.show(
-                                            LogsDialogParams(application.name, 5000) { logsCallback ->
-                                                runCatching {
-                                                    application.watchLogs(5000, logsCallback)
-                                                }
-                                            }
-                                        )
-                                    }
-                                }
-                            )
-                        }
-                        Box {
-                            CiteckIconAction(
-                                coroutineScope,
-                                modifier = Modifier.fillMaxHeight(),
-                                actionDesc = ActionDesc(
-                                    "edit-app",
-                                    ActionIcon.COG_6_TOOTH,
-                                    "Edit App"
-                                ) {
-                                    runCatching {
-                                        val appDef = application.def.value
-                                        try {
-                                            val editRes = AppDefEditDialog.show(
-                                                appDef,
-                                                application.nsRuntime.isEditedAndLockedApp(appDef.name)
-                                            )
-                                            if (editRes == null) {
-                                                application.nsRuntime.resetAppDef(appDef.name)
-                                            } else {
-                                                application.nsRuntime.updateAppDef(
-                                                    appDef,
-                                                    editRes.appDef,
-                                                    editRes.locked
-                                                )
-                                            }
-                                        } catch (_: FormCancelledException) {
-                                            // do nothing
-                                        }
-                                    }
-                                }
-                            )
-                            if (editedDef.value) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(10.dp)
-                                        .align(Alignment.TopEnd)
-                                        .background(Color.Blue, CircleShape)
-                                )
+                        ),
+                        maxLines = 1
+                    )
+                }
+                Row(
+                    modifier = Modifier.weight(0.5f).fillMaxHeight(),
+                    horizontalArrangement = Arrangement.Start,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (!appStatus.value.isStoppingState()) {
+                        CiteckIconAction(
+                            coroutineScope,
+                            modifier = Modifier.fillMaxHeight(),
+                            actionDesc = ActionDesc(
+                                "stop-app",
+                                ActionIcon.STOP,
+                                "Stop application"
+                            ) {
+                                application.stop(manual = true)
                             }
+                        )
+                    } else if (!runtimeStatus.value.isStoppingState()) {
+                        CiteckIconAction(
+                            coroutineScope,
+                            modifier = Modifier.fillMaxHeight(),
+                            actionDesc = ActionDesc(
+                                "start-app",
+                                ActionIcon.START,
+                                "Start application"
+                            ) {
+                                application.start()
+                            }
+                        )
+                    }
+                    if (appStatus.value != AppRuntimeStatus.STOPPED) {
+                        CiteckIconAction(
+                            coroutineScope,
+                            modifier = Modifier.fillMaxHeight(),
+                            actionDesc = ActionDesc(
+                                "show-logs",
+                                ActionIcon.LOGS,
+                                "Show Logs"
+                            ) {
+                                runCatching {
+                                    GlobalLogsWindow.show(
+                                        LogsDialogParams(application.name, 5000) { logsCallback ->
+                                            runCatching {
+                                                application.watchLogs(5000, logsCallback)
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                        )
+                    }
+                    Box {
+                        CiteckIconAction(
+                            coroutineScope,
+                            modifier = Modifier.fillMaxHeight(),
+                            actionDesc = ActionDesc(
+                                "edit-app",
+                                ActionIcon.COG_6_TOOTH,
+                                "Edit App"
+                            ) {
+                                runCatching {
+                                    val appDef = application.def.value
+                                    try {
+                                        val editRes = AppDefEditDialog.show(
+                                            appDef,
+                                            application.nsRuntime.isEditedAndLockedApp(appDef.name)
+                                        )
+                                        if (editRes == null) {
+                                            application.nsRuntime.resetAppDef(appDef.name)
+                                        } else {
+                                            application.nsRuntime.updateAppDef(
+                                                appDef,
+                                                editRes.appDef,
+                                                editRes.locked
+                                            )
+                                        }
+                                    } catch (_: FormCancelledException) {
+                                        // do nothing
+                                    }
+                                }
+                            }
+                        )
+                        if (editedDef.value) {
+                            Box(
+                                modifier = Modifier
+                                    .size(10.dp)
+                                    .align(Alignment.TopEnd)
+                                    .background(Color.Blue, CircleShape)
+                            )
                         }
                     }
                 }
-                HorizontalDivider()
             }
+            HorizontalDivider()
         }
     }
 }

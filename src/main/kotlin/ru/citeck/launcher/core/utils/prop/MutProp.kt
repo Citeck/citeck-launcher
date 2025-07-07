@@ -7,7 +7,7 @@ import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 import kotlin.reflect.KProperty
 
-class MutProp<T>(value: T) {
+open class MutProp<T>(value: T) {
 
     companion object {
         private val log = KotlinLogging.logger {}

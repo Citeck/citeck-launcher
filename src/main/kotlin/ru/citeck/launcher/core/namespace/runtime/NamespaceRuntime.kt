@@ -558,7 +558,7 @@ class NamespaceRuntime(
     private fun createNetworkIfNotExists(networkName: String) {
         val networks = dockerApi.getNetworkByName(networkName)
         if (networks == null) {
-            dockerApi.createBridgeNetwork(networkName)
+            dockerApi.createBridgeNetwork(namespaceRef, networkName)
         }
     }
 

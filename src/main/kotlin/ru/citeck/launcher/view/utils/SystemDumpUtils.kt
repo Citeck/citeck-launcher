@@ -5,6 +5,7 @@ import ru.citeck.launcher.core.LauncherServices
 import ru.citeck.launcher.core.config.AppDir
 import ru.citeck.launcher.core.logs.AppLogUtils
 import ru.citeck.launcher.core.namespace.runtime.docker.DockerLabels
+import ru.citeck.launcher.core.utils.ZipUtils
 import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.file.CiteckFiles
 import ru.citeck.launcher.core.utils.json.Json
@@ -86,7 +87,7 @@ object SystemDumpUtils {
         }
 
         try {
-            saveZip(outDir, reportTargetFile)
+            ZipUtils.createZip(outDir, reportTargetFile.toPath())
         } finally {
             outDir.toFile().deleteRecursively()
         }
@@ -238,31 +239,6 @@ object SystemDumpUtils {
         }
         targetDir.resolve("meta.json").outputStream().use {
             Json.writePretty(it, meta)
-        }
-    }
-
-    private fun saveZip(sourceDir: Path, targetFile: File) {
-
-        targetFile.outputStream().use { fileOut ->
-            ZipOutputStream(fileOut).use { zipOut ->
-                sourceDir.visitFileTree {
-                    onVisitFile { file, _ ->
-                        val zipPath = sourceDir.relativize(file)
-                        val entry = ZipEntry(zipPath.toString().replace(File.separator, "/"))
-
-                        val attrs = Files.readAttributes(file, BasicFileAttributes::class.java)
-                        entry.lastModifiedTime = attrs.lastModifiedTime()
-                        entry.creationTime = attrs.creationTime()
-                        entry.lastAccessTime = attrs.lastAccessTime()
-
-                        zipOut.putNextEntry(entry)
-                        file.inputStream().use { it.copyTo(zipOut) }
-
-                        zipOut.closeEntry()
-                        FileVisitResult.CONTINUE
-                    }
-                }
-            }
         }
     }
 

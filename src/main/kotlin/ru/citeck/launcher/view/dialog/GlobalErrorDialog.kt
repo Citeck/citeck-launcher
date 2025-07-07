@@ -107,7 +107,8 @@ object GlobalErrorDialog {
                             Button(
                                 onClick = {
                                     SystemDumpUtils.dumpSystemInfo()
-                                }
+                                },
+                                modifier = Modifier.padding(top = 5.dp, bottom = 5.dp, start = 0.dp, end = 10.dp),
                             ) {
                                 Text("Export System Info")
                             }

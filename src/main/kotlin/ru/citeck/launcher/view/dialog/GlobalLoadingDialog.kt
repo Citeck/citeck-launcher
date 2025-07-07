@@ -1,7 +1,9 @@
 package ru.citeck.launcher.view.dialog
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
@@ -13,13 +15,15 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.window.Dialog
+import ru.citeck.launcher.core.utils.ActionStatus
+import ru.citeck.launcher.view.utils.rememberMutProp
 
 object GlobalLoadingDialog {
 
-    private lateinit var showDialog: (Unit) -> (() -> Unit)
+    private lateinit var showDialog: (InnerParams) -> (() -> Unit)
 
-    fun show(): () -> Unit {
-        return showDialog(Unit)
+    fun show(status: ActionStatus.Mut? = null): () -> Unit {
+        return showDialog(InnerParams(status))
     }
 
     @Composable
@@ -37,9 +41,22 @@ object GlobalLoadingDialog {
                             "Loading...", textAlign = TextAlign.Center, fontSize = 1.2.em,
                             modifier = Modifier.fillMaxWidth().padding(start = 30.dp, end = 30.dp)
                         )
+                        if (params.status != null) {
+                            Spacer(Modifier.height(10.dp))
+                            val status = rememberMutProp(params.status)
+                            Text(
+                                "(${status.value.progressInPercent}%) ${status.value.message}", textAlign = TextAlign.Center, fontSize = 1.2.em,
+                                modifier = Modifier.fillMaxWidth().padding(start = 30.dp, end = 30.dp)
+                            )
+                        }
+
                     }
                 }
             }
         }
     }
+
+    private class InnerParams(
+        val status: ActionStatus.Mut?
+    )
 }

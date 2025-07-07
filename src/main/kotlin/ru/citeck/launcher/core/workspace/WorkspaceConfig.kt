@@ -7,12 +7,14 @@ import java.time.Duration
 
 data class WorkspaceConfig(
     val defaultBundleRef: BundleRef,
+    val defaultSnapshot: String = "",
     val imageRepos: List<ImageRepo>,
     val bundleRepos: List<BundlesRepo>,
     val defaultWebappProps: NamespaceDto.WebappProps = NamespaceDto.WebappProps.DEFAULT,
     val webapps: List<AppConfig>,
     val citeckProxy: CiteckProxy = CiteckProxy(),
-    val licenses: List<LicenseInstance> = emptyList()
+    val licenses: List<LicenseInstance> = emptyList(),
+    val snapshots: List<Snapshot> = emptyList()
 ) {
 
     val webappsById = webapps.associateBy { it.id }
@@ -43,6 +45,13 @@ data class WorkspaceConfig(
 
     class CiteckProxy(
         val aliases: Set<String> = setOf("EcosProxyApp")
+    )
+
+    class Snapshot(
+        val id: String,
+        val name: String,
+        val url: String,
+        val sha256: String
     )
 
     enum class ImageRepoAuth {

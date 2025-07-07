@@ -24,7 +24,9 @@ class NamespaceGenerator {
             AppName.EAPPS,
             AppName.HISTORY,
             AppName.NOTIFICATIONS,
-            AppName.TRANSFORMATIONS,
+            AppName.TRANSFORMATIONS
+        )
+        private val CORE_EXT_APPS = setOf(
             AppName.INTEGRATIONS,
             AppName.EDI,
             AppName.CONTENT
@@ -246,10 +248,17 @@ class NamespaceGenerator {
                 springProfiles.add(it.trim())
             }
         }
+        val kind = if (CORE_APPS.contains(app.name)) {
+            ApplicationKind.CITECK_CORE
+        } else if (CORE_EXT_APPS.contains(app.name)) {
+            ApplicationKind.CITECK_CORE_EXTENSION
+        } else {
+            ApplicationKind.CITECK_ADDITIONAL
+        }
 
         app.withImage(webappProps.image.ifBlank { context.bundle.applications[name]?.image ?: "" })
             .withScalable(true)
-            .withKind(if (CORE_APPS.contains(app.name)) ApplicationKind.CITECK_CORE else ApplicationKind.CITECK_ADDITIONAL)
+            .withKind(kind)
             .withReplicas(1)
             .addEnv("SERVER_PORT", port.toString())
             .addEnv("SPRING_PROFILES_ACTIVE", springProfiles.joinToString())

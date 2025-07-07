@@ -6,29 +6,47 @@ import com.github.dockerjava.api.command.*
 import com.github.dockerjava.api.exception.DockerException
 import com.github.dockerjava.api.exception.NotFoundException
 import com.github.dockerjava.api.exception.NotModifiedException
+import com.github.dockerjava.api.model.Bind
 import com.github.dockerjava.api.model.Container
 import com.github.dockerjava.api.model.Frame
+import com.github.dockerjava.api.model.HostConfig
 import com.github.dockerjava.api.model.Network
 import io.github.oshai.kotlinlogging.KotlinLogging
 import ru.citeck.launcher.core.namespace.NamespaceRef
+import ru.citeck.launcher.core.snapshot.NamespaceSnapshotMeta
+import ru.citeck.launcher.core.snapshot.VolumeSnapshotMeta
+import ru.citeck.launcher.core.utils.ActionStatus
+import ru.citeck.launcher.core.utils.CompressionAlg
+import ru.citeck.launcher.core.utils.file.FileUtils
+import ru.citeck.launcher.core.utils.ZipUtils
+import ru.citeck.launcher.core.utils.json.Json
+import java.nio.file.Path
 import java.time.Duration
+import java.time.Instant
 import java.util.concurrent.TimeUnit
+import kotlin.io.path.absolutePathString
+import kotlin.io.path.name
 
+// inspect volume data
+// docker run -it --rm -v citeck-volume-zookeeper-cv45o7y-DEFAULT:/volume  busybox:1.37 sh
 class DockerApi(
     private val client: DockerClient
 ) {
     companion object {
         private val log = KotlinLogging.logger {}
+        private const val UTILS_IMAGE = "registry.citeck.ru/community/launcher-utils:1.0"
 
         private const val GRACEFUL_SHUTDOWN_SECONDS = 10
     }
 
-    fun createVolume(nsRef: NamespaceRef, name: String): CreateVolumeResponse {
+    fun createVolume(nsRef: NamespaceRef, originalName: String, name: String): CreateVolumeResponse {
         return client.createVolumeCmd()
             .withLabels(
                 mapOf(
                     DockerLabels.WORKSPACE to nsRef.workspace,
-                    DockerLabels.NAMESPACE to nsRef.namespace
+                    DockerLabels.NAMESPACE to nsRef.namespace,
+                    DockerLabels.ORIGINAL_NAME to originalName,
+                    DockerLabels.LAUNCHER_LABEL_PAIR
                 )
             ).withName(name).exec()
     }
@@ -201,7 +219,7 @@ class DockerApi(
     fun inspectImageOrNull(image: String): InspectImageResponse? {
         return try {
             client.inspectImageCmd(image).exec()
-        } catch (e: NotFoundException) {
+        } catch (_: NotFoundException) {
             null
         }
     }
@@ -217,8 +235,143 @@ class DockerApi(
         client.removeNetworkCmd(network.id).exec()
     }
 
-    fun createBridgeNetwork(name: String): CreateNetworkResponse {
+    fun exportSnapshot(
+        nsRef: NamespaceRef,
+        targetFile: Path,
+        alg: CompressionAlg,
+        actionStatus: ActionStatus.Mut = ActionStatus.Mut()
+    ) {
+
+        actionStatus.message = "initialization"
+
+        val tarAlgParam = when (alg) {
+            CompressionAlg.ZSTD -> "--zstd"
+            CompressionAlg.XZ -> "--xz"
+        }
+
+        if (getContainers(nsRef).isNotEmpty()) {
+            error("Containers should be stopped before exporting snapshot")
+        }
+        val exportStartedAt = System.currentTimeMillis()
+        log.info { "Begin snapshot exporting for namespace $nsRef" }
+
+        actionStatus.progress = 0.01f
+
+        val volumes = getVolumes(nsRef)
+        if (volumes.isEmpty()) {
+            error("No volumes found in namespace $nsRef")
+        }
+        log.info { "Volumes: ${volumes.joinToString { it.name }}" }
+
+        actionStatus.progress = 0.02f
+
+        if (inspectImageOrNull(UTILS_IMAGE) == null) {
+            actionStatus.message = "Pull utils image"
+            log.info { "Image $UTILS_IMAGE is not exists locally. Let's pull it" }
+            val pullStartedAt = System.currentTimeMillis()
+            pullImage(UTILS_IMAGE).start().awaitCompletion(60, TimeUnit.SECONDS)
+            log.info { "Pull completed in ${System.currentTimeMillis() - pullStartedAt}ms" }
+        }
+
+        actionStatus.progress = 0.1f
+
+        var targetZipFile = targetFile
+        if (!targetZipFile.name.endsWith(".zip")) {
+            targetZipFile = targetZipFile.parent.resolve(targetFile.name + ".zip")
+        }
+        val dirToExport = targetFile.parent.resolve(targetZipFile.name + "_files")
+        dirToExport.toFile().mkdirs()
+
+        try {
+
+            actionStatus.message = "Validate volumes"
+
+            val volumesByName = volumes.associateBy {
+                val origName = it.labels[DockerLabels.ORIGINAL_NAME]
+                if (origName.isNullOrBlank()) {
+                    error("Original name of ${it.name} is missing")
+                }
+                origName
+            }
+
+            val progressForVolume = (0.9f - actionStatus.progress) / volumes.size
+
+            val volumesSnapMeta = ArrayList<VolumeSnapshotMeta>()
+
+            for ((originalName, volume) in volumesByName) {
+
+                actionStatus.message = "Create backup for '$originalName'"
+
+                log.info { "Create backup of volume '$originalName'..." }
+                val volumeBackupStartedAt = System.currentTimeMillis()
+
+                val dataFile = FileUtils.sanitizeFileName(originalName) + ".tar.${alg.extension}"
+                volumesSnapMeta.add(VolumeSnapshotMeta(originalName, dataFile))
+
+                val container: CreateContainerResponse = client.createContainerCmd(UTILS_IMAGE)
+                    .withCmd(
+                        "/bin/sh", "-c", "cd /source && " +
+                            "find . -mindepth 1 -printf '%P\\n' | " +
+                            "tar $tarAlgParam -cvf \"/dest/${dataFile}\" -T -"
+                    )
+                    .withHostConfig(
+                        HostConfig.newHostConfig()
+                            .withBinds(
+                                Bind.parse(volume.name + ":/source"),
+                                Bind.parse("${dirToExport.absolutePathString()}:/dest"),
+                            )
+                    ).withLabels(
+                        mapOf(
+                            DockerLabels.LAUNCHER_LABEL_PAIR
+                        )
+                    ).exec()
+
+                client.startContainerCmd(container.id).exec()
+                val statusCode = client.waitContainerCmd(container.id).start().awaitStatusCode(1, TimeUnit.MINUTES)
+                if (statusCode == 0) {
+                    log.info {
+                        "Backup successfully created for $originalName " +
+                        "in ${System.currentTimeMillis() - volumeBackupStartedAt}ms"
+                    }
+                } else {
+                    log.error { "===== Backup completed with non-zero status code: $statusCode. Container logs: =====" }
+                    consumeLogs(container.id, 100_000, Duration.ofSeconds(10)) { msg -> log.warn { msg } }
+                    log.error { "===== End of backup container logs =====" }
+                }
+                removeContainer(container.id)
+
+                actionStatus.addProgress(progressForVolume)
+            }
+
+            val namespaceSnapshotMeta = NamespaceSnapshotMeta(volumesSnapMeta, Instant.now())
+            Json.writePretty(dirToExport.resolve("meta.json"), namespaceSnapshotMeta)
+
+            actionStatus.set("Create snapshot archive", 0.95f)
+
+            ZipUtils.createZip(dirToExport, targetZipFile)
+
+            actionStatus.set("", 1f)
+
+        } finally {
+            try {
+                dirToExport.toFile().deleteRecursively()
+            } catch (e: Throwable) {
+                log.error(e) { "Export dir deletion failed: ${dirToExport.absolutePathString()}" }
+            }
+        }
+        log.info {
+            "Snapshot created successfully for " +
+            "namespace $nsRef in ${System.currentTimeMillis() - exportStartedAt}ms"
+        }
+    }
+
+    fun createBridgeNetwork(nsRef: NamespaceRef, name: String): CreateNetworkResponse {
         return client.createNetworkCmd()
+            .withLabels(mapOf(
+                DockerLabels.WORKSPACE to nsRef.workspace,
+                DockerLabels.NAMESPACE to nsRef.namespace,
+                DockerLabels.LAUNCHER_LABEL_PAIR
+            ))
             .withDriver("bridge")
             .withName(name)
             .exec()

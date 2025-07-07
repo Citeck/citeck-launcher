@@ -10,6 +10,8 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -55,6 +57,10 @@ object AskMasterPasswordDialog {
 
                         var passwordVisible by remember { mutableStateOf(false) }
                         val value = remember { mutableStateOf("") }
+                        val focusRequester = remember { FocusRequester() }
+                        LaunchedEffect(Unit) {
+                            focusRequester.requestFocus()
+                        }
                         OutlinedTextField(
                             value = value.value,
                             onValueChange = { value.value = it },
@@ -66,7 +72,7 @@ object AskMasterPasswordDialog {
                                     Icon(icon, contentDescription = null)
                                 }
                             },
-                            modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
+                            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester).onPreviewKeyEvent { event ->
                                 if (event.key == Key.Enter && event.type == KeyEventType.KeyUp) {
                                     if (params.onSubmit(value.value.toCharArray())) {
                                         closeDialog()

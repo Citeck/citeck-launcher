@@ -97,10 +97,6 @@ class AppRuntime(
         }
     }
 
-    fun getPorts(): Set<Int> {
-        return portsBindings.keys
-    }
-
     fun start() {
         pullImageIfPresent = if (def.value.kind == ApplicationKind.THIRD_PARTY) {
             false
