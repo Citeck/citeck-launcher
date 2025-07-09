@@ -52,7 +52,7 @@ object NamespaceEntityDef {
                         SelectField.Option(it.id, it.name)
                     } ?: emptyList()
                 }
-            ).mandatory()
+            )
         )
     )
 

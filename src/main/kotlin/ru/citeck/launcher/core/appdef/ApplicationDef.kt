@@ -15,7 +15,6 @@ data class ApplicationDef(
     val cmd: String?,
     val ports: List<String>,
     val replicas: Int,
-    val scalable: Boolean,
     val volumes: List<String>,
     val initActions: List<AppInitAction>,
     val dependsOn: Set<String>,
@@ -70,7 +69,6 @@ data class ApplicationDef(
         private var cmd: String? = null
         private var ports: MutableList<String> = ArrayList()
         private var replicas: Int = 1
-        private var scalable: Boolean = false
         private var volumes: MutableList<String> = ArrayList()
         private var initActions: MutableList<AppInitAction> = ArrayList()
         private var dependsOn: MutableSet<String> = LinkedHashSet()
@@ -86,7 +84,6 @@ data class ApplicationDef(
             this.cmd = base.cmd
             this.ports = ArrayList(base.ports)
             this.replicas = base.replicas
-            this.scalable = base.scalable
             this.volumes = ArrayList(base.volumes)
             this.initActions = ArrayList(base.initActions)
             this.dependsOn = LinkedHashSet(base.dependsOn)
@@ -133,11 +130,6 @@ data class ApplicationDef(
 
         fun withReplicas(replicas: Int): Builder {
             this.replicas = replicas
-            return this
-        }
-
-        fun withScalable(scalable: Boolean): Builder {
-            this.scalable = scalable
             return this
         }
 
@@ -208,7 +200,6 @@ data class ApplicationDef(
                 cmd = cmd,
                 ports = ports,
                 replicas = replicas,
-                scalable = scalable,
                 volumes = volumes,
                 initActions = initActions,
                 dependsOn = dependsOn,

@@ -130,7 +130,6 @@ class NamespaceGenerator {
         }
         context.getOrCreateApp(AppName.ONLY_OFFICE)
             .withImage("onlyoffice/documentserver:7.1")
-            .withScalable(false)
             .withReplicas(1)
             .addPort("8070:80/tcp")
             .addPort("443/tcp")
@@ -288,7 +287,6 @@ class NamespaceGenerator {
         }
 
         app.withImage(webappProps.image.ifBlank { context.bundle.applications[name]?.image ?: "" })
-            .withScalable(true)
             .withKind(kind)
             .withReplicas(1)
             .addEnv("SERVER_PORT", port.toString())
@@ -403,7 +401,6 @@ class NamespaceGenerator {
     private fun generateRabbitMq(context: NsGenContext) {
         context.getOrCreateApp(NsGenContext.RMQ_HOST)
             .withImage("bitnami/rabbitmq:4.0.3-debian-12-r1")
-            .withScalable(false)
             .withReplicas(1)
             .addPort("5672:${NsGenContext.RMQ_PORT}")
             .addPort("15672:15672")
@@ -433,7 +430,6 @@ class NamespaceGenerator {
     private fun generateZookeeper(context: NsGenContext) {
         context.getOrCreateApp(NsGenContext.ZK_HOST)
             .withImage("bitnami/zookeeper:3.9.3-debian-12-r3")
-            .withScalable(false)
             .withReplicas(1)
             .addPort("2181:${NsGenContext.ZK_PORT}")
             .addEnv("ZOO_AUTOPURGE_INTERVAL", "1")
@@ -449,7 +445,6 @@ class NamespaceGenerator {
     private fun generatePostgres(context: NsGenContext) {
         context.getOrCreateApp(NsGenContext.PG_HOST)
             .withImage("bitnami/postgresql:13.17.0")
-            .withScalable(false)
             .withReplicas(1)
             .addEnv("POSTGRESQL_USERNAME", "postgres")
             .addEnv("POSTGRESQL_PASSWORD", "postgres")

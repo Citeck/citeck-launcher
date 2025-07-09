@@ -8,6 +8,7 @@ import ru.citeck.launcher.core.database.Repository
 import ru.citeck.launcher.core.entity.events.EntitiesEvents
 import ru.citeck.launcher.core.entity.events.EntityCreatedEvent
 import ru.citeck.launcher.core.entity.events.EntityDeletedEvent
+import ru.citeck.launcher.core.utils.ActionStatus
 import ru.citeck.launcher.core.utils.IdUtils
 import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.json.Json
@@ -15,6 +16,7 @@ import ru.citeck.launcher.core.workspace.WorkspaceDto
 import ru.citeck.launcher.view.action.ActionDesc
 import ru.citeck.launcher.view.action.ActionIcon
 import ru.citeck.launcher.view.dialog.GlobalConfirmDialog
+import ru.citeck.launcher.view.dialog.GlobalLoadingDialog
 import ru.citeck.launcher.view.form.FormMode
 import ru.citeck.launcher.view.form.GlobalFormDialog
 import ru.citeck.launcher.view.form.WorkspaceFormDialog
@@ -232,7 +234,7 @@ class EntitiesService(
             mode = FormMode.CREATE,
             data = initialData,
             onCancel = { onCancel() }
-        ) { data ->
+        ) { data, onDataProcComplete ->
             val idType = definition.idType
 
             @Suppress("UNCHECKED_CAST")
@@ -258,12 +260,25 @@ class EntitiesService(
                 idForNewEntity
             }
             val convertedEntity = definition.fromFormData(data)
-            database.doWithinTxn {
-                repo[idValue] = convertedEntity
-                events.fireEntityCreatedEvent(defWithRepo.definition.valueType, EntityCreatedEvent(convertedEntity))
+
+            Thread.ofPlatform().name("create-entity-$idType").start {
+                ActionStatus.doWithStatus { status ->
+                    val closeLoading = GlobalLoadingDialog.show(status)
+                    try {
+                        database.doWithinTxn {
+                            repo[idValue] = convertedEntity
+                            events.fireEntityCreatedEvent(
+                                defWithRepo.definition.valueType,
+                                EntityCreatedEvent(convertedEntity)
+                            )
+                        }
+                        onSubmit(EntityRef.create(definition.typeId, idValue.toString()))
+                        onDataProcComplete()
+                    } finally {
+                        closeLoading()
+                    }
+                }
             }
-            onSubmit(EntityRef.create(definition.typeId, idValue.toString()))
-            true
         }
     }
 

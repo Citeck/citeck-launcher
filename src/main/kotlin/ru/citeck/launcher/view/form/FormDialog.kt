@@ -45,7 +45,7 @@ open class FormDialog {
         mode: FormMode = FormMode.CREATE,
         data: DataValue = DataValue.NULL,
         onCancel: () -> Unit,
-        onSubmit: (DataValue) -> Boolean
+        onSubmit: (DataValue, onComplete: () -> Unit) -> Unit
     ) {
         showDialog(
             InternalParams(
@@ -69,9 +69,9 @@ open class FormDialog {
                     spec = spec,
                     formMode = mode,
                     data = data,
-                    onSubmit = {
-                        continuation.resume(it)
-                        true
+                    onSubmit = { data, onComplete ->
+                        continuation.resume(data)
+                        onComplete()
                     },
                     onCancel = { continuation.resumeWithException(FormCancelledException()) }
                 ))
@@ -109,7 +109,7 @@ open class FormDialog {
                     } else {
                         Thread.ofPlatform().start {
                             try {
-                                if (params.onSubmit(this.getValues())) {
+                                params.onSubmit(this.getValues()) {
                                     closeDialog()
                                 }
                             } catch (e: Throwable) {
@@ -370,7 +370,7 @@ open class FormDialog {
         val spec: FormSpec,
         val formMode: FormMode,
         val data: DataValue,
-        val onSubmit: (DataValue) -> Boolean,
+        val onSubmit: (DataValue, onComplete: () -> Unit) -> Unit,
         val onCancel: () -> Unit
     )
 }
