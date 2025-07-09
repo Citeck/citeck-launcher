@@ -1,9 +1,9 @@
 package ru.citeck.launcher.core.namespace.gen
 
-import java.net.URI
-
 class NamespaceLink(
-    val uri: URI,
+    val url: String,
     val name: String,
-    val icon: String
+    val description: String,
+    val icon: String,
+    val order: Float
 )

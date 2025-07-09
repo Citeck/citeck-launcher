@@ -422,9 +422,9 @@ class DockerApi(
 
             for ((originalName, volume) in volumesByName) {
 
-                actionStatus.message = "Create backup for '$originalName'"
+                actionStatus.message = "Create snapshot of '$originalName'"
 
-                log.info { "Create backup of volume '$originalName'..." }
+                log.info { "Create snapshot of volume '$originalName'..." }
 
                 val dataFile = FileUtils.sanitizeFileName(originalName) + ".tar.${alg.extension}"
                 volumesSnapMeta.add(VolumeSnapshotMeta(originalName, dataFile))

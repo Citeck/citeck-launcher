@@ -131,7 +131,11 @@ class AppRunAction(
                 containerName = containerBaseName + DockerConstants.NAME_DELIM + nameIdx++
             }
             val portBindings = appDef.ports.map {
-                PortBinding(Ports.Binding.empty(), PortBinding.parse(it).exposedPort)
+                if (it.startsWith("!")) {
+                    PortBinding.parse(it.substring(1))
+                } else {
+                    PortBinding(Ports.Binding.empty(), PortBinding.parse(it).exposedPort)
+                }
             }
             val createCmd = dockerApi.createContainerCmd(appDef.image)
                 .withName(containerName)

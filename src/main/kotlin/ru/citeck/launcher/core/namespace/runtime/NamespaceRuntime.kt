@@ -60,7 +60,7 @@ class NamespaceRuntime(
 
     var status = MutProp(NsRuntimeStatus.STOPPED)
 
-    private var namespaceGenResp: NamespaceGenResp? = null
+    var namespaceGenResp = MutProp<NamespaceGenResp?>("ns-gen-res-${namespaceRef}", null)
 
     @Volatile
     private var runtimeFilesHash: Map<Path, String> = emptyMap()
@@ -442,7 +442,7 @@ class NamespaceRuntime(
             nsRuntimeDataRepo[STATE_EDITED_APPS] = editedApps
         }
 
-        val genRespDef = namespaceGenResp?.applications?.find { it.name == name }
+        val genRespDef = namespaceGenResp.value?.applications?.find { it.name == name }
         if (genRespDef == null) {
             log.error { "Generated app def doesn't found for app '$name'. Reset can't be performed" }
             return
@@ -562,7 +562,7 @@ class NamespaceRuntime(
             nsRuntimeFilesDir.resolve(path).deleteIfExists()
         }
 
-        namespaceGenResp = newGenRes
+        namespaceGenResp.value = newGenRes
 
         cloudConfigServer.cloudConfig = newGenRes.cloudConfig
     }

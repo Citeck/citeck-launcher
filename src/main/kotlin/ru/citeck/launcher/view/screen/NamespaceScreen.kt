@@ -56,9 +56,6 @@ import java.awt.Desktop
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import java.net.URI
-import java.text.SimpleDateFormat
-import java.time.Instant
-import java.util.Date
 
 private val STARTING_STOPPING_COLOR = Color(0xFFF4E909)
 private val RUNNING_COLOR = Color(0xFF33AB50)
@@ -77,6 +74,7 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
     val nsRuntime = remember(selectedNsValue.id) {
         services.namespacesService.getRuntime(selectedNsValue.id)
     }
+    val nsGenRes = rememberMutProp(nsRuntime.namespaceGenResp)
     val runtimeStatus = rememberMutProp(nsRuntime, nsRuntime.status)
     val nsActionInProgress = remember { mutableStateOf(false) }
 
@@ -189,12 +187,15 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
                             nsActionInProgress.value = true
                             rmbStartDropDownShow.value = false
                             Thread.ofPlatform().start {
-                                runBlocking {
-                                    GlobalErrorDialog.doActionSafe({
-                                        nsRuntime.updateAndStart(true)
-                                    }, { "Namespace start error" }, {})
+                                try {
+                                    runBlocking {
+                                        GlobalErrorDialog.doActionSafe({
+                                            nsRuntime.updateAndStart(true)
+                                        }, { "Namespace start error" }, {})
+                                    }
+                                } finally {
+                                    nsActionInProgress.value = false
                                 }
-                                nsActionInProgress.value = false
                             }
                         }
                     )
@@ -229,24 +230,54 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
                 STALLED -> "The application is stalled. Please try to start it again."
                 RUNNING -> ""
             }
+            val linkTextPadding = 55.dp
             CiteckTooltipArea(
                 tooltip = tooltipText
             ) {
-                Row(
+                Box(
                     modifier = Modifier.fillMaxWidth().border(1.dp, Color.LightGray)
                         .clickable(enabled = runtimeStatus.value == RUNNING) {
                             Desktop.getDesktop().browse(URI.create("http://localhost"))
-                        },
-                    verticalAlignment = Alignment.CenterVertically,
+                        }
                 ) {
                     CpImage(
                         "logo.svg",
-                        modifier = Modifier.padding(start = 7.dp, top = 5.dp, bottom = 5.dp)
+                        modifier = Modifier.align(Alignment.CenterStart)
+                            .padding(start = 7.dp, top = 5.dp, bottom = 5.dp)
                             .requiredSize(40.dp)
                     )
-                    Text("Open In Browser", modifier = Modifier.padding(start = 10.dp))
+                    Text("Open In Browser", modifier = Modifier.align(Alignment.CenterStart)
+                        .padding(start = linkTextPadding))
                 }
             }
+            Spacer(Modifier.height(2.dp))
+            HorizontalDivider()
+            for (link in (nsGenRes.value?.links ?: emptyList())) {
+                CiteckTooltipArea(
+                    tooltip = link.description
+                ) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth()
+                            .clickable(enabled = runtimeStatus.value == RUNNING) {
+                                Desktop.getDesktop().browse(URI.create(link.url))
+                            }
+                    ) {
+                        Box(modifier = Modifier.align(Alignment.CenterStart).padding(start = 12.dp, top = 5.dp, bottom = 5.dp)) {
+                            CpImage(
+                                link.icon,
+                                modifier = Modifier.align(Alignment.CenterStart).requiredSize(30.dp),
+                            )
+                        }
+                        Text(
+                            link.name,
+                            modifier = Modifier.align(Alignment.CenterStart)
+                                .padding(start = linkTextPadding)
+                        )
+                    }
+                }
+                HorizontalDivider()
+            }
+
             Spacer(Modifier.weight(1f))
             HorizontalDivider()
             Spacer(modifier = Modifier.height(14.dp))
@@ -298,9 +329,30 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
                         }
                     }
                 )
+                val rmbVolumesDropDownShow = remember { mutableStateOf(false) }
+                var rmbVolumesDropDownOffset by remember { mutableStateOf(DpOffset.Zero) }
                 CiteckIconAction(
                     coroutineScope,
-                    modifier = Modifier.fillMaxHeight(),
+                    modifier = Modifier.fillMaxHeight().pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val pointer = event.changes.firstOrNull()
+                                if (nsActionInProgress.value) {
+                                    continue
+                                }
+                                if (event.type == PointerEventType.Press &&
+                                    event.buttons.isSecondaryPressed &&
+                                    pointer != null
+                                ) {
+                                    val position = pointer.position
+                                    rmbVolumesDropDownOffset = DpOffset(position.x.dp, position.y.dp)
+                                    rmbVolumesDropDownShow.value = true
+                                    pointer.consume()
+                                }
+                            }
+                        }
+                    },
                     actionDesc = ActionDesc(
                         "show-volumes",
                         ActionIcon.STORAGE,
@@ -320,6 +372,38 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
                         }
                     }
                 )
+                DropdownMenu(
+                    expanded = rmbVolumesDropDownShow.value,
+                    offset = rmbVolumesDropDownOffset,
+                    onDismissRequest = { rmbVolumesDropDownShow.value = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Create volumes snapshot") },
+                        onClick = {
+                            nsActionInProgress.value = true
+                            val status = ActionStatus.Mut()
+                            val closeLoading = GlobalLoadingDialog.show(status)
+                            Thread.ofPlatform().start {
+                                runBlocking {
+                                    GlobalErrorDialog.doActionSafe<Unit>({
+                                        val snapshotsDir = NamespacesService.getNamespaceDir(nsRuntime.namespaceRef)
+                                            .resolve("snapshots")
+                                        services.dockerApi.exportSnapshot(
+                                            nsRuntime.namespaceRef,
+                                            snapshotsDir.resolve(FileUtils.createNameWithCurrentDateTime()),
+                                            CompressionAlg.XZ,
+                                            status
+                                        )
+                                        Desktop.getDesktop().open(snapshotsDir.toFile())
+                                    }, { "Snapshot creation failed" }, {})
+                                }
+                                nsActionInProgress.value = false
+                                closeLoading()
+                            }
+                            rmbVolumesDropDownShow.value = false
+                        }
+                    )
+                }
                 CiteckIconAction(
                     coroutineScope,
                     modifier = Modifier.fillMaxHeight(),
@@ -351,33 +435,6 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
                         "Export System Info"
                     ) {
                         SystemDumpUtils.dumpSystemInfo()
-                    }
-                )
-                CiteckIconAction(
-                    coroutineScope,
-                    modifier = Modifier.fillMaxHeight(),
-                    actionDesc = ActionDesc(
-                        "deploy",
-                        ActionIcon.DEPLOY,
-                        "Create snapshot"
-                    ) {
-                        val status = ActionStatus.Mut()
-                        val closeLoading = GlobalLoadingDialog.show(status)
-                        Thread.ofPlatform().start {
-                            try {
-                                services.dockerApi.exportSnapshot(
-                                    nsRuntime.namespaceRef,
-                                    NamespacesService.getNamespaceDir(nsRuntime.namespaceRef)
-                                        .resolve("snapshots")
-                                        .resolve(FileUtils.createNameWithCurrentDateTime()),
-                                    CompressionAlg.XZ,
-                                    status
-                                )
-                            } catch (e: Throwable) {
-                                log.error(e) { "Error occurred while snapshot creation" }
-                            }
-                            closeLoading()
-                        }
                     }
                 )
             }
@@ -463,7 +520,11 @@ private fun renderApps(
             val appDef = rememberMutProp(application, application.def)
             val ports = remember(appDef) {
                 appDef.value.ports.mapNotNull {
-                    it.substringBefore(":", "").ifEmpty { null }
+                    var port = it.substringBefore(":", "")
+                    if (port.startsWith("!")) {
+                        port = port.substring(1)
+                    }
+                    port.ifEmpty { null }
                 }
             }
             Row(modifier = Modifier.fillMaxWidth().height(30.dp), verticalAlignment = Alignment.CenterVertically) {

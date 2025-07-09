@@ -57,16 +57,20 @@ class AppRuntime(
 
     init {
         portsBindings = def.ports.mapNotNull { port ->
-            val portInfo = PortBinding.parse(port)
-            val hostPort = portInfo.binding.hostPortSpec?.toInt() ?: -1
-            if (hostPort != -1) {
-                HostPortBinding(
-                    def.name,
-                    hostPort,
-                    portInfo.exposedPort.port
-                )
-            } else {
+            if (port.startsWith("!")) {
                 null
+            } else {
+                val portInfo = PortBinding.parse(port)
+                val hostPort = portInfo.binding.hostPortSpec?.toInt() ?: -1
+                if (hostPort != -1) {
+                    HostPortBinding(
+                        def.name,
+                        hostPort,
+                        portInfo.exposedPort.port
+                    )
+                } else {
+                    null
+                }
             }
         }.associateBy { it.exposedPort }
 

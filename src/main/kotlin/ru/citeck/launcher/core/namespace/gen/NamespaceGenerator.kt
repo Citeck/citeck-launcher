@@ -72,6 +72,18 @@ class NamespaceGenerator {
         generateProxyApp(context)
         generateOnlyOffice(context)
 
+        context.links.add(
+            NamespaceLink(
+                "http://localhost/gateway/eapps/admin/wallboard",
+                "Spring Boot Admin",
+                "Spring Boot Admin is used to manage and monitor Spring Boot applications",
+                "icons/app/spring-boot-admin.svg",
+                -1f
+            )
+        )
+
+        context.links.sortBy { it.order }
+
         return NamespaceGenResp(
             context.applications.values.map {
                 it.build()
@@ -100,6 +112,15 @@ class NamespaceGenerator {
                     AppResourcesDef.LimitsDef("128m")
                 )
             )
+        context.links.add(
+            NamespaceLink(
+                "http://localhost:8025",
+                "MailHog",
+                "MailHog is an email testing tool",
+                "icons/app/mailhog.svg",
+                1f
+            )
+        )
     }
 
     private fun generateOnlyOffice(context: NsGenContext) {
@@ -138,6 +159,15 @@ class NamespaceGenerator {
                     AppResourcesDef.LimitsDef("256m")
                 )
             )
+        context.links.add(
+            NamespaceLink(
+                "http://localhost:5050",
+                "PG Admin",
+                "Postgres database management and design tool\nUser: admin@admin.com\nPassword: admin",
+                "icons/app/postgres.svg",
+                0f
+            )
+        )
     }
 
     private fun generateMongoDb(context: NsGenContext) {
@@ -171,7 +201,7 @@ class NamespaceGenerator {
             .addEnv("GATEWAY_TARGET", "${AppName.GATEWAY}:$gatewayPort")
             .addEnv("PROXY_TARGET", "${AppName.GATEWAY}:$gatewayPort")
             .addEnv("ECOS_INIT_DELAY", "0")
-            .addPort("80:80")
+            .addPort("!80:80")
             .addDependsOn(AppName.GATEWAY)
             .withKind(ApplicationKind.CITECK_CORE)
             .withResources(
@@ -238,7 +268,8 @@ class NamespaceGenerator {
         }
 
         if (webappCloudConfig.isNotEmpty()) {
-            context.appFiles["app/$name/props/application-launcher.yml"] = Yaml.toString(webappCloudConfig).toByteArray()
+            context.appFiles["app/$name/props/application-launcher.yml"] =
+                Yaml.toString(webappCloudConfig).toByteArray()
             app.addEnv("SPRING_CONFIG_ADDITIONALLOCATION", "/run/java.io/spring-props/")
             app.addVolume("./app/$name/props:/run/java.io/spring-props/")
         }
@@ -386,6 +417,17 @@ class NamespaceGenerator {
                     AppResourcesDef.LimitsDef("256m")
                 )
             )
+        context.links.add(
+            NamespaceLink(
+                "http://localhost:15672",
+                "Rabbit MQ",
+                "Rabbit MQ is a message broker — it helps different parts\n" +
+                    "of a system communicate by sending and receiving messages between them\n" +
+                    "Username: admin\nPassword: admin",
+                "icons/app/rabbitmq.svg",
+                2f
+            )
+        )
     }
 
     private fun generateZookeeper(context: NsGenContext) {
