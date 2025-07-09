@@ -471,7 +471,6 @@ class NamespaceRuntime(
         val fixedDef = appDefAfter.copy()
             .withKind(appDefBefore.kind)
             .withReplicas(appDefBefore.replicas)
-            .withScalable(appDefBefore.scalable)
             .build()
 
         if (fixedDef != appDefBefore) {
