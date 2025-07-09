@@ -42,9 +42,13 @@ dependencies {
     implementation("org.eclipse.jgit:org.eclipse.jgit:7.3.0.202506031305-r")
     implementation("ch.qos.logback:logback-classic:1.5.18")
     implementation("io.github.oshai:kotlin-logging-jvm:7.0.7")
+    implementation("io.ktor:ktor-client-cio-jvm:3.2.1")
 
-    implementation("io.ktor:ktor-server-core-jvm:3.2.0")
-    implementation("io.ktor:ktor-server-cio:3.2.0")
+    val ktorV = project.properties["ktor.version"]
+    implementation("io.ktor:ktor-server-core-jvm:$ktorV")
+    implementation("io.ktor:ktor-server-cio:$ktorV")
+    implementation("io.ktor:ktor-client-core:$ktorV")
+    implementation("io.ktor:ktor-client-cio:$ktorV")
 
     testImplementation("org.junit.jupiter:junit-jupiter-api:5.13.1")
     testImplementation("org.junit.jupiter:junit-jupiter-engine:5.13.1")

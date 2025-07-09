@@ -7,6 +7,7 @@ import ru.citeck.launcher.core.actions.ActionsService
 import ru.citeck.launcher.core.namespace.runtime.AppRuntime
 import ru.citeck.launcher.core.namespace.runtime.docker.DockerApi
 import ru.citeck.launcher.core.utils.promise.Promise
+import java.util.concurrent.CompletableFuture
 
 class AppStopAction(
     private val dockerApi: DockerApi
@@ -18,6 +19,13 @@ class AppStopAction(
         }
     }
 
+    override fun getRetryAfterErrorDelay(
+        context: ActionContext<Params>,
+        future: CompletableFuture<Unit>
+    ): Long {
+        return 1000
+    }
+
     override fun execute(context: ActionContext<Params>) {
 
         val runtime = context.params.appRuntime
@@ -25,7 +33,9 @@ class AppStopAction(
 
         val containers = dockerApi.getContainers(runtime.nsRuntime.namespaceRef, appDef.name)
 
-        containers.forEach { dockerApi.stopAndRemoveContainer(it) }
+        containers.forEach {
+            dockerApi.stopAndRemoveContainer(it)
+        }
     }
 
     override fun getName(context: ActionContext<Params>): String {

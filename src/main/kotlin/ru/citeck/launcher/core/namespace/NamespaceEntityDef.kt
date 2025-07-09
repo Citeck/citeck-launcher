@@ -13,6 +13,7 @@ object NamespaceEntityDef {
 
     const val FORM_FIELD_BUNDLES_REPO = "bundlesRepo"
     const val FORM_FIELD_BUNDLE_KEY = "bundleKey"
+    const val FORM_FIELD_SNAPSHOT = "snapshot"
 
     val formSpec = FormSpec(
         "Namespace",
@@ -40,6 +41,16 @@ object NamespaceEntityDef {
                         ?.bundlesService
                         ?.getRepoBundles(ctx.getStrValue(FORM_FIELD_BUNDLES_REPO))
                         ?.map { SelectField.Option(it.key, it.key) } ?: emptyList()
+                }
+            ).mandatory(),
+            SelectField(
+                FORM_FIELD_SNAPSHOT,
+                "Snapshot",
+                "",
+                options = { ctx ->
+                    ctx.workspaceServices?.workspaceConfig?.value?.snapshots?.map {
+                        SelectField.Option(it.id, it.name)
+                    } ?: emptyList()
                 }
             ).mandatory()
         )
@@ -75,5 +86,4 @@ object NamespaceEntityDef {
     fun getRef(entity: NamespaceDto): EntityRef {
         return EntityRef.create(definition.typeId, entity.id)
     }
-
 }

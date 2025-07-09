@@ -20,6 +20,7 @@ import ru.citeck.launcher.core.namespace.runtime.NamespaceRuntime
 import ru.citeck.launcher.core.namespace.runtime.docker.DockerApi
 import ru.citeck.launcher.core.namespace.volume.VolumeInfo
 import ru.citeck.launcher.core.namespace.volume.VolumesRepo
+import ru.citeck.launcher.core.snapshot.WorkspaceSnapshots
 import ru.citeck.launcher.core.utils.prop.MutProp
 import ru.citeck.launcher.core.workspace.WorkspaceConfig
 import ru.citeck.launcher.core.workspace.WorkspaceDto
@@ -49,6 +50,7 @@ class WorkspaceServices(
     val actionsService: ActionsService get() = launcherServices.actionsService
     val database: Database get() = launcherServices.database
     val cloudConfigServer: CloudConfigServer get() = launcherServices.cloudConfigServer
+    val snapshotsService: WorkspaceSnapshots by lazy { WorkspaceSnapshots() }
 
     private lateinit var workspaceStateRepo: DataRepo
     val selectedNamespace = MutProp<NamespaceDto?>(null)
@@ -60,6 +62,7 @@ class WorkspaceServices(
         entitiesService.init(launcherServices)
         entitiesService.register(NamespaceEntityDef.definition)
         entitiesService.register(getVolumeEntityDef())
+        snapshotsService.init(this)
 
         bundlesService.init(this)
         namespacesService.init(this)

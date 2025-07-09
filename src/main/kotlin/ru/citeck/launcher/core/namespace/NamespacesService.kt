@@ -4,6 +4,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import ru.citeck.launcher.core.WorkspaceServices
 import ru.citeck.launcher.core.namespace.gen.NamespaceGenerator
 import ru.citeck.launcher.core.namespace.runtime.NamespaceRuntime
+import ru.citeck.launcher.core.utils.ActionStatus
 import ru.citeck.launcher.core.utils.Disposable
 import ru.citeck.launcher.core.workspace.WorkspacesService
 import java.nio.file.Path
@@ -60,6 +61,19 @@ class NamespacesService : Disposable {
             registerNsRuntime(it.entity)
         }
         services.entitiesService.events.addEntityCreatedListener(NamespaceDto::class) { event ->
+            if (event.entity.snapshot.isNotEmpty()) {
+                val actionStatus = ActionStatus.getCurrentStatus()
+                val namespaceRef = NamespaceRef(services.workspace.id, event.entity.id)
+                val snapshotFile = services.snapshotsService.getSnapshot(
+                    event.entity.snapshot,
+                    actionStatus.subStatus(0.8f)
+                ).get()
+                services.dockerApi.importSnapshot(
+                    namespaceRef,
+                    snapshotFile,
+                    actionStatus.subStatus(0.2f)
+                )
+            }
             registerNsRuntime(event.entity)
             services.setSelectedNamespace(event.entity.id)
         }

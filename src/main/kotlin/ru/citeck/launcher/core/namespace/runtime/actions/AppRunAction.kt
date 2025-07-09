@@ -405,18 +405,14 @@ class AppRunAction(
         if (srcName.contains(File.separator)) {
             return Bind.parse(volume)
         }
-        val volumeNameInNamespace = nsRuntime.namePrefix +
-            "volume" +
-            DockerConstants.NAME_DELIM +
-            srcName +
-            nsRuntime.nameSuffix
+        val volumeNameInNamespace = DockerConstants.getVolumeName(srcName, nsRuntime.namespaceRef)
         createVolumeIfNotExists(runtime, srcName, volumeNameInNamespace)
 
         return Bind.parse(volume.replaceFirst(srcName, volumeNameInNamespace))
     }
 
     private fun createVolumeIfNotExists(runtime: AppRuntime, srcName: String, name: String): String {
-        val volumeExists = dockerApi.getVolumeByName(name) != null
+        val volumeExists = dockerApi.getVolumeByNameOrNull(name) != null
         if (!volumeExists) {
             log.info { "Create new volume '$name'" }
             dockerApi.createVolume(runtime.nsRuntime.namespaceRef, srcName, name)

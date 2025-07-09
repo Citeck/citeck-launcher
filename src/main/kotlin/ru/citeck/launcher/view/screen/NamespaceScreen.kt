@@ -37,6 +37,7 @@ import ru.citeck.launcher.core.namespace.volume.VolumeInfo
 import ru.citeck.launcher.core.secrets.auth.AuthSecret
 import ru.citeck.launcher.core.utils.ActionStatus
 import ru.citeck.launcher.core.utils.CompressionAlg
+import ru.citeck.launcher.core.utils.file.FileUtils
 import ru.citeck.launcher.view.action.ActionDesc
 import ru.citeck.launcher.view.action.ActionIcon
 import ru.citeck.launcher.view.action.CiteckIconAction
@@ -352,7 +353,7 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
                         SystemDumpUtils.dumpSystemInfo()
                     }
                 )
-                /*CiteckIconAction(
+                CiteckIconAction(
                     coroutineScope,
                     modifier = Modifier.fillMaxHeight(),
                     actionDesc = ActionDesc(
@@ -368,7 +369,7 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
                                     nsRuntime.namespaceRef,
                                     NamespacesService.getNamespaceDir(nsRuntime.namespaceRef)
                                         .resolve("snapshots")
-                                        .resolve(SimpleDateFormat("yy-MM-dd_HH-mm").format(Date.from(Instant.now()))),
+                                        .resolve(FileUtils.createNameWithCurrentDateTime()),
                                     CompressionAlg.XZ,
                                     status
                                 )
@@ -378,7 +379,7 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
                             closeLoading()
                         }
                     }
-                )*/
+                )
             }
         }
         Column(modifier = Modifier.fillMaxHeight().border(1.dp, Color.Black)) {
@@ -492,7 +493,7 @@ private fun renderApps(
                         modifier = Modifier.width(portsWidth)
                     ) {
                         Text(
-                            text = ports.first().toString() + "...",
+                            text = ports.first().toString() + " ..",
                             maxLines = 1
                         )
                     }
@@ -530,7 +531,8 @@ private fun renderApps(
                                 application.stop(manual = true)
                             }
                         )
-                    } else if (!runtimeStatus.value.isStoppingState()) {
+                    }
+                    if (!runtimeStatus.value.isStoppingState() && !appStatus.value.isStartingState()) {
                         CiteckIconAction(
                             coroutineScope,
                             modifier = Modifier.fillMaxHeight(),

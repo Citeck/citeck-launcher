@@ -38,18 +38,21 @@ object GlobalLoadingDialog {
                 ) {
                     Column(modifier = Modifier.padding(top = 30.dp, start = 10.dp, end = 10.dp, bottom = 30.dp)) {
                         Text(
-                            "Loading...", textAlign = TextAlign.Center, fontSize = 1.2.em,
+                            "Please, wait...", textAlign = TextAlign.Center, fontSize = 1.2.em,
                             modifier = Modifier.fillMaxWidth().padding(start = 30.dp, end = 30.dp)
                         )
                         if (params.status != null) {
-                            Spacer(Modifier.height(10.dp))
                             val status = rememberMutProp(params.status)
-                            Text(
-                                "(${status.value.progressInPercent}%) ${status.value.message}", textAlign = TextAlign.Center, fontSize = 1.2.em,
-                                modifier = Modifier.fillMaxWidth().padding(start = 30.dp, end = 30.dp)
-                            )
+                            if (status.value.message.isNotEmpty()) {
+                                Spacer(Modifier.height(10.dp))
+                                Text(
+                                    "(${status.value.progressInPercent}%) ${status.value.message}",
+                                    textAlign = TextAlign.Center,
+                                    fontSize = 1.2.em,
+                                    modifier = Modifier.fillMaxWidth().padding(start = 30.dp, end = 30.dp)
+                                )
+                            }
                         }
-
                     }
                 }
             }

@@ -18,8 +18,22 @@ enum class AppRuntimeStatus {
 
     RUNNING; // final
 
+    companion object {
+        private val STARTING_STATUSES = setOf(
+            READY_TO_PULL,
+            PULLING,
+            READY_TO_START,
+            STARTING,
+            RUNNING
+        )
+    }
+
     fun isStoppingState(): Boolean {
         return this == READY_TO_STOP || this == STOPPING || this == STOPPED
+    }
+
+    fun isStartingState(): Boolean {
+        return STARTING_STATUSES.contains(this)
     }
 
     fun isStalledState(): Boolean {

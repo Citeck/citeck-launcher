@@ -10,6 +10,25 @@ class ActionStatus(
         fun of(message: String, progress: Float): ActionStatus {
             return ActionStatus(message, progress)
         }
+        private val currentStatus = ThreadLocal<Mut>()
+
+        fun <T> doWithStatus(status: Mut = Mut(), action: (actionStatus: Mut) -> T): T {
+            val statusBefore = currentStatus.get()
+            currentStatus.set(status)
+            try {
+                return action.invoke(status)
+            } finally {
+                if (statusBefore == null) {
+                    currentStatus.remove()
+                } else {
+                    currentStatus.set(statusBefore)
+                }
+            }
+        }
+
+        fun getCurrentStatus(): Mut {
+            return currentStatus.get() ?: Mut()
+        }
     }
 
     val progressInPercent: Float
@@ -20,6 +39,8 @@ class ActionStatus(
 
     class Mut : MutProp<ActionStatus>(ActionStatus()) {
 
+        var subStatusWatcher = Disposable.NONE
+
         var message: String
             set(value) { this.value = this.value.withMessage(value) }
             get() = this.value.message
@@ -27,6 +48,16 @@ class ActionStatus(
         var progress: Float
             set(value) { this.value = this.value.withProgress(value) }
             get() = this.value.progress
+
+        fun subStatus(amount: Float): Mut {
+            subStatusWatcher.dispose()
+            val subStatus = Mut()
+            val baseProgress = progress
+            subStatusWatcher = subStatus.watch { _, newStatus ->
+                set(newStatus.message, baseProgress + amount * newStatus.progress)
+            }
+            return subStatus
+        }
 
         fun addProgress(amount: Float) {
             this.value = this.value.withProgress(progress + amount)

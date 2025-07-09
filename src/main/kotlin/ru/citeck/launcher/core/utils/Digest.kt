@@ -9,6 +9,11 @@ class Digest private constructor(private val digest: MessageDigest) {
         fun sha256(): Digest = Digest(MessageDigest.getInstance("SHA-256"))
     }
 
+    fun update(value: ByteArray, offset: Int, len: Int): Digest {
+        digest.update(value, offset, len)
+        return this
+    }
+
     fun update(value: Any?): Digest {
         if (value == null) {
             digest.update(ElementType.NULL.bytes)

@@ -22,7 +22,7 @@ class VolumesRepo(
     }
 
     override fun get(id: String): VolumeInfo? {
-        return dockerApi.getVolumeByName(id)?.toInfo()
+        return dockerApi.getVolumeByNameOrNull(id)?.toInfo()
     }
 
     override fun delete(id: String) {

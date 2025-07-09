@@ -6,7 +6,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -16,14 +19,21 @@ import androidx.compose.ui.unit.em
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.launch
 import ru.citeck.launcher.core.LauncherServices
+import ru.citeck.launcher.core.WorkspaceServices
+import ru.citeck.launcher.core.config.bundle.BundleRef
 import ru.citeck.launcher.core.namespace.NamespaceDto
 import ru.citeck.launcher.core.namespace.NamespaceEntityDef
+import ru.citeck.launcher.core.utils.ActionStatus
 import ru.citeck.launcher.core.utils.data.DataValue
+import ru.citeck.launcher.core.workspace.WorkspaceConfig.FastStartVariant
 import ru.citeck.launcher.core.workspace.WorkspaceDto
 import ru.citeck.launcher.core.workspace.WorkspaceEntityDef
+import ru.citeck.launcher.view.dialog.GlobalErrorDialog
+import ru.citeck.launcher.view.dialog.GlobalLoadingDialog
 import ru.citeck.launcher.view.dialog.GlobalMessageDialog
-import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog
 import ru.citeck.launcher.view.drawable.CpImage
+import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog
+import ru.citeck.launcher.view.utils.rememberMutProp
 import java.util.concurrent.Executors
 
 val coroutineContext = Executors.newFixedThreadPool(1).asCoroutineDispatcher()
@@ -75,7 +85,8 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 val workspaceServices = launcherServices.getWorkspaceServices()
-                var defaultBundleRef = workspaceServices.workspaceConfig.value.defaultBundleRef
+                val workspaceConfig = workspaceServices.workspaceConfig.value
+                var defaultBundleRef = workspaceConfig.defaultBundleRef
                 if (defaultBundleRef.key == "LATEST") {
                     defaultBundleRef = workspaceServices.bundlesService
                         .getLatestRepoBundle(defaultBundleRef.repo)
@@ -85,50 +96,9 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                     workspaceServices.entitiesService.find(NamespaceDto::class, 3)
                 }
                 if (existingNamespaces.isEmpty()) {
-                    Button(
-                        modifier = Modifier.fillMaxWidth().height(250.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        onClick = {
-                            if (workspaceServices.entitiesService.getFirst(NamespaceDto::class) != null) {
-                                coroutineScope.launch {
-                                    GlobalMessageDialog.show(
-                                        "Workspace already has namespaces\nFast start is disabled."
-                                    )
-                                }
-                            } else {
-                                workspaceServices.entitiesService.createWithData(
-                                    NamespaceDto.Builder()
-                                        .withName("Citeck Default")
-                                        .withBundleRef(defaultBundleRef)
-                                        .build()
-                                )
-                                val runtime = workspaceServices.getCurrentNsRuntime()
-                                if (runtime == null) {
-                                    coroutineScope.launch {
-                                        GlobalMessageDialog.show("Namespace runtime is null")
-                                    }
-                                } else {
-                                    runtime.updateAndStart()
-                                }
-                            }
-                        }
-                    ) {
-                        Box {
-                            Text(
-                                "Fast Start",
-                                fontSize = 2.em,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.fillMaxWidth().align(Alignment.Center)
-                            )
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Text(
-                                defaultBundleRef.toString(),
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.fillMaxWidth().align(Alignment.Center).padding(top = 60.dp)
-                            )
-                        }
+                    Column(Modifier.fillMaxWidth().height(250.dp)) {
+                        renderFastStartButtons(workspaceServices, defaultBundleRef)
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
                 } else {
                     for (namespace in existingNamespaces) {
                         Button(
@@ -153,7 +123,7 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                                 )
                             }
                         }
-                        Spacer(modifier = Modifier.height(8.dp))
+                        buttonsSpacer()
                     }
                 }
                 Button(
@@ -178,8 +148,8 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                 "logo/slsoft_full_logo.svg",
                 contentScale = ContentScale.FillHeight,
                 modifier = Modifier.padding(start = 10.dp, bottom = 5.dp)
-                .requiredHeight(100.dp)
-                .align(Alignment.BottomStart)
+                    .requiredHeight(100.dp)
+                    .align(Alignment.BottomStart)
             )
             CpImage(
                 "logo/citeck_full_logo.svg",
@@ -187,6 +157,105 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                 modifier = Modifier.padding(bottom = 29.dp, end = 10.dp)
                     .requiredHeight(50.dp)
                     .align(Alignment.BottomEnd)
+            )
+        }
+    }
+}
+
+@Composable
+private fun ColumnScope.renderFastStartButtons(workspaceServices: WorkspaceServices, defaultBundleRef: BundleRef) {
+
+    val fastStartVariants = rememberMutProp(workspaceServices.workspaceConfig) { config ->
+        var variants: List<FastStartVariant> = config.fastStartVariants.ifEmpty {
+            listOf(
+                FastStartVariant(
+                    "Fast Start",
+                    bundleRef = defaultBundleRef
+                )
+            )
+        }
+
+        variants = variants.map { variant ->
+            variant.copy(
+                bundleRef = variant.bundleRef.ifEmpty { defaultBundleRef }
+            )
+        }
+        variants
+    }
+
+    for ((idx, variant) in fastStartVariants.value.withIndex()) {
+        renderFastStartButton(workspaceServices, variant, idx == 0)
+        buttonsSpacer()
+    }
+}
+
+@Composable
+private fun buttonsSpacer() {
+    Spacer(modifier = Modifier.height(8.dp))
+}
+
+@Composable
+private fun ColumnScope.renderFastStartButton(
+    workspaceServices: WorkspaceServices,
+    variant: FastStartVariant,
+    primary: Boolean
+) {
+    val coroutineScope = rememberCoroutineScope()
+    Button(
+        modifier = Modifier.fillMaxWidth().weight(if (primary) 0.7f else 0.3f),
+        shape = RoundedCornerShape(16.dp),
+        onClick = {
+            if (workspaceServices.entitiesService.getFirst(NamespaceDto::class) != null) {
+                coroutineScope.launch {
+                    GlobalMessageDialog.show(
+                        "Workspace already has namespaces\nFast start is disabled."
+                    )
+                }
+            } else {
+                Thread.ofPlatform().start {
+                    ActionStatus.doWithStatus { actionStatus ->
+                        val closeLoadingDialog = GlobalLoadingDialog.show(actionStatus)
+                        try {
+                            workspaceServices.entitiesService.createWithData(
+                                NamespaceDto.Builder()
+                                    .withName("Citeck Default")
+                                    .withBundleRef(variant.bundleRef)
+                                    .withSnapshot(variant.snapshot)
+                                    .build()
+                            )
+                            val runtime = workspaceServices.getCurrentNsRuntime()
+                            if (runtime == null) {
+                                coroutineScope.launch {
+                                    GlobalMessageDialog.show("Namespace runtime is null")
+                                }
+                            } else {
+                                runtime.updateAndStart()
+                            }
+                        } catch (e: Throwable) {
+                            GlobalErrorDialog.show(GlobalErrorDialog.Params(e) {})
+                        } finally {
+                            closeLoadingDialog()
+                        }
+                    }
+                }
+            }
+        }
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth()
+                .align(Alignment.CenterVertically)
+        ) {
+            Text(
+                variant.name,
+                fontSize = if (primary) 1.7.em else 1.em,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(5.dp))
+            Text(
+                variant.bundleRef.toString(),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
             )
         }
     }

@@ -8,27 +8,21 @@ import ru.citeck.launcher.core.namespace.runtime.docker.DockerLabels
 import ru.citeck.launcher.core.utils.ZipUtils
 import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.file.CiteckFiles
+import ru.citeck.launcher.core.utils.file.FileUtils
 import ru.citeck.launcher.core.utils.json.Json
 import ru.citeck.launcher.view.dialog.GlobalLoadingDialog
 import java.awt.Desktop
-import java.io.File
 import java.io.PrintWriter
 import java.lang.management.LockInfo
 import java.lang.management.ThreadInfo
-import java.nio.file.FileVisitResult
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.attribute.BasicFileAttributes
 import java.text.SimpleDateFormat
 import java.time.Duration
 import java.time.Instant
 import java.util.*
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
 import kotlin.io.path.exists
-import kotlin.io.path.inputStream
 import kotlin.io.path.outputStream
-import kotlin.io.path.visitFileTree
 
 object SystemDumpUtils {
 
@@ -57,9 +51,7 @@ object SystemDumpUtils {
         val reportDir = AppDir.PATH.resolve("reports").resolve(timestamp)
         reportDir.toFile().mkdirs()
 
-        val reportFileName = "launcher-dump_" +
-            SimpleDateFormat("yy-MM-dd_HH-mm").format(Date.from(Instant.now())) +
-            ".zip"
+        val reportFileName = "launcher-dump_" + FileUtils.createNameWithCurrentDateTime() + ".zip"
 
         val reportTargetFile = reportDir.resolve(reportFileName).toFile()
 

@@ -9,6 +9,7 @@ import ru.citeck.launcher.core.utils.json.Json
 class NamespaceDto(
     val id: String,
     val name: String,
+    val snapshot: String,
     val authentication: AuthenticationProps,
     val bundleRef: BundleRef,
     val pgAdmin: PgAdminProps,
@@ -31,6 +32,7 @@ class NamespaceDto(
 
         var id: String = ""
         var name: String = ""
+        var snapshot: String = ""
         var authentication: AuthenticationProps = AuthenticationProps.DEFAULT
         var bundleRef: BundleRef = BundleRef.EMPTY
         var pgAdmin: PgAdminProps = PgAdminProps.DEFAULT
@@ -43,6 +45,7 @@ class NamespaceDto(
         constructor(props: NamespaceDto) : this() {
             id = props.id
             name = props.name
+            snapshot = props.snapshot
             authentication = props.authentication
             bundleRef = props.bundleRef
             pgAdmin = props.pgAdmin
@@ -60,6 +63,11 @@ class NamespaceDto(
 
         fun withName(name: String): Builder {
             this.name = name
+            return this
+        }
+
+        fun withSnapshot(snapshot: String): Builder {
+            this.snapshot = snapshot
             return this
         }
 
@@ -98,14 +106,11 @@ class NamespaceDto(
             return this
         }
 
-        //@JvmOverloads
-        fun build(/*validate: Boolean = true*/): NamespaceDto {
-            /*            if (validate) {
-                            nameValidator.validate(name)
-                        }*/
+        fun build(): NamespaceDto {
             return NamespaceDto(
                 id = id,
                 name = name,
+                snapshot = snapshot,
                 authentication = authentication,
                 bundleRef = bundleRef,
                 pgAdmin = pgAdmin,

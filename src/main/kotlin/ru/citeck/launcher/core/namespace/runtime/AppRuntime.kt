@@ -31,10 +31,16 @@ class AppRuntime(
         private val connectionsIdCounter = AtomicLong()
     }
 
-    val status = MutProp(AppRuntimeStatus.STOPPED)
+    val status = MutProp("${def.name}-status", AppRuntimeStatus.STOPPED)
     val statusText = MutProp("")
     @Volatile
     var activeActionPromise: Promise<*> = Promises.resolve(Unit)
+        set(newValue) {
+            if (!field.isDone()) {
+                field.cancel(true)
+            }
+            field = newValue
+        }
 
     val def = MutProp(def)
 
@@ -71,7 +77,6 @@ class AppRuntime(
                 } else {
                     status.value = AppRuntimeStatus.READY_TO_START
                 }
-                activeActionPromise.cancel(true)
             }
         }
         status.watch { before, after ->
@@ -112,7 +117,6 @@ class AppRuntime(
             manualStop = true
         }
         status.value = AppRuntimeStatus.READY_TO_STOP
-        activeActionPromise.cancel(true)
     }
 
     fun watchLogs(tail: Int, logsCallback: (String) -> Unit): AutoCloseable {

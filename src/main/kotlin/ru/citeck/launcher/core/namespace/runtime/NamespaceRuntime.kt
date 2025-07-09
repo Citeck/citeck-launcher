@@ -16,6 +16,7 @@ import ru.citeck.launcher.core.namespace.runtime.actions.AppRunAction
 import ru.citeck.launcher.core.namespace.runtime.actions.AppStopAction
 import ru.citeck.launcher.core.namespace.runtime.docker.DockerApi
 import ru.citeck.launcher.core.namespace.runtime.docker.DockerConstants
+import ru.citeck.launcher.core.namespace.runtime.docker.exception.DockerStaleNetworkException
 import ru.citeck.launcher.core.utils.Digest
 import ru.citeck.launcher.core.utils.Disposable
 import ru.citeck.launcher.core.utils.file.CiteckFiles
@@ -54,8 +55,6 @@ class NamespaceRuntime(
         private const val STATE_EDITED_APPS = "editedApps" // map<name, config>
         private const val STATE_EDITED_AND_LOCKED_APPS = "editedAndLockedApps" // set<name>
 
-        private const val NAME_PREFIX = "citeck${DockerConstants.NAME_DELIM}"
-
         private val RT_THREAD_IDLE_DELAY_SECONDS = listOf(1, 2, 3, 5, 8, 10)
     }
 
@@ -75,7 +74,7 @@ class NamespaceRuntime(
     @Volatile
     private var isRuntimeThreadRunning = AtomicBoolean()
 
-    val namePrefix = NAME_PREFIX
+    val namePrefix = DockerConstants.getNamePrefix(namespaceRef)
     val nameSuffix = DockerConstants.getNameSuffix(namespaceRef)
     val networkName = "${namePrefix}network$nameSuffix"
     val boundedNs = MutProp(true)
@@ -138,6 +137,11 @@ class NamespaceRuntime(
                             } catch (e: Throwable) {
                                 if (e !is InterruptedException) {
                                     log.error(e) { "Exception in namespace runtime thread" }
+                                    try {
+                                        Thread.sleep(3000)
+                                    } catch (_: InterruptedException) {
+                                        //do nothing
+                                    }
                                 }
                             }
                         }
@@ -216,7 +220,6 @@ class NamespaceRuntime(
                 generateNs(gitUpdatePolicy)
                 appRuntimes.value.forEach {
                     if (!it.manualStop) {
-                        it.activeActionPromise.cancel(true)
                         it.start()
                     }
                 }
@@ -227,7 +230,6 @@ class NamespaceRuntime(
             NsRuntimeActionType.STOP -> {
                 status.value = NsRuntimeStatus.STOPPING
                 appRuntimes.value.forEach {
-                    it.activeActionPromise.cancel(true)
                     it.stop()
                 }
                 flushRuntimeThread()
@@ -259,9 +261,7 @@ class NamespaceRuntime(
         }
 
         for (application in appRuntimes.value) {
-            if (!application.activeActionPromise.isDone()) {
-                continue
-            }
+
             when (application.status.value) {
                 AppRuntimeStatus.READY_TO_PULL -> {
 
@@ -330,7 +330,15 @@ class NamespaceRuntime(
         val statusChangesCount = this.appsStatusChangesCount.get()
         if (status.value != NsRuntimeStatus.STALLED && appsStatusChangesCountProcessed != statusChangesCount) {
 
-            if (appRuntimes.value.any { it.status.value.isStalledState() }) {
+            val stalledStates = appRuntimes.value.mapNotNull {
+                if (it.status.value.isStalledState()) {
+                    it.name to it.status.value
+                } else {
+                    null
+                }
+            }
+            if (stalledStates.isNotEmpty()) {
+                log.error { "Found containers in stalled state: $stalledStates. Namespace is stalled" }
                 status.value = NsRuntimeStatus.STALLED
                 currentActionFuture?.completeExceptionally(RuntimeException("Namespace stalled"))
                 resetCurrentActionState()
@@ -348,7 +356,18 @@ class NamespaceRuntime(
 
                     NsRuntimeStatus.STOPPING -> {
                         if (appRuntimes.value.all { it.status.value == AppRuntimeStatus.STOPPED }) {
-                            dockerApi.deleteNetwork(networkName)
+                            try {
+                                dockerApi.deleteNetwork(networkName)
+                            } catch (_: DockerStaleNetworkException) {
+                                log.warn {
+                                    """
+                                    Failed to remove Docker network '$networkName': Docker reports the network has active endpoints, but no containers are attached.
+                                    This is likely caused by stale internal Docker state (e.g., orphaned endpoints or network namespaces).
+                                    You can try to remove network manually using 'docker network rm $networkName' or try to restart your system.
+                                    This is not a critical error — the launcher will continue using this network in future runs without issues.
+                                    """.trimIndent()
+                                }
+                            }
                             status.value = NsRuntimeStatus.STOPPED
                             resetCurrentActionState()
                         }

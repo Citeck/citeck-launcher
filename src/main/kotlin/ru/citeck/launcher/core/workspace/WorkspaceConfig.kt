@@ -7,7 +7,7 @@ import java.time.Duration
 
 data class WorkspaceConfig(
     val defaultBundleRef: BundleRef,
-    val defaultSnapshot: String = "",
+    val fastStartVariants: List<FastStartVariant> = emptyList(),
     val imageRepos: List<ImageRepo>,
     val bundleRepos: List<BundlesRepo>,
     val defaultWebappProps: NamespaceDto.WebappProps = NamespaceDto.WebappProps.DEFAULT,
@@ -51,7 +51,14 @@ data class WorkspaceConfig(
         val id: String,
         val name: String,
         val url: String,
+        val size: String,
         val sha256: String
+    )
+
+    data class FastStartVariant(
+        val name: String,
+        val snapshot: String = "",
+        val bundleRef: BundleRef = BundleRef.EMPTY
     )
 
     enum class ImageRepoAuth {

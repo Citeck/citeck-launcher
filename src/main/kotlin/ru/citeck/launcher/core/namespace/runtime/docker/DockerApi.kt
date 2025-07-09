@@ -13,6 +13,7 @@ import com.github.dockerjava.api.model.HostConfig
 import com.github.dockerjava.api.model.Network
 import io.github.oshai.kotlinlogging.KotlinLogging
 import ru.citeck.launcher.core.namespace.NamespaceRef
+import ru.citeck.launcher.core.namespace.runtime.docker.exception.DockerStaleNetworkException
 import ru.citeck.launcher.core.snapshot.NamespaceSnapshotMeta
 import ru.citeck.launcher.core.snapshot.VolumeSnapshotMeta
 import ru.citeck.launcher.core.utils.ActionStatus
@@ -24,11 +25,13 @@ import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.TimeUnit
+import java.util.zip.ZipFile
 import kotlin.io.path.absolutePathString
+import kotlin.io.path.deleteExisting
+import kotlin.io.path.exists
 import kotlin.io.path.name
+import kotlin.io.path.outputStream
 
-// inspect volume data
-// docker run -it --rm -v citeck-volume-zookeeper-cv45o7y-DEFAULT:/volume  busybox:1.37 sh
 class DockerApi(
     private val client: DockerClient
 ) {
@@ -53,7 +56,7 @@ class DockerApi(
 
     // +++ VOLUMES +++
 
-    fun getVolumeByName(name: String): InspectVolumeResponse? {
+    fun getVolumeByNameOrNull(name: String): InspectVolumeResponse? {
         return client.listVolumesCmd()
             .withFilter("name", listOf(name)).exec()
             .volumes.firstOrNull()
@@ -135,7 +138,11 @@ class DockerApi(
                 "Name: $containerName State: $containerState"
         }
         try {
-            client.stopContainerCmd(containerId).withTimeout(GRACEFUL_SHUTDOWN_SECONDS).exec()
+            try {
+                client.stopContainerCmd(containerId).withTimeout(GRACEFUL_SHUTDOWN_SECONDS).exec()
+            } catch (_: NotFoundException) {
+                // do nothing
+            }
             val waitUntil = System.currentTimeMillis() + (GRACEFUL_SHUTDOWN_SECONDS + 2) * 1000
             var successfullyStopped = false
             while (System.currentTimeMillis() < waitUntil) {
@@ -232,14 +239,127 @@ class DockerApi(
 
     fun deleteNetwork(name: String) {
         val network = getNetworkByName(name) ?: return
-        client.removeNetworkCmd(network.id).exec()
+        try {
+            client.removeNetworkCmd(network.id).exec()
+        } catch (e: DockerException) {
+            if ((e.message ?: "").contains("has active endpoints") && network.containers.isEmpty()) {
+                throw DockerStaleNetworkException(e)
+            } else {
+                throw e
+            }
+        }
+    }
+
+    fun importSnapshot(nsRef: NamespaceRef, snapshot: Path, actionStatus: ActionStatus.Mut) {
+        log.info { "Snapshot importing started. Namespace: $nsRef Snapshot: $snapshot" }
+        if (!snapshot.exists()) {
+            error("Snapshot file does not exist: ${snapshot.absolutePathString()}")
+        }
+        checkUtilsImage(actionStatus)
+        ZipFile(snapshot.toFile()).use { zip ->
+            actionStatus.set("Read meta", 0.01f)
+            val metaEntry = zip.getEntry("meta.json")
+            if (metaEntry == null) {
+                error("Invalid snapshot: ${snapshot.absolutePathString()}. meta.json is not present")
+            }
+            val snapshotMeta = zip.getInputStream(metaEntry).use { input ->
+                Json.read(input, NamespaceSnapshotMeta::class)
+            }
+            log.info { "Snapshot meta: ${Json.toString(snapshotMeta)}" }
+            val outDir = snapshot.parent.resolve(snapshot.toFile().name + "_import")
+            outDir.toFile().mkdir()
+            try {
+                actionStatus.set("Check volumes", 0.05f)
+                for (volume in snapshotMeta.volumes) {
+                    val volumeNameInNs = DockerConstants.getVolumeName(volume.name, nsRef)
+                    if (getVolumeByNameOrNull(volumeNameInNs) != null) {
+                        error("Volume $volumeNameInNs already exists")
+                    }
+                }
+                actionStatus.set("Import volumes data", 0.1f)
+                val progressForOneVolume = 0.9f / snapshotMeta.volumes.size
+                for (volume in snapshotMeta.volumes) {
+                    actionStatus.message = "Import '${volume.name}'"
+                    val dataEntry = zip.getEntry(volume.dataFile)
+                    if (dataEntry == null) {
+                        log.warn { "Volume listed in snapshot meta, but doesn't exists in archive: ${volume.dataFile}" }
+                        actionStatus.addProgress(progressForOneVolume)
+                        continue
+                    }
+                    log.info { "Extract ${volume.dataFile} to temp dir" }
+                    val extractedVolumeDataFile = outDir.resolve(volume.dataFile)
+                    zip.getInputStream(dataEntry).use { volumeDataStream ->
+                        extractedVolumeDataFile.outputStream().use { fileOut ->
+                            volumeDataStream.copyTo(fileOut)
+                        }
+                    }
+                    val volumeNameInNs = DockerConstants.getVolumeName(volume.name, nsRef)
+                    createVolume(nsRef, volume.name, volumeNameInNs)
+
+                    val srcArchive = "/source/${volume.dataFile}"
+                    execWithUtils("tar -xf $srcArchive -C ./dest",
+                        listOf(
+                            "$volumeNameInNs:/dest",
+                            "${extractedVolumeDataFile.absolutePathString()}:$srcArchive"
+                        )
+                    )
+
+                    actionStatus.addProgress(progressForOneVolume)
+
+                    extractedVolumeDataFile.deleteExisting()
+                }
+            } finally {
+                outDir.toFile().deleteRecursively()
+            }
+        }
+    }
+
+    private fun checkUtilsImage(status: ActionStatus.Mut) {
+        if (inspectImageOrNull(UTILS_IMAGE) != null) {
+            return
+        }
+        status.message = "Pull utils image"
+        log.info { "Image $UTILS_IMAGE is not exists locally. Let's pull it" }
+        val pullStartedAt = System.currentTimeMillis()
+        pullImage(UTILS_IMAGE).start().awaitCompletion(60, TimeUnit.SECONDS)
+        log.info { "Pull completed in ${System.currentTimeMillis() - pullStartedAt}ms" }
+        status.message = "Utils pull completed"
+    }
+
+    private fun execWithUtils(command: String, volumes: List<String>) {
+        log.info { "Execute utils command: $command" }
+        val execStartedAt = System.currentTimeMillis()
+        val container: CreateContainerResponse = client.createContainerCmd(UTILS_IMAGE)
+            .withCmd("/bin/sh", "-c", command)
+            .withHostConfig(
+                HostConfig.newHostConfig()
+                    .withBinds( volumes.map { Bind.parse(it) })
+            ).withLabels(
+                mapOf(
+                    DockerLabels.LAUNCHER_LABEL_PAIR
+                )
+            ).exec()
+
+        client.startContainerCmd(container.id).exec()
+        val statusCode = client.waitContainerCmd(container.id).start().awaitStatusCode(1, TimeUnit.MINUTES)
+        if (statusCode == 0) {
+            log.info {
+                "Command successfully completed " +
+                    "in ${System.currentTimeMillis() - execStartedAt}ms"
+            }
+        } else {
+            log.error { "===== Command completed with non-zero status code: $statusCode. Container logs: =====" }
+            consumeLogs(container.id, 100_000, Duration.ofSeconds(10)) { msg -> log.warn { msg } }
+            log.error { "===== End of command container logs =====" }
+        }
+        removeContainer(container.id)
     }
 
     fun exportSnapshot(
         nsRef: NamespaceRef,
         targetFile: Path,
         alg: CompressionAlg,
-        actionStatus: ActionStatus.Mut = ActionStatus.Mut()
+        actionStatus: ActionStatus.Mut
     ) {
 
         actionStatus.message = "initialization"
@@ -265,13 +385,7 @@ class DockerApi(
 
         actionStatus.progress = 0.02f
 
-        if (inspectImageOrNull(UTILS_IMAGE) == null) {
-            actionStatus.message = "Pull utils image"
-            log.info { "Image $UTILS_IMAGE is not exists locally. Let's pull it" }
-            val pullStartedAt = System.currentTimeMillis()
-            pullImage(UTILS_IMAGE).start().awaitCompletion(60, TimeUnit.SECONDS)
-            log.info { "Pull completed in ${System.currentTimeMillis() - pullStartedAt}ms" }
-        }
+        checkUtilsImage(actionStatus)
 
         actionStatus.progress = 0.1f
 
@@ -279,6 +393,14 @@ class DockerApi(
         if (!targetZipFile.name.endsWith(".zip")) {
             targetZipFile = targetZipFile.parent.resolve(targetFile.name + ".zip")
         }
+        if (targetZipFile.exists()) {
+            var newNameCounter = 1
+            val baseName = targetFile.name.substringBeforeLast('.')
+            while (targetZipFile.exists()) {
+                targetZipFile = targetZipFile.parent.resolve(baseName + "_" + (newNameCounter++) + ".zip")
+            }
+        }
+
         val dirToExport = targetFile.parent.resolve(targetZipFile.name + "_files")
         dirToExport.toFile().mkdirs()
 
@@ -303,42 +425,18 @@ class DockerApi(
                 actionStatus.message = "Create backup for '$originalName'"
 
                 log.info { "Create backup of volume '$originalName'..." }
-                val volumeBackupStartedAt = System.currentTimeMillis()
 
                 val dataFile = FileUtils.sanitizeFileName(originalName) + ".tar.${alg.extension}"
                 volumesSnapMeta.add(VolumeSnapshotMeta(originalName, dataFile))
 
-                val container: CreateContainerResponse = client.createContainerCmd(UTILS_IMAGE)
-                    .withCmd(
-                        "/bin/sh", "-c", "cd /source && " +
-                            "find . -mindepth 1 -printf '%P\\n' | " +
-                            "tar $tarAlgParam -cvf \"/dest/${dataFile}\" -T -"
+                execWithUtils("cd /source && " +
+                    "find . -mindepth 1 -printf '%P\\n' | " +
+                    "tar $tarAlgParam -cvf \"/dest/${dataFile}\" -T -",
+                    listOf(
+                        volume.name + ":/source",
+                        "${dirToExport.absolutePathString()}:/dest"
                     )
-                    .withHostConfig(
-                        HostConfig.newHostConfig()
-                            .withBinds(
-                                Bind.parse(volume.name + ":/source"),
-                                Bind.parse("${dirToExport.absolutePathString()}:/dest"),
-                            )
-                    ).withLabels(
-                        mapOf(
-                            DockerLabels.LAUNCHER_LABEL_PAIR
-                        )
-                    ).exec()
-
-                client.startContainerCmd(container.id).exec()
-                val statusCode = client.waitContainerCmd(container.id).start().awaitStatusCode(1, TimeUnit.MINUTES)
-                if (statusCode == 0) {
-                    log.info {
-                        "Backup successfully created for $originalName " +
-                        "in ${System.currentTimeMillis() - volumeBackupStartedAt}ms"
-                    }
-                } else {
-                    log.error { "===== Backup completed with non-zero status code: $statusCode. Container logs: =====" }
-                    consumeLogs(container.id, 100_000, Duration.ofSeconds(10)) { msg -> log.warn { msg } }
-                    log.error { "===== End of backup container logs =====" }
-                }
-                removeContainer(container.id)
+                )
 
                 actionStatus.addProgress(progressForVolume)
             }
