@@ -43,7 +43,7 @@ class NamespaceGenerator {
         this.services = services
     }
 
-    fun generate(props: NamespaceDto, updatePolicy: GitUpdatePolicy): NamespaceGenResp {
+    fun generate(props: NamespaceDto, updatePolicy: GitUpdatePolicy, detachedApps: Set<String>): NamespaceGenResp {
 
         services.updateConfig(updatePolicy)
 
@@ -51,7 +51,8 @@ class NamespaceGenerator {
             props,
             services.bundlesService.getBundleByRef(props.bundleRef, updatePolicy),
             services.workspaceConfig.value,
-            HashMap(defaultAppFiles)
+            appFiles = HashMap(defaultAppFiles),
+            detachedApps = detachedApps,
         )
 
         generateMailhog(context)
@@ -90,7 +91,8 @@ class NamespaceGenerator {
             },
             context.appFiles,
             context.cloudConfig,
-            context.links
+            context.links,
+            setOf(AppName.ONLY_OFFICE)
         )
     }
 
@@ -100,7 +102,6 @@ class NamespaceGenerator {
 
     private fun generateMailhog(context: NsGenContext) {
         context.getOrCreateApp(AppName.MAILHOG)
-            .withReplicas(1)
             .withImage("mailhog/mailhog")
             .withPorts(
                 listOf(
@@ -124,13 +125,8 @@ class NamespaceGenerator {
     }
 
     private fun generateOnlyOffice(context: NsGenContext) {
-        val props = context.props.onlyOffice
-        if (!props.enabled) {
-            return
-        }
         context.getOrCreateApp(AppName.ONLY_OFFICE)
             .withImage("onlyoffice/documentserver:7.1")
-            .withReplicas(1)
             .addPort("8070:80/tcp")
             .addPort("443/tcp")
             .withResources(
@@ -186,7 +182,7 @@ class NamespaceGenerator {
         val gatewayPort = context.applications[AppName.GATEWAY]!!.getEnv("SERVER_PORT")!!.toInt()
 
         val app = context.getOrCreateApp(AppName.PROXY)
-        if (context.props.onlyOffice.enabled) {
+        if (!context.detachedApps.contains(AppName.ONLY_OFFICE)) {
             app.addEnv("ONLYOFFICE_TARGET", NsGenContext.ONLY_OFFICE_HOST)
                 .addDependsOn(AppName.ONLY_OFFICE)
         }
@@ -214,8 +210,8 @@ class NamespaceGenerator {
             )
 
         val basicAuth = context.props.authentication.users
-        if (basicAuth.isNotBlank()) {
-            app.addEnv("BASIC_AUTH_ACCESS", basicAuth)
+        if (basicAuth.isNotEmpty()) {
+            app.addEnv("BASIC_AUTH_ACCESS", basicAuth.joinToString(",") { "$it:$it" })
         }
     }
 
@@ -288,7 +284,6 @@ class NamespaceGenerator {
 
         app.withImage(webappProps.image.ifBlank { context.bundle.applications[name]?.image ?: "" })
             .withKind(kind)
-            .withReplicas(1)
             .addEnv("SERVER_PORT", port.toString())
             .addEnv("SPRING_PROFILES_ACTIVE", springProfiles.joinToString())
             .addEnv("ECOS_WEBAPP_RABBITMQ_HOST", NsGenContext.RMQ_HOST)
@@ -401,7 +396,6 @@ class NamespaceGenerator {
     private fun generateRabbitMq(context: NsGenContext) {
         context.getOrCreateApp(NsGenContext.RMQ_HOST)
             .withImage("bitnami/rabbitmq:4.0.3-debian-12-r1")
-            .withReplicas(1)
             .addPort("5672:${NsGenContext.RMQ_PORT}")
             .addPort("15672:15672")
             .addEnv("RABBITMQ_USERNAME", "admin")
@@ -430,7 +424,6 @@ class NamespaceGenerator {
     private fun generateZookeeper(context: NsGenContext) {
         context.getOrCreateApp(NsGenContext.ZK_HOST)
             .withImage("bitnami/zookeeper:3.9.3-debian-12-r3")
-            .withReplicas(1)
             .addPort("2181:${NsGenContext.ZK_PORT}")
             .addEnv("ZOO_AUTOPURGE_INTERVAL", "1")
             .addEnv("ALLOW_ANONYMOUS_LOGIN", "yes")
@@ -445,7 +438,6 @@ class NamespaceGenerator {
     private fun generatePostgres(context: NsGenContext) {
         context.getOrCreateApp(NsGenContext.PG_HOST)
             .withImage("bitnami/postgresql:13.17.0")
-            .withReplicas(1)
             .addEnv("POSTGRESQL_USERNAME", "postgres")
             .addEnv("POSTGRESQL_PASSWORD", "postgres")
             .addPort("14523:${NsGenContext.PG_PORT}")

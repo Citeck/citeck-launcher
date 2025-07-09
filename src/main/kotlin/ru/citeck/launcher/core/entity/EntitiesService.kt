@@ -321,9 +321,9 @@ class EntitiesService(
         var entityToSave = entity
         if (idType.isEmpty(id)) {
             id = generateNewId(defWithRepo)
-            entityToSave = DataValue.of(entity)
-                .set(ATT_ID, id)
-                .getAsNotNull(entity::class)
+            entityToSave = defWithRepo.definition.fromFormData(
+                defWithRepo.definition.toFormData(entity).set(ATT_ID, id)
+            )
         } else {
             if (!defWithRepo.definition.idType.isValidId(id)) {
                 error("Invalid id: '$id'")

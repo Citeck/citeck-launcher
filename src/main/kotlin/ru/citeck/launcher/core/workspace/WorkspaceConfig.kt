@@ -7,6 +7,7 @@ import java.time.Duration
 
 data class WorkspaceConfig(
     val defaultBundleRef: BundleRef,
+    val defaultNsTemplate: String = "",
     val fastStartVariants: List<FastStartVariant> = emptyList(),
     val imageRepos: List<ImageRepo>,
     val bundleRepos: List<BundlesRepo>,
@@ -14,7 +15,8 @@ data class WorkspaceConfig(
     val webapps: List<AppConfig>,
     val citeckProxy: CiteckProxy = CiteckProxy(),
     val licenses: List<LicenseInstance> = emptyList(),
-    val snapshots: List<Snapshot> = emptyList()
+    val snapshots: List<Snapshot> = emptyList(),
+    val namespaceTemplates: List<NamespaceTemplate> = emptyList()
 ) {
 
     val webappsById = webapps.associateBy { it.id }
@@ -55,10 +57,17 @@ data class WorkspaceConfig(
         val sha256: String
     )
 
+    data class NamespaceTemplate(
+        val id: String,
+        val name: String,
+        val detachedApps: Set<String> = emptySet(),
+    )
+
     data class FastStartVariant(
         val name: String,
         val snapshot: String = "",
-        val bundleRef: BundleRef = BundleRef.EMPTY
+        val bundleRef: BundleRef = BundleRef.EMPTY,
+        val template: String = ""
     )
 
     enum class ImageRepoAuth {

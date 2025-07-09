@@ -43,9 +43,9 @@ class NamespacesService : Disposable {
         this.services = services
         nsAppsGenerator.init(services)
 
-        fun registerNsRuntime(nsDto: NamespaceDto) {
+        fun registerNsRuntime(nsDto: NamespaceDto): NamespaceRuntime {
             val namespaceRef = NamespaceRef(services.workspace.id, nsDto.id)
-            namespaceRuntimes[nsDto.id] = NamespaceRuntime(
+            val runtime = NamespaceRuntime(
                 namespaceRef,
                 nsDto,
                 services.workspaceConfig,
@@ -55,12 +55,22 @@ class NamespacesService : Disposable {
                 services.database.getDataRepo(NS_RT_STATE_REPO_SCOPE, getRepoKey(namespaceRef)),
                 services.cloudConfigServer
             )
+            namespaceRuntimes[nsDto.id] = runtime
+            return runtime
         }
 
         services.entitiesService.getAll(NamespaceDto::class).forEach {
             registerNsRuntime(it.entity)
         }
         services.entitiesService.events.addEntityCreatedListener(NamespaceDto::class) { event ->
+            val nsTemplateId = event.entity.template
+            val nsTemplate = if (nsTemplateId.isEmpty()) {
+                null
+            } else {
+                services.workspaceConfig.value.namespaceTemplates.find {
+                    it.id == nsTemplateId
+                } ?: error("Unknown namespace template '$nsTemplateId'")
+            }
             if (event.entity.snapshot.isNotEmpty()) {
                 val actionStatus = ActionStatus.getCurrentStatus()
                 val namespaceRef = NamespaceRef(services.workspace.id, event.entity.id)
@@ -74,7 +84,10 @@ class NamespacesService : Disposable {
                     actionStatus.subStatus(0.2f)
                 )
             }
-            registerNsRuntime(event.entity)
+            val runtime = registerNsRuntime(event.entity)
+            if (nsTemplate != null) {
+                runtime.setDetachedApps(nsTemplate.detachedApps)
+            }
             services.setSelectedNamespace(event.entity.id)
         }
         services.entitiesService.events.addEntityDeletedListener(NamespaceDto::class) { event ->

@@ -10,10 +10,10 @@ class NamespaceDto(
     val id: String,
     val name: String,
     val snapshot: String,
+    val template: String,
     val authentication: AuthenticationProps,
     val bundleRef: BundleRef,
     val pgAdmin: PgAdminProps,
-    val onlyOffice: OnlyOfficeProps,
     val mongodb: MongoDbProps,
     val citeckProxy: ProxyProps,
     val alfresco: AlfrescoProps,
@@ -33,10 +33,10 @@ class NamespaceDto(
         var id: String = ""
         var name: String = ""
         var snapshot: String = ""
+        var template: String = ""
         var authentication: AuthenticationProps = AuthenticationProps.DEFAULT
         var bundleRef: BundleRef = BundleRef.EMPTY
         var pgAdmin: PgAdminProps = PgAdminProps.DEFAULT
-        var onlyOffice: OnlyOfficeProps = OnlyOfficeProps.DEFAULT
         var mongodb: MongoDbProps = MongoDbProps.DEFAULT
         var proxy: ProxyProps = ProxyProps.DEFAULT
         var alfresco: AlfrescoProps = AlfrescoProps.DEFAULT
@@ -46,10 +46,10 @@ class NamespaceDto(
             id = props.id
             name = props.name
             snapshot = props.snapshot
+            template = props.template
             authentication = props.authentication
             bundleRef = props.bundleRef
             pgAdmin = props.pgAdmin
-            onlyOffice = props.onlyOffice
             mongodb = props.mongodb
             proxy = props.citeckProxy
             alfresco = props.alfresco
@@ -71,6 +71,11 @@ class NamespaceDto(
             return this
         }
 
+        fun withTemplate(template: String): Builder {
+            this.template = template
+            return this
+        }
+
         fun withAuthentication(authentication: AuthenticationProps?): Builder {
             this.authentication = authentication ?: DEFAULT.authentication
             return this
@@ -78,11 +83,6 @@ class NamespaceDto(
 
         fun withBundleRef(bundleRef: BundleRef?): Builder {
             this.bundleRef = bundleRef ?: DEFAULT.bundleRef
-            return this
-        }
-
-        fun withOnlyOffice(onlyOffice: OnlyOfficeProps?): Builder {
-            this.onlyOffice = onlyOffice ?: DEFAULT.onlyOffice
             return this
         }
 
@@ -111,10 +111,10 @@ class NamespaceDto(
                 id = id,
                 name = name,
                 snapshot = snapshot,
+                template = template,
                 authentication = authentication,
                 bundleRef = bundleRef,
                 pgAdmin = pgAdmin,
-                onlyOffice = onlyOffice,
                 mongodb = mongodb,
                 citeckProxy = proxy,
                 alfresco = alfresco,
@@ -137,14 +137,6 @@ class NamespaceDto(
     ) {
         companion object {
             val DEFAULT = PgAdminProps()
-        }
-    }
-
-    class OnlyOfficeProps(
-        val enabled: Boolean = false
-    ) {
-        companion object {
-            val DEFAULT = OnlyOfficeProps()
         }
     }
 
@@ -214,11 +206,16 @@ class NamespaceDto(
     }
 
     data class AuthenticationProps(
-        val users: String = "admin:admin,fet:fet"
+        val type: AuthenticationType = AuthenticationType.BASIC,
+        val users: Set<String> = setOf("admin", "fet")
     ) {
         companion object {
             val DEFAULT = AuthenticationProps()
         }
+    }
+
+    enum class AuthenticationType {
+        BASIC, KEYCLOAK
     }
 
     data class JdbcDataSource(

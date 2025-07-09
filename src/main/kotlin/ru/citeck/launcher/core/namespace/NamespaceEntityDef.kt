@@ -14,6 +14,7 @@ object NamespaceEntityDef {
     const val FORM_FIELD_BUNDLES_REPO = "bundlesRepo"
     const val FORM_FIELD_BUNDLE_KEY = "bundleKey"
     const val FORM_FIELD_SNAPSHOT = "snapshot"
+    const val FORM_FIELD_TEMPLATE = "template"
 
     val formSpec = FormSpec(
         "Namespace",

@@ -92,12 +92,13 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                         .getLatestRepoBundle(defaultBundleRef.repo)
                         .ifEmpty { defaultBundleRef }
                 }
+
                 val existingNamespaces = remember(workspaceServices.workspace.id) {
                     workspaceServices.entitiesService.find(NamespaceDto::class, 3)
                 }
                 if (existingNamespaces.isEmpty()) {
                     Column(Modifier.fillMaxWidth().height(250.dp)) {
-                        renderFastStartButtons(workspaceServices, defaultBundleRef)
+                        renderFastStartButtons(workspaceServices, defaultBundleRef, workspaceConfig.defaultNsTemplate)
                     }
                 } else {
                     for (namespace in existingNamespaces) {
@@ -136,7 +137,8 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                                 NamespaceDto::class,
                                 DataValue.createObj()
                                     .set(NamespaceEntityDef.FORM_FIELD_BUNDLES_REPO, defaultBundleRef.repo)
-                                    .set(NamespaceEntityDef.FORM_FIELD_BUNDLE_KEY, defaultBundleRef.key),
+                                    .set(NamespaceEntityDef.FORM_FIELD_BUNDLE_KEY, defaultBundleRef.key)
+                                    .set(NamespaceEntityDef.FORM_FIELD_TEMPLATE, workspaceConfig.defaultNsTemplate),
                                 {}, {}
                             )
                     }
@@ -163,21 +165,27 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
 }
 
 @Composable
-private fun ColumnScope.renderFastStartButtons(workspaceServices: WorkspaceServices, defaultBundleRef: BundleRef) {
+private fun ColumnScope.renderFastStartButtons(
+    workspaceServices: WorkspaceServices,
+    defaultBundleRef: BundleRef,
+    defaultTemplate: String
+) {
 
     val fastStartVariants = rememberMutProp(workspaceServices.workspaceConfig) { config ->
         var variants: List<FastStartVariant> = config.fastStartVariants.ifEmpty {
             listOf(
                 FastStartVariant(
                     "Fast Start",
-                    bundleRef = defaultBundleRef
+                    bundleRef = defaultBundleRef,
+                    template = defaultTemplate
                 )
             )
         }
 
         variants = variants.map { variant ->
             variant.copy(
-                bundleRef = variant.bundleRef.ifEmpty { defaultBundleRef }
+                bundleRef = variant.bundleRef.ifEmpty { defaultBundleRef },
+                template = variant.template.ifEmpty { defaultTemplate }
             )
         }
         variants
@@ -221,6 +229,7 @@ private fun ColumnScope.renderFastStartButton(
                                     .withName("Citeck Default")
                                     .withBundleRef(variant.bundleRef)
                                     .withSnapshot(variant.snapshot)
+                                    .withTemplate(variant.template)
                                     .build()
                             )
                             val runtime = workspaceServices.getCurrentNsRuntime()

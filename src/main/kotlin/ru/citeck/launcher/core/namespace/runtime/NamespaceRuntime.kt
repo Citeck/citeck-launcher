@@ -89,7 +89,7 @@ class NamespaceRuntime(
     private var currentActionType: NsRuntimeActionType = NsRuntimeActionType.NONE
     private var currentActionFuture: CompletableFuture<Unit>? = null
 
-    private val manualStoppedAtts = Collections.newSetFromMap<String>(ConcurrentHashMap())
+    private val detachedApps = Collections.newSetFromMap<String>(ConcurrentHashMap())
 
     private val editedAndLockedApps = Collections.newSetFromMap<String>(ConcurrentHashMap())
     private val editedApps = ConcurrentHashMap<String, ApplicationDef>()
@@ -97,7 +97,7 @@ class NamespaceRuntime(
     init {
         editedApps.putAll(nsRuntimeDataRepo[STATE_EDITED_APPS].asMap(String::class, ApplicationDef::class))
         editedAndLockedApps.addAll(nsRuntimeDataRepo[STATE_EDITED_AND_LOCKED_APPS].asStrList())
-        manualStoppedAtts.addAll(nsRuntimeDataRepo[STATE_MANUAL_STOPPED_APPS].asStrList())
+        detachedApps.addAll(nsRuntimeDataRepo[STATE_MANUAL_STOPPED_APPS].asStrList())
 
         status.watch { before, after ->
             log.info {
@@ -176,7 +176,7 @@ class NamespaceRuntime(
             || status.value == NsRuntimeStatus.STALLED
         ) {
             appRuntimes.value.forEach {
-                if (manualStoppedAtts.contains(it.name)) {
+                if (detachedApps.contains(it.name)) {
                     it.stop(true)
                 } else {
                     it.status.value = AppRuntimeStatus.READY_TO_PULL
@@ -210,12 +210,16 @@ class NamespaceRuntime(
         }
         this.currentActionFuture = currentActionFuture
         when (actionType) {
-            NsRuntimeActionType.UPDATE_START, NsRuntimeActionType.FORCE_UPDATE_START -> {
-                cleanEditedNonLockedApps()
-                val gitUpdatePolicy = if (actionType == NsRuntimeActionType.FORCE_UPDATE_START) {
-                    GitUpdatePolicy.REQUIRED
-                } else {
-                    GitUpdatePolicy.ALLOWED
+            NsRuntimeActionType.UPDATE_START,
+            NsRuntimeActionType.FORCE_UPDATE_START,
+            NsRuntimeActionType.REGENERATE -> {
+                if (actionType != NsRuntimeActionType.REGENERATE) {
+                    cleanEditedNonLockedApps()
+                }
+                val gitUpdatePolicy = when (actionType) {
+                    NsRuntimeActionType.FORCE_UPDATE_START -> GitUpdatePolicy.REQUIRED
+                    NsRuntimeActionType.REGENERATE -> GitUpdatePolicy.ALLOWED_IF_NOT_EXISTS
+                    else -> GitUpdatePolicy.ALLOWED
                 }
                 generateNs(gitUpdatePolicy)
                 appRuntimes.value.forEach {
@@ -235,9 +239,39 @@ class NamespaceRuntime(
                 flushRuntimeThread()
             }
 
-            else -> error("Unsupported actionm type: $actionType")
+            else -> error("Unsupported action type: $actionType")
         }
         return Promises.create(currentActionFuture)
+    }
+
+    fun setDetachedApps(detachedApps: Set<String>) {
+        if (this.detachedApps == detachedApps) {
+            return
+        }
+        this.detachedApps.clear()
+        this.detachedApps.addAll(detachedApps)
+        detachedAppsChanged(detachedApps)
+
+    }
+
+    fun addDetachedApp(appName: String) {
+        if (detachedApps.add(appName)) {
+            detachedAppsChanged(setOf(appName))
+        }
+    }
+
+    fun removeDetachedApp(appName: String) {
+        if (detachedApps.remove(appName)) {
+            detachedAppsChanged(setOf(appName))
+        }
+    }
+
+    private fun detachedAppsChanged(changedApps: Set<String>) {
+        nsRuntimeDataRepo[STATE_MANUAL_STOPPED_APPS] = detachedApps
+        val dependsOnDetachedApps = namespaceGenResp.value?.dependsOnDetachedApps ?: emptySet()
+        if (!status.value.isStoppingState() && changedApps.any { dependsOnDetachedApps.contains(it) }) {
+            runNamespaceAction(NsRuntimeActionType.REGENERATE)
+        }
     }
 
     private fun flushRuntimeThread() {
@@ -265,9 +299,7 @@ class NamespaceRuntime(
             when (application.status.value) {
                 AppRuntimeStatus.READY_TO_PULL -> {
 
-                    if (manualStoppedAtts.remove(application.name)) {
-                        nsRuntimeDataRepo[STATE_MANUAL_STOPPED_APPS] = manualStoppedAtts
-                    }
+                    removeDetachedApp(application.name)
 
                     val pullIfPresent = application.pullImageIfPresent
                     application.status.value = AppRuntimeStatus.PULLING
@@ -306,9 +338,7 @@ class NamespaceRuntime(
 
                 AppRuntimeStatus.READY_TO_STOP -> {
                     if (application.manualStop) {
-                        if (manualStoppedAtts.add(application.name)) {
-                            nsRuntimeDataRepo[STATE_MANUAL_STOPPED_APPS] = manualStoppedAtts
-                        }
+                        addDetachedApp(application.name)
                     }
                     application.status.value = AppRuntimeStatus.STOPPING
                     val promise = AppStopAction.execute(actionsService, application)
@@ -470,7 +500,6 @@ class NamespaceRuntime(
         }
         val fixedDef = appDefAfter.copy()
             .withKind(appDefBefore.kind)
-            .withReplicas(appDefBefore.replicas)
             .build()
 
         if (fixedDef != appDefBefore) {
@@ -491,7 +520,7 @@ class NamespaceRuntime(
 
     private fun generateNs(updatePolicy: GitUpdatePolicy) {
 
-        val newGenRes = namespaceGenerator.generate(namespaceDto, updatePolicy)
+        val newGenRes = namespaceGenerator.generate(namespaceDto, updatePolicy, detachedApps)
         val currentRuntimesByName = appRuntimes.value.associateByTo(mutableMapOf()) { it.name }
         val newRuntimes = ArrayList<AppRuntime>()
 
@@ -581,7 +610,7 @@ class NamespaceRuntime(
     }
 
     private enum class NsRuntimeActionType {
-        FORCE_UPDATE_START, UPDATE_START, STOP, NONE
+        FORCE_UPDATE_START, UPDATE_START, REGENERATE, STOP, NONE
     }
 }
 

@@ -58,10 +58,6 @@ class AppRunAction(
 
         val containers = dockerApi.getContainers(namespaceRef, appDef.name)
 
-        if (appDef.replicas == 0) {
-            containers.forEach { dockerApi.stopAndRemoveContainer(it) }
-            return
-        }
         if (appDef.image.isBlank()) {
             error("Application image is empty for ${appDef.name}")
         }
@@ -100,10 +96,12 @@ class AppRunAction(
 
         val deploymentHash = appHashDigest.toHex()
 
+        val expectedReplicas = 1
+
         val validContainersNames = mutableSetOf<String>()
         for (container in containers) {
             val containerName = container.names[0].removePrefix("/")
-            if (validContainersNames.size == appDef.replicas) {
+            if (validContainersNames.size == expectedReplicas) {
                 log.info {
                     "Remove unnecessary container with id ${container.id} " +
                         "and name $containerName"
@@ -120,7 +118,7 @@ class AppRunAction(
 
         var nameIdx = validContainersNames.size
         val containerBaseName = nsRuntime.namePrefix + appDef.name + nsRuntime.nameSuffix
-        while (validContainersNames.size < appDef.replicas) {
+        while (validContainersNames.size < expectedReplicas) {
 
             appDef.initContainers.forEach {
                 runInitContainer(namespaceRef, appDef.name, it)

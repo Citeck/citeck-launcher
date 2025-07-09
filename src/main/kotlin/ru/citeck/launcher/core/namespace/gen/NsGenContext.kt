@@ -13,6 +13,7 @@ class NsGenContext(
     val props: NamespaceDto,
     val bundle: BundleDef,
     val workspaceConfig: WorkspaceConfig,
+    val detachedApps: Set<String>,
     val appFiles: MutableMap<String, ByteArray>,
     val applications: MutableMap<String, ApplicationDef.Builder> = LinkedHashMap(),
     val portsCounter: AtomicInteger = AtomicInteger(17020),

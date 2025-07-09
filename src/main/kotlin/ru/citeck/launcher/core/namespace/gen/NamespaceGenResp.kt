@@ -15,5 +15,7 @@ class NamespaceGenResp(
 
     val cloudConfig: CloudConfig,
 
-    val links: List<NamespaceLink>
+    val links: List<NamespaceLink>,
+
+    val dependsOnDetachedApps: Set<String>
 )
