@@ -6,8 +6,6 @@ import ru.citeck.launcher.core.namespace.NamespaceDto
 import java.time.Duration
 
 data class WorkspaceConfig(
-    val defaultBundleRef: BundleRef,
-    val defaultNsTemplate: String = "",
     val fastStartVariants: List<FastStartVariant> = emptyList(),
     val imageRepos: List<ImageRepo>,
     val bundleRepos: List<BundlesRepo>,
@@ -18,6 +16,8 @@ data class WorkspaceConfig(
     val snapshots: List<Snapshot> = emptyList(),
     val namespaceTemplates: List<NamespaceTemplate> = emptyList()
 ) {
+
+    val defaultNsTemplate = namespaceTemplates.find { it.id == "default" } ?: NamespaceTemplate("", "")
 
     val webappsById = webapps.associateBy { it.id }
     val imageReposById = imageRepos.associateBy { it.id }
@@ -59,7 +59,8 @@ data class WorkspaceConfig(
 
     data class NamespaceTemplate(
         val id: String,
-        val name: String,
+        val name: String = id,
+        val config: NamespaceDto = NamespaceDto.DEFAULT,
         val detachedApps: Set<String> = emptySet(),
     )
 

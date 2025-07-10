@@ -31,4 +31,5 @@ object AppName {
     const val MAILHOG = "mailhog"
     const val ONLY_OFFICE = "only-office"
     const val RABBITMQ = "rabbitmq"
+    const val KEYCLOAK = "keycloak"
 }

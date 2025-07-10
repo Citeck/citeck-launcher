@@ -205,12 +205,39 @@ class NamespaceDto(
         }
     }
 
+    @JsonDeserialize(builder = AuthenticationProps.Builder::class)
     data class AuthenticationProps(
         val type: AuthenticationType = AuthenticationType.BASIC,
         val users: Set<String> = setOf("admin", "fet")
     ) {
         companion object {
             val DEFAULT = AuthenticationProps()
+        }
+
+        class Builder {
+
+            var type: AuthenticationType = AuthenticationType.BASIC
+            var users: Set<String> = setOf("admin", "fet")
+
+            fun withType(type: AuthenticationType): Builder {
+                this.type = type
+                return this
+            }
+
+            fun withUsers(users: DataValue): Builder {
+                if (users.isTextual()) {
+                    this.users = users.asText().split(",").map { it.split(":")[0].trim() }.filter { it.isNotBlank() }.toSet()
+                } else {
+                    this.users = users.toStrSet()
+                }
+                return this
+            }
+
+            fun build(): AuthenticationProps {
+                return AuthenticationProps(
+                    type, users
+                )
+            }
         }
     }
 

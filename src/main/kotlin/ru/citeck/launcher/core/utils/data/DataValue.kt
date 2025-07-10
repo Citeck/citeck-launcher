@@ -557,11 +557,32 @@ class DataValue private constructor(
         return toList(String::class)
     }
 
+    fun toStrSet(): Set<String> {
+        return toSet(String::class)
+    }
+
+    /**
+     * Convert internal value and return a new mutable set.
+     * If internal value is not an array-like object then set with single element will be returned.
+     */
+    fun <T : Any> toSet(elementType: KClass<T>): MutableSet<T> {
+        if (value.isNull) {
+            return LinkedHashSet()
+        }
+        val arrValue = if (value.isArray) {
+            value
+        } else {
+            val array = Json.newArrayNode()
+            array.add(value)
+            array
+        }
+        return LinkedHashSet(Json.convertOrNull<Set<T>>(arrValue, Json.getSetType(elementType)) ?: emptySet())
+    }
+
     /**
      * Convert internal value and return a new mutable list.
      * If internal value is not an array-like object then list with single element will be returned.
      */
-
     fun <T : Any> toList(elementType: KClass<T>): MutableList<T> {
         if (value.isNull) {
             return ArrayList()

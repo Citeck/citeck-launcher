@@ -32,15 +32,18 @@ class BundleRef private constructor(
             }
             return BundleRef(repo.trim(), key.trim())
         }
+
+        fun ifEmpty(ref: BundleRef?, other: () -> BundleRef): BundleRef {
+            return if (ref == null || ref.isEmpty()) {
+                other.invoke()
+            } else {
+                ref
+            }
+        }
+
     }
 
-    fun ifEmpty(other: () -> BundleRef): BundleRef {
-        return if (isEmpty()) {
-            other.invoke()
-        } else {
-            this
-        }
-    }
+    fun ifEmpty(other: () -> BundleRef) = ifEmpty(this, other)
 
     fun isEmpty(): Boolean {
         return repo.isEmpty() && key.isEmpty()

@@ -14,7 +14,7 @@ open class MutProp<T>(val name: String, value: T) {
         private val log = KotlinLogging.logger {}
     }
 
-    private val listeners = CopyOnWriteArrayList<(T, T) -> Unit>()
+    private val watchers = CopyOnWriteArrayList<(T, T) -> Unit>()
     private val lock = ReentrantLock()
 
     var changedAt: Long = System.currentTimeMillis()
@@ -28,10 +28,10 @@ open class MutProp<T>(val name: String, value: T) {
             if (field == newValue) {
                 return
             }
-            log.trace { "Update $this: $field -> $newValue" }
+            logState { "Update $this: $field -> $newValue" }
             val valueBefore = field
             field = newValue
-            for (listener in listeners) {
+            for (listener in watchers) {
                 try {
                     listener(valueBefore, field)
                 } catch (e: Throwable) {
@@ -45,10 +45,15 @@ open class MutProp<T>(val name: String, value: T) {
         }
 
     fun watch(action: (T, T) -> Unit): Disposable {
-        listeners.add(action)
+        logState { "Add watcher for $this - $action" }
+        watchers.add(action)
+        if (watchers.size > 30) {
+            log.warn { "Watchers size is greater than 20. Looks like a leak" }
+        }
         return object : Disposable {
             override fun dispose() {
-                listeners.remove(action)
+                logState { "Remove watcher for $this - $action" }
+                watchers.remove(action)
             }
         }
     }
@@ -63,5 +68,9 @@ open class MutProp<T>(val name: String, value: T) {
 
     override fun toString(): String {
         return "MutProp($name)"
+    }
+
+    private inline fun logState(crossinline msg: () -> String) {
+        log.trace { msg() }
     }
 }

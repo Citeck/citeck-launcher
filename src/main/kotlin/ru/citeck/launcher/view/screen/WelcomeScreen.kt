@@ -16,15 +16,14 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.launch
 import ru.citeck.launcher.core.LauncherServices
 import ru.citeck.launcher.core.WorkspaceServices
 import ru.citeck.launcher.core.config.bundle.BundleRef
 import ru.citeck.launcher.core.namespace.NamespaceDto
-import ru.citeck.launcher.core.namespace.NamespaceEntityDef
 import ru.citeck.launcher.core.utils.ActionStatus
-import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.workspace.WorkspaceConfig.FastStartVariant
 import ru.citeck.launcher.core.workspace.WorkspaceDto
 import ru.citeck.launcher.core.workspace.WorkspaceEntityDef
@@ -36,7 +35,8 @@ import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog
 import ru.citeck.launcher.view.utils.rememberMutProp
 import java.util.concurrent.Executors
 
-val coroutineContext = Executors.newFixedThreadPool(1).asCoroutineDispatcher()
+private val coroutineContext = Executors.newFixedThreadPool(1).asCoroutineDispatcher()
+private val log = KotlinLogging.logger {}
 
 @Composable
 fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: MutableState<WorkspaceDto?>) {
@@ -85,20 +85,13 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 val workspaceServices = launcherServices.getWorkspaceServices()
-                val workspaceConfig = workspaceServices.workspaceConfig.value
-                var defaultBundleRef = workspaceConfig.defaultBundleRef
-                if (defaultBundleRef.key == "LATEST") {
-                    defaultBundleRef = workspaceServices.bundlesService
-                        .getLatestRepoBundle(defaultBundleRef.repo)
-                        .ifEmpty { defaultBundleRef }
-                }
 
                 val existingNamespaces = remember(workspaceServices.workspace.id) {
                     workspaceServices.entitiesService.find(NamespaceDto::class, 3)
                 }
                 if (existingNamespaces.isEmpty()) {
                     Column(Modifier.fillMaxWidth().height(250.dp)) {
-                        renderFastStartButtons(workspaceServices, defaultBundleRef, workspaceConfig.defaultNsTemplate)
+                        renderFastStartButtons(workspaceServices)
                     }
                 } else {
                     for (namespace in existingNamespaces) {
@@ -133,14 +126,7 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                     onClick = {
                         launcherServices.getWorkspaceServices()
                             .entitiesService
-                            .create(
-                                NamespaceDto::class,
-                                DataValue.createObj()
-                                    .set(NamespaceEntityDef.FORM_FIELD_BUNDLES_REPO, defaultBundleRef.repo)
-                                    .set(NamespaceEntityDef.FORM_FIELD_BUNDLE_KEY, defaultBundleRef.key)
-                                    .set(NamespaceEntityDef.FORM_FIELD_TEMPLATE, workspaceConfig.defaultNsTemplate),
-                                {}, {}
-                            )
+                            .create(NamespaceDto::class, {}, {})
                     }
                 ) {
                     Text("Create New Namespace", fontSize = 1.05.em, textAlign = TextAlign.Center)
@@ -164,31 +150,58 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
     }
 }
 
+private fun prepareNsDataToCreate(
+    workspaceServices: WorkspaceServices,
+    fastStart: FastStartVariant
+): NamespaceDto {
+
+    val workspaceConfig = workspaceServices.workspaceConfig.value
+    val namespaceTemplate = if (fastStart.template.isEmpty()) {
+        workspaceConfig.defaultNsTemplate
+    } else {
+        workspaceConfig.namespaceTemplates.first {
+            it.id == fastStart.template
+        }
+    }
+    val namespaceConfig = namespaceTemplate.config
+        .copy()
+        .withName("Citeck Default")
+        .withTemplate(namespaceTemplate.id)
+
+    namespaceConfig.withBundleRef(
+        fastStart.bundleRef.ifEmpty { namespaceTemplate.config.bundleRef }.ifEmpty {
+            val bundleRepoId = workspaceConfig.bundleRepos.first().id
+            BundleRef.create(bundleRepoId, "LATEST")
+        }
+    )
+
+    if (namespaceConfig.bundleRef.key == "LATEST") {
+        namespaceConfig.withBundleRef(
+            workspaceServices.bundlesService.getLatestRepoBundle(namespaceConfig.bundleRef.repo)
+        )
+    }
+
+    namespaceConfig.withSnapshot(
+        fastStart.snapshot.ifEmpty {
+            namespaceTemplate.config.snapshot
+        }
+    )
+
+    return namespaceConfig.build()
+}
+
 @Composable
 private fun ColumnScope.renderFastStartButtons(
-    workspaceServices: WorkspaceServices,
-    defaultBundleRef: BundleRef,
-    defaultTemplate: String
+    workspaceServices: WorkspaceServices
 ) {
 
     val fastStartVariants = rememberMutProp(workspaceServices.workspaceConfig) { config ->
         var variants: List<FastStartVariant> = config.fastStartVariants.ifEmpty {
-            listOf(
-                FastStartVariant(
-                    "Fast Start",
-                    bundleRef = defaultBundleRef,
-                    template = defaultTemplate
-                )
-            )
+            listOf(FastStartVariant("Fast Start"))
         }
-
-        variants = variants.map { variant ->
-            variant.copy(
-                bundleRef = variant.bundleRef.ifEmpty { defaultBundleRef },
-                template = variant.template.ifEmpty { defaultTemplate }
-            )
+        variants.map { variant ->
+            variant to prepareNsDataToCreate(workspaceServices, variant)
         }
-        variants
     }
 
     for ((idx, variant) in fastStartVariants.value.withIndex()) {
@@ -205,9 +218,10 @@ private fun buttonsSpacer() {
 @Composable
 private fun ColumnScope.renderFastStartButton(
     workspaceServices: WorkspaceServices,
-    variant: FastStartVariant,
+    variantAndConfig: Pair<FastStartVariant, NamespaceDto>,
     primary: Boolean
 ) {
+    val (variant, namespaceConfig) = variantAndConfig
     val coroutineScope = rememberCoroutineScope()
     Button(
         modifier = Modifier.fillMaxWidth().weight(if (primary) 0.7f else 0.3f),
@@ -224,14 +238,7 @@ private fun ColumnScope.renderFastStartButton(
                     ActionStatus.doWithStatus { actionStatus ->
                         val closeLoadingDialog = GlobalLoadingDialog.show(actionStatus)
                         try {
-                            workspaceServices.entitiesService.createWithData(
-                                NamespaceDto.Builder()
-                                    .withName("Citeck Default")
-                                    .withBundleRef(variant.bundleRef)
-                                    .withSnapshot(variant.snapshot)
-                                    .withTemplate(variant.template)
-                                    .build()
-                            )
+                            workspaceServices.entitiesService.createWithData(namespaceConfig)
                             val runtime = workspaceServices.getCurrentNsRuntime()
                             if (runtime == null) {
                                 coroutineScope.launch {
@@ -241,6 +248,7 @@ private fun ColumnScope.renderFastStartButton(
                                 runtime.updateAndStart()
                             }
                         } catch (e: Throwable) {
+                            log.error(e) { "Fast start completed with error. Variant: $variant" }
                             GlobalErrorDialog.show(GlobalErrorDialog.Params(e) {})
                         } finally {
                             closeLoadingDialog()
@@ -262,7 +270,7 @@ private fun ColumnScope.renderFastStartButton(
             )
             Spacer(modifier = Modifier.height(5.dp))
             Text(
-                variant.bundleRef.toString(),
+                namespaceConfig.bundleRef.toString(),
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth()
             )

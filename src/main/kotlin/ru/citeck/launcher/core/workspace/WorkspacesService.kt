@@ -15,7 +15,8 @@ import kotlin.io.path.exists
 class WorkspacesService {
 
     companion object {
-        private const val WS_CONFIG_FILE = "workspace.yml"
+        private const val CONFIG_VERSION_MIN = 1
+        private const val CONFIG_VERSION_MAX = 1
 
         fun getWorkspaceDir(workspaceId: String): Path {
             return AppDir.PATH.resolve("ws").resolve(workspaceId)
@@ -95,10 +96,27 @@ class WorkspacesService {
             ), updatePolicy
         ).root
 
-        val wsConfigFile = repoRoot.resolve(WS_CONFIG_FILE)
-        if (!wsConfigFile.exists()) {
+        var cfgVersion = CONFIG_VERSION_MAX + 1
+        var configFile: Path
+        do {
+            cfgVersion--
+            val configName = if (cfgVersion == 0) {
+                "workspace.yml"
+            } else {
+                "workspace-v$cfgVersion.yml"
+            }
+            configFile = repoRoot.resolve(configName)
+        } while (cfgVersion > 0 && !configFile.exists())
+
+        if (!configFile.exists()) {
             error("Workspace config file is not found in repo '${workspace.repoUrl}'")
         }
-        return Yaml.read(wsConfigFile, WorkspaceConfig::class)
+        if (cfgVersion < CONFIG_VERSION_MIN) {
+            error(
+                "Workspace config file found but config version $cfgVersion " +
+                "is less than minimal supported $CONFIG_VERSION_MIN"
+            )
+        }
+        return Yaml.read(configFile, WorkspaceConfig::class)
     }
 }

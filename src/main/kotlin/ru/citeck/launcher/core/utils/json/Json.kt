@@ -264,6 +264,10 @@ object Json {
         return mapper.typeFactory.constructType(type.java)
     }
 
+    fun getSetType(elementType: KClass<*>): JavaType {
+        return mapper.typeFactory.constructCollectionType(Set::class.java, elementType.java)
+    }
+
     fun getListType(elementType: KClass<*>): JavaType {
         return mapper.typeFactory.constructCollectionType(List::class.java, elementType.java)
     }

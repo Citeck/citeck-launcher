@@ -221,7 +221,7 @@ class EntitiesService(
 
     fun <T : Any> create(
         type: KClass<T>,
-        initialData: DataValue,
+        initialData: Any,
         onCancel: () -> Unit,
         onSubmit: (EntityRef) -> Unit
     ) {
@@ -229,10 +229,21 @@ class EntitiesService(
         val defWithRepo = getDefWithRepo<Any, T>(type) as EntityDefWithRepo<*, T>
         val definition = defWithRepo.definition
 
+        var initialDataValue = if (initialData is DataValue) {
+            if (initialData.isNull()) {
+                definition.toFormData(null)
+            } else {
+                initialData
+            }
+        } else {
+            @Suppress("UNCHECKED_CAST")
+            definition.toFormData(initialData as T)
+        }
+
         formDialog.show(
             spec = definition.createForm!!,
             mode = FormMode.CREATE,
-            data = initialData,
+            data = initialDataValue,
             onCancel = { onCancel() }
         ) { data, onDataProcComplete ->
             val idType = definition.idType

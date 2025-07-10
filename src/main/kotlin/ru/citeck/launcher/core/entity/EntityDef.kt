@@ -17,7 +17,9 @@ class EntityDef<K : Any, T : Any>(
     val defaultEntities: List<T>,
     val actions: List<ActionDef<T>> = emptyList(),
     val customRepo: Repository<K, T>? = null,
-    val toFormData: (T) -> DataValue = { DataValue.of(it) },
+    val toFormData: (T?) -> DataValue = {
+        if (it != null) DataValue.of(it) else DataValue.createObj()
+    },
     val fromFormData: (DataValue) -> T = { it.getAsNotNull(valueType) },
     val versionable: Boolean = true
 ) {

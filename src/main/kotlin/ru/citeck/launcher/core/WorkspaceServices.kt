@@ -53,14 +53,13 @@ class WorkspaceServices(
     val snapshotsService: WorkspaceSnapshots by lazy { WorkspaceSnapshots() }
 
     private lateinit var workspaceStateRepo: DataRepo
-    val selectedNamespace = MutProp<NamespaceDto?>(null)
+    val selectedNamespace = MutProp<NamespaceDto?>("selected-namespace", null)
 
     val workspaceConfig = MutProp(workspaceConfig)
 
     fun init() {
 
         entitiesService.init(launcherServices)
-        entitiesService.register(NamespaceEntityDef.definition)
         entitiesService.register(getVolumeEntityDef())
         snapshotsService.init(this)
 
