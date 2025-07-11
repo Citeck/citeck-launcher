@@ -37,7 +37,7 @@ class DockerApi(
 ) {
     companion object {
         private val log = KotlinLogging.logger {}
-        private const val UTILS_IMAGE = "registry.citeck.ru/community/launcher-utils:1.0"
+        const val UTILS_IMAGE = "registry.citeck.ru/community/launcher-utils:1.0"
 
         private const val GRACEFUL_SHUTDOWN_SECONDS = 10
     }
@@ -166,14 +166,18 @@ class DockerApi(
         } catch (e: DockerException) {
             log.error(e) { "Failed to stop container '$containerName' ($containerId)" }
         }
-        client.removeContainerCmd(containerId)
-            .withForce(true)
-            .withRemoveVolumes(true)
-            .exec()
+        removeContainer(containerId)
     }
 
     fun removeContainer(containerId: String) {
-        client.removeContainerCmd(containerId).exec()
+        try {
+            client.removeContainerCmd(containerId)
+                .withForce(true)
+                .withRemoveVolumes(true)
+                .exec()
+        } catch (_: NotFoundException) {
+            // do nothing
+        }
     }
 
     fun getExposedPorts(containerId: String): Map<Int, Int> {

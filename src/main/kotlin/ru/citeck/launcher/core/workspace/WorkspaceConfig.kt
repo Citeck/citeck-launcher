@@ -2,14 +2,14 @@ package ru.citeck.launcher.core.workspace
 
 import ru.citeck.launcher.core.config.bundle.BundleRef
 import ru.citeck.launcher.core.license.LicenseInstance
-import ru.citeck.launcher.core.namespace.NamespaceDto
+import ru.citeck.launcher.core.namespace.NamespaceConfig
 import java.time.Duration
 
 data class WorkspaceConfig(
     val fastStartVariants: List<FastStartVariant> = emptyList(),
     val imageRepos: List<ImageRepo>,
     val bundleRepos: List<BundlesRepo>,
-    val defaultWebappProps: NamespaceDto.WebappProps = NamespaceDto.WebappProps.DEFAULT,
+    val defaultWebappProps: NamespaceConfig.WebappProps = NamespaceConfig.WebappProps.DEFAULT,
     val webapps: List<AppConfig>,
     val citeckProxy: CiteckProxy = CiteckProxy(),
     val licenses: List<LicenseInstance> = emptyList(),
@@ -42,7 +42,7 @@ data class WorkspaceConfig(
     class AppConfig(
         val id: String,
         val aliases: Set<String> = emptySet(),
-        val defaultProps: NamespaceDto.WebappProps = NamespaceDto.WebappProps.DEFAULT
+        val defaultProps: NamespaceConfig.WebappProps = NamespaceConfig.WebappProps.DEFAULT
     )
 
     class CiteckProxy(
@@ -60,7 +60,7 @@ data class WorkspaceConfig(
     data class NamespaceTemplate(
         val id: String,
         val name: String = id,
-        val config: NamespaceDto = NamespaceDto.DEFAULT,
+        val config: NamespaceConfig = NamespaceConfig.DEFAULT,
         val detachedApps: Set<String> = emptySet(),
     )
 

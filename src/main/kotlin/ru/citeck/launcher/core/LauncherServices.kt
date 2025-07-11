@@ -12,7 +12,7 @@ import ru.citeck.launcher.core.database.Database
 import ru.citeck.launcher.core.entity.EntitiesService
 import ru.citeck.launcher.core.git.GitRepoService
 import ru.citeck.launcher.core.namespace.runtime.actions.AppImagePullAction
-import ru.citeck.launcher.core.namespace.runtime.actions.AppRunAction
+import ru.citeck.launcher.core.namespace.runtime.actions.AppStartAction
 import ru.citeck.launcher.core.namespace.runtime.actions.AppStopAction
 import ru.citeck.launcher.core.namespace.runtime.docker.DockerApi
 import ru.citeck.launcher.core.secrets.auth.AuthSecretsService
@@ -85,7 +85,7 @@ class LauncherServices {
 
         actionsService = ActionsService()
         actionsService.register(AppImagePullAction(dockerApi, authSecretsService))
-        actionsService.register(AppRunAction(dockerApi))
+        actionsService.register(AppStartAction(dockerApi))
         actionsService.register(AppStopAction(dockerApi))
     }
 

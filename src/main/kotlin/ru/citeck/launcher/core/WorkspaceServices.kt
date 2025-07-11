@@ -13,8 +13,7 @@ import ru.citeck.launcher.core.entity.EntityIdType
 import ru.citeck.launcher.core.git.GitRepoService
 import ru.citeck.launcher.core.git.GitUpdatePolicy
 import ru.citeck.launcher.core.license.LicenseService
-import ru.citeck.launcher.core.namespace.NamespaceDto
-import ru.citeck.launcher.core.namespace.NamespaceEntityDef
+import ru.citeck.launcher.core.namespace.NamespaceConfig
 import ru.citeck.launcher.core.namespace.NamespacesService
 import ru.citeck.launcher.core.namespace.runtime.NamespaceRuntime
 import ru.citeck.launcher.core.namespace.runtime.docker.DockerApi
@@ -53,7 +52,7 @@ class WorkspaceServices(
     val snapshotsService: WorkspaceSnapshots by lazy { WorkspaceSnapshots() }
 
     private lateinit var workspaceStateRepo: DataRepo
-    val selectedNamespace = MutProp<NamespaceDto?>("selected-namespace", null)
+    val selectedNamespace = MutProp<NamespaceConfig?>("selected-namespace", null)
 
     val workspaceConfig = MutProp(workspaceConfig)
 
@@ -99,12 +98,12 @@ class WorkspaceServices(
         val newValue = if (namespaceId.isBlank()) {
             null
         } else {
-            val namespaceDto = entitiesService.getById(NamespaceDto::class, namespaceId)?.entity
-            if (namespaceDto == null) {
+            val namespaceConfig = entitiesService.getById(NamespaceConfig::class, namespaceId)?.entity
+            if (namespaceConfig == null) {
                 log.error { "Namespace doesn't found by id '$namespaceId'" }
-                entitiesService.getFirst(NamespaceDto::class)?.entity
+                entitiesService.getFirst(NamespaceConfig::class)?.entity
             } else {
-                namespaceDto
+                namespaceConfig
             }
         }
         selectedNamespace.value = newValue
@@ -112,10 +111,10 @@ class WorkspaceServices(
 
     fun selectAnyExistingNamespace() {
         val currentNsDto = selectedNamespace.value
-        if (currentNsDto != null && entitiesService.getById(NamespaceDto::class, currentNsDto.id) != null) {
+        if (currentNsDto != null && entitiesService.getById(NamespaceConfig::class, currentNsDto.id) != null) {
             return
         }
-        val nextNs = entitiesService.getFirst(NamespaceDto::class)?.entity
+        val nextNs = entitiesService.getFirst(NamespaceConfig::class)?.entity
         selectedNamespace.value = nextNs
         workspaceStateRepo[SELECTED_NS_PROP] = nextNs?.id ?: ""
     }

@@ -9,7 +9,8 @@ data class InitContainerDef(
     val image: String,
     val environments: Map<String, String>,
     val volumes: List<String>,
-    val kind: ApplicationKind
+    val kind: ApplicationKind,
+    val cmd: List<String>?
 ) {
 
     companion object {
@@ -32,6 +33,8 @@ data class InitContainerDef(
             .toHex()
     }
 
+
+
     @JsonIgnore
     fun getHash(): String {
         return hashField
@@ -43,12 +46,14 @@ data class InitContainerDef(
         private var environments: MutableMap<String, String> = LinkedHashMap()
         private var volumes: MutableList<String> = ArrayList()
         private var kind: ApplicationKind = ApplicationKind.THIRD_PARTY
+        private var cmd: List<String>? = null
 
         constructor(base: InitContainerDef) : this() {
             this.image = base.image
             this.environments = LinkedHashMap(base.environments)
             this.volumes = ArrayList(base.volumes)
             this.kind = base.kind
+            this.cmd = base.cmd
         }
 
         fun getEnv(name: String): String? {
@@ -57,6 +62,11 @@ data class InitContainerDef(
 
         fun withImage(image: String): Builder {
             this.image = image
+            return this
+        }
+
+        fun withCmd(cmd: List<String>?): Builder {
+            this.cmd = cmd
             return this
         }
 
@@ -90,7 +100,8 @@ data class InitContainerDef(
                 image = image,
                 volumes = volumes,
                 environments = environments,
-                kind = kind
+                kind = kind,
+                cmd = cmd
             )
         }
     }

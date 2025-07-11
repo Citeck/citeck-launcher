@@ -10,6 +10,10 @@ data class EntityCreatedEvent<T : Any>(
     val entity: T
 ) : Event()
 
+data class EntityUpdatedEvent<T : Any>(
+    val entity: T
+) : Event()
+
 data class EntityDeletedEvent<T : Any>(
     val entity: T
 ) : Event()

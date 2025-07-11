@@ -75,8 +75,10 @@ sealed class ComponentSpec {
         var submitOnEnter = false
 
         fun mandatory(): TextField {
-            validation { _, value ->
-                if (value.isNullOrBlank()) {
+            validation { context, value ->
+                if (enabledConditions.isNotEmpty() && enabledConditions.any { it(context, value) == false }) {
+                    ""
+                } else if (value.isNullOrBlank()) {
                     "Value is mandatory"
                 } else {
                     ""

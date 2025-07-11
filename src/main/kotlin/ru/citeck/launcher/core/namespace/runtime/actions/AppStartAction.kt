@@ -29,9 +29,9 @@ import java.time.Duration
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 
-class AppRunAction(
+class AppStartAction(
     private val dockerApi: DockerApi
-) : ActionExecutor<AppRunAction.Params, Unit> {
+) : ActionExecutor<AppStartAction.Params, Unit> {
 
     companion object {
         private val log = KotlinLogging.logger {}
@@ -121,7 +121,7 @@ class AppRunAction(
         while (validContainersNames.size < expectedReplicas) {
 
             appDef.initContainers.forEach {
-                runInitContainer(namespaceRef, appDef.name, it)
+                runInitContainer(runtime, namespaceRef, appDef.name, it)
             }
 
             var containerName = containerBaseName
@@ -129,11 +129,7 @@ class AppRunAction(
                 containerName = containerBaseName + DockerConstants.NAME_DELIM + nameIdx++
             }
             val portBindings = appDef.ports.map {
-                if (it.startsWith("!")) {
-                    PortBinding.parse(it.substring(1))
-                } else {
-                    PortBinding(Ports.Binding.empty(), PortBinding.parse(it).exposedPort)
-                }
+                PortBinding.parse(it)
             }
             val createCmd = dockerApi.createContainerCmd(appDef.image)
                 .withName(containerName)
@@ -181,8 +177,9 @@ class AppRunAction(
             } catch (e: DockerException) {
                 throw RuntimeException("Container starting failed for ${appDef.name}", e)
             }
-            waitStartup(dockerApi, containerName, newContainerResp.id, appDef.startupCondition)
-
+            for (startupCondition in appDef.startupConditions) {
+                waitStartup(dockerApi, containerName, newContainerResp.id, startupCondition)
+            }
             appDef.initActions.forEach {
                 if (it is ExecShell) {
                     val exec = dockerApi.execCreateCmd(newContainerResp.id)
@@ -208,7 +205,12 @@ class AppRunAction(
         }
     }
 
-    private fun runInitContainer(namespaceRef: NamespaceRef, appName: String, initContainerDef: InitContainerDef) {
+    private fun runInitContainer(
+        runtime: AppRuntime,
+        namespaceRef: NamespaceRef,
+        appName: String,
+        initContainerDef: InitContainerDef
+    ) {
         log.info { "Run init container '${initContainerDef.image}' for app '$appName'" }
         val startedAt = System.currentTimeMillis()
         val createCmd = dockerApi.createContainerCmd(initContainerDef.image)
@@ -222,22 +224,45 @@ class AppRunAction(
             }).withHostConfig(run {
                 val config = HostConfig.newHostConfig()
                     .withRestartPolicy(RestartPolicy.noRestart())
-                    .withAutoRemove(true)
 
                 if (initContainerDef.volumes.isNotEmpty()) {
-                    config.withBinds(initContainerDef.volumes.mapNotNull { Bind.parse(it) })
+                    config.withBinds(initContainerDef.volumes.mapNotNull { prepareVolume(runtime, it) })
                 }
                 val memory = MemoryUtils.parseMemAmountToBytes("100m")
                 config.withMemory(memory)
                     .withMemorySwap(memory)
                 config
             })
+        if (initContainerDef.cmd != null) {
+            createCmd.withCmd(initContainerDef.cmd)
+        }
 
         var containerId = ""
         try {
             containerId = createCmd.exec().id
             dockerApi.startContainer(containerId)
-            dockerApi.waitContainer(containerId).awaitCompletion(30, TimeUnit.SECONDS)
+            val statusCode = dockerApi.waitContainer(containerId).awaitStatusCode(30, TimeUnit.SECONDS)
+            if (statusCode != 0) {
+                log.error {
+                    "===== Init container completed with non-zero " +
+                    "status code: $statusCode. Last 10_000 log messages: ====="
+                }
+                dockerApi.consumeLogs(containerId, 10_000, Duration.ofSeconds(10)) { msg -> log.warn { msg } }
+                log.error { "===== End of init container logs =====" }
+                throw RuntimeException("Init container completed with non-zero code")
+            } else {
+                val containerLog = ArrayList<String>()
+                dockerApi.consumeLogs(containerId, 10, Duration.ofSeconds(10)) { containerLog.add(it) }
+                var message = "Init container completed successfully " +
+                    "in ${System.currentTimeMillis() - startedAt}ms."
+                if (containerLog.isNotEmpty()) {
+                    message += " Last 10 log messages:"
+                    log.info { message }
+                    containerLog.forEach { msg -> log.info { msg } }
+                } else {
+                    log.info { message }
+                }
+            }
         } catch (exception: Throwable) {
             val container = dockerApi.inspectContainerOrNull(containerId)
             if (container != null) {
@@ -248,8 +273,11 @@ class AppRunAction(
                 }
             }
             throw RuntimeException("Init container starting failed for $appName", exception)
+        } finally {
+            if (containerId.isNotBlank()) {
+                dockerApi.removeContainer(containerId)
+            }
         }
-        log.info { "Init container stopped. Elapsed time: ${System.currentTimeMillis() - startedAt}ms" }
     }
 
     private fun waitStartup(
@@ -383,7 +411,7 @@ class AppRunAction(
             .withAttachStdout(true)
             .exec()
 
-        val callback = FramesLogCallback(containerName)
+        val callback = FramesLogCallback(containerName, true)
 
         dockerApi
             .execStartCmd(exec.id)
@@ -430,7 +458,8 @@ class AppRunAction(
     ) : ActionParams<Unit>
 
     private class FramesLogCallback(
-        private val containerName: String
+        private val containerName: String,
+        private val printLogsAsTrace: Boolean = false
     ) : ResultCallbackTemplate<FramesLogCallback, Frame>() {
 
         companion object {
@@ -442,9 +471,13 @@ class AppRunAction(
                 return
             }
             val payload = String(frame.payload).trimEnd('\n', ' ', '\t', '\r')
-            when (frame.streamType) {
-                StreamType.STDERR -> log.error { "[$containerName] $payload" }
-                else -> log.info { "[$containerName] $payload" }
+            if (printLogsAsTrace) {
+                log.trace { "[$containerName] $payload" }
+            } else {
+                when (frame.streamType) {
+                    StreamType.STDERR -> log.error { "[$containerName] $payload" }
+                    else -> log.info { "[$containerName] $payload" }
+                }
             }
         }
     }

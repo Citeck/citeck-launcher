@@ -5,8 +5,8 @@ import ru.citeck.launcher.core.config.bundle.BundleRef
 import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.json.Json
 
-@JsonDeserialize(builder = NamespaceDto.Builder::class)
-class NamespaceDto(
+@JsonDeserialize(builder = NamespaceConfig.Builder::class)
+class NamespaceConfig(
     val id: String,
     val name: String,
     val snapshot: String,
@@ -42,7 +42,7 @@ class NamespaceDto(
         var alfresco: AlfrescoProps = AlfrescoProps.DEFAULT
         var webapps: Map<String, WebappProps> = mapOf()
 
-        constructor(props: NamespaceDto) : this() {
+        constructor(props: NamespaceConfig) : this() {
             id = props.id
             name = props.name
             snapshot = props.snapshot
@@ -106,8 +106,8 @@ class NamespaceDto(
             return this
         }
 
-        fun build(): NamespaceDto {
-            return NamespaceDto(
+        fun build(): NamespaceConfig {
+            return NamespaceConfig(
                 id = id,
                 name = name,
                 snapshot = snapshot,

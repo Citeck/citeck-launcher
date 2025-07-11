@@ -41,7 +41,7 @@ class AppImagePullAction(
 
         private const val RETRIES_COUNT_FOR_EXISTING_IMAGE = 3
 
-        private val LAST_PULL_RESPONSE_TIMEOUT_MS = Duration.ofSeconds(20).toMillis()
+        private val LAST_PULL_RESPONSE_TIMEOUT_MS = Duration.ofMinutes(1).toMillis()
         // global param to avoid errors while some pull actions wait until other actions completed
         private val lastPullResponseTime = AtomicLong(System.currentTimeMillis())
 

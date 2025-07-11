@@ -5,12 +5,12 @@ import ru.citeck.launcher.core.config.cloud.CloudConfigImpl
 import ru.citeck.launcher.core.config.cloud.MutableCloudConfig
 import ru.citeck.launcher.core.config.bundle.BundleDef
 import ru.citeck.launcher.core.namespace.AppName
-import ru.citeck.launcher.core.namespace.NamespaceDto
+import ru.citeck.launcher.core.namespace.NamespaceConfig
 import ru.citeck.launcher.core.workspace.WorkspaceConfig
 import java.util.concurrent.atomic.AtomicInteger
 
 class NsGenContext(
-    val props: NamespaceDto,
+    val namespaceConfig: NamespaceConfig,
     val bundle: BundleDef,
     val workspaceConfig: WorkspaceConfig,
     val detachedApps: Set<String>,
@@ -21,6 +21,8 @@ class NsGenContext(
     val links: MutableList<NamespaceLink> = ArrayList()
 ) {
     companion object {
+        const val KK_HOST = AppName.KEYCLOAK
+
         const val PG_HOST = AppName.POSTGRES
         const val PG_PORT = 5432
 

@@ -15,6 +15,7 @@ class EntitiesEvents {
     }
 
     private val entityCreatedListeners = ConcurrentHashMap<KClass<*>, MutableList<(EntityCreatedEvent<Any>) -> Any>>()
+    private val entityUpdatedListeners = ConcurrentHashMap<KClass<*>, MutableList<(EntityUpdatedEvent<Any>) -> Any>>()
     private val entityDeletedListeners = ConcurrentHashMap<KClass<*>, MutableList<(EntityDeletedEvent<Any>) -> Any>>()
 
     fun <T : Any> addEntityCreatedListener(type: KClass<out T>, action: (EntityCreatedEvent<T>) -> Any): Disposable {
@@ -41,8 +42,24 @@ class EntitiesEvents {
         }
     }
 
+    fun <T : Any> addEntityUpdatedListener(type: KClass<out T>, action: (EntityUpdatedEvent<T>) -> Unit): Disposable {
+        @Suppress("UNCHECKED_CAST")
+        action as ((EntityUpdatedEvent<Any>) -> Unit)
+        val listeners = entityUpdatedListeners.computeIfAbsent(type) { CopyOnWriteArrayList() }
+        listeners.add(action)
+        return object : Disposable {
+            override fun dispose() {
+                listeners.remove(action)
+            }
+        }
+    }
+
     fun <T : Any> fireEntityCreatedEvent(type: KClass<T>, event: EntityCreatedEvent<T>) : Promise<*> {
         return fireEvent(entityCreatedListeners, type, event)
+    }
+
+    fun <T : Any> fireEntityUpdatedEvent(type: KClass<T>, event: EntityUpdatedEvent<T>) : Promise<*> {
+        return fireEvent(entityUpdatedListeners, type, event)
     }
 
     fun <T : Any> fireEntityDeletedEvent(type: KClass<T>, event: EntityDeletedEvent<T>) : Promise<*> {

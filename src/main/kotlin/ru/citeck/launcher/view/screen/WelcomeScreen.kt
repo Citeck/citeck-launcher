@@ -22,7 +22,7 @@ import kotlinx.coroutines.launch
 import ru.citeck.launcher.core.LauncherServices
 import ru.citeck.launcher.core.WorkspaceServices
 import ru.citeck.launcher.core.config.bundle.BundleRef
-import ru.citeck.launcher.core.namespace.NamespaceDto
+import ru.citeck.launcher.core.namespace.NamespaceConfig
 import ru.citeck.launcher.core.utils.ActionStatus
 import ru.citeck.launcher.core.workspace.WorkspaceConfig.FastStartVariant
 import ru.citeck.launcher.core.workspace.WorkspaceDto
@@ -87,7 +87,7 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                 val workspaceServices = launcherServices.getWorkspaceServices()
 
                 val existingNamespaces = remember(workspaceServices.workspace.id) {
-                    workspaceServices.entitiesService.find(NamespaceDto::class, 3)
+                    workspaceServices.entitiesService.find(NamespaceConfig::class, 3)
                 }
                 if (existingNamespaces.isEmpty()) {
                     Column(Modifier.fillMaxWidth().height(250.dp)) {
@@ -126,7 +126,7 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                     onClick = {
                         launcherServices.getWorkspaceServices()
                             .entitiesService
-                            .create(NamespaceDto::class, {}, {})
+                            .create(NamespaceConfig::class, {}, {})
                     }
                 ) {
                     Text("Create New Namespace", fontSize = 1.05.em, textAlign = TextAlign.Center)
@@ -153,7 +153,7 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
 private fun prepareNsDataToCreate(
     workspaceServices: WorkspaceServices,
     fastStart: FastStartVariant
-): NamespaceDto {
+): NamespaceConfig {
 
     val workspaceConfig = workspaceServices.workspaceConfig.value
     val namespaceTemplate = if (fastStart.template.isEmpty()) {
@@ -218,7 +218,7 @@ private fun buttonsSpacer() {
 @Composable
 private fun ColumnScope.renderFastStartButton(
     workspaceServices: WorkspaceServices,
-    variantAndConfig: Pair<FastStartVariant, NamespaceDto>,
+    variantAndConfig: Pair<FastStartVariant, NamespaceConfig>,
     primary: Boolean
 ) {
     val (variant, namespaceConfig) = variantAndConfig
@@ -227,7 +227,7 @@ private fun ColumnScope.renderFastStartButton(
         modifier = Modifier.fillMaxWidth().weight(if (primary) 0.7f else 0.3f),
         shape = RoundedCornerShape(16.dp),
         onClick = {
-            if (workspaceServices.entitiesService.getFirst(NamespaceDto::class) != null) {
+            if (workspaceServices.entitiesService.getFirst(NamespaceConfig::class) != null) {
                 coroutineScope.launch {
                     GlobalMessageDialog.show(
                         "Workspace already has namespaces\nFast start is disabled."

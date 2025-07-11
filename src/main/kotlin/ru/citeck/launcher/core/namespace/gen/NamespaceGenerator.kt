@@ -4,8 +4,9 @@ import ru.citeck.launcher.core.WorkspaceServices
 import ru.citeck.launcher.core.appdef.*
 import ru.citeck.launcher.core.git.GitUpdatePolicy
 import ru.citeck.launcher.core.namespace.AppName
-import ru.citeck.launcher.core.namespace.NamespaceDto
+import ru.citeck.launcher.core.namespace.NamespaceConfig
 import ru.citeck.launcher.core.namespace.init.ExecShell
+import ru.citeck.launcher.core.namespace.runtime.docker.DockerApi
 import ru.citeck.launcher.core.utils.TmplUtils
 import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.file.CiteckFiles
@@ -43,7 +44,7 @@ class NamespaceGenerator {
         this.services = services
     }
 
-    fun generate(props: NamespaceDto, updatePolicy: GitUpdatePolicy, detachedApps: Set<String>): NamespaceGenResp {
+    fun generate(props: NamespaceConfig, updatePolicy: GitUpdatePolicy, detachedApps: Set<String>): NamespaceGenResp {
 
         services.updateConfig(updatePolicy)
 
@@ -61,14 +62,13 @@ class NamespaceGenerator {
         generatePostgres(context)
         generateZookeeper(context)
         generateRabbitMq(context)
+        generateKeycloak(context)
 
         for (app in context.bundle.applications) {
             if (!context.workspaceConfig.webappsById.contains(app.key)) {
                 continue
             }
-            if (app.key != AppName.PROXY) {
-                generateWebapp(app.key, context)
-            }
+            generateWebapp(app.key, context)
         }
         generateProxyApp(context)
         generateOnlyOffice(context)
@@ -100,9 +100,64 @@ class NamespaceGenerator {
 
     }
 
+    private fun generateKeycloak(context: NsGenContext) {
+        if (context.namespaceConfig.authentication.type != NamespaceConfig.AuthenticationType.KEYCLOAK) {
+            return
+        }
+        context.links.add(
+            NamespaceLink(
+                "http://localhost/ecos-idp/auth/",
+                "Keycloak",
+                "Keycloak is a tool for user authentication and authorization.\n Username: admin\n Password: admin",
+                "icons/app/keycloak.svg",
+                -10f
+            )
+        )
+        val dbName = "citeck_keycloak"
+
+        context.getOrCreateApp(AppName.KEYCLOAK)
+            .withImage("keycloak/keycloak:26.3.1")
+            .withResources(
+                AppResourcesDef(
+                    AppResourcesDef.LimitsDef("1g")
+                )
+            )
+            .withKind(ApplicationKind.THIRD_PARTY)
+            .addEnv("KC_BOOTSTRAP_ADMIN_USERNAME", "admin")
+            .addEnv("KC_BOOTSTRAP_ADMIN_PASSWORD", "admin")
+            .addDependsOn(NsGenContext.PG_HOST)
+            .addVolume("./keycloak/ecos-app-realm.json:/opt/keycloak/data/import/ecos-app-realm.json")
+            .addVolume("./keycloak/healthcheck.sh:/healthcheck.sh")
+            .withCmd(
+                listOf(
+                    "start",
+                    "--hostname=http://localhost/ecos-idp/auth/",
+                    "--http-enabled=true",
+                    "--health-enabled=true",
+                    "--db=postgres",
+                    "--hostname-backchannel-dynamic=true",
+                    "--db-url=jdbc:postgresql://${NsGenContext.PG_HOST}:${NsGenContext.PG_PORT}/$dbName",
+                    "--db-username=$dbName",
+                    "--db-password=$dbName",
+                    "--proxy-headers=xforwarded",
+                    "--import-realm"
+                )
+            )
+            .withStartupCondition(StartupCondition(
+                probe = AppProbeDef(
+                    exec = ExecProbeDef(
+                        listOf("bash", "/healthcheck.sh")
+                    )
+                )
+            ))
+
+        context.applications[NsGenContext.PG_HOST]!!
+            .addInitAction(ExecShell("/init_db_and_user.sh $dbName"))
+    }
+
     private fun generateMailhog(context: NsGenContext) {
         context.getOrCreateApp(AppName.MAILHOG)
-            .withImage("mailhog/mailhog")
+            .withImage("mailhog/mailhog:v1.0.1")
             .withPorts(
                 listOf(
                     "1025:1025",
@@ -129,6 +184,8 @@ class NamespaceGenerator {
             .withImage("onlyoffice/documentserver:7.1")
             .addPort("8070:80/tcp")
             .addPort("443/tcp")
+            .addEnv("JWT_ENABLED", "false")
+            .addEnv("ALLOW_PRIVATE_IP_ADDRESS", "true")
             .withResources(
                 AppResourcesDef(
                     AppResourcesDef.LimitsDef("1g")
@@ -138,16 +195,16 @@ class NamespaceGenerator {
 
     private fun generatePgAdmin(context: NsGenContext) {
 
-        val props = context.props.pgAdmin
+        val props = context.namespaceConfig.pgAdmin
         if (!props.enabled) {
             return
         }
         context.getOrCreateApp(AppName.PGADMIN)
-            .withImage(props.image.ifBlank { "dpage/pgadmin4:8.13.0" })
+            .withImage(props.image.ifBlank { "dpage/pgadmin4:9.5.0" })
             .addPort("5050:80")
             .addEnv("PGADMIN_DEFAULT_EMAIL", "admin@admin.com")
             .addEnv("PGADMIN_DEFAULT_PASSWORD", "admin")
-            .addVolume("pgadmin:/var/lib/pgadmin")
+            .addVolume("pgadmin2:/var/lib/pgadmin")
             .addVolume("./pgadmin/servers.json:/pgadmin4/servers.json")
             .withResources(
                 AppResourcesDef(
@@ -158,7 +215,10 @@ class NamespaceGenerator {
             NamespaceLink(
                 "http://localhost:5050",
                 "PG Admin",
-                "Postgres database management and design tool\nUser: admin@admin.com\nPassword: admin",
+                "Postgres database management and design tool\n" +
+                    "User: admin@admin.com\n" +
+                    "Password: admin\n" +
+                    "Password for database: postgres",
                 "icons/app/postgres.svg",
                 0f
             )
@@ -167,9 +227,9 @@ class NamespaceGenerator {
 
     private fun generateMongoDb(context: NsGenContext) {
         context.getOrCreateApp(AppName.MONGODB)
-            .withImage(context.props.mongodb.image.ifBlank { "mongo:4.0.2" })
+            .withImage(context.namespaceConfig.mongodb.image.ifBlank { "mongo:4.0.2" })
             .addPort("27017:27017")
-            .addVolume("mongo:/data/db")
+            .addVolume("mongo2:/data/db")
             .withResources(
                 AppResourcesDef(
                     AppResourcesDef.LimitsDef("512m")
@@ -186,7 +246,36 @@ class NamespaceGenerator {
             app.addEnv("ONLYOFFICE_TARGET", NsGenContext.ONLY_OFFICE_HOST)
                 .addDependsOn(AppName.ONLY_OFFICE)
         }
-        val proxyProps = context.props.citeckProxy
+        when (context.namespaceConfig.authentication.type) {
+            NamespaceConfig.AuthenticationType.BASIC -> {
+                val users = context.namespaceConfig.authentication.users
+                app.addEnv("BASIC_AUTH_ACCESS", users.joinToString(",") { "$it:$it" })
+            }
+            NamespaceConfig.AuthenticationType.KEYCLOAK -> {
+                app.addEnv("EIS_TARGET", "${NsGenContext.KK_HOST}:8080")
+                app.addEnv("ENABLE_OIDC_FULL_ACCESS", "true")
+                app.addEnv("CLIENT_ID", "ecos-proxy-app")
+                app.addEnv("EIS_SCHEME", "http")
+                app.addEnv("EIS_ID", "${NsGenContext.KK_HOST}:8080")
+                app.addEnv("REALM_ID", "ecos-app")
+                app.addEnv("EIS_LOCATION", "auth")
+                app.addEnv("REDIRECT_LOGOUT_URI", "http://localhost")
+                app.addEnv("CLIENT_SECRET", "2996117d-9a33-4e06-b48a-867ce6a235db")
+                app.addVolume("./proxy/lua_oidc_full_access.lua:/etc/nginx/includes/lua_oidc_full_access.lua:ro")
+                app.addInitAction(ExecShell(
+                    "sed -i -e '/location \\/ecos-idp\\/auth\\/ {/a\\\n" +
+                    "    rewrite ^/ecos-idp/auth/(.*)\\$ /\\$1 break;\n' " +
+                    "-e 's|http://keycloak:8080/auth/|http://keycloak:8080/|g' /etc/nginx/conf.d/default.conf "
+                ))
+                app.addInitAction(ExecShell("nginx -s reload"))
+            }
+        }
+        app.addEnv("RABBITMQ_TARGET", "${NsGenContext.RMQ_HOST}:15672")
+        app.addEnv("ENABLE_LOGGING", "warn")
+        app.addEnv("ENABLE_SERVER_STATUS", "true")
+        app.addEnv("MAILHOG_TARGET", NsGenContext.MAILHOG_HOST + ":8025")
+
+        val proxyProps = context.namespaceConfig.citeckProxy
 
         app.withImage(proxyProps.image.ifBlank {
             context.bundle.applications[AppName.PROXY]?.image ?: ""
@@ -196,7 +285,8 @@ class NamespaceGenerator {
             .addEnv("GATEWAY_TARGET", "${AppName.GATEWAY}:$gatewayPort")
             .addEnv("PROXY_TARGET", "${AppName.GATEWAY}:$gatewayPort")
             .addEnv("ECOS_INIT_DELAY", "0")
-            .addPort("!80:80")
+            .addEnv("ALFRESCO_ENABLED", "false")
+            .addPort("80:80")
             .addDependsOn(AppName.GATEWAY)
             .withKind(ApplicationKind.CITECK_CORE)
             .withResources(
@@ -208,11 +298,6 @@ class NamespaceGenerator {
                     probe = AppProbeDef(http = HttpProbeDef("/eis.json", 80))
                 )
             )
-
-        val basicAuth = context.props.authentication.users
-        if (basicAuth.isNotEmpty()) {
-            app.addEnv("BASIC_AUTH_ACCESS", basicAuth.joinToString(",") { "$it:$it" })
-        }
     }
 
     private fun generateWebapp(name: String, context: NsGenContext) {
@@ -220,7 +305,7 @@ class NamespaceGenerator {
         val webappProps = TmplUtils.applyAtts(
             context.workspaceConfig.defaultWebappProps
                 .apply(context.workspaceConfig.webappsById[name]?.defaultProps)
-                .apply(context.props.webapps[name]),
+                .apply(context.namespaceConfig.webapps[name]),
             DataValue.create(NsGenContext.VARS)
         )
 
@@ -395,14 +480,14 @@ class NamespaceGenerator {
 
     private fun generateRabbitMq(context: NsGenContext) {
         context.getOrCreateApp(NsGenContext.RMQ_HOST)
-            .withImage("bitnami/rabbitmq:4.0.3-debian-12-r1")
+            .withImage("rabbitmq:4.1.2-management")
             .addPort("5672:${NsGenContext.RMQ_PORT}")
             .addPort("15672:15672")
-            .addEnv("RABBITMQ_USERNAME", "admin")
-            .addEnv("RABBITMQ_PASSWORD", "admin")
-            .addEnv("RABBITMQ_VHOST", "/")
+            .addEnv("RABBITMQ_DEFAULT_USER", "admin")
+            .addEnv("RABBITMQ_DEFAULT_PASS", "admin")
+            .addEnv("RABBITMQ_DEFAULT_VHOST", "/")
             .addEnv("RABBITMQ_MANAGEMENT_ALLOW_WEB_ACCESS", "true")
-            .addVolume("rabbitmq:/bitnami/rabbitmq/mnesia")
+            .addVolume("rabbitmq2:/var/lib/rabbitmq")
             .withResources(
                 AppResourcesDef(
                     AppResourcesDef.LimitsDef("256m")
@@ -423,36 +508,58 @@ class NamespaceGenerator {
 
     private fun generateZookeeper(context: NsGenContext) {
         context.getOrCreateApp(NsGenContext.ZK_HOST)
-            .withImage("bitnami/zookeeper:3.9.3-debian-12-r3")
+            .withImage("zookeeper:3.9.3")
             .addPort("2181:${NsGenContext.ZK_PORT}")
-            .addEnv("ZOO_AUTOPURGE_INTERVAL", "1")
+            .addPort("${context.portsCounter.andIncrement}:8080")
+            .addEnv("ZOO_AUTOPURGE_PURGEINTERVAL", "1")
+            .addEnv("ZOO_AUTOPURGE_SNAPRETAINCOUNT", "3")
             .addEnv("ALLOW_ANONYMOUS_LOGIN", "yes")
-            .addVolume("zookeeper:/bitnami/zookeeper")
+            .addEnv("ZOO_DATA_DIR", "/citeck/zookeeper/data")
+            .addEnv("ZOO_DATA_LOG_DIR", "/citeck/zookeeper/datalog")
+            .addVolume("zookeeper2:/citeck/zookeeper")
             .withResources(
                 AppResourcesDef(
                     AppResourcesDef.LimitsDef("512m")
                 )
-            )
+            ).withInitContainers(listOf(InitContainerDef.create()
+                .withImage(DockerApi.UTILS_IMAGE)
+                .withCmd(listOf("/bin/sh", "-c", "mkdir -p /zkdir/data /zkdir/datalog"))
+                .withVolumes(listOf("zookeeper2:/zkdir"))
+                .build()))
     }
 
     private fun generatePostgres(context: NsGenContext) {
         context.getOrCreateApp(NsGenContext.PG_HOST)
-            .withImage("bitnami/postgresql:13.17.0")
-            .addEnv("POSTGRESQL_USERNAME", "postgres")
-            .addEnv("POSTGRESQL_PASSWORD", "postgres")
+            .withImage("postgres:17.5")
+            .addEnv("POSTGRES_USER", "postgres")
+            .addEnv("POSTGRES_PASSWORD", "postgres")
+            .addEnv("PGDATA", "/var/lib/postgresql/data")
             .addPort("14523:${NsGenContext.PG_PORT}")
-            .addVolume("postgres:/bitnami/postgresql")
+            .addVolume("postgres2:/var/lib/postgresql/data")
             .addVolume("./postgres/init_db_and_user.sh:/init_db_and_user.sh")
-            .addVolume("./postgres/postgresql.conf:/opt/bitnami/postgresql/conf/postgresql.conf")
-            .withStartupCondition(
-                StartupCondition(
-                    log = LogStartupCondition(".*database system is ready to accept connections.*")
+            .addVolume("./postgres/postgresql.conf:/etc/postgresql/postgresql.conf")
+            .withStartupConditions(
+                listOf(
+                    StartupCondition(
+                        log = LogStartupCondition(".*database system is ready to accept connections.*")
+                    ),
+                    StartupCondition(
+                        probe = AppProbeDef(
+                            exec = ExecProbeDef(
+                                listOf(
+                                    "/bin/sh",
+                                    "-c",
+                                    "psql -U postgres -d postgres -c 'SELECT 1' || exit 1"
+                                )
+                            )
+                        )
+                    )
                 )
             ).withResources(
                 AppResourcesDef(
                     AppResourcesDef.LimitsDef("1g")
                 )
-            )
+            ).withCmd(listOf("-c", "config_file=/etc/postgresql/postgresql.conf"))
     }
 
     private enum class DbType(val defaultPort: Int) {

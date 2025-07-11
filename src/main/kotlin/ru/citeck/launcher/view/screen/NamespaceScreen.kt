@@ -26,7 +26,7 @@ import ru.citeck.launcher.core.WorkspaceServices
 import ru.citeck.launcher.core.appdef.ApplicationKind
 import ru.citeck.launcher.core.config.AppDir
 import ru.citeck.launcher.core.logs.AppLogUtils
-import ru.citeck.launcher.core.namespace.NamespaceDto
+import ru.citeck.launcher.core.namespace.NamespaceConfig
 import ru.citeck.launcher.core.namespace.NamespaceEntityDef
 import ru.citeck.launcher.core.namespace.NamespacesService
 import ru.citeck.launcher.core.namespace.runtime.AppRuntime
@@ -65,7 +65,7 @@ private val STALLED_COLOR = Color(0xFFDB831D)
 private val log = KotlinLogging.logger {}
 
 @Composable
-fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState<NamespaceDto?>) {
+fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState<NamespaceConfig?>) {
 
     val coroutineScope = rememberCoroutineScope()
 
@@ -91,7 +91,7 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
                             val currentRef = NamespaceEntityDef.getRef(selectedNsValue)
                             val newRef = JournalSelectDialog.show(
                                 JournalSelectDialog.Params(
-                                    NamespaceDto::class,
+                                    NamespaceConfig::class,
                                     listOf(currentRef),
                                     false,
                                     entitiesService = services.entitiesService,

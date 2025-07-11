@@ -12,12 +12,12 @@ data class ApplicationDef(
     val name: String,
     val image: String,
     val environments: Map<String, String>,
-    val cmd: String?,
+    val cmd: List<String>?,
     val ports: List<String>,
     val volumes: List<String>,
     val initActions: List<AppInitAction>,
     val dependsOn: Set<String>,
-    val startupCondition: StartupCondition?,
+    val startupConditions: List<StartupCondition>,
     val livenessProbe: AppProbeDef?,
     val resources: AppResourcesDef?,
     val kind: ApplicationKind,
@@ -46,7 +46,7 @@ data class ApplicationDef(
             .update(volumes)
             .update(Json.toString(initActions))
             .update(Json.toString(livenessProbe))
-            .update(Json.toString(startupCondition))
+            .update(Json.toString(startupConditions))
             .update(Json.toString(resources))
 
         initContainers.forEach {
@@ -65,12 +65,12 @@ data class ApplicationDef(
 
         private var image: String = ""
         private var environments: MutableMap<String, String> = LinkedHashMap()
-        private var cmd: String? = null
+        private var cmd: List<String>? = null
         private var ports: MutableList<String> = ArrayList()
         private var volumes: MutableList<String> = ArrayList()
         private var initActions: MutableList<AppInitAction> = ArrayList()
         private var dependsOn: MutableSet<String> = LinkedHashSet()
-        private var startupCondition: StartupCondition? = null
+        private var startupConditions: List<StartupCondition> = emptyList()
         private var livenessProbe: AppProbeDef? = null
         private var resources: AppResourcesDef? = null
         private var kind: ApplicationKind = ApplicationKind.THIRD_PARTY
@@ -84,7 +84,7 @@ data class ApplicationDef(
             this.volumes = ArrayList(base.volumes)
             this.initActions = ArrayList(base.initActions)
             this.dependsOn = LinkedHashSet(base.dependsOn)
-            this.startupCondition = base.startupCondition
+            this.startupConditions = base.startupConditions
             this.livenessProbe = base.livenessProbe
             this.resources = base.resources
             this.kind = base.kind
@@ -110,7 +110,7 @@ data class ApplicationDef(
             return this
         }
 
-        fun withCmd(cmd: String?): Builder {
+        fun withCmd(cmd: List<String>?): Builder {
             this.cmd = cmd
             return this
         }
@@ -156,7 +156,11 @@ data class ApplicationDef(
         }
 
         fun withStartupCondition(startupCondition: StartupCondition?): Builder {
-            this.startupCondition = startupCondition
+            return withStartupConditions(startupCondition?.let { listOf(it) })
+        }
+
+        fun withStartupConditions(startupCondition: List<StartupCondition>?): Builder {
+            this.startupConditions = startupCondition ?: emptyList()
             return this
         }
 
@@ -194,7 +198,7 @@ data class ApplicationDef(
                 volumes = volumes,
                 initActions = initActions,
                 dependsOn = dependsOn,
-                startupCondition = startupCondition,
+                startupConditions = startupConditions,
                 livenessProbe = livenessProbe,
                 resources = resources,
                 kind = kind,

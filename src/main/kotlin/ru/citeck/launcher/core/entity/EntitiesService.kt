@@ -8,6 +8,7 @@ import ru.citeck.launcher.core.database.Repository
 import ru.citeck.launcher.core.entity.events.EntitiesEvents
 import ru.citeck.launcher.core.entity.events.EntityCreatedEvent
 import ru.citeck.launcher.core.entity.events.EntityDeletedEvent
+import ru.citeck.launcher.core.entity.events.EntityUpdatedEvent
 import ru.citeck.launcher.core.utils.ActionStatus
 import ru.citeck.launcher.core.utils.IdUtils
 import ru.citeck.launcher.core.utils.data.DataValue
@@ -371,6 +372,8 @@ class EntitiesService(
         database.doWithinTxn {
             storeValueToVersions(defWithRepo, entity)
             defWithRepo.repository[editedEntityId] = newEntity
+
+            events.fireEntityUpdatedEvent(defWithRepo.definition.valueType, EntityUpdatedEvent(newEntity))
         }
     }
 

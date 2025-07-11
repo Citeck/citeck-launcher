@@ -6,13 +6,13 @@ import ru.citeck.launcher.core.appdef.ApplicationDef
 import ru.citeck.launcher.core.config.cloud.CloudConfigServer
 import ru.citeck.launcher.core.database.DataRepo
 import ru.citeck.launcher.core.git.GitUpdatePolicy
-import ru.citeck.launcher.core.namespace.NamespaceDto
+import ru.citeck.launcher.core.namespace.NamespaceConfig
 import ru.citeck.launcher.core.namespace.NamespaceRef
 import ru.citeck.launcher.core.namespace.NamespacesService
 import ru.citeck.launcher.core.namespace.gen.NamespaceGenResp
 import ru.citeck.launcher.core.namespace.gen.NamespaceGenerator
 import ru.citeck.launcher.core.namespace.runtime.actions.AppImagePullAction
-import ru.citeck.launcher.core.namespace.runtime.actions.AppRunAction
+import ru.citeck.launcher.core.namespace.runtime.actions.AppStartAction
 import ru.citeck.launcher.core.namespace.runtime.actions.AppStopAction
 import ru.citeck.launcher.core.namespace.runtime.docker.DockerApi
 import ru.citeck.launcher.core.namespace.runtime.docker.DockerConstants
@@ -38,7 +38,7 @@ import kotlin.math.min
 
 class NamespaceRuntime(
     val namespaceRef: NamespaceRef,
-    val namespaceDto: NamespaceDto,
+    val namespaceConfig: MutProp<NamespaceConfig>,
     val workspaceConfig: MutProp<WorkspaceConfig>,
     private val namespaceGenerator: NamespaceGenerator,
     private val actionsService: ActionsService,
@@ -94,14 +94,20 @@ class NamespaceRuntime(
     private val editedAndLockedApps = Collections.newSetFromMap<String>(ConcurrentHashMap())
     private val editedApps = ConcurrentHashMap<String, ApplicationDef>()
 
+    private lateinit var namespaceConfigWatcher: Disposable
+
     init {
         editedApps.putAll(nsRuntimeDataRepo[STATE_EDITED_APPS].asMap(String::class, ApplicationDef::class))
         editedAndLockedApps.addAll(nsRuntimeDataRepo[STATE_EDITED_AND_LOCKED_APPS].asStrList())
         detachedApps.addAll(nsRuntimeDataRepo[STATE_MANUAL_STOPPED_APPS].asStrList())
 
+        namespaceConfigWatcher = namespaceConfig.watch { before, after ->
+            generateNs(GitUpdatePolicy.ALLOWED_IF_NOT_EXISTS)
+        }
+
         status.watch { before, after ->
             log.info {
-                "[${namespaceDto.name} (${namespaceRef.namespace})] Namespace runtime " +
+                "[${namespaceConfig.name} (${namespaceRef.namespace})] Namespace runtime " +
                 "status was changed: $before -> $after"
             }
             if (before == NsRuntimeStatus.STOPPED) {
@@ -323,7 +329,7 @@ class NamespaceRuntime(
 
                 AppRuntimeStatus.READY_TO_START -> {
                     application.status.value = AppRuntimeStatus.STARTING
-                    val promise = AppRunAction.execute(actionsService, application, runtimeFilesHash)
+                    val promise = AppStartAction.execute(actionsService, application, runtimeFilesHash)
                     application.activeActionPromise = promise
                     promise.then {
                         application.status.value = AppRuntimeStatus.RUNNING
@@ -520,7 +526,7 @@ class NamespaceRuntime(
 
     private fun generateNs(updatePolicy: GitUpdatePolicy) {
 
-        val newGenRes = namespaceGenerator.generate(namespaceDto, updatePolicy, detachedApps)
+        val newGenRes = namespaceGenerator.generate(namespaceConfig.value, updatePolicy, detachedApps)
         val currentRuntimesByName = appRuntimes.value.associateByTo(mutableMapOf()) { it.name }
         val newRuntimes = ArrayList<AppRuntime>()
 
@@ -596,6 +602,7 @@ class NamespaceRuntime(
     }
 
     override fun dispose() {
+        namespaceConfigWatcher.dispose()
         isRuntimeThreadRunning.set(false)
         flushRuntimeThread()
         runtimeThread?.interrupt()

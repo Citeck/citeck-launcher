@@ -7,12 +7,15 @@ import ru.citeck.launcher.core.entity.EntityDef
 import ru.citeck.launcher.core.entity.EntityIdType
 import ru.citeck.launcher.core.namespace.NamespaceEntityDef.FORM_FIELD_BUNDLES_REPO
 import ru.citeck.launcher.core.namespace.NamespaceEntityDef.FORM_FIELD_BUNDLE_KEY
+import ru.citeck.launcher.core.namespace.NamespaceEntityDef.FORM_FIELD_AUTH_TYPE
+import ru.citeck.launcher.core.namespace.NamespaceEntityDef.FORM_FIELD_AUTH_USERS
 import ru.citeck.launcher.core.namespace.NamespaceEntityDef.formSpec
 import ru.citeck.launcher.core.namespace.gen.NamespaceGenerator
 import ru.citeck.launcher.core.namespace.runtime.NamespaceRuntime
 import ru.citeck.launcher.core.utils.ActionStatus
 import ru.citeck.launcher.core.utils.Disposable
 import ru.citeck.launcher.core.utils.data.DataValue
+import ru.citeck.launcher.core.utils.prop.MutProp
 import ru.citeck.launcher.core.workspace.WorkspacesService
 import java.nio.file.Path
 import java.time.Duration
@@ -51,11 +54,11 @@ class NamespacesService : Disposable {
         nsAppsGenerator.init(services)
         services.entitiesService.register(createEntityDef())
 
-        fun registerNsRuntime(nsDto: NamespaceDto): NamespaceRuntime {
+        fun registerNsRuntime(nsDto: NamespaceConfig): NamespaceRuntime {
             val namespaceRef = NamespaceRef(services.workspace.id, nsDto.id)
             val runtime = NamespaceRuntime(
                 namespaceRef,
-                nsDto,
+                MutProp(nsDto),
                 services.workspaceConfig,
                 nsAppsGenerator,
                 services.actionsService,
@@ -67,10 +70,14 @@ class NamespacesService : Disposable {
             return runtime
         }
 
-        services.entitiesService.getAll(NamespaceDto::class).forEach {
+        services.entitiesService.getAll(NamespaceConfig::class).forEach {
             registerNsRuntime(it.entity)
         }
-        services.entitiesService.events.addEntityCreatedListener(NamespaceDto::class) { event ->
+        services.entitiesService.events.addEntityUpdatedListener(NamespaceConfig::class) {
+            namespaceRuntimes[it.entity.id]?.namespaceConfig?.value = it.entity
+        }
+
+        services.entitiesService.events.addEntityCreatedListener(NamespaceConfig::class) { event ->
             val nsTemplateId = event.entity.template
             val nsTemplate = if (nsTemplateId.isEmpty()) {
                 null
@@ -98,7 +105,7 @@ class NamespacesService : Disposable {
             }
             services.setSelectedNamespace(event.entity.id)
         }
-        services.entitiesService.events.addEntityDeletedListener(NamespaceDto::class) { event ->
+        services.entitiesService.events.addEntityDeletedListener(NamespaceConfig::class) { event ->
             val namespaceId = event.entity.id
             val runtime = namespaceRuntimes[namespaceId]
             if (runtime != null) {
@@ -130,10 +137,10 @@ class NamespacesService : Disposable {
         }
     }
 
-    private fun createEntityDef(): EntityDef<String, NamespaceDto> {
+    private fun createEntityDef(): EntityDef<String, NamespaceConfig> {
         return EntityDef(
             idType = EntityIdType.String,
-            valueType = NamespaceDto::class,
+            valueType = NamespaceConfig::class,
             typeId = NamespaceEntityDef.TYPE_ID,
             typeName = "Namespace",
             getId = { it.id },
@@ -160,6 +167,8 @@ class NamespacesService : Disposable {
                 val data = DataValue.of(dto)
                 data[FORM_FIELD_BUNDLES_REPO] = dto.bundleRef.repo
                 data[FORM_FIELD_BUNDLE_KEY] = dto.bundleRef.key
+                data[FORM_FIELD_AUTH_TYPE] = dto.authentication.type
+                data[FORM_FIELD_AUTH_USERS] = dto.authentication.users.joinToString(",")
                 data
             },
             fromFormData = {
@@ -167,8 +176,13 @@ class NamespacesService : Disposable {
                     it[FORM_FIELD_BUNDLES_REPO].asText(),
                     it[FORM_FIELD_BUNDLE_KEY].asText()
                 )
+                it["/authentication/type"] = it[FORM_FIELD_AUTH_TYPE]
+                it.remove(FORM_FIELD_AUTH_TYPE)
+                it["/authentication/users"] = it[FORM_FIELD_AUTH_USERS]
+                it.remove(FORM_FIELD_AUTH_USERS)
+
                 it["bundleRef"] = bundleRef
-                it.getAsNotNull(NamespaceDto::class)
+                it.getAsNotNull(NamespaceConfig::class)
             }
         )
     }
