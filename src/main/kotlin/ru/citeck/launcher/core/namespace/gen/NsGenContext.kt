@@ -36,7 +36,7 @@ class NsGenContext(
         const val MONGO_PORT = 27017
 
         const val MAILHOG_HOST = AppName.MAILHOG
-        const val ONLY_OFFICE_HOST = AppName.ONLY_OFFICE
+        const val ONLYOFFICE_HOST = AppName.ONLYOFFICE
 
         const val JWT_SECRET = "my-secret-key-which-should-be-changed-in-production-and-be-base64-encoded"
 
@@ -50,7 +50,7 @@ class NsGenContext(
             "MONGO_HOST" to MONGO_HOST,
             "MONGO_PORT" to MONGO_PORT,
             "MAILHOG_HOST" to MAILHOG_HOST,
-            "ONLY_OFFICE_HOST" to ONLY_OFFICE_HOST,
+            "ONLYOFFICE_HOST" to ONLYOFFICE_HOST,
             "KK_ADMIN_URL" to "http://$KK_HOST:8080",
             "KK_ADMIN_USER" to "admin",
             "KK_ADMIN_PASSWORD" to "admin"

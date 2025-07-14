@@ -29,7 +29,7 @@ object AppName {
     const val ZOOKEEPER = "zookeeper"
     const val MONGODB = "mongo"
     const val MAILHOG = "mailhog"
-    const val ONLY_OFFICE = "only-office"
+    const val ONLYOFFICE = "onlyoffice"
     const val RABBITMQ = "rabbitmq"
     const val KEYCLOAK = "keycloak"
 }

@@ -93,7 +93,7 @@ class NamespaceGenerator {
             context.appFiles,
             context.cloudConfig,
             context.links,
-            setOf(AppName.ONLY_OFFICE)
+            setOf(AppName.ONLYOFFICE)
         )
     }
 
@@ -181,7 +181,7 @@ class NamespaceGenerator {
     }
 
     private fun generateOnlyOffice(context: NsGenContext) {
-        context.getOrCreateApp(AppName.ONLY_OFFICE)
+        context.getOrCreateApp(AppName.ONLYOFFICE)
             .withImage("onlyoffice/documentserver:7.1")
             .addPort("8070:80/tcp")
             .addPort("443/tcp")
@@ -243,9 +243,9 @@ class NamespaceGenerator {
         val gatewayPort = context.applications[AppName.GATEWAY]!!.getEnv("SERVER_PORT")!!.toInt()
 
         val app = context.getOrCreateApp(AppName.PROXY)
-        if (!context.detachedApps.contains(AppName.ONLY_OFFICE)) {
-            app.addEnv("ONLYOFFICE_TARGET", NsGenContext.ONLY_OFFICE_HOST)
-                .addDependsOn(AppName.ONLY_OFFICE)
+        if (!context.detachedApps.contains(AppName.ONLYOFFICE)) {
+            app.addEnv("ONLYOFFICE_TARGET", NsGenContext.ONLYOFFICE_HOST)
+                .addDependsOn(AppName.ONLYOFFICE)
         }
         when (context.namespaceConfig.authentication.type) {
             AuthenticationType.BASIC -> {
