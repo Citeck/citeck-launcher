@@ -89,7 +89,7 @@ class NamespaceRuntime(
     private var currentActionType: NsRuntimeActionType = NsRuntimeActionType.NONE
     private var currentActionFuture: CompletableFuture<Unit>? = null
 
-    private val detachedApps = Collections.newSetFromMap<String>(ConcurrentHashMap())
+    internal val detachedApps = Collections.newSetFromMap<String>(ConcurrentHashMap())
 
     private val editedAndLockedApps = Collections.newSetFromMap<String>(ConcurrentHashMap())
     private val editedApps = ConcurrentHashMap<String, ApplicationDef>()
@@ -229,7 +229,7 @@ class NamespaceRuntime(
                 }
                 generateNs(gitUpdatePolicy)
                 appRuntimes.value.forEach {
-                    if (!it.manualStop) {
+                    if (!it.isDetached) {
                         it.start()
                     }
                 }
@@ -266,9 +266,13 @@ class NamespaceRuntime(
         }
     }
 
-    fun removeDetachedApp(appName: String) {
-        if (detachedApps.remove(appName)) {
-            detachedAppsChanged(setOf(appName))
+    private fun removeDetachedApps(detachedAppsToRemove: Set<String>) {
+        if (detachedAppsToRemove.isEmpty()) {
+            return
+        }
+        val changedApps = detachedAppsToRemove.filterTo(HashSet()) { detachedApps.remove(it) }
+        if (changedApps.isNotEmpty()) {
+            detachedAppsChanged(changedApps)
         }
     }
 
@@ -314,12 +318,13 @@ class NamespaceRuntime(
             }
         }
 
+        val detachedAppsToRemove = HashSet<String>()
         for (application in appRuntimes.value) {
 
             when (application.status.value) {
                 AppRuntimeStatus.READY_TO_PULL -> {
 
-                    removeDetachedApp(application.name)
+                    detachedAppsToRemove.add(application.name)
 
                     val pullIfPresent = application.pullImageIfPresent
                     application.status.value = AppRuntimeStatus.PULLING
@@ -357,9 +362,7 @@ class NamespaceRuntime(
                 }
 
                 AppRuntimeStatus.READY_TO_STOP -> {
-                    if (application.manualStop) {
-                        addDetachedApp(application.name)
-                    }
+
                     application.status.value = AppRuntimeStatus.STOPPING
                     val promise = AppStopAction.execute(actionsService, application)
                     application.activeActionPromise = promise
@@ -377,6 +380,9 @@ class NamespaceRuntime(
                 else -> {}
             }
         }
+
+        removeDetachedApps(detachedAppsToRemove)
+
         val statusChangesCount = this.appsStatusChangesCount.get()
         if (status.value != NsRuntimeStatus.STALLED && appsStatusChangesCountProcessed != statusChangesCount) {
 

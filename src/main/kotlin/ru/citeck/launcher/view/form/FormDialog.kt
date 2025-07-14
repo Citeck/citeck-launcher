@@ -118,13 +118,20 @@ open class FormDialog {
                         }
                     }
                 }
+                val dataKeysWithFields = HashSet<String>()
                 params.spec.forEachField {
                     val value = if (params.data.has(it.key)) {
+                        dataKeysWithFields.add(it.key)
                         Json.convertOrNull(params.data[it.key], Any::class)
                     } else {
                         it.defaultValue
                     }
                     ctx.setValue(it.key, value)
+                }
+                params.data.forEach { key, value ->
+                    if (!dataKeysWithFields.contains(key)) {
+                        ctx.setValue(key, Json.convertOrNull(value, Any::class))
+                    }
                 }
                 ctx
             }

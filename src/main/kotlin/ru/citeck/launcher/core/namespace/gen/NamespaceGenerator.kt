@@ -551,7 +551,7 @@ class NamespaceGenerator {
             .addVolume("postgres2:/var/lib/postgresql/data")
             .addVolume("./postgres/init_db_and_user.sh:/init_db_and_user.sh")
             .addVolume("./postgres/postgresql.conf:/etc/postgresql/postgresql.conf")
-            .addVolume("./postgres/pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf")
+            .addVolume("./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf")
             .withStartupConditions(
                 listOf(
                     StartupCondition(

@@ -169,7 +169,7 @@ class NamespacesService : Disposable {
                 data[FORM_FIELD_BUNDLE_KEY] = dto.bundleRef.key
                 data[FORM_FIELD_AUTH_TYPE] = dto.authentication.type
                 data[FORM_FIELD_AUTH_USERS] = dto.authentication.users.joinToString(",")
-                data
+                data.remove("id")
             },
             fromFormData = {
                 val bundleRef = BundleRef.create(

@@ -35,7 +35,8 @@ class AppRuntime(
     var containers: List<Container> = emptyList()
 
     var pullImageIfPresent = false
-    var manualStop = false
+    val isDetached: Boolean
+        get() = nsRuntime.detachedApps.contains(name)
 
     init {
         this.def.watch { before, after ->
@@ -68,13 +69,12 @@ class AppRuntime(
         } else {
             def.value.image.contains("snapshot", true)
         }
-        manualStop = false
         status.value = AppRuntimeStatus.READY_TO_PULL
     }
 
     fun stop(manual: Boolean = false) {
         if (manual) {
-            manualStop = true
+            nsRuntime.addDetachedApp(name)
         }
         if (!status.value.isStoppingState()) {
             status.value = AppRuntimeStatus.READY_TO_STOP
