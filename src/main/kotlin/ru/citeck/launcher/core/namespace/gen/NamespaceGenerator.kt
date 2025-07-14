@@ -13,7 +13,6 @@ import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.file.CiteckFiles
 import ru.citeck.launcher.core.utils.json.Json
 import ru.citeck.launcher.core.utils.json.Yaml
-import java.lang.IllegalStateException
 
 class NamespaceGenerator {
 
@@ -109,7 +108,7 @@ class NamespaceGenerator {
         context.links.add(
             NamespaceLink(
                 "http://localhost/ecos-idp/auth/",
-                "Keycloak",
+                "Keycloak Admin",
                 "Keycloak is a tool for user authentication and authorization.\n Username: admin\n Password: admin",
                 "icons/app/keycloak.svg",
                 -10f

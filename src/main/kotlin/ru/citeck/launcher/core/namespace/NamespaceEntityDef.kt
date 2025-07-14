@@ -1,7 +1,6 @@
 package ru.citeck.launcher.core.namespace
 
 import ru.citeck.launcher.core.entity.EntityRef
-import ru.citeck.launcher.view.form.spec.ComponentSpec
 import ru.citeck.launcher.view.form.spec.ComponentSpec.TextField
 import ru.citeck.launcher.view.form.spec.ComponentSpec.NameField
 import ru.citeck.launcher.view.form.spec.ComponentSpec.SelectField
