@@ -1,7 +1,7 @@
 {
   "Servers": {
     "1": {
-      "Name": "microservices",
+      "Name": "postgres",
       "Group": "Servers",
       "Host": "postgres",
       "Port": 5432,

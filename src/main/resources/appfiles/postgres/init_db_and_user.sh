@@ -15,14 +15,8 @@ DB_USER="$1"
 DB_PASSWORD="$1"
 
 # Check if the database exists
-
-echo "========================"
-psql -U postgres -tc "SELECT * FROM pg_database;"
-echo "========================"
-
 DB_EXISTS=$(psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME';" | xargs)
 
-echo "DB EXISTS = $DB_EXISTS"
 if [[ $DB_EXISTS != "1" ]]; then
     echo "Database '$DB_NAME' does not exist. Creating database and user..."
     psql -U postgres -c "CREATE DATABASE \"$DB_NAME\";"

@@ -2,7 +2,6 @@ package ru.citeck.launcher.core.snapshot
 
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.ktor.client.*
-import io.ktor.client.call.*
 import io.ktor.client.engine.cio.*
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.*
@@ -24,7 +23,6 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.io.path.deleteExisting
 import kotlin.io.path.exists
 import kotlin.io.path.name
 import kotlin.math.min
@@ -110,17 +108,34 @@ class WorkspaceSnapshots {
             .resolve("$snapshotId.zip")
 
         if (snapshotFile.exists()) {
+
             val actualHash = FileUtils.getFileSha256(snapshotFile)
+
             if (actualHash == snapshotInfo.sha256) {
+
                 log.info { "Using existing snapshot: ${snapshotFile.fileName}, hash verified." }
                 return snapshotFile
+
             } else {
+
+                val baseName = snapshotFile.fileName
+                    .toString()
+                    .substringBeforeLast('.') +
+                    "_outdated_" +
+                    FileUtils.createNameWithCurrentDateTime()
+
+                var newPath = snapshotFile.parent.resolve("$baseName.zip")
+                var renameIteration = 0
+                while (newPath.exists()) {
+                    newPath = snapshotFile.parent.resolve("${baseName}_${++renameIteration}.zip")
+                }
+
                 log.info {
                     "Obsolete snapshot detected: ${snapshotFile.fileName}. " +
                     "Hash mismatch (expected: ${snapshotInfo.sha256}, actual: $actualHash). " +
-                    "Deleting outdated file."
+                    "Rename outdated file to ${newPath.fileName}."
                 }
-                snapshotFile.deleteExisting()
+                Files.move(snapshotFile, newPath)
             }
         } else {
             log.info {

@@ -30,10 +30,9 @@ data class InitContainerDef(
             .update(image)
             .update(environments)
             .update(volumes)
+            .update(cmd)
             .toHex()
     }
-
-
 
     @JsonIgnore
     fun getHash(): String {

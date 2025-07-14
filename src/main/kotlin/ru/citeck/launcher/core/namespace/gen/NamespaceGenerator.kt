@@ -5,6 +5,7 @@ import ru.citeck.launcher.core.appdef.*
 import ru.citeck.launcher.core.git.GitUpdatePolicy
 import ru.citeck.launcher.core.namespace.AppName
 import ru.citeck.launcher.core.namespace.NamespaceConfig
+import ru.citeck.launcher.core.namespace.NamespaceConfig.AuthenticationType
 import ru.citeck.launcher.core.namespace.init.ExecShell
 import ru.citeck.launcher.core.namespace.runtime.docker.DockerApi
 import ru.citeck.launcher.core.utils.TmplUtils
@@ -101,7 +102,7 @@ class NamespaceGenerator {
     }
 
     private fun generateKeycloak(context: NsGenContext) {
-        if (context.namespaceConfig.authentication.type != NamespaceConfig.AuthenticationType.KEYCLOAK) {
+        if (context.namespaceConfig.authentication.type != AuthenticationType.KEYCLOAK) {
             return
         }
         context.links.add(
@@ -200,7 +201,7 @@ class NamespaceGenerator {
             return
         }
         context.getOrCreateApp(AppName.PGADMIN)
-            .withImage(props.image.ifBlank { "dpage/pgadmin4:9.5.0" })
+            .withImage(props.image.ifBlank { "dpage/pgadmin4:8.13.0" })
             .addPort("5050:80")
             .addEnv("PGADMIN_DEFAULT_EMAIL", "admin@admin.com")
             .addEnv("PGADMIN_DEFAULT_PASSWORD", "admin")
@@ -216,7 +217,7 @@ class NamespaceGenerator {
                 "http://localhost:5050",
                 "PG Admin",
                 "Postgres database management and design tool\n" +
-                    "User: admin@admin.com\n" +
+                    "Username: admin@admin.com\n" +
                     "Password: admin\n" +
                     "Password for database: postgres",
                 "icons/app/postgres.svg",
@@ -247,11 +248,11 @@ class NamespaceGenerator {
                 .addDependsOn(AppName.ONLY_OFFICE)
         }
         when (context.namespaceConfig.authentication.type) {
-            NamespaceConfig.AuthenticationType.BASIC -> {
+            AuthenticationType.BASIC -> {
                 val users = context.namespaceConfig.authentication.users
                 app.addEnv("BASIC_AUTH_ACCESS", users.joinToString(",") { "$it:$it" })
             }
-            NamespaceConfig.AuthenticationType.KEYCLOAK -> {
+            AuthenticationType.KEYCLOAK -> {
                 app.addEnv("EIS_TARGET", "${NsGenContext.KK_HOST}:8080")
                 app.addEnv("ENABLE_OIDC_FULL_ACCESS", "true")
                 app.addEnv("CLIENT_ID", "ecos-proxy-app")
@@ -262,6 +263,7 @@ class NamespaceGenerator {
                 app.addEnv("REDIRECT_LOGOUT_URI", "http://localhost")
                 app.addEnv("CLIENT_SECRET", "2996117d-9a33-4e06-b48a-867ce6a235db")
                 app.addVolume("./proxy/lua_oidc_full_access.lua:/etc/nginx/includes/lua_oidc_full_access.lua:ro")
+                //app.addVolume("./proxy/openidc.lua:/usr/local/openresty/luajit/share/lua/5.1/resty/openidc.lua:ro")
                 app.addInitAction(ExecShell(
                     "sed -i -e '/location \\/ecos-idp\\/auth\\/ {/a\\\n" +
                     "    rewrite ^/ecos-idp/auth/(.*)\\$ /\\$1 break;\n' " +
@@ -302,11 +304,14 @@ class NamespaceGenerator {
 
     private fun generateWebapp(name: String, context: NsGenContext) {
 
+        val variables = DataValue.create(NsGenContext.VARS)
+        variables["KK_ENABLED"] = context.namespaceConfig.authentication.type == AuthenticationType.KEYCLOAK
+
         val webappProps = TmplUtils.applyAtts(
             context.workspaceConfig.defaultWebappProps
                 .apply(context.workspaceConfig.webappsById[name]?.defaultProps)
                 .apply(context.namespaceConfig.webapps[name]),
-            DataValue.create(NsGenContext.VARS)
+            DataValue.create(variables)
         )
 
         if (webappProps.enabled == false) {
@@ -495,7 +500,8 @@ class NamespaceGenerator {
             )
         context.links.add(
             NamespaceLink(
-                "http://localhost:15672",
+                // ip instead of localhost to avoid 'headers too large' error
+                "http://127.0.0.1:15672",
                 "Rabbit MQ",
                 "Rabbit MQ is a message broker — it helps different parts\n" +
                     "of a system communicate by sending and receiving messages between them\n" +
@@ -538,6 +544,7 @@ class NamespaceGenerator {
             .addVolume("postgres2:/var/lib/postgresql/data")
             .addVolume("./postgres/init_db_and_user.sh:/init_db_and_user.sh")
             .addVolume("./postgres/postgresql.conf:/etc/postgresql/postgresql.conf")
+            .addVolume("./postgres/pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf")
             .withStartupConditions(
                 listOf(
                     StartupCondition(

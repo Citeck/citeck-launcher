@@ -94,7 +94,7 @@ class NamespaceRuntime(
     private val editedAndLockedApps = Collections.newSetFromMap<String>(ConcurrentHashMap())
     private val editedApps = ConcurrentHashMap<String, ApplicationDef>()
 
-    private lateinit var namespaceConfigWatcher: Disposable
+    private var namespaceConfigWatcher: Disposable
 
     init {
         editedApps.putAll(nsRuntimeDataRepo[STATE_EDITED_APPS].asMap(String::class, ApplicationDef::class))
@@ -288,14 +288,28 @@ class NamespaceRuntime(
         var somethingChanged = false
 
         if (runtimesToRemove.isNotEmpty()) {
+
             val runtimesToRemoveIt = runtimesToRemove.iterator()
+
             while (runtimesToRemoveIt.hasNext()) {
+
                 val runtimeToRemove = runtimesToRemoveIt.next()
-                val status = runtimeToRemove.status.value
-                if (!status.isStoppingState()) {
-                    runtimeToRemove.stop(false)
-                } else if (status == AppRuntimeStatus.STOPPED) {
+                val status = runtimeToRemove.status
+
+                if (status.value == AppRuntimeStatus.STOPPED) {
+
                     runtimesToRemoveIt.remove()
+
+                } else if (status.value == AppRuntimeStatus.READY_TO_STOP) {
+
+                    status.value = AppRuntimeStatus.STOPPING
+                    val promise = AppStopAction.execute(actionsService, runtimeToRemove)
+                    runtimeToRemove.activeActionPromise = promise
+                    promise.catch {
+                        log.error(it) { "Runtime stopping failed. App: ${runtimeToRemove.name}" }
+                    }.finally {
+                        status.value = AppRuntimeStatus.STOPPED
+                    }
                 }
             }
         }
@@ -382,7 +396,7 @@ class NamespaceRuntime(
                 when (status.value) {
                     NsRuntimeStatus.STARTING -> {
                         if (appRuntimes.value.all {
-                                it.manualStop || it.status.value == AppRuntimeStatus.RUNNING
+                                it.status.value.isStoppingState() || it.status.value == AppRuntimeStatus.RUNNING
                             }) {
                             status.value = NsRuntimeStatus.RUNNING
                             currentActionFuture?.complete(Unit)
@@ -541,26 +555,42 @@ class NamespaceRuntime(
                 currentRuntime.def.value = updatedAppDef
             }
         }
-        if (newRuntimes.isNotEmpty()) {
-            val resRuntimes = ArrayList(appRuntimes.value)
-            resRuntimes.addAll(newRuntimes)
-            appRuntimes.value = resRuntimes
-            if (status.value != NsRuntimeStatus.STOPPED) {
-                newRuntimes.forEach { it.start() }
-            }
-            newRuntimes.forEach {
-                it.status.watch { _, after ->
-                    appsStatusChangesCount.incrementAndGet()
-                    if (after == AppRuntimeStatus.READY_TO_PULL && status.value == NsRuntimeStatus.RUNNING) {
-                        status.value = NsRuntimeStatus.STARTING
-                    }
-                    flushRuntimeThread()
-                }
-                it.editedDef.value = editedApps.containsKey(it.name)
-            }
-        }
         runtimesToRemove.addAll(currentRuntimesByName.values)
         currentRuntimesByName.values.forEach { it.stop() }
+
+        if (newRuntimes.isNotEmpty() || currentRuntimesByName.isNotEmpty()) {
+
+            val resRuntimes = ArrayList(appRuntimes.value)
+            resRuntimes.addAll(newRuntimes)
+            if (currentRuntimesByName.isNotEmpty()) {
+                val it = resRuntimes.iterator()
+                while (it.hasNext()) {
+                    val runtime = it.next()
+                    if (currentRuntimesByName.containsKey(runtime.name)) {
+                        log.info { "Remove runtime for app '${runtime.name}'" }
+                        it.remove()
+                    }
+                }
+            }
+
+            appRuntimes.value = resRuntimes
+
+            if (newRuntimes.isNotEmpty()) {
+                if (!status.value.isStoppingState()) {
+                    newRuntimes.forEach { it.start() }
+                }
+                newRuntimes.forEach {
+                    it.status.watch { _, after ->
+                        appsStatusChangesCount.incrementAndGet()
+                        if (after == AppRuntimeStatus.READY_TO_PULL && status.value == NsRuntimeStatus.RUNNING) {
+                            status.value = NsRuntimeStatus.STARTING
+                        }
+                        flushRuntimeThread()
+                    }
+                    it.editedDef.value = editedApps.containsKey(it.name)
+                }
+            }
+        }
 
         val currentFiles = CiteckFiles.getFile(nsRuntimeFilesDir).getFilesContent().toMutableMap()
         val runtimeFilesHash = TreeMap<Path, String>()

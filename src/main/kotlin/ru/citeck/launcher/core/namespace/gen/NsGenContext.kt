@@ -51,6 +51,9 @@ class NsGenContext(
             "MONGO_PORT" to MONGO_PORT,
             "MAILHOG_HOST" to MAILHOG_HOST,
             "ONLY_OFFICE_HOST" to ONLY_OFFICE_HOST,
+            "KK_ADMIN_URL" to "http://$KK_HOST:8080",
+            "KK_ADMIN_USER" to "admin",
+            "KK_ADMIN_PASSWORD" to "admin"
         )
     }
 

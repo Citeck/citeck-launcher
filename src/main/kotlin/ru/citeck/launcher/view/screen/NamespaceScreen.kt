@@ -228,7 +228,7 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
                 STARTING -> "The application is starting. Please wait..."
                 STOPPING, STOPPED -> "The application is not running. Start it to open in the browser."
                 STALLED -> "The application is stalled. Please try to start it again."
-                RUNNING -> ""
+                RUNNING -> "Open Citeck in your browser.\n Default username: admin\n Default password: admin"
             }
             val linkTextPadding = 55.dp
             CiteckTooltipArea(

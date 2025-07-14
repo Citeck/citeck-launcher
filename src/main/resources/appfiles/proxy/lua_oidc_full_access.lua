@@ -7,9 +7,10 @@ local opts = {
     client_secret = "2996117d-9a33-4e06-b48a-867ce6a235db",
     redirect_uri_scheme = "http",
     logout_path = "/logout",
-    redirect_after_logout_uri = "http://localhost/ecos-idp/auth/realms/ecos-app/protocol/openid-connect/logout?redirect_uri=http://localhost",
-    session_contents = {id_token=true, access_token=false, user=false, enc_id_token=false},
-    redirect_after_logout_with_id_token_hint = false,
+    redirect_after_logout_uri = "http://localhost/ecos-idp/auth/realms/ecos-app/protocol/openid-connect/logout",
+    post_logout_redirect_uri = "http://localhost",
+    session_contents = {id_token=true, access_token=false, user=false, enc_id_token=true},
+    redirect_after_logout_with_id_token_hint = true,
     ssl_verify = "no",
     scope = "openid profile",
     auth_accept_token_as = "cookie:PA"
