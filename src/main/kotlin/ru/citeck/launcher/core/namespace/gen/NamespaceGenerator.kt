@@ -13,6 +13,7 @@ import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.file.CiteckFiles
 import ru.citeck.launcher.core.utils.json.Json
 import ru.citeck.launcher.core.utils.json.Yaml
+import java.lang.IllegalStateException
 
 class NamespaceGenerator {
 
@@ -399,7 +400,13 @@ class NamespaceGenerator {
             app.addEnv("JAVA_OPTS", javaOpts)
         }
 
-        webappProps.environments.forEach { (k, v) -> app.addEnv(k, v) }
+        webappProps.environments.forEach { (k, v) ->
+            try {
+                app.addEnv(k, v)
+            } catch (e: Throwable) {
+                throw IllegalStateException("Invalid env param $k with value $v", e)
+            }
+        }
 
         if (app.name == AppName.EAPPS) {
             app.withInitContainers(

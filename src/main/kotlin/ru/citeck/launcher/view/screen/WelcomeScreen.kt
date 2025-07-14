@@ -17,7 +17,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import io.github.oshai.kotlinlogging.KotlinLogging
-import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.launch
 import ru.citeck.launcher.core.LauncherServices
 import ru.citeck.launcher.core.WorkspaceServices
@@ -33,16 +32,13 @@ import ru.citeck.launcher.view.dialog.GlobalMessageDialog
 import ru.citeck.launcher.view.drawable.CpImage
 import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog
 import ru.citeck.launcher.view.utils.rememberMutProp
-import java.util.concurrent.Executors
 
-private val coroutineContext = Executors.newFixedThreadPool(1).asCoroutineDispatcher()
 private val log = KotlinLogging.logger {}
 
 @Composable
 fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: MutableState<WorkspaceDto?>) {
 
     val entitiesService = launcherServices.entitiesService
-    val coroutineScope = rememberCoroutineScope { coroutineContext }
     val selectedWsValue = selectedWorkspace.value
     if (selectedWsValue == null) {
         LoadingScreen()
@@ -53,15 +49,15 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                     .align(Alignment.TopStart)
                     .padding(5.dp),
                 onClick = {
-                    coroutineScope.launch {
+                    JournalSelectDialog.show(
+                        JournalSelectDialog.Params(
+                            WorkspaceDto::class,
+                            listOf(WorkspaceEntityDef.getRef(selectedWsValue)),
+                            false
+                        )
+                    ) { selectedRefs ->
                         val currentRef = WorkspaceEntityDef.getRef(selectedWsValue)
-                        val newRef = JournalSelectDialog.show(
-                            JournalSelectDialog.Params(
-                                WorkspaceDto::class,
-                                listOf(WorkspaceEntityDef.getRef(selectedWsValue)),
-                                false
-                            )
-                        ).firstOrNull() ?: currentRef
+                        val newRef = selectedRefs.firstOrNull() ?: currentRef
                         var newEntity = entitiesService.getById(WorkspaceDto::class, newRef.localId)?.entity
                         if (newEntity == null) {
                             newEntity = entitiesService.getFirst(WorkspaceDto::class)!!.entity

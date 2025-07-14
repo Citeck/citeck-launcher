@@ -16,6 +16,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
 import ru.citeck.launcher.core.entity.EntitiesService
 import ru.citeck.launcher.core.entity.EntityInfo
@@ -26,6 +27,8 @@ import ru.citeck.launcher.view.action.CiteckIconAction
 import ru.citeck.launcher.view.commons.LimitedText
 import ru.citeck.launcher.view.dialog.CiteckDialog
 import ru.citeck.launcher.view.dialog.CiteckDialogState
+import ru.citeck.launcher.view.dialog.GlobalErrorDialog
+import ru.citeck.launcher.view.dialog.GlobalLoadingDialog
 import ru.citeck.launcher.view.form.exception.FormCancelledException
 import ru.citeck.launcher.view.table.table.DataTable
 import java.util.concurrent.CompletableFuture
@@ -38,14 +41,18 @@ object JournalSelectDialog {
 
     suspend fun show(params: Params): List<EntityRef> {
         return suspendCancellableCoroutine { continuation ->
-            showDialog(
-                InternalParams(
-                    params,
-                    { continuation.resume(it) },
-                    { continuation.resume(params.selected) }
-                )
-            )
+            show(params) { continuation.resume(it) }
         }
+    }
+
+    fun show(params: Params, onSubmit: (List<EntityRef>) -> Unit) {
+        showDialog(
+            InternalParams(
+                params,
+                { onSubmit(it) },
+                { onSubmit(params.selected) }
+            )
+        )
     }
 
     @Composable
@@ -262,8 +269,20 @@ object JournalSelectDialog {
             Spacer(modifier = Modifier.weight(1f))
             Button(
                 onClick = {
-                    params.onSubmit(records.value.filter { it.selected.value }.map { it.record.ref })
-                    closeDialog()
+                    Thread.ofPlatform().start {
+                        runBlocking {
+                            GlobalErrorDialog.doActionSafe({
+                                val closeLoading = GlobalLoadingDialog.show()
+                                try {
+                                    params.onSubmit(records.value.filter { it.selected.value }.map { it.record.ref })
+                                } finally {
+                                    closeLoading()
+                                }
+                            }, { "Journal select submit error" }, {
+                                closeDialog()
+                            })
+                        }
+                    }
                 }
             ) {
                 Text("Confirm")
