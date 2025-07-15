@@ -196,6 +196,16 @@ open class FormDialog {
         coroutineScope: CoroutineScope,
         entitiesService: EntitiesService
     ) {
+        val isVisible = remember {
+            val visibleFlag = mutableStateOf(this.isVisible(formContext, component))
+            formContext.listenChanges(component.dependsOn) { k, v ->
+                visibleFlag.value = this.isVisible(formContext, component)
+            }
+            visibleFlag
+        }
+        if (!isVisible.value) {
+            return
+        }
         if (component is ComponentSpec.Field<*>) {
             LimitedText(component.label + ":", maxWidth = dialogWidth * 0.3f)
         }
@@ -328,6 +338,15 @@ open class FormDialog {
                 context,
                 context.getValue(component.key, component.valueType) ?: component.defaultValue
             )
+        }
+    }
+
+    private fun isVisible(context: FormContext, component: ComponentSpec): Boolean {
+        if (component.visibleConditions.isEmpty()) {
+            return true
+        }
+        return component.visibleConditions.all {
+            it.invoke(context)
         }
     }
 

@@ -1,6 +1,7 @@
 package ru.citeck.launcher.core.namespace
 
 import ru.citeck.launcher.core.entity.EntityRef
+import ru.citeck.launcher.view.form.FormMode
 import ru.citeck.launcher.view.form.spec.ComponentSpec.TextField
 import ru.citeck.launcher.view.form.spec.ComponentSpec.NameField
 import ru.citeck.launcher.view.form.spec.ComponentSpec.SelectField
@@ -28,7 +29,7 @@ object NamespaceEntityDef {
                 options = { ctx ->
                     ctx.workspaceServices
                         ?.workspaceConfig
-                        ?.value
+                        ?.getValue()
                         ?.bundleRepos
                         ?.map { SelectField.Option(it.id, it.name) } ?: emptyList()
                 }
@@ -37,24 +38,23 @@ object NamespaceEntityDef {
                 FORM_FIELD_BUNDLE_KEY,
                 "Bundle",
                 "",
-                dependsOn = setOf(FORM_FIELD_BUNDLES_REPO),
                 options = { ctx ->
                     ctx.workspaceServices
                         ?.bundlesService
                         ?.getRepoBundles(ctx.getStrValue(FORM_FIELD_BUNDLES_REPO))
                         ?.map { SelectField.Option(it.key, it.key) } ?: emptyList()
                 }
-            ).mandatory(),
+            ).mandatory().dependsOn(FORM_FIELD_BUNDLES_REPO),
             SelectField(
                 FORM_FIELD_SNAPSHOT,
                 "Snapshot",
                 "",
                 options = { ctx ->
-                    ctx.workspaceServices?.workspaceConfig?.value?.snapshots?.map {
+                    ctx.workspaceServices?.workspaceConfig?.getValue()?.snapshots?.map {
                         SelectField.Option(it.id, it.name)
                     } ?: emptyList()
                 }
-            ),
+            ).visibleWhen { it.mode == FormMode.CREATE },
             SelectField(
                 FORM_FIELD_AUTH_TYPE,
                 "Authentication Type",
@@ -69,11 +69,9 @@ object NamespaceEntityDef {
                 FORM_FIELD_AUTH_USERS,
                 "Basic Auth Users",
                 ""
-            ).mandatory()
-                .enableWhen { ctx, value ->
-                    ctx.getStrValue(FORM_FIELD_AUTH_TYPE) == NamespaceConfig.AuthenticationType.BASIC.name
-                },
-            )
+            ).mandatory().visibleWhen {
+                it.getStrValue(FORM_FIELD_AUTH_TYPE) == NamespaceConfig.AuthenticationType.BASIC.name
+            }.dependsOn(FORM_FIELD_AUTH_TYPE))
     )
 
     fun getRef(entity: NamespaceConfig): EntityRef {

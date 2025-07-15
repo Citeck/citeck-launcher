@@ -42,12 +42,12 @@ class ActionStatus(
         var subStatusWatcher = Disposable.NONE
 
         var message: String
-            set(value) { this.value = this.value.withMessage(value) }
-            get() = this.value.message
+            set(value) { this.setValue(this.getValue().withMessage(value)) }
+            get() = this.getValue().message
 
         var progress: Float
-            set(value) { this.value = this.value.withProgress(value) }
-            get() = this.value.progress
+            set(value) { this.setValue(this.getValue().withProgress(value)) }
+            get() = this.getValue().progress
 
         fun subStatus(amount: Float): Mut {
             subStatusWatcher.dispose()
@@ -60,11 +60,11 @@ class ActionStatus(
         }
 
         fun addProgress(amount: Float) {
-            this.value = this.value.withProgress(progress + amount)
+            this.setValue(this.getValue().withProgress(progress + amount))
         }
 
         fun set(message: String, progress: Float) {
-            this.value = ActionStatus(message, progress)
+            this.setValue(ActionStatus(message, progress))
         }
     }
 }

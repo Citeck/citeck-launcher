@@ -52,7 +52,7 @@ class NamespaceGenerator {
         val context = NsGenContext(
             props,
             services.bundlesService.getBundleByRef(props.bundleRef, updatePolicy),
-            services.workspaceConfig.value,
+            services.workspaceConfig.getValue(),
             appFiles = HashMap(defaultAppFiles),
             detachedApps = detachedApps,
         )

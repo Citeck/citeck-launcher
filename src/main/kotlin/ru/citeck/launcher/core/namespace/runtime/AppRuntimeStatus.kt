@@ -13,6 +13,7 @@ enum class AppRuntimeStatus {
     PULL_FAILED, //stalled
 
     READY_TO_START,
+    DEPS_WAITING,
     STARTING,
     START_FAILED, //stalled
 
@@ -22,6 +23,7 @@ enum class AppRuntimeStatus {
         private val STARTING_STATUSES = setOf(
             READY_TO_PULL,
             PULLING,
+            DEPS_WAITING,
             READY_TO_START,
             STARTING,
             RUNNING

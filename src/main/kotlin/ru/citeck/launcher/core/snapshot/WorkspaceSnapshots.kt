@@ -99,7 +99,7 @@ class WorkspaceSnapshots {
     ): Path {
 
         val snapshotInfo = workspaceServices.workspaceConfig
-            .value
+            .getValue()
             .snapshots
             .find { it.id == snapshotId } ?: error("Snapshot not found: '$snapshotId'")
 

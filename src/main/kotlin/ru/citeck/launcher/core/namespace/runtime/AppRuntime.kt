@@ -7,6 +7,8 @@ import ru.citeck.launcher.core.namespace.runtime.docker.DockerApi
 import ru.citeck.launcher.core.utils.prop.MutProp
 import ru.citeck.launcher.core.utils.promise.Promise
 import ru.citeck.launcher.core.utils.promise.Promises
+import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 
 class AppRuntime(
     val nsRuntime: NamespaceRuntime,
@@ -19,16 +21,17 @@ class AppRuntime(
     @Volatile
     var activeActionPromise: Promise<*> = Promises.resolve(Unit)
         set(newValue) {
-            if (!field.isDone()) {
-                field.cancel(true)
-            }
+            val oldValue = field
             field = newValue
+            if (!oldValue.isDone()) {
+                oldValue.cancel(true)
+            }
         }
 
     val def = MutProp(def)
 
-    val name: String get() = def.value.name
-    val image: String get() = def.value.image
+    val name: String get() = def.getValue().name
+    val image: String get() = def.getValue().image
     val editedDef = MutProp(false)
 
     @Volatile
@@ -38,13 +41,16 @@ class AppRuntime(
     val isDetached: Boolean
         get() = nsRuntime.detachedApps.contains(name)
 
+    val dependenciesToWait: MutableSet<String> = Collections.newSetFromMap<String>(ConcurrentHashMap())
+    internal var lastDepsCheckingTime = 0L
+
     init {
         this.def.watch { before, after ->
-            if (!status.value.isStoppingState()) {
+            if (!status.getValue().isStoppingState()) {
                 if (before.image != after.image) {
-                    status.value = AppRuntimeStatus.READY_TO_PULL
+                    status.setValue(AppRuntimeStatus.READY_TO_PULL)
                 } else {
-                    status.value = AppRuntimeStatus.READY_TO_START
+                    status.setValue(AppRuntimeStatus.READY_TO_START)
                 }
             }
         }
@@ -61,23 +67,26 @@ class AppRuntime(
     }
 
     fun start() {
-        if (status.value == AppRuntimeStatus.PULLING && !activeActionPromise.isDone()) {
+        if (status.getValue() == AppRuntimeStatus.PULLING && !activeActionPromise.isDone()) {
             return
         }
-        pullImageIfPresent = if (def.value.kind == ApplicationKind.THIRD_PARTY) {
+        val def = this.def.getValue()
+        dependenciesToWait.clear()
+        dependenciesToWait.addAll(def.dependsOn)
+        pullImageIfPresent = if (def.kind == ApplicationKind.THIRD_PARTY) {
             false
         } else {
-            def.value.image.contains("snapshot", true)
+            def.image.contains("snapshot", true)
         }
-        status.value = AppRuntimeStatus.READY_TO_PULL
+        status.setValue(AppRuntimeStatus.READY_TO_PULL)
     }
 
     fun stop(manual: Boolean = false) {
         if (manual) {
             nsRuntime.addDetachedApp(name)
         }
-        if (!status.value.isStoppingState()) {
-            status.value = AppRuntimeStatus.READY_TO_STOP
+        if (!status.getValue().isStoppingState()) {
+            status.setValue(AppRuntimeStatus.READY_TO_STOP)
         }
     }
 

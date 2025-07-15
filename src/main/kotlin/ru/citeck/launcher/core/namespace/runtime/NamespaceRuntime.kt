@@ -20,8 +20,6 @@ import ru.citeck.launcher.core.namespace.runtime.docker.exception.DockerStaleNet
 import ru.citeck.launcher.core.utils.Digest
 import ru.citeck.launcher.core.utils.Disposable
 import ru.citeck.launcher.core.utils.file.CiteckFiles
-import ru.citeck.launcher.core.utils.promise.Promise
-import ru.citeck.launcher.core.utils.promise.Promises
 import ru.citeck.launcher.core.utils.prop.MutProp
 import ru.citeck.launcher.core.workspace.WorkspaceConfig
 import java.nio.file.Path
@@ -29,10 +27,14 @@ import java.util.*
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedDeque
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.thread
+import kotlin.concurrent.withLock
 import kotlin.io.path.*
 import kotlin.math.min
 
@@ -58,7 +60,7 @@ class NamespaceRuntime(
         private val RT_THREAD_IDLE_DELAY_SECONDS = listOf(1, 2, 3, 5, 8, 10)
     }
 
-    var status = MutProp(NsRuntimeStatus.STOPPED)
+    var nsStatus = MutProp(NsRuntimeStatus.STOPPED)
 
     var namespaceGenResp = MutProp<NamespaceGenResp?>("ns-gen-res-${namespaceRef}", null)
 
@@ -70,24 +72,25 @@ class NamespaceRuntime(
 
     @Volatile
     private var runtimeThread: Thread? = null
+    private val isActive = AtomicBoolean()
+    private val activeStateVersion = AtomicLong()
 
-    @Volatile
-    private var isRuntimeThreadRunning = AtomicBoolean()
+    private val runtimeActiveStatusLock = ReentrantLock()
 
     val namePrefix = DockerConstants.getNamePrefix(namespaceRef)
     val nameSuffix = DockerConstants.getNameSuffix(namespaceRef)
     val networkName = "${namePrefix}network$nameSuffix"
-    val boundedNs = MutProp(true)
 
     private val nsRuntimeFilesDir = NamespacesService.getNamespaceDir(namespaceRef).resolve("rtfiles")
 
     private val runtimeThreadSignalQueue = ArrayBlockingQueue<Boolean>(1)
+    private val runtimeCommands = ConcurrentLinkedDeque<NsRuntimeCmd>()
+    private val runtimeCommandsSize = AtomicInteger()
 
     private val appsStatusChangesCount = AtomicLong()
     private var appsStatusChangesCountProcessed = 0L
-
-    private var currentActionType: NsRuntimeActionType = NsRuntimeActionType.NONE
-    private var currentActionFuture: CompletableFuture<Unit>? = null
+    @Volatile
+    private var lastAppStatusChangeTime = System.currentTimeMillis()
 
     internal val detachedApps = Collections.newSetFromMap<String>(ConcurrentHashMap())
 
@@ -105,63 +108,13 @@ class NamespaceRuntime(
             generateNs(GitUpdatePolicy.ALLOWED_IF_NOT_EXISTS)
         }
 
-        status.watch { before, after ->
+        nsStatus.watch { before, after ->
             log.info {
                 "[${namespaceConfig.name} (${namespaceRef.namespace})] Namespace runtime " +
                 "status was changed: $before -> $after"
             }
             if (before == NsRuntimeStatus.STOPPED) {
-                isRuntimeThreadRunning.set(false)
-                runtimeThread?.interrupt()
-                isRuntimeThreadRunning = AtomicBoolean(true)
                 createNetworkIfNotExists(networkName)
-                runtimeThread = thread(start = false, name = "nsrt$nameSuffix") {
-                    log.info { "(+) Namespace runtime thread was started" }
-                    try {
-                        while (isRuntimeThreadRunning.get()) {
-                            var idleIterationsCounter = 0
-                            try {
-                                if (!runtimeThreadAction()) {
-                                    val delaySeconds = RT_THREAD_IDLE_DELAY_SECONDS.let {
-                                        it[min(idleIterationsCounter++, it.lastIndex)]
-                                    }
-                                    if (runtimeThreadSignalQueue.poll(
-                                            delaySeconds.toLong(),
-                                            TimeUnit.SECONDS
-                                        ) != null
-                                    ) {
-                                        for (i in 0..3) {
-                                            // add small delay to catch other "flush" commands and process it in one pass
-                                            if (runtimeThreadSignalQueue.poll(250, TimeUnit.MILLISECONDS) == null) {
-                                                break
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    idleIterationsCounter = 0
-                                }
-                            } catch (e: Throwable) {
-                                if (e !is InterruptedException) {
-                                    log.error(e) { "Exception in namespace runtime thread" }
-                                    try {
-                                        Thread.sleep(3000)
-                                    } catch (_: InterruptedException) {
-                                        //do nothing
-                                    }
-                                }
-                            }
-                        }
-                    } finally {
-                        isRuntimeThreadRunning.set(false)
-                        flushRuntimeThread()
-                        runtimeThread = null
-                        log.info { "(-) Namespace runtime thread was stopped" }
-                    }
-                }
-                runtimeThread?.start()
-            }
-            if (after == NsRuntimeStatus.STOPPED) {
-                isRuntimeThreadRunning.set(false)
             }
             nsRuntimeDataRepo[STATE_STATUS] = after.toString()
             flushRuntimeThread()
@@ -171,83 +124,94 @@ class NamespaceRuntime(
         val statusBefore = nsRuntimeDataRepo[STATE_STATUS].asText()
         if (statusBefore.isNotBlank()) {
             try {
-                status.value = NsRuntimeStatus.valueOf(statusBefore)
+                nsStatus.setValue(NsRuntimeStatus.valueOf(statusBefore)) {}
             } catch (_: Exception) {
                 log.warn { "Invalid status from db: '$statusBefore'" }
             }
         }
+        val statusValue = nsStatus.getValue()
         if (
-            status.value == NsRuntimeStatus.RUNNING
-            || status.value == NsRuntimeStatus.STARTING
-            || status.value == NsRuntimeStatus.STALLED
+            statusValue == NsRuntimeStatus.RUNNING
+            || statusValue == NsRuntimeStatus.STARTING
+            || statusValue == NsRuntimeStatus.STALLED
         ) {
-            appRuntimes.value.forEach {
+            appRuntimes.getValue().forEach {
                 if (detachedApps.contains(it.name)) {
                     it.stop(true)
                 } else {
-                    it.status.value = AppRuntimeStatus.READY_TO_PULL
+                    it.status.setValue(AppRuntimeStatus.READY_TO_PULL) {}
                 }
             }
-            status.value = NsRuntimeStatus.STARTING
+            nsStatus.setValue(NsRuntimeStatus.STARTING) {}
             flushRuntimeThread()
-        } else if (status.value == NsRuntimeStatus.STOPPING) {
+        } else if (statusValue == NsRuntimeStatus.STOPPING) {
             stop()
         }
+        appsStatusChangesCount.incrementAndGet()
     }
 
-    private fun runNamespaceAction(actionType: NsRuntimeActionType): Promise<Unit> {
-        if (this.currentActionType == actionType || actionType == NsRuntimeActionType.NONE) {
-            return Promises.resolve(Unit)
-        }
-        if (actionType == NsRuntimeActionType.STOP && status.value == NsRuntimeStatus.STOPPED) {
-            return Promises.resolve(Unit)
-        }
-        if (currentActionType != NsRuntimeActionType.NONE) {
-            currentActionFuture?.cancel(true)
-            currentActionFuture = null
-        }
-        this.currentActionType = actionType
-        val currentActionFuture = object : CompletableFuture<Unit>() {
-            override fun cancel(mayInterruptIfRunning: Boolean): Boolean {
-                currentActionType = NsRuntimeActionType.NONE
-                currentActionFuture = null
-                return super.cancel(mayInterruptIfRunning)
+    fun setActive(active: Boolean) = runtimeActiveStatusLock.withLock {
+        if (!active) {
+            if (isActive.compareAndSet(true, false)) {
+                flushRuntimeThread()
+                runtimeThread?.interrupt()
+                runtimeThread = null
             }
+            return
         }
-        this.currentActionFuture = currentActionFuture
-        when (actionType) {
-            NsRuntimeActionType.UPDATE_START,
-            NsRuntimeActionType.FORCE_UPDATE_START,
-            NsRuntimeActionType.REGENERATE -> {
-                if (actionType != NsRuntimeActionType.REGENERATE) {
-                    cleanEditedNonLockedApps()
-                }
-                val gitUpdatePolicy = when (actionType) {
-                    NsRuntimeActionType.FORCE_UPDATE_START -> GitUpdatePolicy.REQUIRED
-                    NsRuntimeActionType.REGENERATE -> GitUpdatePolicy.ALLOWED_IF_NOT_EXISTS
-                    else -> GitUpdatePolicy.ALLOWED
-                }
-                generateNs(gitUpdatePolicy)
-                appRuntimes.value.forEach {
-                    if (!it.isDetached) {
-                        it.start()
+        if (!isActive.compareAndSet(false, true)) {
+            return
+        }
+        val activeStateVersion = activeStateVersion.incrementAndGet()
+        runtimeThread?.interrupt()
+        runtimeThread = thread(start = false, name = "nsrt$nameSuffix") {
+            log.info { "(+) Namespace runtime thread was started" }
+            try {
+                while (isActive.get() && activeStateVersion == this.activeStateVersion.get()) {
+                    var idleIterationsCounter = 0
+                    try {
+                        if (!runtimeThreadAction()) {
+                            val delaySeconds = RT_THREAD_IDLE_DELAY_SECONDS.let {
+                                it[min(idleIterationsCounter++, it.lastIndex)]
+                            }
+                            if (runtimeThreadSignalQueue.poll(
+                                    delaySeconds.toLong(),
+                                    TimeUnit.SECONDS
+                                ) != null
+                            ) {
+                                var repeats = 4
+                                while (--repeats >= 0) {
+                                    // add small delay to catch other "flush" commands and process it in one pass
+                                    if (runtimeThreadSignalQueue.poll(250, TimeUnit.MILLISECONDS) == null) {
+                                        break
+                                    }
+                                }
+                            }
+                            if ((System.currentTimeMillis() - lastAppStatusChangeTime) > 30_000) {
+                                appsStatusChangesCount.incrementAndGet()
+                                lastAppStatusChangeTime = System.currentTimeMillis()
+                            }
+                        } else {
+                            idleIterationsCounter = 0
+                        }
+                    } catch (e: Throwable) {
+                        if (e !is InterruptedException) {
+                            log.error(e) { "Exception in namespace runtime thread" }
+                            try {
+                                Thread.sleep(3000)
+                            } catch (_: InterruptedException) {
+                                //do nothing
+                            }
+                        }
                     }
                 }
-                status.value = NsRuntimeStatus.STARTING
-                boundedNs.value = true
+            } finally {
+                runtimeThread = null
+                log.info { "(-) Namespace runtime thread was stopped" }
             }
-
-            NsRuntimeActionType.STOP -> {
-                status.value = NsRuntimeStatus.STOPPING
-                appRuntimes.value.forEach {
-                    it.stop()
-                }
-                flushRuntimeThread()
-            }
-
-            else -> error("Unsupported action type: $actionType")
         }
-        return Promises.create(currentActionFuture)
+        runtimeThread?.start()
+        flushRuntimeThread()
     }
 
     fun setDetachedApps(detachedApps: Set<String>) {
@@ -257,7 +221,6 @@ class NamespaceRuntime(
         this.detachedApps.clear()
         this.detachedApps.addAll(detachedApps)
         detachedAppsChanged(detachedApps)
-
     }
 
     fun addDetachedApp(appName: String) {
@@ -276,11 +239,23 @@ class NamespaceRuntime(
         }
     }
 
+    private fun scheduleRuntimeCmd(cmd: NsRuntimeCmd, systemCmd: Boolean) {
+        if (runtimeCommands.peekLast() == cmd) {
+            return
+        }
+        val cmdCount = runtimeCommandsSize.get()
+        if (systemCmd && cmdCount < 100 || !systemCmd && cmdCount < 50) {
+            runtimeCommands.offer(cmd)
+            runtimeCommandsSize.incrementAndGet()
+            flushRuntimeThread()
+        }
+    }
+
     private fun detachedAppsChanged(changedApps: Set<String>) {
         nsRuntimeDataRepo[STATE_MANUAL_STOPPED_APPS] = detachedApps
-        val dependsOnDetachedApps = namespaceGenResp.value?.dependsOnDetachedApps ?: emptySet()
-        if (!status.value.isStoppingState() && changedApps.any { dependsOnDetachedApps.contains(it) }) {
-            runNamespaceAction(NsRuntimeActionType.REGENERATE)
+        val dependsOnDetachedApps = namespaceGenResp.getValue()?.dependsOnDetachedApps ?: emptySet()
+        if (!nsStatus.getValue().isStoppingState() && changedApps.any { dependsOnDetachedApps.contains(it) }) {
+            scheduleRuntimeCmd(RegenerateNsCmd, true)
         }
     }
 
@@ -288,8 +263,76 @@ class NamespaceRuntime(
         runtimeThreadSignalQueue.offer(true)
     }
 
+    private fun collapseCommandsIfPossible(cmd0: NsRuntimeCmd, cmd1: NsRuntimeCmd): NsRuntimeCmd? {
+        if (cmd0 == cmd1) {
+            return cmd1
+        }
+        if ((cmd0 is StartNsCmd && cmd1 is StopNsCmd) || (cmd0 is StopNsCmd && cmd1 is StartNsCmd)) {
+            return cmd1
+        }
+        if (cmd0 is RegenerateNsCmd && cmd1 is StartNsCmd) {
+            return cmd1
+        }
+        if (cmd1 is RegenerateNsCmd && cmd0 is StartNsCmd) {
+            return cmd0
+        }
+        return null
+    }
+
     private fun runtimeThreadAction(): Boolean {
         var somethingChanged = false
+
+        var rtCommand = runtimeCommands.poll()
+        while (rtCommand != null) {
+            runtimeCommandsSize.decrementAndGet()
+            var nextCmd = runtimeCommands.poll()
+            while (nextCmd != null) {
+                val collapsedCmd = collapseCommandsIfPossible(rtCommand, nextCmd)
+                if (collapsedCmd == null) {
+                    break
+                }
+                runtimeCommandsSize.decrementAndGet()
+                rtCommand = collapsedCmd
+                nextCmd = runtimeCommands.poll()
+            }
+            when (rtCommand) {
+                is StartNsCmd, is RegenerateNsCmd -> {
+                    if (rtCommand !is RegenerateNsCmd) {
+                        cleanEditedNonLockedApps()
+                    }
+                    val gitUpdatePolicy = if (rtCommand is StartNsCmd) {
+                        if (rtCommand.forceUpdate) {
+                            GitUpdatePolicy.REQUIRED
+                        } else {
+                            GitUpdatePolicy.ALLOWED
+                        }
+                    } else {
+                        GitUpdatePolicy.ALLOWED_IF_NOT_EXISTS
+                    }
+                    generateNs(gitUpdatePolicy)
+                    if (rtCommand is StartNsCmd) {
+                        appRuntimes.getValue().forEach {
+                            if (!it.isDetached) {
+                                it.start()
+                            }
+                        }
+                    }
+                    nsStatus.setValue(NsRuntimeStatus.STARTING)
+                }
+                is StopNsCmd -> {
+                    if (!nsStatus.getValue().isStoppingState()) {
+                        nsStatus.setValue(NsRuntimeStatus.STOPPING)
+                        appRuntimes.getValue().forEach {
+                            it.stop()
+                        }
+                    }
+                }
+            }
+            rtCommand = nextCmd
+        }
+        // We don't aim for high precision here.
+        // This count is only needed to prevent an infinite command queue.
+        runtimeCommandsSize.set(runtimeCommands.size)
 
         if (runtimesToRemove.isNotEmpty()) {
 
@@ -299,63 +342,99 @@ class NamespaceRuntime(
 
                 val runtimeToRemove = runtimesToRemoveIt.next()
                 val status = runtimeToRemove.status
+                val statusVal = status.getValue()
 
-                if (status.value == AppRuntimeStatus.STOPPED) {
+                if (statusVal == AppRuntimeStatus.STOPPED) {
 
                     runtimesToRemoveIt.remove()
 
-                } else if (status.value == AppRuntimeStatus.READY_TO_STOP) {
+                } else if (statusVal == AppRuntimeStatus.READY_TO_STOP) {
 
-                    status.value = AppRuntimeStatus.STOPPING
+                    status.setValue(AppRuntimeStatus.STOPPING)
                     val promise = AppStopAction.execute(actionsService, runtimeToRemove)
                     runtimeToRemove.activeActionPromise = promise
                     promise.catch {
                         log.error(it) { "Runtime stopping failed. App: ${runtimeToRemove.name}" }
                     }.finally {
-                        status.value = AppRuntimeStatus.STOPPED
+                        status.setValue(AppRuntimeStatus.STOPPED)
                     }
                 }
             }
         }
 
         val detachedAppsToRemove = HashSet<String>()
-        for (application in appRuntimes.value) {
+        val allRuntimes = appRuntimes.getValue()
 
-            when (application.status.value) {
+        for (application in allRuntimes) {
+
+            when (application.status.getValue()) {
                 AppRuntimeStatus.READY_TO_PULL -> {
 
                     detachedAppsToRemove.add(application.name)
 
                     val pullIfPresent = application.pullImageIfPresent
-                    application.status.value = AppRuntimeStatus.PULLING
-
-                    val promise = AppImagePullAction.execute(
-                        actionsService,
-                        application,
-                        pullIfPresent
-                    )
-                    application.activeActionPromise = promise
-                    promise.then {
-                        application.status.value = AppRuntimeStatus.READY_TO_START
-                        flushRuntimeThread()
-                    }.catch {
-                        if (application.status.value == AppRuntimeStatus.PULLING) {
-                            application.status.value = AppRuntimeStatus.PULL_FAILED
+                    application.status.setValue(AppRuntimeStatus.PULLING) { statusVersion ->
+                        val promise = AppImagePullAction.execute(
+                            actionsService,
+                            application,
+                            pullIfPresent
+                        )
+                        application.activeActionPromise = promise
+                        promise.then {
+                            val deps = application.dependenciesToWait
+                            if (deps.isNotEmpty()) {
+                                for (runtime in allRuntimes) {
+                                    if (runtime.status.getValue() != AppRuntimeStatus.RUNNING) {
+                                        continue
+                                    }
+                                    deps.remove(runtime.name)
+                                    if (deps.isEmpty()) {
+                                        break
+                                    }
+                                }
+                            }
+                            if (deps.isEmpty()) {
+                                application.status.setValue(AppRuntimeStatus.READY_TO_START, statusVersion)
+                            } else {
+                                log.info { "Application '${application.name}' will wait for these dependencies to start: $deps" }
+                                application.status.setValue(AppRuntimeStatus.DEPS_WAITING, statusVersion)
+                            }
+                            flushRuntimeThread()
+                        }.catch {
+                            application.status.setValue(AppRuntimeStatus.PULL_FAILED, statusVersion)
                         }
                     }
                     somethingChanged = true
                 }
 
+                AppRuntimeStatus.DEPS_WAITING -> {
+                    val currentTime = System.currentTimeMillis()
+                    if ((currentTime - application.lastDepsCheckingTime) > 20_000) {
+                        val deps = application.dependenciesToWait
+                        for (runtime in allRuntimes) {
+                            if (runtime.status.getValue() == AppRuntimeStatus.RUNNING) {
+                                application.dependenciesToWait.remove(runtime.name)
+                            }
+                            if (deps.isEmpty()) {
+                                break
+                            }
+                        }
+                        if (deps.isEmpty()) {
+                            application.status.setValue(AppRuntimeStatus.READY_TO_START)
+                            somethingChanged = true
+                        }
+                        application.lastDepsCheckingTime = currentTime
+                    }
+                }
+
                 AppRuntimeStatus.READY_TO_START -> {
-                    application.status.value = AppRuntimeStatus.STARTING
-                    val promise = AppStartAction.execute(actionsService, application, runtimeFilesHash)
-                    application.activeActionPromise = promise
-                    promise.then {
-                        application.status.value = AppRuntimeStatus.RUNNING
-                        flushRuntimeThread()
-                    }.catch {
-                        if (application.status.value == AppRuntimeStatus.STARTING) {
-                            application.status.value = AppRuntimeStatus.START_FAILED
+                    application.status.setValue(AppRuntimeStatus.STARTING) { statusVersion ->
+                        val promise = AppStartAction.execute(actionsService, application, runtimeFilesHash)
+                        application.activeActionPromise = promise
+                        promise.then {
+                            application.status.setValue(AppRuntimeStatus.RUNNING, statusVersion)
+                        }.catch {
+                            application.status.setValue(AppRuntimeStatus.START_FAILED, statusVersion)
                         }
                     }
                     somethingChanged = true
@@ -363,15 +442,13 @@ class NamespaceRuntime(
 
                 AppRuntimeStatus.READY_TO_STOP -> {
 
-                    application.status.value = AppRuntimeStatus.STOPPING
-                    val promise = AppStopAction.execute(actionsService, application)
-                    application.activeActionPromise = promise
-                    promise.then {
-                        application.status.value = AppRuntimeStatus.STOPPED
-                        flushRuntimeThread()
-                    }.catch {
-                        if (application.status.value == AppRuntimeStatus.STOPPING) {
-                            application.status.value = AppRuntimeStatus.STOPPING_FAILED
+                    application.status.setValue(AppRuntimeStatus.STOPPING) { statusVersion ->
+                        val promise = AppStopAction.execute(actionsService, application)
+                        application.activeActionPromise = promise
+                        promise.then {
+                            application.status.setValue(AppRuntimeStatus.STOPPED, statusVersion)
+                        }.catch {
+                            application.status.setValue(AppRuntimeStatus.STOPPING_FAILED, statusVersion)
                         }
                     }
                     somethingChanged = true
@@ -384,34 +461,32 @@ class NamespaceRuntime(
         removeDetachedApps(detachedAppsToRemove)
 
         val statusChangesCount = this.appsStatusChangesCount.get()
-        if (status.value != NsRuntimeStatus.STALLED && appsStatusChangesCountProcessed != statusChangesCount) {
+        if (nsStatus.getValue() != NsRuntimeStatus.STALLED && appsStatusChangesCountProcessed != statusChangesCount) {
 
-            val stalledStates = appRuntimes.value.mapNotNull {
-                if (it.status.value.isStalledState()) {
-                    it.name to it.status.value
+            val stalledStates = allRuntimes.mapNotNull {
+                if (it.status.getValue().isStalledState()) {
+                    it.name to it.status.getValue()
                 } else {
                     null
                 }
             }
             if (stalledStates.isNotEmpty()) {
                 log.error { "Found containers in stalled state: $stalledStates. Namespace is stalled" }
-                status.value = NsRuntimeStatus.STALLED
-                currentActionFuture?.completeExceptionally(RuntimeException("Namespace stalled"))
-                resetCurrentActionState()
+                nsStatus.setValue(NsRuntimeStatus.STALLED)
             } else {
-                when (status.value) {
+                when (nsStatus.getValue()) {
                     NsRuntimeStatus.STARTING -> {
-                        if (appRuntimes.value.all {
-                                it.status.value.isStoppingState() || it.status.value == AppRuntimeStatus.RUNNING
-                            }) {
-                            status.value = NsRuntimeStatus.RUNNING
-                            currentActionFuture?.complete(Unit)
-                            resetCurrentActionState()
+                        if (allRuntimes.all {
+                            it.status.getValue().run {
+                                isStoppingState() || this == AppRuntimeStatus.RUNNING
+                            }
+                        }) {
+                            nsStatus.setValue(NsRuntimeStatus.RUNNING)
                         }
                     }
 
-                    NsRuntimeStatus.STOPPING -> {
-                        if (appRuntimes.value.all { it.status.value == AppRuntimeStatus.STOPPED }) {
+                    NsRuntimeStatus.STOPPING, NsRuntimeStatus.RUNNING -> {
+                        if (allRuntimes.all { it.status.getValue() == AppRuntimeStatus.STOPPED }) {
                             try {
                                 dockerApi.deleteNetwork(networkName)
                             } catch (_: DockerStaleNetworkException) {
@@ -424,8 +499,7 @@ class NamespaceRuntime(
                                     """.trimIndent()
                                 }
                             }
-                            status.value = NsRuntimeStatus.STOPPED
-                            resetCurrentActionState()
+                            nsStatus.setValue(NsRuntimeStatus.STOPPED)
                         }
                     }
 
@@ -437,21 +511,12 @@ class NamespaceRuntime(
         return somethingChanged
     }
 
-    private fun resetCurrentActionState() {
-        currentActionType = NsRuntimeActionType.NONE
-        currentActionFuture = null
+    fun updateAndStart(forceUpdate: Boolean = false) {
+        scheduleRuntimeCmd(StartNsCmd(forceUpdate), false)
     }
 
-    fun updateAndStart(forceUpdate: Boolean = false): Promise<Unit> {
-        return if (forceUpdate) {
-            runNamespaceAction(NsRuntimeActionType.FORCE_UPDATE_START)
-        } else {
-            runNamespaceAction(NsRuntimeActionType.UPDATE_START)
-        }
-    }
-
-    fun stop(): Promise<Unit> {
-        return runNamespaceAction(NsRuntimeActionType.STOP)
+    fun stop() {
+        scheduleRuntimeCmd(StopNsCmd, false)
     }
 
     private fun fixVolume(volume: String): String {
@@ -476,7 +541,7 @@ class NamespaceRuntime(
             val entry = editedAppsIt.next()
             if (!editedAndLockedApps.contains(entry.key)) {
                 editedAppsIt.remove()
-                appRuntimes.value.find { it.name == entry.key }?.editedDef?.value = false
+                appRuntimes.getValue().find { it.name == entry.key }?.editedDef?.setValue(false)
                 changed = true
             }
         }
@@ -498,14 +563,14 @@ class NamespaceRuntime(
             nsRuntimeDataRepo[STATE_EDITED_APPS] = editedApps
         }
 
-        val genRespDef = namespaceGenResp.value?.applications?.find { it.name == name }
+        val genRespDef = namespaceGenResp.getValue()?.applications?.find { it.name == name }
         if (genRespDef == null) {
             log.error { "Generated app def doesn't found for app '$name'. Reset can't be performed" }
             return
         }
-        val runtime = appRuntimes.value.find { it.name == name } ?: return
-        runtime.def.value = normalizeGeneratedAppDef(genRespDef)
-        runtime.editedDef.value = false
+        val runtime = appRuntimes.getValue().find { it.name == name } ?: return
+        runtime.def.setValue(normalizeGeneratedAppDef(genRespDef))
+        runtime.editedDef.setValue(false)
     }
 
     fun updateAppDef(appDefBefore: ApplicationDef, appDefAfter: ApplicationDef, locked: Boolean) {
@@ -514,7 +579,7 @@ class NamespaceRuntime(
             return
         }
         log.info { "Update app def for '${appDefBefore.name}'. Locked: $locked" }
-        val runtime = appRuntimes.value.find { it.name == appName } ?: error("Runtime is not found for app '$appName'")
+        val runtime = appRuntimes.getValue().find { it.name == appName } ?: error("Runtime is not found for app '$appName'")
         if (locked) {
             if (editedAndLockedApps.add(appDefBefore.name)) {
                 nsRuntimeDataRepo[STATE_EDITED_AND_LOCKED_APPS] = editedAndLockedApps
@@ -531,9 +596,9 @@ class NamespaceRuntime(
         if (fixedDef != appDefBefore) {
             editedApps[appName] = fixedDef
             nsRuntimeDataRepo[STATE_EDITED_APPS] = editedApps
-            runtime.def.value = fixedDef
+            runtime.def.setValue(fixedDef)
         }
-        runtime.editedDef.value = editedApps.containsKey(appName)
+        runtime.editedDef.setValue(editedApps.containsKey(appName))
     }
 
     private fun normalizeGeneratedAppDef(appDef: ApplicationDef): ApplicationDef {
@@ -546,8 +611,8 @@ class NamespaceRuntime(
 
     private fun generateNs(updatePolicy: GitUpdatePolicy) {
 
-        val newGenRes = namespaceGenerator.generate(namespaceConfig.value, updatePolicy, detachedApps)
-        val currentRuntimesByName = appRuntimes.value.associateByTo(mutableMapOf()) { it.name }
+        val newGenRes = namespaceGenerator.generate(namespaceConfig.getValue(), updatePolicy, detachedApps)
+        val currentRuntimesByName = appRuntimes.getValue().associateByTo(mutableMapOf()) { it.name }
         val newRuntimes = ArrayList<AppRuntime>()
 
         newGenRes.applications.forEach { appDef ->
@@ -558,7 +623,7 @@ class NamespaceRuntime(
             if (currentRuntime == null) {
                 newRuntimes.add(AppRuntime(this, updatedAppDef, dockerApi))
             } else {
-                currentRuntime.def.value = updatedAppDef
+                currentRuntime.def.setValue(updatedAppDef)
             }
         }
         runtimesToRemove.addAll(currentRuntimesByName.values)
@@ -566,7 +631,7 @@ class NamespaceRuntime(
 
         if (newRuntimes.isNotEmpty() || currentRuntimesByName.isNotEmpty()) {
 
-            val resRuntimes = ArrayList(appRuntimes.value)
+            val resRuntimes = ArrayList(appRuntimes.getValue())
             resRuntimes.addAll(newRuntimes)
             if (currentRuntimesByName.isNotEmpty()) {
                 val it = resRuntimes.iterator()
@@ -579,21 +644,33 @@ class NamespaceRuntime(
                 }
             }
 
-            appRuntimes.value = resRuntimes
+            appRuntimes.setValue(resRuntimes)
 
             if (newRuntimes.isNotEmpty()) {
-                if (!status.value.isStoppingState()) {
+                if (!nsStatus.getValue().isStoppingState()) {
                     newRuntimes.forEach { it.start() }
                 }
-                newRuntimes.forEach {
-                    it.status.watch { _, after ->
+                newRuntimes.forEach { newRuntime ->
+                    newRuntime.status.watch { _, after ->
                         appsStatusChangesCount.incrementAndGet()
-                        if (after == AppRuntimeStatus.READY_TO_PULL && status.value == NsRuntimeStatus.RUNNING) {
-                            status.value = NsRuntimeStatus.STARTING
+                        lastAppStatusChangeTime = System.currentTimeMillis()
+                        if (after == AppRuntimeStatus.READY_TO_PULL
+                            && (nsStatus.getValue() == NsRuntimeStatus.RUNNING ||
+                                nsStatus.getValue() == NsRuntimeStatus.STOPPED)
+                        ) {
+                            nsStatus.setValue(NsRuntimeStatus.STARTING)
+                        }
+                        if (after == AppRuntimeStatus.RUNNING) {
+                            for (runtime in appRuntimes.getValue()) {
+                                if (runtime.status.getValue() == AppRuntimeStatus.DEPS_WAITING) {
+                                    runtime.dependenciesToWait.remove(newRuntime.name)
+                                    runtime.lastDepsCheckingTime = 0L
+                                }
+                            }
                         }
                         flushRuntimeThread()
                     }
-                    it.editedDef.value = editedApps.containsKey(it.name)
+                    newRuntime.editedDef.setValue(editedApps.containsKey(newRuntime.name))
                 }
             }
         }
@@ -632,17 +709,14 @@ class NamespaceRuntime(
             nsRuntimeFilesDir.resolve(path).deleteIfExists()
         }
 
-        namespaceGenResp.value = newGenRes
+        namespaceGenResp.setValue(newGenRes)
 
         cloudConfigServer.cloudConfig = newGenRes.cloudConfig
     }
 
     override fun dispose() {
         namespaceConfigWatcher.dispose()
-        isRuntimeThreadRunning.set(false)
-        flushRuntimeThread()
-        runtimeThread?.interrupt()
-        runtimeThread = null
+        setActive(false)
     }
 
     private fun createNetworkIfNotExists(networkName: String) {
@@ -650,10 +724,6 @@ class NamespaceRuntime(
         if (networks == null) {
             dockerApi.createBridgeNetwork(namespaceRef, networkName)
         }
-    }
-
-    private enum class NsRuntimeActionType {
-        FORCE_UPDATE_START, UPDATE_START, REGENERATE, STOP, NONE
     }
 }
 

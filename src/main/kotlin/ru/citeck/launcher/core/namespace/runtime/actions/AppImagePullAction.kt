@@ -116,7 +116,7 @@ class AppImagePullAction(
             }
         } finally {
             pullSemaphore.release()
-            appRuntime.statusText.value = ""
+            appRuntime.statusText.setValue("")
         }
     }
 
@@ -149,7 +149,7 @@ class AppImagePullAction(
         }
         if (secretDef == null) {
             val secretId = "images-repo:$imageRepoHost"
-            val repoInfo = appRuntime.nsRuntime.workspaceConfig.value.imageReposByHost[imageRepoHost]
+            val repoInfo = appRuntime.nsRuntime.workspaceConfig.getValue().imageReposByHost[imageRepoHost]
             if (lastError is RepoUnauthorizedException || repoInfo?.authType == ImageRepoAuth.BASIC) {
                 secretDef = SecretDef(secretId, AuthType.BASIC)
             }
@@ -247,7 +247,7 @@ class AppImagePullAction(
                 if (retryIdx >= 0) {
                     statusText += " (" + (retryIdx + 1) + ")"
                 }
-                appRuntime.statusText.value = statusText
+                appRuntime.statusText.setValue(statusText)
                 Thread.sleep(2000)
                 if (System.currentTimeMillis() - lastPullResponseTime.get() > LAST_PULL_RESPONSE_TIMEOUT_MS) {
                     pullCallback.onError(RuntimeException("No pull updates during ${LAST_PULL_RESPONSE_TIMEOUT_MS}ms"))
@@ -285,9 +285,9 @@ class AppImagePullAction(
 
         init {
             val imagesToPullSet = HashSet<ImageToPull>()
-            val def = appRuntime.def
-            imagesToPullSet.add(ImageToPull(def.value.image, def.value.kind))
-            def.value.initContainers.forEach { imagesToPullSet.add(ImageToPull(it.image, it.kind)) }
+            val def = appRuntime.def.getValue()
+            imagesToPullSet.add(ImageToPull(def.image, def.kind))
+            def.initContainers.forEach { imagesToPullSet.add(ImageToPull(it.image, it.kind)) }
             this.imagesToPull = LinkedBlockingQueue(imagesToPullSet)
             totalImagesToPull = this.imagesToPull.size
         }

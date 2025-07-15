@@ -12,6 +12,7 @@ import ru.citeck.launcher.core.namespace.NamespaceEntityDef.FORM_FIELD_AUTH_USER
 import ru.citeck.launcher.core.namespace.NamespaceEntityDef.formSpec
 import ru.citeck.launcher.core.namespace.gen.NamespaceGenerator
 import ru.citeck.launcher.core.namespace.runtime.NamespaceRuntime
+import ru.citeck.launcher.core.namespace.runtime.NsRuntimeStatus
 import ru.citeck.launcher.core.utils.ActionStatus
 import ru.citeck.launcher.core.utils.Disposable
 import ru.citeck.launcher.core.utils.data.DataValue
@@ -74,7 +75,7 @@ class NamespacesService : Disposable {
             registerNsRuntime(it.entity)
         }
         services.entitiesService.events.addEntityUpdatedListener(NamespaceConfig::class) {
-            namespaceRuntimes[it.entity.id]?.namespaceConfig?.value = it.entity
+            namespaceRuntimes[it.entity.id]?.namespaceConfig?.setValue(it.entity)
         }
 
         services.entitiesService.events.addEntityCreatedListener(NamespaceConfig::class) { event ->
@@ -82,7 +83,7 @@ class NamespacesService : Disposable {
             val nsTemplate = if (nsTemplateId.isEmpty()) {
                 null
             } else {
-                services.workspaceConfig.value.namespaceTemplates.find {
+                services.workspaceConfig.getValue().namespaceTemplates.find {
                     it.id == nsTemplateId
                 } ?: error("Unknown namespace template '$nsTemplateId'")
             }
@@ -109,7 +110,15 @@ class NamespacesService : Disposable {
             val namespaceId = event.entity.id
             val runtime = namespaceRuntimes[namespaceId]
             if (runtime != null) {
-                runtime.stop().get(Duration.ofMinutes(5))
+                runtime.stop()
+                val waitUntil = System.currentTimeMillis() + Duration.ofMinutes(1).toMillis()
+                while (System.currentTimeMillis() < waitUntil) {
+                    if (runtime.nsStatus.getValue() == NsRuntimeStatus.STOPPED) {
+                        break
+                    }
+                    Thread.sleep(1000)
+                }
+                runtime.dispose()
                 namespaceRuntimes.remove(namespaceId)
             }
             val namespaceRef = NamespaceRef(services.workspace.id, namespaceId)
@@ -135,6 +144,11 @@ class NamespacesService : Disposable {
             }
             services.selectAnyExistingNamespace()
         }
+
+        services.selectedNamespace.watch { before, after ->
+            namespaceRuntimes[before?.id ?: ""]?.setActive(false)
+            namespaceRuntimes[after?.id ?: ""]?.setActive(true)
+        }
     }
 
     private fun createEntityDef(): EntityDef<String, NamespaceConfig> {
@@ -151,7 +165,7 @@ class NamespacesService : Disposable {
             actions = emptyList(),
             toFormData = { ns ->
                 val dto = if (ns == null) {
-                    val wsConfig = services.workspaceConfig.value
+                    val wsConfig = services.workspaceConfig.getValue()
                     val template = wsConfig.defaultNsTemplate.config.copy().withTemplate(wsConfig.defaultNsTemplate.id)
 
                     var bundleRef = template.bundleRef.ifEmpty {

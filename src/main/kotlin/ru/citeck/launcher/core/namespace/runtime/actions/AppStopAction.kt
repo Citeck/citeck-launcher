@@ -29,7 +29,7 @@ class AppStopAction(
     override fun execute(context: ActionContext<Params>) {
 
         val runtime = context.params.appRuntime
-        val appDef = runtime.def.value
+        val appDef = runtime.def.getValue()
 
         val containers = dockerApi.getContainers(runtime.nsRuntime.namespaceRef, appDef.name)
 

@@ -17,6 +17,7 @@ import ru.citeck.launcher.core.namespace.runtime.actions.AppStopAction
 import ru.citeck.launcher.core.namespace.runtime.docker.DockerApi
 import ru.citeck.launcher.core.secrets.auth.AuthSecretsService
 import ru.citeck.launcher.core.secrets.storage.SecretsStorage
+import ru.citeck.launcher.core.utils.prop.MutProp
 import ru.citeck.launcher.core.workspace.WorkspaceDto
 import ru.citeck.launcher.core.workspace.WorkspacesService
 import java.time.Duration
@@ -43,8 +44,7 @@ class LauncherServices {
     lateinit var dockerApi: DockerApi
     lateinit var actionsService: ActionsService
 
-    @Volatile
-    private var workspaceServices: WorkspaceServices? = null
+    private val workspaceServices = MutProp<WorkspaceServices?>(null)
     private val workspaceInitialized = AtomicBoolean(false)
 
     suspend fun init() {
@@ -65,8 +65,7 @@ class LauncherServices {
         }
 
         Runtime.getRuntime().addShutdownHook(Thread {
-            workspaceServices?.dispose()
-            workspaceServices = null
+            workspaceServices.getValue()?.dispose()
             cloudConfigServer.dispose()
         })
 
@@ -90,23 +89,25 @@ class LauncherServices {
     }
 
     @Synchronized
-    fun getWorkspaceServices(): WorkspaceServices {
-        val workspaceServices = this.workspaceServices ?: error("WorkspaceServices is not selected")
+    fun getWorkspaceServices(): MutProp<WorkspaceServices?> {
+        val workspaceServices = this.workspaceServices.getValue() ?: error("WorkspaceServices is not selected")
         if (workspaceInitialized.compareAndSet(false, true)) {
             workspaceServices.init()
         }
-        return workspaceServices
+        return this.workspaceServices
     }
 
     @Synchronized
     fun setWorkspace(workspace: String) {
-        workspaceServices?.dispose()
-        workspaceServices = null
+
         val workspaceDto = entitiesService.getById(WorkspaceDto::class, workspace)?.entity
             ?: error("Workspace is not found by id '$workspace'")
         val workspaceConfig = workspacesService.getWorkspaceConfig(workspaceDto)
         val workspaceServices = WorkspaceServices(this, workspaceDto, workspaceConfig)
-        this.workspaceServices = workspaceServices
+
+        this.workspaceServices.getValue()?.dispose()
+        this.workspaceServices.setValue(workspaceServices)
+
         workspaceInitialized.set(false)
 
         launcherStateService.setSelectedWorkspace(workspace)

@@ -4,6 +4,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import ru.citeck.launcher.core.utils.Disposable
 import ru.citeck.launcher.core.utils.IdUtils
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 import kotlin.reflect.KProperty
@@ -17,32 +18,58 @@ open class MutProp<T>(val name: String, value: T) {
     private val watchers = CopyOnWriteArrayList<(T, T) -> Unit>()
     private val lock = ReentrantLock()
 
-    var changedAt: Long = System.currentTimeMillis()
-        private set
+    @Volatile
+    private var changedAt: Long = System.currentTimeMillis()
+    private val version = AtomicLong()
 
     constructor(value: T) : this(IdUtils.createStrId(), value)
 
     @Volatile
-    var value: T = value
-        set(newValue) = lock.withLock {
-            if (field == newValue) {
-                return
-            }
-            logState { "Update $this: $field -> $newValue" }
-            val valueBefore = field
-            field = newValue
-            for (listener in watchers) {
-                try {
-                    listener(valueBefore, field)
-                } catch (e: Throwable) {
-                    log.error(e) {
-                        "Exception while listener execution " +
-                        "for change event: $valueBefore -> $newValue"
-                    }
+    private var value: T = value
+
+    fun getValue(): T = value
+
+    fun compareAndSet(expected: T, value: T): Long = lock.withLock {
+        if (this.value == expected) {
+            setValue(value) {}
+        } else {
+            version.get()
+        }
+    }
+
+    fun setValue(value: T): Long {
+        return setValue(value) {}
+    }
+
+    fun setValue(value: T, actionInLock: (Long) -> Unit): Long = lock.withLock {
+        if (this.value == value) {
+            return version.get()
+        }
+        logState { "Update $this: ${this.value} -> $value" }
+        val valueBefore = this.value
+        this.value = value
+        for (listener in watchers) {
+            try {
+                listener(valueBefore, this.value)
+            } catch (e: Throwable) {
+                log.error(e) {
+                    "Exception while listener execution " +
+                        "for change event of '$name': $valueBefore -> $value"
                 }
             }
-            changedAt = System.currentTimeMillis()
         }
+        changedAt = System.currentTimeMillis()
+        version.incrementAndGet()
+        actionInLock.invoke(version.get())
+        version.get()
+    }
+
+    fun setValue(value: T, expectedVer: Long): Long = lock.withLock {
+        if (expectedVer != version.get()) {
+            return version.get()
+        }
+        setValue(value) {}
+    }
 
     fun watch(action: (T, T) -> Unit): Disposable {
         logState { "Add watcher for $this - $action" }
@@ -59,11 +86,11 @@ open class MutProp<T>(val name: String, value: T) {
     }
 
     operator fun getValue(thisRef: Any?, property: KProperty<*>): T {
-        return value
+        return getValue()
     }
 
     operator fun setValue(thisRef: Any?, property: KProperty<*>, value: T) {
-        this.value = value
+        setValue(value) {}
     }
 
     override fun toString(): String {

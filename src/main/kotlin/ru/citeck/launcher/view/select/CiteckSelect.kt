@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -15,6 +16,11 @@ import ru.citeck.launcher.view.action.ActionDesc
 
 @Composable
 fun CiteckSelect(state: CiteckSelectState, onSelected: (String) -> Unit) {
+    CiteckSelect(state, false, onSelected)
+}
+
+@Composable
+fun CiteckSelect(state: CiteckSelectState, mandatory: Boolean, onSelected: (String) -> Unit) {
 
     val expanded = remember { mutableStateOf(false) }
     val selectedValue = state.selected.value
@@ -32,6 +38,15 @@ fun CiteckSelect(state: CiteckSelectState, onSelected: (String) -> Unit) {
             style = LocalTextStyle.current.merge(MaterialTheme.typography.bodyMedium),
             modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp).fillMaxWidth()
         )
+        if (!mandatory && selectedValue.isNotBlank()) {
+            Icon(
+                Icons.Default.RemoveCircleOutline,
+                modifier = Modifier.align(Alignment.CenterEnd)
+                    .padding(end = 30.dp)
+                    .requiredSize(20.dp).clickable { onSelected("") },
+                contentDescription = "Delete"
+            )
+        }
         Icon(
             Icons.Default.ArrowDropDown,
             modifier = Modifier.align(Alignment.CenterEnd).padding(end = 5.dp).requiredSize(30.dp),

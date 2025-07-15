@@ -33,7 +33,7 @@ private class MutablePropView<T, R>(
     private val conv: (T) -> R
 ) : RememberObserver {
 
-    val state = mutableStateOf(conv(prop.value))
+    val state = mutableStateOf(conv(prop.getValue()))
     @Volatile
     private var listenerHandle: Disposable? = null
     private val watcher = Watcher()
@@ -42,7 +42,7 @@ private class MutablePropView<T, R>(
     override fun onRemembered() {
         listenerHandle?.dispose()
         listenerHandle = prop.watch(watcher)
-        state.value = conv(prop.value)
+        state.value = conv(prop.getValue())
     }
 
     override fun onAbandoned() = onForgotten()

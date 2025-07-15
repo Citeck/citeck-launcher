@@ -1,5 +1,6 @@
 package ru.citeck.launcher
 
+import androidx.compose.material.Text
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
@@ -15,7 +16,6 @@ import ru.citeck.launcher.core.utils.AppLock
 import ru.citeck.launcher.core.utils.StdOutLog
 import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.file.CiteckFiles
-import ru.citeck.launcher.core.utils.file.FileUtils
 import ru.citeck.launcher.core.utils.json.Json
 import ru.citeck.launcher.core.workspace.WorkspaceDto
 import ru.citeck.launcher.view.dialog.*
@@ -32,7 +32,6 @@ import ru.citeck.launcher.view.utils.SystemDumpUtils
 import ru.citeck.launcher.view.utils.ImageUtils
 import ru.citeck.launcher.view.utils.rememberMutProp
 import ru.citeck.launcher.view.window.AdditionalWindowState
-import java.nio.file.Paths
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.system.exitProcess
 
@@ -214,13 +213,15 @@ fun App(services: LauncherServices, dialogStates: SnapshotStateList<CiteckDialog
     } else if (selectedWorkspace.value == null) {
         LoadingScreen()
     } else {
-        val workspaceServices = services.getWorkspaceServices()
-        WorkspaceFormDialog.FormDialog(dialogStates, workspaceServices.entitiesService, workspaceServices)
-        val selectedNamespace = rememberMutProp(workspaceServices, workspaceServices.selectedNamespace)
-        if (selectedNamespace.value == null) {
-            WelcomeScreen(services, selectedWorkspace)
-        } else {
-            NamespaceScreen(workspaceServices, selectedNamespace)
-        }
+        val workspaceServices = rememberMutProp(services.getWorkspaceServices())
+        workspaceServices.value?.let { wsServices ->
+            WorkspaceFormDialog.FormDialog(dialogStates, wsServices.entitiesService, wsServices)
+            val selectedNamespace = rememberMutProp(wsServices, wsServices.selectedNamespace)
+            if (selectedNamespace.value == null) {
+                WelcomeScreen(services, selectedWorkspace)
+            } else {
+                NamespaceScreen(wsServices, selectedNamespace)
+            }
+        } ?: Text("Selected workspace is empty")
     }
 }

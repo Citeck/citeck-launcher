@@ -23,7 +23,7 @@ import ru.citeck.launcher.core.WorkspaceServices
 import ru.citeck.launcher.core.config.bundle.BundleRef
 import ru.citeck.launcher.core.namespace.NamespaceConfig
 import ru.citeck.launcher.core.utils.ActionStatus
-import ru.citeck.launcher.core.workspace.WorkspaceConfig.FastStartVariant
+import ru.citeck.launcher.core.workspace.WorkspaceConfig.QuickStartVariant
 import ru.citeck.launcher.core.workspace.WorkspaceDto
 import ru.citeck.launcher.core.workspace.WorkspaceEntityDef
 import ru.citeck.launcher.view.dialog.GlobalErrorDialog
@@ -80,52 +80,55 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                 modifier = Modifier.align(Alignment.Center).padding(top = 30.dp).width(500.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                val workspaceServices = launcherServices.getWorkspaceServices()
-
-                val existingNamespaces = remember(workspaceServices.workspace.id) {
-                    workspaceServices.entitiesService.find(NamespaceConfig::class, 3)
-                }
-                if (existingNamespaces.isEmpty()) {
-                    Column(Modifier.fillMaxWidth().height(250.dp)) {
-                        renderFastStartButtons(workspaceServices)
-                    }
+                val workspaceServicesValue = rememberMutProp(launcherServices.getWorkspaceServices())
+                val workspaceServices = workspaceServicesValue.value
+                if (workspaceServices == null) {
+                    Text("Workspace Is Empty", fontSize = 1.05.em, textAlign = TextAlign.Center)
                 } else {
-                    for (namespace in existingNamespaces) {
-                        Button(
-                            modifier = Modifier.fillMaxWidth().height(60.dp),
-                            shape = RoundedCornerShape(16.dp),
-                            onClick = {
-                                workspaceServices.setSelectedNamespace(namespace.ref.localId)
-                            }
-                        ) {
-                            Column {
-                                Text(
-                                    namespace.name,
-                                    fontSize = 1.05.em,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                                Text(
-                                    namespace.entity.bundleRef.toString(),
-                                    fontSize = 0.8.em,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp)
-                                )
-                            }
+                    val existingNamespaces = remember(workspaceServices.workspace.id) {
+                        workspaceServices.entitiesService.find(NamespaceConfig::class, 3)
+                    }
+                    if (existingNamespaces.isEmpty()) {
+                        Column(Modifier.fillMaxWidth().height(250.dp)) {
+                            renderQuickStartButtons(workspaceServicesValue)
                         }
-                        buttonsSpacer()
+                    } else {
+                        for (namespace in existingNamespaces) {
+                            Button(
+                                modifier = Modifier.fillMaxWidth().height(60.dp),
+                                shape = RoundedCornerShape(16.dp),
+                                onClick = {
+                                    workspaceServices.setSelectedNamespace(namespace.ref.localId)
+                                }
+                            ) {
+                                Column {
+                                    Text(
+                                        namespace.name,
+                                        fontSize = 1.05.em,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Text(
+                                        namespace.entity.bundleRef.toString(),
+                                        fontSize = 0.8.em,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.fillMaxWidth().padding(top = 2.dp)
+                                    )
+                                }
+                            }
+                            buttonsSpacer()
+                        }
                     }
-                }
-                Button(
-                    modifier = Modifier.fillMaxWidth().height(60.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    onClick = {
-                        launcherServices.getWorkspaceServices()
-                            .entitiesService
-                            .create(NamespaceConfig::class, {}, {})
+                    Button(
+                        modifier = Modifier.fillMaxWidth().height(60.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        onClick = {
+                            workspaceServices.entitiesService
+                                .create(NamespaceConfig::class, {}, {})
+                        }
+                    ) {
+                        Text("Create New Namespace", fontSize = 1.05.em, textAlign = TextAlign.Center)
                     }
-                ) {
-                    Text("Create New Namespace", fontSize = 1.05.em, textAlign = TextAlign.Center)
                 }
             }
             CpImage(
@@ -148,15 +151,15 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
 
 private fun prepareNsDataToCreate(
     workspaceServices: WorkspaceServices,
-    fastStart: FastStartVariant
+    quickStart: QuickStartVariant
 ): NamespaceConfig {
 
-    val workspaceConfig = workspaceServices.workspaceConfig.value
-    val namespaceTemplate = if (fastStart.template.isEmpty()) {
+    val workspaceConfig = workspaceServices.workspaceConfig.getValue()
+    val namespaceTemplate = if (quickStart.template.isEmpty()) {
         workspaceConfig.defaultNsTemplate
     } else {
         workspaceConfig.namespaceTemplates.first {
-            it.id == fastStart.template
+            it.id == quickStart.template
         }
     }
     val namespaceConfig = namespaceTemplate.config
@@ -165,7 +168,7 @@ private fun prepareNsDataToCreate(
         .withTemplate(namespaceTemplate.id)
 
     namespaceConfig.withBundleRef(
-        fastStart.bundleRef.ifEmpty { namespaceTemplate.config.bundleRef }.ifEmpty {
+        quickStart.bundleRef.ifEmpty { namespaceTemplate.config.bundleRef }.ifEmpty {
             val bundleRepoId = workspaceConfig.bundleRepos.first().id
             BundleRef.create(bundleRepoId, "LATEST")
         }
@@ -178,7 +181,7 @@ private fun prepareNsDataToCreate(
     }
 
     namespaceConfig.withSnapshot(
-        fastStart.snapshot.ifEmpty {
+        quickStart.snapshot.ifEmpty {
             namespaceTemplate.config.snapshot
         }
     )
@@ -187,21 +190,22 @@ private fun prepareNsDataToCreate(
 }
 
 @Composable
-private fun ColumnScope.renderFastStartButtons(
-    workspaceServices: WorkspaceServices
+private fun ColumnScope.renderQuickStartButtons(
+    workspaceServicesValue: MutableState<WorkspaceServices?>
 ) {
+    val workspaceServices = workspaceServicesValue.value ?: return
 
-    val fastStartVariants = rememberMutProp(workspaceServices.workspaceConfig) { config ->
-        var variants: List<FastStartVariant> = config.fastStartVariants.ifEmpty {
-            listOf(FastStartVariant("Fast Start"))
+    val quickStartVariants = rememberMutProp(workspaceServices, workspaceServices.workspaceConfig) { config ->
+        var variants: List<QuickStartVariant> = config.quickStartVariants.ifEmpty {
+            listOf(QuickStartVariant("Quick Start"))
         }
         variants.map { variant ->
             variant to prepareNsDataToCreate(workspaceServices, variant)
         }
     }
 
-    for ((idx, variant) in fastStartVariants.value.withIndex()) {
-        renderFastStartButton(workspaceServices, variant, idx == 0)
+    for ((idx, variant) in quickStartVariants.value.withIndex()) {
+        renderQuickStartButton(workspaceServicesValue, variant, idx == 0)
         buttonsSpacer()
     }
 }
@@ -212,11 +216,12 @@ private fun buttonsSpacer() {
 }
 
 @Composable
-private fun ColumnScope.renderFastStartButton(
-    workspaceServices: WorkspaceServices,
-    variantAndConfig: Pair<FastStartVariant, NamespaceConfig>,
+private fun ColumnScope.renderQuickStartButton(
+    workspaceServicesValue: MutableState<WorkspaceServices?>,
+    variantAndConfig: Pair<QuickStartVariant, NamespaceConfig>,
     primary: Boolean
 ) {
+    val workspaceServices = workspaceServicesValue.value ?: return
     val (variant, namespaceConfig) = variantAndConfig
     val coroutineScope = rememberCoroutineScope()
     Button(
@@ -226,7 +231,7 @@ private fun ColumnScope.renderFastStartButton(
             if (workspaceServices.entitiesService.getFirst(NamespaceConfig::class) != null) {
                 coroutineScope.launch {
                     GlobalMessageDialog.show(
-                        "Workspace already has namespaces\nFast start is disabled."
+                        "Workspace already has namespaces\nQuick start is disabled."
                     )
                 }
             } else {
@@ -244,7 +249,7 @@ private fun ColumnScope.renderFastStartButton(
                                 runtime.updateAndStart()
                             }
                         } catch (e: Throwable) {
-                            log.error(e) { "Fast start completed with error. Variant: $variant" }
+                            log.error(e) { "Quick start completed with error. Variant: $variant" }
                             GlobalErrorDialog.show(GlobalErrorDialog.Params(e) {})
                         } finally {
                             closeLoadingDialog()

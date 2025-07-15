@@ -13,7 +13,7 @@ class VolumesRepo(
     private val dockerApi = workspaceServices.dockerApi
 
     private fun getNsRef(): NamespaceRef? {
-        val currentNamespace = workspaceServices.selectedNamespace.value ?: return null
+        val currentNamespace = workspaceServices.selectedNamespace.getValue() ?: return null
         return NamespaceRef(workspaceServices.workspace.id, currentNamespace.id)
     }
 
@@ -31,7 +31,7 @@ class VolumesRepo(
         if (currentVolumes.none { it.name == id }) {
             return
         }
-        if (workspaceServices.getCurrentNsRuntime()?.status?.value == NsRuntimeStatus.STOPPED) {
+        if (workspaceServices.getCurrentNsRuntime()?.nsStatus?.getValue() == NsRuntimeStatus.STOPPED) {
             dockerApi.deleteVolume(id)
         } else {
             error("You should stop namespace before deleting container")

@@ -42,7 +42,7 @@ class AppStartAction(
     }
 
     override fun getName(context: ActionContext<Params>): String {
-        return "run(${context.params.appRuntime.def.value.name})"
+        return "run(${context.params.appRuntime.def.getValue().name})"
     }
 
     override fun execute(context: ActionContext<Params>) {
@@ -51,7 +51,7 @@ class AppStartAction(
         val runtime = context.params.appRuntime
         val nsRuntime = runtime.nsRuntime
 
-        val appDef = runtime.def.value
+        val appDef = runtime.def.getValue()
         val namespaceRef = nsRuntime.namespaceRef
         val namespaceId = namespaceRef.namespace
         val workspaceId = namespaceRef.workspace

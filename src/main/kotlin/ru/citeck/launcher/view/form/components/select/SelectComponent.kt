@@ -17,14 +17,25 @@ fun SelectComponent(formContext: FormContext, component: ComponentSpec.SelectFie
             formContext.getStrValue(component.key)
         )
         formContext.listenChanges(component.dependsOn) { _, _ ->
-            selectState.options.value = component.options.invoke(formContext).map {
+            val newOptions = component.options.invoke(formContext).map {
                 SelectOption(it.label, it.value)
+            }
+            if (selectState.options.value != newOptions) {
+                selectState.options.value = newOptions
+                if (newOptions.isEmpty()) {
+                    selectState.selected.value = ""
+                } else {
+                    val selectedValue = selectState.selected.value
+                    if (newOptions.all { it.value != selectedValue }) {
+                        selectState.selected.value = newOptions.last().value
+                    }
+                }
             }
         }
         selectState
     }
 
-    CiteckSelect(state) {
+    CiteckSelect(state, component.mandatory) {
         formContext.setValue(component.key, it)
         state.selected.value = it
     }

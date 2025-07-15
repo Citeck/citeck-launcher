@@ -73,7 +73,7 @@ class WorkspaceServices(
     }
 
     fun updateConfig(updatePolicy: GitUpdatePolicy) {
-        workspaceConfig.value = launcherServices.workspacesService.getWorkspaceConfig(workspace, updatePolicy)
+        workspaceConfig.setValue(launcherServices.workspacesService.getWorkspaceConfig(workspace, updatePolicy))
     }
 
     private fun getVolumeEntityDef(): EntityDef<String, VolumeInfo> {
@@ -106,21 +106,21 @@ class WorkspaceServices(
                 namespaceConfig
             }
         }
-        selectedNamespace.value = newValue
+        selectedNamespace.setValue(newValue)
     }
 
     fun selectAnyExistingNamespace() {
-        val currentNsDto = selectedNamespace.value
+        val currentNsDto = selectedNamespace.getValue()
         if (currentNsDto != null && entitiesService.getById(NamespaceConfig::class, currentNsDto.id) != null) {
             return
         }
         val nextNs = entitiesService.getFirst(NamespaceConfig::class)?.entity
-        selectedNamespace.value = nextNs
+        selectedNamespace.setValue(nextNs)
         workspaceStateRepo[SELECTED_NS_PROP] = nextNs?.id ?: ""
     }
 
     fun getCurrentNsRuntime(): NamespaceRuntime? {
-        val currentNs = selectedNamespace.value ?: return null
+        val currentNs = selectedNamespace.getValue() ?: return null
         return namespacesService.getRuntime(currentNs.id)
     }
 

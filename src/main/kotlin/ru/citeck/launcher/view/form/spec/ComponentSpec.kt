@@ -18,6 +18,23 @@ import kotlin.reflect.KClass
 )
 sealed class ComponentSpec {
 
+    val visibleConditions: MutableList<(context: FormContext) -> Boolean> = mutableListOf()
+    val dependsOn: MutableSet<String> = mutableSetOf()
+
+    open fun dependsOn(vararg fields: String): ComponentSpec {
+        dependsOn.addAll(fields)
+        return this
+    }
+
+    open fun visibleWhen(condition: (context: FormContext) -> Boolean): ComponentSpec {
+        visibleConditions.add(condition)
+        return this
+    }
+
+    /**
+     * Component without ability to enter or change some value.
+     * e.g. Panel, Tabs, Text, Button etc
+     */
     sealed class NonField : ComponentSpec()
 
     class Button(val text: String, val onClick: suspend (FormContext) -> Unit) : NonField()
@@ -33,6 +50,16 @@ sealed class ComponentSpec {
 
         val enabledConditions: MutableList<(context: FormContext, value: T?) -> Boolean> = mutableListOf()
         val validations: MutableList<(context: FormContext, value: T?) -> String> = mutableListOf()
+
+        override fun dependsOn(vararg fields: String): ComponentSpec {
+            super.dependsOn(*fields)
+            return this
+        }
+
+        override fun visibleWhen(condition: (context: FormContext) -> Boolean): Field<T> {
+            super.visibleWhen(condition)
+            return this
+        }
 
         fun enableWhen(condition: (context: FormContext, value: T?) -> Boolean): Field<T> {
             enabledConditions.add(condition)
@@ -72,9 +99,11 @@ sealed class ComponentSpec {
         defaultValue: String = ""
     ) : Field<String>(key, label, defaultValue = defaultValue, String::class) {
 
+        var mandatory: Boolean = false
         var submitOnEnter = false
 
         fun mandatory(): TextField {
+            mandatory = true
             validation { context, value ->
                 if (enabledConditions.isNotEmpty() && enabledConditions.any { it(context, value) == false }) {
                     ""
@@ -118,7 +147,6 @@ sealed class ComponentSpec {
         key: String,
         label: String,
         defaultValue: String,
-        val dependsOn: Set<String> = emptySet(),
         val options: (FormContext) -> List<Option>
     ) : TextField(key, label, defaultValue = defaultValue) {
 
@@ -127,7 +155,7 @@ sealed class ComponentSpec {
             label: String,
             defaultValue: String,
             options: List<Option>
-        ) : this(key, label, defaultValue, emptySet(), { options })
+        ) : this(key, label, defaultValue, { options })
 
         class Option(
             val value: String,

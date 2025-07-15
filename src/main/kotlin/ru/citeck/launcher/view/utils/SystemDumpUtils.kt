@@ -168,16 +168,17 @@ object SystemDumpUtils {
     }
 
     private fun exportNamespaceInfo(targetDir: Path) {
+
         val services = services ?: return
+        val workspace = services.getWorkspaceServices().getValue() ?: return
 
         if (!targetDir.exists()) {
             targetDir.toFile().mkdirs()
         }
 
-        val workspace = services.getWorkspaceServices()
         val meta = DataValue.createObj()
         meta["workspaceId"] = workspace.workspace.id
-        val selectedNs = workspace.selectedNamespace.value
+        val selectedNs = workspace.selectedNamespace.getValue()
         if (selectedNs == null) {
             meta["selectedNs"] = null
         } else {
@@ -188,7 +189,7 @@ object SystemDumpUtils {
             val runtime = workspace.getCurrentNsRuntime()
             if (runtime != null) {
 
-                nsRuntimeData["status"] = runtime.status.value
+                nsRuntimeData["status"] = runtime.nsStatus.getValue()
                 val logsDir = targetDir.resolve("logs")
                 logsDir.toFile().mkdirs()
 

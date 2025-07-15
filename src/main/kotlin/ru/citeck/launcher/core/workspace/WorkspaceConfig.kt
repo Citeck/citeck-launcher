@@ -6,7 +6,7 @@ import ru.citeck.launcher.core.namespace.NamespaceConfig
 import java.time.Duration
 
 data class WorkspaceConfig(
-    val fastStartVariants: List<FastStartVariant> = emptyList(),
+    val quickStartVariants: List<QuickStartVariant> = emptyList(),
     val imageRepos: List<ImageRepo>,
     val bundleRepos: List<BundlesRepo>,
     val defaultWebappProps: NamespaceConfig.WebappProps = NamespaceConfig.WebappProps.DEFAULT,
@@ -64,7 +64,7 @@ data class WorkspaceConfig(
         val detachedApps: Set<String> = emptySet(),
     )
 
-    data class FastStartVariant(
+    data class QuickStartVariant(
         val name: String,
         val snapshot: String = "",
         val bundleRef: BundleRef = BundleRef.EMPTY,

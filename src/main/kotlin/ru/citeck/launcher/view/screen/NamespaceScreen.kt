@@ -75,7 +75,7 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
         services.namespacesService.getRuntime(selectedNsValue.id)
     }
     val nsGenRes = rememberMutProp(nsRuntime.namespaceGenResp)
-    val runtimeStatus = rememberMutProp(nsRuntime, nsRuntime.status)
+    val runtimeStatus = rememberMutProp(nsRuntime, nsRuntime.nsStatus)
     val nsActionInProgress = remember { mutableStateOf(false) }
 
     Row(modifier = Modifier.fillMaxSize()) {
@@ -444,8 +444,8 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
             Column(modifier = Modifier.fillMaxHeight().verticalScroll(scrollState).padding(start = 6.dp, end = 6.dp)) {
                 val appsByKind = rememberMutProp(nsRuntime, nsRuntime.appRuntimes) {
                     val appsByKind = HashMap<ApplicationKind, MutableList<AppRuntime>>()
-                    nsRuntime.appRuntimes.value.forEach {
-                        appsByKind.computeIfAbsent(it.def.value.kind) { ArrayList() }.add(it)
+                    nsRuntime.appRuntimes.getValue().forEach {
+                        appsByKind.computeIfAbsent(it.def.getValue().kind) { ArrayList() }.add(it)
                     }
                     appsByKind.values.forEach {
                         it.sortWith { r1, r2 -> r1.name.compareTo(r2.name) }
@@ -593,7 +593,7 @@ private fun renderApps(
                             }
                         )
                     }
-                    if (!runtimeStatus.value.isStoppingState() && !appStatus.value.isStartingState()) {
+                    if (/*!runtimeStatus.value.isStoppingState() && */!appStatus.value.isStartingState()) {
                         CiteckIconAction(
                             coroutineScope,
                             modifier = Modifier.fillMaxHeight(),
@@ -637,7 +637,7 @@ private fun renderApps(
                                 "Edit App"
                             ) {
                                 runCatching {
-                                    val appDef = application.def.value
+                                    val appDef = application.def.getValue()
                                     try {
                                         val editRes = AppDefEditDialog.show(
                                             appDef,
