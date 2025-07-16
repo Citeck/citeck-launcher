@@ -9,6 +9,7 @@ import ru.citeck.launcher.core.namespace.NamespaceEntityDef.FORM_FIELD_AUTH_TYPE
 import ru.citeck.launcher.core.namespace.NamespaceEntityDef.FORM_FIELD_AUTH_USERS
 import ru.citeck.launcher.core.namespace.NamespaceEntityDef.FORM_FIELD_BUNDLES_REPO
 import ru.citeck.launcher.core.namespace.NamespaceEntityDef.FORM_FIELD_BUNDLE_KEY
+import ru.citeck.launcher.core.namespace.NamespaceEntityDef.FORM_FIELD_NAME
 import ru.citeck.launcher.core.namespace.NamespaceEntityDef.formSpec
 import ru.citeck.launcher.core.namespace.gen.NamespaceGenerator
 import ru.citeck.launcher.core.namespace.runtime.NamespaceRuntime
@@ -17,6 +18,7 @@ import ru.citeck.launcher.core.utils.ActionStatus
 import ru.citeck.launcher.core.utils.Disposable
 import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.prop.MutProp
+import ru.citeck.launcher.core.workspace.WorkspaceDto
 import ru.citeck.launcher.core.workspace.WorkspacesService
 import java.nio.file.Path
 import java.time.Duration
@@ -56,7 +58,21 @@ class NamespacesService : Disposable {
         services.entitiesService.register(createEntityDef())
 
         fun registerNsRuntime(nsDto: NamespaceConfig): NamespaceRuntime {
+
             val namespaceRef = NamespaceRef(services.workspace.id, nsDto.id)
+            val database = services.database
+            var repoKey = getRepoKey(namespaceRef)
+
+            if (
+                !database.hasRepo(NS_RT_STATE_REPO_SCOPE, repoKey) &&
+                namespaceRef.workspace == WorkspaceDto.DEFAULT.id
+            ) {
+                val legacyKey = getRepoKey(namespaceRef.withWorkspace("DEFAULT"))
+                if (database.hasRepo(NS_RT_STATE_REPO_SCOPE, legacyKey)) {
+                    repoKey = legacyKey
+                }
+            }
+
             val runtime = NamespaceRuntime(
                 namespaceRef,
                 MutProp(nsDto),
@@ -64,7 +80,7 @@ class NamespacesService : Disposable {
                 nsAppsGenerator,
                 services.actionsService,
                 services.dockerApi,
-                services.database.getDataRepo(NS_RT_STATE_REPO_SCOPE, getRepoKey(namespaceRef)),
+                services.database.getDataRepo(NS_RT_STATE_REPO_SCOPE, repoKey),
                 services.cloudConfigServer
             )
             namespaceRuntimes[nsDto.id] = runtime
@@ -179,6 +195,18 @@ class NamespacesService : Disposable {
                     ns
                 }
                 val data = DataValue.of(dto)
+
+                if (data[FORM_FIELD_NAME].isEmpty()) {
+
+                    val namespaces = services.entitiesService.getAll(NamespaceConfig::class).associateBy { it.name }
+                    var defaultNameNum = namespaces.size + 1
+                    var defaultName: String
+                    do {
+                        defaultName = "Citeck #${defaultNameNum++}"
+                    } while (namespaces.containsKey(defaultName))
+
+                    data[FORM_FIELD_NAME] = defaultName
+                }
                 data[FORM_FIELD_BUNDLES_REPO] = dto.bundleRef.repo
                 data[FORM_FIELD_BUNDLE_KEY] = dto.bundleRef.key
                 data[FORM_FIELD_AUTH_TYPE] = dto.authentication.type

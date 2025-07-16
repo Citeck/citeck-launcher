@@ -13,9 +13,9 @@ class WorkspaceDto(
 ) {
 
     companion object {
-        val GLOBAL_WS_ID = "GLOBAL"
+        val GLOBAL_WS_ID = "global"
         val DEFAULT = WorkspaceDto(
-            id = "DEFAULT",
+            id = "default",
             name = "Default Workspace",
             repoUrl = "https://github.com/Citeck/launcher-workspace.git",
             repoBranch = "main",

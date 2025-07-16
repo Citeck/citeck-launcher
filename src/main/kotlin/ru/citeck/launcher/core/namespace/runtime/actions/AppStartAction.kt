@@ -145,7 +145,8 @@ class AppStartAction(
                         DockerLabels.APP_HASH to deploymentHash,
                         DockerLabels.NAMESPACE to namespaceId,
                         DockerLabels.WORKSPACE to workspaceId,
-                        DockerLabels.LAUNCHER_LABEL_PAIR
+                        DockerLabels.LAUNCHER_LABEL_PAIR,
+                        DockerLabels.DOCKER_COMPOSE_PROJECT to DockerConstants.getDockerProjectName(namespaceRef)
                     )
                 ).withHostConfig(
                     run {
@@ -221,7 +222,8 @@ class AppStartAction(
                 mapOf(
                     DockerLabels.WORKSPACE to namespaceRef.workspace,
                     DockerLabels.NAMESPACE to namespaceRef.namespace,
-                    DockerLabels.LAUNCHER_LABEL_PAIR
+                    DockerLabels.LAUNCHER_LABEL_PAIR,
+                    DockerLabels.DOCKER_COMPOSE_PROJECT to DockerConstants.getDockerProjectName(namespaceRef)
                 )
             )
             .withEnv(
@@ -438,27 +440,27 @@ class AppStartAction(
             return null
         }
 
-        val nsRuntime = runtime.nsRuntime
-
         val srcName = volume.substring(0, twoDotsIdx)
         if (srcName.contains(File.separator)) {
             return Bind.parse(volume)
         }
-        val volumeNameInNamespace = DockerConstants.getVolumeName(srcName, nsRuntime.namespaceRef)
-        createVolumeIfNotExists(runtime, srcName, volumeNameInNamespace)
 
+        val volumeNameInNamespace = createVolumeIfNotExists(runtime, srcName)
         return Bind.parse(volume.replaceFirst(srcName, volumeNameInNamespace))
     }
 
-    private fun createVolumeIfNotExists(runtime: AppRuntime, srcName: String, name: String): String {
-        val volumeExists = dockerApi.getVolumeByNameOrNull(name) != null
-        if (!volumeExists) {
-            log.info { "Create new volume '$name'" }
-            dockerApi.createVolume(runtime.nsRuntime.namespaceRef, srcName, name)
+    private fun createVolumeIfNotExists(runtime: AppRuntime, originalName: String): String {
+        val nsRef = runtime.nsRuntime.namespaceRef
+        val existingVolume = dockerApi.getVolumeByOriginalNameOrNull(nsRef, originalName)
+        return if (existingVolume == null) {
+            val volumeNameInNamespace = DockerConstants.getVolumeName(originalName, nsRef)
+            log.info { "Create new volume '$volumeNameInNamespace'" }
+            dockerApi.createVolume(runtime.nsRuntime.namespaceRef, originalName, volumeNameInNamespace)
+            volumeNameInNamespace
         } else {
-            log.info { "Volume $name already exists. Do nothing." }
+            log.info { "Volume $originalName -> ${existingVolume.name} already exists. Do nothing." }
+            existingVolume.name
         }
-        return name
     }
 
     class Params(

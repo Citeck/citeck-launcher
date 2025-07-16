@@ -67,6 +67,10 @@ class Database {
         )
     }
 
+    fun hasRepo(scope: String, key: String): Boolean {
+        return store.hasMap(getRepoKey(scope, key))
+    }
+
     fun <K : Any, T : Any> getRepo(
         keyType: EntityIdType<K>,
         valueType: JavaType,

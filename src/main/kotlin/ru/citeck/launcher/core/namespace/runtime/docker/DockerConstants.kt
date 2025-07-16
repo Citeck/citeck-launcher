@@ -4,18 +4,28 @@ import ru.citeck.launcher.core.namespace.NamespaceRef
 
 object DockerConstants {
 
-    const val NAME_DELIM = "-"
-    const val NAME_PREFIX = "citeck$NAME_DELIM"
+    const val NAME_DELIM = "_"
 
     fun getNameSuffix(namespaceRef: NamespaceRef): String {
-        return "$NAME_DELIM${namespaceRef.namespace}$NAME_DELIM${namespaceRef.workspace}"
+        return NAME_DELIM +
+            namespaceRef.namespace.lowercase() +
+            NAME_DELIM +
+            namespaceRef.workspace.lowercase()
     }
 
     fun getNamePrefix(namespaceRef: NamespaceRef): String {
-        return NAME_PREFIX
+        return "citeck$NAME_DELIM"
+    }
+
+    fun getDockerProjectName(namespaceRef: NamespaceRef): String {
+        return "citeck${NAME_DELIM}launcher" + getNameSuffix(namespaceRef)
     }
 
     fun getVolumeName(srcName: String, namespaceRef: NamespaceRef): String {
-        return getNamePrefix(namespaceRef) + "volume" + NAME_DELIM + srcName + getNameSuffix(namespaceRef)
+        return getNamePrefix(namespaceRef) +
+            "volume" +
+            NAME_DELIM +
+            srcName +
+            getNameSuffix(namespaceRef)
     }
 }

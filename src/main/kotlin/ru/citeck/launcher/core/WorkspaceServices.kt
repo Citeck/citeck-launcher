@@ -66,10 +66,23 @@ class WorkspaceServices(
         namespacesService.init(this)
         licenseService.init(launcherServices)
 
-        workspaceStateRepo = launcherServices.database
-            .getDataRepo("workspace-state", workspace.id)
+        workspaceStateRepo = getWorkspaceStateRepo()
 
         setSelectedNamespace(workspaceStateRepo[SELECTED_NS_PROP].asText())
+    }
+
+    private fun getWorkspaceStateRepo(): DataRepo {
+
+        val repoScope = "workspace-state"
+        var repoKey = workspace.id
+
+        if (!database.hasRepo(repoScope, repoKey) && repoKey == "default") {
+            val legacyKey = "DEFAULT"
+            if (database.hasRepo(repoScope, legacyKey)) {
+                repoKey = legacyKey
+            }
+        }
+        return database.getDataRepo(repoScope, repoKey)
     }
 
     fun updateConfig(updatePolicy: GitUpdatePolicy) {

@@ -1,3 +1,5 @@
+@file:Suppress("unused")
+
 package ru.citeck.launcher.core.namespace.runtime.docker
 
 import com.github.dockerjava.api.DockerClient
@@ -49,7 +51,8 @@ class DockerApi(
                     DockerLabels.WORKSPACE to nsRef.workspace,
                     DockerLabels.NAMESPACE to nsRef.namespace,
                     DockerLabels.ORIGINAL_NAME to originalName,
-                    DockerLabels.LAUNCHER_LABEL_PAIR
+                    DockerLabels.LAUNCHER_LABEL_PAIR,
+                    DockerLabels.DOCKER_COMPOSE_PROJECT to DockerConstants.getDockerProjectName(nsRef)
                 )
             ).withName(name).exec()
     }
@@ -62,16 +65,30 @@ class DockerApi(
             .volumes.firstOrNull()
     }
 
+    fun getVolumeByOriginalNameOrNull(nsRef: NamespaceRef, name: String): InspectVolumeResponse? {
+        return client.listVolumesCmd()
+            .withFilter(
+                "label",
+                listOf(
+                    DockerLabels.NAMESPACE + "=" + nsRef.namespace,
+                    DockerLabels.ORIGINAL_NAME + "=" + name
+                )
+            ).exec().volumes.firstOrNull {
+                nsRef.workspace.equals(it.labels[DockerLabels.WORKSPACE], true)
+            }
+    }
+
     fun getVolumes(nsRef: NamespaceRef?): List<InspectVolumeResponse> {
         nsRef ?: return emptyList()
         return client.listVolumesCmd()
             .withFilter(
                 "label",
                 listOf(
-                    DockerLabels.NAMESPACE + "=" + nsRef.namespace,
-                    DockerLabels.WORKSPACE + "=" + nsRef.workspace
+                    DockerLabels.NAMESPACE + "=" + nsRef.namespace
                 )
-            ).exec().volumes
+            ).exec().volumes.filter {
+                nsRef.workspace.equals(it.labels[DockerLabels.WORKSPACE], true)
+            }
     }
 
     fun deleteVolume(name: String) {
@@ -101,10 +118,11 @@ class DockerApi(
             .withShowAll(true)
             .withLabelFilter(
                 mapOf(
-                    DockerLabels.WORKSPACE to nsRef.workspace,
                     DockerLabels.NAMESPACE to nsRef.namespace
                 )
-            ).exec()
+            ).exec().filter {
+                nsRef.workspace.equals(it.labels[DockerLabels.WORKSPACE], true)
+            }
     }
 
     fun getContainers(nsRef: NamespaceRef, appName: String): List<Container> {
@@ -112,11 +130,12 @@ class DockerApi(
             .withShowAll(true)
             .withLabelFilter(
                 mapOf(
-                    DockerLabels.WORKSPACE to nsRef.workspace,
                     DockerLabels.NAMESPACE to nsRef.namespace,
                     DockerLabels.APP_NAME to appName
                 )
-            ).exec()
+            ).exec().filter {
+                nsRef.workspace.equals(it.labels[DockerLabels.WORKSPACE], true)
+            }
     }
 
     fun stopAndRemoveContainer(container: InspectContainerResponse?) {
@@ -209,7 +228,7 @@ class DockerApi(
         }
         return try {
             return client.inspectContainerCmd(containerId).exec()
-        } catch (e: NotFoundException) {
+        } catch (_: NotFoundException) {
             null
         }
     }
@@ -305,6 +324,7 @@ class DockerApi(
 
                     val srcArchive = "/source/${volume.dataFile}"
                     execWithUtils(
+                        nsRef,
                         "tar -xf $srcArchive -C ./dest",
                         listOf(
                             "$volumeNameInNs:/dest",
@@ -334,7 +354,7 @@ class DockerApi(
         status.message = "Utils pull completed"
     }
 
-    private fun execWithUtils(command: String, volumes: List<String>) {
+    private fun execWithUtils(nsRef: NamespaceRef, command: String, volumes: List<String>) {
         log.info { "Execute utils command: $command" }
         val execStartedAt = System.currentTimeMillis()
         val container: CreateContainerResponse = client.createContainerCmd(UTILS_IMAGE)
@@ -344,7 +364,10 @@ class DockerApi(
                     .withBinds(volumes.map { Bind.parse(it) })
             ).withLabels(
                 mapOf(
-                    DockerLabels.LAUNCHER_LABEL_PAIR
+                    DockerLabels.WORKSPACE to nsRef.workspace,
+                    DockerLabels.NAMESPACE to nsRef.namespace,
+                    DockerLabels.LAUNCHER_LABEL_PAIR,
+                    DockerLabels.DOCKER_COMPOSE_PROJECT to DockerConstants.getDockerProjectName(nsRef)
                 )
             ).exec()
 
@@ -438,6 +461,7 @@ class DockerApi(
                 volumesSnapMeta.add(VolumeSnapshotMeta(originalName, dataFile))
 
                 execWithUtils(
+                    nsRef,
                     "cd /source && " +
                         "find . -mindepth 1 -printf '%P\\n' | " +
                         "tar $tarAlgParam -cvf \"/dest/${dataFile}\" -T -",
@@ -477,7 +501,8 @@ class DockerApi(
                 mapOf(
                     DockerLabels.WORKSPACE to nsRef.workspace,
                     DockerLabels.NAMESPACE to nsRef.namespace,
-                    DockerLabels.LAUNCHER_LABEL_PAIR
+                    DockerLabels.LAUNCHER_LABEL_PAIR,
+                    DockerLabels.DOCKER_COMPOSE_PROJECT to DockerConstants.getDockerProjectName(nsRef)
                 )
             )
             .withDriver("bridge")

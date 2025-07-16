@@ -11,6 +11,8 @@ import ru.citeck.launcher.core.utils.json.Yaml
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.io.path.exists
+import kotlin.io.path.isDirectory
+import kotlin.io.path.name
 
 class WorkspacesService {
 
@@ -19,6 +21,13 @@ class WorkspacesService {
         private const val CONFIG_VERSION_MAX = 1
 
         fun getWorkspaceDir(workspaceId: String): Path {
+            if (workspaceId == WorkspaceDto.DEFAULT.id) {
+                val upperName = workspaceId.uppercase()
+                val legacyDir = AppDir.PATH.resolve("ws").resolve(upperName)
+                if (legacyDir.exists() && legacyDir.isDirectory() && legacyDir.name == upperName) {
+                    return legacyDir
+                }
+            }
             return AppDir.PATH.resolve("ws").resolve(workspaceId)
         }
 

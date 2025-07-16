@@ -5,6 +5,10 @@ data class NamespaceRef(
     val namespace: String
 ) {
 
+    fun withWorkspace(workspace: String): NamespaceRef {
+        return NamespaceRef(workspace, namespace)
+    }
+
     override fun toString(): String {
         return "$workspace:$namespace"
     }

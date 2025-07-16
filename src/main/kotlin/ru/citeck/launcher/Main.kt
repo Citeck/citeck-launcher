@@ -11,6 +11,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.runBlocking
 import org.jetbrains.compose.resources.decodeToSvgPainter
 import ru.citeck.launcher.core.LauncherServices
+import ru.citeck.launcher.core.git.GitPullCancelledException
 import ru.citeck.launcher.core.socket.AppLocalSocket
 import ru.citeck.launcher.core.utils.AppLock
 import ru.citeck.launcher.core.utils.StdOutLog
@@ -37,7 +38,7 @@ import kotlin.system.exitProcess
 
 private val log = KotlinLogging.logger {}
 
-fun main(@Suppress("UNUSED_PARAMETER") args: Array<String>) {
+fun main(@Suppress("unused") args: Array<String>) {
     // initial phase messages printed without logging framework
     // to avoid conflicts with logging to same file from two apps
     StdOutLog.info("Application starting. Try to take app lock")
@@ -197,10 +198,17 @@ fun App(services: LauncherServices, dialogStates: SnapshotStateList<CiteckDialog
                 if (selectedWs == null) {
                     selectedWs = entitiesService.getFirst(WorkspaceDto::class)!!.entity
                 }
-                services.setWorkspace(selectedWs.id)
-                wsDataState.value = selectedWs
+                try {
+                    services.setWorkspace(selectedWs.id)
+                    wsDataState.value = selectedWs
+                } catch (_: GitPullCancelledException) {
+                    log.warn { "Git pull cancelled for repo '${selectedWs.id}'. Fallback to default workspace." }
+                    services.setWorkspace(WorkspaceDto.DEFAULT.id)
+                    wsDataState.value = entitiesService.getFirst(WorkspaceDto::class)?.entity
+                        ?: error("Default workspace is null")
+                }
             } catch (e: Throwable) {
-                log.error(e) { "Exception while selected namespace loading" }
+                log.error(e) { "Exception while selected workspace loading" }
                 error.value = e
             }
         }

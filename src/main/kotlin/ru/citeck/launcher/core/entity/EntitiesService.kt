@@ -29,13 +29,18 @@ import kotlin.reflect.KClass
 
 @Stable
 class EntitiesService(
-    private val workspaceId: String
+    private var workspaceId: String
 ) {
 
     companion object {
         private const val ATT_ID = "id"
 
         private const val HISTORY_MAX_COUNT = 10
+
+        private val WORKSPACE_ALIASES = mapOf(
+            WorkspaceDto.DEFAULT.id to listOf(WorkspaceDto.DEFAULT.id.uppercase()),
+            WorkspaceDto.GLOBAL_WS_ID to listOf(WorkspaceDto.GLOBAL_WS_ID.uppercase())
+        )
     }
 
     private val definitionsByClass = ConcurrentHashMap<KClass<*>, EntityDefWithRepo<*, *>>()
@@ -101,7 +106,7 @@ class EntitiesService(
             EntityIdType.Long -> entityRef.localId.toLong()
             EntityIdType.String -> entityRef.localId
         }
-        val entity = defWithRepo.repository.get(idValue) ?: return null
+        val entity = defWithRepo.repository[idValue] ?: return null
         return wrapEntitiesToInfo(defWithRepo, listOf(entity)).first()
     }
 
@@ -233,7 +238,7 @@ class EntitiesService(
         val defWithRepo = getDefWithRepo<Any, T>(type) as EntityDefWithRepo<*, T>
         val definition = defWithRepo.definition
 
-        var initialDataValue = if (initialData is DataValue) {
+        val initialDataValue = if (initialData is DataValue) {
             if (initialData.isNull()) {
                 definition.toFormData(null)
             } else {
@@ -276,7 +281,7 @@ class EntitiesService(
             }
             val convertedEntity = definition.fromFormData(data)
 
-            Thread.ofPlatform().name("create-entity-$idType").start {
+            Thread.ofPlatform().name("create-entity-${definition.typeId}").start {
                 ActionStatus.doWithStatus { status ->
                     val closeLoading = GlobalLoadingDialog.show(status)
                     try {
@@ -424,12 +429,25 @@ class EntitiesService(
         return defWithRepo as? EntityDefWithRepo<K1, T> ?: error("No definition for entity '$key'. Workspace: $workspaceId")
     }
 
+    private fun getRepoScope(repoKey: String): String {
+
+        fun getScopeForWsId(wsId: String) = "entities/$wsId"
+
+        // check repositories by aliases to support legacy repositories
+        val wsAliases = WORKSPACE_ALIASES[workspaceId] ?: emptyList()
+        for (wsAlias in wsAliases) {
+            val aliasRepoScope = getScopeForWsId(wsAlias)
+            if (database.hasRepo(aliasRepoScope, repoKey)) {
+                return aliasRepoScope
+            }
+        }
+        return getScopeForWsId(workspaceId)
+    }
+
     fun <K : Any, T : Any> register(definition: EntityDef<K, T>) {
 
         val entityType = Json.getSimpleType(definition.valueType)
         val listType = Json.getListType(definition.valueType)
-
-        val baseRepoKey = "entities/$workspaceId"
 
         val defaultEntitiesInfo = definition.defaultEntities.map {
             EntityInfo(
@@ -444,20 +462,23 @@ class EntitiesService(
             defaultEntitiesByRef[it.ref] = it as EntityInfo<Any>
         }
 
+        val repoKey = definition.typeId
+        val repoScope = getRepoScope(repoKey)
+
         val defWithRepo = EntityDefWithRepo(
             definition,
             defaultEntitiesInfo,
             definition.customRepo ?: database.getRepo(
                 definition.idType,
                 entityType,
-                baseRepoKey,
-                definition.typeId
+                repoScope,
+                repoKey
             ),
             database.getRepo(
                 definition.idType,
                 listType,
-                "$baseRepoKey/versions",
-                definition.typeId
+                "$repoScope/versions",
+                repoKey
             )
         )
         definitionsByClass[definition.valueType] = defWithRepo

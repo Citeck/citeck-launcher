@@ -48,13 +48,15 @@ class LauncherServices {
     private val workspaceInitialized = AtomicBoolean(false)
 
     suspend fun init() {
+
         database.init()
+        launcherStateService.init(this)
+
         secretsStorage.init(database)
         entitiesService.init(this)
         authSecretsService.init(this)
         gitRepoService.init(this)
         workspacesService.init(this)
-        launcherStateService.init(this)
 
         entitiesService.register(authSecretsService.getSecretEntityDef())
 
