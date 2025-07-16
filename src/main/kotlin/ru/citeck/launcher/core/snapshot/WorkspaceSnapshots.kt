@@ -9,8 +9,6 @@ import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.utils.io.*
 import kotlinx.coroutines.runBlocking
-import org.apache.commons.lang3.mutable.MutableDouble
-import org.apache.commons.lang3.mutable.MutableLong
 import ru.citeck.launcher.core.WorkspaceServices
 import ru.citeck.launcher.core.utils.ActionStatus
 import ru.citeck.launcher.core.utils.file.FileUtils
@@ -48,12 +46,12 @@ class WorkspaceSnapshots {
     fun getSnapshot(snapshotId: String, status: ActionStatus.Mut): Promise<Path> {
 
         val completed = AtomicBoolean(false)
-        val progress = MutableDouble(0)
-        val totalBytes = MutableLong(0)
+        val downloadProgress = DownloadProgress(0.0)
+        val contentLength = ContentLength(0)
         val statusUpdater = Thread.ofVirtual().name("download-status-updater").start {
             while (!completed.get()) {
                 try {
-                    status.progress = progress.value.toFloat()
+                    status.progress = downloadProgress.value.toFloat()
                     Thread.sleep(1000)
                 } catch (_: InterruptedException) {
                     // do nothing
@@ -69,23 +67,23 @@ class WorkspaceSnapshots {
                 if (!firstIteration.compareAndSet(true, false)) {
                     Thread.sleep(REPEAT_DELAY_MS)
                 }
-                val progressBefore = progress.value
+                val progressBefore: Double = downloadProgress.value
                 try {
                     status.message = "Snapshot downloading..."
                     return@startForPromise runBlocking {
-                        resolveSnapshot(snapshotId, progress, totalBytes)
+                        resolveSnapshot(snapshotId, downloadProgress, contentLength)
                     }
                 } catch (e: Throwable) {
                     status.message = "Downloading error\nWill try again in ${REPEAT_DELAY_MS / 1000}s"
                     log.error(e) { "Exception while loading snapshot '$snapshotId'" }
-                    if (progress.value > progressBefore) {
+                    if (downloadProgress.value > progressBefore) {
                         repeats = REPEATS_LIMIT_WITHOUT_PROGRESS + 1
                     }
                 }
             } while (!completed.get() && ++totalRepeats < REPEATS_LIMIT_TOTAL && --repeats > 0)
             error(
                 "Snapshot downloading failed after $totalRepeats repeats. " +
-                    "Total bytes: ${totalBytes.value} Progress: ${progress.value}"
+                    "Total bytes: ${contentLength.value} Progress: ${downloadProgress.value}"
             )
         }.finally {
             statusUpdater.interrupt()
@@ -94,8 +92,8 @@ class WorkspaceSnapshots {
 
     private suspend fun resolveSnapshot(
         snapshotId: String,
-        progress: MutableDouble,
-        totalBytes: MutableLong
+        downloadProgress: DownloadProgress,
+        contentLength: ContentLength
     ): Path {
 
         val snapshotInfo = workspaceServices.workspaceConfig
@@ -146,8 +144,8 @@ class WorkspaceSnapshots {
         downloadFileImpl(
             snapshotInfo.url,
             snapshotFile,
-            progress,
-            totalBytes
+            downloadProgress,
+            contentLength
         )
 
         val actualHash = FileUtils.getFileSha256(snapshotFile)
@@ -165,8 +163,8 @@ class WorkspaceSnapshots {
     private suspend fun downloadFileImpl(
         url: String,
         targetFile: Path,
-        progress: MutableDouble,
-        totalBytes: MutableLong
+        downloadProgress: DownloadProgress,
+        contentLength: ContentLength
     ) {
         val partFile = targetFile.parent.resolve(targetFile.name + ".part").toFile()
         if (!partFile.exists()) {
@@ -180,7 +178,7 @@ class WorkspaceSnapshots {
                 socketTimeoutMillis = Duration.ofMinutes(5).toMillis()
             }
         }.use { client ->
-            downloadFileImpl(client, url, partFile, progress, totalBytes)
+            downloadFileImpl(client, url, partFile, downloadProgress, contentLength)
         }
         Files.move(partFile.toPath(), targetFile)
     }
@@ -189,17 +187,17 @@ class WorkspaceSnapshots {
         client: HttpClient,
         url: String,
         targetFile: File,
-        progress: MutableDouble,
-        totalBytes: MutableLong
+        downloadProgress: DownloadProgress,
+        contentLength: ContentLength
     ) {
-        totalBytes.value = client.head(url).contentLength() ?: error("Can't get content length")
+        contentLength.value = client.head(url).contentLength() ?: error("Can't get content length")
 
         var downloadedBytes = if (targetFile.exists()) targetFile.length() else 0L
-        progress.value = downloadedBytes / totalBytes.toDouble()
+        downloadProgress.value = downloadedBytes / contentLength.toDouble()
 
-        while (downloadedBytes < totalBytes.value) {
+        while (downloadedBytes < contentLength.value) {
 
-            val rangeEnd = min(downloadedBytes + DOWNLOAD_PART_BYTES, totalBytes.value)
+            val rangeEnd = min(downloadedBytes + DOWNLOAD_PART_BYTES, contentLength.value)
 
             client.prepareGet(url) {
                 header("Range", "bytes=$downloadedBytes-$rangeEnd")
@@ -214,7 +212,7 @@ class WorkspaceSnapshots {
                             if (bytesRead > 0) {
                                 file.write(buffer, 0, bytesRead)
                                 downloadedBytes += bytesRead
-                                progress.value = downloadedBytes / totalBytes.toDouble()
+                                downloadProgress.value = downloadedBytes / contentLength.toDouble()
                             }
                         }
                     }
@@ -223,5 +221,10 @@ class WorkspaceSnapshots {
                 }
             }
         }
+    }
+
+    private class DownloadProgress(@Volatile var value: Double)
+    private class ContentLength(@Volatile var value: Long) {
+        fun toDouble() = value.toDouble()
     }
 }

@@ -61,7 +61,10 @@ private val STOPPED_COLOR = Color(0xFF424242)
 private val STALLED_COLOR = Color(0xFFDB831D)
 
 @Composable
-fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState<NamespaceConfig?>) {
+fun NamespaceScreen(
+    services: WorkspaceServices,
+    selectedNamespace: MutableState<NamespaceConfig?>
+) {
 
     val coroutineScope = rememberCoroutineScope()
 
