@@ -36,14 +36,10 @@ sealed class AuthSecret(val id: String, val version: Long) {
         val password: CharArray
     ) : AuthSecret(id, version) {
         companion object {
-            val EMPTY = Basic("", 0L,"", charArrayOf())
+            val EMPTY = Basic("", 0L, "", charArrayOf())
         }
         override fun isValid(): Boolean {
             return true
         }
     }
 }
-
-
-
-

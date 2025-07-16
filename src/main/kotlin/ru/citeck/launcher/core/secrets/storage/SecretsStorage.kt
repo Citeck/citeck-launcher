@@ -51,7 +51,7 @@ class SecretsStorage {
             val masterKey = SecretsEncryptor.deriveKey(rawPwd, keyParams)
             val secrets = try {
                 SecretsEncryptor.decrypt(storage, masterKey, DataValue::class)
-            } catch (e: Throwable) {
+            } catch (_: Throwable) {
                 DataValue.NULL
             }
             if (!secrets.isObject()) {
@@ -89,7 +89,6 @@ class SecretsStorage {
                         }
                     )
                 }
-
             } else {
                 secrets = DataValue.createObj()
                 keyParams = SecretsEncryptor.createKeyParams()

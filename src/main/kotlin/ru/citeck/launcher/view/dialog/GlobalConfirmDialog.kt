@@ -26,11 +26,13 @@ object GlobalConfirmDialog {
 
     suspend fun showSuspended(message: String): Boolean {
         return suspendCancellableCoroutine { continuation ->
-            showDialog(ConfirmDialogParams(
-                message = message,
-                onConfirm = { continuation.resume(true) },
-                onCancel = { continuation.resume(false) }
-            ))
+            showDialog(
+                ConfirmDialogParams(
+                    message = message,
+                    onConfirm = { continuation.resume(true) },
+                    onCancel = { continuation.resume(false) }
+                )
+            )
         }
     }
 
@@ -45,8 +47,12 @@ object GlobalConfirmDialog {
                     shape = RoundedCornerShape(3.dp),
                 ) {
                     Column(modifier = Modifier.padding(top = 30.dp, start = 10.dp, end = 10.dp, bottom = 10.dp)) {
-                        Text(params.message, textAlign = TextAlign.Center, fontSize = 1.2.em,
-                            modifier = Modifier.fillMaxWidth().padding(start = 30.dp, end = 30.dp))
+                        Text(
+                            params.message,
+                            textAlign = TextAlign.Center,
+                            fontSize = 1.2.em,
+                            modifier = Modifier.fillMaxWidth().padding(start = 30.dp, end = 30.dp)
+                        )
                         Spacer(modifier = Modifier.height(30.dp))
                         Column(modifier = Modifier.fillMaxWidth().height(50.dp), horizontalAlignment = Alignment.End) {
                             Row {

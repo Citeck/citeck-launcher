@@ -9,4 +9,3 @@ data class StartNsCmd(
 data object StopNsCmd : NsRuntimeCmd()
 
 data object RegenerateNsCmd : NsRuntimeCmd()
-

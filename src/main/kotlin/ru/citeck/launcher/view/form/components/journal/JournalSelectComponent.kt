@@ -9,8 +9,8 @@ import ru.citeck.launcher.core.entity.EntitiesService
 import ru.citeck.launcher.core.entity.EntityInfo
 import ru.citeck.launcher.core.entity.EntityRef
 import ru.citeck.launcher.view.commons.LimitedText
-import ru.citeck.launcher.view.form.spec.ComponentSpec
 import ru.citeck.launcher.view.form.FormContext
+import ru.citeck.launcher.view.form.spec.ComponentSpec
 
 @Composable
 fun JournalSelectComponent(
@@ -58,5 +58,3 @@ fun JournalSelectComponent(
         Text("Select")
     }
 }
-
-

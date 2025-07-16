@@ -3,8 +3,8 @@ package ru.citeck.launcher.core
 import androidx.compose.runtime.Stable
 import io.github.oshai.kotlinlogging.KotlinLogging
 import ru.citeck.launcher.core.actions.ActionsService
-import ru.citeck.launcher.core.config.cloud.CloudConfigServer
 import ru.citeck.launcher.core.config.bundle.BundlesService
+import ru.citeck.launcher.core.config.cloud.CloudConfigServer
 import ru.citeck.launcher.core.database.DataRepo
 import ru.citeck.launcher.core.database.Database
 import ru.citeck.launcher.core.entity.EntitiesService

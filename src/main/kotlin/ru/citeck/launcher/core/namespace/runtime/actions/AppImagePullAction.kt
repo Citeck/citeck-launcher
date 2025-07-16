@@ -42,6 +42,7 @@ class AppImagePullAction(
         private const val RETRIES_COUNT_FOR_EXISTING_IMAGE = 3
 
         private val LAST_PULL_RESPONSE_TIMEOUT_MS = Duration.ofMinutes(1).toMillis()
+
         // global param to avoid errors while some pull actions wait until other actions completed
         private val lastPullResponseTime = AtomicLong(System.currentTimeMillis())
 
@@ -71,9 +72,9 @@ class AppImagePullAction(
     override fun getRetryAfterErrorDelay(context: ActionContext<Params>, future: CompletableFuture<Unit>): Long {
         val params = context.params
         if (
-            params.pullIfPresent
-            && context.retryIdx >= RETRIES_COUNT_FOR_EXISTING_IMAGE
-            && dockerApi.inspectImageOrNull(params.appRuntime.image) != null
+            params.pullIfPresent &&
+            context.retryIdx >= RETRIES_COUNT_FOR_EXISTING_IMAGE &&
+            dockerApi.inspectImageOrNull(params.appRuntime.image) != null
         ) {
             log.warn(context.lastError) {
                 "Pulling failed for ${params.currentPulledImage} " +
@@ -264,9 +265,9 @@ class AppImagePullAction(
     private fun isUnauthorizedException(throwable: Throwable?): Boolean {
         throwable ?: return false
         val message = throwable.message ?: ""
-        return message.contains("unauthorized", true)
-            || message.contains("authorization failed", true)
-            || message.contains("no basic auth", true)
+        return message.contains("unauthorized", true) ||
+            message.contains("authorization failed", true) ||
+            message.contains("no basic auth", true)
     }
 
     class Params(

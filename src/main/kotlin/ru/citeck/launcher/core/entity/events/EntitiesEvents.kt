@@ -54,15 +54,15 @@ class EntitiesEvents {
         }
     }
 
-    fun <T : Any> fireEntityCreatedEvent(type: KClass<T>, event: EntityCreatedEvent<T>) : Promise<*> {
+    fun <T : Any> fireEntityCreatedEvent(type: KClass<T>, event: EntityCreatedEvent<T>): Promise<*> {
         return fireEvent(entityCreatedListeners, type, event)
     }
 
-    fun <T : Any> fireEntityUpdatedEvent(type: KClass<T>, event: EntityUpdatedEvent<T>) : Promise<*> {
+    fun <T : Any> fireEntityUpdatedEvent(type: KClass<T>, event: EntityUpdatedEvent<T>): Promise<*> {
         return fireEvent(entityUpdatedListeners, type, event)
     }
 
-    fun <T : Any> fireEntityDeletedEvent(type: KClass<T>, event: EntityDeletedEvent<T>) : Promise<*> {
+    fun <T : Any> fireEntityDeletedEvent(type: KClass<T>, event: EntityDeletedEvent<T>): Promise<*> {
         return fireEvent(entityDeletedListeners, type, event)
     }
 
@@ -70,7 +70,7 @@ class EntitiesEvents {
         listeners: Map<KClass<*>, List<(T) -> Any>>,
         type: KClass<*>,
         event: Event
-    ) : Promise<*> {
+    ): Promise<*> {
         log.info { "Fire ${event::class.simpleName} for type ${type.simpleName}" }
         @Suppress("UNCHECKED_CAST")
         event as T

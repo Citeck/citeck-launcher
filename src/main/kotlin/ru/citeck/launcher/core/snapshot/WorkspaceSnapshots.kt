@@ -56,7 +56,7 @@ class WorkspaceSnapshots {
                     status.progress = progress.value.toFloat()
                     Thread.sleep(1000)
                 } catch (_: InterruptedException) {
-                    //do nothing
+                    // do nothing
                 }
             }
         }
@@ -85,7 +85,7 @@ class WorkspaceSnapshots {
             } while (!completed.get() && ++totalRepeats < REPEATS_LIMIT_TOTAL && --repeats > 0)
             error(
                 "Snapshot downloading failed after $totalRepeats repeats. " +
-                "Total bytes: ${totalBytes.value} Progress: ${progress.value}"
+                    "Total bytes: ${totalBytes.value} Progress: ${progress.value}"
             )
         }.finally {
             statusUpdater.interrupt()
@@ -115,7 +115,6 @@ class WorkspaceSnapshots {
 
                 log.info { "Using existing snapshot: ${snapshotFile.fileName}, hash verified." }
                 return snapshotFile
-
             } else {
 
                 val baseName = snapshotFile.fileName
@@ -132,15 +131,15 @@ class WorkspaceSnapshots {
 
                 log.info {
                     "Obsolete snapshot detected: ${snapshotFile.fileName}. " +
-                    "Hash mismatch (expected: ${snapshotInfo.sha256}, actual: $actualHash). " +
-                    "Rename outdated file to ${newPath.fileName}."
+                        "Hash mismatch (expected: ${snapshotInfo.sha256}, actual: $actualHash). " +
+                        "Rename outdated file to ${newPath.fileName}."
                 }
                 Files.move(snapshotFile, newPath)
             }
         } else {
             log.info {
                 "Snapshot file not found, " +
-                "initiating download: ${snapshotFile.fileName} from url ${snapshotInfo.url}"
+                    "initiating download: ${snapshotFile.fileName} from url ${snapshotInfo.url}"
             }
         }
 
@@ -156,7 +155,7 @@ class WorkspaceSnapshots {
             error(
                 "Snapshot was downloaded successfully, but hash mismatch " +
                     "(expected: ${snapshotInfo.sha256}, actual: $actualHash)." +
-                "Please, contact with mantainers and report this problem."
+                    "Please, contact with mantainers and report this problem."
             )
         }
 

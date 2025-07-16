@@ -55,4 +55,3 @@ class EntityRef private constructor(typeId: String, localId: String) {
         return 31 * typeId.hashCode() + localId.hashCode()
     }
 }
-

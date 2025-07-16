@@ -25,7 +25,6 @@ import ru.citeck.launcher.core.workspace.WorkspaceConfig
 import java.nio.file.Path
 import java.util.*
 import java.util.concurrent.ArrayBlockingQueue
-import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedDeque
 import java.util.concurrent.TimeUnit
@@ -62,7 +61,7 @@ class NamespaceRuntime(
 
     var nsStatus = MutProp(NsRuntimeStatus.STOPPED)
 
-    var namespaceGenResp = MutProp<NamespaceGenResp?>("ns-gen-res-${namespaceRef}", null)
+    var namespaceGenResp = MutProp<NamespaceGenResp?>("ns-gen-res-$namespaceRef", null)
 
     @Volatile
     private var runtimeFilesHash: Map<Path, String> = emptyMap()
@@ -111,7 +110,7 @@ class NamespaceRuntime(
         nsStatus.watch { before, after ->
             log.info {
                 "[${namespaceConfig.name} (${namespaceRef.namespace})] Namespace runtime " +
-                "status was changed: $before -> $after"
+                    "status was changed: $before -> $after"
             }
             if (before == NsRuntimeStatus.STOPPED) {
                 createNetworkIfNotExists(networkName)
@@ -131,9 +130,9 @@ class NamespaceRuntime(
         }
         val statusValue = nsStatus.getValue()
         if (
-            statusValue == NsRuntimeStatus.RUNNING
-            || statusValue == NsRuntimeStatus.STARTING
-            || statusValue == NsRuntimeStatus.STALLED
+            statusValue == NsRuntimeStatus.RUNNING ||
+            statusValue == NsRuntimeStatus.STARTING ||
+            statusValue == NsRuntimeStatus.STALLED
         ) {
             appRuntimes.getValue().forEach {
                 if (detachedApps.contains(it.name)) {
@@ -200,7 +199,7 @@ class NamespaceRuntime(
                             try {
                                 Thread.sleep(3000)
                             } catch (_: InterruptedException) {
-                                //do nothing
+                                // do nothing
                             }
                         }
                     }
@@ -347,7 +346,6 @@ class NamespaceRuntime(
                 if (statusVal == AppRuntimeStatus.STOPPED) {
 
                     runtimesToRemoveIt.remove()
-
                 } else if (statusVal == AppRuntimeStatus.READY_TO_STOP) {
 
                     status.setValue(AppRuntimeStatus.STOPPING)
@@ -477,10 +475,11 @@ class NamespaceRuntime(
                 when (nsStatus.getValue()) {
                     NsRuntimeStatus.STARTING -> {
                         if (allRuntimes.all {
-                            it.status.getValue().run {
-                                isStoppingState() || this == AppRuntimeStatus.RUNNING
+                                it.status.getValue().run {
+                                    isStoppingState() || this == AppRuntimeStatus.RUNNING
+                                }
                             }
-                        }) {
+                        ) {
                             nsStatus.setValue(NsRuntimeStatus.RUNNING)
                         }
                     }
@@ -604,9 +603,11 @@ class NamespaceRuntime(
     private fun normalizeGeneratedAppDef(appDef: ApplicationDef): ApplicationDef {
         return appDef.copy()
             .withVolumes(appDef.volumes.map(this::fixVolume))
-            .withInitContainers(appDef.initContainers.map { ic ->
-                ic.copy().withVolumes(ic.volumes.map(this::fixVolume)).build()
-            }).build()
+            .withInitContainers(
+                appDef.initContainers.map { ic ->
+                    ic.copy().withVolumes(ic.volumes.map(this::fixVolume)).build()
+                }
+            ).build()
     }
 
     private fun generateNs(updatePolicy: GitUpdatePolicy) {
@@ -654,9 +655,11 @@ class NamespaceRuntime(
                     newRuntime.status.watch { _, after ->
                         appsStatusChangesCount.incrementAndGet()
                         lastAppStatusChangeTime = System.currentTimeMillis()
-                        if (after == AppRuntimeStatus.READY_TO_PULL
-                            && (nsStatus.getValue() == NsRuntimeStatus.RUNNING ||
-                                nsStatus.getValue() == NsRuntimeStatus.STOPPED)
+                        if (after == AppRuntimeStatus.READY_TO_PULL &&
+                            (
+                                nsStatus.getValue() == NsRuntimeStatus.RUNNING ||
+                                    nsStatus.getValue() == NsRuntimeStatus.STOPPED
+                                )
                         ) {
                             nsStatus.setValue(NsRuntimeStatus.STARTING)
                         }
@@ -726,5 +729,3 @@ class NamespaceRuntime(
         }
     }
 }
-
-

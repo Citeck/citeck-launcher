@@ -4,9 +4,9 @@ import com.github.dockerjava.api.model.Container
 import ru.citeck.launcher.core.appdef.ApplicationDef
 import ru.citeck.launcher.core.appdef.ApplicationKind
 import ru.citeck.launcher.core.namespace.runtime.docker.DockerApi
-import ru.citeck.launcher.core.utils.prop.MutProp
 import ru.citeck.launcher.core.utils.promise.Promise
 import ru.citeck.launcher.core.utils.promise.Promises
+import ru.citeck.launcher.core.utils.prop.MutProp
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 

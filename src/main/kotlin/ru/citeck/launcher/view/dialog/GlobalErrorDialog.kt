@@ -134,5 +134,3 @@ object GlobalErrorDialog {
         val onClose: () -> Unit
     )
 }
-
-

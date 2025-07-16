@@ -30,7 +30,7 @@ object AppLocalSocket {
             while (active.get()) {
                 val acceptedSocket = try {
                     socket.accept()
-                } catch (e: SocketException) {
+                } catch (_: SocketException) {
                     // connection closed
                     break
                 }
@@ -65,7 +65,7 @@ object AppLocalSocket {
                             } catch (error: Throwable) {
                                 throw RuntimeException(
                                     "Invalid message: " +
-                                    Base64.getEncoder().encodeToString(messageData),
+                                        Base64.getEncoder().encodeToString(messageData),
                                     error
                                 )
                             }
@@ -81,7 +81,7 @@ object AppLocalSocket {
                                 )
                             }
                         }
-                    } catch (e: Throwable) {
+                    } catch (_: Throwable) {
                         log.debug { "Message reading interrupted" }
                     } finally {
                         acceptedSocket.close()
@@ -89,11 +89,13 @@ object AppLocalSocket {
                 }
             }
         }
-        Runtime.getRuntime().addShutdownHook(Thread {
-            active.set(false)
-            serverThread?.interrupt()
-            serverSocket?.close()
-        })
+        Runtime.getRuntime().addShutdownHook(
+            Thread {
+                active.set(false)
+                serverThread?.interrupt()
+                serverSocket?.close()
+            }
+        )
         return socket.localPort
     }
 

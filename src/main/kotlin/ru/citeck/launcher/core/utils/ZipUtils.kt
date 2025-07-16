@@ -1,7 +1,6 @@
 package ru.citeck.launcher.core.utils
 
 import org.apache.commons.io.FilenameUtils
-import java.io.File
 import java.nio.file.FileVisitResult
 import java.nio.file.Files
 import java.nio.file.Path

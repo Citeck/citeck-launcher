@@ -46,7 +46,8 @@ object GlobalGitPullErrorDialog {
 
             Dialog(
                 properties = DialogProperties(
-                    usePlatformDefaultWidth = false),
+                    usePlatformDefaultWidth = false
+                ),
                 onDismissRequest = {}
             ) {
                 Surface(
@@ -122,7 +123,8 @@ object GlobalGitPullErrorDialog {
 }
 
 enum class GitPullRepoDialogRes {
-    REPEAT, SKIP_IF_POSSIBLE
+    REPEAT,
+    SKIP_IF_POSSIBLE
 }
 
 private class GitPullErrorDialogParams(

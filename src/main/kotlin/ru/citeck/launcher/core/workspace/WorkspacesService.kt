@@ -93,7 +93,8 @@ class WorkspacesService {
                 workspace.repoPullPeriod,
                 "ws:${workspace.id}:repo",
                 workspace.authType
-            ), updatePolicy
+            ),
+            updatePolicy
         ).root
 
         var cfgVersion = CONFIG_VERSION_MAX + 1
@@ -114,7 +115,7 @@ class WorkspacesService {
         if (cfgVersion < CONFIG_VERSION_MIN) {
             error(
                 "Workspace config file found but config version $cfgVersion " +
-                "is less than minimal supported $CONFIG_VERSION_MIN"
+                    "is less than minimal supported $CONFIG_VERSION_MIN"
             )
         }
         return Yaml.read(configFile, WorkspaceConfig::class)

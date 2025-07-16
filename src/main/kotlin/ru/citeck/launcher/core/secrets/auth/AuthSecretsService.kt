@@ -39,7 +39,7 @@ class AuthSecretsService {
             AuthSecret::class,
             "Auth Secret",
             "auth-secret",
-            { it.id},
+            { it.id },
             { it.id },
             createForm = null,
             editForm = null,

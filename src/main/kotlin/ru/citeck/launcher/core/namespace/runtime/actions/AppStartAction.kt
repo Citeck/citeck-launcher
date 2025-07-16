@@ -88,7 +88,7 @@ class AppStartAction(
                 } catch (e: Exception) {
                     log.error {
                         "[${e::class.simpleName}] Error reading volume file " +
-                        "'$localPathStr' for app '${appDef.name}'. Message: ${e.message}"
+                            "'$localPathStr' for app '${appDef.name}'. Message: ${e.message}"
                     }
                 }
             }
@@ -133,9 +133,11 @@ class AppStartAction(
             }
             val createCmd = dockerApi.createContainerCmd(appDef.image)
                 .withName(containerName)
-                .withEnv(appDef.environments.entries.map {
-                    "${it.key}=${it.value}"
-                })
+                .withEnv(
+                    appDef.environments.entries.map {
+                        "${it.key}=${it.value}"
+                    }
+                )
                 .withExposedPorts(portBindings.map { it.exposedPort })
                 .withLabels(
                     mapOf(
@@ -145,23 +147,24 @@ class AppStartAction(
                         DockerLabels.WORKSPACE to workspaceId,
                         DockerLabels.LAUNCHER_LABEL_PAIR
                     )
-                ).withHostConfig(run {
-                    val config = HostConfig.newHostConfig()
-                        .withRestartPolicy(RestartPolicy.unlessStoppedRestart())
-                        .withPortBindings(portBindings)
-                        .withNetworkMode(nsRuntime.networkName)
+                ).withHostConfig(
+                    run {
+                        val config = HostConfig.newHostConfig()
+                            .withRestartPolicy(RestartPolicy.unlessStoppedRestart())
+                            .withPortBindings(portBindings)
+                            .withNetworkMode(nsRuntime.networkName)
 
-                    if (appDef.volumes.isNotEmpty()) {
-                        config.withBinds(appDef.volumes.mapNotNull { prepareVolume(runtime, it) })
+                        if (appDef.volumes.isNotEmpty()) {
+                            config.withBinds(appDef.volumes.mapNotNull { prepareVolume(runtime, it) })
+                        }
+                        val memoryLimit = appDef.resources?.limits?.memory ?: ""
+                        if (memoryLimit.isNotEmpty()) {
+                            val memory = MemoryUtils.parseMemAmountToBytes(memoryLimit)
+                            config.withMemory(memory)
+                                .withMemorySwap(memory)
+                        }
+                        config
                     }
-                    val memoryLimit = appDef.resources?.limits?.memory ?: ""
-                    if (memoryLimit.isNotEmpty()) {
-                        val memory = MemoryUtils.parseMemAmountToBytes(memoryLimit)
-                        config.withMemory(memory)
-                            .withMemorySwap(memory)
-                    }
-                    config
-                }
                 ).withHostName(appDef.name)
 
             if (appDef.cmd != null) {
@@ -199,7 +202,7 @@ class AppStartAction(
                         log.error { "[$containerName] Init command is not completed in 10 seconds" }
                     }
                 } else {
-                    error("Unsupported init action: ${it::class}" )
+                    error("Unsupported init action: ${it::class}")
                 }
             }
         }
@@ -214,25 +217,31 @@ class AppStartAction(
         log.info { "Run init container '${initContainerDef.image}' for app '$appName'" }
         val startedAt = System.currentTimeMillis()
         val createCmd = dockerApi.createContainerCmd(initContainerDef.image)
-            .withLabels(mapOf(
-                DockerLabels.WORKSPACE to namespaceRef.workspace,
-                DockerLabels.NAMESPACE to namespaceRef.namespace,
-                DockerLabels.LAUNCHER_LABEL_PAIR
-            ))
-            .withEnv(initContainerDef.environments.entries.map {
-                "${it.key}=${it.value}"
-            }).withHostConfig(run {
-                val config = HostConfig.newHostConfig()
-                    .withRestartPolicy(RestartPolicy.noRestart())
-
-                if (initContainerDef.volumes.isNotEmpty()) {
-                    config.withBinds(initContainerDef.volumes.mapNotNull { prepareVolume(runtime, it) })
+            .withLabels(
+                mapOf(
+                    DockerLabels.WORKSPACE to namespaceRef.workspace,
+                    DockerLabels.NAMESPACE to namespaceRef.namespace,
+                    DockerLabels.LAUNCHER_LABEL_PAIR
+                )
+            )
+            .withEnv(
+                initContainerDef.environments.entries.map {
+                    "${it.key}=${it.value}"
                 }
-                val memory = MemoryUtils.parseMemAmountToBytes("100m")
-                config.withMemory(memory)
-                    .withMemorySwap(memory)
-                config
-            })
+            ).withHostConfig(
+                run {
+                    val config = HostConfig.newHostConfig()
+                        .withRestartPolicy(RestartPolicy.noRestart())
+
+                    if (initContainerDef.volumes.isNotEmpty()) {
+                        config.withBinds(initContainerDef.volumes.mapNotNull { prepareVolume(runtime, it) })
+                    }
+                    val memory = MemoryUtils.parseMemAmountToBytes("100m")
+                    config.withMemory(memory)
+                        .withMemorySwap(memory)
+                    config
+                }
+            )
         if (initContainerDef.cmd != null) {
             createCmd.withCmd(initContainerDef.cmd)
         }
@@ -245,7 +254,7 @@ class AppStartAction(
             if (statusCode != 0) {
                 log.error {
                     "===== Init container completed with non-zero " +
-                    "status code: $statusCode. Last 10_000 log messages: ====="
+                        "status code: $statusCode. Last 10_000 log messages: ====="
                 }
                 dockerApi.consumeLogs(containerId, 10_000, Duration.ofSeconds(10)) { msg -> log.warn { msg } }
                 log.error { "===== End of init container logs =====" }
@@ -290,8 +299,8 @@ class AppStartAction(
         Thread.sleep(2000)
         val runningWaitUntil = System.currentTimeMillis() + 240_000
         while (
-            dockerApi.inspectContainer(containerId).state.running != true
-            && System.currentTimeMillis() < runningWaitUntil
+            dockerApi.inspectContainer(containerId).state.running != true &&
+            System.currentTimeMillis() < runningWaitUntil
         ) {
             Thread.sleep(1000)
         }
@@ -338,11 +347,11 @@ class AppStartAction(
                 }
             }
             if (iterations == probe.failureThreshold) {
-                error("[$containerName ${containerId}] Container is not ready after failure threshold")
+                error("[$containerName $containerId] Container is not ready after failure threshold")
             } else {
                 val waitDuration = Duration.ofMillis(System.currentTimeMillis() - waitStartedAt)
                 log.info {
-                    "[$containerName ${containerId}] Startup waiting completed " +
+                    "[$containerName $containerId] Startup waiting completed " +
                         "successfully after ${waitDuration.toSeconds()} seconds and $iterations iterations"
                 }
             }

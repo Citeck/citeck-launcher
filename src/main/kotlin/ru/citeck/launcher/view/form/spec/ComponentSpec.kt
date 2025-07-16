@@ -84,7 +84,6 @@ sealed class ComponentSpec {
                 } else {
                     ""
                 }
-
             }
             enableWhen { context, _ ->
                 context.mode == FormMode.CREATE
@@ -176,5 +175,3 @@ sealed class ComponentSpec {
         val multiple: Boolean = false
     ) : TextField(key, label, "")
 }
-
-

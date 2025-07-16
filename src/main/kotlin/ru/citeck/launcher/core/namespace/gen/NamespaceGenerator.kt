@@ -98,7 +98,6 @@ class NamespaceGenerator {
     }
 
     private fun generateAlfresco(context: NsGenContext) {
-
     }
 
     private fun generateKeycloak(context: NsGenContext) {
@@ -144,13 +143,15 @@ class NamespaceGenerator {
                     "--import-realm"
                 )
             )
-            .withStartupCondition(StartupCondition(
-                probe = AppProbeDef(
-                    exec = ExecProbeDef(
-                        listOf("bash", "/healthcheck.sh")
+            .withStartupCondition(
+                StartupCondition(
+                    probe = AppProbeDef(
+                        exec = ExecProbeDef(
+                            listOf("bash", "/healthcheck.sh")
+                        )
                     )
                 )
-            ))
+            )
 
         context.applications[NsGenContext.PG_HOST]!!
             .addInitAction(ExecShell("/init_db_and_user.sh $dbName"))
@@ -263,12 +264,14 @@ class NamespaceGenerator {
                 app.addEnv("REDIRECT_LOGOUT_URI", "http://localhost")
                 app.addEnv("CLIENT_SECRET", "2996117d-9a33-4e06-b48a-867ce6a235db")
                 app.addVolume("./proxy/lua_oidc_full_access.lua:/etc/nginx/includes/lua_oidc_full_access.lua:ro")
-                //app.addVolume("./proxy/openidc.lua:/usr/local/openresty/luajit/share/lua/5.1/resty/openidc.lua:ro")
-                app.addInitAction(ExecShell(
-                    "sed -i -e '/location \\/ecos-idp\\/auth\\/ {/a\\\n" +
-                    "    rewrite ^/ecos-idp/auth/(.*)\\$ /\\$1 break;\n' " +
-                    "-e 's|http://keycloak:8080/auth/|http://keycloak:8080/|g' /etc/nginx/conf.d/default.conf "
-                ))
+                // app.addVolume("./proxy/openidc.lua:/usr/local/openresty/luajit/share/lua/5.1/resty/openidc.lua:ro")
+                app.addInitAction(
+                    ExecShell(
+                        "sed -i -e '/location \\/ecos-idp\\/auth\\/ {/a\\\n" +
+                            "    rewrite ^/ecos-idp/auth/(.*)\\$ /\\$1 break;\n' " +
+                            "-e 's|http://keycloak:8080/auth/|http://keycloak:8080/|g' /etc/nginx/conf.d/default.conf "
+                    )
+                )
                 app.addInitAction(ExecShell("nginx -s reload"))
             }
         }
@@ -279,9 +282,11 @@ class NamespaceGenerator {
 
         val proxyProps = context.namespaceConfig.citeckProxy
 
-        app.withImage(proxyProps.image.ifBlank {
-            context.bundle.applications[AppName.PROXY]?.image ?: ""
-        })
+        app.withImage(
+            proxyProps.image.ifBlank {
+                context.bundle.applications[AppName.PROXY]?.image ?: ""
+            }
+        )
 
         app.addEnv("DEFAULT_LOCATION_V2", "true")
             .addEnv("GATEWAY_TARGET", "${AppName.GATEWAY}:$gatewayPort")
@@ -533,11 +538,15 @@ class NamespaceGenerator {
                 AppResourcesDef(
                     AppResourcesDef.LimitsDef("512m")
                 )
-            ).withInitContainers(listOf(InitContainerDef.create()
-                .withImage(DockerApi.UTILS_IMAGE)
-                .withCmd(listOf("/bin/sh", "-c", "mkdir -p /zkdir/data /zkdir/datalog"))
-                .withVolumes(listOf("zookeeper2:/zkdir"))
-                .build()))
+            ).withInitContainers(
+                listOf(
+                    InitContainerDef.create()
+                        .withImage(DockerApi.UTILS_IMAGE)
+                        .withCmd(listOf("/bin/sh", "-c", "mkdir -p /zkdir/data /zkdir/datalog"))
+                        .withVolumes(listOf("zookeeper2:/zkdir"))
+                        .build()
+                )
+            )
     }
 
     private fun generatePostgres(context: NsGenContext) {

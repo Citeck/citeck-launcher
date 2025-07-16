@@ -153,31 +153,34 @@ class EntitiesService(
         if (definition.editForm != null || definition.createForm != null) {
             actions.add(
                 ActionDesc(
-                "edit",
-                ActionIcon.EDIT,
-                "Edit"
-            ) {
-                try {
-                    edit(it.entity)
-                } catch (e: FormCancelledException) {
-                    // do nothing
+                    "edit",
+                    ActionIcon.EDIT,
+                    "Edit"
+                ) {
+                    try {
+                        edit(it.entity)
+                    } catch (_: FormCancelledException) {
+                        // do nothing
+                    }
                 }
-            })
-        }
-        actions.add(ActionDesc(
-            "delete",
-            ActionIcon.DELETE,
-            "Delete",
-        ) {
-            val def = defWithRepo.definition
-            val confirmRes = GlobalConfirmDialog.showSuspended(
-                "Are you sure to delete \n${def.typeName} " +
-                    "'${def.getName(it.entity)} (${def.getId(it.entity)}')?"
             )
-            if (confirmRes) {
-                delete(it.entity, defWithRepo)
+        }
+        actions.add(
+            ActionDesc(
+                "delete",
+                ActionIcon.DELETE,
+                "Delete",
+            ) {
+                val def = defWithRepo.definition
+                val confirmRes = GlobalConfirmDialog.showSuspended(
+                    "Are you sure to delete \n${def.typeName} " +
+                        "'${def.getName(it.entity)} (${def.getId(it.entity)}')?"
+                )
+                if (confirmRes) {
+                    delete(it.entity, defWithRepo)
+                }
             }
-        })
+        )
         return entities.map { entity ->
             EntityInfo(
                 EntityRef.create(definition.typeId, definition.getId(entity).toString()),
@@ -377,7 +380,7 @@ class EntitiesService(
         }
     }
 
-    private fun <K : Any, T : Any> storeValueToVersions(defWithRepo: EntityDefWithRepo<K, T> , entity: T) {
+    private fun <K : Any, T : Any> storeValueToVersions(defWithRepo: EntityDefWithRepo<K, T>, entity: T) {
         if (!defWithRepo.definition.versionable) {
             return
         }

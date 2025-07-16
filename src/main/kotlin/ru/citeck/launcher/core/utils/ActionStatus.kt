@@ -4,7 +4,7 @@ import ru.citeck.launcher.core.utils.prop.MutProp
 
 class ActionStatus(
     val message: String = "",
-    val progress: Float = 0f // 0..1
+    val progress: Float = 0f
 ) {
     companion object {
         fun of(message: String, progress: Float): ActionStatus {
@@ -42,11 +42,15 @@ class ActionStatus(
         var subStatusWatcher = Disposable.NONE
 
         var message: String
-            set(value) { this.setValue(this.getValue().withMessage(value)) }
+            set(value) {
+                this.setValue(this.getValue().withMessage(value))
+            }
             get() = this.getValue().message
 
         var progress: Float
-            set(value) { this.setValue(this.getValue().withProgress(value)) }
+            set(value) {
+                this.setValue(this.getValue().withProgress(value))
+            }
             get() = this.getValue().progress
 
         fun subStatus(amount: Float): Mut {

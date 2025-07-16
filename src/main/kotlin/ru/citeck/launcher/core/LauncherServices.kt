@@ -64,10 +64,12 @@ class LauncherServices {
             log.error(e) { "Cloud config server can't be started. External apps won't work" }
         }
 
-        Runtime.getRuntime().addShutdownHook(Thread {
-            workspaceServices.getValue()?.dispose()
-            cloudConfigServer.dispose()
-        })
+        Runtime.getRuntime().addShutdownHook(
+            Thread {
+                workspaceServices.getValue()?.dispose()
+                cloudConfigServer.dispose()
+            }
+        )
 
         val dockerClientConfig = DefaultDockerClientConfig.createDefaultConfigBuilder().build()
 

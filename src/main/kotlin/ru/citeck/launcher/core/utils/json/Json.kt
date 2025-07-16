@@ -16,10 +16,10 @@ import com.fasterxml.jackson.databind.node.TextNode
 import com.fasterxml.jackson.module.kotlin.KotlinModule
 import io.github.oshai.kotlinlogging.KotlinLogging
 import ru.citeck.launcher.core.entity.EntityRef
-import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.StringUtils
 import ru.citeck.launcher.core.utils.bean.BeanUtils
 import ru.citeck.launcher.core.utils.bean.PropertyDesc
+import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.json.serialization.*
 import java.io.*
 import java.lang.reflect.ParameterizedType
@@ -486,7 +486,8 @@ object Json {
 
                 if ((
                         firstNotEmptyChar == '{' &&
-                            (secondNotEmptyChar == '"' || secondNotEmptyChar == '}') && lastNotEmptyChar == '}'
+                            (secondNotEmptyChar == '"' || secondNotEmptyChar == '}') &&
+                            lastNotEmptyChar == '}'
                         ) ||
                     (firstNotEmptyChar == '[' && lastNotEmptyChar == ']') ||
                     (firstNotEmptyChar == '"' && lastNotEmptyChar == '"')
@@ -529,7 +530,9 @@ object Json {
 
     private fun isNull(value: Any?): Boolean {
         return value == null ||
-            value is JsonNode && (value.isNull || value.isMissingNode) ||
-            value is DataValue && value.isNull()
+            value is JsonNode &&
+            (value.isNull || value.isMissingNode) ||
+            value is DataValue &&
+            value.isNull()
     }
 }

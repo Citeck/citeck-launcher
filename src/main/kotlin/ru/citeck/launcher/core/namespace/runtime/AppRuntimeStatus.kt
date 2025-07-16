@@ -4,18 +4,18 @@ enum class AppRuntimeStatus {
 
     READY_TO_STOP,
     STOPPING,
-    STOPPING_FAILED, //stalled
+    STOPPING_FAILED, // stalled
 
     STOPPED, // final
 
     READY_TO_PULL,
     PULLING,
-    PULL_FAILED, //stalled
+    PULL_FAILED, // stalled
 
     READY_TO_START,
     DEPS_WAITING,
     STARTING,
-    START_FAILED, //stalled
+    START_FAILED, // stalled
 
     RUNNING; // final
 

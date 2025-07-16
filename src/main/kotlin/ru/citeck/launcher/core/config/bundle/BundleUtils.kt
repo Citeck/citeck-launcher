@@ -2,10 +2,10 @@ package ru.citeck.launcher.core.config.bundle
 
 import io.github.oshai.kotlinlogging.KotlinLogging
 import ru.citeck.launcher.core.config.bundle.BundleDef.BundleAppDef
-import ru.citeck.launcher.core.workspace.WorkspaceConfig
 import ru.citeck.launcher.core.namespace.AppName
 import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.json.Yaml
+import ru.citeck.launcher.core.workspace.WorkspaceConfig
 import java.io.File
 import java.nio.file.Path
 import java.util.TreeMap
@@ -87,7 +87,7 @@ object BundleUtils {
 
         var isEnterpriseBundle = false
 
-        fun getImageUrl(repository: String, tag: String): String  {
+        fun getImageUrl(repository: String, tag: String): String {
             if (repository.isBlank()) {
                 return ""
             }
@@ -105,13 +105,13 @@ object BundleUtils {
 
         data.forEach { appName, value ->
             val image = getImageUrl(value["/image/repository"].asText(), value["/image/tag"].asText())
-            if (image.isNotBlank())  {
+            if (image.isNotBlank()) {
                 applications[appNameByAliases[appName] ?: appName] = BundleAppDef(image)
             }
             if (eappsAppNames.contains(appName)) {
                 for (app in value["/ecosAppsImages"]) {
                     val citeckAppImage = getImageUrl(app["repository"].asText(), app["tag"].asText())
-                    if (citeckAppImage.isNotBlank())  {
+                    if (citeckAppImage.isNotBlank()) {
                         citeckApps.add(BundleAppDef(citeckAppImage))
                     }
                 }

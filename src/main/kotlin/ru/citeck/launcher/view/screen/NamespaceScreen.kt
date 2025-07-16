@@ -18,7 +18,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
-import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -31,7 +30,6 @@ import ru.citeck.launcher.core.namespace.NamespaceEntityDef
 import ru.citeck.launcher.core.namespace.NamespacesService
 import ru.citeck.launcher.core.namespace.runtime.AppRuntime
 import ru.citeck.launcher.core.namespace.runtime.AppRuntimeStatus
-import ru.citeck.launcher.core.namespace.runtime.NsRuntimeStatus
 import ru.citeck.launcher.core.namespace.runtime.NsRuntimeStatus.*
 import ru.citeck.launcher.core.namespace.volume.VolumeInfo
 import ru.citeck.launcher.core.secrets.auth.AuthSecret
@@ -61,8 +59,6 @@ private val STARTING_STOPPING_COLOR = Color(0xFFF4E909)
 private val RUNNING_COLOR = Color(0xFF33AB50)
 private val STOPPED_COLOR = Color(0xFF424242)
 private val STALLED_COLOR = Color(0xFFDB831D)
-
-private val log = KotlinLogging.logger {}
 
 @Composable
 fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState<NamespaceConfig?>) {
@@ -100,7 +96,8 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
                             ).firstOrNull() ?: currentRef
                             services.setSelectedNamespace(newRef.localId)
                         }
-                    }, verticalAlignment = Alignment.CenterVertically
+                    },
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 CiteckTooltipArea(
                     tooltip = "Please stop all running apps before namespace changing",
@@ -214,7 +211,8 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
                                 }
                                 nsActionInProgress.value = false
                             }
-                        }) {
+                        }
+                ) {
                     CpImage(
                         "icons/stop.svg",
                         modifier = Modifier.fillMaxHeight()
@@ -246,8 +244,11 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
                             .padding(start = 7.dp, top = 5.dp, bottom = 5.dp)
                             .requiredSize(40.dp)
                     )
-                    Text("Open In Browser", modifier = Modifier.align(Alignment.CenterStart)
-                        .padding(start = linkTextPadding))
+                    Text(
+                        "Open In Browser",
+                        modifier = Modifier.align(Alignment.CenterStart)
+                            .padding(start = linkTextPadding)
+                    )
                 }
             }
             Spacer(Modifier.height(2.dp))
@@ -452,26 +453,22 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
                     }
                     appsByKind
                 }
-                renderApps(
-                    runtimeStatus,
+                RenderApps(
                     "Citeck Core",
                     appsByKind.value[ApplicationKind.CITECK_CORE],
                     coroutineScope
                 )
-                renderApps(
-                    runtimeStatus,
+                RenderApps(
                     "Citeck Core Extensions",
                     appsByKind.value[ApplicationKind.CITECK_CORE_EXTENSION],
                     coroutineScope
                 )
-                renderApps(
-                    runtimeStatus,
+                RenderApps(
                     "Citeck Additional",
                     appsByKind.value[ApplicationKind.CITECK_ADDITIONAL],
                     coroutineScope
                 )
-                renderApps(
-                    runtimeStatus,
+                RenderApps(
                     "Third Party",
                     appsByKind.value[ApplicationKind.THIRD_PARTY],
                     coroutineScope
@@ -482,8 +479,7 @@ fun NamespaceScreen(services: WorkspaceServices, selectedNamespace: MutableState
 }
 
 @Composable
-private fun renderApps(
-    runtimeStatus: MutableState<NsRuntimeStatus>,
+private fun RenderApps(
     header: String,
     applications: List<AppRuntime>?,
     coroutineScope: CoroutineScope
@@ -535,10 +531,12 @@ private fun renderApps(
                 ) {
                     val statusColor = if (appStatus.value.isStalledState()) {
                         STALLED_COLOR
-                    } else when (appStatus.value) {
-                        AppRuntimeStatus.STOPPED -> STOPPED_COLOR
-                        AppRuntimeStatus.RUNNING -> RUNNING_COLOR
-                        else -> STARTING_STOPPING_COLOR
+                    } else {
+                        when (appStatus.value) {
+                            AppRuntimeStatus.STOPPED -> STOPPED_COLOR
+                            AppRuntimeStatus.RUNNING -> RUNNING_COLOR
+                            else -> STARTING_STOPPING_COLOR
+                        }
                     }
                     Text(appStatus.value.toString(), color = statusColor, maxLines = 1)
                     Spacer(Modifier.width(5.dp))
@@ -566,11 +564,12 @@ private fun renderApps(
                     val image = appDef.value.image
                     Text(
                         text = image.substringAfterLast(":", "unknown"),
-                        modifier = Modifier.clickable(onClick = {
-                            Toolkit.getDefaultToolkit()
-                                .systemClipboard
-                                .setContents(StringSelection(image), null)
-                        }
+                        modifier = Modifier.clickable(
+                            onClick = {
+                                Toolkit.getDefaultToolkit()
+                                    .systemClipboard
+                                    .setContents(StringSelection(image), null)
+                            }
                         ),
                         maxLines = 1
                     )
@@ -593,7 +592,7 @@ private fun renderApps(
                             }
                         )
                     }
-                    if (/*!runtimeStatus.value.isStoppingState() && */!appStatus.value.isStartingState()) {
+                    if (!appStatus.value.isStartingState()) {
                         CiteckIconAction(
                             coroutineScope,
                             modifier = Modifier.fillMaxHeight(),

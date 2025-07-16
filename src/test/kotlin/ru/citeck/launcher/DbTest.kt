@@ -26,14 +26,12 @@ class DbTest {
             .compress()
             .open()
 
-
         val txStore = TransactionStore(mvStore)
         println(txStore)
 
-        //txStore.openTransactions.forEach { it.commit() }
+        // txStore.openTransactions.forEach { it.commit() }
 
         mvStore.close()
-
     }
 
     @Disabled
@@ -73,7 +71,6 @@ class DbTest {
         map.values.forEach { println(Json.readJson(it)) }
 
         mvStore.close()
-
     }
 
     data class CustomClass(
@@ -108,7 +105,7 @@ class DbTest {
             if (size == 0) {
                 return null
             }
-            val bytes= ByteArray(size)
+            val bytes = ByteArray(size)
             buff.get(bytes)
             return Json.read(bytes, CustomClass::class)
         }

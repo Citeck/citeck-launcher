@@ -5,10 +5,10 @@ import ru.citeck.launcher.core.WorkspaceServices
 import ru.citeck.launcher.core.config.bundle.BundleRef
 import ru.citeck.launcher.core.entity.EntityDef
 import ru.citeck.launcher.core.entity.EntityIdType
-import ru.citeck.launcher.core.namespace.NamespaceEntityDef.FORM_FIELD_BUNDLES_REPO
-import ru.citeck.launcher.core.namespace.NamespaceEntityDef.FORM_FIELD_BUNDLE_KEY
 import ru.citeck.launcher.core.namespace.NamespaceEntityDef.FORM_FIELD_AUTH_TYPE
 import ru.citeck.launcher.core.namespace.NamespaceEntityDef.FORM_FIELD_AUTH_USERS
+import ru.citeck.launcher.core.namespace.NamespaceEntityDef.FORM_FIELD_BUNDLES_REPO
+import ru.citeck.launcher.core.namespace.NamespaceEntityDef.FORM_FIELD_BUNDLE_KEY
 import ru.citeck.launcher.core.namespace.NamespaceEntityDef.formSpec
 import ru.citeck.launcher.core.namespace.gen.NamespaceGenerator
 import ru.citeck.launcher.core.namespace.runtime.NamespaceRuntime

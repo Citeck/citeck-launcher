@@ -5,6 +5,7 @@ import ru.citeck.launcher.core.config.bundle.BundleRef
 import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.json.Json
 
+@Suppress("unused")
 @JsonDeserialize(builder = NamespaceConfig.Builder::class)
 class NamespaceConfig(
     val id: String,
@@ -235,14 +236,16 @@ class NamespaceConfig(
 
             fun build(): AuthenticationProps {
                 return AuthenticationProps(
-                    type, users
+                    type,
+                    users
                 )
             }
         }
     }
 
     enum class AuthenticationType {
-        BASIC, KEYCLOAK
+        BASIC,
+        KEYCLOAK
     }
 
     data class JdbcDataSource(

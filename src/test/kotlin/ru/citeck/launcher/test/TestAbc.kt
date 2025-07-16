@@ -16,12 +16,11 @@ class TestAbc {
 
         println(file.getChildren().map { it.getName() })
         println(file.getUri())
-        //println(file.readBytes().size)
+        // println(file.readBytes().size)
     }
 
     @Test
     fun test() {
-
 
         val uri = URI.create("jdbc:postgresql://localhost:14523/ecos_history")
         println(uri.path)

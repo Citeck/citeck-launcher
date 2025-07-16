@@ -58,7 +58,7 @@ fun DataTable(
         val totalWidth = columnWidths.sum()
 
         val scale = when {
-            constraints.maxWidth == Constraints.Infinity -> 1f           // add this to avoid infinite width in parent scrolling
+            constraints.maxWidth == Constraints.Infinity -> 1f // add this to avoid infinite width in parent scrolling
             totalWidth < constraints.maxWidth -> constraints.maxWidth.toFloat() / totalWidth
             else -> 1f
         }
@@ -140,7 +140,6 @@ fun DataTable(
                 // Place divider
                 dividerPlacables[index + 1].place(0, yPosition)
                 yPosition += dividierHeights[index + 1]
-
             }
 
             footerPlaceable?.place(0, yPosition)
@@ -200,5 +199,3 @@ class RowsBuilderImpl : RowsBuilder {
         rows.add(RowBuilderImpl(content, modifier))
     }
 }
-
-

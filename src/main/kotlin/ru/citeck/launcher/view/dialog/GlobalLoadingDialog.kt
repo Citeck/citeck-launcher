@@ -38,7 +38,9 @@ object GlobalLoadingDialog {
                 ) {
                     Column(modifier = Modifier.padding(top = 30.dp, start = 10.dp, end = 10.dp, bottom = 30.dp)) {
                         Text(
-                            "Please, wait...", textAlign = TextAlign.Center, fontSize = 1.2.em,
+                            "Please, wait...",
+                            textAlign = TextAlign.Center,
+                            fontSize = 1.2.em,
                             modifier = Modifier.fillMaxWidth().padding(start = 30.dp, end = 30.dp)
                         )
                         if (params.status != null) {

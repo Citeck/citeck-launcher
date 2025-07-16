@@ -3,7 +3,6 @@ package ru.citeck.launcher
 import org.apache.commons.codec.binary.Base32
 import org.junit.jupiter.api.Test
 import ru.citeck.launcher.view.utils.NumUtils
-import kotlin.random.Random
 
 class TestAbc {
 

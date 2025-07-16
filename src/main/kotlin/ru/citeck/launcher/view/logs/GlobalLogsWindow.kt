@@ -13,7 +13,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.*
 import ru.citeck.launcher.view.window.AdditionalWindow
 import ru.citeck.launcher.view.window.AdditionalWindowState
-import java.awt.GraphicsEnvironment
 import java.awt.Toolkit
 
 object GlobalLogsWindow {
@@ -100,4 +99,3 @@ class LogsDialogParams(
     val limit: Int,
     val listenMessages: ((String) -> Unit) -> Result<AutoCloseable>
 )
-

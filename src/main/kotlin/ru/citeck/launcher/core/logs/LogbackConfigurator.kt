@@ -19,7 +19,9 @@ import ch.qos.logback.core.util.OptionHelper
 import java.nio.charset.Charset
 
 @ConfiguratorRank(ConfiguratorRank.CUSTOM_TOP_PRIORITY)
-class LogbackConfigurator : ContextAwareBase(), Configurator {
+class LogbackConfigurator :
+    ContextAwareBase(),
+    Configurator {
 
     override fun configure(context: LoggerContext): ExecutionStatus {
 
@@ -30,9 +32,10 @@ class LogbackConfigurator : ContextAwareBase(), Configurator {
         return ExecutionStatus.DO_NOT_INVOKE_NEXT_IF_ANY
     }
 
+    @Suppress("SameParameterValue")
     private fun setupLogger(loggerName: String, levelString: String?, additivity: Boolean?): Logger {
 
-        val  loggerContext = context as LoggerContext
+        val loggerContext = context as LoggerContext
         val logger = loggerContext.getLogger(loggerName)
 
         if (!OptionHelper.isNullOrEmptyOrAllSpaces(levelString)) {
@@ -40,7 +43,7 @@ class LogbackConfigurator : ContextAwareBase(), Configurator {
             logger.level = level
         }
         if (additivity != null) {
-            logger.isAdditive = additivity;
+            logger.isAdditive = additivity
         }
         return logger
     }

@@ -34,7 +34,7 @@ object GlobalMessageDialog {
                     Column(modifier = Modifier.padding(15.dp)) {
                         if (params.title.isNotBlank()) {
                             Text(
-                                text = params.title, //"Create your personal master password",
+                                text = params.title, // "Create your personal master password",
                                 style = MaterialTheme.typography.titleLarge
                             )
                         }
@@ -68,4 +68,3 @@ class GlobalMsgDialogParams(
     val title: String,
     val text: String
 )
-

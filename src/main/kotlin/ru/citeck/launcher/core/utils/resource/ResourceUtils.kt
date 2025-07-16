@@ -8,7 +8,6 @@ import java.util.jar.JarFile
 
 object ResourceUtils {
 
-
     /**
      * URL prefix for loading from the class path
      */

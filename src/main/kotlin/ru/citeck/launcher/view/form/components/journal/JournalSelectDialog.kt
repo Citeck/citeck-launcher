@@ -195,18 +195,20 @@ object JournalSelectDialog {
                             })
                         }
                     }
-                    cell(modifier = Modifier.pointerInput(Unit) {
-                        detectTapGestures(
-                            onDoubleTap = {
-                                if (params.params.multiple) {
-                                    row.selected.value = true
-                                } else {
-                                    params.onSubmit(listOf(row.record.ref))
-                                    closeDialog()
+                    cell(
+                        modifier = Modifier.pointerInput(Unit) {
+                            detectTapGestures(
+                                onDoubleTap = {
+                                    if (params.params.multiple) {
+                                        row.selected.value = true
+                                    } else {
+                                        params.onSubmit(listOf(row.record.ref))
+                                        closeDialog()
+                                    }
                                 }
-                            }
-                        )
-                    }) {
+                            )
+                        }
+                    ) {
                         LimitedText(
                             text = row.record.name,
                             modifier = Modifier.padding(0.dp),
@@ -289,7 +291,6 @@ object JournalSelectDialog {
             }
         }
     }
-
 
     class RecordRow(
         val record: EntityInfo<Any>,

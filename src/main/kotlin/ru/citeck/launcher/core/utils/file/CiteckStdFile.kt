@@ -49,10 +49,12 @@ class CiteckStdFile(
         val basePath = file.toPath()
         for (file in file.walkTopDown()) {
             if (file.isFile) {
-                result[file.toPath()
-                    .relativeTo(basePath)
-                    .toString()
-                    .replace("\\", "/")] = file.readBytes()
+                result[
+                    file.toPath()
+                        .relativeTo(basePath)
+                        .toString()
+                        .replace("\\", "/")
+                ] = file.readBytes()
             }
         }
         return result

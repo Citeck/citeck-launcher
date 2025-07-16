@@ -40,7 +40,6 @@ class BundleRef private constructor(
                 ref
             }
         }
-
     }
 
     fun ifEmpty(other: () -> BundleRef) = ifEmpty(this, other)

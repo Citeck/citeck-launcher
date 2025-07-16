@@ -2,9 +2,9 @@ package ru.citeck.launcher.core.namespace
 
 import ru.citeck.launcher.core.entity.EntityRef
 import ru.citeck.launcher.view.form.FormMode
-import ru.citeck.launcher.view.form.spec.ComponentSpec.TextField
 import ru.citeck.launcher.view.form.spec.ComponentSpec.NameField
 import ru.citeck.launcher.view.form.spec.ComponentSpec.SelectField
+import ru.citeck.launcher.view.form.spec.ComponentSpec.TextField
 import ru.citeck.launcher.view.form.spec.FormSpec
 
 object NamespaceEntityDef {
@@ -14,7 +14,6 @@ object NamespaceEntityDef {
     const val FORM_FIELD_BUNDLES_REPO = "bundlesRepo"
     const val FORM_FIELD_BUNDLE_KEY = "bundleKey"
     const val FORM_FIELD_SNAPSHOT = "snapshot"
-    const val FORM_FIELD_TEMPLATE = "template"
     const val FORM_FIELD_AUTH_TYPE = "authenticationType"
     const val FORM_FIELD_AUTH_USERS = "authenticationUsers"
 
@@ -71,7 +70,8 @@ object NamespaceEntityDef {
                 ""
             ).mandatory().visibleWhen {
                 it.getStrValue(FORM_FIELD_AUTH_TYPE) == NamespaceConfig.AuthenticationType.BASIC.name
-            }.dependsOn(FORM_FIELD_AUTH_TYPE))
+            }.dependsOn(FORM_FIELD_AUTH_TYPE)
+        )
     )
 
     fun getRef(entity: NamespaceConfig): EntityRef {

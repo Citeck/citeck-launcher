@@ -31,7 +31,7 @@ object LongTaskUtils {
                     var message = "Action '$actionName' still in progress. Elapsed time: " + (currentTime - startedAt) + "ms"
                     if (currentTime > nextReportThreadTime) {
                         message += ". Action thread trace: \n" +
-                                actionThread.stackTrace.joinToString("\n") { "  $it" }
+                            actionThread.stackTrace.joinToString("\n") { "  $it" }
                         nextReportThreadTime = currentTime + printStackTraceInterval.toMillis()
                     }
                     log.warn { message }

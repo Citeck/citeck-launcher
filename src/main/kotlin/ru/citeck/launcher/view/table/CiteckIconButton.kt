@@ -23,7 +23,7 @@ fun CiteckIconButton(
                 onClick = onClick,
                 enabled = enabled,
                 role = Role.Button,
-                //indication = rippleOrFallbackImplementation(bounded = false, radius = RippleRadius)
+                // indication = rippleOrFallbackImplementation(bounded = false, radius = RippleRadius)
             ),
         contentAlignment = Alignment.Center
     ) {

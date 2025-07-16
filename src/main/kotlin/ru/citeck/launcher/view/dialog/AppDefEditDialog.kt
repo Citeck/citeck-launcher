@@ -188,7 +188,8 @@ object AppDefEditDialog {
                                                     buttonsEnabled.value = true
                                                 }
                                             },
-                                            { "Editing failed" }, {}
+                                            { "Editing failed" },
+                                            {}
                                         )
                                     }
                                 }

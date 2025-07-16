@@ -18,8 +18,8 @@ import ru.citeck.launcher.core.snapshot.NamespaceSnapshotMeta
 import ru.citeck.launcher.core.snapshot.VolumeSnapshotMeta
 import ru.citeck.launcher.core.utils.ActionStatus
 import ru.citeck.launcher.core.utils.CompressionAlg
-import ru.citeck.launcher.core.utils.file.FileUtils
 import ru.citeck.launcher.core.utils.ZipUtils
+import ru.citeck.launcher.core.utils.file.FileUtils
 import ru.citeck.launcher.core.utils.json.Json
 import java.nio.file.Path
 import java.time.Duration
@@ -65,10 +65,13 @@ class DockerApi(
     fun getVolumes(nsRef: NamespaceRef?): List<InspectVolumeResponse> {
         nsRef ?: return emptyList()
         return client.listVolumesCmd()
-            .withFilter("label", listOf(
-                DockerLabels.NAMESPACE + "=" + nsRef.namespace,
-                DockerLabels.WORKSPACE + "=" + nsRef.workspace
-            )).exec().volumes
+            .withFilter(
+                "label",
+                listOf(
+                    DockerLabels.NAMESPACE + "=" + nsRef.namespace,
+                    DockerLabels.WORKSPACE + "=" + nsRef.workspace
+                )
+            ).exec().volumes
     }
 
     fun deleteVolume(name: String) {
@@ -134,7 +137,7 @@ class DockerApi(
         containerState: String
     ) {
         log.info {
-            "Stop and remove container ${containerId}. " +
+            "Stop and remove container $containerId. " +
                 "Name: $containerName State: $containerState"
         }
         try {
@@ -301,7 +304,8 @@ class DockerApi(
                     createVolume(nsRef, volume.name, volumeNameInNs)
 
                     val srcArchive = "/source/${volume.dataFile}"
-                    execWithUtils("tar -xf $srcArchive -C ./dest",
+                    execWithUtils(
+                        "tar -xf $srcArchive -C ./dest",
                         listOf(
                             "$volumeNameInNs:/dest",
                             "${extractedVolumeDataFile.absolutePathString()}:$srcArchive"
@@ -337,7 +341,7 @@ class DockerApi(
             .withCmd("/bin/sh", "-c", command)
             .withHostConfig(
                 HostConfig.newHostConfig()
-                    .withBinds( volumes.map { Bind.parse(it) })
+                    .withBinds(volumes.map { Bind.parse(it) })
             ).withLabels(
                 mapOf(
                     DockerLabels.LAUNCHER_LABEL_PAIR
@@ -433,9 +437,10 @@ class DockerApi(
                 val dataFile = FileUtils.sanitizeFileName(originalName) + ".tar.${alg.extension}"
                 volumesSnapMeta.add(VolumeSnapshotMeta(originalName, dataFile))
 
-                execWithUtils("cd /source && " +
-                    "find . -mindepth 1 -printf '%P\\n' | " +
-                    "tar $tarAlgParam -cvf \"/dest/${dataFile}\" -T -",
+                execWithUtils(
+                    "cd /source && " +
+                        "find . -mindepth 1 -printf '%P\\n' | " +
+                        "tar $tarAlgParam -cvf \"/dest/${dataFile}\" -T -",
                     listOf(
                         volume.name + ":/source",
                         "${dirToExport.absolutePathString()}:/dest"
@@ -453,7 +458,6 @@ class DockerApi(
             ZipUtils.createZip(dirToExport, targetZipFile)
 
             actionStatus.set("", 1f)
-
         } finally {
             try {
                 dirToExport.toFile().deleteRecursively()
@@ -463,17 +467,19 @@ class DockerApi(
         }
         log.info {
             "Snapshot created successfully for " +
-            "namespace $nsRef in ${System.currentTimeMillis() - exportStartedAt}ms"
+                "namespace $nsRef in ${System.currentTimeMillis() - exportStartedAt}ms"
         }
     }
 
     fun createBridgeNetwork(nsRef: NamespaceRef, name: String): CreateNetworkResponse {
         return client.createNetworkCmd()
-            .withLabels(mapOf(
-                DockerLabels.WORKSPACE to nsRef.workspace,
-                DockerLabels.NAMESPACE to nsRef.namespace,
-                DockerLabels.LAUNCHER_LABEL_PAIR
-            ))
+            .withLabels(
+                mapOf(
+                    DockerLabels.WORKSPACE to nsRef.workspace,
+                    DockerLabels.NAMESPACE to nsRef.namespace,
+                    DockerLabels.LAUNCHER_LABEL_PAIR
+                )
+            )
             .withDriver("bridge")
             .withName(name)
             .exec()

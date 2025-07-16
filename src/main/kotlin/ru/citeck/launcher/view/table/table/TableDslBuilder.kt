@@ -13,7 +13,7 @@ interface ColumnBuilder {
     fun column(
         modifier: Modifier = Modifier,
         contentAlignment: Alignment = Alignment.CenterStart,
-        composable: @Composable() (BoxScope.() -> Unit)
+        composable: @Composable (BoxScope.() -> Unit)
     )
 
     fun headerBackground(composable: @Composable () -> Unit)
@@ -29,8 +29,6 @@ interface RowBuilder {
     fun cell(
         modifier: Modifier = Modifier,
         contentAlignment: Alignment = Alignment.CenterStart,
-        content: @Composable() (BoxScope.() -> Unit)
+        content: @Composable (BoxScope.() -> Unit)
     )
 }
-
-

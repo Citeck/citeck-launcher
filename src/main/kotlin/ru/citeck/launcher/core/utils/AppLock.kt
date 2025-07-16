@@ -50,11 +50,13 @@ object AppLock {
                 )
                 lock.release()
                 lock = lockChannel.lock(0, Long.MAX_VALUE, true)
-                Runtime.getRuntime().addShutdownHook(Thread {
-                    lock.release()
-                    lockChannel.close()
-                    lockFile.delete()
-                })
+                Runtime.getRuntime().addShutdownHook(
+                    Thread {
+                        lock.release()
+                        lockChannel.close()
+                        lockFile.delete()
+                    }
+                )
                 true
             }
         } catch (_: OverlappingFileLockException) {

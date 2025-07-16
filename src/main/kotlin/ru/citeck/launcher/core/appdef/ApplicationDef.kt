@@ -206,5 +206,4 @@ data class ApplicationDef(
             )
         }
     }
-
 }

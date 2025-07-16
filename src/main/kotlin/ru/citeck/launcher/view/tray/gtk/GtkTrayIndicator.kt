@@ -53,7 +53,7 @@ object GtkTrayIndicator {
                 if (btn == 1) { // LMB
                     onLmbClick()
                 } else if (btn == 3) { // RMB
-                    gtk.gtk_menu_popup_at_pointer(menu, Pointer.NULL);
+                    gtk.gtk_menu_popup_at_pointer(menu, Pointer.NULL)
                 }
             }
         }
@@ -72,10 +72,12 @@ object GtkTrayIndicator {
             glib.g_main_loop_run(glib.g_main_loop_new(null, false))
         }
 
-        Runtime.getRuntime().addShutdownHook(Thread {
-            gtk.gtk_widget_destroy(menu)
-            gtk.g_object_unref(statusIcon)
-            references.clear()
-        })
+        Runtime.getRuntime().addShutdownHook(
+            Thread {
+                gtk.gtk_widget_destroy(menu)
+                gtk.g_object_unref(statusIcon)
+                references.clear()
+            }
+        )
     }
 }

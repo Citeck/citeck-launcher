@@ -1,12 +1,13 @@
+import groovy.json.JsonOutput
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import groovy.json.JsonOutput
 import java.time.Instant
 
 plugins {
     kotlin("jvm")
     id("org.jetbrains.compose")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("org.jlleitschuh.gradle.ktlint")
 }
 
 group = "ru.citeck.launcher"
@@ -28,13 +29,14 @@ dependencies {
 
     implementation("com.h2database:h2:2.3.232")
 
-    implementation("com.github.docker-java:docker-java:${project.properties["docker-java.version"]}")
-    implementation("com.github.docker-java:docker-java-transport-httpclient5:${project.properties["docker-java.version"]}")
+    val drJavaV = project.properties["docker-java.version"]
+    implementation("com.github.docker-java:docker-java-core:$drJavaV")
+    implementation("com.github.docker-java:docker-java-transport-httpclient5:$drJavaV")
 
     implementation("org.snakeyaml:snakeyaml-engine:2.9")
     implementation("com.fasterxml.jackson.core:jackson-databind:2.19.1")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.19.1")
-    implementation("org.apache.commons:commons-lang3:3.17.0")
+    implementation("org.apache.commons:commons-lang3:3.18.0")
     implementation("commons-codec:commons-codec:1.18.0")
     implementation("org.apache.xmlgraphics:batik-transcoder:1.19")
     implementation("org.apache.xmlgraphics:batik-codec:1.19")
@@ -116,7 +118,7 @@ compose.desktop {
             }
             macOS {
                 appCategory = "public.app-category.utilities"
-                //iconFile.set(project.file("icons/logo.icns")) //todo
+                // iconFile.set(project.file("icons/logo.icns")) //todo
             }
 
             // ./gradlew suggestRuntimeModules
@@ -144,5 +146,8 @@ kotlin {
     }
 }
 
-//zip -d file.jar 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*.DSA'
+tasks.jar {
+    dependsOn(tasks.named("addKtlintFormatGitPreCommitHook"))
+}
 
+// zip -d file.jar 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*.DSA'

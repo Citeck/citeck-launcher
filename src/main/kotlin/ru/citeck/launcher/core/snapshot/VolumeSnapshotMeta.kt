@@ -4,4 +4,3 @@ data class VolumeSnapshotMeta(
     val name: String,
     val dataFile: String
 )
-

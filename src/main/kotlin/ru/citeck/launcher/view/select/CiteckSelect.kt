@@ -15,24 +15,21 @@ import androidx.compose.ui.unit.dp
 import ru.citeck.launcher.view.action.ActionDesc
 
 @Composable
-fun CiteckSelect(state: CiteckSelectState, onSelected: (String) -> Unit) {
-    CiteckSelect(state, false, onSelected)
-}
-
-@Composable
 fun CiteckSelect(state: CiteckSelectState, mandatory: Boolean, onSelected: (String) -> Unit) {
 
     val expanded = remember { mutableStateOf(false) }
     val selectedValue = state.selected.value
 
-    Box(modifier = Modifier.height(30.dp).border(1.dp, Color.Gray).clickable {
-        val options = state.options.value
-        if (options.size == 1 && options.first().button && options.first().value == state.selected.value) {
-            onSelected(state.selected.value)
-        } else {
-            expanded.value = true
+    Box(
+        modifier = Modifier.height(30.dp).border(1.dp, Color.Gray).clickable {
+            val options = state.options.value
+            if (options.size == 1 && options.first().button && options.first().value == state.selected.value) {
+                onSelected(state.selected.value)
+            } else {
+                expanded.value = true
+            }
         }
-    }) {
+    ) {
         Text(
             state.options.value.find { it.value == selectedValue }?.name ?: selectedValue,
             style = LocalTextStyle.current.merge(MaterialTheme.typography.bodyMedium),
@@ -84,7 +81,7 @@ class CiteckSelectState(
     val options: MutableState<List<SelectOption>>,
     val selected: MutableState<String>
 ) {
-    constructor(options: List<SelectOption>, selected: String): this(
+    constructor(options: List<SelectOption>, selected: String) : this(
         mutableStateOf(options),
         mutableStateOf(selected)
     )

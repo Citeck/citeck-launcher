@@ -57,15 +57,17 @@ class Database {
                 }
             }
         }
-        Runtime.getRuntime().addShutdownHook(Thread {
-            if (!store.isClosed) {
-                txStore.close()
-                store.close()
+        Runtime.getRuntime().addShutdownHook(
+            Thread {
+                if (!store.isClosed) {
+                    txStore.close()
+                    store.close()
+                }
             }
-        })
+        )
     }
 
-    fun <K: Any, T : Any> getRepo(
+    fun <K : Any, T : Any> getRepo(
         keyType: EntityIdType<K>,
         valueType: JavaType,
         scope: String,

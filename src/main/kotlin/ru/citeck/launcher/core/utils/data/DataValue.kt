@@ -1,3 +1,5 @@
+@file:Suppress("unused")
+
 package ru.citeck.launcher.core.utils.data
 
 import com.fasterxml.jackson.annotation.JsonCreator
@@ -311,7 +313,6 @@ class DataValue private constructor(
         return this
     }
 
-
     fun insert(idx: Int, value: Any?): DataValue {
         if (unmodifiable) {
             throw RuntimeException("Unmodifiable")
@@ -544,7 +545,6 @@ class DataValue private constructor(
         return getAs(Instant::class) ?: Instant.EPOCH
     }
 
-
     fun <T : Any> getAs(type: KClass<T>): T? {
         return Json.convert(value, type)
     }
@@ -608,7 +608,7 @@ class DataValue private constructor(
 
     fun <T : Any> asList(elementType: KClass<T>): MutableList<T> {
         if (value.isArray) {
-            return ArrayList(Json.convert<List<T>>(value, Json.getListType(elementType)) ?: emptyList())
+            return ArrayList(Json.convertOrNull<List<T>>(value, Json.getListType(elementType)) ?: emptyList())
         }
         return ArrayList()
     }
@@ -621,7 +621,7 @@ class DataValue private constructor(
     fun <K : Any, V : Any> asMap(keyType: KClass<K>, valueType: KClass<V>): MutableMap<K, V> {
         return LinkedHashMap(
             if (!value.isNull) {
-                Json.convert<Map<K, V>>(value, Json.getMapType(keyType, valueType)) ?: emptyMap()
+                Json.convertOrNull<Map<K, V>>(value, Json.getMapType(keyType, valueType)) ?: emptyMap()
             } else {
                 emptyMap()
             }
@@ -758,7 +758,6 @@ class DataValue private constructor(
         return type
     }
 
-
     override fun hashCode(): Int {
         return value.hashCode()
     }
@@ -767,11 +766,9 @@ class DataValue private constructor(
         return path.length >= 2 && path[0] == '$' && (path[1] == '.' || path[1] == '[')
     }
 
-
     fun asUnmodifiable(): DataValue {
         return DataValue(toJsonNode(value.deepCopy()), true)
     }
-
 
     fun isUnmodifiable(): Boolean {
         return unmodifiable

@@ -104,10 +104,10 @@ class GitRepoService {
             return false
         }
         val message = rootCause.message ?: return false
-        return message.contains("authentication is required", ignoreCase = true)
-            || message.contains("not authorized", ignoreCase = true)
-            || message.contains("401")
-            || message.contains("403")
+        return message.contains("authentication is required", ignoreCase = true) ||
+            message.contains("not authorized", ignoreCase = true) ||
+            message.contains("401") ||
+            message.contains("403")
     }
 
     private fun isRepoShouldBeRecreated(propsBefore: GitRepoProps, propsAfter: GitRepoProps): Boolean {
@@ -209,7 +209,8 @@ class GitRepoService {
                 log.debug { "[$relativePath] Repo exists and update is disabled" }
             } else if (
                 updatePolicy == GitUpdatePolicy.REQUIRED ||
-                updatePolicy == GitUpdatePolicy.ALLOWED && lastSyncDiffMs > repoProps.pullPeriod.toMillis()
+                updatePolicy == GitUpdatePolicy.ALLOWED &&
+                lastSyncDiffMs > repoProps.pullPeriod.toMillis()
             ) {
                 log.info { "[$relativePath] Repo directory exists. Pull repo." }
                 var hashOfLastCommit = ""

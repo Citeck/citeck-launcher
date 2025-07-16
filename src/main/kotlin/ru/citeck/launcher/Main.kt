@@ -28,8 +28,8 @@ import ru.citeck.launcher.view.screen.NamespaceScreen
 import ru.citeck.launcher.view.screen.WelcomeScreen
 import ru.citeck.launcher.view.theme.LauncherTheme
 import ru.citeck.launcher.view.tray.CiteckSystemTray
-import ru.citeck.launcher.view.utils.SystemDumpUtils
 import ru.citeck.launcher.view.utils.ImageUtils
+import ru.citeck.launcher.view.utils.SystemDumpUtils
 import ru.citeck.launcher.view.utils.rememberMutProp
 import ru.citeck.launcher.view.window.AdditionalWindowState
 import java.util.concurrent.atomic.AtomicBoolean
@@ -136,6 +136,7 @@ fun main(@Suppress("UNUSED_PARAMETER") args: Array<String>) {
                 if (services == null) {
                     LoadingScreen()
                 } else if (services.isSuccess) {
+
                     GlobalConfirmDialog.ConfirmDialog(dialogStates)
                     GlobalLoadingDialog.LoadingDialog(dialogStates)
                     GlobalErrorDialog.ErrorDialog(dialogStates)
@@ -162,6 +163,7 @@ fun main(@Suppress("UNUSED_PARAMETER") args: Array<String>) {
                     }
                     App(services.getOrThrow(), dialogStates)
                 } else {
+
                     GlobalErrorDialog.ErrorDialog(
                         dialogStates,
                         GlobalErrorDialog.Params(services.exceptionOrNull()!!, onClose = ::exitApplication)
@@ -207,9 +209,12 @@ fun App(services: LauncherServices, dialogStates: SnapshotStateList<CiteckDialog
     }
 
     if (error.value != null) {
-        GlobalErrorDialog.ErrorDialog(dialogStates, GlobalErrorDialog.Params(error.value!!) {
-            exitProcess(0)
-        })
+        GlobalErrorDialog.ErrorDialog(
+            dialogStates,
+            GlobalErrorDialog.Params(error.value!!) {
+                exitProcess(0)
+            }
+        )
     } else if (selectedWorkspace.value == null) {
         LoadingScreen()
     } else {

@@ -46,7 +46,8 @@ object CreateMasterPasswordDialog {
 
             Dialog(
                 properties = DialogProperties(
-                    usePlatformDefaultWidth = false),
+                    usePlatformDefaultWidth = false
+                ),
                 onDismissRequest = {}
             ) {
                 Surface(

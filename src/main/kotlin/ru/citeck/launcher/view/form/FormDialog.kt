@@ -74,7 +74,8 @@ open class FormDialog {
                         onComplete()
                     },
                     onCancel = { continuation.resumeWithException(FormCancelledException()) }
-                ))
+                )
+            )
         }
     }
 
@@ -145,7 +146,8 @@ open class FormDialog {
 
             Dialog(
                 properties = DialogProperties(
-                usePlatformDefaultWidth = false),
+                    usePlatformDefaultWidth = false
+                ),
                 onDismissRequest = {}
             ) {
                 Surface(
@@ -376,8 +378,9 @@ open class FormDialog {
                 Text("Cancel")
             }
             Spacer(modifier = Modifier.weight(1f))
-            //Spacer(modifier = Modifier.width(8.dp))
-            Button(enabled = buttonsEnabled.value,
+            // Spacer(modifier = Modifier.width(8.dp))
+            Button(
+                enabled = buttonsEnabled.value,
                 onClick = {
                     buttonsEnabled.value = false
                     try {
@@ -385,7 +388,8 @@ open class FormDialog {
                     } finally {
                         buttonsEnabled.value = true
                     }
-                }) {
+                }
+            ) {
                 Text("Confirm")
             }
         }
