@@ -52,7 +52,11 @@ class GitRepoService {
         )
     }
 
-    fun initRepo(repoProps: GitRepoProps, updatePolicy: GitUpdatePolicy = GitUpdatePolicy.ALLOWED): GitRepoInfo {
+    fun initRepo(
+        repoProps: GitRepoProps,
+        updatePolicy: GitUpdatePolicy = GitUpdatePolicy.ALLOWED,
+        cancelAvailable: Boolean = false
+    ): GitRepoInfo {
         val relativePath = AppDir.PATH.relativize(repoProps.path).toString().replace(File.separator, "/")
         var updatePolicy = updatePolicy
         var nextFeedbackRepeats = FEEDBACK_REPEATS_COUNT
@@ -69,7 +73,7 @@ class GitRepoService {
                     )
                 } catch (e: Throwable) {
                     exception = e
-                    if (nextFeedbackRepeats-- > 0 && isUnauthorizedException(e)) {
+                    if (nextFeedbackRepeats-- > 0 && isUnauthorizedException(e) && repoProps.authType != AuthType.NONE) {
                         log.error { "Repo unauthorized: " + repoProps.url }
                         continue
                     }
@@ -80,8 +84,12 @@ class GitRepoService {
                             GlobalGitPullErrorDialog.showSuspend(
                                 repoProps.url,
                                 ExceptionUtils.getRootCauseMessage(e) ?: "no-msg",
-                                allowSkip
+                                allowSkip,
+                                cancelAvailable
                             )
+                        }
+                        if (dialogRes == GitPullRepoDialogRes.CANCEL) {
+                            throw GitPullCancelledException(repoProps.url)
                         }
                         if (dialogRes == GitPullRepoDialogRes.SKIP_IF_POSSIBLE) {
                             updatePolicy = GitUpdatePolicy.ALLOWED_IF_NOT_EXISTS

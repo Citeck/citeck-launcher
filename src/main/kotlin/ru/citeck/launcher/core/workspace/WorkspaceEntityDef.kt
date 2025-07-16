@@ -23,7 +23,7 @@ object WorkspaceEntityDef {
                 listOf(AuthType.NONE, AuthType.TOKEN).map {
                     SelectField.Option(it.name, it.displayName)
                 }
-            )
+            ).mandatory()
         )
     )
 

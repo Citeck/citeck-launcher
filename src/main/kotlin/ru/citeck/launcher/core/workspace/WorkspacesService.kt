@@ -43,7 +43,7 @@ class WorkspacesService {
         entitiesService.register(WorkspaceEntityDef.definition)
 
         entitiesService.events.addEntityCreatedListener(WorkspaceDto::class) { event ->
-            loadWorkspaceConfig(event.entity)
+            loadWorkspaceConfig(event.entity, cancelAvailable = true)
         }
         entitiesService.events.addEntityDeletedListener(WorkspaceDto::class) { event ->
             val wsRoot = getWorkspaceDir(event.entity.id).toFile()
@@ -70,7 +70,8 @@ class WorkspacesService {
 
     private fun loadWorkspaceConfig(
         workspace: WorkspaceDto,
-        updatePolicy: GitUpdatePolicy = GitUpdatePolicy.ALLOWED
+        updatePolicy: GitUpdatePolicy = GitUpdatePolicy.ALLOWED,
+        cancelAvailable: Boolean = false
     ): WorkspaceConfig {
 
         val txnContext = database.getTxnContext()
@@ -94,7 +95,8 @@ class WorkspacesService {
                 "ws:${workspace.id}:repo",
                 workspace.authType
             ),
-            updatePolicy
+            updatePolicy,
+            cancelAvailable = cancelAvailable
         ).root
 
         var cfgVersion = CONFIG_VERSION_MAX + 1

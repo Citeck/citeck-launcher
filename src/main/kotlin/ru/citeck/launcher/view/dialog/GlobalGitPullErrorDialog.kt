@@ -1,14 +1,6 @@
 package ru.citeck.launcher.view.dialog
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -29,13 +21,24 @@ object GlobalGitPullErrorDialog {
 
     private lateinit var showDialog: (GitPullErrorDialogParams) -> (() -> Unit)
 
-    fun show(repoUrl: String, errorMsg: String, skipAvailable: Boolean, onSubmit: (GitPullRepoDialogRes) -> Unit) {
-        showDialog(GitPullErrorDialogParams(repoUrl, errorMsg, skipAvailable, onSubmit))
+    fun show(
+        repoUrl: String,
+        errorMsg: String,
+        skipAvailable: Boolean,
+        cancelAvailable: Boolean,
+        onSubmit: (GitPullRepoDialogRes) -> Unit
+    ) {
+        showDialog(GitPullErrorDialogParams(repoUrl, errorMsg, skipAvailable, cancelAvailable, onSubmit))
     }
 
-    suspend fun showSuspend(repoUrl: String, errorMsg: String, skipAvailable: Boolean): GitPullRepoDialogRes {
+    suspend fun showSuspend(
+        repoUrl: String,
+        errorMsg: String,
+        skipAvailable: Boolean,
+        cancelAvailable: Boolean
+    ): GitPullRepoDialogRes {
         return suspendCancellableCoroutine { continuation ->
-            show(repoUrl, errorMsg, skipAvailable) { continuation.resume(it) }
+            show(repoUrl, errorMsg, skipAvailable, cancelAvailable) { continuation.resume(it) }
         }
     }
 
@@ -90,9 +93,20 @@ object GlobalGitPullErrorDialog {
                         Spacer(modifier = Modifier.height(16.dp))
 
                         Row(
-                            horizontalArrangement = Arrangement.End,
                             modifier = Modifier.fillMaxWidth().height(50.dp).padding(5.dp)
                         ) {
+                            if (params.cancelAvailable) {
+                                Button(
+                                    onClick = {
+                                        params.onSubmit(GitPullRepoDialogRes.CANCEL)
+                                        closeDialog()
+                                    },
+                                    modifier = Modifier.fillMaxHeight()
+                                ) {
+                                    Text("Cancel")
+                                }
+                            }
+                            Spacer(Modifier.weight(1f))
                             if (params.skipAvailable) {
                                 Button(
                                     onClick = {
@@ -124,12 +138,14 @@ object GlobalGitPullErrorDialog {
 
 enum class GitPullRepoDialogRes {
     REPEAT,
-    SKIP_IF_POSSIBLE
+    SKIP_IF_POSSIBLE,
+    CANCEL
 }
 
 private class GitPullErrorDialogParams(
     val repoUrl: String,
     val errorMessage: String,
     val skipAvailable: Boolean,
+    val cancelAvailable: Boolean,
     val onSubmit: (GitPullRepoDialogRes) -> Unit
 )

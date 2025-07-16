@@ -223,8 +223,8 @@ class WorkspaceSnapshots {
         }
     }
 
-    private class DownloadProgress(@Volatile var value: Double)
-    private class ContentLength(@Volatile var value: Long) {
+    private data class DownloadProgress(@Volatile var value: Double)
+    private data class ContentLength(@Volatile var value: Long) {
         fun toDouble() = value.toDouble()
     }
 }
