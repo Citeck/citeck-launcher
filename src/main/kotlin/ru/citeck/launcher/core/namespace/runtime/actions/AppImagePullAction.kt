@@ -41,6 +41,7 @@ class AppImagePullAction(
 
         private const val RETRIES_COUNT_FOR_EXISTING_IMAGE = 3
 
+        private val PULL_SEMAPHORE_TIMEOUT_MS = Duration.ofMinutes(1).toMillis()
         private val LAST_PULL_RESPONSE_TIMEOUT_MS = Duration.ofMinutes(1).toMillis()
 
         // global param to avoid errors while some pull actions wait until other actions completed
@@ -95,8 +96,14 @@ class AppImagePullAction(
 
     override fun execute(context: ActionContext<Params>) {
 
-        if (!pullSemaphore.tryAcquire(1, TimeUnit.MINUTES)) {
-            error("Pull semaphore waiting timeout")
+        while (!pullSemaphore.tryAcquire(PULL_SEMAPHORE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+            // if something happened while we wait, then continue wait
+            if ((System.currentTimeMillis() - lastPullResponseTime.get()) > PULL_SEMAPHORE_TIMEOUT_MS) {
+                error(
+                    "Pull semaphore waiting timeout reached (${PULL_SEMAPHORE_TIMEOUT_MS}ms) " +
+                        "and last pull response was at ${lastPullResponseTime.get()}ms"
+                )
+            }
         }
         val params = context.params
         val appRuntime = params.appRuntime
@@ -110,7 +117,9 @@ class AppImagePullAction(
                 if (imageToPull == null) {
                     break
                 }
+                log.info { "Start image pulling: ${imageToPull.image}" }
                 pullImage(params, imageToPull.image, imageToPull.kind, appRuntime, context.retryIdx, context.lastError)
+                log.info { "Image pulling completed successfully: ${imageToPull.image}" }
                 context.retryIdx = -1
                 params.currentPulledImage = null
                 params.pulledImagesCount++
@@ -130,12 +139,13 @@ class AppImagePullAction(
         lastError: Throwable?
     ) {
         if (appKind.isCiteckApp() && !image.contains("/")) {
+            log.info { "Citeck image '$image' without '/' detected; will be treated as locally built and won't be pulled" }
             return
         }
         if (!params.pullIfPresent && dockerApi.inspectImageOrNull(image) != null) {
+            log.info { "Image '$image' found locally; skipping pull as pullIfPresent=false" }
             return
         }
-        log.info { "Start image pulling: $image" }
         lastPullResponseTime.set(System.currentTimeMillis())
         val lastPullInfo = AtomicReference<PullResponseItem>()
         val pullFuture = CompletableFuture<Boolean>()
@@ -186,7 +196,7 @@ class AppImagePullAction(
                 lastPullResponseTime.set(System.currentTimeMillis())
                 super.onComplete()
                 val lastItemStatus = lastPullInfo.get()
-                if (lastItemStatus?.isPullSuccessIndicated() == true) {
+                if (lastItemStatus?.isPullSuccessIndicated == true) {
                     pullFuture.complete(true)
                 } else {
                     pullFuture.completeExceptionally(RuntimeException("Pull doesn't indicated as successful"))

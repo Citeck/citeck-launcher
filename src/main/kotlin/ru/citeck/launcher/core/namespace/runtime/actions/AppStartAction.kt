@@ -15,6 +15,7 @@ import ru.citeck.launcher.core.appdef.StartupCondition
 import ru.citeck.launcher.core.namespace.NamespaceRef
 import ru.citeck.launcher.core.namespace.init.ExecShell
 import ru.citeck.launcher.core.namespace.runtime.AppRuntime
+import ru.citeck.launcher.core.namespace.runtime.DockerImageNotFound
 import ru.citeck.launcher.core.namespace.runtime.docker.DockerApi
 import ru.citeck.launcher.core.namespace.runtime.docker.DockerConstants
 import ru.citeck.launcher.core.namespace.runtime.docker.DockerLabels
@@ -64,7 +65,7 @@ class AppStartAction(
 
         val appHashDigest = Digest.sha256().update(appDef.getHash())
         fun updateAppHashByImage(image: String) {
-            val imageInfo = dockerApi.inspectImageOrNull(image) ?: error("Image doesn't found: '$image'")
+            val imageInfo = dockerApi.inspectImageOrNull(image) ?: throw DockerImageNotFound(image)
             imageInfo.repoDigests?.forEach { appHashDigest.update(it) }
         }
         updateAppHashByImage(appDef.image)

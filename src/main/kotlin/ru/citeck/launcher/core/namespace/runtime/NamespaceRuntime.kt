@@ -432,7 +432,11 @@ class NamespaceRuntime(
                         promise.then {
                             application.status.setValue(AppRuntimeStatus.RUNNING, statusVersion)
                         }.catch {
-                            application.status.setValue(AppRuntimeStatus.START_FAILED, statusVersion)
+                            if (it is DockerImageNotFound) {
+                                application.status.setValue(AppRuntimeStatus.READY_TO_PULL, statusVersion)
+                            } else {
+                                application.status.setValue(AppRuntimeStatus.START_FAILED, statusVersion)
+                            }
                         }
                     }
                     somethingChanged = true
