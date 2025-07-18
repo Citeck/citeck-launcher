@@ -22,12 +22,15 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
@@ -95,6 +98,8 @@ object AppDefEditDialog {
                         modifier = Modifier
                             .fillMaxWidth()
                     ) {
+                        val focusRequester = remember { FocusRequester() }
+                        LaunchedEffect(Unit) { focusRequester.requestFocus() }
                         TextField(
                             value = textFieldValue.value,
                             onValueChange = { value: TextFieldValue -> textFieldValue.value = value },
@@ -105,6 +110,7 @@ object AppDefEditDialog {
                             ),
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .focusRequester(focusRequester)
                                 .weight(1f),
 
                         )
