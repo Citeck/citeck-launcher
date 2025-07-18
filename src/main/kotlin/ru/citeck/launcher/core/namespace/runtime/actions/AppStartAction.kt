@@ -1,14 +1,19 @@
 package ru.citeck.launcher.core.namespace.runtime.actions
 
 import com.github.dockerjava.api.async.ResultCallbackTemplate
+import com.github.dockerjava.api.command.CreateContainerCmd
+import com.github.dockerjava.api.command.CreateContainerResponse
+import com.github.dockerjava.api.exception.ConflictException
 import com.github.dockerjava.api.exception.DockerException
 import com.github.dockerjava.api.exception.NotFoundException
 import com.github.dockerjava.api.model.*
 import io.github.oshai.kotlinlogging.KotlinLogging
+import org.apache.commons.lang3.exception.ExceptionUtils
 import ru.citeck.launcher.core.actions.ActionContext
 import ru.citeck.launcher.core.actions.ActionExecutor
 import ru.citeck.launcher.core.actions.ActionParams
 import ru.citeck.launcher.core.actions.ActionsService
+import ru.citeck.launcher.core.appdef.ApplicationDef
 import ru.citeck.launcher.core.appdef.ExecProbeDef
 import ru.citeck.launcher.core.appdef.InitContainerDef
 import ru.citeck.launcher.core.appdef.StartupCondition
@@ -172,11 +177,7 @@ class AppStartAction(
             if (appDef.cmd != null) {
                 createCmd.withCmd(appDef.cmd)
             }
-            val newContainerResp = try {
-                createCmd.exec()
-            } catch (e: DockerException) {
-                throw RuntimeException("Container creation failed for ${appDef.name}", e)
-            }
+            val newContainerResp = execCreateContainer(appDef, createCmd)
             try {
                 dockerApi.startContainer(newContainerResp.id)
             } catch (e: DockerException) {
@@ -208,6 +209,61 @@ class AppStartAction(
                 }
             }
         }
+    }
+
+    private fun execCreateContainer(
+        appDef: ApplicationDef,
+        createCmd: CreateContainerCmd
+    ): CreateContainerResponse {
+        val appName = appDef.name
+        var iteration = 0
+        var lastError: Throwable
+        do {
+            try {
+                return createCmd.exec()
+            } catch (createErr: DockerException) {
+                lastError = createErr
+                val rootCause = ExceptionUtils.getRootCause(createErr) ?: createErr
+                log.warn {
+                    "[$appName] Container creation failed: " +
+                        "${createErr::class.simpleName} - ${createErr.message}"
+                }
+                if (iteration < 3) {
+                    log.warn { "[$appName] Retrying in 2 seconds..." }
+                    Thread.sleep(2000)
+                    continue
+                }
+                log.warn { "[$appName] Retries didn't help. Attempting to fix the problem..." }
+                try {
+                    if (rootCause !is ConflictException) {
+                        log.warn { "[$appName] Unknown root cause: ${rootCause::class}. Giving up." }
+                        break
+                    }
+                    val containerName = createCmd.name ?: ""
+                    log.warn {
+                        "[$appName] Root cause is ConflictException – likely a container with the " +
+                            "same name is already running. Attempting to stop and remove the existing container..."
+                    }
+                    val existingContainer = dockerApi.getContainerByNameOrNull(containerName)
+                    if (existingContainer == null) {
+                        log.warn {
+                            "[$appName] Container not found by name '$containerName'. " +
+                                "It might have already been removed."
+                        }
+                        continue
+                    } else {
+                        try {
+                            dockerApi.stopAndRemoveContainer(existingContainer)
+                        } catch (e: Throwable) {
+                            log.error(e) { "[$appName] Failed to stop and remove container: ${existingContainer.id}" }
+                        }
+                    }
+                } catch (fixError: Throwable) {
+                    log.error(fixError) { "[$appName] Error occurred while trying to fix container creation failure" }
+                }
+            }
+        } while (iteration++ < 5)
+        throw RuntimeException("Container creation failed for $appName", lastError)
     }
 
     private fun runInitContainer(

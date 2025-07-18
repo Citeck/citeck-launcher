@@ -125,6 +125,17 @@ class DockerApi(
             }
     }
 
+    fun getContainerByNameOrNull(name: String): Container? {
+        if (name.isBlank()) {
+            return null
+        }
+        return client.listContainersCmd()
+            .withShowAll(true)
+            .withNameFilter(listOf(name))
+            .exec()
+            .firstOrNull()
+    }
+
     fun getContainers(nsRef: NamespaceRef, appName: String): List<Container> {
         return client.listContainersCmd()
             .withShowAll(true)
