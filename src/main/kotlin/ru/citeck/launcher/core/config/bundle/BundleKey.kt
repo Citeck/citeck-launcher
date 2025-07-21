@@ -50,7 +50,12 @@ class BundleKey(val rawKey: String) : Comparable<BundleKey> {
         } else if (suffix.isNotBlank() && other.suffix.isBlank()) {
             -1
         } else {
-            0
+            val suffixCompareRes = suffix.compareTo(other.suffix)
+            if (suffixCompareRes == 0) {
+                rawKey.compareTo(other.rawKey)
+            } else {
+                suffixCompareRes
+            }
         }
     }
 

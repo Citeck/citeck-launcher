@@ -82,7 +82,7 @@ object BundleUtils {
             app.aliases.forEach { appNameByAliases[it] = app.id }
         }
         workspaceConfig.citeckProxy.aliases.forEach {
-            appNameByAliases.put(it, AppName.PROXY)
+            appNameByAliases[it] = AppName.PROXY
         }
 
         var isEnterpriseBundle = false

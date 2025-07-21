@@ -1,3 +1,11 @@
+# Release 1.1.3
+
+## Fixes
+
+* Fixed scrolling issue in the app definition editor
+* Fixed DockerImageNotFound error handling
+* Fixed loading of bundles that differ only by the RC suffix
+
 # Release 1.1.2
 
 ## New features
