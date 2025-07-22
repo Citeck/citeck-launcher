@@ -88,33 +88,28 @@ fun NamespaceScreen(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                CiteckTooltipArea(
-                    tooltip = "Please stop all running apps before namespace changing",
-                    enabled = runtimeStatus.value != STOPPED
-                ) {
-                    Column(
-                        modifier = Modifier.padding(start = 10.dp, top = 2.dp).clickable(enabled = runtimeStatus.value == STOPPED) {
-                            coroutineScope.launch {
-                                val currentRef = NamespaceEntityDef.getRef(selectedNsValue)
-                                val newRef = JournalSelectDialog.show(
-                                    JournalSelectDialog.Params(
-                                        NamespaceConfig::class,
-                                        listOf(currentRef),
-                                        false,
-                                        entitiesService = services.entitiesService,
-                                        closeWhenAllRecordsDeleted = true
-                                    )
-                                ).firstOrNull() ?: currentRef
-                                services.setSelectedNamespace(newRef.localId)
-                            }
+                Column(
+                    modifier = Modifier.padding(start = 10.dp, top = 2.dp).clickable(enabled = runtimeStatus.value == STOPPED) {
+                        coroutineScope.launch {
+                            val currentRef = NamespaceEntityDef.getRef(selectedNsValue)
+                            val newRef = JournalSelectDialog.show(
+                                JournalSelectDialog.Params(
+                                    NamespaceConfig::class,
+                                    listOf(currentRef),
+                                    false,
+                                    entitiesService = services.entitiesService,
+                                    closeWhenAllRecordsDeleted = true
+                                )
+                            ).firstOrNull() ?: currentRef
+                            services.setSelectedNamespace(newRef.localId)
                         }
-                    ) {
-                        Row {
-                            LimitedText(selectedNsValue.name, maxWidth = 150.dp)
-                            Text(" (" + selectedNsValue.id + ")")
-                        }
-                        Text(selectedNsValue.bundleRef.toString(), fontSize = 0.8.em, color = Color.LightGray)
                     }
+                ) {
+                    Row {
+                        LimitedText(selectedNsValue.name, maxWidth = 170.dp)
+                        Text(" (" + selectedNsValue.id + ")")
+                    }
+                    Text(selectedNsValue.bundleRef.toString(), fontSize = 0.8.em, color = Color.LightGray)
                 }
                 CpImage(
                     "icons/cog-6-tooth.svg",
