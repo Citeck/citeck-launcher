@@ -104,9 +104,17 @@ class NamespaceGenerator {
     }
 
     private fun generateKeycloak(context: NsGenContext) {
+
+        val dbName = "citeck_keycloak"
+
+        // add init script to db even without enabled keycloak to avoid db restarting when keycloak will be enabled
+        context.applications[NsGenContext.PG_HOST]!!
+            .addInitAction(ExecShell("/init_db_and_user.sh $dbName"))
+
         if (context.namespaceConfig.authentication.type != AuthenticationType.KEYCLOAK) {
             return
         }
+
         context.links.add(
             NamespaceLink(
                 "http://localhost/ecos-idp/auth/",
@@ -116,7 +124,6 @@ class NamespaceGenerator {
                 -10f
             )
         )
-        val dbName = "citeck_keycloak"
 
         context.getOrCreateApp(AppName.KEYCLOAK)
             .withImage("keycloak/keycloak:26.3.1")
@@ -155,9 +162,6 @@ class NamespaceGenerator {
                     )
                 )
             )
-
-        context.applications[NsGenContext.PG_HOST]!!
-            .addInitAction(ExecShell("/init_db_and_user.sh $dbName"))
     }
 
     private fun generateMailhog(context: NsGenContext) {
