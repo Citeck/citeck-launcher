@@ -47,12 +47,18 @@ class BundlesService {
         }
     }
 
+    fun updateBundlesRepo(repo: String, updatePolicy: GitUpdatePolicy = GitUpdatePolicy.REQUIRED) {
+        if (repo.isBlank()) {
+            return
+        }
+        getRepoInfo(repo, updatePolicy)
+    }
+
     fun getBundleByRef(
         ref: BundleRef,
         updatePolicy: GitUpdatePolicy = GitUpdatePolicy.ALLOWED_IF_NOT_EXISTS
     ): BundleDef {
-        return getRepoInfo(ref.repo, updatePolicy).bundlesByRawKey[ref.key]
-            ?: error("Bundle is not found by key '${ref.key}' in repo ${ref.repo}")
+        return getRepoInfo(ref.repo, updatePolicy).bundlesByRawKey[ref.key] ?: throw BundleNotFoundException(ref)
     }
 
     private fun getRepoInfo(

@@ -78,6 +78,7 @@ class NamespacesService : Disposable {
                 MutProp(nsDto),
                 services.workspaceConfig,
                 nsAppsGenerator,
+                services.bundlesService,
                 services.actionsService,
                 services.dockerApi,
                 services.database.getDataRepo(NS_RT_STATE_REPO_SCOPE, repoKey),
@@ -90,8 +91,13 @@ class NamespacesService : Disposable {
         services.entitiesService.getAll(NamespaceConfig::class).forEach {
             registerNsRuntime(it.entity)
         }
+
         services.entitiesService.events.addEntityUpdatedListener(NamespaceConfig::class) {
             namespaceRuntimes[it.entity.id]?.namespaceConfig?.setValue(it.entity)
+            val selectedNs = services.selectedNamespace.getValue()
+            if (selectedNs?.id == it.entity.id) {
+                services.selectedNamespace.setValue(it.entity)
+            }
         }
 
         services.entitiesService.events.addEntityCreatedListener(NamespaceConfig::class) { event ->
@@ -122,6 +128,7 @@ class NamespacesService : Disposable {
             }
             services.setSelectedNamespace(event.entity.id)
         }
+
         services.entitiesService.events.addEntityDeletedListener(NamespaceConfig::class) { event ->
             val namespaceId = event.entity.id
             val runtime = namespaceRuntimes[namespaceId]
@@ -175,7 +182,7 @@ class NamespacesService : Disposable {
             typeName = "Namespace",
             getId = { it.id },
             getName = { it.name },
-            createForm = formSpec,
+            createForm = formSpec(services.bundlesService),
             editForm = null,
             defaultEntities = emptyList(),
             actions = emptyList(),

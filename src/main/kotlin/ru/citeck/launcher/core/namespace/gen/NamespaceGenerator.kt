@@ -2,6 +2,7 @@ package ru.citeck.launcher.core.namespace.gen
 
 import ru.citeck.launcher.core.WorkspaceServices
 import ru.citeck.launcher.core.appdef.*
+import ru.citeck.launcher.core.config.bundle.BundleDef
 import ru.citeck.launcher.core.git.GitUpdatePolicy
 import ru.citeck.launcher.core.namespace.AppName
 import ru.citeck.launcher.core.namespace.NamespaceConfig
@@ -45,13 +46,18 @@ class NamespaceGenerator {
         this.services = services
     }
 
-    fun generate(props: NamespaceConfig, updatePolicy: GitUpdatePolicy, detachedApps: Set<String>): NamespaceGenResp {
+    fun generate(
+        props: NamespaceConfig,
+        updatePolicy: GitUpdatePolicy,
+        bundleDef: BundleDef,
+        detachedApps: Set<String>
+    ): NamespaceGenResp {
 
         services.updateConfig(updatePolicy)
 
         val context = NsGenContext(
             props,
-            services.bundlesService.getBundleByRef(props.bundleRef, updatePolicy),
+            bundleDef,
             services.workspaceConfig.getValue(),
             appFiles = HashMap(defaultAppFiles),
             detachedApps = detachedApps,
@@ -95,9 +101,6 @@ class NamespaceGenerator {
             context.links,
             setOf(AppName.ONLYOFFICE)
         )
-    }
-
-    private fun generateAlfresco(context: NsGenContext) {
     }
 
     private fun generateKeycloak(context: NsGenContext) {
@@ -279,6 +282,7 @@ class NamespaceGenerator {
         app.addEnv("ENABLE_LOGGING", "warn")
         app.addEnv("ENABLE_SERVER_STATUS", "true")
         app.addEnv("MAILHOG_TARGET", NsGenContext.MAILHOG_HOST + ":8025")
+        app.addEnv("ECOS_PAGE_TITLE", "Citeck Launcher")
 
         val proxyProps = context.namespaceConfig.citeckProxy
 

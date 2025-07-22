@@ -40,6 +40,7 @@ import ru.citeck.launcher.view.action.ActionDesc
 import ru.citeck.launcher.view.action.ActionIcon
 import ru.citeck.launcher.view.action.CiteckIconAction
 import ru.citeck.launcher.view.commons.CiteckTooltipArea
+import ru.citeck.launcher.view.commons.LimitedText
 import ru.citeck.launcher.view.dialog.AppDefEditDialog
 import ru.citeck.launcher.view.dialog.GlobalErrorDialog
 import ru.citeck.launcher.view.dialog.GlobalLoadingDialog
@@ -84,36 +85,55 @@ fun NamespaceScreen(
                 .border(1.dp, Color.Black)
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth()
-                    .clickable(enabled = runtimeStatus.value == STOPPED) {
-                        coroutineScope.launch {
-                            val currentRef = NamespaceEntityDef.getRef(selectedNsValue)
-                            val newRef = JournalSelectDialog.show(
-                                JournalSelectDialog.Params(
-                                    NamespaceConfig::class,
-                                    listOf(currentRef),
-                                    false,
-                                    entitiesService = services.entitiesService,
-                                    closeWhenAllRecordsDeleted = true
-                                )
-                            ).firstOrNull() ?: currentRef
-                            services.setSelectedNamespace(newRef.localId)
-                        }
-                    },
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 CiteckTooltipArea(
                     tooltip = "Please stop all running apps before namespace changing",
                     enabled = runtimeStatus.value != STOPPED
                 ) {
-                    Column(modifier = Modifier.padding(start = 10.dp, top = 2.dp)) {
-                        Text(
-                            selectedNsValue.name + " (" + selectedNsValue.id + ")",
-                            color = MaterialTheme.colorScheme.scrim
-                        )
+                    Column(
+                        modifier = Modifier.padding(start = 10.dp, top = 2.dp).clickable(enabled = runtimeStatus.value == STOPPED) {
+                            coroutineScope.launch {
+                                val currentRef = NamespaceEntityDef.getRef(selectedNsValue)
+                                val newRef = JournalSelectDialog.show(
+                                    JournalSelectDialog.Params(
+                                        NamespaceConfig::class,
+                                        listOf(currentRef),
+                                        false,
+                                        entitiesService = services.entitiesService,
+                                        closeWhenAllRecordsDeleted = true
+                                    )
+                                ).firstOrNull() ?: currentRef
+                                services.setSelectedNamespace(newRef.localId)
+                            }
+                        }
+                    ) {
+                        Row {
+                            LimitedText(selectedNsValue.name, maxWidth = 150.dp)
+                            Text(" (" + selectedNsValue.id + ")")
+                        }
                         Text(selectedNsValue.bundleRef.toString(), fontSize = 0.8.em, color = Color.LightGray)
                     }
                 }
+                CpImage(
+                    "icons/cog-6-tooth.svg",
+                    modifier = Modifier.width(28.dp)
+                        .height(29.dp)
+                        .align(Alignment.Top)
+                        .padding(start = 5.dp, top = 2.dp)
+                        .clickable {
+                            Thread.ofPlatform().name("ns-edit-thread").start {
+                                try {
+                                    runBlocking {
+                                        services.entitiesService.edit(selectedNamespace.value!!)
+                                    }
+                                } catch (e: FormCancelledException) {
+                                    // do nothing
+                                }
+                            }
+                        }
+                )
             }
             HorizontalDivider()
             Row(modifier = Modifier.fillMaxWidth().padding(top = 5.dp, bottom = 5.dp)) {
@@ -639,17 +659,17 @@ private fun RenderApps(
                                 "Edit App"
                             ) {
                                 runCatching {
-                                    val appDef = application.def.getValue()
+                                    val appDefToEdit = application.def.getValue()
                                     try {
                                         val editRes = AppDefEditDialog.show(
-                                            appDef,
-                                            application.nsRuntime.isEditedAndLockedApp(appDef.name)
+                                            appDefToEdit,
+                                            application.nsRuntime.isEditedAndLockedApp(appDefToEdit.name)
                                         )
                                         if (editRes == null) {
-                                            application.nsRuntime.resetAppDef(appDef.name)
+                                            application.nsRuntime.resetAppDef(appDefToEdit.name)
                                         } else {
                                             application.nsRuntime.updateAppDef(
-                                                appDef,
+                                                appDefToEdit,
                                                 editRes.appDef,
                                                 editRes.locked
                                             )

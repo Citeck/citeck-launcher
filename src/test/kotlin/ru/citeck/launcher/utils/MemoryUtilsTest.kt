@@ -1,15 +1,15 @@
 package ru.citeck.launcher.utils
 
-import org.junit.jupiter.api.Assertions
-import org.junit.jupiter.api.Test
+import org.assertj.core.api.Assertions
 import ru.citeck.launcher.core.utils.MemoryUtils
+import kotlin.test.Test
 
 class MemoryUtilsTest {
 
     @Test
     fun test() {
-        Assertions.assertEquals(1 * 1024 * 1024L, MemoryUtils.parseMemAmountToBytes("1m"))
-        Assertions.assertEquals((1.5 * 1024 * 1024L).toLong(), MemoryUtils.parseMemAmountToBytes("1.5m"))
-        Assertions.assertEquals((1.5 * 1024 * 1024 * 1024).toLong(), MemoryUtils.parseMemAmountToBytes("1.5g"))
+        Assertions.assertThat(MemoryUtils.parseMemAmountToBytes("1m")).isEqualTo(1 * 1024 * 1024L)
+        Assertions.assertThat(MemoryUtils.parseMemAmountToBytes("1.5m")).isEqualTo((1.5 * 1024 * 1024L).toLong())
+        Assertions.assertThat(MemoryUtils.parseMemAmountToBytes("1.5g")).isEqualTo((1.5 * 1024 * 1024 * 1024).toLong())
     }
 }

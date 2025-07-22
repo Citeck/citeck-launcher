@@ -2,9 +2,38 @@ package ru.citeck.launcher.core.utils
 
 import java.util.*
 
+@Suppress("unused")
 object StringUtils {
 
     const val EMPTY = ""
+
+    inline fun splitByGroups(string: String, getKey: (Char) -> Int): List<String> {
+
+        if (string.isEmpty()) return emptyList()
+
+        val result = ArrayList<String>()
+        var currentGroupKey = getKey(string[0])
+        val currentGroup = StringBuilder(string[0].toString())
+
+        var idx = 0
+
+        while (++idx < string.length) {
+            val nextChar = string[idx]
+            val nextGroupKey = getKey(nextChar)
+            if (nextGroupKey == currentGroupKey) {
+                currentGroup.append(nextChar)
+            } else {
+                result.add(currentGroup.toString())
+                currentGroup.setLength(0)
+                currentGroup.append(nextChar)
+                currentGroupKey = nextGroupKey
+            }
+        }
+        if (currentGroup.isNotEmpty()) {
+            result.add(currentGroup.toString())
+        }
+        return result
+    }
 
     fun getLastNotEmptyCharIdx(str: String): Int {
 

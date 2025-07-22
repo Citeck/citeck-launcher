@@ -1,13 +1,12 @@
 package ru.citeck.launcher.core.config.bundle
 
-class BundleDef(
+data class BundleDef(
     val key: BundleKey,
     val applications: Map<String, BundleAppDef>,
-    val citeckApps: List<BundleAppDef>,
-    val isEnterpriseBundle: Boolean
+    val citeckApps: List<BundleAppDef>
 ) {
     companion object {
-        val EMPTY = BundleDef(BundleKey("0.0.0"), emptyMap(), emptyList(), false)
+        val EMPTY = BundleDef(BundleKey("0.0.0"), emptyMap(), emptyList())
     }
 
     fun isNotEmpty(): Boolean {
@@ -18,7 +17,7 @@ class BundleDef(
         return applications.isEmpty() && citeckApps.isEmpty()
     }
 
-    class BundleAppDef(
+    data class BundleAppDef(
         val image: String
     )
 }

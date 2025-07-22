@@ -1,11 +1,12 @@
 package ru.citeck.launcher.core.config.bundle
 
+import ru.citeck.launcher.core.utils.StringUtils
 import kotlin.math.min
 
-class BundleKey(val rawKey: String) : Comparable<BundleKey> {
+data class BundleKey(val rawKey: String) : Comparable<BundleKey> {
 
     private val versionParts: List<Int>
-    private var suffix = ""
+    private var suffixParts = listOf<Comparable<Comparable<*>>>()
 
     init {
         val versionParts = ArrayList<Int>()
@@ -20,7 +21,8 @@ class BundleKey(val rawKey: String) : Comparable<BundleKey> {
                     versionParts.add(numPart)
                     suffix = suffix.substringAfter("-")
                 }
-                this.suffix = suffix
+                @Suppress("UNCHECKED_CAST")
+                this.suffixParts = parseSuffixParts(suffix) as List<Comparable<Comparable<*>>>
             }
         }
         var nonZeroNumsCount = versionParts.size
@@ -30,32 +32,59 @@ class BundleKey(val rawKey: String) : Comparable<BundleKey> {
         this.versionParts = versionParts.subList(0, nonZeroNumsCount)
     }
 
+    private fun parseSuffixParts(suffix: String): List<Comparable<*>> {
+        if (suffix.isBlank()) {
+            return emptyList()
+        }
+        return StringUtils.splitByGroups(suffix) {
+            if (it.isDigit()) 1 else 0
+        }.map {
+            if (it[0].isDigit()) {
+                (it.toIntOrNull() ?: it)
+            } else {
+                it
+            }
+        }
+    }
+
     override fun compareTo(other: BundleKey): Int {
-        val commonSize = min(versionParts.size, other.versionParts.size)
+        var compareRes = compareElements(versionParts, other.versionParts, false)
+        if (compareRes == 0) {
+            compareRes = compareElements(suffixParts, other.suffixParts, true)
+        }
+        if (compareRes == 0) {
+            compareRes = rawKey.compareTo(other.rawKey)
+        }
+        return compareRes
+    }
+
+    private fun <T : Comparable<T>> compareElements(first: List<T>, second: List<T>, preferEmptyElements: Boolean): Int {
+        if (first.isEmpty() && second.isEmpty()) {
+            return 0
+        }
+        val commonSize = min(first.size, second.size)
         for (idx in 0 until commonSize) {
-            val currentNum = versionParts[idx]
-            val otherNum = other.versionParts[idx]
+            val currentNum = first[idx]
+            val otherNum = second[idx]
             if (currentNum > otherNum) {
                 return 1
             } else if (currentNum < otherNum) {
                 return -1
             }
         }
-        return if (versionParts.size > other.versionParts.size) {
+        if ((first.isEmpty() || second.isEmpty())) {
+            return if (preferEmptyElements) {
+                if (first.isEmpty()) 1 else -1
+            } else {
+                if (second.isEmpty()) -1 else 1
+            }
+        }
+        return if (first.size > second.size) {
             1
-        } else if (versionParts.size < other.versionParts.size) {
-            -1
-        } else if (suffix.isBlank() && other.suffix.isNotBlank()) {
-            1
-        } else if (suffix.isNotBlank() && other.suffix.isBlank()) {
+        } else if (first.size < second.size) {
             -1
         } else {
-            val suffixCompareRes = suffix.compareTo(other.suffix)
-            if (suffixCompareRes == 0) {
-                rawKey.compareTo(other.rawKey)
-            } else {
-                suffixCompareRes
-            }
+            0
         }
     }
 
@@ -64,11 +93,13 @@ class BundleKey(val rawKey: String) : Comparable<BundleKey> {
     }
 
     override fun equals(other: Any?): Boolean {
-        if (this === other) return true
-        if (javaClass != other?.javaClass) return false
-
+        if (this === other) {
+            return true
+        }
+        if (javaClass != other?.javaClass) {
+            return false
+        }
         other as BundleKey
-
         return rawKey == other.rawKey
     }
 

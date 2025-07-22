@@ -85,16 +85,11 @@ object BundleUtils {
             appNameByAliases[it] = AppName.PROXY
         }
 
-        var isEnterpriseBundle = false
-
         fun getImageUrl(repository: String, tag: String): String {
             if (repository.isBlank()) {
                 return ""
             }
             val imagesRepoId = repository.substringBefore("/", "")
-            if (imagesRepoId.isNotBlank() && imagesRepoId != "core") {
-                isEnterpriseBundle = true
-            }
             var realRepository = repository
             val imageRepoInfo = workspaceConfig.imageReposById[imagesRepoId]
             if (imageRepoInfo != null) {
@@ -117,6 +112,6 @@ object BundleUtils {
                 }
             }
         }
-        return BundleDef(key, applications, citeckApps, isEnterpriseBundle)
+        return BundleDef(key, applications, citeckApps)
     }
 }

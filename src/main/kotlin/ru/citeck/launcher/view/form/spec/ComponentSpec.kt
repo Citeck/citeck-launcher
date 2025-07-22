@@ -104,7 +104,7 @@ sealed class ComponentSpec {
         fun mandatory(): TextField {
             mandatory = true
             validation { context, value ->
-                if (enabledConditions.isNotEmpty() && enabledConditions.any { it(context, value) == false }) {
+                if (enabledConditions.isNotEmpty() && enabledConditions.any { !it(context, value) }) {
                     ""
                 } else if (value.isNullOrBlank()) {
                     "Value is mandatory"
@@ -146,7 +146,8 @@ sealed class ComponentSpec {
         key: String,
         label: String,
         defaultValue: String,
-        val options: (FormContext) -> List<Option>
+        val options: (FormContext) -> List<Option>,
+        val onManualUpdate: ((FormContext) -> Unit)? = null
     ) : TextField(key, label, defaultValue = defaultValue) {
 
         constructor(

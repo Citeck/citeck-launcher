@@ -15,13 +15,18 @@ import androidx.compose.ui.unit.dp
 import ru.citeck.launcher.view.action.ActionDesc
 
 @Composable
-fun CiteckSelect(state: CiteckSelectState, mandatory: Boolean, onSelected: (String) -> Unit) {
+fun CiteckSelect(
+    state: CiteckSelectState,
+    modifier: Modifier = Modifier,
+    mandatory: Boolean,
+    onSelected: (String) -> Unit
+) {
 
     val expanded = remember { mutableStateOf(false) }
     val selectedValue = state.selected.value
 
     Box(
-        modifier = Modifier.height(30.dp).border(1.dp, Color.Gray).clickable {
+        modifier = modifier.height(30.dp).border(1.dp, Color.Gray).clickable {
             val options = state.options.value
             if (options.size == 1 && options.first().button && options.first().value == state.selected.value) {
                 onSelected(state.selected.value)

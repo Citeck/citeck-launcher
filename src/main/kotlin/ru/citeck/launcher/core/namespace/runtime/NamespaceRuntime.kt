@@ -3,6 +3,9 @@ package ru.citeck.launcher.core.namespace.runtime
 import io.github.oshai.kotlinlogging.KotlinLogging
 import ru.citeck.launcher.core.actions.ActionsService
 import ru.citeck.launcher.core.appdef.ApplicationDef
+import ru.citeck.launcher.core.config.bundle.BundleDef
+import ru.citeck.launcher.core.config.bundle.BundleNotFoundException
+import ru.citeck.launcher.core.config.bundle.BundlesService
 import ru.citeck.launcher.core.config.cloud.CloudConfigServer
 import ru.citeck.launcher.core.database.DataRepo
 import ru.citeck.launcher.core.git.GitUpdatePolicy
@@ -42,6 +45,7 @@ class NamespaceRuntime(
     val namespaceConfig: MutProp<NamespaceConfig>,
     val workspaceConfig: MutProp<WorkspaceConfig>,
     private val namespaceGenerator: NamespaceGenerator,
+    private val bundlesService: BundlesService,
     private val actionsService: ActionsService,
     private val dockerApi: DockerApi,
     private val nsRuntimeDataRepo: DataRepo,
@@ -55,6 +59,7 @@ class NamespaceRuntime(
         private const val STATE_MANUAL_STOPPED_APPS = "manualStoppedApps"
         private const val STATE_EDITED_APPS = "editedApps" // map<name, config>
         private const val STATE_EDITED_AND_LOCKED_APPS = "editedAndLockedApps" // set<name>
+        private const val STATE_BUNDLE_DEF = "bundleDef"
 
         private val RT_THREAD_IDLE_DELAY_SECONDS = listOf(1, 2, 3, 5, 8, 10)
     }
@@ -98,12 +103,26 @@ class NamespaceRuntime(
 
     private var namespaceConfigWatcher: Disposable
 
+    private var cachedBundleDef: BundleDef = BundleDef.EMPTY
+
     init {
         editedApps.putAll(nsRuntimeDataRepo[STATE_EDITED_APPS].asMap(String::class, ApplicationDef::class))
         editedAndLockedApps.addAll(nsRuntimeDataRepo[STATE_EDITED_AND_LOCKED_APPS].asStrList())
         detachedApps.addAll(nsRuntimeDataRepo[STATE_MANUAL_STOPPED_APPS].asStrList())
 
-        namespaceConfigWatcher = namespaceConfig.watch { before, after ->
+        val bundleDefFromRepo = nsRuntimeDataRepo[STATE_BUNDLE_DEF]
+        if (bundleDefFromRepo.isEmpty()) {
+            cachedBundleDef = BundleDef.EMPTY
+        } else {
+            try {
+                cachedBundleDef = bundleDefFromRepo.getAsNotNull(BundleDef::class)
+            } catch (e: Throwable) {
+                log.error(e) { "Bundle from repo reading failed" }
+                cachedBundleDef = BundleDef.EMPTY
+            }
+        }
+
+        namespaceConfigWatcher = namespaceConfig.watch { _, _ ->
             generateNs(GitUpdatePolicy.ALLOWED_IF_NOT_EXISTS)
         }
 
@@ -616,7 +635,29 @@ class NamespaceRuntime(
 
     private fun generateNs(updatePolicy: GitUpdatePolicy) {
 
-        val newGenRes = namespaceGenerator.generate(namespaceConfig.getValue(), updatePolicy, detachedApps)
+        val nsConfig = namespaceConfig.getValue()
+        val bundleDef = try {
+            bundlesService.getBundleByRef(nsConfig.bundleRef, updatePolicy)
+        } catch (e: Throwable) {
+            if (e is BundleNotFoundException) {
+                log.warn { "Bundle doesn't found by ref ${nsConfig.bundleRef}. We will use cached definition." }
+            } else {
+                log.error(e) { "Bundle loading error. Ref: ${nsConfig.bundleRef}. We will use cached definition." }
+            }
+            if (cachedBundleDef.isEmpty()) {
+                val latestBundleRef = bundlesService.getLatestRepoBundle(nsConfig.bundleRef.repo)
+                bundlesService.getBundleByRef(latestBundleRef)
+            } else {
+                cachedBundleDef
+            }
+        }
+
+        if (bundleDef != cachedBundleDef) {
+            cachedBundleDef = bundleDef
+            nsRuntimeDataRepo[STATE_BUNDLE_DEF] = bundleDef
+        }
+
+        val newGenRes = namespaceGenerator.generate(namespaceConfig.getValue(), updatePolicy, bundleDef, detachedApps)
         val currentRuntimesByName = appRuntimes.getValue().associateByTo(mutableMapOf()) { it.name }
         val newRuntimes = ArrayList<AppRuntime>()
 

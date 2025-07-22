@@ -213,6 +213,7 @@ object JournalSelectDialog {
                             text = row.record.name,
                             modifier = Modifier.padding(0.dp),
                             fontSize = 1.1.em,
+                            minWidth = 500.dp,
                             maxWidth = 500.dp
                         )
                     }

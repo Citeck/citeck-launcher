@@ -209,7 +209,8 @@ open class FormDialog {
             return
         }
         if (component is ComponentSpec.Field<*>) {
-            LimitedText(component.label + ":", maxWidth = dialogWidth * 0.3f)
+            val width = dialogWidth * 0.3f
+            LimitedText(component.label + ":", minWidth = width, maxWidth = width)
         }
         when (component) {
             is ComponentSpec.Text -> {

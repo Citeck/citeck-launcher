@@ -1,3 +1,4 @@
+import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 import groovy.json.JsonOutput
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
@@ -8,6 +9,7 @@ plugins {
     id("org.jetbrains.compose")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jlleitschuh.gradle.ktlint")
+    id("com.gradleup.shadow")
 }
 
 group = "ru.citeck.launcher"
@@ -19,10 +21,33 @@ repositories {
     maven("https://maven.pkg.jetbrains.space/public/p/compose/dev")
     google()
 }
+val targetOs = findProperty("targetOs") as String? ?: "current"
 
 dependencies {
 
-    implementation(compose.desktop.currentOs)
+    when (targetOs) {
+        "macos" -> {
+            implementation(compose.desktop.macos_x64)
+            implementation(compose.desktop.macos_arm64)
+        }
+        "macos_x64" -> implementation(compose.desktop.macos_x64)
+        "macos_arm64" -> implementation(compose.desktop.macos_arm64)
+        "linux" -> {
+            implementation(compose.desktop.linux_x64)
+            implementation(compose.desktop.linux_arm64)
+        }
+        "linux_x64" -> implementation(compose.desktop.linux_x64)
+        "linux_arm64" -> implementation(compose.desktop.linux_arm64)
+        "windows" -> {
+            implementation(compose.desktop.windows_x64)
+            implementation(compose.desktop.windows_arm64)
+        }
+        "windows_x64" -> implementation(compose.desktop.windows_x64)
+        "windows_arm64" -> implementation(compose.desktop.windows_arm64)
+        "current" -> implementation(compose.desktop.currentOs)
+        else -> error("Unknown targetOs: $targetOs")
+    }
+
     implementation(compose.components.resources)
     implementation(compose.materialIconsExtended)
     implementation(compose.material3)
@@ -52,12 +77,8 @@ dependencies {
     implementation("io.ktor:ktor-client-core:$ktorV")
     implementation("io.ktor:ktor-client-cio:$ktorV")
 
-    testImplementation("org.junit.jupiter:junit-jupiter-api:5.13.1")
-    testImplementation("org.junit.jupiter:junit-jupiter-engine:5.13.1")
-}
-
-tasks.withType(Test::class.java) {
-    useJUnitPlatform()
+    testImplementation("org.assertj:assertj-core:3.27.3")
+    testImplementation(kotlin("test"))
 }
 
 val generatedResources by lazy {
@@ -135,6 +156,14 @@ compose.desktop {
     }
 }
 
+configurations.all {
+    resolutionStrategy {
+        val kotlinV = project.properties["kotlin.version"]
+        force("org.jetbrains.kotlin:kotlin-reflect:$kotlinV")
+        force("org.jetbrains.kotlin:kotlin-stdlib:$kotlinV")
+    }
+}
+
 java {
     sourceCompatibility = JavaVersion.VERSION_21
     targetCompatibility = JavaVersion.VERSION_21
@@ -150,4 +179,19 @@ tasks.jar {
     dependsOn(tasks.named("addKtlintFormatGitPreCommitHook"))
 }
 
-// zip -d file.jar 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*.DSA'
+tasks.named<ShadowJar>("shadowJar") {
+    dependsOn(configurations)
+    mergeServiceFiles()
+    isReproducibleFileOrder = true
+    archiveClassifier = null as String?
+    archiveVersion = project.version.toString()
+    archiveBaseName = project.name + "-" + targetOs
+
+    layout.buildDirectory.file("compose/jars").get().asFile.also { destination ->
+        if (!destination.exists()) destination.parentFile?.mkdirs()
+        destinationDirectory = destination
+    }
+    manifest {
+        attributes("Main-Class" to "ru.citeck.launcher.MainKt")
+    }
+}

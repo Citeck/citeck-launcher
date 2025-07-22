@@ -1,5 +1,6 @@
 package ru.citeck.launcher.core.namespace
 
+import ru.citeck.launcher.core.config.bundle.BundlesService
 import ru.citeck.launcher.core.entity.EntityRef
 import ru.citeck.launcher.view.form.FormMode
 import ru.citeck.launcher.view.form.spec.ComponentSpec.NameField
@@ -18,7 +19,7 @@ object NamespaceEntityDef {
     const val FORM_FIELD_AUTH_TYPE = "authenticationType"
     const val FORM_FIELD_AUTH_USERS = "authenticationUsers"
 
-    val formSpec = FormSpec(
+    fun formSpec(bundlesService: BundlesService) = FormSpec(
         "Namespace",
         components = listOf(
             NameField(),
@@ -43,6 +44,10 @@ object NamespaceEntityDef {
                         ?.bundlesService
                         ?.getRepoBundles(ctx.getStrValue(FORM_FIELD_BUNDLES_REPO))
                         ?.map { SelectField.Option(it.key, it.key) } ?: emptyList()
+                },
+                onManualUpdate = { ctx ->
+                    val repo = ctx.getStrValue(FORM_FIELD_BUNDLES_REPO)
+                    bundlesService.updateBundlesRepo(repo)
                 }
             ).mandatory().dependsOn(FORM_FIELD_BUNDLES_REPO),
             SelectField(
@@ -59,7 +64,7 @@ object NamespaceEntityDef {
                 FORM_FIELD_AUTH_TYPE,
                 "Authentication Type",
                 "",
-                options = { ctx ->
+                options = {
                     NamespaceConfig.AuthenticationType.entries.map {
                         SelectField.Option(it.name, it.name)
                     }
