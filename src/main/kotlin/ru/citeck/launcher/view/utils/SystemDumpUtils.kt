@@ -10,7 +10,7 @@ import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.file.CiteckFiles
 import ru.citeck.launcher.core.utils.file.FileUtils
 import ru.citeck.launcher.core.utils.json.Json
-import ru.citeck.launcher.view.dialog.GlobalLoadingDialog
+import ru.citeck.launcher.view.dialog.LoadingDialog
 import java.awt.Desktop
 import java.io.PrintWriter
 import java.lang.management.LockInfo
@@ -35,13 +35,12 @@ object SystemDumpUtils {
     }
 
     fun dumpSystemInfo(basic: Boolean = false) {
-        val closeLoadingDialog = GlobalLoadingDialog.show()
-        Thread.ofPlatform().name("sys-info-dump").start {
-            try {
-                exportSystemInfoImpl(basic)
-            } finally {
-                closeLoadingDialog()
-            }
+        val closeLoadingDialog = LoadingDialog.show()
+        try {
+            Thread.sleep(10_000)
+            exportSystemInfoImpl(basic)
+        } finally {
+            closeLoadingDialog()
         }
     }
 

@@ -42,8 +42,8 @@ import ru.citeck.launcher.view.action.CiteckIconAction
 import ru.citeck.launcher.view.commons.CiteckTooltipArea
 import ru.citeck.launcher.view.commons.LimitedText
 import ru.citeck.launcher.view.dialog.AppDefEditDialog
-import ru.citeck.launcher.view.dialog.GlobalErrorDialog
-import ru.citeck.launcher.view.dialog.GlobalLoadingDialog
+import ru.citeck.launcher.view.dialog.ErrorDialog
+import ru.citeck.launcher.view.dialog.LoadingDialog
 import ru.citeck.launcher.view.drawable.CpImage
 import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog
 import ru.citeck.launcher.view.form.exception.FormCancelledException
@@ -175,7 +175,7 @@ fun NamespaceScreen(
                             nsActionInProgress.value = true
                             Thread.ofPlatform().start {
                                 runBlocking {
-                                    GlobalErrorDialog.doActionSafe({
+                                    ErrorDialog.doActionSafe({
                                         nsRuntime.updateAndStart(false)
                                     }, { "Namespace start error" }, {})
                                 }
@@ -204,7 +204,7 @@ fun NamespaceScreen(
                             Thread.ofPlatform().start {
                                 try {
                                     runBlocking {
-                                        GlobalErrorDialog.doActionSafe({
+                                        ErrorDialog.doActionSafe({
                                             nsRuntime.updateAndStart(true)
                                         }, { "Namespace start error" }, {})
                                     }
@@ -223,7 +223,7 @@ fun NamespaceScreen(
                             nsActionInProgress.value = true
                             Thread.ofPlatform().start {
                                 runBlocking {
-                                    GlobalErrorDialog.doActionSafe({
+                                    ErrorDialog.doActionSafe({
                                         nsRuntime.stop()
                                     }, { "Namespace stop error" }, {})
                                 }
@@ -401,10 +401,10 @@ fun NamespaceScreen(
                         onClick = {
                             nsActionInProgress.value = true
                             val status = ActionStatus.Mut()
-                            val closeLoading = GlobalLoadingDialog.show(status)
+                            val closeLoading = LoadingDialog.show(status)
                             Thread.ofPlatform().start {
                                 runBlocking {
-                                    GlobalErrorDialog.doActionSafe<Unit>({
+                                    ErrorDialog.doActionSafe({
                                         val snapshotsDir = NamespacesService.getNamespaceDir(nsRuntime.namespaceRef)
                                             .resolve("snapshots")
                                         services.dockerApi.exportSnapshot(
@@ -453,7 +453,9 @@ fun NamespaceScreen(
                         ActionIcon.EXCLAMATION_TRIANGLE,
                         "Export System Info"
                     ) {
-                        SystemDumpUtils.dumpSystemInfo()
+                        Thread.ofPlatform().start {
+                            SystemDumpUtils.dumpSystemInfo()
+                        }
                     }
                 )
             }

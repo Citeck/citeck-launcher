@@ -12,7 +12,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
-import ru.citeck.launcher.view.dialog.GlobalErrorDialog
+import ru.citeck.launcher.view.dialog.ErrorDialog
 import ru.citeck.launcher.view.drawable.CpIcon
 import ru.citeck.launcher.view.table.CiteckIconButton
 
@@ -64,7 +64,7 @@ fun <T> CiteckIconAction(
 ) {
     CiteckIconButton(modifier = modifier, enabled = enabled, onClick = {
         actionsCoroutineScope.launch {
-            GlobalErrorDialog.doActionSafe(
+            ErrorDialog.doActionSafe(
                 { actionDesc.action.invoke(actionParam) },
                 { "Action '${actionDesc.id}' failed" },
                 { afterAction.invoke(actionParam) }

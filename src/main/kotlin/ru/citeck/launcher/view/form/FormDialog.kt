@@ -1,14 +1,12 @@
 package ru.citeck.launcher.view.form
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.*
@@ -17,11 +15,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import ru.citeck.launcher.core.LauncherServices
 import ru.citeck.launcher.core.WorkspaceServices
 import ru.citeck.launcher.core.entity.EntitiesService
 import ru.citeck.launcher.core.utils.data.DataValue
@@ -36,11 +33,10 @@ import ru.citeck.launcher.view.form.spec.FormSpec
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-open class FormDialog {
-
-    private lateinit var showDialog: (InternalParams) -> (() -> Unit)
+object FormDialog : CiteckDialog<FormDialog.InternalParams>() {
 
     fun show(
+        launcherServices: LauncherServices,
         spec: FormSpec,
         mode: FormMode = FormMode.CREATE,
         data: DataValue = DataValue.NULL,
@@ -52,6 +48,51 @@ open class FormDialog {
                 spec = spec,
                 formMode = mode,
                 data = data,
+                entitiesService = launcherServices.entitiesService,
+                workspaceServices = null,
+                onSubmit = onSubmit,
+                onCancel = onCancel
+            )
+        )
+    }
+
+    fun show(
+        entitiesService: EntitiesService,
+        workspaceServices: WorkspaceServices?,
+        spec: FormSpec,
+        mode: FormMode = FormMode.CREATE,
+        data: DataValue = DataValue.NULL,
+        onCancel: () -> Unit,
+        onSubmit: (DataValue, onComplete: () -> Unit) -> Unit
+    ) {
+        showDialog(
+            InternalParams(
+                spec = spec,
+                formMode = mode,
+                data = data,
+                entitiesService = entitiesService,
+                workspaceServices = workspaceServices,
+                onSubmit = onSubmit,
+                onCancel = onCancel
+            )
+        )
+    }
+
+    fun show(
+        workspaceServices: WorkspaceServices,
+        spec: FormSpec,
+        mode: FormMode = FormMode.CREATE,
+        data: DataValue = DataValue.NULL,
+        onCancel: () -> Unit,
+        onSubmit: (DataValue, onComplete: () -> Unit) -> Unit
+    ) {
+        showDialog(
+            InternalParams(
+                spec = spec,
+                formMode = mode,
+                data = data,
+                entitiesService = workspaceServices.entitiesService,
+                workspaceServices = workspaceServices,
                 onSubmit = onSubmit,
                 onCancel = onCancel
             )
@@ -59,9 +100,38 @@ open class FormDialog {
     }
 
     suspend fun show(
+        workspaceServices: WorkspaceServices,
         spec: FormSpec,
         mode: FormMode = FormMode.CREATE,
         data: DataValue = DataValue.NULL
+    ): DataValue {
+        return show(workspaceServices.entitiesService, workspaceServices, spec, mode, data)
+    }
+
+    suspend fun show(
+        entitiesService: EntitiesService,
+        spec: FormSpec,
+        mode: FormMode = FormMode.CREATE,
+        data: DataValue = DataValue.NULL
+    ): DataValue {
+        return show(entitiesService, null, spec, mode, data)
+    }
+
+    suspend fun show(
+        launcherServices: LauncherServices,
+        spec: FormSpec,
+        mode: FormMode = FormMode.CREATE,
+        data: DataValue = DataValue.NULL
+    ): DataValue {
+        return show(launcherServices.entitiesService, null, spec, mode, data)
+    }
+
+    suspend fun show(
+        entitiesService: EntitiesService,
+        workspaceServices: WorkspaceServices?,
+        spec: FormSpec,
+        mode: FormMode = FormMode.CREATE,
+        data: DataValue = DataValue.NULL,
     ): DataValue {
         return suspendCancellableCoroutine { continuation ->
             showDialog(
@@ -69,6 +139,8 @@ open class FormDialog {
                     spec = spec,
                     formMode = mode,
                     data = data,
+                    entitiesService = entitiesService,
+                    workspaceServices = workspaceServices,
                     onSubmit = { data, onComplete ->
                         continuation.resume(data)
                         onComplete()
@@ -80,94 +152,72 @@ open class FormDialog {
     }
 
     @Composable
-    fun FormDialog(
-        statesList: SnapshotStateList<CiteckDialogState>,
-        entitiesService: EntitiesService,
-        workspaceServices: WorkspaceServices? = null
-    ) {
-        showDialog = CiteckDialog(statesList) { params, closeDialog ->
-
-            val coroutineScope = rememberCoroutineScope()
-            val formContext = remember {
-                val ctx = FormContext(
-                    params.spec,
-                    params.formMode,
-                    entitiesService,
-                    workspaceServices
-                ) {
-                    val invalidFields = getInvalidFields()
-                    if (invalidFields.isNotEmpty()) {
-                        coroutineScope.launch {
-                            GlobalMessageDialog.show(
-                                GlobalMsgDialogParams(
-                                    "Invalid form fields:",
-                                    invalidFields.entries.joinToString("\n") {
-                                        it.key + ": " + it.value
-                                    }
-                                )
-                            )
-                        }
-                    } else {
-                        Thread.ofPlatform().start {
-                            try {
-                                params.onSubmit(this.getValues()) {
-                                    closeDialog()
-                                }
-                            } catch (e: Throwable) {
-                                GlobalErrorDialog.show(GlobalErrorDialog.Params(e) {})
-                            }
-                        }
-                    }
-                }
-                val dataKeysWithFields = HashSet<String>()
-                params.spec.forEachField {
-                    val value = if (params.data.has(it.key)) {
-                        dataKeysWithFields.add(it.key)
-                        Json.convertOrNull(params.data[it.key], Any::class)
-                    } else {
-                        it.defaultValue
-                    }
-                    ctx.setValue(it.key, value)
-                }
-                params.data.forEach { key, value ->
-                    if (!dataKeysWithFields.contains(key)) {
-                        ctx.setValue(key, Json.convertOrNull(value, Any::class))
-                    }
-                }
-                ctx
-            }
-            val dialogWidth = remember {
-                when (params.spec.width) {
-                    FormSpec.Width.SMALL -> 600.dp
-                    FormSpec.Width.MEDIUM -> 800.dp
-                    FormSpec.Width.LARGE -> 1000.dp
-                }
-            }
-
-            Dialog(
-                properties = DialogProperties(
-                    usePlatformDefaultWidth = false
-                ),
-                onDismissRequest = {}
+    override fun render(params: InternalParams, closeDialog: () -> Unit) {
+        val coroutineScope = rememberCoroutineScope()
+        val formContext = remember {
+            val ctx = FormContext(
+                params.spec,
+                params.formMode,
+                params.entitiesService,
+                params.workspaceServices
             ) {
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    tonalElevation = 0.dp,
-                    modifier = Modifier.width(dialogWidth).padding(5.dp)
-                ) {
-                    Column(modifier = Modifier.padding(15.dp)) {
-                        if (params.spec.label.isNotEmpty()) {
-                            Text(
-                                text = params.spec.label,
-                                style = MaterialTheme.typography.titleLarge
+                val invalidFields = getInvalidFields()
+                if (invalidFields.isNotEmpty()) {
+                    coroutineScope.launch {
+                        GlobalMessageDialog.show(
+                            GlobalMsgDialogParams(
+                                "Invalid form fields:",
+                                invalidFields.entries.joinToString("\n") {
+                                    it.key + ": " + it.value
+                                }
                             )
-                            Spacer(modifier = Modifier.height(16.dp))
+                        )
+                    }
+                } else {
+                    Thread.ofPlatform().start {
+                        try {
+                            params.onSubmit(this.getValues()) {
+                                closeDialog()
+                            }
+                        } catch (e: Throwable) {
+                            ErrorDialog.show(e)
                         }
-                        renderComponents(params.spec.components, dialogWidth, formContext, coroutineScope, entitiesService)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        renderFormButtons(params, closeDialog, formContext)
                     }
                 }
+            }
+            val dataKeysWithFields = HashSet<String>()
+            params.spec.forEachField {
+                val value = if (params.data.has(it.key)) {
+                    dataKeysWithFields.add(it.key)
+                    Json.convertOrNull(params.data[it.key], Any::class)
+                } else {
+                    it.defaultValue
+                }
+                ctx.setValue(it.key, value)
+            }
+            params.data.forEach { key, value ->
+                if (!dataKeysWithFields.contains(key)) {
+                    ctx.setValue(key, Json.convertOrNull(value, Any::class))
+                }
+            }
+            ctx
+        }
+        val dialogWidth = remember {
+            when (params.spec.width) {
+                FormSpec.Width.SMALL -> 600.dp
+                FormSpec.Width.MEDIUM -> 800.dp
+                FormSpec.Width.LARGE -> 1000.dp
+            }
+        }
+
+        content {
+            if (params.spec.label.isNotEmpty()) {
+                title(params.spec.label)
+            }
+            renderComponents(params.spec.components, dialogWidth, formContext, coroutineScope, params.entitiesService)
+
+            buttonsRow {
+                renderFormButtons(params, closeDialog, formContext)
             }
         }
     }
@@ -354,53 +404,28 @@ open class FormDialog {
     }
 
     @Composable
-    private fun renderFormButtons(
+    private fun ButtonsRowContext.renderFormButtons(
         params: InternalParams,
         closeDialog: () -> Unit,
         formContext: FormContext
     ) {
-        val buttonsEnabled = remember { mutableStateOf(true) }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Start
-        ) {
-            Button(
-                enabled = buttonsEnabled.value,
-                onClick = {
-                    buttonsEnabled.value = false
-                    try {
-                        params.onCancel()
-                        closeDialog()
-                    } finally {
-                        buttonsEnabled.value = true
-                    }
-                }
-            ) {
-                Text("Cancel")
-            }
-            Spacer(modifier = Modifier.weight(1f))
-            // Spacer(modifier = Modifier.width(8.dp))
-            Button(
-                enabled = buttonsEnabled.value,
-                onClick = {
-                    buttonsEnabled.value = false
-                    try {
-                        formContext.submit()
-                    } finally {
-                        buttonsEnabled.value = true
-                    }
-                }
-            ) {
-                Text("Confirm")
-            }
+        button("Cancel") {
+            params.onCancel()
+            closeDialog()
+        }
+        spacer()
+        button("Confirm") {
+            formContext.submit()
         }
     }
 
     @Stable
-    private class InternalParams(
+    class InternalParams(
         val spec: FormSpec,
         val formMode: FormMode,
         val data: DataValue,
+        val entitiesService: EntitiesService,
+        val workspaceServices: WorkspaceServices? = null,
         val onSubmit: (DataValue, onComplete: () -> Unit) -> Unit,
         val onCancel: () -> Unit
     )

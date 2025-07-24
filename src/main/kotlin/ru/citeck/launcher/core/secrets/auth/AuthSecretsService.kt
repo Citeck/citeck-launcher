@@ -8,7 +8,7 @@ import ru.citeck.launcher.core.entity.EntityIdType
 import ru.citeck.launcher.core.namespace.runtime.actions.AuthenticationCancelled
 import ru.citeck.launcher.core.secrets.storage.SecretsStorage
 import ru.citeck.launcher.core.utils.json.Json
-import ru.citeck.launcher.view.form.GlobalFormDialog
+import ru.citeck.launcher.view.form.FormDialog
 import ru.citeck.launcher.view.form.exception.FormCancelledException
 import ru.citeck.launcher.view.form.spec.ComponentSpec
 import ru.citeck.launcher.view.form.spec.FormSpec
@@ -23,6 +23,7 @@ class AuthSecretsService {
 
     private lateinit var secrets: SecretsMap
 
+    private lateinit var launcherServices: LauncherServices
     private lateinit var secretsStorage: SecretsStorage
 
     private val semaphore = Semaphore(1)
@@ -30,6 +31,7 @@ class AuthSecretsService {
     private val initialized = AtomicBoolean(false)
 
     fun init(services: LauncherServices) {
+        this.launcherServices = services
         secretsStorage = services.secretsStorage
     }
 
@@ -105,7 +107,8 @@ class AuthSecretsService {
             val secret = try {
                 when (params.type) {
                     AuthType.BASIC -> {
-                        val pwdData = GlobalFormDialog.show(
+                        val pwdData = FormDialog.show(
+                            launcherServices,
                             FormSpec(
                                 "Login",
                                 components = listOf(
@@ -123,7 +126,8 @@ class AuthSecretsService {
                         )
                     }
                     AuthType.TOKEN -> {
-                        val pwdData = GlobalFormDialog.show(
+                        val pwdData = FormDialog.show(
+                            launcherServices,
                             FormSpec(
                                 "Token",
                                 components = listOf(

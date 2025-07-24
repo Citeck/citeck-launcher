@@ -5,7 +5,7 @@ import ru.citeck.launcher.core.WorkspaceServices
 import ru.citeck.launcher.core.git.GitRepoProps
 import ru.citeck.launcher.core.git.GitUpdatePolicy
 import ru.citeck.launcher.core.workspace.WorkspacesService
-import ru.citeck.launcher.view.dialog.GlobalErrorDialog
+import ru.citeck.launcher.view.dialog.ErrorDialog
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -42,7 +42,7 @@ class BundlesService {
                 .toList()
         } catch (e: Throwable) {
             log.error(e) { "getRepoBundles for '$repoId' failed'" }
-            GlobalErrorDialog.show(GlobalErrorDialog.Params(e) {})
+            ErrorDialog.show(e)
             return emptyList()
         }
     }

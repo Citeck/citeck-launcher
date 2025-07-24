@@ -8,10 +8,7 @@ import ru.citeck.launcher.core.database.Repository
 import ru.citeck.launcher.core.entity.EntityIdType
 import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.json.Json
-import ru.citeck.launcher.view.dialog.AskMasterPasswordDialog
-import ru.citeck.launcher.view.dialog.CreateMasterPasswordDialog
-import ru.citeck.launcher.view.dialog.GlobalMessageDialog
-import ru.citeck.launcher.view.dialog.GlobalMsgDialogParams
+import ru.citeck.launcher.view.dialog.*
 import kotlin.coroutines.resume
 import kotlin.reflect.KClass
 
@@ -56,7 +53,13 @@ class SecretsStorage {
             }
             if (!secrets.isObject()) {
                 runBlocking {
-                    GlobalMessageDialog.show(GlobalMsgDialogParams("Invalid password", ""))
+                    GlobalMessageDialog.show(
+                        GlobalMsgDialogParams(
+                            "Invalid password",
+                            "",
+                            width = DialogWidth.EXTRA_SMALL
+                        )
+                    )
                 }
                 false
             } else {
@@ -108,7 +111,7 @@ class SecretsStorage {
         if (masterKey.isNotEmpty()) {
             return
         }
-        val masterKeyPwd = CreateMasterPasswordDialog.showSuspend()
+        val masterKeyPwd = CreateMasterPwdDialog.showSuspend()
         this.masterKey = SecretsEncryptor.deriveKey(masterKeyPwd, keyParams)
         writeSecretsToDisk()
     }

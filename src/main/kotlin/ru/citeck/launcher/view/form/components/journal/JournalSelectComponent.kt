@@ -42,7 +42,8 @@ fun JournalSelectComponent(
                     JournalSelectDialog.Params(
                         component.entityType,
                         selectedEntities.value.map { it.ref },
-                        component.multiple
+                        component.multiple,
+                        entitiesService = entitiesService
                     )
                 )
                 selectedEntities.value = entitiesService.getByRefs<Any>(newEntities)

@@ -8,7 +8,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import ru.citeck.launcher.view.dialog.GlobalLoadingDialog
+import ru.citeck.launcher.view.dialog.LoadingDialog
 import ru.citeck.launcher.view.drawable.CpIcon
 import ru.citeck.launcher.view.form.FormContext
 import ru.citeck.launcher.view.form.spec.ComponentSpec
@@ -63,7 +63,7 @@ fun SelectComponent(formContext: FormContext, component: ComponentSpec.SelectFie
                 modifier = Modifier.size(30.dp)
                     .padding(start = 5.dp, top = 2.dp, bottom = 2.dp)
                     .clickable {
-                        val closeLoading = GlobalLoadingDialog.show()
+                        val closeLoading = LoadingDialog.show()
                         Thread.ofPlatform().name("manual-select-update").start {
                             try {
                                 onManualUpdate(formContext)

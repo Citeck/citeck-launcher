@@ -20,9 +20,6 @@ import ru.citeck.launcher.core.utils.file.CiteckFiles
 import ru.citeck.launcher.core.utils.json.Json
 import ru.citeck.launcher.core.workspace.WorkspaceDto
 import ru.citeck.launcher.view.dialog.*
-import ru.citeck.launcher.view.form.GlobalFormDialog
-import ru.citeck.launcher.view.form.WorkspaceFormDialog
-import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog
 import ru.citeck.launcher.view.logs.GlobalLogsWindow
 import ru.citeck.launcher.view.screen.LoadingScreen
 import ru.citeck.launcher.view.screen.NamespaceScreen
@@ -79,7 +76,6 @@ fun main(@Suppress("unused") args: Array<String>) {
         }
 
         val windowVisible = remember { mutableStateOf(true) }
-        val dialogStates: SnapshotStateList<CiteckDialogState> = remember { mutableStateListOf() }
         val additionalWindowStates: SnapshotStateList<AdditionalWindowState> = remember { mutableStateListOf() }
 
         var launcherVersion: String = remember {
@@ -133,23 +129,16 @@ fun main(@Suppress("unused") args: Array<String>) {
                         servicesRes
                     }
                 }
+
+                CiteckDialog.renderDialogs()
+
                 val services = servicesValue.value
                 if (services == null) {
                     LoadingScreen()
                 } else if (services.isSuccess) {
 
-                    GlobalConfirmDialog.ConfirmDialog(dialogStates)
-                    GlobalLoadingDialog.LoadingDialog(dialogStates)
-                    GlobalErrorDialog.ErrorDialog(dialogStates)
                     val servicesVal = services.getOrThrow()
 
-                    GlobalFormDialog.FormDialog(dialogStates, servicesVal.entitiesService)
-                    JournalSelectDialog.JournalDialog(dialogStates, servicesVal.entitiesService)
-                    GlobalMessageDialog.MessageDialog(dialogStates)
-                    AskMasterPasswordDialog.AskMasterPwd(dialogStates)
-                    CreateMasterPasswordDialog.CreateMasterPwd(dialogStates)
-                    AppDefEditDialog.EditDialog(dialogStates)
-                    GlobalGitPullErrorDialog.PullErrorDialog(dialogStates)
                     GlobalLogsWindow.LogsDialog(additionalWindowStates, logo)
                     remember {
                         SystemDumpUtils.init(servicesVal)
@@ -162,16 +151,9 @@ fun main(@Suppress("unused") args: Array<String>) {
                         CiteckSystemTray.listenLmbClick { takeFocus() }
                         AppLocalSocket.listenMessages(AppLocalSocket.TakeFocusCommand::class) { takeFocus() }
                     }
-                    App(services.getOrThrow(), dialogStates)
+                    App(services.getOrThrow())
                 } else {
-
-                    GlobalErrorDialog.ErrorDialog(
-                        dialogStates,
-                        GlobalErrorDialog.Params(services.exceptionOrNull()!!, onClose = ::exitApplication)
-                    )
-                }
-                for (dialogState in dialogStates) {
-                    dialogState.content.invoke()
+                    ErrorDialog.show(services.exceptionOrNull()!!) { exitApplication() }
                 }
             }
             for (additionalWindowState in additionalWindowStates) {
@@ -182,7 +164,7 @@ fun main(@Suppress("unused") args: Array<String>) {
 }
 
 @Composable
-fun App(services: LauncherServices, dialogStates: SnapshotStateList<CiteckDialogState>) {
+fun App(services: LauncherServices) {
 
     val error = remember { mutableStateOf<Throwable?>(null) }
 
@@ -216,19 +198,14 @@ fun App(services: LauncherServices, dialogStates: SnapshotStateList<CiteckDialog
         wsDataState
     }
 
-    if (error.value != null) {
-        GlobalErrorDialog.ErrorDialog(
-            dialogStates,
-            GlobalErrorDialog.Params(error.value!!) {
-                exitProcess(0)
-            }
-        )
+    val errorVal = error.value
+    if (errorVal != null) {
+        ErrorDialog.show(errorVal) { exitProcess(0) }
     } else if (selectedWorkspace.value == null) {
         LoadingScreen()
     } else {
         val workspaceServices = rememberMutProp(services.getWorkspaceServices())
         workspaceServices.value?.let { wsServices ->
-            WorkspaceFormDialog.FormDialog(dialogStates, wsServices.entitiesService, wsServices)
             val selectedNamespace = rememberMutProp(wsServices, wsServices.selectedNamespace)
             if (selectedNamespace.value == null) {
                 WelcomeScreen(services, selectedWorkspace)

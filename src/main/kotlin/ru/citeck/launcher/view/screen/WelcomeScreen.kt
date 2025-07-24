@@ -26,9 +26,9 @@ import ru.citeck.launcher.core.utils.ActionStatus
 import ru.citeck.launcher.core.workspace.WorkspaceConfig.QuickStartVariant
 import ru.citeck.launcher.core.workspace.WorkspaceDto
 import ru.citeck.launcher.core.workspace.WorkspaceEntityDef
-import ru.citeck.launcher.view.dialog.GlobalErrorDialog
-import ru.citeck.launcher.view.dialog.GlobalLoadingDialog
+import ru.citeck.launcher.view.dialog.ErrorDialog
 import ru.citeck.launcher.view.dialog.GlobalMessageDialog
+import ru.citeck.launcher.view.dialog.LoadingDialog
 import ru.citeck.launcher.view.drawable.CpImage
 import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog
 import ru.citeck.launcher.view.utils.rememberMutProp
@@ -53,7 +53,8 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                         JournalSelectDialog.Params(
                             WorkspaceDto::class,
                             listOf(WorkspaceEntityDef.getRef(selectedWsValue)),
-                            false
+                            false,
+                            entitiesService = launcherServices.entitiesService
                         )
                     ) { selectedRefs ->
                         val currentRef = WorkspaceEntityDef.getRef(selectedWsValue)
@@ -237,7 +238,7 @@ private fun ColumnScope.renderQuickStartButton(
             } else {
                 Thread.ofPlatform().start {
                     ActionStatus.doWithStatus { actionStatus ->
-                        val closeLoadingDialog = GlobalLoadingDialog.show(actionStatus)
+                        val closeLoadingDialog = LoadingDialog.show(actionStatus)
                         try {
                             workspaceServices.entitiesService.createWithData(namespaceConfig)
                             val runtime = workspaceServices.getCurrentNsRuntime()
@@ -250,7 +251,7 @@ private fun ColumnScope.renderQuickStartButton(
                             }
                         } catch (e: Throwable) {
                             log.error(e) { "Quick start completed with error. Variant: $variant" }
-                            GlobalErrorDialog.show(GlobalErrorDialog.Params(e) {})
+                            ErrorDialog.show(e)
                         } finally {
                             closeLoadingDialog()
                         }

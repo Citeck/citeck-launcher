@@ -33,7 +33,9 @@ class LauncherServices {
     val secretsStorage: SecretsStorage by lazy { SecretsStorage() }
     val authSecretsService: AuthSecretsService by lazy { AuthSecretsService() }
     val gitRepoService: GitRepoService by lazy { GitRepoService() }
-    val entitiesService: EntitiesService by lazy { EntitiesService(WorkspaceDto.GLOBAL_WS_ID) }
+    val entitiesService: EntitiesService by lazy {
+        EntitiesService(WorkspaceDto.GLOBAL_WS_ID, this, null)
+    }
     val workspacesService: WorkspacesService by lazy { WorkspacesService() }
     val launcherStateService: LauncherStateService by lazy { LauncherStateService() }
 

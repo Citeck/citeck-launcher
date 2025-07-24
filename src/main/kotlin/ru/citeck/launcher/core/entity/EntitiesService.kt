@@ -3,6 +3,7 @@ package ru.citeck.launcher.core.entity
 import androidx.compose.runtime.Stable
 import kotlinx.coroutines.suspendCancellableCoroutine
 import ru.citeck.launcher.core.LauncherServices
+import ru.citeck.launcher.core.WorkspaceServices
 import ru.citeck.launcher.core.database.Database
 import ru.citeck.launcher.core.database.Repository
 import ru.citeck.launcher.core.entity.events.EntitiesEvents
@@ -16,12 +17,12 @@ import ru.citeck.launcher.core.utils.json.Json
 import ru.citeck.launcher.core.workspace.WorkspaceDto
 import ru.citeck.launcher.view.action.ActionDesc
 import ru.citeck.launcher.view.action.ActionIcon
-import ru.citeck.launcher.view.dialog.GlobalConfirmDialog
-import ru.citeck.launcher.view.dialog.GlobalLoadingDialog
+import ru.citeck.launcher.view.dialog.ConfirmDialog
+import ru.citeck.launcher.view.dialog.LoadingDialog
+import ru.citeck.launcher.view.form.FormDialog
 import ru.citeck.launcher.view.form.FormMode
-import ru.citeck.launcher.view.form.GlobalFormDialog
-import ru.citeck.launcher.view.form.WorkspaceFormDialog
 import ru.citeck.launcher.view.form.exception.FormCancelledException
+import ru.citeck.launcher.view.form.spec.FormSpec
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -29,7 +30,9 @@ import kotlin.reflect.KClass
 
 @Stable
 class EntitiesService(
-    private var workspaceId: String
+    private val workspaceId: String,
+    private var launcherServices: LauncherServices,
+    private var workspaceServices: WorkspaceServices?
 ) {
 
     companion object {
@@ -53,13 +56,25 @@ class EntitiesService(
 
     private lateinit var idCounters: Repository<String, Long>
 
-    val events = EntitiesEvents()
-
-    private val formDialog = if (workspaceId == WorkspaceDto.GLOBAL_WS_ID) {
-        GlobalFormDialog
-    } else {
-        WorkspaceFormDialog
+    private fun showForm(
+        spec: FormSpec,
+        mode: FormMode = FormMode.CREATE,
+        data: DataValue = DataValue.NULL,
+        onCancel: () -> Unit,
+        onSubmit: (DataValue, onComplete: () -> Unit) -> Unit
+    ) {
+        FormDialog.show(this, workspaceServices, spec, mode, data, onCancel, onSubmit)
     }
+
+    private suspend fun showForm(
+        spec: FormSpec,
+        mode: FormMode = FormMode.CREATE,
+        data: DataValue = DataValue.NULL
+    ): DataValue {
+        return FormDialog.show(this, workspaceServices, spec, mode, data)
+    }
+
+    val events = EntitiesEvents()
 
     fun init(services: LauncherServices) {
         this.database = services.database
@@ -177,7 +192,7 @@ class EntitiesService(
                 "Delete",
             ) {
                 val def = defWithRepo.definition
-                val confirmRes = GlobalConfirmDialog.showSuspended(
+                val confirmRes = ConfirmDialog.showSuspended(
                     "Are you sure to delete \n${def.typeName} " +
                         "'${def.getName(it.entity)} (${def.getId(it.entity)}')?"
                 )
@@ -249,7 +264,7 @@ class EntitiesService(
             definition.toFormData(initialData as T)
         }
 
-        formDialog.show(
+        showForm(
             spec = definition.createForm!!,
             mode = FormMode.CREATE,
             data = initialDataValue,
@@ -283,7 +298,7 @@ class EntitiesService(
 
             Thread.ofPlatform().name("create-entity-${definition.typeId}").start {
                 ActionStatus.doWithStatus { status ->
-                    val closeLoading = GlobalLoadingDialog.show(status)
+                    val closeLoading = LoadingDialog.show(status)
                     try {
                         database.doWithinTxn {
                             repo[idValue] = convertedEntity
@@ -369,7 +384,7 @@ class EntitiesService(
         if (!definition.idType.isValidId(editedEntityId)) {
             error("Entity can't be edited because id '$editedEntityId' is invalid. Entity: $entity")
         }
-        val newData = formDialog.show(
+        val newData = showForm(
             spec = definition.editForm ?: definition.createForm!!,
             FormMode.EDIT,
             data = currentData.copy()

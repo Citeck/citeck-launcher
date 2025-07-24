@@ -19,8 +19,8 @@ import ru.citeck.launcher.core.secrets.auth.AuthType
 import ru.citeck.launcher.core.secrets.auth.SecretDef
 import ru.citeck.launcher.core.utils.LongTaskUtils
 import ru.citeck.launcher.core.utils.json.Json
+import ru.citeck.launcher.view.dialog.GitPullErrorDialog
 import ru.citeck.launcher.view.dialog.GitPullRepoDialogRes
-import ru.citeck.launcher.view.dialog.GlobalGitPullErrorDialog
 import java.io.File
 import java.time.Instant
 import java.time.OffsetDateTime
@@ -81,7 +81,7 @@ class GitRepoService {
                     if (nextFeedbackRepeats <= 0 || System.currentTimeMillis() >= nextFeedbackTime) {
                         val allowSkip = (repositoriesInfo[relativePath]?.lastSyncTimeMs ?: 0L) > 0L
                         val dialogRes = runBlocking {
-                            GlobalGitPullErrorDialog.showSuspend(
+                            GitPullErrorDialog.showSuspend(
                                 repoProps.url,
                                 ExceptionUtils.getRootCauseMessage(e) ?: "no-msg",
                                 allowSkip,

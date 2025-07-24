@@ -42,7 +42,9 @@ class WorkspaceServices(
 
     val licenseService: LicenseService by lazy { LicenseService() }
 
-    val entitiesService: EntitiesService by lazy { EntitiesService(workspace.id) }
+    val entitiesService: EntitiesService by lazy {
+        EntitiesService(workspace.id, launcherServices, this)
+    }
 
     val gitRepoService: GitRepoService get() = launcherServices.gitRepoService
     val dockerApi: DockerApi get() = launcherServices.dockerApi

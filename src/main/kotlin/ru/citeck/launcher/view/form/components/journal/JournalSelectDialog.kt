@@ -2,20 +2,15 @@ package ru.citeck.launcher.view.form.components.journal
 
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
 import ru.citeck.launcher.core.entity.EntitiesService
@@ -25,19 +20,15 @@ import ru.citeck.launcher.core.utils.promise.Promise
 import ru.citeck.launcher.core.utils.promise.Promises
 import ru.citeck.launcher.view.action.CiteckIconAction
 import ru.citeck.launcher.view.commons.LimitedText
-import ru.citeck.launcher.view.dialog.CiteckDialog
-import ru.citeck.launcher.view.dialog.CiteckDialogState
-import ru.citeck.launcher.view.dialog.GlobalErrorDialog
-import ru.citeck.launcher.view.dialog.GlobalLoadingDialog
+import ru.citeck.launcher.view.dialog.*
+import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog.InternalParams
 import ru.citeck.launcher.view.form.exception.FormCancelledException
 import ru.citeck.launcher.view.table.table.DataTable
 import java.util.concurrent.CompletableFuture
 import kotlin.coroutines.resume
 import kotlin.reflect.KClass
 
-object JournalSelectDialog {
-
-    private lateinit var showDialog: (InternalParams) -> (() -> Unit)
+object JournalSelectDialog : CiteckDialog<InternalParams>() {
 
     suspend fun show(params: Params): List<EntityRef> {
         return suspendCancellableCoroutine { continuation ->
@@ -56,41 +47,31 @@ object JournalSelectDialog {
     }
 
     @Composable
-    fun JournalDialog(statesList: SnapshotStateList<CiteckDialogState>, defaultEntitiesService: EntitiesService) {
+    override fun render(params: InternalParams, closeDialog: () -> Unit) {
 
-        showDialog = CiteckDialog(statesList) { params, closeDialog ->
+        val entitiesService = params.params.entitiesService
 
-            val entitiesService = params.params.entitiesService ?: defaultEntitiesService
-
-            val dialogTitle = remember {
-                "Select " + entitiesService.getTypeName(params.params.entityType)
+        val dialogTitle = remember {
+            "Select " + entitiesService.getTypeName(params.params.entityType)
+        }
+        val allRecords = remember {
+            val state = mutableStateOf<List<RecordRow>>(emptyList())
+            getTableRows(entitiesService, params, params.params.selected).then {
+                state.value = it
             }
-            val allRecords = remember {
-                val state = mutableStateOf<List<RecordRow>>(emptyList())
-                getTableRows(entitiesService, params, params.params.selected).then {
-                    state.value = it
-                }
-                state
-            }
-            val isEntityCreatable = remember {
-                entitiesService.isEntityCreatable(params.params.entityType)
-            }
-            val coroutineScope = rememberCoroutineScope()
+            state
+        }
+        val isEntityCreatable = remember {
+            entitiesService.isEntityCreatable(params.params.entityType)
+        }
+        val coroutineScope = rememberCoroutineScope()
 
-            Dialog(properties = DialogProperties(usePlatformDefaultWidth = false), onDismissRequest = {}) {
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    tonalElevation = 0.dp,
-                    modifier = Modifier.width(700.dp)
-                ) {
-                    Column(modifier = Modifier.padding(15.dp)) {
-                        Text(dialogTitle, style = MaterialTheme.typography.titleLarge)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        renderTable(entitiesService, params, allRecords, closeDialog)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        renderButtons(entitiesService, coroutineScope, params, allRecords, closeDialog, isEntityCreatable)
-                    }
-                }
+        content {
+            title(dialogTitle)
+            renderTable(entitiesService, params, allRecords, closeDialog)
+            Spacer(modifier = Modifier.height(16.dp))
+            buttonsRow {
+                renderButtons(entitiesService, coroutineScope, params, allRecords, closeDialog, isEntityCreatable)
             }
         }
     }
@@ -235,7 +216,7 @@ object JournalSelectDialog {
     }
 
     @Composable
-    private fun renderButtons(
+    private fun ButtonsRowContext.renderButtons(
         entitiesService: EntitiesService,
         coroutineScope: CoroutineScope,
         params: InternalParams,
@@ -243,53 +224,40 @@ object JournalSelectDialog {
         closeDialog: () -> Unit,
         isEntityCreatable: Boolean
     ) {
-        Row(modifier = Modifier.fillMaxWidth()) {
-            Button(
-                onClick = {
-                    params.onCancel()
-                    closeDialog()
+        button("Cancel") {
+            params.onCancel()
+            closeDialog()
+        }
+        if (isEntityCreatable) {
+            button("Create") {
+                try {
+                    val createdRef = entitiesService.create(params.params.entityType)
+                    updateTableRows(entitiesService, params, records, createdRef, closeDialog)
+                } catch (e: FormCancelledException) {
+                    // do nothing
                 }
-            ) {
-                Text("Cancel")
             }
-            if (isEntityCreatable) {
-                Spacer(modifier = Modifier.width(8.dp))
-                Button(
-                    onClick = {
-                        coroutineScope.launch {
+        }
+        Spacer(modifier = Modifier.weight(1f))
+        Button(
+            onClick = {
+                Thread.ofPlatform().start {
+                    runBlocking {
+                        ErrorDialog.doActionSafe({
+                            val closeLoading = LoadingDialog.show()
                             try {
-                                val createdRef = entitiesService.create(params.params.entityType)
-                                updateTableRows(entitiesService, params, records, createdRef, closeDialog)
-                            } catch (e: FormCancelledException) {
-                                // do nothing
+                                params.onSubmit(records.value.filter { it.selected.value }.map { it.record.ref })
+                            } finally {
+                                closeLoading()
                             }
-                        }
-                    }
-                ) {
-                    Text("Create")
-                }
-            }
-            Spacer(modifier = Modifier.weight(1f))
-            Button(
-                onClick = {
-                    Thread.ofPlatform().start {
-                        runBlocking {
-                            GlobalErrorDialog.doActionSafe({
-                                val closeLoading = GlobalLoadingDialog.show()
-                                try {
-                                    params.onSubmit(records.value.filter { it.selected.value }.map { it.record.ref })
-                                } finally {
-                                    closeLoading()
-                                }
-                            }, { "Journal select submit error" }, {
-                                closeDialog()
-                            })
-                        }
+                        }, { "Journal select submit error" }, {
+                            closeDialog()
+                        })
                     }
                 }
-            ) {
-                Text("Confirm")
             }
+        ) {
+            Text("Confirm")
         }
     }
 
@@ -302,12 +270,12 @@ object JournalSelectDialog {
         val entityType: KClass<out Any>,
         val selected: List<EntityRef>,
         val multiple: Boolean,
-        val entitiesService: EntitiesService? = null,
+        val entitiesService: EntitiesService,
         val closeWhenAllRecordsDeleted: Boolean = false,
         val selectable: Boolean = true
     )
 
-    private data class InternalParams(
+    data class InternalParams(
         val params: Params,
         val onSubmit: (List<EntityRef>) -> Unit,
         val onCancel: () -> Unit
