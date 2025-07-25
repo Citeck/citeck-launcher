@@ -9,27 +9,32 @@ data class BundleKey(val rawKey: String) : Comparable<BundleKey> {
     private var suffixParts = listOf<Comparable<Comparable<*>>>()
 
     init {
-        val versionParts = ArrayList<Int>()
-        rawKey.split(".").forEach { keyPart ->
-            val intValue = keyPart.toIntOrNull()
-            if (intValue != null) {
-                versionParts.add(intValue)
-            } else {
-                var suffix = keyPart
-                val numPart = suffix.substringBefore('-', "").toIntOrNull()
-                if (numPart != null) {
-                    versionParts.add(numPart)
-                    suffix = suffix.substringAfter("-")
-                }
-                @Suppress("UNCHECKED_CAST")
-                this.suffixParts = parseSuffixParts(suffix) as List<Comparable<Comparable<*>>>
-            }
+
+        val firstNonVersionIdx = rawKey.indexOfFirst { !it.isDigit() && it != '.' }
+        val versionRawParts = if (firstNonVersionIdx == -1) {
+            rawKey.split(".")
+        } else {
+            rawKey.substring(0, firstNonVersionIdx).split(".")
         }
+        val versionParts = ArrayList<Int>()
+        versionRawParts.mapNotNullTo(versionParts) { it.toIntOrNull() }
+
         var nonZeroNumsCount = versionParts.size
         while (nonZeroNumsCount > 0 && versionParts[nonZeroNumsCount - 1] == 0) {
             nonZeroNumsCount--
         }
         this.versionParts = versionParts.subList(0, nonZeroNumsCount)
+
+        if (firstNonVersionIdx != -1) {
+            var suffixStartIdx = firstNonVersionIdx
+            if (!rawKey[suffixStartIdx].isLetterOrDigit()) {
+                suffixStartIdx++
+            }
+            if (suffixStartIdx < rawKey.length) {
+                @Suppress("UNCHECKED_CAST")
+                this.suffixParts = parseSuffixParts(rawKey.substring(suffixStartIdx)) as List<Comparable<Comparable<*>>>
+            }
+        }
     }
 
     private fun parseSuffixParts(suffix: String): List<Comparable<*>> {
@@ -37,10 +42,10 @@ data class BundleKey(val rawKey: String) : Comparable<BundleKey> {
             return emptyList()
         }
         return StringUtils.splitByGroups(suffix) {
-            if (it.isDigit()) 1 else 0
+            if (it.isDigit() || it == '.') 1 else 0
         }.map {
             if (it[0].isDigit()) {
-                (it.toIntOrNull() ?: it)
+                BundleKey(it)
             } else {
                 it
             }

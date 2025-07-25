@@ -35,9 +35,9 @@ object CreateMasterPwdDialog : CiteckDialog<CreateMasterPwdParams>() {
         content {
             title("Create your personal master password")
             Text(
-                "This password will be used to protect your secrets used by the launcher.",
-                /*textAlign = TextAlign.Center*/
+                "This password will be used to protect your secrets used by the launcher."
             )
+            Spacer(modifier = Modifier.height(20.dp))
 
             val coroutineScope = rememberCoroutineScope()
 

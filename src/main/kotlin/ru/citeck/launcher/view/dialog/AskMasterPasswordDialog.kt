@@ -56,8 +56,8 @@ object AskMasterPasswordDialog : CiteckDialog<AskMasterPwdParams>() {
             buttonsRow {
                 button("Reset Master Password and Drop All Secrets") {
                     ConfirmDialog.show(
-                        "Are you sure?" +
-                            "\nAll your secrets will be deleted from local storage"
+                        "All your secrets will be deleted from local storage",
+                        width = DialogWidth.SMALL
                     ) {
                         params.onReset()
                         closeDialog()

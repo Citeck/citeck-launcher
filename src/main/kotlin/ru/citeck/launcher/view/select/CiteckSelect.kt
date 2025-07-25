@@ -1,5 +1,6 @@
 package ru.citeck.launcher.view.select
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -55,7 +56,11 @@ fun CiteckSelect(
             contentDescription = "Select namespace"
         )
 
-        DropdownMenu(expanded = expanded.value, onDismissRequest = { expanded.value = false }) {
+        DropdownMenu(
+            expanded = expanded.value,
+            onDismissRequest = { expanded.value = false },
+            modifier = Modifier.background(MaterialTheme.colorScheme.surface)
+        ) {
             state.options.value.forEach { option ->
                 DropdownMenuItem(
                     text = { Text(option.name) },

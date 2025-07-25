@@ -37,7 +37,6 @@ object SystemDumpUtils {
     fun dumpSystemInfo(basic: Boolean = false) {
         val closeLoadingDialog = LoadingDialog.show()
         try {
-            Thread.sleep(10_000)
             exportSystemInfoImpl(basic)
         } finally {
             closeLoadingDialog()

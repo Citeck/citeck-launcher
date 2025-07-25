@@ -34,7 +34,7 @@ class VolumesRepo(
         if (workspaceServices.getCurrentNsRuntime()?.nsStatus?.getValue() == NsRuntimeStatus.STOPPED) {
             dockerApi.deleteVolume(id)
         } else {
-            error("You should stop namespace before deleting container")
+            error("You should stop namespace before deleting volume")
         }
     }
 

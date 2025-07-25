@@ -193,8 +193,9 @@ class EntitiesService(
             ) {
                 val def = defWithRepo.definition
                 val confirmRes = ConfirmDialog.showSuspended(
-                    "Are you sure to delete \n${def.typeName} " +
-                        "'${def.getName(it.entity)} (${def.getId(it.entity)}')?"
+                    "Are you sure to delete?",
+                    "ID: '${def.getId(it.entity)}'\n" +
+                        "Name: '${def.getName(it.entity)}'"
                 )
                 if (confirmRes) {
                     delete(it.entity, defWithRepo)
