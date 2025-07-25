@@ -16,7 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.*
 import io.github.oshai.kotlinlogging.KotlinLogging
 
-abstract class CiteckDialog : CiteckPopup() {
+abstract class CiteckDialog : CiteckPopup(CiteckPopupKind.DIALOG) {
 
     companion object {
 
@@ -57,7 +57,7 @@ abstract class CiteckDialog : CiteckPopup() {
                 shape = RoundedCornerShape(10.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
             ) {
-                Column(modifier = Modifier.padding(top = 15.dp, start = 20.dp, end = 20.dp, bottom = 15.dp)) {
+                Column(modifier = Modifier.padding(top = 15.dp, start = 20.dp, end = 20.dp)) {
                     render(PopupContext(this))
                 }
             }

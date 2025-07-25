@@ -17,7 +17,7 @@ import androidx.compose.ui.window.rememberWindowState
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.awt.Toolkit
 
-abstract class CiteckWindow : CiteckPopup() {
+abstract class CiteckWindow : CiteckPopup(CiteckPopupKind.WINDOW) {
 
     companion object {
 

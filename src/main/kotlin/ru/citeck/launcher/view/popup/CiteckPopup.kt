@@ -12,7 +12,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 
-abstract class CiteckPopup {
+abstract class CiteckPopup(val kind: CiteckPopupKind) {
 
     companion object {
 
@@ -30,7 +30,7 @@ abstract class CiteckPopup {
     @Composable
     abstract fun render()
 
-    protected class PopupContext(private val columnScope: ColumnScope) : ColumnScope by columnScope {
+    protected inner class PopupContext(private val columnScope: ColumnScope) : ColumnScope by columnScope {
 
         @Composable
         fun title(text: String) {
@@ -40,10 +40,22 @@ abstract class CiteckPopup {
 
         @Composable
         inline fun buttonsRow(render: @Composable ButtonsRowContext.() -> Unit) {
-            Spacer(modifier = Modifier.height(18.dp))
-            Row(modifier = Modifier.height(40.dp)) {
-                val buttonsEnabled = remember { mutableStateOf(true) }
-                render.invoke(ButtonsRowContext(this, buttonsEnabled))
+            val buttonsEnabled = remember { mutableStateOf(true) }
+            when (kind) {
+                CiteckPopupKind.DIALOG -> {
+                    Spacer(modifier = Modifier.height(18.dp))
+                    Row(modifier = Modifier.height(40.dp)) {
+                        render.invoke(ButtonsRowContext(this, buttonsEnabled))
+                    }
+                    Spacer(modifier = Modifier.height(15.dp))
+                }
+                CiteckPopupKind.WINDOW -> {
+                    Spacer(modifier = Modifier.height(5.dp))
+                    Row(modifier = Modifier.height(40.dp).padding(start = 10.dp, end = 10.dp)) {
+                        render.invoke(ButtonsRowContext(this, buttonsEnabled))
+                    }
+                    Spacer(modifier = Modifier.height(5.dp))
+                }
             }
         }
     }
