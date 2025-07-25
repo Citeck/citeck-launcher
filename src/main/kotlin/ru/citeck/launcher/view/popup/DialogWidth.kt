@@ -1,4 +1,4 @@
-package ru.citeck.launcher.view.dialog
+package ru.citeck.launcher.view.popup
 
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp

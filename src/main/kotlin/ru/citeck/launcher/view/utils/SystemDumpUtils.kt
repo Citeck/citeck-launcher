@@ -10,7 +10,7 @@ import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.file.CiteckFiles
 import ru.citeck.launcher.core.utils.file.FileUtils
 import ru.citeck.launcher.core.utils.json.Json
-import ru.citeck.launcher.view.dialog.LoadingDialog
+import ru.citeck.launcher.view.commons.dialog.LoadingDialog
 import java.awt.Desktop
 import java.io.PrintWriter
 import java.lang.management.LockInfo

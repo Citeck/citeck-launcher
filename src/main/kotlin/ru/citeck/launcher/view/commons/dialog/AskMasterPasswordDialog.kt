@@ -1,4 +1,4 @@
-package ru.citeck.launcher.view.dialog
+package ru.citeck.launcher.view.commons.dialog
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -12,16 +12,22 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import ru.citeck.launcher.view.popup.CiteckDialog
+import ru.citeck.launcher.view.popup.DialogWidth
 
-object AskMasterPasswordDialog : CiteckDialog<AskMasterPwdParams>() {
+class AskMasterPasswordDialog(
+    private val params: AskMasterPwdParams
+) : CiteckDialog() {
 
-    fun show(onSubmit: (CharArray) -> Boolean, onReset: () -> Unit) {
-        showDialog(AskMasterPwdParams(onSubmit, onReset))
+    companion object {
+        fun show(onSubmit: (CharArray) -> Boolean, onReset: () -> Unit) {
+            showDialog(AskMasterPasswordDialog(AskMasterPwdParams(onSubmit, onReset)))
+        }
     }
 
     @Composable
-    override fun render(params: AskMasterPwdParams, closeDialog: () -> Unit) {
-        content {
+    override fun render() {
+        dialog {
             title("Enter your personal master password")
 
             var passwordVisible by remember { mutableStateOf(false) }

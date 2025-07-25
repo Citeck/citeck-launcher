@@ -19,8 +19,8 @@ import ru.citeck.launcher.core.secrets.auth.AuthType
 import ru.citeck.launcher.core.secrets.auth.SecretDef
 import ru.citeck.launcher.core.utils.LongTaskUtils
 import ru.citeck.launcher.core.utils.json.Json
-import ru.citeck.launcher.view.dialog.GitPullErrorDialog
-import ru.citeck.launcher.view.dialog.GitPullRepoDialogRes
+import ru.citeck.launcher.view.commons.dialog.GitPullErrorDialog
+import ru.citeck.launcher.view.commons.dialog.GitPullRepoDialogRes
 import java.io.File
 import java.time.Instant
 import java.time.OffsetDateTime

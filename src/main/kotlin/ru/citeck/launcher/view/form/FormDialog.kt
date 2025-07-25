@@ -24,116 +24,53 @@ import ru.citeck.launcher.core.entity.EntitiesService
 import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.json.Json
 import ru.citeck.launcher.view.commons.LimitedText
-import ru.citeck.launcher.view.dialog.*
+import ru.citeck.launcher.view.commons.dialog.ErrorDialog
+import ru.citeck.launcher.view.commons.dialog.GlobalMessageDialog
+import ru.citeck.launcher.view.commons.dialog.GlobalMsgDialogParams
 import ru.citeck.launcher.view.form.components.journal.JournalSelectComponent
 import ru.citeck.launcher.view.form.components.select.SelectComponent
 import ru.citeck.launcher.view.form.exception.FormCancelledException
 import ru.citeck.launcher.view.form.spec.ComponentSpec
 import ru.citeck.launcher.view.form.spec.FormSpec
+import ru.citeck.launcher.view.popup.CiteckDialog
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-object FormDialog : CiteckDialog<FormDialog.InternalParams>() {
+class FormDialog(
+    private val params: InternalParams
+) : CiteckDialog() {
 
-    fun show(
-        launcherServices: LauncherServices,
-        spec: FormSpec,
-        mode: FormMode = FormMode.CREATE,
-        data: DataValue = DataValue.NULL,
-        onCancel: () -> Unit,
-        onSubmit: (DataValue, onComplete: () -> Unit) -> Unit
-    ) {
-        showDialog(
-            InternalParams(
-                spec = spec,
-                formMode = mode,
-                data = data,
-                entitiesService = launcherServices.entitiesService,
-                workspaceServices = null,
-                onSubmit = onSubmit,
-                onCancel = onCancel
+    companion object {
+        fun show(
+            launcherServices: LauncherServices,
+            spec: FormSpec,
+            mode: FormMode = FormMode.CREATE,
+            data: DataValue = DataValue.NULL,
+            onCancel: () -> Unit,
+            onSubmit: (DataValue, onComplete: () -> Unit) -> Unit
+        ) {
+            showDialog(
+                InternalParams(
+                    spec = spec,
+                    formMode = mode,
+                    data = data,
+                    entitiesService = launcherServices.entitiesService,
+                    workspaceServices = null,
+                    onSubmit = onSubmit,
+                    onCancel = onCancel
+                )
             )
-        )
-    }
+        }
 
-    fun show(
-        entitiesService: EntitiesService,
-        workspaceServices: WorkspaceServices?,
-        spec: FormSpec,
-        mode: FormMode = FormMode.CREATE,
-        data: DataValue = DataValue.NULL,
-        onCancel: () -> Unit,
-        onSubmit: (DataValue, onComplete: () -> Unit) -> Unit
-    ) {
-        showDialog(
-            InternalParams(
-                spec = spec,
-                formMode = mode,
-                data = data,
-                entitiesService = entitiesService,
-                workspaceServices = workspaceServices,
-                onSubmit = onSubmit,
-                onCancel = onCancel
-            )
-        )
-    }
-
-    fun show(
-        workspaceServices: WorkspaceServices,
-        spec: FormSpec,
-        mode: FormMode = FormMode.CREATE,
-        data: DataValue = DataValue.NULL,
-        onCancel: () -> Unit,
-        onSubmit: (DataValue, onComplete: () -> Unit) -> Unit
-    ) {
-        showDialog(
-            InternalParams(
-                spec = spec,
-                formMode = mode,
-                data = data,
-                entitiesService = workspaceServices.entitiesService,
-                workspaceServices = workspaceServices,
-                onSubmit = onSubmit,
-                onCancel = onCancel
-            )
-        )
-    }
-
-    suspend fun show(
-        workspaceServices: WorkspaceServices,
-        spec: FormSpec,
-        mode: FormMode = FormMode.CREATE,
-        data: DataValue = DataValue.NULL
-    ): DataValue {
-        return show(workspaceServices.entitiesService, workspaceServices, spec, mode, data)
-    }
-
-    suspend fun show(
-        entitiesService: EntitiesService,
-        spec: FormSpec,
-        mode: FormMode = FormMode.CREATE,
-        data: DataValue = DataValue.NULL
-    ): DataValue {
-        return show(entitiesService, null, spec, mode, data)
-    }
-
-    suspend fun show(
-        launcherServices: LauncherServices,
-        spec: FormSpec,
-        mode: FormMode = FormMode.CREATE,
-        data: DataValue = DataValue.NULL
-    ): DataValue {
-        return show(launcherServices.entitiesService, null, spec, mode, data)
-    }
-
-    suspend fun show(
-        entitiesService: EntitiesService,
-        workspaceServices: WorkspaceServices?,
-        spec: FormSpec,
-        mode: FormMode = FormMode.CREATE,
-        data: DataValue = DataValue.NULL,
-    ): DataValue {
-        return suspendCancellableCoroutine { continuation ->
+        fun show(
+            entitiesService: EntitiesService,
+            workspaceServices: WorkspaceServices?,
+            spec: FormSpec,
+            mode: FormMode = FormMode.CREATE,
+            data: DataValue = DataValue.NULL,
+            onCancel: () -> Unit,
+            onSubmit: (DataValue, onComplete: () -> Unit) -> Unit
+        ) {
             showDialog(
                 InternalParams(
                     spec = spec,
@@ -141,18 +78,92 @@ object FormDialog : CiteckDialog<FormDialog.InternalParams>() {
                     data = data,
                     entitiesService = entitiesService,
                     workspaceServices = workspaceServices,
-                    onSubmit = { data, onComplete ->
-                        continuation.resume(data)
-                        onComplete()
-                    },
-                    onCancel = { continuation.resumeWithException(FormCancelledException()) }
+                    onSubmit = onSubmit,
+                    onCancel = onCancel
                 )
             )
+        }
+
+        fun show(
+            workspaceServices: WorkspaceServices,
+            spec: FormSpec,
+            mode: FormMode = FormMode.CREATE,
+            data: DataValue = DataValue.NULL,
+            onCancel: () -> Unit,
+            onSubmit: (DataValue, onComplete: () -> Unit) -> Unit
+        ) {
+            showDialog(
+                InternalParams(
+                    spec = spec,
+                    formMode = mode,
+                    data = data,
+                    entitiesService = workspaceServices.entitiesService,
+                    workspaceServices = workspaceServices,
+                    onSubmit = onSubmit,
+                    onCancel = onCancel
+                )
+            )
+        }
+
+        suspend fun show(
+            workspaceServices: WorkspaceServices,
+            spec: FormSpec,
+            mode: FormMode = FormMode.CREATE,
+            data: DataValue = DataValue.NULL
+        ): DataValue {
+            return show(workspaceServices.entitiesService, workspaceServices, spec, mode, data)
+        }
+
+        suspend fun show(
+            entitiesService: EntitiesService,
+            spec: FormSpec,
+            mode: FormMode = FormMode.CREATE,
+            data: DataValue = DataValue.NULL
+        ): DataValue {
+            return show(entitiesService, null, spec, mode, data)
+        }
+
+        suspend fun show(
+            launcherServices: LauncherServices,
+            spec: FormSpec,
+            mode: FormMode = FormMode.CREATE,
+            data: DataValue = DataValue.NULL
+        ): DataValue {
+            return show(launcherServices.entitiesService, null, spec, mode, data)
+        }
+
+        suspend fun show(
+            entitiesService: EntitiesService,
+            workspaceServices: WorkspaceServices?,
+            spec: FormSpec,
+            mode: FormMode = FormMode.CREATE,
+            data: DataValue = DataValue.NULL,
+        ): DataValue {
+            return suspendCancellableCoroutine { continuation ->
+                showDialog(
+                    InternalParams(
+                        spec = spec,
+                        formMode = mode,
+                        data = data,
+                        entitiesService = entitiesService,
+                        workspaceServices = workspaceServices,
+                        onSubmit = { data, onComplete ->
+                            continuation.resume(data)
+                            onComplete()
+                        },
+                        onCancel = { continuation.resumeWithException(FormCancelledException()) }
+                    )
+                )
+            }
+        }
+
+        private fun showDialog(params: InternalParams) {
+            showDialog(FormDialog(params))
         }
     }
 
     @Composable
-    override fun render(params: InternalParams, closeDialog: () -> Unit) {
+    override fun render() {
         val coroutineScope = rememberCoroutineScope()
         val formContext = remember {
             val ctx = FormContext(
@@ -210,14 +221,14 @@ object FormDialog : CiteckDialog<FormDialog.InternalParams>() {
             }
         }
 
-        content {
+        dialog {
             if (params.spec.label.isNotEmpty()) {
                 title(params.spec.label)
             }
             renderComponents(params.spec.components, dialogWidth, formContext, coroutineScope, params.entitiesService)
 
             buttonsRow {
-                renderFormButtons(params, closeDialog, formContext)
+                renderFormButtons(params, formContext)
             }
         }
     }
@@ -406,7 +417,6 @@ object FormDialog : CiteckDialog<FormDialog.InternalParams>() {
     @Composable
     private fun ButtonsRowContext.renderFormButtons(
         params: InternalParams,
-        closeDialog: () -> Unit,
         formContext: FormContext
     ) {
         button("Cancel") {

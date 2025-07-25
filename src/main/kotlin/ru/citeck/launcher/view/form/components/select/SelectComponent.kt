@@ -8,7 +8,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import ru.citeck.launcher.view.dialog.LoadingDialog
+import ru.citeck.launcher.view.commons.dialog.LoadingDialog
 import ru.citeck.launcher.view.drawable.CpIcon
 import ru.citeck.launcher.view.form.FormContext
 import ru.citeck.launcher.view.form.spec.ComponentSpec

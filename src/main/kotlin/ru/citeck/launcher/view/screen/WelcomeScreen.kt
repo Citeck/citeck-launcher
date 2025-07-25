@@ -26,9 +26,9 @@ import ru.citeck.launcher.core.utils.ActionStatus
 import ru.citeck.launcher.core.workspace.WorkspaceConfig.QuickStartVariant
 import ru.citeck.launcher.core.workspace.WorkspaceDto
 import ru.citeck.launcher.core.workspace.WorkspaceEntityDef
-import ru.citeck.launcher.view.dialog.ErrorDialog
-import ru.citeck.launcher.view.dialog.GlobalMessageDialog
-import ru.citeck.launcher.view.dialog.LoadingDialog
+import ru.citeck.launcher.view.commons.dialog.ErrorDialog
+import ru.citeck.launcher.view.commons.dialog.GlobalMessageDialog
+import ru.citeck.launcher.view.commons.dialog.LoadingDialog
 import ru.citeck.launcher.view.drawable.CpImage
 import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog
 import ru.citeck.launcher.view.utils.rememberMutProp

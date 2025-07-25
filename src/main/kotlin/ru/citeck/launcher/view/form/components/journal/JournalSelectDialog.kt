@@ -10,7 +10,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
 import ru.citeck.launcher.core.entity.EntitiesService
@@ -20,34 +19,41 @@ import ru.citeck.launcher.core.utils.promise.Promise
 import ru.citeck.launcher.core.utils.promise.Promises
 import ru.citeck.launcher.view.action.CiteckIconAction
 import ru.citeck.launcher.view.commons.LimitedText
-import ru.citeck.launcher.view.dialog.*
-import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog.InternalParams
+import ru.citeck.launcher.view.commons.dialog.ErrorDialog
+import ru.citeck.launcher.view.commons.dialog.LoadingDialog
 import ru.citeck.launcher.view.form.exception.FormCancelledException
+import ru.citeck.launcher.view.popup.CiteckDialog
 import ru.citeck.launcher.view.table.table.DataTable
 import java.util.concurrent.CompletableFuture
 import kotlin.coroutines.resume
 import kotlin.reflect.KClass
 
-object JournalSelectDialog : CiteckDialog<InternalParams>() {
+class JournalSelectDialog(
+    private val params: InternalParams
+) : CiteckDialog() {
 
-    suspend fun show(params: Params): List<EntityRef> {
-        return suspendCancellableCoroutine { continuation ->
-            show(params) { continuation.resume(it) }
+    companion object {
+        suspend fun show(params: Params): List<EntityRef> {
+            return suspendCancellableCoroutine { continuation ->
+                show(params) { continuation.resume(it) }
+            }
+        }
+
+        fun show(params: Params, onSubmit: (List<EntityRef>) -> Unit) {
+            showDialog(
+                JournalSelectDialog(
+                    InternalParams(
+                        params,
+                        { onSubmit(it) },
+                        { onSubmit(params.selected) }
+                    )
+                )
+            )
         }
     }
 
-    fun show(params: Params, onSubmit: (List<EntityRef>) -> Unit) {
-        showDialog(
-            InternalParams(
-                params,
-                { onSubmit(it) },
-                { onSubmit(params.selected) }
-            )
-        )
-    }
-
     @Composable
-    override fun render(params: InternalParams, closeDialog: () -> Unit) {
+    override fun render() {
 
         val entitiesService = params.params.entitiesService
 
@@ -64,14 +70,13 @@ object JournalSelectDialog : CiteckDialog<InternalParams>() {
         val isEntityCreatable = remember {
             entitiesService.isEntityCreatable(params.params.entityType)
         }
-        val coroutineScope = rememberCoroutineScope()
 
-        content {
+        dialog {
             title(dialogTitle)
-            renderTable(entitiesService, params, allRecords, closeDialog)
+            renderTable(entitiesService, params, allRecords)
             Spacer(modifier = Modifier.height(16.dp))
             buttonsRow {
-                renderButtons(entitiesService, coroutineScope, params, allRecords, closeDialog, isEntityCreatable)
+                renderButtons(entitiesService, params, allRecords, isEntityCreatable)
             }
         }
     }
@@ -80,8 +85,7 @@ object JournalSelectDialog : CiteckDialog<InternalParams>() {
         entities: EntitiesService,
         params: InternalParams,
         rows: MutableState<List<RecordRow>>,
-        createdRef: EntityRef = EntityRef.EMPTY,
-        closeDialog: () -> Unit
+        createdRef: EntityRef = EntityRef.EMPTY
     ) {
         val selectedRows = rows.value.filter { it.selected.value }.mapTo(ArrayList()) { it.record.ref }
         if (createdRef.isNotEmpty()) {
@@ -130,8 +134,7 @@ object JournalSelectDialog : CiteckDialog<InternalParams>() {
     private fun renderTable(
         entities: EntitiesService,
         params: InternalParams,
-        rows: MutableState<List<RecordRow>>,
-        closeDialog: () -> Unit
+        rows: MutableState<List<RecordRow>>
     ) {
         val coroutineScope = rememberCoroutineScope()
 
@@ -205,7 +208,7 @@ object JournalSelectDialog : CiteckDialog<InternalParams>() {
                         ) {
                             row.record.actions.forEach { action ->
                                 CiteckIconAction(coroutineScope, action, row.record) {
-                                    updateTableRows(entities, params, rows, closeDialog = closeDialog)
+                                    updateTableRows(entities, params, rows)
                                 }
                             }
                         }
@@ -218,10 +221,8 @@ object JournalSelectDialog : CiteckDialog<InternalParams>() {
     @Composable
     private fun ButtonsRowContext.renderButtons(
         entitiesService: EntitiesService,
-        coroutineScope: CoroutineScope,
         params: InternalParams,
         records: MutableState<List<RecordRow>>,
-        closeDialog: () -> Unit,
         isEntityCreatable: Boolean
     ) {
         button("Cancel") {
@@ -232,7 +233,7 @@ object JournalSelectDialog : CiteckDialog<InternalParams>() {
             button("Create") {
                 try {
                     val createdRef = entitiesService.create(params.params.entityType)
-                    updateTableRows(entitiesService, params, records, createdRef, closeDialog)
+                    updateTableRows(entitiesService, params, records, createdRef)
                 } catch (e: FormCancelledException) {
                     // do nothing
                 }

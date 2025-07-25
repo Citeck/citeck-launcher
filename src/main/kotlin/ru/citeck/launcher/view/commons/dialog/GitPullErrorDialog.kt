@@ -1,4 +1,4 @@
-package ru.citeck.launcher.view.dialog
+package ru.citeck.launcher.view.commons.dialog
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Text
@@ -8,34 +8,47 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import kotlinx.coroutines.suspendCancellableCoroutine
+import ru.citeck.launcher.view.popup.CiteckDialog
 import kotlin.coroutines.resume
 
-object GitPullErrorDialog : CiteckDialog<GitPullErrorDialogParams>() {
+class GitPullErrorDialog(private val params: GitPullErrorDialogParams) : CiteckDialog() {
 
-    fun show(
-        repoUrl: String,
-        errorMsg: String,
-        skipAvailable: Boolean,
-        cancelAvailable: Boolean,
-        onSubmit: (GitPullRepoDialogRes) -> Unit
-    ) {
-        showDialog(GitPullErrorDialogParams(repoUrl, errorMsg, skipAvailable, cancelAvailable, onSubmit))
-    }
+    companion object {
+        fun show(
+            repoUrl: String,
+            errorMsg: String,
+            skipAvailable: Boolean,
+            cancelAvailable: Boolean,
+            onSubmit: (GitPullRepoDialogRes) -> Unit
+        ) {
+            showDialog(
+                GitPullErrorDialog(
+                    GitPullErrorDialogParams(
+                        repoUrl,
+                        errorMsg,
+                        skipAvailable,
+                        cancelAvailable,
+                        onSubmit
+                    )
+                )
+            )
+        }
 
-    suspend fun showSuspend(
-        repoUrl: String,
-        errorMsg: String,
-        skipAvailable: Boolean,
-        cancelAvailable: Boolean
-    ): GitPullRepoDialogRes {
-        return suspendCancellableCoroutine { continuation ->
-            show(repoUrl, errorMsg, skipAvailable, cancelAvailable) { continuation.resume(it) }
+        suspend fun showSuspend(
+            repoUrl: String,
+            errorMsg: String,
+            skipAvailable: Boolean,
+            cancelAvailable: Boolean
+        ): GitPullRepoDialogRes {
+            return suspendCancellableCoroutine { continuation ->
+                show(repoUrl, errorMsg, skipAvailable, cancelAvailable) { continuation.resume(it) }
+            }
         }
     }
 
     @Composable
-    override fun render(params: GitPullErrorDialogParams, closeDialog: () -> Unit) {
-        content {
+    override fun render() {
+        dialog {
             title("Git Repo Pull Failed")
             Text(
                 params.errorMessage,

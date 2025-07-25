@@ -15,8 +15,9 @@ import androidx.compose.ui.unit.em
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.delay
 import ru.citeck.launcher.core.logs.AppLogUtils
-import ru.citeck.launcher.view.logs.GlobalLogsWindow
 import ru.citeck.launcher.view.logs.LogsDialogParams
+import ru.citeck.launcher.view.logs.LogsWindow
+import ru.citeck.launcher.view.popup.CiteckDialog
 import ru.citeck.launcher.view.utils.SystemDumpUtils
 
 private val log = KotlinLogging.logger { }
@@ -24,10 +25,17 @@ private val log = KotlinLogging.logger { }
 @Composable
 fun LoadingScreen() {
     val longDelay = remember { mutableStateOf(false) }
+    val longDelayWaitingStart = remember { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
-        delay(20_000)
-        longDelay.value = true
-        log.warn { "Loading takes too long" }
+        while (true) {
+            delay(5_000)
+            if (CiteckDialog.hasActiveDialogs()) {
+                longDelayWaitingStart.value = System.currentTimeMillis()
+            } else if (System.currentTimeMillis() - longDelayWaitingStart.value >= 30_000) {
+                longDelay.value = true
+                log.warn { "Loading takes too long" }
+            }
+        }
     }
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.align(Alignment.Center)) {
@@ -49,7 +57,7 @@ fun LoadingScreen() {
                 text = "Show Logs",
                 fontSize = 0.8.em,
                 modifier = Modifier.clickable {
-                    GlobalLogsWindow.show(
+                    LogsWindow.show(
                         LogsDialogParams("Launcher Logs", 5000) { logsCallback ->
                             runCatching {
                                 AppLogUtils.watchAppLogs { logsCallback.invoke(it) }

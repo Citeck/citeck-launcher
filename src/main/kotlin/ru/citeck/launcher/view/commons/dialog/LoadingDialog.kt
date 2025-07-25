@@ -1,4 +1,4 @@
-package ru.citeck.launcher.view.dialog
+package ru.citeck.launcher.view.commons.dialog
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Text
@@ -9,18 +9,22 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import ru.citeck.launcher.core.utils.ActionStatus
-import ru.citeck.launcher.view.dialog.LoadingDialog.InnerParams
+import ru.citeck.launcher.view.popup.CiteckDialog
+import ru.citeck.launcher.view.popup.DialogWidth
 import ru.citeck.launcher.view.utils.rememberMutProp
 
-object LoadingDialog : CiteckDialog<InnerParams>() {
+class LoadingDialog(private val params: InnerParams) : CiteckDialog() {
 
-    fun show(status: ActionStatus.Mut? = null): () -> Unit {
-        return showDialog(InnerParams(status))
+    companion object {
+        fun show(status: ActionStatus.Mut? = null): () -> Unit {
+            val dialog = showDialog(LoadingDialog(InnerParams(status)))
+            return { dialog.closeDialog() }
+        }
     }
 
     @Composable
-    override fun render(params: InnerParams, closeDialog: () -> Unit) {
-        content(width = DialogWidth.SMALL) {
+    override fun render() {
+        dialog(width = DialogWidth.SMALL) {
             Box(modifier = Modifier.height(130.dp)) {
                 Column(modifier = Modifier.align(Alignment.Center)) {
                     Text(

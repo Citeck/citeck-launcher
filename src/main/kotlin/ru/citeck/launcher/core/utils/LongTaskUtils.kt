@@ -8,8 +8,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 object LongTaskUtils {
 
     private const val CHECK_INTERVAL = 1000L
-    val PRINT_MSG_DEFAULT_INTERVAL: Duration = Duration.ofSeconds(10)
-    val PRINT_STACKTRACE_DEFAULT_INTERVAL: Duration = Duration.ofSeconds(30)
+    val PRINT_MSG_DEFAULT_INTERVAL: Duration = Duration.ofSeconds(30)
+    val PRINT_STACKTRACE_DEFAULT_INTERVAL: Duration = Duration.ofMinutes(2)
 
     val log = KotlinLogging.logger {}
 

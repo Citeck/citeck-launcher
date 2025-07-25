@@ -41,14 +41,14 @@ import ru.citeck.launcher.view.action.ActionIcon
 import ru.citeck.launcher.view.action.CiteckIconAction
 import ru.citeck.launcher.view.commons.CiteckTooltipArea
 import ru.citeck.launcher.view.commons.LimitedText
-import ru.citeck.launcher.view.dialog.AppDefEditDialog
-import ru.citeck.launcher.view.dialog.ErrorDialog
-import ru.citeck.launcher.view.dialog.LoadingDialog
+import ru.citeck.launcher.view.commons.dialog.ErrorDialog
+import ru.citeck.launcher.view.commons.dialog.LoadingDialog
+import ru.citeck.launcher.view.dialog.AppDefEditDialogWindow
 import ru.citeck.launcher.view.drawable.CpImage
 import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog
 import ru.citeck.launcher.view.form.exception.FormCancelledException
-import ru.citeck.launcher.view.logs.GlobalLogsWindow
 import ru.citeck.launcher.view.logs.LogsDialogParams
+import ru.citeck.launcher.view.logs.LogsWindow
 import ru.citeck.launcher.view.utils.SystemDumpUtils
 import ru.citeck.launcher.view.utils.rememberMutProp
 import java.awt.Desktop
@@ -338,7 +338,7 @@ fun NamespaceScreen(
                         "Show Launcher Logs"
                     ) {
                         runCatching {
-                            GlobalLogsWindow.show(
+                            LogsWindow.show(
                                 LogsDialogParams("Launcher Logs", 5000) { logsCallback ->
                                     runCatching {
                                         AppLogUtils.watchAppLogs { logsCallback.invoke(it) }
@@ -635,7 +635,7 @@ private fun RenderApps(
                                 "Show Logs"
                             ) {
                                 runCatching {
-                                    GlobalLogsWindow.show(
+                                    LogsWindow.show(
                                         LogsDialogParams(application.name, 5000) { logsCallback ->
                                             runCatching {
                                                 application.watchLogs(5000, logsCallback)
@@ -658,7 +658,7 @@ private fun RenderApps(
                                 runCatching {
                                     val appDefToEdit = application.def.getValue()
                                     try {
-                                        val editRes = AppDefEditDialog.show(
+                                        val editRes = AppDefEditDialogWindow.show(
                                             appDefToEdit,
                                             application.nsRuntime.isEditedAndLockedApp(appDefToEdit.name)
                                         )

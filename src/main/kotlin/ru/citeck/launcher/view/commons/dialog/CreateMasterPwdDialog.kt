@@ -1,4 +1,4 @@
-package ru.citeck.launcher.view.dialog
+package ru.citeck.launcher.view.commons.dialog
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -13,26 +13,31 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import ru.citeck.launcher.view.popup.CiteckDialog
 import kotlin.coroutines.resume
 
-object CreateMasterPwdDialog : CiteckDialog<CreateMasterPwdParams>() {
+class CreateMasterPwdDialog(
+    private val params: CreateMasterPwdParams
+) : CiteckDialog() {
 
-    fun show(onSubmit: (CharArray) -> Boolean) {
-        showDialog(CreateMasterPwdParams(onSubmit))
-    }
+    companion object {
+        fun show(onSubmit: (CharArray) -> Boolean) {
+            showDialog(CreateMasterPwdDialog(CreateMasterPwdParams(onSubmit)))
+        }
 
-    suspend fun showSuspend(): CharArray {
-        return suspendCancellableCoroutine { continuation ->
-            show {
-                continuation.resume(it)
-                true
+        suspend fun showSuspend(): CharArray {
+            return suspendCancellableCoroutine { continuation ->
+                show {
+                    continuation.resume(it)
+                    true
+                }
             }
         }
     }
 
     @Composable
-    override fun render(params: CreateMasterPwdParams, closeDialog: () -> Unit) {
-        content {
+    override fun render() {
+        dialog {
             title("Create your personal master password")
             Text(
                 "This password will be used to protect your secrets used by the launcher."

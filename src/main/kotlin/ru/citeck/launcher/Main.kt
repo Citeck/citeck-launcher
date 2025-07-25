@@ -2,7 +2,6 @@ package ru.citeck.launcher
 
 import androidx.compose.material.Text
 import androidx.compose.runtime.*
-import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
@@ -19,8 +18,9 @@ import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.file.CiteckFiles
 import ru.citeck.launcher.core.utils.json.Json
 import ru.citeck.launcher.core.workspace.WorkspaceDto
-import ru.citeck.launcher.view.dialog.*
-import ru.citeck.launcher.view.logs.GlobalLogsWindow
+import ru.citeck.launcher.view.commons.dialog.ErrorDialog
+import ru.citeck.launcher.view.popup.CiteckDialog
+import ru.citeck.launcher.view.popup.CiteckWindow
 import ru.citeck.launcher.view.screen.LoadingScreen
 import ru.citeck.launcher.view.screen.NamespaceScreen
 import ru.citeck.launcher.view.screen.WelcomeScreen
@@ -29,7 +29,6 @@ import ru.citeck.launcher.view.tray.CiteckSystemTray
 import ru.citeck.launcher.view.utils.ImageUtils
 import ru.citeck.launcher.view.utils.SystemDumpUtils
 import ru.citeck.launcher.view.utils.rememberMutProp
-import ru.citeck.launcher.view.window.AdditionalWindowState
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.system.exitProcess
 
@@ -75,10 +74,7 @@ fun main(@Suppress("unused") args: Array<String>) {
             ImageUtils.load("classpath:logo.svg").decodeToSvgPainter(density)
         }
 
-        val windowVisible = remember { mutableStateOf(true) }
-        val additionalWindowStates: SnapshotStateList<AdditionalWindowState> = remember { mutableStateListOf() }
-
-        var launcherVersion: String = remember {
+        val launcherVersion: String = remember {
             var version = "unknown"
             try {
                 val buildInfoData = CiteckFiles.getFile("classpath:build-info.json").readBytes()
@@ -90,11 +86,13 @@ fun main(@Suppress("unused") args: Array<String>) {
             version
         }
 
+        val windowVisible = mutableStateOf(true)
+
         LauncherTheme {
             Window(
                 onCloseRequest = {
                     if (traySupported.get()) {
-                        additionalWindowStates.forEach { it.closeWindow() }
+                        CiteckWindow.closeAll()
                         windowVisible.value = false
                     } else {
                         exitApplication()
@@ -130,7 +128,7 @@ fun main(@Suppress("unused") args: Array<String>) {
                     }
                 }
 
-                CiteckDialog.renderDialogs()
+                CiteckDialog.renderDialogs(logo)
 
                 val services = servicesValue.value
                 if (services == null) {
@@ -139,7 +137,6 @@ fun main(@Suppress("unused") args: Array<String>) {
 
                     val servicesVal = services.getOrThrow()
 
-                    GlobalLogsWindow.LogsDialog(additionalWindowStates, logo)
                     remember {
                         SystemDumpUtils.init(servicesVal)
                         fun takeFocus() {
@@ -156,9 +153,7 @@ fun main(@Suppress("unused") args: Array<String>) {
                     ErrorDialog.show(services.exceptionOrNull()!!) { exitApplication() }
                 }
             }
-            for (additionalWindowState in additionalWindowStates) {
-                additionalWindowState.content.invoke()
-            }
+            CiteckWindow.renderWindows(logo)
         }
     }
 }

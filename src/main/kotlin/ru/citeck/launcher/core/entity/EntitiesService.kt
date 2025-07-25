@@ -17,8 +17,8 @@ import ru.citeck.launcher.core.utils.json.Json
 import ru.citeck.launcher.core.workspace.WorkspaceDto
 import ru.citeck.launcher.view.action.ActionDesc
 import ru.citeck.launcher.view.action.ActionIcon
-import ru.citeck.launcher.view.dialog.ConfirmDialog
-import ru.citeck.launcher.view.dialog.LoadingDialog
+import ru.citeck.launcher.view.commons.dialog.ConfirmDialog
+import ru.citeck.launcher.view.commons.dialog.LoadingDialog
 import ru.citeck.launcher.view.form.FormDialog
 import ru.citeck.launcher.view.form.FormMode
 import ru.citeck.launcher.view.form.exception.FormCancelledException

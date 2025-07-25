@@ -20,31 +20,37 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import ru.citeck.launcher.core.appdef.ApplicationDef
 import ru.citeck.launcher.core.utils.json.Yaml
 import ru.citeck.launcher.view.commons.CiteckTooltipArea
-import ru.citeck.launcher.view.dialog.AppDefEditDialog.EditParams
 import ru.citeck.launcher.view.form.exception.FormCancelledException
+import ru.citeck.launcher.view.popup.CiteckWindow
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-object AppDefEditDialog : CiteckDialog<EditParams>() {
+class AppDefEditDialogWindow(
+    private val params: EditParams
+) : CiteckWindow() {
 
-    suspend fun show(appDef: ApplicationDef, locked: Boolean): EditResponse? {
-        return suspendCancellableCoroutine { continuation ->
-            showDialog(
-                EditParams(
-                    appDef,
-                    locked,
-                    { continuation.resumeWithException(FormCancelledException()) },
-                    { continuation.resume(it) },
-                    { continuation.resume(null) }
+    companion object {
+
+        suspend fun show(appDef: ApplicationDef, locked: Boolean): EditResponse? {
+            return suspendCancellableCoroutine { continuation ->
+                showWindow(
+                    AppDefEditDialogWindow(
+                        EditParams(
+                            appDef,
+                            locked,
+                            { continuation.resumeWithException(FormCancelledException()) },
+                            { continuation.resume(it) },
+                            { continuation.resume(null) }
+                        )
+                    )
                 )
-            )
+            }
         }
     }
 
     @Composable
-    override fun render(params: EditParams, closeDialog: () -> Unit) {
-
-        content(width = DialogWidth.EXTRA_LARGE) {
+    override fun render() {
+        window(title = "Edit ${params.appDef.name}") {
             val textFieldValue = remember {
                 mutableStateOf(TextFieldValue(Yaml.toString(params.appDef)))
             }
@@ -81,11 +87,11 @@ object AppDefEditDialog : CiteckDialog<EditParams>() {
                 spacer()
                 button("Reset") {
                     params.onReset()
-                    closeDialog()
+                    closeWindow()
                 }
                 button("Cancel") {
                     params.onCancel()
-                    closeDialog()
+                    closeWindow()
                 }
                 button("Submit") {
                     val editedApp = Yaml.read(
@@ -93,7 +99,7 @@ object AppDefEditDialog : CiteckDialog<EditParams>() {
                         ApplicationDef::class
                     )
                     params.onSubmit(EditResponse(editedApp, lockedValue.value))
-                    closeDialog()
+                    closeWindow()
                 }
             }
         }

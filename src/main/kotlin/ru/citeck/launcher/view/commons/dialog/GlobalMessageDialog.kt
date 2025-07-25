@@ -1,21 +1,27 @@
-package ru.citeck.launcher.view.dialog
+package ru.citeck.launcher.view.commons.dialog
 
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import ru.citeck.launcher.view.popup.CiteckDialog
+import ru.citeck.launcher.view.popup.DialogWidth
 
-object GlobalMessageDialog : CiteckDialog<GlobalMsgDialogParams>() {
+class GlobalMessageDialog(
+    private val params: GlobalMsgDialogParams
+) : CiteckDialog() {
 
-    fun show(text: String, title: String = "") {
-        showDialog(GlobalMsgDialogParams(title, text, DialogWidth.MEDIUM))
-    }
+    companion object {
+        fun show(text: String, title: String = "") {
+            showDialog(GlobalMessageDialog(GlobalMsgDialogParams(title, text, DialogWidth.MEDIUM)))
+        }
 
-    fun show(params: GlobalMsgDialogParams) {
-        showDialog(params)
+        fun show(params: GlobalMsgDialogParams) {
+            showDialog(GlobalMessageDialog(params))
+        }
     }
 
     @Composable
-    override fun render(params: GlobalMsgDialogParams, closeDialog: () -> Unit) {
-        content(params.width) {
+    override fun render() {
+        dialog(params.width) {
             if (params.title.isNotBlank()) {
                 title(params.title)
             }

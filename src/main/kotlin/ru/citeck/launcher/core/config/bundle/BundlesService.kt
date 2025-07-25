@@ -5,7 +5,7 @@ import ru.citeck.launcher.core.WorkspaceServices
 import ru.citeck.launcher.core.git.GitRepoProps
 import ru.citeck.launcher.core.git.GitUpdatePolicy
 import ru.citeck.launcher.core.workspace.WorkspacesService
-import ru.citeck.launcher.view.dialog.ErrorDialog
+import ru.citeck.launcher.view.commons.dialog.ErrorDialog
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
