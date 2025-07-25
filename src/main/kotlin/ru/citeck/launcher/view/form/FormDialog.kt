@@ -25,8 +25,8 @@ import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.json.Json
 import ru.citeck.launcher.view.commons.LimitedText
 import ru.citeck.launcher.view.commons.dialog.ErrorDialog
-import ru.citeck.launcher.view.commons.dialog.GlobalMessageDialog
 import ru.citeck.launcher.view.commons.dialog.GlobalMsgDialogParams
+import ru.citeck.launcher.view.commons.dialog.MessageDialog
 import ru.citeck.launcher.view.form.components.journal.JournalSelectComponent
 import ru.citeck.launcher.view.form.components.select.SelectComponent
 import ru.citeck.launcher.view.form.exception.FormCancelledException
@@ -175,7 +175,7 @@ class FormDialog(
                 val invalidFields = getInvalidFields()
                 if (invalidFields.isNotEmpty()) {
                     coroutineScope.launch {
-                        GlobalMessageDialog.show(
+                        MessageDialog.show(
                             GlobalMsgDialogParams(
                                 "Invalid form fields:",
                                 invalidFields.entries.joinToString("\n") {

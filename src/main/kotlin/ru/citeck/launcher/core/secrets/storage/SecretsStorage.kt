@@ -10,8 +10,8 @@ import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.json.Json
 import ru.citeck.launcher.view.commons.dialog.AskMasterPasswordDialog
 import ru.citeck.launcher.view.commons.dialog.CreateMasterPwdDialog
-import ru.citeck.launcher.view.commons.dialog.GlobalMessageDialog
 import ru.citeck.launcher.view.commons.dialog.GlobalMsgDialogParams
+import ru.citeck.launcher.view.commons.dialog.MessageDialog
 import ru.citeck.launcher.view.popup.DialogWidth
 import kotlin.coroutines.resume
 import kotlin.reflect.KClass
@@ -57,7 +57,7 @@ class SecretsStorage {
             }
             if (!secrets.isObject()) {
                 runBlocking {
-                    GlobalMessageDialog.show(
+                    MessageDialog.show(
                         GlobalMsgDialogParams(
                             "Invalid password",
                             "",

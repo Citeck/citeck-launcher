@@ -27,8 +27,8 @@ import ru.citeck.launcher.core.workspace.WorkspaceConfig.QuickStartVariant
 import ru.citeck.launcher.core.workspace.WorkspaceDto
 import ru.citeck.launcher.core.workspace.WorkspaceEntityDef
 import ru.citeck.launcher.view.commons.dialog.ErrorDialog
-import ru.citeck.launcher.view.commons.dialog.GlobalMessageDialog
 import ru.citeck.launcher.view.commons.dialog.LoadingDialog
+import ru.citeck.launcher.view.commons.dialog.MessageDialog
 import ru.citeck.launcher.view.drawable.CpImage
 import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog
 import ru.citeck.launcher.view.utils.rememberMutProp
@@ -231,7 +231,7 @@ private fun ColumnScope.renderQuickStartButton(
         onClick = {
             if (workspaceServices.entitiesService.getFirst(NamespaceConfig::class) != null) {
                 coroutineScope.launch {
-                    GlobalMessageDialog.show(
+                    MessageDialog.show(
                         "Workspace already has namespaces\nQuick start is disabled."
                     )
                 }
@@ -244,7 +244,7 @@ private fun ColumnScope.renderQuickStartButton(
                             val runtime = workspaceServices.getCurrentNsRuntime()
                             if (runtime == null) {
                                 coroutineScope.launch {
-                                    GlobalMessageDialog.show("Namespace runtime is null")
+                                    MessageDialog.show("Namespace runtime is null")
                                 }
                             } else {
                                 runtime.updateAndStart()

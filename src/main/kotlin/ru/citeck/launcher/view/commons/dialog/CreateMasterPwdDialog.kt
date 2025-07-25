@@ -50,11 +50,11 @@ class CreateMasterPwdDialog(
             fun onSubmit() {
                 if (fields[0].value.value != fields[1].value.value) {
                     coroutineScope.launch {
-                        GlobalMessageDialog.show("Passwords do not match!")
+                        MessageDialog.show("Passwords do not match!")
                     }
                 } else if (fields[0].value.value.isBlank()) {
                     coroutineScope.launch {
-                        GlobalMessageDialog.show("Password is empty!")
+                        MessageDialog.show("Password is empty!")
                     }
                 } else {
                     if (params.onSubmit(fields[0].value.value.toCharArray())) {

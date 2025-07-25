@@ -5,17 +5,17 @@ import androidx.compose.runtime.*
 import ru.citeck.launcher.view.popup.CiteckDialog
 import ru.citeck.launcher.view.popup.DialogWidth
 
-class GlobalMessageDialog(
+class MessageDialog(
     private val params: GlobalMsgDialogParams
 ) : CiteckDialog() {
 
     companion object {
         fun show(text: String, title: String = "") {
-            showDialog(GlobalMessageDialog(GlobalMsgDialogParams(title, text, DialogWidth.MEDIUM)))
+            showDialog(MessageDialog(GlobalMsgDialogParams(title, text, DialogWidth.MEDIUM)))
         }
 
         fun show(params: GlobalMsgDialogParams) {
-            showDialog(GlobalMessageDialog(params))
+            showDialog(MessageDialog(params))
         }
     }
 
