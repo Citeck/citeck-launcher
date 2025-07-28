@@ -459,7 +459,7 @@ class NamespaceGenerator {
 
         val alfrescoBundle = context.bundle.applications[AppName.ALFRESCO]
         if (alfrescoBundle == null) {
-            log.warn {
+            log.debug {
                 "Alfresco enabled, but bundle " +
                     "${context.namespaceConfig.bundleRef} doesn't contain alfresco image info"
             }
@@ -485,7 +485,6 @@ class NamespaceGenerator {
             .addEnv("PGDATA", "/var/lib/postgresql/data")
             .addVolume("alf_postgres:/var/lib/postgresql/data")
             .addVolume("./postgres/init_db_and_user.sh:/init_db_and_user.sh")
-            // .withCmd(listOf("postgres", "-c", "config_file=/var/lib/postgresql/conf/postgresql.conf"))
             .addInitAction(ExecShell("/init_db_and_user.sh alfresco"))
             .addInitAction(ExecShell("/init_db_and_user.sh alf_flowable"))
             .withStartupConditions(
@@ -554,10 +553,21 @@ class NamespaceGenerator {
             .addEnv("FLOWABLE_DB_PASSWORD", "alf_flowable")
             .addEnv("JAVA_OPTS", "-Xms4G -Xmx4G -Duser.country=EN -Duser.language=en -Djava.security.egd=file:///dev/urandom -Djavamelody.authorized-users=admin:admin")
 
+        context.links.add(
+            NamespaceLink(
+                "http://localhost:38080/solr4/#/",
+                "Solr Admin",
+                "Solr Admin Console",
+                "icons/app/solr4.svg",
+                120f
+            )
+        )
+
         context.getOrCreateApp("alf-solr")
             .withKind(ApplicationKind.CITECK_ADDITIONAL)
             .withImage("nexus.citeck.ru/ess:1.1.0")
             .addVolume("alf_solr_data:/opt/solr4_data")
+            .addPort("38080:8080")
             .addEnv("TWEAK_SOLR", "true")
             .addEnv("JAVA_OPTS", "-Xms1G -Xmx1G")
             .addEnv("ALFRESCO_HOST", AppName.ALFRESCO)
