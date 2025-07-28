@@ -11,6 +11,7 @@ data class WorkspaceConfig(
     val bundleRepos: List<BundlesRepo>,
     val defaultWebappProps: NamespaceConfig.WebappProps = NamespaceConfig.WebappProps.DEFAULT,
     val webapps: List<AppConfig>,
+    val alfresco: AlfrescoProps = AlfrescoProps.DEFAULT,
     val citeckProxy: CiteckProxy = CiteckProxy(),
     val licenses: List<LicenseInstance> = emptyList(),
     val snapshots: List<Snapshot> = emptyList(),
@@ -32,6 +33,15 @@ data class WorkspaceConfig(
         val path: String = "",
         val pullPeriod: Duration = Duration.ofHours(1),
     )
+
+    class AlfrescoProps(
+        val enabled: Boolean = false,
+        val aliases: Set<String> = emptySet()
+    ) {
+        companion object {
+            val DEFAULT = AlfrescoProps()
+        }
+    }
 
     class ImageRepo(
         val id: String,

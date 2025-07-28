@@ -17,7 +17,6 @@ class NamespaceConfig(
     val pgAdmin: PgAdminProps,
     val mongodb: MongoDbProps,
     val citeckProxy: ProxyProps,
-    val alfresco: AlfrescoProps,
     val webapps: Map<String, WebappProps>
 ) {
 
@@ -40,7 +39,6 @@ class NamespaceConfig(
         var pgAdmin: PgAdminProps = PgAdminProps.DEFAULT
         var mongodb: MongoDbProps = MongoDbProps.DEFAULT
         var proxy: ProxyProps = ProxyProps.DEFAULT
-        var alfresco: AlfrescoProps = AlfrescoProps.DEFAULT
         var webapps: Map<String, WebappProps> = mapOf()
 
         constructor(props: NamespaceConfig) : this() {
@@ -53,7 +51,6 @@ class NamespaceConfig(
             pgAdmin = props.pgAdmin
             mongodb = props.mongodb
             proxy = props.citeckProxy
-            alfresco = props.alfresco
             webapps = props.webapps
         }
 
@@ -97,11 +94,6 @@ class NamespaceConfig(
             return this
         }
 
-        fun withAlfresco(alfresco: AlfrescoProps?): Builder {
-            this.alfresco = alfresco ?: DEFAULT.alfresco
-            return this
-        }
-
         fun withWebapps(webapps: Map<String, WebappProps>?): Builder {
             this.webapps = webapps ?: DEFAULT.webapps
             return this
@@ -118,7 +110,6 @@ class NamespaceConfig(
                 pgAdmin = pgAdmin,
                 mongodb = mongodb,
                 citeckProxy = proxy,
-                alfresco = alfresco,
                 webapps = webapps
             )
         }
@@ -192,17 +183,6 @@ class NamespaceConfig(
     ) {
         companion object {
             val DEFAULT = ProxyProps()
-        }
-    }
-
-    data class AlfrescoProps(
-        val enabled: Boolean = false,
-        val javaOpts: String = "",
-        val heapSize: String = "",
-        val memoryLimit: String = ""
-    ) {
-        companion object {
-            val DEFAULT = AlfrescoProps()
         }
     }
 

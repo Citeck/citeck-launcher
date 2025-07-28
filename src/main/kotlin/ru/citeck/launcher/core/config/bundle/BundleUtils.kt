@@ -84,6 +84,9 @@ object BundleUtils {
         workspaceConfig.citeckProxy.aliases.forEach {
             appNameByAliases[it] = AppName.PROXY
         }
+        workspaceConfig.alfresco.aliases.forEach {
+            appNameByAliases[it] = AppName.ALFRESCO
+        }
 
         fun getImageUrl(repository: String, tag: String): String {
             if (repository.isBlank()) {

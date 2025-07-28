@@ -22,6 +22,7 @@ object AppName {
     const val ECOM = "ecom"
     const val SERVICE_DESK = "service-desk"
     const val PROJECT_TRACKER = "ecos-project-tracker"
+    const val ALFRESCO = "alfresco"
 
     // infrastructure
     const val POSTGRES = "postgres"

@@ -1,5 +1,6 @@
 package ru.citeck.launcher.core.namespace.gen
 
+import io.github.oshai.kotlinlogging.KotlinLogging
 import ru.citeck.launcher.core.WorkspaceServices
 import ru.citeck.launcher.core.appdef.*
 import ru.citeck.launcher.core.config.bundle.BundleDef
@@ -34,6 +35,8 @@ class NamespaceGenerator {
             AppName.EDI,
             AppName.CONTENT
         )
+
+        private val log = KotlinLogging.logger {}
     }
 
     private lateinit var services: WorkspaceServices
@@ -70,6 +73,7 @@ class NamespaceGenerator {
         generateZookeeper(context)
         generateRabbitMq(context)
         generateKeycloak(context)
+        generateAlfresco(context)
 
         for (app in context.bundle.applications) {
             if (!context.workspaceConfig.webappsById.contains(app.key)) {
@@ -296,11 +300,21 @@ class NamespaceGenerator {
             }
         )
 
+        val alfEnabled = context.applications.containsKey(AppName.ALFRESCO) &&
+            !context.detachedApps.contains(AppName.ALFRESCO)
+
+        val proxyTarget = if (alfEnabled) {
+            app.addDependsOn(AppName.ALFRESCO)
+            AppName.ALFRESCO + ":8080"
+        } else {
+            AppName.GATEWAY + ":" + gatewayPort
+        }
+
         app.addEnv("DEFAULT_LOCATION_V2", "true")
             .addEnv("GATEWAY_TARGET", "${AppName.GATEWAY}:$gatewayPort")
-            .addEnv("PROXY_TARGET", "${AppName.GATEWAY}:$gatewayPort")
+            .addEnv("PROXY_TARGET", proxyTarget)
             .addEnv("ECOS_INIT_DELAY", "0")
-            .addEnv("ALFRESCO_ENABLED", "false")
+            .addEnv("ALFRESCO_ENABLED", alfEnabled.toString())
             .addPort("80:80")
             .addDependsOn(AppName.GATEWAY)
             .withKind(ApplicationKind.CITECK_CORE)
@@ -434,6 +448,122 @@ class NamespaceGenerator {
             app.addEnv("ECOS_WEBAPP_EAPPS_ADDITIONAL_ARTIFACTS_LOCATIONS", "/run/ecos-artifacts")
             app.addVolume("./app/$name/ecos-apps:/run/ecos-artifacts/app/ecosapp")
         }
+    }
+
+    private fun generateAlfresco(
+        context: NsGenContext
+    ) {
+        if (!context.workspaceConfig.alfresco.enabled) {
+            return
+        }
+
+        val alfrescoBundle = context.bundle.applications[AppName.ALFRESCO]
+        if (alfrescoBundle == null) {
+            log.warn {
+                "Alfresco enabled, but bundle " +
+                    "${context.namespaceConfig.bundleRef} doesn't contain alfresco image info"
+            }
+            return
+        }
+
+        context.links.add(
+            NamespaceLink(
+                "http://localhost/alfresco/s/admin/",
+                "Alfresco Admin",
+                "Alfresco Admin Console",
+                "icons/app/alfresco.svg",
+                100f
+            )
+        )
+
+        val alfDbName = "alf-postgres"
+        context.getOrCreateApp(alfDbName)
+            .withImage("postgres:9.4")
+            .addPort("54329:5432")
+            .addEnv("POSTGRES_USER", "postgres")
+            .addEnv("POSTGRES_PASSWORD", "postgres")
+            .addEnv("PGDATA", "/var/lib/postgresql/data")
+            .addVolume("alf_postgres:/var/lib/postgresql/data")
+            .addVolume("./postgres/init_db_and_user.sh:/init_db_and_user.sh")
+            // .withCmd(listOf("postgres", "-c", "config_file=/var/lib/postgresql/conf/postgresql.conf"))
+            .addInitAction(ExecShell("/init_db_and_user.sh alfresco"))
+            .addInitAction(ExecShell("/init_db_and_user.sh alf_flowable"))
+            .withStartupConditions(
+                listOf(
+                    StartupCondition(
+                        log = LogStartupCondition(".*database system is ready to accept connections.*")
+                    ),
+                    StartupCondition(
+                        probe = AppProbeDef(
+                            exec = ExecProbeDef(
+                                listOf(
+                                    "/bin/sh",
+                                    "-c",
+                                    "psql -U postgres -d postgres -c 'SELECT 1' || exit 1"
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+
+        val alfApp = context.getOrCreateApp(AppName.ALFRESCO)
+
+        alfApp.withImage(alfrescoBundle.image)
+            .withKind(ApplicationKind.CITECK_ADDITIONAL)
+            .addVolume("alf_content:/content")
+            .addVolume("./alfresco/alfresco_additional.properties:/tmp/alfresco/alfresco_additional.properties")
+            .addPort("${context.portsCounter.getAndIncrement()}:8080")
+            .addDependsOn(alfDbName)
+            .withStartupCondition(
+                StartupCondition(
+                    probe = AppProbeDef(
+                        http = HttpProbeDef("/alfresco/s/citeck/ecos/eureka-status", 8080)
+                    )
+                )
+            )
+
+        alfApp.addEnv("ALFRESCO_USER_STORE_ADMIN_PASSWORD", "fefdbb615556a4b1dbb36e7935d77cf2")
+            .addEnv("USE_EXTERNAL_AUTH", "true")
+            .addEnv("SOLR_HOST", "alf-solr")
+            .addEnv("SOLR_PORT", "8080")
+            .addEnv("DB_HOST", alfDbName)
+            .addEnv("DB_PORT", NsGenContext.PG_PORT.toString())
+            .addEnv("DB_NAME", AppName.ALFRESCO)
+            .addEnv("DB_USERNAME", AppName.ALFRESCO)
+            .addEnv("DB_PASSWORD", AppName.ALFRESCO)
+            .addEnv("ALFRESCO_HOSTNAME", AppName.ALFRESCO)
+            .addEnv("ALFRESCO_PROTOCOL", "http")
+            .addEnv("SHARE_HOSTNAME", AppName.ALFRESCO)
+            .addEnv("SHARE_PROTOCOL", "http")
+            .addEnv("SHARE_PORT", "80")
+            .addEnv("ALFRESCO_PORT", "8080")
+            .addEnv("FLOWABLE_URL", "http://localhost")
+            .addEnv("MAIL_HOST", NsGenContext.MAILHOG_HOST)
+            .addEnv("MAIL_PORT", "1025")
+            .addEnv("MAIL_FROM_DEFAULT", "citeck@ecos24.ru")
+            .addEnv("MAIL_PROTOCOL", "smtp")
+            .addEnv("MAIL_SMTP_AUTH", "false")
+            .addEnv("MAIL_SMTP_STARTTLS_ENABLE", "false")
+            .addEnv("MAIL_SMTPS_AUTH", "false")
+            .addEnv("MAIL_SMTPS_STARTTLS_ENABLE", "false")
+            .addEnv("FLOWABLE_DB_HOST", alfDbName)
+            .addEnv("FLOWABLE_DB_PORT", NsGenContext.PG_PORT.toString())
+            .addEnv("FLOWABLE_DB_NAME", "alf_flowable")
+            .addEnv("FLOWABLE_DB_USERNAME", "alf_flowable")
+            .addEnv("FLOWABLE_DB_PASSWORD", "alf_flowable")
+            .addEnv("JAVA_OPTS", "-Xms4G -Xmx4G -Duser.country=EN -Duser.language=en -Djava.security.egd=file:///dev/urandom -Djavamelody.authorized-users=admin:admin")
+
+        context.getOrCreateApp("alf-solr")
+            .withKind(ApplicationKind.CITECK_ADDITIONAL)
+            .withImage("nexus.citeck.ru/ess:1.1.0")
+            .addVolume("alf_solr_data:/opt/solr4_data")
+            .addEnv("TWEAK_SOLR", "true")
+            .addEnv("JAVA_OPTS", "-Xms1G -Xmx1G")
+            .addEnv("ALFRESCO_HOST", AppName.ALFRESCO)
+            .addEnv("ALFRESCO_PORT", "8080")
+            .addEnv("ALFRESCO_INDEX_TRANSFORM_CONTENT", "false")
+            .addEnv("ALFRESCO_RECORD_UNINDEXED_NODES", "false")
     }
 
     private fun processDataSource(
