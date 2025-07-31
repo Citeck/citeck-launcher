@@ -12,6 +12,7 @@ data class WorkspaceConfig(
     val defaultWebappProps: NamespaceConfig.WebappProps = NamespaceConfig.WebappProps.DEFAULT,
     val webapps: List<AppConfig>,
     val alfresco: AlfrescoProps = AlfrescoProps.DEFAULT,
+    val onlyoffice: OnlyOfficeProps = OnlyOfficeProps.DEFAULT,
     val citeckProxy: CiteckProxy = CiteckProxy(),
     val licenses: List<LicenseInstance> = emptyList(),
     val snapshots: List<Snapshot> = emptyList(),
@@ -40,6 +41,15 @@ data class WorkspaceConfig(
     ) {
         companion object {
             val DEFAULT = AlfrescoProps()
+        }
+    }
+
+    class OnlyOfficeProps(
+        val image: String = "onlyoffice/documentserver:9.0.3.1",
+        val memoryLimit: String = "3g"
+    ) {
+        companion object {
+            val DEFAULT = OnlyOfficeProps()
         }
     }
 

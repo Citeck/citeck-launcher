@@ -193,15 +193,16 @@ class NamespaceGenerator {
     }
 
     private fun generateOnlyOffice(context: NsGenContext) {
+        val props = context.workspaceConfig.onlyoffice
         context.getOrCreateApp(AppName.ONLYOFFICE)
-            .withImage("onlyoffice/documentserver:7.1")
+            .withImage(props.image)
             .addPort("8070:80/tcp")
             .addPort("443/tcp")
             .addEnv("JWT_ENABLED", "false")
             .addEnv("ALLOW_PRIVATE_IP_ADDRESS", "true")
             .withResources(
                 AppResourcesDef(
-                    AppResourcesDef.LimitsDef("1g")
+                    AppResourcesDef.LimitsDef(props.memoryLimit)
                 )
             )
     }
