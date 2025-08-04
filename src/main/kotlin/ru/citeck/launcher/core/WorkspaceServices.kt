@@ -23,6 +23,7 @@ import ru.citeck.launcher.core.snapshot.WorkspaceSnapshots
 import ru.citeck.launcher.core.utils.prop.MutProp
 import ru.citeck.launcher.core.workspace.WorkspaceConfig
 import ru.citeck.launcher.core.workspace.WorkspaceDto
+import ru.citeck.launcher.view.popup.CiteckWindow
 
 @Stable
 class WorkspaceServices(
@@ -120,6 +121,9 @@ class WorkspaceServices(
             } else {
                 namespaceConfig
             }
+        }
+        if (selectedNamespace.getValue()?.id != newValue?.id) {
+            CiteckWindow.closeAll()
         }
         selectedNamespace.setValue(newValue)
     }

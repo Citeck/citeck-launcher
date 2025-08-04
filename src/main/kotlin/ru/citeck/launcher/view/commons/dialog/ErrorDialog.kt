@@ -9,6 +9,7 @@ import org.apache.commons.lang3.exception.ExceptionUtils
 import ru.citeck.launcher.view.popup.CiteckDialog
 import ru.citeck.launcher.view.popup.DialogWidth
 import ru.citeck.launcher.view.utils.SystemDumpUtils
+import java.util.concurrent.CancellationException
 import kotlin.coroutines.resume
 import kotlin.math.min
 
@@ -29,8 +30,12 @@ class ErrorDialog(private val params: Params) : CiteckDialog() {
             }
             if (res is Result<*> && res.isFailure) {
                 val exception = res.exceptionOrNull() ?: RuntimeException("Unknown exception")
-                log.error(exception) { errorMsg() }
-                show(exception)
+                if (exception is CancellationException) {
+                    log.debug { "Safe action was cancelled. Message: ${errorMsg()}" }
+                } else {
+                    log.error(exception) { errorMsg() }
+                    show(exception)
+                }
             } else {
                 try {
                     @Suppress("UNCHECKED_CAST")
