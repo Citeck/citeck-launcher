@@ -139,6 +139,7 @@ class NamespaceGenerator {
             .withKind(ApplicationKind.THIRD_PARTY)
             .addEnv("KC_BOOTSTRAP_ADMIN_USERNAME", "admin")
             .addEnv("KC_BOOTSTRAP_ADMIN_PASSWORD", "admin")
+            .addEnv("KC_HOSTNAME_STRICT_HTTPS", "false")
             .addDependsOn(NsGenContext.PG_HOST)
             .addVolume("./keycloak/ecos-app-realm.json:/opt/keycloak/data/import/ecos-app-realm.json")
             .addVolume("./keycloak/healthcheck.sh:/healthcheck.sh")
