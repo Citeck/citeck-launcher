@@ -5,7 +5,11 @@ import org.apache.batik.transcoder.TranscoderInput
 import org.apache.batik.transcoder.TranscoderOutput
 import org.apache.batik.transcoder.image.PNGTranscoder
 import ru.citeck.launcher.core.utils.file.CiteckFiles
+import java.awt.AlphaComposite
+import java.awt.image.BufferedImage
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import javax.imageio.ImageIO
 
 object ImageUtils {
 
@@ -42,13 +46,22 @@ object ImageUtils {
         }
     }
 
-/*    private fun convertSvgToPng(svgFilePath: String?, pngFilePath: String?) {
+    fun addTransparentBorderToPng(pngData: ByteArray, borderSize: Int): ByteArray {
 
-        FileInputStream(svgFilePath).use { inputStream ->
-            FileOutputStream(pngFilePath).use { outputStream ->
+        val original = ImageIO.read(ByteArrayInputStream(pngData))
 
+        val newWidth: Int = original.width + borderSize * 2
+        val newHeight: Int = original.height + borderSize * 2
 
-            }
-        }
-    }*/
+        val withBorder = BufferedImage(newWidth, newHeight, BufferedImage.TYPE_INT_ARGB)
+
+        val g2d = withBorder.createGraphics()
+        g2d.composite = AlphaComposite.Src
+        g2d.drawImage(original, borderSize, borderSize, null)
+        g2d.dispose()
+
+        val baos = ByteArrayOutputStream()
+        ImageIO.write(withBorder, "png", baos)
+        return baos.toByteArray()
+    }
 }

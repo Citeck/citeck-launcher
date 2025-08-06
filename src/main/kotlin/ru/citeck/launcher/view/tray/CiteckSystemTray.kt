@@ -51,11 +51,14 @@ object CiteckSystemTray {
     }
 
     private fun createDefaultTray() {
-        val isMac = System.getProperty("os.name").lowercase().contains("mac")
 
-        val tray = SystemTray.getSystemTray()
-        val iconSize = tray.trayIconSize.width.toFloat()
-        val image = Toolkit.getDefaultToolkit().getImage(initIcon(if (isMac) iconSize - 3 else iconSize).toUri().toURL())
+        // val isMac = CiteckEnvUtils.isOsMac()
+
+        val systemTray = SystemTray.getSystemTray()
+        val iconSize = 64f
+        val iconBorder = 3
+
+        val image = Toolkit.getDefaultToolkit().getImage(initIcon(iconSize, iconBorder).toUri().toURL())
         val popup = PopupMenu()
 
         val openItem = MenuItem(BTN_OPEN)
@@ -66,6 +69,7 @@ object CiteckSystemTray {
         popup.add(exitItem)
 
         val trayIcon = TrayIcon(image, "Citeck Launcher", popup)
+
         trayIcon.addMouseListener(object : MouseListener {
             override fun mouseClicked(e: MouseEvent) {
                 if (e.button == 1) {
@@ -77,11 +81,15 @@ object CiteckSystemTray {
             override fun mousePressed(e: MouseEvent) {}
             override fun mouseReleased(e: MouseEvent) {}
         })
-        tray.add(trayIcon)
+        systemTray.add(trayIcon)
     }
 
-    private fun initIcon(size: Float = 24f): Path {
-        val pngData = ImageUtils.loadPng("classpath:logo.svg", size)
+    private fun initIcon(size: Float = 24f, border: Int = 0): Path {
+
+        var pngData = ImageUtils.loadPng("classpath:logo.svg", size)
+        if (border > 0) {
+            pngData = ImageUtils.addTransparentBorderToPng(pngData, border)
+        }
 
         val iconsPath = AppDir.PATH.resolve("icons")
         if (!iconsPath.exists()) {
