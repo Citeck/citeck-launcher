@@ -49,8 +49,10 @@ class AskMasterPasswordDialog(
                 },
                 modifier = Modifier.fillMaxWidth().focusRequester(focusRequester).onPreviewKeyEvent { event ->
                     if (event.key == Key.Enter && event.type == KeyEventType.KeyUp) {
-                        if (params.onSubmit(value.value.toCharArray())) {
-                            closeDialog()
+                        executePopupAction("Ask master dialog -> Enter press") {
+                            if (params.onSubmit(value.value.toCharArray())) {
+                                closeDialog()
+                            }
                         }
                         true
                     } else {

@@ -1,8 +1,12 @@
 package ru.citeck.launcher.view.popup
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -25,12 +29,38 @@ abstract class CiteckPopup(val kind: CiteckPopupKind) {
         }
     }
 
+    val actionsEnabled: MutableState<Boolean> = mutableStateOf(true)
+
     protected open fun beforeClose() {}
 
     @Composable
     abstract fun render()
 
-    protected inner class PopupContext(private val columnScope: ColumnScope) : ColumnScope by columnScope {
+    inline fun executePopupAction(
+        desc: String,
+        crossinline action: suspend () -> Unit
+    ) {
+        if (!actionsEnabled.value) {
+            return
+        }
+        actionsEnabled.value = false
+        popupActionExecutor.submit {
+            try {
+                runBlocking {
+                    action.invoke()
+                }
+            } catch (e: Throwable) {
+                log.error(e) { "Popup action completed exceptionally. $desc" }
+                ErrorDialog.show(e)
+            } finally {
+                actionsEnabled.value = true
+            }
+        }
+    }
+
+    protected inner class PopupContext(
+        private val columnScope: ColumnScope
+    ) : ColumnScope by columnScope {
 
         @Composable
         fun title(text: String) {
@@ -40,19 +70,19 @@ abstract class CiteckPopup(val kind: CiteckPopupKind) {
 
         @Composable
         inline fun buttonsRow(render: @Composable ButtonsRowContext.() -> Unit) {
-            val buttonsEnabled = remember { mutableStateOf(true) }
             when (kind) {
                 CiteckPopupKind.DIALOG -> {
                     Spacer(modifier = Modifier.height(18.dp))
                     Row(modifier = Modifier.height(40.dp)) {
-                        render.invoke(ButtonsRowContext(this, buttonsEnabled))
+                        render.invoke(ButtonsRowContext(this))
                     }
                     Spacer(modifier = Modifier.height(15.dp))
                 }
+
                 CiteckPopupKind.WINDOW -> {
                     Spacer(modifier = Modifier.height(5.dp))
                     Row(modifier = Modifier.height(40.dp).padding(start = 10.dp, end = 10.dp)) {
-                        render.invoke(ButtonsRowContext(this, buttonsEnabled))
+                        render.invoke(ButtonsRowContext(this))
                     }
                     Spacer(modifier = Modifier.height(5.dp))
                 }
@@ -60,9 +90,8 @@ abstract class CiteckPopup(val kind: CiteckPopupKind) {
         }
     }
 
-    protected class ButtonsRowContext(
-        private val rowScope: RowScope,
-        val buttonsEnabled: MutableState<Boolean>
+    protected inner class ButtonsRowContext(
+        private val rowScope: RowScope
     ) : RowScope by rowScope {
 
         var firstBtn = true
@@ -71,23 +100,9 @@ abstract class CiteckPopup(val kind: CiteckPopupKind) {
         inline fun button(text: String, crossinline action: suspend () -> Unit) {
             Button(
                 modifier = Modifier.padding(start = if (firstBtn) 0.dp else 10.dp).fillMaxHeight(),
-                enabled = buttonsEnabled.value,
+                enabled = actionsEnabled.value,
                 onClick = {
-                    if (buttonsEnabled.value) {
-                        buttonsEnabled.value = false
-                        popupActionExecutor.submit {
-                            try {
-                                runBlocking {
-                                    action.invoke()
-                                }
-                            } catch (e: Throwable) {
-                                log.error(e) { "Button action completed exceptionally. Button: '$text'" }
-                                ErrorDialog.show(e)
-                            } finally {
-                                buttonsEnabled.value = true
-                            }
-                        }
-                    }
+                    executePopupAction("Button: '$text'", action)
                 }
             ) {
                 Text(text)
