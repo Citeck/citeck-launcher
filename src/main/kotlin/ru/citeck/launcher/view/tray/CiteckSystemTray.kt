@@ -2,6 +2,7 @@ package ru.citeck.launcher.view.tray
 
 import io.github.oshai.kotlinlogging.KotlinLogging
 import ru.citeck.launcher.core.config.AppDir
+import ru.citeck.launcher.core.utils.CiteckEnvUtils
 import ru.citeck.launcher.view.tray.gtk.*
 import ru.citeck.launcher.view.utils.ImageUtils
 import java.awt.*
@@ -11,6 +12,7 @@ import java.io.FileOutputStream
 import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArraySet
 import kotlin.io.path.exists
+import kotlin.math.max
 import kotlin.system.exitProcess
 
 object CiteckSystemTray {
@@ -52,13 +54,9 @@ object CiteckSystemTray {
 
     private fun createDefaultTray() {
 
-        // val isMac = CiteckEnvUtils.isOsMac()
-
         val systemTray = SystemTray.getSystemTray()
-        val iconSize = 64f
-        val iconBorder = 8
 
-        val image = Toolkit.getDefaultToolkit().getImage(initIcon(iconSize, iconBorder).toUri().toURL())
+        val image = Toolkit.getDefaultToolkit().getImage(initIcon(systemTray).toUri().toURL())
         val popup = PopupMenu()
 
         val openItem = MenuItem(BTN_OPEN)
@@ -82,6 +80,16 @@ object CiteckSystemTray {
             override fun mouseReleased(e: MouseEvent) {}
         })
         systemTray.add(trayIcon)
+    }
+
+    private fun initIcon(tray: SystemTray): Path {
+        val (size, border) = if (CiteckEnvUtils.isOsMac()) {
+            val size = max(tray.trayIconSize.width, 64)
+            size.toFloat() to size / 8
+        } else {
+            tray.trayIconSize.width.toFloat() to 0
+        }
+        return initIcon(size, border)
     }
 
     private fun initIcon(size: Float = 24f, border: Int = 0): Path {
