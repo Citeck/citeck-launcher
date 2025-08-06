@@ -82,7 +82,6 @@ fun NamespaceScreen(
         Column(
             modifier = Modifier.fillMaxHeight()
                 .width(300.dp)
-                .border(1.dp, Color.Black)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -460,7 +459,8 @@ fun NamespaceScreen(
                 )
             }
         }
-        Column(modifier = Modifier.fillMaxHeight().border(1.dp, Color.Black)) {
+        VerticalDivider(color = Color.Black)
+        Column(modifier = Modifier.fillMaxHeight()) {
             val scrollState = rememberScrollState()
             Column(modifier = Modifier.fillMaxHeight().verticalScroll(scrollState).padding(start = 6.dp, end = 6.dp)) {
                 val appsByKind = rememberMutProp(nsRuntime, nsRuntime.appRuntimes) {
