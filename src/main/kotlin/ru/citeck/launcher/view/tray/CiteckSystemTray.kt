@@ -22,7 +22,7 @@ object CiteckSystemTray {
 
     private val log = KotlinLogging.logger {}
 
-    private val lmbClickListeners = CopyOnWriteArraySet<() -> Unit>()
+    private val onOpenListeners = CopyOnWriteArraySet<() -> Unit>()
 
     fun initialize(): Boolean {
 
@@ -43,7 +43,7 @@ object CiteckSystemTray {
         }
         try {
             GtkTrayIndicator.create(initIcon().toString()) {
-                lmbClickListeners.forEach { it.invoke() }
+                onOpenListeners.forEach { it.invoke() }
             }
         } catch (e: Throwable) {
             log.error(e) { "GtkInit error. Tray won't work" }
@@ -61,7 +61,7 @@ object CiteckSystemTray {
 
         val openItem = MenuItem(BTN_OPEN)
         val exitItem = MenuItem(BTN_EXIT)
-        openItem.addActionListener { lmbClickListeners.forEach { it.invoke() } }
+        openItem.addActionListener { onOpenListeners.forEach { it.invoke() } }
         exitItem.addActionListener { exitProcess(0) }
         popup.add(openItem)
         popup.add(exitItem)
@@ -71,7 +71,7 @@ object CiteckSystemTray {
         trayIcon.addMouseListener(object : MouseListener {
             override fun mouseClicked(e: MouseEvent) {
                 if (e.button == 1) {
-                    lmbClickListeners.forEach { it.invoke() }
+                    onOpenListeners.forEach { it.invoke() }
                 }
             }
             override fun mouseEntered(e: MouseEvent) {}
@@ -117,7 +117,7 @@ object CiteckSystemTray {
         return fsIconPath.toAbsolutePath()
     }
 
-    fun listenLmbClick(action: () -> Unit) {
-        lmbClickListeners.add(action)
+    fun listenOnOpenAction(action: () -> Unit) {
+        onOpenListeners.add(action)
     }
 }

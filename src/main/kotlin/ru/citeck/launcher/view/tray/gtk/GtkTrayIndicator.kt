@@ -17,7 +17,7 @@ object GtkTrayIndicator {
         glib = Native.load("glib-2.0", GLib::class.java)
     }
 
-    fun create(iconPath: String, onLmbClick: () -> Unit) {
+    fun create(iconPath: String, onOpenAction: () -> Unit) {
 
         gtk.gtk_init(null, null)
         val statusIcon = gtk.gtk_status_icon_new_from_file(iconPath)
@@ -26,15 +26,35 @@ object GtkTrayIndicator {
 
         val menu: Pointer = gtk.gtk_menu_new()
         references.add(menu)
+
+        val openItem: Pointer = gtk.gtk_menu_item_new_with_label(CiteckSystemTray.BTN_OPEN)
+        references.add(openItem)
+
         val exitItem: Pointer = gtk.gtk_menu_item_new_with_label(CiteckSystemTray.BTN_EXIT)
         references.add(exitItem)
+
+        val openCallback = object : ActivateCallback {
+            override fun invoke(widget: Pointer?, data: Pointer?) {
+                onOpenAction.invoke()
+            }
+        }
+        references.add(openCallback)
+
         val exitCallback = object : ActivateCallback {
             override fun invoke(widget: Pointer?, data: Pointer?) {
                 exitProcess(0)
             }
         }
-
         references.add(exitCallback)
+
+        gtk.g_signal_connect_data(
+            openItem,
+            "activate",
+            openCallback,
+            null,
+            null,
+            0
+        )
         gtk.g_signal_connect_data(
             exitItem,
             "activate",
@@ -44,6 +64,7 @@ object GtkTrayIndicator {
             0
         )
 
+        gtk.gtk_menu_shell_append(menu, openItem)
         gtk.gtk_menu_shell_append(menu, exitItem)
         gtk.gtk_widget_show_all(menu)
 
@@ -51,7 +72,7 @@ object GtkTrayIndicator {
             override fun callback(widget: Pointer?, event: Pointer?, user_data: Pointer?) {
                 val btn = event?.getByte(52)?.toInt() ?: -1
                 if (btn == 1) { // LMB
-                    onLmbClick()
+                    onOpenAction()
                 } else if (btn == 3) { // RMB
                     gtk.gtk_menu_popup_at_pointer(menu, Pointer.NULL)
                 }

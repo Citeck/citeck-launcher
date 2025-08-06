@@ -145,7 +145,7 @@ fun main(@Suppress("unused") args: Array<String>) {
                             window.requestFocus()
                             window.toFront()
                         }
-                        CiteckSystemTray.listenLmbClick { takeFocus() }
+                        CiteckSystemTray.listenOnOpenAction { takeFocus() }
                         AppLocalSocket.listenMessages(AppLocalSocket.TakeFocusCommand::class) { takeFocus() }
                     }
                     App(services.getOrThrow())
