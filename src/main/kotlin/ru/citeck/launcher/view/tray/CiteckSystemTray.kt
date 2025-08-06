@@ -15,7 +15,8 @@ import kotlin.system.exitProcess
 
 object CiteckSystemTray {
 
-    val BTN_EXIT = "Exit"
+    const val BTN_OPEN = "Open"
+    const val BTN_EXIT = "Exit"
 
     private val log = KotlinLogging.logger {}
 
@@ -50,14 +51,18 @@ object CiteckSystemTray {
     }
 
     private fun createDefaultTray() {
+        val isMac = System.getProperty("os.name").lowercase().contains("mac")
 
         val tray = SystemTray.getSystemTray()
-
-        val image = Toolkit.getDefaultToolkit().getImage(initIcon(tray.trayIconSize.width.toFloat()).toUri().toURL())
+        val iconSize = tray.trayIconSize.width.toFloat()
+        val image = Toolkit.getDefaultToolkit().getImage(initIcon(if (isMac) iconSize - 3 else iconSize).toUri().toURL())
         val popup = PopupMenu()
 
+        val openItem = MenuItem(BTN_OPEN)
         val exitItem = MenuItem(BTN_EXIT)
+        openItem.addActionListener { lmbClickListeners.forEach { it.invoke() } }
         exitItem.addActionListener { exitProcess(0) }
+        popup.add(openItem)
         popup.add(exitItem)
 
         val trayIcon = TrayIcon(image, "Citeck Launcher", popup)

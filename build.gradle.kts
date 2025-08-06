@@ -139,7 +139,8 @@ compose.desktop {
             }
             macOS {
                 appCategory = "public.app-category.utilities"
-                // iconFile.set(project.file("icons/logo.icns")) //todo
+                iconFile.set(project.file("icons/icon.icns"))
+                jvmArgs("-Dapple.awt.enableTemplateImages=true")
             }
 
             // ./gradlew suggestRuntimeModules
