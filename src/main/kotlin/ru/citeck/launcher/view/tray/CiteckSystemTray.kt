@@ -56,7 +56,7 @@ object CiteckSystemTray {
 
         val systemTray = SystemTray.getSystemTray()
         val iconSize = 64f
-        val iconBorder = 3
+        val iconBorder = 8
 
         val image = Toolkit.getDefaultToolkit().getImage(initIcon(iconSize, iconBorder).toUri().toURL())
         val popup = PopupMenu()
