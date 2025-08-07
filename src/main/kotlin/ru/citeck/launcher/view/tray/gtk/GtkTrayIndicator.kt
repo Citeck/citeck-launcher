@@ -2,9 +2,9 @@ package ru.citeck.launcher.view.tray.gtk
 
 import com.sun.jna.Native
 import com.sun.jna.Pointer
-import ru.citeck.launcher.view.tray.CiteckSystemTray
-import kotlin.system.exitProcess
+import ru.citeck.launcher.view.tray.CiteckTrayItem
 
+@Suppress("LocalVariableName")
 object GtkTrayIndicator {
 
     private val references = ArrayList<Any>()
@@ -17,7 +17,7 @@ object GtkTrayIndicator {
         glib = Native.load("glib-2.0", GLib::class.java)
     }
 
-    fun create(iconPath: String, onOpenAction: () -> Unit) {
+    fun create(iconPath: String, items: List<CiteckTrayItem>, lmbAction: () -> Unit) {
 
         gtk.gtk_init(null, null)
         val statusIcon = gtk.gtk_status_icon_new_from_file(iconPath)
@@ -27,52 +27,33 @@ object GtkTrayIndicator {
         val menu: Pointer = gtk.gtk_menu_new()
         references.add(menu)
 
-        val openItem: Pointer = gtk.gtk_menu_item_new_with_label(CiteckSystemTray.BTN_OPEN)
-        references.add(openItem)
-
-        val exitItem: Pointer = gtk.gtk_menu_item_new_with_label(CiteckSystemTray.BTN_EXIT)
-        references.add(exitItem)
-
-        val openCallback = object : ActivateCallback {
-            override fun invoke(widget: Pointer?, data: Pointer?) {
-                onOpenAction.invoke()
+        for (item in items) {
+            val menuItem: Pointer = gtk.gtk_menu_item_new_with_label(item.name)
+            references.add(menuItem)
+            val itemCallback = object : ActivateCallback {
+                override fun invoke(widget: Pointer?, data: Pointer?) {
+                    item.action()
+                }
             }
+            references.add(itemCallback)
+            gtk.g_signal_connect_data(
+                menuItem,
+                "activate",
+                itemCallback,
+                null,
+                null,
+                0
+            )
+            gtk.gtk_menu_shell_append(menu, menuItem)
         }
-        references.add(openCallback)
 
-        val exitCallback = object : ActivateCallback {
-            override fun invoke(widget: Pointer?, data: Pointer?) {
-                exitProcess(0)
-            }
-        }
-        references.add(exitCallback)
-
-        gtk.g_signal_connect_data(
-            openItem,
-            "activate",
-            openCallback,
-            null,
-            null,
-            0
-        )
-        gtk.g_signal_connect_data(
-            exitItem,
-            "activate",
-            exitCallback,
-            null,
-            null,
-            0
-        )
-
-        gtk.gtk_menu_shell_append(menu, openItem)
-        gtk.gtk_menu_shell_append(menu, exitItem)
         gtk.gtk_widget_show_all(menu)
 
         val statusIconListener = object : ButtonPressHandler {
             override fun callback(widget: Pointer?, event: Pointer?, user_data: Pointer?) {
                 val btn = event?.getByte(52)?.toInt() ?: -1
                 if (btn == 1) { // LMB
-                    onOpenAction()
+                    lmbAction()
                 } else if (btn == 3) { // RMB
                     gtk.gtk_menu_popup_at_pointer(menu, Pointer.NULL)
                 }
@@ -88,7 +69,7 @@ object GtkTrayIndicator {
             0
         )
 
-        Thread.ofPlatform().start {
+        Thread.ofPlatform().name("gtk-tray").start {
             // Run the GLib main loop to handle GTK events
             glib.g_main_loop_run(glib.g_main_loop_new(null, false))
         }

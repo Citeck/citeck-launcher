@@ -26,6 +26,7 @@ import ru.citeck.launcher.view.screen.NamespaceScreen
 import ru.citeck.launcher.view.screen.WelcomeScreen
 import ru.citeck.launcher.view.theme.LauncherTheme
 import ru.citeck.launcher.view.tray.CiteckSystemTray
+import ru.citeck.launcher.view.tray.CiteckTrayItem
 import ru.citeck.launcher.view.utils.ImageUtils
 import ru.citeck.launcher.view.utils.SystemDumpUtils
 import ru.citeck.launcher.view.utils.rememberMutProp
@@ -33,6 +34,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.system.exitProcess
 
 private val log = KotlinLogging.logger {}
+
+private const val TRAY_BTN_OPEN = "Open"
+private const val TRAY_BTN_EXIT = "Exit"
 
 fun main(@Suppress("unused") args: Array<String>) {
     // initial phase messages printed without logging framework
@@ -49,13 +53,21 @@ fun main(@Suppress("unused") args: Array<String>) {
         e.printStackTrace()
         tryToLockError = e
     }
+    var takeMainWindowFocus: (() -> Unit)? = null
+
     // initial phase completed
     application {
 
         val traySupported = remember {
             val traySupported = AtomicBoolean()
             Thread.ofPlatform().start {
-                traySupported.set(CiteckSystemTray.initialize())
+                val trayActions = listOf(
+                    CiteckTrayItem(TRAY_BTN_OPEN) { takeMainWindowFocus?.invoke() },
+                    CiteckTrayItem(TRAY_BTN_EXIT) { exitApplication() }
+                )
+                traySupported.set(
+                    CiteckSystemTray.initialize(trayActions) { takeMainWindowFocus?.invoke() }
+                )
                 if (!traySupported.get()) {
                     log.warn { "Tray is not supported" }
                 }
@@ -139,14 +151,15 @@ fun main(@Suppress("unused") args: Array<String>) {
 
                     remember {
                         SystemDumpUtils.init(servicesVal)
-                        fun takeFocus() {
+                        takeMainWindowFocus = {
                             windowVisible.value = true
                             window.isMinimized = false
                             window.requestFocus()
                             window.toFront()
                         }
-                        CiteckSystemTray.listenOnOpenAction { takeFocus() }
-                        AppLocalSocket.listenMessages(AppLocalSocket.TakeFocusCommand::class) { takeFocus() }
+                        AppLocalSocket.listenMessages(AppLocalSocket.TakeFocusCommand::class) {
+                            takeMainWindowFocus?.invoke()
+                        }
                     }
                     App(services.getOrThrow())
                 } else {

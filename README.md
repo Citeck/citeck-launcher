@@ -23,7 +23,21 @@ To start application from source code, simply run:
 To build the application for production, run:
 
 ```
-./gradlew packageDistributionForCurrentOS
+./gradlew packageDist -PtargetOs=linux_x64
+
+targetOs may be:
+- macos_x64
+- macos_arm64
+- linux_x64
+- linux_arm64
+- windows_x64
+- windows_arm64
+
+result will be located in:
+
+windows - build/compose/binaries/main/msi/citeck-launcher_{version}_{targetOs}.msi
+macos   - build/compose/binaries/main/dmg/citeck-launcher_{version}_{targetOs}.dmg
+linux   - build/compose/binaries/main/deb/citeck-launcher_{version}_{targetOs}.deb
 ```
 
 ## Useful Links

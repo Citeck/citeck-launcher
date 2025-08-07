@@ -10,25 +10,18 @@ import java.awt.event.MouseEvent
 import java.awt.event.MouseListener
 import java.io.FileOutputStream
 import java.nio.file.Path
-import java.util.concurrent.CopyOnWriteArraySet
 import kotlin.io.path.exists
 import kotlin.math.max
-import kotlin.system.exitProcess
 
 object CiteckSystemTray {
 
-    const val BTN_OPEN = "Open"
-    const val BTN_EXIT = "Exit"
-
     private val log = KotlinLogging.logger {}
 
-    private val onOpenListeners = CopyOnWriteArraySet<() -> Unit>()
-
-    fun initialize(): Boolean {
+    fun initialize(items: List<CiteckTrayItem>, lmbAction: () -> Unit): Boolean {
 
         if (SystemTray.isSupported()) {
             return try {
-                createDefaultTray()
+                createDefaultTray(items, lmbAction)
                 true
             } catch (e: Throwable) {
                 log.error(e) { "System tray could not be initialized" }
@@ -42,9 +35,7 @@ object CiteckSystemTray {
             return false
         }
         try {
-            GtkTrayIndicator.create(initIcon().toString()) {
-                onOpenListeners.forEach { it.invoke() }
-            }
+            GtkTrayIndicator.create(initIcon().toString(), items, lmbAction)
         } catch (e: Throwable) {
             log.error(e) { "GtkInit error. Tray won't work" }
             return false
@@ -52,26 +43,25 @@ object CiteckSystemTray {
         return true
     }
 
-    private fun createDefaultTray() {
+    private fun createDefaultTray(items: List<CiteckTrayItem>, lmbAction: () -> Unit) {
 
         val systemTray = SystemTray.getSystemTray()
 
         val image = Toolkit.getDefaultToolkit().getImage(initIcon(systemTray).toUri().toURL())
         val popup = PopupMenu()
 
-        val openItem = MenuItem(BTN_OPEN)
-        val exitItem = MenuItem(BTN_EXIT)
-        openItem.addActionListener { onOpenListeners.forEach { it.invoke() } }
-        exitItem.addActionListener { exitProcess(0) }
-        popup.add(openItem)
-        popup.add(exitItem)
+        for (item in items) {
+            val menuItem = MenuItem(item.name)
+            menuItem.addActionListener { item.action() }
+            popup.add(menuItem)
+        }
 
         val trayIcon = TrayIcon(image, "Citeck Launcher", popup)
 
         trayIcon.addMouseListener(object : MouseListener {
             override fun mouseClicked(e: MouseEvent) {
                 if (e.button == 1) {
-                    onOpenListeners.forEach { it.invoke() }
+                    lmbAction.invoke()
                 }
             }
             override fun mouseEntered(e: MouseEvent) {}
@@ -115,9 +105,5 @@ object CiteckSystemTray {
         fsIconPath.toFile().setReadable(true, false)
 
         return fsIconPath.toAbsolutePath()
-    }
-
-    fun listenOnOpenAction(action: () -> Unit) {
-        onOpenListeners.add(action)
     }
 }
