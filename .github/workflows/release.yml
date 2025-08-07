@@ -3,7 +3,7 @@ name: Cross-platform Release
 on:
   push:
     tags:
-      - 'v*'
+      - 'v*.*.*'
 env:
   JAVA_VERSION: '21'
 
@@ -103,9 +103,13 @@ jobs:
       - name: Create Release with all artifacts
         uses: softprops/action-gh-release@v2
         with:
-          name: Release ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
           body: ${{ steps.changelog.outputs.body }}
           files: dist/**/*
+          draft: false
+          prerelease: false
+          make_latest: 'true'
+
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
