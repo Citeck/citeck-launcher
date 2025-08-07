@@ -1,4 +1,4 @@
-# Release v1.1.8
+# Release 1.1.8
 
 ## New features
 
