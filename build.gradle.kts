@@ -2,6 +2,8 @@ import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 import groovy.json.JsonOutput
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.time.Instant
 
 plugins {
@@ -14,6 +16,7 @@ plugins {
 
 group = "ru.citeck.launcher"
 version = "1.1.8"
+val distPackageName = "citeck-launcher"
 
 repositories {
     mavenCentral()
@@ -120,7 +123,7 @@ compose.desktop {
             jvmArgs("-Xmx200m")
             description = "Citeck Launcher"
             copyright = "© 2025 Citeck LLC. All Rights Reserved"
-            packageName = "citeck-launcher"
+            packageName = distPackageName
             vendor = "Citeck LLC"
             packageVersion = project.version.toString()
             licenseFile.set(project.file("LICENSE"))
@@ -182,8 +185,10 @@ tasks.jar {
 
 tasks.named<ShadowJar>("shadowJar") {
     dependsOn(configurations)
+
     mergeServiceFiles()
     isReproducibleFileOrder = true
+
     archiveClassifier = null as String?
     archiveVersion = project.version.toString()
     archiveBaseName = project.name + "-" + targetOs
@@ -194,5 +199,32 @@ tasks.named<ShadowJar>("shadowJar") {
     }
     manifest {
         attributes("Main-Class" to "ru.citeck.launcher.MainKt")
+    }
+}
+
+tasks.register("packageDist") {
+    val outDir = when {
+        targetOs.contains("macos") -> "dmg"
+        targetOs.contains("windows") -> "msi"
+        targetOs.contains("linux") -> "deb"
+        else -> error("Unsupported target OS: $targetOs")
+    }
+    dependsOn("packageDistributionForCurrentOS")
+    doLast {
+        val buildDir = layout.buildDirectory
+
+        val packageFile = buildDir.file("compose/binaries/main/$outDir/").get().asFile.listFiles()?.find {
+            it.name.contains(project.version.toString())
+        }
+        if (packageFile == null) {
+            error("Package file not found in dir: $outDir")
+        }
+        val sourceFile = packageFile.toPath()
+        val extension = packageFile.name.substringAfterLast(".")
+        val targetFile = sourceFile.parent.resolve(
+            distPackageName + "_" + project.version + "_" + targetOs + "." + extension
+        )
+
+        Files.move(packageFile.toPath(), targetFile, StandardCopyOption.REPLACE_EXISTING)
     }
 }

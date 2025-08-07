@@ -9,7 +9,7 @@ env:
 
 jobs:
   build-linux:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -17,7 +17,7 @@ jobs:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
       - run: chmod +x ./gradlew
-      - run: ./gradlew packageDistributionForCurrentOS
+      - run: ./gradlew packageDist -PtargetOs=linux_x64
       - name: Upload DEB (Linux)
         uses: actions/upload-artifact@v4
         with:
@@ -25,14 +25,14 @@ jobs:
           path: build/compose/binaries/main/deb/*.deb
 
   build-windows:
-    runs-on: windows-latest
+    runs-on: windows-2025
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
-      - run: .\gradlew.bat packageDistributionForCurrentOS
+      - run: .\gradlew.bat packageDist -PtargetOs=windows_x64
       - name: Upload MSI (Windows)
         uses: actions/upload-artifact@v4
         with:
@@ -40,7 +40,7 @@ jobs:
           path: build/compose/binaries/main/msi/*.msi
 
   build-macos:
-    runs-on: macos-latest
+    runs-on: macos-15-large # non-ARM
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -48,8 +48,24 @@ jobs:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
       - run: chmod +x ./gradlew
-      - run: ./gradlew packageDistributionForCurrentOS -PtargetOs=macos
+      - run: ./gradlew packageDist -PtargetOs=macos_64
       - name: Upload DMG (macOS)
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: build/compose/binaries/main/dmg/*.dmg
+
+  build-macos-arm64:
+    runs-on: macos-15 # ARM
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
+      - run: chmod +x ./gradlew
+      - run: ./gradlew packageDist -PtargetOs=macos_arm64
+      - name: Upload DMG (macOS ARM)
         uses: actions/upload-artifact@v4
         with:
           name: macos-dmg
