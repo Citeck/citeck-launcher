@@ -1,3 +1,9 @@
+# Release v1.1.8
+
+## New features
+
+* Added Release Github Workflow
+
 # Release 1.1.7
 
 ## New features
