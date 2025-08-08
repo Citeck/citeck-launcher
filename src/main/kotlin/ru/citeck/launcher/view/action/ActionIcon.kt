@@ -20,4 +20,5 @@ enum class ActionIcon {
     STORAGE,
     EXCLAMATION_TRIANGLE,
     COG_6_TOOTH,
+    ELLIPSIS_VERTICAL,
 }

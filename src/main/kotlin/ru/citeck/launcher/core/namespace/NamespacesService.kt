@@ -165,7 +165,9 @@ class NamespacesService : Disposable {
                     log.error(e) { "Volume deletion failed: '${volume.name}'" }
                 }
             }
-            services.selectAnyExistingNamespace()
+            if (services.selectedNamespace.getValue() != null) {
+                services.selectAnyExistingNamespace()
+            }
         }
 
         services.selectedNamespace.watch { before, after ->

@@ -2,25 +2,29 @@ package ru.citeck.launcher.view.screen
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.MutableState
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isPrimaryPressed
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import ru.citeck.launcher.core.LauncherServices
 import ru.citeck.launcher.core.WorkspaceServices
 import ru.citeck.launcher.core.config.bundle.BundleRef
+import ru.citeck.launcher.core.entity.EntityInfo
 import ru.citeck.launcher.core.namespace.NamespaceConfig
 import ru.citeck.launcher.core.utils.ActionStatus
 import ru.citeck.launcher.core.workspace.WorkspaceConfig.QuickStartVariant
@@ -29,9 +33,13 @@ import ru.citeck.launcher.core.workspace.WorkspaceEntityDef
 import ru.citeck.launcher.view.commons.dialog.ErrorDialog
 import ru.citeck.launcher.view.commons.dialog.LoadingDialog
 import ru.citeck.launcher.view.commons.dialog.MessageDialog
+import ru.citeck.launcher.view.drawable.CpIcon
 import ru.citeck.launcher.view.drawable.CpImage
 import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog
+import ru.citeck.launcher.view.form.exception.FormCancelledException
 import ru.citeck.launcher.view.utils.rememberMutProp
+
+private const val FAST_ACCESS_NAMESPACES_LIMIT = 3
 
 private val log = KotlinLogging.logger {}
 
@@ -87,14 +95,19 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                     Text("Workspace Is Empty", fontSize = 1.05.em, textAlign = TextAlign.Center)
                 } else {
                     val existingNamespaces = remember(workspaceServices.workspace.id) {
-                        workspaceServices.entitiesService.find(NamespaceConfig::class, 3)
+                        val namespaces = mutableStateOf<List<EntityInfo<NamespaceConfig>>>(emptyList())
+                        namespaces.value = workspaceServices.entitiesService.find(
+                            NamespaceConfig::class,
+                            FAST_ACCESS_NAMESPACES_LIMIT
+                        )
+                        namespaces
                     }
-                    if (existingNamespaces.isEmpty()) {
+                    if (existingNamespaces.value.isEmpty()) {
                         Column(Modifier.fillMaxWidth().height(250.dp)) {
                             renderQuickStartButtons(workspaceServicesValue)
                         }
                     } else {
-                        for (namespace in existingNamespaces) {
+                        for (namespace in existingNamespaces.value) {
                             Button(
                                 modifier = Modifier.fillMaxWidth().height(60.dp),
                                 shape = RoundedCornerShape(16.dp),
@@ -102,23 +115,134 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                                     workspaceServices.setSelectedNamespace(namespace.ref.localId)
                                 }
                             ) {
-                                Column {
-                                    Text(
-                                        namespace.name,
-                                        fontSize = 1.05.em,
-                                        textAlign = TextAlign.Center,
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                    Text(
-                                        namespace.entity.bundleRef.toString(),
-                                        fontSize = 0.8.em,
-                                        textAlign = TextAlign.Center,
-                                        modifier = Modifier.fillMaxWidth().padding(top = 2.dp)
+                                Box {
+                                    Column(modifier = Modifier.align(Alignment.Center)) {
+                                        Text(
+                                            namespace.name,
+                                            fontSize = 1.05.em,
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                        Text(
+                                            namespace.entity.bundleRef.toString(),
+                                            fontSize = 0.8.em,
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.fillMaxWidth().padding(top = 2.dp)
+                                        )
+                                    }
+                                    val nsActionsDropDownShow = remember { mutableStateOf(false) }
+                                    var nsActionsDropDownOffset by remember { mutableStateOf(DpOffset.Zero) }
+                                    DropdownMenu(
+                                        expanded = nsActionsDropDownShow.value,
+                                        offset = nsActionsDropDownOffset,
+                                        modifier = Modifier.align(Alignment.CenterEnd),
+                                        onDismissRequest = { nsActionsDropDownShow.value = false }
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text("Edit") },
+                                            onClick = {
+                                                nsActionsDropDownShow.value = false
+                                                Thread.ofPlatform().start {
+                                                    runBlocking {
+                                                        try {
+                                                            workspaceServices.entitiesService.edit(namespace.entity)
+                                                            existingNamespaces.value = workspaceServices.entitiesService.find(
+                                                                NamespaceConfig::class,
+                                                                FAST_ACCESS_NAMESPACES_LIMIT
+                                                            )
+                                                        } catch (_: FormCancelledException) {
+                                                            // do nothing
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Delete") },
+                                            onClick = {
+                                                nsActionsDropDownShow.value = false
+                                                Thread.ofPlatform().start {
+                                                    runBlocking {
+                                                        workspaceServices.entitiesService.delete(namespace.entity)
+                                                        existingNamespaces.value = workspaceServices.entitiesService.find(
+                                                            NamespaceConfig::class,
+                                                            FAST_ACCESS_NAMESPACES_LIMIT
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        )
+                                    }
+                                    val actionsIconPosition = remember { mutableStateOf<LayoutCoordinates?>(null) }
+                                    CpIcon(
+                                        "icons/ellipsis-horizontal-circle.svg",
+                                        modifier = Modifier.padding(0.dp)
+                                            .requiredSize(25.dp)
+                                            .align(Alignment.CenterEnd)
+                                            .onGloballyPositioned {
+                                                actionsIconPosition.value = it
+                                            }
+                                            .pointerInput(Unit) {
+                                                awaitPointerEventScope {
+                                                    while (true) {
+                                                        val event = awaitPointerEvent()
+                                                        val pointer = event.changes.firstOrNull()
+                                                        if (event.type == PointerEventType.Press &&
+                                                            event.buttons.isPrimaryPressed &&
+                                                            pointer != null
+                                                        ) {
+                                                            var position = pointer.position
+                                                            actionsIconPosition.value?.let {
+                                                                val positionInParent = it.positionInParent()
+                                                                position = Offset(
+                                                                    positionInParent.x + position.x,
+                                                                    positionInParent.y + position.y - it.size.height
+                                                                )
+                                                            }
+                                                            nsActionsDropDownOffset = DpOffset(position.x.dp, position.y.dp)
+                                                            nsActionsDropDownShow.value = true
+                                                            pointer.consume()
+                                                        }
+                                                    }
+                                                }
+                                            }
                                     )
                                 }
                             }
                             buttonsSpacer()
                         }
+                        Button(
+                            modifier = Modifier.fillMaxWidth().height(35.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            onClick = {
+                                Thread.ofPlatform().start {
+                                    val newRef = runBlocking {
+                                        JournalSelectDialog.show(
+                                            JournalSelectDialog.Params(
+                                                NamespaceConfig::class,
+                                                emptyList(),
+                                                false,
+                                                entitiesService = workspaceServices.entitiesService,
+                                                closeWhenAllRecordsDeleted = true
+                                            )
+                                        )
+                                    }.firstOrNull()
+                                    if (newRef != null) {
+                                        workspaceServices.setSelectedNamespace(newRef.localId)
+                                    }
+                                }
+                            }
+                        ) {
+                            Column {
+                                Text(
+                                    "More",
+                                    fontSize = 1.05.em,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
+                        buttonsSpacer()
                     }
                     Button(
                         modifier = Modifier.fillMaxWidth().height(60.dp),
