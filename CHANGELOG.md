@@ -1,3 +1,9 @@
+# Release 1.1.9
+
+## New features
+
+* Added support for editing and deleting namespaces directly from the welcome screen
+
 # Release 1.1.8
 
 ## New features
