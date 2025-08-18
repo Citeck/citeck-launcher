@@ -21,6 +21,10 @@ data class ApplicationDef(
     val livenessProbe: AppProbeDef?,
     val resources: AppResourcesDef?,
     val kind: ApplicationKind,
+    /**
+     * Shared memory size - /dev/shm
+     */
+    val shmSize: String,
     val initContainers: List<InitContainerDef>
 ) {
 
@@ -49,6 +53,10 @@ data class ApplicationDef(
             .update(Json.toString(startupConditions))
             .update(Json.toString(resources))
 
+        if (shmSize != EMPTY.shmSize) {
+            digest.update(shmSize)
+        }
+
         initContainers.forEach {
             digest.update(it.getHash())
         }
@@ -74,6 +82,7 @@ data class ApplicationDef(
         private var livenessProbe: AppProbeDef? = null
         private var resources: AppResourcesDef? = null
         private var kind: ApplicationKind = ApplicationKind.THIRD_PARTY
+        private var shmSize: String = "64m"
         private var initContainers: MutableList<InitContainerDef> = ArrayList()
 
         constructor(base: ApplicationDef) : this(base.name) {
@@ -88,6 +97,7 @@ data class ApplicationDef(
             this.livenessProbe = base.livenessProbe
             this.resources = base.resources
             this.kind = base.kind
+            this.shmSize = base.shmSize
             withInitContainers(base.initContainers)
         }
 
@@ -179,6 +189,11 @@ data class ApplicationDef(
             return this
         }
 
+        fun withShmSize(shmSize: String): Builder {
+            this.shmSize = shmSize
+            return this
+        }
+
         fun withInitContainers(initContainers: List<InitContainerDef>?): Builder {
             this.initContainers = ArrayList(initContainers ?: emptyList())
             return this
@@ -202,6 +217,7 @@ data class ApplicationDef(
                 livenessProbe = livenessProbe,
                 resources = resources,
                 kind = kind,
+                shmSize = shmSize,
                 initContainers = initContainers
             )
         }

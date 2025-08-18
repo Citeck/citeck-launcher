@@ -706,6 +706,7 @@ class NamespaceGenerator {
             .addEnv("POSTGRES_PASSWORD", "postgres")
             .addEnv("PGDATA", "/var/lib/postgresql/data")
             .addPort("14523:${NsGenContext.PG_PORT}")
+            .withShmSize("128m")
             .addVolume("postgres2:/var/lib/postgresql/data")
             .addVolume("./postgres/init_db_and_user.sh:/init_db_and_user.sh")
             .addVolume("./postgres/postgresql.conf:/etc/postgresql/postgresql.conf")

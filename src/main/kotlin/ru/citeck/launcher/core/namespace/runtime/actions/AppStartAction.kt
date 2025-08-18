@@ -160,6 +160,7 @@ class AppStartAction(
                             .withRestartPolicy(RestartPolicy.unlessStoppedRestart())
                             .withPortBindings(portBindings)
                             .withNetworkMode(nsRuntime.networkName)
+                            .withShmSize(MemoryUtils.parseMemAmountToBytes(appDef.shmSize))
 
                         if (appDef.volumes.isNotEmpty()) {
                             config.withBinds(appDef.volumes.mapNotNull { prepareVolume(runtime, it) })
