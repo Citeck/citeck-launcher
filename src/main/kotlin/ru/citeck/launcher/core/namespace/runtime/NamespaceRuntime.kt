@@ -480,10 +480,38 @@ class NamespaceRuntime(
         }
 
         removeDetachedApps(detachedAppsToRemove)
+        updateNsStatus(allRuntimes)
+
+        return somethingChanged
+    }
+
+    private fun updateNsStatus(allRuntimes: List<AppRuntime>) {
 
         val statusChangesCount = this.appsStatusChangesCount.get()
-        if (nsStatus.getValue() != NsRuntimeStatus.STALLED && appsStatusChangesCountProcessed != statusChangesCount) {
+        if (appsStatusChangesCountProcessed == statusChangesCount) {
+            return
+        }
 
+        appsStatusChangesCountProcessed = statusChangesCount
+
+        if (nsStatus.getValue() == NsRuntimeStatus.STALLED) {
+            if (allRuntimes.all { !it.status.getValue().isStalledState() }) {
+                var nsStatusChanged = false
+                for (runtime in allRuntimes) {
+                    val status = runtime.status.getValue()
+                    if (status.isStartingState()) {
+                        nsStatus.setValue(NsRuntimeStatus.STARTING)
+                        nsStatusChanged = true
+                        break
+                    }
+                }
+                if (!nsStatusChanged) {
+                    nsStatus.setValue(NsRuntimeStatus.STOPPING)
+                }
+            } else {
+                return
+            }
+        } else {
             val stalledStates = allRuntimes.mapNotNull {
                 if (it.status.getValue().isStalledState()) {
                     it.name to it.status.getValue()
@@ -494,43 +522,43 @@ class NamespaceRuntime(
             if (stalledStates.isNotEmpty()) {
                 log.error { "Found containers in stalled state: $stalledStates. Namespace is stalled" }
                 nsStatus.setValue(NsRuntimeStatus.STALLED)
-            } else {
-                when (nsStatus.getValue()) {
-                    NsRuntimeStatus.STARTING -> {
-                        if (allRuntimes.all {
-                                it.status.getValue().run {
-                                    isStoppingState() || this == AppRuntimeStatus.RUNNING
-                                }
-                            }
-                        ) {
-                            nsStatus.setValue(NsRuntimeStatus.RUNNING)
+                return
+            }
+        }
+
+        when (nsStatus.getValue()) {
+
+            NsRuntimeStatus.STARTING -> {
+                if (allRuntimes.all {
+                        it.status.getValue().run {
+                            isStoppingState() || this == AppRuntimeStatus.RUNNING
                         }
                     }
-
-                    NsRuntimeStatus.STOPPING, NsRuntimeStatus.RUNNING -> {
-                        if (allRuntimes.all { it.status.getValue() == AppRuntimeStatus.STOPPED }) {
-                            try {
-                                dockerApi.deleteNetwork(networkName)
-                            } catch (_: DockerStaleNetworkException) {
-                                log.warn {
-                                    """
-                                    Failed to remove Docker network '$networkName': Docker reports the network has active endpoints, but no containers are attached.
-                                    This is likely caused by stale internal Docker state (e.g., orphaned endpoints or network namespaces).
-                                    You can try to remove network manually using 'docker network rm $networkName' or try to restart your system.
-                                    This is not a critical error — the launcher will continue using this network in future runs without issues.
-                                    """.trimIndent()
-                                }
-                            }
-                            nsStatus.setValue(NsRuntimeStatus.STOPPED)
-                        }
-                    }
-
-                    else -> {}
+                ) {
+                    nsStatus.setValue(NsRuntimeStatus.RUNNING)
                 }
             }
-            appsStatusChangesCountProcessed = statusChangesCount
+
+            NsRuntimeStatus.STOPPING, NsRuntimeStatus.RUNNING -> {
+                if (allRuntimes.all { it.status.getValue() == AppRuntimeStatus.STOPPED }) {
+                    try {
+                        dockerApi.deleteNetwork(networkName)
+                    } catch (_: DockerStaleNetworkException) {
+                        log.warn {
+                            """
+                            Failed to remove Docker network '$networkName': Docker reports the network has active endpoints, but no containers are attached.
+                            This is likely caused by stale internal Docker state (e.g., orphaned endpoints or network namespaces).
+                            You can try to remove network manually using 'docker network rm $networkName' or try to restart your system.
+                            This is not a critical error — the launcher will continue using this network in future runs without issues.
+                            """.trimIndent()
+                        }
+                    }
+                    nsStatus.setValue(NsRuntimeStatus.STOPPED)
+                }
+            }
+
+            else -> {}
         }
-        return somethingChanged
     }
 
     fun updateAndStart(forceUpdate: Boolean = false) {
