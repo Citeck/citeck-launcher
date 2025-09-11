@@ -685,7 +685,7 @@ class NamespaceRuntime(
             nsRuntimeDataRepo[STATE_BUNDLE_DEF] = bundleDef
         }
 
-        val newGenRes = namespaceGenerator.generate(namespaceConfig.getValue(), updatePolicy, bundleDef, detachedApps)
+        val newGenRes = namespaceGenerator.generate(namespaceConfig.getValue(), bundleDef, detachedApps)
         val currentRuntimesByName = appRuntimes.getValue().associateByTo(mutableMapOf()) { it.name }
         val newRuntimes = ArrayList<AppRuntime>()
 

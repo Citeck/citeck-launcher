@@ -337,7 +337,7 @@ class FormDialog(
                         }
                     },
                     modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
-                        if (component.submitOnEnter && event.key == Key.Enter && event.type == KeyEventType.KeyUp) {
+                        if (component.submitOnEnter && (event.key == Key.Enter || event.key == Key.NumPadEnter) && event.type == KeyEventType.KeyUp) {
                             executePopupAction("FormDialog -> Enter press") {
                                 formContext.submit()
                             }

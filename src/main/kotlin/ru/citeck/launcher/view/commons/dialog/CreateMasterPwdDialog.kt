@@ -81,7 +81,7 @@ class CreateMasterPwdDialog(
                         }
                     },
                     modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
-                        if (event.key == Key.Enter && event.type == KeyEventType.KeyUp) {
+                        if ((event.key == Key.Enter || event.key == Key.NumPadEnter) && event.type == KeyEventType.KeyUp) {
                             executePopupAction("Create master pwd -> Enter press") { onSubmit() }
                             true
                         } else {

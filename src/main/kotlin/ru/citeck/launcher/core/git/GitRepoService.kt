@@ -6,8 +6,11 @@ import org.apache.commons.io.FileUtils
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.eclipse.jgit.api.CloneCommand.Callback
 import org.eclipse.jgit.api.Git
+import org.eclipse.jgit.api.ResetCommand
 import org.eclipse.jgit.errors.TransportException
 import org.eclipse.jgit.lib.AnyObjectId
+import org.eclipse.jgit.merge.ContentMergeStrategy
+import org.eclipse.jgit.merge.MergeStrategy
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider
 import ru.citeck.launcher.core.LauncherServices
 import ru.citeck.launcher.core.config.AppDir
@@ -177,7 +180,7 @@ class GitRepoService {
             log.info { "[$relativePath] Repo directory doesn't exists. Clone repo." }
             val totalMs = measureTimeMillis {
                 FileUtils.deleteDirectory(repoDir.toFile())
-                var hashOfLastCommit = ""
+                var hashOfLastCommit: String
                 Git.cloneRepository()
                     .setURI(repoProps.url)
                     .setDirectory(repoDir.toFile())
@@ -221,11 +224,17 @@ class GitRepoService {
                 lastSyncDiffMs > repoProps.pullPeriod.toMillis()
             ) {
                 log.info { "[$relativePath] Repo directory exists. Pull repo." }
-                var hashOfLastCommit = ""
+                var hashOfLastCommit: String
                 val totalMs = measureTimeMillis {
                     Git.open(repoDir.toFile()).use {
+                        it.reset()
+                            .setMode(ResetCommand.ResetType.HARD)
+                            .setRef("origin/${repoProps.branch}")
+                            .call()
                         it.pull()
                             .setCredentialsProvider(credentialsProvider)
+                            .setContentMergeStrategy(ContentMergeStrategy.THEIRS)
+                            .setStrategy(MergeStrategy.THEIRS)
                             .setTimeout(15)
                             .call()
                         hashOfLastCommit = it.getLastCommitHash()

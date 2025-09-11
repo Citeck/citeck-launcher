@@ -4,7 +4,6 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import ru.citeck.launcher.core.WorkspaceServices
 import ru.citeck.launcher.core.appdef.*
 import ru.citeck.launcher.core.config.bundle.BundleDef
-import ru.citeck.launcher.core.git.GitUpdatePolicy
 import ru.citeck.launcher.core.namespace.AppName
 import ru.citeck.launcher.core.namespace.NamespaceConfig
 import ru.citeck.launcher.core.namespace.NamespaceConfig.AuthenticationType
@@ -51,12 +50,9 @@ class NamespaceGenerator {
 
     fun generate(
         props: NamespaceConfig,
-        updatePolicy: GitUpdatePolicy,
         bundleDef: BundleDef,
         detachedApps: Set<String>
     ): NamespaceGenResp {
-
-        services.updateConfig(updatePolicy)
 
         val context = NsGenContext(
             props,

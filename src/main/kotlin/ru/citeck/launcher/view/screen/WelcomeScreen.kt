@@ -25,6 +25,7 @@ import ru.citeck.launcher.core.LauncherServices
 import ru.citeck.launcher.core.WorkspaceServices
 import ru.citeck.launcher.core.config.bundle.BundleRef
 import ru.citeck.launcher.core.entity.EntityInfo
+import ru.citeck.launcher.core.git.GitUpdatePolicy
 import ru.citeck.launcher.core.namespace.NamespaceConfig
 import ru.citeck.launcher.core.utils.ActionStatus
 import ru.citeck.launcher.core.workspace.WorkspaceConfig.QuickStartVariant
@@ -48,37 +49,100 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
 
     val entitiesService = launcherServices.entitiesService
     val selectedWsValue = selectedWorkspace.value
+
     if (selectedWsValue == null) {
         LoadingScreen()
     } else {
-        Box(modifier = Modifier.fillMaxSize()) {
-            TextButton(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(5.dp),
-                onClick = {
-                    JournalSelectDialog.show(
-                        JournalSelectDialog.Params(
-                            WorkspaceDto::class,
-                            listOf(WorkspaceEntityDef.getRef(selectedWsValue)),
-                            false,
-                            entitiesService = launcherServices.entitiesService
-                        )
-                    ) { selectedRefs ->
-                        val currentRef = WorkspaceEntityDef.getRef(selectedWsValue)
-                        val newRef = selectedRefs.firstOrNull() ?: currentRef
-                        var newEntity = entitiesService.getById(WorkspaceDto::class, newRef.localId)?.entity
-                        if (newEntity == null) {
-                            newEntity = entitiesService.getFirst(WorkspaceDto::class)!!.entity
-                        }
-                        launcherServices.setWorkspace(newEntity.id)
-                        selectedWorkspace.value = newEntity
-                    }
-                }
-            ) {
-                Text(selectedWsValue.name, color = MaterialTheme.colorScheme.scrim)
-            }
 
+        val workspaceServicesValue = rememberMutProp(launcherServices.getWorkspaceServices())
+        val workspaceServices = workspaceServicesValue.value
+
+        Box(modifier = Modifier.fillMaxSize()) {
+            Row(modifier = Modifier.align(Alignment.TopStart)) {
+                TextButton(
+                    onClick = {
+                        JournalSelectDialog.show(
+                            JournalSelectDialog.Params(
+                                WorkspaceDto::class,
+                                listOf(WorkspaceEntityDef.getRef(selectedWsValue)),
+                                false,
+                                entitiesService = launcherServices.entitiesService
+                            )
+                        ) { selectedRefs ->
+                            val currentRef = WorkspaceEntityDef.getRef(selectedWsValue)
+                            val newRef = selectedRefs.firstOrNull() ?: currentRef
+                            var newEntity = entitiesService.getById(WorkspaceDto::class, newRef.localId)?.entity
+                            if (newEntity == null) {
+                                newEntity = entitiesService.getFirst(WorkspaceDto::class)!!.entity
+                            }
+                            launcherServices.setWorkspace(newEntity.id)
+                            selectedWorkspace.value = newEntity
+                        }
+                    }
+                ) {
+                    Text(selectedWsValue.name, color = MaterialTheme.colorScheme.scrim)
+                }
+                val wsActionsDropDownShow = remember { mutableStateOf(false) }
+                var wsActionsDropDownOffset by remember { mutableStateOf(DpOffset.Zero) }
+                DropdownMenu(
+                    expanded = wsActionsDropDownShow.value,
+                    offset = wsActionsDropDownOffset,
+                    onDismissRequest = { wsActionsDropDownShow.value = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Force Update") },
+                        onClick = {
+                            wsActionsDropDownShow.value = false
+                            val closeLoading = LoadingDialog.show()
+                            Thread.ofPlatform().start {
+                                try {
+                                    if (workspaceServices == null) {
+                                        log.error { "workspaceServices is null" }
+                                    } else {
+                                        workspaceServices.updateConfig(GitUpdatePolicy.REQUIRED)
+                                    }
+                                } finally {
+                                    closeLoading()
+                                }
+                            }
+                        }
+                    )
+                }
+                val actionsIconPosition = remember { mutableStateOf<LayoutCoordinates?>(null) }
+                CpIcon(
+                    "icons/ellipsis-vertical.svg",
+                    modifier = Modifier.padding(0.dp)
+                        .requiredSize(20.dp)
+                        .align(Alignment.CenterVertically)
+                        .onGloballyPositioned {
+                            actionsIconPosition.value = it
+                        }
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    val pointer = event.changes.firstOrNull()
+                                    if (event.type == PointerEventType.Press &&
+                                        event.buttons.isPrimaryPressed &&
+                                        pointer != null
+                                    ) {
+                                        var position = pointer.position
+                                        actionsIconPosition.value?.let {
+                                            val positionInParent = it.positionInParent()
+                                            position = Offset(
+                                                positionInParent.x + position.x,
+                                                positionInParent.y + position.y - it.size.height
+                                            )
+                                        }
+                                        wsActionsDropDownOffset = DpOffset(position.x.dp, position.y.dp)
+                                        wsActionsDropDownShow.value = true
+                                        pointer.consume()
+                                    }
+                                }
+                            }
+                        }
+                )
+            }
             Text(
                 "Welcome To Citeck Launcher!",
                 fontSize = 3.em,
@@ -89,8 +153,6 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                 modifier = Modifier.align(Alignment.Center).padding(top = 30.dp).width(500.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                val workspaceServicesValue = rememberMutProp(launcherServices.getWorkspaceServices())
-                val workspaceServices = workspaceServicesValue.value
                 if (workspaceServices == null) {
                     Text("Workspace Is Empty", fontSize = 1.05.em, textAlign = TextAlign.Center)
                 } else {
@@ -321,7 +383,7 @@ private fun ColumnScope.renderQuickStartButtons(
     val workspaceServices = workspaceServicesValue.value ?: return
 
     val quickStartVariants = rememberMutProp(workspaceServices, workspaceServices.workspaceConfig) { config ->
-        var variants: List<QuickStartVariant> = config.quickStartVariants.ifEmpty {
+        val variants: List<QuickStartVariant> = config.quickStartVariants.ifEmpty {
             listOf(QuickStartVariant("Quick Start"))
         }
         variants.map { variant ->
