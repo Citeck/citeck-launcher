@@ -6,16 +6,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.input.pointer.PointerEventType
-import androidx.compose.ui.input.pointer.isPrimaryPressed
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -31,6 +25,8 @@ import ru.citeck.launcher.core.utils.ActionStatus
 import ru.citeck.launcher.core.workspace.WorkspaceConfig.QuickStartVariant
 import ru.citeck.launcher.core.workspace.WorkspaceDto
 import ru.citeck.launcher.core.workspace.WorkspaceEntityDef
+import ru.citeck.launcher.view.commons.ContextMenu
+import ru.citeck.launcher.view.commons.ContextMenu.contextMenu
 import ru.citeck.launcher.view.commons.dialog.ErrorDialog
 import ru.citeck.launcher.view.commons.dialog.LoadingDialog
 import ru.citeck.launcher.view.commons.dialog.MessageDialog
@@ -82,32 +78,6 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                 ) {
                     Text(selectedWsValue.name, color = MaterialTheme.colorScheme.scrim)
                 }
-                val wsActionsDropDownShow = remember { mutableStateOf(false) }
-                var wsActionsDropDownOffset by remember { mutableStateOf(DpOffset.Zero) }
-                DropdownMenu(
-                    expanded = wsActionsDropDownShow.value,
-                    offset = wsActionsDropDownOffset,
-                    onDismissRequest = { wsActionsDropDownShow.value = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Force Update") },
-                        onClick = {
-                            wsActionsDropDownShow.value = false
-                            val closeLoading = LoadingDialog.show()
-                            Thread.ofPlatform().start {
-                                try {
-                                    if (workspaceServices == null) {
-                                        log.error { "workspaceServices is null" }
-                                    } else {
-                                        workspaceServices.updateConfig(GitUpdatePolicy.REQUIRED)
-                                    }
-                                } finally {
-                                    closeLoading()
-                                }
-                            }
-                        }
-                    )
-                }
                 val actionsIconPosition = remember { mutableStateOf<LayoutCoordinates?>(null) }
                 CpIcon(
                     "icons/ellipsis-vertical.svg",
@@ -117,30 +87,23 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                         .onGloballyPositioned {
                             actionsIconPosition.value = it
                         }
-                        .pointerInput(Unit) {
-                            awaitPointerEventScope {
-                                while (true) {
-                                    val event = awaitPointerEvent()
-                                    val pointer = event.changes.firstOrNull()
-                                    if (event.type == PointerEventType.Press &&
-                                        event.buttons.isPrimaryPressed &&
-                                        pointer != null
-                                    ) {
-                                        var position = pointer.position
-                                        actionsIconPosition.value?.let {
-                                            val positionInParent = it.positionInParent()
-                                            position = Offset(
-                                                positionInParent.x + position.x,
-                                                positionInParent.y + position.y - it.size.height
-                                            )
+                        .contextMenu(
+                            ContextMenu.Button.LMB,
+                            listOf(
+                                ContextMenu.Item("Force Update") {
+                                    val closeLoading = LoadingDialog.show()
+                                    try {
+                                        if (workspaceServices == null) {
+                                            log.error { "workspaceServices is null" }
+                                        } else {
+                                            workspaceServices.updateConfig(GitUpdatePolicy.REQUIRED)
                                         }
-                                        wsActionsDropDownOffset = DpOffset(position.x.dp, position.y.dp)
-                                        wsActionsDropDownShow.value = true
-                                        pointer.consume()
+                                    } finally {
+                                        closeLoading()
                                     }
                                 }
-                            }
-                        }
+                            )
+                        )
                 )
             }
             Text(
@@ -192,20 +155,15 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                                             modifier = Modifier.fillMaxWidth().padding(top = 2.dp)
                                         )
                                     }
-                                    val nsActionsDropDownShow = remember { mutableStateOf(false) }
-                                    var nsActionsDropDownOffset by remember { mutableStateOf(DpOffset.Zero) }
-                                    DropdownMenu(
-                                        expanded = nsActionsDropDownShow.value,
-                                        offset = nsActionsDropDownOffset,
-                                        modifier = Modifier.align(Alignment.CenterEnd),
-                                        onDismissRequest = { nsActionsDropDownShow.value = false }
-                                    ) {
-                                        DropdownMenuItem(
-                                            text = { Text("Edit") },
-                                            onClick = {
-                                                nsActionsDropDownShow.value = false
-                                                Thread.ofPlatform().start {
-                                                    runBlocking {
+                                    CpIcon(
+                                        "icons/ellipsis-horizontal-circle.svg",
+                                        modifier = Modifier.padding(0.dp)
+                                            .requiredSize(25.dp)
+                                            .align(Alignment.CenterEnd)
+                                            .contextMenu(
+                                                ContextMenu.Button.LMB,
+                                                listOf(
+                                                    ContextMenu.Item("Edit") {
                                                         try {
                                                             workspaceServices.entitiesService.edit(namespace.entity)
                                                             existingNamespaces.value = workspaceServices.entitiesService.find(
@@ -215,59 +173,16 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                                                         } catch (_: FormCancelledException) {
                                                             // do nothing
                                                         }
-                                                    }
-                                                }
-                                            }
-                                        )
-                                        DropdownMenuItem(
-                                            text = { Text("Delete") },
-                                            onClick = {
-                                                nsActionsDropDownShow.value = false
-                                                Thread.ofPlatform().start {
-                                                    runBlocking {
+                                                    },
+                                                    ContextMenu.Item("Delete") {
                                                         workspaceServices.entitiesService.delete(namespace.entity)
                                                         existingNamespaces.value = workspaceServices.entitiesService.find(
                                                             NamespaceConfig::class,
                                                             FAST_ACCESS_NAMESPACES_LIMIT
                                                         )
                                                     }
-                                                }
-                                            }
-                                        )
-                                    }
-                                    val actionsIconPosition = remember { mutableStateOf<LayoutCoordinates?>(null) }
-                                    CpIcon(
-                                        "icons/ellipsis-horizontal-circle.svg",
-                                        modifier = Modifier.padding(0.dp)
-                                            .requiredSize(25.dp)
-                                            .align(Alignment.CenterEnd)
-                                            .onGloballyPositioned {
-                                                actionsIconPosition.value = it
-                                            }
-                                            .pointerInput(Unit) {
-                                                awaitPointerEventScope {
-                                                    while (true) {
-                                                        val event = awaitPointerEvent()
-                                                        val pointer = event.changes.firstOrNull()
-                                                        if (event.type == PointerEventType.Press &&
-                                                            event.buttons.isPrimaryPressed &&
-                                                            pointer != null
-                                                        ) {
-                                                            var position = pointer.position
-                                                            actionsIconPosition.value?.let {
-                                                                val positionInParent = it.positionInParent()
-                                                                position = Offset(
-                                                                    positionInParent.x + position.x,
-                                                                    positionInParent.y + position.y - it.size.height
-                                                                )
-                                                            }
-                                                            nsActionsDropDownOffset = DpOffset(position.x.dp, position.y.dp)
-                                                            nsActionsDropDownShow.value = true
-                                                            pointer.consume()
-                                                        }
-                                                    }
-                                                }
-                                            }
+                                                )
+                                            )
                                     )
                                 }
                             }

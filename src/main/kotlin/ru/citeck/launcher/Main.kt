@@ -18,6 +18,7 @@ import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.file.CiteckFiles
 import ru.citeck.launcher.core.utils.json.Json
 import ru.citeck.launcher.core.workspace.WorkspaceDto
+import ru.citeck.launcher.view.commons.ContextMenu
 import ru.citeck.launcher.view.commons.dialog.ErrorDialog
 import ru.citeck.launcher.view.popup.CiteckDialog
 import ru.citeck.launcher.view.popup.CiteckWindow
@@ -141,6 +142,7 @@ fun main(@Suppress("unused") args: Array<String>) {
                 }
 
                 CiteckDialog.renderDialogs(logo)
+                ContextMenu.render()
 
                 val services = servicesValue.value
                 if (services == null) {

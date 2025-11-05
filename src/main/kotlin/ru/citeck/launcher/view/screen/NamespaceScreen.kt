@@ -8,14 +8,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.PointerEventType
-import androidx.compose.ui.input.pointer.isSecondaryPressed
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import kotlinx.coroutines.CoroutineScope
@@ -40,6 +36,8 @@ import ru.citeck.launcher.view.action.ActionDesc
 import ru.citeck.launcher.view.action.ActionIcon
 import ru.citeck.launcher.view.action.CiteckIconAction
 import ru.citeck.launcher.view.commons.CiteckTooltipArea
+import ru.citeck.launcher.view.commons.ContextMenu
+import ru.citeck.launcher.view.commons.ContextMenu.contextMenu
 import ru.citeck.launcher.view.commons.LimitedText
 import ru.citeck.launcher.view.commons.dialog.ErrorDialog
 import ru.citeck.launcher.view.commons.dialog.LoadingDialog
@@ -145,31 +143,21 @@ fun NamespaceScreen(
             }
             HorizontalDivider()
             Row(modifier = Modifier.height(30.dp), verticalAlignment = Alignment.CenterVertically) {
-                val rmbStartDropDownShow = remember { mutableStateOf(false) }
-                var rmbStartDropDownOffset by remember { mutableStateOf(DpOffset.Zero) }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.weight(0.7f).fillMaxHeight()
-                        .pointerInput(Unit) {
-                            awaitPointerEventScope {
-                                while (true) {
-                                    val event = awaitPointerEvent()
-                                    val pointer = event.changes.firstOrNull()
-                                    if (nsActionInProgress.value) {
-                                        continue
-                                    }
-                                    if (event.type == PointerEventType.Press &&
-                                        event.buttons.isSecondaryPressed &&
-                                        pointer != null
-                                    ) {
-                                        val position = pointer.position
-                                        rmbStartDropDownOffset = DpOffset(position.x.dp, position.y.dp)
-                                        rmbStartDropDownShow.value = true
-                                        pointer.consume()
-                                    }
+                        .contextMenu(
+                            ContextMenu.Button.RMB,
+                            listOf(
+                                ContextMenu.Item("Force Update And Start") {
+                                    nsActionInProgress.value = true
+                                    ErrorDialog.doActionSafe({
+                                        nsRuntime.updateAndStart(true)
+                                    }, { "Namespace start error" }, {})
+                                    nsActionInProgress.value = false
                                 }
-                            }
-                        }
+                            )
+                        )
                         .clickable(enabled = !nsActionInProgress.value) {
                             nsActionInProgress.value = true
                             Thread.ofPlatform().start {
@@ -189,30 +177,6 @@ fun NamespaceScreen(
                         contentScale = ContentScale.FillHeight
                     )
                     Text("Update&Start", modifier = Modifier.padding(start = 5.dp))
-                }
-                DropdownMenu(
-                    expanded = rmbStartDropDownShow.value,
-                    offset = rmbStartDropDownOffset,
-                    onDismissRequest = { rmbStartDropDownShow.value = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Force Update And Start") },
-                        onClick = {
-                            nsActionInProgress.value = true
-                            rmbStartDropDownShow.value = false
-                            Thread.ofPlatform().start {
-                                try {
-                                    runBlocking {
-                                        ErrorDialog.doActionSafe({
-                                            nsRuntime.updateAndStart(true)
-                                        }, { "Namespace start error" }, {})
-                                    }
-                                } finally {
-                                    nsActionInProgress.value = false
-                                }
-                            }
-                        }
-                    )
                 }
                 VerticalDivider()
                 Row(
@@ -347,30 +311,32 @@ fun NamespaceScreen(
                         }
                     }
                 )
-                val rmbVolumesDropDownShow = remember { mutableStateOf(false) }
-                var rmbVolumesDropDownOffset by remember { mutableStateOf(DpOffset.Zero) }
                 CiteckIconAction(
                     coroutineScope,
-                    modifier = Modifier.fillMaxHeight().pointerInput(Unit) {
-                        awaitPointerEventScope {
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                val pointer = event.changes.firstOrNull()
-                                if (nsActionInProgress.value) {
-                                    continue
-                                }
-                                if (event.type == PointerEventType.Press &&
-                                    event.buttons.isSecondaryPressed &&
-                                    pointer != null
-                                ) {
-                                    val position = pointer.position
-                                    rmbVolumesDropDownOffset = DpOffset(position.x.dp, position.y.dp)
-                                    rmbVolumesDropDownShow.value = true
-                                    pointer.consume()
+                    modifier = Modifier.fillMaxHeight().contextMenu(
+                        ContextMenu.Button.RMB,
+                        listOf(
+                            ContextMenu.Item("Create volumes snapshot") {
+                                nsActionInProgress.value = true
+                                val status = ActionStatus.Mut()
+                                val closeLoading = LoadingDialog.show(status)
+                                try {
+                                    val snapshotsDir = NamespacesService.getNamespaceDir(nsRuntime.namespaceRef)
+                                        .resolve("snapshots")
+                                    services.dockerApi.exportSnapshot(
+                                        nsRuntime.namespaceRef,
+                                        snapshotsDir.resolve(FileUtils.createNameWithCurrentDateTime()),
+                                        CompressionAlg.XZ,
+                                        status
+                                    )
+                                    Desktop.getDesktop().open(snapshotsDir.toFile())
+                                } finally {
+                                    closeLoading()
+                                    nsActionInProgress.value = false
                                 }
                             }
-                        }
-                    },
+                        )
+                    ),
                     actionDesc = ActionDesc(
                         "show-volumes",
                         ActionIcon.STORAGE,
@@ -390,38 +356,6 @@ fun NamespaceScreen(
                         }
                     }
                 )
-                DropdownMenu(
-                    expanded = rmbVolumesDropDownShow.value,
-                    offset = rmbVolumesDropDownOffset,
-                    onDismissRequest = { rmbVolumesDropDownShow.value = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Create volumes snapshot") },
-                        onClick = {
-                            nsActionInProgress.value = true
-                            val status = ActionStatus.Mut()
-                            val closeLoading = LoadingDialog.show(status)
-                            Thread.ofPlatform().start {
-                                runBlocking {
-                                    ErrorDialog.doActionSafe({
-                                        val snapshotsDir = NamespacesService.getNamespaceDir(nsRuntime.namespaceRef)
-                                            .resolve("snapshots")
-                                        services.dockerApi.exportSnapshot(
-                                            nsRuntime.namespaceRef,
-                                            snapshotsDir.resolve(FileUtils.createNameWithCurrentDateTime()),
-                                            CompressionAlg.XZ,
-                                            status
-                                        )
-                                        Desktop.getDesktop().open(snapshotsDir.toFile())
-                                    }, { "Snapshot creation failed" }, {})
-                                }
-                                nsActionInProgress.value = false
-                                closeLoading()
-                            }
-                            rmbVolumesDropDownShow.value = false
-                        }
-                    )
-                }
                 CiteckIconAction(
                     coroutineScope,
                     modifier = Modifier.fillMaxHeight(),
