@@ -235,6 +235,7 @@ class AppImagePullAction(
         val pullInProgress = AtomicBoolean(true)
         Thread.ofVirtual().name("pull-watcher-${appRuntime.name}").start {
             var mbLen = 3
+            var isCompletedCheckedForItem: PullResponseItem? = null
             while (pullInProgress.get()) {
                 val details = lastPullInfo.get()?.progressDetail
                 var totalBytes = 0L
@@ -260,7 +261,17 @@ class AppImagePullAction(
                 }
                 appRuntime.statusText.setValue(statusText)
                 Thread.sleep(2000)
-                if (System.currentTimeMillis() - lastPullResponseTime.get() > LAST_PULL_RESPONSE_TIMEOUT_MS) {
+                val timeSinceLastResp = System.currentTimeMillis() - lastPullResponseTime.get()
+                val lastPullRespItem = lastPullInfo.get()
+                if (lastPullRespItem != null && timeSinceLastResp > 10_000 && isCompletedCheckedForItem !== lastPullRespItem) {
+                    if (lastPullRespItem.isPullSuccessIndicated) {
+                        log.warn { "onCompleted doesn't invoke, but last item indicated as success. Call onComplete manually" }
+                        pullCallback.onComplete()
+                        continue
+                    }
+                    isCompletedCheckedForItem = lastPullRespItem
+                }
+                if (timeSinceLastResp > LAST_PULL_RESPONSE_TIMEOUT_MS) {
                     pullCallback.onError(RuntimeException("No pull updates during ${LAST_PULL_RESPONSE_TIMEOUT_MS}ms"))
                 }
             }
