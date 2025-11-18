@@ -101,19 +101,34 @@ object BundleUtils {
             return "$realRepository:$tag"
         }
 
-        data.forEach { appName, value ->
-            val image = getImageUrl(value["/image/repository"].asText(), value["/image/tag"].asText())
-            if (image.isNotBlank()) {
-                applications[appNameByAliases[appName] ?: appName] = BundleAppDef(image)
+        fun processApp(appName: String, value: DataValue) {
+            if (appName.isBlank()) {
+                return
             }
-            if (eappsAppNames.contains(appName)) {
-                for (app in value["/ecosAppsImages"]) {
-                    val citeckAppImage = getImageUrl(app["repository"].asText(), app["tag"].asText())
-                    if (citeckAppImage.isNotBlank()) {
-                        citeckApps.add(BundleAppDef(citeckAppImage))
+            if (appName == "ecos") {
+                if (value.isObject()) {
+                    // some helm charts have core version under ecos key in kit
+                    value.forEach { ecosScopeAppName, ecosScopeAppValue ->
+                        processApp(ecosScopeAppName, ecosScopeAppValue)
+                    }
+                }
+            } else {
+                val image = getImageUrl(value["/image/repository"].asText(), value["/image/tag"].asText())
+                if (image.isNotBlank()) {
+                    applications[appNameByAliases[appName] ?: appName] = BundleAppDef(image)
+                }
+                if (eappsAppNames.contains(appName)) {
+                    for (app in value["/ecosAppsImages"]) {
+                        val citeckAppImage = getImageUrl(app["repository"].asText(), app["tag"].asText())
+                        if (citeckAppImage.isNotBlank()) {
+                            citeckApps.add(BundleAppDef(citeckAppImage))
+                        }
                     }
                 }
             }
+        }
+        data.forEach { appName, value ->
+            processApp(appName, value)
         }
         return BundleDef(key, applications, citeckApps)
     }
