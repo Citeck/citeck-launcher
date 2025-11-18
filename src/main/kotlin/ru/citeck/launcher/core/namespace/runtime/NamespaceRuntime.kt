@@ -23,6 +23,7 @@ import ru.citeck.launcher.core.namespace.runtime.docker.exception.DockerStaleNet
 import ru.citeck.launcher.core.utils.Digest
 import ru.citeck.launcher.core.utils.Disposable
 import ru.citeck.launcher.core.utils.file.CiteckFiles
+import ru.citeck.launcher.core.utils.json.Json
 import ru.citeck.launcher.core.utils.prop.MutProp
 import ru.citeck.launcher.core.workspace.WorkspaceConfig
 import java.nio.file.Path
@@ -685,7 +686,23 @@ class NamespaceRuntime(
             nsRuntimeDataRepo[STATE_BUNDLE_DEF] = bundleDef
         }
 
-        val newGenRes = namespaceGenerator.generate(namespaceConfig.getValue(), bundleDef, detachedApps)
+        val newGenRes = try {
+            namespaceGenerator.generate(namespaceConfig.getValue(), bundleDef, detachedApps)
+        } catch (e: Throwable) {
+            if (updatePolicy != GitUpdatePolicy.REQUIRED) {
+                generateNs(GitUpdatePolicy.REQUIRED)
+                return
+            } else {
+                log.error(e) {
+                    "Exception occurred while namespace generation. " +
+                        "bundleDef: ${Json.toString(bundleDef)} " +
+                        "Namespace config: ${Json.toString(namespaceConfig.getValue())} " +
+                        "detachedApps: ${Json.toString(detachedApps)}"
+                }
+                val nsName = namespaceConfig.getValue().name
+                throw IllegalStateException("Exception occurred while namespace generation: '$nsName'", e)
+            }
+        }
         val currentRuntimesByName = appRuntimes.getValue().associateByTo(mutableMapOf()) { it.name }
         val newRuntimes = ArrayList<AppRuntime>()
 

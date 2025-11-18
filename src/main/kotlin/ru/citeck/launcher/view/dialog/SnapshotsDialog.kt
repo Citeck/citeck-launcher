@@ -82,8 +82,10 @@ class SnapshotsDialog(
     @Composable
     override fun render() {
         dialog(width = DialogWidth.MEDIUM) {
-            renderSnapshots("Workspace Snapshots", true, workspaceSnapshots)
-            Spacer(modifier = Modifier.height(10.dp))
+            if (workspaceSnapshots.value.isNotEmpty()) {
+                renderSnapshots("Workspace Snapshots", true, workspaceSnapshots)
+                Spacer(modifier = Modifier.height(10.dp))
+            }
             renderSnapshots("Namespace Snapshots", false, namespaceSnapshots)
             buttonsRow {
                 button("Cancel") {

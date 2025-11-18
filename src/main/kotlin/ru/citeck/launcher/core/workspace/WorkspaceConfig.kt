@@ -49,7 +49,7 @@ data class WorkspaceConfig(
     }
 
     class PostgresProps(
-        val image: String = "postgres:17.7"
+        val image: String = "postgres:17.5"
     ) {
         companion object {
             val DEFAULT = PostgresProps()
