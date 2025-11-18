@@ -22,7 +22,11 @@ object DockerConstants {
     }
 
     fun getVolumeName(srcName: String, namespaceRef: NamespaceRef): String {
-        return getNamePrefix(namespaceRef) +
+        return getVolumeName("", srcName, namespaceRef)
+    }
+
+    fun getVolumeName(prefix: String, srcName: String, namespaceRef: NamespaceRef): String {
+        return prefix + getNamePrefix(namespaceRef) +
             "volume" +
             NAME_DELIM +
             srcName +

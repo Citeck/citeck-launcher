@@ -98,9 +98,14 @@ abstract class CiteckPopup(val kind: CiteckPopupKind) {
 
         @Composable
         inline fun button(text: String, crossinline action: suspend () -> Unit) {
+            button(text, { true }, action)
+        }
+
+        @Composable
+        inline fun button(text: String, crossinline enabledIf: () -> Boolean, crossinline action: suspend () -> Unit) {
             Button(
                 modifier = Modifier.padding(start = if (firstBtn) 0.dp else 10.dp).fillMaxHeight(),
-                enabled = actionsEnabled.value,
+                enabled = actionsEnabled.value && enabledIf(),
                 onClick = {
                     executePopupAction("Button: '$text'", action)
                 }

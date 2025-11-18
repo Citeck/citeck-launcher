@@ -5,6 +5,7 @@ import ru.citeck.launcher.core.WorkspaceServices
 import ru.citeck.launcher.core.database.Repository
 import ru.citeck.launcher.core.namespace.NamespaceRef
 import ru.citeck.launcher.core.namespace.runtime.NsRuntimeStatus
+import java.util.*
 
 class VolumesRepo(
     private val workspaceServices: WorkspaceServices
@@ -22,7 +23,7 @@ class VolumesRepo(
     }
 
     override fun get(id: String): VolumeInfo? {
-        return dockerApi.getVolumeByNameOrNull(id)?.toInfo()
+        return dockerApi.getVolumeByNameOrNull(id)?.toInfo(dockerApi.getVolumesSize())
     }
 
     override fun delete(id: String) {
@@ -39,7 +40,10 @@ class VolumesRepo(
     }
 
     override fun find(max: Int): List<VolumeInfo> {
-        return dockerApi.getVolumes(getNsRef()).map { it.toInfo() }
+        val volumesSize = dockerApi.getVolumesSize()
+        return dockerApi.getVolumes(getNsRef())
+            .map { it.toInfo(volumesSize) }
+            .sortedBy { it.name }
     }
 
     override fun getFirst(): VolumeInfo? {
@@ -50,7 +54,13 @@ class VolumesRepo(
         find(1000).forEach { action(it.name, it) }
     }
 
-    private fun InspectVolumeResponse.toInfo(): VolumeInfo {
-        return VolumeInfo(name)
+    private fun InspectVolumeResponse.toInfo(volumesSize: Map<String, Long>): VolumeInfo {
+        val sizeBytes = volumesSize[name] ?: -1L
+        val sizeMb = if (sizeBytes >= 0) {
+            String.format(Locale.US, "%.2f", sizeBytes / (1024f * 1024f))
+        } else {
+            "-1"
+        }
+        return VolumeInfo(name, "$sizeMb mb", sizeBytes)
     }
 }

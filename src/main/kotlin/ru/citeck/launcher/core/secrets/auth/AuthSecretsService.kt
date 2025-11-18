@@ -7,6 +7,7 @@ import ru.citeck.launcher.core.entity.EntityDef
 import ru.citeck.launcher.core.entity.EntityIdType
 import ru.citeck.launcher.core.namespace.runtime.actions.AuthenticationCancelled
 import ru.citeck.launcher.core.secrets.storage.SecretsStorage
+import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.json.Json
 import ru.citeck.launcher.view.form.FormDialog
 import ru.citeck.launcher.view.form.exception.FormCancelledException
@@ -43,6 +44,7 @@ class AuthSecretsService {
             "auth-secret",
             { it.id },
             { it.id },
+            { _, _ -> DataValue.NULL },
             createForm = null,
             editForm = null,
             emptyList(),

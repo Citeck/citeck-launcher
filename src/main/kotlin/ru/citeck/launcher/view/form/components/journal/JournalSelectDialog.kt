@@ -8,9 +8,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
 import ru.citeck.launcher.core.entity.EntitiesService
 import ru.citeck.launcher.core.entity.EntityInfo
@@ -19,7 +19,6 @@ import ru.citeck.launcher.core.utils.promise.Promise
 import ru.citeck.launcher.core.utils.promise.Promises
 import ru.citeck.launcher.view.action.CiteckIconAction
 import ru.citeck.launcher.view.commons.LimitedText
-import ru.citeck.launcher.view.commons.dialog.ErrorDialog
 import ru.citeck.launcher.view.commons.dialog.LoadingDialog
 import ru.citeck.launcher.view.form.exception.FormCancelledException
 import ru.citeck.launcher.view.popup.CiteckDialog
@@ -145,12 +144,14 @@ class JournalSelectDialog(
                         Checkbox(false, onCheckedChange = {}, enabled = false)
                     }
                 }
-                column {
-                    Text(
-                        "Name",
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(bottom = 5.dp)
-                    )
+                params.params.columns.forEach {
+                    column {
+                        Text(
+                            it.name,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(bottom = 5.dp)
+                        )
+                    }
                 }
                 column {
                     Text(
@@ -179,27 +180,43 @@ class JournalSelectDialog(
                             })
                         }
                     }
-                    cell(
-                        modifier = Modifier.pointerInput(Unit) {
-                            detectTapGestures(
-                                onDoubleTap = {
-                                    if (params.params.multiple) {
-                                        row.selected.value = true
-                                    } else {
-                                        params.onSubmit(listOf(row.record.ref))
-                                        closeDialog()
-                                    }
+                    params.params.columns.forEach { column ->
+                        if (column.property == "name") {
+                            cell(
+                                modifier = Modifier.pointerInput(Unit) {
+                                    detectTapGestures(
+                                        onDoubleTap = {
+                                            if (params.params.selectable) {
+                                                if (params.params.multiple) {
+                                                    row.selected.value = true
+                                                } else {
+                                                    params.onSubmit(listOf(row.record.ref))
+                                                    closeDialog()
+                                                }
+                                            }
+                                        }
+                                    )
                                 }
-                            )
+                            ) {
+                                LimitedText(
+                                    text = row.record.name,
+                                    modifier = Modifier.padding(0.dp),
+                                    fontSize = 1.1.em,
+                                    minWidth = column.sizeMin,
+                                    maxWidth = column.sizeMax
+                                )
+                            }
+                        } else {
+                            cell {
+                                LimitedText(
+                                    text = row.record.getCustomProp(column.property).asText(),
+                                    modifier = Modifier.padding(0.dp),
+                                    fontSize = 1.1.em,
+                                    minWidth = column.sizeMin,
+                                    maxWidth = column.sizeMax
+                                )
+                            }
                         }
-                    ) {
-                        LimitedText(
-                            text = row.record.name,
-                            modifier = Modifier.padding(0.dp),
-                            fontSize = 1.1.em,
-                            minWidth = 500.dp,
-                            maxWidth = 500.dp
-                        )
                     }
                     cell {
                         Row(
@@ -225,7 +242,7 @@ class JournalSelectDialog(
         records: MutableState<List<RecordRow>>,
         isEntityCreatable: Boolean
     ) {
-        button("Cancel") {
+        button(if (params.params.selectable) "Cancel" else "Close") {
             params.onCancel()
             closeDialog()
         }
@@ -239,26 +256,36 @@ class JournalSelectDialog(
                 }
             }
         }
-        Spacer(modifier = Modifier.weight(1f))
-        Button(
-            onClick = {
-                Thread.ofPlatform().start {
-                    runBlocking {
-                        ErrorDialog.doActionSafe({
-                            val closeLoading = LoadingDialog.show()
-                            try {
-                                params.onSubmit(records.value.filter { it.selected.value }.map { it.record.ref })
-                            } finally {
-                                closeLoading()
-                            }
-                        }, { "Journal select submit error" }, {
-                            closeDialog()
-                        })
-                    }
+        spacer()
+        params.params.customButtons.forEach { buttonDesc ->
+            button(buttonDesc.name, buttonDesc.enabledIf) {
+                val closeLoading: () -> Unit = if (buttonDesc.loading) {
+                    LoadingDialog.show()
+                } else {
+                    {}
+                }
+                val closeDialog = try {
+                    buttonDesc.action.invoke()
+                } finally {
+                    closeLoading()
+                }
+                if (closeDialog) {
+                    closeDialog()
+                } else {
+                    updateTableRows(entitiesService, params, records)
                 }
             }
-        ) {
-            Text("Confirm")
+        }
+        if (params.params.selectable) {
+            button("Confirm") {
+                val closeLoading = LoadingDialog.show()
+                try {
+                    params.onSubmit(records.value.filter { it.selected.value }.map { it.record.ref })
+                } finally {
+                    closeLoading()
+                }
+                closeDialog()
+            }
         }
     }
 
@@ -273,8 +300,28 @@ class JournalSelectDialog(
         val multiple: Boolean,
         val entitiesService: EntitiesService,
         val closeWhenAllRecordsDeleted: Boolean = false,
-        val selectable: Boolean = true
+        val selectable: Boolean = true,
+        val columns: List<JournalColumn> = listOf(JournalColumn.NAME),
+        val customButtons: List<JournalButton> = emptyList()
     )
+
+    data class JournalButton(
+        val name: String,
+        val loading: Boolean = false,
+        val enabledIf: () -> Boolean = { true },
+        val action: suspend () -> Boolean,
+    )
+
+    data class JournalColumn(
+        val name: String,
+        val property: String,
+        val sizeMin: Dp,
+        val sizeMax: Dp
+    ) {
+        companion object {
+            val NAME = JournalColumn("Name", "name", 500.dp, 500.dp)
+        }
+    }
 
     data class InternalParams(
         val params: Params,

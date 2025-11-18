@@ -11,8 +11,12 @@ data class WorkspaceConfig(
     val bundleRepos: List<BundlesRepo>,
     val defaultWebappProps: NamespaceConfig.WebappProps = NamespaceConfig.WebappProps.DEFAULT,
     val webapps: List<AppConfig>,
+    val postgres: PostgresProps = PostgresProps.DEFAULT,
+    val keycloak: KeycloakProps = KeycloakProps.DEFAULT,
     val alfresco: AlfrescoProps = AlfrescoProps.DEFAULT,
     val onlyoffice: OnlyOfficeProps = OnlyOfficeProps.DEFAULT,
+    val pgadmin: PgAdminProps = PgAdminProps.DEFAULT,
+    val zookeeper: ZookeeperProps = ZookeeperProps.DEFAULT,
     val citeckProxy: CiteckProxy = CiteckProxy(),
     val licenses: List<LicenseInstance> = emptyList(),
     val snapshots: List<Snapshot> = emptyList(),
@@ -44,8 +48,39 @@ data class WorkspaceConfig(
         }
     }
 
+    class PostgresProps(
+        val image: String = "postgres:17.7"
+    ) {
+        companion object {
+            val DEFAULT = PostgresProps()
+        }
+    }
+
+    class KeycloakProps(
+        val image: String = "keycloak/keycloak:26.4.5"
+    ) {
+        companion object {
+            val DEFAULT = KeycloakProps()
+        }
+    }
+    class ZookeeperProps(
+        val image: String = "zookeeper:3.9.4"
+    ) {
+        companion object {
+            val DEFAULT = ZookeeperProps()
+        }
+    }
+
+    class PgAdminProps(
+        val image: String = "dpage/pgadmin4:9.10.0"
+    ) {
+        companion object {
+            val DEFAULT = PgAdminProps()
+        }
+    }
+
     class OnlyOfficeProps(
-        val image: String = "onlyoffice/documentserver:9.0.3.1",
+        val image: String = "onlyoffice/documentserver:9.1.0.1",
         val memoryLimit: String = "3g"
     ) {
         companion object {

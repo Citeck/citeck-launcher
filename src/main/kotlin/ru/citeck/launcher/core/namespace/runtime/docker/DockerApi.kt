@@ -13,6 +13,7 @@ import com.github.dockerjava.api.model.Container
 import com.github.dockerjava.api.model.Frame
 import com.github.dockerjava.api.model.HostConfig
 import com.github.dockerjava.api.model.Network
+import com.github.dockerjava.transport.DockerHttpClient
 import io.github.oshai.kotlinlogging.KotlinLogging
 import ru.citeck.launcher.core.namespace.NamespaceRef
 import ru.citeck.launcher.core.namespace.runtime.docker.exception.DockerStaleNetworkException
@@ -28,14 +29,11 @@ import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipFile
-import kotlin.io.path.absolutePathString
-import kotlin.io.path.deleteExisting
-import kotlin.io.path.exists
-import kotlin.io.path.name
-import kotlin.io.path.outputStream
+import kotlin.io.path.*
 
 class DockerApi(
-    private val client: DockerClient
+    private val client: DockerClient,
+    private val httpClient: DockerHttpClient
 ) {
     companion object {
         private val log = KotlinLogging.logger {}
@@ -58,6 +56,33 @@ class DockerApi(
     }
 
     // +++ VOLUMES +++
+
+    fun getVolumesSize(): Map<String, Long> {
+
+        val request = DockerHttpClient.Request.builder()
+            .method(DockerHttpClient.Request.Method.GET)
+            .path("/system/df?type=volume")
+            .build()
+
+        return try {
+            httpClient.execute(request).use { response ->
+                val body = response.body ?: return emptyMap()
+                val jsonResp = Json.readJson(body.readAllBytes())
+                val result = mutableMapOf<String, Long>()
+                jsonResp["Volumes"]?.forEach { volume ->
+                    val name = volume["Name"]?.asText()
+                    val size = volume["UsageData"]?.get("Size")?.asLong()
+                    if (name != null && size != null) {
+                        result[name] = size
+                    }
+                }
+                result
+            }
+        } catch (e: Throwable) {
+            log.error(e) { "getVolumesSize call failed" }
+            emptyMap()
+        }
+    }
 
     fun getVolumeByNameOrNull(name: String): InspectVolumeResponse? {
         return client.listVolumesCmd()
@@ -287,18 +312,38 @@ class DockerApi(
         }
     }
 
-    fun importSnapshot(nsRef: NamespaceRef, snapshot: Path, actionStatus: ActionStatus.Mut) {
+    fun validateSnapshot(
+        snapshot: Path
+    ): NamespaceSnapshotMeta {
+        return ZipFile(snapshot.toFile()).use { zip ->
+            val metaEntry = zip.getEntry("meta.json")
+                ?: error("Invalid snapshot: ${snapshot.absolutePathString()}. meta.json is not present")
+            val snapshotMeta = zip.getInputStream(metaEntry).use { input ->
+                Json.read(input, NamespaceSnapshotMeta::class)
+            }
+            if (snapshotMeta.volumes.isEmpty()) {
+                error("Snapshot with empty volumes: ${snapshot.absolute()}")
+            }
+            snapshotMeta
+        }
+    }
+
+    fun importSnapshot(
+        nsRef: NamespaceRef,
+        snapshot: Path,
+        actionStatus: ActionStatus.Mut,
+        namePrefix: String = ""
+    ): List<String> {
         log.info { "Snapshot importing started. Namespace: $nsRef Snapshot: $snapshot" }
         if (!snapshot.exists()) {
             error("Snapshot file does not exist: ${snapshot.absolutePathString()}")
         }
         checkUtilsImage(actionStatus)
+        val importedVolumes = mutableListOf<String>()
         ZipFile(snapshot.toFile()).use { zip ->
             actionStatus.set("Read meta", 0.01f)
             val metaEntry = zip.getEntry("meta.json")
-            if (metaEntry == null) {
-                error("Invalid snapshot: ${snapshot.absolutePathString()}. meta.json is not present")
-            }
+                ?: error("Invalid snapshot: ${snapshot.absolutePathString()}. meta.json is not present")
             val snapshotMeta = zip.getInputStream(metaEntry).use { input ->
                 Json.read(input, NamespaceSnapshotMeta::class)
             }
@@ -308,7 +353,7 @@ class DockerApi(
             try {
                 actionStatus.set("Check volumes", 0.05f)
                 for (volume in snapshotMeta.volumes) {
-                    val volumeNameInNs = DockerConstants.getVolumeName(volume.name, nsRef)
+                    val volumeNameInNs = DockerConstants.getVolumeName(namePrefix, volume.name, nsRef)
                     if (getVolumeByNameOrNull(volumeNameInNs) != null) {
                         error("Volume $volumeNameInNs already exists")
                     }
@@ -330,13 +375,21 @@ class DockerApi(
                             volumeDataStream.copyTo(fileOut)
                         }
                     }
-                    val volumeNameInNs = DockerConstants.getVolumeName(volume.name, nsRef)
+                    val volumeNameInNs = DockerConstants.getVolumeName(namePrefix, volume.name, nsRef)
                     createVolume(nsRef, volume.name, volumeNameInNs)
+                    importedVolumes.add(volumeNameInNs)
 
                     val srcArchive = "/source/${volume.dataFile}"
+                    var command = "tar -xf $srcArchive -C /dest"
+                    val rootStat = volume.rootStat
+                    if (rootStat.isNotBlank()) {
+                        val rootStatParts = rootStat.split("|")
+                        command = "chown ${rootStatParts[0]} /dest " +
+                            "&& chmod ${rootStatParts[1]} /dest && " + command
+                    }
                     execWithUtils(
                         nsRef,
-                        "tar -xf $srcArchive -C ./dest",
+                        command,
                         listOf(
                             "$volumeNameInNs:/dest",
                             "${extractedVolumeDataFile.absolutePathString()}:$srcArchive"
@@ -351,6 +404,7 @@ class DockerApi(
                 outDir.toFile().deleteRecursively()
             }
         }
+        return importedVolumes
     }
 
     private fun checkUtilsImage(status: ActionStatus.Mut) {
@@ -469,18 +523,27 @@ class DockerApi(
                 log.info { "Create snapshot of volume '$originalName'..." }
 
                 val dataFile = FileUtils.sanitizeFileName(originalName) + ".tar.${alg.extension}"
-                volumesSnapMeta.add(VolumeSnapshotMeta(originalName, dataFile))
 
                 execWithUtils(
                     nsRef,
                     "cd /source && " +
                         "find . -mindepth 1 -printf '%P\\n' | " +
-                        "tar $tarAlgParam -cvf \"/dest/${dataFile}\" -T -",
+                        "tar $tarAlgParam -cvf \"/dest/${dataFile}\" -T - && " +
+                        "stat -c \"%u:%g|0%a\" /source > \"/dest/$dataFile.stat\"",
                     listOf(
                         volume.name + ":/source",
                         "${dirToExport.absolutePathString()}:/dest"
                     )
                 )
+                val statFile = dirToExport.resolve("$dataFile.stat")
+                volumesSnapMeta.add(
+                    VolumeSnapshotMeta(
+                        originalName,
+                        statFile.readText(Charsets.UTF_8).trim(),
+                        dataFile
+                    )
+                )
+                statFile.deleteIfExists()
 
                 actionStatus.addProgress(progressForVolume)
             }

@@ -86,7 +86,7 @@ class LauncherServices {
             .build()
 
         val dockerClient = DockerClientImpl.getInstance(dockerClientConfig, httpClient)
-        this.dockerApi = DockerApi(dockerClient)
+        this.dockerApi = DockerApi(dockerClient, httpClient)
 
         actionsService = ActionsService()
         actionsService.register(AppImagePullAction(dockerApi, authSecretsService))

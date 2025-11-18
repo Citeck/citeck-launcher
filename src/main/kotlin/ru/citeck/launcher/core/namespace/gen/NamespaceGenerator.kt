@@ -126,7 +126,7 @@ class NamespaceGenerator {
         )
 
         context.getOrCreateApp(AppName.KEYCLOAK)
-            .withImage("keycloak/keycloak:26.3.1")
+            .withImage(context.workspaceConfig.keycloak.image)
             .withResources(
                 AppResourcesDef(
                     AppResourcesDef.LimitsDef("1g")
@@ -211,7 +211,7 @@ class NamespaceGenerator {
             return
         }
         context.getOrCreateApp(AppName.PGADMIN)
-            .withImage(props.image.ifBlank { "dpage/pgadmin4:8.13.0" })
+            .withImage(props.image.ifBlank { context.workspaceConfig.pgadmin.image })
             .addPort("5050:80")
             .addEnv("PGADMIN_DEFAULT_EMAIL", "admin@admin.com")
             .addEnv("PGADMIN_DEFAULT_PASSWORD", "admin")
@@ -671,7 +671,7 @@ class NamespaceGenerator {
 
     private fun generateZookeeper(context: NsGenContext) {
         context.getOrCreateApp(NsGenContext.ZK_HOST)
-            .withImage("zookeeper:3.9.3")
+            .withImage(context.workspaceConfig.zookeeper.image)
             .addPort("2181:${NsGenContext.ZK_PORT}")
             .addPort("${context.portsCounter.andIncrement}:8080")
             .addEnv("ZOO_AUTOPURGE_PURGEINTERVAL", "1")
@@ -697,7 +697,7 @@ class NamespaceGenerator {
 
     private fun generatePostgres(context: NsGenContext) {
         context.getOrCreateApp(NsGenContext.PG_HOST)
-            .withImage("postgres:17.5")
+            .withImage(context.workspaceConfig.postgres.image)
             .addEnv("POSTGRES_USER", "postgres")
             .addEnv("POSTGRES_PASSWORD", "postgres")
             .addEnv("PGDATA", "/var/lib/postgresql/data")

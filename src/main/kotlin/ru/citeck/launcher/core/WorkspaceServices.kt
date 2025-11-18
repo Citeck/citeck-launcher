@@ -20,6 +20,7 @@ import ru.citeck.launcher.core.namespace.runtime.docker.DockerApi
 import ru.citeck.launcher.core.namespace.volume.VolumeInfo
 import ru.citeck.launcher.core.namespace.volume.VolumesRepo
 import ru.citeck.launcher.core.snapshot.WorkspaceSnapshots
+import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.prop.MutProp
 import ru.citeck.launcher.core.workspace.WorkspaceConfig
 import ru.citeck.launcher.core.workspace.WorkspaceDto
@@ -100,6 +101,12 @@ class WorkspaceServices(
             "volume",
             { it.name },
             { it.name },
+            { info, prop ->
+                when (prop) {
+                    "sizeMb" -> DataValue.createStr(info.sizeMb)
+                    else -> DataValue.NULL
+                }
+            },
             createForm = null,
             editForm = null,
             emptyList(),

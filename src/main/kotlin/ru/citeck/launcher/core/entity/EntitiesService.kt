@@ -206,6 +206,7 @@ class EntitiesService(
             EntityInfo(
                 EntityRef.create(definition.typeId, definition.getId(entity).toString()),
                 definition.getName(entity),
+                { definition.getCustomProp(entity, it) },
                 actions,
                 entity
             )
@@ -465,12 +466,13 @@ class EntitiesService(
         val entityType = Json.getSimpleType(definition.valueType)
         val listType = Json.getListType(definition.valueType)
 
-        val defaultEntitiesInfo = definition.defaultEntities.map {
+        val defaultEntitiesInfo = definition.defaultEntities.map { entity ->
             EntityInfo(
-                EntityRef.create(definition.typeId, definition.getId(it).toString()),
-                definition.getName(it),
+                EntityRef.create(definition.typeId, definition.getId(entity).toString()),
+                definition.getName(entity),
+                { definition.getCustomProp(entity, it) },
                 emptyList(),
-                it
+                entity
             )
         }
         defaultEntitiesInfo.forEach {

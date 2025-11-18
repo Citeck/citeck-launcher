@@ -24,6 +24,8 @@ import ru.citeck.launcher.view.commons.dialog.ErrorDialog
 
 object ContextMenu {
 
+    private const val POPUP_PADDING = 10
+
     private val items = mutableStateOf<List<Item>>(emptyList())
     val actionInProgress = mutableStateOf(false)
 
@@ -140,8 +142,8 @@ object ContextMenu {
                         layoutDirection: LayoutDirection,
                         popupContentSize: IntSize
                     ): IntOffset {
-                        val windowLimX = windowSize.width - 4
-                        val windowLimY = windowSize.height - 4
+                        val windowLimX = windowSize.width - POPUP_PADDING
+                        val windowLimY = windowSize.height - POPUP_PADDING
 
                         var x = offset.x
                         var y = offset.y
@@ -154,8 +156,8 @@ object ContextMenu {
                             y = windowLimY - popupContentSize.height
                         }
 
-                        x = x.coerceAtLeast(0)
-                        y = y.coerceAtLeast(0)
+                        x = x.coerceAtLeast(POPUP_PADDING)
+                        y = y.coerceAtLeast(POPUP_PADDING)
 
                         return IntOffset(x, y)
                     }

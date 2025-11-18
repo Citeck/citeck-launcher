@@ -14,6 +14,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -23,15 +24,11 @@ import ru.citeck.launcher.core.config.AppDir
 import ru.citeck.launcher.core.logs.AppLogUtils
 import ru.citeck.launcher.core.namespace.NamespaceConfig
 import ru.citeck.launcher.core.namespace.NamespaceEntityDef
-import ru.citeck.launcher.core.namespace.NamespacesService
 import ru.citeck.launcher.core.namespace.runtime.AppRuntime
 import ru.citeck.launcher.core.namespace.runtime.AppRuntimeStatus
 import ru.citeck.launcher.core.namespace.runtime.NsRuntimeStatus.*
 import ru.citeck.launcher.core.namespace.volume.VolumeInfo
 import ru.citeck.launcher.core.secrets.auth.AuthSecret
-import ru.citeck.launcher.core.utils.ActionStatus
-import ru.citeck.launcher.core.utils.CompressionAlg
-import ru.citeck.launcher.core.utils.file.FileUtils
 import ru.citeck.launcher.view.action.ActionDesc
 import ru.citeck.launcher.view.action.ActionIcon
 import ru.citeck.launcher.view.action.CiteckIconAction
@@ -39,9 +36,10 @@ import ru.citeck.launcher.view.commons.CiteckTooltipArea
 import ru.citeck.launcher.view.commons.ContextMenu
 import ru.citeck.launcher.view.commons.ContextMenu.contextMenu
 import ru.citeck.launcher.view.commons.LimitedText
+import ru.citeck.launcher.view.commons.dialog.ConfirmDialog
 import ru.citeck.launcher.view.commons.dialog.ErrorDialog
-import ru.citeck.launcher.view.commons.dialog.LoadingDialog
 import ru.citeck.launcher.view.dialog.AppDefEditDialogWindow
+import ru.citeck.launcher.view.dialog.SnapshotsDialog
 import ru.citeck.launcher.view.drawable.CpImage
 import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog
 import ru.citeck.launcher.view.form.exception.FormCancelledException
@@ -53,6 +51,8 @@ import java.awt.Desktop
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import java.net.URI
+
+private val log = KotlinLogging.logger {}
 
 private val STARTING_STOPPING_COLOR = Color(0xFFF4E909)
 private val RUNNING_COLOR = Color(0xFF33AB50)
@@ -313,30 +313,7 @@ fun NamespaceScreen(
                 )
                 CiteckIconAction(
                     coroutineScope,
-                    modifier = Modifier.fillMaxHeight().contextMenu(
-                        ContextMenu.Button.RMB,
-                        listOf(
-                            ContextMenu.Item("Create volumes snapshot") {
-                                nsActionInProgress.value = true
-                                val status = ActionStatus.Mut()
-                                val closeLoading = LoadingDialog.show(status)
-                                try {
-                                    val snapshotsDir = NamespacesService.getNamespaceDir(nsRuntime.namespaceRef)
-                                        .resolve("snapshots")
-                                    services.dockerApi.exportSnapshot(
-                                        nsRuntime.namespaceRef,
-                                        snapshotsDir.resolve(FileUtils.createNameWithCurrentDateTime()),
-                                        CompressionAlg.XZ,
-                                        status
-                                    )
-                                    Desktop.getDesktop().open(snapshotsDir.toFile())
-                                } finally {
-                                    closeLoading()
-                                    nsActionInProgress.value = false
-                                }
-                            }
-                        )
-                    ),
+                    modifier = Modifier.fillMaxHeight(),
                     actionDesc = ActionDesc(
                         "show-volumes",
                         ActionIcon.STORAGE,
@@ -350,7 +327,42 @@ fun NamespaceScreen(
                                     false,
                                     services.entitiesService,
                                     false,
-                                    selectable = false
+                                    selectable = false,
+                                    columns = listOf(
+                                        JournalSelectDialog.JournalColumn("Name", "name", 200.dp, 450.dp),
+                                        JournalSelectDialog.JournalColumn("Size", "sizeMb", 50.dp, 100.dp)
+                                    ),
+                                    customButtons = listOf(
+                                        JournalSelectDialog.JournalButton("Snapshots") {
+                                            SnapshotsDialog.showSuspended(SnapshotsDialog.Params(nsRuntime, services))
+                                        },
+                                        JournalSelectDialog.JournalButton("Delete All", enabledIf = {
+                                            runtimeStatus.value == STOPPED
+                                        }, loading = true) {
+                                            var entities = services.entitiesService.find(VolumeInfo::class, 100)
+                                            if (entities.isNotEmpty() && ConfirmDialog.showSuspended("All your data in volumes will be lost")) {
+                                                log.info {
+                                                    "Begin full deletion of volumes for namespace " +
+                                                        "${selectedNamespace.value?.name} (${selectedNamespace.value?.id})"
+                                                }
+                                                var iterations = 100
+                                                while (--iterations > 0 && entities.isNotEmpty()) {
+                                                    for (entity in entities) {
+                                                        log.info { "Delete ${entity.name} (${entity.ref.localId})" }
+                                                        services.entitiesService.delete(entity.entity)
+                                                    }
+                                                    entities = services.entitiesService.find(VolumeInfo::class, 100)
+                                                }
+                                                if (iterations <= 0) {
+                                                    error(
+                                                        "Delete All action failed. Iterations limit was reached. " +
+                                                            "Entities: " + entities.joinToString { it.ref.toString() }
+                                                    )
+                                                }
+                                            }
+                                            false
+                                        }
+                                    )
                                 )
                             )
                         }

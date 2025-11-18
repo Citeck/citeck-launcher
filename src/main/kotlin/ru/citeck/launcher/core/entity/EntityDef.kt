@@ -12,6 +12,7 @@ class EntityDef<K : Any, T : Any>(
     val typeId: String,
     val getId: (T) -> K,
     val getName: (T) -> String,
+    val getCustomProp: (T, String) -> DataValue = { _, _ -> DataValue.NULL },
     val createForm: FormSpec?,
     val editForm: FormSpec?,
     val defaultEntities: List<T>,
