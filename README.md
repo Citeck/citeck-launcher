@@ -1,8 +1,12 @@
-![Citeck ECOS Logo](https://raw.githubusercontent.com/Citeck/ecos-ui/develop/public/img/logo/ecos-logo.png)
+![Citeck ECOS Logo](https://github.com/Citeck/ecos-ui/raw/develop/public/img/logo/ecos-logo.svg)
 
 # `Citeck Launcher`
 
 Welcome to the Citeck Launcher repository!
+
+## Download
+
+Download the latest version from our [website](https://citeck.github.io/citeck-launcher/) or the [releases page](https://github.com/Citeck/citeck-launcher/releases).
 
 ## Dependencies
 
