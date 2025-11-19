@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - pages
-    paths:
-      - 'website/**'
-      - '.github/workflows/deploy-pages.yml'
   workflow_dispatch:
 
 permissions:
@@ -21,9 +18,6 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./website
     
     steps:
       - name: Checkout
