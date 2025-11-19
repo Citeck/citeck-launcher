@@ -33,11 +33,8 @@ jobs:
           node-version: '20'
           cache: 'yarn'
 
-      - name: Install dependencies
-        run: yarn install --frozen-lockfile
-
       - name: Build website
-        run: yarn build
+        run: yarn && yarn build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
