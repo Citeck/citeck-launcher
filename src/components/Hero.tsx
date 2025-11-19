@@ -1,5 +1,5 @@
 import DownloadButton from "./DownloadButton";
-import { AppleIcon, Downloads } from "./Downloads";
+import { AppleIcon, WindowsIcon, LinuxIcon, Downloads } from "./Downloads";
 import { DetectedOS } from "../utils/detectOS";
 
 interface HeroProps {
@@ -27,8 +27,15 @@ export default function Hero({ title, description, client, downloads }: HeroProp
       ? (platformValue as any).secondary
       : undefined;
 
+  const iconForPlatform =
+    clientPlatform === "macos"
+      ? <AppleIcon />
+      : clientPlatform === "windows"
+      ? <WindowsIcon />
+      : <LinuxIcon />;
+
   return (
-    <section className="relative overflow-hidden px-4 py-16 sm:px-6 sm:py-24 lg:px-8 lg:py-32">
+    <section className="relative overflow-hidden px-4 py-16 sm:px-6 sm:py-24 lg:px-8 lg:py16">
       <div className="relative mx-auto max-w-7xl flex px-5 py-24 md:flex-row flex-col items-center">
         <div className="lg:flex-grow md:w-1/2 lg:pr-24 md:pr-16 flex flex-col md:items-start md:text-left mb-16 md:mb-0 items-center text-center animate-fade-in">
           <h1 className="text-4xl font-bold tracking-tight sm:text-4xl text-3xl mb-4 font-medium text-gray-900">
@@ -39,7 +46,7 @@ export default function Hero({ title, description, client, downloads }: HeroProp
             <DownloadButton
               primaryLink={primaryLink}
               secondaryLinks={secondaryLinks}
-              icon={<AppleIcon />}
+              icon={iconForPlatform}
             />
           </div>
         </div>

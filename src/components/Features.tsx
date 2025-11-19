@@ -10,7 +10,7 @@ interface FeaturesProps {
 
 export default function Features({ features }: FeaturesProps) {
   return (
-    <section className="px-4 py-12 sm:px-6 sm:py-16 lg:px-8 lg:py-24">
+    <section className="px-4 py-12 sm:px-6 sm:py-16 lg:px-8 lg:py-12">
       <div className="mx-auto max-w-7xl">
         <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3 lg:gap-12">
           {features.map((feature, index) => (
