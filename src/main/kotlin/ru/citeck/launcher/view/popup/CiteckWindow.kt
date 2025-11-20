@@ -4,10 +4,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.painter.Painter
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
@@ -15,6 +13,9 @@ import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.rememberWindowState
 import io.github.oshai.kotlinlogging.KotlinLogging
+import ru.citeck.launcher.MainWindowHolder
+import java.awt.Dimension
+import java.awt.GraphicsEnvironment
 import java.awt.Toolkit
 
 abstract class CiteckWindow : CiteckPopup(CiteckPopupKind.WINDOW) {
@@ -23,7 +24,6 @@ abstract class CiteckWindow : CiteckPopup(CiteckPopupKind.WINDOW) {
 
         val log = KotlinLogging.logger {}
 
-        var screenSize: DpSize = DpSize(400.dp, 400.dp)
         private val activeWindows: MutableList<CiteckWindow> = mutableStateListOf()
 
         lateinit var windowIcon: Painter
@@ -38,21 +38,7 @@ abstract class CiteckWindow : CiteckPopup(CiteckPopupKind.WINDOW) {
 
         @Composable
         fun renderWindows(windowIcon: Painter) {
-
             this.windowIcon = windowIcon
-
-            val density = LocalDensity.current
-            screenSize = remember(density) {
-                val screenSize = Toolkit.getDefaultToolkit().screenSize
-                val screenWidthPx = screenSize.width
-                val screenHeightPx = screenSize.height
-                with(density) {
-                    DpSize(
-                        screenWidthPx.toDp(),
-                        screenHeightPx.toDp()
-                    )
-                }
-            }
             for (state in this.activeWindows) {
                 state.render()
             }
@@ -64,6 +50,30 @@ abstract class CiteckWindow : CiteckPopup(CiteckPopupKind.WINDOW) {
     }
 
     val visible = mutableStateOf(true)
+
+    protected var screenSize: DpSize = evalCurrentScreenSize()
+
+    private fun evalCurrentScreenSize(): DpSize {
+        val graphicsEnvironment = GraphicsEnvironment.getLocalGraphicsEnvironment()
+        val location = MainWindowHolder.mainWindow.location
+        var screenDimension: Dimension? = null
+        for (device in graphicsEnvironment.screenDevices) {
+            val bounds = device.defaultConfiguration.bounds
+            if (bounds.contains(location)) {
+                screenDimension = bounds.size
+                break
+            }
+        }
+        if (screenDimension == null) {
+            screenDimension = Toolkit.getDefaultToolkit().screenSize
+        }
+        if (screenDimension == null) {
+            screenDimension = Dimension(400, 400)
+        }
+        val width = screenDimension.width.coerceAtLeast(400)
+        val height = screenDimension.height.coerceAtLeast(400)
+        return DpSize(width.dp, height.dp)
+    }
 
     @Composable
     protected inline fun window(

@@ -22,8 +22,8 @@ class LogsWindow(
     @Composable
     override fun render() {
         val windowState = rememberWindowState(
-            width = screenSize.width * 0.9f,
-            height = screenSize.height * 0.7f,
+            width = screenSize.width,
+            height = screenSize.height * 0.9f,
             position = WindowPosition(Alignment.Center)
         )
         window(windowState, params.title) {

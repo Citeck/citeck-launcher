@@ -31,6 +31,7 @@ import ru.citeck.launcher.view.tray.CiteckTrayItem
 import ru.citeck.launcher.view.utils.ImageUtils
 import ru.citeck.launcher.view.utils.SystemDumpUtils
 import ru.citeck.launcher.view.utils.rememberMutProp
+import java.awt.Window
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.system.exitProcess
 
@@ -38,6 +39,10 @@ private val log = KotlinLogging.logger {}
 
 private const val TRAY_BTN_OPEN = "Open"
 private const val TRAY_BTN_EXIT = "Exit"
+
+object MainWindowHolder {
+    lateinit var mainWindow: Window
+}
 
 fun main(@Suppress("unused") args: Array<String>) {
     // initial phase messages printed without logging framework
@@ -118,6 +123,7 @@ fun main(@Suppress("unused") args: Array<String>) {
             ) {
                 LaunchedEffect(Unit) {
                     window.minimumSize = java.awt.Dimension(300, 400)
+                    MainWindowHolder.mainWindow = window
                 }
 
                 val servicesValue = remember {
