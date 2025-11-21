@@ -1,3 +1,15 @@
+# Release 1.2.1
+
+## New features
+
+* Reordered bundles to improve consistency
+* Refactored the select control for better usability
+
+## Fixes
+
+* Added error handling for namespace generation failure
+* Corrected the logs window size
+
 # Release 1.2.0
 
 ## Updates
