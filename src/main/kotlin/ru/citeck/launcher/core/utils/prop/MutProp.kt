@@ -42,6 +42,19 @@ open class MutProp<T>(val name: String, value: T) {
     }
 
     fun setValue(value: T, actionInLock: (Long) -> Unit): Long = lock.withLock {
+        setValue(value, { error, before, after ->
+            log.error(error) {
+                "Exception while listener execution " +
+                    "for change event of '$name': $before -> $after"
+            }
+        }, actionInLock)
+    }
+
+    fun setValue(
+        value: T,
+        onError: (Throwable, before: T, after: T) -> Unit,
+        actionInLock: (Long) -> Unit = {}
+    ): Long = lock.withLock {
         if (this.value == value) {
             return version.get()
         }
@@ -52,9 +65,11 @@ open class MutProp<T>(val name: String, value: T) {
             try {
                 listener(valueBefore, this.value)
             } catch (e: Throwable) {
-                log.error(e) {
-                    "Exception while listener execution " +
-                        "for change event of '$name': $valueBefore -> $value"
+                try {
+                    onError(e, valueBefore, value)
+                } catch (e: Throwable) {
+                    this.value = valueBefore
+                    throw e
                 }
             }
         }

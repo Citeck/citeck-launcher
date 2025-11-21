@@ -98,7 +98,12 @@ fun NamespaceScreen(
                                     closeWhenAllRecordsDeleted = true
                                 )
                             ).firstOrNull() ?: currentRef
-                            services.setSelectedNamespace(newRef.localId)
+                            try {
+                                services.setSelectedNamespace(newRef.localId)
+                            } catch (e: Throwable) {
+                                log.error(e) { "Namespace selection failed. Namespace: ${newRef.localId}" }
+                                ErrorDialog.show(e)
+                            }
                         }
                     }
                 ) {

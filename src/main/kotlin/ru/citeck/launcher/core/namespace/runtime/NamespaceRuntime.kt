@@ -124,7 +124,9 @@ class NamespaceRuntime(
         }
 
         namespaceConfigWatcher = namespaceConfig.watch { _, _ ->
-            generateNs(GitUpdatePolicy.ALLOWED_IF_NOT_EXISTS)
+            if (isActive.get()) {
+                generateNs(GitUpdatePolicy.ALLOWED_IF_NOT_EXISTS)
+            }
         }
 
         nsStatus.watch { before, after ->
@@ -138,7 +140,6 @@ class NamespaceRuntime(
             nsRuntimeDataRepo[STATE_STATUS] = after.toString()
             flushRuntimeThread()
         }
-        generateNs(GitUpdatePolicy.ALLOWED)
 
         val statusBefore = nsRuntimeDataRepo[STATE_STATUS].asText()
         if (statusBefore.isNotBlank()) {
@@ -170,6 +171,16 @@ class NamespaceRuntime(
     }
 
     fun setActive(active: Boolean) = runtimeActiveStatusLock.withLock {
+        val valueBefore = isActive.get()
+        try {
+            setActiveImpl(active)
+        } catch (e: Throwable) {
+            isActive.set(valueBefore)
+            throw e
+        }
+    }
+
+    private fun setActiveImpl(active: Boolean) {
         if (!active) {
             if (isActive.compareAndSet(true, false)) {
                 flushRuntimeThread()
@@ -182,6 +193,7 @@ class NamespaceRuntime(
             return
         }
         val activeStateVersion = activeStateVersion.incrementAndGet()
+        generateNs(GitUpdatePolicy.ALLOWED)
         runtimeThread?.interrupt()
         runtimeThread = thread(start = false, name = "nsrt$nameSuffix") {
             log.info { "(+) Namespace runtime thread was started" }

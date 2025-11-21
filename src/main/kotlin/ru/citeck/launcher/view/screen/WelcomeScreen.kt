@@ -137,7 +137,7 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                                 modifier = Modifier.fillMaxWidth().height(60.dp),
                                 shape = RoundedCornerShape(16.dp),
                                 onClick = {
-                                    workspaceServices.setSelectedNamespace(namespace.ref.localId)
+                                    setSelectedNamespaceSafe(workspaceServices, namespace.ref.localId)
                                 }
                             ) {
                                 Box {
@@ -205,7 +205,7 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                                         )
                                     }.firstOrNull()
                                     if (newRef != null) {
-                                        workspaceServices.setSelectedNamespace(newRef.localId)
+                                        setSelectedNamespaceSafe(workspaceServices, newRef.localId)
                                     }
                                 }
                             }
@@ -248,6 +248,15 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
                     .align(Alignment.BottomEnd)
             )
         }
+    }
+}
+
+private fun setSelectedNamespaceSafe(workspaceServices: WorkspaceServices, namespaceId: String) {
+    try {
+        workspaceServices.setSelectedNamespace(namespaceId)
+    } catch (e: Throwable) {
+        log.error(e) { "Namespace selection failed: $namespaceId" }
+        ErrorDialog.show(e)
     }
 }
 

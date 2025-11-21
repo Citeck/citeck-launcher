@@ -126,7 +126,11 @@ class NamespacesService : Disposable {
             if (nsTemplate != null) {
                 runtime.setDetachedApps(nsTemplate.detachedApps)
             }
-            services.setSelectedNamespace(event.entity.id)
+            try {
+                services.setSelectedNamespace(event.entity.id)
+            } catch (e: Throwable) {
+                log.error(e) { "Namespace selection failed: '${event.entity.id}'" }
+            }
         }
 
         services.entitiesService.events.addEntityDeletedListener(NamespaceConfig::class) { event ->

@@ -72,7 +72,13 @@ class WorkspaceServices(
 
         workspaceStateRepo = getWorkspaceStateRepo()
 
-        setSelectedNamespace(workspaceStateRepo[SELECTED_NS_PROP].asText())
+        val activeNamespaceFromRepo = workspaceStateRepo[SELECTED_NS_PROP].asText()
+        try {
+            setSelectedNamespace(activeNamespaceFromRepo)
+        } catch (e: Throwable) {
+            log.error(e) { "Namespace initialization failed. Namespace: '$activeNamespaceFromRepo'" }
+            setSelectedNamespace("")
+        }
     }
 
     private fun getWorkspaceStateRepo(): DataRepo {
@@ -116,8 +122,10 @@ class WorkspaceServices(
         )
     }
 
+    /**
+     * @throws error if namespace selection failed. This may occur when configs generation can't be performed
+     */
     fun setSelectedNamespace(namespaceId: String) {
-        workspaceStateRepo[SELECTED_NS_PROP] = namespaceId
         val newValue = if (namespaceId.isBlank()) {
             null
         } else {
@@ -132,7 +140,10 @@ class WorkspaceServices(
         if (selectedNamespace.getValue()?.id != newValue?.id) {
             CiteckWindow.closeAll()
         }
-        selectedNamespace.setValue(newValue)
+        selectedNamespace.setValue(newValue, onError = { error, _, _ ->
+            throw error
+        })
+        workspaceStateRepo[SELECTED_NS_PROP] = namespaceId
     }
 
     fun selectAnyExistingNamespace() {
