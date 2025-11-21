@@ -16,7 +16,7 @@ object BundleUtils {
     private val log = KotlinLogging.logger {}
 
     fun loadBundles(path: Path, workspaceConfig: WorkspaceConfig): List<BundleDef> {
-        val kitsMap = TreeMap<BundleKey, BundleDef>()
+        val kitsMap = TreeMap<BundleKey, BundleDef>(Comparator<BundleKey> { v0, v1 -> v1.compareTo(v0) })
         loadKitsFiles(path, workspaceConfig, path.toFile(), kitsMap)
         return kitsMap.values.toList()
     }

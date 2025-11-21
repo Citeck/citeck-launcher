@@ -9,22 +9,16 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.*
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupPositionProvider
-import androidx.compose.ui.window.PopupProperties
 import kotlinx.coroutines.runBlocking
 import ru.citeck.launcher.view.commons.dialog.ErrorDialog
 
 object ContextMenu {
-
-    private const val POPUP_PADDING = 10
 
     private val items = mutableStateOf<List<Item>>(emptyList())
     val actionInProgress = mutableStateOf(false)
@@ -80,7 +74,7 @@ object ContextMenu {
                                 text = item.name,
                                 modifier = Modifier.padding(start = 10.dp, end = 10.dp, top = 4.dp, bottom = 4.dp)
                             )
-                            Box(modifier = Modifier.height(1.dp).background(Color.Gray).widthIn(min = minWidth))
+                            Box(modifier = Modifier.height(1.dp).background(Color.LightGray).widthIn(min = minWidth))
                         }
                     }
                 }
@@ -117,54 +111,6 @@ object ContextMenu {
                     }
                 }
             }
-        }
-    }
-
-    @Composable
-    @OptIn(ExperimentalComposeUiApi::class)
-    private inline fun PopupInWindow(
-        offset: IntOffset,
-        crossinline onDismissRequest: () -> Unit,
-        crossinline content: @Composable () -> Unit
-    ) {
-        Popup(
-            onDismissRequest = { onDismissRequest() },
-            properties = PopupProperties(
-                focusable = true,
-                clippingEnabled = false,
-                usePlatformInsets = false
-            ),
-            popupPositionProvider = remember(offset) {
-                object : PopupPositionProvider {
-                    override fun calculatePosition(
-                        anchorBounds: IntRect,
-                        windowSize: IntSize,
-                        layoutDirection: LayoutDirection,
-                        popupContentSize: IntSize
-                    ): IntOffset {
-                        val windowLimX = windowSize.width - POPUP_PADDING
-                        val windowLimY = windowSize.height - POPUP_PADDING
-
-                        var x = offset.x
-                        var y = offset.y
-
-                        if (x + popupContentSize.width > windowLimX) {
-                            x = windowLimX - popupContentSize.width
-                        }
-
-                        if (y + popupContentSize.height > windowLimY) {
-                            y = windowLimY - popupContentSize.height
-                        }
-
-                        x = x.coerceAtLeast(POPUP_PADDING)
-                        y = y.coerceAtLeast(POPUP_PADDING)
-
-                        return IntOffset(x, y)
-                    }
-                }
-            }
-        ) {
-            content()
         }
     }
 
