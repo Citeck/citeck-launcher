@@ -78,7 +78,7 @@ fun CiteckSelect(
 
             val itemsValue = state.options.value
             val maxHeight = remember(selectedValueBounds.value) {
-                ((selectedValueBounds.value?.size?.height ?: 30) * 10).dp
+                ((selectedValueBounds.value?.size?.height ?: ITEM_HEIGHT) * 8).dp
             }
 
             PopupInWindow(
