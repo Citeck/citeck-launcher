@@ -90,7 +90,7 @@ abstract class CiteckPopup(val kind: CiteckPopupKind) {
         }
     }
 
-    protected inner class ButtonsRowContext(
+    inner class ButtonsRowContext(
         private val rowScope: RowScope
     ) : RowScope by rowScope {
 

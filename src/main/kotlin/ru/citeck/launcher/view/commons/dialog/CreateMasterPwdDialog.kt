@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import ru.citeck.launcher.view.popup.CiteckDialog
+import ru.citeck.launcher.view.utils.onEnterClick
 import kotlin.coroutines.resume
 
 class CreateMasterPwdDialog(
@@ -80,13 +81,8 @@ class CreateMasterPwdDialog(
                             Icon(icon, contentDescription = null)
                         }
                     },
-                    modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
-                        if ((event.key == Key.Enter || event.key == Key.NumPadEnter) && event.type == KeyEventType.KeyUp) {
-                            executePopupAction("Create master pwd -> Enter press") { onSubmit() }
-                            true
-                        } else {
-                            false
-                        }
+                    modifier = Modifier.fillMaxWidth().onEnterClick {
+                        executePopupAction("Create master pwd -> Enter press") { onSubmit() }
                     }
                 )
             }

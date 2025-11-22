@@ -50,6 +50,13 @@ abstract class CiteckWindow : CiteckPopup(CiteckPopupKind.WINDOW) {
     }
 
     val visible = mutableStateOf(true)
+    val dialogs: MutableList<CiteckPopup> = mutableStateListOf()
+
+    protected fun showDialog(dialog: CiteckDialog): CiteckDialog {
+        dialogs.add(dialog)
+        dialog.setContainer(dialogs)
+        return dialog
+    }
 
     protected var screenSize: DpSize = evalCurrentScreenSize()
 
@@ -94,6 +101,9 @@ abstract class CiteckWindow : CiteckPopup(CiteckPopupKind.WINDOW) {
         ) {
             Column {
                 render(PopupContext(this))
+            }
+            for (dialog in dialogs) {
+                dialog.render()
             }
         }
     }

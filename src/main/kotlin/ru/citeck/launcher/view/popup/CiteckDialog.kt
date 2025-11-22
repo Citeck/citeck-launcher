@@ -31,6 +31,7 @@ abstract class CiteckDialog : CiteckPopup(CiteckPopupKind.DIALOG) {
 
         fun showDialog(dialog: CiteckDialog): CiteckDialog {
             activeDialogs.add(dialog)
+            dialog.setContainer(activeDialogs)
             return dialog
         }
 
@@ -41,6 +42,11 @@ abstract class CiteckDialog : CiteckPopup(CiteckPopupKind.DIALOG) {
                 state.render()
             }
         }
+    }
+    private lateinit var dialogs: MutableList<CiteckPopup>
+
+    internal fun setContainer(dialogs: MutableList<CiteckPopup>) {
+        this.dialogs = dialogs
     }
 
     @Composable
@@ -88,10 +94,10 @@ abstract class CiteckDialog : CiteckPopup(CiteckPopupKind.DIALOG) {
 
     fun closeDialog() {
         beforeClose()
-        var dialogIdx = activeDialogs.size
+        var dialogIdx = dialogs.size
         while (--dialogIdx >= 0) {
-            if (activeDialogs[dialogIdx] === this) {
-                activeDialogs.removeAt(dialogIdx)
+            if (dialogs[dialogIdx] === this) {
+                dialogs.removeAt(dialogIdx)
             }
         }
     }

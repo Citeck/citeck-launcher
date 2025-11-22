@@ -1,6 +1,12 @@
 package ru.citeck.launcher.view.utils
 
 import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import ru.citeck.launcher.core.utils.Disposable
 import ru.citeck.launcher.core.utils.IdUtils
 import ru.citeck.launcher.core.utils.prop.MutProp
@@ -26,6 +32,17 @@ fun <T, R> rememberMutProp(key0: Any?, prop: MutProp<T>, conv: (T) -> R): Mutabl
     rememberCoroutineScope()
     val view = remember(key0) { MutablePropView(prop, conv) }
     return view.state
+}
+
+inline fun Modifier.onEnterClick(crossinline action: () -> Unit): Modifier {
+    return this.onPreviewKeyEvent { event ->
+        if ((event.key == Key.Enter || event.key == Key.NumPadEnter) && event.type == KeyEventType.KeyUp) {
+            action()
+            true
+        } else {
+            false
+        }
+    }
 }
 
 private class MutablePropView<T, R>(

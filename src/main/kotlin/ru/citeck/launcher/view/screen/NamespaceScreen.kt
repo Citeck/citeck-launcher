@@ -38,7 +38,7 @@ import ru.citeck.launcher.view.commons.ContextMenu.contextMenu
 import ru.citeck.launcher.view.commons.LimitedText
 import ru.citeck.launcher.view.commons.dialog.ConfirmDialog
 import ru.citeck.launcher.view.commons.dialog.ErrorDialog
-import ru.citeck.launcher.view.dialog.AppDefEditDialogWindow
+import ru.citeck.launcher.view.dialog.AppDefEditWindow
 import ru.citeck.launcher.view.dialog.SnapshotsDialog
 import ru.citeck.launcher.view.drawable.CpImage
 import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog
@@ -609,10 +609,7 @@ private fun RenderApps(
                                 runCatching {
                                     val appDefToEdit = application.def.getValue()
                                     try {
-                                        val editRes = AppDefEditDialogWindow.show(
-                                            appDefToEdit,
-                                            application.nsRuntime.isEditedAndLockedApp(appDefToEdit.name)
-                                        )
+                                        val editRes = AppDefEditWindow.show(appDefToEdit)
                                         if (editRes == null) {
                                             application.nsRuntime.resetAppDef(appDefToEdit.name)
                                         } else {

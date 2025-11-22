@@ -33,6 +33,7 @@ import ru.citeck.launcher.view.form.exception.FormCancelledException
 import ru.citeck.launcher.view.form.spec.ComponentSpec
 import ru.citeck.launcher.view.form.spec.FormSpec
 import ru.citeck.launcher.view.popup.CiteckDialog
+import ru.citeck.launcher.view.utils.onEnterClick
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -336,14 +337,9 @@ class FormDialog(
                             Icon(icon, contentDescription = null)
                         }
                     },
-                    modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
-                        if (component.submitOnEnter && (event.key == Key.Enter || event.key == Key.NumPadEnter) && event.type == KeyEventType.KeyUp) {
-                            executePopupAction("FormDialog -> Enter press") {
-                                formContext.submit()
-                            }
-                            true
-                        } else {
-                            false
+                    modifier = Modifier.fillMaxWidth().onEnterClick {
+                        executePopupAction("FormDialog -> Enter press") {
+                            formContext.submit()
                         }
                     }
                 )

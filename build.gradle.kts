@@ -80,6 +80,8 @@ dependencies {
     implementation("io.ktor:ktor-client-core:$ktorV")
     implementation("io.ktor:ktor-client-cio:$ktorV")
 
+    implementation("com.fifesoft:rsyntaxtextarea:3.6.0")
+
     testImplementation("org.assertj:assertj-core:3.27.3")
     testImplementation(kotlin("test"))
 }

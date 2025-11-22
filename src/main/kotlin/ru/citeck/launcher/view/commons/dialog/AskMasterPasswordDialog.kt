@@ -9,11 +9,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.input.key.*
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import ru.citeck.launcher.view.popup.CiteckDialog
 import ru.citeck.launcher.view.popup.DialogWidth
+import ru.citeck.launcher.view.utils.onEnterClick
 
 class AskMasterPasswordDialog(
     private val params: AskMasterPwdParams
@@ -47,16 +47,11 @@ class AskMasterPasswordDialog(
                         Icon(icon, contentDescription = null)
                     }
                 },
-                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester).onPreviewKeyEvent { event ->
-                    if ((event.key == Key.Enter || event.key == Key.NumPadEnter) && event.type == KeyEventType.KeyUp) {
-                        executePopupAction("Ask master dialog -> Enter press") {
-                            if (params.onSubmit(value.value.toCharArray())) {
-                                closeDialog()
-                            }
+                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester).onEnterClick {
+                    executePopupAction("Ask master dialog -> Enter press") {
+                        if (params.onSubmit(value.value.toCharArray())) {
+                            closeDialog()
                         }
-                        true
-                    } else {
-                        false
                     }
                 }
             )

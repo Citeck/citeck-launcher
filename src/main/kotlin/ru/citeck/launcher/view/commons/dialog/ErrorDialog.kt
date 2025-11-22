@@ -58,7 +58,10 @@ class ErrorDialog(private val params: Params) : CiteckDialog() {
         }
 
         fun show(error: Throwable, onClose: () -> Unit) {
+            showDialog(ErrorDialog(prepareParams(error, onClose)))
+        }
 
+        fun prepareParams(error: Throwable, onClose: () -> Unit = {}): Params {
             val rootCause = ExceptionUtils.getRootCause(error)
             val message = StringBuilder()
             val stackTrace = ExceptionUtils.getRootCauseStackTrace(rootCause)
@@ -76,7 +79,7 @@ class ErrorDialog(private val params: Params) : CiteckDialog() {
                 message.append(line.replace("\t", "  "))
             }
 
-            showDialog(ErrorDialog(Params(message.toString(), onClose)))
+            return Params(message.toString(), onClose)
         }
     }
 
