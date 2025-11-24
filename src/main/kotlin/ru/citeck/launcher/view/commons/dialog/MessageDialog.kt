@@ -21,7 +21,10 @@ class MessageDialog(
 
     @Composable
     override fun render() {
-        dialog(params.width) {
+        dialog(params.width, onEnter = {
+            closeDialog()
+            true
+        }) {
             if (params.title.isNotBlank()) {
                 title(params.title)
             }

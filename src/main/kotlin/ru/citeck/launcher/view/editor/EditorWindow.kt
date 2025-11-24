@@ -201,8 +201,10 @@ class EditorWindow private constructor(
                     modifier = Modifier.padding(horizontal = 10.dp)
                         .align(Alignment.CenterVertically)
                         .focusRequester(searchFocusRequester)
-                        .requiredWidthIn(min = 300.dp).onEnterClick {
+                        .requiredWidthIn(min = 300.dp)
+                        .onEnterClick {
                             search(true)
+                            true
                         }
                 )
                 VerticalDivider()

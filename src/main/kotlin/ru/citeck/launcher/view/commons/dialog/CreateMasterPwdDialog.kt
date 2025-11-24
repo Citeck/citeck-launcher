@@ -83,6 +83,7 @@ class CreateMasterPwdDialog(
                     },
                     modifier = Modifier.fillMaxWidth().onEnterClick {
                         executePopupAction("Create master pwd -> Enter press") { onSubmit() }
+                        true
                     }
                 )
             }

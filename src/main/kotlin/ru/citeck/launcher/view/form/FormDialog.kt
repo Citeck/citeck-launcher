@@ -341,6 +341,7 @@ class FormDialog(
                         executePopupAction("FormDialog -> Enter press") {
                             formContext.submit()
                         }
+                        true
                     }
                 )
             }

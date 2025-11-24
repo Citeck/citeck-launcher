@@ -53,6 +53,7 @@ class AskMasterPasswordDialog(
                             closeDialog()
                         }
                     }
+                    true
                 }
             )
 

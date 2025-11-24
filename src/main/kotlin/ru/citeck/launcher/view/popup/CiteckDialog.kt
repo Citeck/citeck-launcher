@@ -8,13 +8,18 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.*
 import io.github.oshai.kotlinlogging.KotlinLogging
+import ru.citeck.launcher.view.utils.onEnterClick
 
 abstract class CiteckDialog : CiteckPopup(CiteckPopupKind.DIALOG) {
 
@@ -52,14 +57,21 @@ abstract class CiteckDialog : CiteckPopup(CiteckPopupKind.DIALOG) {
     @Composable
     protected inline fun dialog(
         width: DialogWidth = DialogWidth.MEDIUM,
+        crossinline onEnter: () -> Boolean = { false },
         crossinline render: @Composable PopupContext.() -> Unit
     ) {
+        val focusRequester = remember { FocusRequester() }
+        LaunchedEffect(Unit) {
+            focusRequester.requestFocus()
+        }
         Dialog(
             properties = DialogProperties(usePlatformDefaultWidth = false),
             onDismissRequest = {}
         ) {
             Card(
-                modifier = Modifier.width(width.dp),
+                modifier = Modifier.width(width.dp)
+                    .focusRequester(focusRequester)
+                    .onEnterClick(onEnter),
                 shape = RoundedCornerShape(10.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
             ) {

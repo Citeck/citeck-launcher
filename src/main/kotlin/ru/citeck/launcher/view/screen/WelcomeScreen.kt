@@ -252,11 +252,16 @@ fun WelcomeScreen(launcherServices: LauncherServices, selectedWorkspace: Mutable
 }
 
 private fun setSelectedNamespaceSafe(workspaceServices: WorkspaceServices, namespaceId: String) {
-    try {
-        workspaceServices.setSelectedNamespace(namespaceId)
-    } catch (e: Throwable) {
-        log.error(e) { "Namespace selection failed: $namespaceId" }
-        ErrorDialog.show(e)
+    val closeLoading = LoadingDialog.show()
+    Thread.ofPlatform().start {
+        try {
+            workspaceServices.setSelectedNamespace(namespaceId)
+            closeLoading()
+        } catch (e: Throwable) {
+            closeLoading()
+            log.error(e) { "Namespace selection failed: $namespaceId" }
+            ErrorDialog.show(e)
+        }
     }
 }
 

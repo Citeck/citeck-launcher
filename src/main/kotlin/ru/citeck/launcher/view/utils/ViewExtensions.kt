@@ -34,11 +34,10 @@ fun <T, R> rememberMutProp(key0: Any?, prop: MutProp<T>, conv: (T) -> R): Mutabl
     return view.state
 }
 
-inline fun Modifier.onEnterClick(crossinline action: () -> Unit): Modifier {
+inline fun Modifier.onEnterClick(crossinline action: () -> Boolean): Modifier {
     return this.onPreviewKeyEvent { event ->
         if ((event.key == Key.Enter || event.key == Key.NumPadEnter) && event.type == KeyEventType.KeyUp) {
             action()
-            true
         } else {
             false
         }

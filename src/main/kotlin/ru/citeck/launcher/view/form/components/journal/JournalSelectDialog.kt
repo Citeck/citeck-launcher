@@ -129,6 +129,22 @@ class JournalSelectDialog(
         return Promises.create(future)
     }
 
+    private fun submitSelected(records: MutableState<List<RecordRow>>) {
+        val closeLoading = LoadingDialog.show()
+        Thread.ofPlatform().start {
+            try {
+                params.onSubmit(
+                    records.value
+                        .filter { it.selected.value }
+                        .map { it.record.ref }
+                )
+            } finally {
+                closeLoading()
+            }
+            closeDialog()
+        }
+    }
+
     @Composable
     private fun renderTable(
         entities: EntitiesService,
@@ -190,8 +206,10 @@ class JournalSelectDialog(
                                                 if (params.params.multiple) {
                                                     row.selected.value = true
                                                 } else {
-                                                    params.onSubmit(listOf(row.record.ref))
-                                                    closeDialog()
+                                                    rowsValue.forEach {
+                                                        it.selected.value = it.record.ref == row.record.ref
+                                                    }
+                                                    submitSelected(rows)
                                                 }
                                             }
                                         }
@@ -251,7 +269,7 @@ class JournalSelectDialog(
                 try {
                     val createdRef = entitiesService.create(params.params.entityType)
                     updateTableRows(entitiesService, params, records, createdRef)
-                } catch (e: FormCancelledException) {
+                } catch (_: FormCancelledException) {
                     // do nothing
                 }
             }
@@ -277,15 +295,7 @@ class JournalSelectDialog(
             }
         }
         if (params.params.selectable) {
-            button("Confirm") {
-                val closeLoading = LoadingDialog.show()
-                try {
-                    params.onSubmit(records.value.filter { it.selected.value }.map { it.record.ref })
-                } finally {
-                    closeLoading()
-                }
-                closeDialog()
-            }
+            button("Confirm") { submitSelected(records) }
         }
     }
 
