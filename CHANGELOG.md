@@ -1,3 +1,9 @@
+# Release 1.2.4
+
+## Fixes
+
+* Resolved incorrect behavior in automatic bundle selection after repository updates.
+
 # Release 1.2.3
 
 ## New features

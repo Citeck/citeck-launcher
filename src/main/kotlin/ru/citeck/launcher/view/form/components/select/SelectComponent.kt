@@ -27,14 +27,24 @@ private fun updateOptions(
     if (selectState.options.value != newOptions) {
         selectState.options.value = newOptions
         if (newOptions.isEmpty()) {
-            selectState.selected.value = ""
+            setSelectedValue(selectState, formContext, component, "")
         } else {
             val selectedValue = selectState.selected.value
             if (newOptions.all { it.value != selectedValue }) {
-                selectState.selected.value = newOptions.last().value
+                setSelectedValue(selectState, formContext, component, newOptions.first().value)
             }
         }
     }
+}
+
+private fun setSelectedValue(
+    selectState: CiteckSelectState,
+    formContext: FormContext,
+    component: ComponentSpec.SelectField,
+    value: String
+) {
+    formContext.setValue(component.key, value)
+    selectState.selected.value = value
 }
 
 @Composable
@@ -53,8 +63,7 @@ fun SelectComponent(formContext: FormContext, component: ComponentSpec.SelectFie
 
     Row {
         CiteckSelect(state, mandatory = component.mandatory, modifier = Modifier.weight(1f)) {
-            formContext.setValue(component.key, it)
-            state.selected.value = it
+            setSelectedValue(state, formContext, component, it)
         }
         val onManualUpdate = component.onManualUpdate
         if (onManualUpdate != null) {
