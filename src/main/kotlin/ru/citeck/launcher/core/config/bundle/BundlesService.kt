@@ -26,7 +26,7 @@ class BundlesService {
     }
 
     fun getLatestRepoBundle(repoId: String): BundleRef {
-        return getRepoBundles(repoId).lastOrNull() ?: BundleRef.EMPTY
+        return getRepoBundles(repoId).firstOrNull() ?: BundleRef.EMPTY
     }
 
     fun getRepoBundles(repoId: String, max: Int = Int.MAX_VALUE): List<BundleRef> {

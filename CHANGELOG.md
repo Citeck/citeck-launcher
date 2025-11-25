@@ -2,7 +2,8 @@
 
 ## Fixes
 
-* Resolved incorrect behavior in automatic bundle selection after repository updates.
+* Fixed bundle for quick start buttons
+* Resolved incorrect behavior in automatic bundle selection after repository updates
 
 # Release 1.2.3
 
