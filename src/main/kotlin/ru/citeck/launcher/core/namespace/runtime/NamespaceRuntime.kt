@@ -155,15 +155,7 @@ class NamespaceRuntime(
             statusValue == NsRuntimeStatus.STARTING ||
             statusValue == NsRuntimeStatus.STALLED
         ) {
-            appRuntimes.getValue().forEach {
-                if (detachedApps.contains(it.name)) {
-                    it.stop(true)
-                } else {
-                    it.status.setValue(AppRuntimeStatus.READY_TO_PULL) {}
-                }
-            }
             nsStatus.setValue(NsRuntimeStatus.STARTING) {}
-            flushRuntimeThread()
         } else if (statusValue == NsRuntimeStatus.STOPPING) {
             stop()
         }
@@ -751,7 +743,11 @@ class NamespaceRuntime(
 
             if (newRuntimes.isNotEmpty()) {
                 if (!nsStatus.getValue().isStoppingState()) {
-                    newRuntimes.forEach { it.start() }
+                    newRuntimes.forEach {
+                        if (!detachedApps.contains(it.name)) {
+                            it.start()
+                        }
+                    }
                 }
                 newRuntimes.forEach { newRuntime ->
                     newRuntime.status.watch { _, after ->
