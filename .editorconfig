@@ -42,3 +42,9 @@ ktlint_standard_function-expression-body = disabled
 ktlint_standard_multiline-expression-wrapping = disabled
 ktlint_standard_spacing-between-declarations-with-annotations = disabled
 ktlint_function_naming_ignore_when_annotated_with = Composable
+
+[/build/**/*]
+ktlint = disabled
+
+[/src/**gtk/**]
+ktlint_standard_function-naming = disabled
