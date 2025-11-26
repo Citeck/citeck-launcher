@@ -27,7 +27,11 @@ class LogsWindow(
             position = WindowPosition(Alignment.Center)
         )
         window(windowState, params.title) {
-            LogsViewer(params.logsState)
+            LogsViewer(
+                logsState = params.logsState,
+                windowTitle = params.title,
+                onClose = { closeWindow() }
+            )
         }
     }
 
