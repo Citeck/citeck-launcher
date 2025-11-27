@@ -21,14 +21,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.WrapText
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TooltipBox
-import androidx.compose.material3.TooltipDefaults
-import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
@@ -45,6 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
+import ru.citeck.launcher.view.commons.CiteckTooltipArea
 
 private const val SCROLL_THRESHOLD = 50
 
@@ -153,17 +149,12 @@ fun LogsStatusBar(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScrollToBottomButton(
     isActive: Boolean,
     onClick: () -> Unit
 ) {
-    TooltipBox(
-        positionProvider = TooltipDefaults.rememberTooltipPositionProvider(),
-        tooltip = { PlainTooltip { Text("Follow logs") } },
-        state = rememberTooltipState()
-    ) {
+    CiteckTooltipArea(tooltip = "Follow logs") {
         Icon(
             imageVector = Icons.Default.KeyboardArrowDown,
             contentDescription = "Follow logs",
@@ -175,17 +166,12 @@ fun ScrollToBottomButton(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WrapToggleButton(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
-    TooltipBox(
-        positionProvider = TooltipDefaults.rememberTooltipPositionProvider(),
-        tooltip = { PlainTooltip { Text("Word wrap") } },
-        state = rememberTooltipState()
-    ) {
+    CiteckTooltipArea(tooltip = "Word wrap") {
         Icon(
             imageVector = Icons.AutoMirrored.Filled.WrapText,
             contentDescription = "Word wrap",
