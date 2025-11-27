@@ -8,6 +8,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
@@ -18,15 +19,26 @@ fun CiteckTooltipArea(
     enabled: Boolean = true,
     modifier: Modifier = Modifier,
     delayMillis: Int = 600,
+    placement: CiteckTooltipPlacement = CiteckTooltipPlacement.CURSOR,
     content: @Composable () -> Unit
 ) {
+    @OptIn(ExperimentalFoundationApi::class)
+    val tooltipPlacement = when (placement) {
+        CiteckTooltipPlacement.CURSOR -> TooltipPlacement.CursorPoint(
+            offset = DpOffset((-16).dp, 16.dp)
+        )
+        CiteckTooltipPlacement.TOP -> TooltipPlacement.ComponentRect(
+            anchor = Alignment.TopCenter,
+            alignment = Alignment.TopCenter,
+            offset = DpOffset(0.dp, (-8).dp)
+        )
+    }
+
     @OptIn(ExperimentalFoundationApi::class)
     TooltipArea(
         delayMillis = delayMillis,
         modifier = modifier,
-        tooltipPlacement = TooltipPlacement.CursorPoint(
-            offset = DpOffset((-16).dp, 16.dp)
-        ),
+        tooltipPlacement = tooltipPlacement,
         tooltip = {
             if (enabled && tooltip.isNotEmpty()) {
                 Surface(shadowElevation = 4.dp, shape = RoundedCornerShape(4.dp)) {
@@ -39,4 +51,9 @@ fun CiteckTooltipArea(
         },
         content = content
     )
+}
+
+enum class CiteckTooltipPlacement {
+    CURSOR,
+    TOP
 }

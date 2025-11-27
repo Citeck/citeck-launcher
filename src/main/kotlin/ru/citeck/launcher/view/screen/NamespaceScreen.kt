@@ -33,6 +33,7 @@ import ru.citeck.launcher.view.action.ActionDesc
 import ru.citeck.launcher.view.action.ActionIcon
 import ru.citeck.launcher.view.action.CiteckIconAction
 import ru.citeck.launcher.view.commons.CiteckTooltipArea
+import ru.citeck.launcher.view.commons.CiteckTooltipPlacement
 import ru.citeck.launcher.view.commons.ContextMenu
 import ru.citeck.launcher.view.commons.ContextMenu.contextMenu
 import ru.citeck.launcher.view.commons.LimitedText
@@ -270,8 +271,12 @@ fun NamespaceScreen(
             Spacer(modifier = Modifier.height(14.dp))
             Row(modifier = Modifier.height(30.dp).padding(start = 10.dp, bottom = 15.dp)) {
                 CiteckTooltipArea(
-                    tooltip = "Please stop all running apps before returning to the welcome screen",
-                    enabled = runtimeStatus.value != STOPPED,
+                    tooltip = if (runtimeStatus.value != STOPPED) {
+                        "Please stop all running apps before returning to the welcome screen"
+                    } else {
+                        "Back to Welcome Screen"
+                    },
+                    placement = CiteckTooltipPlacement.TOP,
                     modifier = Modifier.fillMaxHeight()
                 ) {
                     CiteckIconAction(
@@ -281,133 +286,163 @@ fun NamespaceScreen(
                         ActionDesc(
                             "back-to-workspaces",
                             ActionIcon.ARROW_LEFT,
-                            "Open Launcher Dir"
+                            "Back to Welcome Screen"
                         ) {
                             services.setSelectedNamespace("")
                         }
                     )
                 }
                 Spacer(modifier = Modifier.width(10.dp))
-                CiteckIconAction(
-                    coroutineScope,
-                    modifier = Modifier.fillMaxHeight(),
-                    actionDesc = ActionDesc(
-                        "open-launcher-dir",
-                        ActionIcon.OPEN_DIR,
-                        "Open Launcher Dir"
-                    ) { Desktop.getDesktop().open(AppDir.PATH.toFile()) }
-                )
-                CiteckIconAction(
-                    coroutineScope,
-                    modifier = Modifier.fillMaxHeight(),
-                    actionDesc = ActionDesc(
-                        "show-launcher-logs",
-                        ActionIcon.LOGS,
-                        "Show Launcher Logs"
-                    ) {
-                        runCatching {
-                            LogsWindow.show(
-                                LogsDialogParams("Launcher Logs", 5000) { logsCallback ->
-                                    runCatching {
-                                        AppLogUtils.watchAppLogs { logsCallback.invoke(it) }
-                                    }
-                                }
-                            )
-                        }
-                    }
-                )
-                CiteckIconAction(
-                    coroutineScope,
-                    modifier = Modifier.fillMaxHeight(),
-                    actionDesc = ActionDesc(
-                        "show-volumes",
-                        ActionIcon.STORAGE,
-                        "Show Volumes"
-                    ) {
-                        runCatching {
-                            JournalSelectDialog.show(
-                                JournalSelectDialog.Params(
-                                    VolumeInfo::class,
-                                    emptyList(),
-                                    false,
-                                    services.entitiesService,
-                                    false,
-                                    selectable = false,
-                                    columns = listOf(
-                                        JournalSelectDialog.JournalColumn("Name", "name", 200.dp, 450.dp),
-                                        JournalSelectDialog.JournalColumn("Size", "sizeMb", 50.dp, 100.dp)
-                                    ),
-                                    customButtons = listOf(
-                                        JournalSelectDialog.JournalButton("Snapshots") {
-                                            SnapshotsDialog.showSuspended(SnapshotsDialog.Params(nsRuntime, services))
-                                        },
-                                        JournalSelectDialog.JournalButton("Delete All", enabledIf = {
-                                            runtimeStatus.value == STOPPED
-                                        }, loading = true) {
-                                            var entities = services.entitiesService.find(VolumeInfo::class, 100)
-                                            if (entities.isNotEmpty() && ConfirmDialog.showSuspended("All your data in volumes will be lost")) {
-                                                log.info {
-                                                    "Begin full deletion of volumes for namespace " +
-                                                        "${selectedNamespace.value?.name} (${selectedNamespace.value?.id})"
-                                                }
-                                                var iterations = 100
-                                                while (--iterations > 0 && entities.isNotEmpty()) {
-                                                    for (entity in entities) {
-                                                        log.info { "Delete ${entity.name} (${entity.ref.localId})" }
-                                                        services.entitiesService.delete(entity.entity)
-                                                    }
-                                                    entities = services.entitiesService.find(VolumeInfo::class, 100)
-                                                }
-                                                if (iterations <= 0) {
-                                                    error(
-                                                        "Delete All action failed. Iterations limit was reached. " +
-                                                            "Entities: " + entities.joinToString { it.ref.toString() }
-                                                    )
-                                                }
-                                            }
-                                            false
+                CiteckTooltipArea(
+                    tooltip = "Open Launcher Dir",
+                    placement = CiteckTooltipPlacement.TOP,
+                    modifier = Modifier.fillMaxHeight()
+                ) {
+                    CiteckIconAction(
+                        coroutineScope,
+                        modifier = Modifier.fillMaxHeight(),
+                        actionDesc = ActionDesc(
+                            "open-launcher-dir",
+                            ActionIcon.OPEN_DIR,
+                            "Open Launcher Dir"
+                        ) { Desktop.getDesktop().open(AppDir.PATH.toFile()) }
+                    )
+                }
+                CiteckTooltipArea(
+                    tooltip = "Show Launcher Logs",
+                    placement = CiteckTooltipPlacement.TOP,
+                    modifier = Modifier.fillMaxHeight()
+                ) {
+                    CiteckIconAction(
+                        coroutineScope,
+                        modifier = Modifier.fillMaxHeight(),
+                        actionDesc = ActionDesc(
+                            "show-launcher-logs",
+                            ActionIcon.LOGS,
+                            "Show Launcher Logs"
+                        ) {
+                            runCatching {
+                                LogsWindow.show(
+                                    LogsDialogParams("Launcher Logs", 5000) { logsCallback ->
+                                        runCatching {
+                                            AppLogUtils.watchAppLogs { logsCallback.invoke(it) }
                                         }
+                                    }
+                                )
+                            }
+                        }
+                    )
+                }
+                CiteckTooltipArea(
+                    tooltip = "Show Volumes",
+                    placement = CiteckTooltipPlacement.TOP,
+                    modifier = Modifier.fillMaxHeight()
+                ) {
+                    CiteckIconAction(
+                        coroutineScope,
+                        modifier = Modifier.fillMaxHeight(),
+                        actionDesc = ActionDesc(
+                            "show-volumes",
+                            ActionIcon.STORAGE,
+                            "Show Volumes"
+                        ) {
+                            runCatching {
+                                JournalSelectDialog.show(
+                                    JournalSelectDialog.Params(
+                                        VolumeInfo::class,
+                                        emptyList(),
+                                        false,
+                                        services.entitiesService,
+                                        false,
+                                        selectable = false,
+                                        columns = listOf(
+                                            JournalSelectDialog.JournalColumn("Name", "name", 200.dp, 450.dp),
+                                            JournalSelectDialog.JournalColumn("Size", "sizeMb", 50.dp, 100.dp)
+                                        ),
+                                        customButtons = listOf(
+                                            JournalSelectDialog.JournalButton("Snapshots") {
+                                                SnapshotsDialog.showSuspended(SnapshotsDialog.Params(nsRuntime, services))
+                                            },
+                                            JournalSelectDialog.JournalButton("Delete All", enabledIf = {
+                                                runtimeStatus.value == STOPPED
+                                            }, loading = true) {
+                                                var entities = services.entitiesService.find(VolumeInfo::class, 100)
+                                                if (entities.isNotEmpty() && ConfirmDialog.showSuspended("All your data in volumes will be lost")) {
+                                                    log.info {
+                                                        "Begin full deletion of volumes for namespace " +
+                                                            "${selectedNamespace.value?.name} (${selectedNamespace.value?.id})"
+                                                    }
+                                                    var iterations = 100
+                                                    while (--iterations > 0 && entities.isNotEmpty()) {
+                                                        for (entity in entities) {
+                                                            log.info { "Delete ${entity.name} (${entity.ref.localId})" }
+                                                            services.entitiesService.delete(entity.entity)
+                                                        }
+                                                        entities = services.entitiesService.find(VolumeInfo::class, 100)
+                                                    }
+                                                    if (iterations <= 0) {
+                                                        error(
+                                                            "Delete All action failed. Iterations limit was reached. " +
+                                                                "Entities: " + entities.joinToString { it.ref.toString() }
+                                                        )
+                                                    }
+                                                }
+                                                false
+                                            }
+                                        )
                                     )
                                 )
-                            )
+                            }
                         }
-                    }
-                )
-                CiteckIconAction(
-                    coroutineScope,
-                    modifier = Modifier.fillMaxHeight(),
-                    actionDesc = ActionDesc(
-                        "open-secrets-list",
-                        ActionIcon.KEY,
-                        "Show Auth Secrets"
-                    ) {
-                        runCatching {
-                            JournalSelectDialog.show(
-                                JournalSelectDialog.Params(
-                                    AuthSecret::class,
-                                    emptyList(),
-                                    false,
-                                    services.entitiesService,
-                                    true,
-                                    selectable = false
+                    )
+                }
+                CiteckTooltipArea(
+                    tooltip = "Show Auth Secrets",
+                    placement = CiteckTooltipPlacement.TOP,
+                    modifier = Modifier.fillMaxHeight()
+                ) {
+                    CiteckIconAction(
+                        coroutineScope,
+                        modifier = Modifier.fillMaxHeight(),
+                        actionDesc = ActionDesc(
+                            "open-secrets-list",
+                            ActionIcon.KEY,
+                            "Show Auth Secrets"
+                        ) {
+                            runCatching {
+                                JournalSelectDialog.show(
+                                    JournalSelectDialog.Params(
+                                        AuthSecret::class,
+                                        emptyList(),
+                                        false,
+                                        services.entitiesService,
+                                        true,
+                                        selectable = false
+                                    )
                                 )
-                            )
+                            }
                         }
-                    }
-                )
-                CiteckIconAction(
-                    coroutineScope,
-                    modifier = Modifier.fillMaxHeight(),
-                    actionDesc = ActionDesc(
-                        "feedback",
-                        ActionIcon.EXCLAMATION_TRIANGLE,
-                        "Export System Info"
-                    ) {
-                        Thread.ofPlatform().start {
-                            SystemDumpUtils.dumpSystemInfo()
+                    )
+                }
+                CiteckTooltipArea(
+                    tooltip = "Export System Info",
+                    placement = CiteckTooltipPlacement.TOP,
+                    modifier = Modifier.fillMaxHeight()
+                ) {
+                    CiteckIconAction(
+                        coroutineScope,
+                        modifier = Modifier.fillMaxHeight(),
+                        actionDesc = ActionDesc(
+                            "feedback",
+                            ActionIcon.EXCLAMATION_TRIANGLE,
+                            "Export System Info"
+                        ) {
+                            Thread.ofPlatform().start {
+                                SystemDumpUtils.dumpSystemInfo()
+                            }
                         }
-                    }
-                )
+                    )
+                }
             }
         }
         VerticalDivider(color = Color.Black)
