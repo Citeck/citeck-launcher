@@ -471,7 +471,7 @@ class AppStartAction(
 
     private fun prepareVolume(runtime: AppRuntime, volume: String): Bind? {
 
-        val twoDotsIdx = volume.lastIndexOf(':')
+        val twoDotsIdx = volume.indexOf(':')
         if (twoDotsIdx < 1) {
             return null
         }
