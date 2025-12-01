@@ -29,6 +29,7 @@ class AppRuntime(
         }
 
     val def = MutProp(def)
+    val containerStats = MutProp("${def.name}-stats", ContainerStats.EMPTY)
 
     val name: String get() = def.getValue().name
     val image: String get() = def.getValue().image
@@ -44,6 +45,9 @@ class AppRuntime(
     val dependenciesToWait: MutableSet<String> = Collections.newSetFromMap<String>(ConcurrentHashMap())
     internal var lastDepsCheckingTime = 0L
 
+    @Volatile
+    private var statsStream: AutoCloseable? = null
+
     init {
         this.def.watch { before, after ->
             if (!status.getValue().isStoppingState()) {
@@ -57,8 +61,13 @@ class AppRuntime(
         status.watch { before, after ->
             if (after == AppRuntimeStatus.RUNNING) {
                 this.containers = dockerApi.getContainers(nsRuntime.namespaceRef, def.name)
-            } else if (after == AppRuntimeStatus.STOPPED) {
+                startStatsStream()
+            } else if (before == AppRuntimeStatus.RUNNING) {
+                stopStatsStream()
+            }
+            if (after == AppRuntimeStatus.STOPPED) {
                 this.containers = emptyList()
+                containerStats.setValue(ContainerStats.EMPTY)
             }
             if (before == AppRuntimeStatus.READY_TO_PULL) {
                 pullImageIfPresent = false
@@ -94,5 +103,30 @@ class AppRuntime(
         return dockerApi.getContainers(nsRuntime.namespaceRef, name).firstOrNull()?.let {
             dockerApi.watchLogs(it.id, tail, logsCallback)
         } ?: return AutoCloseable { }
+    }
+
+    private fun startStatsStream() {
+        stopStatsStream()
+        val container = containers.firstOrNull() ?: return
+        val containerId = container.id
+        statsStream = dockerApi.watchContainerStats(
+            containerId = containerId,
+            onStats = { stats ->
+                containerStats.setValue(stats)
+            },
+            onError = {
+                if (status.getValue() == AppRuntimeStatus.RUNNING) {
+                    Thread.sleep(2000)
+                    if (status.getValue() == AppRuntimeStatus.RUNNING) {
+                        startStatsStream()
+                    }
+                }
+            }
+        )
+    }
+
+    private fun stopStatsStream() {
+        statsStream?.close()
+        statsStream = null
     }
 }

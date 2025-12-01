@@ -3,6 +3,7 @@
 package ru.citeck.launcher.core.namespace.runtime.docker
 
 import com.github.dockerjava.api.DockerClient
+import com.github.dockerjava.api.async.ResultCallback
 import com.github.dockerjava.api.async.ResultCallbackTemplate
 import com.github.dockerjava.api.command.*
 import com.github.dockerjava.api.exception.DockerException
@@ -13,9 +14,12 @@ import com.github.dockerjava.api.model.Container
 import com.github.dockerjava.api.model.Frame
 import com.github.dockerjava.api.model.HostConfig
 import com.github.dockerjava.api.model.Network
+import com.github.dockerjava.api.model.Statistics
 import com.github.dockerjava.transport.DockerHttpClient
 import io.github.oshai.kotlinlogging.KotlinLogging
 import ru.citeck.launcher.core.namespace.NamespaceRef
+import ru.citeck.launcher.core.namespace.runtime.ContainerStats
+import ru.citeck.launcher.core.namespace.runtime.DockerSystemInfo
 import ru.citeck.launcher.core.namespace.runtime.docker.exception.DockerStaleNetworkException
 import ru.citeck.launcher.core.snapshot.NamespaceSnapshotMeta
 import ru.citeck.launcher.core.snapshot.VolumeSnapshotMeta
@@ -40,7 +44,14 @@ class DockerApi(
         const val UTILS_IMAGE = "registry.citeck.ru/community/launcher-utils:1.0"
 
         private const val GRACEFUL_SHUTDOWN_SECONDS = 10
+        private const val SYSTEM_INFO_CACHE_TTL_MS = 120_000L
     }
+
+    @Volatile
+    private var cachedSystemInfo: DockerSystemInfo? = null
+
+    @Volatile
+    private var systemInfoCacheTime: Long = 0
 
     fun createVolume(nsRef: NamespaceRef, originalName: String, name: String): CreateVolumeResponse {
         return client.createVolumeCmd()
@@ -641,5 +652,105 @@ class DockerApi(
             val payload = String(frame.payload).trimEnd('\n', ' ', '\t', '\r')
             logMsgReceiver.invoke(payload)
         }
+    }
+
+    fun getSystemInfo(): DockerSystemInfo {
+        val now = System.currentTimeMillis()
+        val cached = cachedSystemInfo
+        if (cached != null && now - systemInfoCacheTime < SYSTEM_INFO_CACHE_TTL_MS) {
+            return cached
+        }
+
+        return try {
+            val info = client.infoCmd().exec()
+            val result = DockerSystemInfo(
+                cpuCores = info.ncpu ?: 0,
+                memoryTotal = info.memTotal ?: 0L
+            )
+            cachedSystemInfo = result
+            systemInfoCacheTime = now
+            result
+        } catch (e: Exception) {
+            log.warn(e) { "Failed to get Docker system info" }
+            cached ?: DockerSystemInfo.EMPTY
+        }
+    }
+
+    fun watchContainerStats(
+        containerId: String,
+        onStats: (ContainerStats) -> Unit,
+        onError: (Throwable) -> Unit = {}
+    ): AutoCloseable {
+        val resultCallback = object : ResultCallback.Adapter<Statistics>() {
+            override fun onNext(stats: Statistics) {
+                onStats(calculateContainerStats(stats))
+            }
+            override fun onError(throwable: Throwable) {
+                if (throwable !is java.io.IOException) {
+                    log.warn(throwable) { "Stats stream error for container $containerId" }
+                }
+                onError(throwable)
+            }
+        }
+
+        client.statsCmd(containerId)
+            .withNoStream(false)
+            .exec(resultCallback)
+
+        return AutoCloseable {
+            try {
+                resultCallback.close()
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun calculateContainerStats(stats: Statistics): ContainerStats {
+        val cpuStats = stats.cpuStats
+        val preCpuStats = stats.preCpuStats
+
+        val cpuDelta = (cpuStats?.cpuUsage?.totalUsage ?: 0L) - (preCpuStats?.cpuUsage?.totalUsage ?: 0L)
+        val systemDelta = (cpuStats?.systemCpuUsage ?: 0L) - (preCpuStats?.systemCpuUsage ?: 0L)
+        val cpuCount = cpuStats?.onlineCpus
+            ?: cpuStats?.cpuUsage?.percpuUsage?.size?.toLong()
+            ?: 1L
+
+        val cpuPercent = if (systemDelta > 0 && cpuDelta > 0) {
+            (cpuDelta.toDouble() / systemDelta.toDouble()) * cpuCount * 100.0
+        } else {
+            0.0
+        }
+
+        // CPU throttling info
+        val throttlingData = cpuStats?.throttlingData
+        val cpuThrottledPeriods = throttlingData?.throttledPeriods ?: 0L
+        val cpuThrottledTime = throttlingData?.throttledTime ?: 0L
+
+        val memStats = stats.memoryStats
+        val memStatsDetails = memStats?.stats
+        // Docker stats CLI formula: usage - inactive_file
+        // cgroup v1: total_inactive_file, cgroup v2: inactive_file, fallback: cache
+        val inactiveFile = memStatsDetails?.totalInactiveFile
+            ?: memStatsDetails?.inactiveFile
+            ?: memStatsDetails?.cache
+            ?: 0L
+        val memoryUsage = maxOf(0L, (memStats?.usage ?: 0L) - inactiveFile)
+        val memoryLimit = memStats?.limit ?: 0L
+        val memoryCache = memStatsDetails?.cache ?: 0L
+        val memoryPercent = if (memoryLimit > 0) {
+            (memoryUsage.toDouble() / memoryLimit.toDouble()) * 100.0
+        } else {
+            0.0
+        }
+
+        return ContainerStats(
+            cpuPercent = cpuPercent,
+            cpuCores = cpuCount,
+            cpuThrottledPeriods = cpuThrottledPeriods,
+            cpuThrottledTime = cpuThrottledTime,
+            memoryUsage = memoryUsage,
+            memoryLimit = memoryLimit,
+            memoryPercent = memoryPercent,
+            memoryCache = memoryCache
+        )
     }
 }

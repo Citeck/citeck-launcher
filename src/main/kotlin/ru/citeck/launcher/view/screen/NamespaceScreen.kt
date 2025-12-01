@@ -3,7 +3,9 @@ package ru.citeck.launcher.view.screen
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.*
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Text
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -87,26 +89,27 @@ fun NamespaceScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(
-                    modifier = Modifier.padding(start = 10.dp, top = 2.dp).clickable(enabled = runtimeStatus.value == STOPPED) {
-                        coroutineScope.launch {
-                            val currentRef = NamespaceEntityDef.getRef(selectedNsValue)
-                            val newRef = JournalSelectDialog.show(
-                                JournalSelectDialog.Params(
-                                    NamespaceConfig::class,
-                                    listOf(currentRef),
-                                    false,
-                                    entitiesService = services.entitiesService,
-                                    closeWhenAllRecordsDeleted = true
-                                )
-                            ).firstOrNull() ?: currentRef
-                            try {
-                                services.setSelectedNamespace(newRef.localId)
-                            } catch (e: Throwable) {
-                                log.error(e) { "Namespace selection failed. Namespace: ${newRef.localId}" }
-                                ErrorDialog.show(e)
+                    modifier = Modifier.padding(start = 10.dp, top = 2.dp)
+                        .clickable(enabled = runtimeStatus.value == STOPPED) {
+                            coroutineScope.launch {
+                                val currentRef = NamespaceEntityDef.getRef(selectedNsValue)
+                                val newRef = JournalSelectDialog.show(
+                                    JournalSelectDialog.Params(
+                                        NamespaceConfig::class,
+                                        listOf(currentRef),
+                                        false,
+                                        entitiesService = services.entitiesService,
+                                        closeWhenAllRecordsDeleted = true
+                                    )
+                                ).firstOrNull() ?: currentRef
+                                try {
+                                    services.setSelectedNamespace(newRef.localId)
+                                } catch (e: Throwable) {
+                                    log.error(e) { "Namespace selection failed. Namespace: ${newRef.localId}" }
+                                    ErrorDialog.show(e)
+                                }
                             }
                         }
-                    }
                 ) {
                     Row {
                         LimitedText(selectedNsValue.name, maxWidth = 170.dp)
@@ -147,6 +150,14 @@ fun NamespaceScreen(
                 Spacer(Modifier.width(10.dp))
                 Text(runtimeStatus.value.name, modifier = Modifier.align(Alignment.CenterVertically))
             }
+
+            val nsStats = rememberMutProp(nsRuntime, nsRuntime.namespaceStats)
+            if (nsStats.value.runningContainers > 0 &&
+                (runtimeStatus.value == RUNNING || runtimeStatus.value == STARTING)
+            ) {
+                NamespaceStatsSummary(nsStats.value)
+            }
+
             HorizontalDivider()
             Row(modifier = Modifier.height(30.dp), verticalAlignment = Alignment.CenterVertically) {
                 Row(
@@ -250,7 +261,10 @@ fun NamespaceScreen(
                                 Desktop.getDesktop().browse(URI.create(link.url))
                             }
                     ) {
-                        Box(modifier = Modifier.align(Alignment.CenterStart).padding(start = 12.dp, top = 5.dp, bottom = 5.dp)) {
+                        Box(
+                            modifier = Modifier.align(Alignment.CenterStart)
+                                .padding(start = 12.dp, top = 5.dp, bottom = 5.dp)
+                        ) {
                             CpImage(
                                 link.icon,
                                 modifier = Modifier.align(Alignment.CenterStart).requiredSize(30.dp),
@@ -361,7 +375,12 @@ fun NamespaceScreen(
                                         ),
                                         customButtons = listOf(
                                             JournalSelectDialog.JournalButton("Snapshots") {
-                                                SnapshotsDialog.showSuspended(SnapshotsDialog.Params(nsRuntime, services))
+                                                SnapshotsDialog.showSuspended(
+                                                    SnapshotsDialog.Params(
+                                                        nsRuntime,
+                                                        services
+                                                    )
+                                                )
                                             },
                                             JournalSelectDialog.JournalButton("Delete All", enabledIf = {
                                                 runtimeStatus.value == STOPPED
@@ -494,8 +513,6 @@ private fun RenderApps(
         return
     }
 
-    val portsWidth = 80.dp
-    val tagWidth = 180.dp
     Text(
         header,
         fontSize = 1.1.em,
@@ -506,11 +523,13 @@ private fun RenderApps(
     Column(modifier = Modifier.padding(start = 5.dp, end = 5.dp)) {
 
         Row(modifier = Modifier.fillMaxWidth()) {
-            Text("Name", modifier = Modifier.weight(0.8f), maxLines = 1)
-            Text("Status", modifier = Modifier.weight(1f), maxLines = 1)
-            Text("Ports", modifier = Modifier.width(portsWidth), maxLines = 1)
-            Text("Tag", modifier = Modifier.width(tagWidth), maxLines = 1)
-            Text("Actions", modifier = Modifier.weight(0.5f), maxLines = 1)
+            Text("Name", modifier = Modifier.weight(AppTableColumns.NAME_WEIGHT), maxLines = 1)
+            Text("Status", modifier = Modifier.weight(AppTableColumns.STATUS_WEIGHT), maxLines = 1)
+            Text("CPU", modifier = Modifier.width(AppTableColumns.CPU_WIDTH), maxLines = 1)
+            Text("MEM", modifier = Modifier.width(AppTableColumns.MEM_WIDTH), maxLines = 1)
+            Text("Ports", modifier = Modifier.width(AppTableColumns.PORTS_WIDTH), maxLines = 1)
+            Text("Tag", modifier = Modifier.width(AppTableColumns.TAG_WIDTH), maxLines = 1)
+            Text("Actions", modifier = Modifier.weight(AppTableColumns.ACTIONS_WEIGHT), maxLines = 1)
         }
 
         HorizontalDivider()
@@ -520,6 +539,7 @@ private fun RenderApps(
             val appStatus = rememberMutProp(application, application.status)
             val editedDef = rememberMutProp(application, application.editedDef)
             val appDef = rememberMutProp(application, application.def)
+            val containerStats = rememberMutProp(application, application.containerStats)
             val ports = remember(appDef) {
                 appDef.value.ports.mapNotNull {
                     var port = it.substringBefore(":", "")
@@ -530,9 +550,9 @@ private fun RenderApps(
                 }
             }
             Row(modifier = Modifier.fillMaxWidth().height(30.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(application.name, modifier = Modifier.weight(0.8f), maxLines = 1)
+                Text(application.name, modifier = Modifier.weight(AppTableColumns.NAME_WEIGHT), maxLines = 1)
                 Row(
-                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                    modifier = Modifier.weight(AppTableColumns.STATUS_WEIGHT).fillMaxHeight(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     val statusColor = if (appStatus.value.isStalledState()) {
@@ -548,24 +568,30 @@ private fun RenderApps(
                     Spacer(Modifier.width(5.dp))
                     Text(statusText.value, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
+
+                AppStatsCells(
+                    appStatus = appStatus.value,
+                    containerStats = containerStats.value
+                )
+
                 if (ports.isEmpty()) {
-                    Row(modifier = Modifier.width(portsWidth)) {}
+                    Row(modifier = Modifier.width(AppTableColumns.PORTS_WIDTH)) {}
                 } else if (ports.size == 1) {
-                    Text(text = ports.first().toString(), modifier = Modifier.width(portsWidth))
+                    Text(text = ports.first(), modifier = Modifier.width(AppTableColumns.PORTS_WIDTH))
                 } else {
                     CiteckTooltipArea(
                         tooltip = ports.joinToString("\n"),
-                        modifier = Modifier.width(portsWidth)
+                        modifier = Modifier.width(AppTableColumns.PORTS_WIDTH)
                     ) {
                         Text(
-                            text = ports.first().toString() + " ..",
+                            text = ports.first() + " ..",
                             maxLines = 1
                         )
                     }
                 }
                 CiteckTooltipArea(
                     tooltip = application.image,
-                    modifier = Modifier.width(tagWidth),
+                    modifier = Modifier.width(AppTableColumns.TAG_WIDTH),
                 ) {
                     val image = appDef.value.image
                     Text(
@@ -581,7 +607,7 @@ private fun RenderApps(
                     )
                 }
                 Row(
-                    modifier = Modifier.weight(0.5f).fillMaxHeight(),
+                    modifier = Modifier.weight(AppTableColumns.ACTIONS_WEIGHT).fillMaxHeight(),
                     horizontalArrangement = Arrangement.Start,
                     verticalAlignment = Alignment.CenterVertically
                 ) {

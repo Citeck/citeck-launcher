@@ -73,10 +73,12 @@ class NamespaceRuntime(
     private var runtimeFilesHash: Map<Path, String> = emptyMap()
 
     val appRuntimes = MutProp<List<AppRuntime>>(emptyList())
+    val namespaceStats = MutProp("ns-stats-$namespaceRef", NamespaceStats.EMPTY)
     private val runtimesToRemove = Collections.synchronizedList(ArrayList<AppRuntime>())
 
     @Volatile
     private var runtimeThread: Thread? = null
+
     private val isActive = AtomicBoolean()
     private val activeStateVersion = AtomicLong()
 
@@ -94,6 +96,7 @@ class NamespaceRuntime(
 
     private val appsStatusChangesCount = AtomicLong()
     private var appsStatusChangesCountProcessed = 0L
+
     @Volatile
     private var lastAppStatusChangeTime = System.currentTimeMillis()
 
@@ -302,6 +305,12 @@ class NamespaceRuntime(
         return null
     }
 
+    private fun updateNamespaceStats() {
+        val containerStatsList = appRuntimes.getValue().map { it.containerStats.getValue() }
+        val systemInfo = dockerApi.getSystemInfo()
+        namespaceStats.setValue(NamespaceStats.aggregate(containerStatsList, systemInfo))
+    }
+
     private fun runtimeThreadAction(): Boolean {
         var somethingChanged = false
 
@@ -342,6 +351,7 @@ class NamespaceRuntime(
                     }
                     nsStatus.setValue(NsRuntimeStatus.STARTING)
                 }
+
                 is StopNsCmd -> {
                     if (!nsStatus.getValue().isStoppingState()) {
                         nsStatus.setValue(NsRuntimeStatus.STOPPING)
@@ -559,6 +569,7 @@ class NamespaceRuntime(
                         }
                     }
                     nsStatus.setValue(NsRuntimeStatus.STOPPED)
+                    namespaceStats.setValue(NamespaceStats.EMPTY)
                 }
             }
 
@@ -634,7 +645,8 @@ class NamespaceRuntime(
             return
         }
         log.info { "Update app def for '${appDefBefore.name}'. Locked: $locked" }
-        val runtime = appRuntimes.getValue().find { it.name == appName } ?: error("Runtime is not found for app '$appName'")
+        val runtime =
+            appRuntimes.getValue().find { it.name == appName } ?: error("Runtime is not found for app '$appName'")
         if (locked) {
             if (editedAndLockedApps.add(appDefBefore.name)) {
                 nsRuntimeDataRepo[STATE_EDITED_AND_LOCKED_APPS] = editedAndLockedApps
@@ -770,6 +782,9 @@ class NamespaceRuntime(
                             }
                         }
                         flushRuntimeThread()
+                    }
+                    newRuntime.containerStats.watch { _, _ ->
+                        updateNamespaceStats()
                     }
                     newRuntime.editedDef.setValue(editedApps.containsKey(newRuntime.name))
                 }
