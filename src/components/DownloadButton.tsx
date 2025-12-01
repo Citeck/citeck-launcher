@@ -5,10 +5,10 @@ interface DownloadButtonProps {
   primaryLink: DownloadLink;
   secondaryLinks?: DownloadLink[];
   icon: React.ReactNode;
-  releaseName: String;
+  releaseName?: String;
 }
 
-export default function DownloadButton({ primaryLink, secondaryLinks, icon, releaseName }: DownloadButtonProps) {
+export default function DownloadButton({ primaryLink, secondaryLinks, icon, releaseName = "" }: DownloadButtonProps) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -28,6 +28,10 @@ export default function DownloadButton({ primaryLink, secondaryLinks, icon, rele
     window.location.href = link.url;
     setIsOpen(false);
   };
+  let btnLabel = "Download for " + primaryLink.label
+  if (releaseName) {
+    btnLabel += " (" + releaseName + ")"
+  }
 
   return (
     <div className="relative inline-block" ref={dropdownRef}>
@@ -35,10 +39,10 @@ export default function DownloadButton({ primaryLink, secondaryLinks, icon, rele
         <button
           onClick={() => handleDownload(primaryLink)}
           className={`flex items-center gap-3 rounded-lg bg-primary-600 px-6 py-3 text-sm font-semibold text-white transition-smooth hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:px-8 sm:py-4 sm:text-base${secondaryLinks && secondaryLinks.length > 0 ? ' rounded-r-none' : ''}`}
-          aria-label={`Download for ${primaryLink.label}`}
+          aria-label={btnLabel}
         >
           <span className="h-5 w-5 sm:h-6 sm:w-6">{icon}</span>
-          <span>Download for {primaryLink.label} ({releaseName})</span>
+          <span>{btnLabel}</span>
         </button>
 
         {secondaryLinks && secondaryLinks.length > 0 && (
