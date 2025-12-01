@@ -254,9 +254,9 @@ object LogsTextBuilder {
 
                     // Check if there's a search match at this position
                     val matchingRange = matchPositions.getOrNull(matchIdx)
-                    if (matchingRange != null && matchingRange.first <= globalPos && globalPos < matchingRange.last) {
+                    if (matchingRange != null && matchingRange.first <= globalPos && globalPos <= matchingRange.last) {
                         // Inside a search match
-                        val matchEndInLine = minOf(matchingRange.last - lineStart, line.length)
+                        val matchEndInLine = minOf(matchingRange.last + 1 - lineStart, line.length)
                         val matchStartInLine = maxOf(matchingRange.first - lineStart, linePos)
 
                         // Append non-match text before
@@ -273,7 +273,7 @@ object LogsTextBuilder {
                         linePos = matchEndInLine
 
                         // Move to next match if we've passed this one
-                        if (lineStart + linePos >= matchingRange.last) {
+                        if (lineStart + linePos > matchingRange.last) {
                             matchIdx++
                         }
                     } else if (matchingRange != null && matchingRange.first < lineEnd && matchingRange.first >= globalPos) {

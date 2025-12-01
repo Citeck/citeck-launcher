@@ -128,6 +128,7 @@ fun LogsViewer(
     val coroutineScope = rememberCoroutineScope()
     val followLogs = remember { mutableStateOf(true) }
     val searchQuery = remember { mutableStateOf("") }
+    val debouncedSearchQuery = remember { mutableStateOf("") }
     val searchVisible = remember { mutableStateOf(false) }
     val currentMatchIndex = remember { mutableIntStateOf(0) }
     val textLayoutResult = remember { mutableStateOf<TextLayoutResult?>(null) }
@@ -217,6 +218,11 @@ fun LogsViewer(
         }
     }
 
+    LaunchedEffect(searchQuery.value) {
+        delay(300)
+        debouncedSearchQuery.value = searchQuery.value
+    }
+
     LaunchedEffect(Unit) {
         mainFocusRequester.requestFocus()
         delay(300)
@@ -284,13 +290,13 @@ fun LogsViewer(
         filteredLogsData.joinToString("\n") { it.first }
     }
 
-    val matchPositions = remember(logsText, searchQuery.value, useRegex.value) {
-        if (searchQuery.value.isEmpty() || searchQuery.value.length < 2) {
+    val matchPositions = remember(logsText, debouncedSearchQuery.value, useRegex.value) {
+        if (debouncedSearchQuery.value.isEmpty() || debouncedSearchQuery.value.length < 2) {
             emptyList()
         } else if (useRegex.value) {
-            LogSearch.findAllMatchesRegex(logsText, searchQuery.value)
+            LogSearch.findAllMatchesRegex(logsText, debouncedSearchQuery.value)
         } else {
-            LogSearch.findAllMatches(logsText, searchQuery.value)
+            LogSearch.findAllMatches(logsText, debouncedSearchQuery.value)
         }
     }
 

@@ -141,8 +141,10 @@ fun StatsCell(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
+        // Text value
         Text(text, maxLines = 1, modifier = Modifier.width(55.dp), color = textColor)
 
+        // Progress bar
         Box(
             modifier = Modifier
                 .width(30.dp)
