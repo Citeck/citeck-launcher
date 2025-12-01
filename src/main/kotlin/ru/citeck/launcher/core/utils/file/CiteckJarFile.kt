@@ -39,7 +39,11 @@ class CiteckJarFile(
         if (isDir) {
             error("Directory can't be read. Url: $url")
         }
-        return url.openStream().use(action)
+        try {
+            return url.openStream().use(action)
+        } catch (e: Exception) {
+            throw RuntimeException("Jar file reading failed. Url: $url", e)
+        }
     }
 
     override fun <T> write(action: (OutputStream) -> T): T {
@@ -54,7 +58,15 @@ class CiteckJarFile(
         return CiteckJarFile(URI.create("$url/$name").toURL(), !name.contains("."))
     }
 
+    override fun getFilesPath(): List<String> {
+        return getAllFiles(false).keys.toList()
+    }
+
     override fun getFilesContent(): Map<String, ByteArray> {
+        return getAllFiles(true)
+    }
+
+    private fun getAllFiles(withContent: Boolean): Map<String, ByteArray> {
         val conn = url.openConnection()
         if (conn !is JarURLConnection) {
             return emptyMap()
@@ -72,7 +84,11 @@ class CiteckJarFile(
             if (fileName.isBlank() || fileName.endsWith("/")) {
                 continue
             }
-            result[fileName] = URI.create("$url/$fileName").toURL().openStream().use { it.readBytes() }
+            if (withContent) {
+                result[fileName] = URI.create("$url/$fileName").toURL().openStream().use { it.readBytes() }
+            } else {
+                result[fileName] = ByteArray(0)
+            }
         }
         return result
     }
@@ -94,7 +110,7 @@ class CiteckJarFile(
             var fileName: String = entry.name.removePrefix(prefixToRemove)
             var isDir = false
             if (fileName.endsWith("/")) {
-                fileName = fileName.substring(0, fileName.length - 1)
+                fileName = fileName.dropLast(1)
                 isDir = true
             }
             if (fileName.matches(SIMPLE_NAME_REGEX)) {

@@ -48,7 +48,10 @@ class Database {
 
         val openTransactions = txStore.openTransactions
         if (openTransactions.isNotEmpty()) {
-            log.warn { "Found ${openTransactions.size} open transactions. Seems that previous app instance closed unexpectedly." }
+            log.warn {
+                "Found ${openTransactions.size} open transactions. " +
+                    "Seems that previous app instance closed unexpectedly."
+            }
             openTransactions.forEach {
                 try {
                     it.rollback()
@@ -175,7 +178,11 @@ class Database {
         }
 
         override fun get(id: K): T? {
-            return doWithRepoMap(repoKey, keyType) { map -> map[id]?.let { Json.read(it, valueType) } }
+            return doWithRepoMap(repoKey, keyType) { map ->
+                map[id]?.let {
+                    Json.read(it, valueType)
+                }
+            }
         }
 
         override fun delete(id: K) {

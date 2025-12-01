@@ -89,11 +89,12 @@ abstract class CiteckWindow : CiteckPopup(CiteckPopupKind.WINDOW) {
             height = 800.dp,
             position = WindowPosition(Alignment.Center)
         ),
+        crossinline onClose: () -> Boolean,
         title: String = "Citeck Launcher",
         crossinline render: @Composable PopupContext.() -> Unit
     ) {
         Window(
-            onCloseRequest = { closeWindow() },
+            onCloseRequest = { if (onClose()) closeWindow() },
             visible = visible.value,
             title = title,
             state = state,

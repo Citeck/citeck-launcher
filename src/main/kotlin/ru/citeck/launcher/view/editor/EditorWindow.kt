@@ -28,6 +28,8 @@ import org.fife.ui.rtextarea.RTextScrollPane
 import org.fife.ui.rtextarea.SearchContext
 import org.fife.ui.rtextarea.SearchEngine
 import ru.citeck.launcher.core.utils.file.CiteckFiles
+import ru.citeck.launcher.core.utils.json.Json
+import ru.citeck.launcher.core.utils.json.Yaml
 import ru.citeck.launcher.view.commons.dialog.ErrorDialog
 import ru.citeck.launcher.view.popup.CiteckWindow
 import ru.citeck.launcher.view.utils.onEnterClick
@@ -41,6 +43,7 @@ import javax.swing.plaf.basic.BasicScrollBarUI
 class EditorWindow private constructor(
     private val filename: String,
     private val initialText: String,
+    private val onClose: () -> Boolean,
     private val buttonsRowImpl: @Composable ButtonsRowContext.(EditorContext) -> Unit
 ) : CiteckWindow() {
 
@@ -51,7 +54,10 @@ class EditorWindow private constructor(
             "kt" to SyntaxConstants.SYNTAX_STYLE_KOTLIN,
             "java" to SyntaxConstants.SYNTAX_STYLE_JAVA,
             "js" to SyntaxConstants.SYNTAX_STYLE_JAVASCRIPT,
-            "json" to SyntaxConstants.SYNTAX_STYLE_JSON
+            "json" to SyntaxConstants.SYNTAX_STYLE_JSON,
+            "lua" to SyntaxConstants.SYNTAX_STYLE_LUA,
+            "Dockerfile" to SyntaxConstants.SYNTAX_STYLE_DOCKERFILE,
+            "sh" to SyntaxConstants.SYNTAX_STYLE_UNIX_SHELL
         )
 
         private val theme by lazy {
@@ -67,8 +73,13 @@ class EditorWindow private constructor(
             }
         }
 
-        fun show(filename: String, text: String, buttonsRow: @Composable ButtonsRowContext.(EditorContext) -> Unit) {
-            showWindow(EditorWindow(filename, text, buttonsRow))
+        fun show(
+            filename: String,
+            text: String,
+            onClose: () -> Boolean,
+            buttonsRow: @Composable ButtonsRowContext.(EditorContext) -> Unit
+        ) {
+            showWindow(EditorWindow(filename, text, onClose, buttonsRow))
         }
     }
 
@@ -76,22 +87,17 @@ class EditorWindow private constructor(
     private val gutterSize = mutableStateOf(20.dp)
     private val searchFocusRequester = FocusRequester()
 
+    private val textSyntax = syntaxByExtension[filename.substringAfterLast(".")]
+        ?: SyntaxConstants.SYNTAX_STYLE_NONE
+
     private val scrollPane: RTextScrollPane by lazy {
 
         val textArea = RSyntaxTextArea(initialText)
 
-        textArea.syntaxEditingStyle = syntaxByExtension[filename.substringAfterLast(".")]
-            ?: SyntaxConstants.SYNTAX_STYLE_NONE
+        textArea.syntaxEditingStyle = textSyntax
         textArea.isCodeFoldingEnabled = true
         textArea.antiAliasingEnabled = true
         textArea.tabSize = 2
-
-/*        textArea.addKeyListener(object : KeyAdapter() {
-            override fun keyTyped(e: KeyEvent) {
-                if (e.keyCode = )
-            }
-        })*/
-        // textArea.redoLastAction()
 
         fun setFont(newFont: Font?, size: Float) {
             var ss = textArea.syntaxScheme
@@ -115,6 +121,7 @@ class EditorWindow private constructor(
                 textArea.font = textArea.font.deriveFont(size)
             }
         }
+
         val scrollPane = RTextScrollPane(textArea)
         scrollPane.viewportBorder = BorderFactory.createEmptyBorder()
 
@@ -181,9 +188,17 @@ class EditorWindow private constructor(
     @Composable
     override fun render() {
         window(
-            rememberWindowState(
+            onClose = {
+                try {
+                    onClose()
+                } catch (e: Throwable) {
+                    editorContext.showError(e)
+                    false
+                }
+            },
+            state = rememberWindowState(
                 width = 1200.dp.coerceAtMost(screenSize.width * 0.9f),
-                height = 1000.dp.coerceAtMost(screenSize.height * 0.9f),
+                height = 900.dp.coerceAtMost(screenSize.height * 0.9f),
                 position = WindowPosition(Alignment.Center)
             )
         ) {
@@ -319,8 +334,15 @@ class EditorWindow private constructor(
             scrollPane.textArea.text = text
         }
 
+        fun validate() {
+            when (textSyntax) {
+                SyntaxConstants.SYNTAX_STYLE_YAML -> Yaml.read(getText(), Any::class)
+                SyntaxConstants.SYNTAX_STYLE_JSON -> Json.read(getText(), Any::class)
+            }
+        }
+
         fun showError(e: Throwable) {
-            showDialog(ErrorDialog(ErrorDialog.prepareParams(e)))
+            showDialog(ErrorDialog(ErrorDialog.prepareParamsWithoutTrace(e)))
         }
     }
 }

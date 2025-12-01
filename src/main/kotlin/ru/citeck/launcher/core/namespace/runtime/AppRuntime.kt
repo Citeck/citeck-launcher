@@ -48,6 +48,8 @@ class AppRuntime(
     @Volatile
     private var statsStream: AutoCloseable? = null
 
+    val volumeFiles = MutProp(emptyList<NsFileInfo>())
+
     init {
         this.def.watch { before, after ->
             if (!status.getValue().isStoppingState()) {
@@ -57,6 +59,7 @@ class AppRuntime(
                     status.setValue(AppRuntimeStatus.READY_TO_START)
                 }
             }
+            updateVolumeFiles(after)
         }
         status.watch { before, after ->
             if (after == AppRuntimeStatus.RUNNING) {
@@ -73,6 +76,19 @@ class AppRuntime(
                 pullImageIfPresent = false
             }
         }
+        updateVolumeFiles(this.def.getValue())
+    }
+
+    private fun updateVolumeFiles(appDef: ApplicationDef) {
+        val newFiles = nsRuntime.runtimeFiles.getPathsFiles(
+            appDef.volumes.map { volume ->
+                volume.takeWhile { it != ':' }
+            }.filter { it.contains('/') || it.contains('\\') }
+        )
+        if (newFiles.isEmpty() && volumeFiles.getValue().isEmpty()) {
+            return
+        }
+        volumeFiles.setValue(newFiles)
     }
 
     fun start() {

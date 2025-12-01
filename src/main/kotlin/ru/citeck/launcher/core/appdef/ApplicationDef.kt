@@ -15,6 +15,7 @@ data class ApplicationDef(
     val cmd: List<String>?,
     val ports: List<String>,
     val volumes: List<String>,
+    val volumesContentHash: String,
     val initActions: List<AppInitAction>,
     val dependsOn: Set<String>,
     val startupConditions: List<StartupCondition>,
@@ -40,6 +41,14 @@ data class ApplicationDef(
         return Builder(this)
     }
 
+    fun withVolumesContentHash(volumesContentHash: String): ApplicationDef {
+        return if (this.volumesContentHash == volumesContentHash) {
+            this
+        } else {
+            copy().withVolumesContentHash(volumesContentHash).build()
+        }
+    }
+
     private val hashField: String by lazy {
         val digest = Digest.sha256()
             .update(name)
@@ -48,6 +57,7 @@ data class ApplicationDef(
             .update(cmd)
             .update(ports)
             .update(volumes)
+            .update(volumesContentHash)
             .update(Json.toString(initActions))
             .update(Json.toString(livenessProbe))
             .update(Json.toString(startupConditions))
@@ -76,6 +86,7 @@ data class ApplicationDef(
         private var cmd: List<String>? = null
         private var ports: MutableList<String> = ArrayList()
         private var volumes: MutableList<String> = ArrayList()
+        private var volumesContentHash: String = ""
         private var initActions: MutableList<AppInitAction> = ArrayList()
         private var dependsOn: MutableSet<String> = LinkedHashSet()
         private var startupConditions: List<StartupCondition> = emptyList()
@@ -91,6 +102,7 @@ data class ApplicationDef(
             this.cmd = base.cmd
             this.ports = ArrayList(base.ports)
             this.volumes = ArrayList(base.volumes)
+            this.volumesContentHash = base.volumesContentHash
             this.initActions = ArrayList(base.initActions)
             this.dependsOn = LinkedHashSet(base.dependsOn)
             this.startupConditions = base.startupConditions
@@ -155,6 +167,11 @@ data class ApplicationDef(
             return this
         }
 
+        fun withVolumesContentHash(volumesContentHash: String): Builder {
+            this.volumesContentHash = volumesContentHash
+            return this
+        }
+
         fun withDependsOn(dependsOn: Set<String>): Builder {
             this.dependsOn = LinkedHashSet(dependsOn)
             return this
@@ -211,6 +228,7 @@ data class ApplicationDef(
                 cmd = cmd,
                 ports = ports,
                 volumes = volumes,
+                volumesContentHash = volumesContentHash,
                 initActions = initActions,
                 dependsOn = dependsOn,
                 startupConditions = startupConditions,

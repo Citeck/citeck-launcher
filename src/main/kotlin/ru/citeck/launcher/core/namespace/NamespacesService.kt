@@ -13,10 +13,12 @@ import ru.citeck.launcher.core.namespace.NamespaceEntityDef.FORM_FIELD_NAME
 import ru.citeck.launcher.core.namespace.NamespaceEntityDef.formSpec
 import ru.citeck.launcher.core.namespace.gen.NamespaceGenerator
 import ru.citeck.launcher.core.namespace.runtime.NamespaceRuntime
+import ru.citeck.launcher.core.namespace.runtime.NsRuntimeFiles
 import ru.citeck.launcher.core.namespace.runtime.NsRuntimeStatus
 import ru.citeck.launcher.core.utils.ActionStatus
 import ru.citeck.launcher.core.utils.Disposable
 import ru.citeck.launcher.core.utils.data.DataValue
+import ru.citeck.launcher.core.utils.json.Json
 import ru.citeck.launcher.core.utils.prop.MutProp
 import ru.citeck.launcher.core.workspace.WorkspaceDto
 import ru.citeck.launcher.core.workspace.WorkspacesService
@@ -36,6 +38,13 @@ class NamespacesService : Disposable {
 
         private fun getRepoKey(namespaceRef: NamespaceRef): String {
             return namespaceRef.workspace + ":" + namespaceRef.namespace
+        }
+
+        private fun getInnerRepoKey(
+            namespaceRef: NamespaceRef,
+            @Suppress("SameParameterValue") innerKey: String
+        ): String {
+            return getRepoKey(namespaceRef) + "/" + innerKey
         }
 
         fun getNamespaceDir(namespaceRef: NamespaceRef): Path {
@@ -73,10 +82,21 @@ class NamespacesService : Disposable {
                 }
             }
 
+            val runtimeFiles = NsRuntimeFiles(
+                namespaceRef,
+                services.database.getRepo(
+                    EntityIdType.String,
+                    Json.getSimpleType(ByteArray::class),
+                    NS_RT_STATE_REPO_SCOPE,
+                    getInnerRepoKey(namespaceRef, "changedRuntimeFiles")
+                )
+            )
+
             val runtime = NamespaceRuntime(
                 namespaceRef,
                 MutProp(nsDto),
                 services.workspaceConfig,
+                runtimeFiles,
                 nsAppsGenerator,
                 services.bundlesService,
                 services.actionsService,

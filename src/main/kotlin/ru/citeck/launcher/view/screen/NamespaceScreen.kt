@@ -16,10 +16,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import org.apache.commons.io.FilenameUtils
 import ru.citeck.launcher.core.WorkspaceServices
 import ru.citeck.launcher.core.appdef.ApplicationKind
 import ru.citeck.launcher.core.config.AppDir
@@ -41,7 +43,7 @@ import ru.citeck.launcher.view.commons.ContextMenu.contextMenu
 import ru.citeck.launcher.view.commons.LimitedText
 import ru.citeck.launcher.view.commons.dialog.ConfirmDialog
 import ru.citeck.launcher.view.commons.dialog.ErrorDialog
-import ru.citeck.launcher.view.dialog.AppDefEditWindow
+import ru.citeck.launcher.view.dialog.AppCfgEditWindow
 import ru.citeck.launcher.view.dialog.SnapshotsDialog
 import ru.citeck.launcher.view.drawable.CpImage
 import ru.citeck.launcher.view.form.components.journal.JournalSelectDialog
@@ -61,6 +63,10 @@ private val STARTING_STOPPING_COLOR = Color(0xFFF4E909)
 private val RUNNING_COLOR = Color(0xFF33AB50)
 private val STOPPED_COLOR = Color(0xFF424242)
 private val STALLED_COLOR = Color(0xFFDB831D)
+
+private val EDITABLE_FILE_EXTENSIONS = setOf(
+    "yaml", "yml", "json", "kt", "java", "js", "lua", "Dockerfile", "sh", "txt", "conf"
+)
 
 @Composable
 fun NamespaceScreen(
@@ -129,7 +135,7 @@ fun NamespaceScreen(
                                     runBlocking {
                                         services.entitiesService.edit(selectedNamespace.value!!)
                                     }
-                                } catch (e: FormCancelledException) {
+                                } catch (_: FormCancelledException) {
                                     // do nothing
                                 }
                             }
@@ -658,10 +664,58 @@ private fun RenderApps(
                             }
                         )
                     }
-                    Box {
+
+                    val anyVolumeFilesEdited = remember { mutableStateOf(false) }
+
+                    val volumeFilesItems = rememberMutProp(application.volumeFiles) { volumeFiles ->
+                        anyVolumeFilesEdited.value = volumeFiles.any { it.edited }
+                        volumeFiles.mapNotNull { fileInfo ->
+                            val path = fileInfo.path
+                            val filename = path.fileName.toString()
+                            val extension = FilenameUtils.getExtension(filename)
+                            if (EDITABLE_FILE_EXTENSIONS.contains(extension)) {
+                                ContextMenu.Item(
+                                    filename,
+                                    decoration = if (fileInfo.edited) {
+                                        {
+                                            Box(
+                                                Modifier
+                                                    .align(Alignment.CenterEnd)
+                                                    .width(5.dp)
+                                                    .fillMaxHeight()
+                                                    .background(Color.Blue)
+                                            )
+                                        }
+                                    } else {
+                                        {}
+                                    }
+                                ) {
+                                    val contentToEdit = application.nsRuntime.runtimeFiles.getFileContent(path)
+                                    try {
+                                        val editRes = AppCfgEditWindow.show(
+                                            filename,
+                                            String(contentToEdit, Charsets.UTF_8)
+                                        )?.content
+                                        if (editRes == null) {
+                                            application.nsRuntime.resetEditedFile(path)
+                                        } else {
+                                            application.nsRuntime
+                                                .pushEditedFile(path, editRes.toByteArray())
+                                        }
+                                    } catch (_: FormCancelledException) {
+                                        // do nothing
+                                    }
+                                }
+                            } else {
+                                null
+                            }
+                        }
+                    }
+                    Box(modifier = Modifier.width(34.dp).fillMaxHeight()) {
                         CiteckIconAction(
                             coroutineScope,
-                            modifier = Modifier.fillMaxHeight(),
+                            modifier = Modifier.fillMaxHeight()
+                                .contextMenu(ContextMenu.Button.RMB, volumeFilesItems.value),
                             actionDesc = ActionDesc(
                                 "edit-app",
                                 ActionIcon.COG_6_TOOTH,
@@ -670,7 +724,7 @@ private fun RenderApps(
                                 runCatching {
                                     val appDefToEdit = application.def.getValue()
                                     try {
-                                        val editRes = AppDefEditWindow.show(appDefToEdit)
+                                        val editRes = AppCfgEditWindow.show(appDefToEdit)
                                         if (editRes == null) {
                                             application.nsRuntime.resetAppDef(appDefToEdit.name)
                                         } else {
@@ -686,12 +740,21 @@ private fun RenderApps(
                                 }
                             }
                         )
-                        if (editedDef.value) {
+                        if (editedDef.value || anyVolumeFilesEdited.value) {
                             Box(
                                 modifier = Modifier
-                                    .size(10.dp)
+                                    .padding(end = 2.dp, top = 4.dp)
+                                    .size(6.dp)
                                     .align(Alignment.TopEnd)
                                     .background(Color.Blue, CircleShape)
+                            )
+                        }
+                        if (volumeFilesItems.value.isNotEmpty()) {
+                            Text(
+                                text = volumeFilesItems.value.size.toString(),
+                                fontSize = 12.sp,
+                                lineHeight = 0.5.em,
+                                modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 1.dp)
                             )
                         }
                     }

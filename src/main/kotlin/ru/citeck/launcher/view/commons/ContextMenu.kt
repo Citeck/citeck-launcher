@@ -53,8 +53,8 @@ object ContextMenu {
                     for (item in itemsValue) {
                         Box(
                             modifier = Modifier
-                                .wrapContentSize()
                                 .widthIn(min = minWidth)
+                                .height(IntrinsicSize.Min)
                                 .clickable {
                                     if (!actionInProgress.value) {
                                         actionInProgress.value = true
@@ -74,8 +74,9 @@ object ContextMenu {
                                 text = item.name,
                                 modifier = Modifier.padding(start = 10.dp, end = 10.dp, top = 4.dp, bottom = 4.dp)
                             )
-                            Box(modifier = Modifier.height(1.dp).background(Color.LightGray).widthIn(min = minWidth))
+                            item.decoration(this)
                         }
+                        Box(modifier = Modifier.height(1.dp).background(Color.LightGray).widthIn(min = minWidth))
                     }
                 }
             }
@@ -93,7 +94,7 @@ object ContextMenu {
                 while (true) {
                     val event = awaitPointerEvent()
                     val pointer = event.changes.firstOrNull()
-                    if (actionInProgress.value) {
+                    if (actionInProgress.value || items.isEmpty()) {
                         continue
                     }
                     if (event.type == PointerEventType.Press &&
@@ -121,6 +122,7 @@ object ContextMenu {
 
     class Item(
         val name: String,
-        val action: suspend () -> Unit,
+        val decoration: @Composable BoxScope.() -> Unit = {},
+        val action: suspend () -> Unit
     )
 }

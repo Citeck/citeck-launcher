@@ -61,6 +61,15 @@ class ErrorDialog(private val params: Params) : CiteckDialog() {
             showDialog(ErrorDialog(prepareParams(error, onClose)))
         }
 
+        fun prepareParamsWithoutTrace(error: Throwable, onClose: () -> Unit = {}): Params {
+            val rootCause = ExceptionUtils.getRootCause(error) ?: error
+            val message = (rootCause.localizedMessage ?: "").ifBlank { rootCause::class.simpleName }
+            if (message.isNullOrBlank()) {
+                return prepareParams(error, onClose)
+            }
+            return Params(message, true, onClose)
+        }
+
         fun prepareParams(error: Throwable, onClose: () -> Unit = {}): Params {
             val rootCause = ExceptionUtils.getRootCause(error)
             val message = StringBuilder()
@@ -79,14 +88,18 @@ class ErrorDialog(private val params: Params) : CiteckDialog() {
                 message.append(line.replace("\t", "  "))
             }
 
-            return Params(message.toString(), onClose)
+            return Params(message.toString(), false, onClose)
         }
     }
 
     @Composable
     override fun render() {
-
-        dialog(width = DialogWidth.EXTRA_LARGE) {
+        val width = if (params.withoutTrace) {
+            DialogWidth.MEDIUM
+        } else {
+            DialogWidth.EXTRA_LARGE
+        }
+        dialog(width = width) {
             title("Exception occurred")
             SelectionContainer { Text(params.errMsg) }
             buttonsRow {
@@ -104,6 +117,7 @@ class ErrorDialog(private val params: Params) : CiteckDialog() {
 
     class Params(
         val errMsg: String,
+        val withoutTrace: Boolean,
         val onClose: () -> Unit
     )
 }

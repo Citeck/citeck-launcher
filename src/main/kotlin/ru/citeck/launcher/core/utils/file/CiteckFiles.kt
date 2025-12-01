@@ -22,14 +22,18 @@ object CiteckFiles {
     }
 
     fun getFile(url: URL): CiteckFile {
-        val conn = url.openConnection()
-        return if (conn is JarURLConnection) {
-            val fileName = url.path
-                .substringAfterLast('/')
-                .substringAfterLast('\\')
-            CiteckJarFile(url, !fileName.contains('.'))
-        } else {
-            CiteckStdFile(File(url.toURI()))
+        try {
+            val conn = url.openConnection()
+            return if (conn is JarURLConnection) {
+                val fileName = url.path
+                    .substringAfterLast('/')
+                    .substringAfterLast('\\')
+                CiteckJarFile(url, !fileName.contains('.'))
+            } else {
+                CiteckStdFile(File(url.toURI()))
+            }
+        } catch (e: Exception) {
+            throw RuntimeException("File can't be resolved for url $url", e)
         }
     }
 }

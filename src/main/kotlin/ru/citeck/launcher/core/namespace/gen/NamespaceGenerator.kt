@@ -35,6 +35,13 @@ class NamespaceGenerator {
             AppName.CONTENT
         )
 
+        private val EMPTY_SPRING_PROPS_CONTENT = """
+            ---
+            # You can add spring properties here in yaml format
+            # key0:
+            #   key1: value
+        """.trimIndent() + "\n"
+
         private val log = KotlinLogging.logger {}
     }
 
@@ -58,7 +65,7 @@ class NamespaceGenerator {
             props,
             bundleDef,
             services.workspaceConfig.getValue(),
-            appFiles = HashMap(defaultAppFiles),
+            files = HashMap(defaultAppFiles),
             detachedApps = detachedApps,
         )
 
@@ -96,7 +103,7 @@ class NamespaceGenerator {
             context.applications.values.map {
                 it.build()
             },
-            context.appFiles,
+            context.files,
             context.cloudConfig,
             context.links,
             setOf(AppName.ONLYOFFICE)
@@ -377,12 +384,15 @@ class NamespaceGenerator {
                 context.workspaceConfig.licenses.map { Json.toString(it) }
         }
 
-        if (webappCloudConfig.isNotEmpty()) {
-            context.appFiles["app/$name/props/application-launcher.yml"] =
-                Yaml.toString(webappCloudConfig).toByteArray()
-            app.addEnv("SPRING_CONFIG_ADDITIONALLOCATION", "/run/java.io/spring-props/")
-            app.addVolume("./app/$name/props:/run/java.io/spring-props/")
+        val cloudConfigText = if (webappCloudConfig.isEmpty()) {
+            EMPTY_SPRING_PROPS_CONTENT
+        } else {
+            Yaml.toString(webappCloudConfig)
         }
+        context.files["app/$name/props/application-launcher.yml"] = cloudConfigText.toByteArray()
+        app.addEnv("SPRING_CONFIG_ADDITIONALLOCATION", "/run/java.io/spring-props/")
+        app.addVolume("./app/$name/props:/run/java.io/spring-props/")
+
         val springProfiles = linkedSetOf("dev", "launcher")
         webappProps.springProfiles.split(",").forEach {
             if (it.isNotBlank()) {
