@@ -678,7 +678,7 @@ private fun RenderApps(
                                         val editRes = AppCfgEditWindow.show(
                                             filename,
                                             String(contentToEdit, Charsets.UTF_8)
-                                        ) { it }?.content
+                                        )?.content
                                         if (editRes == null) {
                                             application.nsRuntime.resetEditedFile(path)
                                         } else {

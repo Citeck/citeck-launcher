@@ -10,11 +10,17 @@ import kotlin.coroutines.resumeWithException
 
 object AppCfgEditWindow {
 
+    private val NOOP_CONV: (String) -> String = { it }
+
     suspend fun show(appDef: ApplicationDef): AppEditResponse? {
         val resp = show("app-def.yml", Yaml.toString(appDef)) {
             Yaml.read(it, ApplicationDef::class)
         } ?: return null
         return AppEditResponse(resp.content, true)
+    }
+
+    suspend fun show(filename: String, content: String): FileEditResponse<String>? {
+        return show(filename, content, NOOP_CONV)
     }
 
     suspend fun <T : Any> show(filename: String, content: String, conv: (String) -> T): FileEditResponse<T>? {
@@ -34,6 +40,9 @@ object AppCfgEditWindow {
                 }
                 button("Submit") {
                     try {
+                        if (conv === NOOP_CONV) {
+                            ctx.validate()
+                        }
                         val convertedValue = conv(ctx.getText())
                         continuation.resume(FileEditResponse(convertedValue))
                         ctx.closeWindow()

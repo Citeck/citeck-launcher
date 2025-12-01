@@ -28,6 +28,8 @@ import org.fife.ui.rtextarea.RTextScrollPane
 import org.fife.ui.rtextarea.SearchContext
 import org.fife.ui.rtextarea.SearchEngine
 import ru.citeck.launcher.core.utils.file.CiteckFiles
+import ru.citeck.launcher.core.utils.json.Json
+import ru.citeck.launcher.core.utils.json.Yaml
 import ru.citeck.launcher.view.commons.dialog.ErrorDialog
 import ru.citeck.launcher.view.popup.CiteckWindow
 import ru.citeck.launcher.view.utils.onEnterClick
@@ -85,12 +87,14 @@ class EditorWindow private constructor(
     private val gutterSize = mutableStateOf(20.dp)
     private val searchFocusRequester = FocusRequester()
 
+    private val textSyntax = syntaxByExtension[filename.substringAfterLast(".")]
+        ?: SyntaxConstants.SYNTAX_STYLE_NONE
+
     private val scrollPane: RTextScrollPane by lazy {
 
         val textArea = RSyntaxTextArea(initialText)
 
-        textArea.syntaxEditingStyle = syntaxByExtension[filename.substringAfterLast(".")]
-            ?: SyntaxConstants.SYNTAX_STYLE_NONE
+        textArea.syntaxEditingStyle = textSyntax
         textArea.isCodeFoldingEnabled = true
         textArea.antiAliasingEnabled = true
         textArea.tabSize = 2
@@ -330,8 +334,15 @@ class EditorWindow private constructor(
             scrollPane.textArea.text = text
         }
 
+        fun validate() {
+            when (textSyntax) {
+                SyntaxConstants.SYNTAX_STYLE_YAML -> Yaml.read(getText(), Any::class)
+                SyntaxConstants.SYNTAX_STYLE_JSON -> Json.read(getText(), Any::class)
+            }
+        }
+
         fun showError(e: Throwable) {
-            showDialog(ErrorDialog(ErrorDialog.prepareParams(e)))
+            showDialog(ErrorDialog(ErrorDialog.prepareParamsWithoutTrace(e)))
         }
     }
 }
