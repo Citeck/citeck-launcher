@@ -5,9 +5,10 @@ interface DownloadButtonProps {
   primaryLink: DownloadLink;
   secondaryLinks?: DownloadLink[];
   icon: React.ReactNode;
+  releaseName: String;
 }
 
-export default function DownloadButton({ primaryLink, secondaryLinks, icon }: DownloadButtonProps) {
+export default function DownloadButton({ primaryLink, secondaryLinks, icon, releaseName }: DownloadButtonProps) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -37,7 +38,7 @@ export default function DownloadButton({ primaryLink, secondaryLinks, icon }: Do
           aria-label={`Download for ${primaryLink.label}`}
         >
           <span className="h-5 w-5 sm:h-6 sm:w-6">{icon}</span>
-          <span>Download for {primaryLink.label}</span>
+          <span>Download for {primaryLink.label} ({releaseName})</span>
         </button>
 
         {secondaryLinks && secondaryLinks.length > 0 && (

@@ -51,6 +51,11 @@ type DownloadsShape = {
   linux: DownloadLink;
 };
 
+type LatestReleaseInfoShape = {
+  name: string,
+  createdAt: string
+};
+
 const initialDownloads: DownloadsShape = {
   macos: {
     primary: {
@@ -82,6 +87,11 @@ const initialDownloads: DownloadsShape = {
   },
 };
 
+const initialLatestReleaseInfo = {
+    name: "",
+    createdAt: ""
+}
+
 const screenshots: string[] = [
   '/screenshots/screenshot1.png',
   '/screenshots/screenshot2.png',
@@ -95,6 +105,7 @@ export default function App() {
   }, []);
 
   const [downloadsState, setDownloadsState] = useState<DownloadsShape>(initialDownloads);
+  const [latestReleaseInfo, setLatestReleaseInfo] = useState<LatestReleaseInfoShape>(initialLatestReleaseInfo);
 
   useEffect(() => {
     let mounted = true;
@@ -104,6 +115,11 @@ export default function App() {
         const res = await fetch('https://api.github.com/repos/Citeck/citeck-launcher/releases/latest');
         if (!res.ok) return;
         const data = await res.json();
+        setLatestReleaseInfo({
+            name: data.name || '',
+            createdAt: data.created_at || ''
+        });
+
         const assets: any[] = data.assets || [];
 
         const find = (re: RegExp) => assets.find(a => re.test(a.name));
@@ -159,6 +175,7 @@ export default function App() {
         description="A fast, secure cross-platform launcher for installing, updating and running applications on macOS, Windows and Linux. Small footprint, automatic updates, and an intuitive interface."
         client={client}
         downloads={downloadsState}
+        latestReleaseInfo={latestReleaseInfo}
       />
 
       <Features features={features} />

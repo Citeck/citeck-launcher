@@ -1,5 +1,5 @@
 import DownloadButton from "./DownloadButton";
-import { AppleIcon, WindowsIcon, LinuxIcon, Downloads } from "./Downloads";
+import {AppleIcon, WindowsIcon, LinuxIcon, Downloads, LatestReleaseInfo} from "./Downloads";
 import { DetectedOS } from "../utils/detectOS";
 
 interface HeroProps {
@@ -7,9 +7,10 @@ interface HeroProps {
   description: string;
   client: DetectedOS | undefined;
   downloads: Downloads;
+  latestReleaseInfo: LatestReleaseInfo;
 }
 
-export default function Hero({ title, description, client, downloads }: HeroProps) {
+export default function Hero({ title, description, client, downloads, latestReleaseInfo }: HeroProps) {
   if (!client?.platform) {
     return null;
   }
@@ -47,6 +48,7 @@ export default function Hero({ title, description, client, downloads }: HeroProp
               primaryLink={primaryLink}
               secondaryLinks={secondaryLinks}
               icon={iconForPlatform}
+              releaseName={latestReleaseInfo.name}
             />
           </div>
         </div>

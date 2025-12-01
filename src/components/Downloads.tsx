@@ -10,6 +10,11 @@ export interface Downloads {
   linux: DownloadLink;
 }
 
+export interface LatestReleaseInfo {
+  name: string,
+  createdAt: string
+}
+
 interface DownloadsProps {
   downloads: Downloads;
 }
