@@ -30,7 +30,6 @@ import ru.citeck.launcher.core.utils.promise.Promise
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URI
-import java.nio.file.Path
 import java.time.Duration
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
@@ -42,8 +41,8 @@ class AppStartAction(
     companion object {
         private val log = KotlinLogging.logger {}
 
-        fun execute(service: ActionsService, appRuntime: AppRuntime, runtimeFilesHash: Map<Path, String>): Promise<Unit> {
-            return service.execute(Params(appRuntime, runtimeFilesHash))
+        fun execute(service: ActionsService, appRuntime: AppRuntime): Promise<Unit> {
+            return service.execute(Params(appRuntime))
         }
     }
 
@@ -53,7 +52,6 @@ class AppStartAction(
 
     override fun execute(context: ActionContext<Params>) {
 
-        val params = context.params
         val runtime = context.params.appRuntime
         val nsRuntime = runtime.nsRuntime
 
@@ -75,30 +73,6 @@ class AppStartAction(
         }
         updateAppHashByImage(appDef.image)
         appDef.initContainers.forEach { updateAppHashByImage(it.image) }
-
-        appDef.volumes.forEach { volume ->
-            val localPathStr = volume.substringBefore(":", "")
-            if (localPathStr.contains("/") || localPathStr.contains("\\")) {
-                try {
-                    val localPath = Path.of(localPathStr)
-                    val directFileHash = params.runtimeFilesHash[localPath]
-                    if (directFileHash != null) {
-                        appHashDigest.update(directFileHash)
-                    } else {
-                        params.runtimeFilesHash.forEach { (filePath, fileHash) ->
-                            if (filePath.startsWith(localPath)) {
-                                appHashDigest.update(fileHash)
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    log.error {
-                        "[${e::class.simpleName}] Error reading volume file " +
-                            "'$localPathStr' for app '${appDef.name}'. Message: ${e.message}"
-                    }
-                }
-            }
-        }
 
         val deploymentHash = appHashDigest.toHex()
 
@@ -294,7 +268,11 @@ class AppStartAction(
                         .withRestartPolicy(RestartPolicy.noRestart())
 
                     if (initContainerDef.volumes.isNotEmpty()) {
-                        config.withBinds(initContainerDef.volumes.mapNotNull { prepareVolume(runtime, it) })
+                        config.withBinds(
+                            initContainerDef.volumes.mapNotNull {
+                                prepareVolume(runtime, it)
+                            }
+                        )
                     }
                     val memory = MemoryUtils.parseMemAmountToBytes("100m")
                     config.withMemory(memory)
@@ -498,9 +476,16 @@ class AppStartAction(
             return null
         }
 
-        val srcName = volume.substring(0, twoDotsIdx)
+        var normalizedVolume = volume
+
+        var srcName = volume.take(twoDotsIdx)
+        if (srcName.startsWith("./")) {
+            srcName = runtime.nsRuntime.runtimeFiles.resolveAbsPathInFilesDir(srcName.substring(2))
+            normalizedVolume = srcName + volume.substring(twoDotsIdx)
+        }
+
         if (srcName.contains(File.separator)) {
-            return Bind.parse(volume)
+            return Bind.parse(normalizedVolume)
         }
 
         val volumeNameInNamespace = createVolumeIfNotExists(runtime, srcName)
@@ -522,8 +507,7 @@ class AppStartAction(
     }
 
     class Params(
-        val appRuntime: AppRuntime,
-        val runtimeFilesHash: Map<Path, String>
+        val appRuntime: AppRuntime
     ) : ActionParams<Unit>
 
     private class FramesLogCallback(

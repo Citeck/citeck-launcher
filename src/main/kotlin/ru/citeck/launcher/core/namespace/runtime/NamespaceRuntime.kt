@@ -11,7 +11,6 @@ import ru.citeck.launcher.core.database.DataRepo
 import ru.citeck.launcher.core.git.GitUpdatePolicy
 import ru.citeck.launcher.core.namespace.NamespaceConfig
 import ru.citeck.launcher.core.namespace.NamespaceRef
-import ru.citeck.launcher.core.namespace.NamespacesService
 import ru.citeck.launcher.core.namespace.gen.NamespaceGenResp
 import ru.citeck.launcher.core.namespace.gen.NamespaceGenerator
 import ru.citeck.launcher.core.namespace.runtime.actions.AppImagePullAction
@@ -20,9 +19,7 @@ import ru.citeck.launcher.core.namespace.runtime.actions.AppStopAction
 import ru.citeck.launcher.core.namespace.runtime.docker.DockerApi
 import ru.citeck.launcher.core.namespace.runtime.docker.DockerConstants
 import ru.citeck.launcher.core.namespace.runtime.docker.exception.DockerStaleNetworkException
-import ru.citeck.launcher.core.utils.Digest
 import ru.citeck.launcher.core.utils.Disposable
-import ru.citeck.launcher.core.utils.file.CiteckFiles
 import ru.citeck.launcher.core.utils.json.Json
 import ru.citeck.launcher.core.utils.prop.MutProp
 import ru.citeck.launcher.core.workspace.WorkspaceConfig
@@ -38,13 +35,13 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.thread
 import kotlin.concurrent.withLock
-import kotlin.io.path.*
 import kotlin.math.min
 
 class NamespaceRuntime(
     val namespaceRef: NamespaceRef,
     val namespaceConfig: MutProp<NamespaceConfig>,
     val workspaceConfig: MutProp<WorkspaceConfig>,
+    val runtimeFiles: NsRuntimeFiles,
     private val namespaceGenerator: NamespaceGenerator,
     private val bundlesService: BundlesService,
     private val actionsService: ActionsService,
@@ -69,9 +66,6 @@ class NamespaceRuntime(
 
     var namespaceGenResp = MutProp<NamespaceGenResp?>("ns-gen-res-$namespaceRef", null)
 
-    @Volatile
-    private var runtimeFilesHash: Map<Path, String> = emptyMap()
-
     val appRuntimes = MutProp<List<AppRuntime>>(emptyList())
     private val runtimesToRemove = Collections.synchronizedList(ArrayList<AppRuntime>())
 
@@ -85,8 +79,6 @@ class NamespaceRuntime(
     val namePrefix = DockerConstants.getNamePrefix(namespaceRef)
     val nameSuffix = DockerConstants.getNameSuffix(namespaceRef)
     val networkName = "${namePrefix}network$nameSuffix"
-
-    private val nsRuntimeFilesDir = NamespacesService.getNamespaceDir(namespaceRef).resolve("rtfiles")
 
     private val runtimeThreadSignalQueue = ArrayBlockingQueue<Boolean>(1)
     private val runtimeCommands = ConcurrentLinkedDeque<NsRuntimeCmd>()
@@ -190,8 +182,8 @@ class NamespaceRuntime(
         runtimeThread = thread(start = false, name = "nsrt$nameSuffix") {
             log.info { "(+) Namespace runtime thread was started" }
             try {
+                var idleIterationsCounter = 0
                 while (isActive.get() && activeStateVersion == this.activeStateVersion.get()) {
-                    var idleIterationsCounter = 0
                     try {
                         if (!runtimeThreadAction()) {
                             val delaySeconds = RT_THREAD_IDLE_DELAY_SECONDS.let {
@@ -310,19 +302,13 @@ class NamespaceRuntime(
             runtimeCommandsSize.decrementAndGet()
             var nextCmd = runtimeCommands.poll()
             while (nextCmd != null) {
-                val collapsedCmd = collapseCommandsIfPossible(rtCommand, nextCmd)
-                if (collapsedCmd == null) {
-                    break
-                }
+                val collapsedCmd = collapseCommandsIfPossible(rtCommand, nextCmd) ?: break
                 runtimeCommandsSize.decrementAndGet()
                 rtCommand = collapsedCmd
                 nextCmd = runtimeCommands.poll()
             }
             when (rtCommand) {
                 is StartNsCmd, is RegenerateNsCmd -> {
-                    if (rtCommand !is RegenerateNsCmd) {
-                        cleanEditedNonLockedApps()
-                    }
                     val gitUpdatePolicy = if (rtCommand is StartNsCmd) {
                         if (rtCommand.forceUpdate) {
                             GitUpdatePolicy.REQUIRED
@@ -451,7 +437,7 @@ class NamespaceRuntime(
 
                 AppRuntimeStatus.READY_TO_START -> {
                     application.status.setValue(AppRuntimeStatus.STARTING) { statusVersion ->
-                        val promise = AppStartAction.execute(actionsService, application, runtimeFilesHash)
+                        val promise = AppStartAction.execute(actionsService, application)
                         application.activeActionPromise = promise
                         promise.then {
                             application.status.setValue(AppRuntimeStatus.RUNNING, statusVersion)
@@ -574,42 +560,9 @@ class NamespaceRuntime(
         scheduleRuntimeCmd(StopNsCmd, false)
     }
 
-    private fun fixVolume(volume: String): String {
-        if (!volume.startsWith("./")) {
-            return volume
-        }
-        val delimIdx = volume.indexOf(":")
-        if (delimIdx <= 0) {
-            return volume
-        }
-        var localPath = volume.substring(0, delimIdx)
-        localPath = nsRuntimeFilesDir.resolve(localPath.substring(2))
-            .absolutePathString()
-        return localPath + volume.substring(delimIdx)
-    }
-
-    private fun cleanEditedNonLockedApps() {
-
-        val editedAppsIt = editedApps.iterator()
-        var changed = false
-        while (editedAppsIt.hasNext()) {
-            val entry = editedAppsIt.next()
-            if (!editedAndLockedApps.contains(entry.key)) {
-                editedAppsIt.remove()
-                appRuntimes.getValue().find { it.name == entry.key }?.editedDef?.setValue(false)
-                changed = true
-            }
-        }
-        if (changed) {
-            nsRuntimeDataRepo[STATE_EDITED_APPS] = editedApps
-        }
-    }
-
-    fun isEditedAndLockedApp(appName: String): Boolean {
-        return editedAndLockedApps.contains(appName)
-    }
-
     fun resetAppDef(name: String) {
+
+        log.info { "Reset app def: $name" }
 
         if (editedAndLockedApps.remove(name)) {
             nsRuntimeDataRepo[STATE_EDITED_AND_LOCKED_APPS] = editedAndLockedApps
@@ -624,7 +577,8 @@ class NamespaceRuntime(
             return
         }
         val runtime = appRuntimes.getValue().find { it.name == name } ?: return
-        runtime.def.setValue(normalizeGeneratedAppDef(genRespDef))
+
+        runtime.def.setValue(genRespDef.withActualVolumesContentHash())
         runtime.editedDef.setValue(false)
     }
 
@@ -651,19 +605,31 @@ class NamespaceRuntime(
         if (fixedDef != appDefBefore) {
             editedApps[appName] = fixedDef
             nsRuntimeDataRepo[STATE_EDITED_APPS] = editedApps
-            runtime.def.setValue(fixedDef)
+            runtime.def.setValue(fixedDef.withActualVolumesContentHash())
         }
         runtime.editedDef.setValue(editedApps.containsKey(appName))
     }
 
-    private fun normalizeGeneratedAppDef(appDef: ApplicationDef): ApplicationDef {
-        return appDef.copy()
-            .withVolumes(appDef.volumes.map(this::fixVolume))
-            .withInitContainers(
-                appDef.initContainers.map { ic ->
-                    ic.copy().withVolumes(ic.volumes.map(this::fixVolume)).build()
-                }
-            ).build()
+    fun resetEditedFile(file: Path) {
+        runtimeFiles.resetEditedFile(file)
+        updateVolumeFilesHash(file)
+    }
+
+    fun pushEditedFile(file: Path, content: ByteArray) {
+        if (!runtimeFiles.applyEditedFile(file, content)) {
+            return
+        }
+        updateVolumeFilesHash(file)
+    }
+
+    private fun updateVolumeFilesHash(path: Path) {
+        for (runtime in appRuntimes.getValue()) {
+            if (runtime.volumeFiles.getValue().none { it.path == path }) {
+                continue
+            }
+            val appDef = runtime.def.getValue()
+            runtime.def.setValue(appDef.withActualVolumesContentHash())
+        }
     }
 
     private fun generateNs(updatePolicy: GitUpdatePolicy) {
@@ -710,11 +676,15 @@ class NamespaceRuntime(
         val currentRuntimesByName = appRuntimes.getValue().associateByTo(mutableMapOf()) { it.name }
         val newRuntimes = ArrayList<AppRuntime>()
 
+        runtimeFiles.applyGeneratedFiles(newGenRes.files)
+
         newGenRes.applications.forEach { appDef ->
 
             val currentRuntime = currentRuntimesByName.remove(appDef.name)
 
-            val updatedAppDef = editedApps[appDef.name] ?: normalizeGeneratedAppDef(appDef)
+            var updatedAppDef = editedApps[appDef.name] ?: appDef
+            updatedAppDef = updatedAppDef.withActualVolumesContentHash()
+
             if (currentRuntime == null) {
                 newRuntimes.add(AppRuntime(this, updatedAppDef, dockerApi))
             } else {
@@ -776,43 +746,37 @@ class NamespaceRuntime(
             }
         }
 
-        val currentFiles = CiteckFiles.getFile(nsRuntimeFilesDir).getFilesContent().toMutableMap()
-        val runtimeFilesHash = TreeMap<Path, String>()
-        for ((path, bytes) in newGenRes.files) {
-            val currentData = currentFiles.remove(path)
-            val targetFilePath = nsRuntimeFilesDir.resolve(path)
-            if (!bytes.contentEquals(currentData)) {
-                val fileDir = targetFilePath.parent
-                if (fileDir.exists() && !fileDir.isDirectory()) {
-                    fileDir.deleteExisting()
-                }
-                if (!fileDir.exists()) {
-                    fileDir.toFile().mkdirs()
-                }
-                try {
-                    targetFilePath.outputStream().use { it.write(bytes) }
-                } catch (writeEx: Throwable) {
-                    throw RuntimeException(
-                        "File write failed. " +
-                            "File path: '$path' " +
-                            "Content: ${Base64.getEncoder().encodeToString(bytes)}",
-                        writeEx
-                    )
-                }
-            }
-            if (path.endsWith(".sh") && !targetFilePath.toFile().canExecute()) {
-                targetFilePath.toFile().setExecutable(true, false)
-            }
-            runtimeFilesHash[targetFilePath] = Digest.sha256().update(bytes).toHex()
-        }
-        this.runtimeFilesHash = runtimeFilesHash
-        for (path in currentFiles.keys) {
-            nsRuntimeFilesDir.resolve(path).deleteIfExists()
-        }
-
         namespaceGenResp.setValue(newGenRes)
 
         cloudConfigServer.cloudConfig = newGenRes.cloudConfig
+    }
+
+    private fun ApplicationDef.withActualVolumesContentHash(): ApplicationDef {
+        return this.withVolumesContentHash(
+            runtimeFiles.getPathsContentHash(
+                getVolumePathsToCalcContentHash(this)
+            )
+        )
+    }
+
+    private fun getVolumePathsToCalcContentHash(applicationDef: ApplicationDef): List<String> {
+        val result = LinkedHashSet<String>()
+        applicationDef.volumes.forEach {
+            addVolumePathToCalcContentHash(it, result)
+        }
+        applicationDef.initContainers.forEach { initContainer ->
+            initContainer.volumes.forEach {
+                addVolumePathToCalcContentHash(it, result)
+            }
+        }
+        return result.toList()
+    }
+
+    private fun addVolumePathToCalcContentHash(volume: String, result: MutableSet<String>) {
+        if (!volume.startsWith("./")) return
+        val twoDotsIdx = volume.indexOf(':')
+        if (twoDotsIdx <= 0) return
+        result.add(volume.take(twoDotsIdx))
     }
 
     override fun dispose() {

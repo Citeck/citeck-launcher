@@ -8,11 +8,21 @@ import ru.citeck.launcher.view.form.exception.FormCancelledException
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-object AppDefEditWindow {
+object AppCfgEditWindow {
 
-    suspend fun show(appDef: ApplicationDef): EditResponse? {
+    suspend fun show(appDef: ApplicationDef): AppEditResponse? {
+        val resp = show("app-def.yml", Yaml.toString(appDef)) {
+            Yaml.read(it, ApplicationDef::class)
+        } ?: return null
+        return AppEditResponse(resp.content, true)
+    }
+
+    suspend fun <T : Any> show(filename: String, content: String, conv: (String) -> T): FileEditResponse<T>? {
         return suspendCancellableCoroutine { continuation ->
-            EditorWindow.show("app-def.yml", Yaml.toString(appDef)) { ctx ->
+            EditorWindow.show(filename, content, onClose = {
+                continuation.resumeWithException(FormCancelledException())
+                true
+            }) { ctx ->
                 spacer()
                 button("Reset") {
                     continuation.resume(null)
@@ -24,8 +34,8 @@ object AppDefEditWindow {
                 }
                 button("Submit") {
                     try {
-                        val appDef = Yaml.read(ctx.getText(), ApplicationDef::class)
-                        continuation.resume(EditResponse(appDef, true))
+                        val convertedValue = conv(ctx.getText())
+                        continuation.resume(FileEditResponse(convertedValue))
                         ctx.closeWindow()
                     } catch (e: Throwable) {
                         ctx.showError(e)
@@ -35,8 +45,12 @@ object AppDefEditWindow {
         }
     }
 
-    class EditResponse(
+    class AppEditResponse(
         val appDef: ApplicationDef,
         val locked: Boolean
+    )
+
+    class FileEditResponse<T : Any>(
+        val content: T
     )
 }

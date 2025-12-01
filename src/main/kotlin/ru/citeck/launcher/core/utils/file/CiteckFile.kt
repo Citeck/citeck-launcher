@@ -28,6 +28,8 @@ interface CiteckFile {
 
     fun getFilesContent(): Map<String, ByteArray>
 
+    fun getFilesPath(): List<String>
+
     fun getFile(name: String): CiteckFile
 
     fun getOrCreateDir(name: String): CiteckFile

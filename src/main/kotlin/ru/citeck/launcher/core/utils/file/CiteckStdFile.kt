@@ -27,7 +27,11 @@ class CiteckStdFile(
     }
 
     override fun <T> read(action: (InputStream) -> T): T {
-        return file.inputStream().use(action)
+        try {
+            return file.inputStream().use(action)
+        } catch (e: Exception) {
+            throw RuntimeException("Std file reading failed. File: ${file.path}", e)
+        }
     }
 
     override fun <T> write(action: (OutputStream) -> T): T {
@@ -42,6 +46,22 @@ class CiteckStdFile(
 
     override fun getChildren(): List<CiteckFile> {
         return file.listFiles()?.map { CiteckStdFile(it) } ?: emptyList()
+    }
+
+    override fun getFilesPath(): List<String> {
+        val result = ArrayList<String>()
+        val basePath = file.toPath()
+        for (file in file.walkTopDown()) {
+            if (file.isFile) {
+                result.add(
+                    file.toPath()
+                        .relativeTo(basePath)
+                        .toString()
+                        .replace("\\", "/")
+                )
+            }
+        }
+        return result
     }
 
     override fun getFilesContent(): Map<String, ByteArray> {

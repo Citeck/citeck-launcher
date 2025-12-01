@@ -15,7 +15,7 @@ plugins {
 }
 
 group = "ru.citeck.launcher"
-version = "1.2.4"
+version = "1.3.0"
 val distPackageName = "citeck-launcher"
 
 repositories {
@@ -81,6 +81,7 @@ dependencies {
     implementation("io.ktor:ktor-client-cio:$ktorV")
 
     implementation("com.fifesoft:rsyntaxtextarea:3.6.0")
+    implementation("com.dynatrace.hash4j:hash4j:0.28.0")
 
     testImplementation("org.assertj:assertj-core:3.27.3")
     testImplementation(kotlin("test"))

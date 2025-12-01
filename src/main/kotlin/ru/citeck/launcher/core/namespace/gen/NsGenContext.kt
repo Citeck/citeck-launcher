@@ -14,7 +14,7 @@ class NsGenContext(
     val bundle: BundleDef,
     val workspaceConfig: WorkspaceConfig,
     val detachedApps: Set<String>,
-    val appFiles: MutableMap<String, ByteArray>,
+    val files: MutableMap<String, ByteArray>,
     val applications: MutableMap<String, ApplicationDef.Builder> = LinkedHashMap(),
     val portsCounter: AtomicInteger = AtomicInteger(17020),
     val cloudConfig: MutableCloudConfig = CloudConfigImpl(),
