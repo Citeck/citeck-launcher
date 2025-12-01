@@ -535,7 +535,7 @@ private fun RenderApps(
             Text("MEM", modifier = Modifier.width(AppTableColumns.MEM_WIDTH), maxLines = 1)
             Text("Ports", modifier = Modifier.width(AppTableColumns.PORTS_WIDTH), maxLines = 1)
             Text("Tag", modifier = Modifier.width(AppTableColumns.TAG_WIDTH), maxLines = 1)
-            Text("Actions", modifier = Modifier.weight(AppTableColumns.ACTIONS_WEIGHT), maxLines = 1)
+            Text("Actions", modifier = Modifier.width(AppTableColumns.ACTIONS_WIDTH), maxLines = 1)
         }
 
         HorizontalDivider()
@@ -613,7 +613,7 @@ private fun RenderApps(
                     )
                 }
                 Row(
-                    modifier = Modifier.weight(AppTableColumns.ACTIONS_WEIGHT).fillMaxHeight(),
+                    modifier = Modifier.width(AppTableColumns.ACTIONS_WIDTH).fillMaxHeight(),
                     horizontalArrangement = Arrangement.Start,
                     verticalAlignment = Alignment.CenterVertically
                 ) {

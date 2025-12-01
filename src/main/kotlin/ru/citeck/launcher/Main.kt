@@ -82,8 +82,8 @@ fun main(@Suppress("unused") args: Array<String>) {
         }
 
         val state = rememberWindowState(
-            width = 1100.dp,
-            height = 700.dp,
+            width = 1200.dp,
+            height = 800.dp,
             position = WindowPosition(Alignment.Center)
         )
 
