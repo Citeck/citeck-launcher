@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.delay
+import ru.citeck.launcher.core.config.AppDir
 import ru.citeck.launcher.core.logs.AppLogUtils
 import ru.citeck.launcher.view.logs.LogsDialogParams
 import ru.citeck.launcher.view.logs.LogsWindow
@@ -73,7 +74,7 @@ fun LoadingScreen() {
                 text = "Dump System Info",
                 fontSize = 0.8.em,
                 modifier = Modifier.clickable {
-                    SystemDumpUtils.dumpSystemInfo(true)
+                    SystemDumpUtils.dumpSystemInfo(AppDir.PATH.resolve("reports"), true)
                 }
             )
         }

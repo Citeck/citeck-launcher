@@ -34,19 +34,19 @@ object SystemDumpUtils {
         this.services = services
     }
 
-    fun dumpSystemInfo(basic: Boolean = false) {
+    fun dumpSystemInfo(targetDir: Path, basic: Boolean = false) {
         val closeLoadingDialog = LoadingDialog.show()
         try {
-            exportSystemInfoImpl(basic)
+            exportSystemInfoImpl(targetDir, basic)
         } finally {
             closeLoadingDialog()
         }
     }
 
-    private fun exportSystemInfoImpl(basic: Boolean) {
+    private fun exportSystemInfoImpl(targetDir: Path, basic: Boolean) {
 
         val timestamp = SimpleDateFormat("yy-MM-dd_HH-mm").format(Date.from(Instant.now()))
-        val reportDir = AppDir.PATH.resolve("reports").resolve(timestamp)
+        val reportDir = targetDir.resolve(timestamp)
         reportDir.toFile().mkdirs()
 
         val reportFileName = "launcher-dump_" + FileUtils.createNameWithCurrentDateTime() + ".zip"

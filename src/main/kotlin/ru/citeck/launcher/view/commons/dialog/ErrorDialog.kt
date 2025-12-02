@@ -6,6 +6,7 @@ import androidx.compose.runtime.Composable
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.suspendCancellableCoroutine
 import org.apache.commons.lang3.exception.ExceptionUtils
+import ru.citeck.launcher.core.config.AppDir
 import ru.citeck.launcher.view.popup.CiteckDialog
 import ru.citeck.launcher.view.popup.DialogWidth
 import ru.citeck.launcher.view.utils.SystemDumpUtils
@@ -105,7 +106,7 @@ class ErrorDialog(private val params: Params) : CiteckDialog() {
             buttonsRow {
                 spacer()
                 button("Export System Info") {
-                    SystemDumpUtils.dumpSystemInfo()
+                    SystemDumpUtils.dumpSystemInfo(AppDir.PATH.resolve("reports"))
                 }
                 button("Close") {
                     closeDialog()

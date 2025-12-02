@@ -241,6 +241,7 @@ private fun CompactResourceRow(
             text = label,
             color = Color.Gray,
             fontSize = 0.85.em,
+            lineHeight = 0.85.em,
             modifier = Modifier.width(35.dp)
         )
 
@@ -249,6 +250,7 @@ private fun CompactResourceRow(
             text = if (maxValue != null) "$currentValue / $maxValue" else currentValue,
             fontWeight = FontWeight.Medium,
             fontSize = 0.85.em,
+            lineHeight = 0.85.em,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f).padding(horizontal = 4.dp)

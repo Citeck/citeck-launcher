@@ -21,4 +21,5 @@ enum class ActionIcon {
     EXCLAMATION_TRIANGLE,
     COG_6_TOOTH,
     ELLIPSIS_VERTICAL,
+    BARS_ARROW_DOWN
 }
