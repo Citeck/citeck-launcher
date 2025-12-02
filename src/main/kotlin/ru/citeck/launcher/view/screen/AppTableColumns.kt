@@ -10,6 +10,6 @@ object AppTableColumns {
     val CPU_WIDTH: Dp = 100.dp
     val MEM_WIDTH: Dp = 100.dp
     val PORTS_WIDTH: Dp = 80.dp
-    val TAG_WIDTH: Dp = 150.dp
+    val TAG_WIDTH: Dp = 175.dp
     val ACTIONS_WIDTH: Dp = 100.dp
 }
