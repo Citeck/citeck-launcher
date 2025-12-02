@@ -539,14 +539,13 @@ private fun RenderApps(
                     horizontalArrangement = Arrangement.Start,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (!appStatus.value.isStoppingState()) {
-                        IconBtn(ActionIcon.STOP, tooltip = "Stop Application") {
-                            application.stop(manual = true)
-                        }
-                    }
-                    if (!appStatus.value.isStartingState()) {
+                    if (appStatus.value.isStoppingState()) {
                         IconBtn(ActionIcon.START, tooltip = "Start Application") {
                             application.start()
+                        }
+                    } else {
+                        IconBtn(ActionIcon.STOP, tooltip = "Stop Application") {
+                            application.stop(manual = true)
                         }
                     }
                     IconBtn(
