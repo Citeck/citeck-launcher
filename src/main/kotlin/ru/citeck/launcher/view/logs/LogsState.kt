@@ -3,8 +3,10 @@ package ru.citeck.launcher.view.logs
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import io.github.oshai.kotlinlogging.KotlinLogging
 import ru.citeck.launcher.view.utils.LogsUtils
 import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.min
 
@@ -89,6 +91,8 @@ class LogsState(
     messages: List<String> = emptyList(),
     val limit: Int
 ) {
+    private val log = KotlinLogging.logger {}
+
     private val msgIdCounter = AtomicLong()
 
     private val messagesArray0 = LogsList(limit)
@@ -180,14 +184,19 @@ class LogsState(
     }
 
     fun addMsg(message: String) {
-
         if (message.contains('\n')) {
-            message.split('\n').forEach { addMsg(it) }
-            return
+            message.split('\n').forEach { addOneLineMsg(it) }
+        } else {
+            addOneLineMsg(message)
         }
-        val fixedMessage = LogsUtils.normalizeMessage(message)
+    }
 
-        messagesQueue.add(LogMessage(msgIdCounter.getAndIncrement(), fixedMessage))
+    private fun addOneLineMsg(message: String) {
+        val fixedMessage = LogsUtils.normalizeMessage(message)
+        val logMsg = LogMessage(msgIdCounter.getAndIncrement(), fixedMessage)
+        if (!messagesQueue.offer(logMsg, 30, TimeUnit.SECONDS)) {
+            log.error { "Log messages queue is full and failed to accept the message within 30 seconds" }
+        }
     }
 
     internal class LogMessage(val id: Long, val msg: String)
