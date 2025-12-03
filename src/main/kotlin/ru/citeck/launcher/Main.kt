@@ -10,6 +10,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.runBlocking
 import org.jetbrains.compose.resources.decodeToSvgPainter
 import ru.citeck.launcher.core.LauncherServices
+import ru.citeck.launcher.core.config.AppDir
 import ru.citeck.launcher.core.git.GitPullCancelledException
 import ru.citeck.launcher.core.socket.AppLocalSocket
 import ru.citeck.launcher.core.utils.AppLock
@@ -31,6 +32,7 @@ import ru.citeck.launcher.view.tray.CiteckTrayItem
 import ru.citeck.launcher.view.utils.ImageUtils
 import ru.citeck.launcher.view.utils.SystemDumpUtils
 import ru.citeck.launcher.view.utils.rememberMutProp
+import java.awt.Desktop
 import java.awt.Window
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.system.exitProcess
@@ -39,6 +41,8 @@ private val log = KotlinLogging.logger {}
 
 private const val TRAY_BTN_OPEN = "Open"
 private const val TRAY_BTN_EXIT = "Exit"
+private const val TRAY_BTN_CREATE_DUMP = "Dump System Info"
+private const val TRAY_BTN_OPEN_LAUNCHER_DIR = "Open Launcher Dir"
 
 object MainWindowHolder {
     lateinit var mainWindow: Window
@@ -69,6 +73,16 @@ fun main(@Suppress("unused") args: Array<String>) {
             Thread.ofPlatform().start {
                 val trayActions = listOf(
                     CiteckTrayItem(TRAY_BTN_OPEN) { takeMainWindowFocus?.invoke() },
+                    CiteckTrayItem(TRAY_BTN_CREATE_DUMP) {
+                        Thread.ofPlatform().start {
+                            SystemDumpUtils.dumpSystemInfo()
+                        }
+                    },
+                    CiteckTrayItem(TRAY_BTN_OPEN_LAUNCHER_DIR) {
+                        Thread.ofPlatform().start {
+                            Desktop.getDesktop().open(AppDir.PATH.toFile())
+                        }
+                    },
                     CiteckTrayItem(TRAY_BTN_EXIT) { exitApplication() }
                 )
                 traySupported.set(
@@ -189,22 +203,25 @@ fun App(services: LauncherServices) {
         val wsDataState = mutableStateOf<WorkspaceDto?>(null)
         val entitiesService = services.entitiesService
 
-        Thread.ofPlatform().start {
+        Thread.ofPlatform().name("ws-svc-init").start {
             try {
                 val selectedWsId = services.launcherStateService.getSelectedWorkspace()
                 var selectedWs = entitiesService.getById(WorkspaceDto::class, selectedWsId)?.entity
                 if (selectedWs == null) {
                     selectedWs = entitiesService.getFirst(WorkspaceDto::class)!!.entity
                 }
-                try {
+                val fixedSelectedWs = try {
                     services.setWorkspace(selectedWs.id)
-                    wsDataState.value = selectedWs
+                    selectedWs
                 } catch (_: GitPullCancelledException) {
                     log.warn { "Git pull cancelled for repo '${selectedWs.id}'. Fallback to default workspace." }
                     services.setWorkspace(WorkspaceDto.DEFAULT.id)
-                    wsDataState.value = entitiesService.getFirst(WorkspaceDto::class)?.entity
+                    entitiesService.getFirst(WorkspaceDto::class)?.entity
                         ?: error("Default workspace is null")
                 }
+                // Init WorkspaceServices
+                services.getWorkspaceServices()
+                wsDataState.value = fixedSelectedWs
             } catch (e: Throwable) {
                 log.error(e) { "Exception while selected workspace loading" }
                 error.value = e

@@ -21,6 +21,7 @@ import java.text.SimpleDateFormat
 import java.time.Duration
 import java.time.Instant
 import java.util.*
+import java.util.concurrent.TimeoutException
 import kotlin.io.path.exists
 import kotlin.io.path.outputStream
 
@@ -34,7 +35,7 @@ object SystemDumpUtils {
         this.services = services
     }
 
-    fun dumpSystemInfo(targetDir: Path, basic: Boolean = false) {
+    fun dumpSystemInfo(targetDir: Path = AppDir.PATH.resolve("reports"), basic: Boolean = false) {
         val closeLoadingDialog = LoadingDialog.show()
         try {
             exportSystemInfoImpl(targetDir, basic)
@@ -168,7 +169,12 @@ object SystemDumpUtils {
     private fun exportNamespaceInfo(targetDir: Path) {
 
         val services = services ?: return
-        val workspace = services.getWorkspaceServices().getValue() ?: return
+        val workspace = try {
+            services.getWorkspaceServices(Duration.ofSeconds(2)).getValue() ?: return
+        } catch (_: TimeoutException) {
+            log.warn { "Workspace services is not initialized yet. Namespace info can't be exported" }
+            return
+        }
 
         if (!targetDir.exists()) {
             targetDir.toFile().mkdirs()

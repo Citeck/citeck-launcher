@@ -25,11 +25,13 @@ import ru.citeck.launcher.core.utils.json.Json
 import ru.citeck.launcher.view.commons.dialog.GitPullErrorDialog
 import ru.citeck.launcher.view.commons.dialog.GitPullRepoDialogRes
 import java.io.File
+import java.net.URI
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.OffsetTime
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.io.path.exists
 import kotlin.system.measureTimeMillis
 
@@ -40,10 +42,14 @@ class GitRepoService {
 
         private const val FEEDBACK_REPEATS_COUNT = 5
         private const val FEEDBACK_TIMEOUT_MS = 10_000
+
+        private const val HOUR_MS = 1000 * 60 * 60
     }
 
     private lateinit var authSecretsService: AuthSecretsService
     private lateinit var repositoriesInfo: Repository<String, GitRepoInstance>
+
+    private val skipPullForRepoDecisionAt = ConcurrentHashMap<String, Long>()
 
     fun init(services: LauncherServices) {
         this.authSecretsService = services.authSecretsService
@@ -60,8 +66,19 @@ class GitRepoService {
         updatePolicy: GitUpdatePolicy = GitUpdatePolicy.ALLOWED,
         cancelAvailable: Boolean = false
     ): GitRepoInfo {
-        val relativePath = AppDir.PATH.relativize(repoProps.path).toString().replace(File.separator, "/")
+        val relativePath = AppDir.PATH.relativize(repoProps.path)
+            .toString()
+            .replace(File.separator, "/")
+
+        val repoHost = URI.create(repoProps.url).host
         var updatePolicy = updatePolicy
+        if (updatePolicy == GitUpdatePolicy.ALLOWED) {
+            val skipPullDecisionAt = skipPullForRepoDecisionAt[repoHost] ?: 0L
+            if ((System.currentTimeMillis() - skipPullDecisionAt) < HOUR_MS) {
+                updatePolicy = GitUpdatePolicy.ALLOWED_IF_NOT_EXISTS
+            }
+        }
+
         var nextFeedbackRepeats = FEEDBACK_REPEATS_COUNT
         var nextFeedbackTime = System.currentTimeMillis() + FEEDBACK_TIMEOUT_MS
         return LongTaskUtils.doWithWatcher(actionName = "Init repo ${repoProps.url}") {
@@ -96,6 +113,7 @@ class GitRepoService {
                         }
                         if (dialogRes == GitPullRepoDialogRes.SKIP_IF_POSSIBLE) {
                             updatePolicy = GitUpdatePolicy.ALLOWED_IF_NOT_EXISTS
+                            skipPullForRepoDecisionAt[repoHost] = System.currentTimeMillis()
                         }
                         nextFeedbackRepeats = FEEDBACK_REPEATS_COUNT
                         nextFeedbackTime = System.currentTimeMillis() + FEEDBACK_TIMEOUT_MS

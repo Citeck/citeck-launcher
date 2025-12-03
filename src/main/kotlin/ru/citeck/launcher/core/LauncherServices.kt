@@ -21,7 +21,10 @@ import ru.citeck.launcher.core.utils.prop.MutProp
 import ru.citeck.launcher.core.workspace.WorkspaceDto
 import ru.citeck.launcher.core.workspace.WorkspacesService
 import java.time.Duration
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.locks.ReentrantLock
 
 @Stable
 class LauncherServices {
@@ -48,6 +51,8 @@ class LauncherServices {
 
     private val workspaceServices = MutProp<WorkspaceServices?>(null)
     private val workspaceInitialized = AtomicBoolean(false)
+
+    private val thisLock = ReentrantLock()
 
     suspend fun init() {
 
@@ -94,17 +99,17 @@ class LauncherServices {
         actionsService.register(AppStopAction(dockerApi))
     }
 
-    @Synchronized
-    fun getWorkspaceServices(): MutProp<WorkspaceServices?> {
-        val workspaceServices = this.workspaceServices.getValue() ?: error("WorkspaceServices is not selected")
-        if (workspaceInitialized.compareAndSet(false, true)) {
-            workspaceServices.init()
+    fun getWorkspaceServices(timeout: Duration? = null): MutProp<WorkspaceServices?> {
+        return doWithThisLock(timeout) {
+            val workspaceServices = this.workspaceServices.getValue() ?: error("WorkspaceServices is not selected")
+            if (workspaceInitialized.compareAndSet(false, true)) {
+                workspaceServices.init()
+            }
+            this.workspaceServices
         }
-        return this.workspaceServices
     }
 
-    @Synchronized
-    fun setWorkspace(workspace: String) {
+    fun setWorkspace(workspace: String) = doWithThisLock {
 
         val workspaceDto = entitiesService.getById(WorkspaceDto::class, workspace)?.entity
             ?: error("Workspace is not found by id '$workspace'")
@@ -117,5 +122,20 @@ class LauncherServices {
         workspaceInitialized.set(false)
 
         launcherStateService.setSelectedWorkspace(workspace)
+    }
+
+    private inline fun <T> doWithThisLock(timeout: Duration? = null, action: () -> T): T {
+        if (timeout != null) {
+            if (!thisLock.tryLock(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
+                throw TimeoutException("${this::class.simpleName} lock timed out. Timeout: $timeout")
+            }
+        } else {
+            thisLock.lock()
+        }
+        try {
+            return action.invoke()
+        } finally {
+            thisLock.unlock()
+        }
     }
 }
