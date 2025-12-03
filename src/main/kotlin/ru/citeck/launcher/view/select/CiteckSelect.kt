@@ -14,9 +14,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.LayoutCoordinates
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.layout.*
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -97,7 +96,11 @@ fun CiteckSelect(
                         .border(1.dp, Color.Gray)
                         .onGloballyPositioned { itemsColumnLayout.value = it }
                 ) {
-                    val minWidth = selectedValueBounds.value?.size?.width?.dp ?: itemsColumnLayout.value?.size?.width?.dp ?: 50.dp
+                    val minWidth = with(LocalDensity.current) {
+                        selectedValueBounds.value?.size?.width?.toDp()
+                            ?: itemsColumnLayout.value?.size?.width?.toDp()
+                            ?: 50.dp
+                    }
                     for (option in itemsValue) {
                         if (option.value != state.selected.value) {
                             renderSelectPopupItem(minWidth, expanded, state, option, onSelected)

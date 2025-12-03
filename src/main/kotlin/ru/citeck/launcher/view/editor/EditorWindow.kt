@@ -84,7 +84,7 @@ class EditorWindow private constructor(
     }
 
     private val searchText = mutableStateOf(TextFieldValue(""))
-    private val gutterSize = mutableStateOf(20.dp)
+    private val gutterSize = mutableStateOf(20)
     private val searchFocusRequester = FocusRequester()
 
     private val textSyntax = syntaxByExtension[filename.substringAfterLast(".")]
@@ -135,7 +135,7 @@ class EditorWindow private constructor(
 
         scrollPane.gutter.addComponentListener(object : ComponentAdapter() {
             override fun componentResized(e: ComponentEvent) {
-                gutterSize.value = e.component.width.dp
+                gutterSize.value = e.component.width
             }
         })
 
@@ -204,7 +204,7 @@ class EditorWindow private constructor(
         ) {
             Row(modifier = Modifier.height(25.dp)) {
 
-                Spacer(modifier = Modifier.width(gutterSize.value - 1.dp))
+                Spacer(modifier = Modifier.width(gutterSize.value.dp))
                 VerticalDivider()
 
                 BasicTextField(

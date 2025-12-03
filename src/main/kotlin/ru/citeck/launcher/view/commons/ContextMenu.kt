@@ -14,6 +14,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.*
 import kotlinx.coroutines.runBlocking
 import ru.citeck.launcher.view.commons.dialog.ErrorDialog
@@ -49,7 +50,9 @@ object ContextMenu {
                         .onGloballyPositioned { itemsColumnLayout.value = it }
                 ) {
                     val itemsValue = items.value
-                    val minWidth = itemsColumnLayout.value?.size?.width?.dp ?: 50.dp
+                    val minWidth = with(LocalDensity.current) {
+                        itemsColumnLayout.value?.size?.width?.toDp() ?: 50.dp
+                    }
                     for (item in itemsValue) {
                         Box(
                             modifier = Modifier
