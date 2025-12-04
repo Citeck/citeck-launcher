@@ -22,7 +22,6 @@ import ru.citeck.launcher.view.commons.dialog.ErrorDialog
 object ContextMenu {
 
     private val items = mutableStateOf<List<Item>>(emptyList())
-    val actionInProgress = mutableStateOf(false)
 
     private val dropDownOffset = mutableStateOf(IntOffset.Zero)
     private val dropDownShow = mutableStateOf(false)
@@ -59,18 +58,14 @@ object ContextMenu {
                                 .widthIn(min = minWidth)
                                 .height(IntrinsicSize.Min)
                                 .clickable {
-                                    if (!actionInProgress.value) {
-                                        actionInProgress.value = true
-                                        Thread.ofPlatform().start {
-                                            runBlocking {
-                                                ErrorDialog.doActionSafe({
-                                                    item.action.invoke()
-                                                }, { "Action failed" }, {})
-                                            }
-                                            actionInProgress.value = false
+                                    Thread.ofPlatform().start {
+                                        runBlocking {
+                                            ErrorDialog.doActionSafe({
+                                                item.action.invoke()
+                                            }, { "Action failed" }, {})
                                         }
-                                        dropDownShow.value = false
                                     }
+                                    dropDownShow.value = false
                                 }
                         ) {
                             Text(
@@ -97,7 +92,7 @@ object ContextMenu {
                 while (true) {
                     val event = awaitPointerEvent()
                     val pointer = event.changes.firstOrNull()
-                    if (actionInProgress.value || items.isEmpty()) {
+                    if (items.isEmpty()) {
                         continue
                     }
                     if (event.type == PointerEventType.Press &&

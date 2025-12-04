@@ -20,6 +20,24 @@ local opts = {
   local tokenIss;
   local tokenFromSession = true;
 
+  local function isStaticResUri(uri)
+
+    if (not uri or uri == "") then return false end
+    if (uri:sub(1,1) ~= "/") then return false end
+    if (uri:find("/gateway", 1, true)) then return false end
+
+    local dot = uri:match("^.+()%.")
+    if not dot then return false end
+
+    local staticResExtensions = {
+      js = true, css = true, json = true, map = true
+      png = true, jpg = true, jpeg = true, gif = true, webp = true, svg = true, ico = true,
+      woff = true, woff2 = true, ttf = true, eot = true, otf = true
+    }
+    local ext = uri:sub(dot + 1)
+    return staticResExtensions[ext] == true
+  end
+
   local function introspect(options)
 
     local res, err = require("resty.openidc").introspect(options)
@@ -114,6 +132,10 @@ local opts = {
   end
 
   local userName;
+
+  if isStaticResUri(ngx.var.request_uri:lower()) then
+    userName = "guest";
+  end
 
   -- TODO: remove this checks
   -- this checks doesn't required now because this locations doesn't protected by oidc
