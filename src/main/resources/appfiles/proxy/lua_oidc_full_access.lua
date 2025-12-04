@@ -30,7 +30,7 @@ local opts = {
     if not dot then return false end
 
     local staticResExtensions = {
-      js = true, css = true, json = true, map = true
+      js = true, css = true, json = true, map = true,
       png = true, jpg = true, jpeg = true, gif = true, webp = true, svg = true, ico = true,
       woff = true, woff2 = true, ttf = true, eot = true, otf = true
     }
