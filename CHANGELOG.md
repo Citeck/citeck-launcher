@@ -1,3 +1,10 @@
+# Release 1.3.2
+
+## Fixes
+
+* Fixed Citeck logo
+* Resolved issues with Chrome’s dev-mobile mode
+
 # Release 1.3.1
 
 ## New features
