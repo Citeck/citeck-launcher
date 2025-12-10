@@ -154,10 +154,12 @@ class NsRuntimeFiles(
             ByteArray(0)
         }
 
+        val targetFilePath = filesDir.resolve(localPath)
+
         if (fileBytes.contentEquals(currentFileData)) {
+            markFileAsExecutableIfRequired(targetFilePath)
             return false
         }
-        val targetFilePath = filesDir.resolve(localPath)
         val fileDir = targetFilePath.parent
         if (fileDir.exists() && !fileDir.isDirectory()) {
             fileDir.deleteExisting()
@@ -175,10 +177,15 @@ class NsRuntimeFiles(
                 writeEx
             )
         }
-        if (localPath.endsWith(".sh") && !targetFilePath.toFile().canExecute()) {
-            targetFilePath.toFile().setExecutable(true, false)
-        }
+        markFileAsExecutableIfRequired(targetFilePath)
         return true
+    }
+
+    private fun markFileAsExecutableIfRequired(filePath: Path) {
+        if (!filePath.fileName.toString().endsWith(".sh") || filePath.toFile().canExecute()) {
+            return
+        }
+        filePath.toFile().setExecutable(true, false)
     }
 
     fun resolveAbsPathInFilesDir(path: String): String {

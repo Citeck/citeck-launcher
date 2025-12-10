@@ -15,7 +15,7 @@ plugins {
 }
 
 group = "ru.citeck.launcher"
-version = "1.3.2"
+version = "1.3.3"
 val distPackageName = "citeck-launcher"
 
 repositories {
