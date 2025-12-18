@@ -5,16 +5,27 @@ import kotlin.math.min
 
 data class BundleKey(val rawKey: String) : Comparable<BundleKey> {
 
-    private val versionParts: List<Int>
-    private var suffixParts = listOf<Comparable<Comparable<*>>>()
+    val scope: List<String>
+    val versionParts: List<Int>
+    val suffixParts: List<Comparable<Comparable<*>>>
 
     init {
 
-        val firstNonVersionIdx = rawKey.indexOfFirst { !it.isDigit() && it != '.' }
-        val versionRawParts = if (firstNonVersionIdx == -1) {
-            rawKey.split(".")
+        var keyToParse = rawKey
+
+        val lastScopeDelimIdx = keyToParse.indexOfLast { it == '/' }
+        if (lastScopeDelimIdx != -1) {
+            scope = keyToParse.take(lastScopeDelimIdx).split("/").filter { it.isNotBlank() }
+            keyToParse = keyToParse.substring(lastScopeDelimIdx + 1)
         } else {
-            rawKey.substring(0, firstNonVersionIdx).split(".")
+            scope = emptyList()
+        }
+
+        val firstNonVersionIdx = keyToParse.indexOfFirst { !it.isDigit() && it != '.' }
+        val versionRawParts = if (firstNonVersionIdx == -1) {
+            keyToParse.split(".")
+        } else {
+            keyToParse.take(firstNonVersionIdx).split(".")
         }
         val versionParts = ArrayList<Int>()
         versionRawParts.mapNotNullTo(versionParts) { it.toIntOrNull() }
@@ -25,16 +36,18 @@ data class BundleKey(val rawKey: String) : Comparable<BundleKey> {
         }
         this.versionParts = versionParts.subList(0, nonZeroNumsCount)
 
+        var suffixParts = emptyList<Comparable<*>>()
         if (firstNonVersionIdx != -1) {
             var suffixStartIdx = firstNonVersionIdx
-            if (!rawKey[suffixStartIdx].isLetterOrDigit()) {
+            if (!keyToParse[suffixStartIdx].isLetterOrDigit()) {
                 suffixStartIdx++
             }
-            if (suffixStartIdx < rawKey.length) {
-                @Suppress("UNCHECKED_CAST")
-                this.suffixParts = parseSuffixParts(rawKey.substring(suffixStartIdx)) as List<Comparable<Comparable<*>>>
+            if (suffixStartIdx < keyToParse.length) {
+                suffixParts = parseSuffixParts(keyToParse.substring(suffixStartIdx))
             }
         }
+        @Suppress("UNCHECKED_CAST")
+        this.suffixParts = suffixParts as List<Comparable<Comparable<*>>>
     }
 
     private fun parseSuffixParts(suffix: String): List<Comparable<*>> {
@@ -53,7 +66,10 @@ data class BundleKey(val rawKey: String) : Comparable<BundleKey> {
     }
 
     override fun compareTo(other: BundleKey): Int {
-        var compareRes = compareElements(versionParts, other.versionParts, false)
+        var compareRes = compareElements(scope, other.scope, true)
+        if (compareRes == 0) {
+            compareRes = compareElements(versionParts, other.versionParts, false)
+        }
         if (compareRes == 0) {
             compareRes = compareElements(suffixParts, other.suffixParts, true)
         }
@@ -85,9 +101,9 @@ data class BundleKey(val rawKey: String) : Comparable<BundleKey> {
             }
         }
         return if (first.size > second.size) {
-            1
+            if (preferEmptyElements) -1 else 1
         } else if (first.size < second.size) {
-            -1
+            if (preferEmptyElements) 1 else -1
         } else {
             0
         }

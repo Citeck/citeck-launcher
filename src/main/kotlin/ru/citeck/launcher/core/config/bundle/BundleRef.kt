@@ -21,7 +21,7 @@ class BundleRef private constructor(
                 error("Invalid ref: '$value'")
             }
             return create(
-                value.substring(0, lastDelimIdx),
+                value.take(lastDelimIdx),
                 value.substring(lastDelimIdx + 1)
             )
         }
