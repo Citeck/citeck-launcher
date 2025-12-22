@@ -4,6 +4,7 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.*
@@ -28,6 +29,7 @@ import ru.citeck.launcher.core.logs.AppLogUtils
 import ru.citeck.launcher.core.namespace.NamespaceConfig
 import ru.citeck.launcher.core.namespace.NamespaceEntityDef
 import ru.citeck.launcher.core.namespace.NamespacesService
+import ru.citeck.launcher.core.namespace.gen.GlobalLinks
 import ru.citeck.launcher.core.namespace.runtime.AppRuntime
 import ru.citeck.launcher.core.namespace.runtime.AppRuntimeStatus
 import ru.citeck.launcher.core.namespace.runtime.NsRuntimeStatus.*
@@ -259,13 +261,25 @@ fun NamespaceScreen(
             }
             Spacer(Modifier.height(2.dp))
             HorizontalDivider()
-            for (link in (nsGenRes.value?.links ?: emptyList())) {
+            var currentCategory: String? = null
+            val allLinks = (nsGenRes.value?.links ?: emptyList()) + GlobalLinks.LINKS
+            for (link in allLinks) {
+                if (link.category != null && link.category != currentCategory) {
+                    currentCategory = link.category
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        currentCategory,
+                        modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 CiteckTooltipArea(
                     tooltip = link.description
                 ) {
                     Box(
                         modifier = Modifier.fillMaxWidth()
-                            .clickable(enabled = runtimeStatus.value == RUNNING) {
+                            .clickable(enabled = link.alwaysEnabled || runtimeStatus.value == RUNNING) {
                                 Desktop.getDesktop().browse(URI.create(link.url))
                             }
                     ) {

@@ -5,5 +5,7 @@ class NamespaceLink(
     val name: String,
     val description: String,
     val icon: String,
-    val order: Float
+    val order: Float,
+    val category: String? = null,
+    val alwaysEnabled: Boolean = false
 )
