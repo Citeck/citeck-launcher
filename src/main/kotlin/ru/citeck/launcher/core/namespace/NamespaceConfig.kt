@@ -1,7 +1,7 @@
 package ru.citeck.launcher.core.namespace
 
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
-import ru.citeck.launcher.core.config.bundle.BundleRef
+import ru.citeck.launcher.core.bundle.BundleRef
 import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.json.Json
 

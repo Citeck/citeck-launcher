@@ -1,6 +1,9 @@
 package ru.citeck.launcher.core.config.bundle
 
 import org.assertj.core.api.Assertions.*
+import ru.citeck.launcher.core.bundle.BundleKey
+import ru.citeck.launcher.core.utils.json.Json
+import java.io.ByteArrayInputStream
 import kotlin.test.Test
 
 class BundleKeyTest {
@@ -55,5 +58,26 @@ class BundleKeyTest {
                 assertThat(next).isGreaterThan(prev)
             }
         }
+    }
+
+    @Test
+    fun serializationTest() {
+
+        val raw = "2025.5-RC2.1.1000"
+        val key = BundleKey(raw)
+        assertThat(key.toString()).isEqualTo(raw)
+        val jsonValue = Json.toString(key)
+        assertThat(jsonValue).isEqualTo('"' + raw + '"')
+
+        fun readBundleKey(json: String) = Json.readNotNull(
+            ByteArrayInputStream(json.toByteArray()),
+            BundleKey::class
+        )
+        val keyFromJson = readBundleKey(jsonValue)
+        assertThat(keyFromJson).isEqualTo(key)
+        assertThat(keyFromJson.toString()).isEqualTo(raw)
+
+        val keyFromObj = readBundleKey("{\"rawKey\":\"2025.8-RC3\"}")
+        assertThat(keyFromObj.toString()).isEqualTo("2025.8-RC3")
     }
 }

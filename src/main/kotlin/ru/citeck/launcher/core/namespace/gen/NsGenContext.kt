@@ -1,7 +1,7 @@
 package ru.citeck.launcher.core.namespace.gen
 
 import ru.citeck.launcher.core.appdef.ApplicationDef
-import ru.citeck.launcher.core.config.bundle.BundleDef
+import ru.citeck.launcher.core.bundle.BundleDef
 import ru.citeck.launcher.core.config.cloud.CloudConfigImpl
 import ru.citeck.launcher.core.config.cloud.MutableCloudConfig
 import ru.citeck.launcher.core.namespace.AppName

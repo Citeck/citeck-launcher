@@ -1,3 +1,9 @@
+# Release 1.3.6
+
+## Fixes
+
+* Fixed startup error in logs 'Cannot construct instance of BundleKey'
+
 # Release 1.3.5
 
 ## New features

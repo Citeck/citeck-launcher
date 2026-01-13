@@ -1,6 +1,6 @@
 package ru.citeck.launcher.core.namespace
 
-import ru.citeck.launcher.core.config.bundle.BundlesService
+import ru.citeck.launcher.core.bundle.BundlesService
 import ru.citeck.launcher.core.entity.EntityRef
 import ru.citeck.launcher.view.form.FormMode
 import ru.citeck.launcher.view.form.spec.ComponentSpec.NameField

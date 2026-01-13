@@ -17,7 +17,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import ru.citeck.launcher.core.LauncherServices
 import ru.citeck.launcher.core.WorkspaceServices
-import ru.citeck.launcher.core.config.bundle.BundleRef
+import ru.citeck.launcher.core.bundle.BundleRef
 import ru.citeck.launcher.core.entity.EntityInfo
 import ru.citeck.launcher.core.git.GitUpdatePolicy
 import ru.citeck.launcher.core.namespace.NamespaceConfig

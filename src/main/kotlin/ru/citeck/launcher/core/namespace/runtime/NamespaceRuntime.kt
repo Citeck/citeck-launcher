@@ -3,9 +3,9 @@ package ru.citeck.launcher.core.namespace.runtime
 import io.github.oshai.kotlinlogging.KotlinLogging
 import ru.citeck.launcher.core.actions.ActionsService
 import ru.citeck.launcher.core.appdef.ApplicationDef
-import ru.citeck.launcher.core.config.bundle.BundleDef
-import ru.citeck.launcher.core.config.bundle.BundleNotFoundException
-import ru.citeck.launcher.core.config.bundle.BundlesService
+import ru.citeck.launcher.core.bundle.BundleDef
+import ru.citeck.launcher.core.bundle.BundleNotFoundException
+import ru.citeck.launcher.core.bundle.BundlesService
 import ru.citeck.launcher.core.config.cloud.CloudConfigServer
 import ru.citeck.launcher.core.database.DataRepo
 import ru.citeck.launcher.core.git.GitUpdatePolicy
@@ -113,7 +113,7 @@ class NamespaceRuntime(
             try {
                 cachedBundleDef = bundleDefFromRepo.getAsNotNull(BundleDef::class)
             } catch (e: Throwable) {
-                log.error(e) { "Bundle from repo reading failed" }
+                log.error(e) { "Bundle from repo reading failed. BundleDef: $bundleDefFromRepo" }
                 cachedBundleDef = BundleDef.EMPTY
             }
         }

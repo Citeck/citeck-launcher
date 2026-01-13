@@ -2,7 +2,7 @@ package ru.citeck.launcher.core.namespace
 
 import io.github.oshai.kotlinlogging.KotlinLogging
 import ru.citeck.launcher.core.WorkspaceServices
-import ru.citeck.launcher.core.config.bundle.BundleRef
+import ru.citeck.launcher.core.bundle.BundleRef
 import ru.citeck.launcher.core.entity.EntityDef
 import ru.citeck.launcher.core.entity.EntityIdType
 import ru.citeck.launcher.core.namespace.NamespaceEntityDef.FORM_FIELD_AUTH_TYPE

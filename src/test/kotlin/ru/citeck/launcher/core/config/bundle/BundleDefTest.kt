@@ -1,6 +1,8 @@
 package ru.citeck.launcher.core.config.bundle
 
 import org.assertj.core.api.Assertions.*
+import ru.citeck.launcher.core.bundle.BundleDef
+import ru.citeck.launcher.core.bundle.BundleKey
 import ru.citeck.launcher.core.utils.data.DataValue
 import kotlin.test.Test
 

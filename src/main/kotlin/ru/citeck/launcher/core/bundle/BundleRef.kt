@@ -1,4 +1,4 @@
-package ru.citeck.launcher.core.config.bundle
+package ru.citeck.launcher.core.bundle
 
 import com.fasterxml.jackson.annotation.JsonCreator
 import com.fasterxml.jackson.annotation.JsonValue

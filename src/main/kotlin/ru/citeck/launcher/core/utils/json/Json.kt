@@ -15,6 +15,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode
 import com.fasterxml.jackson.databind.node.TextNode
 import com.fasterxml.jackson.module.kotlin.KotlinModule
 import io.github.oshai.kotlinlogging.KotlinLogging
+import ru.citeck.launcher.core.bundle.BundleKey
 import ru.citeck.launcher.core.entity.EntityRef
 import ru.citeck.launcher.core.utils.StringUtils
 import ru.citeck.launcher.core.utils.bean.BeanUtils
@@ -50,6 +51,7 @@ object Json {
         customModule.addDeserializer(EntityRef::class.java, EntityRefDeserializer())
         customModule.addSerializer(DurationSerializer())
         customModule.addDeserializer(Duration::class.java, DurationDeserializer())
+        customModule.addDeserializer(BundleKey::class.java, BundleKeyDeserializer())
 
         mapper.registerModules(customModule)
     }

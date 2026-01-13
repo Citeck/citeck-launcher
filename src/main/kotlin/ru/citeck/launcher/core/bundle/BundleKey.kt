@@ -1,9 +1,19 @@
-package ru.citeck.launcher.core.config.bundle
+package ru.citeck.launcher.core.bundle
 
+import com.fasterxml.jackson.annotation.JsonCreator
+import com.fasterxml.jackson.annotation.JsonValue
 import ru.citeck.launcher.core.utils.StringUtils
 import kotlin.math.min
 
 data class BundleKey(val rawKey: String) : Comparable<BundleKey> {
+
+    companion object {
+        @JvmStatic
+        @JsonCreator
+        fun valueOf(key: String): BundleKey {
+            return BundleKey(key)
+        }
+    }
 
     val scope: List<String>
     val versionParts: List<Int>
@@ -109,6 +119,7 @@ data class BundleKey(val rawKey: String) : Comparable<BundleKey> {
         }
     }
 
+    @JsonValue
     override fun toString(): String {
         return rawKey
     }

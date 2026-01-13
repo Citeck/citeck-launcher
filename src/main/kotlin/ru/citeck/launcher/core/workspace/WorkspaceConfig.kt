@@ -1,6 +1,6 @@
 package ru.citeck.launcher.core.workspace
 
-import ru.citeck.launcher.core.config.bundle.BundleRef
+import ru.citeck.launcher.core.bundle.BundleRef
 import ru.citeck.launcher.core.license.LicenseInstance
 import ru.citeck.launcher.core.namespace.NamespaceConfig
 import java.time.Duration

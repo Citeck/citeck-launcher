@@ -1,4 +1,4 @@
-package ru.citeck.launcher.core.config.bundle
+package ru.citeck.launcher.core.bundle
 
 data class BundleDef(
     val key: BundleKey,

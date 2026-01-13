@@ -1,4 +1,4 @@
-package ru.citeck.launcher.core.config.bundle
+package ru.citeck.launcher.core.bundle
 
 import io.github.oshai.kotlinlogging.KotlinLogging
 import ru.citeck.launcher.core.WorkspaceServices

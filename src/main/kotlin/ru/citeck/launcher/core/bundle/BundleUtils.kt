@@ -1,7 +1,7 @@
-package ru.citeck.launcher.core.config.bundle
+package ru.citeck.launcher.core.bundle
 
 import io.github.oshai.kotlinlogging.KotlinLogging
-import ru.citeck.launcher.core.config.bundle.BundleDef.BundleAppDef
+import ru.citeck.launcher.core.bundle.BundleDef.BundleAppDef
 import ru.citeck.launcher.core.namespace.AppName
 import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.json.Yaml
