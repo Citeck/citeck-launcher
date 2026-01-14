@@ -1,3 +1,9 @@
+# Release 1.3.7
+
+## New features
+
+* Added bundle info to citeck-apps
+
 # Release 1.3.6
 
 ## Fixes

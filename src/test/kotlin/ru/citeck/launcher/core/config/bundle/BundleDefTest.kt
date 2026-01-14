@@ -14,7 +14,8 @@ class BundleDefTest {
         val bundleDef = BundleDef(
             BundleKey("2025.1-RC2"),
             mapOf("userv" to BundleDef.BundleAppDef("nexus.citeck.ru/ecos-uiserv:2.23.2-snapshot")),
-            listOf(BundleDef.BundleAppDef("nexus.citeck.ru/ecos-contracts:1.21.2-snapshot"))
+            listOf(BundleDef.BundleAppDef("nexus.citeck.ru/ecos-contracts:1.21.2-snapshot")),
+            DataValue.createObj().set("aa", "bb")
         )
         val json = DataValue.of(bundleDef)
 

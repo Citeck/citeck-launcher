@@ -65,8 +65,8 @@ object BundleUtils {
     }
 
     private fun readBundleFile(key: BundleKey, file: File, workspaceConfig: WorkspaceConfig): BundleDef {
-        val data = Yaml.read(file, DataValue::class)
-        if (!data.isObject()) {
+        val rawData = Yaml.read(file, DataValue::class)
+        if (!rawData.isObject()) {
             return BundleDef.EMPTY
         }
 
@@ -127,9 +127,9 @@ object BundleUtils {
                 }
             }
         }
-        data.forEach { appName, value ->
+        rawData.forEach { appName, value ->
             processApp(appName, value)
         }
-        return BundleDef(key, applications, citeckApps)
+        return BundleDef(key, applications, citeckApps, rawData)
     }
 }

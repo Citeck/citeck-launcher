@@ -370,26 +370,31 @@ class NamespaceGenerator {
         val app = context.getOrCreateApp(name)
 
         val webappCloudConfig = DataValue.createObj()
-        val cloudConfig = DataValue.createObj()
+        val extCloudConfig = DataValue.createObj()
         webappProps.dataSources.forEach { (key, config) ->
             webappCloudConfig["/ecos/webapp/dataSources/$key"] = processDataSource(context, app, key, config, false)
-            cloudConfig["/ecos/webapp/dataSources/$key"] = processDataSource(context, app, key, config, true)
+            extCloudConfig["/ecos/webapp/dataSources/$key"] = processDataSource(context, app, key, config, true)
         }
-        context.cloudConfig.put(name, cloudConfig)
 
         webappCloudConfig.mergeDataFrom(webappProps.cloudConfig)
 
         if (app.name == AppName.EAPPS && context.workspaceConfig.licenses.isNotEmpty()) {
             webappCloudConfig["ecos.webapp.license.instances"] =
                 context.workspaceConfig.licenses.map { Json.toString(it) }
+            listOf(extCloudConfig, webappCloudConfig).forEach {
+                it["citeck.bundle.key"] = context.bundle.key.toString()
+                it["citeck.bundle.content"] = context.bundle.content.toString()
+            }
         }
 
-        val cloudConfigText = if (webappCloudConfig.isEmpty()) {
+        context.cloudConfig.put(name, extCloudConfig)
+
+        val webappCloudConfigText = if (webappCloudConfig.isEmpty()) {
             EMPTY_SPRING_PROPS_CONTENT
         } else {
             Yaml.toString(webappCloudConfig)
         }
-        context.files["app/$name/props/application-launcher.yml"] = cloudConfigText.toByteArray()
+        context.files["app/$name/props/application-launcher.yml"] = webappCloudConfigText.toByteArray()
         app.addEnv("SPRING_CONFIG_ADDITIONALLOCATION", "/run/java.io/spring-props/")
         app.addVolume("./app/$name/props:/run/java.io/spring-props/")
 
