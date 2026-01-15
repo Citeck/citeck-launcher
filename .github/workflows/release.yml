@@ -40,7 +40,7 @@ jobs:
           path: build/compose/binaries/main/msi/*.msi
 
   build-macos:
-    runs-on: macOS-15 # non-ARM
+    runs-on: macos-15-intel # non-ARM
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
