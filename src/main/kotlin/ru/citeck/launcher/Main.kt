@@ -8,10 +8,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.*
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.runBlocking
+import org.apache.commons.lang3.exception.ExceptionUtils
 import org.jetbrains.compose.resources.decodeToSvgPainter
 import ru.citeck.launcher.core.LauncherServices
 import ru.citeck.launcher.core.config.AppDir
 import ru.citeck.launcher.core.git.GitPullCancelledException
+import ru.citeck.launcher.core.namespace.runtime.docker.exception.DockerNotAvailableException
 import ru.citeck.launcher.core.socket.AppLocalSocket
 import ru.citeck.launcher.core.utils.AppLock
 import ru.citeck.launcher.core.utils.StdOutLog
@@ -23,6 +25,7 @@ import ru.citeck.launcher.view.commons.ContextMenu
 import ru.citeck.launcher.view.commons.dialog.ErrorDialog
 import ru.citeck.launcher.view.popup.CiteckDialog
 import ru.citeck.launcher.view.popup.CiteckWindow
+import ru.citeck.launcher.view.screen.DockerNotAvailableScreen
 import ru.citeck.launcher.view.screen.LoadingScreen
 import ru.citeck.launcher.view.screen.NamespaceScreen
 import ru.citeck.launcher.view.screen.WelcomeScreen
@@ -140,6 +143,7 @@ fun main(@Suppress("unused") args: Array<String>) {
                     MainWindowHolder.mainWindow = window
                 }
 
+                val launcherServicesRef = remember { mutableStateOf<LauncherServices?>(null) }
                 val servicesValue = remember {
                     if (tryToLockError != null) {
                         mutableStateOf(Result.failure(tryToLockError))
@@ -148,6 +152,7 @@ fun main(@Suppress("unused") args: Array<String>) {
                         Thread.ofPlatform().start {
                             try {
                                 val launcherServices = LauncherServices()
+                                launcherServicesRef.value = launcherServices
                                 runBlocking {
                                     launcherServices.init()
                                 }
@@ -185,7 +190,39 @@ fun main(@Suppress("unused") args: Array<String>) {
                     }
                     App(services.getOrThrow())
                 } else {
-                    ErrorDialog.show(services.exceptionOrNull()!!) { exitApplication() }
+                    val exception = services.exceptionOrNull()!!
+                    val dockerException = if (exception is DockerNotAvailableException) {
+                        exception
+                    } else {
+                        val rootCause = ExceptionUtils.getRootCause(exception)
+                        rootCause as? DockerNotAvailableException
+                    }
+                    if (dockerException != null) {
+                        DockerNotAvailableScreen(dockerException) {
+                            servicesValue.value = null
+                            Thread.ofPlatform().start {
+                                try {
+                                    val launcherServices = launcherServicesRef.value
+                                    if (launcherServices != null) {
+                                        launcherServices.initDocker()
+                                        servicesValue.value = Result.success(launcherServices)
+                                    } else {
+                                        val newServices = LauncherServices()
+                                        launcherServicesRef.value = newServices
+                                        runBlocking {
+                                            newServices.init()
+                                        }
+                                        servicesValue.value = Result.success(newServices)
+                                    }
+                                } catch (e: Exception) {
+                                    log.error(e) { "Services initialization failed" }
+                                    servicesValue.value = Result.failure(e)
+                                }
+                            }
+                        }
+                    } else {
+                        ErrorDialog.show(exception) { exitApplication() }
+                    }
                 }
             }
             CiteckWindow.renderWindows(logo)

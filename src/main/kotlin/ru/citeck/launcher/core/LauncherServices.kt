@@ -15,6 +15,7 @@ import ru.citeck.launcher.core.namespace.runtime.actions.AppImagePullAction
 import ru.citeck.launcher.core.namespace.runtime.actions.AppStartAction
 import ru.citeck.launcher.core.namespace.runtime.actions.AppStopAction
 import ru.citeck.launcher.core.namespace.runtime.docker.DockerApi
+import ru.citeck.launcher.core.namespace.runtime.docker.exception.DockerNotAvailableException
 import ru.citeck.launcher.core.secrets.auth.AuthSecretsService
 import ru.citeck.launcher.core.secrets.storage.SecretsStorage
 import ru.citeck.launcher.core.utils.prop.MutProp
@@ -49,12 +50,25 @@ class LauncherServices {
     lateinit var dockerApi: DockerApi
     lateinit var actionsService: ActionsService
 
+    private var dockerHttpClient: DockerHttpClient? = null
+
     private val workspaceServices = MutProp<WorkspaceServices?>(null)
     private val workspaceInitialized = AtomicBoolean(false)
 
     private val thisLock = ReentrantLock()
 
+    @Volatile
+    private var baseInitDone = false
+
     suspend fun init() {
+        initBase()
+        initDocker()
+    }
+
+    private fun initBase() {
+        if (baseInitDone) {
+            return
+        }
 
         database.init()
         launcherStateService.init(this)
@@ -80,6 +94,12 @@ class LauncherServices {
             }
         )
 
+        baseInitDone = true
+    }
+
+    fun initDocker() {
+        dockerHttpClient?.close()
+
         val dockerClientConfig = DefaultDockerClientConfig.createDefaultConfigBuilder().build()
 
         val httpClient: DockerHttpClient = ApacheDockerHttpClient.Builder()
@@ -89,9 +109,16 @@ class LauncherServices {
             .connectionTimeout(Duration.ofMinutes(2))
             .responseTimeout(Duration.ofMinutes(10))
             .build()
+        dockerHttpClient = httpClient
 
         val dockerClient = DockerClientImpl.getInstance(dockerClientConfig, httpClient)
         this.dockerApi = DockerApi(dockerClient, httpClient)
+
+        try {
+            dockerClient.pingCmd().exec()
+        } catch (e: Exception) {
+            throw DockerNotAvailableException(e)
+        }
 
         actionsService = ActionsService()
         actionsService.register(AppImagePullAction(dockerApi, authSecretsService))
