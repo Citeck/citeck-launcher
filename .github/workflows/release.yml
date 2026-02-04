@@ -5,7 +5,7 @@ on:
     tags:
       - 'v*.*.*'
 env:
-  JAVA_VERSION: '21'
+  JAVA_VERSION: '25'
 
 jobs:
   build-linux:
@@ -17,12 +17,12 @@ jobs:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
       - run: chmod +x ./gradlew
-      - run: ./gradlew packageDist -PtargetOs=linux_x64
+      - run: ./gradlew :app:packageDist -PtargetOs=linux_x64
       - name: Upload DEB (Linux)
         uses: actions/upload-artifact@v4
         with:
           name: linux-deb
-          path: build/compose/binaries/main/deb/*.deb
+          path: app/build/compose/binaries/main/deb/*.deb
 
   build-windows:
     runs-on: windows-2025
@@ -32,12 +32,12 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
-      - run: .\gradlew.bat packageDist -PtargetOs=windows_x64
+      - run: .\gradlew.bat :app:packageDist -PtargetOs=windows_x64
       - name: Upload MSI (Windows)
         uses: actions/upload-artifact@v4
         with:
           name: windows-msi
-          path: build/compose/binaries/main/msi/*.msi
+          path: app/build/compose/binaries/main/msi/*.msi
 
   build-macos:
     runs-on: macos-15-intel # non-ARM
@@ -48,12 +48,12 @@ jobs:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
       - run: chmod +x ./gradlew
-      - run: ./gradlew packageDist -PtargetOs=macos_x64
+      - run: ./gradlew :app:packageDist -PtargetOs=macos_x64
       - name: Upload DMG (macOS)
         uses: actions/upload-artifact@v4
         with:
           name: macos-dmg
-          path: build/compose/binaries/main/dmg/*.dmg
+          path: app/build/compose/binaries/main/dmg/*.dmg
 
   build-macos-arm64:
     runs-on: macos-latest # ARM
@@ -64,12 +64,12 @@ jobs:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
       - run: chmod +x ./gradlew
-      - run: ./gradlew packageDist -PtargetOs=macos_arm64
+      - run: ./gradlew :app:packageDist -PtargetOs=macos_arm64
       - name: Upload DMG (macOS ARM)
         uses: actions/upload-artifact@v4
         with:
           name: macos-dmg-arm
-          path: build/compose/binaries/main/dmg/*.dmg
+          path: app/build/compose/binaries/main/dmg/*.dmg
 
   release:
     name: Create GitHub Release

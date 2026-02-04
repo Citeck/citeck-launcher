@@ -46,5 +46,8 @@ ktlint_function_naming_ignore_when_annotated_with = Composable
 [/build/**/*]
 ktlint = disabled
 
-[/src/**gtk/**]
+[/**/build/**/*]
+ktlint = disabled
+
+[/**/src/**gtk/**]
 ktlint_standard_function-naming = disabled
