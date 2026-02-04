@@ -1,0 +1,55 @@
+name: Release Server Binary
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Build web UI
+        run: cd web && pnpm install --frozen-lockfile && pnpm run build
+
+      - name: Embed web UI
+        run: rm -rf internal/daemon/webdist && cp -r web/dist internal/daemon/webdist
+
+      - name: Run Go tests
+        run: go test -race ./internal/...
+
+      - name: Run web tests
+        run: cd web && pnpm vitest run
+
+      - name: Build server binary
+        env:
+          VERSION_TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="${VERSION_TAG#v}"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.version=${VERSION}" -o "citeck_${VERSION}_linux_amd64" ./cmd/citeck
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: citeck_*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

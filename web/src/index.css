@@ -1,0 +1,116 @@
+@import "tailwindcss";
+
+@theme {
+  /* Darcula / Lens inspired palette (dark — default) */
+  --color-background: #1e1f22;
+  --color-foreground: #dfe1e5;
+  --color-muted: #2b2d30;
+  --color-muted-foreground: #9da0a8;
+  --color-card: #2b2d30;
+  --color-card-foreground: #dfe1e5;
+  --color-border: #43454a;
+  --color-primary: #4d9cf6;
+  --color-primary-foreground: #ffffff;
+  --color-destructive: #f75464;
+  --color-success: #5fad65;
+  --color-warning: #e8c44d;
+  --color-accent: #393b40;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* Smooth transitions on interactive elements */
+button, a, [role="button"] {
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+
+/* Focus-visible for keyboard accessibility */
+:focus-visible {
+  outline: 1.5px solid var(--color-primary);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+
+/* Selection */
+::selection {
+  background: color-mix(in srgb, var(--color-primary) 35%, transparent);
+}
+
+/* Light theme */
+[data-theme="light"] {
+  --color-background: #f0f1f3;
+  --color-foreground: #1e1e1e;
+  --color-muted: #e4e5e8;
+  --color-muted-foreground: #6e7078;
+  --color-card: #ffffff;
+  --color-card-foreground: #1e1e1e;
+  --color-border: #c9ccd1;
+  --color-primary: #2563eb;
+  --color-primary-foreground: #ffffff;
+  --color-destructive: #dc2626;
+  --color-success: #16a34a;
+  --color-warning: #ca8a04;
+  --color-accent: #ecedf0;
+}
+
+/* Respect OS preference on first visit */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --color-background: #f0f1f3;
+    --color-foreground: #1e1e1e;
+    --color-muted: #e4e5e8;
+    --color-muted-foreground: #6e7078;
+    --color-card: #ffffff;
+    --color-card-foreground: #1e1e1e;
+    --color-border: #c9ccd1;
+    --color-primary: #2563eb;
+    --color-primary-foreground: #ffffff;
+    --color-destructive: #dc2626;
+    --color-success: #16a34a;
+    --color-warning: #ca8a04;
+    --color-accent: #ecedf0;
+  }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-muted-foreground);
+}
+
+/* Hide scrollbar utility */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  scrollbar-width: none;
+}
+
+/* Dialog backdrop */
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+}

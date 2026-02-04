@@ -29,22 +29,10 @@ insert_final_newline = false
 
 indent_size = 2
 
-[*.{kt,kts}]
+[*.go]
 
-ktlint_code_style = intellij_idea
-ktlint_standard_no-wildcard-imports = disabled
-ktlint_standard_no-empty-first-line-in-method-block = disabled
-ktlint_standard_trailing-comma-on-declaration-site = disabled
-ktlint_standard_trailing-comma-on-call-site = disabled
-ktlint_standard_no-empty-first-line-in-method-block = disabled
-ktlint_standard_no-empty-first-line-in-class-body = disabled
-ktlint_standard_function-expression-body = disabled
-ktlint_standard_multiline-expression-wrapping = disabled
-ktlint_standard_spacing-between-declarations-with-annotations = disabled
-ktlint_function_naming_ignore_when_annotated_with = Composable
+indent_style = tab
 
-[/build/**/*]
-ktlint = disabled
+[*.{ts,tsx,js,jsx}]
 
-[/src/**gtk/**]
-ktlint_standard_function-naming = disabled
+indent_size = 2

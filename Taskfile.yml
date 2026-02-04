@@ -1,0 +1,69 @@
+version: '3'
+
+vars:
+  APP_NAME: citeck-desktop
+  BIN_DIR: bin
+
+includes:
+  linux:
+    taskfile: build/linux/Taskfile.yml
+    optional: true
+  windows:
+    taskfile: build/windows/Taskfile.yml
+    optional: true
+  darwin:
+    taskfile: build/darwin/Taskfile.yml
+    optional: true
+
+tasks:
+  build:
+    summary: Build the desktop application
+    cmds:
+      - task: build:frontend
+      - task: build:desktop
+    vars:
+      DEV: '{{.DEV | default "false"}}'
+
+  build:frontend:
+    summary: Build the web frontend
+    dir: web
+    cmds:
+      - npm ci --silent
+      - npm run build
+    sources:
+      - "src/**/*"
+      - "package.json"
+    generates:
+      - "dist/**/*"
+
+  build:desktop:
+    summary: Build the Go desktop binary
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - go build {{.BUILD_FLAGS}} -o {{.BIN_DIR}}/{{.APP_NAME}} ./cmd/citeck-desktop
+    vars:
+      BUILD_FLAGS: '{{if eq .DEV "true"}}-buildvcs=false -gcflags=all="-l"{{else}}-tags production -trimpath -buildvcs=false -ldflags="-w -s"{{end}}'
+      DEV: '{{.DEV | default "false"}}'
+    env:
+      CGO_ENABLED: 1
+
+  dev:
+    summary: Run in development mode (web dev server + Go binary)
+    cmds:
+      - task: build:desktop
+        vars:
+          DEV: "true"
+      - '{{.BIN_DIR}}/{{.APP_NAME}}'
+    env:
+      FRONTEND_DEVSERVER_URL: http://localhost:5173
+
+  run:
+    summary: Run the built application
+    cmds:
+      - '{{.BIN_DIR}}/{{.APP_NAME}}'
+
+  clean:
+    summary: Clean build artifacts
+    cmds:
+      - rm -rf {{.BIN_DIR}}
+      - rm -rf web/dist

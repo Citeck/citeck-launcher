@@ -1,0 +1,347 @@
+package h2migrate
+
+import (
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/citeck/citeck-launcher/internal/storage"
+	"gopkg.in/yaml.v3"
+)
+
+// MigrateResult holds the result of an H2 → SQLite migration.
+type MigrateResult struct {
+	Workspaces int `json:"workspaces"`
+	Namespaces int `json:"namespaces"`
+	Secrets    int `json:"secrets"`
+	Errors     int `json:"errors"`
+}
+
+// NeedsMigration checks if migration is needed:
+// storage.db exists but launcher.db does not.
+// Returns (true, nil) if migration needed, (false, nil) if not, (false, err) on access problems.
+func NeedsMigration(homeDir string) (bool, error) {
+	h2Path := filepath.Join(homeDir, "storage.db")
+	sqlitePath := filepath.Join(homeDir, "launcher.db")
+
+	_, h2Err := os.Stat(h2Path)
+	if h2Err != nil {
+		if os.IsNotExist(h2Err) {
+			return false, nil // no H2 database
+		}
+		return false, fmt.Errorf("check h2 database: %w", h2Err)
+	}
+
+	_, sqliteErr := os.Stat(sqlitePath)
+	if sqliteErr == nil {
+		return false, nil // SQLite already exists
+	}
+	if !os.IsNotExist(sqliteErr) {
+		return false, fmt.Errorf("check sqlite database: %w", sqliteErr)
+	}
+
+	return true, nil // H2 exists, SQLite doesn't
+}
+
+// Migrate reads data from H2 MVStore (storage.db) and writes it to a SQLite store.
+// It also creates namespace.yml files in the workspace directory structure.
+func Migrate(homeDir string, store storage.Store) (*MigrateResult, error) {
+	h2Path := filepath.Join(homeDir, "storage.db")
+	result := &MigrateResult{}
+
+	slog.Info("Starting H2 → SQLite migration", "source", h2Path)
+
+	mvs, err := OpenMVStore(h2Path)
+	if err != nil {
+		return result, fmt.Errorf("open h2 database: %w", err)
+	}
+	defer mvs.Close()
+
+	// List all maps to understand what data exists
+	mapNames, err := mvs.ListMapNames()
+	if err != nil {
+		slog.Warn("Failed to list map names, trying filesystem fallback", "err", err)
+		return migrateFromFilesystem(homeDir, store)
+	}
+
+	slog.Info("H2 maps found", "count", len(mapNames), "names", mapNames)
+
+	// Extract workspaces
+	migrateWorkspaces(mvs, mapNames, store, result)
+
+	// Extract secrets/auth
+	migrateSecrets(mvs, mapNames, store, result)
+
+	// Migrate namespace configs from workspace directories (they're already YAML files)
+	if err := migrateNamespaceConfigs(homeDir, result); err != nil {
+		slog.Error("Namespace config migration failed", "err", err)
+		result.Errors++
+	}
+
+	slog.Info("Migration complete", "result", result)
+	return result, nil
+}
+
+// migrateWorkspaces extracts workspace entities from H2 maps.
+func migrateWorkspaces(mvs *MVStore, mapNames []string, store storage.Store, result *MigrateResult) {
+	// Workspace entities are stored in maps named like "entities!workspace"
+	for _, name := range mapNames {
+		if !strings.Contains(name, "workspace") {
+			continue
+		}
+
+		entries, err := mvs.ReadMap(name)
+		if err != nil {
+			slog.Warn("Failed to read map", "name", name, "err", err)
+			continue
+		}
+
+		for id, data := range entries {
+			ws, err := parseWorkspaceJSON(id, data)
+			if err != nil {
+				slog.Warn("Failed to parse workspace", "id", id, "err", err)
+				continue
+			}
+			if err := store.SaveWorkspace(*ws); err != nil {
+				slog.Warn("Failed to save workspace", "id", ws.ID, "err", err)
+				continue
+			}
+			result.Workspaces++
+			slog.Info("Migrated workspace", "id", ws.ID, "name", ws.Name)
+		}
+	}
+}
+
+// migrateSecrets extracts auth/secret data from H2 maps.
+func migrateSecrets(mvs *MVStore, mapNames []string, store storage.Store, result *MigrateResult) {
+	// Auth data is stored in maps named like "auth" or containing "secret"
+	for _, name := range mapNames {
+		if !strings.Contains(name, "auth") && !strings.Contains(name, "secret") {
+			continue
+		}
+
+		entries, err := mvs.ReadMap(name)
+		if err != nil {
+			slog.Warn("Failed to read secret map", "name", name, "err", err)
+			continue
+		}
+
+		for id, data := range entries {
+			secret, err := parseSecretJSON(id, data)
+			if err != nil {
+				slog.Warn("Failed to parse secret", "id", id, "err", err)
+				continue
+			}
+			if err := store.SaveSecret(*secret); err != nil {
+				slog.Warn("Failed to save secret", "id", secret.ID, "err", err)
+				continue
+			}
+			result.Secrets++
+			slog.Info("Migrated secret", "id", secret.ID, "type", secret.Type)
+		}
+	}
+}
+
+// migrateNamespaceConfigs ensures namespace YAML configs exist in the workspace dir structure.
+// The Kotlin app stores them via the entity system, but the actual YAML generation happens
+// when the namespace is created. If namespace.yml files already exist in ws/{id}/ns/{id}/,
+// they don't need migration.
+func migrateNamespaceConfigs(homeDir string, result *MigrateResult) error {
+	wsDir := filepath.Join(homeDir, "ws")
+	entries, err := os.ReadDir(wsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read workspaces dir: %w", err)
+	}
+
+	for _, wsEntry := range entries {
+		if !wsEntry.IsDir() {
+			continue
+		}
+
+		nsDir := filepath.Join(wsDir, wsEntry.Name(), "ns")
+		nsEntries, err := os.ReadDir(nsDir)
+		if err != nil {
+			continue
+		}
+
+		for _, nsEntry := range nsEntries {
+			if !nsEntry.IsDir() {
+				continue
+			}
+
+			configPath := filepath.Join(nsDir, nsEntry.Name(), "namespace.yml")
+			if _, err := os.Stat(configPath); err == nil {
+				result.Namespaces++
+				slog.Info("Found namespace config", "ws", wsEntry.Name(), "ns", nsEntry.Name())
+			}
+		}
+	}
+	return nil
+}
+
+// migrateFromFilesystem is a fallback that creates workspace records and stub namespace.yml
+// files from the directory structure when the H2 file can't be parsed.
+func migrateFromFilesystem(homeDir string, store storage.Store) (*MigrateResult, error) {
+	result := &MigrateResult{}
+	slog.Info("Using filesystem fallback migration")
+
+	wsDir := filepath.Join(homeDir, "ws")
+	entries, err := os.ReadDir(wsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return result, nil
+		}
+		return result, fmt.Errorf("read workspaces dir: %w", err)
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		wsID := entry.Name()
+
+		// Check if workspace has a namespace dir (valid workspace)
+		nsDir := filepath.Join(wsDir, wsID, "ns")
+		if _, err := os.Stat(nsDir); err != nil {
+			continue
+		}
+
+		ws := storage.WorkspaceDto{
+			ID:   wsID,
+			Name: wsID,
+		}
+		if err := store.SaveWorkspace(ws); err != nil {
+			slog.Warn("Failed to save workspace", "id", wsID, "err", err)
+			result.Errors++
+			continue
+		}
+		result.Workspaces++
+
+		// Read default bundleRef from workspace-v1.yml template (if available)
+		defaultBundleRef := ""
+		wsCfgPath := filepath.Join(wsDir, wsID, "repo", "workspace-v1.yml")
+		if data, err := os.ReadFile(wsCfgPath); err == nil { //nolint:gosec // G304: wsCfgPath is constructed from internal workspace dir
+			defaultBundleRef = extractDefaultBundleRef(data)
+		}
+
+		// Create stub namespace.yml for namespaces that don't have one
+		nsEntries, err := os.ReadDir(nsDir)
+		if err != nil {
+			continue
+		}
+		for _, ns := range nsEntries {
+			if !ns.IsDir() {
+				continue
+			}
+			nsID := ns.Name()
+			nsConfigPath := filepath.Join(nsDir, nsID, "namespace.yml")
+			if _, err := os.Stat(nsConfigPath); err == nil {
+				result.Namespaces++ // already has config
+				continue
+			}
+			// Create minimal namespace.yml so the launcher can manage this namespace
+			stub := fmt.Sprintf("id: %s\nname: %s\n", nsID, nsID)
+			if defaultBundleRef != "" {
+				stub += fmt.Sprintf("bundleRef: '%s'\n", defaultBundleRef)
+			}
+			if err := os.WriteFile(nsConfigPath, []byte(stub), 0o644); err != nil { //nolint:gosec // config file needs to be readable
+				slog.Warn("Failed to create namespace config", "ns", nsID, "err", err)
+				result.Errors++
+				continue
+			}
+			result.Namespaces++
+			slog.Info("Created stub namespace config", "ws", wsID, "ns", nsID, "bundleRef", defaultBundleRef)
+		}
+	}
+
+	return result, nil
+}
+
+// extractDefaultBundleRef reads the first namespaceTemplate bundleRef from workspace-v1.yml.
+func extractDefaultBundleRef(data []byte) string {
+	// Simple YAML extraction without full unmarshal
+	var cfg struct {
+		NamespaceTemplates []struct {
+			Config struct {
+				BundleRef string `yaml:"bundleRef"`
+			} `yaml:"config"`
+		} `yaml:"namespaceTemplates"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return ""
+	}
+	for _, t := range cfg.NamespaceTemplates {
+		if t.Config.BundleRef != "" {
+			return t.Config.BundleRef
+		}
+	}
+	return ""
+}
+
+// parseWorkspaceJSON parses a workspace entity from Jackson JSON bytes.
+func parseWorkspaceJSON(id string, data []byte) (*storage.WorkspaceDto, error) {
+	// Kotlin stores workspace data as Jackson JSON
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("unmarshal workspace %s: %w", id, err)
+	}
+
+	ws := &storage.WorkspaceDto{ID: id}
+
+	if name, ok := raw["name"].(string); ok {
+		ws.Name = name
+	}
+	if repoURL, ok := raw["repoUrl"].(string); ok {
+		ws.RepoURL = repoURL
+	}
+	if repoBranch, ok := raw["repoBranch"].(string); ok {
+		ws.RepoBranch = repoBranch
+	}
+
+	if ws.Name == "" {
+		ws.Name = id
+	}
+
+	return ws, nil
+}
+
+// parseSecretJSON parses a secret/auth entry from Jackson JSON bytes.
+func parseSecretJSON(id string, data []byte) (*storage.Secret, error) {
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("unmarshal secret %s: %w", id, err)
+	}
+
+	secret := &storage.Secret{
+		SecretMeta: storage.SecretMeta{
+			ID:   id,
+			Name: id,
+		},
+	}
+
+	if name, ok := raw["name"].(string); ok && name != "" {
+		secret.Name = name
+	}
+	if typ, ok := raw["type"].(string); ok {
+		secret.Type = storage.SecretType(typ)
+	}
+	if value, ok := raw["value"].(string); ok {
+		secret.Value = value
+	}
+	if token, ok := raw["token"].(string); ok && secret.Value == "" {
+		secret.Value = token
+		secret.Type = storage.SecretGitToken
+	}
+	if password, ok := raw["password"].(string); ok && secret.Value == "" {
+		secret.Value = password
+		secret.Type = storage.SecretBasicAuth
+	}
+
+	return secret, nil
+}

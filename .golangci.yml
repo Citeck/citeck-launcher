@@ -1,0 +1,81 @@
+version: "2"
+linters:
+  default: none
+  enable:
+    - dupl
+    - gochecknoinits
+    - gocritic
+    - gocyclo
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - nakedret
+    - prealloc
+    - revive
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+    - nestif
+    - testifylint
+    - wrapcheck
+    - errorlint
+    - modernize
+  settings:
+    gocritic:
+      disabled-checks:
+        - wrapperFunc
+        - hugeParam
+        - rangeValCopy
+        - singleCaseSwitch
+        - ifElseChain
+      enabled-tags:
+        - performance
+        - style
+        - experimental
+    gosec:
+      excludes:
+        - G104  # "Errors unhandled" — too noisy for cleanup (Close, Remove, MkdirAll)
+    govet:
+      enable:
+        - shadow
+    lll:
+      line-length: 140
+    misspell:
+      locale: US
+  exclusions:
+    generated: lax
+    rules:
+      - linters:
+          - staticcheck
+        text: at least one file in a package should have a package comment
+      - linters:
+          - revive
+        text: should have a package comment
+      - linters:
+          - revive
+        text: "var-naming: avoid meaningless package names"
+      - linters:
+          - dupl
+          - gosec
+        path: _test\.go
+      - linters:
+          - revive
+          - unparam
+          - unused
+        path: _test\.go$
+        text: unused-parameter
+      - linters:
+          - revive
+        text: unused-parameter
+        path: internal/cli/
+      - linters:
+          - revive
+        text: unused-parameter
+        path: internal/daemon/
+    paths:
+      - vendor
+      - third_party$
+      - builtin$
+      - node_modules

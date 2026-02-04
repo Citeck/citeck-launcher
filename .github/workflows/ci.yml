@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [master, "release/**"]
+  pull_request:
+    branches: [master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Go vet
+        run: |
+          mkdir -p internal/daemon/webdist
+          echo '<html></html>' > internal/daemon/webdist/index.html
+          go vet ./internal/... ./cmd/citeck/...
+
+      - name: Go lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.7.2
+
+      - name: Go tests (race detector)
+        run: go test -race ./internal/...
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Web UI tests
+        run: cd web && pnpm install --frozen-lockfile && pnpm vitest run
+
+      - name: Build server binary
+        run: |
+          cd web && pnpm run build && cd ..
+          rm -rf internal/daemon/webdist && cp -r web/dist internal/daemon/webdist
+          CGO_ENABLED=0 go build -o citeck ./cmd/citeck

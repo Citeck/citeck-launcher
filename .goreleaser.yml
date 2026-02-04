@@ -1,0 +1,50 @@
+# NOTE: Not used by current release workflow (release-go.yml builds manually).
+# Kept for future multi-platform desktop release.
+version: 2
+
+before:
+  hooks:
+    - cmd: cd web && pnpm install --frozen-lockfile && pnpm run build
+    - cmd: rm -rf internal/daemon/webdist && cp -r web/dist internal/daemon/webdist
+
+builds:
+  - id: citeck
+    main: ./cmd/citeck
+    binary: citeck
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos:
+      - linux
+      # - darwin   # TODO: enable for desktop release
+      # - windows  # TODO: enable for desktop release
+    goarch:
+      - amd64
+      # - arm64  # TODO: enable when needed
+    env:
+      - CGO_ENABLED=0
+
+archives:
+  - id: citeck
+    builds:
+      - citeck
+    name_template: "citeck_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  github:
+    owner: citeck
+    name: citeck-launcher
+  draft: true

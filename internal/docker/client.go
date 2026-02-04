@@ -1,0 +1,781 @@
+package docker
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/registry"
+	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/docker/go-connections/nat"
+	"github.com/citeck/citeck-launcher/internal/appdef"
+)
+
+// Labels used to track Citeck containers.
+// These must match the Kotlin desktop app labels (DockerLabels.kt) for backward compatibility.
+const (
+	LabelLauncher    = "citeck.launcher"           // marker label, always "true"
+	LabelWorkspace   = "citeck.launcher.workspace"
+	LabelNamespace   = "citeck.launcher.namespace"
+	LabelAppName     = "citeck.launcher.app.name"  // Kotlin: DockerLabels.APP_NAME
+	LabelAppHash     = "citeck.launcher.app.hash"  // Kotlin: DockerLabels.APP_HASH
+	LabelOrigName    = "citeck.launcher.original-name"
+	LabelComposeProj = "com.docker.compose.project" // Docker Desktop grouping
+)
+
+// Client wraps the Docker SDK client with Citeck-specific operations.
+type Client struct {
+	cli       *client.Client
+	workspace string // empty in server mode, set in desktop mode for Kotlin compat
+	namespace string
+}
+
+// NewClient creates a Docker client.
+// workspace is used in container/network names for desktop mode backward compatibility.
+// Pass "" for server mode (names become citeck_{app}_{ns}).
+func NewClient(workspace, namespace string) (*Client, error) {
+	opts := []client.Opt{client.FromEnv, client.WithAPIVersionNegotiation()}
+
+	// If DOCKER_HOST is not set, try common socket locations
+	if os.Getenv("DOCKER_HOST") == "" {
+		socketPath := detectDockerSocket()
+		if socketPath != "" {
+			opts = append(opts, client.WithHost("unix://"+socketPath))
+		}
+	}
+
+	cli, err := client.NewClientWithOpts(opts...)
+	if err != nil {
+		return nil, fmt.Errorf("create docker client: %w", err)
+	}
+	return &Client{cli: cli, workspace: workspace, namespace: namespace}, nil
+}
+
+// detectDockerSocket finds the Docker socket in common locations.
+func detectDockerSocket() string {
+	candidates := []string{
+		"/var/run/docker.sock",
+		fmt.Sprintf("/run/user/%d/docker.sock", os.Getuid()),
+		os.Getenv("HOME") + "/.docker/desktop/docker.sock",
+	}
+	for _, path := range candidates {
+		if fi, err := os.Stat(path); err == nil && fi.Mode()&os.ModeSocket != 0 { //nolint:gosec // hardcoded socket paths
+			return path
+		}
+	}
+	return ""
+}
+
+// Close releases the Docker client connection.
+func (c *Client) Close() error {
+	return c.cli.Close() //nolint:wrapcheck // transparent close
+}
+
+// Ping checks Docker connectivity.
+func (c *Client) Ping(ctx context.Context) error {
+	if _, err := c.cli.Ping(ctx); err != nil {
+		return fmt.Errorf("docker ping: %w", err)
+	}
+	return nil
+}
+
+// ContainerName generates the Docker container name.
+// Server mode (workspace=""): citeck_{app}_{ns}
+// Desktop mode (workspace set): citeck_{app}_{ns}_{ws} (Kotlin backward compat)
+func (c *Client) ContainerName(appName string) string {
+	if c.workspace == "" {
+		return fmt.Sprintf("citeck_%s_%s", appName, c.namespace)
+	}
+	return fmt.Sprintf("citeck_%s_%s_%s", appName, c.namespace, c.workspace)
+}
+
+// NetworkName returns the Docker network name for this namespace.
+func (c *Client) NetworkName() string {
+	if c.workspace == "" {
+		return fmt.Sprintf("citeck_network_%s", c.namespace)
+	}
+	return fmt.Sprintf("citeck_network_%s_%s", c.namespace, c.workspace)
+}
+
+func (c *Client) composeProject() string {
+	if c.workspace == "" {
+		return fmt.Sprintf("citeck_launcher_%s", c.namespace)
+	}
+	return fmt.Sprintf("citeck_launcher_%s_%s", c.namespace, c.workspace)
+}
+
+// CreateNetwork creates a bridge network for the namespace.
+func (c *Client) CreateNetwork(ctx context.Context) (string, error) {
+	name := c.NetworkName()
+
+	// Check if exists
+	networks, err := c.cli.NetworkList(ctx, network.ListOptions{
+		Filters: filters.NewArgs(filters.Arg("name", name)),
+	})
+	if err != nil {
+		return "", fmt.Errorf("list networks: %w", err)
+	}
+	for _, n := range networks {
+		if n.Name == name {
+			return n.ID, nil
+		}
+	}
+
+	resp, err := c.cli.NetworkCreate(ctx, name, network.CreateOptions{
+		Driver: "bridge",
+		Labels: map[string]string{
+			LabelLauncher:  "true",
+			LabelWorkspace: c.workspace,
+			LabelNamespace: c.namespace,
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("create network %s: %w", name, err)
+	}
+	return resp.ID, nil
+}
+
+// RemoveNetwork removes the namespace network.
+func (c *Client) RemoveNetwork(ctx context.Context) error {
+	if err := c.cli.NetworkRemove(ctx, c.NetworkName()); err != nil {
+		return fmt.Errorf("remove network %s: %w", c.NetworkName(), err)
+	}
+	return nil
+}
+
+// RemoveNetworkByName removes a Docker network by its exact name.
+func (c *Client) RemoveNetworkByName(ctx context.Context, name string) error {
+	if err := c.cli.NetworkRemove(ctx, name); err != nil {
+		return fmt.Errorf("remove network %s: %w", name, err)
+	}
+	return nil
+}
+
+// ListLauncherNetworks returns networks with the citeck.launcher label.
+func (c *Client) ListLauncherNetworks(ctx context.Context) ([]network.Summary, error) {
+	result, err := c.cli.NetworkList(ctx, network.ListOptions{
+		Filters: filters.NewArgs(filters.Arg("label", LabelLauncher+"=true")),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list launcher networks: %w", err)
+	}
+	return result, nil
+}
+
+// CreateContainer creates a container from an ApplicationDef.
+func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef, volumesBaseDir string) (string, error) {
+	containerName := c.ContainerName(app.Name)
+	networkName := c.NetworkName()
+
+	// Environment
+	env := make([]string, 0, len(app.Environments))
+	for k, v := range app.Environments {
+		env = append(env, k+"="+v)
+	}
+
+	// Port bindings
+	exposedPorts := nat.PortSet{}
+	portBindings := nat.PortMap{}
+	for _, p := range app.Ports {
+		parts := strings.SplitN(p, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		hostPort := parts[0]
+		containerPort := nat.Port(parts[1] + "/tcp")
+		exposedPorts[containerPort] = struct{}{}
+		portBindings[containerPort] = []nat.PortBinding{{HostPort: hostPort}}
+	}
+
+	// Volumes (binds)
+	// Named volumes (e.g. "mongo2:/data/db") are converted to bind mounts
+	// at {volumesBaseDir}/{name} so data stays in the runtime directory.
+	binds := make([]string, 0, len(app.Volumes))
+	for _, v := range app.Volumes {
+		parts := strings.SplitN(v, ":", 2)
+		if len(parts) == 2 { //nolint:nestif // volume source resolution logic
+			source := parts[0]
+			if strings.HasPrefix(source, "./") && volumesBaseDir != "" {
+				// Relative path — resolve against volumesBase.
+				// Ensure the parent directory exists so Docker doesn't create
+				// a directory at the file path (its default for missing bind sources).
+				hostPath := filepath.Join(volumesBaseDir, source[2:])
+				if err := os.MkdirAll(filepath.Dir(hostPath), 0o755); err != nil { //nolint:gosec // Docker bind-mount dirs need container-accessible perms
+					return "", fmt.Errorf("create bind-mount directory %s: %w", filepath.Dir(hostPath), err)
+				}
+				v = hostPath + ":" + parts[1]
+			} else if !strings.ContainsAny(source, "/.") && volumesBaseDir != "" && !config.IsDesktopMode() {
+				// Server mode: convert named volume to bind mount in runtime dir.
+				// Desktop mode keeps Docker named volumes (compatible with Kotlin launcher).
+				hostDir := filepath.Join(volumesBaseDir, "volumes", source)
+				if err := os.MkdirAll(hostDir, 0o755); err != nil { //nolint:gosec // Docker bind-mount dirs need container-accessible perms
+					return "", fmt.Errorf("create bind-mount directory %s: %w", hostDir, err)
+				}
+				v = hostDir + ":" + parts[1]
+			}
+		}
+		binds = append(binds, v)
+	}
+
+	// Labels (must match Kotlin DockerLabels for backward compatibility)
+	labels := map[string]string{
+		LabelLauncher:    "true",
+		LabelWorkspace:   c.namespace, // legacy label, uses namespace as value
+		LabelNamespace:   c.namespace,
+		LabelAppName:     app.Name,
+		LabelAppHash:     app.GetHash(),
+		LabelComposeProj: c.composeProject(),
+	}
+
+	// Memory limit
+	var memoryBytes int64
+	if app.Resources != nil && app.Resources.Limits.Memory != "" {
+		memoryBytes = parseMemory(app.Resources.Limits.Memory)
+	}
+
+	// SHM size
+	var shmSize int64
+	if app.ShmSize != "" {
+		shmSize = parseMemory(app.ShmSize)
+	}
+
+	ctrConfig := &container.Config{
+		Image:        app.Image,
+		Env:          env,
+		Cmd:          app.Cmd,
+		ExposedPorts: exposedPorts,
+		Labels:       labels,
+	}
+
+	// Init containers should not have a restart policy — only main containers
+	restartPolicy := container.RestartPolicy{Name: container.RestartPolicyUnlessStopped}
+	if app.IsInit {
+		restartPolicy = container.RestartPolicy{Name: container.RestartPolicyDisabled}
+	}
+
+	hostConfig := &container.HostConfig{
+		Binds:         binds,
+		PortBindings:  portBindings,
+		NetworkMode:   container.NetworkMode(networkName),
+		RestartPolicy: restartPolicy,
+		LogConfig: container.LogConfig{
+			Type: "json-file",
+			Config: map[string]string{
+				"max-size": "50m",
+				"max-file": "3",
+			},
+		},
+	}
+	if memoryBytes > 0 {
+		hostConfig.Memory = memoryBytes
+	}
+	if shmSize > 0 {
+		hostConfig.ShmSize = shmSize
+	}
+
+	// Network aliases: app name + any additional aliases
+	aliases := make([]string, 0, 1+len(app.NetworkAliases))
+	aliases = append(aliases, app.Name)
+	aliases = append(aliases, app.NetworkAliases...)
+
+	networkConfig := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			networkName: {
+				Aliases: aliases,
+			},
+		},
+	}
+
+	resp, err := c.cli.ContainerCreate(ctx, ctrConfig, hostConfig, networkConfig, nil, containerName)
+	if err != nil {
+		return "", fmt.Errorf("create container %s: %w", containerName, err)
+	}
+
+	return resp.ID, nil
+}
+
+// StartContainer starts a container by ID.
+func (c *Client) StartContainer(ctx context.Context, id string) error {
+	if err := c.cli.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
+		return fmt.Errorf("start container %s: %w", id, err)
+	}
+	return nil
+}
+
+// StopContainer stops a container with a timeout.
+func (c *Client) StopContainer(ctx context.Context, id string, timeoutSec int) error {
+	timeout := timeoutSec
+	if err := c.cli.ContainerStop(ctx, id, container.StopOptions{Timeout: &timeout}); err != nil {
+		return fmt.Errorf("stop container %s: %w", id, err)
+	}
+	return nil
+}
+
+// RemoveContainer removes a container.
+func (c *Client) RemoveContainer(ctx context.Context, id string) error {
+	if err := c.cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true}); err != nil {
+		return fmt.Errorf("remove container %s: %w", id, err)
+	}
+	return nil
+}
+
+// StopAndRemoveContainer stops and removes a container by name.
+// timeoutSec is the stop timeout in seconds; 0 uses default (10s).
+func (c *Client) StopAndRemoveContainer(ctx context.Context, name string, timeoutSec int) error {
+	if timeoutSec <= 0 {
+		timeoutSec = 10
+	}
+	if err := c.StopContainer(ctx, name, timeoutSec); err != nil {
+		slog.Debug("stop container", "name", name, "err", err)
+	}
+	return c.RemoveContainer(ctx, name)
+}
+
+// GetContainers returns containers for this namespace.
+func (c *Client) GetContainers(ctx context.Context) ([]container.Summary, error) {
+	result, err := c.cli.ContainerList(ctx, container.ListOptions{
+		All: true,
+		Filters: filters.NewArgs(
+			filters.Arg("label", LabelNamespace+"="+c.namespace),
+		),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list containers: %w", err)
+	}
+	return result, nil
+}
+
+// ListAllLauncherContainers returns ALL containers with the citeck.launcher label,
+// regardless of workspace/namespace. Used by the clean command to find orphans.
+func (c *Client) ListAllLauncherContainers(ctx context.Context) ([]container.Summary, error) {
+	result, err := c.cli.ContainerList(ctx, container.ListOptions{
+		All: true,
+		Filters: filters.NewArgs(
+			filters.Arg("label", LabelLauncher+"=true"),
+		),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list all launcher containers: %w", err)
+	}
+	return result, nil
+}
+
+// CleanupStaleContainers stops and removes all containers from this namespace.
+// Used at startup to clear leftovers from a previous daemon run.
+func (c *Client) CleanupStaleContainers(ctx context.Context) {
+	containers, err := c.GetContainers(ctx)
+	if err != nil {
+		return
+	}
+	for _, ctr := range containers {
+		if len(ctr.Names) == 0 {
+			continue
+		}
+		name := strings.TrimPrefix(ctr.Names[0], "/")
+		slog.Info("Removing stale container", "name", name)
+		_ = c.StopAndRemoveContainer(ctx, name, 0)
+	}
+}
+
+// InspectContainer returns container details.
+func (c *Client) InspectContainer(ctx context.Context, id string) (container.InspectResponse, error) {
+	return c.cli.ContainerInspect(ctx, id) //nolint:wrapcheck // thin Docker SDK wrapper
+}
+
+// RegistryAuth holds credentials for a Docker registry.
+type RegistryAuth struct {
+	Username string
+	Password string
+	Registry string // e.g. "https://harbor.citeck.ru"
+}
+
+// PullImage pulls a Docker image, optionally with registry credentials.
+func (c *Client) PullImage(ctx context.Context, img string, auth *RegistryAuth) error {
+	return c.PullImageWithProgress(ctx, img, auth, nil)
+}
+
+// PullProgressFn is called during image pull with current/total bytes and percentage.
+type PullProgressFn func(currentMB, totalMB float64, pct int)
+
+// PullImageWithProgress pulls an image and reports download progress via callback.
+func (c *Client) PullImageWithProgress(ctx context.Context, img string, auth *RegistryAuth, progressFn PullProgressFn) error {
+	opts := image.PullOptions{}
+	if auth != nil && auth.Username != "" {
+		authCfg := registry.AuthConfig{
+			Username:      auth.Username,
+			Password:      auth.Password,
+			ServerAddress: auth.Registry,
+		}
+		encoded, err := registry.EncodeAuthConfig(authCfg)
+		if err != nil {
+			return fmt.Errorf("encode auth for %s: %w", img, err)
+		}
+		opts.RegistryAuth = encoded
+	}
+	reader, err := c.cli.ImagePull(ctx, img, opts)
+	if err != nil {
+		return fmt.Errorf("pull image %s: %w", img, err)
+	}
+	defer reader.Close()
+
+	if progressFn == nil {
+		_, err = io.Copy(io.Discard, reader)
+		return err //nolint:wrapcheck // transparent I/O drain
+	}
+
+	return parsePullProgress(reader, progressFn)
+}
+
+// ContainerLogsFollow returns a streaming reader for container logs with follow=true.
+// The caller must close the returned reader.
+func (c *Client) ContainerLogsFollow(ctx context.Context, containerID string, tail int) (io.ReadCloser, error) {
+	return c.cli.ContainerLogs(ctx, containerID, container.LogsOptions{ //nolint:wrapcheck // thin Docker SDK wrapper
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     true,
+		Tail:       fmt.Sprintf("%d", tail),
+	})
+}
+
+// ImageExists checks if an image exists locally.
+func (c *Client) ImageExists(ctx context.Context, img string) bool {
+	_, err := c.cli.ImageInspect(ctx, img)
+	return err == nil
+}
+
+// GetImageDigest returns the RepoDigest for a locally available image.
+// Returns empty string if the image is not found or has no digest.
+func (c *Client) GetImageDigest(ctx context.Context, img string) string {
+	inspect, err := c.cli.ImageInspect(ctx, img)
+	if err != nil {
+		return ""
+	}
+	if len(inspect.RepoDigests) > 0 {
+		return inspect.RepoDigests[0]
+	}
+	return ""
+}
+
+// PruneUnusedImages removes dangling images and returns space reclaimed in bytes.
+func (c *Client) PruneUnusedImages(ctx context.Context) (uint64, error) {
+	report, err := c.cli.ImagesPrune(ctx, filters.NewArgs(filters.Arg("dangling", "true")))
+	if err != nil {
+		return 0, fmt.Errorf("prune images: %w", err)
+	}
+	return report.SpaceReclaimed, nil
+}
+
+// parsePullProgress reads Docker pull JSON stream and reports aggregated progress.
+func parsePullProgress(reader io.Reader, progressFn PullProgressFn) error {
+	type pullEvent struct {
+		Status         string `json:"status"`
+		ProgressDetail struct {
+			Current int64 `json:"current"`
+			Total   int64 `json:"total"`
+		} `json:"progressDetail"`
+		ID    string `json:"id"`
+		Error string `json:"error"`
+	}
+
+	layerCurrent := make(map[string]int64)
+	layerTotal := make(map[string]int64)
+	scanner := bufio.NewScanner(reader)
+	for scanner.Scan() {
+		var evt pullEvent
+		if err := json.Unmarshal(scanner.Bytes(), &evt); err != nil {
+			continue
+		}
+		if evt.Error != "" {
+			return fmt.Errorf("docker pull error: %s", evt.Error)
+		}
+		if evt.ID != "" && evt.ProgressDetail.Total > 0 {
+			layerCurrent[evt.ID] = evt.ProgressDetail.Current
+			layerTotal[evt.ID] = evt.ProgressDetail.Total
+		}
+
+		var totalBytes, currentBytes int64
+		for id, t := range layerTotal {
+			totalBytes += t
+			currentBytes += layerCurrent[id]
+		}
+		if totalBytes > 0 {
+			const mb = 1024 * 1024
+			pct := int(currentBytes * 100 / totalBytes)
+			progressFn(float64(currentBytes)/float64(mb), float64(totalBytes)/float64(mb), pct)
+		}
+	}
+	return scanner.Err() //nolint:wrapcheck // transparent scanner error
+}
+
+// ContainerLogs returns logs from a container.
+func (c *Client) ContainerLogs(ctx context.Context, containerID string, tail int) (string, error) {
+	reader, err := c.cli.ContainerLogs(ctx, containerID, container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Tail:       fmt.Sprintf("%d", tail),
+	})
+	if err != nil {
+		return "", err //nolint:wrapcheck // thin Docker SDK wrapper
+	}
+	defer reader.Close()
+
+	// Use stdcopy to properly demultiplex Docker log stream headers
+	var stdout, stderr strings.Builder
+	_, err = stdcopy.StdCopy(&stdout, &stderr, reader)
+	if err != nil {
+		// Fallback: some containers use TTY mode (no multiplex headers)
+		reader2, err2 := c.cli.ContainerLogs(ctx, containerID, container.LogsOptions{
+			ShowStdout: true, ShowStderr: true, Tail: fmt.Sprintf("%d", tail),
+		})
+		if err2 != nil {
+			return "", err2 //nolint:wrapcheck // thin Docker SDK wrapper
+		}
+		defer reader2.Close()
+		data, _ := io.ReadAll(io.LimitReader(reader2, 50*1024*1024)) // 50MB cap
+		return string(data), nil
+	}
+
+	result := stdout.String()
+	if s := stderr.String(); s != "" {
+		result += s
+	}
+	return result, nil
+}
+
+// ExecInContainer runs a command inside a running container.
+func (c *Client) ExecInContainer(ctx context.Context, containerID string, cmd []string) (output string, exitCode int, err error) {
+	execConfig := container.ExecOptions{
+		Cmd:          cmd,
+		AttachStdout: true,
+		AttachStderr: true,
+	}
+
+	execResp, err := c.cli.ContainerExecCreate(ctx, containerID, execConfig)
+	if err != nil {
+		return "", -1, err //nolint:wrapcheck // thin Docker SDK wrapper
+	}
+
+	attachResp, err := c.cli.ContainerExecAttach(ctx, execResp.ID, container.ExecStartOptions{})
+	if err != nil {
+		return "", -1, err //nolint:wrapcheck // thin Docker SDK wrapper
+	}
+	defer attachResp.Close()
+
+	// Demultiplex exec output
+	var stdout, stderr strings.Builder
+	_, err = stdcopy.StdCopy(&stdout, &stderr, attachResp.Reader)
+	if err != nil {
+		// Fallback for TTY-mode exec
+		data, _ := io.ReadAll(attachResp.Reader)
+		output = string(data)
+		inspectResp, _ := c.cli.ContainerExecInspect(ctx, execResp.ID)
+		return output, inspectResp.ExitCode, nil
+	}
+
+	output = stdout.String() + stderr.String()
+
+	// Get exit code
+	inspectResp, err := c.cli.ContainerExecInspect(ctx, execResp.ID)
+	if err != nil {
+		return output, -1, err //nolint:wrapcheck // thin Docker SDK wrapper
+	}
+
+	return output, inspectResp.ExitCode, nil
+}
+
+// GetPublishedPort returns the host port for a container's exposed port.
+func (c *Client) GetPublishedPort(ctx context.Context, containerID string, containerPort int) int {
+	inspect, err := c.cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return -1
+	}
+	for port, bindings := range inspect.NetworkSettings.Ports {
+		if port.Int() == containerPort && len(bindings) > 0 {
+			var hostPort int
+			_, _ = fmt.Sscanf(bindings[0].HostPort, "%d", &hostPort)
+			return hostPort
+		}
+	}
+	return -1
+}
+
+// GetContainerIP returns the container's IP address on the namespace network.
+// Returns empty string if the IP cannot be determined.
+func (c *Client) GetContainerIP(ctx context.Context, containerID string) string {
+	inspect, err := c.cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return ""
+	}
+	// Prefer the namespace-specific network
+	if ep, ok := inspect.NetworkSettings.Networks[c.NetworkName()]; ok && ep.IPAddress != "" {
+		return ep.IPAddress
+	}
+	// Fallback: first non-empty IP from any network
+	for _, ep := range inspect.NetworkSettings.Networks {
+		if ep.IPAddress != "" {
+			return ep.IPAddress
+		}
+	}
+	return ""
+}
+
+// ContainerStats returns resource usage stats for a container.
+func (c *Client) ContainerStats(ctx context.Context, containerID string) (*ContainerStat, error) {
+	resp, err := c.cli.ContainerStatsOneShot(ctx, containerID)
+	if err != nil {
+		return nil, err //nolint:wrapcheck // thin Docker SDK wrapper
+	}
+	defer resp.Body.Close()
+	return parseContainerStats(resp.Body)
+}
+
+// WaitForContainer waits for a container to start running.
+func (c *Client) WaitForContainer(ctx context.Context, containerID string, timeout time.Duration) error {
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// Quick check if already running
+	inspect, err := c.cli.ContainerInspect(timeoutCtx, containerID)
+	if err == nil && inspect.State.Running {
+		return nil
+	}
+
+	// Poll with short interval — ContainerWait only supports "not-running" condition
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-timeoutCtx.Done():
+			return fmt.Errorf("timeout waiting for container %s", containerID)
+		case <-ticker.C:
+			inspect, err := c.cli.ContainerInspect(timeoutCtx, containerID)
+			if err != nil {
+				continue
+			}
+			if inspect.State.Running {
+				return nil
+			}
+			if inspect.State.ExitCode != 0 {
+				return fmt.Errorf("container exited with code %d", inspect.State.ExitCode)
+			}
+		}
+	}
+}
+
+// WaitForContainerExit waits for a container to finish and exit (for init containers).
+// Uses Docker's ContainerWait API for instant notification instead of polling.
+func (c *Client) WaitForContainerExit(ctx context.Context, containerID string, timeout time.Duration) error {
+	// Pre-check: if container already exited, return immediately
+	info, err := c.cli.ContainerInspect(ctx, containerID)
+	if err == nil && !info.State.Running {
+		if info.State.ExitCode != 0 {
+			return fmt.Errorf("init container exited with code %d", info.State.ExitCode)
+		}
+		return nil
+	}
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	waitCh, errCh := c.cli.ContainerWait(timeoutCtx, containerID, container.WaitConditionNotRunning)
+	select {
+	case <-timeoutCtx.Done():
+		return fmt.Errorf("timeout waiting for container exit %s", containerID)
+	case err := <-errCh:
+		return fmt.Errorf("wait error for %s: %w", containerID, err)
+	case result := <-waitCh:
+		if result.StatusCode != 0 {
+			return fmt.Errorf("init container exited with code %d", result.StatusCode)
+		}
+		return nil
+	}
+}
+
+// parseMemory converts memory strings like "128m", "1g" to bytes.
+func parseMemory(s string) int64 {
+	s = strings.TrimSpace(strings.ToLower(s))
+	if s == "" {
+		return 0
+	}
+
+	multiplier := int64(1)
+	switch {
+	case strings.HasSuffix(s, "g"):
+		multiplier = 1024 * 1024 * 1024
+		s = s[:len(s)-1]
+	case strings.HasSuffix(s, "m"):
+		multiplier = 1024 * 1024
+		s = s[:len(s)-1]
+	case strings.HasSuffix(s, "k"):
+		multiplier = 1024
+		s = s[:len(s)-1]
+	}
+
+	var n int64
+	_, _ = fmt.Sscanf(s, "%d", &n)
+	return n * multiplier
+}
+
+// ContainerStat holds resource usage for a container.
+type ContainerStat struct {
+	CPUPercent float64
+	MemUsage   int64
+	MemLimit   int64
+}
+
+// RunUtilsContainer runs a command in a temporary launcher-utils container with the given bind mounts.
+// It creates the container, starts it, waits for exit, captures output, and removes it.
+func (c *Client) RunUtilsContainer(ctx context.Context, cmd, binds []string) (output string, exitCode int, err error) {
+	utilsImage := config.UtilsImage()
+
+	containerName := c.ContainerName("launcher-utils-tmp")
+	_ = c.StopAndRemoveContainer(ctx, containerName, 0)
+
+	resp, err := c.cli.ContainerCreate(ctx, &container.Config{
+		Image: utilsImage,
+		Cmd:   cmd,
+		Labels: map[string]string{
+			LabelLauncher:  "true",
+			LabelWorkspace: c.workspace,
+			LabelNamespace: c.namespace,
+			LabelAppName:   "launcher-utils",
+		},
+	}, &container.HostConfig{
+		Binds: binds,
+	}, nil, nil, containerName)
+	if err != nil {
+		return "", -1, fmt.Errorf("create utils container: %w", err)
+	}
+	containerID := resp.ID
+	defer func() { _ = c.RemoveContainer(ctx, containerID) }()
+
+	if startErr := c.cli.ContainerStart(ctx, containerID, container.StartOptions{}); startErr != nil {
+		return "", -1, fmt.Errorf("start utils container: %w", startErr)
+	}
+
+	if waitErr := c.WaitForContainerExit(ctx, containerID, 5*time.Minute); waitErr != nil {
+		return "", -1, fmt.Errorf("wait for utils container: %w", waitErr)
+	}
+
+	output, _ = c.ContainerLogs(ctx, containerID, 1000)
+
+	inspect, inspErr := c.cli.ContainerInspect(ctx, containerID)
+	if inspErr != nil {
+		return output, -1, nil
+	}
+	return output, inspect.State.ExitCode, nil
+}
+

@@ -1,0 +1,70 @@
+import { Component } from 'react'
+import type { ErrorInfo, ReactNode } from 'react'
+import { t } from '../lib/i18n'
+
+interface Props {
+  children: ReactNode
+  /** When true, show a compact inline error instead of full-screen overlay */
+  inline?: boolean
+}
+
+interface State {
+  hasError: boolean
+  error: Error | null
+}
+
+export class ErrorBoundary extends Component<Props, State> {
+  state: State = { hasError: false, error: null }
+
+  static getDerivedStateFromError(error: Error): State {
+    return { hasError: true, error }
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('ErrorBoundary caught:', error, info.componentStack)
+  }
+
+  render() {
+    if (this.state.hasError) {
+      if (this.props.inline) {
+        return (
+          <div className="flex flex-col items-center justify-center p-8 gap-3 flex-1">
+            <p className="text-sm text-destructive font-medium">{t('error.title')}</p>
+            <p className="text-xs text-muted-foreground font-mono max-w-lg text-center break-words">
+              {this.state.error?.message || t('error.unexpected')}
+            </p>
+            <button
+              type="button"
+              className="rounded-md bg-primary px-3 py-1 text-xs text-primary-foreground hover:bg-primary/90"
+              onClick={() => this.setState({ hasError: false, error: null })}
+            >
+              {t('error.retry')}
+            </button>
+          </div>
+        )
+      }
+      return (
+        <div className="flex items-center justify-center min-h-screen bg-background">
+          <div className="text-center space-y-4 p-8 max-w-md">
+            <h1 className="text-2xl font-semibold text-foreground">{t('error.title')}</h1>
+            <p className="text-sm text-muted-foreground">
+              {this.state.error?.message || t('error.unexpected')}
+            </p>
+            <button
+              type="button"
+              className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90"
+              onClick={() => {
+                this.setState({ hasError: false, error: null })
+                window.location.reload()
+              }}
+            >
+              {t('error.reload')}
+            </button>
+          </div>
+        </div>
+      )
+    }
+
+    return this.props.children
+  }
+}

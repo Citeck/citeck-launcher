@@ -1,3 +1,13 @@
+# Release 2.0.0
+
+Complete rewrite from Kotlin/Compose to Go + React. Single binary — CLI, daemon, and embedded Web UI.
+
+- Daemon: Docker SDK, declarative reconciler (k8s-style), liveness probes with auto-restart and diagnostics
+- 24 CLI commands: install, start/stop/restart, upgrade, snapshot, self-update, webui cert, etc.
+- Web UI: React 19, Lens-inspired, 8 languages, SSE real-time, 50K-line log viewer
+- Security: mTLS, Let's Encrypt with auto-renewal, AES-256-GCM secrets encryption, CSRF
+- DevOps: synchronous stop with live progress, --detach, snapshot auto-stop/start, self-update with rollback
+
 # Release 1.3.8
 
 ## New features
