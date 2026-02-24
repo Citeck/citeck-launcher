@@ -55,12 +55,42 @@ class GitRepoService(
 
     fun init(services: LauncherServices) {
         this.authSecretsService = services.authSecretsService
-        repositoriesInfo = services.database.getRepo(
+        this.repositoriesInfo = services.database.getRepo(
             EntityIdType.String,
             Json.getSimpleType(GitRepoInstance::class),
             "git-repo",
             "instances"
         )
+    }
+
+    fun init(authSecretsService: AuthSecretsService) {
+        this.authSecretsService = authSecretsService
+        this.repositoriesInfo = InMemoryGitRepoRepository()
+    }
+
+    private class InMemoryGitRepoRepository : Repository<String, GitRepoInstance> {
+
+        private val data = ConcurrentHashMap<String, GitRepoInstance>()
+
+        override fun set(id: String, value: GitRepoInstance) {
+            data[id] = value
+        }
+
+        override fun get(id: String): GitRepoInstance? = data[id]
+
+        override fun delete(id: String) {
+            data.remove(id)
+        }
+
+        override fun find(max: Int): List<GitRepoInstance> = data.values.take(max)
+
+        override fun getFirst(): GitRepoInstance? = data.values.firstOrNull()
+
+        override fun forEach(action: (String, GitRepoInstance) -> Boolean) {
+            for ((k, v) in data) {
+                if (action(k, v)) break
+            }
+        }
     }
 
     fun initRepo(

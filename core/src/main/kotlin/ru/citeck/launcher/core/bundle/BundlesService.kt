@@ -1,11 +1,11 @@
 package ru.citeck.launcher.core.bundle
 
 import io.github.oshai.kotlinlogging.KotlinLogging
-import ru.citeck.launcher.core.WorkspaceServices
+import ru.citeck.launcher.core.WorkspaceContext
 import ru.citeck.launcher.core.git.GitRepoProps
 import ru.citeck.launcher.core.git.GitUpdatePolicy
 import ru.citeck.launcher.core.ui.UiProvider
-import ru.citeck.launcher.core.workspace.WorkspacesService
+import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -18,12 +18,12 @@ class BundlesService(
         private val log = KotlinLogging.logger { }
     }
 
-    private lateinit var services: WorkspaceServices
+    private lateinit var services: WorkspaceContext
     private val lock = ReentrantLock()
 
     private val bundleRepos = ConcurrentHashMap<String, BundlesRepoInfo>()
 
-    fun init(services: WorkspaceServices) {
+    fun init(services: WorkspaceContext) {
         this.services = services
     }
 
@@ -93,27 +93,40 @@ class BundlesService(
         val repo = workspaceConfig.bundleReposById[repoId]
             ?: error("Can't find repo with id '$repoId'")
 
-        val repoInfo = services.gitRepoService.initRepo(
-            GitRepoProps(
-                WorkspacesService.getWorkspaceDir(services.workspace.id)
-                    .resolve("bundles")
-                    .resolve(repo.id),
-                repo.url,
-                repo.branch,
-                repo.pullPeriod,
-                WorkspacesService.getRepoAuthId(services.workspace.id),
-                services.workspace.authType
-            ),
-            updatePolicy
-        )
+        val repoRoot: Path
+        val nextUpdateMs: Long
+
+        if (repo.url.isBlank()) {
+            // Bundles are in the workspace repo — no extra git clone
+            repoRoot = services.workspaceRepoDir
+            if (!repoRoot.toFile().isDirectory) {
+                log.warn { "Workspace repo dir does not exist: $repoRoot. Bundles will be empty." }
+            }
+            nextUpdateMs = Long.MAX_VALUE
+        } else {
+            val repoInfo = services.gitRepoService.initRepo(
+                GitRepoProps(
+                    services.bundlesDir.resolve(repo.id),
+                    repo.url,
+                    repo.branch,
+                    repo.pullPeriod,
+                    services.repoAuthId,
+                    services.workspace.authType
+                ),
+                updatePolicy
+            )
+            repoRoot = repoInfo.root
+            nextUpdateMs = repoInfo.nextUpdateMs
+        }
+
         val path = if (repo.path.startsWith("/")) repo.path.substring(1) else repo.path
 
         return BundlesRepoInfo(
             BundleUtils.loadBundles(
-                repoInfo.root.resolve(path),
+                repoRoot.resolve(path),
                 workspaceConfig
             ).ifEmpty { listOf(BundleDef.EMPTY) },
-            nextPlannedUpdateMs = repoInfo.nextUpdateMs
+            nextPlannedUpdateMs = nextUpdateMs
         )
     }
 

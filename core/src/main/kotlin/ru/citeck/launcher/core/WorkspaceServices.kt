@@ -24,13 +24,15 @@ import ru.citeck.launcher.core.utils.data.DataValue
 import ru.citeck.launcher.core.utils.prop.MutProp
 import ru.citeck.launcher.core.workspace.WorkspaceConfig
 import ru.citeck.launcher.core.workspace.WorkspaceDto
+import ru.citeck.launcher.core.workspace.WorkspacesService
+import java.nio.file.Path
 
 class WorkspaceServices(
     private val launcherServices: LauncherServices,
-    val workspace: WorkspaceDto,
+    override val workspace: WorkspaceDto,
     workspaceConfig: WorkspaceConfig,
     private val uiProvider: UiProvider
-) {
+) : WorkspaceContext {
 
     companion object {
         private const val SELECTED_NS_PROP = "selectedNamespace"
@@ -39,7 +41,7 @@ class WorkspaceServices(
     }
 
     val namespacesService: NamespacesService by lazy { NamespacesService() }
-    val bundlesService: BundlesService by lazy { BundlesService(uiProvider) }
+    override val bundlesService: BundlesService by lazy { BundlesService(uiProvider) }
 
     val licenseService: LicenseService by lazy { LicenseService() }
 
@@ -47,17 +49,20 @@ class WorkspaceServices(
         EntitiesService(workspace.id, launcherServices, this, uiProvider)
     }
 
-    val gitRepoService: GitRepoService get() = launcherServices.gitRepoService
-    val dockerApi: DockerApi get() = launcherServices.dockerApi
-    val actionsService: ActionsService get() = launcherServices.actionsService
+    override val gitRepoService: GitRepoService get() = launcherServices.gitRepoService
+    override val dockerApi: DockerApi get() = launcherServices.dockerApi
+    override val actionsService: ActionsService get() = launcherServices.actionsService
+    override val bundlesDir: Path get() = WorkspacesService.getWorkspaceDir(workspace.id).resolve("bundles")
+    override val workspaceRepoDir: Path get() = WorkspacesService.getWorkspaceDir(workspace.id).resolve("repo")
+    override val repoAuthId: String get() = WorkspacesService.getRepoAuthId(workspace.id)
     val database: Database get() = launcherServices.database
-    val cloudConfigServer: CloudConfigServer get() = launcherServices.cloudConfigServer
+    override val cloudConfigServer: CloudConfigServer get() = launcherServices.cloudConfigServer
     val snapshotsService: WorkspaceSnapshots by lazy { WorkspaceSnapshots() }
 
     private lateinit var workspaceStateRepo: DataRepo
     val selectedNamespace = MutProp<NamespaceConfig?>("selected-namespace", null)
 
-    val workspaceConfig = MutProp(workspaceConfig)
+    override val workspaceConfig = MutProp(workspaceConfig)
 
     fun init() {
 

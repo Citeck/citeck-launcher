@@ -179,10 +179,24 @@ class NamespaceConfig(
     }
 
     data class ProxyProps(
-        val image: String = ""
+        val image: String = "",
+        val port: Int = 80,
+        val host: String = "",
+        val tls: TlsConfig = TlsConfig.DEFAULT
     ) {
         companion object {
             val DEFAULT = ProxyProps()
+        }
+    }
+
+    data class TlsConfig(
+        val enabled: Boolean = false,
+        val certPath: String = "",
+        val keyPath: String = "",
+        val letsEncrypt: Boolean = false
+    ) {
+        companion object {
+            val DEFAULT = TlsConfig()
         }
     }
 

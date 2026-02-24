@@ -33,13 +33,14 @@ import kotlin.math.roundToInt
 
 class AppImagePullAction(
     private val dockerApi: DockerApi,
-    private val authSecretsService: AuthSecretsService
+    private val authSecretsService: AuthSecretsService?
 ) : ActionExecutor<AppImagePullAction.Params, Unit> {
 
     companion object {
         private val log = KotlinLogging.logger {}
 
         private const val RETRIES_COUNT_FOR_EXISTING_IMAGE = 3
+        private val DOCKER_LOGIN_RETRY_DELAY = Duration.ofSeconds(30)
 
         private val PULL_SEMAPHORE_TIMEOUT_MS = Duration.ofMinutes(1).toMillis()
         private val LAST_PULL_RESPONSE_TIMEOUT_MS = Duration.ofMinutes(1).toMillis()
@@ -72,10 +73,11 @@ class AppImagePullAction(
 
     override fun getRetryAfterErrorDelay(context: ActionContext<Params>, future: CompletableFuture<Unit>): Long {
         val params = context.params
+        val failingImage = params.currentPulledImage?.image ?: params.appRuntime.image
         if (
             params.pullIfPresent &&
             context.retryIdx >= RETRIES_COUNT_FOR_EXISTING_IMAGE &&
-            dockerApi.inspectImageOrNull(params.appRuntime.image) != null
+            dockerApi.inspectImageOrNull(failingImage) != null
         ) {
             log.warn(context.lastError) {
                 "Pulling failed for ${params.currentPulledImage} " +
@@ -85,11 +87,17 @@ class AppImagePullAction(
             future.complete(Unit)
             return -1
         }
-        if (context.lastError is AuthenticationCancelled) {
-            return -1
-        }
-        if (context.lastError is RepoUnauthorizedException) {
-            return 0
+        if (context.lastError is AuthenticationCancelled || context.lastError is RepoUnauthorizedException) {
+            if (authSecretsService == null) {
+                val host = failingImage.substringBefore("/")
+                log.warn {
+                    "Pull unauthorized for '$failingImage'. " +
+                        "Run 'docker login $host' to provide credentials. " +
+                        "Retrying in ${DOCKER_LOGIN_RETRY_DELAY.toSeconds()}s..."
+                }
+                return DOCKER_LOGIN_RETRY_DELAY.toMillis()
+            }
+            return if (context.lastError is AuthenticationCancelled) -1L else 0L
         }
         return RETRY_DELAYS[min(context.retryIdx, RETRY_DELAYS.lastIndex)].toMillis()
     }
@@ -154,35 +162,38 @@ class AppImagePullAction(
 
         val imageRepoHost = image.substringBefore("/")
 
-        var secretDef: SecretDef? = params.secretDef
-        if (secretDef != null && lastError is RepoUnauthorizedException) {
-            secretDef = null
-        }
-        if (secretDef == null) {
-            val secretId = "images-repo:$imageRepoHost"
-            val repoInfo = appRuntime.nsRuntime.workspaceConfig.getValue().imageReposByHost[imageRepoHost]
-            if (lastError is RepoUnauthorizedException || repoInfo?.authType == ImageRepoAuth.BASIC) {
-                secretDef = SecretDef(secretId, AuthType.BASIC)
+        var secret: AuthSecret.Basic? = null
+        if (authSecretsService != null) {
+            var secretDef: SecretDef? = params.secretDef
+            if (secretDef != null && lastError is RepoUnauthorizedException) {
+                secretDef = null
             }
-        }
-        params.secretDef = secretDef
+            if (secretDef == null) {
+                val secretId = "images-repo:$imageRepoHost"
+                val repoInfo = appRuntime.nsRuntime.workspaceConfig.getValue().imageReposByHost[imageRepoHost]
+                if (lastError is RepoUnauthorizedException || repoInfo?.authType == ImageRepoAuth.BASIC) {
+                    secretDef = SecretDef(secretId, AuthType.BASIC)
+                }
+            }
+            params.secretDef = secretDef
 
-        val secret: AuthSecret.Basic? = secretDef?.let {
-            runBlocking {
-                authSecretsService.getSecret(
-                    it,
-                    imageRepoHost,
-                    (lastError as? RepoUnauthorizedException)?.secretVersion ?: 0L
-                ) as? AuthSecret.Basic
+            secret = secretDef?.let {
+                runBlocking {
+                    authSecretsService.getSecret(
+                        it,
+                        imageRepoHost,
+                        (lastError as? RepoUnauthorizedException)?.secretVersion ?: 0L
+                    ) as? AuthSecret.Basic
+                }
             }
-        }
-        if (secret != null) {
-            pullCmd.withAuthConfig(
-                AuthConfig()
-                    .withRegistryAddress("https://$imageRepoHost")
-                    .withUsername(secret.username)
-                    .withPassword(String(secret.password))
-            )
+            if (secret != null) {
+                pullCmd.withAuthConfig(
+                    AuthConfig()
+                        .withRegistryAddress("https://$imageRepoHost")
+                        .withUsername(secret.username)
+                        .withPassword(String(secret.password))
+                )
+            }
         }
 
         val pullCallback = object : PullImageResultCallback() {
@@ -227,11 +238,7 @@ class AppImagePullAction(
                 pullFuture.completeExceptionally(exception)
             }
         }
-        try {
-            pullCmd.exec(pullCallback)
-        } catch (e: Throwable) {
-            throw e
-        }
+        pullCmd.exec(pullCallback)
         val pullInProgress = AtomicBoolean(true)
         Thread.ofVirtual().name("pull-watcher-${appRuntime.name}").start {
             var mbLen = 3

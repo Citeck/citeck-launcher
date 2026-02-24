@@ -57,6 +57,11 @@ class NsGenContext(
         )
     }
 
+    val proxyHost: String get() = namespaceConfig.citeckProxy.host.ifBlank { "localhost" }
+    val tlsEnabled: Boolean get() = namespaceConfig.citeckProxy.tls.enabled
+    val proxyScheme: String get() = if (tlsEnabled) "https" else "http"
+    val proxyBaseUrl: String get() = "$proxyScheme://$proxyHost"
+
     fun getOrCreateApp(name: String): ApplicationDef.Builder {
         return applications.computeIfAbsent(name) {
             ApplicationDef.create(name)

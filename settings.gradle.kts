@@ -16,4 +16,4 @@ pluginManagement {
 }
 
 rootProject.name = "citeck-launcher"
-include("core", "app")
+include("core", "app", "cli")

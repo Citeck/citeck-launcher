@@ -488,6 +488,20 @@ class AppStartAction(
             return Bind.parse(normalizedVolume)
         }
 
+        val volumesBaseDir = runtime.nsRuntime.volumesBaseDir
+        if (volumesBaseDir != null) {
+            require(!srcName.contains("..") && !srcName.contains('/') && !srcName.contains('\\')) {
+                "Invalid volume name: $srcName"
+            }
+            val hostDir = volumesBaseDir.resolve(srcName)
+            val dirFile = hostDir.toFile()
+            if (!dirFile.exists() && !dirFile.mkdirs() && !dirFile.exists()) {
+                error("Failed to create volume directory: $hostDir")
+            }
+            val hostPath = hostDir.toAbsolutePath().toString().replace('\\', '/')
+            return Bind.parse(hostPath + volume.substring(twoDotsIdx))
+        }
+
         val volumeNameInNamespace = createVolumeIfNotExists(runtime, srcName)
         return Bind.parse(volume.replaceFirst(srcName, volumeNameInNamespace))
     }

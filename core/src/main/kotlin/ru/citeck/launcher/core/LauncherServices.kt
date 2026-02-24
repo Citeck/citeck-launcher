@@ -29,7 +29,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
 
 class LauncherServices(
-    val uiProvider: UiProvider = HeadlessUiProvider()
+    val uiProvider: UiProvider = HeadlessUiProvider(),
+    val enableCloudConfig: Boolean = true
 ) {
 
     companion object {
@@ -83,10 +84,12 @@ class LauncherServices(
 
         entitiesService.register(authSecretsService.getSecretEntityDef())
 
-        try {
-            cloudConfigServer.init()
-        } catch (e: Throwable) {
-            log.error(e) { "Cloud config server can't be started. External apps won't work" }
+        if (enableCloudConfig) {
+            try {
+                cloudConfigServer.init()
+            } catch (e: Throwable) {
+                log.error(e) { "Cloud config server can't be started. External apps won't work" }
+            }
         }
 
         Runtime.getRuntime().addShutdownHook(

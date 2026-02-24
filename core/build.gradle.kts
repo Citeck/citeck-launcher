@@ -37,7 +37,7 @@ dependencies {
     api("io.ktor:ktor-client-cio:$ktorV")
     api("io.ktor:ktor-client-cio-jvm:$ktorV")
 
-    implementation("com.dynatrace.hash4j:hash4j:0.28.0")
+    implementation("com.dynatrace.hash4j:hash4j:${property("hash4j.version")}")
 
     testImplementation("org.assertj:assertj-core:3.27.7")
     testImplementation(kotlin("test"))

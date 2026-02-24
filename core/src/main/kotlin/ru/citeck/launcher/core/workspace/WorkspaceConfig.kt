@@ -33,7 +33,7 @@ data class WorkspaceConfig(
     class BundlesRepo(
         val id: String,
         val name: String,
-        val url: String,
+        val url: String = "",
         val branch: String = "main",
         val path: String = "",
         val pullPeriod: Duration = Duration.ofHours(1),

@@ -47,7 +47,8 @@ class NamespaceRuntime(
     private val actionsService: ActionsService,
     private val dockerApi: DockerApi,
     private val nsRuntimeDataRepo: DataRepo,
-    private val cloudConfigServer: CloudConfigServer
+    private val cloudConfigServer: CloudConfigServer,
+    val volumesBaseDir: Path? = null
 ) : Disposable {
 
     companion object {

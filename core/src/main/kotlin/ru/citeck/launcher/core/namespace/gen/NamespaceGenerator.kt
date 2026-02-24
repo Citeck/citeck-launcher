@@ -1,7 +1,7 @@
 package ru.citeck.launcher.core.namespace.gen
 
 import io.github.oshai.kotlinlogging.KotlinLogging
-import ru.citeck.launcher.core.WorkspaceServices
+import ru.citeck.launcher.core.WorkspaceContext
 import ru.citeck.launcher.core.appdef.*
 import ru.citeck.launcher.core.bundle.BundleDef
 import ru.citeck.launcher.core.namespace.AppName
@@ -45,13 +45,13 @@ class NamespaceGenerator {
         private val log = KotlinLogging.logger {}
     }
 
-    private lateinit var services: WorkspaceServices
+    private lateinit var services: WorkspaceContext
 
     private val defaultAppFiles by lazy {
         CiteckFiles.getFile("classpath:appfiles").getFilesContent()
     }
 
-    fun init(services: WorkspaceServices) {
+    fun init(services: WorkspaceContext) {
         this.services = services
     }
 
@@ -89,7 +89,7 @@ class NamespaceGenerator {
 
         context.links.add(
             NamespaceLink(
-                "http://localhost/gateway/eapps/admin/wallboard",
+                "${context.proxyBaseUrl}/gateway/eapps/admin/wallboard",
                 "Spring Boot Admin",
                 "Spring Boot Admin is used to manage and monitor Spring Boot applications",
                 "icons/app/spring-boot-admin.svg",
@@ -124,7 +124,7 @@ class NamespaceGenerator {
 
         context.links.add(
             NamespaceLink(
-                "http://localhost/ecos-idp/auth/",
+                "${context.proxyBaseUrl}/ecos-idp/auth/",
                 "Keycloak Admin",
                 "Keycloak is a tool for user authentication and authorization.\n Username: admin\n Password: admin",
                 "icons/app/keycloak.svg",
@@ -132,7 +132,7 @@ class NamespaceGenerator {
             )
         )
 
-        context.getOrCreateApp(AppName.KEYCLOAK)
+        val kcApp = context.getOrCreateApp(AppName.KEYCLOAK)
             .withImage(context.workspaceConfig.keycloak.image)
             .withResources(
                 AppResourcesDef(
@@ -142,14 +142,14 @@ class NamespaceGenerator {
             .withKind(ApplicationKind.THIRD_PARTY)
             .addEnv("KC_BOOTSTRAP_ADMIN_USERNAME", "admin")
             .addEnv("KC_BOOTSTRAP_ADMIN_PASSWORD", "admin")
-            .addEnv("KC_HOSTNAME_STRICT_HTTPS", "false")
+            .addEnv("KC_HOSTNAME_STRICT_HTTPS", context.tlsEnabled.toString())
             .addDependsOn(NsGenContext.PG_HOST)
             .addVolume("./keycloak/ecos-app-realm.json:/opt/keycloak/data/import/ecos-app-realm.json")
             .addVolume("./keycloak/healthcheck.sh:/healthcheck.sh")
             .withCmd(
                 listOf(
                     "start",
-                    "--hostname=http://localhost/ecos-idp/auth/",
+                    "--hostname=${context.proxyBaseUrl}/ecos-idp/auth/",
                     "--http-enabled=true",
                     "--health-enabled=true",
                     "--db=postgres",
@@ -170,6 +170,26 @@ class NamespaceGenerator {
                     )
                 )
             )
+
+        if (context.proxyHost != "localhost" || context.tlsEnabled) {
+            val baseUrl = context.proxyBaseUrl
+            val script = """
+                |#!/bin/bash
+                |KCADM=/opt/keycloak/bin/kcadm.sh
+                |${'$'}KCADM config credentials --server http://localhost:8080 \
+                |    --realm master --user admin --password admin
+                |CID=${'$'}(${'$'}KCADM get clients -r ecos-app \
+                |    -q clientId=ecos-proxy-app --fields id \
+                |    --format csv --noquotes | head -1)
+                |[ -n "${'$'}CID" ] && ${'$'}KCADM update "clients/${'$'}CID" \
+                |    -r ecos-app -s 'redirectUris=["$baseUrl*"]'
+            """.trimMargin()
+
+            context.files["keycloak/update-redirect-uris.sh"] = script.toByteArray()
+
+            kcApp.addVolume("./keycloak/update-redirect-uris.sh:/opt/keycloak/scripts/update-redirect-uris.sh")
+                .addInitAction(ExecShell("bash /opt/keycloak/scripts/update-redirect-uris.sh"))
+        }
     }
 
     private fun generateMailhog(context: NsGenContext) {
@@ -187,7 +207,7 @@ class NamespaceGenerator {
             )
         context.links.add(
             NamespaceLink(
-                "http://localhost:8025",
+                "http://${context.proxyHost}:8025",
                 "MailHog",
                 "MailHog is an email testing tool",
                 "icons/app/mailhog.svg",
@@ -231,7 +251,7 @@ class NamespaceGenerator {
             )
         context.links.add(
             NamespaceLink(
-                "http://localhost:5050",
+                "http://${context.proxyHost}:5050",
                 "PG Admin",
                 "Postgres database management and design tool\n" +
                     "Username: admin@admin.com\n" +
@@ -260,6 +280,7 @@ class NamespaceGenerator {
         val gatewayPort = context.applications[AppName.GATEWAY]!!.getEnv("SERVER_PORT")!!.toInt()
 
         val app = context.getOrCreateApp(AppName.PROXY)
+        var hasProxyInitActions = false
         if (!context.detachedApps.contains(AppName.ONLYOFFICE)) {
             app.addEnv("ONLYOFFICE_TARGET", NsGenContext.ONLYOFFICE_HOST)
                 .addDependsOn(AppName.ONLYOFFICE)
@@ -277,8 +298,27 @@ class NamespaceGenerator {
                 app.addEnv("EIS_ID", "${NsGenContext.KK_HOST}:8080")
                 app.addEnv("REALM_ID", "ecos-app")
                 app.addEnv("EIS_LOCATION", "auth")
-                app.addEnv("REDIRECT_LOGOUT_URI", "http://localhost")
+                app.addEnv("REDIRECT_LOGOUT_URI", context.proxyBaseUrl)
                 app.addEnv("CLIENT_SECRET", "2996117d-9a33-4e06-b48a-867ce6a235db")
+
+                // Update lua file with correct scheme and URLs
+                val luaKey = "proxy/lua_oidc_full_access.lua"
+                val luaBytes = context.files[luaKey]!!
+                val lua = String(luaBytes)
+                    .replace(
+                        """redirect_uri_scheme = "http"""",
+                        """redirect_uri_scheme = "${context.proxyScheme}""""
+                    )
+                    .replace(
+                        """redirect_after_logout_uri = "http://localhost/ecos-idp/auth/realms/ecos-app/protocol/openid-connect/logout"""",
+                        """redirect_after_logout_uri = "${context.proxyBaseUrl}/ecos-idp/auth/realms/ecos-app/protocol/openid-connect/logout""""
+                    )
+                    .replace(
+                        """post_logout_redirect_uri = "http://localhost"""",
+                        """post_logout_redirect_uri = "${context.proxyBaseUrl}""""
+                    )
+                context.files[luaKey] = lua.toByteArray()
+
                 app.addVolume("./proxy/lua_oidc_full_access.lua:/etc/nginx/includes/lua_oidc_full_access.lua:ro")
                 // app.addVolume("./proxy/openidc.lua:/usr/local/openresty/luajit/share/lua/5.1/resty/openidc.lua:ro")
                 app.addInitAction(
@@ -288,7 +328,7 @@ class NamespaceGenerator {
                             "-e 's|http://keycloak:8080/auth/|http://keycloak:8080/|g' /etc/nginx/conf.d/default.conf "
                     )
                 )
-                app.addInitAction(ExecShell("nginx -s reload"))
+                hasProxyInitActions = true
             }
         }
         app.addEnv("RABBITMQ_TARGET", "${NsGenContext.RMQ_HOST}:15672")
@@ -315,12 +355,14 @@ class NamespaceGenerator {
             AppName.GATEWAY + ":" + gatewayPort
         }
 
+        val containerPort = if (context.tlsEnabled) 443 else 80
+
         app.addEnv("DEFAULT_LOCATION_V2", "true")
             .addEnv("GATEWAY_TARGET", "${AppName.GATEWAY}:$gatewayPort")
             .addEnv("PROXY_TARGET", proxyTarget)
             .addEnv("ECOS_INIT_DELAY", "0")
             .addEnv("ALFRESCO_ENABLED", alfEnabled.toString())
-            .addPort("80:80")
+            .addPort("${proxyProps.port}:$containerPort")
             .addDependsOn(AppName.GATEWAY)
             .withKind(ApplicationKind.CITECK_CORE)
             .withResources(
@@ -332,6 +374,21 @@ class NamespaceGenerator {
                     probe = AppProbeDef(http = HttpProbeDef("/eis.json", 80))
                 )
             )
+
+        if (context.tlsEnabled) {
+            val tls = proxyProps.tls
+            val containerCertPath = "/app/tls/server.crt"
+            val containerKeyPath = "/app/tls/server.key"
+            app.addEnv("ENABLE_HTTPS", "true")
+                .addEnv("SERVER_TLS_CERT", containerCertPath)
+                .addEnv("SERVER_TLS_KEY", containerKeyPath)
+                .addVolume("${tls.certPath}:$containerCertPath:ro")
+                .addVolume("${tls.keyPath}:$containerKeyPath:ro")
+        }
+
+        if (hasProxyInitActions) {
+            app.addInitAction(ExecShell("nginx -s reload"))
+        }
     }
 
     private fun generateWebapp(name: String, context: NsGenContext) {
@@ -481,7 +538,7 @@ class NamespaceGenerator {
 
         context.links.add(
             NamespaceLink(
-                "http://localhost/alfresco/s/admin/",
+                "${context.proxyBaseUrl}/alfresco/s/admin/",
                 "Alfresco Admin",
                 "Alfresco Admin Console",
                 "icons/app/alfresco.svg",
@@ -568,7 +625,7 @@ class NamespaceGenerator {
 
         context.links.add(
             NamespaceLink(
-                "http://localhost:38080/solr4/#/",
+                "http://${context.proxyHost}:38080/solr4/#/",
                 "Solr Admin",
                 "Solr Admin Console",
                 "icons/app/solr4.svg",

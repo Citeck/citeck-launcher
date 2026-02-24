@@ -48,7 +48,7 @@ class HeadlessUiProvider : UiProvider {
         allowCancel: Boolean
     ): GitPullErrorResult {
         log.error(error) { "Git pull error for repo: $repoUrl" }
-        return GitPullErrorResult.RETRY
+        return if (allowSkip) GitPullErrorResult.SKIP else GitPullErrorResult.RETRY
     }
 
     override fun showError(error: Throwable) {
