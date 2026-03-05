@@ -1,3 +1,9 @@
+# Release 1.3.9
+
+## Fixes
+
+* Fixed NPE in deleteNetwork when Network.getContainers() returns null
+
 # Release 1.3.8
 
 ## New features
