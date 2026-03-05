@@ -315,7 +315,7 @@ class DockerApi(
         try {
             client.removeNetworkCmd(network.id).exec()
         } catch (e: DockerException) {
-            if ((e.message ?: "").contains("has active endpoints") && network.containers.isEmpty()) {
+            if ((e.message ?: "").contains("has active endpoints") && network.containers.isNullOrEmpty()) {
                 throw DockerStaleNetworkException(e)
             } else {
                 throw e
