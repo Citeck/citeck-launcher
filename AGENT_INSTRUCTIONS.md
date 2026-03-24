@@ -20,7 +20,7 @@ while (tasks remain in current phase):
 
 ### Plans
 
-- **AGENT_PLAN_V2.md** — current development plan (phases 0-13)
+- **AGENT_PLAN_V3.md** — current plan: full rewrite in Go + React + Tauri (phases 1-10)
 - **PROGRESS.md** — tracks completed work and next steps
 
 ---
