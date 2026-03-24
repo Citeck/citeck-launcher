@@ -17,11 +17,22 @@ Full rewrite: Go + React Web UI + Tauri Desktop.
 - [x] Unit tests: 20 tests (formatter, exit codes, transport detection, uptime formatting)
 - [x] Integration: Go CLI verified against live Kotlin daemon (status, health, describe, config)
 
-### Phase 2: Web UI Scaffold
-- [ ] React + Vite + TypeScript project in `web/`
-- [ ] shadcn/ui + Tailwind CSS 4
-- [ ] API client + WebSocket client
-- [ ] Minimal Dashboard page
-- [ ] Playwright + Storybook setup
-- [ ] Embed web UI into Go binary via go:embed
-- [ ] Static file serving route in daemon
+### Phase 2: Web UI Scaffold — COMPLETE (2026-03-25)
+- [x] React 19 + Vite + TypeScript + Tailwind CSS 4
+- [x] API client (fetch) + WebSocket client + Zustand store
+- [x] Dashboard page with StatusBadge + AppTable components
+- [x] Vitest: 8 component tests pass
+- [x] go:embed + SPA fallback handler for web UI serving
+- [x] Build: 9.5MB binary with embedded web UI
+
+### Phase 3: Port Daemon Core
+- [ ] NamespaceConfig (YAML parsing)
+- [ ] NsGenContext + NamespaceGenerator (container definitions)
+- [ ] DockerApi (official Docker SDK)
+- [ ] AppRuntime state machine + probes
+- [ ] NamespaceRuntime (goroutine + channel-based command queue)
+- [ ] BundlesService + GitRepoService
+- [ ] NamespaceConfigManager (config loading, bundle resolution)
+- [ ] Daemon lifecycle (lock file, shutdown hooks, signals)
+- [ ] API routes (namespace, apps, events, health)
+- [ ] Appfiles embedding (keycloak, postgres, proxy configs)
