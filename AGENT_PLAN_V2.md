@@ -1,17 +1,33 @@
-# Agent Plan V2: Citeck Launcher — Agent Autonomy & Orchestration
+# Plan V2: Citeck Launcher — Orchestration, UX & Agent Autonomy
 
 ## Context
 
-V1 complete: bug fixes, 8 CLI commands, 5 E2E configs pass. This plan makes the launcher a proper orchestration tool that agents can operate autonomously — inspired by Kubernetes/Docker Swarm patterns adapted for single-host deployment.
+V1 complete: bug fixes, 8 CLI commands, 5 E2E configs pass. This plan makes the launcher a proper orchestration tool for **both humans and agents** — inspired by Kubernetes/Docker Swarm patterns adapted for single-host deployment.
 
 ### Design Principles
 
-1. **Every command produces machine-readable output** (`--output json`)
-2. **Every mutation has a preview** (`--dry-run`)
-3. **Every operation is idempotent** (safe to retry)
-4. **Every failure is categorized** (exit codes + structured errors)
+1. **Human-first defaults, agent-friendly options** — text output by default, `--output json` for agents
+2. **Every mutation has a preview** (`--dry-run`) — humans see a readable summary, agents get structured JSON
+3. **Every operation is idempotent** (safe to retry by both humans and agents)
+4. **Every failure is actionable** — humans get suggestions ("Run `citeck diagnose`"), agents get error codes
 5. **The system self-heals** (liveness probes, reconciliation)
 6. **State is declarative** (`citeck apply` — desired state → actual state)
+7. **Interactive and non-interactive paths coexist** — wizard stays for humans, `--non-interactive` for agents
+8. **Dangerous operations require confirmation** — humans get `[y/N]` prompt, agents pass `--yes`
+
+### Human vs Agent UX Contract
+
+| Aspect | Human (default) | Agent (`-o json` / `--yes`) |
+|--------|----------------|---------------------------|
+| Output format | Colored tables, readable messages | JSON to stdout |
+| Progress | Progress bars in stderr | Suppressed (or events via API) |
+| Errors | Message + suggestion + exit code | JSON `{error, code, suggestion}` + exit code |
+| Confirmations | Interactive `[y/N]` prompt | `--yes` skips prompts |
+| Mutations | `--dry-run` shows colored diff | `--dry-run -o json` shows structured changes |
+| Install | Interactive wizard | `--non-interactive` / `--from-config` |
+| Logs | Streamed to terminal | `--since 5m --errors-only -o json` |
+
+**Rule:** stderr is for humans (progress, hints, warnings). stdout is for data (tables or JSON). Agents use `-o json` and only parse stdout.
 
 ---
 
@@ -64,7 +80,26 @@ Commands translate this to exit codes + error JSON.
 | 8 | UNHEALTHY | Health check failed |
 | 9 | CONFLICT | Another operation in progress / lock held |
 
-### 1.4 `--dry-run` on all mutating commands
+### 1.4 Human-friendly error messages with suggestions
+
+When an error occurs in text mode, show actionable guidance:
+```
+Error: Namespace is not configured (exit code 4)
+  Run 'citeck install' to create a configuration, or
+  copy a namespace.yml to /opt/citeck/conf/namespace.yml
+
+Error: Docker daemon unreachable (exit code 6)
+  Ensure Docker is running: systemctl start docker
+  Check permissions: usermod -aG docker $USER
+```
+
+In JSON mode, the same info is structured:
+```json
+{"error": "not_configured", "code": 4, "message": "Namespace is not configured",
+ "suggestions": ["Run 'citeck install'", "Copy namespace.yml to /opt/citeck/conf/"]}
+```
+
+### 1.5 `--dry-run` on all mutating commands
 
 Every command that changes state gets `--dry-run`:
 ```bash
@@ -75,7 +110,42 @@ citeck reload --dry-run                        # validates config, shows diff
 citeck stop --dry-run                          # lists what would be stopped
 ```
 
-Returns JSON with `{"dryRun": true, "changes": [...]}`.
+**Human output** (colored, readable):
+```
+Dry run: deploy new.yml
+  STOP    proxy         (running, uptime 5h)
+  UPDATE  gateway       nexus.citeck.ru/ecos-gateway:3.3.0 → 3.4.0
+  NO-OP   postgres      (unchanged)
+  START   new-app       nexus.citeck.ru/ecos-new:1.0.0
+  3 apps affected, 16 unchanged
+```
+
+**Agent output** (`-o json`):
+```json
+{"dryRun": true, "changes": [
+  {"app": "proxy", "action": "stop", "reason": "removed from config"},
+  {"app": "gateway", "action": "update", "oldImage": "...3.3.0", "newImage": "...3.4.0"}
+]}
+```
+
+### 1.6 `--yes` flag for non-interactive confirmation
+
+Dangerous commands (diagnose --fix, clean, restore) ask for confirmation in text mode:
+```
+Found 3 issues:
+  1. Orphaned container citeck_old_proxy (remove)
+  2. Stale socket file /run/citeck/daemon.sock (delete)
+  3. Crashed app emodel (restart)
+
+Apply fixes? [y/N]
+```
+
+With `--yes` (for agents and scripts): skip confirmation, apply immediately.
+```bash
+citeck diagnose --fix --yes          # agent: no prompt
+citeck clean --execute --yes         # agent: no prompt
+citeck restore --from backup.tar.gz --yes
+```
 
 ---
 
@@ -545,22 +615,94 @@ Optional: verify image signatures before pulling (cosign/notary).
 
 ## Implementation Order
 
-Optimized for maximum agent value per unit of effort:
+Optimized for both human and agent value:
 
-| Phase | Items | Agent impact |
-|-------|-------|-------------|
-| **Phase 1** | 1.1 `--output json` + 1.2 structured errors + 1.3 exit codes | Agent can parse ALL output |
-| **Phase 2** | 5.1 `citeck wait` + 1.4 `--dry-run` | Agent can wait + preview |
-| **Phase 3** | 2.1 `citeck apply` + 2.3 `citeck diff` | Declarative state management |
-| **Phase 4** | 3.1 non-interactive install + 3.2 `--from-config` | Automated deployment |
-| **Phase 5** | 4.1 liveness probes + 4.2 probe failure categorization | Self-healing + fast failure |
-| **Phase 6** | 6.1 `citeck diagnose --fix` + 6.2 log filtering | Self-diagnosis + repair |
-| **Phase 7** | 6.3 `citeck describe` + 6.5 operation history | Rich context + session recovery |
-| **Phase 8** | 5.3 rolling update + 5.5 rollback | Safe updates |
-| **Phase 9** | 7.1 preflight + 7.2 cert lifecycle | Prevention |
-| **Phase 10** | 2.2 reconciliation loop | Continuous self-healing |
-| **Phase 11** | 5.4 backup/restore + 7.3-7.5 operational commands | Full lifecycle |
-| **Phase 12** | 8.x performance + 9.x security | Polish |
+| Phase | Items | Human value | Agent value |
+|-------|-------|-------------|-------------|
+| **Phase 1** | 1.1-1.6 output/errors/exit codes/dry-run/--yes | Readable errors with suggestions, dry-run preview | JSON output, structured errors, exit codes |
+| **Phase 2** | 5.1 `citeck wait` + 6.3 `citeck describe` | Rich app details, readable event timeline | Atomic waiting, structured app state |
+| **Phase 3** | 2.1 `citeck apply` + 2.3 `citeck diff` | Preview changes before applying, safe config updates | Declarative idempotent state management |
+| **Phase 4** | 3.1-3.4 non-interactive install | Wizard stays, `--from-config` shortcut | Full automation via flags/env vars |
+| **Phase 5** | 4.1-4.2 liveness probes + probe categorization | Automatic restart of hung apps, fast failure feedback | Self-healing, no 28h probe waits |
+| **Phase 6** | 6.1-6.2 diagnose --fix + log filtering | Interactive fix confirmation, error log search | Auto-remediation with `--yes` |
+| **Phase 7** | 6.4-6.5 top + history | Live resource dashboard, operation audit trail | Resource monitoring, context recovery |
+| **Phase 8** | 5.3 rolling update + 5.5 rollback | Safe updates with per-app progress | Automated rollback on failure |
+| **Phase 9** | 7.1-7.2 preflight + cert lifecycle | Pre-deploy warnings, cert expiry alerts | Fail-fast, proactive cert renewal |
+| **Phase 10** | 2.2 reconciliation loop | Zero-maintenance drift correction | Continuous self-healing |
+| **Phase 11** | 5.4 backup + 7.3-7.5 cp/port-forward/clean | Debugging tools, data protection | Full lifecycle automation |
+| **Phase 12** | 8.x performance + 9.x security | Progress bars for pulls, faster startup | Parallel pulls, audit log |
+
+---
+
+## Human UX Guidelines (apply across ALL phases)
+
+These apply to every new command and feature:
+
+### Output conventions
+- **Text mode** (default): colored output, tables with padding, progress bars in stderr
+- **JSON mode** (`-o json`): clean JSON to stdout, no progress/color, no extra text
+- Progress (pull, download, startup) goes to **stderr** — visible to humans, invisible to `jq`
+- Use ANSI colors for status: green=RUNNING, red=FAILED, yellow=STARTING/WARNING
+
+### Status display
+```
+$ citeck status --apps
+
+Name:      Production (default)                 ← bold
+Status:    RUNNING                               ← green
+Bundle:    community:2025.12
+
+APP              STATUS     IMAGE                         CPU    MEMORY
+proxy            RUNNING    ecos-proxy-oidc:2.25.6        0.1%   32M/128M    ← green
+gateway          RUNNING    ecos-gateway:3.3.0            0.6%   533M/1.0G   ← green
+emodel           STARTING   ecos-model:2.35.7             --     --          ← yellow
+postgres         FAILED     postgres:17.5                 --     --          ← red
+  └─ Exit code 1: configuration file contains errors                         ← hint
+```
+
+### Error messages
+Always include:
+1. **What happened** (one line)
+2. **Why** (if known)
+3. **What to do** (suggestion)
+
+```
+Error: App 'proxy' failed to start
+  Container exited with code 1 after 3.2s
+  Last log: nginx: [emerg] cannot load certificate "/app/tls/server.crt"
+  Suggestion: Check TLS certificate path in namespace.yml
+              Run 'citeck config validate' to verify configuration
+```
+
+### Confirmation prompts
+For destructive operations in text mode:
+```
+$ citeck clean --execute
+Found 3 orphaned resources:
+  Container  citeck_old_proxy_default_daemon   (stopped 3 days ago)
+  Volume     citeck_volume_old_data            (unused)
+  Network    citeck_network_old                (no containers)
+
+Remove these resources? [y/N] y
+Removed 3 resources.
+```
+
+Skipped with `--yes` for agents/scripts.
+
+### Progress display (stderr)
+```
+$ citeck apply -f namespace.yml --wait
+Applying configuration...
+  Pulling images    [████████░░] 4/5
+  Starting apps     [██████░░░░] 12/19
+  Waiting for proxy [probe 3/10, 30s elapsed]
+All 19 apps running. Took 2m 15s.
+```
+
+In JSON mode, none of this appears. Final result only:
+```json
+{"status": "applied", "apps": 19, "running": 19, "duration": 135000}
+```
 
 ---
 
@@ -569,7 +711,8 @@ Optimized for maximum agent value per unit of effort:
 ### Per-phase testing
 1. **Unit tests** — new code, formatters, diff logic, validation
 2. **Integration tests** — real Docker, configs 1-5 from V1
-3. **Agent simulation** — script that deploys using ONLY `--json` output and exit codes:
+3. **Human UX review** — run each command in text mode, verify: colors, table alignment, error messages have suggestions, progress bars work, confirmations prompt correctly
+4. **Agent simulation** — script that deploys using ONLY `--json` output and exit codes:
    ```bash
    citeck install --from-config ns.yml --non-interactive
    citeck apply -f ns.yml --wait --timeout 600 -o json
