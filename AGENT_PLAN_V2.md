@@ -29,6 +29,64 @@ V1 complete: bug fixes, 8 CLI commands, 5 E2E configs pass. This plan makes the 
 
 **Rule:** stderr is for humans (progress, hints, warnings). stdout is for data (tables or JSON). Agents use `-o json` and only parse stdout.
 
+### Familiarity for Kubernetes users
+
+The CLI is designed so that K8s experience transfers directly. A user who knows `kubectl` should feel at home.
+
+| kubectl | citeck | Notes |
+|---------|--------|-------|
+| `kubectl apply -f pod.yml` | `citeck apply -f namespace.yml` | Declarative, idempotent |
+| `kubectl get pods` | `citeck status --apps` | List resources with status |
+| `kubectl describe pod X` | `citeck describe <app>` | Rich detail with events/conditions |
+| `kubectl logs X` | `citeck logs <app>` | Container logs |
+| `kubectl logs X -f` | `citeck logs <app> --follow` | Follow logs |
+| `kubectl exec X -- cmd` | `citeck exec <app> cmd` | Exec in container |
+| `kubectl top pods` | `citeck top` | Resource usage |
+| `kubectl diff -f new.yml` | `citeck diff -f new.yml` | Preview changes |
+| `kubectl rollout undo` | `citeck rollback` | Undo last change |
+| `kubectl cp X:/path ./local` | `citeck cp <app>:/path ./local` | Copy files |
+| `kubectl delete pod X` | `citeck restart <app>` | Force restart (recreate) |
+| `kubectl get events` | `citeck events` | Cluster events |
+| `kubectl config view` | `citeck config show` | View config |
+
+**Shared conventions:**
+- `-o json` for JSON output (not `--format json`)
+- `-f <file>` for config file input (not `--config`)
+- `--dry-run` for preview
+- `--wait` to block until ready
+- `--timeout <seconds>` for deadlines
+- Exit code 0 = success, non-zero = specific error
+- `describe` shows events + conditions + timeline (not just inspect)
+
+**Intentional differences from K8s:**
+- No namespaces within a launcher instance (one namespace per installation)
+- `citeck install` instead of `helm install` (includes system setup, not just app deploy)
+- `citeck health` instead of `kubectl get componentstatuses` (simpler, all-in-one)
+- `citeck diagnose --fix` has no K8s equivalent (auto-remediation)
+
+---
+
+## PRIORITY 0: CLI Renaming (K8s alignment)
+
+Since CLI is not yet in production, rename commands to match K8s conventions. This is a one-time low-effort change that makes everything feel natural.
+
+| Current (V1) | New | Reason |
+|--------------|-----|--------|
+| `citeck inspect <app>` | `citeck describe <app>` | K8s uses `describe` for rich detail |
+| `citeck config show` | `citeck config view` | K8s uses `config view` |
+| `citeck config validate` | `citeck config validate` | Same (no change) |
+| `citeck start` | `citeck start` | Same — starts daemon + namespace |
+| `citeck stop` | `citeck stop` | Same |
+| `citeck status` | `citeck status` or `citeck get` | Consider alias |
+| `citeck logs <app>` | `citeck logs <app>` | Same |
+| `citeck exec <app> cmd` | `citeck exec <app> -- cmd` | Add `--` separator like K8s |
+| `citeck restart <app>` | `citeck restart <app>` | Same |
+| `citeck health` | `citeck health` | No K8s equivalent, keep |
+| `citeck version` | `citeck version` | Same |
+| `citeck reload` | `citeck reload` | Same |
+
+**Implementation:** Rename classes, update CliMain.kt, update CLAUDE.md. Small commit.
+
 ---
 
 ## PRIORITY 1: Machine-Readable Interface
@@ -156,15 +214,17 @@ citeck restore --from backup.tar.gz --yes
 The single most important command for agents. Takes a desired state and makes it so.
 
 ```bash
-citeck apply -f namespace.yml                  # make it so
+citeck apply -f namespace.yml                  # make it so (minimal changes)
 citeck apply -f namespace.yml --dry-run        # show what would change
 citeck apply -f namespace.yml --wait           # apply + wait for RUNNING
 citeck apply -f namespace.yml --timeout 600    # with timeout
+citeck apply -f namespace.yml --force          # full stop→regenerate→start (like deploy)
+citeck apply -f namespace.yml --rollback-on-failure  # restore old config if new one fails
 ```
 
-**Behavior:**
+**Behavior (default):**
 1. Parse desired config
-2. Compare with current running state
+2. Compare with current running state (generate both, diff ApplicationDefs)
 3. Compute minimal change set:
    - Config unchanged → no-op (exit 0)
    - Only env/config changed → restart affected apps only
@@ -175,7 +235,9 @@ citeck apply -f namespace.yml --timeout 600    # with timeout
 4. Apply changes
 5. If `--wait` → wait for all apps RUNNING
 
-**Difference from `deploy`:** `deploy` always does full stop→start cycle. `apply` computes the diff and makes minimal changes. Safe to run in a cron loop.
+**Behavior (`--force`):** Full stop → regenerate all → start all. Use when minimal diff is insufficient (e.g., volume structure changed, network needs recreation).
+
+Safe to run in a cron loop (without `--force`).
 
 **API:**
 ```
@@ -193,14 +255,16 @@ Daemon periodically compares desired state (namespace.yml) with actual state (Do
 - Config file changed on disk → trigger reload
 - Image updated in bundle → pull + restart
 
-Configurable interval (default: 60s). Can be disabled.
+Configurable interval (default: 60s). Can be disabled. This is a daemon operational setting, NOT part of namespace.yml (which describes what to deploy, not how).
 
 ```yaml
-# namespace.yml
+# /opt/citeck/conf/daemon.yml (new file — daemon operational config)
 reconciliation:
   enabled: true
   intervalSeconds: 60
 ```
+
+Or via CLI flag: `citeck start --reconcile --reconcile-interval 60`
 
 ### 2.3 `citeck diff` — Show pending changes
 
@@ -252,18 +316,15 @@ citeck install --from-config ns.yml --force    # overwrite existing
 citeck install --from-config ns.yml            # skip if same config exists (exit 0)
 ```
 
-### 3.4 Config templating
+### 3.4 Config templating (external only)
 
-Support environment variable expansion in namespace.yml:
-```yaml
-proxy:
-  host: "${CITECK_HOST:-localhost}"
-  port: ${CITECK_PORT:-80}
-  tls:
-    enabled: ${CITECK_TLS_ENABLED:-false}
+Do NOT build a template engine into the launcher. Users and agents use standard Unix tools:
+```bash
+envsubst < namespace.yml.tmpl > namespace.yml
+citeck apply -f namespace.yml
 ```
 
-Resolved at `apply`/`install` time. Original template preserved.
+Document this pattern in `citeck install --help` and in generated example configs.
 
 ---
 
@@ -348,18 +409,7 @@ Exit code 0 = condition met, 7 = timeout. Returns final status in JSON.
 
 **Implementation:** WebSocket event subscription with condition matching + timeout.
 
-### 5.2 `citeck deploy` — Full lifecycle deploy
-
-```bash
-citeck deploy --config namespace.yml --wait --timeout 600
-citeck deploy --config namespace.yml --dry-run
-citeck deploy --config namespace.yml --rollback-on-failure
-```
-
-Steps: validate → stop current → write config → start → wait → verify.
-On `--rollback-on-failure`: backup old config before, restore if new deployment fails.
-
-### 5.3 `citeck update` — Rolling update (inspired by K8s rolling update)
+### 5.2 `citeck update` — Rolling update (inspired by K8s rolling update)
 
 ```bash
 citeck update                                  # update to latest bundle
@@ -379,7 +429,7 @@ Rolling update strategy:
    d. If failed → rollback this app to old image, abort remaining
 3. Report result
 
-### 5.4 `citeck backup` / `citeck restore`
+### 5.3 `citeck backup` / `citeck restore`
 
 ```bash
 citeck backup --output /path/to/backup.tar.gz
@@ -388,7 +438,7 @@ citeck restore --from /path/to/backup.tar.gz
 citeck restore --from /path/to/backup.tar.gz --dry-run
 ```
 
-### 5.5 `citeck rollback`
+### 5.4 `citeck rollback`
 
 ```bash
 citeck rollback                                # rollback to previous config
@@ -544,16 +594,7 @@ citeck cp ./custom.conf proxy:/etc/nginx/conf.d/custom.conf
 
 Uses `docker cp` under the hood.
 
-### 7.4 `citeck port-forward` — Temporary port exposure (inspired by `kubectl port-forward`)
-
-```bash
-citeck port-forward postgres 5432:5432         # expose postgres on localhost:5432
-citeck port-forward emodel 8080:17020          # expose emodel debug port
-```
-
-Creates temporary `socat`/`docker exec` forwarding. Useful for debugging.
-
-### 7.5 `citeck clean` — Cleanup orphaned resources
+### 7.4 `citeck clean` — Cleanup orphaned resources
 
 ```bash
 citeck clean                                   # show what would be cleaned
@@ -599,9 +640,10 @@ Optional bearer token. Generated at install, stored in `/opt/citeck/conf/daemon-
 
 ### 9.2 Secret management
 
-- Support external secret references: `password: ${secret:vault/citeck/admin-password}`
-- `citeck secret set <key> <value>` — store encrypted secrets
-- `citeck secret rotate` — regenerate all secrets
+- BASIC auth: support custom passwords (not password=username)
+- `citeck secret set <key> <value>` — store encrypted secrets locally
+- `citeck secret list` — list stored secret keys (not values)
+- Secrets stored in `/opt/citeck/conf/secrets.enc` (AES-encrypted, key derived from machine ID)
 
 ### 9.3 Audit log
 
@@ -619,18 +661,19 @@ Optimized for both human and agent value:
 
 | Phase | Items | Human value | Agent value |
 |-------|-------|-------------|-------------|
-| **Phase 1** | 1.1-1.6 output/errors/exit codes/dry-run/--yes | Readable errors with suggestions, dry-run preview | JSON output, structured errors, exit codes |
-| **Phase 2** | 5.1 `citeck wait` + 6.3 `citeck describe` | Rich app details, readable event timeline | Atomic waiting, structured app state |
-| **Phase 3** | 2.1 `citeck apply` + 2.3 `citeck diff` | Preview changes before applying, safe config updates | Declarative idempotent state management |
-| **Phase 4** | 3.1-3.4 non-interactive install | Wizard stays, `--from-config` shortcut | Full automation via flags/env vars |
-| **Phase 5** | 4.1-4.2 liveness probes + probe categorization | Automatic restart of hung apps, fast failure feedback | Self-healing, no 28h probe waits |
-| **Phase 6** | 6.1-6.2 diagnose --fix + log filtering | Interactive fix confirmation, error log search | Auto-remediation with `--yes` |
-| **Phase 7** | 6.4-6.5 top + history | Live resource dashboard, operation audit trail | Resource monitoring, context recovery |
-| **Phase 8** | 5.3 rolling update + 5.5 rollback | Safe updates with per-app progress | Automated rollback on failure |
-| **Phase 9** | 7.1-7.2 preflight + cert lifecycle | Pre-deploy warnings, cert expiry alerts | Fail-fast, proactive cert renewal |
-| **Phase 10** | 2.2 reconciliation loop | Zero-maintenance drift correction | Continuous self-healing |
-| **Phase 11** | 5.4 backup + 7.3-7.5 cp/port-forward/clean | Debugging tools, data protection | Full lifecycle automation |
-| **Phase 12** | 8.x performance + 9.x security | Progress bars for pulls, faster startup | Parallel pulls, audit log |
+| **Phase 0** | P0: CLI renaming (K8s alignment) | Familiar commands for K8s users | Consistent naming |
+| **Phase 1** | P1: output/errors/exit codes/dry-run/--yes | Readable errors with suggestions, dry-run preview | JSON output, structured errors, exit codes |
+| **Phase 2** | P5.1 `citeck wait` + P6.3 `citeck describe` | Rich app details, readable event timeline | Atomic waiting, structured app state |
+| **Phase 3** | P2.1 `citeck apply` + P2.3 `citeck diff` | Preview changes before applying, safe config updates | Declarative idempotent state management |
+| **Phase 4** | P3.1-3.3 non-interactive install | Wizard stays, `--from-config` shortcut | Full automation via flags/env vars |
+| **Phase 5** | P4.1-4.2 liveness probes + probe categorization | Auto-restart hung apps, fast failure feedback | Self-healing, no 28h probe waits |
+| **Phase 6** | P6.1-6.2 diagnose --fix + log filtering | Interactive fix confirmation, error log search | Auto-remediation with `--yes` |
+| **Phase 7** | P6.4-6.5 top + history | Live resource dashboard, operation audit trail | Resource monitoring, context recovery |
+| **Phase 8** | P5.2 rolling update + P5.4 rollback | Safe updates with per-app progress | Automated rollback on failure |
+| **Phase 9** | P7.1-7.2 preflight + cert lifecycle | Pre-deploy warnings, cert expiry alerts | Fail-fast, proactive cert renewal |
+| **Phase 10** | P2.2 reconciliation loop | Zero-maintenance drift correction | Continuous self-healing |
+| **Phase 11** | P5.3 backup + P7.3-7.4 cp/clean | Debugging tools, data protection | Full lifecycle automation |
+| **Phase 12** | P8.x performance + P9.x security | Progress bars for pulls, faster startup | Parallel pulls, audit log |
 
 ---
 
@@ -708,45 +751,153 @@ In JSON mode, none of this appears. Final result only:
 
 ## Testing Strategy
 
-### Per-phase testing
-1. **Unit tests** — new code, formatters, diff logic, validation
-2. **Integration tests** — real Docker, configs 1-5 from V1
-3. **Human UX review** — run each command in text mode, verify: colors, table alignment, error messages have suggestions, progress bars work, confirmations prompt correctly
-4. **Agent simulation** — script that deploys using ONLY `--json` output and exit codes:
-   ```bash
-   citeck install --from-config ns.yml --non-interactive
-   citeck apply -f ns.yml --wait --timeout 600 -o json
-   STATUS=$(citeck status -o json | jq -r '.status')
-   [ "$STATUS" = "RUNNING" ] || citeck diagnose --fix -o json
-   ```
-4. **Failure injection** — bad config, crashed container, network down, disk full, OOM
-5. **Idempotency test** — run `citeck apply` 3 times, verify no unnecessary restarts
+### General rules
+- **Unit tests:** `core/src/test/kotlin/` and `cli/src/test/kotlin/`. Run: `./gradlew test`
+- **Integration tests:** Run real daemon + Docker. Use `/tmp/citeck-test` as home, `/tmp/citeck-run` for socket
+- **Lint before commit:** `./gradlew ktlintFormat`
+- **Build check:** `./gradlew :cli:shadowJar`
+- CLI module needs test dependencies added to `cli/build.gradle.kts`: `testImplementation(kotlin("test"))`, `testImplementation("org.assertj:assertj-core:3.27.3")`
 
-### Agent E2E scenario
+### Phase 1 tests (`--output json`, errors, exit codes, `--dry-run`, `--yes`)
 
-Full autonomous workflow test:
+**Unit tests** (`cli/src/test/kotlin/`):
+| Test class | Cases |
+|-----------|-------|
+| `OutputFormatterTest` | Text formatter renders table correctly; JSON formatter produces valid JSON; JSON has no ANSI colors; empty data renders empty object |
+| `DaemonResultTest` | Success maps to exit 0; NotFound maps to exit 5; ServerError maps to exit 1; ConnectionFailed maps to exit 3; JSON error includes suggestions |
+| `ExitCodesTest` | Each ExitCode constant has correct int value; all codes are unique |
+
+**Integration tests:**
+1. Start daemon, run `citeck status -o json`, validate JSON schema with Jackson
+2. Run `citeck status -o json` when daemon not running — verify exit code 3 and JSON error
+3. Run `citeck health -o json` — verify `{"healthy": true/false, "checks": [...]}` schema
+4. Run `citeck config validate -o json` with valid config — verify `{"valid": true}`
+5. Run `citeck config validate -o json` with bad YAML — verify `{"valid": false, "errors": [...]}`
+
+### Phase 2 tests (`citeck wait`, `citeck describe`)
+
+**Unit tests:**
+| Test class | Cases |
+|-----------|-------|
+| `WaitConditionTest` | Parse `--status running`; parse `--app proxy --status running`; parse `--healthy`; invalid status name returns error |
+| `DescribeFormatterTest` | Text output includes all sections (Conditions, Timeline, Events); JSON output has all fields |
+| `StartupTimelineTest` | Timeline tracks all phases; totalMs equals sum of phases; missing phases show N/A |
+
+**Integration tests:**
+1. Start namespace, run `citeck wait --status running --timeout 300` — verify exit 0 when all RUNNING
+2. Run `citeck wait --status running --timeout 5` on stopped namespace — verify exit 7 (timeout)
+3. Run `citeck wait --app proxy --status running --timeout 120` — verify waits for specific app
+4. Run `citeck describe proxy` — verify output includes Container ID, Ports, Timeline
+5. Run `citeck describe proxy -o json` — verify JSON has all fields
+
+### Phase 3 tests (`citeck apply`, `citeck diff`)
+
+**Unit tests:**
+| Test class | Cases |
+|-----------|-------|
+| `ConfigDiffTest` | Same config → empty diff; changed port → diff with port change; changed auth type → full regenerate flag; added webapp → diff with "add" action; removed webapp → diff with "remove" action |
+| `ApplyPlannerTest` | No changes → no-op; env change → restart only affected app; image change → pull + restart; auth type change → full regenerate; new app → start only new; `--force` → restart all |
+
+**Integration tests:**
+1. `citeck apply -f ns.yml` on fresh system → starts all apps, verify RUNNING
+2. `citeck apply -f ns.yml` again (no changes) → no-op, exit 0, no restarts
+3. Modify port in ns.yml, `citeck apply -f ns.yml --dry-run` → shows change, doesn't apply
+4. Modify port in ns.yml, `citeck apply -f ns.yml --wait` → applies, proxy restarts, others stay
+5. `citeck apply -f ns.yml --force --wait` → full restart of all apps
+6. `citeck diff` → shows no changes after apply
+7. Modify config, `citeck diff -o json` → shows structured changes
+
+### Phase 4 tests (non-interactive install)
+
+**Unit tests:**
+| Test class | Cases |
+|-----------|-------|
+| `InstallConfigBuilderTest` | Flags override env vars; env vars override defaults; missing required field with `--non-interactive` → error; `--from-config` reads valid YAML; `--from-config` with bad YAML → exit 2 |
+
+**Integration tests:**
+1. `citeck install --from-config ns.yml` → writes config, sets up systemd (if root)
+2. `citeck install --from-config ns.yml` again → idempotent, exit 0
+3. `citeck install --from-config ns.yml --start --wait` → install + start + wait for RUNNING
+4. `citeck install --non-interactive --auth basic --users admin --host localhost --port 80` → generates valid namespace.yml
+
+### Phase 5 tests (liveness probes, probe categorization)
+
+**Unit tests:**
+| Test class | Cases |
+|-----------|-------|
+| `ProbeCategorizationTest` | Running container + failed probe → continue retrying; exited container → immediate START_FAILED; OOMKilled → START_FAILED with OOM message; restart loop detected → START_FAILED with restart count |
+| `LivenessProbeTest` | Probe config with default values; custom probe overrides; probe failure count tracking; probe success resets failure count |
+
+**Integration tests:**
+1. Start namespace, kill a webapp container with `docker kill` → liveness probe detects, auto-restarts
+2. Start with bad image (e.g., `nonexistent:latest`) → probe categorization reports immediate failure, not 28h retry
+3. Start with OOM-triggering config → probe reports OOM correctly
+
+### Phase 6 tests (diagnose --fix, log filtering)
+
+**Unit tests:**
+| Test class | Cases |
+|-----------|-------|
+| `DiagnoseChecksTest` | Each check type produces correct result; auto-fix action for each fixable issue; non-fixable issues have empty fix; `--dry-run` doesn't execute fixes |
+| `LogFilterTest` | `--errors-only` filters to ERROR/Exception lines; `--search "pattern"` matches correctly; `--since 5m` filters by time; empty result returns empty list |
+
+**Integration tests:**
+1. Create stale socket file, run `citeck diagnose` → detects it
+2. Run `citeck diagnose --fix --yes` with stale socket → fixes it
+3. Run `citeck diagnose --fix --dry-run` → shows what would fix, doesn't fix
+4. Run `citeck logs --all --errors-only` on running system → returns only error lines
+5. Run `citeck logs proxy --search "GET /eis.json"` → finds matching lines
+
+### Failure injection tests (run after Phase 5+6)
+
+| Scenario | How to inject | Expected behavior |
+|----------|--------------|-------------------|
+| Bad YAML | Write `{{{invalid` to namespace.yml | `apply` returns exit 2, error message shows line number |
+| Missing cert | Set certPath to nonexistent file | `apply` returns exit 2, suggests checking cert path |
+| Container crash | `docker kill citeck_proxy_*` | Liveness probe detects, auto-restart within 60s |
+| OOM kill | Set memory limit to 10m for a webapp | Probe reports OOM, suggests increasing memory |
+| Docker down | `systemctl stop docker` | `health` returns exit 6, diagnose reports Docker unavailable |
+| Disk full | Fill tmpfs to 100% | `preflight` warns, `health` shows disk check failed |
+| Port conflict | Start another service on port 80 | `preflight` detects, `diagnose` reports which process |
+
+### Agent E2E scenario (run after all phases)
+
+Full autonomous workflow — validates that an agent can operate the system using ONLY `--json` output and exit codes:
 ```bash
-# 1. Pre-flight
-citeck preflight --config ns.yml -o json || exit 1
+#!/bin/bash
+set -euo pipefail
+CITECK="java --enable-native-access=ALL-UNNAMED -Dciteck.home=/tmp/citeck-test -Dciteck.run=/tmp/citeck-run -jar cli/build/libs/citeck-cli-*.jar"
 
-# 2. Deploy
-citeck apply -f ns.yml --wait --timeout 600 -o json
-[ $? -eq 0 ] || { citeck diagnose --fix -o json; exit 1; }
+# 1. Pre-flight
+$CITECK preflight --config ns.yml -o json | jq -e '.checks | all(.ok)' || exit 1
+
+# 2. Install + Apply
+$CITECK install --from-config ns.yml
+$CITECK apply -f ns.yml --wait --timeout 600 -o json
+[ $? -eq 0 ] || { $CITECK diagnose --fix --yes -o json; exit 1; }
 
 # 3. Verify
-citeck health -o json | jq -e '.healthy' || exit 1
+$CITECK health -o json | jq -e '.healthy' || exit 1
+$CITECK status -o json | jq -e '.status == "RUNNING"' || exit 1
 
-# 4. Update
-citeck update --dry-run -o json
-citeck update --strategy rolling --wait --timeout 600
+# 4. Idempotency
+$CITECK apply -f ns.yml -o json | jq -e '.changes | length == 0' || exit 1
 
-# 5. Monitor (periodic)
-citeck health -o json
-citeck cert check --warn-days 30
-citeck top -o json
+# 5. Describe all apps (structured)
+for APP in $($CITECK status -o json | jq -r '.apps[].name'); do
+  $CITECK describe "$APP" -o json | jq -e '.status == "RUNNING"' || exit 1
+done
 
-# 6. Troubleshoot (on alert)
-citeck diagnose -o json
-citeck logs --all --errors-only --since 5m -o json
-citeck describe <failing-app> -o json
+# 6. Check logs for errors
+ERRORS=$($CITECK logs --all --errors-only --since 5m -o json | jq '.lines | length')
+echo "Found $ERRORS error lines in logs"
+
+# 7. Update dry-run
+$CITECK update --dry-run -o json | jq '.changes'
+
+# 8. Stop
+$CITECK stop --yes
+$CITECK wait --status stopped --timeout 60
+
+echo "Agent E2E test passed"
 ```
