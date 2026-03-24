@@ -7,7 +7,9 @@ import java.nio.file.Paths
 object DaemonFiles {
 
     // Socket stays in /run for OS-managed lifecycle and single-instance enforcement
-    private val RUN_DIR: Path = Paths.get("/run/citeck")
+    private val RUN_DIR: Path = Paths.get(
+        System.getProperty("citeck.run") ?: "/run/citeck"
+    )
 
     fun ensureDirs() {
         createDirOrFail(RUN_DIR)

@@ -85,7 +85,7 @@ class CiteckJarFile(
                 continue
             }
             if (withContent) {
-                result[fileName] = URI.create("$url/$fileName").toURL().openStream().use { it.readBytes() }
+                result[fileName] = jarFile.getInputStream(entry).use { it.readBytes() }
             } else {
                 result[fileName] = ByteArray(0)
             }

@@ -28,6 +28,7 @@ fun Routing.namespaceRoutes(nsManager: NamespaceConfigManager) {
             return@post
         }
         try {
+            runtime.setActive(true)
             runtime.updateAndStart()
             call.respond(ActionResultDto(success = true, message = "Namespace start requested"))
         } catch (e: Throwable) {

@@ -80,6 +80,12 @@ class DaemonLifecycle {
 
             if (loaded) {
                 log.info { "Namespace loaded: ${nsManager.getConfig()?.id}" }
+                val runtime = nsManager.getRuntime()
+                if (runtime != null) {
+                    runtime.setActive(true)
+                    runtime.updateAndStart()
+                    log.info { "Namespace start requested" }
+                }
             } else {
                 log.info { "No namespace configured. Create ${ConfigPaths.NAMESPACE_CONFIG}" }
             }

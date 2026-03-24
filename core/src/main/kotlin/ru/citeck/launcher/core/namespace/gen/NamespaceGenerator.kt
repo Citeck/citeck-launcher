@@ -48,7 +48,15 @@ class NamespaceGenerator {
     private lateinit var services: WorkspaceContext
 
     private val defaultAppFiles by lazy {
-        CiteckFiles.getFile("classpath:appfiles").getFilesContent()
+        val files = CiteckFiles.getFile("classpath:appfiles").getFilesContent()
+        // Shadow JAR may return keys with 'appfiles/' prefix due to
+        // JarURLConnection.entryName being empty. Strip it if present.
+        val prefix = "appfiles/"
+        if (files.keys.any { it.startsWith(prefix) }) {
+            files.mapKeys { (key, _) -> key.removePrefix(prefix) }
+        } else {
+            files
+        }
     }
 
     fun init(services: WorkspaceContext) {
