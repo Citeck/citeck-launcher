@@ -372,7 +372,7 @@ class NamespaceGenerator {
         val startupProbe = if (context.tlsEnabled) {
             AppProbeDef(
                 exec = ExecProbeDef(
-                    listOf("sh", "-c", "wget -q -O /dev/null http://localhost:80/eis.json")
+                    listOf("sh", "-c", "curl -sf -o /dev/null http://localhost:80/eis.json")
                 )
             )
         } else {
