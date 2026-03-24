@@ -26,12 +26,13 @@ const (
 
 // NsGenContext holds state during namespace generation.
 type NsGenContext struct {
-	Config       *NamespaceConfig
-	Bundle       *bundle.BundleDef
-	DetachedApps map[string]bool
-	Files        map[string][]byte
-	Applications map[string]*AppBuilder
-	portsCounter atomic.Int32
+	Config          *NamespaceConfig
+	Bundle          *bundle.BundleDef
+	WorkspaceConfig *bundle.WorkspaceConfig
+	DetachedApps    map[string]bool
+	Files           map[string][]byte
+	Applications    map[string]*AppBuilder
+	portsCounter    atomic.Int32
 }
 
 func NewNsGenContext(cfg *NamespaceConfig, bun *bundle.BundleDef) *NsGenContext {

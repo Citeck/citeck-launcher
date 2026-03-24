@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/niceteck/citeck-launcher/internal/api"
+	"github.com/niceteck/citeck-launcher/internal/appfiles"
 	"github.com/niceteck/citeck-launcher/internal/bundle"
 	"github.com/niceteck/citeck-launcher/internal/config"
 	"github.com/niceteck/citeck-launcher/internal/docker"
@@ -65,21 +66,29 @@ func Start(foreground bool) error {
 	var runtime *namespace.Runtime
 
 	if nsCfg != nil {
-		// Resolve bundle
+		// Resolve bundle + workspace config
 		resolver := bundle.NewResolver(config.DataDir())
-		bundleDef, err = resolver.Resolve(nsCfg.BundleRef)
+		resolveResult, err := resolver.Resolve(nsCfg.BundleRef)
 		if err != nil {
 			slog.Error("Failed to resolve bundle", "ref", nsCfg.BundleRef, "err", err)
-			bundleDef = &bundle.EmptyBundleDef
+			resolveResult = &bundle.ResolveResult{Bundle: &bundle.EmptyBundleDef, Workspace: &bundle.WorkspaceConfig{}}
 		}
+		bundleDef = resolveResult.Bundle
 
 		slog.Info("Using bundle", "ref", nsCfg.BundleRef, "apps", len(bundleDef.Applications))
 
-		// Generate namespace
+		// Extract appfiles to volumes base
 		volumesBase := filepath.Join(config.DataDir(), "runtime", nsCfg.ID)
+		if err := appfiles.ExtractTo(volumesBase); err != nil {
+			slog.Error("Failed to extract appfiles", "err", err)
+		} else {
+			slog.Info("Extracted appfiles", "dir", volumesBase)
+		}
+
+		// Generate namespace
 		runtime = namespace.NewRuntime(nsCfg, dockerClient, "daemon", volumesBase)
 
-		genResp := namespace.Generate(nsCfg, bundleDef)
+		genResp := namespace.Generate(nsCfg, bundleDef, resolveResult.Workspace)
 		runtime.Start(genResp.Applications)
 	}
 

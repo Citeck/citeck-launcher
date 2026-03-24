@@ -361,6 +361,38 @@ func (r *Runtime) startApp(ctx context.Context, appName string) {
 
 	slog.Info("Starting app", "app", appName, "image", appDef.Image)
 
+	// Run init containers first
+	for _, initC := range appDef.InitContainers {
+		slog.Info("Running init container", "app", appName, "image", initC.Image)
+		initDef := appdef.ApplicationDef{
+			Name:    appName + "-init",
+			Image:   initC.Image,
+			Cmd:     initC.Cmd,
+			Volumes: initC.Volumes,
+			Environments: initC.Environments,
+		}
+		// Pull init image if needed
+		if !r.docker.ImageExists(ctx, initC.Image) {
+			if err := r.docker.PullImage(ctx, initC.Image); err != nil {
+				slog.Warn("Init container pull failed", "app", appName, "image", initC.Image, "err", err)
+				continue
+			}
+		}
+		initName := r.docker.ContainerName(appName + "-init")
+		_ = r.docker.StopAndRemoveContainer(ctx, initName)
+		initID, err := r.docker.CreateContainer(ctx, initDef, r.volumesBase)
+		if err != nil {
+			slog.Warn("Init container create failed", "app", appName, "err", err)
+			continue
+		}
+		if err := r.docker.StartContainer(ctx, initID); err != nil {
+			slog.Warn("Init container start failed", "app", appName, "err", err)
+		}
+		// Wait for init container to finish
+		r.docker.WaitForContainer(ctx, initID, 60*time.Second)
+		_ = r.docker.RemoveContainer(ctx, initID)
+	}
+
 	// Remove existing container if any
 	containerName := r.docker.ContainerName(appName)
 	_ = r.docker.StopAndRemoveContainer(ctx, containerName)

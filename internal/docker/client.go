@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -34,12 +35,38 @@ type Client struct {
 }
 
 // NewClient creates a Docker client.
+// It auto-detects the Docker socket: DOCKER_HOST env, rootless, or standard.
 func NewClient(workspace, namespace string) (*Client, error) {
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	opts := []client.Opt{client.FromEnv, client.WithAPIVersionNegotiation()}
+
+	// If DOCKER_HOST is not set, try common socket locations
+	if os.Getenv("DOCKER_HOST") == "" {
+		socketPath := detectDockerSocket()
+		if socketPath != "" {
+			opts = append(opts, client.WithHost("unix://"+socketPath))
+		}
+	}
+
+	cli, err := client.NewClientWithOpts(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("create docker client: %w", err)
 	}
 	return &Client{cli: cli, workspace: workspace, namespace: namespace}, nil
+}
+
+// detectDockerSocket finds the Docker socket in common locations.
+func detectDockerSocket() string {
+	candidates := []string{
+		"/var/run/docker.sock",
+		fmt.Sprintf("/run/user/%d/docker.sock", os.Getuid()),
+		os.Getenv("HOME") + "/.docker/desktop/docker.sock",
+	}
+	for _, path := range candidates {
+		if fi, err := os.Stat(path); err == nil && fi.Mode()&os.ModeSocket != 0 {
+			return path
+		}
+	}
+	return ""
 }
 
 func (c *Client) Close() error {

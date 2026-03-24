@@ -14,9 +14,10 @@ type NamespaceGenResp struct {
 	Files        map[string][]byte
 }
 
-// Generate creates container definitions from a namespace config and bundle.
-func Generate(cfg *NamespaceConfig, bun *bundle.BundleDef) *NamespaceGenResp {
+// Generate creates container definitions from a namespace config, bundle, and workspace config.
+func Generate(cfg *NamespaceConfig, bun *bundle.BundleDef, wsCfg *bundle.WorkspaceConfig) *NamespaceGenResp {
 	ctx := NewNsGenContext(cfg, bun)
+	ctx.WorkspaceConfig = wsCfg
 
 	// Load embedded appfiles
 	loadAppFiles(ctx)
@@ -371,6 +372,9 @@ func generateWebapp(name string, ctx *NsGenContext) {
 		app.AddEnv("JAVA_OPTS", strings.TrimSpace(javaOpts))
 	}
 
+	// Process data sources from workspace config
+	processWebappDataSources(name, app, ctx)
+
 	// Startup probe: HTTP health check
 	app.StartupConditions = []appdef.StartupCondition{
 		{Probe: &appdef.AppProbeDef{HTTP: &appdef.HttpProbeDef{
@@ -378,14 +382,86 @@ func generateWebapp(name string, ctx *NsGenContext) {
 			Port: port,
 		}}},
 	}
+}
 
-	// Data source dependencies
-	if needsPostgres(name) {
-		app.AddDependsOn(appdef.AppPostgres)
+// processWebappDataSources reads datasource definitions from workspace config
+// (workspace-v1.yml → webapps[].defaultProps.dataSources) and configures:
+//   - JDBC: dependency on postgres, init action to create DB, SPRING_DATASOURCE_* env
+//   - MongoDB: dependency on mongodb, SPRING_DATA_MONGODB_URI env
+//
+// No hardcoded datasource mappings — everything comes from workspace config.
+func processWebappDataSources(appName string, app *AppBuilder, ctx *NsGenContext) {
+	if ctx.WorkspaceConfig == nil {
+		return
 	}
-	if needsMongo(name) {
-		app.AddDependsOn(appdef.AppMongodb)
+
+	// Find webapp in workspace config
+	var dataSources map[string]bundle.DataSourceConfig
+	for _, webapp := range ctx.WorkspaceConfig.Webapps {
+		if webapp.ID == appName {
+			dataSources = webapp.DefaultProps.DataSources
+			break
+		}
 	}
+	if len(dataSources) == 0 {
+		return
+	}
+
+	pgApp := ctx.Applications[appdef.AppPostgres]
+
+	for dsKey, dsCfg := range dataSources {
+		url := resolveTemplateVars(dsCfg.URL)
+
+		if strings.HasPrefix(url, "jdbc:") {
+			app.AddDependsOn(appdef.AppPostgres)
+
+			dbName := extractDBName(url)
+			if dbName != "" && pgApp != nil {
+				pgApp.InitActions = append(pgApp.InitActions, appdef.AppInitAction{
+					Exec: []string{"sh", "-c", "/init_db_and_user.sh " + dbName},
+				})
+			}
+
+			if dsKey == "main" {
+				app.AddEnv("SPRING_DATASOURCE_USERNAME", dbName)
+				app.AddEnv("SPRING_DATASOURCE_PASSWORD", dbName)
+				app.AddEnv("SPRING_DATASOURCE_URL", url)
+			}
+		} else if strings.HasPrefix(url, "mongodb:") {
+			app.AddDependsOn(appdef.AppMongodb)
+			app.AddEnv("SPRING_DATA_MONGODB_URI", url)
+		}
+	}
+}
+
+// resolveTemplateVars replaces ${VAR} placeholders in datasource URLs.
+func resolveTemplateVars(s string) string {
+	replacements := map[string]string{
+		"${PG_HOST}":    PGHost,
+		"${PG_PORT}":    fmt.Sprintf("%d", PGPort),
+		"${MONGO_HOST}": MongoHost,
+		"${MONGO_PORT}": fmt.Sprintf("%d", MongoPort),
+		"${ZK_HOST}":    ZKHost,
+		"${ZK_PORT}":    fmt.Sprintf("%d", ZKPort),
+		"${RMQ_HOST}":   RMQHost,
+		"${RMQ_PORT}":   fmt.Sprintf("%d", RMQPort),
+	}
+	for k, v := range replacements {
+		s = strings.ReplaceAll(s, k, v)
+	}
+	return s
+}
+
+// extractDBName extracts the database name from a JDBC or MongoDB URL.
+// jdbc:postgresql://host:port/dbname -> dbname
+// mongodb://host:port/dbname -> dbname
+func extractDBName(url string) string {
+	// Find the last path segment
+	idx := strings.LastIndex(url, "/")
+	if idx < 0 {
+		return ""
+	}
+	return url[idx+1:]
 }
 
 // UtilsImage is the default init container image for volume setup.
@@ -402,18 +478,6 @@ func webappKind(name string) appdef.ApplicationKind {
 		return appdef.KindCiteckCore
 	}
 	return appdef.KindCiteckAdditional
-}
-
-func needsPostgres(name string) bool {
-	switch name {
-	case appdef.AppEmodel, appdef.AppUiserv, appdef.AppHistory, appdef.AppNotifications, appdef.AppEapps:
-		return true
-	}
-	return false
-}
-
-func needsMongo(name string) bool {
-	return name == appdef.AppEproc
 }
 
 func bundleImageOr(ctx *NsGenContext, name, fallback string) string {
