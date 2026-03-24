@@ -319,8 +319,12 @@ class NamespaceGenerator {
                     )
                 context.files[luaKey] = lua.toByteArray()
 
-                app.addVolume("./proxy/lua_oidc_full_access.lua:/etc/nginx/includes/lua_oidc_full_access.lua:ro")
-                // app.addVolume("./proxy/openidc.lua:/usr/local/openresty/luajit/share/lua/5.1/resty/openidc.lua:ro")
+                // Mount to temp location and copy via init action to avoid
+                // "sed: cannot rename" errors from runfile.sh on bind-mounted files
+                app.addVolume("./proxy/lua_oidc_full_access.lua:/tmp/lua_oidc_full_access.lua:ro")
+                app.addInitAction(
+                    ExecShell("cp /tmp/lua_oidc_full_access.lua /etc/nginx/includes/lua_oidc_full_access.lua")
+                )
                 app.addInitAction(
                     ExecShell(
                         "sed -i -e '/location \\/ecos-idp\\/auth\\/ {/a\\\n" +
@@ -357,6 +361,16 @@ class NamespaceGenerator {
 
         val containerPort = if (context.tlsEnabled) 443 else 80
 
+        val startupProbe = if (context.tlsEnabled) {
+            AppProbeDef(
+                exec = ExecProbeDef(
+                    listOf("sh", "-c", "wget -q -O /dev/null http://localhost:80/eis.json")
+                )
+            )
+        } else {
+            AppProbeDef(http = HttpProbeDef("/eis.json", 80))
+        }
+
         app.addEnv("DEFAULT_LOCATION_V2", "true")
             .addEnv("GATEWAY_TARGET", "${AppName.GATEWAY}:$gatewayPort")
             .addEnv("PROXY_TARGET", proxyTarget)
@@ -370,9 +384,7 @@ class NamespaceGenerator {
                     AppResourcesDef.LimitsDef("128m")
                 )
             ).withStartupCondition(
-                StartupCondition(
-                    probe = AppProbeDef(http = HttpProbeDef("/eis.json", 80))
-                )
+                StartupCondition(probe = startupProbe)
             )
 
         if (context.tlsEnabled) {
