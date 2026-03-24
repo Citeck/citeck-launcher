@@ -73,7 +73,7 @@ The CLI is designed so that K8s experience transfers directly. A user who knows 
 | `kubectl describe pod X` | `citeck describe <app>` | Rich detail with events/conditions |
 | `kubectl logs X` | `citeck logs <app>` | Container logs |
 | `kubectl logs X -f` | `citeck logs <app> --follow` | Follow logs |
-| `kubectl exec X -- cmd` | `citeck exec <app> cmd` | Exec in container |
+| `kubectl exec X -- cmd` | `citeck exec <app> -- cmd` | Exec in container (`--` separates app from command) |
 | `kubectl top pods` | `citeck top` | Resource usage |
 | `kubectl diff -f new.yml` | `citeck diff -f new.yml` | Preview changes |
 | `kubectl rollout undo` | `citeck rollback` | Undo last change |
@@ -1006,6 +1006,54 @@ In JSON mode, none of this appears. Final result only:
 | Docker down | `systemctl stop docker` | `health` returns exit 6, diagnose reports Docker unavailable |
 | Disk full | Fill tmpfs to 100% | `preflight` warns, `health` shows disk check failed |
 | Port conflict | Start another service on port 80 | `preflight` detects, `diagnose` reports which process |
+
+### Phase 7 tests (Remote daemon — TCP/TLS)
+
+**Unit tests:**
+| Test class | Cases |
+|-----------|-------|
+| `DaemonClientTransportTest` | Unix socket detected when file exists; TCP used when `--host` set; TCP used when `CITECK_HOST` env set; error when neither socket nor host available |
+| `TokenAuthTest` | Request without token to TCP → 401; request with valid token → 200; request with invalid token → 401; Unix socket requests skip auth |
+
+**Integration tests:**
+1. Start daemon with TCP enabled (`daemon.yml`), connect via `--host localhost:8088 --token <token>` → status works
+2. Start daemon, connect via Unix socket (no token) → works
+3. Connect via TCP without token → exit code 9 (unauthorized)
+4. Connect via TCP with wrong token → exit code 9
+5. Run all 5 test configs through TCP transport (regression)
+
+### Regression suite (run after every phase)
+
+Run the 5 test configurations from V1 as a regression suite:
+
+| # | Config | Command | Verification |
+|---|--------|---------|-------------|
+| 1 | BASIC + HTTP 80 | `citeck apply -f config1.yml --wait -o json` | `jq '.status == "RUNNING"'` |
+| 2 | BASIC + TLS 443 | `citeck apply -f config2.yml --wait -o json` | `curl -sk https://localhost/eis.json` |
+| 3 | KC + custom + TLS | `citeck apply -f config3.yml --wait -o json` | OIDC discovery endpoint returns correct issuer |
+| 4 | KC + HTTP 80 | `citeck apply -f config4.yml --wait -o json` | Playwright: login → dashboard |
+| 5 | BASIC + port 8443 | `citeck apply -f config5.yml --wait -o json` | `curl -sk https://custom.launcher.ru:8443/` |
+
+After Phase 1, these tests use `-o json` for verification. After Phase 3, they use `citeck apply` instead of manual start.
+
+### Playwright browser tests (run with configs 1 + 4)
+
+**Smoke test (all configs):**
+1. Navigate to platform URL
+2. Verify JS/CSS load (HTTP 200, no `ERR_HTTP2_PROTOCOL_ERROR`)
+3. Check console for errors (ignore chrome-extension and favicon)
+4. Take screenshot
+
+**BASIC auth test (configs 1, 2, 5):**
+1. Set HTTP credentials via `context.setHTTPCredentials()` (not URL embedding)
+2. Navigate → dashboard renders with workspaces
+
+**Keycloak auth test (config 4):**
+1. Navigate → redirect to Keycloak login page
+2. Fill username=admin, password=admin, submit
+3. Handle password update if prompted
+4. Verify redirect back to dashboard
+5. Take screenshot
 
 ### Agent E2E scenario (run after all phases)
 
