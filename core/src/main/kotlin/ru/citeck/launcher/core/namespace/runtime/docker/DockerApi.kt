@@ -53,6 +53,10 @@ class DockerApi(
     @Volatile
     private var systemInfoCacheTime: Long = 0
 
+    fun ping() {
+        client.pingCmd().exec()
+    }
+
     fun createVolume(nsRef: NamespaceRef, originalName: String, name: String): CreateVolumeResponse {
         return client.createVolumeCmd()
             .withLabels(

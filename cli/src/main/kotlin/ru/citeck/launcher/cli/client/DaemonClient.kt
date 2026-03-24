@@ -13,9 +13,7 @@ import io.ktor.websocket.*
 import kotlinx.coroutines.runBlocking
 import ru.citeck.launcher.api.ApiPaths
 import ru.citeck.launcher.api.DaemonFiles
-import ru.citeck.launcher.api.dto.ActionResultDto
-import ru.citeck.launcher.api.dto.DaemonStatusDto
-import ru.citeck.launcher.api.dto.NamespaceDto
+import ru.citeck.launcher.api.dto.*
 import kotlin.io.path.exists
 
 class DaemonClient(private val socketPath: String) : AutoCloseable {
@@ -75,6 +73,26 @@ class DaemonClient(private val socketPath: String) : AutoCloseable {
         return post(ApiPaths.NAMESPACE_RELOAD)
     }
 
+    fun getAppLogs(name: String, tail: Int = 100): String? {
+        return getText(ApiPaths.appLogs(name) + "?tail=$tail")
+    }
+
+    fun restartApp(name: String): ActionResultDto? {
+        return post(ApiPaths.appRestart(name))
+    }
+
+    fun inspectApp(name: String): AppInspectDto? {
+        return get(ApiPaths.appInspect(name))
+    }
+
+    fun execApp(name: String, command: List<String>): ExecResultDto? {
+        return postBody(ApiPaths.appExec(name), ExecRequestDto(command))
+    }
+
+    fun getHealth(): HealthDto? {
+        return get(ApiPaths.HEALTH)
+    }
+
     fun watchEvents(
         onMessage: (String) -> Unit,
         onClose: () -> Unit
@@ -116,6 +134,60 @@ class DaemonClient(private val socketPath: String) : AutoCloseable {
                     }
                     unixSocket(socketPath)
                     accept(ContentType.Application.Json)
+                }
+                if (response.status.isSuccess()) {
+                    mapper.readValue<T>(response.bodyAsText())
+                } else {
+                    null
+                }
+            } catch (_: Throwable) {
+                null
+            }
+        }
+    }
+
+    private fun getText(path: String): String? {
+        return runBlocking {
+            try {
+                val response: HttpResponse = httpClient.get {
+                    url {
+                        protocol = URLProtocol.HTTP
+                        host = "localhost"
+                        encodedPath = path.substringBefore('?')
+                        val query = path.substringAfter('?', "")
+                        if (query.isNotEmpty()) {
+                            query.split('&').forEach { param ->
+                                val (k, v) = param.split('=', limit = 2)
+                                parameters.append(k, v)
+                            }
+                        }
+                    }
+                    unixSocket(socketPath)
+                }
+                if (response.status.isSuccess()) {
+                    response.bodyAsText()
+                } else {
+                    null
+                }
+            } catch (_: Throwable) {
+                null
+            }
+        }
+    }
+
+    private inline fun <reified T> postBody(path: String, body: Any): T? {
+        return runBlocking {
+            try {
+                val response: HttpResponse = httpClient.post {
+                    url {
+                        protocol = URLProtocol.HTTP
+                        host = "localhost"
+                        encodedPath = path
+                    }
+                    unixSocket(socketPath)
+                    contentType(ContentType.Application.Json)
+                    accept(ContentType.Application.Json)
+                    setBody(mapper.writeValueAsString(body))
                 }
                 if (response.status.isSuccess()) {
                     mapper.readValue<T>(response.bodyAsText())

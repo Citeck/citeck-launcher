@@ -13,4 +13,12 @@ object ApiPaths {
     const val NAMESPACE_RELOAD = "$API_V1/namespace/reload"
 
     const val EVENTS = "$API_V1/events"
+
+    const val APPS = "$API_V1/apps"
+    const val HEALTH = "$API_V1/health"
+
+    fun appLogs(name: String) = "$APPS/$name/logs"
+    fun appRestart(name: String) = "$APPS/$name/restart"
+    fun appInspect(name: String) = "$APPS/$name/inspect"
+    fun appExec(name: String) = "$APPS/$name/exec"
 }

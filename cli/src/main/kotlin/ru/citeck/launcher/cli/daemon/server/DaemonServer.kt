@@ -9,15 +9,19 @@ import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
 import ru.citeck.launcher.api.DaemonFiles
+import ru.citeck.launcher.cli.daemon.server.routes.appRoutes
 import ru.citeck.launcher.cli.daemon.server.routes.daemonRoutes
 import ru.citeck.launcher.cli.daemon.server.routes.eventRoutes
+import ru.citeck.launcher.cli.daemon.server.routes.healthRoutes
 import ru.citeck.launcher.cli.daemon.server.routes.namespaceRoutes
 import ru.citeck.launcher.cli.daemon.services.NamespaceConfigManager
+import ru.citeck.launcher.core.namespace.runtime.docker.DockerApi
 import kotlin.io.path.deleteIfExists
 import kotlin.time.Duration.Companion.seconds
 
 class DaemonServer(
     private val nsManager: NamespaceConfigManager,
+    private val dockerApi: DockerApi,
     private val onShutdown: () -> Unit
 ) {
 
@@ -47,6 +51,8 @@ class DaemonServer(
                 daemonRoutes(onShutdown)
                 namespaceRoutes(nsManager)
                 eventRoutes(nsManager)
+                appRoutes(nsManager, dockerApi)
+                healthRoutes(nsManager, dockerApi)
             }
         }.start(wait = false)
     }

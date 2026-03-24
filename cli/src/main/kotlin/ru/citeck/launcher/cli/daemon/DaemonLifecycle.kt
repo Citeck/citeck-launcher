@@ -84,7 +84,7 @@ class DaemonLifecycle {
                 log.info { "No namespace configured. Create ${ConfigPaths.NAMESPACE_CONFIG}" }
             }
 
-            server = DaemonServer(nsManager, ::shutdown)
+            server = DaemonServer(nsManager, daemonServices.dockerApi, ::shutdown)
             server.start()
 
             // Start certificate renewal service if using Let's Encrypt
