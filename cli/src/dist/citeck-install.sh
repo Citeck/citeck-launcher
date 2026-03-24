@@ -113,7 +113,13 @@ fi
 if [ "${UPGRADE}" = true ]; then
     echo "Stopping daemon..."
     "${CITECK_BIN}" stop --shutdown 2>/dev/null || true
-    sleep 2
+    # Wait for daemon to fully stop (up to 30s)
+    for i in $(seq 1 30); do
+        if ! "${CITECK_BIN}" status &>/dev/null; then
+            break
+        fi
+        sleep 1
+    done
 fi
 
 # Extract
@@ -129,9 +135,17 @@ echo ""
 
 if [ "${UPGRADE}" = true ]; then
     if systemctl is-enabled citeck &>/dev/null; then
+        systemctl reset-failed citeck 2>/dev/null || true
         echo "Starting daemon..."
         systemctl start citeck
-        echo "Upgrade complete: v${VERSION}"
+        # Verify daemon started
+        sleep 2
+        if systemctl is-active citeck &>/dev/null; then
+            echo "Upgrade complete: v${VERSION}"
+        else
+            echo "Warning: daemon may not have started correctly."
+            echo "Check logs with: journalctl -u citeck -n 50 --no-pager"
+        fi
     else
         echo "Upgrade complete: v${VERSION}"
         echo "Start the daemon with: sudo systemctl start citeck"
