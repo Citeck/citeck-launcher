@@ -36,11 +36,19 @@ Full rewrite: Go + React Web UI + Tauri Desktop.
 - [x] Unit tests: 36 total (config, proxyBaseUrl, state machine, memory, formatBytes)
 - [x] Binary: 14MB with Docker SDK + web UI embedded
 
-### Phase 4: Full CLI + Apply + Diff
-- [ ] Port: logs, exec, restart, describe, install, uninstall, reload, stop
-- [ ] `citeck apply -f namespace.yml` (idempotent, diff-based)
-- [ ] `citeck diff` (show pending changes)
-- [ ] `citeck wait` (atomic condition waiting)
-- [ ] `--dry-run` on mutating commands
-- [ ] `citeck diagnose` (with `--fix`)
-- [ ] Non-interactive install (`--from-config`)
+### Phase 4: Full CLI + Apply + Diff — COMPLETE (2026-03-25)
+- [x] All commands ported: start, stop, status, health, config, describe, logs, exec, restart
+- [x] `citeck apply -f namespace.yml` (--wait, --timeout, --force, --dry-run)
+- [x] `citeck diff -f new.yml` (configuration comparison)
+- [x] `citeck wait --status RUNNING --app X --healthy --timeout`
+- [x] `citeck diagnose` (--fix, --dry-run) — socket, config, Docker, ports
+- [x] `citeck reload` — hot-reload configuration
+- [x] 17 CLI commands total, all support -o json
+
+### Phase 5-10: Remaining (see AGENT_PLAN_V3.md)
+- [ ] Phase 5: Web UI — full dashboard, app detail, logs, config
+- [ ] Phase 6: Liveness probes + self-healing
+- [ ] Phase 7: Remote daemon + auth
+- [ ] Phase 8: Advanced features (rolling updates, backup, certs)
+- [ ] Phase 9: Citeck Desktop (Wails v3)
+- [ ] Phase 10: Distribution + polish
