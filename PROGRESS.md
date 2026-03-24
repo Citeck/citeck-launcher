@@ -25,14 +25,22 @@ Full rewrite: Go + React Web UI + Tauri Desktop.
 - [x] go:embed + SPA fallback handler for web UI serving
 - [x] Build: 9.5MB binary with embedded web UI
 
-### Phase 3: Port Daemon Core
-- [ ] NamespaceConfig (YAML parsing)
-- [ ] NsGenContext + NamespaceGenerator (container definitions)
-- [ ] DockerApi (official Docker SDK)
-- [ ] AppRuntime state machine + probes
-- [ ] NamespaceRuntime (goroutine + channel-based command queue)
-- [ ] BundlesService + GitRepoService
-- [ ] NamespaceConfigManager (config loading, bundle resolution)
-- [ ] Daemon lifecycle (lock file, shutdown hooks, signals)
-- [ ] API routes (namespace, apps, events, health)
-- [ ] Appfiles embedding (keycloak, postgres, proxy configs)
+### Phase 3: Port Daemon Core — COMPLETE (2026-03-25)
+- [x] NamespaceConfig (YAML parsing with auth, proxy, TLS, bundle)
+- [x] NsGenContext + NamespaceGenerator (all infrastructure + webapps)
+- [x] Docker client (official SDK: containers, images, exec, logs, stats, probes)
+- [x] AppRuntime state machine + NamespaceRuntime (goroutine + channels)
+- [x] BundlesService (git clone/pull) + bundle YAML resolver
+- [x] Daemon HTTP server on Unix socket with all API routes
+- [x] CLI: start (foreground) + stop (with --shutdown)
+- [x] Unit tests: 36 total (config, proxyBaseUrl, state machine, memory, formatBytes)
+- [x] Binary: 14MB with Docker SDK + web UI embedded
+
+### Phase 4: Full CLI + Apply + Diff
+- [ ] Port: logs, exec, restart, describe, install, uninstall, reload, stop
+- [ ] `citeck apply -f namespace.yml` (idempotent, diff-based)
+- [ ] `citeck diff` (show pending changes)
+- [ ] `citeck wait` (atomic condition waiting)
+- [ ] `--dry-run` on mutating commands
+- [ ] `citeck diagnose` (with `--fix`)
+- [ ] Non-interactive install (`--from-config`)
