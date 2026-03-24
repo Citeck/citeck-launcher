@@ -43,3 +43,19 @@ export interface EventDto {
   before: string
   after: string
 }
+
+export interface AppInspectDto {
+  name: string
+  containerId: string
+  image: string
+  status: string
+  state: string
+  ports: string[]
+  volumes: string[]
+  env: string[]
+  labels: Record<string, string>
+  network: string
+  restartCount: number
+  startedAt: string
+  uptime: number
+}

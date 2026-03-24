@@ -1,4 +1,4 @@
-import type { NamespaceDto, HealthDto, DaemonStatusDto } from './types'
+import type { NamespaceDto, HealthDto, DaemonStatusDto, AppInspectDto } from './types'
 
 const API_BASE = '/api/v1'
 
@@ -26,6 +26,22 @@ export async function getDaemonStatus(): Promise<DaemonStatusDto> {
 
 export async function getAppLogs(name: string, tail = 100): Promise<string> {
   const res = await fetch(`${API_BASE}/apps/${name}/logs?tail=${tail}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.text()
+}
+
+export async function getAppInspect(name: string): Promise<AppInspectDto> {
+  return fetchJSON(`/apps/${name}/inspect`)
+}
+
+export async function postAppRestart(name: string): Promise<{ success: boolean; message: string }> {
+  const res = await fetch(`${API_BASE}/apps/${name}/restart`, { method: 'POST' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function getConfigContent(): Promise<string> {
+  const res = await fetch(`${API_BASE}/../conf/namespace.yml`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.text()
 }

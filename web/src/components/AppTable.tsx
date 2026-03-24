@@ -1,3 +1,4 @@
+import { Link } from 'react-router'
 import type { AppDto } from '../lib/types'
 import { StatusBadge } from './StatusBadge'
 
@@ -21,7 +22,11 @@ export function AppTable({ apps }: AppTableProps) {
         <tbody>
           {apps.map((app) => (
             <tr key={app.name} className="border-b border-border/50 hover:bg-muted/30">
-              <td className="py-2.5 pr-4 font-mono text-sm">{app.name}</td>
+              <td className="py-2.5 pr-4 font-mono text-sm">
+                <Link to={`/apps/${app.name}`} className="text-primary hover:underline">
+                  {app.name}
+                </Link>
+              </td>
               <td className="py-2.5 pr-4">
                 <StatusBadge status={app.status} />
               </td>
