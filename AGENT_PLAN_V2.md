@@ -2,7 +2,38 @@
 
 ## Context
 
-V1 complete: bug fixes, 8 CLI commands, 5 E2E configs pass. This plan makes the launcher a proper orchestration tool for **both humans and agents** — inspired by Kubernetes/Docker Swarm patterns adapted for single-host deployment.
+V1 complete: bug fixes, 8 CLI commands, 5 E2E configs pass. This plan makes the launcher a proper orchestration tool for **humans, agents, and remote GUI** — inspired by Kubernetes/Docker Swarm patterns adapted for single-host deployment.
+
+### Platform Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Daemon (Linux server)                  │
+│  Ktor CIO engine                                         │
+│  ├─ Unix socket  /run/citeck/daemon.sock  (local fast)   │
+│  └─ TCP/TLS      0.0.0.0:8088            (remote)       │
+│  ↕                                                       │
+│  core/ — namespace runtime, Docker API, config, bundles  │
+└─────────────────────────────────────────────────────────┘
+        ↑                    ↑                    ↑
+   Unix socket            TCP/TLS              TCP/TLS
+        ↑                    ↑                    ↑
+┌──────────────┐  ┌──────────────────┐  ┌─────────────────┐
+│  CLI (Linux) │  │  GUI app (any OS)│  │  Agent (any)    │
+│  citeck cmd  │  │  Compose Desktop │  │  -o json + API  │
+└──────────────┘  └──────────────────┘  └─────────────────┘
+```
+
+### Platform Scope
+
+| Component | Linux | macOS | Windows | Notes |
+|-----------|-------|-------|---------|-------|
+| **core/** | Yes | Yes | Yes | Pure Kotlin, no OS deps |
+| **cli/** (daemon + CLI) | Yes | No | No | Unix socket, systemd, bash |
+| **app/** (GUI) | Yes | Yes | Yes | Compose Desktop |
+| **Daemon API** | Local | Remote | Remote | GUI connects via TCP/TLS |
+
+**Key rule:** All business logic lives in `core/`. The `cli/` module is a thin Linux-specific wrapper. The `app/` module is a cross-platform GUI. Both cli and app talk to the daemon via the same HTTP API — just different transports (Unix socket vs TCP/TLS).
 
 ### Design Principles
 
@@ -14,6 +45,8 @@ V1 complete: bug fixes, 8 CLI commands, 5 E2E configs pass. This plan makes the 
 6. **State is declarative** (`citeck apply` — desired state → actual state)
 7. **Interactive and non-interactive paths coexist** — wizard stays for humans, `--non-interactive` for agents
 8. **Dangerous operations require confirmation** — humans get `[y/N]` prompt, agents pass `--yes`
+9. **core/ stays cross-platform** — no Unix/Linux deps in core, no CLI-specific code
+10. **API-first** — every feature is an API endpoint first, CLI/GUI are just clients
 
 ### Human vs Agent UX Contract
 
@@ -605,13 +638,126 @@ citeck clean --images                          # remove unused images
 
 ---
 
-## PRIORITY 8: Performance
+## PRIORITY 8: Remote Daemon & GUI Connectivity
 
-### 8.1 Logs follow via WebSocket
+Enable the GUI app (running on any OS) to connect to the daemon (running on a Linux server).
 
-Replace polling with `WS /api/v1/apps/{name}/logs/stream`.
+### 8.1 Dual transport: Unix socket + TCP/TLS
 
-### 8.2 Parallel image pulls
+Daemon listens on BOTH simultaneously:
+
+```kotlin
+// DaemonServer.kt
+embeddedServer(CIO, configure = {
+    unixConnector(socketPath)                    // local fast path
+    if (tcpEnabled) {
+        connector {
+            host = tcpHost                       // 0.0.0.0
+            port = tcpPort                       // 8088
+            // TLS configured via Ktor SSL plugin
+        }
+    }
+})
+```
+
+**Configuration** (`/opt/citeck/conf/daemon.yml`):
+```yaml
+server:
+  tcp:
+    enabled: false          # off by default — opt-in
+    port: 8088
+    host: "0.0.0.0"
+    tls:
+      certPath: "/opt/citeck/conf/tls/daemon.crt"
+      keyPath: "/opt/citeck/conf/tls/daemon.key"
+  auth:
+    token: "generated-at-install-time"   # required for TCP connections
+```
+
+**Design decisions:**
+- Unix socket requires NO auth (only accessible locally via filesystem permissions)
+- TCP REQUIRES both TLS and bearer token (never plaintext over network)
+- Same API, same routes, same DTOs — just different transport
+- CLI auto-detects: socket file exists → use Unix socket, else → use TCP with `--host` flag
+
+### 8.2 CLI `--host` flag for remote connections
+
+```bash
+citeck --host server.example.com:8088 --token <token> status --apps
+citeck --host server.example.com:8088 --token-file /path/to/token status -o json
+```
+
+Or via env vars:
+```bash
+export CITECK_HOST=server.example.com:8088
+export CITECK_TOKEN=<token>
+citeck status --apps
+```
+
+**DaemonClient changes:** Detect transport from context:
+1. `--host` provided or `CITECK_HOST` set → TCP/TLS connection
+2. Socket file exists at default path → Unix socket
+3. Neither → error "Daemon not running. Start with: citeck start"
+
+### 8.3 GUI remote connection
+
+The GUI app (Compose Desktop) gets a "Connect to remote server" feature:
+
+```
+┌─ Connect to Citeck Server ──────────────────┐
+│  Host:   [server.example.com:8088  ]        │
+│  Token:  [****************************]     │
+│  TLS:    [✓] Verify certificate             │
+│          [Connect]  [Cancel]                 │
+└─────────────────────────────────────────────┘
+```
+
+**Implementation:** The GUI's existing `DaemonClient` (in core/) needs to support TCP too. Since core/ already uses plain HTTP calls internally, the change is adding TCP transport alongside Unix socket.
+
+**Saved connections:** Store in `~/.citeck/launcher/connections.yml`:
+```yaml
+connections:
+  - name: "Production"
+    host: "prod.example.com:8088"
+    token: "encrypted-token"
+  - name: "Staging"
+    host: "staging.example.com:8088"
+    token: "encrypted-token"
+```
+
+### 8.4 API authentication for TCP
+
+```
+Authorization: Bearer <daemon-token>
+```
+
+- Token generated at `citeck install` time, stored in `/opt/citeck/conf/daemon-token`
+- Token required ONLY for TCP connections (Unix socket is inherently local-only)
+- `citeck token generate` — generate new token
+- `citeck token show` — show current token (for copying to GUI)
+
+### 8.5 Cross-platform considerations
+
+| What | Where it lives | Cross-platform? |
+|------|---------------|-----------------|
+| DaemonClient HTTP logic | `core/` | Yes — plain HTTP, no OS deps |
+| Unix socket transport | `cli/` only | No — Linux-only (by design) |
+| TCP/TLS transport | `core/` | Yes — works on any OS |
+| Connection manager | `core/` (for GUI) | Yes |
+| Daemon server | `cli/` | Linux-only (daemon runs on server) |
+| Saved connections | `core/` (AppDir) | Yes — per-OS path resolution |
+
+**Rule:** `DaemonClient` in core/ uses TCP/TLS. `DaemonClient` in cli/ extends it with Unix socket support. GUI uses only the core/ TCP client.
+
+---
+
+## PRIORITY 9: Performance
+
+### 9.1 Logs follow via WebSocket
+
+Replace polling with `WS /api/v1/apps/{name}/logs/stream`. Works for both local CLI and remote GUI.
+
+### 9.2 Parallel image pulls
 
 Pull all images concurrently before starting containers. Show progress:
 ```
@@ -621,35 +767,35 @@ Pulling images...
   [=>        ] emodel      (1/5 layers)
 ```
 
-### 8.3 Async snapshot import with progress
+### 9.3 Async snapshot import with progress
 
 Background download, report via events. Daemon functional during download.
 
-### 8.4 Incremental config reload
+### 9.4 Incremental config reload
 
 Only restart apps that actually changed (not full stop→start).
 Compute diff between old and new generated app definitions.
 
 ---
 
-## PRIORITY 9: Security
+## PRIORITY 10: Security
 
-### 9.1 Daemon API token auth
+### 10.1 Daemon API token auth
 
-Optional bearer token. Generated at install, stored in `/opt/citeck/conf/daemon-token`.
+Covered in P8.4 — token required for TCP connections, generated at install.
 
-### 9.2 Secret management
+### 10.2 Secret management
 
 - BASIC auth: support custom passwords (not password=username)
 - `citeck secret set <key> <value>` — store encrypted secrets locally
 - `citeck secret list` — list stored secret keys (not values)
 - Secrets stored in `/opt/citeck/conf/secrets.enc` (AES-encrypted, key derived from machine ID)
 
-### 9.3 Audit log
+### 10.3 Audit log
 
-All mutating operations logged to `/opt/citeck/log/audit.jsonl` with: timestamp, command, user, source IP, result.
+All mutating operations logged to `/opt/citeck/log/audit.jsonl` with: timestamp, command, source (local/remote IP), result. Works for both CLI and GUI connections.
 
-### 9.4 Image signature verification
+### 10.4 Image signature verification
 
 Optional: verify image signatures before pulling (cosign/notary).
 
@@ -668,12 +814,13 @@ Optimized for both human and agent value:
 | **Phase 4** | P3.1-3.3 non-interactive install | Wizard stays, `--from-config` shortcut | Full automation via flags/env vars |
 | **Phase 5** | P4.1-4.2 liveness probes + probe categorization | Auto-restart hung apps, fast failure feedback | Self-healing, no 28h probe waits |
 | **Phase 6** | P6.1-6.2 diagnose --fix + log filtering | Interactive fix confirmation, error log search | Auto-remediation with `--yes` |
-| **Phase 7** | P6.4-6.5 top + history | Live resource dashboard, operation audit trail | Resource monitoring, context recovery |
-| **Phase 8** | P5.2 rolling update + P5.4 rollback | Safe updates with per-app progress | Automated rollback on failure |
-| **Phase 9** | P7.1-7.2 preflight + cert lifecycle | Pre-deploy warnings, cert expiry alerts | Fail-fast, proactive cert renewal |
-| **Phase 10** | P2.2 reconciliation loop | Zero-maintenance drift correction | Continuous self-healing |
-| **Phase 11** | P5.3 backup + P7.3-7.4 cp/clean | Debugging tools, data protection | Full lifecycle automation |
-| **Phase 12** | P8.x performance + P9.x security | Progress bars for pulls, faster startup | Parallel pulls, audit log |
+| **Phase 7** | P8.1-8.5 Remote daemon (TCP/TLS + auth) | GUI connects to remote server | Agent connects from anywhere |
+| **Phase 8** | P6.4-6.5 top + history | Live resource dashboard, operation audit trail | Resource monitoring, context recovery |
+| **Phase 9** | P5.2 rolling update + P5.4 rollback | Safe updates with per-app progress | Automated rollback on failure |
+| **Phase 10** | P7.1-7.2 preflight + cert lifecycle | Pre-deploy warnings, cert expiry alerts | Fail-fast, proactive cert renewal |
+| **Phase 11** | P2.2 reconciliation loop | Zero-maintenance drift correction | Continuous self-healing |
+| **Phase 12** | P5.3 backup + P7.3-7.4 cp/clean | Debugging tools, data protection | Full lifecycle automation |
+| **Phase 13** | P9.x performance + P10.x security | Progress bars, parallel pulls | Audit log, secrets |
 
 ---
 
