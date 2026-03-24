@@ -693,7 +693,7 @@ The Kotlin code at `/home/spk/IdeaProjects/citeck-launcher2/` stays available as
 
 ---
 
-## K8s Familiarity (same as V2)
+## K8s Familiarity
 
 | kubectl | citeck | Notes |
 |---------|--------|-------|
