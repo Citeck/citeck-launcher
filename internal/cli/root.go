@@ -53,6 +53,7 @@ func NewRootCmd(version string) *cobra.Command {
 		newLogsCmd(),
 		newExecCmd(),
 		newRestartCmd(),
+		newTokenCmd(),
 	)
 
 	return root
