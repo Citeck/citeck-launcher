@@ -44,4 +44,11 @@ bin/
 ### Kotlin ###
 .kotlin
 
+### Go ###
+citeck
+internal/daemon/webdist/
+
+### Web ###
+web/dist/
+
 ### Custom ###
