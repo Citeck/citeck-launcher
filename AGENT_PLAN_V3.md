@@ -119,7 +119,7 @@ citeck-launcher/
 │   │   ├── version.go
 │   │   └── config.go             # config view, config validate
 │   ├── daemon/
-│   │   ├── server.go             # HTTP server (chi router)
+│   │   ├── server.go             # HTTP server (stdlib net/http)
 │   │   ├── routes_namespace.go   # Namespace API handlers
 │   │   ├── routes_apps.go        # App API handlers (logs, restart, exec, describe)
 │   │   ├── routes_health.go      # Health check
@@ -209,22 +209,41 @@ citeck-launcher/
 
 ### Key Go Libraries
 
+**External (6 total):**
+
 | Purpose | Library | Why |
 |---------|---------|-----|
 | CLI | `github.com/spf13/cobra` | Standard (kubectl, docker, helm use it) |
-| Config | `github.com/spf13/viper` | YAML/env/flags unified config |
-| HTTP server | `net/http` + `github.com/go-chi/chi` | Lightweight, stdlib-compatible |
-| WebSocket | `github.com/gorilla/websocket` | Standard, battle-tested |
 | Docker | `github.com/docker/docker/client` | Official Docker SDK |
-| Git | `github.com/go-git/go-git/v5` | Pure Go, no libgit2 |
+| WebSocket | `github.com/coder/websocket` | Modern replacement for archived gorilla/websocket |
 | YAML | `gopkg.in/yaml.v3` | Standard YAML parser |
-| JSON | `encoding/json` (stdlib) | No external deps |
-| Testing | `testing` + `github.com/stretchr/testify` | Standard + assertions |
-| Logging | `log/slog` (stdlib) | Structured logging, Go 1.21+ |
-| Embed | `embed` (stdlib) | Embed web UI + appfiles into binary |
-| Color output | `github.com/fatih/color` | ANSI colors for CLI |
-| Table output | `github.com/olekukonenko/tablewriter` | ASCII tables |
-| Unix socket | `net` (stdlib) | Unix domain socket listener |
+| CLI output | `github.com/charmbracelet/lipgloss` | Colors, tables, borders — unified styling (used by gh CLI) |
+| Testing | `github.com/stretchr/testify` | Assertions + test suites |
+
+**Stdlib only (no external deps):**
+
+| Purpose | Package | Notes |
+|---------|---------|-------|
+| HTTP server | `net/http` | Go 1.22+ has method routing + path params — no chi needed |
+| JSON | `encoding/json` | |
+| Logging | `log/slog` | Structured logging, Go 1.21+ |
+| Embed | `embed` | Embed web UI + appfiles into binary |
+| Unix socket | `net` | Unix domain socket listener |
+| Git | `os/exec` → `git clone/pull` | No go-git (~40 deps); git is always available on Docker hosts |
+| Config | `yaml.v3` + `os.Getenv` | No viper (~15 deps); YAML parsing + env vars is all we need |
+| TLS certs | `crypto/x509` + `crypto/tls` | Self-signed cert generation without openssl |
+| ACME | `golang.org/x/crypto/acme/autocert` | Let's Encrypt (stdlib-adjacent) |
+
+**Rejected dependencies and why:**
+
+| Library | Why rejected |
+|---------|-------------|
+| `spf13/viper` | Overkill — pulls ~15 transitive deps for config that yaml.v3 + os.Getenv handles |
+| `go-chi/chi` | Go 1.22+ `http.ServeMux` supports `GET /api/v1/apps/{name}/logs` natively |
+| `gorilla/websocket` | Archived, maintenance-only. `coder/websocket` is the modern successor |
+| `go-git/go-git` | ~40 transitive deps for `clone` + `pull`. `os/exec("git", ...)` is simpler and git is always present |
+| `fatih/color` | Replaced by lipgloss (unified styling instead of separate color + table packages) |
+| `olekukonenko/tablewriter` | Old, replaced by lipgloss table rendering |
 
 ### Web UI Stack
 
@@ -521,7 +540,7 @@ Reference implementation: `/home/spk/IdeaProjects/citeck-launcher2/`
 | `MutProp<T>` (reactive) | Channel + goroutine, or `sync.Mutex` + callback |
 | `companion object { val DEFAULT }` | Package-level `var Default = Dto{}` |
 | `Clikt command` | `cobra.Command` |
-| `Ktor route` | `chi.Router.Get/Post` |
+| `Ktor route` | `http.HandleFunc("GET /path", handler)` |
 | `Jackson @JsonDeserialize` | `yaml.v3` / `encoding/json` struct tags |
 | `kotlin.test + assertj` | `testing.T` + `testify/assert` |
 | `coroutines` | goroutines + channels |
