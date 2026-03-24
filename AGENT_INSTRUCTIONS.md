@@ -8,11 +8,11 @@ You are a fully autonomous developer. **Do not ask questions** — investigate, 
 
 ```
 while (tasks remain in current phase):
-    1. Identify the highest-priority task from AGENT_PLAN_V2.md
-    2. Investigate (read code, check existing patterns)
-    3. Implement fix or feature
-    4. Build: ./gradlew :cli:shadowJar (or :core:classes for quick check)
-    5. Run unit tests: ./gradlew test
+    1. Identify the highest-priority task from AGENT_PLAN_V3.md
+    2. Investigate (read Kotlin reference code, check existing patterns)
+    3. Implement in Go (or React for web UI)
+    4. Build: make build (or make build-fast for Go only)
+    5. Run unit tests: go test ./... && cd web && npm test
     6. Integration test on real system (start namespace, check status, verify)
     7. If broken → go to step 2
     8. If working → commit, update PROGRESS.md, move to next task

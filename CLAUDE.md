@@ -106,6 +106,21 @@ Contains default configuration templates for managed services: Alfresco, Postgre
 - **Hashing**: Hash4J
 - **Testing**: kotlin-test, AssertJ
 
+## Agent Plan — Go Rewrite (V3)
+
+The project is being rewritten from Kotlin to **Go + React + Tauri**. See:
+- **`AGENT_PLAN_V3.md`** — full rewrite plan (10 phases)
+- **`AGENT_INSTRUCTIONS.md`** — reference guide for agents (architecture, key files, debugging)
+- **`PROGRESS.md`** — tracks completed work
+
+The current Kotlin code serves as **reference implementation**. Agents read it to understand logic, then write Go equivalent.
+
+### V3 Target Architecture
+```
+citeck (single Go binary ~30MB) — daemon + CLI + embedded React Web UI
+Citeck Desktop (Tauri app)      — Lens-like client for local + remote management
+```
+
 ## CI/CD
 
 GitHub Actions release workflow (`.github/workflows/release.yml`): triggered by `v*.*.*` tags, builds on Linux/Windows/macOS (x64 + arm64), creates GitHub release.
