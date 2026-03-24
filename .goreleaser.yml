@@ -1,0 +1,45 @@
+version: 2
+
+before:
+  hooks:
+    - cmd: cd web && npm ci && npm run build
+    - cmd: rm -rf internal/daemon/webdist && cp -r web/dist internal/daemon/webdist
+
+builds:
+  - id: citeck
+    main: ./cmd/citeck
+    binary: citeck
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: citeck
+    builds:
+      - citeck
+    name_template: "citeck_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  github:
+    owner: niceteck
+    name: citeck-launcher

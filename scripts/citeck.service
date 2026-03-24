@@ -1,0 +1,18 @@
+[Unit]
+Description=Citeck Launcher Daemon
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/citeck start --foreground
+ExecStop=/usr/local/bin/citeck stop --shutdown
+Restart=on-failure
+RestartSec=10
+Environment=CITECK_HOME=/opt/citeck
+Environment=CITECK_RUN=/run/citeck
+RuntimeDirectory=citeck
+WorkingDirectory=/opt/citeck
+
+[Install]
+WantedBy=multi-user.target
