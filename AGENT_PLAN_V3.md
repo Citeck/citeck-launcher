@@ -30,7 +30,7 @@ $ citeck status                               # shows status
 
 ```
 1. citeck (Go binary)              — daemon + CLI for servers (Linux/macOS/Windows)
-2. Citeck Desktop (Tauri app)      — Lens-like desktop client (Windows/macOS/Linux)
+2. Citeck Desktop (Wails v3 app)   — Lens-like desktop client (Windows/macOS/Linux)
 3. Web UI (browser)                — opens http://localhost:8088 or remote URL
 ```
 
@@ -39,7 +39,7 @@ $ citeck status                               # shows status
 Like Lens manages multiple Kubernetes clusters, Citeck Desktop manages multiple Citeck instances:
 
 ```
-┌─ Citeck Desktop (Tauri) ──────────────────────────────────────┐
+┌─ Citeck Desktop (Wails v3) ────────────────────────────────────┐
 │                                                                │
 │  Connections:                                                  │
 │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐          │
@@ -67,10 +67,10 @@ Like Lens manages multiple Kubernetes clusters, Citeck Desktop manages multiple 
 | Component | Linux x64 | Linux arm64 | macOS x64 | macOS arm64 | Windows x64 |
 |-----------|-----------|-------------|-----------|-------------|-------------|
 | **citeck** (daemon+CLI) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Citeck Desktop** (Tauri) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Citeck Desktop** (Wails v3) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Web UI** (browser) | ✅ | ✅ | ✅ | ✅ | ✅ |
 
-Go cross-compiles natively for all targets. Tauri builds via GitHub Actions for each platform.
+Go cross-compiles natively for all targets. Wails v3 builds for each platform (single Go binary with embedded WebView).
 
 **Local mode:** On any OS, `citeck start` launches the daemon locally. Docker Desktop (macOS/Windows) or Docker Engine (Linux) provides containers. The Web UI at `localhost:8088` manages the local instance. Desktop app connects to `localhost:8088`.
 
@@ -87,12 +87,14 @@ citeck (single Go binary — daemon + CLI + embedded Web UI)
 │   └── Web UI        /* (embedded React SPA)
 └── Hybrid:       citeck start                      (fork daemon, then CLI)
 
-Citeck Desktop (Tauri — thin native shell)
-├── WebView → loads http://localhost:8088 or remote URL
+Citeck Desktop (Wails v3 — Go-native desktop app)
+├── Go backend (same language as daemon — shared types, no serialization overhead)
+│   ├── Binds Go structs/methods → auto-generated TypeScript bindings
+│   ├── Can embed daemon logic directly (local mode) or connect via HTTP (remote mode)
+│   └── System tray, native notifications, auto-start — all via Go APIs
+├── WebView frontend (same React components as web/)
 ├── Connection manager (add/edit/remove servers)
-├── System tray icon (quick status, start/stop)
-├── Native notifications (app failed, cert expiring)
-└── Auto-start on login
+└── Single binary (~8MB) — no separate runtime needed
 ```
 
 ### Project Structure
@@ -183,25 +185,25 @@ citeck-launcher/
 │       ├── dashboard.spec.ts     # Playwright E2E
 │       ├── logs.spec.ts
 │       └── login.spec.ts
-├── desktop/                      # Tauri desktop app
-│   ├── src-tauri/
-│   │   ├── Cargo.toml
-│   │   ├── src/main.rs           # Tauri entry point
-│   │   ├── tauri.conf.json       # Window config, tray, permissions
-│   │   └── icons/                # App icons per platform
-│   ├── src/                      # Desktop-specific UI (shares web/ components)
-│   │   ├── App.tsx               # Wraps web UI + connection manager
-│   │   ├── ConnectionManager.tsx # Add/edit/remove servers (like Lens cluster list)
-│   │   └── TrayMenu.tsx          # System tray context
-│   ├── package.json
-│   └── vite.config.ts
+├── desktop/                      # Wails v3 desktop app
+│   ├── main.go                   # Wails entry point (Go — same language as daemon)
+│   ├── app.go                    # Go backend: connection manager, tray, notifications
+│   ├── bindings.go               # Go structs/methods exposed to JS (auto-generates TS)
+│   ├── frontend/                 # Shares components from web/
+│   │   ├── src/
+│   │   │   ├── App.tsx           # Wraps web UI + connection manager
+│   │   │   └── ConnectionManager.tsx
+│   │   ├── package.json
+│   │   └── vite.config.ts
+│   ├── build/                    # App icons per platform
+│   └── wails.json                # Wails config
 ├── go.mod
 ├── go.sum
 ├── Makefile                      # build, test, lint, dist
 ├── .goreleaser.yml               # Go binary multi-platform release
 ├── .github/workflows/
 │   ├── release-cli.yml           # Go binary release (goreleaser)
-│   └── release-desktop.yml       # Tauri app release (tauri-action)
+│   └── release-desktop.yml       # Wails app release (wails build per platform)
 └── AGENT_PLAN_V3.md
 ```
 
@@ -459,25 +461,34 @@ make test                        # all tests (~30s)
 9. `citeck events` / `citeck history`
 10. Log filtering (`--errors-only`, `--search`, `--since`)
 
-### Phase 9: Citeck Desktop (Tauri — Lens-like client)
+### Phase 9: Citeck Desktop (Wails v3 — Lens-like client)
 
 **Goal:** Cross-platform desktop app for managing local and remote instances.
 
+**Why Wails v3 over Tauri:**
+- Go-native — backend and desktop shell are the same language (no Rust dependency)
+- Go structs auto-generate TypeScript bindings (no manual serialization)
+- System tray, notifications built-in via Go APIs
+- Build time ~12s vs ~343s (Tauri on Windows)
+- Can embed daemon logic directly for local mode (single process, no HTTP hop)
+
 **Tasks:**
-1. Initialize Tauri project in `desktop/`
-2. Connection manager: add/edit/remove servers (local + remote)
-3. Connection list UI (like Lens cluster sidebar)
-4. Auto-detect local daemon (localhost:8088)
-5. System tray icon with quick status + start/stop
-6. Native notifications (app failed, cert expiring, update available)
-7. Auto-start on login (optional)
-8. Embed same React components from `web/` (shared component library)
-9. Package: DMG (macOS), MSI (Windows), AppImage/deb (Linux)
-10. GitHub Actions: tauri-action for all 5 targets (linux x64/arm64, macos x64/arm64, windows x64)
+1. Initialize Wails v3 project in `desktop/`
+2. Define Go backend bindings (connection manager, status polling, daemon control)
+3. Connection manager UI: add/edit/remove servers (like Lens cluster sidebar)
+4. Reuse React components from `web/` in Wails frontend
+5. Auto-detect local daemon (localhost:8088)
+6. System tray icon with quick status + start/stop (Go API)
+7. Native notifications (app failed, cert expiring, update available)
+8. Auto-start on login (optional, per-OS)
+9. Local mode: embed daemon logic — desktop app IS the daemon (no separate process)
+10. Package: DMG (macOS), MSI/NSIS (Windows), AppImage/deb (Linux)
+11. GitHub Actions: `wails build` per platform
 
 **Tests:**
-- Component: Shared components tested via web/ Vitest
-- E2E: Playwright connects to Tauri WebView (tauri-driver)
+- Component: Shared React components tested via web/ Vitest
+- E2E: Playwright connects to Wails WebView (via Wails dev mode)
+- Go: Unit tests for connection manager, bindings
 - Manual: Install on each platform, verify tray icon + connection
 
 ### Phase 10: Distribution + Polish
