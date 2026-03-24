@@ -604,6 +604,70 @@ done
 echo "PASS"
 ```
 
+### Detailed test cases per phase
+
+**Phase 1 — Go unit tests** (`internal/*_test.go`):
+| Test file | Cases |
+|-----------|-------|
+| `output/formatter_test.go` | Text renders table; JSON produces valid JSON; JSON has no ANSI; empty data → empty object |
+| `client/client_test.go` | Unix socket detected when file exists; TCP used when `--host` set; TCP via `CITECK_HOST` env; error when neither available |
+| `cli/exitcodes_test.go` | Each code has correct int; all codes unique |
+
+**Phase 3 — Go unit tests:**
+| Test file | Cases |
+|-----------|-------|
+| `namespace/config_test.go` | YAML parse BASIC; YAML parse KEYCLOAK+TLS; default values; builder round-trip |
+| `namespace/context_test.go` | proxyBaseUrl HTTP:80; HTTPS:443; HTTP:8080; HTTPS:8443; HTTP:443; HTTPS:80; blank host → localhost |
+| `namespace/generator_test.go` | BASIC auth env vars; KEYCLOAK proxy env vars; TLS exec probe uses curl; lua mount to /tmp |
+| `docker/probes_test.go` | Container running → retry; container exited → immediate fail; OOMKilled → report OOM; restart loop detected |
+| `namespace/runtime_test.go` | State transitions: STOPPED→STARTING→RUNNING; STARTING→STALLED on failure |
+
+**Phase 4 — Go unit tests:**
+| Test file | Cases |
+|-----------|-------|
+| `namespace/diff_test.go` | Same config → empty; changed port → port change; auth type change → full regenerate; new app → add; removed app → remove |
+| `namespace/apply_test.go` | No changes → no-op; env change → restart affected; image change → pull+restart; `--force` → restart all |
+| `cli/wait_test.go` | Parse `--status running`; parse `--app X`; parse `--healthy`; invalid status → error |
+| `cli/diagnose_test.go` | Each check produces correct result; fixable vs non-fixable; `--dry-run` doesn't execute |
+| `cli/install_test.go` | Flags override env; env override defaults; missing required → error; `--from-config` reads YAML |
+
+**Phase 7 — Go unit tests:**
+| Test file | Cases |
+|-----------|-------|
+| `daemon/middleware_test.go` | No token on TCP → 401; valid token → 200; invalid token → 401; Unix socket → skip auth |
+
+### Failure injection matrix
+
+| Scenario | How to inject | Expected behavior |
+|----------|--------------|-------------------|
+| Bad YAML | Write `{{{invalid` to namespace.yml | `apply` exit code 2, error shows line number |
+| Missing cert | Set certPath to nonexistent file | `apply` exit code 2, suggests checking cert |
+| Container crash | `docker kill citeck_proxy_*` | Liveness probe detects, auto-restart within 60s |
+| OOM kill | Set memory limit to 10m for webapp | Probe reports OOM, suggests increasing memory |
+| Docker down | `systemctl stop docker` | `health` exit code 6, diagnose reports unavailable |
+| Disk full | Fill disk to 100% | `preflight` warns, `health` shows disk failed |
+| Port conflict | Start service on port 80 | `preflight` detects, `diagnose` reports process |
+| Stale lock | Leave `app.lock` from dead process | `diagnose --fix` deletes it |
+| Orphaned container | `docker stop` without using citeck | Reconciler recreates from config |
+
+### Playwright browser tests (Web UI)
+
+**Smoke test (all configs):**
+1. Navigate to dashboard URL
+2. Verify JS/CSS load (HTTP 200)
+3. Check console for errors (ignore chrome-extension)
+4. Take screenshot, compare with baseline
+
+**BASIC auth (configs 1, 2, 5):**
+1. Set HTTP credentials via Playwright context
+2. Navigate → dashboard renders with app list
+
+**Keycloak auth (config 4):**
+1. Navigate → redirect to Keycloak login
+2. Fill username=admin, password=admin, submit
+3. Handle password update if prompted
+4. Verify redirect back to dashboard
+
 ### Visual regression test (agent runs after UI changes)
 
 ```bash
@@ -648,11 +712,263 @@ The Kotlin code at `/home/spk/IdeaProjects/citeck-launcher2/` stays available as
 
 ---
 
-## Human + Agent UX (same as V2)
+## Complete CLI Command Reference
 
-- Text output by default (colored tables, progress bars in stderr)
-- `-o json` for machine parsing (clean JSON to stdout)
-- `--yes` skips confirmations
-- `--dry-run` previews changes
-- Errors include suggestions: "Run `citeck diagnose` to investigate"
-- Web UI for visual management (humans + Playwright for agents)
+All commands the Go binary must support (final state after all phases):
+
+### Namespace lifecycle
+| Command | Phase | Description |
+|---------|-------|-------------|
+| `citeck install` | 4 | Interactive wizard OR `--non-interactive` / `--from-config` |
+| `citeck uninstall` | 4 | Remove config, optionally data (`--yes` for no prompt) |
+| `citeck start` | 3 | Start daemon (background or `--foreground`) + namespace |
+| `citeck stop` | 3 | Stop namespace, `--shutdown` also stops daemon |
+| `citeck apply -f ns.yml` | 4 | Idempotent desired-state (core command). `--wait`, `--force`, `--dry-run`, `--rollback-on-failure` |
+| `citeck reload` | 3 | Hot-reload config. `--dry-run` validates without applying |
+| `citeck diff` | 4 | Show pending changes. `-f new.yml` to compare with file |
+
+### App management
+| Command | Phase | Description |
+|---------|-------|-------------|
+| `citeck status --apps` | 1 | Show namespace + app table |
+| `citeck describe <app>` | 1 | Rich detail: events, timeline, conditions, env, ports |
+| `citeck logs <app>` | 1 | Container logs. `--tail N`, `--follow`, `--errors-only`, `--search`, `--since` |
+| `citeck exec <app> -- cmd` | 1 | Execute command in container |
+| `citeck restart <app>` | 1 | Stop + recreate app |
+| `citeck top` | 8 | Resource usage. `--sort memory`, `--watch` |
+
+### Operations
+| Command | Phase | Description |
+|---------|-------|-------------|
+| `citeck health` | 1 | System health check |
+| `citeck diagnose` | 4 | Find problems. `--fix` auto-repair, `--fix --dry-run` preview, `--yes` skip confirmation |
+| `citeck wait` | 4 | Block until condition. `--status running`, `--app X --status running`, `--healthy`, `--timeout` |
+| `citeck update` | 8 | Update bundle/images. `--strategy rolling`, `--dry-run`, `--app X --image Y` |
+| `citeck rollback` | 8 | Restore previous config. `--to <version>` |
+| `citeck backup` | 8 | Backup config + volumes. `--include-volumes` |
+| `citeck restore` | 8 | Restore from backup. `--dry-run`, `--yes` |
+| `citeck preflight` | 8 | Pre-deploy resource check. `--config ns.yml` |
+| `citeck clean` | 8 | Cleanup orphaned resources. `--execute`, `--volumes`, `--images`, `--yes` |
+| `citeck cp <app>:/path ./local` | 8 | Copy files to/from container |
+
+### Configuration
+| Command | Phase | Description |
+|---------|-------|-------------|
+| `citeck config view` | 1 | Display current namespace.yml |
+| `citeck config validate` | 1 | Validate YAML, certs, ports |
+| `citeck version` | 1 | Version, build time, OS |
+
+### Events & history
+| Command | Phase | Description |
+|---------|-------|-------------|
+| `citeck events` | 8 | App state change events. `--since 1h` |
+| `citeck history` | 8 | Operation log (start, stop, apply, restart). `--since 1d` |
+
+### Security & certificates
+| Command | Phase | Description |
+|---------|-------|-------------|
+| `citeck cert status` | 8 | Show cert expiration, issuer, SANs |
+| `citeck cert check --warn-days 30` | 8 | Exit code 1 if expiring soon |
+| `citeck cert renew` | 8 | Renew (Let's Encrypt or regenerate self-signed) |
+| `citeck cert generate --host X` | 8 | Generate new self-signed cert |
+| `citeck token generate` | 7 | Generate new daemon API token |
+| `citeck token show` | 7 | Show current token (for copying to desktop app) |
+| `citeck secret set <key> <val>` | 10 | Store encrypted secret locally |
+| `citeck secret list` | 10 | List secret keys (not values) |
+
+### Global flags (all commands)
+| Flag | Description |
+|------|-------------|
+| `-o json` | Machine-readable JSON output to stdout |
+| `--yes` | Skip confirmation prompts |
+| `--dry-run` | Preview changes without applying |
+| `--host <host:port>` | Connect to remote daemon |
+| `--token <token>` | Auth token for remote connections |
+| `--token-file <path>` | Read token from file |
+
+Env var alternatives: `CITECK_HOST`, `CITECK_TOKEN`, `CITECK_HOME`, `CITECK_RUN`
+
+### Exit codes
+| Code | Constant | Meaning |
+|------|----------|---------|
+| 0 | OK | Success |
+| 1 | ERROR | General error |
+| 2 | CONFIG_ERROR | Invalid YAML, missing cert |
+| 3 | DAEMON_NOT_RUNNING | Daemon not running |
+| 4 | NOT_CONFIGURED | Namespace not configured |
+| 5 | NOT_FOUND | App/resource not found |
+| 6 | DOCKER_UNAVAILABLE | Docker unreachable |
+| 7 | TIMEOUT | Operation timed out |
+| 8 | UNHEALTHY | Health check failed |
+| 9 | CONFLICT | Lock held / operation in progress |
+
+---
+
+## Human + Agent UX Guidelines
+
+### Design principles
+
+1. **Human-first defaults, agent-friendly options** — text by default, `-o json` for agents
+2. **Every mutation has a preview** (`--dry-run`)
+3. **Every operation is idempotent** (safe to retry)
+4. **Every failure is actionable** — humans get suggestions, agents get error codes
+5. **The system self-heals** (liveness probes, reconciliation)
+6. **State is declarative** (`citeck apply`)
+7. **Interactive and non-interactive paths coexist** — wizard for humans, flags for agents
+8. **Dangerous operations require confirmation** — `[y/N]` for humans, `--yes` for agents
+9. **API-first** — every feature is an API endpoint, CLI/GUI/Desktop are just clients
+
+### Human vs Agent UX contract
+
+| Aspect | Human (default) | Agent (`-o json` / `--yes`) |
+|--------|----------------|---------------------------|
+| Output format | Colored tables, readable messages | JSON to stdout |
+| Progress | Progress bars in stderr | Suppressed |
+| Errors | Message + suggestion + exit code | JSON `{error, code, suggestion}` + exit code |
+| Confirmations | Interactive `[y/N]` prompt | `--yes` skips prompts |
+| Mutations | `--dry-run` shows colored diff | `--dry-run -o json` shows structured changes |
+| Install | Interactive wizard | `--non-interactive` / `--from-config` |
+| Logs | Streamed to terminal | `--since 5m --errors-only -o json` |
+
+**Rule:** stderr is for humans (progress, hints). stdout is for data (tables or JSON). Agents parse only stdout.
+
+### Output conventions
+- ANSI colors: green=RUNNING, red=FAILED, yellow=STARTING/WARNING
+- Progress bars go to **stderr** (invisible to `jq`)
+- JSON mode (`-o json`): no colors, no progress, clean JSON to stdout
+
+### Status display (human)
+```
+Name:      Production (default)
+Status:    RUNNING                                ← green
+Bundle:    community:2025.12
+
+APP          STATUS     IMAGE                     CPU    MEMORY
+proxy        RUNNING    ecos-proxy:2.25.6         0.1%   32M/128M     ← green
+gateway      RUNNING    ecos-gateway:3.3.0        0.6%   533M/1.0G    ← green
+emodel       STARTING   ecos-model:2.35.7         --     --           ← yellow
+postgres     FAILED     postgres:17.5             --     --           ← red
+  └─ Exit code 1: configuration file contains errors                  ← hint
+```
+
+### Error messages (always include what/why/what-to-do)
+```
+Error: App 'proxy' failed to start
+  Container exited with code 1 after 3.2s
+  Last log: nginx: [emerg] cannot load certificate "/app/tls/server.crt"
+  Suggestion: Check TLS certificate path in namespace.yml
+              Run 'citeck config validate' to verify configuration
+```
+
+JSON equivalent:
+```json
+{"error": "start_failed", "code": 1, "app": "proxy",
+ "message": "Container exited with code 1 after 3.2s",
+ "lastLog": "nginx: [emerg] cannot load certificate ...",
+ "suggestions": ["Check TLS certificate path", "Run citeck config validate"]}
+```
+
+### Confirmation prompts (destructive operations)
+```
+$ citeck clean --execute
+Found 3 orphaned resources:
+  Container  citeck_old_proxy   (stopped 3 days ago)
+  Volume     citeck_old_data    (unused)
+  Network    citeck_old_net     (no containers)
+
+Remove these resources? [y/N]
+```
+
+With `--yes`: skip prompt, apply immediately.
+
+### Progress display (stderr, human mode)
+```
+$ citeck apply -f ns.yml --wait
+Applying configuration...
+  Pulling images    [████████░░] 4/5
+  Starting apps     [██████░░░░] 12/19
+  Waiting for proxy [probe 3/10, 30s elapsed]
+All 19 apps running. Took 2m 15s.
+```
+
+In JSON mode: only final result to stdout:
+```json
+{"status": "applied", "apps": 19, "running": 19, "duration": 135000}
+```
+
+---
+
+## Implementation Details
+
+### File paths
+| Path | Purpose |
+|------|---------|
+| `/opt/citeck/conf/namespace.yml` | Namespace config |
+| `/opt/citeck/conf/daemon.yml` | Daemon operational config (TCP, reconciliation) |
+| `/opt/citeck/conf/daemon-token` | API token for TCP connections |
+| `/opt/citeck/conf/tls/` | TLS certificates |
+| `/opt/citeck/conf/history/` | Last N configs for rollback (default: 5) |
+| `/opt/citeck/data/` | Persistent data (bundles, workspace, volumes, snapshots) |
+| `/opt/citeck/log/daemon.log` | Daemon log |
+| `/opt/citeck/log/operations.jsonl` | Operation history |
+| `/opt/citeck/log/audit.jsonl` | Audit log (timestamp, command, source, result) |
+| `/run/citeck/daemon.sock` | Unix socket (local connections) |
+| `~/.citeck/launcher/connections.yml` | Saved remote connections (Desktop app) |
+
+### daemon.yml structure
+```yaml
+server:
+  tcp:
+    enabled: false
+    port: 8088
+    host: "0.0.0.0"
+    tls:
+      certPath: "/opt/citeck/conf/tls/daemon.crt"
+      keyPath: "/opt/citeck/conf/tls/daemon.key"
+  auth:
+    token: "generated-at-install-time"
+reconciliation:
+  enabled: true
+  intervalSeconds: 60
+```
+
+### Operation history format (`operations.jsonl`)
+```json
+{"ts":"2026-03-24T12:00:00Z","op":"start","result":"ok","duration":180000,"apps":19}
+{"ts":"2026-03-24T14:30:00Z","op":"restart","app":"proxy","result":"ok","duration":5000}
+{"ts":"2026-03-24T15:00:00Z","op":"apply","result":"error","error":"invalid YAML at line 12"}
+```
+
+### Liveness probe defaults
+| App type | Probe | Period | Failure threshold |
+|----------|-------|--------|-------------------|
+| Webapps (Spring) | `GET /management/health` | 30s | 3 |
+| Gateway | `GET /management/health` | 30s | 3 |
+| Proxy | `curl -sf http://localhost:80/eis.json` | 30s | 3 |
+| Postgres | `psql -U postgres -c 'SELECT 1'` | 30s | 3 |
+| Keycloak | `bash /healthcheck.sh` | 30s | 3 |
+
+### Graceful shutdown ordering
+1. Stop proxy (stop accepting traffic)
+2. Stop webapps (drain in-flight requests, `terminationGracePeriodSeconds` default: 30s)
+3. Stop Keycloak
+4. Stop infrastructure (postgres, rabbitmq, zookeeper — last)
+
+### Startup timeline tracking (per-app)
+```json
+{
+  "pullStart": "2026-03-24T12:18:00Z", "pullEnd": "2026-03-24T12:18:02Z",
+  "createStart": "2026-03-24T12:18:02Z", "createEnd": "2026-03-24T12:18:03Z",
+  "initStart": "2026-03-24T12:18:03Z", "initEnd": "2026-03-24T12:18:08Z",
+  "probeStart": "2026-03-24T12:18:08Z", "probeEnd": "2026-03-24T12:18:45Z",
+  "runningAt": "2026-03-24T12:18:45Z",
+  "totalMs": 45000, "probeAttempts": 4
+}
+```
+
+### K8s intentional differences
+- No namespaces within a launcher instance (one namespace per installation)
+- `citeck install` instead of `helm install` (includes system setup)
+- `citeck health` — simpler all-in-one check (no separate component statuses)
+- `citeck diagnose --fix` — auto-remediation (no K8s equivalent)
+- `citeck preflight` — pre-deploy resource validation (no K8s equivalent)
