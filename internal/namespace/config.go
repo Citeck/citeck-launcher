@@ -1,0 +1,99 @@
+package namespace
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/niceteck/citeck-launcher/internal/bundle"
+	"gopkg.in/yaml.v3"
+)
+
+type AuthenticationType string
+
+const (
+	AuthBasic    AuthenticationType = "BASIC"
+	AuthKeycloak AuthenticationType = "KEYCLOAK"
+)
+
+type TlsConfig struct {
+	Enabled     bool   `yaml:"enabled" json:"enabled"`
+	CertPath    string `yaml:"certPath" json:"certPath"`
+	KeyPath     string `yaml:"keyPath" json:"keyPath"`
+	LetsEncrypt bool   `yaml:"letsEncrypt" json:"letsEncrypt"`
+}
+
+type ProxyProps struct {
+	Image string    `yaml:"image" json:"image"`
+	Port  int       `yaml:"port" json:"port"`
+	Host  string    `yaml:"host" json:"host"`
+	TLS   TlsConfig `yaml:"tls" json:"tls"`
+}
+
+type AuthenticationProps struct {
+	Type  AuthenticationType `yaml:"type" json:"type"`
+	Users []string           `yaml:"users" json:"users"`
+}
+
+type PgAdminProps struct {
+	Enabled bool   `yaml:"enabled" json:"enabled"`
+	Image   string `yaml:"image" json:"image"`
+}
+
+type MongoDbProps struct {
+	Image string `yaml:"image" json:"image"`
+}
+
+type WebappProps struct {
+	Enabled        *bool             `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Image          string            `yaml:"image" json:"image"`
+	Environments   map[string]string `yaml:"environments,omitempty" json:"environments,omitempty"`
+	DebugPort      int               `yaml:"debugPort" json:"debugPort"`
+	HeapSize       string            `yaml:"heapSize" json:"heapSize"`
+	MemoryLimit    string            `yaml:"memoryLimit" json:"memoryLimit"`
+	ServerPort     int               `yaml:"serverPort" json:"serverPort"`
+	JavaOpts       string            `yaml:"javaOpts" json:"javaOpts"`
+	SpringProfiles string            `yaml:"springProfiles" json:"springProfiles"`
+}
+
+type NamespaceConfig struct {
+	ID             string              `yaml:"id" json:"id"`
+	Name           string              `yaml:"name" json:"name"`
+	Snapshot       string              `yaml:"snapshot" json:"snapshot"`
+	Template       string              `yaml:"template" json:"template"`
+	Authentication AuthenticationProps `yaml:"authentication" json:"authentication"`
+	BundleRef      bundle.BundleRef    `yaml:"bundleRef" json:"bundleRef"`
+	PgAdmin        PgAdminProps        `yaml:"pgAdmin" json:"pgAdmin"`
+	MongoDB        MongoDbProps        `yaml:"mongodb" json:"mongodb"`
+	Proxy          ProxyProps          `yaml:"proxy" json:"proxy"`
+	Webapps        map[string]WebappProps `yaml:"webapps,omitempty" json:"webapps,omitempty"`
+}
+
+func DefaultNamespaceConfig() NamespaceConfig {
+	return NamespaceConfig{
+		Authentication: AuthenticationProps{
+			Type:  AuthBasic,
+			Users: []string{"admin"},
+		},
+		PgAdmin: PgAdminProps{Enabled: true},
+		Proxy:   ProxyProps{Port: 80},
+	}
+}
+
+func LoadNamespaceConfig(path string) (*NamespaceConfig, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read namespace config: %w", err)
+	}
+	return ParseNamespaceConfig(data)
+}
+
+func ParseNamespaceConfig(data []byte) (*NamespaceConfig, error) {
+	cfg := DefaultNamespaceConfig()
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("parse namespace config: %w", err)
+	}
+	if cfg.ID == "" {
+		cfg.ID = "default"
+	}
+	return &cfg, nil
+}

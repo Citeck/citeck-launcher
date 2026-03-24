@@ -1,0 +1,187 @@
+package daemon
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"syscall"
+	"time"
+
+	"github.com/niceteck/citeck-launcher/internal/api"
+	"github.com/niceteck/citeck-launcher/internal/bundle"
+	"github.com/niceteck/citeck-launcher/internal/config"
+	"github.com/niceteck/citeck-launcher/internal/docker"
+	"github.com/niceteck/citeck-launcher/internal/namespace"
+)
+
+// Daemon is the main daemon server.
+type Daemon struct {
+	dockerClient *docker.Client
+	runtime      *namespace.Runtime
+	nsConfig     *namespace.NamespaceConfig
+	bundleDef    *bundle.BundleDef
+	server       *http.Server
+	socketPath   string
+	startTime    time.Time
+}
+
+// Start runs the daemon in foreground mode.
+func Start(foreground bool) error {
+	slog.Info("Starting daemon", "foreground", foreground)
+
+	socketPath := config.SocketPath()
+
+	// Ensure directories exist
+	for _, dir := range []string{config.ConfDir(), config.DataDir(), config.LogDir(), config.RunDir()} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create directory %s: %w", dir, err)
+		}
+	}
+
+	// Clean up stale socket
+	os.Remove(socketPath)
+
+	// Create Docker client
+	dockerClient, err := docker.NewClient("daemon", "default")
+	if err != nil {
+		return fmt.Errorf("create docker client: %w", err)
+	}
+
+	// Load namespace config
+	nsCfgPath := config.NamespaceConfigPath()
+	nsCfg, err := namespace.LoadNamespaceConfig(nsCfgPath)
+	if err != nil {
+		slog.Warn("No namespace config found", "path", nsCfgPath, "err", err)
+		nsCfg = nil
+	}
+
+	var bundleDef *bundle.BundleDef
+	var runtime *namespace.Runtime
+
+	if nsCfg != nil {
+		// Resolve bundle
+		resolver := bundle.NewResolver(config.DataDir())
+		bundleDef, err = resolver.Resolve(nsCfg.BundleRef)
+		if err != nil {
+			slog.Error("Failed to resolve bundle", "ref", nsCfg.BundleRef, "err", err)
+			bundleDef = &bundle.EmptyBundleDef
+		}
+
+		slog.Info("Using bundle", "ref", nsCfg.BundleRef, "apps", len(bundleDef.Applications))
+
+		// Generate namespace
+		volumesBase := filepath.Join(config.DataDir(), "runtime", nsCfg.ID)
+		runtime = namespace.NewRuntime(nsCfg, dockerClient, "daemon", volumesBase)
+
+		genResp := namespace.Generate(nsCfg, bundleDef)
+		runtime.Start(genResp.Applications)
+	}
+
+	d := &Daemon{
+		dockerClient: dockerClient,
+		runtime:      runtime,
+		nsConfig:     nsCfg,
+		bundleDef:    bundleDef,
+		socketPath:   socketPath,
+		startTime:    time.Now(),
+	}
+
+	// Create HTTP server
+	mux := http.NewServeMux()
+	d.registerRoutes(mux)
+	d.server = &http.Server{Handler: mux}
+
+	// Listen on Unix socket
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", socketPath, err)
+	}
+
+	// Make socket accessible
+	os.Chmod(socketPath, 0o666)
+
+	slog.Info("Citeck Daemon started", "socket", socketPath, "pid", os.Getpid())
+
+	// Handle shutdown
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-sigCh
+		slog.Info("Shutdown signal received")
+		d.shutdown()
+	}()
+
+	// Serve
+	if err := d.server.Serve(listener); err != nil && err != http.ErrServerClosed {
+		return fmt.Errorf("server error: %w", err)
+	}
+
+	return nil
+}
+
+func (d *Daemon) shutdown() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if d.runtime != nil {
+		d.runtime.Stop()
+		d.runtime.Shutdown()
+	}
+
+	d.server.Shutdown(ctx)
+	d.dockerClient.Close()
+	os.Remove(d.socketPath)
+
+	slog.Info("Daemon stopped")
+}
+
+func (d *Daemon) registerRoutes(mux *http.ServeMux) {
+	// Daemon routes
+	mux.HandleFunc("GET "+api.DaemonStatus, d.handleDaemonStatus)
+	mux.HandleFunc("POST "+api.DaemonShutdown, d.handleDaemonShutdown)
+
+	// Namespace routes
+	mux.HandleFunc("GET "+api.Namespace, d.handleGetNamespace)
+	mux.HandleFunc("POST "+api.NamespaceStart, d.handleStartNamespace)
+	mux.HandleFunc("POST "+api.NamespaceStop, d.handleStopNamespace)
+	mux.HandleFunc("POST "+api.NamespaceReload, d.handleReloadNamespace)
+
+	// App routes
+	mux.HandleFunc("GET /api/v1/apps/{name}/logs", d.handleAppLogs)
+	mux.HandleFunc("POST /api/v1/apps/{name}/restart", d.handleAppRestart)
+	mux.HandleFunc("GET /api/v1/apps/{name}/inspect", d.handleAppInspect)
+	mux.HandleFunc("POST /api/v1/apps/{name}/exec", d.handleAppExec)
+
+	// Health
+	mux.HandleFunc("GET "+api.Health, d.handleHealth)
+
+	// Web UI (fallback)
+	mux.Handle("/", WebUIHandler())
+}
+
+// JSON helpers
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(v)
+}
+
+func writeError(w http.ResponseWriter, code int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(api.ErrorDto{
+		Error:   http.StatusText(code),
+		Message: msg,
+	})
+}
+
+func readJSON(r *http.Request, v any) error {
+	return json.NewDecoder(r.Body).Decode(v)
+}
