@@ -422,18 +422,7 @@ func (r *Runtime) startApp(ctx context.Context, appName string) {
 	app.ContainerID = id
 	r.mu.Unlock()
 
-	// Run init actions
-	for _, action := range appDef.InitActions {
-		if len(action.Exec) > 0 {
-			slog.Info("Running init action", "app", appName, "cmd", action.Exec)
-			_, exitCode, err := r.docker.ExecInContainer(ctx, id, action.Exec)
-			if err != nil || exitCode != 0 {
-				slog.Warn("Init action failed", "app", appName, "err", err, "exitCode", exitCode)
-			}
-		}
-	}
-
-	// Wait for startup probe
+	// Wait for startup probe FIRST (container must be healthy before init actions)
 	if len(appDef.StartupConditions) > 0 {
 		if err := r.waitForStartup(ctx, appName, id, appDef.StartupConditions); err != nil {
 			slog.Error("Startup probe failed", "app", appName, "err", err)
@@ -442,6 +431,17 @@ func (r *Runtime) startApp(ctx context.Context, appName string) {
 			app.StatusText = err.Error()
 			r.mu.Unlock()
 			return
+		}
+	}
+
+	// Run init actions AFTER startup probe (e.g. postgres DB creation needs DB ready)
+	for _, action := range appDef.InitActions {
+		if len(action.Exec) > 0 {
+			slog.Info("Running init action", "app", appName, "cmd", action.Exec)
+			_, exitCode, err := r.docker.ExecInContainer(ctx, id, action.Exec)
+			if err != nil || exitCode != 0 {
+				slog.Warn("Init action failed", "app", appName, "err", err, "exitCode", exitCode)
+			}
 		}
 	}
 

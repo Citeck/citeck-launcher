@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 //go:embed all:postgres all:pgadmin all:keycloak all:proxy all:alfresco
@@ -38,7 +39,11 @@ func ExtractTo(targetDir string) error {
 			return err
 		}
 
-		return os.WriteFile(destPath, data, 0o644)
+		perm := os.FileMode(0o644)
+		if strings.HasSuffix(path, ".sh") {
+			perm = 0o755
+		}
+		return os.WriteFile(destPath, data, perm)
 	})
 }
 
