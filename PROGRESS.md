@@ -1,58 +1,63 @@
-# Progress Log
+# Progress Log — Citeck CLI Production Readiness
 
-## Summary
+## Status: COMPLETE
 
-All Priority 1 bug fixes and Priority 2 CLI commands are implemented. All 5 test configurations pass end-to-end.
+All priorities implemented. All 5 test configurations pass. All tests pass. All code lints clean.
 
-## Priority 1: Critical bug fixes
+## Priority 1: Bug Fixes
 
-| # | Bug | Fix | Commit |
-|---|-----|-----|--------|
-| 4.2 | proxyBaseUrl omits non-standard port | Include port when != 80/443 | 232e20c |
-| 4.1 | TLS startup probe checks port 80 via host (not published) | Use exec probe with `curl -sf` inside container | d720e83, c7ed60f |
-| 4.5 | Bind-mounted lua file causes `sed: cannot rename` | Mount to /tmp, copy via init action | d720e83 |
-| 4.3 | Install script upgrade restart too short + failed state | Polling loop (30s), reset-failed, post-start check | b8c4c02 |
-| 4.4 | ERR_HTTP2_PROTOCOL_ERROR | NOT reproduced — static assets load fine in all configs | N/A |
+| # | Bug | Status |
+|---|-----|--------|
+| 4.1 | TLS startup probe (port 80 not published) | Fixed — exec probe with `curl -sf` inside container |
+| 4.2 | proxyBaseUrl omits non-standard port | Fixed — includes port when != default for scheme |
+| 4.3 | Install script upgrade restart too short | Fixed — polling loop, reset-failed, post-start check |
+| 4.4 | ERR_HTTP2_PROTOCOL_ERROR | NOT reproduced in any config |
+| 4.5 | Lua file bind mount sed errors | Fixed — mount to /tmp, copy via init action |
 
-### Additional bugs found during testing
-| Bug | Fix | Commit |
-|-----|-----|--------|
-| Daemon doesn't auto-start namespace | Call `setActive(true)` + `updateAndStart()` | e2b53b4 |
-| Shadow JAR resource loading fails | Use `jarFile.getInputStream(entry)` directly | e2b53b4 |
-| appfiles prefix creates dirs instead of files | Strip `appfiles/` prefix from keys | e2b53b4 |
+### Additional bugs found and fixed during testing
+- Daemon doesn't auto-start namespace → `setActive(true)` + `updateAndStart()`
+- Shadow JAR resource loading → `jarFile.getInputStream(entry)` directly
+- appfiles prefix creates dirs instead of files → strip `appfiles/` prefix
+- TLS probe uses `wget` (not available) → changed to `curl`
 
-## Priority 2: New CLI commands (commit 08927a8)
+## Priority 2: CLI Commands (8 total)
 
 | Command | Description |
 |---------|-------------|
-| `citeck logs <app> [--tail N] [--follow]` | Show container logs |
-| `citeck restart <app>` | Restart a single application |
-| `citeck inspect <app>` | Container details (ports, volumes, env, network, uptime) |
-| `citeck version` | Version, build time, Java, OS |
-| `citeck health` | Docker, containers, disk, JVM memory |
-| `citeck exec <app> <cmd...>` | Execute command in container |
-| `citeck config show` | Display current namespace.yml |
+| `citeck logs <app> [--tail N] [--follow]` | Container logs |
+| `citeck restart <app>` | Restart single app |
+| `citeck inspect <app>` | Container details |
+| `citeck version` | Version info |
+| `citeck health` | System health check |
+| `citeck exec <app> <cmd...>` | Exec in container |
+| `citeck config show` | Display config |
+| `citeck config validate` | Validate config |
 
-## Priority 3: E2E Testing Results
+## Priority 3: E2E Testing
 
-| # | Config | Status | Notes |
-|---|--------|--------|-------|
-| 1 | BASIC + localhost + HTTP (80) | PASS | 19 apps RUNNING, dashboard loads, Playwright verified |
-| 2 | BASIC + localhost + TLS (443) | PASS | 19 apps RUNNING, TLS exec probe works, HTTPS OK |
-| 3 | KEYCLOAK + custom.launcher.ru + TLS (443) | PASS | 20 apps RUNNING, OIDC discovery correct, proxyBaseUrl correct |
-| 4 | KEYCLOAK + localhost + HTTP (80) | PASS | 20 apps RUNNING, login→update password→dashboard Playwright flow |
-| 5 | BASIC + custom.launcher.ru + TLS (8443) | PASS | 19 apps RUNNING, non-standard port works, proxyBaseUrl includes port |
+| # | Config | Result |
+|---|--------|--------|
+| 1 | BASIC + localhost + HTTP (80) | PASS — Playwright dashboard verified |
+| 2 | BASIC + localhost + TLS (443) | PASS — TLS exec probe works |
+| 3 | KEYCLOAK + custom.launcher.ru + TLS (443) | PASS — OIDC discovery correct |
+| 4 | KEYCLOAK + localhost + HTTP (80) | PASS — Playwright login flow verified |
+| 5 | BASIC + custom.launcher.ru + TLS (8443) | PASS — proxyBaseUrl port works |
 
-## Commits
+## Unit Tests
+- NsGenContext.proxyBaseUrl: 10 test cases (default/non-standard ports, scheme, host)
+- NamespaceConfig: YAML deserialization, default values, Builder round-trip
 
-1. 232e20c — Fix proxyBaseUrl to include non-standard port
-2. d720e83 — Fix TLS startup probe and lua file bind mount for proxy
-3. b8c4c02 — Fix citeck-install.sh upgrade restart reliability
-4. 08927a8 — Add new CLI commands: logs, restart, inspect, exec, version, health, config
-5. e2b53b4 — Fix daemon startup, JAR resource loading, and appfiles prefix bug
-6. c7ed60f — Fix TLS startup probe to use curl instead of wget
-7. 07e45f4 — Update PROGRESS.md with E2E test results
+## All Commits
 
-## Remaining items
-- Unit tests for proxyBaseUrl, NamespaceConfig serialization, new DTOs
-- `citeck config validate` command (5.8, lower priority)
+| # | Hash | Message |
+|---|------|---------|
+| 1 | 232e20c | Fix proxyBaseUrl to include non-standard port |
+| 2 | d720e83 | Fix TLS startup probe and lua file bind mount for proxy |
+| 3 | b8c4c02 | Fix citeck-install.sh upgrade restart reliability |
+| 4 | 08927a8 | Add new CLI commands: logs, restart, inspect, exec, version, health, config |
+| 5 | e2b53b4 | Fix daemon startup, JAR resource loading, and appfiles prefix bug |
+| 6 | c7ed60f | Fix TLS startup probe to use curl instead of wget |
+| 7 | 07e45f4 | Update PROGRESS.md with E2E test results |
+| 8 | e2bff61 | Update PROGRESS.md — all 5 test configs pass E2E |
+| 9 | e1ffa03 | Add unit tests for NsGenContext.proxyBaseUrl and NamespaceConfig |
+| 10 | 2b9d584 | Add citeck config validate command |
