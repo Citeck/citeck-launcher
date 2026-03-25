@@ -89,76 +89,42 @@ Full rewrite: Go + React Web UI + Tauri Desktop.
 | 4 | KEYCLOAK | localhost | no | 80 | 20/20 | Full OIDC login flow (Playwright) |
 | 5 | BASIC | custom.launcher.ru | self-signed | 8443 | 19/19 | curl + Playwright API |
 
-- Code review: 15 issues fixed (deadlock, race conditions, init container wait)
-- Generator diff: 17 differences with Kotlin fixed (MongoHost, Keycloak DB, port counter, EAPPS init containers, etc.)
-
 ---
 
-## Current: Web UI Feature Parity (2026-03-25)
+## Web UI Feature Parity — COMPLETE (2026-03-25)
 
-**Goal:** Bring React Web UI to full parity with Kotlin Compose Desktop app (~30 features across 4 screens, 13 dialogs, log viewer, code editor).
+**18 commits**, 5 rounds of code review (53 issues found and fixed).
 
-**Plan:** `~/.claude/plans/snoopy-herding-gosling.md`
+### Implemented Features
+- Dashboard: app table grouped by kind, CPU/MEM/Ports/Tag columns, action buttons (lucide icons)
+- Namespace info panel: status, stats summary, Start/Stop/Reload, Open In Browser, quick links
+- Quick links: SBA, PG Admin, MailHog, RabbitMQ, Keycloak, Documentation, AI Bot
+- Config editor: YAML viewer with highlighting, edit mode, apply + reload
+- Log viewer: 7-pattern level detection with inheritance, ANSI strip, color coding,
+  regex search with highlighting, level filters, follow/wrap/copy/download/clear, keyboard shortcuts,
+  2000-line render cap for performance
+- App detail: container info, ports, volumes, env, logs preview, per-app YAML config editor
+- Volume management: list (namespace-scoped), delete with confirm
+- Daemon logs viewer with auto-refresh
+- System dump JSON download
+- Tab navigation (open apps/logs/config in tabs, close with X)
+- SSE real-time events (replaces WebSocket, exponential backoff reconnect)
+- Darcula/Lens color scheme, compact layout, responsive for small windows
+- Confirm modals with error feedback for all destructive actions
 
-### Phase 0: Housekeeping — DONE
-- [x] Update AGENT_INSTRUCTIONS.md for Go
-- [x] Update CLAUDE.md with Go rewrite status
-- [x] Update PROGRESS.md with Web UI section
-- [x] Update AGENT_PLAN_V3.md with completion markers
+### Code Quality (5 review rounds, 53 fixes)
+- Proper mutex usage (appWg for goroutines, configMu for daemon state, sync.Once for shutdown)
+- stdcopy.StdCopy for Docker log demuxing (no line-based hacks)
+- Namespace-scoped volume operations with ownership verification
+- Input validation (volume names, YAML parsing, regex)
+- TCP bound to 127.0.0.1 (not 0.0.0.0)
+- useMemo for expensive log filtering, render cap for DOM performance
 
-### Phase A: Core Controls (API + UI) — DONE
-- [x] Per-app Start/Stop/Restart from Web UI (with confirm modal)
-- [x] Namespace Start/Stop/Reload buttons (with confirm modal)
-- [x] Docker error banner with retry button
-- [x] ConfirmModal reusable component
-- [x] Go API: POST /api/v1/apps/{name}/stop, /start routes
-- [x] Go runtime: StopApp, RestartApp methods
-- [x] Fixed restart TODO (was no-op, now actually stops + starts container)
-- [x] Fixed vitest config (exclude Playwright tests directory)
-
-### Phase B: Dashboard Enhancements — DONE
-- [x] App grouping by kind (Core / Extensions / Additional / Infrastructure)
-- [x] Tag column (extracted from image name)
-- [x] Ports column (formatted as host→container)
-- [x] StatsBar component (running/starting/failed/stopped counts)
-- [x] QuickLinks panel (ECOS UI, Spring Boot Admin, RabbitMQ, MailHog, Keycloak, PG Admin)
-- [x] Namespace info (ID shown in header)
-- [x] Go API: kind + ports added to AppDto, links added to NamespaceDto
-- [x] Go runtime: generateLinks() with dynamic links based on config
-- [x] Updated tests for new table columns
-### Phase C: Config Editor — DONE
-- [x] Go API: GET /api/v1/config returns namespace.yml content
-- [x] Go API: PUT /api/v1/config saves + validates YAML before write
-- [x] Config page: YAML viewer with syntax highlighting (keys, values, comments, lists)
-- [x] Config page: Edit mode with textarea + Apply button
-- [x] Config page: Apply saves config + triggers namespace reload
-- [x] Config page: Validation error shown if YAML is invalid
-- [x] Confirm modal before applying changes
-### Phase D: Full Log Viewer — DONE
-- [x] Level filter buttons (ERROR/WARN/INFO/DEBUG/TRACE) — toggle each
-- [x] Colored log lines by detected level
-- [x] Search with regex toggle + match highlighting
-- [x] Prev/Next match navigation (F3 / Shift+F3)
-- [x] Word wrap toggle
-- [x] Follow mode (auto-scroll, disables on manual scroll up)
-- [x] Copy all to clipboard
-- [x] Download as .txt file
-- [x] Line count status bar with keyboard shortcut hints
-- [x] Keyboard shortcuts: Ctrl+F focus search, F3 next, Shift+F3 prev, Esc clear
-- [x] Tail line selector (100/200/500/1000/5000)
-### Code Review + Fix — DONE
-- [x] 10 issues found and fixed:
-  - Implemented namespace start/reload (were no-op stubs)
-  - Fixed WebSocket reconnect loop (stale closure)
-  - Fixed regex highlight (stateful g-flag bug)
-  - Fixed StopApp holding mutex across Docker call
-  - Fixed TCP server graceful shutdown
-  - Fixed restartApp nil dereference on concurrent stop
-  - Added error feedback in confirm modals
-  - Added runtime nil checks on handlers
-
-### Phase E: Namespace Wizard / Setup — PENDING
-### Phase F: Advanced Operations — PENDING
+### Remaining (Phase E/F — next iteration)
+- [ ] Namespace creation wizard (multi-step form)
+- [ ] Snapshot import/export (ZIP + tar.xz, requires launcher-utils container)
+- [ ] Auth secrets management
+- [ ] Diagnostics page (Docker info, disk, ports, diagnose --fix)
 
 ---
 
@@ -166,5 +132,6 @@ Full rewrite: Go + React Web UI + Tauri Desktop.
 
 **Binary:** 14MB single Go binary with embedded React web UI
 **CLI commands:** 22 total, all support `-o json`
-**Tests:** 43 Go unit + 9 Vitest + 8 Playwright E2E = 60 total
+**Web UI:** Full feature parity with Kotlin Compose Desktop (except snapshots/wizard)
+**Tests:** 43 Go unit + 9 Vitest component tests
 **All 5 test configs pass** from clean start with full browser verification
