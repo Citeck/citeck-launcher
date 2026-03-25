@@ -150,6 +150,9 @@ export function Logs() {
     ? ((matchIndex % matchIndices.length) + matchIndices.length) % matchIndices.length
     : 0
 
+  // Reset match index when matches change (log refresh, filter change)
+  useEffect(() => { setMatchIndex(0) }, [searchMatches.size])
+
   function toggleLevel(level: LogLevel) {
     setEnabledLevels((prev) => {
       const next = new Set(prev)

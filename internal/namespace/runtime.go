@@ -570,7 +570,8 @@ func (r *Runtime) waitForDeps(ctx context.Context, appName string) bool {
 			r.mu.RLock()
 			allReady := true
 			for dep := range deps {
-				if depApp, ok := r.apps[dep]; ok && depApp.Status != AppStatusRunning {
+				depApp, ok := r.apps[dep]
+				if !ok || depApp.Status != AppStatusRunning {
 					allReady = false
 					break
 				}

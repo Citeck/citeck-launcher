@@ -149,6 +149,10 @@ func (d *Daemon) handleAppStop(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "no namespace configured")
 		return
 	}
+	if d.findApp(name) == nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("app %q not found", name))
+		return
+	}
 
 	if err := d.runtime.StopApp(name); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -343,7 +347,11 @@ func (d *Daemon) handleDaemonLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	defer f.Close()
 
-	stat, _ := f.Stat()
+	stat, err := f.Stat()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	readSize := stat.Size()
 	if readSize > maxReadSize {
 		f.Seek(-maxReadSize, io.SeekEnd)
@@ -443,7 +451,11 @@ func (d *Daemon) handleDeleteVolume(w http.ResponseWriter, r *http.Request) {
 	}
 	// Verify volume belongs to this namespace before deletion
 	ctx := context.Background()
-	nsVolumes, _ := d.dockerClient.ListNamespaceVolumes(ctx)
+	nsVolumes, err := d.dockerClient.ListNamespaceVolumes(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("list volumes: %s", err.Error()))
+		return
+	}
 	found := false
 	for _, v := range nsVolumes {
 		if v.Name == name {
@@ -583,7 +595,8 @@ func (d *Daemon) findApp(name string) *namespace.AppRuntime {
 }
 
 // stripAnsi removes ANSI escape codes and normalizes tabs (matching Kotlin LogsUtils.normalizeMessage)
-var ansiRegex = regexp.MustCompile(`\x1b\[[\d;]*m`)
+// Matches all CSI escape sequences (SGR colors, cursor movement, erase, etc.)
+var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 
 func stripAnsi(s string) string {
 	s = ansiRegex.ReplaceAllString(s, "")

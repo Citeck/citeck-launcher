@@ -6,14 +6,13 @@ type ActionResultDto struct {
 }
 
 type AppDto struct {
-	Name     string   `json:"name"`
-	Status   string   `json:"status"`
-	Image    string   `json:"image"`
-	Detached bool     `json:"detached"`
-	CPU      string   `json:"cpu"`
-	Memory   string   `json:"memory"`
-	Kind     string   `json:"kind"`
-	Ports    []string `json:"ports,omitempty"`
+	Name   string   `json:"name"`
+	Status string   `json:"status"`
+	Image  string   `json:"image"`
+	CPU    string   `json:"cpu"`
+	Memory string   `json:"memory"`
+	Kind   string   `json:"kind"`
+	Ports  []string `json:"ports,omitempty"`
 }
 
 type DaemonStatusDto struct {

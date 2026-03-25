@@ -7,7 +7,6 @@ export interface AppDto {
   name: string
   status: string
   image: string
-  detached: boolean
   cpu: string
   memory: string
   kind: string

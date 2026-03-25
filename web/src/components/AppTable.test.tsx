@@ -5,9 +5,9 @@ import { AppTable } from './AppTable'
 import type { AppDto } from '../lib/types'
 
 const mockApps: AppDto[] = [
-  { name: 'proxy', status: 'RUNNING', image: 'ecos-proxy:2.25', detached: false, cpu: '0.1%', memory: '32M', kind: 'THIRD_PARTY', ports: ['80:80'] },
-  { name: 'gateway', status: 'STARTING', image: 'ecos-gateway:3.3', detached: false, cpu: '', memory: '', kind: 'CITECK_CORE' },
-  { name: 'postgres', status: 'FAILED', image: 'postgres:17', detached: false, cpu: '', memory: '', kind: 'THIRD_PARTY' },
+  { name: 'proxy', status: 'RUNNING', image: 'ecos-proxy:2.25', cpu: '0.1%', memory: '32M', kind: 'THIRD_PARTY', ports: ['80:80'] },
+  { name: 'gateway', status: 'STARTING', image: 'ecos-gateway:3.3', cpu: '', memory: '', kind: 'CITECK_CORE' },
+  { name: 'postgres', status: 'FAILED', image: 'postgres:17', cpu: '', memory: '', kind: 'THIRD_PARTY' },
 ]
 
 function renderWithRouter(ui: React.ReactElement) {
