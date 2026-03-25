@@ -5,7 +5,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/niceteck/citeck-launcher/internal/git"
 	"gopkg.in/yaml.v3"
@@ -14,6 +16,7 @@ import (
 const (
 	defaultBundlesRepo   = "https://github.com/Citeck/launcher-workspace.git"
 	defaultBundlesBranch = "main"
+	defaultPullPeriod    = time.Hour
 )
 
 // ImageRepo maps a short prefix like "core" to a full registry URL like "nexus.citeck.ru".
@@ -48,20 +51,71 @@ type ProxyConfig struct {
 	Aliases []string `yaml:"aliases"`
 }
 
-// WorkspaceConfig is the top-level workspace-v1.yml structure (subset we need).
-type WorkspaceConfig struct {
-	ImageRepos  []ImageRepo    `yaml:"imageRepos"`
-	Webapps     []WebappConfig `yaml:"webapps"`
-	CiteckProxy ProxyConfig    `yaml:"citeckProxy"`
+// QuickStartVariant describes a quick start option from workspace config.
+type QuickStartVariant struct {
+	Name     string    `yaml:"name"`
+	Snapshot string    `yaml:"snapshot,omitempty"`
+	Bundle   BundleRef `yaml:"bundleRef,omitempty"`
+	Template string    `yaml:"template,omitempty"`
 }
+
+// NamespaceTemplate describes a pre-configured namespace template.
+type NamespaceTemplate struct {
+	ID           string         `yaml:"id"`
+	Name         string         `yaml:"name,omitempty"`
+	Config       map[string]any `yaml:"config,omitempty"`
+	DetachedApps []string       `yaml:"detachedApps,omitempty"`
+}
+
+// BundlesRepo describes a git repository containing bundle definitions.
+type BundlesRepo struct {
+	ID       string `yaml:"id"`
+	Name     string `yaml:"name"`
+	URL      string `yaml:"url,omitempty"`
+	Branch   string `yaml:"branch,omitempty"`
+	Path     string `yaml:"path,omitempty"`
+	AuthType string `yaml:"authType,omitempty"`
+}
+
+// SnapshotDef describes a downloadable snapshot from workspace config.
+type SnapshotDef struct {
+	ID     string `yaml:"id"`
+	Name   string `yaml:"name"`
+	URL    string `yaml:"url"`
+	Size   string `yaml:"size,omitempty"`
+	SHA256 string `yaml:"sha256,omitempty"`
+}
+
+// WorkspaceConfig is the top-level workspace-v1.yml structure.
+type WorkspaceConfig struct {
+	QuickStartVariants []QuickStartVariant `yaml:"quickStartVariants,omitempty"`
+	Snapshots          []SnapshotDef       `yaml:"snapshots,omitempty"`
+	NamespaceTemplates []NamespaceTemplate `yaml:"namespaceTemplates,omitempty"`
+	ImageRepos         []ImageRepo         `yaml:"imageRepos"`
+	BundleRepos        []BundlesRepo       `yaml:"bundleRepos,omitempty"`
+	CiteckProxy        ProxyConfig         `yaml:"citeckProxy"`
+	DefaultWebappProps WebappDefaultProps  `yaml:"defaultWebappProps,omitempty"`
+	Webapps            []WebappConfig      `yaml:"webapps"`
+}
+
+// TokenLookupFunc returns an auth token for a given repo auth type.
+// Returns empty string if no credentials are available.
+type TokenLookupFunc func(authType string) string
 
 // Resolver resolves bundle references to full bundle definitions.
 type Resolver struct {
-	dataDir string
+	dataDir     string
+	tokenLookup TokenLookupFunc
 }
 
+// NewResolver creates a resolver without auth support.
 func NewResolver(dataDir string) *Resolver {
 	return &Resolver{dataDir: dataDir}
+}
+
+// NewResolverWithAuth creates a resolver with token lookup for authenticated repos.
+func NewResolverWithAuth(dataDir string, tokenLookup TokenLookupFunc) *Resolver {
+	return &Resolver{dataDir: dataDir, tokenLookup: tokenLookup}
 }
 
 // ResolveResult contains the bundle definition and workspace config.
@@ -78,20 +132,55 @@ func (r *Resolver) Resolve(ref BundleRef) (*ResolveResult, error) {
 
 	repoDir := filepath.Join(r.dataDir, "bundles", ref.Repo)
 
-	// Clone or pull the bundle repo
-	if err := git.CloneOrPull(defaultBundlesRepo, defaultBundlesBranch, repoDir); err != nil {
+	// Clone or pull the bundle repo (with auth if available)
+	opts := git.RepoOpts{
+		URL:        defaultBundlesRepo,
+		Branch:     defaultBundlesBranch,
+		DestDir:    repoDir,
+		PullPeriod: defaultPullPeriod,
+	}
+	if err := git.CloneOrPullWithAuth(opts); err != nil {
 		slog.Warn("Failed to update bundle repo", "err", err)
 	}
 
-	// Load workspace config for alias mapping + image repos
+	// Load workspace config — may define bundleRepos with auth
 	wsCfg := loadWorkspaceConfig(repoDir)
+
+	// If the bundle repo has a specific URL in workspace config, re-sync from there
+	if repo := findBundleRepo(wsCfg, ref.Repo); repo != nil {
+		repoURL := repo.URL
+		branch := repo.Branch
+		if repoURL == "" {
+			repoURL = defaultBundlesRepo
+		}
+		if branch == "" {
+			branch = defaultBundlesBranch
+		}
+		token := ""
+		if repo.AuthType != "" && r.tokenLookup != nil {
+			token = r.tokenLookup(repo.AuthType)
+		}
+		// Only re-sync if the specific repo differs from default
+		if repoURL != defaultBundlesRepo || token != "" {
+			opts = git.RepoOpts{
+				URL: repoURL, Branch: branch, DestDir: repoDir,
+				Token: token, PullPeriod: defaultPullPeriod,
+			}
+			if err := git.CloneOrPullWithAuth(opts); err != nil {
+				slog.Warn("Failed to update bundle repo with auth", "repo", ref.Repo, "err", err)
+			}
+		}
+	}
 
 	// Build alias → canonical name map
 	aliasMap := buildAliasMap(wsCfg)
 	imageRepoMap := buildImageRepoMap(wsCfg)
 
-	// Resolve bundle version
-	bundlesDir := filepath.Join(repoDir, ref.Repo)
+	// Resolve bundle version — look in BundlesRepo.Path sub-directory if defined
+	bundlesDir := repoDir
+	if repo := findBundleRepo(wsCfg, ref.Repo); repo != nil && repo.Path != "" {
+		bundlesDir = filepath.Join(repoDir, repo.Path)
+	}
 	key := ref.Key
 	if strings.EqualFold(key, "LATEST") {
 		latest, err := findLatestBundle(bundlesDir)
@@ -129,6 +218,16 @@ func loadWorkspaceConfig(repoDir string) *WorkspaceConfig {
 		return &cfg
 	}
 	return &WorkspaceConfig{}
+}
+
+// findBundleRepo finds a BundlesRepo entry by ID in the workspace config.
+func findBundleRepo(cfg *WorkspaceConfig, repoID string) *BundlesRepo {
+	for i := range cfg.BundleRepos {
+		if cfg.BundleRepos[i].ID == repoID {
+			return &cfg.BundleRepos[i]
+		}
+	}
+	return nil
 }
 
 func buildAliasMap(cfg *WorkspaceConfig) map[string]string {
@@ -240,6 +339,25 @@ func findBundleFile(dir, key string) string {
 	return ""
 }
 
+// ListBundleVersions lists available bundle version keys in a given bundles sub-directory.
+func ListBundleVersions(bundlesDir string) []string {
+	entries, err := os.ReadDir(bundlesDir)
+	if err != nil {
+		return nil
+	}
+	var versions []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		name = strings.TrimSuffix(name, ".yaml")
+		name = strings.TrimSuffix(name, ".yml")
+		versions = append(versions, name)
+	}
+	return versions
+}
+
 func findLatestBundle(bundlesDir string) (string, error) {
 	entries, err := os.ReadDir(bundlesDir)
 	if err != nil {
@@ -254,7 +372,7 @@ func findLatestBundle(bundlesDir string) (string, error) {
 		name := e.Name()
 		name = strings.TrimSuffix(name, ".yaml")
 		name = strings.TrimSuffix(name, ".yml")
-		if latest == "" || name > latest {
+		if latest == "" || compareBundleVersions(name, latest) > 0 {
 			latest = name
 		}
 	}
@@ -262,4 +380,26 @@ func findLatestBundle(bundlesDir string) (string, error) {
 		return "", fmt.Errorf("no bundles found in %s", bundlesDir)
 	}
 	return latest, nil
+}
+
+// compareBundleVersions compares two dot-separated version strings numerically.
+// "2025.10" > "2025.9", matching the Kotlin BundleKey.compareTo behaviour.
+func compareBundleVersions(a, b string) int {
+	aParts := strings.Split(a, ".")
+	bParts := strings.Split(b, ".")
+	n := len(aParts)
+	if len(bParts) < n {
+		n = len(bParts)
+	}
+	for i := 0; i < n; i++ {
+		ai, _ := strconv.Atoi(aParts[i])
+		bi, _ := strconv.Atoi(bParts[i])
+		if ai != bi {
+			if ai > bi {
+				return 1
+			}
+			return -1
+		}
+	}
+	return len(aParts) - len(bParts)
 }

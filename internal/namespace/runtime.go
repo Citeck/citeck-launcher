@@ -6,11 +6,14 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/niceteck/citeck-launcher/internal/actions"
 	"github.com/niceteck/citeck-launcher/internal/api"
 	"github.com/niceteck/citeck-launcher/internal/appdef"
 	"github.com/niceteck/citeck-launcher/internal/docker"
+	"github.com/niceteck/citeck-launcher/internal/namespace/nsactions"
 )
 
 // NsRuntimeStatus represents namespace lifecycle states.
@@ -64,11 +67,15 @@ type Runtime struct {
 	config      *NamespaceConfig
 	apps        map[string]*AppRuntime
 	docker      *docker.Client
+	actionSvc   *actions.Service
+	ownsActions bool // true if this runtime created its own action service
+	running     atomic.Bool
 	workspace   string
 	nsID        string
 	volumesBase string
 	eventCb     EventCallback
 	cmdCh       chan command
+	runCtx      context.Context    // set by doStart, cancelled by doStop
 	cancel      context.CancelFunc
 	wg          sync.WaitGroup
 	appWg       sync.WaitGroup // tracks only app start/restart goroutines (not runLoop)
@@ -87,12 +94,26 @@ type command struct {
 	apps []appdef.ApplicationDef
 }
 
+// NewRuntime creates a new namespace runtime with a dedicated action service.
 func NewRuntime(cfg *NamespaceConfig, dockerClient *docker.Client, workspace, volumesBase string) *Runtime {
+	return NewRuntimeWithActions(cfg, dockerClient, workspace, volumesBase, nil)
+}
+
+// NewRuntimeWithActions creates a runtime with an externally provided action service.
+// If actionSvc is nil, a new dedicated service is created.
+func NewRuntimeWithActions(cfg *NamespaceConfig, dockerClient *docker.Client, workspace, volumesBase string, actionSvc *actions.Service) *Runtime {
+	ownsActions := false
+	if actionSvc == nil {
+		actionSvc = actions.NewService(actions.ServiceConfig{})
+		ownsActions = true
+	}
 	return &Runtime{
 		status:      NsStatusStopped,
 		config:      cfg,
 		apps:        make(map[string]*AppRuntime),
 		docker:      dockerClient,
+		actionSvc:   actionSvc,
+		ownsActions: ownsActions,
 		workspace:   workspace,
 		nsID:        cfg.ID,
 		volumesBase: volumesBase,
@@ -223,25 +244,38 @@ func (r *Runtime) proxyBaseURL() string {
 }
 
 func (r *Runtime) Start(apps []appdef.ApplicationDef) {
+	if !r.running.CompareAndSwap(false, true) {
+		slog.Warn("Runtime already running, ignoring Start()")
+		return
+	}
 	r.wg.Add(1)
 	go r.runLoop()
 	r.cmdCh <- command{typ: cmdStart, apps: apps}
 }
 
 func (r *Runtime) Stop() {
-	r.cmdCh <- command{typ: cmdStop}
-}
-
-func (r *Runtime) Shutdown() {
 	select {
 	case r.cmdCh <- command{typ: cmdStop}:
 	default:
+		slog.Warn("Stop command dropped (channel full)")
 	}
+}
+
+func (r *Runtime) Shutdown() {
+	r.Stop()
 	r.wg.Wait()
+	r.running.Store(false)
+	if r.ownsActions {
+		r.actionSvc.Shutdown()
+	}
 }
 
 func (r *Runtime) Regenerate(apps []appdef.ApplicationDef) {
-	r.cmdCh <- command{typ: cmdRegenerate, apps: apps}
+	select {
+	case r.cmdCh <- command{typ: cmdRegenerate, apps: apps}:
+	default:
+		slog.Warn("Regenerate command dropped (channel full)")
+	}
 }
 
 // UpdateAppDef updates the ApplicationDef for a running app (under lock).
@@ -296,8 +330,13 @@ func (r *Runtime) RestartApp(appName string) error {
 	hasContainer := app.ContainerID != ""
 	r.mu.Unlock()
 
-	// Stop existing container — outside lock to avoid blocking
-	ctx := context.Background()
+	// Use runtime context so restarts are cancelled on shutdown
+	r.mu.RLock()
+	ctx := r.runCtx
+	r.mu.RUnlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if hasContainer {
 		_ = r.docker.StopAndRemoveContainer(ctx, containerName)
 	}
@@ -429,9 +468,10 @@ func (r *Runtime) runLoop() {
 
 func (r *Runtime) doStart(apps []appdef.ApplicationDef) {
 	ctx, cancel := context.WithCancel(context.Background())
-	r.cancel = cancel
 
 	r.mu.Lock()
+	r.runCtx = ctx
+	r.cancel = cancel
 	r.setStatus(NsStatusStarting)
 
 	// Create network (outside lock is fine — Docker call, no shared state)
@@ -465,11 +505,13 @@ func (r *Runtime) pullAndStartApp(ctx context.Context, appName string) {
 	appDef := app.Def
 	r.mu.RUnlock()
 
-	// Pull image if not present
-	if appDef.Image != "" && !r.docker.ImageExists(ctx, appDef.Image) {
-		slog.Info("Pulling image", "app", appName, "image", appDef.Image)
-		if err := r.docker.PullImage(ctx, appDef.Image); err != nil {
-			slog.Error("Pull failed", "app", appName, "err", err)
+	// Pull image via action service
+	if appDef.Image != "" {
+		pullHandle := r.actionSvc.Execute(actions.ActionParams{
+			Executor: &nsactions.PullExecutor{Docker: r.docker, PullAlways: true},
+			Data:     &nsactions.PullData{AppName: appName, Image: appDef.Image},
+		})
+		if err := pullHandle.Wait(ctx); err != nil {
 			r.mu.Lock()
 			r.setAppStatus(app, AppStatusPullFailed)
 			app.StatusText = err.Error()
@@ -490,22 +532,15 @@ func (r *Runtime) pullAndStartApp(ctx context.Context, appName string) {
 	// Run init containers
 	r.runInitContainers(ctx, appName, appDef)
 
-	// Create and start main container
-	containerName := r.docker.ContainerName(appName)
-	_ = r.docker.StopAndRemoveContainer(ctx, containerName)
-
-	id, err := r.docker.CreateContainer(ctx, appDef, r.volumesBase)
-	if err != nil {
-		slog.Error("Create container failed", "app", appName, "err", err)
-		r.mu.Lock()
-		r.setAppStatus(app, AppStatusStartFailed)
-		app.StatusText = err.Error()
-		r.mu.Unlock()
-		return
+	// Create and start container via action service
+	startData := &nsactions.StartData{
+		AppName: appName, AppDef: appDef, VolumesBase: r.volumesBase,
 	}
-
-	if err := r.docker.StartContainer(ctx, id); err != nil {
-		slog.Error("Start container failed", "app", appName, "err", err)
+	startHandle := r.actionSvc.Execute(actions.ActionParams{
+		Executor: &nsactions.StartExecutor{Docker: r.docker},
+		Data:     startData,
+	})
+	if err := startHandle.Wait(ctx); err != nil {
 		r.mu.Lock()
 		r.setAppStatus(app, AppStatusStartFailed)
 		app.StatusText = err.Error()
@@ -514,12 +549,12 @@ func (r *Runtime) pullAndStartApp(ctx context.Context, appName string) {
 	}
 
 	r.mu.Lock()
-	app.ContainerID = id
+	app.ContainerID = startData.ContainerID
 	r.mu.Unlock()
 
 	// Wait for startup probe
 	if len(appDef.StartupConditions) > 0 {
-		if err := r.waitForStartup(ctx, appName, id, appDef.StartupConditions); err != nil {
+		if err := r.waitForStartup(ctx, appName, startData.ContainerID, appDef.StartupConditions); err != nil {
 			slog.Error("Startup probe failed", "app", appName, "err", err)
 			r.mu.Lock()
 			r.setAppStatus(app, AppStatusStartFailed)
@@ -533,7 +568,7 @@ func (r *Runtime) pullAndStartApp(ctx context.Context, appName string) {
 	for _, action := range appDef.InitActions {
 		if len(action.Exec) > 0 {
 			slog.Info("Running init action", "app", appName, "cmd", action.Exec)
-			_, exitCode, err := r.docker.ExecInContainer(ctx, id, action.Exec)
+			_, exitCode, err := r.docker.ExecInContainer(ctx, startData.ContainerID, action.Exec)
 			if err != nil || exitCode != 0 {
 				slog.Warn("Init action failed", "app", appName, "err", err, "exitCode", exitCode)
 			}
@@ -590,13 +625,19 @@ func (r *Runtime) runInitContainers(ctx context.Context, appName string, appDef 
 		initDef := appdef.ApplicationDef{
 			Name: appName + "-init", Image: initC.Image,
 			Cmd: initC.Cmd, Volumes: initC.Volumes, Environments: initC.Environments,
+			IsInit: true, // no restart policy for init containers
 		}
-		if !r.docker.ImageExists(ctx, initC.Image) {
-			if err := r.docker.PullImage(ctx, initC.Image); err != nil {
-				slog.Warn("Init container pull failed", "app", appName, "err", err)
-				continue
-			}
+
+		// Pull init image via action service
+		pullHandle := r.actionSvc.Execute(actions.ActionParams{
+			Executor: &nsactions.PullExecutor{Docker: r.docker, RetryDelays: nsactions.InitPullRetryDelays},
+			Data:     &nsactions.PullData{AppName: appName, Image: initC.Image},
+		})
+		if err := pullHandle.Wait(ctx); err != nil {
+			slog.Warn("Init container pull failed after retries", "app", appName, "image", initC.Image, "err", err)
+			continue
 		}
+
 		initName := r.docker.ContainerName(appName + "-init")
 		_ = r.docker.StopAndRemoveContainer(ctx, initName)
 		initID, err := r.docker.CreateContainer(ctx, initDef, r.volumesBase)
@@ -638,7 +679,12 @@ func (r *Runtime) waitForProbe(ctx context.Context, containerID string, probe *a
 		threshold = 10000
 	}
 
-	time.Sleep(time.Duration(delay) * time.Second)
+	// Context-aware initial delay
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(time.Duration(delay) * time.Second):
+	}
 
 	shortID := truncateID(containerID)
 
@@ -668,7 +714,12 @@ func (r *Runtime) waitForProbe(ctx context.Context, containerID string, probe *a
 				return nil
 			}
 		}
-		time.Sleep(time.Duration(period) * time.Second)
+		// Context-aware period sleep
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(period) * time.Second):
+		}
 	}
 
 	return fmt.Errorf("probe failed after %d attempts", threshold)
@@ -685,18 +736,36 @@ func (r *Runtime) doStop() {
 	}
 	r.mu.Unlock()
 
-	// Wait for all app goroutines to finish (they check ctx.Done).
-	// appWg only tracks app start/restart goroutines, not runLoop.
+	// Wait for all app start/restart goroutines to finish.
 	r.appWg.Wait()
 
+	// Collect apps to stop (snapshot under lock, stop outside lock)
 	r.mu.Lock()
-	ctx := context.Background()
+	var toStop []*AppRuntime
 	for _, app := range r.apps {
 		if app.ContainerID != "" {
-			slog.Info("Stopping app", "app", app.Name)
-			_ = r.docker.StopAndRemoveContainer(ctx, r.docker.ContainerName(app.Name))
-			r.setAppStatus(app, AppStatusStopped)
+			toStop = append(toStop, app)
 		}
+	}
+	r.mu.Unlock()
+
+	// Stop all containers in parallel
+	ctx := context.Background()
+	var stopWg sync.WaitGroup
+	for _, app := range toStop {
+		stopWg.Add(1)
+		go func(a *AppRuntime) {
+			defer stopWg.Done()
+			slog.Info("Stopping app", "app", a.Name)
+			_ = r.docker.StopAndRemoveContainer(ctx, r.docker.ContainerName(a.Name))
+		}(app)
+	}
+	stopWg.Wait()
+
+	// Update status under lock after all containers are stopped
+	r.mu.Lock()
+	for _, app := range r.apps {
+		r.setAppStatus(app, AppStatusStopped)
 	}
 	_ = r.docker.RemoveNetwork(ctx)
 	r.apps = make(map[string]*AppRuntime)

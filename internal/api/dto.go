@@ -90,3 +90,102 @@ type ErrorDto struct {
 	Message string `json:"message"`
 	Details string `json:"details"`
 }
+
+// --- Phase E1: Welcome Screen ---
+
+type NamespaceSummaryDto struct {
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspaceId"`
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+	BundleRef   string `json:"bundleRef"`
+}
+
+type QuickStartDto struct {
+	Name     string `json:"name"`
+	Template string `json:"template"`
+	Snapshot string `json:"snapshot,omitempty"`
+}
+
+type TemplateDto struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// --- Phase F1: Secrets ---
+
+type SecretMetaDto struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Scope     string `json:"scope"`
+	CreatedAt string `json:"createdAt"`
+}
+
+type SecretCreateDto struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Value string `json:"value"`
+	Scope string `json:"scope,omitempty"`
+}
+
+// --- Phase F2: Diagnostics ---
+
+type DiagnosticCheckDto struct {
+	Name    string `json:"name"`
+	Status  string `json:"status"` // "ok", "warn", "error"
+	Message string `json:"message"`
+	Fixable bool   `json:"fixable"`
+}
+
+type DiagnosticsDto struct {
+	Checks []DiagnosticCheckDto `json:"checks"`
+}
+
+type DiagFixResultDto struct {
+	Fixed   int    `json:"fixed"`
+	Failed  int    `json:"failed"`
+	Message string `json:"message"`
+}
+
+// --- Phase F3: Snapshots ---
+
+type SnapshotDto struct {
+	Name      string   `json:"name"`
+	CreatedAt string   `json:"createdAt"`
+	Size      int64    `json:"size"`
+	Volumes   []string `json:"volumes"`
+}
+
+// --- Phase E3: Namespace creation ---
+
+type NamespaceCreateDto struct {
+	Name           string   `json:"name"`
+	AuthType       string   `json:"authType"`
+	Users          []string `json:"users,omitempty"`
+	Host           string   `json:"host"`
+	Port           int      `json:"port"`
+	TLSEnabled     bool     `json:"tlsEnabled"`
+	TLSMode        string   `json:"tlsMode,omitempty"` // "self-signed", "letsencrypt", "custom"
+	PgAdminEnabled bool     `json:"pgAdminEnabled"`
+	BundleRepo     string   `json:"bundleRepo"`
+	BundleKey      string   `json:"bundleKey"`
+	WorkspaceID    string   `json:"workspaceId,omitempty"`
+}
+
+type BundleInfoDto struct {
+	Repo     string   `json:"repo"`
+	Versions []string `json:"versions"`
+}
+
+// ValidationErrorDto is returned when server-side form validation fails.
+type ValidationErrorDto struct {
+	Error  string          `json:"error"`
+	Fields []FieldErrorDto `json:"fields"`
+}
+
+type FieldErrorDto struct {
+	Key     string `json:"key"`
+	Message string `json:"message"`
+}

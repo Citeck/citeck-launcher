@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -21,50 +22,135 @@ import (
 	"github.com/niceteck/citeck-launcher/internal/config"
 	"github.com/niceteck/citeck-launcher/internal/docker"
 	"github.com/niceteck/citeck-launcher/internal/namespace"
+	"github.com/niceteck/citeck-launcher/internal/storage"
 )
+
+// StartOptions controls daemon startup behavior.
+type StartOptions struct {
+	Foreground bool
+	NoUI       bool // disable web UI (TCP listener)
+}
 
 // Daemon is the main daemon server.
 type Daemon struct {
-	dockerClient *docker.Client
-	runtime      *namespace.Runtime
-	nsConfig     *namespace.NamespaceConfig
-	bundleDef    *bundle.BundleDef
-	appDefs      []appdef.ApplicationDef
-	server       *http.Server
-	tcpServer    *http.Server
-	socketPath    string
-	volumesBase   string
-	startTime     time.Time
-	eventSubs     []chan api.EventDto
-	eventMu       sync.Mutex
-	configMu      sync.Mutex // protects nsConfig, bundleDef, appDefs
-	shutdownOnce  sync.Once
+	dockerClient   *docker.Client
+	runtime        *namespace.Runtime
+	nsConfig       *namespace.NamespaceConfig
+	bundleDef      *bundle.BundleDef
+	workspaceConfig *bundle.WorkspaceConfig
+	appDefs        []appdef.ApplicationDef
+	server         *http.Server
+	tcpServer      *http.Server
+	store          storage.Store
+	socketPath     string
+	volumesBase    string
+	workspaceID    string
+	startTime      time.Time
+	eventSubs      []chan api.EventDto
+	eventMu        sync.Mutex
+	configMu       sync.Mutex // protects nsConfig, bundleDef, appDefs, workspaceConfig
+	shutdownOnce   sync.Once
 }
 
-// Start runs the daemon in foreground mode.
-func Start(foreground bool) error {
-	slog.Info("Starting daemon", "foreground", foreground)
+// Start runs the daemon.
+func Start(opts StartOptions) error {
+	slog.Info("Starting daemon",
+		"foreground", opts.Foreground,
+		"desktop", config.IsDesktopMode(),
+		"noUI", opts.NoUI,
+		"home", config.HomeDir(),
+	)
 
 	socketPath := config.SocketPath()
 
 	// Ensure directories exist
-	for _, dir := range []string{config.ConfDir(), config.DataDir(), config.LogDir(), config.RunDir()} {
+	dirs := []string{config.ConfDir(), config.DataDir(), config.LogDir(), config.RunDir()}
+	if config.IsDesktopMode() {
+		dirs = append(dirs, config.WorkspacesDir())
+	}
+	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("create directory %s: %w", dir, err)
 		}
 	}
 
+	// Load daemon config
+	daemonCfg, err := config.LoadDaemonConfig()
+	if err != nil {
+		slog.Warn("Failed to load daemon config, using defaults", "err", err)
+		daemonCfg = config.DefaultDaemonConfig()
+	}
+
+	// Override web UI with --no-ui flag
+	if opts.NoUI {
+		daemonCfg.Server.WebUI.Enabled = false
+	}
+
 	// Clean up stale socket
 	os.Remove(socketPath)
 
+	// Determine workspace and namespace IDs
+	wsID := "daemon"
+	nsID := "default"
+	if config.IsDesktopMode() {
+		wsID = "default"
+		// Use first available workspace if "default" doesn't exist
+		if workspaces, err := config.ListWorkspaces(); err == nil && len(workspaces) > 0 {
+			found := false
+			for _, ws := range workspaces {
+				if ws.ID == "default" || ws.ID == "DEFAULT" {
+					wsID = ws.ID
+					found = true
+					break
+				}
+			}
+			if !found {
+				wsID = workspaces[0].ID
+			}
+			// Use first namespace in the selected workspace
+			for _, ws := range workspaces {
+				if ws.ID == wsID && len(ws.Namespaces) > 0 {
+					nsID = ws.Namespaces[0]
+					break
+				}
+			}
+		}
+		slog.Info("Desktop mode workspace", "wsID", wsID, "nsID", nsID)
+	}
+
 	// Create Docker client
-	dockerClient, err := docker.NewClient("daemon", "default")
+	dockerClient, err := docker.NewClient(wsID, nsID)
 	if err != nil {
 		return fmt.Errorf("create docker client: %w", err)
 	}
+	startupFailed := true
+	defer func() {
+		if startupFailed {
+			dockerClient.Close()
+		}
+	}()
 
-	// Load namespace config
-	nsCfgPath := config.NamespaceConfigPath()
+	// Initialize storage backend
+	var store storage.Store
+	if config.IsDesktopMode() {
+		store, err = storage.NewSQLiteStore(config.HomeDir())
+		if err != nil {
+			return fmt.Errorf("create sqlite store: %w", err)
+		}
+	} else {
+		store, err = storage.NewFileStore(config.ConfDir())
+		if err != nil {
+			return fmt.Errorf("create file store: %w", err)
+		}
+	}
+	defer func() {
+		if startupFailed {
+			store.Close()
+		}
+	}()
+
+	// Load namespace config (mode-aware path)
+	nsCfgPath := config.ResolveNamespaceConfigPath(wsID, nsID)
 	nsCfg, err := namespace.LoadNamespaceConfig(nsCfgPath)
 	if err != nil {
 		slog.Warn("No namespace config found", "path", nsCfgPath, "err", err)
@@ -72,24 +158,47 @@ func Start(foreground bool) error {
 	}
 
 	var bundleDef *bundle.BundleDef
+	var wsCfg *bundle.WorkspaceConfig
 	var runtime *namespace.Runtime
 	var appDefs []appdef.ApplicationDef
-	var volumesBase string
+	volumesBase := config.ResolveVolumesBase(wsID, nsID)
 
 	if nsCfg != nil {
-		// Resolve bundle + workspace config
-		resolver := bundle.NewResolver(config.DataDir())
+		if nsCfg.ID == "" {
+			nsCfg.ID = nsID
+		}
+
+		// Resolve bundle + workspace config (with auth from stored secrets)
+		tokenLookup := func(authType string) string {
+			if store == nil {
+				return ""
+			}
+			secrets, err := store.ListSecrets()
+			if err != nil {
+				return ""
+			}
+			for _, s := range secrets {
+				if string(s.Type) == authType || s.Scope == authType {
+					sec, err := store.GetSecret(s.ID)
+					if err == nil {
+						return sec.Value
+					}
+				}
+			}
+			return ""
+		}
+		resolver := bundle.NewResolverWithAuth(config.DataDir(), tokenLookup)
 		resolveResult, err := resolver.Resolve(nsCfg.BundleRef)
 		if err != nil {
 			slog.Error("Failed to resolve bundle", "ref", nsCfg.BundleRef, "err", err)
 			resolveResult = &bundle.ResolveResult{Bundle: &bundle.EmptyBundleDef, Workspace: &bundle.WorkspaceConfig{}}
 		}
 		bundleDef = resolveResult.Bundle
+		wsCfg = resolveResult.Workspace
 
 		slog.Info("Using bundle", "ref", nsCfg.BundleRef, "apps", len(bundleDef.Applications))
 
 		// Extract appfiles to volumes base
-		volumesBase = filepath.Join(config.DataDir(), "runtime", nsCfg.ID)
 		if err := appfiles.ExtractTo(volumesBase); err != nil {
 			slog.Error("Failed to extract appfiles", "err", err)
 		} else {
@@ -113,19 +222,22 @@ func Start(foreground bool) error {
 		slog.Info("Generated namespace", "apps", len(genResp.Applications), "files", len(genResp.Files))
 
 		appDefs = genResp.Applications
-		runtime = namespace.NewRuntime(nsCfg, dockerClient, "daemon", volumesBase)
+		runtime = namespace.NewRuntime(nsCfg, dockerClient, wsID, volumesBase)
 		runtime.Start(appDefs)
 	}
 
 	d := &Daemon{
-		dockerClient: dockerClient,
-		runtime:      runtime,
-		nsConfig:     nsCfg,
-		bundleDef:    bundleDef,
-		appDefs:      appDefs,
-		socketPath:   socketPath,
-		volumesBase:  volumesBase,
-		startTime:    time.Now(),
+		dockerClient:    dockerClient,
+		runtime:         runtime,
+		nsConfig:        nsCfg,
+		bundleDef:       bundleDef,
+		workspaceConfig: wsCfg,
+		appDefs:         appDefs,
+		store:           store,
+		socketPath:      socketPath,
+		volumesBase:     volumesBase,
+		workspaceID:     wsID,
+		startTime:       time.Now(),
 	}
 
 	// Wire up event broadcasting
@@ -138,7 +250,12 @@ func Start(foreground bool) error {
 	// Create HTTP server
 	mux := http.NewServeMux()
 	d.registerRoutes(mux)
-	d.server = &http.Server{Handler: mux}
+	d.server = &http.Server{
+		Handler:        mux,
+		ReadTimeout:    30 * time.Second,
+		WriteTimeout:   120 * time.Second, // long for log streaming
+		MaxHeaderBytes: 1 << 20,           // 1MB
+	}
 
 	// Listen on Unix socket (for local CLI)
 	listener, err := net.Listen("unix", socketPath)
@@ -149,22 +266,31 @@ func Start(foreground bool) error {
 		slog.Warn("Failed to chmod socket", "path", socketPath, "err", err)
 	}
 
-	// Also listen on TCP :8088 (for Web UI / Desktop app / remote access)
-	const tcpAddr = "127.0.0.1:8088"
-	tcpListener, err := net.Listen("tcp", tcpAddr)
-	if err != nil {
-		slog.Warn("TCP listener failed, Web UI only on Unix socket", "addr", tcpAddr, "err", err)
+	// TCP listener for Web UI (controlled by daemon.yml and --no-ui flag)
+	tcpAddr := daemonCfg.Server.WebUI.Listen
+	if daemonCfg.Server.WebUI.Enabled {
+		tcpListener, err := net.Listen("tcp", tcpAddr)
+		if err != nil {
+			slog.Warn("TCP listener failed, Web UI unavailable", "addr", tcpAddr, "err", err)
+		} else {
+			d.tcpServer = &http.Server{Handler: mux}
+			go func() {
+				slog.Info("Web UI available", "url", "http://"+tcpAddr)
+				if err := d.tcpServer.Serve(tcpListener); err != nil && err != http.ErrServerClosed {
+					slog.Error("TCP server error", "err", err)
+				}
+			}()
+		}
 	} else {
-		d.tcpServer = &http.Server{Handler: mux}
-		go func() {
-			slog.Info("Web UI available", "url", "http://"+tcpAddr)
-			if err := d.tcpServer.Serve(tcpListener); err != nil && err != http.ErrServerClosed {
-				slog.Error("TCP server error", "err", err)
-			}
-		}()
+		slog.Info("Web UI disabled")
 	}
 
-	slog.Info("Citeck Daemon started", "socket", socketPath, "tcp", tcpAddr, "pid", os.Getpid())
+	slog.Info("Citeck Daemon started",
+		"socket", socketPath,
+		"webui", daemonCfg.Server.WebUI.Enabled,
+		"tcp", tcpAddr,
+		"pid", os.Getpid(),
+	)
 
 	// Handle shutdown
 	sigCh := make(chan os.Signal, 1)
@@ -176,7 +302,10 @@ func Start(foreground bool) error {
 		d.shutdown()
 	}()
 
-	// Serve
+	// Startup complete — disable cleanup defers
+	startupFailed = false
+
+	// Serve (blocks until shutdown)
 	if err := d.server.Serve(listener); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("server error: %w", err)
 	}
@@ -193,13 +322,15 @@ func (d *Daemon) doShutdown() {
 	defer cancel()
 
 	if d.runtime != nil {
-		d.runtime.Stop()
 		d.runtime.Shutdown()
 	}
 
 	d.server.Shutdown(ctx)
 	if d.tcpServer != nil {
 		d.tcpServer.Shutdown(ctx)
+	}
+	if d.store != nil {
+		d.store.Close()
 	}
 	d.dockerClient.Close()
 	os.Remove(d.socketPath)
@@ -281,6 +412,34 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	// Health
 	mux.HandleFunc("GET "+api.Health, d.handleHealth)
 
+	// Phase E1: Namespaces
+	mux.HandleFunc("GET "+api.Namespaces, d.handleListNamespaces)
+	mux.HandleFunc("POST "+api.Namespaces, d.handleCreateNamespace)
+	mux.HandleFunc("DELETE /api/v1/namespaces/{id}", d.handleDeleteNamespace)
+	mux.HandleFunc("GET "+api.Templates, d.handleGetTemplates)
+	mux.HandleFunc("GET "+api.QuickStarts, d.handleGetQuickStarts)
+
+	// Phase E3: Bundles
+	mux.HandleFunc("GET "+api.Bundles, d.handleListBundles)
+
+	// Phase F1: Secrets
+	mux.HandleFunc("GET "+api.Secrets, d.handleListSecrets)
+	mux.HandleFunc("POST "+api.Secrets, d.handleCreateSecret)
+	mux.HandleFunc("DELETE /api/v1/secrets/{id}", d.handleDeleteSecret)
+	mux.HandleFunc("GET /api/v1/secrets/{id}/test", d.handleTestSecret)
+
+	// Phase 3E: Forms
+	mux.HandleFunc("GET /api/v1/forms/{formId}", d.handleGetForm)
+
+	// Phase F2: Diagnostics
+	mux.HandleFunc("GET "+api.Diagnostics, d.handleGetDiagnostics)
+	mux.HandleFunc("POST "+api.DiagnosticsFix, d.handleDiagnosticsFix)
+
+	// Phase F3: Snapshots
+	mux.HandleFunc("GET "+api.Snapshots, d.handleListSnapshots)
+	mux.HandleFunc("POST "+api.SnapshotsExport, d.handleExportSnapshot)
+	mux.HandleFunc("POST "+api.SnapshotsImport, d.handleImportSnapshot)
+
 	// Web UI (fallback)
 	mux.Handle("/", WebUIHandler())
 }
@@ -306,6 +465,15 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 	})
 }
 
+// activeConfigPath returns the namespace config path for the currently loaded namespace.
+func (d *Daemon) activeConfigPath() string {
+	nsID := "default"
+	if d.nsConfig != nil {
+		nsID = d.nsConfig.ID
+	}
+	return config.ResolveNamespaceConfigPath(d.workspaceID, nsID)
+}
+
 func readJSON(r *http.Request, v any) error {
-	return json.NewDecoder(r.Body).Decode(v)
+	return json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(v) // 1MB max
 }
