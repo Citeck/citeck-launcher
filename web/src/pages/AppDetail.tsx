@@ -96,21 +96,21 @@ export function AppDetail() {
       </div>
 
       {/* Volumes */}
-      {inspect.volumes?.length > 0 && (
+      {(inspect.volumes?.length ?? 0) > 0 && (
         <div className="rounded border border-border bg-card p-2">
           <div className="text-xs font-medium mb-1">Volumes</div>
-          {inspect.volumes.map((v, i) => (
+          {inspect.volumes!.map((v, i) => (
             <div key={i} className="text-[11px] font-mono text-muted-foreground break-all">{v}</div>
           ))}
         </div>
       )}
 
       {/* Environment */}
-      {inspect.env?.length > 0 && (
+      {(inspect.env?.length ?? 0) > 0 && (
         <div className="rounded border border-border bg-card p-2">
           <div className="text-xs font-medium mb-1">Environment</div>
           <div className="max-h-40 overflow-y-auto">
-            {inspect.env.map((e, i) => (
+            {inspect.env!.map((e, i) => (
               <div key={i} className="text-[11px] font-mono text-muted-foreground break-all">{e}</div>
             ))}
           </div>

@@ -6,13 +6,15 @@ import { getSystemDump } from '../lib/api'
 import { StatusBadge } from '../components/StatusBadge'
 import { AppTable } from '../components/AppTable'
 import { NamespaceControls } from '../components/NamespaceControls'
-import { ExternalLink, Globe, FileText, Download, AlertTriangle, HardDrive } from 'lucide-react'
+import { ExternalLink, Globe, FileText, Download, AlertTriangle, HardDrive, Key, Stethoscope } from 'lucide-react'
 
 export function Dashboard() {
   const { namespace, health, loading, error, fetchData, startEventStream, stopEventStream } =
     useDashboardStore()
+  const setHomeTab = useTabsStore((s) => s.setHomeTab)
 
   useEffect(() => {
+    setHomeTab('Dashboard')
     fetchData()
     startEventStream()
     return () => stopEventStream()
@@ -128,6 +130,10 @@ export function Dashboard() {
         <div className="mt-auto pt-2 border-t border-border flex flex-col gap-1">
           <SidebarBtn icon={HardDrive} label="Volumes"
             onClick={() => { openTab({ id: 'volumes', title: 'Volumes', path: '/volumes' }); navigate('/volumes') }} />
+          <SidebarBtn icon={Key} label="Secrets"
+            onClick={() => { openTab({ id: 'secrets', title: 'Secrets', path: '/secrets' }); navigate('/secrets') }} />
+          <SidebarBtn icon={Stethoscope} label="Diagnostics"
+            onClick={() => { openTab({ id: 'diagnostics', title: 'Diagnostics', path: '/diagnostics' }); navigate('/diagnostics') }} />
           <SidebarBtn icon={FileText} label="Launcher Logs"
             onClick={() => { openTab({ id: 'daemon-logs', title: 'Daemon Logs', path: '/daemon-logs' }); navigate('/daemon-logs') }} />
           <SidebarBtn icon={Download} label="System Dump"

@@ -1,4 +1,20 @@
-import type { NamespaceDto, HealthDto, DaemonStatusDto, AppInspectDto, ActionResultDto } from './types'
+import type {
+  NamespaceDto,
+  HealthDto,
+  DaemonStatusDto,
+  AppInspectDto,
+  ActionResultDto,
+  NamespaceSummaryDto,
+  QuickStartDto,
+  TemplateDto,
+  NamespaceCreateDto,
+  BundleInfoDto,
+  SecretMetaDto,
+  SecretCreateDto,
+  DiagnosticsDto,
+  DiagFixResultDto,
+  SnapshotDto,
+} from './types'
 
 const API_BASE = '/api/v1'
 
@@ -84,7 +100,10 @@ export async function getSystemDump(): Promise<void> {
   const a = document.createElement('a')
   a.href = url
   a.download = 'system-dump.json'
+  a.style.display = 'none'
+  document.body.appendChild(a)
   a.click()
+  document.body.removeChild(a)
   setTimeout(() => URL.revokeObjectURL(url), 5000)
 }
 
@@ -133,5 +152,97 @@ export async function putConfigContent(content: string): Promise<ActionResultDto
     const err = await res.json().catch(() => ({ message: `HTTP ${res.status}` }))
     throw new Error(err.message || `HTTP ${res.status}`)
   }
+  return res.json()
+}
+
+// Phase E1: Welcome Screen
+export async function getNamespaces(): Promise<NamespaceSummaryDto[]> {
+  return fetchJSON('/namespaces')
+}
+
+export async function deleteNamespace(id: string): Promise<ActionResultDto> {
+  const res = await fetch(`${API_BASE}/namespaces/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function getTemplates(): Promise<TemplateDto[]> {
+  return fetchJSON('/templates')
+}
+
+export async function getQuickStarts(): Promise<QuickStartDto[]> {
+  return fetchJSON('/quick-starts')
+}
+
+// Phase E3: Namespace creation
+export async function createNamespace(data: NamespaceCreateDto): Promise<ActionResultDto> {
+  const res = await fetch(`${API_BASE}/namespaces`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ message: `HTTP ${res.status}` }))
+    throw new Error(err.message || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function getBundles(): Promise<BundleInfoDto[]> {
+  return fetchJSON('/bundles')
+}
+
+// Phase F1: Secrets
+export async function getSecrets(): Promise<SecretMetaDto[]> {
+  return fetchJSON('/secrets')
+}
+
+export async function createSecret(data: SecretCreateDto): Promise<ActionResultDto> {
+  const res = await fetch(`${API_BASE}/secrets`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function deleteSecret(id: string): Promise<ActionResultDto> {
+  const res = await fetch(`${API_BASE}/secrets/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function testSecret(id: string): Promise<ActionResultDto> {
+  return fetchJSON(`/secrets/${id}/test`)
+}
+
+// Phase F2: Diagnostics
+export async function getDiagnostics(): Promise<DiagnosticsDto> {
+  return fetchJSON('/diagnostics')
+}
+
+export async function postDiagnosticsFix(): Promise<DiagFixResultDto> {
+  const res = await fetch(`${API_BASE}/diagnostics/fix`, { method: 'POST' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+// Phase F3: Snapshots
+export async function getSnapshots(): Promise<SnapshotDto[]> {
+  return fetchJSON('/snapshots')
+}
+
+export async function postExportSnapshot(): Promise<ActionResultDto> {
+  const res = await fetch(`${API_BASE}/snapshots/export`, { method: 'POST' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function postImportSnapshot(file: File): Promise<ActionResultDto> {
+  const formData = new FormData()
+  formData.append('file', file)
+  const res = await fetch(`${API_BASE}/snapshots/import`, { method: 'POST', body: formData })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }

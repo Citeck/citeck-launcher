@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 @theme {
-  /* Darcula / Lens inspired palette */
+  /* Darcula / Lens inspired palette (dark — default) */
   --color-background: #2b2b2b;
   --color-foreground: #e8e8e8;
   --color-muted: #3c3f41;
@@ -27,4 +27,59 @@ body {
 
 #root {
   min-height: 100vh;
+}
+
+/* Light theme */
+[data-theme="light"] {
+  --color-background: #f5f5f5;
+  --color-foreground: #1e1e1e;
+  --color-muted: #e8e8e8;
+  --color-muted-foreground: #6e6e6e;
+  --color-card: #ffffff;
+  --color-card-foreground: #1e1e1e;
+  --color-border: #d0d0d0;
+  --color-primary: #2563eb;
+  --color-primary-foreground: #ffffff;
+  --color-destructive: #dc2626;
+  --color-success: #16a34a;
+  --color-warning: #ca8a04;
+}
+
+/* Respect OS preference on first visit */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --color-background: #f5f5f5;
+    --color-foreground: #1e1e1e;
+    --color-muted: #e8e8e8;
+    --color-muted-foreground: #6e6e6e;
+    --color-card: #ffffff;
+    --color-card-foreground: #1e1e1e;
+    --color-border: #d0d0d0;
+    --color-primary: #2563eb;
+    --color-primary-foreground: #ffffff;
+    --color-destructive: #dc2626;
+    --color-success: #16a34a;
+    --color-warning: #ca8a04;
+  }
+}
+
+/* Scrollbar styling (dark) */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-muted-foreground);
+}
+
+/* Dialog backdrop */
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
 }

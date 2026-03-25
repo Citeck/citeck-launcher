@@ -6,17 +6,22 @@ export interface Tab {
   path: string
 }
 
+// Namespace-level tab IDs that should be closed when switching to Welcome
+const NAMESPACE_TAB_IDS = new Set(['config', 'volumes'])
+
 interface TabsState {
   tabs: Tab[]
   activeTabId: string | null
   openTab: (tab: Tab) => void
   closeTab: (id: string) => string | null // returns path to navigate to
   setActiveTab: (id: string) => void
+  setHomeTab: (title: string) => void // rename the home tab (Welcome ↔ Dashboard)
+  closeNamespaceTabs: () => void // close all namespace-level tabs
 }
 
 export const useTabsStore = create<TabsState>((set, get) => ({
-  tabs: [{ id: 'dashboard', title: 'Dashboard', path: '/' }],
-  activeTabId: 'dashboard',
+  tabs: [{ id: 'home', title: 'Welcome', path: '/' }],
+  activeTabId: 'home',
 
   openTab: (tab) => {
     const { tabs } = get()
@@ -30,12 +35,12 @@ export const useTabsStore = create<TabsState>((set, get) => ({
 
   closeTab: (id) => {
     const { tabs, activeTabId } = get()
-    if (id === 'dashboard') return null // can't close dashboard
+    if (id === 'home') return null // can't close home tab
     const newTabs = tabs.filter((t) => t.id !== id)
     if (activeTabId === id) {
       const idx = tabs.findIndex((t) => t.id === id)
       const next = newTabs[Math.min(idx, newTabs.length - 1)]
-      set({ tabs: newTabs, activeTabId: next?.id ?? 'dashboard' })
+      set({ tabs: newTabs, activeTabId: next?.id ?? 'home' })
       return next?.path ?? '/'
     }
     set({ tabs: newTabs })
@@ -43,4 +48,21 @@ export const useTabsStore = create<TabsState>((set, get) => ({
   },
 
   setActiveTab: (id) => set({ activeTabId: id }),
+
+  setHomeTab: (title) => {
+    const { tabs } = get()
+    set({ tabs: tabs.map((t) => (t.id === 'home' ? { ...t, title } : t)) })
+  },
+
+  closeNamespaceTabs: () => {
+    const { tabs, activeTabId } = get()
+    const newTabs = tabs.filter(
+      (t) => t.id === 'home' || (!NAMESPACE_TAB_IDS.has(t.id) && !t.path.startsWith('/apps/')),
+    )
+    const activeStillExists = newTabs.some((t) => t.id === activeTabId)
+    set({
+      tabs: newTabs,
+      activeTabId: activeStillExists ? activeTabId : 'home',
+    })
+  },
 }))

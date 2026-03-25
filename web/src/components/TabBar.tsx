@@ -1,7 +1,7 @@
 import { useNavigate, useLocation } from 'react-router'
 import { useTabsStore } from '../lib/tabs'
-import { X, Settings } from 'lucide-react'
-import { useEffect } from 'react'
+import { X, Settings, Sun, Moon } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 export function TabBar() {
   const { tabs, activeTabId, setActiveTab, closeTab, openTab } = useTabsStore()
@@ -35,7 +35,7 @@ export function TabBar() {
               }}
             >
               <span className="truncate max-w-[140px]">{tab.title}</span>
-              {tab.id !== 'dashboard' && (
+              {tab.id !== 'home' && (
                 <button
                   type="button"
                   className="ml-0.5 p-0.5 rounded hover:bg-muted opacity-0 group-hover:opacity-100 transition-opacity"
@@ -52,18 +52,49 @@ export function TabBar() {
           )
         })}
       </div>
-      {/* Config button on the right */}
-      <button
-        type="button"
-        className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted border-l border-border shrink-0"
-        title="Settings"
-        onClick={() => {
-          openTab({ id: 'config', title: 'Config', path: '/config' })
-          navigate('/config')
-        }}
-      >
-        <Settings size={14} />
-      </button>
+      {/* Right-side buttons */}
+      <div className="flex items-center border-l border-border shrink-0">
+        <ThemeToggle />
+        <button
+          type="button"
+          className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted"
+          title="Settings"
+          onClick={() => {
+            openTab({ id: 'config', title: 'Config', path: '/config' })
+            navigate('/config')
+          }}
+        >
+          <Settings size={14} />
+        </button>
+      </div>
     </div>
+  )
+}
+
+function ThemeToggle() {
+  const [isDark, setIsDark] = useState(() => {
+    try {
+      const stored = localStorage.getItem('theme')
+      if (stored) return stored === 'dark'
+      return !window.matchMedia?.('(prefers-color-scheme: light)').matches
+    } catch {
+      return true // default to dark
+    }
+  })
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light')
+    localStorage.setItem('theme', isDark ? 'dark' : 'light')
+  }, [isDark])
+
+  return (
+    <button
+      type="button"
+      className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted"
+      title={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+      onClick={() => setIsDark((d) => !d)}
+    >
+      {isDark ? <Sun size={14} /> : <Moon size={14} />}
+    </button>
   )
 }

@@ -3,16 +3,11 @@ import { defineConfig } from '@playwright/test'
 export default defineConfig({
   testDir: './tests',
   timeout: 60000,
+  retries: 1,
   use: {
-    baseURL: 'https://custom.launcher.ru:8443',
-    ignoreHTTPSErrors: true,
-    httpCredentials: {
-      username: 'admin',
-      password: 'admin',
-    },
-    launchOptions: {
-      args: ['--ignore-certificate-errors'],
-    },
+    baseURL: 'http://127.0.0.1:8088',
+    screenshot: 'only-on-failure',
+    trace: 'on-first-retry',
   },
   projects: [
     {
