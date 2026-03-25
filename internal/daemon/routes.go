@@ -70,6 +70,10 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "no namespace configured")
 		return
 	}
+
+	d.configMu.Lock()
+	defer d.configMu.Unlock()
+
 	// Re-read config from disk
 	nsCfg, err := namespace.LoadNamespaceConfig(config.NamespaceConfigPath())
 	if err != nil {

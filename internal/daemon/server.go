@@ -32,11 +32,13 @@ type Daemon struct {
 	appDefs      []appdef.ApplicationDef
 	server       *http.Server
 	tcpServer    *http.Server
-	socketPath   string
-	volumesBase  string
-	startTime    time.Time
-	eventSubs    []chan api.EventDto
-	eventMu      sync.Mutex
+	socketPath    string
+	volumesBase   string
+	startTime     time.Time
+	eventSubs     []chan api.EventDto
+	eventMu       sync.Mutex
+	configMu      sync.Mutex // protects nsConfig, bundleDef, appDefs
+	shutdownOnce  sync.Once
 }
 
 // Start runs the daemon in foreground mode.
@@ -155,7 +157,7 @@ func Start(foreground bool) error {
 	} else {
 		d.tcpServer = &http.Server{Handler: mux}
 		go func() {
-			slog.Info("Web UI available", "url", "http://localhost"+tcpAddr)
+			slog.Info("Web UI available", "url", "http://"+tcpAddr)
 			if err := d.tcpServer.Serve(tcpListener); err != nil && err != http.ErrServerClosed {
 				slog.Error("TCP server error", "err", err)
 			}
@@ -183,6 +185,10 @@ func Start(foreground bool) error {
 }
 
 func (d *Daemon) shutdown() {
+	d.shutdownOnce.Do(d.doShutdown)
+}
+
+func (d *Daemon) doShutdown() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 

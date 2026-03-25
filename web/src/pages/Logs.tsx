@@ -5,6 +5,7 @@ import { getAppLogs } from '../lib/api'
 type LogLevel = 'ERROR' | 'WARN' | 'INFO' | 'DEBUG' | 'TRACE'
 
 const LOG_LEVELS: LogLevel[] = ['ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE']
+const MAX_RENDER_LINES = 2000
 
 // Kotlin-matching colors
 const LEVEL_COLORS: Record<LogLevel, string> = {
@@ -341,20 +342,26 @@ export function Logs() {
         {filteredLines.length === 0 ? (
           <span className="text-muted-foreground">No logs available</span>
         ) : (
-          filteredLines.map((line, i) => {
-            const level = filteredLevels[i]
-            const colorClass = level ? LEVEL_COLORS[level] : 'text-foreground'
-            const isCurrentMatch = matchIndices[safeMatchIndex] === i
+          <>
+            {filteredLines.length > MAX_RENDER_LINES && (
+              <div className="text-xs text-warning mb-1">Showing last {MAX_RENDER_LINES} of {filteredLines.length} lines</div>
+            )}
+            {filteredLines.slice(-MAX_RENDER_LINES).map((line, i) => {
+              const realIdx = Math.max(0, filteredLines.length - MAX_RENDER_LINES) + i
+              const level = filteredLevels[realIdx]
+              const colorClass = level ? LEVEL_COLORS[level] : 'text-foreground'
+              const isCurrentMatch = matchIndices[safeMatchIndex] === realIdx
 
-            return (
-              <div
-                key={i}
-                className={`${colorClass} ${isCurrentMatch ? 'bg-primary/20' : searchMatches.has(i) ? 'bg-primary/10' : ''}`}
-              >
-                {search ? highlightSearch(line, search, useRegex) : line}
-              </div>
-            )
-          })
+              return (
+                <div
+                  key={realIdx}
+                  className={`${colorClass} ${isCurrentMatch ? 'bg-primary/20' : searchMatches.has(realIdx) ? 'bg-primary/10' : ''}`}
+                >
+                  {search ? highlightSearch(line, search, useRegex) : line}
+                </div>
+              )
+            })}
+          </>
         )}
       </div>
 
