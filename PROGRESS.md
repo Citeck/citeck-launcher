@@ -134,7 +134,18 @@ Full rewrite: Go + React Web UI + Tauri Desktop.
 - [x] Config page: Apply saves config + triggers namespace reload
 - [x] Config page: Validation error shown if YAML is invalid
 - [x] Confirm modal before applying changes
-### Phase D: Full Log Viewer — PENDING
+### Phase D: Full Log Viewer — DONE
+- [x] Level filter buttons (ERROR/WARN/INFO/DEBUG/TRACE) — toggle each
+- [x] Colored log lines by detected level
+- [x] Search with regex toggle + match highlighting
+- [x] Prev/Next match navigation (F3 / Shift+F3)
+- [x] Word wrap toggle
+- [x] Follow mode (auto-scroll, disables on manual scroll up)
+- [x] Copy all to clipboard
+- [x] Download as .txt file
+- [x] Line count status bar with keyboard shortcut hints
+- [x] Keyboard shortcuts: Ctrl+F focus search, F3 next, Shift+F3 prev, Esc clear
+- [x] Tail line selector (100/200/500/1000/5000)
 ### Phase E: Namespace Wizard / Setup — PENDING
 ### Phase F: Advanced Operations — PENDING
 
