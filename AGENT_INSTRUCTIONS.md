@@ -21,7 +21,7 @@ while (tasks remain in current plan):
 ### Plans
 
 - **AGENT_PLAN_V3.md** — original rewrite plan (phases 1-10, all done except phase 9)
-- **snoopy-herding-gosling.md** (in `~/.claude/plans/`) — current plan: Web UI feature parity
+- **snoopy-herding-gosling.md** (in `~/.claude/plans/`) — current plan: Web UI Phase 2 (welcome, forms, secrets, desktop compat)
 - **PROGRESS.md** — tracks completed work and next steps
 
 ---
@@ -87,7 +87,7 @@ mkdir -p /tmp/citeck-test/conf /tmp/citeck-test/data /tmp/citeck-test/log /tmp/c
 │              citeck (single Go binary ~14MB)             │
 │  net/http server                                         │
 │  ├─ Unix socket  /run/citeck/daemon.sock  (local fast)   │
-│  ├─ TCP          0.0.0.0:8088             (remote)       │
+│  ├─ TCP          127.0.0.1:8088           (local Web UI)  │
 │  └─ Embedded React Web UI on /*                          │
 │  ↕                                                       │
 │  internal/ — namespace runtime, Docker API, config       │
@@ -124,7 +124,7 @@ citeck-launcher/
 │   ├── src/
 │   │   ├── pages/                  # Dashboard, AppDetail, Logs, Config
 │   │   ├── components/             # AppTable, StatusBadge
-│   │   └── lib/                    # API client, WebSocket
+│   │   └── lib/                    # API client, SSE events, Zustand store
 │   ├── package.json
 │   └── vite.config.ts
 ├── go.mod
