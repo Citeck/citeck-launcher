@@ -6,7 +6,7 @@ import { getSystemDump } from '../lib/api'
 import { StatusBadge } from '../components/StatusBadge'
 import { AppTable } from '../components/AppTable'
 import { NamespaceControls } from '../components/NamespaceControls'
-import { ExternalLink, Globe, FileText, Download, AlertTriangle } from 'lucide-react'
+import { ExternalLink, Globe, FileText, Download, AlertTriangle, HardDrive } from 'lucide-react'
 
 export function Dashboard() {
   const { namespace, health, loading, error, fetchData, startEventStream, stopEventStream } =
@@ -125,6 +125,8 @@ export function Dashboard() {
         )}
 
         <div className="mt-auto pt-2 border-t border-border flex flex-col gap-1">
+          <SidebarBtn icon={HardDrive} label="Volumes"
+            onClick={() => { openTab({ id: 'volumes', title: 'Volumes', path: '/volumes' }); navigate('/volumes') }} />
           <SidebarBtn icon={FileText} label="Launcher Logs"
             onClick={() => { openTab({ id: 'daemon-logs', title: 'Daemon Logs', path: '/config' }); navigate('/config') }} />
           <SidebarBtn icon={Download} label="System Dump"

@@ -256,6 +256,14 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	// Events (SSE)
 	mux.HandleFunc("GET "+api.Events, d.handleEvents)
 
+	// Volumes
+	mux.HandleFunc("GET /api/v1/volumes", d.handleListVolumes)
+	mux.HandleFunc("DELETE /api/v1/volumes/{name}", d.handleDeleteVolume)
+
+	// App config
+	mux.HandleFunc("GET /api/v1/apps/{name}/config", d.handleGetAppConfig)
+	mux.HandleFunc("PUT /api/v1/apps/{name}/config", d.handlePutAppConfig)
+
 	// Daemon logs
 	mux.HandleFunc("GET /api/v1/daemon/logs", d.handleDaemonLogs)
 

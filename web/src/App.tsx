@@ -3,6 +3,7 @@ import { Dashboard } from './pages/Dashboard'
 import { AppDetail } from './pages/AppDetail'
 import { Logs } from './pages/Logs'
 import { Config } from './pages/Config'
+import { Volumes } from './pages/Volumes'
 import { TabBar } from './components/TabBar'
 
 function Layout() {
@@ -15,6 +16,7 @@ function Layout() {
           <Route path="/apps/:name" element={<AppDetail />} />
           <Route path="/apps/:name/logs" element={<Logs />} />
           <Route path="/config" element={<Config />} />
+          <Route path="/volumes" element={<Volumes />} />
         </Routes>
       </main>
     </div>

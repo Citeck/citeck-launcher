@@ -1,19 +1,18 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useParams, Link } from 'react-router'
-import { getAppInspect, getAppLogs, postAppRestart } from '../lib/api'
+import { getAppInspect, getAppLogs, postAppRestart, getAppConfig, putAppConfig } from '../lib/api'
 import type { AppInspectDto } from '../lib/types'
 import { StatusBadge } from '../components/StatusBadge'
+import { ConfirmModal } from '../components/ConfirmModal'
+import { RotateCw, FileCode } from 'lucide-react'
 
 function formatUptime(ms: number): string {
   if (ms <= 0) return '—'
-  const seconds = Math.floor(ms / 1000)
-  const minutes = Math.floor(seconds / 60)
-  const hours = Math.floor(minutes / 60)
-  const days = Math.floor(hours / 24)
-  if (days > 0) return `${days}d ${hours % 24}h ${minutes % 60}m`
-  if (hours > 0) return `${hours}h ${minutes % 60}m ${seconds % 60}s`
-  if (minutes > 0) return `${minutes}m ${seconds % 60}s`
-  return `${seconds}s`
+  const s = Math.floor(ms / 1000), m = Math.floor(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24)
+  if (d > 0) return `${d}d ${h % 24}h ${m % 60}m`
+  if (h > 0) return `${h}h ${m % 60}m ${s % 60}s`
+  if (m > 0) return `${m}m ${s % 60}s`
+  return `${s}s`
 }
 
 export function AppDetail() {
@@ -22,136 +21,156 @@ export function AppDetail() {
   const [logs, setLogs] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [restarting, setRestarting] = useState(false)
+  // Config editor
+  const [configYaml, setConfigYaml] = useState<string | null>(null)
+  const [editYaml, setEditYaml] = useState<string | null>(null)
+  const [configEditing, setConfigEditing] = useState(false)
+  const [configSaving, setConfigSaving] = useState(false)
+  const [configError, setConfigError] = useState<string | null>(null)
+  const [showApplyConfirm, setShowApplyConfirm] = useState(false)
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!name) return
     getAppInspect(name).then(setInspect).catch((e) => setError(e.message))
-    getAppLogs(name, 50).then(setLogs).catch(() => {})
+    getAppLogs(name, 30).then(setLogs).catch(() => {})
+    getAppConfig(name).then((y) => { setConfigYaml(y); setEditYaml(y) }).catch(() => {})
   }, [name])
+
+  useEffect(() => { load() }, [load])
 
   const handleRestart = async () => {
     if (!name) return
     setRestarting(true)
+    try { await postAppRestart(name) } finally { setRestarting(false) }
+  }
+
+  async function handleApplyConfig() {
+    if (!name || !editYaml) return
+    setConfigSaving(true); setConfigError(null)
     try {
-      await postAppRestart(name)
+      await putAppConfig(name, editYaml)
+      setConfigYaml(editYaml)
+      setConfigEditing(false)
+      setShowApplyConfirm(false)
+    } catch (e) {
+      setConfigError((e as Error).message)
     } finally {
-      setRestarting(false)
+      setConfigSaving(false)
     }
   }
 
-  if (error) {
-    return (
-      <div className="space-y-4">
-        <Link to="/" className="text-sm text-primary hover:underline">
-          &larr; Back to dashboard
-        </Link>
-        <div className="text-destructive">Error: {error}</div>
-      </div>
-    )
-  }
+  if (error) return (
+    <div className="p-3">
+      <Link to="/" className="text-xs text-primary hover:underline">&larr; Dashboard</Link>
+      <div className="text-destructive text-xs mt-2">Error: {error}</div>
+    </div>
+  )
 
-  if (!inspect) {
-    return <div className="text-muted-foreground">Loading...</div>
-  }
+  if (!inspect) return <div className="text-muted-foreground text-xs p-3">Loading...</div>
 
   return (
-    <div className="space-y-6">
+    <div className="p-3 space-y-3">
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <Link to="/" className="text-sm text-primary hover:underline">
-            &larr; Back to dashboard
-          </Link>
-          <h1 className="text-2xl font-semibold mt-2">{inspect.name}</h1>
-        </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          <Link to="/" className="text-xs text-primary hover:underline">&larr;</Link>
+          <h1 className="text-base font-semibold">{inspect.name}</h1>
           <StatusBadge status={inspect.status} />
-          <button
-            onClick={handleRestart}
-            disabled={restarting}
-            className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-          >
-            {restarting ? 'Restarting...' : 'Restart'}
-          </button>
         </div>
+        <button onClick={handleRestart} disabled={restarting}
+          className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-50">
+          <RotateCw size={12} /> {restarting ? 'Restarting...' : 'Restart'}
+        </button>
       </div>
 
-      {/* Details */}
-      <div className="rounded-lg border border-border bg-card p-4 space-y-3">
-        <h2 className="text-lg font-medium">Details</h2>
-        <div className="grid grid-cols-2 gap-2 text-sm">
-          <Detail label="Container ID" value={inspect.containerId?.slice(0, 12) || '—'} />
-          <Detail label="Image" value={inspect.image} />
-          <Detail label="State" value={inspect.state} />
-          <Detail label="Network" value={inspect.network} />
-          <Detail label="Started" value={inspect.startedAt ? new Date(inspect.startedAt).toLocaleString() : '—'} />
-          <Detail label="Uptime" value={formatUptime(inspect.uptime)} />
-          <Detail label="Restarts" value={String(inspect.restartCount)} />
-        </div>
+      {/* Details grid */}
+      <div className="grid grid-cols-[auto_1fr_auto_1fr] gap-x-4 gap-y-0.5 text-xs rounded border border-border bg-card p-2">
+        <D l="Container" v={inspect.containerId?.slice(0, 12) || '—'} />
+        <D l="Image" v={inspect.image} />
+        <D l="State" v={inspect.state} />
+        <D l="Network" v={inspect.network} />
+        <D l="Started" v={inspect.startedAt ? new Date(inspect.startedAt).toLocaleString() : '—'} />
+        <D l="Uptime" v={formatUptime(inspect.uptime)} />
+        <D l="Restarts" v={String(inspect.restartCount)} />
+        <D l="Ports" v={inspect.ports?.join(', ') || '—'} />
       </div>
-
-      {/* Ports */}
-      {inspect.ports?.length > 0 && (
-        <div className="rounded-lg border border-border bg-card p-4 space-y-2">
-          <h2 className="text-lg font-medium">Ports</h2>
-          <div className="flex flex-wrap gap-2">
-            {inspect.ports.map((p, i) => (
-              <span key={i} className="rounded bg-muted px-2 py-1 text-xs font-mono">
-                {p}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Volumes */}
       {inspect.volumes?.length > 0 && (
-        <div className="rounded-lg border border-border bg-card p-4 space-y-2">
-          <h2 className="text-lg font-medium">Volumes</h2>
+        <div className="rounded border border-border bg-card p-2">
+          <div className="text-xs font-medium mb-1">Volumes</div>
           {inspect.volumes.map((v, i) => (
-            <div key={i} className="text-xs font-mono text-muted-foreground break-all">
-              {v}
-            </div>
+            <div key={i} className="text-[11px] font-mono text-muted-foreground break-all">{v}</div>
           ))}
         </div>
       )}
 
       {/* Environment */}
       {inspect.env?.length > 0 && (
-        <div className="rounded-lg border border-border bg-card p-4 space-y-2">
-          <h2 className="text-lg font-medium">Environment</h2>
-          <div className="max-h-64 overflow-y-auto">
+        <div className="rounded border border-border bg-card p-2">
+          <div className="text-xs font-medium mb-1">Environment</div>
+          <div className="max-h-40 overflow-y-auto">
             {inspect.env.map((e, i) => (
-              <div key={i} className="text-xs font-mono text-muted-foreground break-all">
-                {e}
-              </div>
+              <div key={i} className="text-[11px] font-mono text-muted-foreground break-all">{e}</div>
             ))}
           </div>
         </div>
       )}
 
-      {/* Logs preview */}
-      {logs && (
-        <div className="rounded-lg border border-border bg-card p-4 space-y-2">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-medium">Recent Logs</h2>
-            <Link to={`/apps/${name}/logs`} className="text-sm text-primary hover:underline">
-              View full logs &rarr;
-            </Link>
+      {/* App config editor */}
+      {configYaml !== null && (
+        <div className="rounded border border-border bg-card p-2">
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-1 text-xs font-medium">
+              <FileCode size={13} /> App Config (YAML)
+            </div>
+            {!configEditing ? (
+              <button type="button" className="rounded border border-border px-2 py-0.5 text-xs hover:bg-muted"
+                onClick={() => { setEditYaml(configYaml); setConfigEditing(true); setConfigError(null) }}>
+                Edit
+              </button>
+            ) : (
+              <div className="flex gap-1">
+                <button type="button" className="rounded border border-border px-2 py-0.5 text-xs hover:bg-muted"
+                  onClick={() => setConfigEditing(false)}>Cancel</button>
+                <button type="button" className="rounded bg-primary px-2 py-0.5 text-xs text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                  onClick={() => setShowApplyConfirm(true)} disabled={editYaml === configYaml}>Apply</button>
+              </div>
+            )}
           </div>
-          <pre className="max-h-48 overflow-y-auto rounded bg-background p-3 text-xs font-mono text-muted-foreground whitespace-pre-wrap">
-            {logs}
-          </pre>
+          {configError && <div className="text-[11px] text-destructive mb-1">{configError}</div>}
+          {configEditing ? (
+            <textarea className="w-full rounded border border-border bg-background p-2 font-mono text-[11px] text-foreground focus:border-primary focus:outline-none"
+              rows={Math.max(10, (editYaml ?? '').split('\n').length + 1)}
+              value={editYaml ?? ''} onChange={(e) => setEditYaml(e.target.value)} spellCheck={false} />
+          ) : (
+            <pre className="max-h-48 overflow-auto rounded bg-background p-2 text-[11px] font-mono text-muted-foreground whitespace-pre-wrap">{configYaml}</pre>
+          )}
         </div>
       )}
+
+      {/* Logs */}
+      {logs && (
+        <div className="rounded border border-border bg-card p-2">
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-xs font-medium">Recent Logs</div>
+            <Link to={`/apps/${name}/logs`} className="text-xs text-primary hover:underline">Full logs &rarr;</Link>
+          </div>
+          <pre className="max-h-32 overflow-y-auto rounded bg-background p-2 text-[11px] font-mono text-foreground whitespace-pre-wrap">{logs}</pre>
+        </div>
+      )}
+
+      <ConfirmModal open={showApplyConfirm} title="Apply config changes?"
+        message="Save config and restart the app?"
+        confirmLabel="Apply" loading={configSaving}
+        onConfirm={handleApplyConfig} onCancel={() => setShowApplyConfirm(false)} />
     </div>
   )
 }
 
-function Detail({ label, value }: { label: string; value: string }) {
-  return (
-    <>
-      <span className="text-muted-foreground">{label}</span>
-      <span className="font-mono">{value}</span>
-    </>
-  )
+function D({ l, v }: { l: string; v: string }) {
+  return <>
+    <span className="text-muted-foreground">{l}</span>
+    <span className="font-mono truncate" title={v}>{v}</span>
+  </>
 }

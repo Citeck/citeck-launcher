@@ -356,6 +356,20 @@ func (c *Client) CreateVolume(ctx context.Context, name string) error {
 	return err
 }
 
+// ListVolumes returns all Docker volumes.
+func (c *Client) ListVolumes(ctx context.Context) ([]*volume.Volume, error) {
+	resp, err := c.cli.VolumeList(ctx, volume.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Volumes, nil
+}
+
+// DeleteVolume removes a Docker volume by name.
+func (c *Client) DeleteVolume(ctx context.Context, name string) error {
+	return c.cli.VolumeRemove(ctx, name, false)
+}
+
 // WaitForContainer waits for a container to start running.
 func (c *Client) WaitForContainer(ctx context.Context, containerID string, timeout time.Duration) error {
 	deadline := time.After(timeout)

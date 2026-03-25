@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/niceteck/citeck-launcher/internal/api"
+	"github.com/niceteck/citeck-launcher/internal/appdef"
 	"github.com/niceteck/citeck-launcher/internal/bundle"
 	"github.com/niceteck/citeck-launcher/internal/config"
 	"github.com/niceteck/citeck-launcher/internal/namespace"
@@ -393,6 +394,90 @@ func (d *Daemon) handleSystemDump(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Disposition", "attachment; filename=system-dump.json")
 	writeJSON(w, dump)
+}
+
+func (d *Daemon) handleListVolumes(w http.ResponseWriter, r *http.Request) {
+	ctx := context.Background()
+	volumes, err := d.dockerClient.ListVolumes(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	type volumeDto struct {
+		Name       string `json:"name"`
+		Driver     string `json:"driver"`
+		Mountpoint string `json:"mountpoint"`
+	}
+	result := make([]volumeDto, 0, len(volumes))
+	for _, v := range volumes {
+		result = append(result, volumeDto{
+			Name:       v.Name,
+			Driver:     v.Driver,
+			Mountpoint: v.Mountpoint,
+		})
+	}
+	writeJSON(w, result)
+}
+
+func (d *Daemon) handleDeleteVolume(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	ctx := context.Background()
+	if err := d.dockerClient.DeleteVolume(ctx, name); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("Volume %s deleted", name)})
+}
+
+func (d *Daemon) handleGetAppConfig(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	app := d.findApp(name)
+	if app == nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("app %q not found", name))
+		return
+	}
+	// Serialize ApplicationDef to YAML
+	data, err := yaml.Marshal(app.Def)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "text/yaml")
+	w.Write(data)
+}
+
+func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if d.runtime == nil {
+		writeError(w, http.StatusBadRequest, "no namespace configured")
+		return
+	}
+	app := d.findApp(name)
+	if app == nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("app %q not found", name))
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 512*1024))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read body")
+		return
+	}
+
+	var newDef appdef.ApplicationDef
+	if err := yaml.Unmarshal(body, &newDef); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid YAML: %s", err.Error()))
+		return
+	}
+
+	// Update the app definition and restart
+	newDef.Name = name // preserve original name
+	app.Def = newDef
+	if err := d.runtime.RestartApp(name); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("App %s config updated and restart requested", name)})
 }
 
 func (d *Daemon) handleHealth(w http.ResponseWriter, r *http.Request) {

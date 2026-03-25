@@ -88,6 +88,35 @@ export async function getSystemDump(): Promise<void> {
   URL.revokeObjectURL(url)
 }
 
+export async function getVolumes(): Promise<{ name: string; driver: string; mountpoint: string }[]> {
+  return fetchJSON('/volumes')
+}
+
+export async function deleteVolume(name: string): Promise<ActionResultDto> {
+  const res = await fetch(`${API_BASE}/volumes/${name}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function getAppConfig(name: string): Promise<string> {
+  const res = await fetch(`${API_BASE}/apps/${name}/config`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.text()
+}
+
+export async function putAppConfig(name: string, content: string): Promise<ActionResultDto> {
+  const res = await fetch(`${API_BASE}/apps/${name}/config`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'text/yaml' },
+    body: content,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ message: `HTTP ${res.status}` }))
+    throw new Error(err.message || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
 export async function getConfigContent(): Promise<string> {
   const res = await fetch(`${API_BASE}/config`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
