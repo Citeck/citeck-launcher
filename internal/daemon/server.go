@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/niceteck/citeck-launcher/internal/api"
+	"github.com/niceteck/citeck-launcher/internal/appdef"
 	"github.com/niceteck/citeck-launcher/internal/appfiles"
 	"github.com/niceteck/citeck-launcher/internal/bundle"
 	"github.com/niceteck/citeck-launcher/internal/config"
@@ -27,8 +28,11 @@ type Daemon struct {
 	runtime      *namespace.Runtime
 	nsConfig     *namespace.NamespaceConfig
 	bundleDef    *bundle.BundleDef
+	appDefs      []appdef.ApplicationDef
 	server       *http.Server
+	tcpServer    *http.Server
 	socketPath   string
+	volumesBase  string
 	startTime    time.Time
 }
 
@@ -64,6 +68,8 @@ func Start(foreground bool) error {
 
 	var bundleDef *bundle.BundleDef
 	var runtime *namespace.Runtime
+	var appDefs []appdef.ApplicationDef
+	var volumesBase string
 
 	if nsCfg != nil {
 		// Resolve bundle + workspace config
@@ -78,7 +84,7 @@ func Start(foreground bool) error {
 		slog.Info("Using bundle", "ref", nsCfg.BundleRef, "apps", len(bundleDef.Applications))
 
 		// Extract appfiles to volumes base
-		volumesBase := filepath.Join(config.DataDir(), "runtime", nsCfg.ID)
+		volumesBase = filepath.Join(config.DataDir(), "runtime", nsCfg.ID)
 		if err := appfiles.ExtractTo(volumesBase); err != nil {
 			slog.Error("Failed to extract appfiles", "err", err)
 		} else {
@@ -101,8 +107,9 @@ func Start(foreground bool) error {
 		}
 		slog.Info("Generated namespace", "apps", len(genResp.Applications), "files", len(genResp.Files))
 
+		appDefs = genResp.Applications
 		runtime = namespace.NewRuntime(nsCfg, dockerClient, "daemon", volumesBase)
-		runtime.Start(genResp.Applications)
+		runtime.Start(appDefs)
 	}
 
 	d := &Daemon{
@@ -110,7 +117,9 @@ func Start(foreground bool) error {
 		runtime:      runtime,
 		nsConfig:     nsCfg,
 		bundleDef:    bundleDef,
+		appDefs:      appDefs,
 		socketPath:   socketPath,
+		volumesBase:  volumesBase,
 		startTime:    time.Now(),
 	}
 
@@ -132,10 +141,10 @@ func Start(foreground bool) error {
 	if err != nil {
 		slog.Warn("TCP listener failed, Web UI only on Unix socket", "addr", tcpAddr, "err", err)
 	} else {
-		tcpServer := &http.Server{Handler: mux}
+		d.tcpServer = &http.Server{Handler: mux}
 		go func() {
 			slog.Info("Web UI available", "url", "http://localhost"+tcpAddr)
-			if err := tcpServer.Serve(tcpListener); err != nil && err != http.ErrServerClosed {
+			if err := d.tcpServer.Serve(tcpListener); err != nil && err != http.ErrServerClosed {
 				slog.Error("TCP server error", "err", err)
 			}
 		}()
@@ -171,6 +180,9 @@ func (d *Daemon) shutdown() {
 	}
 
 	d.server.Shutdown(ctx)
+	if d.tcpServer != nil {
+		d.tcpServer.Shutdown(ctx)
+	}
 	d.dockerClient.Close()
 	os.Remove(d.socketPath)
 

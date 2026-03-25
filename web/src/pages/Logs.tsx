@@ -331,8 +331,9 @@ function highlightSearch(line: string, search: string, useRegex: boolean): React
     const regex = useRegex ? new RegExp(`(${search})`, 'gi') : new RegExp(`(${escapeRegExp(search)})`, 'gi')
     const parts = line.split(regex)
     if (parts.length === 1) return line
+    // After split with capturing group, odd indices are matches
     return parts.map((part, i) =>
-      regex.test(part) ? (
+      i % 2 === 1 ? (
         <mark key={i} className="bg-warning/40 text-inherit rounded-sm px-0.5">
           {part}
         </mark>

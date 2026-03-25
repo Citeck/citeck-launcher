@@ -7,6 +7,7 @@ interface ConfirmModalProps {
   confirmLabel?: string
   confirmVariant?: 'primary' | 'danger'
   loading?: boolean
+  error?: string | null
   onConfirm: () => void
   onCancel: () => void
 }
@@ -18,6 +19,7 @@ export function ConfirmModal({
   confirmLabel = 'Confirm',
   confirmVariant = 'primary',
   loading = false,
+  error,
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
@@ -49,6 +51,11 @@ export function ConfirmModal({
       <div className="p-6">
         <h2 className="text-lg font-semibold">{title}</h2>
         <p className="mt-2 text-sm text-muted-foreground">{message}</p>
+        {error && (
+          <p className="mt-2 rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 text-sm text-destructive">
+            {error}
+          </p>
+        )}
         <div className="mt-6 flex justify-end gap-3">
           <button
             type="button"

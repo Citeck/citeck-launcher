@@ -239,23 +239,28 @@ func (r *Runtime) Regenerate(apps []appdef.ApplicationDef) {
 // StopApp stops a single app by name. Returns error if not found or not running.
 func (r *Runtime) StopApp(appName string) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	app, ok := r.apps[appName]
 	if !ok {
+		r.mu.Unlock()
 		return fmt.Errorf("app %q not found", appName)
 	}
 	if app.ContainerID == "" {
+		r.mu.Unlock()
 		return fmt.Errorf("app %q has no container", appName)
 	}
-
-	ctx := context.Background()
 	containerName := r.docker.ContainerName(appName)
+	r.mu.Unlock()
+
+	// Blocking Docker call outside the lock
+	ctx := context.Background()
 	if err := r.docker.StopAndRemoveContainer(ctx, containerName); err != nil {
 		return fmt.Errorf("stop app %q: %w", appName, err)
 	}
+
+	r.mu.Lock()
 	app.ContainerID = ""
 	r.setAppStatus(app, AppStatusStopped)
+	r.mu.Unlock()
 	return nil
 }
 
@@ -289,6 +294,11 @@ func (r *Runtime) restartApp(ctx context.Context, appName string) {
 
 	r.mu.RLock()
 	app := r.apps[appName]
+	if app == nil {
+		r.mu.RUnlock()
+		slog.Warn("restartApp: app not found (possibly stopped concurrently)", "app", appName)
+		return
+	}
 	appDef := app.Def
 	r.mu.RUnlock()
 

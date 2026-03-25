@@ -33,15 +33,21 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   },
 
   startEventStream: () => {
+    const currentWs = get().ws
+    if (currentWs) return // already connected
+
     const ws = connectEvents(
       () => {
         // On any event, refetch data
         get().fetchData()
       },
       () => {
-        // On close, attempt reconnect after 3s
+        // On close, attempt reconnect only if ws is still the active one
         setTimeout(() => {
-          if (get().ws) get().startEventStream()
+          if (get().ws === ws) {
+            set({ ws: null })
+            get().startEventStream()
+          }
         }, 3000)
       },
     )
@@ -50,9 +56,10 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
 
   stopEventStream: () => {
     const { ws } = get()
+    // Clear ref BEFORE close so the onClose callback sees ws !== get().ws
+    set({ ws: null })
     if (ws) {
       ws.close()
-      set({ ws: null })
     }
   },
 }))

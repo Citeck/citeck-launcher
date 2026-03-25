@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/niceteck/citeck-launcher/internal/api"
+	"github.com/niceteck/citeck-launcher/internal/bundle"
 	"github.com/niceteck/citeck-launcher/internal/config"
 	"github.com/niceteck/citeck-launcher/internal/namespace"
 	"gopkg.in/yaml.v3"
@@ -43,10 +44,11 @@ func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
-	if d.runtime == nil {
+	if d.runtime == nil || d.appDefs == nil {
 		writeError(w, http.StatusBadRequest, "no namespace configured")
 		return
 	}
+	d.runtime.Start(d.appDefs)
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "Namespace start requested"})
 }
 
@@ -64,7 +66,29 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "no namespace configured")
 		return
 	}
-	// TODO: Re-read config, re-generate, regenerate runtime
+	// Re-read config from disk
+	nsCfg, err := namespace.LoadNamespaceConfig(config.NamespaceConfigPath())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("reload config: %s", err.Error()))
+		return
+	}
+	d.nsConfig = nsCfg
+
+	// Re-resolve bundle
+	resolver := bundle.NewResolver(config.DataDir())
+	resolveResult, err := resolver.Resolve(nsCfg.BundleRef)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("resolve bundle: %s", err.Error()))
+		return
+	}
+	d.bundleDef = resolveResult.Bundle
+
+	// Re-generate namespace
+	genResp := namespace.Generate(nsCfg, d.bundleDef, resolveResult.Workspace)
+	d.appDefs = genResp.Applications
+
+	// Regenerate runtime (stop + start with new config)
+	d.runtime.Regenerate(d.appDefs)
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "Reload requested"})
 }
 
@@ -96,6 +120,10 @@ func (d *Daemon) handleAppLogs(w http.ResponseWriter, r *http.Request) {
 
 func (d *Daemon) handleAppRestart(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if d.runtime == nil {
+		writeError(w, http.StatusBadRequest, "no namespace configured")
+		return
+	}
 	app := d.findApp(name)
 	if app == nil {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("app %q not found", name))

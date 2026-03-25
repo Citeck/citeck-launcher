@@ -64,6 +64,7 @@ function formatPorts(ports?: string[]): string {
 export function AppTable({ apps }: AppTableProps) {
   const [pendingAction, setPendingAction] = useState<AppAction>(null)
   const [loading, setLoading] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
   const fetchData = useDashboardStore((s) => s.fetchData)
 
   const groups = groupByKind(apps)
@@ -71,6 +72,7 @@ export function AppTable({ apps }: AppTableProps) {
   async function handleConfirm() {
     if (!pendingAction) return
     setLoading(true)
+    setActionError(null)
     try {
       switch (pendingAction.type) {
         case 'stop':
@@ -86,7 +88,7 @@ export function AppTable({ apps }: AppTableProps) {
       setPendingAction(null)
       setTimeout(fetchData, 500)
     } catch (err) {
-      console.error('App action failed:', err)
+      setActionError((err as Error).message)
     } finally {
       setLoading(false)
     }
@@ -158,8 +160,9 @@ export function AppTable({ apps }: AppTableProps) {
           confirmLabel={modalConfig.confirmLabel}
           confirmVariant={modalConfig.confirmVariant}
           loading={loading}
+          error={actionError}
           onConfirm={handleConfirm}
-          onCancel={() => setPendingAction(null)}
+          onCancel={() => { setPendingAction(null); setActionError(null) }}
         />
       )}
     </>

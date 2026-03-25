@@ -36,6 +36,7 @@ const actionConfig = {
 export function NamespaceControls({ status }: NamespaceControlsProps) {
   const [pendingAction, setPendingAction] = useState<Action>(null)
   const [loading, setLoading] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
   const fetchData = useDashboardStore((s) => s.fetchData)
 
   const isStopped = status === 'STOPPED'
@@ -44,13 +45,14 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
   async function handleConfirm() {
     if (!pendingAction) return
     setLoading(true)
+    setActionError(null)
     try {
       await actionConfig[pendingAction].fn()
       setPendingAction(null)
       // Refetch after a short delay to allow state to propagate
       setTimeout(fetchData, 500)
     } catch (err) {
-      console.error('Action failed:', err)
+      setActionError((err as Error).message)
     } finally {
       setLoading(false)
     }
@@ -98,8 +100,9 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
           confirmLabel={config.confirmLabel}
           confirmVariant={config.confirmVariant}
           loading={loading}
+          error={actionError}
           onConfirm={handleConfirm}
-          onCancel={() => setPendingAction(null)}
+          onCancel={() => { setPendingAction(null); setActionError(null) }}
         />
       )}
     </>
