@@ -64,31 +64,16 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
     <>
       <div className="flex items-center gap-2">
         {(isStopped || status === 'STARTING') && (
-          <button
-            type="button"
-            className="rounded-md bg-success px-3 py-1.5 text-xs font-medium text-white hover:bg-success/90"
-            onClick={() => setPendingAction('start')}
-          >
-            Start
-          </button>
+          <button type="button" className="rounded border border-success/50 px-2 py-0.5 text-xs text-success hover:bg-success/10"
+            onClick={() => setPendingAction('start')}>▶ Start</button>
         )}
         {(isRunning || status === 'STARTING') && (
-          <button
-            type="button"
-            className="rounded-md bg-destructive px-3 py-1.5 text-xs font-medium text-white hover:bg-destructive/90"
-            onClick={() => setPendingAction('stop')}
-          >
-            Stop
-          </button>
+          <button type="button" className="rounded border border-destructive/50 px-2 py-0.5 text-xs text-destructive hover:bg-destructive/10"
+            onClick={() => setPendingAction('stop')}>⏹ Stop</button>
         )}
         {isRunning && (
-          <button
-            type="button"
-            className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted"
-            onClick={() => setPendingAction('reload')}
-          >
-            Reload
-          </button>
+          <button type="button" className="rounded border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted"
+            onClick={() => setPendingAction('reload')}>↻ Reload</button>
         )}
       </div>
 

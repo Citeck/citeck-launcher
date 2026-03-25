@@ -10,7 +10,7 @@ function NavLink({ to, children }: { to: string; children: React.ReactNode }) {
   return (
     <Link
       to={to}
-      className={`text-sm px-2 py-1 rounded ${
+      className={`block px-2 py-0.5 text-xs rounded ${
         active ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'
       }`}
     >
@@ -21,21 +21,19 @@ function NavLink({ to, children }: { to: string; children: React.ReactNode }) {
 
 function Layout() {
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b border-border bg-card">
-        <div className="mx-auto max-w-7xl px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Link to="/" className="text-lg font-semibold">
-              Citeck
-            </Link>
-            <nav className="flex items-center gap-1">
-              <NavLink to="/">Dashboard</NavLink>
-              <NavLink to="/config">Config</NavLink>
-            </nav>
-          </div>
+    <div className="min-h-screen bg-background flex">
+      {/* Sidebar */}
+      <aside className="w-44 shrink-0 border-r border-border bg-card flex flex-col">
+        <div className="px-3 py-2 border-b border-border">
+          <Link to="/" className="text-sm font-semibold text-foreground">Citeck</Link>
         </div>
-      </header>
-      <main className="mx-auto max-w-7xl px-6 py-6">
+        <nav className="flex flex-col gap-0.5 p-2">
+          <NavLink to="/">Dashboard</NavLink>
+          <NavLink to="/config">Config</NavLink>
+        </nav>
+      </aside>
+      {/* Main content */}
+      <main className="flex-1 min-w-0 p-3 overflow-auto">
         <Routes>
           <Route index element={<Dashboard />} />
           <Route path="/apps/:name" element={<AppDetail />} />

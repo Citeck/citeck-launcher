@@ -24,13 +24,11 @@ describe('AppTable', () => {
 
   it('renders column headers', () => {
     renderWithRouter(<AppTable apps={mockApps} />)
-    expect(screen.getByText('APP')).toBeInTheDocument()
-    expect(screen.getByText('STATUS')).toBeInTheDocument()
-    expect(screen.getByText('TAG')).toBeInTheDocument()
-    expect(screen.getByText('PORTS')).toBeInTheDocument()
-    expect(screen.getByText('CPU')).toBeInTheDocument()
-    expect(screen.getByText('MEMORY')).toBeInTheDocument()
-    expect(screen.getByText('ACTIONS')).toBeInTheDocument()
+    // Multiple tables (one per group), each with headers
+    const names = screen.getAllByText('Name')
+    expect(names.length).toBeGreaterThanOrEqual(1)
+    const statuses = screen.getAllByText('Status')
+    expect(statuses.length).toBeGreaterThanOrEqual(1)
   })
 
   it('renders status badges for each app', () => {
@@ -48,13 +46,13 @@ describe('AppTable', () => {
 
   it('renders empty table', () => {
     renderWithRouter(<AppTable apps={[]} />)
-    expect(screen.getByText('APP')).toBeInTheDocument()
+    // No groups rendered when empty
+    expect(screen.queryByText('Name')).not.toBeInTheDocument()
   })
 
-  it('shows dash for empty cpu/memory/ports', () => {
-    renderWithRouter(<AppTable apps={[mockApps[1]]} />)
-    const dashes = screen.getAllByText('—')
-    // cpu + memory + ports = 3 dashes
-    expect(dashes.length).toBe(3)
+  it('renders group headers', () => {
+    renderWithRouter(<AppTable apps={mockApps} />)
+    expect(screen.getByText('Citeck Core')).toBeInTheDocument()
+    expect(screen.getByText('Third Party')).toBeInTheDocument()
   })
 })

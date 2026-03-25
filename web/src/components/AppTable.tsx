@@ -12,24 +12,13 @@ interface AppTableProps {
 
 type AppAction = { type: 'stop' | 'start' | 'restart'; appName: string } | null
 
-const RUNNING_STATUSES = ['RUNNING']
-const STOPPED_STATUSES = ['STOPPED', 'START_FAILED', 'PULL_FAILED', 'FAILED', 'STOPPING_FAILED']
+const RUNNING = ['RUNNING']
+const STOPPED = ['STOPPED', 'START_FAILED', 'PULL_FAILED', 'FAILED', 'STOPPING_FAILED']
 
-const KIND_ORDER: Record<string, number> = {
-  CITECK_CORE: 0,
-  CITECK_CORE_EXTENSION: 1,
-  CITECK_ADDITIONAL: 2,
-  THIRD_PARTY: 3,
-}
+const KIND_ORDER: Record<string, number> = { CITECK_CORE: 0, CITECK_CORE_EXTENSION: 1, CITECK_ADDITIONAL: 2, THIRD_PARTY: 3 }
+const KIND_LABELS: Record<string, string> = { CITECK_CORE: 'Citeck Core', CITECK_CORE_EXTENSION: 'Citeck Core Extensions', CITECK_ADDITIONAL: 'Citeck Additional', THIRD_PARTY: 'Third Party' }
 
-const KIND_LABELS: Record<string, string> = {
-  CITECK_CORE: 'Core',
-  CITECK_CORE_EXTENSION: 'Extensions',
-  CITECK_ADDITIONAL: 'Additional',
-  THIRD_PARTY: 'Infrastructure',
-}
-
-function groupByKind(apps: AppDto[]): { kind: string; label: string; apps: AppDto[] }[] {
+function groupByKind(apps: AppDto[]) {
   const groups = new Map<string, AppDto[]>()
   for (const app of apps) {
     const kind = app.kind || 'THIRD_PARTY'
@@ -38,223 +27,97 @@ function groupByKind(apps: AppDto[]): { kind: string; label: string; apps: AppDt
   }
   return Array.from(groups.entries())
     .sort(([a], [b]) => (KIND_ORDER[a] ?? 99) - (KIND_ORDER[b] ?? 99))
-    .map(([kind, apps]) => ({
-      kind,
-      label: KIND_LABELS[kind] ?? kind,
-      apps,
-    }))
+    .map(([kind, apps]) => ({ kind, label: KIND_LABELS[kind] ?? kind, apps }))
 }
 
-function extractTag(image: string): string {
-  const idx = image.lastIndexOf(':')
-  return idx >= 0 ? image.substring(idx + 1) : 'latest'
+function tag(image: string) {
+  const i = image.lastIndexOf(':')
+  return i >= 0 ? image.substring(i + 1) : 'latest'
 }
 
-function formatPorts(ports?: string[]): string {
-  if (!ports || ports.length === 0) return '—'
-  return ports
-    .map((p) => {
-      // "8080:80" → "8080→80"
-      const parts = p.split(':')
-      return parts.length === 2 ? `${parts[0]}→${parts[1]}` : p
-    })
-    .join(', ')
+function ports(p?: string[]) {
+  if (!p || !p.length) return ''
+  return p.map((s) => { const a = s.split(':'); return a.length === 2 ? a[0] : s }).join(', ')
 }
 
 export function AppTable({ apps }: AppTableProps) {
-  const [pendingAction, setPendingAction] = useState<AppAction>(null)
+  const [action, setAction] = useState<AppAction>(null)
   const [loading, setLoading] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const fetchData = useDashboardStore((s) => s.fetchData)
-
   const groups = groupByKind(apps)
 
   async function handleConfirm() {
-    if (!pendingAction) return
-    setLoading(true)
-    setActionError(null)
+    if (!action) return
+    setLoading(true); setActionError(null)
     try {
-      switch (pendingAction.type) {
-        case 'stop':
-          await postAppStop(pendingAction.appName)
-          break
-        case 'start':
-          await postAppStart(pendingAction.appName)
-          break
-        case 'restart':
-          await postAppRestart(pendingAction.appName)
-          break
-      }
-      setPendingAction(null)
-      setTimeout(fetchData, 500)
-    } catch (err) {
-      setActionError((err as Error).message)
-    } finally {
-      setLoading(false)
-    }
+      if (action.type === 'stop') await postAppStop(action.appName)
+      else if (action.type === 'start') await postAppStart(action.appName)
+      else await postAppRestart(action.appName)
+      setAction(null); setTimeout(fetchData, 500)
+    } catch (err) { setActionError((err as Error).message) }
+    finally { setLoading(false) }
   }
 
-  function getModalConfig() {
-    if (!pendingAction) return null
-    const { type, appName } = pendingAction
-    switch (type) {
-      case 'stop':
-        return {
-          title: `Stop ${appName}`,
-          message: `Stop the ${appName} container?`,
-          confirmLabel: 'Stop',
-          confirmVariant: 'danger' as const,
-        }
-      case 'start':
-        return {
-          title: `Start ${appName}`,
-          message: `Start the ${appName} container?`,
-          confirmLabel: 'Start',
-          confirmVariant: 'primary' as const,
-        }
-      case 'restart':
-        return {
-          title: `Restart ${appName}`,
-          message: `Restart the ${appName} container? It will be briefly unavailable.`,
-          confirmLabel: 'Restart',
-          confirmVariant: 'primary' as const,
-        }
-    }
-  }
-
-  const modalConfig = getModalConfig()
+  const mc = action ? {
+    stop: { title: `Stop ${action.appName}?`, msg: `Stop container ${action.appName}?`, label: 'Stop', variant: 'danger' as const },
+    start: { title: `Start ${action.appName}?`, msg: `Start container ${action.appName}?`, label: 'Start', variant: 'primary' as const },
+    restart: { title: `Restart ${action.appName}?`, msg: `Restart ${action.appName}?`, label: 'Restart', variant: 'primary' as const },
+  }[action.type] : null
 
   return (
     <>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border text-left text-muted-foreground">
-              <th className="pb-3 pr-4 font-medium">APP</th>
-              <th className="pb-3 pr-4 font-medium">STATUS</th>
-              <th className="pb-3 pr-4 font-medium">TAG</th>
-              <th className="pb-3 pr-4 font-medium">PORTS</th>
-              <th className="pb-3 pr-4 font-medium text-right">CPU</th>
-              <th className="pb-3 pr-4 font-medium text-right">MEMORY</th>
-              <th className="pb-3 font-medium text-right">ACTIONS</th>
-            </tr>
-          </thead>
-          <tbody>
-            {groups.map((group) => (
-              <GroupRows
-                key={group.kind}
-                label={group.label}
-                apps={group.apps}
-                onAction={setPendingAction}
-              />
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {modalConfig && (
-        <ConfirmModal
-          open={!!pendingAction}
-          title={modalConfig.title}
-          message={modalConfig.message}
-          confirmLabel={modalConfig.confirmLabel}
-          confirmVariant={modalConfig.confirmVariant}
-          loading={loading}
-          error={actionError}
-          onConfirm={handleConfirm}
-          onCancel={() => { setPendingAction(null); setActionError(null) }}
+      {groups.map((g) => (
+        <div key={g.kind} className="mb-1">
+          <div className="text-xs font-bold py-1">{g.label}</div>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-muted-foreground border-b border-border">
+                <th className="py-0.5 pr-6 font-medium">Name</th>
+                <th className="py-0.5 pr-6 font-medium">Status</th>
+                <th className="py-0.5 pr-6 font-medium">Ports</th>
+                <th className="py-0.5 pr-6 font-medium">Tag</th>
+                <th className="py-0.5 font-medium text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {g.apps.map((app) => {
+                const isRun = RUNNING.includes(app.status)
+                const isStop = STOPPED.includes(app.status)
+                return (
+                  <tr key={app.name} className="border-b border-border/20 hover:bg-muted/30">
+                    <td className="py-[3px] pr-6 font-mono">
+                      <Link to={`/apps/${app.name}`} className="text-primary hover:underline">{app.name}</Link>
+                    </td>
+                    <td className="py-[3px] pr-6"><StatusBadge status={app.status} /></td>
+                    <td className="py-[3px] pr-6 font-mono text-muted-foreground whitespace-nowrap">{ports(app.ports)}</td>
+                    <td className="py-[3px] pr-6 font-mono text-muted-foreground">{tag(app.image)}</td>
+                    <td className="py-[3px] text-right whitespace-nowrap">
+                      {isRun && <>
+                        <AB c="text-muted-foreground" onClick={() => setAction({ type: 'stop', appName: app.name })}>⏹</AB>
+                        <AB c="text-muted-foreground" onClick={() => setAction({ type: 'restart', appName: app.name })}>↻</AB>
+                      </>}
+                      {isStop && <AB c="text-success" onClick={() => setAction({ type: 'start', appName: app.name })}>▶</AB>}
+                      <Link to={`/apps/${app.name}/logs`} className="inline-block px-1 text-muted-foreground hover:text-foreground" title="Logs">📋</Link>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      ))}
+      {mc && (
+        <ConfirmModal open={!!action} title={mc.title} message={mc.msg}
+          confirmLabel={mc.label} confirmVariant={mc.variant}
+          loading={loading} error={actionError}
+          onConfirm={handleConfirm} onCancel={() => { setAction(null); setActionError(null) }}
         />
       )}
     </>
   )
 }
 
-function GroupRows({
-  label,
-  apps,
-  onAction,
-}: {
-  label: string
-  apps: AppDto[]
-  onAction: (action: AppAction) => void
-}) {
-  return (
-    <>
-      <tr>
-        <td
-          colSpan={7}
-          className="pt-4 pb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground"
-        >
-          {label}
-          <span className="ml-2 font-normal">({apps.length})</span>
-        </td>
-      </tr>
-      {apps.map((app) => {
-        const isRunning = RUNNING_STATUSES.includes(app.status)
-        const isStopped = STOPPED_STATUSES.includes(app.status)
-
-        return (
-          <tr key={app.name} className="border-b border-border/50 hover:bg-muted/30">
-            <td className="py-2.5 pr-4 font-mono text-sm">
-              <Link to={`/apps/${app.name}`} className="text-primary hover:underline">
-                {app.name}
-              </Link>
-            </td>
-            <td className="py-2.5 pr-4">
-              <StatusBadge status={app.status} />
-            </td>
-            <td className="py-2.5 pr-4 font-mono text-xs text-muted-foreground">
-              {extractTag(app.image)}
-            </td>
-            <td className="py-2.5 pr-4 font-mono text-xs text-muted-foreground">
-              {formatPorts(app.ports)}
-            </td>
-            <td className="py-2.5 pr-4 text-right font-mono text-xs text-muted-foreground">
-              {app.cpu || '—'}
-            </td>
-            <td className="py-2.5 pr-4 text-right font-mono text-xs text-muted-foreground">
-              {app.memory || '—'}
-            </td>
-            <td className="py-2.5 text-right">
-              <div className="flex items-center justify-end gap-1">
-                {isRunning && (
-                  <>
-                    <button
-                      type="button"
-                      className="rounded px-2 py-1 text-xs text-destructive hover:bg-destructive/10"
-                      onClick={() => onAction({ type: 'stop', appName: app.name })}
-                    >
-                      Stop
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
-                      onClick={() => onAction({ type: 'restart', appName: app.name })}
-                    >
-                      Restart
-                    </button>
-                  </>
-                )}
-                {isStopped && (
-                  <button
-                    type="button"
-                    className="rounded px-2 py-1 text-xs text-success hover:bg-success/10"
-                    onClick={() => onAction({ type: 'start', appName: app.name })}
-                  >
-                    Start
-                  </button>
-                )}
-                <Link
-                  to={`/apps/${app.name}/logs`}
-                  className="rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
-                >
-                  Logs
-                </Link>
-              </div>
-            </td>
-          </tr>
-        )
-      })}
-    </>
-  )
+function AB({ children, c, onClick }: { children: React.ReactNode; c: string; onClick: () => void }) {
+  return <button type="button" className={`px-1 ${c} hover:text-foreground`} onClick={onClick} title={String(children)}>{children}</button>
 }

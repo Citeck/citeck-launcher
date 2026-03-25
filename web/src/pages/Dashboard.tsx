@@ -3,8 +3,6 @@ import { useDashboardStore } from '../lib/store'
 import { StatusBadge } from '../components/StatusBadge'
 import { AppTable } from '../components/AppTable'
 import { NamespaceControls } from '../components/NamespaceControls'
-import { QuickLinks } from '../components/QuickLinks'
-import { StatsBar } from '../components/StatsBar'
 
 export function Dashboard() {
   const { namespace, health, loading, error, fetchData, startEventStream, stopEventStream } =
@@ -17,94 +15,54 @@ export function Dashboard() {
   }, [fetchData, startEventStream, stopEventStream])
 
   if (loading && !namespace) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-muted-foreground">Loading...</div>
-      </div>
-    )
+    return <div className="text-muted-foreground text-xs p-4">Loading...</div>
   }
 
   if (error && !namespace) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-destructive">Error: {error}</div>
-      </div>
-    )
+    return <div className="text-destructive text-xs p-4">Error: {error}</div>
   }
 
   if (!namespace) return null
 
-  // Check Docker availability from health checks
   const dockerCheck = health?.checks.find((c) => c.name === 'docker')
   const dockerError = dockerCheck?.status === 'error' ? dockerCheck.message : null
+  const runningCount = namespace.apps.filter((a) => a.status === 'RUNNING').length
 
   return (
-    <div className="space-y-6">
-      {/* Docker error banner */}
+    <div>
+      {/* Docker error */}
       {dockerError && (
-        <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-          <span className="font-medium">Docker unavailable:</span> {dockerError}
-          <p className="mt-1 text-xs text-destructive/70">
-            Make sure Docker is installed and running.{' '}
-            <a
-              href="https://docs.docker.com/get-docker/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline"
-            >
-              Install Docker
-            </a>
-          </p>
-          <button
-            type="button"
-            className="mt-2 rounded-md border border-destructive/30 px-3 py-1 text-xs hover:bg-destructive/10"
-            onClick={fetchData}
-          >
-            Retry
-          </button>
+        <div className="rounded border border-destructive/30 bg-destructive/5 px-3 py-1.5 text-xs text-destructive mb-2">
+          Docker unavailable: {dockerError}
+          {' '}<a href="https://docs.docker.com/get-docker/" target="_blank" rel="noopener noreferrer" className="underline">Install</a>
+          {' '}<button type="button" className="underline" onClick={fetchData}>Retry</button>
         </div>
       )}
 
-      {/* Namespace header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">{namespace.name}</h1>
-          <div className="mt-1 flex items-center gap-3 text-sm text-muted-foreground">
-            {namespace.bundleRef && <span>Bundle: {namespace.bundleRef}</span>}
-            <span>ID: {namespace.id}</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <NamespaceControls status={namespace.status} />
+      {/* Header line */}
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold">{namespace.name}</span>
           <StatusBadge status={namespace.status} />
+          <span className="text-xs text-muted-foreground">{namespace.bundleRef}</span>
+          <span className="text-xs text-muted-foreground">·</span>
+          <span className="text-xs text-muted-foreground">{runningCount}/{namespace.apps.length} running</span>
+        </div>
+        <div className="flex items-center gap-2">
+          {namespace.links && namespace.links.length > 0 && (
+            <div className="flex items-center gap-2 text-xs">
+              {[...namespace.links].sort((a, b) => a.order - b.order).map((l) => (
+                <a key={l.name} href={l.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">{l.name}</a>
+              ))}
+              <span className="text-border">|</span>
+            </div>
+          )}
+          <NamespaceControls status={namespace.status} />
         </div>
       </div>
 
-      {/* Stats bar */}
-      <StatsBar apps={namespace.apps} />
-
-      {/* Quick links */}
-      {namespace.links && namespace.links.length > 0 && (
-        <QuickLinks links={namespace.links} />
-      )}
-
-      {/* Health indicator */}
-      {health && !dockerError && (
-        <div
-          className={`rounded-lg border px-4 py-3 text-sm ${
-            health.healthy
-              ? 'border-success/30 bg-success/5 text-success'
-              : 'border-destructive/30 bg-destructive/5 text-destructive'
-          }`}
-        >
-          System: {health.healthy ? 'Healthy' : 'Unhealthy'}
-        </div>
-      )}
-
-      {/* App table */}
-      <div className="rounded-lg border border-border bg-card p-4">
-        <AppTable apps={namespace.apps} />
-      </div>
+      {/* App table — no wrapper card, maximum density */}
+      <AppTable apps={namespace.apps} />
     </div>
   )
 }
