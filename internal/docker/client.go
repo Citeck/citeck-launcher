@@ -16,6 +16,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	"github.com/niceteck/citeck-launcher/internal/appdef"
 )
@@ -284,11 +285,28 @@ func (c *Client) ContainerLogs(ctx context.Context, containerID string, tail int
 		return "", err
 	}
 	defer reader.Close()
-	data, err := io.ReadAll(reader)
+
+	// Use stdcopy to properly demultiplex Docker log stream headers
+	var stdout, stderr strings.Builder
+	_, err = stdcopy.StdCopy(&stdout, &stderr, reader)
 	if err != nil {
-		return "", err
+		// Fallback: some containers use TTY mode (no multiplex headers)
+		reader2, err2 := c.cli.ContainerLogs(ctx, containerID, container.LogsOptions{
+			ShowStdout: true, ShowStderr: true, Tail: fmt.Sprintf("%d", tail),
+		})
+		if err2 != nil {
+			return "", err2
+		}
+		defer reader2.Close()
+		data, _ := io.ReadAll(reader2)
+		return string(data), nil
 	}
-	return stripDockerLogHeaders(string(data)), nil
+
+	result := stdout.String()
+	if s := stderr.String(); s != "" {
+		result += s
+	}
+	return result, nil
 }
 
 // ExecInContainer runs a command inside a running container.
@@ -310,18 +328,26 @@ func (c *Client) ExecInContainer(ctx context.Context, containerID string, cmd []
 	}
 	defer attachResp.Close()
 
-	output, err := io.ReadAll(attachResp.Reader)
+	// Demultiplex exec output
+	var stdout, stderr strings.Builder
+	_, err = stdcopy.StdCopy(&stdout, &stderr, attachResp.Reader)
 	if err != nil {
-		return "", -1, err
+		// Fallback for TTY-mode exec
+		data, _ := io.ReadAll(attachResp.Reader)
+		output := string(data)
+		inspectResp, _ := c.cli.ContainerExecInspect(ctx, execResp.ID)
+		return output, inspectResp.ExitCode, nil
 	}
+
+	output := stdout.String() + stderr.String()
 
 	// Get exit code
 	inspectResp, err := c.cli.ContainerExecInspect(ctx, execResp.ID)
 	if err != nil {
-		return stripDockerLogHeaders(string(output)), -1, err
+		return output, -1, err
 	}
 
-	return stripDockerLogHeaders(string(output)), inspectResp.ExitCode, nil
+	return output, inspectResp.ExitCode, nil
 }
 
 // ContainerStats returns resource stats for a container.
@@ -450,20 +476,6 @@ func parseMemory(s string) int64 {
 }
 
 // stripDockerLogHeaders removes Docker log stream headers (8-byte prefix per line).
-// stripDockerLogHeaders removes Docker multiplex frame headers.
-// Only strips if the first byte is a valid stream type (0=stdin, 1=stdout, 2=stderr).
-func stripDockerLogHeaders(s string) string {
-	var result strings.Builder
-	for _, line := range strings.Split(s, "\n") {
-		if len(line) >= 8 && (line[0] == 0 || line[0] == 1 || line[0] == 2) {
-			result.WriteString(line[8:])
-		} else {
-			result.WriteString(line)
-		}
-		result.WriteString("\n")
-	}
-	return strings.TrimRight(result.String(), "\n")
-}
 
 // ContainerStat holds resource usage for a container.
 type ContainerStat struct {

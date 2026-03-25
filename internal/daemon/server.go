@@ -148,7 +148,7 @@ func Start(foreground bool) error {
 	}
 
 	// Also listen on TCP :8088 (for Web UI / Desktop app / remote access)
-	const tcpAddr = ":8088"
+	const tcpAddr = "127.0.0.1:8088"
 	tcpListener, err := net.Listen("tcp", tcpAddr)
 	if err != nil {
 		slog.Warn("TCP listener failed, Web UI only on Unix socket", "addr", tcpAddr, "err", err)

@@ -64,10 +64,10 @@ export interface AppInspectDto {
   image: string
   status: string
   state: string
-  ports: string[]
-  volumes: string[]
-  env: string[]
-  labels: Record<string, string>
+  ports: string[] | null
+  volumes: string[] | null
+  env: string[] | null
+  labels: Record<string, string> | null
   network: string
   restartCount: number
   startedAt: string

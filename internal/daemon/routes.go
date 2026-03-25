@@ -167,6 +167,15 @@ func (d *Daemon) handleAppStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "no namespace configured")
 		return
 	}
+	app := d.findApp(name)
+	if app == nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("app %q not found", name))
+		return
+	}
+	if app.Status == namespace.AppStatusRunning {
+		writeError(w, http.StatusConflict, fmt.Sprintf("app %q is already running", name))
+		return
+	}
 
 	if err := d.runtime.RestartApp(name); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

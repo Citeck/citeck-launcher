@@ -23,11 +23,3 @@ func TestParseMemory(t *testing.T) {
 	}
 }
 
-func TestStripDockerLogHeaders(t *testing.T) {
-	// Docker log headers are 8 bytes
-	input := "\x01\x00\x00\x00\x00\x00\x00\x05Hello\n\x01\x00\x00\x00\x00\x00\x00\x05World"
-	result := stripDockerLogHeaders(input)
-	if result != "Hello\nWorld" {
-		t.Errorf("unexpected result: %q", result)
-	}
-}
