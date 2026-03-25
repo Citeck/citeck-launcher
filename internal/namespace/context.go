@@ -102,6 +102,7 @@ func (c *NsGenContext) ProxyBaseURL() string {
 // AppBuilder accumulates ApplicationDef properties during generation.
 type AppBuilder struct {
 	Name              string
+	NetworkAliases    []string
 	Image             string
 	Environments      map[string]string
 	Cmd               []string
@@ -145,6 +146,7 @@ func (b *AppBuilder) Build() appdef.ApplicationDef {
 	}
 	return appdef.ApplicationDef{
 		Name:              b.Name,
+		NetworkAliases:    b.NetworkAliases,
 		Image:             b.Image,
 		Environments:      b.Environments,
 		Cmd:               b.Cmd,

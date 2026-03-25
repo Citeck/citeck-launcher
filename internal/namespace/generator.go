@@ -70,6 +70,8 @@ func generateMongoDB(ctx *NsGenContext) {
 	app := ctx.GetOrCreateApp(appdef.AppMongodb)
 	app.Image = img
 	app.Kind = appdef.KindThirdParty
+	// Container name is "mongo" but apps reference it as "mongodb" — add network alias
+	app.NetworkAliases = []string{MongoHost}
 	app.AddPort(fmt.Sprintf("27017:%d", MongoPort))
 	app.AddVolume("mongodb:/data/db")
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "512m"}}
@@ -329,7 +331,25 @@ func generateWebapp(name string, ctx *NsGenContext) {
 	app.Image = bundleApp.Image
 	app.Kind = webappKind(name)
 
-	// Java opts
+	// Apply workspace default props (env, heapSize, memoryLimit)
+	if ctx.WorkspaceConfig != nil {
+		for _, wsCfg := range ctx.WorkspaceConfig.Webapps {
+			if wsCfg.ID == name {
+				for k, v := range wsCfg.DefaultProps.Environments {
+					app.AddEnv(k, resolveTemplateVarsWithConfig(v, ctx.Config))
+				}
+				if wsCfg.DefaultProps.HeapSize != "" {
+					app.AddEnv("JAVA_OPTS", fmt.Sprintf("-Xmx%s -Xms%s", wsCfg.DefaultProps.HeapSize, wsCfg.DefaultProps.HeapSize))
+				}
+				if wsCfg.DefaultProps.MemoryLimit != "" && app.Resources == nil {
+					app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: wsCfg.DefaultProps.MemoryLimit}}
+				}
+				break
+			}
+		}
+	}
+
+	// Java opts from namespace config (overrides workspace defaults)
 	var javaOpts string
 	if wp, ok := ctx.Config.Webapps[name]; ok {
 		if wp.HeapSize != "" {
@@ -385,11 +405,14 @@ func generateWebapp(name string, ctx *NsGenContext) {
 }
 
 // processWebappDataSources reads datasource definitions from workspace config
-// (workspace-v1.yml → webapps[].defaultProps.dataSources) and configures:
-//   - JDBC: dependency on postgres, init action to create DB, SPRING_DATASOURCE_* env
-//   - MongoDB: dependency on mongodb, SPRING_DATA_MONGODB_URI env
+// and generates:
+//   - Spring cloud config YAML (application-launcher.yml) with all datasource URLs
+//   - Volume mount for the config file
+//   - SPRING_CONFIG_ADDITIONALLOCATION env var
+//   - Init actions on postgres to create databases
+//   - Dependencies on postgres/mongodb
 //
-// No hardcoded datasource mappings — everything comes from workspace config.
+// This mirrors the Kotlin NamespaceGenerator.processDataSource + cloud config logic.
 func processWebappDataSources(appName string, app *AppBuilder, ctx *NsGenContext) {
 	if ctx.WorkspaceConfig == nil {
 		return
@@ -409,19 +432,38 @@ func processWebappDataSources(appName string, app *AppBuilder, ctx *NsGenContext
 
 	pgApp := ctx.Applications[appdef.AppPostgres]
 
+	// Build Spring cloud config YAML for all datasources
+	// Format: ecos.webapp.dataSources.<key>.url / username / password
+	var yamlLines []string
+	yamlLines = append(yamlLines, "ecos:")
+	yamlLines = append(yamlLines, "  webapp:")
+	yamlLines = append(yamlLines, "    dataSources:")
+
 	for dsKey, dsCfg := range dataSources {
 		url := resolveTemplateVars(dsCfg.URL)
 
 		if strings.HasPrefix(url, "jdbc:") {
 			app.AddDependsOn(appdef.AppPostgres)
-
 			dbName := extractDBName(url)
+
+			// Add init action on postgres to create DB
 			if dbName != "" && pgApp != nil {
 				pgApp.InitActions = append(pgApp.InitActions, appdef.AppInitAction{
 					Exec: []string{"sh", "-c", "/init_db_and_user.sh " + dbName},
 				})
 			}
 
+			yamlLines = append(yamlLines, fmt.Sprintf("      %s:", dsKey))
+			yamlLines = append(yamlLines, fmt.Sprintf("        url: %s", url))
+			if dbName != "" {
+				yamlLines = append(yamlLines, fmt.Sprintf("        username: %s", dbName))
+				yamlLines = append(yamlLines, fmt.Sprintf("        password: %s", dbName))
+			}
+			if dsCfg.XA {
+				yamlLines = append(yamlLines, "        xa: true")
+			}
+
+			// Also set env vars for "main" datasource (Spring Boot standard)
 			if dsKey == "main" {
 				app.AddEnv("SPRING_DATASOURCE_USERNAME", dbName)
 				app.AddEnv("SPRING_DATASOURCE_PASSWORD", dbName)
@@ -429,22 +471,56 @@ func processWebappDataSources(appName string, app *AppBuilder, ctx *NsGenContext
 			}
 		} else if strings.HasPrefix(url, "mongodb:") {
 			app.AddDependsOn(appdef.AppMongodb)
+
+			yamlLines = append(yamlLines, fmt.Sprintf("      %s:", dsKey))
+			yamlLines = append(yamlLines, fmt.Sprintf("        url: %s", url))
+
 			app.AddEnv("SPRING_DATA_MONGODB_URI", url)
 		}
 	}
+
+	// Write cloud config YAML to files map
+	configContent := strings.Join(yamlLines, "\n") + "\n"
+	configPath := fmt.Sprintf("app/%s/props/application-launcher.yml", appName)
+	ctx.Files[configPath] = []byte(configContent)
+
+	// Mount props directory and set Spring additional config location
+	app.AddEnv("SPRING_CONFIG_ADDITIONALLOCATION", "/run/java.io/spring-props/")
+	app.AddVolume(fmt.Sprintf("./app/%s/props:/run/java.io/spring-props/", appName))
 }
 
 // resolveTemplateVars replaces ${VAR} placeholders in datasource URLs.
+// resolveTemplateVarsWithConfig resolves template variables including config-dependent ones.
+func resolveTemplateVarsWithConfig(s string, cfg *NamespaceConfig) string {
+	kkEnabled := "false"
+	kkAdminURL := ""
+	kkAdminUser := ""
+	kkAdminPassword := ""
+	if cfg != nil && cfg.Authentication.Type == AuthKeycloak {
+		kkEnabled = "true"
+		kkAdminURL = fmt.Sprintf("http://%s:8080", KKHost)
+		kkAdminUser = "admin"
+		kkAdminPassword = "admin"
+	}
+	s = strings.ReplaceAll(s, "${KK_ENABLED}", kkEnabled)
+	s = strings.ReplaceAll(s, "${KK_ADMIN_URL}", kkAdminURL)
+	s = strings.ReplaceAll(s, "${KK_ADMIN_USER}", kkAdminUser)
+	s = strings.ReplaceAll(s, "${KK_ADMIN_PASSWORD}", kkAdminPassword)
+	return resolveTemplateVars(s)
+}
+
 func resolveTemplateVars(s string) string {
 	replacements := map[string]string{
-		"${PG_HOST}":    PGHost,
-		"${PG_PORT}":    fmt.Sprintf("%d", PGPort),
-		"${MONGO_HOST}": MongoHost,
-		"${MONGO_PORT}": fmt.Sprintf("%d", MongoPort),
-		"${ZK_HOST}":    ZKHost,
-		"${ZK_PORT}":    fmt.Sprintf("%d", ZKPort),
-		"${RMQ_HOST}":   RMQHost,
-		"${RMQ_PORT}":   fmt.Sprintf("%d", RMQPort),
+		"${PG_HOST}":          PGHost,
+		"${PG_PORT}":          fmt.Sprintf("%d", PGPort),
+		"${MONGO_HOST}":       MongoHost,
+		"${MONGO_PORT}":       fmt.Sprintf("%d", MongoPort),
+		"${ZK_HOST}":          ZKHost,
+		"${ZK_PORT}":          fmt.Sprintf("%d", ZKPort),
+		"${RMQ_HOST}":         RMQHost,
+		"${RMQ_PORT}":         fmt.Sprintf("%d", RMQPort),
+		"${MAILHOG_HOST}":     MailhogHost,
+		"${ONLYOFFICE_HOST}":  OnlyofficeHost,
 	}
 	for k, v := range replacements {
 		s = strings.ReplaceAll(s, k, v)

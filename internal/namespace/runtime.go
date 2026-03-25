@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sync"
 	"time"
 
@@ -481,14 +482,20 @@ func (r *Runtime) waitForProbe(ctx context.Context, containerID string, probe *a
 		if probe.Exec != nil {
 			_, exitCode, err := r.docker.ExecInContainer(ctx, containerID, probe.Exec.Command)
 			if err == nil && exitCode == 0 {
+				slog.Info("Exec probe passed", "container", containerID[:12], "attempt", attempt)
 				return nil
 			}
 		}
 		if probe.HTTP != nil {
-			cmd := []string{"sh", "-c", fmt.Sprintf("curl -sf -o /dev/null http://localhost:%d%s", probe.HTTP.Port, probe.HTTP.Path)}
-			_, exitCode, err := r.docker.ExecInContainer(ctx, containerID, cmd)
-			if err == nil && exitCode == 0 {
-				return nil
+			publishedPort := r.docker.GetPublishedPort(ctx, containerID, probe.HTTP.Port)
+			if attempt == 0 || attempt%10 == 0 {
+				slog.Info("HTTP probe", "container", containerID[:12], "containerPort", probe.HTTP.Port, "publishedPort", publishedPort, "path", probe.HTTP.Path, "attempt", attempt)
+			}
+			if publishedPort > 0 {
+				if httpProbeCheck(publishedPort, probe.HTTP.Path, probe.TimeoutSeconds) {
+					slog.Info("HTTP probe passed", "container", containerID[:12], "port", publishedPort, "attempt", attempt)
+					return nil
+				}
 			}
 		}
 		time.Sleep(time.Duration(period) * time.Second)
@@ -562,6 +569,20 @@ func formatMemory(usage, limit int64) string {
 		return fmt.Sprintf("%s", formatBytes(usage))
 	}
 	return fmt.Sprintf("%s / %s", formatBytes(usage), formatBytes(limit))
+}
+
+// httpProbeCheck does a HTTP GET to localhost:port/path and returns true if status 200.
+func httpProbeCheck(port int, path string, timeoutSec int) bool {
+	if timeoutSec <= 0 {
+		timeoutSec = 5
+	}
+	client := &http.Client{Timeout: time.Duration(timeoutSec) * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d%s", port, path))
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == 200
 }
 
 func formatBytes(b int64) string {

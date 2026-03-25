@@ -30,9 +30,10 @@ type DataSourceConfig struct {
 
 // WebappDefaultProps holds default properties for a webapp from workspace config.
 type WebappDefaultProps struct {
-	HeapSize    string                       `yaml:"heapSize"`
-	MemoryLimit string                       `yaml:"memoryLimit"`
-	DataSources map[string]DataSourceConfig  `yaml:"dataSources"`
+	HeapSize     string                       `yaml:"heapSize"`
+	MemoryLimit  string                       `yaml:"memoryLimit"`
+	Environments map[string]string            `yaml:"environments"`
+	DataSources  map[string]DataSourceConfig  `yaml:"dataSources"`
 }
 
 // WebappConfig describes a webapp with its aliases and default props.

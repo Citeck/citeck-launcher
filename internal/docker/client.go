@@ -195,10 +195,14 @@ func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef,
 		hostConfig.ShmSize = shmSize
 	}
 
+	// Network aliases: app name + any additional aliases
+	aliases := []string{app.Name}
+	aliases = append(aliases, app.NetworkAliases...)
+
 	networkConfig := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
 			networkName: {
-				Aliases: []string{app.Name},
+				Aliases: aliases,
 			},
 		},
 	}
@@ -321,6 +325,22 @@ func (c *Client) ExecInContainer(ctx context.Context, containerID string, cmd []
 }
 
 // ContainerStats returns resource stats for a container.
+// GetPublishedPort returns the host port for a container's exposed port.
+func (c *Client) GetPublishedPort(ctx context.Context, containerID string, containerPort int) int {
+	inspect, err := c.cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return -1
+	}
+	for port, bindings := range inspect.NetworkSettings.Ports {
+		if port.Int() == containerPort && len(bindings) > 0 {
+			var hostPort int
+			fmt.Sscanf(bindings[0].HostPort, "%d", &hostPort)
+			return hostPort
+		}
+	}
+	return -1
+}
+
 func (c *Client) ContainerStats(ctx context.Context, containerID string) (*ContainerStat, error) {
 	resp, err := c.cli.ContainerStatsOneShot(ctx, containerID)
 	if err != nil {

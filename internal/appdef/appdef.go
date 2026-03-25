@@ -80,6 +80,7 @@ type InitContainerDef struct {
 // ApplicationDef is a fully resolved container definition.
 type ApplicationDef struct {
 	Name              string            `json:"name"`
+	NetworkAliases    []string          `json:"networkAliases,omitempty"`
 	Image             string            `json:"image"`
 	Environments      map[string]string `json:"environments,omitempty"`
 	Cmd               []string          `json:"cmd,omitempty"`

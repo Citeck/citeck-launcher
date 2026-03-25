@@ -86,9 +86,22 @@ func Start(foreground bool) error {
 		}
 
 		// Generate namespace
-		runtime = namespace.NewRuntime(nsCfg, dockerClient, "daemon", volumesBase)
-
 		genResp := namespace.Generate(nsCfg, bundleDef, resolveResult.Workspace)
+
+		// Write generated files (cloud config YAMLs, etc.) to volumes base
+		for filePath, content := range genResp.Files {
+			destPath := filepath.Join(volumesBase, filePath)
+			if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+				slog.Error("Failed to create dir for generated file", "path", destPath, "err", err)
+				continue
+			}
+			if err := os.WriteFile(destPath, content, 0o644); err != nil {
+				slog.Error("Failed to write generated file", "path", destPath, "err", err)
+			}
+		}
+		slog.Info("Generated namespace", "apps", len(genResp.Applications), "files", len(genResp.Files))
+
+		runtime = namespace.NewRuntime(nsCfg, dockerClient, "daemon", volumesBase)
 		runtime.Start(genResp.Applications)
 	}
 
