@@ -6,7 +6,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/niceteck/citeck-launcher/internal/api"
@@ -108,12 +110,14 @@ func (d *Daemon) handleAppLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logs, err := d.dockerClient.ContainerLogs(context.Background(), app.ContainerID, tail)
+	rawLogs, err := d.dockerClient.ContainerLogs(context.Background(), app.ContainerID, tail)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
+	// Strip ANSI escape codes and normalize
+	logs := stripAnsi(rawLogs)
 	w.Header().Set("Content-Type", "text/plain")
 	w.Write([]byte(logs))
 }
@@ -355,4 +359,13 @@ func (d *Daemon) findApp(name string) *namespace.AppRuntime {
 		}
 	}
 	return nil
+}
+
+// stripAnsi removes ANSI escape codes and normalizes tabs (matching Kotlin LogsUtils.normalizeMessage)
+var ansiRegex = regexp.MustCompile(`\x1b\[[\d;]*m`)
+
+func stripAnsi(s string) string {
+	s = ansiRegex.ReplaceAllString(s, "")
+	s = strings.ReplaceAll(s, "\t", "    ")
+	return s
 }

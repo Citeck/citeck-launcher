@@ -191,6 +191,12 @@ func (r *Runtime) generateLinks() []api.LinkDto {
 		})
 	}
 
+	// Global links (always available)
+	links = append(links,
+		api.LinkDto{Name: "Documentation", URL: "https://citeck-ecos.readthedocs.io/", Icon: "docs", Order: 100},
+		api.LinkDto{Name: "AI Documentation Bot", URL: "https://t.me/haski_citeck_bot", Icon: "telegram", Order: 101},
+	)
+
 	return links
 }
 

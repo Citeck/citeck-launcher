@@ -6,22 +6,48 @@ type LogLevel = 'ERROR' | 'WARN' | 'INFO' | 'DEBUG' | 'TRACE'
 
 const LOG_LEVELS: LogLevel[] = ['ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE']
 
+// Kotlin-matching colors
 const LEVEL_COLORS: Record<LogLevel, string> = {
-  ERROR: 'text-destructive',
-  WARN: 'text-warning',
-  INFO: 'text-foreground',
-  DEBUG: 'text-foreground/70',
-  TRACE: 'text-foreground/50',
+  ERROR: 'text-[#ef5350]',
+  WARN: 'text-[#ffa726]',
+  INFO: 'text-[#66bb6a]',
+  DEBUG: 'text-[#9e9e9e]',
+  TRACE: 'text-[#bdbdbd]',
 }
 
+// 7 regex patterns matching Kotlin LogLevelDetector (ordered by confidence)
+const LEVEL_PATTERNS: [RegExp, number][] = [
+  [/\[(ERROR|WARN|INFO|DEBUG|TRACE)]/i, 1],                           // [ERROR]
+  [/\|-(ERROR|WARN|INFO|DEBUG|TRACE)\b/i, 1],                         // |-ERROR (logback)
+  [/\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\s+(ERROR|WARN|INFO|DEBUG|TRACE)\b/i, 1], // After timestamp
+  [/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^\s]*\s+(ERROR|WARN|INFO|DEBUG|TRACE)\s/i, 1], // Spring Boot ISO
+  [/^(ERROR|WARN|INFO|DEBUG|TRACE):/i, 1],                             // Python format
+  [/\s(ERROR|WARN|INFO|DEBUG|TRACE)\s/i, 1],                           // Whitespace-surrounded
+  [/^(ERROR|WARN|INFO|DEBUG|TRACE)[\s:\-[]/i, 1],                      // At line start
+]
+
 function detectLevel(line: string): LogLevel | null {
-  const upper = line.toUpperCase()
-  if (upper.includes(' ERROR ') || upper.includes('[ERROR]') || upper.includes('ERROR:')) return 'ERROR'
-  if (upper.includes(' WARN ') || upper.includes('[WARN]') || upper.includes('WARNING')) return 'WARN'
-  if (upper.includes(' DEBUG ') || upper.includes('[DEBUG]')) return 'DEBUG'
-  if (upper.includes(' TRACE ') || upper.includes('[TRACE]')) return 'TRACE'
-  if (upper.includes(' INFO ') || upper.includes('[INFO]')) return 'INFO'
+  for (const [pattern, group] of LEVEL_PATTERNS) {
+    const m = line.match(pattern)
+    if (m) return m[group].toUpperCase() as LogLevel
+  }
   return null
+}
+
+// Apply level inheritance — lines without level inherit from previous (stack traces etc.)
+function detectLevels(lines: string[]): (LogLevel | null)[] {
+  const result: (LogLevel | null)[] = []
+  let lastLevel: LogLevel | null = null
+  for (const line of lines) {
+    const level = detectLevel(line)
+    if (level) {
+      lastLevel = level
+      result.push(level)
+    } else {
+      result.push(lastLevel) // inherit from previous
+    }
+  }
+  return result
 }
 
 export function Logs() {
@@ -86,13 +112,16 @@ export function Logs() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  // Filter and search
+  // Detect levels with inheritance, then filter
   const lines = logs.split('\n')
-  const filteredLines = lines.filter((line) => {
-    const level = detectLevel(line)
+  const allLevels = detectLevels(lines)
+  const indexedLines = lines.map((line, i) => ({ line, level: allLevels[i] }))
+  const filteredEntries = indexedLines.filter(({ level }) => {
     if (level && !enabledLevels.has(level)) return false
     return true
   })
+  const filteredLines = filteredEntries.map((e) => e.line)
+  const filteredLevels = filteredEntries.map((e) => e.level)
 
   const searchMatches = new Set<number>()
   if (search) {
@@ -296,7 +325,7 @@ export function Logs() {
           <span className="text-muted-foreground">No logs available</span>
         ) : (
           filteredLines.map((line, i) => {
-            const level = detectLevel(line)
+            const level = filteredLevels[i]
             const colorClass = level ? LEVEL_COLORS[level] : 'text-foreground'
             const isCurrentMatch = matchIndices[safeMatchIndex] === i
 

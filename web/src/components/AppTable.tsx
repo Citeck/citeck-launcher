@@ -6,7 +6,7 @@ import { useDashboardStore } from '../lib/store'
 import { useTabsStore } from '../lib/tabs'
 import { StatusBadge } from './StatusBadge'
 import { ConfirmModal } from './ConfirmModal'
-import { Square, Play, RotateCw, FileText, Settings } from 'lucide-react'
+import { Square, Play, RotateCw, FileText, Settings, Copy } from 'lucide-react'
 
 interface AppTableProps {
   apps: AppDto[]
@@ -37,9 +37,11 @@ function tag(image: string) {
   return i >= 0 ? image.substring(i + 1) : 'latest'
 }
 
-function ports(p?: string[]) {
+function portsShort(p?: string[]) {
   if (!p || !p.length) return ''
-  return p.map((s) => { const a = s.split(':'); return a.length === 2 ? a[0] : s }).join(', ')
+  const hostPorts = p.map((s) => { const a = s.split(':'); return a.length === 2 ? a[0] : s })
+  if (hostPorts.length === 1) return hostPorts[0]
+  return `${hostPorts[0]} ..`
 }
 
 export function AppTable({ apps }: AppTableProps) {
@@ -74,7 +76,9 @@ export function AppTable({ apps }: AppTableProps) {
           <tr className="text-left text-muted-foreground border-b border-border">
             <th className="py-1 pr-4 font-medium">Name</th>
             <th className="py-1 pr-4 font-medium">Status</th>
-            <th className="py-1 pr-4 font-medium">Ports</th>
+            <th className="py-1 pr-2 font-medium text-right w-16">CPU</th>
+            <th className="py-1 pr-4 font-medium text-right w-20">MEM</th>
+            <th className="py-1 pr-4 font-medium w-20">Ports</th>
             <th className="py-1 pr-4 font-medium">Tag</th>
             <th className="py-1 font-medium text-right w-24">Actions</th>
           </tr>
@@ -109,7 +113,7 @@ function GroupRows({ label, apps, onAction }: { label: string; apps: AppDto[]; o
   return (
     <>
       <tr>
-        <td colSpan={5} className="pt-3 pb-1 text-xs font-bold text-foreground">
+        <td colSpan={7} className="pt-3 pb-1 text-xs font-bold text-foreground">
           {label}
         </td>
       </tr>
@@ -125,8 +129,16 @@ function GroupRows({ label, apps, onAction }: { label: string; apps: AppDto[]; o
               </a>
             </td>
             <td className="py-[3px] pr-4"><StatusBadge status={app.status} /></td>
-            <td className="py-[3px] pr-4 font-mono text-muted-foreground whitespace-nowrap">{ports(app.ports)}</td>
-            <td className="py-[3px] pr-4 font-mono text-muted-foreground">{tag(app.image)}</td>
+            <td className="py-[3px] pr-2 text-right font-mono text-muted-foreground">{app.cpu || ''}</td>
+            <td className="py-[3px] pr-4 text-right font-mono text-muted-foreground">{app.memory ? app.memory.split(' / ')[0] : ''}</td>
+            <td className="py-[3px] pr-4 font-mono text-muted-foreground whitespace-nowrap" title={app.ports?.join(', ')}>
+              {portsShort(app.ports)}
+            </td>
+            <td className="py-[3px] pr-4 font-mono text-muted-foreground cursor-pointer hover:text-foreground"
+              title={`Click to copy: ${app.image}`}
+              onClick={() => navigator.clipboard.writeText(app.image)}>
+              {tag(app.image)}
+            </td>
             <td className="py-[3px] text-right whitespace-nowrap">
               <div className="inline-flex items-center gap-0.5">
                 {isRun && (
