@@ -6,7 +6,7 @@ import { useDashboardStore } from '../lib/store'
 import { useTabsStore } from '../lib/tabs'
 import { StatusBadge } from './StatusBadge'
 import { ConfirmModal } from './ConfirmModal'
-import { Square, Play, RotateCw, FileText, Settings, Copy } from 'lucide-react'
+import { Square, Play, RotateCw, FileText, Settings } from 'lucide-react'
 
 interface AppTableProps {
   apps: AppDto[]

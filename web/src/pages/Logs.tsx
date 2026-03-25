@@ -117,7 +117,7 @@ export function Logs() {
   }, [])
 
   // Detect levels with inheritance, then filter (memoized for performance)
-  const { filteredLines, filteredLevels } = useMemo(() => {
+  const { filteredLines, filteredLevels, totalLineCount } = useMemo(() => {
     const lines = logs.split('\n')
     const allLevels = detectLevels(lines)
     const entries = lines
@@ -126,6 +126,7 @@ export function Logs() {
     return {
       filteredLines: entries.map((e) => e.line),
       filteredLevels: entries.map((e) => e.level),
+      totalLineCount: lines.length,
     }
   }, [logs, enabledLevels])
 
@@ -358,7 +359,7 @@ export function Logs() {
       <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
         <span>
           {filteredLines.length} lines
-          {filteredLines.length !== lines.length && ` (${lines.length} total)`}
+          {filteredLines.length !== totalLineCount && ` (${totalLineCount} total)`}
         </span>
         <span>
           {follow && '⬇ Following'} | Ctrl+F search | F3 next | Shift+F3 prev | Esc clear

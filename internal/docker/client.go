@@ -459,10 +459,12 @@ func parseMemory(s string) int64 {
 }
 
 // stripDockerLogHeaders removes Docker log stream headers (8-byte prefix per line).
+// stripDockerLogHeaders removes Docker multiplex frame headers.
+// Only strips if the first byte is a valid stream type (0=stdin, 1=stdout, 2=stderr).
 func stripDockerLogHeaders(s string) string {
 	var result strings.Builder
 	for _, line := range strings.Split(s, "\n") {
-		if len(line) >= 8 {
+		if len(line) >= 8 && (line[0] == 0 || line[0] == 1 || line[0] == 2) {
 			result.WriteString(line[8:])
 		} else {
 			result.WriteString(line)

@@ -325,19 +325,34 @@ func (d *Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 func (d *Daemon) handleDaemonLogs(w http.ResponseWriter, r *http.Request) {
 	logPath := config.DaemonLogPath()
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("daemon log not found: %s", logPath))
-		return
-	}
 
-	// Return last N lines
 	tailStr := r.URL.Query().Get("tail")
 	tail := 200
 	if tailStr != "" {
 		if n, err := strconv.Atoi(tailStr); err == nil {
 			tail = n
 		}
+	}
+
+	// Read at most last 2MB of the file to avoid OOM on large logs
+	const maxReadSize = 2 * 1024 * 1024
+	f, err := os.Open(logPath)
+	if err != nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("daemon log not found: %s", logPath))
+		return
+	}
+	defer f.Close()
+
+	stat, _ := f.Stat()
+	readSize := stat.Size()
+	if readSize > maxReadSize {
+		f.Seek(-maxReadSize, io.SeekEnd)
+		readSize = maxReadSize
+	}
+	data, err := io.ReadAll(io.LimitReader(f, readSize))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 
 	lines := strings.Split(string(data), "\n")
@@ -426,7 +441,20 @@ func (d *Daemon) handleDeleteVolume(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid volume name")
 		return
 	}
+	// Verify volume belongs to this namespace before deletion
 	ctx := context.Background()
+	nsVolumes, _ := d.dockerClient.ListNamespaceVolumes(ctx)
+	found := false
+	for _, v := range nsVolumes {
+		if v.Name == name {
+			found = true
+			break
+		}
+	}
+	if !found {
+		writeError(w, http.StatusForbidden, "volume does not belong to this namespace")
+		return
+	}
 	if err := d.dockerClient.DeleteVolume(ctx, name); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

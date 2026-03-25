@@ -71,6 +71,7 @@ type Runtime struct {
 	cmdCh       chan command
 	cancel      context.CancelFunc
 	wg          sync.WaitGroup
+	appWg       sync.WaitGroup // tracks only app start/restart goroutines (not runLoop)
 }
 
 type commandType int
@@ -309,13 +310,13 @@ func (r *Runtime) RestartApp(appName string) error {
 	r.mu.Unlock()
 
 	// Re-start in background
-	r.wg.Add(1)
+	r.appWg.Add(1)
 	go r.restartApp(ctx, appName)
 	return nil
 }
 
 func (r *Runtime) restartApp(ctx context.Context, appName string) {
-	defer r.wg.Done()
+	defer r.appWg.Done()
 
 	r.mu.RLock()
 	app := r.apps[appName]
@@ -447,17 +448,17 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) {
 		}
 	}
 
-	// Launch each app in its own goroutine, tracked by wg
+	// Launch each app in its own goroutine, tracked by appWg
 	for _, app := range r.apps {
 		r.setAppStatus(app, AppStatusPulling)
-		r.wg.Add(1)
+		r.appWg.Add(1)
 		go r.pullAndStartApp(ctx, app.Name)
 	}
 	r.mu.Unlock()
 }
 
 func (r *Runtime) pullAndStartApp(ctx context.Context, appName string) {
-	defer r.wg.Done()
+	defer r.appWg.Done()
 
 	r.mu.RLock()
 	app := r.apps[appName]
@@ -683,10 +684,9 @@ func (r *Runtime) doStop() {
 	}
 	r.mu.Unlock()
 
-	// Wait for all app goroutines to finish (they check ctx.Done)
-	// Note: wg includes runLoop itself, so we can't Wait here.
-	// Instead, give goroutines time to notice cancellation.
-	time.Sleep(500 * time.Millisecond)
+	// Wait for all app goroutines to finish (they check ctx.Done).
+	// appWg only tracks app start/restart goroutines, not runLoop.
+	r.appWg.Wait()
 
 	r.mu.Lock()
 	ctx := context.Background()
