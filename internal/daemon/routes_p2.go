@@ -597,7 +597,7 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 	outputPath := fmt.Sprintf("%s/%s", dir, fileName)
 
 	ctx := r.Context()
-	meta, err := snapshot.Export(ctx, d.dockerClient, outputPath)
+	meta, err := snapshot.Export(ctx, d.dockerClient, outputPath, d.volumesBase)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -664,7 +664,7 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	meta, err := snapshot.Import(ctx, d.dockerClient, zipPath)
+	meta, err := snapshot.Import(ctx, d.dockerClient, zipPath, d.volumesBase)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

@@ -802,7 +802,7 @@ func (r *Runtime) checkStatus() {
 			anyFailed = true
 		}
 	}
-	if allRunning && r.status != NsStatusRunning {
+	if len(r.apps) > 0 && allRunning && r.status != NsStatusRunning {
 		r.setStatus(NsStatusRunning)
 	}
 	if anyFailed && r.status == NsStatusStarting {

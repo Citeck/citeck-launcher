@@ -55,14 +55,23 @@ func sanitizeFileName(name string) string {
 
 // Export creates a snapshot ZIP of all namespace volumes.
 // The namespace MUST be stopped before calling this.
-func Export(ctx context.Context, dc *docker.Client, outputPath string) (*NamespaceSnapshotMeta, error) {
-	// List namespace volumes
-	volumes, err := dc.ListNamespaceVolumes(ctx)
+// volumesBase is the runtime directory containing volumes/ subdirectory.
+func Export(ctx context.Context, dc *docker.Client, outputPath, volumesBase string) (*NamespaceSnapshotMeta, error) {
+	// Scan bind-mount volumes in {volumesBase}/volumes/
+	volumesDir := filepath.Join(volumesBase, "volumes")
+	entries, err := os.ReadDir(volumesDir)
 	if err != nil {
-		return nil, fmt.Errorf("list volumes: %w", err)
+		return nil, fmt.Errorf("list volumes in %s: %w", volumesDir, err)
 	}
-	if len(volumes) == 0 {
-		return nil, fmt.Errorf("no volumes found for this namespace")
+
+	var volumeDirs []string
+	for _, e := range entries {
+		if e.IsDir() {
+			volumeDirs = append(volumeDirs, e.Name())
+		}
+	}
+	if len(volumeDirs) == 0 {
+		return nil, fmt.Errorf("no volumes found in %s", volumesDir)
 	}
 
 	// Ensure launcher-utils image is available
@@ -82,25 +91,19 @@ func Export(ctx context.Context, dc *docker.Client, outputPath string) (*Namespa
 	}
 
 	// Export each volume via launcher-utils container
-	for _, vol := range volumes {
-		volName := vol.Name
-		origName := vol.Labels[docker.LabelOrigName]
-		if origName == "" {
-			// Derive original name from volume name (strip prefix)
-			origName = volName
-		}
+	for _, volName := range volumeDirs {
+		hostPath := filepath.Join(volumesDir, volName)
+		dataFile := sanitizeFileName(volName) + ".tar." + compressionExt
 
-		dataFile := sanitizeFileName(origName) + ".tar." + compressionExt
+		slog.Info("Exporting volume", "volume", volName, "path", hostPath, "file", dataFile)
 
-		slog.Info("Exporting volume", "volume", volName, "file", dataFile)
-
-		rootStat, err := exportVolume(ctx, dc, volName, filepath.Join(tmpDir, dataFile))
+		rootStat, err := exportVolume(ctx, dc, hostPath, filepath.Join(tmpDir, dataFile))
 		if err != nil {
 			return nil, fmt.Errorf("export volume %s: %w", volName, err)
 		}
 
 		meta.Volumes = append(meta.Volumes, VolumeSnapshotMeta{
-			Name:     origName,
+			Name:     volName,
 			RootStat: rootStat,
 			DataFile: dataFile,
 		})
@@ -124,9 +127,9 @@ func Export(ctx context.Context, dc *docker.Client, outputPath string) (*Namespa
 	return &meta, nil
 }
 
-// Import restores volumes from a snapshot ZIP.
+// Import restores volumes from a snapshot ZIP into bind-mount directories.
 // The namespace MUST be stopped before calling this.
-func Import(ctx context.Context, dc *docker.Client, zipPath string) (*NamespaceSnapshotMeta, error) {
+func Import(ctx context.Context, dc *docker.Client, zipPath, volumesBase string) (*NamespaceSnapshotMeta, error) {
 	// Extract ZIP to temp dir
 	tmpDir, err := os.MkdirTemp("", "citeck-snapshot-import-")
 	if err != nil {
@@ -167,7 +170,7 @@ func Import(ctx context.Context, dc *docker.Client, zipPath string) (*NamespaceS
 
 		slog.Info("Importing volume", "name", vol.Name, "file", vol.DataFile)
 
-		if err := importVolume(ctx, dc, vol, tarPath); err != nil {
+		if err := importVolume(ctx, dc, vol, tarPath, volumesBase); err != nil {
 			return nil, fmt.Errorf("import volume %s: %w", vol.Name, err)
 		}
 	}
@@ -223,12 +226,12 @@ func exportVolume(ctx context.Context, dc *docker.Client, volumeName, outputPath
 	return rootStat, nil
 }
 
-// importVolume restores a single volume from a tar archive.
-func importVolume(ctx context.Context, dc *docker.Client, vol VolumeSnapshotMeta, tarPath string) error {
-	// Create the Docker volume with labels (name determined by current workspace/namespace)
-	volumeName := dc.VolumeNameForRestore(vol.Name)
-	if err := dc.CreateLabeledVolume(ctx, volumeName, vol.Name); err != nil {
-		return fmt.Errorf("create volume %s: %w", volumeName, err)
+// importVolume restores a single volume from a tar archive into a bind-mount directory.
+func importVolume(ctx context.Context, dc *docker.Client, vol VolumeSnapshotMeta, tarPath, volumesBase string) error {
+	// Create host directory for this volume
+	hostDir := filepath.Join(volumesBase, "volumes", vol.Name)
+	if err := os.MkdirAll(hostDir, 0o755); err != nil {
+		return fmt.Errorf("create volume dir %s: %w", hostDir, err)
 	}
 
 	// Parse rootStat — validate format to prevent shell injection from crafted snapshots.
@@ -258,7 +261,7 @@ func importVolume(ctx context.Context, dc *docker.Client, vol VolumeSnapshotMeta
 	)}
 
 	output, exitCode, err := dc.RunUtilsContainer(ctx, cmd, []string{
-		volumeName + ":/dest",
+		hostDir + ":/dest",
 		tarDir + ":/source:ro",
 	})
 	if err != nil {
