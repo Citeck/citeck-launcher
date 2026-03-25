@@ -79,9 +79,18 @@ Full rewrite: Go + React Web UI + Tauri Desktop.
 - [x] scripts/citeck.service: systemd service template
 - [x] GitHub Actions release workflow
 
+### E2E Verification — COMPLETE (2026-03-25)
+- [x] Go daemon starts from clean state (no existing volumes/containers)
+- [x] All 19/19 apps reach RUNNING (config #5: BASIC + custom host + TLS + port 8443)
+- [x] Dynamic datasource resolution from workspace-v1.yml (no hardcoded mappings)
+- [x] MongoDB network alias, Keycloak variable resolution, workspace default envs
+- [x] Init containers (zookeeper dirs), postgres DB init via init actions
+- [x] HTTP startup probes via host-side HTTP GET (not exec curl)
+- [x] Docker rootless socket auto-detection
+
 ## Summary
 
 **Binary:** 14MB single Go binary with embedded React web UI
 **CLI commands:** 22 total, all support `-o json`
 **Tests:** 43 Go unit tests + 9 Vitest component tests = 52 total
-**Commits:** 20+ on `release/1.4.0`
+**Full E2E:** 19/19 apps RUNNING from clean start
