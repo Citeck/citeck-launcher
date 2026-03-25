@@ -44,7 +44,7 @@ The Kotlin code in `core/`, `cli/`, `app/` directories is reference-only. All ne
 | `internal/namespace/` | Config parsing, container generator, runtime state machine, reconciler |
 | `internal/docker/` | Docker SDK wrapper (containers, images, exec, logs via stdcopy, probes) |
 | `internal/bundle/` | Bundle definitions and resolution from git repos |
-| `internal/git/` | Git clone/pull via os/exec |
+| `internal/git/` | Git clone/pull via go-git (pure Go, with token auth, hard-reset, reclone) |
 | `internal/config/` | Filesystem paths, daemon config (daemon.yml), workspace dir scanner |
 | `internal/storage/` | Store interface + FileStore (server) + SQLiteStore (desktop) |
 | `internal/h2migrate/` | H2 MVStore read-only parser, LZF decompressor, H2→SQLite migration |
@@ -152,15 +152,47 @@ Full Web UI feature set: Welcome screen, wizard, secrets, diagnostics, context m
 ### Phase 3: Architecture Gap Closure — COMPLETE (2026-03-25)
 Actions service, go-git, form validation, bind-mount volumes, snapshot export/import, runtime hardening (stalled recovery, stale cleanup, socket lock). Platform deploys 19/19.
 
+### Phase 4: CLI Completion + Production Hardening — COMPLETE (2026-03-25)
+Snapshot URL download (HTTP resume, SHA256, retry), CLI clean/apply/diff/status --watch, git hardening (hard-reset, reclone on corruption, URL change detection), dead code cleanup. 3 code review passes.
+
+### Phase 5: Kotlin Parity — PLANNED
+See `~/.claude/plans/snappy-cuddling-popcorn.md` for full plan (30 gaps, 8 sub-phases).
+Order: 5-pre (generator parity, CloudConfigServer, registry auth) → 5A (wire reconciler/auth/history) → 5C (state persistence) → 5B (deployment hash) → 5D (pull policy) → 5E (install) → 5F (ACME) → 5G (validation).
+After Phase 5: delete Kotlin code (`core/`, `cli/`, `app/`, `gradle/`).
+
 ### Key Technical Decisions
 - SSE (not WebSocket) for real-time events
 - TCP bound to 127.0.0.1 (security)
 - stdcopy.StdCopy for Docker log demuxing
-- Namespace-scoped volume operations
+- Namespace-scoped volume operations (bind-mounts, not Docker named volumes)
 - Two storage backends: flat files (server) / SQLite (desktop)
 - Desktop mode via explicit `--desktop` flag only
 - H2 MVStore read-only parser in Go for migration
 - Shared secrets at launcher level, not per-workspace
+- go-git (pure Go) for git operations — no external git binary required
+- Snapshot download with HTTP resume, SHA256 verification, retry (3 attempts)
+- `reflect.DeepEqual` for config diff (not string comparison)
+- filepath.Join everywhere (no fmt.Sprintf for paths)
+
+### Known Gaps (will be closed in Phase 5)
+
+**Unwired code (exists but not connected):**
+- Reconciler + liveness probes: NOT wired in daemon startup
+- Token auth middleware: NOT applied to TCP listener
+- OperationHistory: NOT called anywhere
+
+**Missing features vs Kotlin:**
+- CloudConfigServer (port 8761): NOT implemented — breaks "stop in launcher, debug locally" developer workflow. Kotlin serves extCloudConfig with localhost URLs (published ports) for local debugging
+- Docker registry auth: `PullImage()` sends no credentials — enterprise repos (harbor.citeck.ru) fail with 401
+- Runtime state not persisted (detached apps, edited defs, cached bundle lost on restart)
+- Deployment hash: containers always recreated on start (Kotlin keeps unchanged ones)
+- Pull policy: all images re-pulled every time (Kotlin only re-pulls snapshot images)
+- Generator gaps: no Alfresco, no globalDefaultWebappProps, no springProfiles, no debugPort JDWP, no webappProps.cloudConfig merge, no workspace-level infra image overrides, no namespace template application on creation, no license/bundle-key injection
+- Snapshot auto-import on daemon startup: `snapshot` field in namespace.yml is dead config
+- Workspace config not re-read on reload
+- `citeck install` + ACME/Let's Encrypt not implemented
+- `config validate` only checks YAML syntax, no semantic validation
+- Log startup condition (`cond.Log`) ignored in `waitForStartup()`
 
 ### Other References
 - **`PROGRESS.md`** — tracks completed work

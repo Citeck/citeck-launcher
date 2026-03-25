@@ -433,7 +433,7 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/secrets/{id}", d.handleDeleteSecret)
 	mux.HandleFunc("GET /api/v1/secrets/{id}/test", d.handleTestSecret)
 
-	// Phase 3E: Forms
+	// Forms
 	mux.HandleFunc("GET /api/v1/forms/{formId}", d.handleGetForm)
 
 	// Phase F2: Diagnostics

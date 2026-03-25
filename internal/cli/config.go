@@ -72,11 +72,8 @@ func newConfigValidateCmd() *cobra.Command {
 				errors = append(errors, "config file is empty")
 			}
 
-			// TODO: Full YAML parsing + validation (Phase 3)
-			// - authentication type (BASIC or KEYCLOAK)
-			// - proxy port (1-65535)
-			// - TLS files existence
-			// - bundle ref format
+			// Semantic validation planned for Phase 5G
+			// (auth type, port range, TLS files, bundle ref format)
 
 			result := map[string]any{
 				"path":   path,

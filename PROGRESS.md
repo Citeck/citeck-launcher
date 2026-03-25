@@ -5,9 +5,9 @@
 Kotlin implementation done. 11 commits on `release/1.4.0`. All 5 test configs pass E2E.
 Serves as **reference implementation** for Go rewrite.
 
-## V3 — Plan: `AGENT_PLAN_V3.md`
+## V3 — Go Rewrite
 
-Full rewrite: Go + React Web UI + Tauri Desktop.
+Full rewrite: Go + React Web UI (embedded). Plan: `~/.claude/plans/snappy-cuddling-popcorn.md`.
 
 ### Phase 1: Go scaffold + CLI skeleton — COMPLETE (2026-03-25)
 - [x] Go module init, cobra CLI, global flags (`-o json`, `--host`, `--token`, `--yes`)
@@ -38,7 +38,7 @@ Full rewrite: Go + React Web UI + Tauri Desktop.
 
 ### Phase 4: Full CLI + Apply + Diff — COMPLETE (2026-03-25)
 - [x] All commands ported: start, stop, status, health, config, describe, logs, exec, restart
-- [x] `citeck apply -f namespace.yml` (--wait, --timeout, --force, --dry-run)
+- [x] `citeck apply -f namespace.yml` (--wait, --timeout, --dry-run)
 - [x] `citeck diff -f new.yml` (configuration comparison)
 - [x] `citeck wait --status RUNNING --app X --healthy --timeout`
 - [x] `citeck diagnose` (--fix, --dry-run) — socket, config, Docker, ports
@@ -52,14 +52,14 @@ Full rewrite: Go + React Web UI + Tauri Desktop.
 - [x] Config page: system health display
 - [x] 9 Vitest component tests
 
-### Phase 6: Liveness + Self-Healing — COMPLETE (2026-03-25)
-- [x] Reconciler: desired vs actual state, auto-recreate missing containers
-- [x] Liveness probes: periodic health checks, auto-restart on failure
+### Phase 6: Liveness + Self-Healing — CODE COMPLETE (2026-03-25)
+- [x] Reconciler: desired vs actual state, auto-recreate missing containers (code written, NOT YET WIRED — Phase 5A)
+- [x] Liveness probes: periodic health checks, auto-restart on failure (code written, NOT YET WIRED — Phase 5A)
 - [x] Graceful shutdown ordering (proxy → webapps → keycloak → infra)
-- [x] Operation history JSONL logging
+- [x] Operation history JSONL logging (code written, NOT YET WIRED — Phase 5A)
 
-### Phase 7: Remote Daemon + Auth — COMPLETE (2026-03-25)
-- [x] Token auth middleware (required on TCP, skip on Unix socket)
+### Phase 7: Remote Daemon + Auth — CODE COMPLETE (2026-03-25)
+- [x] Token auth middleware (required on TCP, skip on Unix socket) — code written, NOT YET WIRED to TCP listener (Phase 5A)
 - [x] CORS middleware for web UI dev mode
 - [x] `citeck token generate/show`
 - [x] 5 middleware tests
@@ -69,9 +69,8 @@ Full rewrite: Go + React Web UI + Tauri Desktop.
 - [x] `citeck cert generate`: self-signed ECDSA P256 (pure Go crypto)
 - [x] `citeck clean`: orphaned resource cleanup (--execute, --volumes)
 
-### Phase 9: Citeck Desktop (Wails v3)
-- [ ] Requires Wails v3 SDK installation
-- [ ] Connection manager UI, system tray, native notifications
+### Phase 9: Desktop App — DEFERRED
+Desktop functionality delivered via embedded React Web UI (no Wails/Tauri needed for now).
 
 ### Phase 10: Distribution — COMPLETE (2026-03-25)
 - [x] .goreleaser.yml: multi-platform (linux/darwin/windows, amd64/arm64)
@@ -120,11 +119,7 @@ Full rewrite: Go + React Web UI + Tauri Desktop.
 - TCP bound to 127.0.0.1 (not 0.0.0.0)
 - useMemo for expensive log filtering, render cap for DOM performance
 
-### Remaining (Phase E/F — next iteration)
-- [ ] Namespace creation wizard (multi-step form)
-- [ ] Snapshot import/export (ZIP + tar.xz, requires launcher-utils container)
-- [ ] Auth secrets management
-- [ ] Diagnostics page (Docker info, disk, ports, diagnose --fix)
+*(All Phase E/F items completed — see below)*
 
 ---
 
@@ -203,9 +198,10 @@ Full rewrite: Go + React Web UI + Tauri Desktop.
 - Checks: Docker, Socket, Config, Disk, Runtime
 - React: status-colored check table, Run Checks/Fix All buttons
 
-### Phase F3: Snapshot Import/Export (API scaffold)
-- Go API: `GET /api/v1/snapshots`, `POST /api/v1/snapshots/export`, `POST /api/v1/snapshots/import`
-- React API client ready, volume backup/restore implementation TODO
+### Phase F3: Snapshot Import/Export — COMPLETE
+- Go API: `GET /api/v1/snapshots`, `POST /api/v1/snapshots/export`, `POST /api/v1/snapshots/import`, `POST /api/v1/snapshots/download`
+- Export/import via launcher-utils container (tar+zstd), ZIP format compatible with Kotlin
+- HTTP download with Range resume, SHA256 verification, retry (3 attempts)
 
 ### Phase F4: UI Design Polish + Light Theme
 - Light theme via `[data-theme="light"]` CSS custom properties
