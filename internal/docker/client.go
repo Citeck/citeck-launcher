@@ -22,10 +22,15 @@ import (
 )
 
 // Labels used to track Citeck containers.
+// These must match the Kotlin desktop app labels (DockerLabels.kt) for backward compatibility.
 const (
-	LabelWorkspace = "citeck.launcher.workspace"
-	LabelNamespace = "citeck.launcher.namespace"
-	LabelAppName   = "citeck.launcher.app"
+	LabelLauncher    = "citeck.launcher"           // marker label, always "true"
+	LabelWorkspace   = "citeck.launcher.workspace"
+	LabelNamespace   = "citeck.launcher.namespace"
+	LabelAppName     = "citeck.launcher.app.name"  // Kotlin: DockerLabels.APP_NAME
+	LabelAppHash     = "citeck.launcher.app.hash"  // Kotlin: DockerLabels.APP_HASH
+	LabelOrigName    = "citeck.launcher.original-name"
+	LabelComposeProj = "com.docker.compose.project" // Docker Desktop grouping
 )
 
 // Client wraps the Docker SDK client with Citeck-specific operations.
@@ -83,6 +88,11 @@ func (c *Client) Ping(ctx context.Context) error {
 // ContainerName generates the Docker container name.
 func (c *Client) ContainerName(appName string) string {
 	return fmt.Sprintf("citeck_%s_%s_%s", appName, c.namespace, c.workspace)
+}
+
+// VolumeName generates the Docker volume name (matching Kotlin pattern).
+func (c *Client) VolumeName(shortName string) string {
+	return fmt.Sprintf("citeck_volume_%s_%s_%s", shortName, c.namespace, c.workspace)
 }
 
 // NetworkName returns the Docker network name for this namespace.
@@ -145,20 +155,33 @@ func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef,
 	}
 
 	// Volumes (binds)
+	// Named volumes (e.g. "mongo2:/data/db") are converted to bind mounts
+	// at {volumesBaseDir}/{name} so data stays in the runtime directory.
 	var binds []string
 	for _, v := range app.Volumes {
-		// Resolve relative paths
-		if strings.HasPrefix(v, "./") && volumesBaseDir != "" {
-			v = volumesBaseDir + "/" + v[2:]
+		parts := strings.SplitN(v, ":", 2)
+		if len(parts) == 2 {
+			source := parts[0]
+			if strings.HasPrefix(source, "./") && volumesBaseDir != "" {
+				// Relative path — resolve against volumesBase
+				v = volumesBaseDir + "/" + source[2:] + ":" + parts[1]
+			} else if !strings.ContainsAny(source, "/.") && volumesBaseDir != "" {
+				// Named volume — convert to bind mount in runtime dir
+				hostDir := volumesBaseDir + "/volumes/" + source
+				os.MkdirAll(hostDir, 0o755)
+				v = hostDir + ":" + parts[1]
+			}
 		}
 		binds = append(binds, v)
 	}
 
-	// Labels
+	// Labels (must match Kotlin DockerLabels for backward compatibility)
 	labels := map[string]string{
-		LabelWorkspace: c.workspace,
-		LabelNamespace: c.namespace,
-		LabelAppName:   app.Name,
+		LabelLauncher:    "true",
+		LabelWorkspace:   c.workspace,
+		LabelNamespace:   c.namespace,
+		LabelAppName:     app.Name,
+		LabelComposeProj: fmt.Sprintf("citeck_launcher_%s_%s", c.namespace, c.workspace),
 	}
 
 	// Memory limit
@@ -181,13 +204,17 @@ func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef,
 		Labels:       labels,
 	}
 
+	// Init containers should not have a restart policy — only main containers
+	restartPolicy := container.RestartPolicy{Name: container.RestartPolicyUnlessStopped}
+	if app.IsInit {
+		restartPolicy = container.RestartPolicy{Name: container.RestartPolicyDisabled}
+	}
+
 	hostConfig := &container.HostConfig{
-		Binds:        binds,
-		PortBindings: portBindings,
-		NetworkMode:  container.NetworkMode(networkName),
-		RestartPolicy: container.RestartPolicy{
-			Name: container.RestartPolicyUnlessStopped,
-		},
+		Binds:         binds,
+		PortBindings:  portBindings,
+		NetworkMode:   container.NetworkMode(networkName),
+		RestartPolicy: restartPolicy,
 	}
 	if memoryBytes > 0 {
 		hostConfig.Resources.Memory = memoryBytes
@@ -234,7 +261,7 @@ func (c *Client) RemoveContainer(ctx context.Context, id string) error {
 
 // StopAndRemoveContainer stops and removes a container by name.
 func (c *Client) StopAndRemoveContainer(ctx context.Context, name string) error {
-	if err := c.StopContainer(ctx, name, 30); err != nil {
+	if err := c.StopContainer(ctx, name, 10); err != nil {
 		slog.Debug("stop container", "name", name, "err", err)
 	}
 	return c.RemoveContainer(ctx, name)
@@ -382,6 +409,21 @@ func (c *Client) CreateVolume(ctx context.Context, name string) error {
 	return err
 }
 
+// CreateLabeledVolume creates a Docker volume with namespace labels (used by snapshot import).
+func (c *Client) CreateLabeledVolume(ctx context.Context, name, originalName string) error {
+	_, err := c.cli.VolumeCreate(ctx, volume.CreateOptions{
+		Name: name,
+		Labels: map[string]string{
+			LabelLauncher:    "true",
+			LabelWorkspace:   c.workspace,
+			LabelNamespace:   c.namespace,
+			LabelOrigName:    originalName,
+			LabelComposeProj: fmt.Sprintf("citeck_launcher_%s_%s", c.namespace, c.workspace),
+		},
+	})
+	return err
+}
+
 // ListNamespaceVolumes returns volumes filtered by this client's namespace.
 func (c *Client) ListNamespaceVolumes(ctx context.Context) ([]*volume.Volume, error) {
 	resp, err := c.cli.VolumeList(ctx, volume.ListOptions{
@@ -482,4 +524,52 @@ type ContainerStat struct {
 	CPUPercent float64
 	MemUsage   int64
 	MemLimit   int64
+}
+
+// RunUtilsContainer runs a command in a temporary launcher-utils container with the given bind mounts.
+// It creates the container, starts it, waits for exit, captures output, and removes it.
+func (c *Client) RunUtilsContainer(ctx context.Context, cmd []string, binds []string) (string, int, error) {
+	const utilsImage = "registry.citeck.ru/community/launcher-utils:1.0"
+
+	containerName := c.ContainerName("launcher-utils-tmp")
+	_ = c.StopAndRemoveContainer(ctx, containerName)
+
+	resp, err := c.cli.ContainerCreate(ctx, &container.Config{
+		Image: utilsImage,
+		Cmd:   cmd,
+		Labels: map[string]string{
+			LabelLauncher:  "true",
+			LabelWorkspace: c.workspace,
+			LabelNamespace: c.namespace,
+			LabelAppName:   "launcher-utils",
+		},
+	}, &container.HostConfig{
+		Binds: binds,
+	}, nil, nil, containerName)
+	if err != nil {
+		return "", -1, fmt.Errorf("create utils container: %w", err)
+	}
+	containerID := resp.ID
+	defer func() { _ = c.RemoveContainer(ctx, containerID) }()
+
+	if err := c.cli.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+		return "", -1, fmt.Errorf("start utils container: %w", err)
+	}
+
+	if err := c.WaitForContainerExit(ctx, containerID, 5*time.Minute); err != nil {
+		return "", -1, fmt.Errorf("wait for utils container: %w", err)
+	}
+
+	output, _ := c.ContainerLogs(ctx, containerID, 1000)
+
+	inspect, err := c.cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return output, -1, nil
+	}
+	return output, inspect.State.ExitCode, nil
+}
+
+// VolumeNameForRestore returns the Docker volume name for restoring a snapshot volume.
+func (c *Client) VolumeNameForRestore(originalName string) string {
+	return fmt.Sprintf("citeck_volume_%s_%s_%s", originalName, c.namespace, c.workspace)
 }
