@@ -17,7 +17,7 @@ const (
 	ZKPort         = 2181
 	RMQHost        = "rabbitmq"
 	RMQPort        = 5672
-	MongoHost      = "mongodb"
+	MongoHost      = "mongo"
 	MongoPort      = 27017
 	MailhogHost    = "mailhog"
 	OnlyofficeHost = "onlyoffice"
@@ -47,8 +47,12 @@ func NewNsGenContext(cfg *NamespaceConfig, bun *bundle.BundleDef) *NsGenContext 
 	return ctx
 }
 
+// NextPort returns current port value and increments for next call (pre-increment).
+// Matches Kotlin's AtomicInteger.getAndIncrement() behavior.
 func (c *NsGenContext) NextPort() int {
-	return int(c.portsCounter.Add(1))
+	prev := c.portsCounter.Load()
+	c.portsCounter.Add(1)
+	return int(prev)
 }
 
 func (c *NsGenContext) GetOrCreateApp(name string) *AppBuilder {
@@ -140,10 +144,6 @@ func (b *AppBuilder) AddDependsOn(name string) *AppBuilder {
 }
 
 func (b *AppBuilder) Build() appdef.ApplicationDef {
-	shmSize := b.ShmSize
-	if shmSize == "" {
-		shmSize = "64m"
-	}
 	return appdef.ApplicationDef{
 		Name:              b.Name,
 		NetworkAliases:    b.NetworkAliases,
@@ -159,7 +159,7 @@ func (b *AppBuilder) Build() appdef.ApplicationDef {
 		LivenessProbe:     b.LivenessProbe,
 		Resources:         b.Resources,
 		Kind:              b.Kind,
-		ShmSize:           shmSize,
+		ShmSize:           b.ShmSize,
 		InitContainers:    b.InitContainers,
 	}
 }

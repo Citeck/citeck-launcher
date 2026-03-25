@@ -56,9 +56,7 @@ func generateMailhog(ctx *NsGenContext) {
 	app := ctx.GetOrCreateApp(appdef.AppMailhog)
 	app.Image = bundleImageOr(ctx, appdef.AppMailhog, "mailhog/mailhog:v1.0.1")
 	app.Kind = appdef.KindThirdParty
-	app.AddPort("8025:8025").AddPort("1025:1025")
-	app.AddVolume("mailhog:/maildir")
-	app.AddEnv("MH_STORAGE", "maildir")
+	app.AddPort("1025:1025").AddPort("8025:8025")
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "128m"}}
 }
 
@@ -70,10 +68,9 @@ func generateMongoDB(ctx *NsGenContext) {
 	app := ctx.GetOrCreateApp(appdef.AppMongodb)
 	app.Image = img
 	app.Kind = appdef.KindThirdParty
-	// Container name is "mongo" but apps reference it as "mongodb" — add network alias
-	app.NetworkAliases = []string{MongoHost}
+	// No extra alias needed — Kotlin uses "mongo" as the hostname
 	app.AddPort(fmt.Sprintf("27017:%d", MongoPort))
-	app.AddVolume("mongodb:/data/db")
+	app.AddVolume("mongo2:/data/db")
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "512m"}}
 }
 
@@ -89,11 +86,10 @@ func generatePgAdmin(ctx *NsGenContext) {
 	app.Image = img
 	app.Kind = appdef.KindThirdParty
 	app.AddPort("5050:80")
-	app.AddEnv("PGADMIN_DEFAULT_EMAIL", "admin@citeck.ru")
+	app.AddEnv("PGADMIN_DEFAULT_EMAIL", "admin@admin.com")
 	app.AddEnv("PGADMIN_DEFAULT_PASSWORD", "admin")
-	app.AddEnv("PGADMIN_CONFIG_SERVER_MODE", "False")
-	app.AddVolume("./pgadmin/servers.json:/pgadmin4/servers.json:ro")
-	app.AddDependsOn(appdef.AppPostgres)
+	app.AddVolume("pgadmin2:/var/lib/pgadmin")
+	app.AddVolume("./pgadmin/servers.json:/pgadmin4/servers.json")
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "256m"}}
 }
 
@@ -162,7 +158,7 @@ func generateKeycloak(ctx *NsGenContext) {
 		return
 	}
 
-	dbName := "keycloak"
+	dbName := "citeck_keycloak"
 
 	// Keycloak needs its own DB in postgres
 	if pgApp := ctx.Applications[appdef.AppPostgres]; pgApp != nil {
@@ -171,14 +167,13 @@ func generateKeycloak(ctx *NsGenContext) {
 		})
 	}
 
-	img := bundleImageOr(ctx, appdef.AppKeycloak, "quay.io/keycloak/keycloak:26.0")
+	img := bundleImageOr(ctx, appdef.AppKeycloak, "keycloak/keycloak:26.4.5")
 	app := ctx.GetOrCreateApp(appdef.AppKeycloak)
 	app.Image = img
 	app.Kind = appdef.KindThirdParty
 	app.AddEnv("KC_BOOTSTRAP_ADMIN_USERNAME", "admin")
 	app.AddEnv("KC_BOOTSTRAP_ADMIN_PASSWORD", "admin")
 	app.AddEnv("KC_HOSTNAME_STRICT_HTTPS", fmt.Sprintf("%v", ctx.TLSEnabled()))
-	app.AddPort("8080:8080")
 	app.AddDependsOn(appdef.AppPostgres)
 	app.AddVolume("./keycloak/ecos-app-realm.json:/opt/keycloak/data/import/ecos-app-realm.json")
 	app.AddVolume("./keycloak/healthcheck.sh:/healthcheck.sh")
@@ -232,9 +227,9 @@ func generateOnlyOffice(ctx *NsGenContext) {
 	app := ctx.GetOrCreateApp(appdef.AppOnlyoffice)
 	app.Image = img
 	app.Kind = appdef.KindThirdParty
-	app.AddEnv("JWT_SECRET", JWTSecret)
-	app.AddPort("8980:80")
-	app.ShmSize = "256m"
+	app.AddEnv("JWT_ENABLED", "false")
+	app.AddEnv("ALLOW_PRIVATE_IP_ADDRESS", "true")
+	app.AddPort("8070:80")
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "3g"}}
 }
 
@@ -441,6 +436,21 @@ func generateWebapp(name string, ctx *NsGenContext) {
 			Port: port,
 		}}},
 	}
+
+	// EAPPS special handling: add init containers from bundle citeckApps
+	if name == appdef.AppEapps && ctx.Bundle != nil && len(ctx.Bundle.CiteckApps) > 0 {
+		for _, citeckApp := range ctx.Bundle.CiteckApps {
+			app.InitContainers = append(app.InitContainers, appdef.InitContainerDef{
+				Image: citeckApp.Image,
+				Environments: map[string]string{
+					"ECOS_APPS_TARGET_DIR": "/run/ecos-apps",
+				},
+				Volumes: []string{fmt.Sprintf("./app/%s/ecos-apps:/run/ecos-apps", name)},
+			})
+		}
+		app.AddEnv("ECOS_WEBAPP_EAPPS_ADDITIONAL_ARTIFACTS_LOCATIONS", "/run/ecos-artifacts")
+		app.AddVolume(fmt.Sprintf("./app/%s/ecos-apps:/run/ecos-artifacts/app/ecosapp", name))
+	}
 }
 
 // processWebappDataSources reads datasource definitions from workspace config
@@ -532,15 +542,13 @@ func processWebappDataSources(appName string, app *AppBuilder, ctx *NsGenContext
 // resolveTemplateVarsWithConfig resolves template variables including config-dependent ones.
 func resolveTemplateVarsWithConfig(s string, cfg *NamespaceConfig) string {
 	kkEnabled := "false"
-	kkAdminURL := ""
-	kkAdminUser := ""
-	kkAdminPassword := ""
 	if cfg != nil && cfg.Authentication.Type == AuthKeycloak {
 		kkEnabled = "true"
-		kkAdminURL = fmt.Sprintf("http://%s:8080", KKHost)
-		kkAdminUser = "admin"
-		kkAdminPassword = "admin"
 	}
+	// KK_ADMIN_URL is always set (Kotlin NsGenContext.VARS)
+	kkAdminURL := fmt.Sprintf("http://%s:8080", KKHost)
+	kkAdminUser := "admin"
+	kkAdminPassword := "admin"
 	s = strings.ReplaceAll(s, "${KK_ENABLED}", kkEnabled)
 	s = strings.ReplaceAll(s, "${KK_ADMIN_URL}", kkAdminURL)
 	s = strings.ReplaceAll(s, "${KK_ADMIN_USER}", kkAdminUser)
