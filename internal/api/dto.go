@@ -6,12 +6,14 @@ type ActionResultDto struct {
 }
 
 type AppDto struct {
-	Name     string `json:"name"`
-	Status   string `json:"status"`
-	Image    string `json:"image"`
-	Detached bool   `json:"detached"`
-	CPU      string `json:"cpu"`
-	Memory   string `json:"memory"`
+	Name     string   `json:"name"`
+	Status   string   `json:"status"`
+	Image    string   `json:"image"`
+	Detached bool     `json:"detached"`
+	CPU      string   `json:"cpu"`
+	Memory   string   `json:"memory"`
+	Kind     string   `json:"kind"`
+	Ports    []string `json:"ports,omitempty"`
 }
 
 type DaemonStatusDto struct {
@@ -24,11 +26,19 @@ type DaemonStatusDto struct {
 }
 
 type NamespaceDto struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	Status    string   `json:"status"`
-	BundleRef string   `json:"bundleRef"`
-	Apps      []AppDto `json:"apps"`
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Status    string    `json:"status"`
+	BundleRef string    `json:"bundleRef"`
+	Apps      []AppDto  `json:"apps"`
+	Links     []LinkDto `json:"links,omitempty"`
+}
+
+type LinkDto struct {
+	Name  string  `json:"name"`
+	URL   string  `json:"url"`
+	Icon  string  `json:"icon,omitempty"`
+	Order float64 `json:"order"`
 }
 
 type EventDto struct {

@@ -5,9 +5,9 @@ import { AppTable } from './AppTable'
 import type { AppDto } from '../lib/types'
 
 const mockApps: AppDto[] = [
-  { name: 'proxy', status: 'RUNNING', image: 'ecos-proxy:2.25', detached: false, cpu: '0.1%', memory: '32M' },
-  { name: 'gateway', status: 'STARTING', image: 'ecos-gateway:3.3', detached: false, cpu: '', memory: '' },
-  { name: 'postgres', status: 'FAILED', image: 'postgres:17', detached: false, cpu: '', memory: '' },
+  { name: 'proxy', status: 'RUNNING', image: 'ecos-proxy:2.25', detached: false, cpu: '0.1%', memory: '32M', kind: 'THIRD_PARTY', ports: ['80:80'] },
+  { name: 'gateway', status: 'STARTING', image: 'ecos-gateway:3.3', detached: false, cpu: '', memory: '', kind: 'CITECK_CORE' },
+  { name: 'postgres', status: 'FAILED', image: 'postgres:17', detached: false, cpu: '', memory: '', kind: 'THIRD_PARTY' },
 ]
 
 function renderWithRouter(ui: React.ReactElement) {
@@ -26,9 +26,11 @@ describe('AppTable', () => {
     renderWithRouter(<AppTable apps={mockApps} />)
     expect(screen.getByText('APP')).toBeInTheDocument()
     expect(screen.getByText('STATUS')).toBeInTheDocument()
-    expect(screen.getByText('IMAGE')).toBeInTheDocument()
+    expect(screen.getByText('TAG')).toBeInTheDocument()
+    expect(screen.getByText('PORTS')).toBeInTheDocument()
     expect(screen.getByText('CPU')).toBeInTheDocument()
     expect(screen.getByText('MEMORY')).toBeInTheDocument()
+    expect(screen.getByText('ACTIONS')).toBeInTheDocument()
   })
 
   it('renders status badges for each app', () => {
@@ -49,9 +51,10 @@ describe('AppTable', () => {
     expect(screen.getByText('APP')).toBeInTheDocument()
   })
 
-  it('shows dash for empty cpu/memory', () => {
+  it('shows dash for empty cpu/memory/ports', () => {
     renderWithRouter(<AppTable apps={[mockApps[1]]} />)
     const dashes = screen.getAllByText('—')
-    expect(dashes.length).toBe(2)
+    // cpu + memory + ports = 3 dashes
+    expect(dashes.length).toBe(3)
   })
 })

@@ -3,6 +3,8 @@ import { useDashboardStore } from '../lib/store'
 import { StatusBadge } from '../components/StatusBadge'
 import { AppTable } from '../components/AppTable'
 import { NamespaceControls } from '../components/NamespaceControls'
+import { QuickLinks } from '../components/QuickLinks'
+import { StatsBar } from '../components/StatsBar'
 
 export function Dashboard() {
   const { namespace, health, loading, error, fetchData, startEventStream, stopEventStream } =
@@ -31,9 +33,6 @@ export function Dashboard() {
   }
 
   if (!namespace) return null
-
-  const runningCount = namespace.apps.filter((a) => a.status === 'RUNNING').length
-  const totalCount = namespace.apps.length
 
   // Check Docker availability from health checks
   const dockerCheck = health?.checks.find((c) => c.name === 'docker')
@@ -66,15 +65,13 @@ export function Dashboard() {
         </div>
       )}
 
-      {/* Header */}
+      {/* Namespace header */}
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-semibold">{namespace.name}</h1>
           <div className="mt-1 flex items-center gap-3 text-sm text-muted-foreground">
             {namespace.bundleRef && <span>Bundle: {namespace.bundleRef}</span>}
-            <span>
-              {runningCount}/{totalCount} apps running
-            </span>
+            <span>ID: {namespace.id}</span>
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -82,6 +79,14 @@ export function Dashboard() {
           <StatusBadge status={namespace.status} />
         </div>
       </div>
+
+      {/* Stats bar */}
+      <StatsBar apps={namespace.apps} />
+
+      {/* Quick links */}
+      {namespace.links && namespace.links.length > 0 && (
+        <QuickLinks links={namespace.links} />
+      )}
 
       {/* Health indicator */}
       {health && !dockerError && (
@@ -93,16 +98,6 @@ export function Dashboard() {
           }`}
         >
           System: {health.healthy ? 'Healthy' : 'Unhealthy'}
-          {namespace.status === 'RUNNING' && (
-            <a
-              href="/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="ml-4 text-xs underline opacity-70 hover:opacity-100"
-            >
-              Open in Browser
-            </a>
-          )}
         </div>
       )}
 

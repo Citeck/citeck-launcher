@@ -10,6 +10,15 @@ export interface AppDto {
   detached: boolean
   cpu: string
   memory: string
+  kind: string
+  ports?: string[]
+}
+
+export interface LinkDto {
+  name: string
+  url: string
+  icon?: string
+  order: number
 }
 
 export interface NamespaceDto {
@@ -18,6 +27,7 @@ export interface NamespaceDto {
   status: string
   bundleRef: string
   apps: AppDto[]
+  links?: LinkDto[]
 }
 
 export interface HealthDto {

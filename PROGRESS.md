@@ -116,7 +116,16 @@ Full rewrite: Go + React Web UI + Tauri Desktop.
 - [x] Fixed restart TODO (was no-op, now actually stops + starts container)
 - [x] Fixed vitest config (exclude Playwright tests directory)
 
-### Phase B: Dashboard Enhancements — PENDING
+### Phase B: Dashboard Enhancements — DONE
+- [x] App grouping by kind (Core / Extensions / Additional / Infrastructure)
+- [x] Tag column (extracted from image name)
+- [x] Ports column (formatted as host→container)
+- [x] StatsBar component (running/starting/failed/stopped counts)
+- [x] QuickLinks panel (ECOS UI, Spring Boot Admin, RabbitMQ, MailHog, Keycloak, PG Admin)
+- [x] Namespace info (ID shown in header)
+- [x] Go API: kind + ports added to AppDto, links added to NamespaceDto
+- [x] Go runtime: generateLinks() with dynamic links based on config
+- [x] Updated tests for new table columns
 ### Phase C: Config Editor — PENDING
 ### Phase D: Full Log Viewer — PENDING
 ### Phase E: Namespace Wizard / Setup — PENDING

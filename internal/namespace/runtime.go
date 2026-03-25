@@ -131,6 +131,8 @@ func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 			Image:  app.Def.Image,
 			CPU:    app.CPU,
 			Memory: app.Memory,
+			Kind:   kindToString(app.Def.Kind),
+			Ports:  app.Def.Ports,
 		})
 	}
 	return api.NamespaceDto{
@@ -139,7 +141,77 @@ func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 		Status:    string(r.status),
 		BundleRef: r.config.BundleRef.String(),
 		Apps:      apps,
+		Links:     r.generateLinks(),
 	}
+}
+
+func kindToString(k appdef.ApplicationKind) string {
+	switch k {
+	case appdef.KindCiteckCore:
+		return "CITECK_CORE"
+	case appdef.KindCiteckCoreExtension:
+		return "CITECK_CORE_EXTENSION"
+	case appdef.KindCiteckAdditional:
+		return "CITECK_ADDITIONAL"
+	case appdef.KindThirdParty:
+		return "THIRD_PARTY"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+func (r *Runtime) generateLinks() []api.LinkDto {
+	if r.config == nil {
+		return nil
+	}
+	proxyBase := r.proxyBaseURL()
+	proxyHost := r.config.Proxy.Host
+	if proxyHost == "" {
+		proxyHost = "localhost"
+	}
+
+	links := []api.LinkDto{
+		{Name: "ECOS UI", URL: proxyBase, Icon: "ecos", Order: -100},
+		{Name: "Spring Boot Admin", URL: proxyBase + "/gateway/eapps/admin/wallboard", Icon: "spring", Order: -1},
+		{Name: "RabbitMQ", URL: fmt.Sprintf("http://%s:15672", proxyHost), Icon: "rabbitmq", Order: 2},
+		{Name: "MailHog", URL: fmt.Sprintf("http://%s:8025", proxyHost), Icon: "mailhog", Order: 1},
+	}
+
+	// Keycloak link (only if auth is KEYCLOAK)
+	if r.config.Authentication.Type == AuthKeycloak {
+		links = append(links, api.LinkDto{
+			Name: "Keycloak Admin", URL: proxyBase + "/ecos-idp/auth/", Icon: "keycloak", Order: -10,
+		})
+	}
+
+	// PgAdmin link (if app exists)
+	if _, ok := r.apps["pgadmin"]; ok {
+		links = append(links, api.LinkDto{
+			Name: "PG Admin", URL: fmt.Sprintf("http://%s:5050", proxyHost), Icon: "postgres", Order: 0,
+		})
+	}
+
+	return links
+}
+
+func (r *Runtime) proxyBaseURL() string {
+	scheme := "http"
+	if r.config.Proxy.TLS.Enabled {
+		scheme = "https"
+	}
+	host := r.config.Proxy.Host
+	if host == "" {
+		host = "localhost"
+	}
+	port := r.config.Proxy.Port
+	defaultPort := 80
+	if r.config.Proxy.TLS.Enabled {
+		defaultPort = 443
+	}
+	if port == 0 || port == defaultPort {
+		return fmt.Sprintf("%s://%s", scheme, host)
+	}
+	return fmt.Sprintf("%s://%s:%d", scheme, host, port)
 }
 
 func (r *Runtime) Start(apps []appdef.ApplicationDef) {
