@@ -321,7 +321,7 @@ make test                        # all tests (~30s)
 
 ## Implementation Phases
 
-### Phase 1: Go Project Scaffold + CLI Skeleton
+### Phase 1: Go Project Scaffold + CLI Skeleton — DONE
 
 **Goal:** Buildable Go binary with basic commands that talk to the existing Kotlin daemon.
 
@@ -339,7 +339,7 @@ make test                        # all tests (~30s)
 
 **Verification:** Go `citeck status -o json` returns same data as Kotlin version.
 
-### Phase 2: Web UI Scaffold
+### Phase 2: Web UI Scaffold — DONE
 
 **Goal:** React app served by Go daemon, testable with Playwright.
 
@@ -361,7 +361,7 @@ make test                        # all tests (~30s)
 
 **Verification:** `citeck start --foreground` → open `http://localhost:8088` → dashboard shows apps.
 
-### Phase 3: Port Daemon Core
+### Phase 3: Port Daemon Core — DONE
 
 **Goal:** Go daemon replaces Kotlin daemon. Full namespace lifecycle.
 
@@ -386,7 +386,7 @@ make test                        # all tests (~30s)
 
 **Verification:** Delete Kotlin daemon. Go binary handles everything. Same 5 configs pass.
 
-### Phase 4: Full CLI + Apply + Diff
+### Phase 4: Full CLI + Apply + Diff — DONE
 
 **Goal:** All CLI commands ported + new K8s-style commands.
 
@@ -407,7 +407,7 @@ make test                        # all tests (~30s)
 - Integration: `diagnose --fix` fixes stale socket/container
 - E2E: Full agent workflow (install → apply → wait → health → describe)
 
-### Phase 5: Web UI — Full Dashboard
+### Phase 5: Web UI — Full Dashboard — DONE
 
 **Goal:** Production-ready web dashboard with real-time updates.
 
@@ -428,7 +428,7 @@ make test                        # all tests (~30s)
 - Visual regression: Screenshot baselines for all pages
 - Accessibility: Playwright accessibility snapshot for all pages
 
-### Phase 6: Liveness Probes + Self-Healing
+### Phase 6: Liveness Probes + Self-Healing — DONE
 
 **Goal:** Daemon detects and fixes problems automatically.
 
@@ -446,7 +446,7 @@ make test                        # all tests (~30s)
 - Integration: `docker rm` container → reconciler recreates
 - E2E: Web UI shows restart event in real-time
 
-### Phase 7: Remote Daemon + Auth
+### Phase 7: Remote Daemon + Auth — DONE
 
 **Goal:** Daemon accessible over network with TLS + token auth.
 
@@ -464,7 +464,7 @@ make test                        # all tests (~30s)
 - Integration: Connect without token → 401
 - E2E: Open remote URL in Playwright → login → dashboard
 
-### Phase 8: Advanced Features
+### Phase 8: Advanced Features — DONE
 
 **Goal:** Rolling updates, backup, cert management, cleanup.
 
@@ -480,7 +480,7 @@ make test                        # all tests (~30s)
 9. `citeck events` / `citeck history`
 10. Log filtering (`--errors-only`, `--search`, `--since`)
 
-### Phase 9: Citeck Desktop (Wails v3 — Lens-like client)
+### Phase 9: Citeck Desktop (Wails v3 — Lens-like client) — DEFERRED
 
 **Goal:** Cross-platform desktop app for managing local and remote instances.
 
@@ -510,7 +510,7 @@ make test                        # all tests (~30s)
 - Go: Unit tests for connection manager, bindings
 - Manual: Install on each platform, verify tray icon + connection
 
-### Phase 10: Distribution + Polish
+### Phase 10: Distribution + Polish — DONE
 
 **Goal:** Production-ready releases for all platforms.
 

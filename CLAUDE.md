@@ -4,121 +4,140 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Citeck Launcher is a Kotlin desktop application for managing Citeck ECOS namespaces and Docker containers. It uses Jetbrains Compose Desktop for UI, targets Java 25, and builds with Gradle (Kotlin DSL).
+Citeck Launcher manages Citeck ECOS namespaces and Docker containers. It is a single Go binary (~14MB) that serves as both CLI and daemon, with an embedded React Web UI. The original Kotlin code (Compose Desktop, Gradle) is kept as reference implementation.
 
 ## Build & Development Commands
 
+### Go + Web UI (primary)
+
 ```bash
-./gradlew :app:run                               # Run the application
-./gradlew test                                   # Run all tests
-./gradlew test --tests "*.BundleKeyTest"         # Run a single test class
-./gradlew ktlintCheck                            # Lint check
-./gradlew ktlintFormat                           # Auto-fix lint issues
-./gradlew build                                  # Full build
-./gradlew :core:build                            # Build core module only (no Compose)
-./gradlew :app:build                             # Build app module (with Compose)
-./gradlew :app:shadowJar                         # Build fat JAR (output: app/build/compose/jars/)
-./gradlew :app:packageDist -PtargetOs=linux_x64  # Build native distribution
+make build                    # Build Go binary + embed React web UI
+make build-fast               # Build Go only (skip web rebuild)
+make test                     # Run all tests (Go + Vitest)
+go test ./...                 # Go tests only
+go test ./internal/...        # Go unit tests only
+cd web && npx vitest run      # React component tests
+cd web && npx playwright test # E2E browser tests
+golangci-lint run             # Go linter
+cd web && npm run lint        # Web linter
+./citeck start --foreground   # Run daemon with web UI on :8088
 ```
 
-Build output paths for `packageDist`:
-- Linux: `app/build/compose/binaries/main/deb/`
-- macOS: `app/build/compose/binaries/main/dmg/`
-- Windows: `app/build/compose/binaries/main/msi/`
+### Kotlin reference (read-only, not built)
 
-A ktlint pre-commit hook is installed automatically on first build (`addKtlintFormatGitPreCommitHook` task).
+```bash
+./gradlew :app:run            # Run Compose Desktop app
+./gradlew test                # Run Kotlin tests
+./gradlew ktlintFormat        # Auto-fix Kotlin lint
+```
 
-The `generateBuildInfo` task produces `build-info.json` (version, buildTime, javaVersion) as a generated resource.
+The Kotlin code in `core/`, `cli/`, `app/` directories is reference-only. All new development is in Go + React.
 
 ## Architecture
 
-### Service Layer (`core/`)
-
-- **LauncherServices** — top-level IoC container that lazily initializes all application-wide services (database, Docker API, Git, secrets, cloud config, workspace selection)
-- **WorkspaceServices** — workspace-scoped service container (namespaces, bundles, entities, licenses, snapshots, state persistence)
-- **MutProp<T>** — reactive property wrapper used throughout for state management, similar to mutable state (lives in `core/utils/prop/`)
-
-### Key Subsystems
+### Go Daemon + CLI (`internal/`)
 
 | Package | Purpose |
 |---|---|
-| `core/namespace/` | Docker namespace lifecycle (start, stop, configure containers) |
-| `core/bundle/` | Bundle definitions and versioning for application packages |
-| `core/config/` | Configuration management and persistence |
-| `core/database/` | H2 embedded database with `DataRepo` key-value abstraction |
-| `core/entity/` | Generic entity/DTO definition and CRUD framework |
-| `core/git/` | JGit integration for repository operations |
-| `core/secrets/` | Secrets storage and authentication (Basic + Keycloak) |
-| `core/actions/` | Pluggable action execution system |
-| `core/socket/` | IPC via local sockets (single-instance lock) |
-| `core/appdef/` | Application definition models (ApplicationDef, probes, resources, init containers) |
-| `core/license/` | Enterprise license validation and storage |
-| `core/logs/` | Custom Logback configuration |
-| `core/snapshot/` | Workspace/volume snapshot download and restore |
-| `core/workspace/` | Multi-workspace lifecycle management |
-| `core/utils/` | Utilities: reactive props, JSON/YAML, file ops, promises, hashing |
+| `internal/cli/` | Cobra CLI commands (start, stop, status, apply, etc.) |
+| `internal/daemon/` | HTTP server, API routes, middleware (auth, CORS) |
+| `internal/namespace/` | Config parsing, container generator, runtime state machine, reconciler |
+| `internal/docker/` | Docker SDK wrapper (containers, images, exec, logs, probes) |
+| `internal/bundle/` | Bundle definitions and resolution from git repos |
+| `internal/git/` | Git clone/pull via os/exec |
+| `internal/config/` | Filesystem paths, daemon config, workspace loading |
+| `internal/client/` | DaemonClient (Unix socket + TCP transport) |
+| `internal/output/` | Text/JSON output formatter, tables, colors |
+| `internal/api/` | Shared API types (DTOs) |
+| `internal/appdef/` | Application definition models |
+| `internal/appfiles/` | Embedded resource files (go:embed) |
+| `internal/history/` | Operation history (JSONL) |
 
-### UI Layer (`view/`)
+### Web UI (`web/`)
 
-Built with Jetbrains Compose Desktop and Material 3. Key areas:
+React 19 + Vite + TypeScript + Tailwind CSS 4. Embedded into Go binary via `go:embed`.
 
-- `view/screen/` — main screens (Welcome, Namespace, Loading)
-- `view/dialog/` — dialog components
-- `view/form/` — form framework with components (Select, Journal)
-- `view/table/` — table components with DSL builder
-- `view/logs/` — log viewer with filtering and search
-- `view/tray/` — system tray integration (includes GTK support on Linux)
-- `view/theme/` — `LauncherTheme` theming system
-- `view/editor/` — Syntax-highlighted text editor (RSyntaxTextArea)
-- `view/popup/` — Window/dialog/popup abstractions (`CiteckWindow`, `CiteckPopup`)
-- `view/commons/` — Shared components (tooltips, context menus, error dialogs)
-- `view/action/` — Reusable action button components
+- `web/src/pages/` — Dashboard, AppDetail, Logs, Config
+- `web/src/components/` — AppTable, StatusBadge
+- `web/src/lib/` — API client (fetch), WebSocket client, Zustand store
 
 ### Entry Point
 
-`Main.kt` (`ru.citeck.launcher.MainKt`) — handles application lock, service initialization, window management, and tray integration.
+`cmd/citeck/main.go` — CLI entry point (cobra root command).
 
-### Resources (`core/src/main/resources/appfiles/`)
+### Embedded Resources (`internal/appfiles/`)
 
-Contains default configuration templates for managed services: Alfresco, PostgreSQL, PgAdmin, Proxy, Keycloak.
+Contains default configuration templates for managed services: Alfresco, PostgreSQL, PgAdmin, Proxy, Keycloak (embedded via `go:embed`).
+
+### Kotlin Reference (`core/`, `cli/`, `app/`)
+
+Original Kotlin implementation. Read-only reference for understanding business logic. Key files:
+- `core/namespace/gen/NamespaceGenerator.kt` — container generation logic
+- `core/namespace/NamespaceConfig.kt` — config model
+- `core/namespace/runtime/` — state machine, app lifecycle
 
 ## Code Style
 
-- Kotlin with IntelliJ IDEA code style (enforced by ktlint via `.editorconfig`)
-- Wildcard imports are allowed (`ktlint_standard_no-wildcard-imports = disabled`)
-- Trailing commas are disabled
-- Composable function naming rules are relaxed (`@Composable` annotated functions ignore naming convention)
-- GTK-related code (`src/**gtk/**`) has relaxed function naming rules
+### Go
+- Standard `gofmt` formatting
+- `golangci-lint` for linting
+- Tabs for indentation (Go standard)
+
+### Web (React/TypeScript)
+- Tailwind CSS 4 for styling
+- ESLint for linting
+
+### Kotlin (reference only)
+- ktlint via `.editorconfig`, wildcard imports allowed
 - 4-space indentation, LF line endings, UTF-8
-- Additional disabled ktlint rules: `no-empty-first-line-in-method-block`, `no-empty-first-line-in-class-body`, `function-expression-body`, `multiline-expression-wrapping`, `spacing-between-declarations-with-annotations`
 
 ## Key Dependencies
 
-- **UI**: Jetbrains Compose Desktop, Material 3
-- **Docker**: docker-java (core + httpclient5 transport)
-- **Git**: JGit
-- **Database**: H2
-- **Networking**: Ktor (client + server)
-- **Serialization**: Jackson (JSON), SnakeYAML Engine
-- **Logging**: Logback + kotlin-logging
-- **Editor**: RSyntaxTextArea
-- **SVG**: Apache Batik
-- **Hashing**: Hash4J
-- **Testing**: kotlin-test, AssertJ
+### Go
+- **CLI**: spf13/cobra
+- **Docker**: docker/docker/client (official SDK)
+- **WebSocket**: coder/websocket
+- **YAML**: gopkg.in/yaml.v3
+- **CLI output**: charmbracelet/lipgloss
+- **Testing**: stretchr/testify
+- **HTTP**: net/http (stdlib, Go 1.22+ routing)
+- **Logging**: log/slog (stdlib)
+- **Embed**: embed (stdlib, for web UI + appfiles)
+
+### Web UI
+- **Framework**: React 19 + TypeScript
+- **Build**: Vite
+- **Styles**: Tailwind CSS 4
+- **State**: Zustand
+- **Testing**: Vitest + Testing Library
+- **E2E**: Playwright
 
 ## Agent Plan — Go Rewrite (V3)
 
-The project is being rewritten from Kotlin to **Go + React + Tauri**. See:
-- **`AGENT_PLAN_V3.md`** — full rewrite plan (10 phases)
-- **`AGENT_INSTRUCTIONS.md`** — reference guide for agents (architecture, key files, debugging)
+Go rewrite is **complete** (phases 1-8, 10 DONE). Phase 9 (Desktop app) deferred.
+
+**Current focus:** Web UI feature parity with Compose Desktop.
+- See `~/.claude/plans/snoopy-herding-gosling.md` for the Web UI plan
+- **`AGENT_PLAN_V3.md`** — original rewrite plan (phases 1-10)
+- **`AGENT_INSTRUCTIONS.md`** — reference guide for agents
 - **`PROGRESS.md`** — tracks completed work
 
-The current Kotlin code serves as **reference implementation**. Agents read it to understand logic, then write Go equivalent.
+### Completed V3 Phases
+- Phase 1: Go scaffold + CLI skeleton ✅
+- Phase 2: Web UI scaffold (React + Vite + Tailwind) ✅
+- Phase 3: Port daemon core (namespace, Docker, bundles) ✅
+- Phase 4: Full CLI + apply + diff ✅
+- Phase 5: Full web dashboard ✅
+- Phase 6: Liveness + self-healing ✅
+- Phase 7: Remote daemon + auth ✅
+- Phase 8: Advanced features (cert, clean) ✅
+- Phase 9: Desktop app (Wails v3) — DEFERRED
+- Phase 10: Distribution (goreleaser, install script, systemd) ✅
 
-### V3 Target Architecture
+### Architecture
 ```
-citeck (single Go binary ~30MB) — daemon + CLI + embedded React Web UI
-Citeck Desktop (Tauri app)      — Lens-like client for local + remote management
+citeck (single Go binary ~14MB) — daemon + CLI + embedded React Web UI
+Web UI on http://localhost:8088 — full management dashboard
 ```
 
 ## CI/CD

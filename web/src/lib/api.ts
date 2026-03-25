@@ -1,4 +1,4 @@
-import type { NamespaceDto, HealthDto, DaemonStatusDto, AppInspectDto } from './types'
+import type { NamespaceDto, HealthDto, DaemonStatusDto, AppInspectDto, ActionResultDto } from './types'
 
 const API_BASE = '/api/v1'
 
@@ -34,8 +34,38 @@ export async function getAppInspect(name: string): Promise<AppInspectDto> {
   return fetchJSON(`/apps/${name}/inspect`)
 }
 
-export async function postAppRestart(name: string): Promise<{ success: boolean; message: string }> {
+export async function postAppRestart(name: string): Promise<ActionResultDto> {
   const res = await fetch(`${API_BASE}/apps/${name}/restart`, { method: 'POST' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function postAppStop(name: string): Promise<ActionResultDto> {
+  const res = await fetch(`${API_BASE}/apps/${name}/stop`, { method: 'POST' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function postAppStart(name: string): Promise<ActionResultDto> {
+  const res = await fetch(`${API_BASE}/apps/${name}/start`, { method: 'POST' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function postNamespaceStart(): Promise<ActionResultDto> {
+  const res = await fetch(`${API_BASE}/namespace/start`, { method: 'POST' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function postNamespaceStop(): Promise<ActionResultDto> {
+  const res = await fetch(`${API_BASE}/namespace/stop`, { method: 'POST' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function postNamespaceReload(): Promise<ActionResultDto> {
+  const res = await fetch(`${API_BASE}/namespace/reload`, { method: 'POST' })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }

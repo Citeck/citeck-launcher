@@ -33,3 +33,11 @@ func AppInspect(name string) string {
 func AppExec(name string) string {
 	return fmt.Sprintf("%s/%s/exec", Apps, name)
 }
+
+func AppStop(name string) string {
+	return fmt.Sprintf("%s/%s/stop", Apps, name)
+}
+
+func AppStart(name string) string {
+	return fmt.Sprintf("%s/%s/start", Apps, name)
+}

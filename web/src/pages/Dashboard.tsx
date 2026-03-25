@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useDashboardStore } from '../lib/store'
 import { StatusBadge } from '../components/StatusBadge'
 import { AppTable } from '../components/AppTable'
+import { NamespaceControls } from '../components/NamespaceControls'
 
 export function Dashboard() {
   const { namespace, health, loading, error, fetchData, startEventStream, stopEventStream } =
@@ -34,8 +35,37 @@ export function Dashboard() {
   const runningCount = namespace.apps.filter((a) => a.status === 'RUNNING').length
   const totalCount = namespace.apps.length
 
+  // Check Docker availability from health checks
+  const dockerCheck = health?.checks.find((c) => c.name === 'docker')
+  const dockerError = dockerCheck?.status === 'error' ? dockerCheck.message : null
+
   return (
     <div className="space-y-6">
+      {/* Docker error banner */}
+      {dockerError && (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+          <span className="font-medium">Docker unavailable:</span> {dockerError}
+          <p className="mt-1 text-xs text-destructive/70">
+            Make sure Docker is installed and running.{' '}
+            <a
+              href="https://docs.docker.com/get-docker/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline"
+            >
+              Install Docker
+            </a>
+          </p>
+          <button
+            type="button"
+            className="mt-2 rounded-md border border-destructive/30 px-3 py-1 text-xs hover:bg-destructive/10"
+            onClick={fetchData}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
@@ -47,11 +77,14 @@ export function Dashboard() {
             </span>
           </div>
         </div>
-        <StatusBadge status={namespace.status} />
+        <div className="flex items-center gap-3">
+          <NamespaceControls status={namespace.status} />
+          <StatusBadge status={namespace.status} />
+        </div>
       </div>
 
       {/* Health indicator */}
-      {health && (
+      {health && !dockerError && (
         <div
           className={`rounded-lg border px-4 py-3 text-sm ${
             health.healthy
@@ -60,6 +93,16 @@ export function Dashboard() {
           }`}
         >
           System: {health.healthy ? 'Healthy' : 'Unhealthy'}
+          {namespace.status === 'RUNNING' && (
+            <a
+              href="/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-4 text-xs underline opacity-70 hover:opacity-100"
+            >
+              Open in Browser
+            </a>
+          )}
         </div>
       )}
 

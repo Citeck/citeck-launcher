@@ -1,3 +1,8 @@
+export interface ActionResultDto {
+  success: boolean
+  message: string
+}
+
 export interface AppDto {
   name: string
   status: string

@@ -7,20 +7,21 @@ You are a fully autonomous developer. **Do not ask questions** — investigate, 
 ### Work loop
 
 ```
-while (tasks remain in current phase):
-    1. Identify the highest-priority task from AGENT_PLAN_V3.md
-    2. Investigate (read Kotlin reference code, check existing patterns)
+while (tasks remain in current plan):
+    1. Identify the highest-priority task from the current plan
+    2. Investigate (read Kotlin reference code, check existing Go patterns)
     3. Implement in Go (or React for web UI)
     4. Build: make build (or make build-fast for Go only)
-    5. Run unit tests: go test ./... && cd web && npm test
-    6. Integration test on real system (start namespace, check status, verify)
+    5. Run unit tests: go test ./... && cd web && npx vitest run
+    6. Integration test on real system (start daemon, check status, verify)
     7. If broken → go to step 2
     8. If working → commit, update PROGRESS.md, move to next task
 ```
 
 ### Plans
 
-- **AGENT_PLAN_V3.md** — current plan: full rewrite in Go + React + Tauri (phases 1-10)
+- **AGENT_PLAN_V3.md** — original rewrite plan (phases 1-10, all done except phase 9)
+- **snoopy-herding-gosling.md** (in `~/.claude/plans/`) — current plan: Web UI feature parity
 - **PROGRESS.md** — tracks completed work and next steps
 
 ---
@@ -31,36 +32,49 @@ while (tasks remain in current phase):
 |------|-------|
 | Repo | `/home/spk/IdeaProjects/citeck-launcher2` |
 | Branch | `release/1.4.0` |
-| Build CLI | `./gradlew :cli:shadowJar` → `cli/build/libs/citeck-cli-1.4.0.jar` |
-| Quick check | `./gradlew :core:classes` or `./gradlew :cli:classes` |
-| Run tests | `./gradlew test` |
-| Lint | `./gradlew ktlintFormat` (auto-fix) / `./gradlew ktlintCheck` |
-| JDK | Java 25 at `~/.jdks/temurin-25.0.1+12/` |
+| Build | `make build` → single `citeck` binary with embedded web UI |
+| Build (Go only) | `make build-fast` → skip web rebuild |
+| Run tests | `make test` (Go + Vitest) |
+| Run Go tests | `go test ./...` |
+| Run web tests | `cd web && npx vitest run` |
+| Run E2E tests | `cd web && npx playwright test` |
+| Lint Go | `golangci-lint run` |
+| Lint web | `cd web && npm run lint` |
+| Go version | 1.26.1 |
+| Node | see `web/package.json` |
 | Test host | `custom.launcher.ru` → `127.0.0.1` (in `/etc/hosts`) |
 | Platform sources | `/home/spk/IdeaProjects/ecos-*` and `/home/spk/IdeaProjects/citeck-*` |
 
-### How to run and test the CLI
+### How to run and test
 
 ```bash
-# Build the fat JAR
-./gradlew :cli:shadowJar
+# Build everything (Go + web UI)
+make build
 
-# Run without sudo (custom home/run dirs)
-java --enable-native-access=ALL-UNNAMED \
-  -Dciteck.home=/tmp/citeck-test \
-  -Dciteck.run=/tmp/citeck-run \
-  -jar cli/build/libs/citeck-cli-1.4.0.jar <command>
+# Build Go only (faster iteration)
+make build-fast
+
+# Run daemon in foreground
+./citeck start --foreground
+
+# Open Web UI
+# http://localhost:8088
+
+# Run with custom dirs (no sudo)
+CITECK_HOME=/tmp/citeck-test CITECK_RUN=/tmp/citeck-run ./citeck start --foreground
 
 # Setup test dirs (first time)
 mkdir -p /tmp/citeck-test/conf /tmp/citeck-test/data /tmp/citeck-test/log /tmp/citeck-run
 ```
 
-### Key system properties
+### Key environment variables
 
-| Property | Default | Purpose |
+| Variable | Default | Purpose |
 |----------|---------|---------|
-| `citeck.home` | `/opt/citeck` | Base directory for config, data, logs |
-| `citeck.run` | `/run/citeck` | Socket directory |
+| `CITECK_HOME` | `/opt/citeck` | Base directory for config, data, logs |
+| `CITECK_RUN` | `/run/citeck` | Socket directory |
+| `CITECK_HOST` | — | Remote daemon address (host:port) |
+| `CITECK_TOKEN` | — | Auth token for remote connections |
 
 ---
 
@@ -70,50 +84,81 @@ mkdir -p /tmp/citeck-test/conf /tmp/citeck-test/data /tmp/citeck-test/log /tmp/c
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    Daemon (Linux server)                  │
-│  Ktor CIO engine                                         │
+│              citeck (single Go binary ~14MB)             │
+│  net/http server                                         │
 │  ├─ Unix socket  /run/citeck/daemon.sock  (local fast)   │
-│  └─ TCP/TLS      0.0.0.0:8088            (remote, P8)   │
+│  ├─ TCP          0.0.0.0:8088             (remote)       │
+│  └─ Embedded React Web UI on /*                          │
 │  ↕                                                       │
-│  core/ — namespace runtime, Docker API, config, bundles  │
+│  internal/ — namespace runtime, Docker API, config       │
 └─────────────────────────────────────────────────────────┘
-        ↑                    ↑                    ↑
-   Unix socket            TCP/TLS              TCP/TLS
-        ↑                    ↑                    ↑
-┌──────────────┐  ┌──────────────────┐  ┌─────────────────┐
-│  CLI (Linux) │  │  GUI app (any OS)│  │  Agent (any)    │
-│  citeck cmd  │  │  Compose Desktop │  │  -o json + API  │
-└──────────────┘  └──────────────────┘  └─────────────────┘
+        ↑                    ↑
+   Unix socket            TCP + token
+        ↑                    ↑
+┌──────────────┐  ┌──────────────────┐
+│  CLI (local) │  │  Browser / Remote│
+│  citeck cmd  │  │  Web UI at :8088 │
+└──────────────┘  └──────────────────┘
 ```
 
-### Modules
+### Project Structure
 
-| Module | Scope | Cross-platform |
-|--------|-------|---------------|
-| **`core/`** | Business logic: Docker API, namespace gen, bundle resolution, config | Yes — all OS |
-| **`app/`** | Compose Desktop GUI | Yes — Windows, macOS, Linux |
-| **`cli/`** | CLI daemon + client, Linux deployment | Linux only |
+```
+citeck-launcher/
+├── cmd/citeck/main.go              # Entry point
+├── internal/
+│   ├── cli/                        # Cobra commands
+│   ├── daemon/                     # HTTP server, routes, middleware
+│   ├── namespace/                  # Config, generator, runtime, reconciler
+│   ├── docker/                     # Docker SDK wrapper
+│   ├── bundle/                     # Bundle resolution from git repos
+│   ├── git/                        # Git clone/pull (os/exec)
+│   ├── config/                     # Paths, daemon config, workspace
+│   ├── output/                     # Text/JSON formatter, tables, colors
+│   ├── client/                     # DaemonClient (Unix socket + TCP)
+│   ├── api/                        # API types (DTOs)
+│   ├── appdef/                     # Application definition models
+│   ├── appfiles/                   # Embedded resource files (go:embed)
+│   └── history/                    # Operation history (JSONL)
+├── web/                            # React SPA (Vite + TypeScript + Tailwind)
+│   ├── src/
+│   │   ├── pages/                  # Dashboard, AppDetail, Logs, Config
+│   │   ├── components/             # AppTable, StatusBadge
+│   │   └── lib/                    # API client, WebSocket
+│   ├── package.json
+│   └── vite.config.ts
+├── go.mod
+├── go.sum
+└── Makefile
+```
 
-**Key rule:** All business logic in `core/`. No OS-specific code in core. CLI is a thin Linux-specific wrapper. GUI and CLI are both API clients.
-
-### CLI Commands (current)
+### CLI Commands
 
 | Command | What it does |
 |---------|-------------|
-| `citeck install` | Interactive wizard → namespace.yml + systemd service |
-| `citeck uninstall` | Remove service, optionally data |
 | `citeck start` | Start daemon (background or `--foreground`) + namespace |
 | `citeck stop` | Stop namespace, optionally daemon (`--shutdown`) |
 | `citeck status` | Print status, `--watch` for live events, `--apps` for app table |
 | `citeck reload` | Hot-reload namespace config |
 | `citeck logs <app>` | Show container logs (`--tail N`, `--follow`) |
 | `citeck restart <app>` | Restart a single app |
-| `citeck inspect <app>` | Show container details (rename to `describe` in V2 Phase 0) |
+| `citeck describe <app>` | Show container details |
 | `citeck exec <app> <cmd>` | Execute command in container |
 | `citeck version` | Show version info |
 | `citeck health` | System health check |
-| `citeck config show` | Display namespace.yml (rename to `config view` in V2 Phase 0) |
+| `citeck config view` | Display namespace.yml |
 | `citeck config validate` | Validate config (YAML, certs, ports) |
+| `citeck apply -f ns.yml` | Idempotent desired-state apply (`--wait`, `--force`, `--dry-run`) |
+| `citeck diff -f new.yml` | Show pending config changes |
+| `citeck wait` | Block until condition (`--status`, `--app`, `--healthy`, `--timeout`) |
+| `citeck diagnose` | Find problems (`--fix`, `--dry-run`) |
+| `citeck cert status` | Show cert expiry, issuer, SANs |
+| `citeck cert generate` | Generate self-signed ECDSA P256 cert |
+| `citeck clean` | Orphaned resource cleanup (`--execute`, `--volumes`) |
+| `citeck token generate` | Generate new daemon API token |
+| `citeck token show` | Show current token |
+
+All commands support `-o json` for machine-readable output.
 
 ### API Endpoints
 
@@ -144,62 +189,7 @@ Namespace status: `STOPPED → STARTING → RUNNING` (or `STALLED` if any app fa
 
 ---
 
-## 3. Key Files
-
-All paths relative to repo root. Package: `ru.citeck.launcher`.
-
-### CLI module (`cli/src/main/kotlin/ru/citeck/launcher/`)
-
-| Path | Purpose |
-|------|---------|
-| `cli/CliMain.kt` | Entry point, Clikt command tree |
-| `cli/commands/` | All CLI commands (StartCmd, StopCmd, StatusCmd, etc.) |
-| `cli/client/DaemonClient.kt` | HTTP+WS client to daemon via Unix socket |
-| `cli/daemon/DaemonLifecycle.kt` | Daemon startup/shutdown, background spawn |
-| `cli/daemon/server/DaemonServer.kt` | Ktor Unix socket server |
-| `cli/daemon/server/routes/` | API route handlers (Namespace, Daemon, Event, App, Health) |
-| `cli/daemon/server/converters/NamespaceConverter.kt` | Runtime → DTO conversion |
-| `cli/daemon/services/DaemonServices.kt` | Service container (Docker, Git, Bundles) |
-| `cli/daemon/services/NamespaceConfigManager.kt` | Config loading, bundle resolution |
-| `cli/daemon/storage/ConfigPaths.kt` | Filesystem path constants |
-| `cli/output/` | TableFormatter, EventPrinter, (future: OutputFormatter) |
-
-### API types (`cli/src/main/kotlin/ru/citeck/launcher/api/`)
-
-| Path | Purpose |
-|------|---------|
-| `ApiPaths.kt` | Route path constants |
-| `DaemonFiles.kt` | Socket/log file resolution |
-| `dto/*.kt` | All DTOs (ActionResult, App, AppInspect, DaemonStatus, Error, Event, ExecRequest, ExecResult, Health, Namespace) |
-
-### Core module (`core/src/main/kotlin/ru/citeck/launcher/core/`)
-
-| Path | Purpose |
-|------|---------|
-| `namespace/NamespaceConfig.kt` | Config model (ProxyProps, TlsConfig, AuthenticationProps) |
-| `namespace/gen/NamespaceGenerator.kt` | Container definitions from config |
-| `namespace/gen/NsGenContext.kt` | Generation context (proxyBaseUrl, ports) |
-| `namespace/runtime/NamespaceRuntime.kt` | Namespace state machine + background thread |
-| `namespace/runtime/AppRuntime.kt` | Per-app state machine |
-| `namespace/runtime/actions/AppStartAction.kt` | Container create + start + probe |
-| `namespace/runtime/docker/DockerApi.kt` | Docker client wrapper |
-| `bundle/BundleDef.kt` / `BundleRef.kt` / `BundlesService.kt` | Bundle resolution |
-| `appdef/ApplicationDef.kt` / `AppProbeDef.kt` | Container definition models |
-| `config/AppDir.kt` | OS-specific app directory (cross-platform) |
-| `utils/file/CiteckJarFile.kt` | JAR resource reading (shadow JAR compatible) |
-
----
-
-## 4. Critical Knowledge (from V1 development)
-
-### setActive(true) Required
-
-`NamespaceRuntime.updateAndStart()` only queues a command. The runtime thread is started by `setActive(true)`. Without it, nothing happens. GUI calls setActive via NamespacesService; CLI must call it explicitly.
-
-### Shadow JAR Resource Loading
-
-- `CiteckJarFile.getAllFiles()` must use `jarFile.getInputStream(entry)` — not construct nested URLs
-- Shadow JAR returns file keys with `appfiles/` prefix — must be stripped in NamespaceGenerator
+## 3. Critical Knowledge
 
 ### Keycloak + Proxy Integration
 
@@ -215,15 +205,23 @@ All paths relative to repo root. Package: `ru.citeck.launcher`.
 - TLS mode: port 80 internal only, port 443 published → exec probe for startup
 - Bind-mounted files: use init action `cp` from `/tmp` to avoid sed inode lock
 
-### AppLock
+### Kotlin Reference Code
 
-- File-based lock at `~/.citeck/launcher/app.lock`
-- Shared between GUI and CLI — only one can run at a time
-- Kill desktop launcher before starting CLI daemon
+The Kotlin code (in `core/`, `cli/`, `app/` directories) is the **reference implementation**. Read it to understand logic when porting or extending Go code. Key Kotlin paths:
+
+| Kotlin source | Purpose |
+|--------------|---------|
+| `core/namespace/NamespaceConfig.kt` | Config model |
+| `core/namespace/gen/NamespaceGenerator.kt` | Container definitions |
+| `core/namespace/gen/NsGenContext.kt` | Generation context |
+| `core/namespace/runtime/NamespaceRuntime.kt` | Namespace state machine |
+| `core/namespace/runtime/AppRuntime.kt` | Per-app state machine |
+| `core/namespace/runtime/docker/DockerApi.kt` | Docker client wrapper |
+| `core/bundle/BundlesService.kt` | Bundle resolution |
 
 ---
 
-## 5. Debugging Cheat Sheet
+## 4. Debugging Cheat Sheet
 
 ```bash
 # Containers
@@ -245,37 +243,33 @@ cat /tmp/citeck-test/log/daemon.log | tail -50
 
 # Clean slate
 docker ps -a --filter "label=citeck.launcher.workspace=daemon" -q | xargs -r docker rm -f
-rm -rf ~/.citeck/launcher/ws/daemon/ns/default/rtfiles/
-rm -f ~/.citeck/launcher/app.lock /tmp/citeck-run/daemon.sock
-rm -f /tmp/citeck-test/data/runtime.yml
+rm -f /tmp/citeck-run/daemon.sock
 ```
 
 ---
 
-## 6. Code Quality Rules
+## 5. Code Quality Rules
 
-- Follow existing Kotlin style. Run `ktlintFormat` before every commit
+- Follow Go conventions (`gofmt`, `golangci-lint`)
 - API routes follow REST conventions. Use proper HTTP status codes
 - Error responses use `ErrorDto`. Success responses use specific DTOs
-- CLI commands support `-o json` for machine-readable output (V2 Phase 1)
-- Dangerous commands ask confirmation in text mode, `--yes` skips (V2 Phase 1)
-- Never swallow exceptions silently. Log or return them
-- Exit codes: 0 success, non-zero for specific errors (see V2 P1.3)
-- No OS-specific code in `core/` module
+- All commands support `-o json` for machine-readable output
+- Dangerous commands ask confirmation in text mode, `--yes` skips
+- Never swallow errors silently. Log or return them
+- Exit codes: 0 success, non-zero for specific errors (see AGENT_PLAN_V3.md)
 
 ---
 
-## 7. Commit Discipline
+## 6. Commit Discipline
 
 - Commit at every meaningful milestone
 - **NEVER push. NEVER amend. NEVER add Co-Authored-By.**
-- Always run `./gradlew ktlintFormat` before committing
 - Stage specific files, not `git add -A`
 - Update PROGRESS.md after each phase completion
 
 ---
 
-## 8. Context Management
+## 7. Context Management
 
 ### Preventive measures
 - Commit early and often (save points for context overflow)
@@ -286,12 +280,12 @@ rm -f /tmp/citeck-test/data/runtime.yml
 ### If context overflows
 1. `git log --oneline -20` — see all commits
 2. `cat PROGRESS.md` — completed work and next steps
-3. `cat AGENT_PLAN_V2.md` — the full plan
+3. `cat AGENT_PLAN_V3.md` — the original plan
 4. `git diff HEAD` — uncommitted work
 
 ---
 
-## 9. Test Configurations (regression suite)
+## 8. Test Configurations (regression suite)
 
 These 5 configs must pass after every major change:
 
@@ -307,4 +301,48 @@ Self-signed cert:
 ```bash
 openssl req -x509 -newkey rsa:2048 -keyout server.key -out server.crt -days 365 -nodes \
   -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,DNS:custom.launcher.ru,IP:127.0.0.1"
+```
+
+---
+
+## 9. Web UI Development
+
+### Development workflow
+
+```bash
+# Start daemon
+./citeck start --foreground &
+
+# Start Vite dev server with proxy to daemon
+cd web && npm run dev -- --proxy http://localhost:8088
+
+# Run component tests
+cd web && npx vitest run
+
+# Run E2E tests
+cd web && npx playwright test
+```
+
+### Web UI stack
+
+| Purpose | Library |
+|---------|---------|
+| Framework | React 19 + TypeScript |
+| Build | Vite |
+| Styles | Tailwind CSS 4 |
+| State | Zustand |
+| Testing | Vitest + Testing Library |
+| E2E | Playwright |
+
+### Development cycle (per feature)
+
+```
+1. IMPLEMENT → Write code (Go API + React UI)
+2. BUILD     → make build
+3. TEST      → go test + npx vitest run + npx playwright test
+4. VERIFY    → Start daemon, open browser, test with Playwright MCP
+5. REVIEW    → Code review: bugs, duplication, hardcoded values, security
+6. FIX       → Fix ALL issues found in review
+7. DEDUP     → Extract shared components/hooks/utils
+8. COMMIT    → Only after steps 1-7 are clean
 ```

@@ -164,6 +164,106 @@ func (r *Runtime) Regenerate(apps []appdef.ApplicationDef) {
 	r.cmdCh <- command{typ: cmdRegenerate, apps: apps}
 }
 
+// StopApp stops a single app by name. Returns error if not found or not running.
+func (r *Runtime) StopApp(appName string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	app, ok := r.apps[appName]
+	if !ok {
+		return fmt.Errorf("app %q not found", appName)
+	}
+	if app.ContainerID == "" {
+		return fmt.Errorf("app %q has no container", appName)
+	}
+
+	ctx := context.Background()
+	containerName := r.docker.ContainerName(appName)
+	if err := r.docker.StopAndRemoveContainer(ctx, containerName); err != nil {
+		return fmt.Errorf("stop app %q: %w", appName, err)
+	}
+	app.ContainerID = ""
+	r.setAppStatus(app, AppStatusStopped)
+	return nil
+}
+
+// RestartApp stops and re-starts a single app.
+func (r *Runtime) RestartApp(appName string) error {
+	r.mu.Lock()
+	app, ok := r.apps[appName]
+	if !ok {
+		r.mu.Unlock()
+		return fmt.Errorf("app %q not found", appName)
+	}
+
+	// Stop existing container
+	ctx := context.Background()
+	if app.ContainerID != "" {
+		containerName := r.docker.ContainerName(appName)
+		_ = r.docker.StopAndRemoveContainer(ctx, containerName)
+		app.ContainerID = ""
+	}
+	r.setAppStatus(app, AppStatusStarting)
+	r.mu.Unlock()
+
+	// Re-start in background
+	r.wg.Add(1)
+	go r.restartApp(ctx, appName)
+	return nil
+}
+
+func (r *Runtime) restartApp(ctx context.Context, appName string) {
+	defer r.wg.Done()
+
+	r.mu.RLock()
+	app := r.apps[appName]
+	appDef := app.Def
+	r.mu.RUnlock()
+
+	// Create and start container
+	containerName := r.docker.ContainerName(appName)
+	_ = r.docker.StopAndRemoveContainer(ctx, containerName)
+
+	id, err := r.docker.CreateContainer(ctx, appDef, r.volumesBase)
+	if err != nil {
+		slog.Error("Restart create failed", "app", appName, "err", err)
+		r.mu.Lock()
+		r.setAppStatus(app, AppStatusStartFailed)
+		app.StatusText = err.Error()
+		r.mu.Unlock()
+		return
+	}
+
+	if err := r.docker.StartContainer(ctx, id); err != nil {
+		slog.Error("Restart start failed", "app", appName, "err", err)
+		r.mu.Lock()
+		r.setAppStatus(app, AppStatusStartFailed)
+		app.StatusText = err.Error()
+		r.mu.Unlock()
+		return
+	}
+
+	r.mu.Lock()
+	app.ContainerID = id
+	r.mu.Unlock()
+
+	// Wait for startup probe
+	if len(appDef.StartupConditions) > 0 {
+		if err := r.waitForStartup(ctx, appName, id, appDef.StartupConditions); err != nil {
+			slog.Error("Restart probe failed", "app", appName, "err", err)
+			r.mu.Lock()
+			r.setAppStatus(app, AppStatusStartFailed)
+			app.StatusText = err.Error()
+			r.mu.Unlock()
+			return
+		}
+	}
+
+	r.mu.Lock()
+	r.setAppStatus(app, AppStatusRunning)
+	r.mu.Unlock()
+}
+
 // setStatus must be called with r.mu held.
 func (r *Runtime) setStatus(s NsRuntimeStatus) {
 	old := r.status

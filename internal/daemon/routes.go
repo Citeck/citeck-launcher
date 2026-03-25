@@ -100,8 +100,40 @@ func (d *Daemon) handleAppRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Implement restart logic (stop + start)
+	if err := d.runtime.RestartApp(name); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("Restart requested for %s", name)})
+}
+
+func (d *Daemon) handleAppStop(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if d.runtime == nil {
+		writeError(w, http.StatusBadRequest, "no namespace configured")
+		return
+	}
+
+	if err := d.runtime.StopApp(name); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("App %s stopped", name)})
+}
+
+func (d *Daemon) handleAppStart(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if d.runtime == nil {
+		writeError(w, http.StatusBadRequest, "no namespace configured")
+		return
+	}
+
+	// RestartApp handles both starting a stopped app and restarting a running one
+	if err := d.runtime.RestartApp(name); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("App %s start requested", name)})
 }
 
 func (d *Daemon) handleAppInspect(w http.ResponseWriter, r *http.Request) {

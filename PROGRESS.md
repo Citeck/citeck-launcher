@@ -92,6 +92,38 @@ Full rewrite: Go + React Web UI + Tauri Desktop.
 - Code review: 15 issues fixed (deadlock, race conditions, init container wait)
 - Generator diff: 17 differences with Kotlin fixed (MongoHost, Keycloak DB, port counter, EAPPS init containers, etc.)
 
+---
+
+## Current: Web UI Feature Parity (2026-03-25)
+
+**Goal:** Bring React Web UI to full parity with Kotlin Compose Desktop app (~30 features across 4 screens, 13 dialogs, log viewer, code editor).
+
+**Plan:** `~/.claude/plans/snoopy-herding-gosling.md`
+
+### Phase 0: Housekeeping — DONE
+- [x] Update AGENT_INSTRUCTIONS.md for Go
+- [x] Update CLAUDE.md with Go rewrite status
+- [x] Update PROGRESS.md with Web UI section
+- [x] Update AGENT_PLAN_V3.md with completion markers
+
+### Phase A: Core Controls (API + UI) — DONE
+- [x] Per-app Start/Stop/Restart from Web UI (with confirm modal)
+- [x] Namespace Start/Stop/Reload buttons (with confirm modal)
+- [x] Docker error banner with retry button
+- [x] ConfirmModal reusable component
+- [x] Go API: POST /api/v1/apps/{name}/stop, /start routes
+- [x] Go runtime: StopApp, RestartApp methods
+- [x] Fixed restart TODO (was no-op, now actually stops + starts container)
+- [x] Fixed vitest config (exclude Playwright tests directory)
+
+### Phase B: Dashboard Enhancements — PENDING
+### Phase C: Config Editor — PENDING
+### Phase D: Full Log Viewer — PENDING
+### Phase E: Namespace Wizard / Setup — PENDING
+### Phase F: Advanced Operations — PENDING
+
+---
+
 ## Summary
 
 **Binary:** 14MB single Go binary with embedded React web UI
