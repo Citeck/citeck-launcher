@@ -87,6 +87,10 @@ func LoadNamespaceConfig(path string) (*NamespaceConfig, error) {
 	return ParseNamespaceConfig(data)
 }
 
+func MarshalNamespaceConfig(cfg *NamespaceConfig) ([]byte, error) {
+	return yaml.Marshal(cfg)
+}
+
 func ParseNamespaceConfig(data []byte) (*NamespaceConfig, error) {
 	cfg := DefaultNamespaceConfig()
 	if err := yaml.Unmarshal(data, &cfg); err != nil {

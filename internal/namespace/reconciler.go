@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/niceteck/citeck-launcher/internal/appdef"
+	"github.com/niceteck/citeck-launcher/internal/docker"
 )
 
 // ReconcilerConfig holds reconciliation settings.
@@ -87,27 +88,29 @@ func (r *Runtime) reconcile(ctx context.Context) {
 	// Build map of running containers by app name
 	containersByApp := make(map[string]bool)
 	for _, c := range containers {
-		if appName, ok := c.Labels["citeck.launcher.app"]; ok {
+		if appName, ok := c.Labels[docker.LabelAppName]; ok {
 			if c.State == "running" {
 				containersByApp[appName] = true
 			}
 		}
 	}
 
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	// Collect apps needing restart under lock, then spawn goroutines after unlock
+	var toRestart []string
 
-	// Check each app that should be running
+	r.mu.Lock()
 	for name, app := range r.apps {
-		if app.Status == AppStatusRunning {
-			if !containersByApp[name] {
-				// Container disappeared — mark for restart
-				slog.Warn("Reconciler: container missing, restarting", "app", name)
-				r.setAppStatus(app, AppStatusReadyToPull)
-				r.wg.Add(1)
-				go r.pullAndStartApp(ctx, name)
-			}
+		if app.Status == AppStatusRunning && !containersByApp[name] {
+			slog.Warn("Reconciler: container missing, will restart", "app", name)
+			r.setAppStatus(app, AppStatusReadyToPull)
+			toRestart = append(toRestart, name)
 		}
+	}
+	r.mu.Unlock()
+
+	for _, name := range toRestart {
+		r.appWg.Add(1)
+		go r.pullAndStartApp(ctx, name)
 	}
 }
 
@@ -136,18 +139,22 @@ func (r *Runtime) checkLiveness(ctx context.Context) {
 	}
 	r.mu.RUnlock()
 
+	var toRestart []string
 	for _, check := range appsToCheck {
 		alive := r.runLivenessProbe(ctx, check.containerID, check.probe)
 		if !alive {
-			slog.Warn("Liveness probe failed, restarting", "app", check.name)
+			slog.Warn("Liveness probe failed, will restart", "app", check.name)
 			r.mu.Lock()
 			if app, ok := r.apps[check.name]; ok && app.Status == AppStatusRunning {
 				r.setAppStatus(app, AppStatusReadyToPull)
-				r.wg.Add(1)
-				go r.pullAndStartApp(ctx, check.name)
+				toRestart = append(toRestart, check.name)
 			}
 			r.mu.Unlock()
 		}
+	}
+	for _, name := range toRestart {
+		r.appWg.Add(1)
+		go r.pullAndStartApp(ctx, name)
 	}
 }
 

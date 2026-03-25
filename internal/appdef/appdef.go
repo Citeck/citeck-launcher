@@ -95,6 +95,7 @@ type ApplicationDef struct {
 	Kind              ApplicationKind   `json:"kind"`
 	ShmSize           string            `json:"shmSize,omitempty"`
 	InitContainers    []InitContainerDef `json:"initContainers,omitempty"`
+	IsInit            bool              `json:"-"` // true for init containers (no restart policy)
 }
 
 // App name constants.
