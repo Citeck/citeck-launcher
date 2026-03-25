@@ -86,7 +86,12 @@ func Start(opts StartOptions) error {
 		daemonCfg.Server.WebUI.Enabled = false
 	}
 
-	// Clean up stale socket
+	// Check if another daemon is already running via socket lock
+	if conn, err := net.DialTimeout("unix", socketPath, 2*time.Second); err == nil {
+		conn.Close()
+		return fmt.Errorf("another daemon is already running (socket %s is active)", socketPath)
+	}
+	// Socket exists but nobody listening — stale, safe to remove
 	os.Remove(socketPath)
 
 	// Determine workspace and namespace IDs
