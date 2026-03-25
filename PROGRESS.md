@@ -126,7 +126,14 @@ Full rewrite: Go + React Web UI + Tauri Desktop.
 - [x] Go API: kind + ports added to AppDto, links added to NamespaceDto
 - [x] Go runtime: generateLinks() with dynamic links based on config
 - [x] Updated tests for new table columns
-### Phase C: Config Editor — PENDING
+### Phase C: Config Editor — DONE
+- [x] Go API: GET /api/v1/config returns namespace.yml content
+- [x] Go API: PUT /api/v1/config saves + validates YAML before write
+- [x] Config page: YAML viewer with syntax highlighting (keys, values, comments, lists)
+- [x] Config page: Edit mode with textarea + Apply button
+- [x] Config page: Apply saves config + triggers namespace reload
+- [x] Config page: Validation error shown if YAML is invalid
+- [x] Confirm modal before applying changes
 ### Phase D: Full Log Viewer — PENDING
 ### Phase E: Namespace Wizard / Setup — PENDING
 ### Phase F: Advanced Operations — PENDING

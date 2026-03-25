@@ -3,14 +3,16 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
 	"time"
 
-	"github.com/niceteck/citeck-launcher/internal/namespace"
-
 	"github.com/niceteck/citeck-launcher/internal/api"
+	"github.com/niceteck/citeck-launcher/internal/config"
+	"github.com/niceteck/citeck-launcher/internal/namespace"
+	"gopkg.in/yaml.v3"
 )
 
 func (d *Daemon) handleDaemonStatus(w http.ResponseWriter, r *http.Request) {
@@ -222,6 +224,42 @@ func (d *Daemon) handleAppExec(w http.ResponseWriter, r *http.Request) {
 		ExitCode: int64(exitCode),
 		Output:   output,
 	})
+}
+
+func (d *Daemon) handleGetConfig(w http.ResponseWriter, r *http.Request) {
+	cfgPath := config.NamespaceConfigPath()
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("config file not found: %s", cfgPath))
+		return
+	}
+	w.Header().Set("Content-Type", "text/yaml")
+	w.Write(data)
+}
+
+func (d *Daemon) handlePutConfig(w http.ResponseWriter, r *http.Request) {
+	cfgPath := config.NamespaceConfigPath()
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1024*1024)) // 1MB max
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read request body")
+		return
+	}
+
+	// Validate YAML by attempting to parse
+	var testCfg namespace.NamespaceConfig
+	if err := yaml.Unmarshal(body, &testCfg); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid YAML: %s", err.Error()))
+		return
+	}
+
+	// Write file
+	if err := os.WriteFile(cfgPath, body, 0o644); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to write config: %s", err.Error()))
+		return
+	}
+
+	writeJSON(w, api.ActionResultDto{Success: true, Message: "Configuration saved"})
 }
 
 func (d *Daemon) handleHealth(w http.ResponseWriter, r *http.Request) {

@@ -196,6 +196,10 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/apps/{name}/inspect", d.handleAppInspect)
 	mux.HandleFunc("POST /api/v1/apps/{name}/exec", d.handleAppExec)
 
+	// Config
+	mux.HandleFunc("GET /api/v1/config", d.handleGetConfig)
+	mux.HandleFunc("PUT /api/v1/config", d.handlePutConfig)
+
 	// Health
 	mux.HandleFunc("GET "+api.Health, d.handleHealth)
 

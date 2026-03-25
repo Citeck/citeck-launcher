@@ -71,7 +71,20 @@ export async function postNamespaceReload(): Promise<ActionResultDto> {
 }
 
 export async function getConfigContent(): Promise<string> {
-  const res = await fetch(`${API_BASE}/../conf/namespace.yml`)
+  const res = await fetch(`${API_BASE}/config`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.text()
+}
+
+export async function putConfigContent(content: string): Promise<ActionResultDto> {
+  const res = await fetch(`${API_BASE}/config`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'text/yaml' },
+    body: content,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ message: `HTTP ${res.status}` }))
+    throw new Error(err.message || `HTTP ${res.status}`)
+  }
+  return res.json()
 }
