@@ -16,7 +16,8 @@ export function Dashboard() {
     fetchData()
     startEventStream()
     return () => stopEventStream()
-  }, [fetchData, startEventStream, stopEventStream])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- store methods are stable
+  }, [])
 
   const navigate = useNavigate()
   const openTab = useTabsStore((s) => s.openTab)
@@ -128,7 +129,7 @@ export function Dashboard() {
           <SidebarBtn icon={HardDrive} label="Volumes"
             onClick={() => { openTab({ id: 'volumes', title: 'Volumes', path: '/volumes' }); navigate('/volumes') }} />
           <SidebarBtn icon={FileText} label="Launcher Logs"
-            onClick={() => { openTab({ id: 'daemon-logs', title: 'Daemon Logs', path: '/config' }); navigate('/config') }} />
+            onClick={() => { openTab({ id: 'daemon-logs', title: 'Daemon Logs', path: '/daemon-logs' }); navigate('/daemon-logs') }} />
           <SidebarBtn icon={Download} label="System Dump"
             onClick={() => getSystemDump().catch((e) => console.error('Dump failed:', e))} />
         </div>

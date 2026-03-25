@@ -13,6 +13,7 @@ interface DashboardState {
   loading: boolean
   error: string | null
   stream: EventStream | null
+  reconnectDelay: number
 
   fetchData: () => Promise<void>
   startEventStream: () => void
@@ -25,6 +26,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   loading: true,
   error: null,
   stream: null,
+  reconnectDelay: 1000,
 
   fetchData: async () => {
     set({ loading: true, error: null })
@@ -40,14 +42,20 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     if (get().stream) return
 
     const stream = connectEvents(
-      () => { get().fetchData() },
       () => {
+        set({ reconnectDelay: 1000 }) // reset backoff on successful event
+        get().fetchData()
+      },
+      () => {
+        const delay = get().reconnectDelay
+        const nextDelay = Math.min(delay * 2, 30000) // exponential backoff, max 30s
+        set({ reconnectDelay: nextDelay })
         setTimeout(() => {
           if (get().stream === stream) {
             set({ stream: null })
             get().startEventStream()
           }
-        }, 3000)
+        }, delay)
       },
     )
     set({ stream })
@@ -55,7 +63,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
 
   stopEventStream: () => {
     const { stream } = get()
-    set({ stream: null })
+    set({ stream: null, reconnectDelay: 1000 })
     stream?.close()
   },
 }))

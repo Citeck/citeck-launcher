@@ -143,7 +143,9 @@ func Start(foreground bool) error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", socketPath, err)
 	}
-	os.Chmod(socketPath, 0o666)
+	if err := os.Chmod(socketPath, 0o666); err != nil {
+		slog.Warn("Failed to chmod socket", "path", socketPath, "err", err)
+	}
 
 	// Also listen on TCP :8088 (for Web UI / Desktop app / remote access)
 	const tcpAddr = ":8088"
@@ -280,8 +282,13 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 // JSON helpers
 
 func writeJSON(w http.ResponseWriter, v any) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
+	w.Write(data)
 }
 
 func writeError(w http.ResponseWriter, code int, msg string) {

@@ -32,7 +32,7 @@ export function AppDetail() {
   const load = useCallback(() => {
     if (!name) return
     getAppInspect(name).then(setInspect).catch((e) => setError(e.message))
-    getAppLogs(name, 30).then(setLogs).catch(() => {})
+    getAppLogs(name, 30).then(setLogs).catch(() => setLogs('(logs unavailable)'))
     getAppConfig(name).then((y) => { setConfigYaml(y); setEditYaml(y) }).catch(() => {})
   }, [name])
 

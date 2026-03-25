@@ -35,8 +35,6 @@ export function ConfirmModal({
     }
   }, [open])
 
-  if (!open) return null
-
   const confirmStyles =
     confirmVariant === 'danger'
       ? 'bg-destructive text-white hover:bg-destructive/90'

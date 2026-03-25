@@ -85,7 +85,7 @@ export async function getSystemDump(): Promise<void> {
   a.href = url
   a.download = 'system-dump.json'
   a.click()
-  URL.revokeObjectURL(url)
+  setTimeout(() => URL.revokeObjectURL(url), 5000)
 }
 
 export async function getVolumes(): Promise<{ name: string; driver: string; mountpoint: string }[]> {

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { useParams, Link } from 'react-router'
 import { getAppLogs } from '../lib/api'
 
@@ -116,32 +116,33 @@ export function Logs() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  // Detect levels with inheritance, then filter
-  const lines = logs.split('\n')
-  const allLevels = detectLevels(lines)
-  const indexedLines = lines.map((line, i) => ({ line, level: allLevels[i] }))
-  const filteredEntries = indexedLines.filter(({ level }) => {
-    if (level && !enabledLevels.has(level)) return false
-    return true
-  })
-  const filteredLines = filteredEntries.map((e) => e.line)
-  const filteredLevels = filteredEntries.map((e) => e.level)
-
-  const searchMatches = new Set<number>()
-  if (search) {
-    try {
-      const pattern = useRegex ? new RegExp(search, 'gi') : null
-      filteredLines.forEach((line, i) => {
-        if (pattern ? pattern.test(line) : line.toLowerCase().includes(search.toLowerCase())) {
-          searchMatches.add(i)
-        }
-        // Reset regex lastIndex
-        if (pattern) pattern.lastIndex = 0
-      })
-    } catch {
-      // Invalid regex
+  // Detect levels with inheritance, then filter (memoized for performance)
+  const { filteredLines, filteredLevels } = useMemo(() => {
+    const lines = logs.split('\n')
+    const allLevels = detectLevels(lines)
+    const entries = lines
+      .map((line, i) => ({ line, level: allLevels[i] }))
+      .filter(({ level }) => !level || enabledLevels.has(level))
+    return {
+      filteredLines: entries.map((e) => e.line),
+      filteredLevels: entries.map((e) => e.level),
     }
-  }
+  }, [logs, enabledLevels])
+
+  const searchMatches = useMemo(() => {
+    const matches = new Set<number>()
+    if (search) {
+      try {
+        const pattern = useRegex ? new RegExp(search, 'i') : null
+        filteredLines.forEach((line, i) => {
+          if (pattern ? pattern.test(line) : line.toLowerCase().includes(search.toLowerCase())) {
+            matches.add(i)
+          }
+        })
+      } catch { /* invalid regex */ }
+    }
+    return matches
+  }, [filteredLines, search, useRegex])
 
   const matchIndices = Array.from(searchMatches).sort((a, b) => a - b)
   const safeMatchIndex = matchIndices.length > 0
@@ -168,7 +169,7 @@ export function Logs() {
     a.href = url
     a.download = `${name}-logs.txt`
     a.click()
-    URL.revokeObjectURL(url)
+    setTimeout(() => URL.revokeObjectURL(url), 5000)
   }
 
   return (

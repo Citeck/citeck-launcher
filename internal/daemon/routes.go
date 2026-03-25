@@ -164,7 +164,6 @@ func (d *Daemon) handleAppStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// RestartApp handles both starting a stopped app and restarting a running one
 	if err := d.runtime.RestartApp(name); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -398,7 +397,7 @@ func (d *Daemon) handleSystemDump(w http.ResponseWriter, r *http.Request) {
 
 func (d *Daemon) handleListVolumes(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
-	volumes, err := d.dockerClient.ListVolumes(ctx)
+	volumes, err := d.dockerClient.ListNamespaceVolumes(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -419,8 +418,14 @@ func (d *Daemon) handleListVolumes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, result)
 }
 
+var validNameRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+
 func (d *Daemon) handleDeleteVolume(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if !validNameRegex.MatchString(name) {
+		writeError(w, http.StatusBadRequest, "invalid volume name")
+		return
+	}
 	ctx := context.Background()
 	if err := d.dockerClient.DeleteVolume(ctx, name); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -470,9 +475,11 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update the app definition and restart
-	newDef.Name = name // preserve original name
-	app.Def = newDef
+	newDef.Name = name
+	if err := d.runtime.UpdateAppDef(name, newDef); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if err := d.runtime.RestartApp(name); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -513,7 +520,7 @@ func (d *Daemon) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 		for _, app := range apps {
 			appStatus := "ok"
-			if app.Status != "RUNNING" {
+			if app.Status != namespace.AppStatusRunning {
 				appStatus = "warning"
 			}
 			checks = append(checks, api.HealthCheckDto{

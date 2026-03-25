@@ -160,6 +160,7 @@ func kindToString(k appdef.ApplicationKind) string {
 	}
 }
 
+// generateLinks builds quick links. Must be called with r.mu held.
 func (r *Runtime) generateLinks() []api.LinkDto {
 	if r.config == nil {
 		return nil
@@ -242,6 +243,18 @@ func (r *Runtime) Regenerate(apps []appdef.ApplicationDef) {
 	r.cmdCh <- command{typ: cmdRegenerate, apps: apps}
 }
 
+// UpdateAppDef updates the ApplicationDef for a running app (under lock).
+func (r *Runtime) UpdateAppDef(appName string, def appdef.ApplicationDef) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	app, ok := r.apps[appName]
+	if !ok {
+		return fmt.Errorf("app %q not found", appName)
+	}
+	app.Def = def
+	return nil
+}
+
 // StopApp stops a single app by name. Returns error if not found or not running.
 func (r *Runtime) StopApp(appName string) error {
 	r.mu.Lock()
@@ -278,15 +291,21 @@ func (r *Runtime) RestartApp(appName string) error {
 		r.mu.Unlock()
 		return fmt.Errorf("app %q not found", appName)
 	}
+	containerName := r.docker.ContainerName(appName)
+	hasContainer := app.ContainerID != ""
+	r.mu.Unlock()
 
-	// Stop existing container
+	// Stop existing container — outside lock to avoid blocking
 	ctx := context.Background()
-	if app.ContainerID != "" {
-		containerName := r.docker.ContainerName(appName)
+	if hasContainer {
 		_ = r.docker.StopAndRemoveContainer(ctx, containerName)
-		app.ContainerID = ""
 	}
-	r.setAppStatus(app, AppStatusStarting)
+
+	r.mu.Lock()
+	if app, ok = r.apps[appName]; ok {
+		app.ContainerID = ""
+		r.setAppStatus(app, AppStatusStarting)
+	}
 	r.mu.Unlock()
 
 	// Re-start in background

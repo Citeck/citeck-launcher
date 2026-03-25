@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { getVolumes, deleteVolume } from '../lib/api'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { Trash2 } from 'lucide-react'
@@ -16,11 +16,11 @@ export function Volumes() {
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
-  function loadVolumes() {
+  const loadVolumes = useCallback(() => {
     getVolumes().then(setVolumes).catch((e) => setError(e.message))
-  }
+  }, [])
 
-  useEffect(() => { loadVolumes() }, [])
+  useEffect(() => { loadVolumes() }, [loadVolumes])
 
   async function handleDelete() {
     if (!deleteTarget) return

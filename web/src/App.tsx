@@ -4,6 +4,7 @@ import { AppDetail } from './pages/AppDetail'
 import { Logs } from './pages/Logs'
 import { Config } from './pages/Config'
 import { Volumes } from './pages/Volumes'
+import { DaemonLogs } from './pages/DaemonLogs'
 import { TabBar } from './components/TabBar'
 
 function Layout() {
@@ -17,6 +18,7 @@ function Layout() {
           <Route path="/apps/:name/logs" element={<Logs />} />
           <Route path="/config" element={<Config />} />
           <Route path="/volumes" element={<Volumes />} />
+          <Route path="/daemon-logs" element={<DaemonLogs />} />
         </Routes>
       </main>
     </div>

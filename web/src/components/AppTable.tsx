@@ -89,7 +89,7 @@ export function AppTable({ apps }: AppTableProps) {
         </thead>
         <tbody>
           {groups.map((g) => (
-            <GroupRows key={g.kind} label={g.label} count={g.apps.length} apps={g.apps} onAction={setAction} />
+            <GroupRows key={g.kind} label={g.label} apps={g.apps} onAction={setAction} />
           ))}
         </tbody>
       </table>

@@ -356,9 +356,22 @@ func (c *Client) CreateVolume(ctx context.Context, name string) error {
 	return err
 }
 
-// ListVolumes returns all Docker volumes.
+// ListVolumes returns Docker volumes filtered by namespace.
 func (c *Client) ListVolumes(ctx context.Context) ([]*volume.Volume, error) {
 	resp, err := c.cli.VolumeList(ctx, volume.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Volumes, nil
+}
+
+// ListNamespaceVolumes returns volumes filtered by this client's namespace.
+func (c *Client) ListNamespaceVolumes(ctx context.Context) ([]*volume.Volume, error) {
+	resp, err := c.cli.VolumeList(ctx, volume.ListOptions{
+		Filters: filters.NewArgs(
+			filters.Arg("label", LabelNamespace+"="+c.namespace),
+		),
+	})
 	if err != nil {
 		return nil, err
 	}
