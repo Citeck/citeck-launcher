@@ -44,10 +44,10 @@ describe('AppTable', () => {
     expect(proxyLink).toHaveAttribute('href', '/apps/proxy')
   })
 
-  it('renders empty table', () => {
+  it('renders empty table with header', () => {
     renderWithRouter(<AppTable apps={[]} />)
-    // No groups rendered when empty
-    expect(screen.queryByText('Name')).not.toBeInTheDocument()
+    // Header row always present
+    expect(screen.getByText('Name')).toBeInTheDocument()
   })
 
   it('renders group headers', () => {

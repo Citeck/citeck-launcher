@@ -10,8 +10,8 @@ const LEVEL_COLORS: Record<LogLevel, string> = {
   ERROR: 'text-destructive',
   WARN: 'text-warning',
   INFO: 'text-foreground',
-  DEBUG: 'text-muted-foreground',
-  TRACE: 'text-muted-foreground/70',
+  DEBUG: 'text-foreground/70',
+  TRACE: 'text-foreground/50',
 }
 
 function detectLevel(line: string): LogLevel | null {
@@ -297,7 +297,7 @@ export function Logs() {
         ) : (
           filteredLines.map((line, i) => {
             const level = detectLevel(line)
-            const colorClass = level ? LEVEL_COLORS[level] : 'text-muted-foreground'
+            const colorClass = level ? LEVEL_COLORS[level] : 'text-foreground'
             const isCurrentMatch = matchIndices[safeMatchIndex] === i
 
             return (

@@ -1,10 +1,12 @@
 import { useState } from 'react'
-import { Link } from 'react-router'
+import { useNavigate } from 'react-router'
 import type { AppDto } from '../lib/types'
 import { postAppStop, postAppStart, postAppRestart } from '../lib/api'
 import { useDashboardStore } from '../lib/store'
+import { useTabsStore } from '../lib/tabs'
 import { StatusBadge } from './StatusBadge'
 import { ConfirmModal } from './ConfirmModal'
+import { Square, Play, RotateCw, FileText, Settings } from 'lucide-react'
 
 interface AppTableProps {
   apps: AppDto[]
@@ -67,46 +69,23 @@ export function AppTable({ apps }: AppTableProps) {
 
   return (
     <>
-      {groups.map((g) => (
-        <div key={g.kind} className="mb-1">
-          <div className="text-xs font-bold py-1">{g.label}</div>
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="text-left text-muted-foreground border-b border-border">
-                <th className="py-0.5 pr-6 font-medium">Name</th>
-                <th className="py-0.5 pr-6 font-medium">Status</th>
-                <th className="py-0.5 pr-6 font-medium">Ports</th>
-                <th className="py-0.5 pr-6 font-medium">Tag</th>
-                <th className="py-0.5 font-medium text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {g.apps.map((app) => {
-                const isRun = RUNNING.includes(app.status)
-                const isStop = STOPPED.includes(app.status)
-                return (
-                  <tr key={app.name} className="border-b border-border/20 hover:bg-muted/30">
-                    <td className="py-[3px] pr-6 font-mono">
-                      <Link to={`/apps/${app.name}`} className="text-primary hover:underline">{app.name}</Link>
-                    </td>
-                    <td className="py-[3px] pr-6"><StatusBadge status={app.status} /></td>
-                    <td className="py-[3px] pr-6 font-mono text-muted-foreground whitespace-nowrap">{ports(app.ports)}</td>
-                    <td className="py-[3px] pr-6 font-mono text-muted-foreground">{tag(app.image)}</td>
-                    <td className="py-[3px] text-right whitespace-nowrap">
-                      {isRun && <>
-                        <AB c="text-muted-foreground" onClick={() => setAction({ type: 'stop', appName: app.name })}>⏹</AB>
-                        <AB c="text-muted-foreground" onClick={() => setAction({ type: 'restart', appName: app.name })}>↻</AB>
-                      </>}
-                      {isStop && <AB c="text-success" onClick={() => setAction({ type: 'start', appName: app.name })}>▶</AB>}
-                      <Link to={`/apps/${app.name}/logs`} className="inline-block px-1 text-muted-foreground hover:text-foreground" title="Logs">📋</Link>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      ))}
+      <table className="w-full text-xs border-collapse">
+        <thead>
+          <tr className="text-left text-muted-foreground border-b border-border">
+            <th className="py-1 pr-4 font-medium">Name</th>
+            <th className="py-1 pr-4 font-medium">Status</th>
+            <th className="py-1 pr-4 font-medium">Ports</th>
+            <th className="py-1 pr-4 font-medium">Tag</th>
+            <th className="py-1 font-medium text-right w-24">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {groups.map((g) => (
+            <GroupRows key={g.kind} label={g.label} count={g.apps.length} apps={g.apps} onAction={setAction} />
+          ))}
+        </tbody>
+      </table>
+
       {mc && (
         <ConfirmModal open={!!action} title={mc.title} message={mc.msg}
           confirmLabel={mc.label} confirmVariant={mc.variant}
@@ -118,6 +97,73 @@ export function AppTable({ apps }: AppTableProps) {
   )
 }
 
-function AB({ children, c, onClick }: { children: React.ReactNode; c: string; onClick: () => void }) {
-  return <button type="button" className={`px-1 ${c} hover:text-foreground`} onClick={onClick} title={String(children)}>{children}</button>
+function GroupRows({ label, apps, onAction }: { label: string; apps: AppDto[]; onAction: (a: AppAction) => void }) {
+  const navigate = useNavigate()
+  const openTab = useTabsStore((s) => s.openTab)
+
+  function openInTab(id: string, title: string, path: string) {
+    openTab({ id, title, path })
+    navigate(path)
+  }
+
+  return (
+    <>
+      <tr>
+        <td colSpan={5} className="pt-3 pb-1 text-xs font-bold text-foreground">
+          {label}
+        </td>
+      </tr>
+      {apps.map((app) => {
+        const isRun = RUNNING.includes(app.status)
+        const isStop = STOPPED.includes(app.status)
+        return (
+          <tr key={app.name} className="border-b border-border/20 hover:bg-muted/30">
+            <td className="py-[3px] pr-4 font-mono">
+              <a href={`/apps/${app.name}`} className="text-primary hover:underline cursor-pointer"
+                onClick={(e) => { e.preventDefault(); openInTab(`app-${app.name}`, app.name, `/apps/${app.name}`) }}>
+                {app.name}
+              </a>
+            </td>
+            <td className="py-[3px] pr-4"><StatusBadge status={app.status} /></td>
+            <td className="py-[3px] pr-4 font-mono text-muted-foreground whitespace-nowrap">{ports(app.ports)}</td>
+            <td className="py-[3px] pr-4 font-mono text-muted-foreground">{tag(app.image)}</td>
+            <td className="py-[3px] text-right whitespace-nowrap">
+              <div className="inline-flex items-center gap-0.5">
+                {isRun && (
+                  <>
+                    <IconBtn icon={Square} title="Stop" color="hover:text-destructive" onClick={() => onAction({ type: 'stop', appName: app.name })} />
+                    <IconBtn icon={RotateCw} title="Restart" onClick={() => onAction({ type: 'restart', appName: app.name })} />
+                  </>
+                )}
+                {isStop && (
+                  <IconBtn icon={Play} title="Start" color="hover:text-success" onClick={() => onAction({ type: 'start', appName: app.name })} />
+                )}
+                <button type="button" className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted" title="Logs"
+                  onClick={() => openInTab(`logs-${app.name}`, `Logs: ${app.name}`, `/apps/${app.name}/logs`)}>
+                  <FileText size={14} />
+                </button>
+                <button type="button" className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted" title="Details"
+                  onClick={() => openInTab(`app-${app.name}`, app.name, `/apps/${app.name}`)}>
+                  <Settings size={14} />
+                </button>
+              </div>
+            </td>
+          </tr>
+        )
+      })}
+    </>
+  )
+}
+
+function IconBtn({ icon: Icon, title, color, onClick }: { icon: React.ElementType; title: string; color?: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className={`p-1 rounded text-muted-foreground ${color ?? 'hover:text-foreground'} hover:bg-muted`}
+      onClick={onClick}
+      title={title}
+    >
+      <Icon size={14} />
+    </button>
+  )
 }
