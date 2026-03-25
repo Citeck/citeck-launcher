@@ -179,9 +179,10 @@ func Import(ctx context.Context, dc *docker.Client, zipPath, volumesBase string)
 	return &meta, nil
 }
 
-// exportVolume archives a single Docker volume using launcher-utils.
+// exportVolume archives a single volume directory using launcher-utils.
+// hostPath is the absolute path to the volume directory on the host.
 // Returns rootStat string ("uid:gid|0perms").
-func exportVolume(ctx context.Context, dc *docker.Client, volumeName, outputPath string) (string, error) {
+func exportVolume(ctx context.Context, dc *docker.Client, hostPath, outputPath string) (string, error) {
 	destDir := filepath.Dir(outputPath)
 	dataFile := filepath.Base(outputPath)
 
@@ -198,7 +199,7 @@ func exportVolume(ctx context.Context, dc *docker.Client, volumeName, outputPath
 	)}
 
 	output, exitCode, err := dc.RunUtilsContainer(ctx, cmd, []string{
-		volumeName + ":/source:ro",
+		hostPath + ":/source:ro",
 		destDir + ":/dest",
 	})
 	if err != nil {

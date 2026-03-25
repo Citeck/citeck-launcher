@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -74,8 +75,8 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 	d.configMu.Lock()
 	defer d.configMu.Unlock()
 
-	// Re-read config from disk
-	nsCfg, err := namespace.LoadNamespaceConfig(config.NamespaceConfigPath())
+	// Re-read config from disk (mode-aware path)
+	nsCfg, err := namespace.LoadNamespaceConfig(config.ResolveNamespaceConfigPath(d.workspaceID, d.nsConfig.ID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("reload config: %s", err.Error()))
 		return
@@ -277,7 +278,7 @@ func (d *Daemon) handleAppExec(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleGetConfig(w http.ResponseWriter, r *http.Request) {
-	cfgPath := config.NamespaceConfigPath()
+	cfgPath := d.activeConfigPath()
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("config file not found: %s", cfgPath))
@@ -288,7 +289,7 @@ func (d *Daemon) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handlePutConfig(w http.ResponseWriter, r *http.Request) {
-	cfgPath := config.NamespaceConfigPath()
+	cfgPath := d.activeConfigPath()
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1024*1024)) // 1MB max
 	if err != nil {
@@ -431,25 +432,36 @@ func (d *Daemon) handleSystemDump(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, dump)
 }
 
-func (d *Daemon) handleListVolumes(w http.ResponseWriter, r *http.Request) {
-	ctx := context.Background()
-	volumes, err := d.dockerClient.ListNamespaceVolumes(ctx)
+func (d *Daemon) volumesDir() string {
+	return filepath.Join(d.volumesBase, "volumes")
+}
+
+func (d *Daemon) handleListVolumes(w http.ResponseWriter, _ *http.Request) {
+	volDir := d.volumesDir()
+	entries, err := os.ReadDir(volDir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			writeJSON(w, []any{})
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	type volumeDto struct {
-		Name       string `json:"name"`
-		Driver     string `json:"driver"`
-		Mountpoint string `json:"mountpoint"`
+		Name string `json:"name"`
+		Path string `json:"path"`
 	}
-	result := make([]volumeDto, 0, len(volumes))
-	for _, v := range volumes {
-		result = append(result, volumeDto{
-			Name:       v.Name,
-			Driver:     v.Driver,
-			Mountpoint: v.Mountpoint,
-		})
+	var result []volumeDto
+	for _, e := range entries {
+		if e.IsDir() {
+			result = append(result, volumeDto{
+				Name: e.Name(),
+				Path: filepath.Join(volDir, e.Name()),
+			})
+		}
+	}
+	if result == nil {
+		result = []volumeDto{}
 	}
 	writeJSON(w, result)
 }
@@ -462,25 +474,12 @@ func (d *Daemon) handleDeleteVolume(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid volume name")
 		return
 	}
-	// Verify volume belongs to this namespace before deletion
-	ctx := context.Background()
-	nsVolumes, err := d.dockerClient.ListNamespaceVolumes(ctx)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("list volumes: %s", err.Error()))
+	volPath := filepath.Join(d.volumesDir(), name)
+	if _, err := os.Stat(volPath); err != nil {
+		writeError(w, http.StatusNotFound, "volume not found")
 		return
 	}
-	found := false
-	for _, v := range nsVolumes {
-		if v.Name == name {
-			found = true
-			break
-		}
-	}
-	if !found {
-		writeError(w, http.StatusForbidden, "volume does not belong to this namespace")
-		return
-	}
-	if err := d.dockerClient.DeleteVolume(ctx, name); err != nil {
+	if err := os.RemoveAll(volPath); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

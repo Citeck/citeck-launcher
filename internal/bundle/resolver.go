@@ -130,46 +130,41 @@ func (r *Resolver) Resolve(ref BundleRef) (*ResolveResult, error) {
 		return &ResolveResult{Bundle: &EmptyBundleDef, Workspace: &WorkspaceConfig{}}, nil
 	}
 
+	// Step 1: Sync the default workspace repo to get workspace-v1.yml (bundleRepos, aliases, etc.)
+	// This is a shared cache that contains workspace config for all bundle repos.
+	defaultRepoDir := filepath.Join(r.dataDir, "bundles", "_workspace")
+	if err := git.CloneOrPullWithAuth(git.RepoOpts{
+		URL: defaultBundlesRepo, Branch: defaultBundlesBranch,
+		DestDir: defaultRepoDir, PullPeriod: defaultPullPeriod,
+	}); err != nil {
+		slog.Warn("Failed to sync workspace repo", "err", err)
+	}
+	wsCfg := loadWorkspaceConfig(defaultRepoDir)
+
+	// Step 2: Resolve the actual repo URL for ref.Repo from workspace config
 	repoDir := filepath.Join(r.dataDir, "bundles", ref.Repo)
+	repoURL := defaultBundlesRepo
+	repoBranch := defaultBundlesBranch
+	var repoToken string
 
-	// Clone or pull the bundle repo (with auth if available)
-	opts := git.RepoOpts{
-		URL:        defaultBundlesRepo,
-		Branch:     defaultBundlesBranch,
-		DestDir:    repoDir,
-		PullPeriod: defaultPullPeriod,
-	}
-	if err := git.CloneOrPullWithAuth(opts); err != nil {
-		slog.Warn("Failed to update bundle repo", "err", err)
-	}
-
-	// Load workspace config — may define bundleRepos with auth
-	wsCfg := loadWorkspaceConfig(repoDir)
-
-	// If the bundle repo has a specific URL in workspace config, re-sync from there
 	if repo := findBundleRepo(wsCfg, ref.Repo); repo != nil {
-		repoURL := repo.URL
-		branch := repo.Branch
-		if repoURL == "" {
-			repoURL = defaultBundlesRepo
+		if repo.URL != "" {
+			repoURL = repo.URL
 		}
-		if branch == "" {
-			branch = defaultBundlesBranch
+		if repo.Branch != "" {
+			repoBranch = repo.Branch
 		}
-		token := ""
 		if repo.AuthType != "" && r.tokenLookup != nil {
-			token = r.tokenLookup(repo.AuthType)
+			repoToken = r.tokenLookup(repo.AuthType)
 		}
-		// Only re-sync if the specific repo differs from default
-		if repoURL != defaultBundlesRepo || token != "" {
-			opts = git.RepoOpts{
-				URL: repoURL, Branch: branch, DestDir: repoDir,
-				Token: token, PullPeriod: defaultPullPeriod,
-			}
-			if err := git.CloneOrPullWithAuth(opts); err != nil {
-				slog.Warn("Failed to update bundle repo with auth", "repo", ref.Repo, "err", err)
-			}
-		}
+	}
+
+	// Step 3: Clone or pull the actual bundle repo
+	if err := git.CloneOrPullWithAuth(git.RepoOpts{
+		URL: repoURL, Branch: repoBranch, DestDir: repoDir,
+		Token: repoToken, PullPeriod: defaultPullPeriod,
+	}); err != nil {
+		slog.Warn("Failed to sync bundle repo", "repo", ref.Repo, "err", err)
 	}
 
 	// Build alias → canonical name map
