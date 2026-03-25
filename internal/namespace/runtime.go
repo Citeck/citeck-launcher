@@ -474,8 +474,11 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) {
 	r.cancel = cancel
 	r.setStatus(NsStatusStarting)
 
-	// Create network (outside lock is fine — Docker call, no shared state)
+	// Cleanup stale containers from previous daemon run (prevents port conflicts)
 	r.mu.Unlock()
+	r.docker.CleanupStaleContainers(ctx)
+
+	// Create network
 	if _, err := r.docker.CreateNetwork(ctx); err != nil {
 		slog.Error("Failed to create network", "err", err)
 	}
@@ -789,7 +792,7 @@ func (r *Runtime) updateStats() {
 }
 
 func (r *Runtime) checkStatus() {
-	if r.status != NsStatusStarting && r.status != NsStatusRunning {
+	if r.status != NsStatusStarting && r.status != NsStatusRunning && r.status != NsStatusStalled {
 		return
 	}
 	allRunning := true
@@ -805,7 +808,7 @@ func (r *Runtime) checkStatus() {
 	if len(r.apps) > 0 && allRunning && r.status != NsStatusRunning {
 		r.setStatus(NsStatusRunning)
 	}
-	if anyFailed && r.status == NsStatusStarting {
+	if anyFailed && (r.status == NsStatusStarting || r.status == NsStatusRunning) {
 		r.setStatus(NsStatusStalled)
 	}
 }

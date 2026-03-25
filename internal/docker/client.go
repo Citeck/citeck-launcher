@@ -278,6 +278,23 @@ func (c *Client) GetContainers(ctx context.Context) ([]types.Container, error) {
 	})
 }
 
+// CleanupStaleContainers stops and removes all containers from this namespace.
+// Used at startup to clear leftovers from a previous daemon run.
+func (c *Client) CleanupStaleContainers(ctx context.Context) {
+	containers, err := c.GetContainers(ctx)
+	if err != nil {
+		return
+	}
+	for _, ctr := range containers {
+		name := ctr.Names[0]
+		if strings.HasPrefix(name, "/") {
+			name = name[1:]
+		}
+		slog.Info("Removing stale container", "name", name)
+		_ = c.StopAndRemoveContainer(ctx, name)
+	}
+}
+
 // InspectContainer returns container details.
 func (c *Client) InspectContainer(ctx context.Context, id string) (types.ContainerJSON, error) {
 	return c.cli.ContainerInspect(ctx, id)
