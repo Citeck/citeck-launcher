@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -34,6 +35,8 @@ type Daemon struct {
 	socketPath   string
 	volumesBase  string
 	startTime    time.Time
+	eventSubs    []chan api.EventDto
+	eventMu      sync.Mutex
 }
 
 // Start runs the daemon in foreground mode.
@@ -123,6 +126,13 @@ func Start(foreground bool) error {
 		startTime:    time.Now(),
 	}
 
+	// Wire up event broadcasting
+	if d.runtime != nil {
+		d.runtime.SetEventCallback(func(evt api.EventDto) {
+			d.broadcastEvent(evt)
+		})
+	}
+
 	// Create HTTP server
 	mux := http.NewServeMux()
 	d.registerRoutes(mux)
@@ -189,6 +199,37 @@ func (d *Daemon) shutdown() {
 	slog.Info("Daemon stopped")
 }
 
+func (d *Daemon) broadcastEvent(evt api.EventDto) {
+	d.eventMu.Lock()
+	defer d.eventMu.Unlock()
+	for _, ch := range d.eventSubs {
+		select {
+		case ch <- evt:
+		default: // drop if subscriber is slow
+		}
+	}
+}
+
+func (d *Daemon) addSubscriber() chan api.EventDto {
+	ch := make(chan api.EventDto, 64)
+	d.eventMu.Lock()
+	d.eventSubs = append(d.eventSubs, ch)
+	d.eventMu.Unlock()
+	return ch
+}
+
+func (d *Daemon) removeSubscriber(ch chan api.EventDto) {
+	d.eventMu.Lock()
+	defer d.eventMu.Unlock()
+	for i, sub := range d.eventSubs {
+		if sub == ch {
+			d.eventSubs = append(d.eventSubs[:i], d.eventSubs[i+1:]...)
+			break
+		}
+	}
+	close(ch)
+}
+
 func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	// Daemon routes
 	mux.HandleFunc("GET "+api.DaemonStatus, d.handleDaemonStatus)
@@ -211,6 +252,15 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	// Config
 	mux.HandleFunc("GET /api/v1/config", d.handleGetConfig)
 	mux.HandleFunc("PUT /api/v1/config", d.handlePutConfig)
+
+	// Events (SSE)
+	mux.HandleFunc("GET "+api.Events, d.handleEvents)
+
+	// Daemon logs
+	mux.HandleFunc("GET /api/v1/daemon/logs", d.handleDaemonLogs)
+
+	// System dump
+	mux.HandleFunc("GET /api/v1/system/dump", d.handleSystemDump)
 
 	// Health
 	mux.HandleFunc("GET "+api.Health, d.handleHealth)

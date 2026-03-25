@@ -29,7 +29,11 @@ function groupByKind(apps: AppDto[]) {
   }
   return Array.from(groups.entries())
     .sort(([a], [b]) => (KIND_ORDER[a] ?? 99) - (KIND_ORDER[b] ?? 99))
-    .map(([kind, apps]) => ({ kind, label: KIND_LABELS[kind] ?? kind, apps }))
+    .map(([kind, apps]) => ({
+      kind,
+      label: KIND_LABELS[kind] ?? kind,
+      apps: apps.sort((a, b) => a.name.localeCompare(b.name)),
+    }))
 }
 
 function tag(image: string) {

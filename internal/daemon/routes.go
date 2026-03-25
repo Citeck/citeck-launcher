@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -292,6 +293,106 @@ func (d *Daemon) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "Configuration saved"})
+}
+
+func (d *Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	ch := d.addSubscriber()
+	defer d.removeSubscriber(ch)
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case evt := <-ch:
+			data, _ := json.Marshal(evt)
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		}
+	}
+}
+
+func (d *Daemon) handleDaemonLogs(w http.ResponseWriter, r *http.Request) {
+	logPath := config.DaemonLogPath()
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("daemon log not found: %s", logPath))
+		return
+	}
+
+	// Return last N lines
+	tailStr := r.URL.Query().Get("tail")
+	tail := 200
+	if tailStr != "" {
+		if n, err := strconv.Atoi(tailStr); err == nil {
+			tail = n
+		}
+	}
+
+	lines := strings.Split(string(data), "\n")
+	if len(lines) > tail {
+		lines = lines[len(lines)-tail:]
+	}
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write([]byte(strings.Join(lines, "\n")))
+}
+
+func (d *Daemon) handleSystemDump(w http.ResponseWriter, r *http.Request) {
+	ctx := context.Background()
+	dump := make(map[string]any)
+
+	// Daemon info
+	dump["daemon"] = map[string]any{
+		"pid":     os.Getpid(),
+		"uptime":  time.Since(d.startTime).Milliseconds(),
+		"version": "dev",
+		"socket":  d.socketPath,
+	}
+
+	// Namespace info
+	if d.nsConfig != nil {
+		dump["namespace"] = map[string]any{
+			"id":     d.nsConfig.ID,
+			"name":   d.nsConfig.Name,
+			"bundle": d.nsConfig.BundleRef.String(),
+		}
+	}
+
+	// Docker info
+	if err := d.dockerClient.Ping(ctx); err != nil {
+		dump["docker"] = map[string]any{"available": false, "error": err.Error()}
+	} else {
+		dump["docker"] = map[string]any{"available": true}
+	}
+
+	// Apps status
+	if d.runtime != nil {
+		apps := d.runtime.Apps()
+		appList := make([]map[string]string, 0, len(apps))
+		for _, app := range apps {
+			appList = append(appList, map[string]string{
+				"name":   app.Name,
+				"status": string(app.Status),
+				"image":  app.Def.Image,
+			})
+		}
+		dump["apps"] = appList
+	}
+
+	w.Header().Set("Content-Disposition", "attachment; filename=system-dump.json")
+	writeJSON(w, dump)
 }
 
 func (d *Daemon) handleHealth(w http.ResponseWriter, r *http.Request) {

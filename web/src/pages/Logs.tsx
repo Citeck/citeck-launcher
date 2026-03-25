@@ -103,6 +103,10 @@ export function Logs() {
         e.preventDefault()
         setMatchIndex((prev) => prev + (e.shiftKey ? -1 : 1))
       }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'l') {
+        e.preventDefault()
+        setLogs('')
+      }
       if (e.key === 'Escape') {
         setSearch('')
         searchRef.current?.blur()
@@ -297,6 +301,14 @@ export function Logs() {
           title="Download as file"
         >
           Download
+        </button>
+        <button
+          type="button"
+          className="rounded px-2 py-1.5 text-xs border border-border text-muted-foreground hover:bg-muted"
+          onClick={() => setLogs('')}
+          title="Clear logs (Ctrl+L)"
+        >
+          Clear
         </button>
         <button
           type="button"

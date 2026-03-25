@@ -3,12 +3,16 @@ import type { NamespaceDto, HealthDto } from './types'
 import { getNamespace, getHealth } from './api'
 import { connectEvents } from './websocket'
 
+interface EventStream {
+  close: () => void
+}
+
 interface DashboardState {
   namespace: NamespaceDto | null
   health: HealthDto | null
   loading: boolean
   error: string | null
-  ws: WebSocket | null
+  stream: EventStream | null
 
   fetchData: () => Promise<void>
   startEventStream: () => void
@@ -20,7 +24,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   health: null,
   loading: true,
   error: null,
-  ws: null,
+  stream: null,
 
   fetchData: async () => {
     set({ loading: true, error: null })
@@ -33,33 +37,25 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   },
 
   startEventStream: () => {
-    const currentWs = get().ws
-    if (currentWs) return // already connected
+    if (get().stream) return
 
-    const ws = connectEvents(
+    const stream = connectEvents(
+      () => { get().fetchData() },
       () => {
-        // On any event, refetch data
-        get().fetchData()
-      },
-      () => {
-        // On close, attempt reconnect only if ws is still the active one
         setTimeout(() => {
-          if (get().ws === ws) {
-            set({ ws: null })
+          if (get().stream === stream) {
+            set({ stream: null })
             get().startEventStream()
           }
         }, 3000)
       },
     )
-    set({ ws })
+    set({ stream })
   },
 
   stopEventStream: () => {
-    const { ws } = get()
-    // Clear ref BEFORE close so the onClose callback sees ws !== get().ws
-    set({ ws: null })
-    if (ws) {
-      ws.close()
-    }
+    const { stream } = get()
+    set({ stream: null })
+    stream?.close()
   },
 }))

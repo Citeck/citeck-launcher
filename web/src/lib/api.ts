@@ -70,6 +70,24 @@ export async function postNamespaceReload(): Promise<ActionResultDto> {
   return res.json()
 }
 
+export async function getDaemonLogs(tail = 200): Promise<string> {
+  const res = await fetch(`${API_BASE}/daemon/logs?tail=${tail}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.text()
+}
+
+export async function getSystemDump(): Promise<void> {
+  const res = await fetch(`${API_BASE}/system/dump`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'system-dump.json'
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 export async function getConfigContent(): Promise<string> {
   const res = await fetch(`${API_BASE}/config`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)

@@ -2,11 +2,12 @@ import type { EventDto } from './types'
 
 export type EventHandler = (event: EventDto) => void
 
-export function connectEvents(onEvent: EventHandler, onClose?: () => void): WebSocket {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const ws = new WebSocket(`${protocol}//${window.location.host}/api/v1/events`)
+// SSE-based event stream (Server-Sent Events, no external deps)
+export function connectEvents(onEvent: EventHandler, onClose?: () => void): { close: () => void } {
+  const url = `/api/v1/events`
+  const es = new EventSource(url)
 
-  ws.onmessage = (msg) => {
+  es.onmessage = (msg) => {
     try {
       const event: EventDto = JSON.parse(msg.data)
       onEvent(event)
@@ -15,9 +16,10 @@ export function connectEvents(onEvent: EventHandler, onClose?: () => void): WebS
     }
   }
 
-  ws.onclose = () => {
+  es.onerror = () => {
+    es.close()
     onClose?.()
   }
 
-  return ws
+  return { close: () => es.close() }
 }
