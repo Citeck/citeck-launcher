@@ -119,16 +119,29 @@ func Start(foreground bool) error {
 	d.registerRoutes(mux)
 	d.server = &http.Server{Handler: mux}
 
-	// Listen on Unix socket
+	// Listen on Unix socket (for local CLI)
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", socketPath, err)
 	}
-
-	// Make socket accessible
 	os.Chmod(socketPath, 0o666)
 
-	slog.Info("Citeck Daemon started", "socket", socketPath, "pid", os.Getpid())
+	// Also listen on TCP :8088 (for Web UI / Desktop app / remote access)
+	const tcpAddr = ":8088"
+	tcpListener, err := net.Listen("tcp", tcpAddr)
+	if err != nil {
+		slog.Warn("TCP listener failed, Web UI only on Unix socket", "addr", tcpAddr, "err", err)
+	} else {
+		tcpServer := &http.Server{Handler: mux}
+		go func() {
+			slog.Info("Web UI available", "url", "http://localhost"+tcpAddr)
+			if err := tcpServer.Serve(tcpListener); err != nil && err != http.ErrServerClosed {
+				slog.Error("TCP server error", "err", err)
+			}
+		}()
+	}
+
+	slog.Info("Citeck Daemon started", "socket", socketPath, "tcp", tcpAddr, "pid", os.Getpid())
 
 	// Handle shutdown
 	sigCh := make(chan os.Signal, 1)
