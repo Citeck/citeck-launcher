@@ -161,6 +161,14 @@ func generateKeycloak(ctx *NsGenContext) {
 	if ctx.Config.Authentication.Type != AuthKeycloak {
 		return
 	}
+
+	// Keycloak needs its own DB in postgres
+	if pgApp := ctx.Applications[appdef.AppPostgres]; pgApp != nil {
+		pgApp.InitActions = append(pgApp.InitActions, appdef.AppInitAction{
+			Exec: []string{"sh", "-c", "/init_db_and_user.sh keycloak"},
+		})
+	}
+
 	img := bundleImageOr(ctx, appdef.AppKeycloak, "quay.io/keycloak/keycloak:26.0")
 	app := ctx.GetOrCreateApp(appdef.AppKeycloak)
 	app.Image = img
