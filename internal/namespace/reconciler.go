@@ -28,7 +28,7 @@ func DefaultReconcilerConfig() ReconcilerConfig {
 
 // RunReconciler starts the reconciliation loop in a goroutine.
 // It checks desired vs actual state and fixes discrepancies.
-func (r *Runtime) RunReconciler(cfg ReconcilerConfig) {
+func (r *Runtime) RunReconciler(ctx context.Context, cfg ReconcilerConfig) {
 	if !cfg.Enabled {
 		return
 	}
@@ -41,10 +41,10 @@ func (r *Runtime) RunReconciler(cfg ReconcilerConfig) {
 
 		for {
 			select {
-			case <-r.stopCh:
+			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				r.reconcile()
+				r.reconcile(ctx)
 			}
 		}
 	}()
@@ -58,10 +58,10 @@ func (r *Runtime) RunReconciler(cfg ReconcilerConfig) {
 
 			for {
 				select {
-				case <-r.stopCh:
+				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					r.checkLiveness()
+					r.checkLiveness(ctx)
 				}
 			}
 		}()
@@ -69,15 +69,13 @@ func (r *Runtime) RunReconciler(cfg ReconcilerConfig) {
 }
 
 // reconcile compares desired state (app definitions) with actual state (Docker containers).
-func (r *Runtime) reconcile() {
+func (r *Runtime) reconcile(ctx context.Context) {
 	r.mu.RLock()
 	if r.status != NsStatusRunning && r.status != NsStatusStalled {
 		r.mu.RUnlock()
 		return
 	}
 	r.mu.RUnlock()
-
-	ctx := context.Background()
 
 	// Get actual containers
 	containers, err := r.docker.GetContainers(ctx)
@@ -106,14 +104,15 @@ func (r *Runtime) reconcile() {
 				// Container disappeared — mark for restart
 				slog.Warn("Reconciler: container missing, restarting", "app", name)
 				r.setAppStatus(app, AppStatusReadyToPull)
-				go r.pullAndStart(ctx, name)
+				r.wg.Add(1)
+				go r.pullAndStartApp(ctx, name)
 			}
 		}
 	}
 }
 
 // checkLiveness runs liveness probes on running apps.
-func (r *Runtime) checkLiveness() {
+func (r *Runtime) checkLiveness(ctx context.Context) {
 	r.mu.RLock()
 	if r.status != NsStatusRunning {
 		r.mu.RUnlock()
@@ -137,8 +136,6 @@ func (r *Runtime) checkLiveness() {
 	}
 	r.mu.RUnlock()
 
-	ctx := context.Background()
-
 	for _, check := range appsToCheck {
 		alive := r.runLivenessProbe(ctx, check.containerID, check.probe)
 		if !alive {
@@ -146,7 +143,8 @@ func (r *Runtime) checkLiveness() {
 			r.mu.Lock()
 			if app, ok := r.apps[check.name]; ok && app.Status == AppStatusRunning {
 				r.setAppStatus(app, AppStatusReadyToPull)
-				go r.pullAndStart(ctx, check.name)
+				r.wg.Add(1)
+				go r.pullAndStartApp(ctx, check.name)
 			}
 			r.mu.Unlock()
 		}

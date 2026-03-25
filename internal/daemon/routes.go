@@ -29,7 +29,6 @@ func (d *Daemon) handleDaemonShutdown(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		time.Sleep(100 * time.Millisecond)
 		d.shutdown()
-		os.Exit(0)
 	}()
 }
 
@@ -209,7 +208,7 @@ func (d *Daemon) handleHealth(w http.ResponseWriter, r *http.Request) {
 		apps := d.runtime.Apps()
 		running := 0
 		for _, app := range apps {
-			if app.Status == "RUNNING" {
+			if app.Status == namespace.AppStatusRunning {
 				running++
 			}
 		}

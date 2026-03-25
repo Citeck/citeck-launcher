@@ -2,6 +2,7 @@ package git
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -26,8 +27,8 @@ func clone(repoURL, branch, destDir string) error {
 	}
 
 	cmd := exec.Command("git", "clone", "--branch", branch, "--depth", "1", repoURL, destDir)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("git clone %s: %w", repoURL, err)
@@ -41,8 +42,8 @@ func pull(destDir, branch string) error {
 	slog.Info("Pulling repository", "dir", destDir, "branch", branch)
 
 	cmd := exec.Command("git", "-C", destDir, "pull", "--ff-only", "origin", branch)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("git pull in %s: %w", destDir, err)

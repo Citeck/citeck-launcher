@@ -529,15 +529,18 @@ func resolveTemplateVars(s string) string {
 }
 
 // extractDBName extracts the database name from a JDBC or MongoDB URL.
-// jdbc:postgresql://host:port/dbname -> dbname
-// mongodb://host:port/dbname -> dbname
+// jdbc:postgresql://host:port/dbname?params -> dbname
 func extractDBName(url string) string {
-	// Find the last path segment
 	idx := strings.LastIndex(url, "/")
 	if idx < 0 {
 		return ""
 	}
-	return url[idx+1:]
+	name := url[idx+1:]
+	// Strip query parameters
+	if qIdx := strings.IndexByte(name, '?'); qIdx >= 0 {
+		name = name[:qIdx]
+	}
+	return name
 }
 
 // UtilsImage is the default init container image for volume setup.

@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/niceteck/citeck-launcher/internal/appdef"
 	"github.com/niceteck/citeck-launcher/internal/api"
+	"github.com/niceteck/citeck-launcher/internal/appdef"
 	"github.com/niceteck/citeck-launcher/internal/docker"
 )
 
@@ -28,17 +28,17 @@ const (
 type AppRuntimeStatus string
 
 const (
-	AppStatusReadyToPull   AppRuntimeStatus = "READY_TO_PULL"
-	AppStatusPulling       AppRuntimeStatus = "PULLING"
-	AppStatusPullFailed    AppRuntimeStatus = "PULL_FAILED"
-	AppStatusReadyToStart  AppRuntimeStatus = "READY_TO_START"
-	AppStatusDepsWaiting   AppRuntimeStatus = "DEPS_WAITING"
-	AppStatusStarting      AppRuntimeStatus = "STARTING"
-	AppStatusRunning       AppRuntimeStatus = "RUNNING"
-	AppStatusFailed        AppRuntimeStatus = "FAILED"
-	AppStatusStartFailed   AppRuntimeStatus = "START_FAILED"
+	AppStatusReadyToPull    AppRuntimeStatus = "READY_TO_PULL"
+	AppStatusPulling        AppRuntimeStatus = "PULLING"
+	AppStatusPullFailed     AppRuntimeStatus = "PULL_FAILED"
+	AppStatusReadyToStart   AppRuntimeStatus = "READY_TO_START"
+	AppStatusDepsWaiting    AppRuntimeStatus = "DEPS_WAITING"
+	AppStatusStarting       AppRuntimeStatus = "STARTING"
+	AppStatusRunning        AppRuntimeStatus = "RUNNING"
+	AppStatusFailed         AppRuntimeStatus = "FAILED"
+	AppStatusStartFailed    AppRuntimeStatus = "START_FAILED"
 	AppStatusStoppingFailed AppRuntimeStatus = "STOPPING_FAILED"
-	AppStatusStopped       AppRuntimeStatus = "STOPPED"
+	AppStatusStopped        AppRuntimeStatus = "STOPPED"
 )
 
 // AppRuntime holds the state for a single app.
@@ -56,6 +56,8 @@ type AppRuntime struct {
 type EventCallback func(event api.EventDto)
 
 // Runtime manages the full namespace lifecycle.
+// All mutable state is protected by mu. setStatus/setAppStatus must only be called
+// while mu is held by the caller.
 type Runtime struct {
 	mu          sync.RWMutex
 	status      NsRuntimeStatus
@@ -67,7 +69,7 @@ type Runtime struct {
 	volumesBase string
 	eventCb     EventCallback
 	cmdCh       chan command
-	stopCh      chan struct{}
+	cancel      context.CancelFunc
 	wg          sync.WaitGroup
 }
 
@@ -81,10 +83,9 @@ const (
 
 type command struct {
 	typ  commandType
-	apps []appdef.ApplicationDef // for regenerate
+	apps []appdef.ApplicationDef
 }
 
-// NewRuntime creates a namespace runtime.
 func NewRuntime(cfg *NamespaceConfig, dockerClient *docker.Client, workspace, volumesBase string) *Runtime {
 	return &Runtime{
 		status:      NsStatusStopped,
@@ -95,7 +96,6 @@ func NewRuntime(cfg *NamespaceConfig, dockerClient *docker.Client, workspace, vo
 		nsID:        cfg.ID,
 		volumesBase: volumesBase,
 		cmdCh:       make(chan command, 16),
-		stopCh:      make(chan struct{}),
 	}
 }
 
@@ -103,14 +103,12 @@ func (r *Runtime) SetEventCallback(cb EventCallback) {
 	r.eventCb = cb
 }
 
-// Status returns the current namespace status.
 func (r *Runtime) Status() NsRuntimeStatus {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.status
 }
 
-// Apps returns a snapshot of all app runtimes.
 func (r *Runtime) Apps() []*AppRuntime {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -122,11 +120,9 @@ func (r *Runtime) Apps() []*AppRuntime {
 	return result
 }
 
-// ToNamespaceDto converts runtime state to API DTO.
 func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-
 	apps := make([]api.AppDto, 0, len(r.apps))
 	for _, app := range r.apps {
 		apps = append(apps, api.AppDto{
@@ -137,7 +133,6 @@ func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 			Memory: app.Memory,
 		})
 	}
-
 	return api.NamespaceDto{
 		ID:        r.nsID,
 		Name:      r.config.Name,
@@ -147,56 +142,50 @@ func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 	}
 }
 
-// Start begins the namespace runtime goroutine and starts apps.
 func (r *Runtime) Start(apps []appdef.ApplicationDef) {
 	r.wg.Add(1)
 	go r.runLoop()
 	r.cmdCh <- command{typ: cmdStart, apps: apps}
 }
 
-// Stop sends a stop command.
 func (r *Runtime) Stop() {
 	r.cmdCh <- command{typ: cmdStop}
 }
 
-// Shutdown stops the runtime goroutine.
 func (r *Runtime) Shutdown() {
-	close(r.stopCh)
+	select {
+	case r.cmdCh <- command{typ: cmdStop}:
+	default:
+	}
 	r.wg.Wait()
 }
 
-// Regenerate updates the namespace with new app definitions.
 func (r *Runtime) Regenerate(apps []appdef.ApplicationDef) {
 	r.cmdCh <- command{typ: cmdRegenerate, apps: apps}
 }
 
+// setStatus must be called with r.mu held.
 func (r *Runtime) setStatus(s NsRuntimeStatus) {
 	old := r.status
 	r.status = s
 	slog.Info("Namespace status changed", "from", old, "to", s)
 	if r.eventCb != nil {
 		r.eventCb(api.EventDto{
-			Type:        "namespace_status",
-			Timestamp:   time.Now().UnixMilli(),
-			NamespaceID: r.nsID,
-			Before:      string(old),
-			After:       string(s),
+			Type: "namespace_status", Timestamp: time.Now().UnixMilli(),
+			NamespaceID: r.nsID, Before: string(old), After: string(s),
 		})
 	}
 }
 
+// setAppStatus must be called with r.mu held.
 func (r *Runtime) setAppStatus(app *AppRuntime, s AppRuntimeStatus) {
 	old := app.Status
 	app.Status = s
 	slog.Info("App status changed", "app", app.Name, "from", old, "to", s)
 	if r.eventCb != nil {
 		r.eventCb(api.EventDto{
-			Type:        "app_status",
-			Timestamp:   time.Now().UnixMilli(),
-			NamespaceID: r.nsID,
-			AppName:     app.Name,
-			Before:      string(old),
-			After:       string(s),
+			Type: "app_status", Timestamp: time.Now().UnixMilli(),
+			NamespaceID: r.nsID, AppName: app.Name, Before: string(old), After: string(s),
 		})
 	}
 }
@@ -205,24 +194,23 @@ func (r *Runtime) runLoop() {
 	defer r.wg.Done()
 	slog.Info("Namespace runtime thread started", "namespace", r.nsID)
 
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
 	for {
 		select {
-		case <-r.stopCh:
-			r.doStop()
-			return
 		case cmd := <-r.cmdCh:
-			r.mu.Lock()
 			switch cmd.typ {
 			case cmdStart:
 				r.doStart(cmd.apps)
 			case cmdStop:
 				r.doStop()
+				return
 			case cmdRegenerate:
-				r.doRegenerate(cmd.apps)
+				r.doStop()
+				r.doStart(cmd.apps)
 			}
-			r.mu.Unlock()
-		case <-time.After(5 * time.Second):
-			// Periodic check: update stats and status
+		case <-ticker.C:
 			r.mu.Lock()
 			r.updateStats()
 			r.checkStatus()
@@ -232,71 +220,45 @@ func (r *Runtime) runLoop() {
 }
 
 func (r *Runtime) doStart(apps []appdef.ApplicationDef) {
-	r.setStatus(NsStatusStarting)
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	r.cancel = cancel
 
-	// Create network
+	r.mu.Lock()
+	r.setStatus(NsStatusStarting)
+
+	// Create network (outside lock is fine — Docker call, no shared state)
+	r.mu.Unlock()
 	if _, err := r.docker.CreateNetwork(ctx); err != nil {
 		slog.Error("Failed to create network", "err", err)
 	}
+	r.mu.Lock()
 
 	// Initialize app runtimes
 	for _, appDef := range apps {
-		ar := &AppRuntime{
-			Name:   appDef.Name,
-			Status: AppStatusReadyToPull,
-			Def:    appDef,
+		r.apps[appDef.Name] = &AppRuntime{
+			Name: appDef.Name, Status: AppStatusReadyToPull, Def: appDef,
 		}
-		r.apps[appDef.Name] = ar
 	}
 
-	// Start apps in dependency order
-	go r.startApps(ctx)
-}
-
-func (r *Runtime) startApps(ctx context.Context) {
-	for {
-		r.mu.Lock()
-		allDone := true
-		anyFailed := false
-
-		for _, app := range r.apps {
-			switch app.Status {
-			case AppStatusReadyToPull:
-				allDone = false
-				go r.pullAndStart(ctx, app.Name)
-				r.setAppStatus(app, AppStatusPulling)
-			case AppStatusPulling, AppStatusDepsWaiting, AppStatusStarting, AppStatusReadyToStart:
-				allDone = false
-			case AppStatusStartFailed, AppStatusPullFailed:
-				anyFailed = true
-			}
-		}
-		r.mu.Unlock()
-
-		if allDone {
-			r.mu.Lock()
-			if anyFailed {
-				r.setStatus(NsStatusStalled)
-			} else {
-				r.setStatus(NsStatusRunning)
-			}
-			r.mu.Unlock()
-			return
-		}
-
-		time.Sleep(time.Second)
+	// Launch each app in its own goroutine, tracked by wg
+	for _, app := range r.apps {
+		r.setAppStatus(app, AppStatusPulling)
+		r.wg.Add(1)
+		go r.pullAndStartApp(ctx, app.Name)
 	}
+	r.mu.Unlock()
 }
 
-func (r *Runtime) pullAndStart(ctx context.Context, appName string) {
+func (r *Runtime) pullAndStartApp(ctx context.Context, appName string) {
+	defer r.wg.Done()
+
 	r.mu.RLock()
 	app := r.apps[appName]
 	appDef := app.Def
 	r.mu.RUnlock()
 
-	// Pull image
-	if !r.docker.ImageExists(ctx, appDef.Image) {
+	// Pull image if not present
+	if appDef.Image != "" && !r.docker.ImageExists(ctx, appDef.Image) {
 		slog.Info("Pulling image", "app", appName, "image", appDef.Image)
 		if err := r.docker.PullImage(ctx, appDef.Image); err != nil {
 			slog.Error("Pull failed", "app", appName, "err", err)
@@ -308,97 +270,22 @@ func (r *Runtime) pullAndStart(ctx context.Context, appName string) {
 		}
 	}
 
-	r.mu.Lock()
-	// Check dependencies
-	for dep := range appDef.DependsOn {
-		depApp, exists := r.apps[dep]
-		if exists && depApp.Status != AppStatusRunning {
-			r.setAppStatus(app, AppStatusDepsWaiting)
-			r.mu.Unlock()
-			r.waitForDeps(ctx, appName)
-			return
-		}
+	// Wait for dependencies
+	if !r.waitForDeps(ctx, appName) {
+		return // context cancelled (shutdown)
 	}
+
+	r.mu.Lock()
 	r.setAppStatus(app, AppStatusStarting)
 	r.mu.Unlock()
 
-	r.startApp(ctx, appName)
-}
+	// Run init containers
+	r.runInitContainers(ctx, appName, appDef)
 
-func (r *Runtime) waitForDeps(ctx context.Context, appName string) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(2 * time.Second):
-			r.mu.RLock()
-			app := r.apps[appName]
-			allReady := true
-			for dep := range app.Def.DependsOn {
-				depApp, exists := r.apps[dep]
-				if exists && depApp.Status != AppStatusRunning {
-					allReady = false
-					break
-				}
-			}
-			r.mu.RUnlock()
-
-			if allReady {
-				r.mu.Lock()
-				r.setAppStatus(r.apps[appName], AppStatusStarting)
-				r.mu.Unlock()
-				r.startApp(ctx, appName)
-				return
-			}
-		}
-	}
-}
-
-func (r *Runtime) startApp(ctx context.Context, appName string) {
-	r.mu.RLock()
-	app := r.apps[appName]
-	appDef := app.Def
-	r.mu.RUnlock()
-
-	slog.Info("Starting app", "app", appName, "image", appDef.Image)
-
-	// Run init containers first
-	for _, initC := range appDef.InitContainers {
-		slog.Info("Running init container", "app", appName, "image", initC.Image)
-		initDef := appdef.ApplicationDef{
-			Name:    appName + "-init",
-			Image:   initC.Image,
-			Cmd:     initC.Cmd,
-			Volumes: initC.Volumes,
-			Environments: initC.Environments,
-		}
-		// Pull init image if needed
-		if !r.docker.ImageExists(ctx, initC.Image) {
-			if err := r.docker.PullImage(ctx, initC.Image); err != nil {
-				slog.Warn("Init container pull failed", "app", appName, "image", initC.Image, "err", err)
-				continue
-			}
-		}
-		initName := r.docker.ContainerName(appName + "-init")
-		_ = r.docker.StopAndRemoveContainer(ctx, initName)
-		initID, err := r.docker.CreateContainer(ctx, initDef, r.volumesBase)
-		if err != nil {
-			slog.Warn("Init container create failed", "app", appName, "err", err)
-			continue
-		}
-		if err := r.docker.StartContainer(ctx, initID); err != nil {
-			slog.Warn("Init container start failed", "app", appName, "err", err)
-		}
-		// Wait for init container to finish
-		r.docker.WaitForContainer(ctx, initID, 60*time.Second)
-		_ = r.docker.RemoveContainer(ctx, initID)
-	}
-
-	// Remove existing container if any
+	// Create and start main container
 	containerName := r.docker.ContainerName(appName)
 	_ = r.docker.StopAndRemoveContainer(ctx, containerName)
 
-	// Create container
 	id, err := r.docker.CreateContainer(ctx, appDef, r.volumesBase)
 	if err != nil {
 		slog.Error("Create container failed", "app", appName, "err", err)
@@ -409,7 +296,6 @@ func (r *Runtime) startApp(ctx context.Context, appName string) {
 		return
 	}
 
-	// Start container
 	if err := r.docker.StartContainer(ctx, id); err != nil {
 		slog.Error("Start container failed", "app", appName, "err", err)
 		r.mu.Lock()
@@ -423,7 +309,7 @@ func (r *Runtime) startApp(ctx context.Context, appName string) {
 	app.ContainerID = id
 	r.mu.Unlock()
 
-	// Wait for startup probe FIRST (container must be healthy before init actions)
+	// Wait for startup probe
 	if len(appDef.StartupConditions) > 0 {
 		if err := r.waitForStartup(ctx, appName, id, appDef.StartupConditions); err != nil {
 			slog.Error("Startup probe failed", "app", appName, "err", err)
@@ -435,7 +321,7 @@ func (r *Runtime) startApp(ctx context.Context, appName string) {
 		}
 	}
 
-	// Run init actions AFTER startup probe (e.g. postgres DB creation needs DB ready)
+	// Run init actions (after startup probe — e.g. postgres DB creation)
 	for _, action := range appDef.InitActions {
 		if len(action.Exec) > 0 {
 			slog.Info("Running init action", "app", appName, "cmd", action.Exec)
@@ -449,6 +335,73 @@ func (r *Runtime) startApp(ctx context.Context, appName string) {
 	r.mu.Lock()
 	r.setAppStatus(app, AppStatusRunning)
 	r.mu.Unlock()
+}
+
+func (r *Runtime) waitForDeps(ctx context.Context, appName string) bool {
+	r.mu.RLock()
+	app := r.apps[appName]
+	deps := app.Def.DependsOn
+	r.mu.RUnlock()
+
+	if len(deps) == 0 {
+		return true
+	}
+
+	r.mu.Lock()
+	r.setAppStatus(app, AppStatusDepsWaiting)
+	r.mu.Unlock()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+			r.mu.RLock()
+			allReady := true
+			for dep := range deps {
+				if depApp, ok := r.apps[dep]; ok && depApp.Status != AppStatusRunning {
+					allReady = false
+					break
+				}
+			}
+			r.mu.RUnlock()
+			if allReady {
+				return true
+			}
+		}
+	}
+}
+
+func (r *Runtime) runInitContainers(ctx context.Context, appName string, appDef appdef.ApplicationDef) {
+	for _, initC := range appDef.InitContainers {
+		slog.Info("Running init container", "app", appName, "image", initC.Image)
+		initDef := appdef.ApplicationDef{
+			Name: appName + "-init", Image: initC.Image,
+			Cmd: initC.Cmd, Volumes: initC.Volumes, Environments: initC.Environments,
+		}
+		if !r.docker.ImageExists(ctx, initC.Image) {
+			if err := r.docker.PullImage(ctx, initC.Image); err != nil {
+				slog.Warn("Init container pull failed", "app", appName, "err", err)
+				continue
+			}
+		}
+		initName := r.docker.ContainerName(appName + "-init")
+		_ = r.docker.StopAndRemoveContainer(ctx, initName)
+		initID, err := r.docker.CreateContainer(ctx, initDef, r.volumesBase)
+		if err != nil {
+			slog.Warn("Init container create failed", "app", appName, "err", err)
+			continue
+		}
+		if err := r.docker.StartContainer(ctx, initID); err != nil {
+			slog.Warn("Init container start failed", "app", appName, "err", err)
+		}
+		// Wait for init container to EXIT (not start)
+		r.docker.WaitForContainerExit(ctx, initID, 60*time.Second)
+		_ = r.docker.RemoveContainer(ctx, initID)
+	}
 }
 
 func (r *Runtime) waitForStartup(ctx context.Context, appName, containerID string, conditions []appdef.StartupCondition) error {
@@ -478,24 +431,32 @@ func (r *Runtime) waitForProbe(ctx context.Context, containerID string, probe *a
 
 	time.Sleep(time.Duration(delay) * time.Second)
 
+	shortID := truncateID(containerID)
+
 	for attempt := 0; attempt < threshold; attempt++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		if probe.Exec != nil {
 			_, exitCode, err := r.docker.ExecInContainer(ctx, containerID, probe.Exec.Command)
 			if err == nil && exitCode == 0 {
-				slog.Info("Exec probe passed", "container", containerID[:12], "attempt", attempt)
+				slog.Info("Exec probe passed", "container", shortID, "attempt", attempt)
 				return nil
 			}
 		}
 		if probe.HTTP != nil {
 			publishedPort := r.docker.GetPublishedPort(ctx, containerID, probe.HTTP.Port)
 			if attempt == 0 || attempt%10 == 0 {
-				slog.Info("HTTP probe", "container", containerID[:12], "containerPort", probe.HTTP.Port, "publishedPort", publishedPort, "path", probe.HTTP.Path, "attempt", attempt)
+				slog.Info("HTTP probe", "container", shortID,
+					"containerPort", probe.HTTP.Port, "publishedPort", publishedPort,
+					"path", probe.HTTP.Path, "attempt", attempt)
 			}
-			if publishedPort > 0 {
-				if httpProbeCheck(publishedPort, probe.HTTP.Path, probe.TimeoutSeconds) {
-					slog.Info("HTTP probe passed", "container", containerID[:12], "port", publishedPort, "attempt", attempt)
-					return nil
-				}
+			if publishedPort > 0 && httpProbeCheck(publishedPort, probe.HTTP.Path, probe.TimeoutSeconds) {
+				slog.Info("HTTP probe passed", "container", shortID, "port", publishedPort, "attempt", attempt)
+				return nil
 			}
 		}
 		time.Sleep(time.Duration(period) * time.Second)
@@ -505,9 +466,23 @@ func (r *Runtime) waitForProbe(ctx context.Context, containerID string, probe *a
 }
 
 func (r *Runtime) doStop() {
+	r.mu.Lock()
 	r.setStatus(NsStatusStopping)
-	ctx := context.Background()
 
+	// Cancel all running goroutines
+	if r.cancel != nil {
+		r.cancel()
+		r.cancel = nil
+	}
+	r.mu.Unlock()
+
+	// Wait for all app goroutines to finish (they check ctx.Done)
+	// Note: wg includes runLoop itself, so we can't Wait here.
+	// Instead, give goroutines time to notice cancellation.
+	time.Sleep(500 * time.Millisecond)
+
+	r.mu.Lock()
+	ctx := context.Background()
 	for _, app := range r.apps {
 		if app.ContainerID != "" {
 			slog.Info("Stopping app", "app", app.Name)
@@ -515,16 +490,10 @@ func (r *Runtime) doStop() {
 			r.setAppStatus(app, AppStatusStopped)
 		}
 	}
-
 	_ = r.docker.RemoveNetwork(ctx)
 	r.apps = make(map[string]*AppRuntime)
 	r.setStatus(NsStatusStopped)
-}
-
-func (r *Runtime) doRegenerate(apps []appdef.ApplicationDef) {
-	// For now, stop and restart with new definitions
-	r.doStop()
-	r.doStart(apps)
+	r.mu.Unlock()
 }
 
 func (r *Runtime) updateStats() {
@@ -566,12 +535,11 @@ func (r *Runtime) checkStatus() {
 
 func formatMemory(usage, limit int64) string {
 	if limit <= 0 {
-		return fmt.Sprintf("%s", formatBytes(usage))
+		return formatBytes(usage)
 	}
 	return fmt.Sprintf("%s / %s", formatBytes(usage), formatBytes(limit))
 }
 
-// httpProbeCheck does a HTTP GET to localhost:port/path and returns true if status 200.
 func httpProbeCheck(port int, path string, timeoutSec int) bool {
 	if timeoutSec <= 0 {
 		timeoutSec = 5
@@ -598,4 +566,11 @@ func formatBytes(b int64) string {
 	default:
 		return fmt.Sprintf("%dK", b/1024)
 	}
+}
+
+func truncateID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
 }

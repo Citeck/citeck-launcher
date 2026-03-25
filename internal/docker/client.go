@@ -356,7 +356,7 @@ func (c *Client) CreateVolume(ctx context.Context, name string) error {
 	return err
 }
 
-// WaitForContainer waits for a container to reach a certain state.
+// WaitForContainer waits for a container to start running.
 func (c *Client) WaitForContainer(ctx context.Context, containerID string, timeout time.Duration) error {
 	deadline := time.After(timeout)
 	ticker := time.NewTicker(time.Second)
@@ -376,6 +376,31 @@ func (c *Client) WaitForContainer(ctx context.Context, containerID string, timeo
 			}
 			if inspect.State.ExitCode != 0 {
 				return fmt.Errorf("container exited with code %d", inspect.State.ExitCode)
+			}
+		}
+	}
+}
+
+// WaitForContainerExit waits for a container to finish and exit (for init containers).
+func (c *Client) WaitForContainerExit(ctx context.Context, containerID string, timeout time.Duration) error {
+	deadline := time.After(timeout)
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-deadline:
+			return fmt.Errorf("timeout waiting for container exit %s", containerID)
+		case <-ticker.C:
+			inspect, err := c.cli.ContainerInspect(ctx, containerID)
+			if err != nil {
+				continue
+			}
+			if !inspect.State.Running {
+				if inspect.State.ExitCode != 0 {
+					return fmt.Errorf("init container exited with code %d", inspect.State.ExitCode)
+				}
+				return nil
 			}
 		}
 	}
