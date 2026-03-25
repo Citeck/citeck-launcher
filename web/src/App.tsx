@@ -11,7 +11,7 @@ function NavLink({ to, children }: { to: string; children: React.ReactNode }) {
     <Link
       to={to}
       className={`block px-2 py-0.5 text-xs rounded ${
-        active ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'
+        active ? 'bg-muted text-foreground font-medium' : 'text-foreground/70 hover:text-foreground hover:bg-muted/50'
       }`}
     >
       {children}

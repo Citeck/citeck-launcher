@@ -3,17 +3,17 @@
 @theme {
   /* Darcula / Lens inspired palette */
   --color-background: #2b2b2b;
-  --color-foreground: #a9b7c6;
+  --color-foreground: #d4d4d4;
   --color-muted: #3c3f41;
-  --color-muted-foreground: #808080;
+  --color-muted-foreground: #999999;
   --color-card: #313335;
-  --color-card-foreground: #a9b7c6;
+  --color-card-foreground: #d4d4d4;
   --color-border: #515658;
-  --color-primary: #548af7;
+  --color-primary: #589df6;
   --color-primary-foreground: #ffffff;
-  --color-destructive: #ff6b68;
-  --color-success: #6a8759;
-  --color-warning: #bbb529;
+  --color-destructive: #f75464;
+  --color-success: #59a869;
+  --color-warning: #d9c767;
 }
 
 body {
