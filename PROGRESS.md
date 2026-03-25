@@ -146,6 +146,17 @@ Full rewrite: Go + React Web UI + Tauri Desktop.
 - [x] Line count status bar with keyboard shortcut hints
 - [x] Keyboard shortcuts: Ctrl+F focus search, F3 next, Shift+F3 prev, Esc clear
 - [x] Tail line selector (100/200/500/1000/5000)
+### Code Review + Fix — DONE
+- [x] 10 issues found and fixed:
+  - Implemented namespace start/reload (were no-op stubs)
+  - Fixed WebSocket reconnect loop (stale closure)
+  - Fixed regex highlight (stateful g-flag bug)
+  - Fixed StopApp holding mutex across Docker call
+  - Fixed TCP server graceful shutdown
+  - Fixed restartApp nil dereference on concurrent stop
+  - Added error feedback in confirm modals
+  - Added runtime nil checks on handlers
+
 ### Phase E: Namespace Wizard / Setup — PENDING
 ### Phase F: Advanced Operations — PENDING
 
