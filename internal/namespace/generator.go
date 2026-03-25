@@ -162,10 +162,12 @@ func generateKeycloak(ctx *NsGenContext) {
 		return
 	}
 
+	dbName := "keycloak"
+
 	// Keycloak needs its own DB in postgres
 	if pgApp := ctx.Applications[appdef.AppPostgres]; pgApp != nil {
 		pgApp.InitActions = append(pgApp.InitActions, appdef.AppInitAction{
-			Exec: []string{"sh", "-c", "/init_db_and_user.sh keycloak"},
+			Exec: []string{"sh", "-c", "/init_db_and_user.sh " + dbName},
 		})
 	}
 
@@ -173,27 +175,56 @@ func generateKeycloak(ctx *NsGenContext) {
 	app := ctx.GetOrCreateApp(appdef.AppKeycloak)
 	app.Image = img
 	app.Kind = appdef.KindThirdParty
-	app.AddEnv("KC_DB", "postgres")
-	app.AddEnv("KC_DB_URL", fmt.Sprintf("jdbc:postgresql://%s:%d/keycloak", PGHost, PGPort))
-	app.AddEnv("KC_DB_USERNAME", "keycloak")
-	app.AddEnv("KC_DB_PASSWORD", "keycloak")
-	app.AddEnv("KC_HOSTNAME", ctx.ProxyBaseURL()+"/ecos-idp")
-	app.AddEnv("KC_HTTP_RELATIVE_PATH", "/")
-	app.AddEnv("KC_PROXY_HEADERS", "xforwarded")
-	app.AddEnv("KC_HTTP_ENABLED", "true")
-	app.AddEnv("KC_HEALTH_ENABLED", "true")
-	app.AddEnv("KEYCLOAK_ADMIN", "admin")
-	app.AddEnv("KEYCLOAK_ADMIN_PASSWORD", "admin")
+	app.AddEnv("KC_BOOTSTRAP_ADMIN_USERNAME", "admin")
+	app.AddEnv("KC_BOOTSTRAP_ADMIN_PASSWORD", "admin")
+	app.AddEnv("KC_HOSTNAME_STRICT_HTTPS", fmt.Sprintf("%v", ctx.TLSEnabled()))
 	app.AddPort("8080:8080")
 	app.AddDependsOn(appdef.AppPostgres)
-	app.AddVolume("./keycloak/healthcheck.sh:/healthcheck.sh:ro")
-	app.Cmd = []string{"start"}
+	app.AddVolume("./keycloak/ecos-app-realm.json:/opt/keycloak/data/import/ecos-app-realm.json")
+	app.AddVolume("./keycloak/healthcheck.sh:/healthcheck.sh")
+
+	// All keycloak config via command args (not env), including --import-realm
+	app.Cmd = []string{
+		"start",
+		"--hostname=" + ctx.ProxyBaseURL() + "/ecos-idp/auth/",
+		"--http-enabled=true",
+		"--health-enabled=true",
+		"--db=postgres",
+		"--hostname-backchannel-dynamic=true",
+		fmt.Sprintf("--db-url=jdbc:postgresql://%s:%d/%s", PGHost, PGPort, dbName),
+		"--db-username=" + dbName,
+		"--db-password=" + dbName,
+		"--proxy-headers=xforwarded",
+		"--import-realm",
+	}
+
 	app.StartupConditions = []appdef.StartupCondition{
 		{Probe: &appdef.AppProbeDef{Exec: &appdef.ExecProbeDef{
 			Command: []string{"bash", "/healthcheck.sh"},
 		}}},
 	}
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "1g"}}
+
+	// For custom hosts: generate script to update redirect URIs in realm
+	if ctx.ProxyHost() != "localhost" || ctx.TLSEnabled() {
+		baseURL := ctx.ProxyBaseURL()
+		script := fmt.Sprintf(`#!/bin/bash
+KCADM=/opt/keycloak/bin/kcadm.sh
+$KCADM config credentials --server http://localhost:8080 \
+    --realm master --user admin --password admin
+CID=$($KCADM get clients -r ecos-app \
+    -q clientId=ecos-proxy-app --fields id \
+    --format csv --noquotes | head -1)
+[ -n "$CID" ] && $KCADM update "clients/$CID" \
+    -r ecos-app -s 'redirectUris=["%s*"]'
+`, baseURL)
+
+		ctx.Files["keycloak/update-redirect-uris.sh"] = []byte(script)
+		app.AddVolume("./keycloak/update-redirect-uris.sh:/opt/keycloak/scripts/update-redirect-uris.sh")
+		app.InitActions = append(app.InitActions, appdef.AppInitAction{
+			Exec: []string{"sh", "-c", "bash /opt/keycloak/scripts/update-redirect-uris.sh"},
+		})
+	}
 }
 
 func generateOnlyOffice(ctx *NsGenContext) {
