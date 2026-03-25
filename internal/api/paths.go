@@ -7,6 +7,7 @@ const (
 
 	DaemonStatus   = APIV1 + "/daemon/status"
 	DaemonShutdown = APIV1 + "/daemon/shutdown"
+	Config         = APIV1 + "/config"
 
 	Namespace      = APIV1 + "/namespace"
 	NamespaceStart = APIV1 + "/namespace/start"
@@ -17,28 +18,29 @@ const (
 	Apps   = APIV1 + "/apps"
 	Health = APIV1 + "/health"
 
-	// Phase E1: Namespaces
+	// Namespaces
 	Namespaces  = APIV1 + "/namespaces"
 	Templates   = APIV1 + "/templates"
 	QuickStarts = APIV1 + "/quick-starts"
 
-	// Phase E3: Bundles
+	// Bundles
 	Bundles = APIV1 + "/bundles"
 
-	// Phase F1: Secrets
+	// Secrets
 	Secrets = APIV1 + "/secrets"
 
-	// Phase F2: Diagnostics
+	// Diagnostics
 	Diagnostics    = APIV1 + "/diagnostics"
 	DiagnosticsFix = APIV1 + "/diagnostics/fix"
 
-	// Phase 3E: Forms
+	// Forms
 	Forms = APIV1 + "/forms"
 
-	// Phase F3: Snapshots
-	Snapshots       = APIV1 + "/snapshots"
-	SnapshotsExport = APIV1 + "/snapshots/export"
-	SnapshotsImport = APIV1 + "/snapshots/import"
+	// Snapshots
+	Snapshots         = APIV1 + "/snapshots"
+	SnapshotsExport   = APIV1 + "/snapshots/export"
+	SnapshotsImport   = APIV1 + "/snapshots/import"
+	SnapshotsDownload = APIV1 + "/snapshots/download"
 )
 
 func AppLogs(name string) string {

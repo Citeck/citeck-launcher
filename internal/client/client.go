@@ -2,10 +2,12 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/niceteck/citeck-launcher/internal/api"
 )
@@ -43,7 +45,7 @@ func (c *DaemonClient) Close() {
 }
 
 func (c *DaemonClient) get(path string, result any) error {
-	resp, err := c.doRequest("GET", path, nil)
+	resp, err := c.doRequest(http.MethodGet, path, nil)
 	if err != nil {
 		return err
 	}
@@ -52,7 +54,7 @@ func (c *DaemonClient) get(path string, result any) error {
 }
 
 func (c *DaemonClient) getRaw(path string) (string, error) {
-	resp, err := c.doRequest("GET", path, nil)
+	resp, err := c.doRequest(http.MethodGet, path, nil)
 	if err != nil {
 		return "", err
 	}
@@ -68,7 +70,7 @@ func (c *DaemonClient) getRaw(path string) (string, error) {
 }
 
 func (c *DaemonClient) post(path string, body any, result any) error {
-	resp, err := c.doRequest("POST", path, body)
+	resp, err := c.doRequest(http.MethodPost, path, body)
 	if err != nil {
 		return err
 	}
@@ -194,4 +196,97 @@ func (c *DaemonClient) GetHealth() (*api.HealthDto, error) {
 	var dto api.HealthDto
 	err := c.get(api.Health, &dto)
 	return &dto, err
+}
+
+// GetConfig returns the raw YAML config from the daemon.
+func (c *DaemonClient) GetConfig() (string, error) {
+	return c.getRaw(api.Config)
+}
+
+// PutConfig uploads a YAML config to the daemon.
+func (c *DaemonClient) PutConfig(yamlData []byte) (*api.ActionResultDto, error) {
+	req, err := http.NewRequest(http.MethodPut, c.baseURL+api.Config, bytes.NewReader(yamlData))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "text/yaml")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var dto api.ActionResultDto
+	if err := decodeResponse(resp, &dto); err != nil {
+		return nil, err
+	}
+	return &dto, nil
+}
+
+// StreamEvents opens an SSE connection to the daemon and sends events to the channel.
+// Blocks until the context is cancelled. The channel is closed when the function returns.
+func (c *DaemonClient) StreamEvents(ctx context.Context) (<-chan api.EventDto, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+api.Events, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("connect to event stream: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("event stream: HTTP %d", resp.StatusCode)
+	}
+
+	ch := make(chan api.EventDto, 64)
+	go func() {
+		defer resp.Body.Close()
+		defer close(ch)
+
+		buf := make([]byte, 0, 4096)
+		tmp := make([]byte, 1024)
+		for {
+			n, err := resp.Body.Read(tmp)
+			if n > 0 {
+				buf = append(buf, tmp[:n]...)
+				// Parse complete SSE messages (terminated by "\n\n")
+				for {
+					idx := bytes.Index(buf, []byte("\n\n"))
+					if idx < 0 {
+						break
+					}
+					msg := string(buf[:idx])
+					buf = buf[idx+2:]
+
+					// Extract "data: ..." line
+					for _, line := range strings.Split(msg, "\n") {
+						if strings.HasPrefix(line, "data: ") {
+							payload := line[6:]
+							var evt api.EventDto
+							if json.Unmarshal([]byte(payload), &evt) == nil {
+								select {
+								case ch <- evt:
+								case <-ctx.Done():
+									return
+								}
+							}
+						}
+					}
+				}
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	return ch, nil
 }

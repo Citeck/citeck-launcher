@@ -39,19 +39,24 @@ The Kotlin code in `core/`, `cli/`, `app/` directories is reference-only. All ne
 
 | Package | Purpose |
 |---|---|
-| `internal/cli/` | Cobra CLI commands (start, stop, status, apply, etc.) |
+| `internal/cli/` | Cobra CLI commands (start, stop, status, apply, migrate, etc.) |
 | `internal/daemon/` | HTTP server, API routes (SSE events, config, volumes), middleware |
 | `internal/namespace/` | Config parsing, container generator, runtime state machine, reconciler |
 | `internal/docker/` | Docker SDK wrapper (containers, images, exec, logs via stdcopy, probes) |
 | `internal/bundle/` | Bundle definitions and resolution from git repos |
 | `internal/git/` | Git clone/pull via os/exec |
-| `internal/config/` | Filesystem paths, daemon config, workspace loading |
+| `internal/config/` | Filesystem paths, daemon config (daemon.yml), workspace dir scanner |
+| `internal/storage/` | Store interface + FileStore (server) + SQLiteStore (desktop) |
+| `internal/h2migrate/` | H2 MVStore read-only parser, LZF decompressor, H2→SQLite migration |
 | `internal/client/` | DaemonClient (Unix socket + TCP transport) |
 | `internal/output/` | Text/JSON output formatter, tables, colors |
 | `internal/api/` | Shared API types (DTOs), path constants |
 | `internal/appdef/` | Application definition models (ApplicationDef, ApplicationKind) |
 | `internal/appfiles/` | Embedded resource files (go:embed) |
-| `internal/history/` | Operation history (JSONL) |
+| `internal/actions/` | Namespace lifecycle actions (pull, start, stop executors) |
+| `internal/form/` | Form field specs, built-in field definitions, validation |
+| `internal/snapshot/` | Volume snapshot export/import (ZIP + tar.xz) |
+| `internal/namespace/nsactions/` | Action executors wired to Docker + runtime |
 
 ### Web UI (`web/`)
 
@@ -64,6 +69,10 @@ React 19 + Vite + TypeScript + Tailwind CSS 4. Embedded into Go binary via `go:e
 - `Config.tsx` — namespace.yml viewer/editor with YAML highlighting
 - `Volumes.tsx` — Docker volume management (namespace-scoped, list/delete)
 - `DaemonLogs.tsx` — launcher daemon logs viewer
+- `Welcome.tsx` — namespace list, quick start buttons, create/delete
+- `Wizard.tsx` — multi-step namespace creation (8 steps)
+- `Secrets.tsx` — secret CRUD with type selector and test button
+- `Diagnostics.tsx` — system health checks with fix actions
 
 **Components:**
 - `AppTable.tsx` — grouped table (Core/Extensions/Additional/ThirdParty), lucide-react icons
@@ -71,6 +80,9 @@ React 19 + Vite + TypeScript + Tailwind CSS 4. Embedded into Go binary via `go:e
 - `ConfirmModal.tsx` — reusable confirm dialog (always mounted, showModal/close)
 - `NamespaceControls.tsx` — Start/Stop/Reload with confirm
 - `StatusBadge.tsx` — color-coded status labels
+- `ContextMenu.tsx` — right-click context menu with items/dividers
+- `FormDialog.tsx` — spec-driven form dialog (text/number/password/select/checkbox)
+- `JournalDialog.tsx` — data table dialog with search, selection, custom buttons
 
 **Lib:**
 - `api.ts` — REST API client (fetch wrapper)
@@ -118,6 +130,7 @@ Original Kotlin implementation. Read-only reference for understanding business l
 - **HTTP**: net/http (stdlib, Go 1.22+ routing)
 - **Logging**: log/slog (stdlib)
 - **Embed**: embed (stdlib, for web UI + appfiles)
+- **SQLite**: modernc.org/sqlite (pure Go, no CGO — desktop mode storage)
 
 ### Web UI
 - **Framework**: React 19 + TypeScript
@@ -131,21 +144,13 @@ Original Kotlin implementation. Read-only reference for understanding business l
 ## Current Status
 
 ### Web UI Phase 1 — COMPLETE (2026-03-25)
-Full feature parity with Kotlin Compose Desktop namespace screen. 18 commits, 5 review rounds (53 issues fixed). See `PROGRESS.md` for details.
+Full feature parity with Kotlin Compose Desktop namespace screen. 18 commits, 5 review rounds (53 issues fixed).
 
-### Web UI Phase 2 — IN PROGRESS
-See `~/.claude/plans/snoopy-herding-gosling.md` for the full plan:
-- E0: Desktop data compatibility (H2 migration, dual storage backends, `--desktop` flag)
-- E1: Welcome Screen + namespace list
-- E2: Dynamic form framework (FormSpec → React)
-- E3: Namespace install wizard
-- E4: Journal/Entity browser
-- E5: Context menus
-- F1: Shared secrets (global git tokens)
-- F2: Diagnostics page
-- F3: Snapshot import/export
-- F4: UI polish (frontend-design agent, light theme)
-- F5: Playwright E2E test suite
+### Web UI Phase 2 — COMPLETE (2026-03-25)
+Full Web UI feature set: Welcome screen, wizard, secrets, diagnostics, context menus, form framework, journal browser, snapshot import/export, light theme, Playwright E2E.
+
+### Phase 3: Architecture Gap Closure — COMPLETE (2026-03-25)
+Actions service, go-git, form validation, bind-mount volumes, snapshot export/import, runtime hardening (stalled recovery, stale cleanup, socket lock). Platform deploys 19/19.
 
 ### Key Technical Decisions
 - SSE (not WebSocket) for real-time events
@@ -158,8 +163,6 @@ See `~/.claude/plans/snoopy-herding-gosling.md` for the full plan:
 - Shared secrets at launcher level, not per-workspace
 
 ### Other References
-- **`AGENT_PLAN_V3.md`** — original Go rewrite plan (phases 1-10)
-- **`AGENT_INSTRUCTIONS.md`** — reference guide for agents
 - **`PROGRESS.md`** — tracks completed work
 
 ## CI/CD

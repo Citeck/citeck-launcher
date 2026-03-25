@@ -153,3 +153,53 @@ func TestLoadWorkspaceConfig_MissingFile(t *testing.T) {
 	assert.Empty(t, cfg.BundleRepos)
 	assert.Empty(t, cfg.NamespaceTemplates)
 }
+
+func TestFindSnapshot(t *testing.T) {
+	cfg := &WorkspaceConfig{
+		Snapshots: []SnapshotDef{
+			{ID: "demo-2025.12", Name: "Demo", URL: "https://example.com/demo.zip", SHA256: "abc"},
+			{ID: "empty", Name: "Empty", URL: "https://example.com/empty.zip"},
+		},
+	}
+
+	found := FindSnapshot(cfg, "demo-2025.12")
+	require.NotNil(t, found)
+	assert.Equal(t, "Demo", found.Name)
+	assert.Equal(t, "abc", found.SHA256)
+
+	found = FindSnapshot(cfg, "empty")
+	require.NotNil(t, found)
+	assert.Equal(t, "Empty", found.Name)
+
+	assert.Nil(t, FindSnapshot(cfg, "nonexistent"))
+	assert.Nil(t, FindSnapshot(nil, "demo-2025.12"))
+	assert.Nil(t, FindSnapshot(&WorkspaceConfig{}, "demo-2025.12"))
+}
+
+func TestCompareBundleVersions_EdgeCases(t *testing.T) {
+	// Same numeric value with different string representations
+	assert.Equal(t, 0, compareBundleVersions("01", "1"))
+	// Non-numeric parts sort as 0
+	assert.Equal(t, 0, compareBundleVersions("abc", "def"))
+	// Longer version is greater when prefix matches
+	assert.Equal(t, 1, compareBundleVersions("1.0.0", "1.0"))
+	assert.Equal(t, -1, compareBundleVersions("1.0", "1.0.0"))
+	// Single-segment versions
+	assert.Equal(t, 1, compareBundleVersions("2", "1"))
+	assert.Equal(t, 0, compareBundleVersions("0", "0"))
+}
+
+func TestFindBundleRepo(t *testing.T) {
+	cfg := &WorkspaceConfig{
+		BundleRepos: []BundlesRepo{
+			{ID: "community", URL: "https://github.com/repo1.git"},
+			{ID: "enterprise", URL: "https://github.com/repo2.git"},
+		},
+	}
+
+	found := findBundleRepo(cfg, "community")
+	require.NotNil(t, found)
+	assert.Equal(t, "https://github.com/repo1.git", found.URL)
+
+	assert.Nil(t, findBundleRepo(cfg, "nonexistent"))
+}

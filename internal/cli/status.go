@@ -1,8 +1,12 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/niceteck/citeck-launcher/internal/client"
 	"github.com/niceteck/citeck-launcher/internal/output"
@@ -81,7 +85,39 @@ func newStatusCmd() *cobra.Command {
 }
 
 func watchEvents(c *client.DaemonClient) error {
-	// TODO: WebSocket event streaming (Phase 3+)
-	fmt.Fprintln(os.Stderr, "Event streaming not yet implemented")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Cancel on interrupt
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		cancel()
+	}()
+
+	events, err := c.StreamEvents(ctx)
+	if err != nil {
+		return fmt.Errorf("connect to event stream: %w", err)
+	}
+
+	output.Errf("Watching events (Ctrl+C to stop)...")
+
+	for evt := range events {
+		ts := time.UnixMilli(evt.Timestamp).Format("15:04:05")
+		if output.IsJSON() {
+			output.PrintJSON(evt)
+		} else {
+			switch evt.Type {
+			case "app_status":
+				output.PrintText("[%s] %s  %s → %s", ts, evt.AppName, output.ColorizeStatus(evt.Before), output.ColorizeStatus(evt.After))
+			case "namespace_status":
+				output.PrintText("[%s] namespace  %s → %s", ts, output.ColorizeStatus(evt.Before), output.ColorizeStatus(evt.After))
+			default:
+				output.PrintText("[%s] %s  %s", ts, evt.Type, evt.After)
+			}
+		}
+	}
+
 	return nil
 }

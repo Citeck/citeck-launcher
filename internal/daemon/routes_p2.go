@@ -12,10 +12,13 @@ import (
 	"strings"
 	"time"
 
+	"log/slog"
+
 	"github.com/niceteck/citeck-launcher/internal/api"
 	"github.com/niceteck/citeck-launcher/internal/bundle"
 	"github.com/niceteck/citeck-launcher/internal/config"
 	"github.com/niceteck/citeck-launcher/internal/form"
+	"github.com/niceteck/citeck-launcher/internal/git"
 	"github.com/niceteck/citeck-launcher/internal/namespace"
 	"github.com/niceteck/citeck-launcher/internal/snapshot"
 	"github.com/niceteck/citeck-launcher/internal/storage"
@@ -48,7 +51,7 @@ func sanitizeName(name string) string {
 	return id
 }
 
-// --- Phase E1: Namespace list ---
+// --- Namespace list ---
 
 func (d *Daemon) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
 	var result []api.NamespaceSummaryDto
@@ -169,7 +172,7 @@ func (d *Daemon) handleGetQuickStarts(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, quickStarts)
 }
 
-// --- Phase 3E: Forms ---
+// --- Forms ---
 
 func (d *Daemon) handleGetForm(w http.ResponseWriter, r *http.Request) {
 	formID := r.PathValue("formId")
@@ -181,7 +184,7 @@ func (d *Daemon) handleGetForm(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, spec)
 }
 
-// --- Phase E3: Namespace creation + Bundles ---
+// --- Namespace creation + Bundles ---
 
 func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	var req api.NamespaceCreateDto
@@ -270,6 +273,15 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Trigger background snapshot download + import if specified
+	if req.Snapshot != "" {
+		wsID := req.WorkspaceID
+		if wsID == "" {
+			wsID = d.workspaceID
+		}
+		go d.downloadAndImportSnapshot(req.Snapshot, wsID, nsCfg.ID)
+	}
+
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("namespace %q created", nsCfg.Name)})
 }
 
@@ -296,7 +308,7 @@ func (d *Daemon) handleListBundles(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, result)
 }
 
-// --- Phase F1: Secrets ---
+// --- Secrets ---
 
 func (d *Daemon) handleListSecrets(w http.ResponseWriter, _ *http.Request) {
 	if d.store == nil {
@@ -400,13 +412,34 @@ func (d *Daemon) handleTestSecret(w http.ResponseWriter, r *http.Request) {
 	// Test connectivity based on secret type
 	switch secret.Type {
 	case storage.SecretGitToken:
-		writeJSON(w, api.ActionResultDto{Success: false, Message: "connectivity test for git tokens is not yet implemented"})
+		// Resolve the repo URL for this secret's scope from workspace config
+		var repoURL string
+		d.configMu.Lock()
+		wsCfg := d.workspaceConfig
+		d.configMu.Unlock()
+		if wsCfg != nil && secret.Scope != "" {
+			for _, repo := range wsCfg.BundleRepos {
+				if repo.AuthType == secret.Scope && repo.URL != "" {
+					repoURL = repo.URL
+					break
+				}
+			}
+		}
+		if repoURL == "" {
+			writeJSON(w, api.ActionResultDto{Success: false, Message: "no repository configured for this secret scope"})
+			return
+		}
+		if err := git.TestAuth(repoURL, secret.Value); err != nil {
+			writeJSON(w, api.ActionResultDto{Success: false, Message: fmt.Sprintf("auth failed: %v", err)})
+		} else {
+			writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("authenticated to %s", repoURL)})
+		}
 	default:
 		writeJSON(w, api.ActionResultDto{Success: true, Message: "secret exists"})
 	}
 }
 
-// --- Phase F2: Diagnostics ---
+// --- Diagnostics ---
 
 func (d *Daemon) handleGetDiagnostics(w http.ResponseWriter, _ *http.Request) {
 	var checks []api.DiagnosticCheckDto
@@ -440,10 +473,7 @@ func (d *Daemon) handleGetDiagnostics(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	// Check 3: Namespace config valid
-	nsID := "default"
-	if d.nsConfig != nil {
-		nsID = d.nsConfig.ID
-	}
+	nsID := d.activeNsID()
 	nsCfgPath := config.ResolveNamespaceConfigPath(d.workspaceID, nsID)
 	if _, err := namespace.LoadNamespaceConfig(nsCfgPath); err != nil {
 		checks = append(checks, api.DiagnosticCheckDto{
@@ -528,21 +558,27 @@ func (d *Daemon) handleDiagnosticsFix(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, api.DiagFixResultDto{Fixed: fixed, Failed: failed, Message: msg})
 }
 
-// --- Phase F3: Snapshots ---
-
-func (d *Daemon) snapshotsDir() string {
-	return fmt.Sprintf("%s/snapshots", config.ResolveVolumesBase(d.workspaceID, d.activeNsID()))
+func (d *Daemon) snapshotsDir() (string, error) {
+	nsID := d.activeNsID()
+	if nsID == "" {
+		return "", fmt.Errorf("no namespace configured")
+	}
+	return filepath.Join(config.ResolveVolumesBase(d.workspaceID, nsID), "snapshots"), nil
 }
 
 func (d *Daemon) activeNsID() string {
 	if d.nsConfig != nil {
 		return d.nsConfig.ID
 	}
-	return "default"
+	return ""
 }
 
 func (d *Daemon) handleListSnapshots(w http.ResponseWriter, _ *http.Request) {
-	dir := d.snapshotsDir()
+	dir, err := d.snapshotsDir()
+	if err != nil {
+		writeJSON(w, []api.SnapshotDto{})
+		return
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		writeJSON(w, []api.SnapshotDto{})
@@ -580,7 +616,11 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dir := d.snapshotsDir()
+	dir, err := d.snapshotsDir()
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -594,7 +634,7 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	fileName := fmt.Sprintf("%s_%s.zip", nsName, time.Now().Format("2006-01-02_15-04-05"))
-	outputPath := fmt.Sprintf("%s/%s", dir, fileName)
+	outputPath := filepath.Join(dir, fileName)
 
 	ctx := r.Context()
 	meta, err := snapshot.Export(ctx, d.dockerClient, outputPath, d.volumesBase)
@@ -629,7 +669,12 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid snapshot name")
 			return
 		}
-		zipPath = fmt.Sprintf("%s/%s", d.snapshotsDir(), snapshotName)
+		snapDir, err := d.snapshotsDir()
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		zipPath = filepath.Join(snapDir, snapshotName)
 		if _, err := os.Stat(zipPath); err != nil {
 			writeError(w, http.StatusNotFound, "snapshot not found")
 			return
@@ -673,5 +718,201 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, api.ActionResultDto{
 		Success: true,
 		Message: fmt.Sprintf("Imported %d volumes", len(meta.Volumes)),
+	})
+}
+
+func (d *Daemon) handleDownloadSnapshot(w http.ResponseWriter, r *http.Request) {
+	var req api.SnapshotDownloadDto
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.URL == "" {
+		writeError(w, http.StatusBadRequest, "url is required")
+		return
+	}
+
+	dir, err := d.snapshotsDir()
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Determine file name — sanitize to prevent path traversal
+	fileName := req.Name
+	if fileName == "" {
+		fileName = safeSnapshotFileName(req.URL)
+	}
+	fileName = filepath.Base(fileName) // strip any directory components
+	if fileName == "." || fileName == "/" || fileName == "" {
+		writeError(w, http.StatusBadRequest, "invalid snapshot name")
+		return
+	}
+	if !strings.HasSuffix(fileName, ".zip") {
+		fileName += ".zip"
+	}
+	destPath := filepath.Join(dir, fileName)
+
+	// Skip if already downloaded
+	if _, err := os.Stat(destPath); err == nil {
+		writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("Snapshot %s already exists", fileName)})
+		return
+	}
+
+	// Run download in background, report via SSE events
+	nsID := d.activeNsID()
+	go func() {
+		d.broadcastEvent(api.EventDto{
+			Type: "snapshot_download", Timestamp: time.Now().UnixMilli(),
+			NamespaceID: nsID, After: fmt.Sprintf("downloading %s", fileName),
+		})
+		if err := snapshot.Download(context.Background(), req.URL, destPath, req.SHA256, nil); err != nil {
+			slog.Error("Snapshot download failed", "url", req.URL, "err", err)
+			d.broadcastEvent(api.EventDto{
+				Type: "snapshot_error", Timestamp: time.Now().UnixMilli(),
+				NamespaceID: nsID, After: err.Error(),
+			})
+			return
+		}
+		d.broadcastEvent(api.EventDto{
+			Type: "snapshot_complete", Timestamp: time.Now().UnixMilli(),
+			NamespaceID: nsID, After: fmt.Sprintf("downloaded %s", fileName),
+		})
+	}()
+
+	writeJSON(w, api.ActionResultDto{
+		Success: true,
+		Message: fmt.Sprintf("Download started: %s", fileName),
+	})
+}
+
+// safeSnapshotFileName extracts and sanitizes a file name from a download URL.
+func safeSnapshotFileName(rawURL string) string {
+	if idx := strings.LastIndex(rawURL, "/"); idx >= 0 {
+		name := rawURL[idx+1:]
+		if qIdx := strings.Index(name, "?"); qIdx >= 0 {
+			name = name[:qIdx]
+		}
+		name = filepath.Base(name)
+		if name != "" && name != "." && name != "/" {
+			return name
+		}
+	}
+	return "snapshot.zip"
+}
+
+// downloadAndImportSnapshot downloads a snapshot in the background and imports it into the namespace.
+func (d *Daemon) downloadAndImportSnapshot(snapshotID, wsID, nsID string) {
+	d.configMu.Lock()
+	wsCfg := d.workspaceConfig
+	d.configMu.Unlock()
+
+	snapDef := bundle.FindSnapshot(wsCfg, snapshotID)
+	if snapDef == nil {
+		slog.Warn("Snapshot not found in workspace config", "id", snapshotID)
+		d.broadcastEvent(api.EventDto{
+			Type: "snapshot_error", Timestamp: time.Now().UnixMilli(),
+			NamespaceID: nsID, After: fmt.Sprintf("snapshot %q not found", snapshotID),
+		})
+		return
+	}
+
+	// Use the new namespace's volumes base, not the active namespace
+	volumesBase := config.ResolveVolumesBase(wsID, nsID)
+	dir := filepath.Join(volumesBase, "snapshots")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		slog.Error("Create snapshots dir", "err", err)
+		return
+	}
+
+	fileName := safeSnapshotFileName(snapDef.URL)
+	if !strings.HasSuffix(fileName, ".zip") {
+		fileName += ".zip"
+	}
+	destPath := filepath.Join(dir, fileName)
+
+	d.broadcastEvent(api.EventDto{
+		Type: "snapshot_download", Timestamp: time.Now().UnixMilli(),
+		NamespaceID: nsID, After: fmt.Sprintf("downloading %s", fileName),
+	})
+
+	// Check if file already exists and matches expected hash
+	needsDownload := true
+	if _, err := os.Stat(destPath); err == nil {
+		if snapDef.SHA256 != "" {
+			if actual, err := snapshot.FileSHA256(destPath); err == nil && strings.EqualFold(actual, snapDef.SHA256) {
+				needsDownload = false
+			} else {
+				os.Remove(destPath) // stale or corrupted — re-download
+			}
+		} else {
+			needsDownload = false // no hash to verify, trust existing file
+		}
+	}
+
+	if needsDownload {
+		progress := func(received, total int64) {
+			pct := int64(0)
+			if total > 0 {
+				pct = received * 100 / total
+			}
+			d.broadcastEvent(api.EventDto{
+				Type: "snapshot_progress", Timestamp: time.Now().UnixMilli(),
+				NamespaceID: nsID, After: fmt.Sprintf("%d%%", pct),
+			})
+		}
+
+		// Retry loop — up to 3 attempts with 3-second delay
+		const maxRetries = 3
+		var downloadErr error
+		for attempt := 1; attempt <= maxRetries; attempt++ {
+			downloadErr = snapshot.Download(context.Background(), snapDef.URL, destPath, snapDef.SHA256, progress)
+			if downloadErr == nil {
+				break
+			}
+			slog.Warn("Snapshot download attempt failed", "attempt", attempt, "err", downloadErr)
+			if attempt < maxRetries {
+				time.Sleep(3 * time.Second)
+			}
+		}
+		if downloadErr != nil {
+			slog.Error("Snapshot download failed after retries", "url", snapDef.URL, "err", downloadErr)
+			d.broadcastEvent(api.EventDto{
+				Type: "snapshot_error", Timestamp: time.Now().UnixMilli(),
+				NamespaceID: nsID, After: downloadErr.Error(),
+			})
+			return
+		}
+	}
+
+	// Import the snapshot
+	if d.dockerClient == nil {
+		slog.Error("Docker client not available for snapshot import")
+		return
+	}
+
+	d.broadcastEvent(api.EventDto{
+		Type: "snapshot_import", Timestamp: time.Now().UnixMilli(),
+		NamespaceID: nsID, After: "importing snapshot",
+	})
+
+	meta, err := snapshot.Import(context.Background(), d.dockerClient, destPath, volumesBase)
+	if err != nil {
+		slog.Error("Snapshot import failed", "err", err)
+		d.broadcastEvent(api.EventDto{
+			Type: "snapshot_error", Timestamp: time.Now().UnixMilli(),
+			NamespaceID: nsID, After: err.Error(),
+		})
+		return
+	}
+
+	slog.Info("Snapshot imported for new namespace", "ns", nsID, "volumes", len(meta.Volumes))
+	d.broadcastEvent(api.EventDto{
+		Type: "snapshot_complete", Timestamp: time.Now().UnixMilli(),
+		NamespaceID: nsID, After: fmt.Sprintf("imported %d volumes", len(meta.Volumes)),
 	})
 }

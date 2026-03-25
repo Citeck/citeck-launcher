@@ -444,6 +444,7 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+api.Snapshots, d.handleListSnapshots)
 	mux.HandleFunc("POST "+api.SnapshotsExport, d.handleExportSnapshot)
 	mux.HandleFunc("POST "+api.SnapshotsImport, d.handleImportSnapshot)
+	mux.HandleFunc("POST "+api.SnapshotsDownload, d.handleDownloadSnapshot)
 
 	// Web UI (fallback)
 	mux.Handle("/", WebUIHandler())

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"os"
@@ -114,7 +113,6 @@ func newDiagnoseCmd() *cobra.Command {
 					})
 				}
 			}
-			_ = context.Background()
 			checkPort(80, "HTTP")
 			checkPort(443, "HTTPS")
 

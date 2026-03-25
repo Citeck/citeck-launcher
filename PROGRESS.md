@@ -128,10 +128,158 @@ Full rewrite: Go + React Web UI + Tauri Desktop.
 
 ---
 
+## Phase 2, E0: Desktop Data Compatibility — COMPLETE (2026-03-25)
+
+**Goal:** Go daemon works with existing Kotlin desktop launcher data. Desktop user upgrades to Go binary, same data directory.
+
+### Implemented
+- **Three runtime modes:** Server (`/opt/citeck/`), Desktop (`~/.citeck/launcher/`), CLI-only (`--no-ui`)
+- **Desktop mode:** `--desktop` flag or `CITECK_DESKTOP=true` env var → uses `~/.citeck/launcher/`
+- **Workspace structure:** `ws/{id}/ns/{id}/rtfiles/` matching Kotlin directory layout
+- **daemon.yml:** configurable web UI (enabled, listen address)
+- **Storage backends:** FileStore (server, flat JSON files), SQLiteStore (desktop, pure Go `modernc.org/sqlite`)
+- **Docker labels:** fixed `citeck.launcher.app` → `citeck.launcher.app.name`, added marker/hash/compose labels matching Kotlin DockerLabels.kt
+- **H2 MVStore migration:** pure Go read-only parser (LZF decompressor, varint decoder, B-tree page reader), `citeck migrate` CLI command, auto-detects `storage.db` → SQLite migration
+- **Reconciler bug fix:** wrong WaitGroup (`r.wg` → `r.appWg`) that caused shutdown deadlock after reconciler-triggered restarts
+
+### Code Review (7 issues found, all fixed)
+1. ~~Reconciler WaitGroup mismatch (critical — shutdown deadlock)~~
+2. ~~`IsDesktopMode()` env override semantics~~
+3. ~~`NewSQLiteStore` missing MkdirAll~~
+4. ~~Daemon resource leak on startup failure~~
+5. ~~LZF decompression silent fallback to corrupt data~~
+6. ~~`NeedsMigration` swallows permission errors~~
+7. ~~`scanChunks` partial cache on error~~
+
+### Tests
+- 15 new tests: paths (8), daemon config (3), workspace scanner (3), Docker labels (3)
+- 4 new tests: storage interface — FileStore + SQLiteStore with workspace and secret CRUD
+- 6 new tests: H2 varint, LZF decompression
+- **Total: 72 Go tests** (all pass)
+
+### New packages
+| Package | Files | Purpose |
+|---------|-------|---------|
+| `internal/config/` | `daemon.go`, `workspace.go` | daemon.yml config, workspace dir scanner |
+| `internal/storage/` | `store.go`, `filestore.go`, `sqlitestore.go` | Dual storage backends |
+| `internal/h2migrate/` | `migrate.go`, `mvstore.go`, `lzf.go`, `varint.go` | H2→SQLite migration |
+
+---
+
+## Summary
+
+## Phase 2, E1-F5: Full Web UI Feature Set — COMPLETE (2026-03-25)
+
+### Phase E1: Welcome Screen + Namespace List
+- Go API: `GET /api/v1/namespaces`, `DELETE /api/v1/namespaces/{id}`, `GET /api/v1/templates`, `GET /api/v1/quick-starts`
+- React: Welcome page with namespace cards, quick start buttons, create/delete actions
+
+### Phase E2: Dynamic Form Framework
+- `FormDialog` component: spec-driven forms with field types (text, number, password, select, checkbox, display)
+- Validation, visibility conditions, `<dialog>` element
+
+### Phase E3: Namespace Install Wizard
+- 8-step wizard (Name → Auth → Users → Hostname → TLS → Port → PgAdmin → Review)
+- Go API: `POST /api/v1/namespaces`, `GET /api/v1/bundles`
+- Step visibility: Users step hidden when auth=KEYCLOAK
+- Port auto-defaults based on TLS selection (80/443)
+
+### Phase E4: Journal/Entity Browser
+- `JournalDialog` component: configurable columns, single/multi select, search filter
+- Custom action buttons, sticky header, row count display
+
+### Phase E5: Context Menus
+- `ContextMenu` component + `useContextMenu` hook
+- Right-click support, Escape to close, click-outside dismiss
+- Item variants (default/danger), disabled state, dividers
+
+### Phase F1: Shared Secrets
+- Go API: CRUD `/api/v1/secrets`, `GET /api/v1/secrets/{id}/test`
+- React: Secrets page with add form, type selector, test/delete per row
+- Stores secrets via Store interface (FileStore or SQLiteStore)
+
+### Phase F2: Diagnostics
+- Go API: `GET /api/v1/diagnostics`, `POST /api/v1/diagnostics/fix`
+- Checks: Docker, Socket, Config, Disk, Runtime
+- React: status-colored check table, Run Checks/Fix All buttons
+
+### Phase F3: Snapshot Import/Export (API scaffold)
+- Go API: `GET /api/v1/snapshots`, `POST /api/v1/snapshots/export`, `POST /api/v1/snapshots/import`
+- React API client ready, volume backup/restore implementation TODO
+
+### Phase F4: UI Design Polish + Light Theme
+- Light theme via `[data-theme="light"]` CSS custom properties
+- Theme toggle (sun/moon) in TabBar, persists in localStorage
+- Respects OS `prefers-color-scheme` on first visit
+- Custom scrollbar styling, dialog backdrop
+- Dashboard sidebar: added Welcome, Secrets, Diagnostics nav buttons
+
+### Phase F5: Playwright E2E Test Suite
+- `playwright.config.ts`: baseURL `http://127.0.0.1:8088`, screenshots on failure
+- Test suites: Dashboard, Navigation, Wizard (8 steps), Secrets
+- Vitest: 13 component tests (ContextMenu, AppTable, StatusBadge)
+
+### New pages & components
+| Page/Component | Type | Purpose |
+|---|---|---|
+| `Welcome.tsx` | Page | Namespace list, quick start, create/delete |
+| `Wizard.tsx` | Page | Multi-step namespace creation |
+| `Secrets.tsx` | Page | Secret CRUD + test |
+| `Diagnostics.tsx` | Page | System health checks + fix |
+| `ContextMenu.tsx` | Component | Right-click context menu |
+| `FormDialog.tsx` | Component | Spec-driven form dialog |
+| `JournalDialog.tsx` | Component | Data table dialog with selection |
+| `useContextMenu.ts` | Hook | Context menu state management |
+
+### New Go API routes (18 endpoints)
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/namespaces` | List namespaces |
+| POST | `/api/v1/namespaces` | Create namespace |
+| DELETE | `/api/v1/namespaces/{id}` | Delete namespace |
+| GET | `/api/v1/templates` | List templates |
+| GET | `/api/v1/quick-starts` | Quick start variants |
+| GET | `/api/v1/bundles` | Available bundles |
+| GET | `/api/v1/secrets` | List secrets |
+| POST | `/api/v1/secrets` | Create/update secret |
+| DELETE | `/api/v1/secrets/{id}` | Delete secret |
+| GET | `/api/v1/secrets/{id}/test` | Test secret connectivity |
+| GET | `/api/v1/diagnostics` | Run diagnostic checks |
+| POST | `/api/v1/diagnostics/fix` | Auto-fix fixable issues |
+| GET | `/api/v1/snapshots` | List snapshots |
+| POST | `/api/v1/snapshots/export` | Export volumes snapshot |
+| POST | `/api/v1/snapshots/import` | Import snapshot |
+
+---
+
+## Phase 3: Architecture Gap Closure — COMPLETE (2026-03-25)
+
+**Goal:** Close remaining gaps vs Kotlin reference: actions service, real git, form validation, bind-mount volumes, snapshot workflows, runtime hardening.
+
+### Implemented
+- **Actions service** (`internal/actions/`): PullImages, Start, Stop, Reload executors with SSE progress events
+- **Namespace actions** (`internal/namespace/nsactions/`): Wired action executors to Docker client + runtime
+- **Form framework** (`internal/form/`): Field specs, built-in definitions, validation rules
+- **Bind-mount volumes**: Replaced Docker named volumes with bind-mounts in runtime dir (matching Kotlin)
+- **Snapshot export/import** (`internal/snapshot/`): Volume backup via launcher-utils container
+- **go-git integration** (`internal/git/`): Real clone/pull with token auth (replaces os/exec stubs)
+- **Runtime hardening**: STALLED recovery, stale container cleanup at startup, socket lock preventing multiple daemon instances
+- **Reconciler improvements**: Proper bootstrap ordering, resolver fixes
+
+### New packages
+| Package | Purpose |
+|---------|---------|
+| `internal/actions/` | Namespace lifecycle actions (pull, start, stop executors) |
+| `internal/form/` | Form field specs, built-in fields, validation |
+| `internal/snapshot/` | Volume snapshot export/import |
+| `internal/namespace/nsactions/` | Action executors wired to Docker + runtime |
+
+---
+
 ## Summary
 
 **Binary:** 14MB single Go binary with embedded React web UI
-**CLI commands:** 22 total, all support `-o json`
-**Web UI:** Full feature parity with Kotlin Compose Desktop (except snapshots/wizard)
-**Tests:** 43 Go unit + 9 Vitest component tests
+**CLI commands:** 24 total, all support `-o json`
+**Web UI:** Full feature set (10 pages, 18 API endpoints)
+**Tests:** 72+ Go unit + 13 Vitest component + Playwright E2E suites
 **All 5 test configs pass** from clean start with full browser verification

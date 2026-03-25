@@ -91,7 +91,7 @@ type ErrorDto struct {
 	Details string `json:"details"`
 }
 
-// --- Phase E1: Welcome Screen ---
+// --- Welcome Screen ---
 
 type NamespaceSummaryDto struct {
 	ID          string `json:"id"`
@@ -112,7 +112,7 @@ type TemplateDto struct {
 	Name string `json:"name"`
 }
 
-// --- Phase F1: Secrets ---
+// --- Secrets ---
 
 type SecretMetaDto struct {
 	ID        string `json:"id"`
@@ -130,7 +130,7 @@ type SecretCreateDto struct {
 	Scope string `json:"scope,omitempty"`
 }
 
-// --- Phase F2: Diagnostics ---
+// --- Diagnostics ---
 
 type DiagnosticCheckDto struct {
 	Name    string `json:"name"`
@@ -149,16 +149,15 @@ type DiagFixResultDto struct {
 	Message string `json:"message"`
 }
 
-// --- Phase F3: Snapshots ---
+// --- Snapshots ---
 
 type SnapshotDto struct {
-	Name      string   `json:"name"`
-	CreatedAt string   `json:"createdAt"`
-	Size      int64    `json:"size"`
-	Volumes   []string `json:"volumes"`
+	Name      string `json:"name"`
+	CreatedAt string `json:"createdAt"`
+	Size      int64  `json:"size"`
 }
 
-// --- Phase E3: Namespace creation ---
+// --- Namespace creation ---
 
 type NamespaceCreateDto struct {
 	Name           string   `json:"name"`
@@ -172,6 +171,13 @@ type NamespaceCreateDto struct {
 	BundleRepo     string   `json:"bundleRepo"`
 	BundleKey      string   `json:"bundleKey"`
 	WorkspaceID    string   `json:"workspaceId,omitempty"`
+	Snapshot       string   `json:"snapshot,omitempty"` // snapshot ID from workspace config
+}
+
+type SnapshotDownloadDto struct {
+	URL    string `json:"url"`
+	SHA256 string `json:"sha256,omitempty"`
+	Name   string `json:"name,omitempty"` // output file name (auto-generated if empty)
 }
 
 type BundleInfoDto struct {

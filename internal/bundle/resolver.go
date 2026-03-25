@@ -147,15 +147,16 @@ func (r *Resolver) Resolve(ref BundleRef) (*ResolveResult, error) {
 	repoBranch := defaultBundlesBranch
 	var repoToken string
 
-	if repo := findBundleRepo(wsCfg, ref.Repo); repo != nil {
-		if repo.URL != "" {
-			repoURL = repo.URL
+	bundleRepo := findBundleRepo(wsCfg, ref.Repo)
+	if bundleRepo != nil {
+		if bundleRepo.URL != "" {
+			repoURL = bundleRepo.URL
 		}
-		if repo.Branch != "" {
-			repoBranch = repo.Branch
+		if bundleRepo.Branch != "" {
+			repoBranch = bundleRepo.Branch
 		}
-		if repo.AuthType != "" && r.tokenLookup != nil {
-			repoToken = r.tokenLookup(repo.AuthType)
+		if bundleRepo.AuthType != "" && r.tokenLookup != nil {
+			repoToken = r.tokenLookup(bundleRepo.AuthType)
 		}
 	}
 
@@ -173,8 +174,8 @@ func (r *Resolver) Resolve(ref BundleRef) (*ResolveResult, error) {
 
 	// Resolve bundle version — look in BundlesRepo.Path sub-directory if defined
 	bundlesDir := repoDir
-	if repo := findBundleRepo(wsCfg, ref.Repo); repo != nil && repo.Path != "" {
-		bundlesDir = filepath.Join(repoDir, repo.Path)
+	if bundleRepo != nil && bundleRepo.Path != "" {
+		bundlesDir = filepath.Join(repoDir, bundleRepo.Path)
 	}
 	key := ref.Key
 	if strings.EqualFold(key, "LATEST") {
@@ -213,6 +214,19 @@ func loadWorkspaceConfig(repoDir string) *WorkspaceConfig {
 		return &cfg
 	}
 	return &WorkspaceConfig{}
+}
+
+// FindSnapshot finds a SnapshotDef by ID in the workspace config.
+func FindSnapshot(cfg *WorkspaceConfig, snapshotID string) *SnapshotDef {
+	if cfg == nil {
+		return nil
+	}
+	for i := range cfg.Snapshots {
+		if cfg.Snapshots[i].ID == snapshotID {
+			return &cfg.Snapshots[i]
+		}
+	}
+	return nil
 }
 
 // findBundleRepo finds a BundlesRepo entry by ID in the workspace config.

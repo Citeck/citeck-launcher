@@ -52,3 +52,6 @@ internal/daemon/webdist/
 web/dist/
 
 ### Custom ###
+*.png
+!icons/**/*.png
+test-results/

@@ -262,9 +262,10 @@ func (r *Runtime) Stop() {
 }
 
 func (r *Runtime) Shutdown() {
-	r.Stop()
-	r.wg.Wait()
-	r.running.Store(false)
+	if r.running.Load() {
+		r.Stop()
+		r.wg.Wait()
+	}
 	if r.ownsActions {
 		r.actionSvc.Shutdown()
 	}
@@ -439,6 +440,7 @@ func (r *Runtime) setAppStatus(app *AppRuntime, s AppRuntimeStatus) {
 
 func (r *Runtime) runLoop() {
 	defer r.wg.Done()
+	defer r.running.Store(false) // allow Start() to be called again after stop
 	slog.Info("Namespace runtime thread started", "namespace", r.nsID)
 
 	ticker := time.NewTicker(5 * time.Second)

@@ -3,12 +3,14 @@ package cli
 import (
 	"fmt"
 	"os"
+	"reflect"
 	"time"
 
 	"github.com/niceteck/citeck-launcher/internal/client"
 	"github.com/niceteck/citeck-launcher/internal/namespace"
 	"github.com/niceteck/citeck-launcher/internal/output"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 func newApplyCmd() *cobra.Command {
@@ -16,7 +18,6 @@ func newApplyCmd() *cobra.Command {
 		file    string
 		wait    bool
 		timeout int
-		force   bool
 		dryRun  bool
 	)
 
@@ -52,20 +53,28 @@ func newApplyCmd() *cobra.Command {
 				return nil
 			}
 
-			// TODO: Compare with current config and compute diff
-			// For now, just reload the daemon with the new config
-
 			c, err := client.New(flagHost, flagToken)
 			if err != nil {
 				return fmt.Errorf("connect to daemon: %w", err)
 			}
 			defer c.Close()
 
-			_ = force // will be used for forced restart
+			// Show diff before applying
+			showConfigDiff(c, file)
 
+			// Upload the new config to the daemon
+			yamlData, err := os.ReadFile(file)
+			if err != nil {
+				return fmt.Errorf("read config file: %w", err)
+			}
+			if _, err := c.PutConfig(yamlData); err != nil {
+				return fmt.Errorf("upload config: %w", err)
+			}
+
+			// Reload the namespace with the new config
 			result, err := c.ReloadNamespace()
 			if err != nil {
-				return fmt.Errorf("apply config: %w", err)
+				return fmt.Errorf("reload namespace: %w", err)
 			}
 
 			output.PrintResult(result, func() {
@@ -83,10 +92,80 @@ func newApplyCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&file, "file", "f", "", "Path to namespace.yml")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for all apps to be running")
 	cmd.Flags().IntVar(&timeout, "timeout", 600, "Wait timeout in seconds")
-	cmd.Flags().BoolVar(&force, "force", false, "Force restart all apps")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without applying")
 
 	return cmd
+}
+
+// showConfigDiff fetches the current config from daemon and prints structural differences.
+func showConfigDiff(c *client.DaemonClient, newFile string) {
+	currentYAML, err := c.GetConfig()
+	if err != nil {
+		return // daemon may not have config loaded yet
+	}
+
+	newData, err := os.ReadFile(newFile)
+	if err != nil {
+		return
+	}
+
+	var current, new_ map[string]any
+	if yaml.Unmarshal([]byte(currentYAML), &current) != nil {
+		return
+	}
+	if yaml.Unmarshal(newData, &new_) != nil {
+		return
+	}
+
+	changes := diffMaps("", current, new_)
+	if len(changes) == 0 {
+		output.PrintText("No configuration changes detected.")
+		return
+	}
+
+	output.PrintText("Configuration changes:")
+	for _, ch := range changes {
+		output.PrintText("  %s", ch)
+	}
+	output.PrintText("")
+}
+
+// diffMaps recursively compares two YAML maps and returns human-readable change descriptions.
+func diffMaps(prefix string, old, new_ map[string]any) []string {
+	var changes []string
+
+	for key, newVal := range new_ {
+		path := key
+		if prefix != "" {
+			path = prefix + "." + key
+		}
+
+		oldVal, exists := old[key]
+		if !exists {
+			changes = append(changes, fmt.Sprintf("+ %s: %v", path, newVal))
+			continue
+		}
+
+		oldMap, oldIsMap := oldVal.(map[string]any)
+		newMap, newIsMap := newVal.(map[string]any)
+		if oldIsMap && newIsMap {
+			changes = append(changes, diffMaps(path, oldMap, newMap)...)
+		} else if !reflect.DeepEqual(oldVal, newVal) {
+			changes = append(changes, fmt.Sprintf("~ %s: %v → %v", path, oldVal, newVal))
+		}
+	}
+
+	for key := range old {
+		path := key
+		if prefix != "" {
+			path = prefix + "." + key
+		}
+		if _, exists := new_[key]; !exists {
+			changes = append(changes, fmt.Sprintf("- %s", path))
+		}
+	}
+
+	return changes
 }
 
 func waitForRunning(c *client.DaemonClient, timeout time.Duration) error {
@@ -127,31 +206,50 @@ func newDiffCmd() *cobra.Command {
 		Use:   "diff",
 		Short: "Show pending configuration changes",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client.New(flagHost, flagToken)
+			if err != nil {
+				return fmt.Errorf("connect to daemon: %w", err)
+			}
+			defer c.Close()
+
 			if file == "" {
-				// Compare current running config with saved config
-				output.PrintText("No changes (diff without -f compares running vs saved)")
+				output.PrintText("Usage: citeck diff -f <new-config.yml>")
 				return nil
 			}
 
-			// Parse the new config
-			newCfg, err := namespace.LoadNamespaceConfig(file)
+			currentYAML, err := c.GetConfig()
 			if err != nil {
-				return fmt.Errorf("load config: %w", err)
+				return fmt.Errorf("fetch current config: %w", err)
 			}
 
-			// TODO: Full diff computation
-			if output.IsJSON() {
-				output.PrintJSON(map[string]any{
-					"file":    file,
-					"name":    newCfg.Name,
-					"changes": []string{},
-				})
-			} else {
-				output.PrintText("Comparing with %s...", file)
-				output.PrintText("  Name:   %s", newCfg.Name)
-				output.PrintText("  Bundle: %s", newCfg.BundleRef.String())
-				output.PrintText("(Full diff computation coming in Phase 4)")
+			newData, err := os.ReadFile(file)
+			if err != nil {
+				return fmt.Errorf("read file: %w", err)
 			}
+
+			var current, new_ map[string]any
+			if err := yaml.Unmarshal([]byte(currentYAML), &current); err != nil {
+				return fmt.Errorf("parse current config: %w", err)
+			}
+			if err := yaml.Unmarshal(newData, &new_); err != nil {
+				return fmt.Errorf("parse new config: %w", err)
+			}
+
+			changes := diffMaps("", current, new_)
+
+			output.PrintResult(map[string]any{
+				"file":    file,
+				"changes": changes,
+			}, func() {
+				if len(changes) == 0 {
+					output.PrintText("No changes.")
+				} else {
+					output.PrintText("Changes:")
+					for _, ch := range changes {
+						output.PrintText("  %s", ch)
+					}
+				}
+			})
 			return nil
 		},
 	}

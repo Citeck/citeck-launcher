@@ -14,7 +14,6 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
@@ -88,11 +87,6 @@ func (c *Client) Ping(ctx context.Context) error {
 // ContainerName generates the Docker container name.
 func (c *Client) ContainerName(appName string) string {
 	return fmt.Sprintf("citeck_%s_%s_%s", appName, c.namespace, c.workspace)
-}
-
-// VolumeName generates the Docker volume name (matching Kotlin pattern).
-func (c *Client) VolumeName(shortName string) string {
-	return fmt.Sprintf("citeck_volume_%s_%s_%s", shortName, c.namespace, c.workspace)
 }
 
 // NetworkName returns the Docker network name for this namespace.
@@ -278,6 +272,17 @@ func (c *Client) GetContainers(ctx context.Context) ([]types.Container, error) {
 	})
 }
 
+// ListAllLauncherContainers returns ALL containers with the citeck.launcher label,
+// regardless of workspace/namespace. Used by the clean command to find orphans.
+func (c *Client) ListAllLauncherContainers(ctx context.Context) ([]types.Container, error) {
+	return c.cli.ContainerList(ctx, container.ListOptions{
+		All: true,
+		Filters: filters.NewArgs(
+			filters.Arg("label", LabelLauncher+"=true"),
+		),
+	})
+}
+
 // CleanupStaleContainers stops and removes all containers from this namespace.
 // Used at startup to clear leftovers from a previous daemon run.
 func (c *Client) CleanupStaleContainers(ctx context.Context) {
@@ -420,45 +425,6 @@ func (c *Client) ContainerStats(ctx context.Context, containerID string) (*Conta
 	return parseContainerStats(resp.Body)
 }
 
-// CreateVolume creates a Docker volume.
-func (c *Client) CreateVolume(ctx context.Context, name string) error {
-	_, err := c.cli.VolumeCreate(ctx, volume.CreateOptions{Name: name})
-	return err
-}
-
-// CreateLabeledVolume creates a Docker volume with namespace labels (used by snapshot import).
-func (c *Client) CreateLabeledVolume(ctx context.Context, name, originalName string) error {
-	_, err := c.cli.VolumeCreate(ctx, volume.CreateOptions{
-		Name: name,
-		Labels: map[string]string{
-			LabelLauncher:    "true",
-			LabelWorkspace:   c.workspace,
-			LabelNamespace:   c.namespace,
-			LabelOrigName:    originalName,
-			LabelComposeProj: fmt.Sprintf("citeck_launcher_%s_%s", c.namespace, c.workspace),
-		},
-	})
-	return err
-}
-
-// ListNamespaceVolumes returns volumes filtered by this client's namespace.
-func (c *Client) ListNamespaceVolumes(ctx context.Context) ([]*volume.Volume, error) {
-	resp, err := c.cli.VolumeList(ctx, volume.ListOptions{
-		Filters: filters.NewArgs(
-			filters.Arg("label", LabelNamespace+"="+c.namespace),
-		),
-	})
-	if err != nil {
-		return nil, err
-	}
-	return resp.Volumes, nil
-}
-
-// DeleteVolume removes a Docker volume by name.
-func (c *Client) DeleteVolume(ctx context.Context, name string) error {
-	return c.cli.VolumeRemove(ctx, name, false)
-}
-
 // WaitForContainer waits for a container to start running.
 func (c *Client) WaitForContainer(ctx context.Context, containerID string, timeout time.Duration) error {
 	deadline := time.After(timeout)
@@ -534,8 +500,6 @@ func parseMemory(s string) int64 {
 	return n * multiplier
 }
 
-// stripDockerLogHeaders removes Docker log stream headers (8-byte prefix per line).
-
 // ContainerStat holds resource usage for a container.
 type ContainerStat struct {
 	CPUPercent float64
@@ -586,7 +550,3 @@ func (c *Client) RunUtilsContainer(ctx context.Context, cmd []string, binds []st
 	return output, inspect.State.ExitCode, nil
 }
 
-// VolumeNameForRestore returns the Docker volume name for restoring a snapshot volume.
-func (c *Client) VolumeNameForRestore(originalName string) string {
-	return fmt.Sprintf("citeck_volume_%s_%s_%s", originalName, c.namespace, c.workspace)
-}
