@@ -111,26 +111,8 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 
 	appfiles.ExtractTo(d.volumesBase)
 
-	// TLS certificate provisioning on reload
-	// Self-signed: generate if TLS enabled + no cert paths + no LE
-	if nsCfg.Proxy.TLS.Enabled && !nsCfg.Proxy.TLS.LetsEncrypt && nsCfg.Proxy.TLS.CertPath == "" {
-		host := nsCfg.Proxy.Host
-		if host == "" {
-			host = "localhost"
-		}
-		tlsDir := filepath.Join(config.ConfDir(), "tls")
-		os.MkdirAll(tlsDir, 0o755)
-		certPath := filepath.Join(tlsDir, "server.crt")
-		keyPath := filepath.Join(tlsDir, "server.key")
-		if !isRegularFile(certPath) {
-			slog.Info("Generating self-signed certificate on reload", "host", host)
-			if err := generateSelfSignedCert(certPath, keyPath, host); err != nil {
-				slog.Error("Failed to generate self-signed cert on reload", "err", err)
-			}
-		}
-		nsCfg.Proxy.TLS.CertPath = certPath
-		nsCfg.Proxy.TLS.KeyPath = keyPath
-	}
+	// Self-signed cert: generate if TLS enabled + no cert paths + no LE
+	ensureSelfSignedCert(nsCfg)
 
 	// Let's Encrypt: obtain certificate if needed; prepare renewal service for Phase 2
 	var newRenewal *acme.RenewalService

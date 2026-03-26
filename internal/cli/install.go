@@ -16,6 +16,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/output"
+	"github.com/citeck/citeck-launcher/internal/tlsutil"
 	"github.com/spf13/cobra"
 )
 
@@ -104,7 +105,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		os.MkdirAll(tlsDir, 0o755)
 		certPath := filepath.Join(tlsDir, "server.crt")
 		keyPath := filepath.Join(tlsDir, "server.key")
-		if err := generateSelfSignedCert(certPath, keyPath, []string{host}, 365); err != nil {
+		if err := tlsutil.GenerateSelfSignedCert(certPath, keyPath, []string{host}, 365); err != nil {
 			return fmt.Errorf("generate self-signed cert: %w", err)
 		}
 		nsCfg.Proxy.TLS.CertPath = certPath

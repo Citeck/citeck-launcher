@@ -228,26 +228,8 @@ func Start(opts StartOptions) error {
 
 		slog.Info("Using bundle", "ref", nsCfg.BundleRef, "apps", len(bundleDef.Applications))
 
-		// TLS certificate provisioning at startup
-		// Self-signed: generate if TLS enabled + no cert paths + no LE
-		if nsCfg.Proxy.TLS.Enabled && !nsCfg.Proxy.TLS.LetsEncrypt && nsCfg.Proxy.TLS.CertPath == "" {
-			host := nsCfg.Proxy.Host
-			if host == "" {
-				host = "localhost"
-			}
-			tlsDir := filepath.Join(config.ConfDir(), "tls")
-			os.MkdirAll(tlsDir, 0o755)
-			certPath := filepath.Join(tlsDir, "server.crt")
-			keyPath := filepath.Join(tlsDir, "server.key")
-			if !isRegularFile(certPath) {
-				slog.Info("Generating self-signed certificate", "host", host)
-				if err := generateSelfSignedCert(certPath, keyPath, host); err != nil {
-					slog.Error("Failed to generate self-signed cert", "err", err)
-				}
-			}
-			nsCfg.Proxy.TLS.CertPath = certPath
-			nsCfg.Proxy.TLS.KeyPath = keyPath
-		}
+		// Self-signed cert: generate if TLS enabled + no cert paths + no LE
+		ensureSelfSignedCert(nsCfg)
 
 		// Let's Encrypt: obtain certificate if configured and not yet present
 		if nsCfg.Proxy.TLS.Enabled && nsCfg.Proxy.TLS.LetsEncrypt {
@@ -847,7 +829,25 @@ func isRegularFile(path string) bool {
 	return err == nil && fi.Mode().IsRegular()
 }
 
-// generateSelfSignedCert creates a self-signed TLS certificate (365-day validity).
-func generateSelfSignedCert(certPath, keyPath, host string) error {
-	return tlsutil.GenerateSelfSignedCert(certPath, keyPath, []string{host}, 365)
+// ensureSelfSignedCert generates a self-signed cert if TLS is enabled without LE and no cert is configured.
+func ensureSelfSignedCert(nsCfg *namespace.NamespaceConfig) {
+	if !nsCfg.Proxy.TLS.Enabled || nsCfg.Proxy.TLS.LetsEncrypt || nsCfg.Proxy.TLS.CertPath != "" {
+		return
+	}
+	host := nsCfg.Proxy.Host
+	if host == "" {
+		host = "localhost"
+	}
+	tlsDir := filepath.Join(config.ConfDir(), "tls")
+	os.MkdirAll(tlsDir, 0o755)
+	certPath := filepath.Join(tlsDir, "server.crt")
+	keyPath := filepath.Join(tlsDir, "server.key")
+	if !isRegularFile(certPath) {
+		slog.Info("Generating self-signed certificate", "host", host)
+		if err := tlsutil.GenerateSelfSignedCert(certPath, keyPath, []string{host}, 365); err != nil {
+			slog.Error("Failed to generate self-signed cert", "err", err)
+		}
+	}
+	nsCfg.Proxy.TLS.CertPath = certPath
+	nsCfg.Proxy.TLS.KeyPath = keyPath
 }

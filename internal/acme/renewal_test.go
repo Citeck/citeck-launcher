@@ -100,7 +100,10 @@ func TestCheckAndRenew_SkipsWhenMoreThanHalfValid(t *testing.T) {
 // writeTempCertWithSAN creates a cert with a DNS SAN for hostname verification tests.
 func writeTempCertWithSAN(t *testing.T, dir string, hostname string, notBefore, notAfter time.Time) {
 	t.Helper()
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
 	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	template := x509.Certificate{
 		SerialNumber: serial,
@@ -109,9 +112,18 @@ func writeTempCertWithSAN(t *testing.T, dir string, hostname string, notBefore, 
 		NotBefore:    notBefore,
 		NotAfter:     notAfter,
 	}
-	certDER, _ := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
-	f, _ := os.Create(filepath.Join(dir, "fullchain.pem"))
-	pem.Encode(f, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(filepath.Join(dir, "fullchain.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pem.Encode(f, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
 	f.Close()
 }
 

@@ -115,7 +115,7 @@ func newCertGenerateCmd() *cobra.Command {
 			certPath := filepath.Join(tlsDir, "server.crt")
 			keyPath := filepath.Join(tlsDir, "server.key")
 
-			if err := generateSelfSignedCert(certPath, keyPath, hosts, days); err != nil {
+			if err := tlsutil.GenerateSelfSignedCert(certPath, keyPath, hosts, days); err != nil {
 				return err
 			}
 
@@ -205,5 +205,3 @@ func newCertLetsEncryptCmd() *cobra.Command {
 	return cmd
 }
 
-// generateSelfSignedCert delegates to the shared tlsutil package.
-var generateSelfSignedCert = tlsutil.GenerateSelfSignedCert
