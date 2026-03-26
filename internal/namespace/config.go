@@ -115,6 +115,12 @@ func ValidateNamespaceConfig(cfg *NamespaceConfig) error {
 	if cfg.Proxy.TLS.Enabled && cfg.Proxy.Host == "" {
 		return fmt.Errorf("proxy host required when TLS is enabled")
 	}
+	if cfg.Proxy.TLS.LetsEncrypt {
+		host := cfg.Proxy.Host
+		if host == "" || host == "localhost" || host == "127.0.0.1" {
+			return fmt.Errorf("Let's Encrypt requires a public hostname, got %q", host)
+		}
+	}
 	if cfg.Authentication.Type == AuthBasic && len(cfg.Authentication.Users) == 0 {
 		return fmt.Errorf("at least one user required for BASIC authentication")
 	}

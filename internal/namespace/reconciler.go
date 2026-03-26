@@ -187,10 +187,21 @@ func (r *Runtime) runLivenessProbe(ctx context.Context, containerID string, prob
 	return true
 }
 
-// GracefulShutdownOrder returns apps in the correct shutdown order.
+// GracefulShutdownOrder returns apps in the correct shutdown order (flat list).
 // proxy -> webapps -> keycloak -> infrastructure (postgres, rabbitmq, zookeeper)
 func GracefulShutdownOrder(apps []*AppRuntime) []*AppRuntime {
-	var proxy, webapps, keycloak, infra, other []*AppRuntime
+	var result []*AppRuntime
+	for _, group := range GracefulShutdownGroups(apps) {
+		result = append(result, group...)
+	}
+	return result
+}
+
+// GracefulShutdownGroups returns apps grouped for phased shutdown.
+// Each group is stopped in parallel; groups are stopped sequentially.
+// Order: [proxy] → [webapps+other] → [keycloak] → [infra]
+func GracefulShutdownGroups(apps []*AppRuntime) [][]*AppRuntime {
+	var proxy, webapps, keycloak, infra []*AppRuntime
 
 	for _, app := range apps {
 		switch app.Name {
@@ -201,19 +212,22 @@ func GracefulShutdownOrder(apps []*AppRuntime) []*AppRuntime {
 		case appdef.AppPostgres, appdef.AppRabbitmq, appdef.AppZookeeper, appdef.AppMongodb:
 			infra = append(infra, app)
 		default:
-			if app.Def.Kind.IsCiteckApp() {
-				webapps = append(webapps, app)
-			} else {
-				other = append(other, app)
-			}
+			webapps = append(webapps, app)
 		}
 	}
 
-	var result []*AppRuntime
-	result = append(result, proxy...)
-	result = append(result, webapps...)
-	result = append(result, other...)
-	result = append(result, keycloak...)
-	result = append(result, infra...)
-	return result
+	var groups [][]*AppRuntime
+	if len(proxy) > 0 {
+		groups = append(groups, proxy)
+	}
+	if len(webapps) > 0 {
+		groups = append(groups, webapps)
+	}
+	if len(keycloak) > 0 {
+		groups = append(groups, keycloak)
+	}
+	if len(infra) > 0 {
+		groups = append(groups, infra)
+	}
+	return groups
 }

@@ -1,6 +1,7 @@
 package acme
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -10,6 +11,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -36,30 +38,35 @@ func writeTempCert(t *testing.T, dir string, notBefore, notAfter time.Time) stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	pem.Encode(f, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	if err := pem.Encode(f, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
 	f.Close()
 	return certPath
 }
 
 func TestRenewalInterval_NormalCert(t *testing.T) {
 	dir := t.TempDir()
+	// 90 days total validity → should use 12h interval
 	writeTempCert(t, dir, time.Now().Add(-30*24*time.Hour), time.Now().Add(60*24*time.Hour))
 	client := &Client{confDir: dir}
 	svc := NewRenewalService(client, nil)
 	interval := svc.renewalInterval()
 	if interval != 12*time.Hour {
-		t.Errorf("expected 12h for normal cert, got %v", interval)
+		t.Errorf("expected 12h for 90-day cert, got %v", interval)
 	}
 }
 
 func TestRenewalInterval_ShortLivedCert(t *testing.T) {
 	dir := t.TempDir()
+	// 6 days total validity → should use 6h interval (IP cert pattern)
 	writeTempCert(t, dir, time.Now().Add(-1*24*time.Hour), time.Now().Add(5*24*time.Hour))
 	client := &Client{confDir: dir}
 	svc := NewRenewalService(client, nil)
 	interval := svc.renewalInterval()
 	if interval != 6*time.Hour {
-		t.Errorf("expected 6h for short-lived cert, got %v", interval)
+		t.Errorf("expected 6h for 6-day cert, got %v", interval)
 	}
 }
 
@@ -70,5 +77,22 @@ func TestRenewalInterval_NoCert(t *testing.T) {
 	interval := svc.renewalInterval()
 	if interval != 12*time.Hour {
 		t.Errorf("expected 12h default when cert missing, got %v", interval)
+	}
+}
+
+func TestCheckAndRenew_SkipsWhenMoreThanHalfValid(t *testing.T) {
+	dir := t.TempDir()
+	// Cert valid for 90 days, 80 days remaining → >50%, should NOT renew
+	writeTempCert(t, dir, time.Now().Add(-10*24*time.Hour), time.Now().Add(80*24*time.Hour))
+	client := &Client{confDir: dir}
+
+	var renewed atomic.Bool
+	svc := NewRenewalService(client, func() { renewed.Store(true) })
+
+	ctx := context.Background()
+	svc.checkAndRenew(ctx) // should be a no-op (cert is still >50% valid)
+
+	if renewed.Load() {
+		t.Error("restartFn should not be called when cert has >50% validity remaining")
 	}
 }

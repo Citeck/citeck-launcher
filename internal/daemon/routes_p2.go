@@ -771,8 +771,7 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 	// Launch import in background and return 202 immediately
 	importPath := zipPath
 	go func() {
-		ctx := context.Background()
-		meta, err := snapshot.Import(ctx, d.dockerClient, importPath, d.volumesBase)
+		meta, err := snapshot.Import(d.bgCtx, d.dockerClient, importPath, d.volumesBase)
 		if err != nil {
 			slog.Error("Snapshot import failed", "err", err)
 			d.broadcastEvent(api.EventDto{

@@ -402,14 +402,16 @@ func Start(opts StartOptions) error {
 		if err != nil {
 			slog.Warn("TCP listener failed, Web UI unavailable", "addr", tcpAddr, "err", err)
 		} else {
-			// Wrap with logging + CORS + token auth middleware for TCP connections
+			// Wrap middleware for TCP connections.
+			// Order (outermost first): CORS → TokenAuth → Logging → mux
+			// CORS must be outermost so OPTIONS preflight bypasses auth.
 			var tcpHandler http.Handler = mux
 			tcpHandler = LoggingMiddleware(tcpHandler)
-			tcpHandler = CORSMiddleware(tcpHandler)
 			if daemonCfg.Server.Token != "" {
 				tcpHandler = TokenAuthMiddleware(daemonCfg.Server.Token, tcpHandler)
 				slog.Info("Token auth enabled on TCP listener")
 			}
+			tcpHandler = CORSMiddleware(tcpHandler)
 			d.tcpServer = &http.Server{
 				Handler:        tcpHandler,
 				ReadTimeout:    30 * time.Second,

@@ -94,6 +94,7 @@ type Runtime struct {
 	statusCond             *sync.Cond                       // signaled on every app status change
 	cmdCh              chan command
 	pullSem            chan struct{}       // limits concurrent image pulls (capacity 4)
+	statsRunning       atomic.Bool        // guards against overlapping updateStats goroutines
 	runCtx          context.Context    // set by doStart, cancelled by doStop
 	cancel          context.CancelFunc
 	wg              sync.WaitGroup
@@ -483,13 +484,18 @@ func (r *Runtime) StartApp(appName string) error {
 		return nil // already running
 	case AppStatusReadyToPull, AppStatusPullFailed, AppStatusStartFailed, AppStatusStopped, AppStatusFailed:
 		// These states can be re-entered via pullAndStartApp
+		ctx := r.runCtx
+		if ctx == nil {
+			r.mu.Unlock()
+			return fmt.Errorf("runtime not started, cannot start app %q", appName)
+		}
 		r.setAppStatus(app, AppStatusPulling)
 		delete(r.manualStoppedApps, appName)
 		r.resetRetry(appName)
 		r.persistState()
 		r.mu.Unlock()
 		r.appWg.Add(1)
-		go r.pullAndStartApp(r.runCtx, appName)
+		go r.pullAndStartApp(ctx, appName)
 		return nil
 	default:
 		r.mu.Unlock()
@@ -659,7 +665,12 @@ func (r *Runtime) runLoop() {
 				r.doRegenerate(cmd.apps)
 			}
 		case <-ticker.C:
-			go r.updateStats() // runs in separate goroutine to avoid blocking cmdCh
+			if r.statsRunning.CompareAndSwap(false, true) {
+				go func() {
+					defer r.statsRunning.Store(false)
+					r.updateStats()
+				}()
+			}
 			r.mu.Lock()
 			r.checkStatus()
 			r.mu.Unlock()
@@ -1220,6 +1231,7 @@ func (r *Runtime) doRegenerate(apps []appdef.ApplicationDef) {
 	// 2. Clear in-memory state — Docker containers keep running
 	r.mu.Lock()
 	r.apps = make(map[string]*AppRuntime)
+	r.retryState = nil // clean slate — regeneration resets retry counters
 	r.mu.Unlock()
 
 	// 3. Start with new definitions — doStart discovers running containers
@@ -1255,27 +1267,27 @@ func (r *Runtime) doStop() {
 	}
 	r.mu.Unlock()
 
-	// Stop in graceful order: proxy → webapps → keycloak → infra
+	// Stop in graceful order: proxy → webapps/other → keycloak → infra
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer stopCancel()
-	ordered := GracefulShutdownOrder(toStop)
 
-	// Group: stop proxy first, then webapps+other in parallel, then keycloak, then infra in parallel
-	stopOne := func(a *AppRuntime) {
-		slog.Info("Stopping app", "app", a.Name)
-		if err := r.docker.StopAndRemoveContainer(stopCtx, r.docker.ContainerName(a.Name)); err != nil {
-			slog.Warn("Failed to stop container", "app", a.Name, "err", err)
+	stopGroup := func(apps []*AppRuntime) {
+		var wg sync.WaitGroup
+		for _, a := range apps {
+			wg.Add(1)
+			go func(app *AppRuntime) {
+				defer wg.Done()
+				slog.Info("Stopping app", "app", app.Name)
+				if err := r.docker.StopAndRemoveContainer(stopCtx, r.docker.ContainerName(app.Name)); err != nil {
+					slog.Warn("Failed to stop container", "app", app.Name, "err", err)
+				}
+			}(a)
 		}
+		wg.Wait()
 	}
-	var stopWg sync.WaitGroup
-	for _, app := range ordered {
-		stopWg.Add(1)
-		go func(a *AppRuntime) {
-			defer stopWg.Done()
-			stopOne(a)
-		}(app)
+	for _, group := range GracefulShutdownGroups(toStop) {
+		stopGroup(group)
 	}
-	stopWg.Wait()
 
 	// Update status under lock after all containers are stopped
 	r.mu.Lock()

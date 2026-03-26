@@ -200,43 +200,6 @@ func diffMaps(prefix string, old, new_ map[string]any) []string {
 	return changes
 }
 
-func waitForRunning(c *client.DaemonClient, timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	output.Errf("Waiting for all apps to be running...")
-
-	// Use SSE events for instant notification instead of polling
-	events, err := c.StreamEvents(ctx)
-	if err != nil {
-		return fmt.Errorf("connect to event stream: %w", err)
-	}
-
-	// Check initial state first
-	if ns, err := c.GetNamespace(); err == nil && ns.Status == "RUNNING" {
-		output.PrintText("All apps running")
-		return nil
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for namespace to be running")
-		case evt, ok := <-events:
-			if !ok {
-				return fmt.Errorf("event stream closed")
-			}
-			if evt.Type == "namespace_status" && evt.After == "RUNNING" {
-				output.PrintText("All apps running")
-				return nil
-			}
-			if evt.Type == "namespace_status" && evt.After == "STALLED" {
-				return fmt.Errorf("namespace stalled — some apps failed to start")
-			}
-		}
-	}
-}
-
 func newDiffCmd() *cobra.Command {
 	var file string
 
