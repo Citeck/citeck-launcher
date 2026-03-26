@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -20,19 +21,21 @@ type OperationRecord struct {
 	Apps      int    `json:"apps,omitempty"`
 }
 
-// OperationHistory records operations to a JSONL file.
+// OperationHistory records operations to a JSONL file with automatic rotation.
 type OperationHistory struct {
-	path string
+	path     string
+	counter  atomic.Int64 // in-memory write counter, avoids reading file on every Record
 }
+
+const maxHistoryEntries = 1000
+const truncateToEntries = 500
+const rotateCheckInterval = 100 // check file size every N writes
 
 func NewOperationHistory(logDir string) *OperationHistory {
 	return &OperationHistory{
 		path: filepath.Join(logDir, "operations.jsonl"),
 	}
 }
-
-const maxHistoryEntries = 1000
-const truncateToEntries = 500
 
 func (h *OperationHistory) Record(op, app, result string, duration time.Duration, err error, appCount int) {
 	rec := OperationRecord{
@@ -60,8 +63,10 @@ func (h *OperationHistory) Record(op, app, result string, duration time.Duration
 
 	fmt.Fprintf(f, "%s\n", data)
 
-	// Rotate if file exceeds max entries
-	h.rotateIfNeeded()
+	// Check rotation only every N writes to avoid reading the file on every append
+	if h.counter.Add(1)%rotateCheckInterval == 0 {
+		h.rotateIfNeeded()
+	}
 }
 
 func (h *OperationHistory) rotateIfNeeded() {
@@ -73,7 +78,11 @@ func (h *OperationHistory) rotateIfNeeded() {
 	if len(lines) <= maxHistoryEntries {
 		return
 	}
-	// Truncate to last N entries
+	// Keep last N entries, atomic via temp file
 	lines = lines[len(lines)-truncateToEntries:]
-	os.WriteFile(h.path, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
+	tmpPath := h.path + ".tmp"
+	if err := os.WriteFile(tmpPath, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		return
+	}
+	os.Rename(tmpPath, h.path)
 }

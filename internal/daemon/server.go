@@ -2,10 +2,17 @@ package daemon
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"log/slog"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -224,6 +231,27 @@ func Start(opts StartOptions) error {
 
 		slog.Info("Using bundle", "ref", nsCfg.BundleRef, "apps", len(bundleDef.Applications))
 
+		// TLS certificate provisioning at startup
+		// Self-signed: generate if TLS enabled + no cert paths + no LE
+		if nsCfg.Proxy.TLS.Enabled && !nsCfg.Proxy.TLS.LetsEncrypt && nsCfg.Proxy.TLS.CertPath == "" {
+			host := nsCfg.Proxy.Host
+			if host == "" {
+				host = "localhost"
+			}
+			tlsDir := filepath.Join(config.ConfDir(), "tls")
+			os.MkdirAll(tlsDir, 0o755)
+			certPath := filepath.Join(tlsDir, "server.crt")
+			keyPath := filepath.Join(tlsDir, "server.key")
+			if _, err := os.Stat(certPath); err != nil {
+				slog.Info("Generating self-signed certificate", "host", host)
+				if err := generateSelfSignedCert(certPath, keyPath, host); err != nil {
+					slog.Error("Failed to generate self-signed cert", "err", err)
+				}
+			}
+			nsCfg.Proxy.TLS.CertPath = certPath
+			nsCfg.Proxy.TLS.KeyPath = keyPath
+		}
+
 		// Let's Encrypt: obtain certificate if configured and not yet present
 		if nsCfg.Proxy.TLS.Enabled && nsCfg.Proxy.TLS.LetsEncrypt {
 			host := nsCfg.Proxy.Host
@@ -309,9 +337,6 @@ func Start(opts StartOptions) error {
 
 		// Start CloudConfigServer with generated ext cloud config
 		cloudCfgSrv = NewCloudConfigServer()
-		if persistedState != nil && persistedState.CloudConfigVersion > 0 {
-			cloudCfgSrv.SetVersion(persistedState.CloudConfigVersion)
-		}
 		cloudCfgSrv.UpdateConfig(genResp.CloudConfig)
 		if err := cloudCfgSrv.Start(); err != nil {
 			slog.Warn("CloudConfigServer failed to start", "err", err)
@@ -782,4 +807,51 @@ func importSnapshotIfNeeded(nsCfg *namespace.NamespaceConfig, wsCfg *bundle.Work
 	// Write marker
 	os.WriteFile(markerFile, []byte(nsCfg.Snapshot), 0o644)
 	slog.Info("Snapshot auto-import completed", "snapshot", nsCfg.Snapshot, "ns", nsCfg.ID)
+}
+
+// generateSelfSignedCert creates a self-signed TLS certificate.
+func generateSelfSignedCert(certPath, keyPath, host string) error {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return fmt.Errorf("generate key: %w", err)
+	}
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return err
+	}
+	template := x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject:      pkix.Name{CommonName: host},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		template.IPAddresses = append(template.IPAddresses, ip)
+	} else {
+		template.DNSNames = append(template.DNSNames, host)
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		return fmt.Errorf("create certificate: %w", err)
+	}
+	certFile, err := os.Create(certPath)
+	if err != nil {
+		return err
+	}
+	defer certFile.Close()
+	if err := pem.Encode(certFile, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
+		return err
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return err
+	}
+	keyFile, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	defer keyFile.Close()
+	return pem.Encode(keyFile, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 }

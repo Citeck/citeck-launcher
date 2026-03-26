@@ -83,7 +83,9 @@ func newApplyCmd() *cobra.Command {
 			})
 
 			if wait {
-				// Subscribe to SSE BEFORE reload to avoid race
+				// Subscribe to SSE stream, then check initial state.
+				// This is race-safe: if RUNNING happened between reload and subscribe,
+				// GetNamespace below catches it; if between subscribe and GetNamespace, the event is buffered.
 				ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
 				defer cancel()
 				events, sseErr := c.StreamEvents(ctx)
@@ -91,7 +93,6 @@ func newApplyCmd() *cobra.Command {
 					return fmt.Errorf("connect to event stream: %w", sseErr)
 				}
 
-				// Reload is already done above, just wait for RUNNING
 				output.Errf("Waiting for all apps to be running...")
 				// Check initial state after subscribing
 				if ns, err := c.GetNamespace(); err == nil && ns.Status == "RUNNING" {

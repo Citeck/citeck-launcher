@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/citeck/citeck-launcher/internal/client"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/spf13/cobra"
@@ -46,11 +45,7 @@ func newTokenGenerateCmd() *cobra.Command {
 				output.PrintText("Token: %s", token)
 			})
 
-			// Try to notify running daemon to reload config
-			if c := client.TryNew("", ""); c != nil {
-				c.Close()
-				output.PrintText("Note: restart daemon to apply the new token")
-			}
+		output.PrintText("Note: restart the daemon to apply the new token")
 			return nil
 		},
 	}

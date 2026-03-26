@@ -10,11 +10,10 @@ import (
 
 // NsPersistedState holds runtime state that survives daemon restarts.
 type NsPersistedState struct {
-	Status              NsRuntimeStatus              `json:"status"`
-	ManualStoppedApps   []string                     `json:"manualStoppedApps,omitempty"`
-	EditedApps          map[string]appdef.ApplicationDef `json:"editedApps,omitempty"`
-	EditedLockedApps    []string                     `json:"editedLockedApps,omitempty"`
-	CloudConfigVersion  int64                        `json:"cloudConfigVersion,omitempty"`
+	Status            NsRuntimeStatus              `json:"status"`
+	ManualStoppedApps []string                     `json:"manualStoppedApps,omitempty"`
+	EditedApps        map[string]appdef.ApplicationDef `json:"editedApps,omitempty"`
+	EditedLockedApps  []string                     `json:"editedLockedApps,omitempty"`
 }
 
 // statePath returns the path to the persisted state file (namespace-scoped).

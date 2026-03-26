@@ -265,21 +265,10 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TLSEnabled {
 		nsCfg.Proxy.TLS.Enabled = true
-		switch req.TLSMode {
-		case "letsencrypt":
+		if req.TLSMode == "letsencrypt" {
 			nsCfg.Proxy.TLS.LetsEncrypt = true
-		case "self-signed":
-			host := req.Host
-			if host == "" {
-				host = "localhost"
-			}
-			tlsDir := filepath.Join(config.ConfDir(), "tls")
-			os.MkdirAll(tlsDir, 0o755)
-			certPath := filepath.Join(tlsDir, "server.crt")
-			keyPath := filepath.Join(tlsDir, "server.key")
-			nsCfg.Proxy.TLS.CertPath = certPath
-			nsCfg.Proxy.TLS.KeyPath = keyPath
 		}
+		// self-signed cert is generated at daemon startup when certPath is empty and letsEncrypt is false
 	}
 	nsCfg.PgAdmin.Enabled = req.PgAdminEnabled
 	if req.BundleRepo != "" && req.BundleKey != "" {

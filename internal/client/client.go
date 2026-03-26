@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/api"
@@ -173,16 +174,17 @@ func (c *DaemonClient) ReloadNamespace() (*api.ActionResultDto, error) {
 }
 
 func (c *DaemonClient) GetAppLogs(name string, tail int, since, until string, timestamps bool) (string, error) {
-	path := fmt.Sprintf("%s?tail=%d", api.AppLogs(name), tail)
+	params := url.Values{"tail": {strconv.Itoa(tail)}}
 	if since != "" {
-		path += "&since=" + since
+		params.Set("since", since)
 	}
 	if until != "" {
-		path += "&until=" + until
+		params.Set("until", until)
 	}
 	if timestamps {
-		path += "&timestamps=true"
+		params.Set("timestamps", "true")
 	}
+	path := api.AppLogs(name) + "?" + params.Encode()
 	return c.getRaw(path)
 }
 
