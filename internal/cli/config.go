@@ -96,10 +96,12 @@ func newConfigValidateCmd() *cobra.Command {
 					for _, e := range errors {
 						output.PrintText("  - %s", e)
 					}
-					os.Exit(ExitConfigError)
 				}
 			})
 
+			if len(errors) > 0 {
+				return exitWithCode(ExitConfigError, "%d config error(s)", len(errors))
+			}
 			return nil
 		},
 	}

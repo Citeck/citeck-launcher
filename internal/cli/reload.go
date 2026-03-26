@@ -32,6 +32,9 @@ func newReloadCmd() *cobra.Command {
 					output.PrintText("Reload failed: %s", result.Message)
 				}
 			})
+			if !result.Success {
+				return exitWithCode(ExitError, "reload failed: %s", result.Message)
+			}
 			return nil
 		},
 	}

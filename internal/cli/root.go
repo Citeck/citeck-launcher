@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 
 	"github.com/citeck/citeck-launcher/internal/output"
@@ -18,7 +19,14 @@ func Host() string  { return flagHost }
 func Token() string { return flagToken }
 func Yes() bool     { return flagYes }
 
-func NewRootCmd(version string) *cobra.Command {
+func NewRootCmd(version string, extra ...string) *cobra.Command {
+	commit, buildDate := "", ""
+	if len(extra) > 0 {
+		commit = extra[0]
+	}
+	if len(extra) > 1 {
+		buildDate = extra[1]
+	}
 	root := &cobra.Command{
 		Use:   "citeck",
 		Short: "Citeck Launcher CLI",
@@ -38,7 +46,7 @@ func NewRootCmd(version string) *cobra.Command {
 	root.PersistentFlags().BoolVar(&flagYes, "yes", false, "Skip confirmation prompts")
 
 	root.AddCommand(
-		newVersionCmd(version),
+		newVersionCmd(version, commit, buildDate),
 		newStartCmd(version),
 		newStopCmd(),
 		newStatusCmd(),
@@ -65,9 +73,23 @@ func NewRootCmd(version string) *cobra.Command {
 	return root
 }
 
-func Execute(version string) {
-	root := NewRootCmd(version)
+func Execute(version string, extra ...string) {
+	commit, buildDate := "", ""
+	if len(extra) > 0 {
+		commit = extra[0]
+	}
+	if len(extra) > 1 {
+		buildDate = extra[1]
+	}
+	root := NewRootCmd(version, commit, buildDate)
 	if err := root.Execute(); err != nil {
+		var ece ExitCodeError
+		if errors.As(err, &ece) {
+			if !output.IsJSON() {
+				output.Errf("Error: %v", ece.Err)
+			}
+			os.Exit(ece.Code)
+		}
 		if !output.IsJSON() {
 			output.Errf("Error: %v", err)
 		}

@@ -6,14 +6,17 @@ import (
 	"encoding/pem"
 	"log/slog"
 	"os"
+	"strings"
+	"sync/atomic"
 	"time"
 )
 
 // RenewalService checks certificate expiry periodically and renews if needed.
 type RenewalService struct {
-	client    *Client
-	restartFn func() // called after successful renewal to restart proxy
-	cancel    context.CancelFunc
+	client     *Client
+	restartFn  func() // called after successful renewal to restart proxy
+	cancel     context.CancelFunc
+	isRenewing atomic.Bool // prevents concurrent renewals
 }
 
 // NewRenewalService creates a renewal service.
@@ -82,6 +85,12 @@ func (s *RenewalService) renewalInterval() time.Duration {
 }
 
 func (s *RenewalService) checkAndRenew(ctx context.Context) {
+	if !s.isRenewing.CompareAndSwap(false, true) {
+		slog.Debug("ACME renewal already in progress, skipping")
+		return
+	}
+	defer s.isRenewing.Store(false)
+
 	certPath := s.client.CertPath()
 	data, err := os.ReadFile(certPath)
 	if err != nil {
@@ -113,7 +122,17 @@ func (s *RenewalService) checkAndRenew(ctx context.Context) {
 	slog.Info("ACME cert renewal needed", "daysLeft", int(remaining.Hours()/24))
 
 	if err := s.client.ObtainCertificate(ctx); err != nil {
-		slog.Error("ACME renewal failed", "err", err)
+		errStr := err.Error()
+		if strings.Contains(errStr, "rateLimited") || strings.Contains(errStr, "too many") {
+			slog.Error("ACME renewal rate limited — backing off 1h", "err", err)
+			// Sleep to avoid hammering LE (rate limit lockout is typically 1 week)
+			select {
+			case <-ctx.Done():
+			case <-time.After(1 * time.Hour):
+			}
+		} else {
+			slog.Error("ACME renewal failed", "err", err)
+		}
 		return
 	}
 

@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -642,6 +641,12 @@ func (d *Daemon) handleListSnapshots(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
+	if !d.snapshotMu.TryLock() {
+		writeError(w, http.StatusConflict, "another snapshot operation is in progress")
+		return
+	}
+	defer d.snapshotMu.Unlock()
+
 	if d.runtime != nil && d.runtime.Status() != namespace.NsStatusStopped {
 		writeError(w, http.StatusConflict, "namespace must be stopped before export")
 		return
@@ -672,7 +677,9 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 	outputPath := filepath.Join(dir, fileName)
 
 	nsID := d.activeNsID()
+	d.bgWg.Add(1)
 	go func() {
+		defer d.bgWg.Done()
 		d.broadcastEvent(api.EventDto{
 			Type: "snapshot_export", Timestamp: time.Now().UnixMilli(),
 			NamespaceID: nsID, After: fmt.Sprintf("exporting to %s", fileName),
@@ -699,6 +706,12 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
+	if !d.snapshotMu.TryLock() {
+		writeError(w, http.StatusConflict, "another snapshot operation is in progress")
+		return
+	}
+	defer d.snapshotMu.Unlock()
+
 	if d.runtime != nil && d.runtime.Status() != namespace.NsStatusStopped {
 		writeError(w, http.StatusConflict, "namespace must be stopped before import")
 		return
@@ -730,7 +743,7 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		// Accept file upload
-		if err := r.ParseMultipartForm(512 << 20); err != nil { // 512MB max
+		if err := r.ParseMultipartForm(32 << 20); err != nil { // 32MB in memory, Go spills to disk
 			writeError(w, http.StatusBadRequest, "invalid multipart form")
 			return
 		}
@@ -759,7 +772,9 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 
 	// Launch import in background and return 202 immediately
 	importPath := zipPath
+	d.bgWg.Add(1)
 	go func() {
+		defer d.bgWg.Done()
 		meta, err := snapshot.Import(d.bgCtx, d.dockerClient, importPath, d.volumesBase)
 		if err != nil {
 			slog.Error("Snapshot import failed", "err", err)
@@ -825,7 +840,9 @@ func (d *Daemon) handleDownloadSnapshot(w http.ResponseWriter, r *http.Request) 
 
 	// Run download in background, report via SSE events
 	nsID := d.activeNsID()
+	d.bgWg.Add(1)
 	go func() {
+		defer d.bgWg.Done()
 		d.broadcastEvent(api.EventDto{
 			Type: "snapshot_download", Timestamp: time.Now().UnixMilli(),
 			NamespaceID: nsID, After: fmt.Sprintf("downloading %s", fileName),
@@ -1001,7 +1018,7 @@ func (d *Daemon) handleRenameSnapshot(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name string `json:"name"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" {
+	if err := readJSON(r, &body); err != nil || body.Name == "" {
 		writeError(w, http.StatusBadRequest, "missing new name")
 		return
 	}

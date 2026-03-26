@@ -9,7 +9,9 @@ import (
 
 // DaemonConfig represents daemon.yml configuration.
 type DaemonConfig struct {
-	Server ServerConfig `yaml:"server" json:"server"`
+	Server     ServerConfig     `yaml:"server" json:"server"`
+	Reconciler ReconcilerConfig `yaml:"reconciler,omitempty" json:"reconciler,omitempty"`
+	Docker     DockerConfig     `yaml:"docker,omitempty" json:"docker,omitempty"`
 }
 
 // ServerConfig holds server-level settings.
@@ -22,6 +24,18 @@ type ServerConfig struct {
 type WebUIConfig struct {
 	Enabled bool   `yaml:"enabled" json:"enabled"`
 	Listen  string `yaml:"listen" json:"listen"`
+}
+
+// ReconcilerConfig holds reconciler tuning.
+type ReconcilerConfig struct {
+	IntervalSeconds  int `yaml:"interval,omitempty" json:"interval,omitempty"`           // default 60
+	LivenessPeriodMs int `yaml:"livenessPeriod,omitempty" json:"livenessPeriod,omitempty"` // default 30000
+}
+
+// DockerConfig holds Docker-level tuning.
+type DockerConfig struct {
+	PullConcurrency int `yaml:"pullConcurrency,omitempty" json:"pullConcurrency,omitempty"` // default 4
+	StopTimeout     int `yaml:"stopTimeout,omitempty" json:"stopTimeout,omitempty"`         // default 10
 }
 
 // DefaultDaemonConfig returns the default daemon configuration.

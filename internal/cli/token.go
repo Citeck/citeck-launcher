@@ -43,9 +43,8 @@ func newTokenGenerateCmd() *cobra.Command {
 			output.PrintResult(map[string]string{"token": token, "path": tokenPath}, func() {
 				output.PrintText("Token generated and saved to %s", tokenPath)
 				output.PrintText("Token: %s", token)
+				output.PrintText("Note: restart the daemon to apply the new token")
 			})
-
-		output.PrintText("Note: restart the daemon to apply the new token")
 			return nil
 		},
 	}

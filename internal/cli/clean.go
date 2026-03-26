@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -112,8 +113,9 @@ func newCleanCmd() *cobra.Command {
 
 			if !flagYes {
 				fmt.Printf("Remove %d containers, %d volume dirs, %d networks? [y/N]: ", len(orphans), len(orphanVols), len(orphanNets))
-				var answer string
-				fmt.Scanln(&answer)
+				scanner := bufio.NewScanner(os.Stdin)
+				scanner.Scan()
+				answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
 				if answer != "y" && answer != "yes" {
 					output.PrintText("Aborted")
 					return nil

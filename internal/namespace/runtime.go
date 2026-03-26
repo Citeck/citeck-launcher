@@ -82,7 +82,8 @@ type Runtime struct {
 	workspace       string
 	nsID            string
 	volumesBase     string
-	eventCb            EventCallback
+	eventCb            atomic.Pointer[EventCallback]
+	eventCh            chan api.EventDto
 	registryAuthFn     RegistryAuthFunc
 	history            *OperationHistory
 	manualStoppedApps  map[string]bool
@@ -252,7 +253,7 @@ func NewRuntimeWithActions(cfg *NamespaceConfig, dockerClient *docker.Client, wo
 		actionSvc = actions.NewService(actions.ServiceConfig{})
 		ownsActions = true
 	}
-	return &Runtime{
+	r := &Runtime{
 		status:            NsStatusStopped,
 		config:            cfg,
 		apps:              make(map[string]*AppRuntime),
@@ -268,11 +269,32 @@ func NewRuntimeWithActions(cfg *NamespaceConfig, dockerClient *docker.Client, wo
 		statusCond:        sync.NewCond(&sync.Mutex{}),
 		cmdCh:             make(chan command, 16),
 		pullSem:           make(chan struct{}, 4),
+		eventCh:           make(chan api.EventDto, 256),
 	}
+	go r.dispatchLoop()
+	return r
 }
 
 func (r *Runtime) SetEventCallback(cb EventCallback) {
-	r.eventCb = cb
+	r.eventCb.Store(&cb)
+}
+
+// emitEvent pushes an event to the dispatch channel (non-blocking).
+// Must be called with r.mu held. The event is delivered outside the lock by dispatchLoop.
+func (r *Runtime) emitEvent(evt api.EventDto) {
+	select {
+	case r.eventCh <- evt:
+	default:
+	}
+}
+
+// dispatchLoop drains eventCh and calls eventCb outside any lock.
+func (r *Runtime) dispatchLoop() {
+	for evt := range r.eventCh {
+		if cb := r.eventCb.Load(); cb != nil {
+			(*cb)(evt)
+		}
+	}
 }
 
 func (r *Runtime) Status() NsRuntimeStatus {
@@ -408,6 +430,7 @@ func (r *Runtime) Shutdown() {
 		r.Stop()
 		r.wg.Wait()
 	}
+	close(r.eventCh) // stops dispatchLoop
 	if r.ownsActions {
 		r.actionSvc.Shutdown()
 	}
@@ -619,12 +642,10 @@ func (r *Runtime) setStatus(s NsRuntimeStatus) {
 	old := r.status
 	r.status = s
 	slog.Info("Namespace status changed", "from", old, "to", s)
-	if r.eventCb != nil {
-		r.eventCb(api.EventDto{
-			Type: "namespace_status", Timestamp: time.Now().UnixMilli(),
-			NamespaceID: r.nsID, Before: string(old), After: string(s),
-		})
-	}
+	r.emitEvent(api.EventDto{
+		Type: "namespace_status", Timestamp: time.Now().UnixMilli(),
+		NamespaceID: r.nsID, Before: string(old), After: string(s),
+	})
 	// Persist state on status change
 	r.persistState()
 }
@@ -634,12 +655,10 @@ func (r *Runtime) setAppStatus(app *AppRuntime, s AppRuntimeStatus) {
 	old := app.Status
 	app.Status = s
 	slog.Info("App status changed", "app", app.Name, "from", old, "to", s)
-	if r.eventCb != nil {
-		r.eventCb(api.EventDto{
-			Type: "app_status", Timestamp: time.Now().UnixMilli(),
-			NamespaceID: r.nsID, AppName: app.Name, Before: string(old), After: string(s),
-		})
-	}
+	r.emitEvent(api.EventDto{
+		Type: "app_status", Timestamp: time.Now().UnixMilli(),
+		NamespaceID: r.nsID, AppName: app.Name, Before: string(old), After: string(s),
+	})
 	// Wake all goroutines waiting for dependency status changes
 	r.statusCond.Broadcast()
 }
@@ -751,7 +770,9 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) {
 				removeWg.Add(1)
 				go func(name string) {
 					defer removeWg.Done()
-					r.docker.StopAndRemoveContainer(ctx, name)
+					if err := r.docker.StopAndRemoveContainer(ctx, name); err != nil {
+						slog.Warn("Failed to remove stale container", "name", name, "err", err)
+					}
 				}(p.containerName)
 			}
 		}
@@ -787,21 +808,23 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) {
 		}
 	}
 
-	// Phase 3 (lock): update in-memory state and launch apps.
+	// Phase 3 (lock): atomically replace in-memory state and launch apps.
 	r.mu.Lock()
+	newApps := make(map[string]*AppRuntime, len(plans))
 	for _, p := range plans {
 		if p.reuse {
 			slog.Info("Reusing existing container (hash match)", "app", p.def.Name)
-			r.apps[p.def.Name] = &AppRuntime{
+			newApps[p.def.Name] = &AppRuntime{
 				Name: p.def.Name, Status: AppStatusRunning, Def: p.def,
 				ContainerID: p.containerID,
 			}
 		} else {
-			r.apps[p.def.Name] = &AppRuntime{
+			newApps[p.def.Name] = &AppRuntime{
 				Name: p.def.Name, Status: AppStatusReadyToPull, Def: p.def,
 			}
 		}
 	}
+	r.apps = newApps
 	for _, app := range r.apps {
 		if app.Status == AppStatusReadyToPull {
 			r.setAppStatus(app, AppStatusPulling)
@@ -842,6 +865,12 @@ func (r *Runtime) pullAndStartApp(ctx context.Context, appName string) {
 		case <-ctx.Done():
 			return
 		}
+		pullDone := false
+		defer func() {
+			if !pullDone {
+				<-r.pullSem
+			}
+		}()
 
 		pullAlways := shouldPullImage(appDef.Kind, appDef.Image)
 		var auth *docker.RegistryAuth
@@ -865,8 +894,9 @@ func (r *Runtime) pullAndStartApp(ctx context.Context, appName string) {
 		})
 		pullErr := pullHandle.Wait(ctx)
 
-		// Release pull semaphore
+		// Release pull semaphore (defer won't double-release)
 		<-r.pullSem
+		pullDone = true
 
 		if pullErr != nil {
 			if ctx.Err() != nil {
@@ -1038,15 +1068,21 @@ func (r *Runtime) runInitContainers(ctx context.Context, appName string, appDef 
 			return fmt.Errorf("create init container for %s: %w", appName, err)
 		}
 		if err := r.docker.StartContainer(ctx, initID); err != nil {
-			_ = r.docker.RemoveContainer(ctx, initID)
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			_ = r.docker.RemoveContainer(cleanupCtx, initID)
+			cleanupCancel()
 			return fmt.Errorf("start init container for %s: %w", appName, err)
 		}
 		// Wait for init container to EXIT (not start)
 		if err := r.docker.WaitForContainerExit(ctx, initID, 60*time.Second); err != nil {
-			_ = r.docker.RemoveContainer(ctx, initID)
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			_ = r.docker.RemoveContainer(cleanupCtx, initID)
+			cleanupCancel()
 			return fmt.Errorf("init container exited with error for %s: %w", appName, err)
 		}
-		_ = r.docker.RemoveContainer(ctx, initID)
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_ = r.docker.RemoveContainer(cleanupCtx, initID)
+		cleanupCancel()
 	}
 	return nil
 }
@@ -1228,14 +1264,14 @@ func (r *Runtime) doRegenerate(apps []appdef.ApplicationDef) {
 	r.reconcileWg.Wait()
 	r.appWg.Wait()
 
-	// 2. Clear in-memory state — Docker containers keep running
+	// 2. Clear retry state (apps are preserved until doStart Phase 3 to avoid empty window)
 	r.mu.Lock()
-	r.apps = make(map[string]*AppRuntime)
 	r.retryState = nil // clean slate — regeneration resets retry counters
 	r.mu.Unlock()
 
 	// 3. Start with new definitions — doStart discovers running containers
-	//    via buildExistingContainerMap and reuses those with matching hash
+	//    via buildExistingContainerMap and reuses those with matching hash.
+	//    doStart Phase 3 atomically replaces r.apps, so Apps() never returns empty.
 	r.doStart(apps)
 }
 
@@ -1267,18 +1303,17 @@ func (r *Runtime) doStop() {
 	}
 	r.mu.Unlock()
 
-	// Stop in graceful order: proxy → webapps/other → keycloak → infra
-	stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer stopCancel()
-
+	// Stop in graceful order: proxy → webapps/other → keycloak → infra (30s per group)
 	stopGroup := func(apps []*AppRuntime) {
+		groupCtx, groupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer groupCancel()
 		var wg sync.WaitGroup
 		for _, a := range apps {
 			wg.Add(1)
 			go func(app *AppRuntime) {
 				defer wg.Done()
 				slog.Info("Stopping app", "app", app.Name)
-				if err := r.docker.StopAndRemoveContainer(stopCtx, r.docker.ContainerName(app.Name)); err != nil {
+				if err := r.docker.StopAndRemoveContainer(groupCtx, r.docker.ContainerName(app.Name)); err != nil {
 					slog.Warn("Failed to stop container", "app", app.Name, "err", err)
 				}
 			}(a)
@@ -1294,7 +1329,9 @@ func (r *Runtime) doStop() {
 	for _, app := range r.apps {
 		r.setAppStatus(app, AppStatusStopped)
 	}
-	_ = r.docker.RemoveNetwork(stopCtx)
+	netCtx, netCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	_ = r.docker.RemoveNetwork(netCtx)
+	netCancel()
 	r.apps = make(map[string]*AppRuntime)
 	r.setStatus(NsStatusStopped)
 	r.mu.Unlock()

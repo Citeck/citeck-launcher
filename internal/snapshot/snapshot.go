@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/config"
@@ -132,6 +133,15 @@ func Export(ctx context.Context, dc *docker.Client, outputPath, volumesBase stri
 // Import restores volumes from a snapshot ZIP into bind-mount directories.
 // The namespace MUST be stopped before calling this.
 func Import(ctx context.Context, dc *docker.Client, zipPath, volumesBase string) (*NamespaceSnapshotMeta, error) {
+	// Estimate needed space (3x ZIP size) and check available disk
+	if zipInfo, err := os.Stat(zipPath); err == nil {
+		needed := zipInfo.Size() * 3
+		if avail := availableDiskSpace(volumesBase); avail > 0 && avail < needed {
+			return nil, fmt.Errorf("insufficient disk space: need ~%d MB, available %d MB",
+				needed/(1024*1024), avail/(1024*1024))
+		}
+	}
+
 	// Extract ZIP to temp dir
 	tmpDir, err := os.MkdirTemp("", "citeck-snapshot-import-")
 	if err != nil {
@@ -329,6 +339,9 @@ func createZip(zipPath, srcDir string) error {
 	})
 }
 
+// maxExtractSize is the aggregate extraction size limit (50 GB) to prevent zip bombs.
+const maxExtractSize int64 = 50 << 30
+
 // extractZip extracts a ZIP archive to destDir.
 func extractZip(zipPath, destDir string) error {
 	r, err := zip.OpenReader(zipPath)
@@ -336,6 +349,8 @@ func extractZip(zipPath, destDir string) error {
 		return err
 	}
 	defer r.Close()
+
+	var totalWritten int64
 
 	for _, f := range r.File {
 		// Security: prevent zip slip
@@ -364,8 +379,19 @@ func extractZip(zipPath, destDir string) error {
 			return err
 		}
 
-		// Limit decompressed size to prevent zip bombs (10 GB per file)
-		_, err = io.Copy(outFile, io.LimitReader(rc, 10<<30))
+		// Limit per-file (10 GB) and aggregate (50 GB)
+		remaining := maxExtractSize - totalWritten
+		if remaining <= 0 {
+			rc.Close()
+			outFile.Close()
+			return fmt.Errorf("zip extraction aborted: aggregate size exceeds %d GB", maxExtractSize>>30)
+		}
+		perFileLimit := int64(10 << 30)
+		if remaining < perFileLimit {
+			perFileLimit = remaining
+		}
+		n, err := io.Copy(outFile, io.LimitReader(rc, perFileLimit))
+		totalWritten += n
 		rc.Close()
 		outFile.Close()
 		if err != nil {
@@ -374,6 +400,15 @@ func extractZip(zipPath, destDir string) error {
 	}
 
 	return nil
+}
+
+// availableDiskSpace returns available bytes at the given path, or 0 if unknown.
+func availableDiskSpace(path string) int64 {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(path, &stat); err != nil {
+		return 0
+	}
+	return int64(stat.Bavail) * int64(stat.Bsize)
 }
 
 // isValidChown validates "uid:gid" format (digits only).

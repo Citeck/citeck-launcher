@@ -1,10 +1,12 @@
 package daemon
 
 import (
+	"crypto/subtle"
 	"log/slog"
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -30,7 +32,7 @@ func TokenAuthMiddleware(token string, next http.Handler) http.Handler {
 		}
 
 		parts := strings.SplitN(auth, " ", 2)
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || parts[1] != token {
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || subtle.ConstantTimeCompare([]byte(parts[1]), []byte(token)) != 1 {
 			writeError(w, http.StatusUnauthorized, "invalid token")
 			return
 		}
@@ -50,10 +52,20 @@ func isUnixSocket(r *http.Request) bool {
 	return err != nil
 }
 
-// CORSMiddleware adds CORS headers for web UI development.
+// defaultCORSOrigins lists origins allowed by default for the web UI.
+var defaultCORSOrigins = []string{
+	"http://127.0.0.1",
+	"http://localhost",
+}
+
+// CORSMiddleware validates Origin against allowed patterns and reflects the matching origin.
 func CORSMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+		if origin != "" && matchCORSOrigin(origin) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept")
 
@@ -64,6 +76,57 @@ func CORSMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func matchCORSOrigin(origin string) bool {
+	for _, allowed := range defaultCORSOrigins {
+		if strings.HasPrefix(origin, allowed) {
+			return true
+		}
+	}
+	return false
+}
+
+// RateLimitMiddleware limits requests per IP using a token bucket.
+func RateLimitMiddleware(rps int, next http.Handler) http.Handler {
+	var mu sync.Mutex
+	limiters := make(map[string]*rateLimiterEntry)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if ip == "" {
+			ip = r.RemoteAddr
+		}
+
+		mu.Lock()
+		entry, ok := limiters[ip]
+		if !ok {
+			entry = &rateLimiterEntry{tokens: float64(rps), last: time.Now()}
+			limiters[ip] = entry
+		}
+		// Refill tokens
+		now := time.Now()
+		elapsed := now.Sub(entry.last).Seconds()
+		entry.tokens += elapsed * float64(rps)
+		if entry.tokens > float64(rps) {
+			entry.tokens = float64(rps)
+		}
+		entry.last = now
+		if entry.tokens < 1 {
+			mu.Unlock()
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+		entry.tokens--
+		mu.Unlock()
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+type rateLimiterEntry struct {
+	tokens float64
+	last   time.Time
 }
 
 // statusRecorder captures the HTTP status code.

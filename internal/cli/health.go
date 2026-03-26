@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/citeck/citeck-launcher/internal/client"
 	"github.com/citeck/citeck-launcher/internal/output"
@@ -47,7 +46,7 @@ func newHealthCmd() *cobra.Command {
 			})
 
 			if !health.Healthy {
-				os.Exit(ExitUnhealthy)
+				return exitWithCode(ExitUnhealthy, "system is unhealthy")
 			}
 			return nil
 		},

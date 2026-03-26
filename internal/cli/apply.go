@@ -60,14 +60,14 @@ func newApplyCmd() *cobra.Command {
 			}
 			defer c.Close()
 
-			// Show diff before applying
-			showConfigDiff(c, file)
-
-			// Upload the new config to the daemon
+			// Read config file once (avoid TOCTOU)
 			yamlData, err := os.ReadFile(file)
 			if err != nil {
 				return fmt.Errorf("read config file: %w", err)
 			}
+
+			// Show diff before applying
+			showConfigDiffData(c, yamlData)
 			if _, err := c.PutConfig(yamlData); err != nil {
 				return fmt.Errorf("upload config: %w", err)
 			}
@@ -130,16 +130,11 @@ func newApplyCmd() *cobra.Command {
 	return cmd
 }
 
-// showConfigDiff fetches the current config from daemon and prints structural differences.
-func showConfigDiff(c *client.DaemonClient, newFile string) {
+// showConfigDiffData fetches the current config from daemon and prints structural differences.
+func showConfigDiffData(c *client.DaemonClient, newData []byte) {
 	currentYAML, err := c.GetConfig()
 	if err != nil {
 		return // daemon may not have config loaded yet
-	}
-
-	newData, err := os.ReadFile(newFile)
-	if err != nil {
-		return
 	}
 
 	var current, new_ map[string]any
@@ -215,8 +210,7 @@ func newDiffCmd() *cobra.Command {
 			defer c.Close()
 
 			if file == "" {
-				output.PrintText("Usage: citeck diff -f <new-config.yml>")
-				return nil
+				return fmt.Errorf("--file is required: citeck diff -f <new-config.yml>")
 			}
 
 			currentYAML, err := c.GetConfig()
@@ -312,8 +306,7 @@ func newWaitCmd() *cobra.Command {
 			for {
 				select {
 				case <-ctx.Done():
-					os.Exit(ExitTimeout)
-					return nil
+					return exitWithCode(ExitTimeout, "timeout waiting for status")
 				case evt, ok := <-events:
 					if !ok {
 						return fmt.Errorf("event stream closed")

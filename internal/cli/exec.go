@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/client"
@@ -41,7 +40,7 @@ func newExecCmd() *cobra.Command {
 			if output.IsJSON() {
 				output.PrintJSON(result)
 				if result.ExitCode != 0 {
-					os.Exit(ExitError)
+					return exitWithCode(int(result.ExitCode), "command exited with code %d", result.ExitCode)
 				}
 				return nil
 			}
@@ -52,7 +51,7 @@ func newExecCmd() *cobra.Command {
 			}
 
 			if result.ExitCode != 0 {
-				os.Exit(int(result.ExitCode))
+				return exitWithCode(int(result.ExitCode), "command exited with code %d", result.ExitCode)
 			}
 			return nil
 		},

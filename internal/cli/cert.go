@@ -165,6 +165,19 @@ func newCertLetsEncryptCmd() *cobra.Command {
 
 			acmeClient := acmeLib.NewClient(config.DataDir(), config.ConfDir(), host)
 
+			// Check existing cert — require --yes to overwrite
+			if _, err := os.Stat(acmeClient.CertPath()); err == nil {
+				if !flagYes {
+					return fmt.Errorf("certificate already exists at %s (use --yes to overwrite)", acmeClient.CertPath())
+				}
+				// Backup existing cert
+				backupPath := acmeClient.CertPath() + ".bak"
+				if data, err := os.ReadFile(acmeClient.CertPath()); err == nil {
+					os.WriteFile(backupPath, data, 0o644)
+					output.PrintText("Existing cert backed up to %s", backupPath)
+				}
+			}
+
 			output.PrintText("Obtaining Let's Encrypt certificate for %s...", host)
 			output.PrintText("Port 80 must be available for HTTP-01 challenge")
 

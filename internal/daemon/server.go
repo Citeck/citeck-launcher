@@ -67,6 +67,8 @@ type Daemon struct {
 	shutdownOnce    sync.Once
 	bgCtx           context.Context    // cancelled on daemon shutdown
 	bgCancel        context.CancelFunc
+	bgWg            sync.WaitGroup     // tracks background goroutines (snapshot, downloads)
+	snapshotMu      sync.Mutex         // guards concurrent snapshot import/export
 }
 
 // Start runs the daemon.
@@ -407,8 +409,8 @@ func Start(opts StartOptions) error {
 	d.server = &http.Server{
 		Handler:        mux,
 		ReadTimeout:    30 * time.Second,
-		WriteTimeout:   120 * time.Second, // long for log streaming
-		MaxHeaderBytes: 1 << 20,           // 1MB
+		WriteTimeout:   0, // 0 for SSE/log streaming on Unix socket
+		MaxHeaderBytes: 1 << 20, // 1MB
 	}
 
 	// Listen on Unix socket (for local CLI)
@@ -416,7 +418,11 @@ func Start(opts StartOptions) error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", socketPath, err)
 	}
-	if err := os.Chmod(socketPath, 0o666); err != nil {
+	socketPerm := os.FileMode(0o600)
+	if config.IsDesktopMode() {
+		socketPerm = 0o666
+	}
+	if err := os.Chmod(socketPath, socketPerm); err != nil {
 		slog.Warn("Failed to chmod socket", "path", socketPath, "err", err)
 	}
 
@@ -431,6 +437,7 @@ func Start(opts StartOptions) error {
 			// Order (outermost first): CORS → TokenAuth → Logging → mux
 			// CORS must be outermost so OPTIONS preflight bypasses auth.
 			var tcpHandler http.Handler = mux
+			tcpHandler = RateLimitMiddleware(100, tcpHandler)
 			tcpHandler = LoggingMiddleware(tcpHandler)
 			if daemonCfg.Server.Token != "" {
 				tcpHandler = TokenAuthMiddleware(daemonCfg.Server.Token, tcpHandler)
@@ -462,13 +469,18 @@ func Start(opts StartOptions) error {
 		"pid", os.Getpid(),
 	)
 
-	// Handle shutdown
-	sigCh := make(chan os.Signal, 1)
+	// Handle shutdown — second signal forces immediate exit
+	sigCh := make(chan os.Signal, 2)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
 		<-sigCh
 		slog.Info("Shutdown signal received")
+		go func() {
+			<-sigCh
+			slog.Warn("Second signal received, forcing exit")
+			os.Exit(1)
+		}()
 		d.shutdown()
 	}()
 
@@ -491,8 +503,9 @@ func (d *Daemon) doShutdown() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Cancel background goroutines (downloads, snapshot imports)
+	// Cancel background goroutines (downloads, snapshot imports) and wait
 	d.bgCancel()
+	d.bgWg.Wait()
 
 	if d.runtime != nil {
 		d.runtime.Shutdown()
@@ -531,6 +544,8 @@ func (d *Daemon) broadcastEvent(evt api.EventDto) {
 		}
 	}
 }
+
+const maxSSESubscribers = 100
 
 func (d *Daemon) addSubscriber() chan api.EventDto {
 	ch := make(chan api.EventDto, 256)
@@ -596,8 +611,9 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	// System dump
 	mux.HandleFunc("GET /api/v1/system/dump", d.handleSystemDump)
 
-	// Health
+	// Health + Metrics
 	mux.HandleFunc("GET "+api.Health, d.handleHealth)
+	mux.HandleFunc("GET /api/v1/metrics", d.handleMetrics)
 
 	// Phase E1: Namespaces
 	mux.HandleFunc("GET "+api.Namespaces, d.handleListNamespaces)
@@ -657,6 +673,8 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 
 // activeConfigPath returns the namespace config path for the currently loaded namespace.
 func (d *Daemon) activeConfigPath() string {
+	d.configMu.RLock()
+	defer d.configMu.RUnlock()
 	nsID := "default"
 	if d.nsConfig != nil {
 		nsID = d.nsConfig.ID

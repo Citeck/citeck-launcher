@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -69,17 +71,25 @@ func newDiagnoseCmd() *cobra.Command {
 				})
 			}
 
-			// Check 3: Docker
-			conn, err := net.DialTimeout("unix", "/var/run/docker.sock", 2*time.Second)
-			if err != nil {
+			// Check 3: Docker (uses Docker SDK auto-detection, respects DOCKER_HOST)
+			dockerClient, dockerErr := docker.NewClient("diagnose", "diagnose")
+			if dockerErr != nil {
 				checks = append(checks, diagnoseCheck{
-					Name: "docker", Status: "error", Message: "Docker is not reachable",
+					Name: "docker", Status: "error", Message: "Docker client error: " + dockerErr.Error(),
 				})
 			} else {
-				conn.Close()
-				checks = append(checks, diagnoseCheck{
-					Name: "docker", Status: "ok", Message: "Docker is reachable",
-				})
+				pingCtx, pingCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				if err := dockerClient.Ping(pingCtx); err != nil {
+					checks = append(checks, diagnoseCheck{
+						Name: "docker", Status: "error", Message: "Docker is not reachable: " + err.Error(),
+					})
+				} else {
+					checks = append(checks, diagnoseCheck{
+						Name: "docker", Status: "ok", Message: "Docker is reachable",
+					})
+				}
+				pingCancel()
+				dockerClient.Close()
 			}
 
 			// Check 4: Directories
@@ -146,7 +156,7 @@ func newDiagnoseCmd() *cobra.Command {
 			})
 
 			if errCount > 0 {
-				os.Exit(ExitError)
+				return exitWithCode(ExitError, "%d problem(s) found", errCount)
 			}
 			return nil
 		},

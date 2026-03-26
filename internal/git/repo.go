@@ -1,11 +1,13 @@
 package git
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 	gogitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport/http"
+	"golang.org/x/sync/singleflight"
 )
 
 // RepoOpts configures a git clone/pull operation.
@@ -30,16 +33,26 @@ type RepoOpts struct {
 var (
 	lastSyncMu    sync.Mutex
 	lastSyncTimes = make(map[string]time.Time)
+	cloneFlight   singleflight.Group // 8b-12: dedup concurrent ops on same dir
 )
 
 // CloneOrPull clones a repo if not present, or pulls latest changes.
 func CloneOrPull(repoURL, branch, destDir string) error {
-	return CloneOrPullWithAuth(RepoOpts{URL: repoURL, Branch: branch, DestDir: destDir})
+	return CloneOrPullWithAuth(context.Background(), RepoOpts{URL: repoURL, Branch: branch, DestDir: destDir})
 }
 
 // CloneOrPullWithAuth clones or pulls with optional token authentication and sync throttling.
 // If the repo URL or branch has changed since the last clone, the repo is re-cloned from scratch.
-func CloneOrPullWithAuth(opts RepoOpts) error {
+// Accepts context for timeout/cancellation support.
+func CloneOrPullWithAuth(ctx context.Context, opts RepoOpts) error {
+	// 8b-12: dedup concurrent clone/pull on same directory
+	_, err, _ := cloneFlight.Do(opts.DestDir, func() (any, error) {
+		return nil, cloneOrPullInner(ctx, opts)
+	})
+	return err
+}
+
+func cloneOrPullInner(ctx context.Context, opts RepoOpts) error {
 	gitDir := filepath.Join(opts.DestDir, ".git")
 	if _, err := os.Stat(gitDir); err == nil {
 		// Check if URL or branch changed — re-clone if so
@@ -48,7 +61,7 @@ func CloneOrPullWithAuth(opts RepoOpts) error {
 			if err := os.RemoveAll(opts.DestDir); err != nil {
 				return fmt.Errorf("remove stale repo %s: %w", opts.DestDir, err)
 			}
-			err := doClone(opts)
+			err := doClone(ctx, opts)
 			if err == nil {
 				recordSync(opts)
 			}
@@ -64,13 +77,13 @@ func CloneOrPullWithAuth(opts RepoOpts) error {
 				return nil
 			}
 		}
-		err := doPull(opts)
+		err := doPull(ctx, opts)
 		if err == nil {
 			recordSync(opts)
 		}
 		return err
 	}
-	err := doClone(opts)
+	err := doClone(ctx, opts)
 	if err == nil {
 		recordSync(opts)
 	}
@@ -122,7 +135,7 @@ func tokenAuth(token string) *http.BasicAuth {
 	}
 }
 
-func doClone(opts RepoOpts) error {
+func doClone(ctx context.Context, opts RepoOpts) error {
 	slog.Info("Cloning repository", "url", opts.URL, "branch", opts.Branch, "dir", opts.DestDir)
 	start := time.Now()
 
@@ -140,7 +153,7 @@ func doClone(opts RepoOpts) error {
 		cloneOpts.Auth = auth
 	}
 
-	if _, err := gogit.PlainClone(opts.DestDir, false, cloneOpts); err != nil {
+	if _, err := gogit.PlainCloneContext(ctx, opts.DestDir, false, cloneOpts); err != nil {
 		return fmt.Errorf("git clone %s: %w", opts.URL, err)
 	}
 
@@ -168,17 +181,17 @@ func TestAuth(repoURL, token string) error {
 	return nil
 }
 
-func doPull(opts RepoOpts) error {
+func doPull(ctx context.Context, opts RepoOpts) error {
 	slog.Info("Pulling repository", "dir", opts.DestDir, "branch", opts.Branch)
 
 	repo, err := gogit.PlainOpen(opts.DestDir)
 	if err != nil {
-		return reclone(opts, fmt.Errorf("open repo: %w", err))
+		return reclone(ctx, opts, fmt.Errorf("open repo: %w", err))
 	}
 
 	wt, err := repo.Worktree()
 	if err != nil {
-		return reclone(opts, fmt.Errorf("worktree: %w", err))
+		return reclone(ctx, opts, fmt.Errorf("worktree: %w", err))
 	}
 
 	// Hard-reset working tree to ensure clean state before pulling.
@@ -187,7 +200,7 @@ func doPull(opts RepoOpts) error {
 	if err == nil {
 		if err := wt.Reset(&gogit.ResetOptions{Commit: remoteRef.Hash(), Mode: gogit.HardReset}); err != nil {
 			// Corrupted packfile index or similar — re-clone from scratch
-			return reclone(opts, fmt.Errorf("hard reset: %w", err))
+			return reclone(ctx, opts, fmt.Errorf("hard reset: %w", err))
 		}
 	}
 
@@ -202,16 +215,21 @@ func doPull(opts RepoOpts) error {
 	}
 
 	if err := wt.Pull(pullOpts); err != nil && err != gogit.NoErrAlreadyUpToDate {
-		return reclone(opts, fmt.Errorf("pull: %w", err))
+		// 8b-13: auth errors should not trigger reclone
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "authentication") || strings.Contains(errStr, "unauthorized") {
+			return fmt.Errorf("git auth failed for %s: %w", opts.URL, err)
+		}
+		return reclone(ctx, opts, fmt.Errorf("pull: %w", err))
 	}
 	return nil
 }
 
 // reclone deletes the existing repo and clones fresh. Used when the local repo is corrupted.
-func reclone(opts RepoOpts, cause error) error {
+func reclone(ctx context.Context, opts RepoOpts, cause error) error {
 	slog.Warn("Repo corrupted, re-cloning", "dir", opts.DestDir, "cause", cause)
 	if err := os.RemoveAll(opts.DestDir); err != nil {
 		return fmt.Errorf("remove corrupted repo %s: %w", opts.DestDir, err)
 	}
-	return doClone(opts)
+	return doClone(ctx, opts)
 }

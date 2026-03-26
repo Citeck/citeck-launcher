@@ -6,8 +6,10 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/docker"
+	"github.com/docker/docker/client"
 )
 
 // ReconcilerConfig holds reconciliation settings.
@@ -78,10 +80,14 @@ func (r *Runtime) reconcile(ctx context.Context) {
 	}
 	r.mu.RUnlock()
 
-	// Get actual containers
+	// Get actual containers — detect Docker daemon restart
 	containers, err := r.docker.GetContainers(ctx)
 	if err != nil {
-		slog.Warn("Reconciler: failed to list containers", "err", err)
+		if client.IsErrConnectionFailed(err) {
+			slog.Warn("Reconciler: Docker daemon unreachable, will retry next cycle")
+		} else {
+			slog.Warn("Reconciler: failed to list containers", "err", err)
+		}
 		return
 	}
 
@@ -102,7 +108,23 @@ func (r *Runtime) reconcile(ctx context.Context) {
 	r.mu.Lock()
 	for name, app := range r.apps {
 		if app.Status == AppStatusRunning && !containersByApp[name] {
-			slog.Warn("Reconciler: container missing, will restart", "app", name)
+			// Check if OOM killed
+			if app.ContainerID != "" {
+				inspCtx, inspCancel := context.WithTimeout(ctx, 5*time.Second)
+				info, inspErr := r.docker.InspectContainer(inspCtx, app.ContainerID)
+				inspCancel()
+				if inspErr == nil && info.State != nil && info.State.OOMKilled {
+					slog.Warn("Reconciler: container OOM killed, will restart", "app", name)
+					r.emitEvent(api.EventDto{
+						Type: "app_oom", Timestamp: time.Now().UnixMilli(),
+						NamespaceID: r.nsID, AppName: name, After: "OOMKilled",
+					})
+				} else {
+					slog.Warn("Reconciler: container missing, will restart", "app", name)
+				}
+			} else {
+				slog.Warn("Reconciler: container missing, will restart", "app", name)
+			}
 			r.setAppStatus(app, AppStatusReadyToPull)
 			toRestart = append(toRestart, name)
 		}

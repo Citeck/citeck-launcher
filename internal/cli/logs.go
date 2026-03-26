@@ -73,9 +73,8 @@ func followLogs(c *client.DaemonClient, appName string, lastTail int) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	done := make(chan struct{})
+	errCh := make(chan error, 1)
 	go func() {
-		defer close(done)
 		buf := make([]byte, 4096)
 		for {
 			n, readErr := reader.Read(buf)
@@ -83,6 +82,11 @@ func followLogs(c *client.DaemonClient, appName string, lastTail int) error {
 				os.Stdout.Write(buf[:n])
 			}
 			if readErr != nil {
+				if readErr.Error() != "EOF" {
+					errCh <- readErr
+				} else {
+					errCh <- nil
+				}
 				return
 			}
 		}
@@ -91,7 +95,11 @@ func followLogs(c *client.DaemonClient, appName string, lastTail int) error {
 	select {
 	case <-sigCh:
 		return nil
-	case <-done:
+	case readErr := <-errCh:
+		if readErr != nil {
+			fmt.Fprintf(os.Stderr, "Log stream error: %v\n", readErr)
+			return exitWithCode(ExitError, "log stream: %v", readErr)
+		}
 		return nil
 	}
 }

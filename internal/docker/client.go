@@ -286,8 +286,13 @@ func (c *Client) RemoveContainer(ctx context.Context, id string) error {
 }
 
 // StopAndRemoveContainer stops and removes a container by name.
-func (c *Client) StopAndRemoveContainer(ctx context.Context, name string) error {
-	if err := c.StopContainer(ctx, name, 10); err != nil {
+// stopTimeout is in seconds; 0 uses default (10s).
+func (c *Client) StopAndRemoveContainer(ctx context.Context, name string, stopTimeout ...int) error {
+	timeout := 10
+	if len(stopTimeout) > 0 && stopTimeout[0] > 0 {
+		timeout = stopTimeout[0]
+	}
+	if err := c.StopContainer(ctx, name, timeout); err != nil {
 		slog.Debug("stop container", "name", name, "err", err)
 	}
 	return c.RemoveContainer(ctx, name)

@@ -46,13 +46,17 @@ func (d *Daemon) handleDaemonShutdown(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
-	if d.runtime == nil {
+	d.configMu.RLock()
+	runtime := d.runtime
+	bundleErr := d.bundleError
+	d.configMu.RUnlock()
+	if runtime == nil {
 		writeError(w, http.StatusNotFound, "no namespace configured")
 		return
 	}
-	dto := d.runtime.ToNamespaceDto()
-	if d.bundleError != "" {
-		dto.BundleError = d.bundleError
+	dto := runtime.ToNamespaceDto()
+	if bundleErr != "" {
+		dto.BundleError = bundleErr
 	}
 	writeJSON(w, dto)
 }
@@ -185,6 +189,9 @@ func (d *Daemon) handleAppLogs(w http.ResponseWriter, r *http.Request) {
 		if n, err := strconv.Atoi(tailStr); err == nil {
 			tail = n
 		}
+	}
+	if tail > 10000 {
+		tail = 10000
 	}
 	follow := r.URL.Query().Get("follow") == "true"
 
@@ -427,9 +434,22 @@ func (d *Daemon) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Write original body to preserve user comments and formatting
-	if err := os.WriteFile(cfgPath, body, 0o644); err != nil {
+	// Atomic write: temp file + rename to prevent corruption on crash
+	tmpFile, err := os.CreateTemp(filepath.Dir(cfgPath), ".namespace-*.yml")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create temp file: %s", err.Error()))
+		return
+	}
+	if _, err := tmpFile.Write(body); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpFile.Name())
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to write config: %s", err.Error()))
+		return
+	}
+	tmpFile.Close()
+	if err := os.Rename(tmpFile.Name(), cfgPath); err != nil {
+		os.Remove(tmpFile.Name())
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to save config: %s", err.Error()))
 		return
 	}
 
@@ -446,6 +466,14 @@ func (d *Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+
+	d.eventMu.Lock()
+	if len(d.eventSubs) >= maxSSESubscribers {
+		d.eventMu.Unlock()
+		writeError(w, http.StatusServiceUnavailable, "too many SSE subscribers")
+		return
+	}
+	d.eventMu.Unlock()
 
 	ch := d.addSubscriber()
 	defer d.removeSubscriber(ch)
@@ -472,6 +500,9 @@ func (d *Daemon) handleDaemonLogs(w http.ResponseWriter, r *http.Request) {
 		if n, err := strconv.Atoi(tailStr); err == nil {
 			tail = n
 		}
+	}
+	if tail > 10000 {
+		tail = 10000
 	}
 
 	// Read at most last 2MB of the file to avoid OOM on large logs
@@ -516,11 +547,14 @@ func (d *Daemon) buildDumpData(ctx context.Context) map[string]any {
 		"version": d.version,
 		"socket":  d.socketPath,
 	}
-	if d.nsConfig != nil {
+	d.configMu.RLock()
+	nsCfg := d.nsConfig
+	d.configMu.RUnlock()
+	if nsCfg != nil {
 		dump["namespace"] = map[string]any{
-			"id":     d.nsConfig.ID,
-			"name":   d.nsConfig.Name,
-			"bundle": d.nsConfig.BundleRef.String(),
+			"id":     nsCfg.ID,
+			"name":   nsCfg.Name,
+			"bundle": nsCfg.BundleRef.String(),
 		}
 	}
 	if err := d.dockerClient.Ping(ctx); err != nil {
@@ -843,7 +877,7 @@ func (d *Daemon) handleAppLockToggle(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Locked bool `json:"locked"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := readJSON(r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
@@ -858,8 +892,11 @@ func (d *Daemon) handleHealth(w http.ResponseWriter, r *http.Request) {
 	var checks []api.HealthCheckDto
 
 	// Bundle check
-	if d.bundleError != "" {
-		checks = append(checks, api.HealthCheckDto{Name: "bundle", Status: "error", Message: "Bundle resolution failed: " + d.bundleError})
+	d.configMu.RLock()
+	bundleErr := d.bundleError
+	d.configMu.RUnlock()
+	if bundleErr != "" {
+		checks = append(checks, api.HealthCheckDto{Name: "bundle", Status: "error", Message: "Bundle resolution failed: " + bundleErr})
 	}
 
 	// Docker check
@@ -911,6 +948,36 @@ func (d *Daemon) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, api.HealthDto{Healthy: healthy, Checks: checks})
+}
+
+func (d *Daemon) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	metrics := map[string]any{
+		"uptime_ms":    time.Since(d.startTime).Milliseconds(),
+		"pid":          os.Getpid(),
+	}
+
+	d.eventMu.Lock()
+	metrics["sse_subscribers"] = len(d.eventSubs)
+	d.eventMu.Unlock()
+
+	if d.runtime != nil {
+		apps := d.runtime.Apps()
+		running, failed, total := 0, 0, len(apps)
+		for _, app := range apps {
+			switch app.Status {
+			case namespace.AppStatusRunning:
+				running++
+			case namespace.AppStatusStartFailed, namespace.AppStatusPullFailed:
+				failed++
+			}
+		}
+		metrics["namespace_status"] = string(d.runtime.Status())
+		metrics["apps_total"] = total
+		metrics["apps_running"] = running
+		metrics["apps_failed"] = failed
+	}
+
+	writeJSON(w, metrics)
 }
 
 func (d *Daemon) findApp(name string) *namespace.AppRuntime {

@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"context"
 	"fmt"
+	"time"
 
 	"github.com/citeck/citeck-launcher/internal/client"
 	"github.com/citeck/citeck-launcher/internal/output"
@@ -9,7 +11,10 @@ import (
 )
 
 func newRestartCmd() *cobra.Command {
-	return &cobra.Command{
+	var wait bool
+	var timeout int
+
+	cmd := &cobra.Command{
 		Use:   "restart <app>",
 		Short: "Restart an app",
 		Args:  cobra.ExactArgs(1),
@@ -30,7 +35,36 @@ func newRestartCmd() *cobra.Command {
 			output.PrintResult(result, func() {
 				output.PrintText(result.Message)
 			})
+
+			if wait {
+				ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+				defer cancel()
+				events, sseErr := c.StreamEvents(ctx)
+				if sseErr != nil {
+					return fmt.Errorf("connect to event stream: %w", sseErr)
+				}
+				for {
+					select {
+					case <-ctx.Done():
+						return exitWithCode(ExitTimeout, "timeout waiting for %s to restart", appName)
+					case evt, ok := <-events:
+						if !ok {
+							return nil
+						}
+						if evt.Type == "app_status" && evt.AppName == appName && evt.After == "RUNNING" {
+							output.PrintText("App %s: RUNNING", appName)
+							return nil
+						}
+					}
+				}
+			}
+
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for app to reach RUNNING status")
+	cmd.Flags().IntVar(&timeout, "timeout", 300, "Timeout in seconds (with --wait)")
+
+	return cmd
 }

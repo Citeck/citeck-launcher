@@ -1,6 +1,7 @@
 package git
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,7 +16,7 @@ func TestCloneOrPull_PublicRepo(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "repo")
 
 	// Clone
-	err := CloneOrPullWithAuth(RepoOpts{
+	err := CloneOrPullWithAuth(context.Background(), RepoOpts{
 		URL:     "https://github.com/Citeck/launcher-workspace.git",
 		Branch:  "main",
 		DestDir: dir,
@@ -35,7 +36,7 @@ func TestCloneOrPull_PublicRepo(t *testing.T) {
 	}
 
 	// Pull (should succeed with NoErrAlreadyUpToDate)
-	err = CloneOrPullWithAuth(RepoOpts{
+	err = CloneOrPullWithAuth(context.Background(), RepoOpts{
 		URL:     "https://github.com/Citeck/launcher-workspace.git",
 		Branch:  "main",
 		DestDir: dir,
@@ -55,7 +56,7 @@ func TestPullPeriod_Throttling(t *testing.T) {
 
 	// First call with non-existent dir — should attempt clone (will fail since URL is fake,
 	// but that's OK — we're testing throttling, not network)
-	_ = CloneOrPullWithAuth(RepoOpts{
+	_ = CloneOrPullWithAuth(context.Background(), RepoOpts{
 		URL:        "https://invalid.example.com/repo.git",
 		Branch:     "main",
 		DestDir:    dir,
@@ -71,7 +72,7 @@ func TestPullPeriod_Throttling(t *testing.T) {
 	lastSyncMu.Unlock()
 
 	// Second call should be throttled (skip pull)
-	err := CloneOrPullWithAuth(RepoOpts{
+	err := CloneOrPullWithAuth(context.Background(), RepoOpts{
 		URL:        "https://invalid.example.com/repo.git",
 		Branch:     "main",
 		DestDir:    dir,

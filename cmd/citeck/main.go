@@ -2,8 +2,12 @@ package main
 
 import "github.com/citeck/citeck-launcher/internal/cli"
 
-var version = "dev"
+var (
+	version   = "dev"
+	gitCommit = ""
+	buildDate = ""
+)
 
 func main() {
-	cli.Execute(version)
+	cli.Execute(version, gitCommit, buildDate)
 }

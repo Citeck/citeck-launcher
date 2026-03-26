@@ -104,6 +104,7 @@ type ApplicationDef struct {
 	ShmSize           string            `json:"shmSize,omitempty"`
 	InitContainers    []InitContainerDef `json:"initContainers,omitempty"`
 	IsInit            bool              `json:"-"` // true for init containers (no restart policy)
+	StopTimeout       int               `json:"stopTimeout,omitempty" yaml:"stopTimeout,omitempty"` // seconds; 0 = default (10s webapps, 30s infra)
 }
 
 // GetHash computes a SHA-256 hash of the application definition.
@@ -127,8 +128,9 @@ func (d *ApplicationDef) GetHashInput() string {
 	for _, k := range envKeys {
 		fmt.Fprintf(&b, "env:%s=%s\n", k, d.Environments[k])
 	}
-	sort.Strings(d.Ports)
-	for _, p := range d.Ports {
+	ports := append([]string(nil), d.Ports...)
+	sort.Strings(ports)
+	for _, p := range ports {
 		fmt.Fprintf(&b, "port=%s\n", p)
 	}
 	for _, v := range d.Volumes {

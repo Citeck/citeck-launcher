@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newVersionCmd(version string) *cobra.Command {
+func newVersionCmd(version, commit, buildDate string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Show version information",
@@ -18,11 +18,23 @@ func newVersionCmd(version string) *cobra.Command {
 				"arch":    runtime.GOARCH,
 				"go":      runtime.Version(),
 			}
+			if commit != "" {
+				info["commit"] = commit
+			}
+			if buildDate != "" {
+				info["buildDate"] = buildDate
+			}
 
 			output.PrintResult(info, func() {
 				output.PrintText("Citeck CLI %s", version)
-				output.PrintText("OS:   %s/%s", runtime.GOOS, runtime.GOARCH)
-				output.PrintText("Go:   %s", runtime.Version())
+				if commit != "" {
+					output.PrintText("Commit: %s", commit)
+				}
+				if buildDate != "" {
+					output.PrintText("Built:  %s", buildDate)
+				}
+				output.PrintText("OS:     %s/%s", runtime.GOOS, runtime.GOARCH)
+				output.PrintText("Go:     %s", runtime.Version())
 			})
 			return nil
 		},

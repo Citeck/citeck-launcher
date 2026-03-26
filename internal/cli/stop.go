@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"context"
 	"fmt"
+	"time"
 
 	"github.com/citeck/citeck-launcher/internal/client"
 	"github.com/citeck/citeck-launcher/internal/output"
@@ -10,6 +12,8 @@ import (
 
 func newStopCmd() *cobra.Command {
 	var shutdown bool
+	var wait bool
+	var timeout int
 
 	cmd := &cobra.Command{
 		Use:   "stop",
@@ -18,7 +22,7 @@ func newStopCmd() *cobra.Command {
 			c := client.TryNew(flagHost, flagToken)
 			if c == nil || !c.IsRunning() {
 				output.PrintText("Platform is not running")
-				return nil
+				return nil // idempotent by design
 			}
 			defer c.Close()
 
@@ -29,6 +33,30 @@ func newStopCmd() *cobra.Command {
 			output.PrintResult(result, func() {
 				output.PrintText(result.Message)
 			})
+
+			if wait {
+				ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+				defer cancel()
+				events, err := c.StreamEvents(ctx)
+				if err != nil {
+					return fmt.Errorf("connect to event stream: %w", err)
+				}
+				for {
+					select {
+					case <-ctx.Done():
+						return exitWithCode(ExitTimeout, "timeout waiting for stop")
+					case evt, ok := <-events:
+						if !ok {
+							return nil
+						}
+						if evt.Type == "namespace_status" && evt.After == "STOPPED" {
+							output.PrintText("Namespace stopped")
+							goto done
+						}
+					}
+				}
+			done:
+			}
 
 			if shutdown {
 				r, err := c.Shutdown()
@@ -45,6 +73,8 @@ func newStopCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVarP(&shutdown, "shutdown", "s", false, "Also shutdown the daemon")
+	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for namespace to stop")
+	cmd.Flags().IntVar(&timeout, "timeout", 120, "Timeout in seconds (with --wait)")
 
 	return cmd
 }

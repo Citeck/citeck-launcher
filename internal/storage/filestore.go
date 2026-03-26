@@ -121,7 +121,23 @@ func (s *FileStore) SaveSecret(secret Secret) error {
 		return fmt.Errorf("marshal secret: %w", err)
 	}
 
-	return os.WriteFile(s.secretPath(secret.ID), data, 0o600)
+	// Atomic write: temp file + rename to prevent corruption on crash
+	secretDir := s.secretsDir()
+	tmpFile, err := os.CreateTemp(secretDir, ".secret-*.json")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpFile.Name())
+		return fmt.Errorf("write temp file: %w", err)
+	}
+	tmpFile.Close()
+	if err := os.Rename(tmpFile.Name(), s.secretPath(secret.ID)); err != nil {
+		os.Remove(tmpFile.Name())
+		return fmt.Errorf("rename temp file: %w", err)
+	}
+	return nil
 }
 
 func (s *FileStore) DeleteSecret(id string) error {

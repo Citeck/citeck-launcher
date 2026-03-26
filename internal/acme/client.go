@@ -174,7 +174,7 @@ func (c *Client) ObtainCertificate(ctx context.Context) error {
 
 	// Write fullchain.pem
 	chainPath := filepath.Join(c.confDir, "fullchain.pem")
-	chainFile, err := os.Create(chainPath)
+	chainFile, err := os.OpenFile(chainPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
 		return fmt.Errorf("create fullchain: %w", err)
 	}

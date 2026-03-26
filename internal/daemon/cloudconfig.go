@@ -45,7 +45,10 @@ func (s *CloudConfigServer) Start() error {
 	mux.HandleFunc("GET /config/{appName}/{profiles}/{rest...}", s.handleConfig)
 
 	s.server = &http.Server{
-		Handler: mux,
+		Handler:     mux,
+		ReadTimeout: 10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	listener, err := net.Listen("tcp", "127.0.0.1:8761")

@@ -198,7 +198,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
-	if err := os.WriteFile(nsCfgPath, data, 0o644); err != nil {
+	if err := os.WriteFile(nsCfgPath, data, 0o600); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 	output.PrintText("\nNamespace config written to: %s", nsCfgPath)
@@ -226,19 +226,20 @@ func prompt(scanner *bufio.Scanner, label, defaultVal string) string {
 }
 
 func promptChoice(scanner *bufio.Scanner, label string, choices []string, defaultVal string) string {
-	fmt.Printf("%s (%s) [%s]: ", label, strings.Join(choices, "/"), defaultVal)
-	scanner.Scan()
-	val := strings.TrimSpace(scanner.Text())
-	if val == "" {
-		return defaultVal
-	}
-	// Match case-insensitively
-	for _, c := range choices {
-		if strings.EqualFold(val, c) {
-			return c
+	for {
+		fmt.Printf("%s (%s) [%s]: ", label, strings.Join(choices, "/"), defaultVal)
+		scanner.Scan()
+		val := strings.TrimSpace(scanner.Text())
+		if val == "" {
+			return defaultVal
 		}
+		for _, c := range choices {
+			if strings.EqualFold(val, c) {
+				return c
+			}
+		}
+		fmt.Printf("Invalid choice %q. Please enter one of: %s\n", val, strings.Join(choices, ", "))
 	}
-	return val
 }
 
 func promptYesNo(scanner *bufio.Scanner, label string, defaultYes bool) bool {
@@ -256,17 +257,24 @@ func promptYesNo(scanner *bufio.Scanner, label string, defaultYes bool) bool {
 }
 
 func detectPublicIP() string {
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get("https://ifconfig.me/ip")
-	if err != nil {
-		return ""
+	services := []string{
+		"https://ifconfig.me/ip",
+		"https://api.ipify.org",
+		"https://checkip.amazonaws.com",
 	}
-	defer resp.Body.Close()
-	buf := make([]byte, 64)
-	n, _ := resp.Body.Read(buf)
-	ip := strings.TrimSpace(string(buf[:n]))
-	if net.ParseIP(ip) != nil {
-		return ip
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	for _, svc := range services {
+		resp, err := httpClient.Get(svc)
+		if err != nil {
+			continue
+		}
+		buf := make([]byte, 64)
+		n, _ := resp.Body.Read(buf)
+		resp.Body.Close()
+		ip := strings.TrimSpace(string(buf[:n]))
+		if net.ParseIP(ip) != nil {
+			return ip
+		}
 	}
 	return ""
 }

@@ -292,7 +292,7 @@ func (c *DaemonClient) StreamEvents(ctx context.Context) (<-chan api.EventDto, e
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.streamClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("connect to event stream: %w", err)
 	}

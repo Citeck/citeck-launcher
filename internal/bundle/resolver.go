@@ -1,6 +1,7 @@
 package bundle
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -196,10 +197,13 @@ func (r *Resolver) Resolve(ref BundleRef) (*ResolveResult, error) {
 	// Step 1: Sync the default workspace repo to get workspace-v1.yml (bundleRepos, aliases, etc.)
 	// This is a shared cache that contains workspace config for all bundle repos.
 	defaultRepoDir := filepath.Join(r.dataDir, "bundles", "_workspace")
-	if err := git.CloneOrPullWithAuth(git.RepoOpts{
+	gitCtx, gitCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	err := git.CloneOrPullWithAuth(gitCtx, git.RepoOpts{
 		URL: defaultBundlesRepo, Branch: defaultBundlesBranch,
 		DestDir: defaultRepoDir, PullPeriod: defaultPullPeriod,
-	}); err != nil {
+	})
+	gitCancel()
+	if err != nil {
 		slog.Warn("Failed to sync workspace repo", "err", err)
 	}
 	wsCfg := loadWorkspaceConfig(defaultRepoDir)
@@ -230,10 +234,13 @@ func (r *Resolver) Resolve(ref BundleRef) (*ResolveResult, error) {
 			pullPeriod = d
 		}
 	}
-	if err := git.CloneOrPullWithAuth(git.RepoOpts{
+	gitCtx2, gitCancel2 := context.WithTimeout(context.Background(), 2*time.Minute)
+	err = git.CloneOrPullWithAuth(gitCtx2, git.RepoOpts{
 		URL: repoURL, Branch: repoBranch, DestDir: repoDir,
 		Token: repoToken, PullPeriod: pullPeriod,
-	}); err != nil {
+	})
+	gitCancel2()
+	if err != nil {
 		slog.Warn("Failed to sync bundle repo", "repo", ref.Repo, "err", err)
 	}
 
