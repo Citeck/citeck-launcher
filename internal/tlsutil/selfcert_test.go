@@ -53,9 +53,18 @@ func TestGenerateSelfSignedCert_IP(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data, _ := os.ReadFile(certPath)
+	data, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	block, _ := pem.Decode(data)
-	cert, _ := x509.ParseCertificate(block.Bytes)
+	if block == nil {
+		t.Fatal("no PEM block")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(cert.IPAddresses) == 0 {
 		t.Error("expected IP SAN")

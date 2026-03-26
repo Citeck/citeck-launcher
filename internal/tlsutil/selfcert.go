@@ -18,6 +18,9 @@ import (
 // GenerateSelfSignedCert creates a self-signed TLS certificate for the given hosts.
 // Each host can be an IP address or a DNS name.
 func GenerateSelfSignedCert(certPath, keyPath string, hosts []string, days int) error {
+	if len(hosts) == 0 {
+		return fmt.Errorf("at least one host is required")
+	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return fmt.Errorf("generate key: %w", err)
