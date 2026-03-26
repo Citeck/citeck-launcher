@@ -12,23 +12,30 @@ Must fix before any production deployment at scale. Race conditions, security, d
 
 **Problem:** `setStatus` and `setAppStatus` call `r.eventCb(...)` while holding `r.mu`. The callback acquires `d.eventMu`. Any future code path acquiring `eventMu→r.mu` will deadlock.
 
-**Fix:** Collect the event struct under the lock, release, then dispatch:
+**Fix:** Add a buffered event channel `eventCh chan api.EventDto` to Runtime. `setStatus`/`setAppStatus` push events into the channel (non-blocking) instead of calling `eventCb` directly. A dedicated goroutine drains the channel and calls `eventCb` outside any lock. This avoids modifying all ~20 call sites:
 ```go
-func (r *Runtime) setStatusAndEmit(s NsRuntimeStatus) api.EventDto {
-    // caller holds r.mu
-    old := r.status; r.status = s; r.persistState()
-    return api.EventDto{Type: "namespace_status", ...}
+// In Runtime struct:
+eventCh chan api.EventDto // buffered, drained by dispatchLoop goroutine
+
+// In setStatus (called with r.mu held):
+select {
+case r.eventCh <- evt:
+default: // drop if full, same as current broadcastEvent behavior
 }
-// caller: evt := r.setStatusAndEmit(s); r.mu.Unlock(); if r.eventCb != nil { r.eventCb(evt) }
+
+// dispatchLoop (started by doStart, stopped by doStop):
+for evt := range r.eventCh {
+    if cb := r.eventCb.Load(); cb != nil { (*cb)(evt) }
+}
 ```
 
-### 8a-2: SetEventCallback has no mutex — data race
+### 8a-2: SetEventCallback has no synchronization — data race
 
 **Files:** `internal/namespace/runtime.go:274-276`
 
 **Problem:** `r.eventCb` written without lock, read under `r.mu`. Race if called after `Start()`.
 
-**Fix:** Protect with `r.mu.Lock()` in `SetEventCallback`.
+**Fix:** Use `atomic.Pointer[EventCallback]` for lock-free read/write. This is consistent with 8a-1 which moves the eventCb call outside `r.mu` — using `r.mu` to protect eventCb would conflict with that change. Atomic pointer provides safe concurrent access without any mutex.
 
 ### 8a-3: Daemon fields read without configMu
 
@@ -141,7 +148,7 @@ Fixes that prevent silent failures, resource leaks, and Docker edge cases.
 
 **Files:** `internal/docker/client.go:290`
 
-**Fix:** Accept `stopTimeout` parameter, default 30s for infra, 10s for webapps.
+**Fix:** Add `StopTimeout int` field to `ApplicationDef` (0 = use default). Generator sets defaults by kind: 30s for infra (postgres, rabbitmq, zookeeper), 10s for webapps. `StopAndRemoveContainer` accepts the timeout from the caller. Global default is configurable via `docker.stopTimeout` in `daemon.yml` (see 8d-11).
 
 ### 8b-6: Phase 2 container removal errors discarded — next create fails with "name in use"
 
@@ -211,7 +218,7 @@ Fixes that prevent silent failures, resource leaks, and Docker edge cases.
 
 ---
 
-## Sub-phase 8c: CLI Correctness & UX (18 issues)
+## Sub-phase 8c: CLI Correctness & UX (17 issues)
 
 ### 8c-1: Exit codes defined but unused — scripts can't distinguish error types
 
@@ -223,7 +230,7 @@ Fixes that prevent silent failures, resource leaks, and Docker edge cases.
 
 ### 8c-3: `stop` exits 0 when daemon not running
 
-**Fix:** Return `ExitDaemonNotRunning` (or exit 0 with stderr warning, matching `kubectl delete` pattern).
+**Fix:** Exit 0 with stderr warning "daemon is not running" — idempotent, matches `kubectl delete` pattern. Note: this is an exception to 8c-1 — `stop` is idempotent by design, other commands (`status`, `logs`, `exec`) should use `ExitDaemonNotRunning`.
 
 ### 8c-4: `restart` has no `--wait` flag
 
@@ -305,7 +312,7 @@ Fixes that prevent silent failures, resource leaks, and Docker edge cases.
 
 ### 8d-5: CORS wildcard `*` — localhost CSRF
 
-**Fix:** Allow only `http://127.0.0.1:*` and `http://localhost:*` origins. Validate dynamically.
+**Fix:** Default allowed origins: `http://127.0.0.1:*`, `http://localhost:*`. Configurable via `server.cors.allowedOrigins` in `daemon.yml` (for custom dev setups, e.g. Vite on :5173). Validate `Origin` header against the list; reflect matching origin (not `*`).
 
 ### 8d-6: Token comparison not constant-time
 
@@ -313,7 +320,7 @@ Fixes that prevent silent failures, resource leaks, and Docker edge cases.
 
 ### 8d-7: No rate limiting on TCP listener
 
-**Fix:** Add `golang.org/x/time/rate` limiter (100 req/s per IP).
+**Fix:** Add rate limiter (100 req/s per IP). Use stdlib `sync` + `time` for a simple token-bucket (avoid adding `golang.org/x/time/rate` dependency — this project has zero `golang.org/x/*` deps).
 
 ### 8d-8: Snapshot operations have no concurrency guard
 
@@ -333,7 +340,7 @@ Fixes that prevent silent failures, resource leaks, and Docker edge cases.
 
 ### 8d-12: No metrics endpoint (Prometheus/OpenMetrics)
 
-**Fix:** Add `/metrics` endpoint with:
+**Fix:** Add `/metrics` endpoint using `github.com/prometheus/client_golang` (new dependency). Metrics:
 - `citeck_namespace_status` gauge
 - `citeck_app_status` gauge per app
 - `citeck_app_restarts_total` counter
@@ -341,16 +348,21 @@ Fixes that prevent silent failures, resource leaks, and Docker edge cases.
 - `citeck_reconciler_runs_total` counter
 - `citeck_http_requests_total` counter with method/path/status labels
 
+Note: adds ~2MB to binary. Endpoint only registered on TCP listener (not Unix socket).
+
 ---
 
 ## Execution Order
 
 1. **8a (12 issues):** Race conditions + security + data integrity. Build + test after each.
+   - 8a-1 + 8a-2 must be done together (event dispatch + eventCb synchronization).
 2. **8b (16 issues):** Runtime robustness, Docker edge cases, ACME. Build + test.
    - 8b-5 (stop timeout parameter) before 8b-10 (per-group timeout) — both touch doStop callers.
+   - 8b-11 (doRegenerate empty window) touches Phase 3 lock in doStart — coordinate with 8a-1 (event dispatch changes).
 3. **8c (17 issues):** CLI correctness, exit codes, UX. Build + test.
    - 8c-1 (exit codes) depends on 8a-7 (ExitCodeError type) being done first.
 4. **8d (12 issues):** DoS protection, observability, tuning. Build + test.
+   - 8d-11 (daemon.yml tunables) must be done before 8d-12 (metrics) — metrics use configurable intervals.
 
 ## Verification
 
