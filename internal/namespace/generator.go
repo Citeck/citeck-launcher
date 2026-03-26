@@ -269,24 +269,33 @@ func generateKeycloak(ctx *NsGenContext) {
 	}
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "1g"}}
 
-	// For custom hosts: generate script to update redirect URIs in realm
-	if ctx.ProxyHost() != "localhost" || ctx.TLSEnabled() {
+	// Generate kcadm init script to update client config in existing Keycloak DBs.
+	// Updates redirect URIs (if custom host) and OIDC client secret (always).
+	{
 		baseURL := ctx.ProxyBaseURL()
-		script := fmt.Sprintf(`#!/bin/bash
+		oidcSecret := OIDCSecret()
+		var scriptParts []string
+		scriptParts = append(scriptParts, `#!/bin/bash
 KCADM=/opt/keycloak/bin/kcadm.sh
 $KCADM config credentials --server http://localhost:8080 \
     --realm master --user admin --password admin
 CID=$($KCADM get clients -r ecos-app \
     -q clientId=ecos-proxy-app --fields id \
     --format csv --noquotes | head -1)
-[ -n "$CID" ] && $KCADM update "clients/$CID" \
-    -r ecos-app -s 'redirectUris=["%s*"]'
-`, baseURL)
+[ -z "$CID" ] && exit 0`)
 
-		ctx.Files["keycloak/update-redirect-uris.sh"] = []byte(script)
-		app.AddVolume("./keycloak/update-redirect-uris.sh:/opt/keycloak/scripts/update-redirect-uris.sh")
+		if ctx.ProxyHost() != "localhost" || ctx.TLSEnabled() {
+			scriptParts = append(scriptParts, fmt.Sprintf(
+				`$KCADM update "clients/$CID" -r ecos-app -s 'redirectUris=["%s*"]'`, baseURL))
+		}
+		scriptParts = append(scriptParts, fmt.Sprintf(
+			`$KCADM update "clients/$CID" -r ecos-app -s 'secret=%s'`, oidcSecret))
+
+		script := strings.Join(scriptParts, "\n") + "\n"
+		ctx.Files["keycloak/update-client-config.sh"] = []byte(script)
+		app.AddVolume("./keycloak/update-client-config.sh:/opt/keycloak/scripts/update-client-config.sh")
 		app.InitActions = append(app.InitActions, appdef.AppInitAction{
-			Exec: []string{"sh", "-c", "bash /opt/keycloak/scripts/update-redirect-uris.sh"},
+			Exec: []string{"sh", "-c", "bash /opt/keycloak/scripts/update-client-config.sh"},
 		})
 	}
 }
@@ -438,9 +447,10 @@ func generateProxy(ctx *NsGenContext) {
 		app.AddEnv("REALM_ID", "ecos-app")
 		app.AddEnv("EIS_LOCATION", "auth")
 		app.AddEnv("REDIRECT_LOGOUT_URI", ctx.ProxyBaseURL())
-		app.AddEnv("CLIENT_SECRET", "2996117d-9a33-4e06-b48a-867ce6a235db")
+		oidcSecret := OIDCSecret()
+		app.AddEnv("CLIENT_SECRET", oidcSecret)
 
-		// Update lua file with correct scheme and URLs
+		// Update lua file with correct scheme, URLs, and OIDC secret
 		luaKey := "proxy/lua_oidc_full_access.lua"
 		if luaBytes, ok := ctx.Files[luaKey]; ok {
 			lua := string(luaBytes)
@@ -449,7 +459,18 @@ func generateProxy(ctx *NsGenContext) {
 				fmt.Sprintf(`redirect_after_logout_uri = "%s/ecos-idp/auth/realms/ecos-app/protocol/openid-connect/logout"`, ctx.ProxyBaseURL()), 1)
 			lua = strings.Replace(lua, `post_logout_redirect_uri = "http://localhost"`,
 				fmt.Sprintf(`post_logout_redirect_uri = "%s"`, ctx.ProxyBaseURL()), 1)
+			lua = strings.Replace(lua, `client_secret = "2996117d-9a33-4e06-b48a-867ce6a235db"`,
+				fmt.Sprintf(`client_secret = "%s"`, oidcSecret), 1)
 			ctx.Files[luaKey] = []byte(lua)
+		}
+
+		// Substitute OIDC secret in realm JSON
+		realmKey := "keycloak/ecos-app-realm.json"
+		if realmBytes, ok := ctx.Files[realmKey]; ok {
+			realm := strings.Replace(string(realmBytes),
+				`"secret": "2996117d-9a33-4e06-b48a-867ce6a235db"`,
+				fmt.Sprintf(`"secret": "%s"`, oidcSecret), 1)
+			ctx.Files[realmKey] = []byte(realm)
 		}
 
 		app.AddVolume("./proxy/lua_oidc_full_access.lua:/tmp/lua_oidc_full_access.lua:ro")

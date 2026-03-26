@@ -101,34 +101,58 @@ func (r *Runtime) reconcile(ctx context.Context) {
 		}
 	}
 
-	// Collect apps needing restart under lock, then spawn goroutines after unlock
+	// Phase 1: collect candidate apps and container IDs under read lock
+	type missingApp struct {
+		name        string
+		containerID string
+	}
+	var missing []missingApp
+
+	r.mu.RLock()
+	for name, app := range r.apps {
+		if app.Status == AppStatusRunning && !containersByApp[name] {
+			missing = append(missing, missingApp{name: name, containerID: app.ContainerID})
+		}
+	}
+	r.mu.RUnlock()
+
+	// Phase 2: inspect containers outside any lock (Docker API calls may take seconds)
+	oomKilled := make(map[string]bool)
+	for _, m := range missing {
+		if m.containerID != "" {
+			inspCtx, inspCancel := context.WithTimeout(ctx, 5*time.Second)
+			info, inspErr := r.docker.InspectContainer(inspCtx, m.containerID)
+			inspCancel()
+			if inspErr == nil && info.State != nil && info.State.OOMKilled {
+				oomKilled[m.name] = true
+			}
+		}
+	}
+
+	// Phase 3: re-acquire write lock, update state
 	var toRestart []string
 	now := time.Now()
 
 	r.mu.Lock()
-	for name, app := range r.apps {
-		if app.Status == AppStatusRunning && !containersByApp[name] {
-			// Check if OOM killed
-			if app.ContainerID != "" {
-				inspCtx, inspCancel := context.WithTimeout(ctx, 5*time.Second)
-				info, inspErr := r.docker.InspectContainer(inspCtx, app.ContainerID)
-				inspCancel()
-				if inspErr == nil && info.State != nil && info.State.OOMKilled {
-					slog.Warn("Reconciler: container OOM killed, will restart", "app", name)
-					r.emitEvent(api.EventDto{
-						Type: "app_oom", Timestamp: time.Now().UnixMilli(),
-						NamespaceID: r.nsID, AppName: name, After: "OOMKilled",
-					})
-				} else {
-					slog.Warn("Reconciler: container missing, will restart", "app", name)
-				}
-			} else {
-				slog.Warn("Reconciler: container missing, will restart", "app", name)
-			}
-			r.setAppStatus(app, AppStatusReadyToPull)
-			toRestart = append(toRestart, name)
+	for _, m := range missing {
+		app, ok := r.apps[m.name]
+		if !ok || app.Status != AppStatusRunning || containersByApp[m.name] {
+			continue // state changed while we were inspecting
 		}
-		// Retry failed apps with exponential backoff (1m, 2m, 4m, ..., max 30m)
+		if oomKilled[m.name] {
+			slog.Warn("Reconciler: container OOM killed, will restart", "app", m.name)
+			r.emitEvent(api.EventDto{
+				Type: "app_oom", Timestamp: time.Now().UnixMilli(),
+				NamespaceID: r.nsID, AppName: m.name, After: "OOMKilled",
+			})
+		} else {
+			slog.Warn("Reconciler: container missing, will restart", "app", m.name)
+		}
+		r.setAppStatus(app, AppStatusReadyToPull)
+		toRestart = append(toRestart, m.name)
+	}
+	// Retry failed apps with exponential backoff (1m, 2m, 4m, ..., max 30m)
+	for name, app := range r.apps {
 		if app.Status == AppStatusStartFailed || app.Status == AppStatusPullFailed {
 			retryCount := r.retryCount(name)
 			backoff := time.Duration(1<<retryCount) * time.Minute

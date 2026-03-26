@@ -6,6 +6,7 @@ import (
 	"encoding/pem"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -84,12 +85,43 @@ func (s *RenewalService) renewalInterval() time.Duration {
 	return 12 * time.Hour
 }
 
+// rateLimitPath returns the path to the rate limit marker file.
+func (s *RenewalService) rateLimitPath() string {
+	return filepath.Join(s.client.dataDir, "rate-limit-until")
+}
+
+// isRateLimited checks if we're within a rate limit backoff window.
+func (s *RenewalService) isRateLimited() bool {
+	data, err := os.ReadFile(s.rateLimitPath())
+	if err != nil {
+		return false
+	}
+	until, err := time.Parse(time.RFC3339, strings.TrimSpace(string(data)))
+	if err != nil {
+		return false
+	}
+	return time.Now().Before(until)
+}
+
+// setRateLimited writes a rate limit marker with a 1-hour backoff.
+func (s *RenewalService) setRateLimited() {
+	until := time.Now().Add(1 * time.Hour)
+	os.MkdirAll(filepath.Dir(s.rateLimitPath()), 0o755)
+	os.WriteFile(s.rateLimitPath(), []byte(until.Format(time.RFC3339)), 0o644)
+}
+
 func (s *RenewalService) checkAndRenew(ctx context.Context) {
 	if !s.isRenewing.CompareAndSwap(false, true) {
 		slog.Debug("ACME renewal already in progress, skipping")
 		return
 	}
 	defer s.isRenewing.Store(false)
+
+	// Check persisted rate limit — prevents hammering LE after daemon restart
+	if s.isRateLimited() {
+		slog.Info("ACME renewal skipped: rate limit backoff active")
+		return
+	}
 
 	certPath := s.client.CertPath()
 	data, err := os.ReadFile(certPath)
@@ -124,12 +156,8 @@ func (s *RenewalService) checkAndRenew(ctx context.Context) {
 	if err := s.client.ObtainCertificate(ctx); err != nil {
 		errStr := err.Error()
 		if strings.Contains(errStr, "rateLimited") || strings.Contains(errStr, "too many") {
-			slog.Error("ACME renewal rate limited — backing off 1h", "err", err)
-			// Sleep to avoid hammering LE (rate limit lockout is typically 1 week)
-			select {
-			case <-ctx.Done():
-			case <-time.After(1 * time.Hour):
-			}
+			slog.Error("ACME renewal rate limited — persisting 1h backoff", "err", err)
+			s.setRateLimited()
 		} else {
 			slog.Error("ACME renewal failed", "err", err)
 		}

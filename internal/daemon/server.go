@@ -805,15 +805,18 @@ func importSnapshotIfNeeded(nsCfg *namespace.NamespaceConfig, wsCfg *bundle.Work
 			needsDownload = false
 		}
 	}
+	importCtx, importCancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer importCancel()
+
 	if needsDownload {
-		if dlErr := snapshot.Download(context.Background(), snapDef.URL, destPath, snapDef.SHA256, nil); dlErr != nil {
+		if dlErr := snapshot.Download(importCtx, snapDef.URL, destPath, snapDef.SHA256, nil); dlErr != nil {
 			slog.Error("Snapshot download failed", "url", snapDef.URL, "err", dlErr)
 			return
 		}
 	}
 
 	// Import
-	if _, err := snapshot.Import(context.Background(), dc, destPath, volumesBase); err != nil {
+	if _, err := snapshot.Import(importCtx, dc, destPath, volumesBase); err != nil {
 		slog.Error("Snapshot import failed", "err", err)
 		return
 	}

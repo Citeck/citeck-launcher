@@ -493,8 +493,9 @@ func (r *Runtime) StopApp(appName string) error {
 	containerName := r.docker.ContainerName(appName)
 	r.mu.Unlock()
 
-	// Blocking Docker call outside the lock
-	ctx := context.Background()
+	// Blocking Docker call outside the lock — 2 minute timeout to prevent indefinite hang
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
 	if err := r.docker.StopAndRemoveContainer(ctx, containerName, 0); err != nil {
 		return fmt.Errorf("stop app %q: %w", appName, err)
 	}
@@ -1175,7 +1176,7 @@ func (r *Runtime) waitForProbe(ctx context.Context, containerID string, probe *a
 	}
 	threshold := probe.FailureThreshold
 	if threshold <= 0 {
-		threshold = 10000
+		threshold = 360 // ~1 hour with default 10s period
 	}
 
 	// Context-aware initial delay

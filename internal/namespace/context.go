@@ -33,6 +33,9 @@ const (
 var (
 	jwtSecretOnce sync.Once
 	jwtSecretVal  string
+
+	oidcSecretOnce sync.Once
+	oidcSecretVal  string
 )
 
 // JWTSecret returns a stable JWT secret, generated once and persisted to disk.
@@ -55,6 +58,28 @@ func JWTSecret() string {
 		os.WriteFile(secretPath, []byte(jwtSecretVal), 0o600)
 	})
 	return jwtSecretVal
+}
+
+// OIDCSecret returns a stable OIDC client secret, generated once and persisted to disk.
+// Replaces the hardcoded UUID that was identical across all deployments.
+func OIDCSecret() string {
+	oidcSecretOnce.Do(func() {
+		secretPath := filepath.Join(config.ConfDir(), "oidc-secret")
+		if data, err := os.ReadFile(secretPath); err == nil && len(data) > 0 {
+			oidcSecretVal = string(data)
+			return
+		}
+		b := make([]byte, 32)
+		if _, err := rand.Read(b); err != nil {
+			slog.Error("Failed to generate OIDC secret", "err", err)
+			oidcSecretVal = "2996117d-9a33-4e06-b48a-867ce6a235db" // fallback to old value
+			return
+		}
+		oidcSecretVal = fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+		os.MkdirAll(filepath.Dir(secretPath), 0o755)
+		os.WriteFile(secretPath, []byte(oidcSecretVal), 0o600)
+	})
+	return oidcSecretVal
 }
 
 // NsGenContext holds state during namespace generation.
