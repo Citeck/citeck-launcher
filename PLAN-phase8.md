@@ -190,7 +190,7 @@ Fixes that prevent silent failures, resource leaks, and Docker edge cases.
 
 **Files:** `internal/git/repo.go`
 
-**Fix:** Add `singleflight.Group` keyed on `DestDir`.
+**Fix:** Add `singleflight.Group` keyed on `DestDir` (from `golang.org/x/sync/singleflight` — new direct dep, but `golang.org/x/*` packages are already used: crypto, net, sys, time).
 
 ### 8b-13: Auth errors trigger reclone loop — burns API rate limits
 
@@ -320,7 +320,7 @@ Fixes that prevent silent failures, resource leaks, and Docker edge cases.
 
 ### 8d-7: No rate limiting on TCP listener
 
-**Fix:** Add rate limiter (100 req/s per IP). Use stdlib `sync` + `time` for a simple token-bucket (avoid adding `golang.org/x/time/rate` dependency — this project has zero `golang.org/x/*` deps).
+**Fix:** Add rate limiter (100 req/s per IP). Use `golang.org/x/time/rate` — already an indirect dependency in go.mod.
 
 ### 8d-8: Snapshot operations have no concurrency guard
 
