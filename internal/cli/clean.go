@@ -66,7 +66,10 @@ func newCleanCmd() *cobra.Command {
 				orphanVols = findOrphanVolumeDirs(knownNS)
 			}
 
-			if len(orphans) == 0 && len(orphanVols) == 0 {
+			// Find orphan networks
+			orphanNets, _ := findOrphanNetworks(scanCtx, dc, knownNS)
+
+			if len(orphans) == 0 && len(orphanVols) == 0 && len(orphanNets) == 0 {
 				output.PrintResult(map[string]any{"orphans": 0}, func() {
 					output.PrintText("No orphaned resources found.")
 				})
@@ -77,6 +80,7 @@ func newCleanCmd() *cobra.Command {
 			output.PrintResult(map[string]any{
 				"containers": len(orphans),
 				"volumes":    len(orphanVols),
+				"networks":   len(orphanNets),
 				"dryRun":     !execute,
 			}, func() {
 				if len(orphans) > 0 {
@@ -91,6 +95,12 @@ func newCleanCmd() *cobra.Command {
 						output.PrintText(fmt.Sprintf("  %-30s  ns=%s", v.Name, v.Namespace))
 					}
 				}
+				if len(orphanNets) > 0 {
+					output.PrintText(fmt.Sprintf("Orphaned networks: %d", len(orphanNets)))
+					for _, n := range orphanNets {
+						output.PrintText(fmt.Sprintf("  %s", n))
+					}
+				}
 				if !execute {
 					output.PrintText("\nRun with --execute to remove orphaned resources.")
 				}
@@ -101,7 +111,13 @@ func newCleanCmd() *cobra.Command {
 			}
 
 			if !flagYes {
-				return fmt.Errorf("confirmation required (use --yes to skip)")
+				fmt.Printf("Remove %d containers, %d volume dirs, %d networks? [y/N]: ", len(orphans), len(orphanVols), len(orphanNets))
+				var answer string
+				fmt.Scanln(&answer)
+				if answer != "y" && answer != "yes" {
+					output.PrintText("Aborted")
+					return nil
+				}
 			}
 
 			// Removal gets its own context — stopping containers can be slow
@@ -114,6 +130,16 @@ func newCleanCmd() *cobra.Command {
 			for _, o := range orphans {
 				if err := dc.StopAndRemoveContainer(execCtx, o.Name); err != nil {
 					output.Errf("Failed to remove %s: %v", o.Name, err)
+					failed++
+				} else {
+					removed++
+				}
+			}
+
+			// Remove orphan networks
+			for _, netName := range orphanNets {
+				if err := dc.RemoveNetworkByName(execCtx, netName); err != nil {
+					output.Errf("Failed to remove network %s: %v", netName, err)
 					failed++
 				} else {
 					removed++
@@ -193,6 +219,22 @@ func findOrphanContainers(ctx context.Context, dc *docker.Client, knownNS map[st
 			Image:     ctr.Image,
 			State:     ctr.State,
 		})
+	}
+	return orphans, nil
+}
+
+func findOrphanNetworks(ctx context.Context, dc *docker.Client, knownNS map[string]bool) ([]string, error) {
+	networks, err := dc.ListLauncherNetworks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var orphans []string
+	for _, net := range networks {
+		ns := net.Labels[docker.LabelNamespace]
+		if ns != "" && knownNS[ns] {
+			continue
+		}
+		orphans = append(orphans, net.Name)
 	}
 	return orphans, nil
 }

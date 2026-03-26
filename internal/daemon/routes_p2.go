@@ -265,6 +265,21 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TLSEnabled {
 		nsCfg.Proxy.TLS.Enabled = true
+		switch req.TLSMode {
+		case "letsencrypt":
+			nsCfg.Proxy.TLS.LetsEncrypt = true
+		case "self-signed":
+			host := req.Host
+			if host == "" {
+				host = "localhost"
+			}
+			tlsDir := filepath.Join(config.ConfDir(), "tls")
+			os.MkdirAll(tlsDir, 0o755)
+			certPath := filepath.Join(tlsDir, "server.crt")
+			keyPath := filepath.Join(tlsDir, "server.key")
+			nsCfg.Proxy.TLS.CertPath = certPath
+			nsCfg.Proxy.TLS.KeyPath = keyPath
+		}
 	}
 	nsCfg.PgAdmin.Enabled = req.PgAdminEnabled
 	if req.BundleRepo != "" && req.BundleKey != "" {
@@ -508,7 +523,7 @@ func (d *Daemon) handleGetDiagnostics(w http.ResponseWriter, _ *http.Request) {
 	nsCfgPath := config.ResolveNamespaceConfigPath(d.workspaceID, nsID)
 	if _, err := namespace.LoadNamespaceConfig(nsCfgPath); err != nil {
 		checks = append(checks, api.DiagnosticCheckDto{
-			Name: "Config", Status: "warn", Message: "Namespace config: " + err.Error(), Fixable: false,
+			Name: "Config", Status: "warning", Message: "Namespace config: " + err.Error(), Fixable: false,
 		})
 	} else {
 		checks = append(checks, api.DiagnosticCheckDto{
@@ -536,7 +551,7 @@ func (d *Daemon) handleGetDiagnostics(w http.ResponseWriter, _ *http.Request) {
 		})
 	} else {
 		checks = append(checks, api.DiagnosticCheckDto{
-			Name: "Disk", Status: "warn", Message: "Disk space check failed: " + err.Error(), Fixable: false,
+			Name: "Disk", Status: "warning", Message: "Disk space check failed: " + err.Error(), Fixable: false,
 		})
 	}
 
@@ -549,12 +564,12 @@ func (d *Daemon) handleGetDiagnostics(w http.ResponseWriter, _ *http.Request) {
 			})
 		} else {
 			checks = append(checks, api.DiagnosticCheckDto{
-				Name: "Runtime", Status: "warn", Message: fmt.Sprintf("Namespace status: %s", status), Fixable: false,
+				Name: "Runtime", Status: "warning", Message: fmt.Sprintf("Namespace status: %s", status), Fixable: false,
 			})
 		}
 	} else {
 		checks = append(checks, api.DiagnosticCheckDto{
-			Name: "Runtime", Status: "warn", Message: "No namespace is loaded", Fixable: false,
+			Name: "Runtime", Status: "warning", Message: "No namespace is loaded", Fixable: false,
 		})
 	}
 
@@ -753,16 +768,28 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 		zipPath = tmpFile.Name()
 	}
 
-	ctx := r.Context()
-	meta, err := snapshot.Import(ctx, d.dockerClient, zipPath, d.volumesBase)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
+	// Launch import in background and return 202 immediately
+	importPath := zipPath
+	go func() {
+		ctx := context.Background()
+		meta, err := snapshot.Import(ctx, d.dockerClient, importPath, d.volumesBase)
+		if err != nil {
+			slog.Error("Snapshot import failed", "err", err)
+			d.broadcastEvent(api.EventDto{
+				Type: "snapshot_import", After: "failed",
+			})
+			return
+		}
+		slog.Info("Snapshot import completed", "volumes", len(meta.Volumes))
+		d.broadcastEvent(api.EventDto{
+			Type: "snapshot_import", After: "completed",
+		})
+	}()
 
+	w.WriteHeader(http.StatusAccepted)
 	writeJSON(w, api.ActionResultDto{
 		Success: true,
-		Message: fmt.Sprintf("Imported %d volumes", len(meta.Volumes)),
+		Message: "Import started",
 	})
 }
 

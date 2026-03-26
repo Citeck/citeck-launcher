@@ -10,10 +10,11 @@ import (
 
 // NsPersistedState holds runtime state that survives daemon restarts.
 type NsPersistedState struct {
-	Status            NsRuntimeStatus              `json:"status"`
-	ManualStoppedApps []string                     `json:"manualStoppedApps,omitempty"`
-	EditedApps        map[string]appdef.ApplicationDef `json:"editedApps,omitempty"`
-	EditedLockedApps  []string                     `json:"editedLockedApps,omitempty"`
+	Status              NsRuntimeStatus              `json:"status"`
+	ManualStoppedApps   []string                     `json:"manualStoppedApps,omitempty"`
+	EditedApps          map[string]appdef.ApplicationDef `json:"editedApps,omitempty"`
+	EditedLockedApps    []string                     `json:"editedLockedApps,omitempty"`
+	CloudConfigVersion  int64                        `json:"cloudConfigVersion,omitempty"`
 }
 
 // statePath returns the path to the persisted state file (namespace-scoped).
@@ -29,7 +30,12 @@ func SaveNsState(volumesBase, nsID string, state *NsPersistedState) error {
 	}
 	path := statePath(volumesBase, nsID)
 	os.MkdirAll(filepath.Dir(path), 0o755)
-	return os.WriteFile(path, data, 0o644)
+	// Atomic write: write to temp file then rename (POSIX atomic)
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 // LoadNsState reads the persisted namespace state from disk.

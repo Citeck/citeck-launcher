@@ -172,8 +172,17 @@ func (c *DaemonClient) ReloadNamespace() (*api.ActionResultDto, error) {
 	return &dto, err
 }
 
-func (c *DaemonClient) GetAppLogs(name string, tail int) (string, error) {
+func (c *DaemonClient) GetAppLogs(name string, tail int, since, until string, timestamps bool) (string, error) {
 	path := fmt.Sprintf("%s?tail=%d", api.AppLogs(name), tail)
+	if since != "" {
+		path += "&since=" + since
+	}
+	if until != "" {
+		path += "&until=" + until
+	}
+	if timestamps {
+		path += "&timestamps=true"
+	}
 	return c.getRaw(path)
 }
 

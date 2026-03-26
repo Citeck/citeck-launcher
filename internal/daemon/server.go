@@ -31,7 +31,8 @@ import (
 // StartOptions controls daemon startup behavior.
 type StartOptions struct {
 	Foreground bool
-	NoUI       bool // disable web UI (TCP listener)
+	NoUI       bool   // disable web UI (TCP listener)
+	Version    string // build version injected via ldflags
 }
 
 // Daemon is the main daemon server.
@@ -53,6 +54,8 @@ type Daemon struct {
 	eventSubs       []chan api.EventDto
 	eventMu         sync.Mutex
 	configMu        sync.RWMutex // protects nsConfig, bundleDef, appDefs, workspaceConfig
+	version         string
+	bundleError     string // non-empty if bundle resolution failed
 	acmeRenewal     *acme.RenewalService
 	shutdownOnce    sync.Once
 	bgCtx           context.Context    // cancelled on daemon shutdown
@@ -106,24 +109,50 @@ func Start(opts StartOptions) error {
 	nsID := "default"
 	if config.IsDesktopMode() {
 		wsID = "default"
-		// Use first available workspace if "default" doesn't exist
+
+		// Try SQLiteStore for preferred workspace/namespace from launcher_state
+		if sqlStore, sqlErr := storage.NewSQLiteStore(config.HomeDir()); sqlErr == nil {
+			if state, stateErr := sqlStore.GetState(); stateErr == nil {
+				if state.WorkspaceID != "" {
+					wsID = state.WorkspaceID
+				}
+				if state.NamespaceID != "" {
+					nsID = state.NamespaceID
+				}
+			}
+			sqlStore.Close()
+		}
+
+		// Fallback: use first available workspace if stored one doesn't exist
 		if workspaces, err := config.ListWorkspaces(); err == nil && len(workspaces) > 0 {
-			found := false
+			// Verify the stored wsID exists
+			wsExists := false
 			for _, ws := range workspaces {
-				if ws.ID == "default" || ws.ID == "DEFAULT" {
-					wsID = ws.ID
-					found = true
+				if ws.ID == wsID {
+					wsExists = true
 					break
 				}
 			}
-			if !found {
-				wsID = workspaces[0].ID
+			if !wsExists {
+				found := false
+				for _, ws := range workspaces {
+					if ws.ID == "default" || ws.ID == "DEFAULT" {
+						wsID = ws.ID
+						found = true
+						break
+					}
+				}
+				if !found {
+					wsID = workspaces[0].ID
+				}
 			}
-			// Use first namespace in the selected workspace
-			for _, ws := range workspaces {
-				if ws.ID == wsID && len(ws.Namespaces) > 0 {
-					nsID = ws.Namespaces[0]
-					break
+			// Use first namespace in the selected workspace if nsID still default
+			if nsID == "default" {
+				for _, ws := range workspaces {
+					if ws.ID == wsID && len(ws.Namespaces) > 0 {
+						nsID = ws.Namespaces[0]
+						break
+					}
 				}
 			}
 		}
@@ -174,6 +203,7 @@ func Start(opts StartOptions) error {
 	var runtime *namespace.Runtime
 	var appDefs []appdef.ApplicationDef
 	var cloudCfgSrv *CloudConfigServer
+	var bundleError string
 	volumesBase := config.ResolveVolumesBase(wsID, nsID)
 
 	if nsCfg != nil {
@@ -185,7 +215,8 @@ func Start(opts StartOptions) error {
 		resolver := bundle.NewResolverWithAuth(config.DataDir(), makeTokenLookup(store))
 		resolveResult, err := resolver.Resolve(nsCfg.BundleRef)
 		if err != nil {
-			slog.Error("Failed to resolve bundle", "ref", nsCfg.BundleRef, "err", err)
+			slog.Error("Failed to resolve bundle — daemon starts with 0 apps", "ref", nsCfg.BundleRef, "err", err)
+			bundleError = err.Error()
 			resolveResult = &bundle.ResolveResult{Bundle: &bundle.EmptyBundleDef, Workspace: &bundle.WorkspaceConfig{}}
 		}
 		bundleDef = resolveResult.Bundle
@@ -278,6 +309,9 @@ func Start(opts StartOptions) error {
 
 		// Start CloudConfigServer with generated ext cloud config
 		cloudCfgSrv = NewCloudConfigServer()
+		if persistedState != nil && persistedState.CloudConfigVersion > 0 {
+			cloudCfgSrv.SetVersion(persistedState.CloudConfigVersion)
+		}
 		cloudCfgSrv.UpdateConfig(genResp.CloudConfig)
 		if err := cloudCfgSrv.Start(); err != nil {
 			slog.Warn("CloudConfigServer failed to start", "err", err)
@@ -290,13 +324,14 @@ func Start(opts StartOptions) error {
 			slog.Info("Previous status was STOPPING — not auto-starting")
 			shouldStart = false
 		}
-		if shouldStart {
-			runtime.Start(appDefs)
+		// Snapshot auto-import: run synchronously BEFORE start so volumes are populated
+		if nsCfg.Snapshot != "" {
+			slog.Info("Running snapshot auto-import before namespace start", "snapshot", nsCfg.Snapshot)
+			importSnapshotIfNeeded(nsCfg, wsCfg, dockerClient, volumesBase)
 		}
 
-		// Snapshot auto-import in background (non-blocking startup)
-		if nsCfg.Snapshot != "" {
-			go importSnapshotIfNeeded(nsCfg, wsCfg, dockerClient, volumesBase)
+		if shouldStart {
+			runtime.Start(appDefs)
 		}
 	}
 
@@ -314,6 +349,8 @@ func Start(opts StartOptions) error {
 		socketPath:      socketPath,
 		volumesBase:     volumesBase,
 		workspaceID:     wsID,
+		version:         opts.Version,
+		bundleError:     bundleError,
 		startTime:       time.Now(),
 		bgCtx:           bgCtx,
 		bgCancel:        bgCancel,
@@ -365,13 +402,21 @@ func Start(opts StartOptions) error {
 		if err != nil {
 			slog.Warn("TCP listener failed, Web UI unavailable", "addr", tcpAddr, "err", err)
 		} else {
-			// Wrap with token auth middleware for TCP connections (Unix socket skips auth)
+			// Wrap with logging + CORS + token auth middleware for TCP connections
 			var tcpHandler http.Handler = mux
+			tcpHandler = LoggingMiddleware(tcpHandler)
+			tcpHandler = CORSMiddleware(tcpHandler)
 			if daemonCfg.Server.Token != "" {
-				tcpHandler = TokenAuthMiddleware(daemonCfg.Server.Token, mux)
+				tcpHandler = TokenAuthMiddleware(daemonCfg.Server.Token, tcpHandler)
 				slog.Info("Token auth enabled on TCP listener")
 			}
-			d.tcpServer = &http.Server{Handler: tcpHandler}
+			d.tcpServer = &http.Server{
+				Handler:        tcpHandler,
+				ReadTimeout:    30 * time.Second,
+				WriteTimeout:   0, // 0 for SSE streaming — use per-handler timeouts for non-SSE
+				IdleTimeout:    120 * time.Second,
+				MaxHeaderBytes: 1 << 20,
+			}
 			go func() {
 				slog.Info("Web UI available", "url", "http://"+tcpAddr)
 				if err := d.tcpServer.Serve(tcpListener); err != nil && err != http.ErrServerClosed {

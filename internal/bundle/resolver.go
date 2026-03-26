@@ -82,11 +82,11 @@ type BundlesRepo struct {
 
 // SnapshotDef describes a downloadable snapshot from workspace config.
 type SnapshotDef struct {
-	ID     string `yaml:"id"`
-	Name   string `yaml:"name"`
-	URL    string `yaml:"url"`
-	Size   string `yaml:"size,omitempty"`
-	SHA256 string `yaml:"sha256,omitempty"`
+	ID     string `yaml:"id" json:"id"`
+	Name   string `yaml:"name" json:"name"`
+	URL    string `yaml:"url" json:"url"`
+	Size   string `yaml:"size,omitempty" json:"size,omitempty"`
+	SHA256 string `yaml:"sha256,omitempty" json:"sha256,omitempty"`
 }
 
 // Infrastructure image override structs — workspace-level defaults for infra containers.

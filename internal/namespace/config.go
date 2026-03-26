@@ -101,5 +101,22 @@ func ParseNamespaceConfig(data []byte) (*NamespaceConfig, error) {
 	if cfg.ID == "" {
 		cfg.ID = "default"
 	}
+	if err := ValidateNamespaceConfig(&cfg); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
+}
+
+// ValidateNamespaceConfig checks namespace config for common errors.
+func ValidateNamespaceConfig(cfg *NamespaceConfig) error {
+	if cfg.Proxy.Port < 1 || cfg.Proxy.Port > 65535 {
+		return fmt.Errorf("proxy port must be 1-65535, got %d", cfg.Proxy.Port)
+	}
+	if cfg.Proxy.TLS.Enabled && cfg.Proxy.Host == "" {
+		return fmt.Errorf("proxy host required when TLS is enabled")
+	}
+	if cfg.Authentication.Type == AuthBasic && len(cfg.Authentication.Users) == 0 {
+		return fmt.Errorf("at least one user required for BASIC authentication")
+	}
+	return nil
 }

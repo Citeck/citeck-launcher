@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"time"
 
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/output"
@@ -34,6 +35,18 @@ func runUninstall(deleteData bool) error {
 	// 1. Stop the daemon if running
 	output.PrintText("Stopping daemon...")
 	exec.Command("systemctl", "stop", "citeck").Run()
+
+	// Wait for socket to disappear (up to 30s)
+	socketPath := config.SocketPath()
+	for i := 0; i < 30; i++ {
+		if _, err := os.Stat(socketPath); err != nil {
+			break // socket gone
+		}
+		time.Sleep(time.Second)
+	}
+	if _, err := os.Stat(socketPath); err == nil {
+		output.PrintText("Warning: daemon socket still active after 30s at %s", socketPath)
+	}
 
 	// 2. Remove systemd service
 	servicePath := "/etc/systemd/system/citeck.service"

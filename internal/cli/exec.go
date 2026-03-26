@@ -11,9 +11,12 @@ import (
 )
 
 func newExecCmd() *cobra.Command {
-	return &cobra.Command{
+	var interactive bool
+
+	cmd := &cobra.Command{
 		Use:   "exec <app> -- <command...>",
 		Short: "Execute command in container",
+		Long:  "Execute a command in a running container. Interactive mode (-i) is only supported for local connections (Unix socket).",
 		Args:  cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			appName := args[0]
@@ -25,6 +28,10 @@ func newExecCmd() *cobra.Command {
 			}
 			if len(command) == 0 {
 				return fmt.Errorf("command is required")
+			}
+
+			if interactive && flagHost != "" {
+				return fmt.Errorf("interactive mode (-i) is only supported for local connections")
 			}
 
 			c, err := client.New(flagHost, flagToken)
@@ -57,4 +64,7 @@ func newExecCmd() *cobra.Command {
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "Interactive mode (local only)")
+	return cmd
 }

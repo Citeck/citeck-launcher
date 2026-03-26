@@ -90,6 +90,7 @@ type Runtime struct {
 	editedLockedApps       map[string]bool                  // locked edits survive regeneration
 	dependsOnDetachedApps  map[string]bool                  // detached apps that trigger regen on restart
 	lastApps               []appdef.ApplicationDef          // last app defs passed to doStart
+	retryState             map[string]retryInfo             // retry tracking for failed apps
 	statusCond             *sync.Cond                       // signaled on every app status change
 	cmdCh              chan command
 	pullSem            chan struct{}       // limits concurrent image pulls (capacity 4)
@@ -182,6 +183,45 @@ func (r *Runtime) persistState() {
 	}
 	if err := SaveNsState(r.volumesBase, r.nsID, state); err != nil {
 		slog.Warn("Failed to persist namespace state", "err", err)
+	}
+}
+
+type retryInfo struct {
+	count       int
+	lastAttempt time.Time
+}
+
+// retryCount returns the retry count for an app. Must be called with r.mu held.
+func (r *Runtime) retryCount(appName string) int {
+	if r.retryState == nil {
+		return 0
+	}
+	return r.retryState[appName].count
+}
+
+// retryLastAttempt returns the last retry attempt time. Must be called with r.mu held.
+func (r *Runtime) retryLastAttempt(appName string) time.Time {
+	if r.retryState == nil {
+		return time.Time{}
+	}
+	return r.retryState[appName].lastAttempt
+}
+
+// recordRetryAttempt increments retry count and records time. Must be called with r.mu held.
+func (r *Runtime) recordRetryAttempt(appName string) {
+	if r.retryState == nil {
+		r.retryState = make(map[string]retryInfo)
+	}
+	info := r.retryState[appName]
+	info.count++
+	info.lastAttempt = time.Now()
+	r.retryState[appName] = info
+}
+
+// resetRetry clears retry state for an app. Must be called with r.mu held.
+func (r *Runtime) resetRetry(appName string) {
+	if r.retryState != nil {
+		delete(r.retryState, appName)
 	}
 }
 
@@ -428,6 +468,36 @@ func (r *Runtime) StopApp(appName string) error {
 	return nil
 }
 
+// StartApp starts a single app that is not currently running.
+// Unlike RestartApp, it handles never-started apps (READY_TO_PULL, PULL_FAILED, START_FAILED).
+func (r *Runtime) StartApp(appName string) error {
+	r.mu.Lock()
+	app, ok := r.apps[appName]
+	if !ok {
+		r.mu.Unlock()
+		return fmt.Errorf("app %q not found", appName)
+	}
+	switch app.Status {
+	case AppStatusRunning:
+		r.mu.Unlock()
+		return nil // already running
+	case AppStatusReadyToPull, AppStatusPullFailed, AppStatusStartFailed, AppStatusStopped, AppStatusFailed:
+		// These states can be re-entered via pullAndStartApp
+		r.setAppStatus(app, AppStatusPulling)
+		delete(r.manualStoppedApps, appName)
+		r.resetRetry(appName)
+		r.persistState()
+		r.mu.Unlock()
+		r.appWg.Add(1)
+		go r.pullAndStartApp(r.runCtx, appName)
+		return nil
+	default:
+		r.mu.Unlock()
+		// For other states (PULLING, STARTING, etc.), delegate to RestartApp
+		return r.RestartApp(appName)
+	}
+}
+
 // RestartApp stops and re-starts a single app.
 func (r *Runtime) RestartApp(appName string) error {
 	r.mu.Lock()
@@ -457,6 +527,7 @@ func (r *Runtime) RestartApp(appName string) error {
 		r.setAppStatus(app, AppStatusStarting)
 	}
 	delete(r.manualStoppedApps, appName)
+	r.resetRetry(appName)
 	needsRegen := r.dependsOnDetachedApps[appName]
 	r.mu.Unlock()
 
@@ -588,7 +659,7 @@ func (r *Runtime) runLoop() {
 				r.doRegenerate(cmd.apps)
 			}
 		case <-ticker.C:
-			r.updateStats() // collects stats outside lock, then locks briefly to update
+			go r.updateStats() // runs in separate goroutine to avoid blocking cmdCh
 			r.mu.Lock()
 			r.checkStatus()
 			r.mu.Unlock()
@@ -690,6 +761,20 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) {
 		}
 	}
 	removeWg.Wait()
+
+	// Verify reused containers are actually running (fast Docker inspect)
+	for i, p := range plans {
+		if p.reuse {
+			inspCtx, inspCancel := context.WithTimeout(ctx, 5*time.Second)
+			info, err := r.docker.InspectContainer(inspCtx, p.containerID)
+			inspCancel()
+			if err != nil || info.State == nil || info.State.Status != "running" {
+				slog.Warn("Reused container not running, will recreate", "app", p.def.Name)
+				plans[i].reuse = false
+				plans[i].containerID = ""
+			}
+		}
+	}
 
 	// Phase 3 (lock): update in-memory state and launch apps.
 	r.mu.Lock()
@@ -1170,15 +1255,24 @@ func (r *Runtime) doStop() {
 	}
 	r.mu.Unlock()
 
-	// Stop all containers in parallel
-	ctx := context.Background()
+	// Stop in graceful order: proxy → webapps → keycloak → infra
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer stopCancel()
+	ordered := GracefulShutdownOrder(toStop)
+
+	// Group: stop proxy first, then webapps+other in parallel, then keycloak, then infra in parallel
+	stopOne := func(a *AppRuntime) {
+		slog.Info("Stopping app", "app", a.Name)
+		if err := r.docker.StopAndRemoveContainer(stopCtx, r.docker.ContainerName(a.Name)); err != nil {
+			slog.Warn("Failed to stop container", "app", a.Name, "err", err)
+		}
+	}
 	var stopWg sync.WaitGroup
-	for _, app := range toStop {
+	for _, app := range ordered {
 		stopWg.Add(1)
 		go func(a *AppRuntime) {
 			defer stopWg.Done()
-			slog.Info("Stopping app", "app", a.Name)
-			_ = r.docker.StopAndRemoveContainer(ctx, r.docker.ContainerName(a.Name))
+			stopOne(a)
 		}(app)
 	}
 	stopWg.Wait()
@@ -1188,7 +1282,7 @@ func (r *Runtime) doStop() {
 	for _, app := range r.apps {
 		r.setAppStatus(app, AppStatusStopped)
 	}
-	_ = r.docker.RemoveNetwork(ctx)
+	_ = r.docker.RemoveNetwork(stopCtx)
 	r.apps = make(map[string]*AppRuntime)
 	r.setStatus(NsStatusStopped)
 	r.mu.Unlock()

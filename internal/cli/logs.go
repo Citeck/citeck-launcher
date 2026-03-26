@@ -14,6 +14,9 @@ import (
 func newLogsCmd() *cobra.Command {
 	var tail int
 	var follow bool
+	var since string
+	var until string
+	var timestamps bool
 
 	cmd := &cobra.Command{
 		Use:   "logs <app>",
@@ -33,7 +36,7 @@ func newLogsCmd() *cobra.Command {
 				return followLogs(c, appName, tail)
 			}
 
-			logs, err := c.GetAppLogs(appName, tail)
+			logs, err := c.GetAppLogs(appName, tail, since, until, timestamps)
 			if err != nil {
 				return fmt.Errorf("get logs for %q: %w", appName, err)
 			}
@@ -53,6 +56,9 @@ func newLogsCmd() *cobra.Command {
 
 	cmd.Flags().IntVar(&tail, "tail", 100, "Number of lines to show")
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Follow log output")
+	cmd.Flags().StringVar(&since, "since", "", "Show logs since timestamp (RFC3339) or relative (e.g. 1h)")
+	cmd.Flags().StringVar(&until, "until", "", "Show logs until timestamp (RFC3339) or relative")
+	cmd.Flags().BoolVarP(&timestamps, "timestamps", "t", false, "Show timestamps")
 
 	return cmd
 }

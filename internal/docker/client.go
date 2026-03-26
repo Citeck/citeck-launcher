@@ -110,12 +110,19 @@ func (c *Client) CreateNetwork(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if len(networks) > 0 {
-		return networks[0].ID, nil
+	for _, n := range networks {
+		if n.Name == name {
+			return n.ID, nil
+		}
 	}
 
 	resp, err := c.cli.NetworkCreate(ctx, name, network.CreateOptions{
 		Driver: "bridge",
+		Labels: map[string]string{
+			LabelLauncher:  "true",
+			LabelWorkspace: c.workspace,
+			LabelNamespace: c.namespace,
+		},
 	})
 	if err != nil {
 		return "", err
@@ -126,6 +133,18 @@ func (c *Client) CreateNetwork(ctx context.Context) (string, error) {
 // RemoveNetwork removes the namespace network.
 func (c *Client) RemoveNetwork(ctx context.Context) error {
 	return c.cli.NetworkRemove(ctx, c.NetworkName())
+}
+
+// RemoveNetworkByName removes a Docker network by its exact name.
+func (c *Client) RemoveNetworkByName(ctx context.Context, name string) error {
+	return c.cli.NetworkRemove(ctx, name)
+}
+
+// ListLauncherNetworks returns networks with the citeck.launcher label.
+func (c *Client) ListLauncherNetworks(ctx context.Context) ([]network.Summary, error) {
+	return c.cli.NetworkList(ctx, network.ListOptions{
+		Filters: filters.NewArgs(filters.Arg("label", LabelLauncher+"=true")),
+	})
 }
 
 // CreateContainer creates a container from an ApplicationDef.

@@ -28,12 +28,13 @@ type DaemonStatusDto struct {
 }
 
 type NamespaceDto struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Status    string    `json:"status"`
-	BundleRef string    `json:"bundleRef"`
-	Apps      []AppDto  `json:"apps"`
-	Links     []LinkDto `json:"links,omitempty"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Status      string    `json:"status"`
+	BundleRef   string    `json:"bundleRef"`
+	BundleError string    `json:"bundleError,omitempty"`
+	Apps        []AppDto  `json:"apps"`
+	Links       []LinkDto `json:"links,omitempty"`
 }
 
 type LinkDto struct {
@@ -137,7 +138,7 @@ type SecretCreateDto struct {
 
 type DiagnosticCheckDto struct {
 	Name    string `json:"name"`
-	Status  string `json:"status"` // "ok", "warn", "error"
+	Status  string `json:"status"` // "ok", "warning", "error"
 	Message string `json:"message"`
 	Fixable bool   `json:"fixable"`
 }

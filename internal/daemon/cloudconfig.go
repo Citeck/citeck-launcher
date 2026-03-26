@@ -29,6 +29,20 @@ func NewCloudConfigServer() *CloudConfigServer {
 	return &CloudConfigServer{}
 }
 
+// SetVersion restores the version counter from persisted state (call before Start).
+func (s *CloudConfigServer) SetVersion(v int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.version = v
+}
+
+// Version returns the current version counter.
+func (s *CloudConfigServer) Version() int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.version
+}
+
 // UpdateConfig replaces the cloud config data (called after regeneration).
 func (s *CloudConfigServer) UpdateConfig(config map[string]map[string]any) {
 	s.mu.Lock()

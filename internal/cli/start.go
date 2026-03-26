@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newStartCmd() *cobra.Command {
+func newStartCmd(version string) *cobra.Command {
 	var foreground bool
 	var desktop bool
 	var noUI bool
@@ -36,6 +36,7 @@ func newStartCmd() *cobra.Command {
 			return daemon.Start(daemon.StartOptions{
 				Foreground: foreground,
 				NoUI:       noUI,
+				Version:    version,
 			})
 		},
 	}

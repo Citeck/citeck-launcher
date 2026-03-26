@@ -83,7 +83,38 @@ func newApplyCmd() *cobra.Command {
 			})
 
 			if wait {
-				return waitForRunning(c, time.Duration(timeout)*time.Second)
+				// Subscribe to SSE BEFORE reload to avoid race
+				ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+				defer cancel()
+				events, sseErr := c.StreamEvents(ctx)
+				if sseErr != nil {
+					return fmt.Errorf("connect to event stream: %w", sseErr)
+				}
+
+				// Reload is already done above, just wait for RUNNING
+				output.Errf("Waiting for all apps to be running...")
+				// Check initial state after subscribing
+				if ns, err := c.GetNamespace(); err == nil && ns.Status == "RUNNING" {
+					output.PrintText("All apps running")
+					return nil
+				}
+				for {
+					select {
+					case <-ctx.Done():
+						return fmt.Errorf("timeout waiting for namespace to be running")
+					case evt, ok := <-events:
+						if !ok {
+							return fmt.Errorf("event stream closed")
+						}
+						if evt.Type == "namespace_status" && evt.After == "RUNNING" {
+							output.PrintText("All apps running")
+							return nil
+						}
+						if evt.Type == "namespace_status" && evt.After == "STALLED" {
+							return fmt.Errorf("namespace stalled — some apps failed to start")
+						}
+					}
+				}
 			}
 
 			return nil

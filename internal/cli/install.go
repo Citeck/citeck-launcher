@@ -31,6 +31,13 @@ func newInstallCmd() *cobra.Command {
 func runInstall(cmd *cobra.Command, args []string) error {
 	scanner := bufio.NewScanner(os.Stdin)
 
+	// Check Docker is available
+	dockerConn, err := net.DialTimeout("unix", "/var/run/docker.sock", 2*time.Second)
+	if err != nil {
+		return fmt.Errorf("Docker is not reachable at /var/run/docker.sock. Install Docker first: https://docs.docker.com/engine/install/")
+	}
+	dockerConn.Close()
+
 	// Check if namespace.yml already exists — skip config prompts
 	nsCfgPath := config.NamespaceConfigPath()
 	if _, err := os.Stat(nsCfgPath); err == nil {
@@ -61,8 +68,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 				if !strings.Contains(u, ":") {
 					u = u + ":" + u
 				}
-				parts := strings.SplitN(u, ":", 2)
-				users = append(users, parts[0])
+				users = append(users, u) // store full user:password
 			}
 		}
 		if len(users) > 0 {
@@ -126,9 +132,15 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		defaultPort = 443
 	}
 	portStr := prompt(scanner, "Port", strconv.Itoa(defaultPort))
-	port, err := strconv.Atoi(portStr)
-	if err != nil || port < 1 || port > 65535 {
+	port, portErr := strconv.Atoi(portStr)
+	if portErr != nil || port < 1 || port > 65535 {
 		port = defaultPort
+	}
+	// Check port availability
+	if ln, listenErr := net.Listen("tcp", fmt.Sprintf(":%d", port)); listenErr != nil {
+		output.PrintText("Warning: port %d is already in use", port)
+	} else {
+		ln.Close()
 	}
 	nsCfg.Proxy.Port = port
 

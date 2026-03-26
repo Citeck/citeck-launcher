@@ -31,7 +31,7 @@ func (d *Daemon) handleDaemonStatus(w http.ResponseWriter, r *http.Request) {
 		Running:    true,
 		PID:        int64(os.Getpid()),
 		Uptime:     time.Since(d.startTime).Milliseconds(),
-		Version:    "dev",
+		Version:    d.version,
 		Workspace:  d.workspaceID,
 		SocketPath: d.socketPath,
 	})
@@ -50,7 +50,11 @@ func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no namespace configured")
 		return
 	}
-	writeJSON(w, d.runtime.ToNamespaceDto())
+	dto := d.runtime.ToNamespaceDto()
+	if d.bundleError != "" {
+		dto.BundleError = d.bundleError
+	}
+	writeJSON(w, dto)
 }
 
 func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
@@ -298,7 +302,7 @@ func (d *Daemon) handleAppStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := d.runtime.RestartApp(name); err != nil {
+	if err := d.runtime.StartApp(name); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -442,7 +446,6 @@ func (d *Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	ch := d.addSubscriber()
 	defer d.removeSubscriber(ch)
@@ -510,7 +513,7 @@ func (d *Daemon) buildDumpData(ctx context.Context) map[string]any {
 	dump["daemon"] = map[string]any{
 		"pid":     os.Getpid(),
 		"uptime":  time.Since(d.startTime).Milliseconds(),
-		"version": "dev",
+		"version": d.version,
 		"socket":  d.socketPath,
 	}
 	if d.nsConfig != nil {
@@ -853,6 +856,11 @@ func (d *Daemon) handleHealth(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	var checks []api.HealthCheckDto
+
+	// Bundle check
+	if d.bundleError != "" {
+		checks = append(checks, api.HealthCheckDto{Name: "bundle", Status: "error", Message: "Bundle resolution failed: " + d.bundleError})
+	}
 
 	// Docker check
 	if err := d.dockerClient.Ping(ctx); err != nil {

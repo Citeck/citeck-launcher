@@ -97,6 +97,7 @@ func (r *Runtime) reconcile(ctx context.Context) {
 
 	// Collect apps needing restart under lock, then spawn goroutines after unlock
 	var toRestart []string
+	now := time.Now()
 
 	r.mu.Lock()
 	for name, app := range r.apps {
@@ -104,6 +105,21 @@ func (r *Runtime) reconcile(ctx context.Context) {
 			slog.Warn("Reconciler: container missing, will restart", "app", name)
 			r.setAppStatus(app, AppStatusReadyToPull)
 			toRestart = append(toRestart, name)
+		}
+		// Retry failed apps with exponential backoff (1m, 2m, 4m, ..., max 30m)
+		if app.Status == AppStatusStartFailed || app.Status == AppStatusPullFailed {
+			retryCount := r.retryCount(name)
+			backoff := time.Duration(1<<retryCount) * time.Minute
+			if backoff > 30*time.Minute {
+				backoff = 30 * time.Minute
+			}
+			lastAttempt := r.retryLastAttempt(name)
+			if now.Sub(lastAttempt) >= backoff {
+				slog.Info("Reconciler: retrying failed app", "app", name, "attempt", retryCount+1)
+				r.setAppStatus(app, AppStatusPulling)
+				r.recordRetryAttempt(name)
+				toRestart = append(toRestart, name)
+			}
 		}
 	}
 	r.mu.Unlock()

@@ -36,7 +36,20 @@ func newCertStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Show certificate expiration and details",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			certPath := filepath.Join(config.ConfDir(), "tls", "server.crt")
+			// Try namespace config cert path first, then LE fullchain, then default
+			certPath := ""
+			if nsCfg, err := namespace.LoadNamespaceConfig(config.NamespaceConfigPath()); err == nil && nsCfg.Proxy.TLS.CertPath != "" {
+				certPath = nsCfg.Proxy.TLS.CertPath
+			}
+			if certPath == "" {
+				lePath := filepath.Join(config.ConfDir(), "tls", "fullchain.pem")
+				if _, err := os.Stat(lePath); err == nil {
+					certPath = lePath
+				}
+			}
+			if certPath == "" {
+				certPath = filepath.Join(config.ConfDir(), "tls", "server.crt")
+			}
 			data, err := os.ReadFile(certPath)
 			if err != nil {
 				return fmt.Errorf("read cert: %w", err)

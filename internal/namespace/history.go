@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -29,6 +30,9 @@ func NewOperationHistory(logDir string) *OperationHistory {
 		path: filepath.Join(logDir, "operations.jsonl"),
 	}
 }
+
+const maxHistoryEntries = 1000
+const truncateToEntries = 500
 
 func (h *OperationHistory) Record(op, app, result string, duration time.Duration, err error, appCount int) {
 	rec := OperationRecord{
@@ -55,4 +59,21 @@ func (h *OperationHistory) Record(op, app, result string, duration time.Duration
 	defer f.Close()
 
 	fmt.Fprintf(f, "%s\n", data)
+
+	// Rotate if file exceeds max entries
+	h.rotateIfNeeded()
+}
+
+func (h *OperationHistory) rotateIfNeeded() {
+	data, err := os.ReadFile(h.path)
+	if err != nil {
+		return
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) <= maxHistoryEntries {
+		return
+	}
+	// Truncate to last N entries
+	lines = lines[len(lines)-truncateToEntries:]
+	os.WriteFile(h.path, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
 }

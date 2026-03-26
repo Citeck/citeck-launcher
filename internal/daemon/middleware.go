@@ -1,9 +1,11 @@
 package daemon
 
 import (
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // TokenAuthMiddleware checks for a valid Bearer token on TCP connections.
@@ -64,14 +66,28 @@ func CORSMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// LoggingMiddleware logs HTTP requests.
+// statusRecorder captures the HTTP status code.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (sr *statusRecorder) WriteHeader(code int) {
+	sr.status = code
+	sr.ResponseWriter.WriteHeader(code)
+}
+
+// LoggingMiddleware logs HTTP requests with method, path, status, and duration.
 func LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Skip logging for static files
-		if strings.HasPrefix(r.URL.Path, "/assets/") {
+		if strings.HasPrefix(r.URL.Path, "/assets/") || r.URL.Path == "/favicon.ico" {
 			next.ServeHTTP(w, r)
 			return
 		}
-		next.ServeHTTP(w, r)
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		slog.Info("HTTP request", "method", r.Method, "path", r.URL.Path, "status", rec.status, "duration", time.Since(start).String())
 	})
 }
