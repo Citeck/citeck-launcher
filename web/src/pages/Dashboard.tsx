@@ -137,7 +137,7 @@ export function Dashboard() {
           <SidebarBtn icon={FileText} label="Launcher Logs"
             onClick={() => { openTab({ id: 'daemon-logs', title: 'Daemon Logs', path: '/daemon-logs' }); navigate('/daemon-logs') }} />
           <SidebarBtn icon={Download} label="System Dump"
-            onClick={() => getSystemDump().catch((e) => console.error('Dump failed:', e))} />
+            onClick={() => getSystemDump('zip').catch((e) => console.error('Dump failed:', e))} />
         </div>
       </div>
 

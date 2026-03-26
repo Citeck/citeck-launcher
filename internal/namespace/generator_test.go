@@ -101,10 +101,10 @@ func TestGenerateWebapp_FiltersByWorkspaceConfig(t *testing.T) {
 		}
 	}
 	if !hasEmodel {
-		t.Error("expected emodel to be generated (it's in workspace config)")
+		t.Fatal("expected emodel to be generated (it's in workspace config)")
 	}
 	if hasUnknown {
-		t.Error("expected unknown to be filtered out (not in workspace config)")
+		t.Fatal("expected unknown to be filtered out (not in workspace config)")
 	}
 }
 
@@ -265,5 +265,251 @@ func TestProcessWebappDataSources_CloudConfigOnly(t *testing.T) {
 	}
 	if !strings.Contains(string(content), "custom-value") {
 		t.Errorf("expected custom.property in cloud config YAML, got:\n%s", string(content))
+	}
+}
+
+func TestPerAppMemoryLimitOverridesGlobal(t *testing.T) {
+	cfg := &NamespaceConfig{
+		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+	}
+	bun := &bundle.BundleDef{
+		Applications: map[string]bundle.BundleAppDef{
+			"eproc": {Image: "nexus.citeck.ru/eproc:1.0"},
+		},
+	}
+	wsCfg := &bundle.WorkspaceConfig{
+		DefaultWebappProps: bundle.WebappDefaultProps{MemoryLimit: "1g"},
+		Webapps: []bundle.WebappConfig{{
+			ID:           "eproc",
+			DefaultProps: bundle.WebappDefaultProps{MemoryLimit: "2g"},
+		}},
+	}
+
+	resp := Generate(cfg, bun, wsCfg)
+	for _, app := range resp.Applications {
+		if app.Name == "eproc" {
+			if app.Resources == nil || app.Resources.Limits.Memory != "2g" {
+				t.Errorf("expected per-app memoryLimit=2g to override global 1g, got %+v", app.Resources)
+			}
+			return
+		}
+	}
+	t.Error("expected eproc app")
+}
+
+func TestAlfrescoContainerDefs(t *testing.T) {
+	cfg := &NamespaceConfig{
+		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+	}
+	bun := &bundle.BundleDef{
+		Applications: map[string]bundle.BundleAppDef{
+			"alfresco": {Image: "citeck/alfresco:1.0"},
+		},
+	}
+	wsCfg := &bundle.WorkspaceConfig{
+		Alfresco: bundle.AlfrescoProps{Enabled: true},
+	}
+
+	resp := Generate(cfg, bun, wsCfg)
+
+	findApp := func(name string) *appdef.ApplicationDef {
+		for i := range resp.Applications {
+			if resp.Applications[i].Name == name {
+				return &resp.Applications[i]
+			}
+		}
+		return nil
+	}
+
+	// Alfresco app
+	alfApp := findApp("alfresco")
+	if alfApp == nil {
+		t.Fatal("expected alfresco app")
+	}
+	if alfApp.Kind != appdef.KindCiteckAdditional {
+		t.Errorf("expected alfresco kind=KindCiteckAdditional, got %d", alfApp.Kind)
+	}
+
+	// Alfresco postgres — should have PGDATA
+	alfPg := findApp("alf-postgres")
+	if alfPg == nil {
+		t.Fatal("expected alf-postgres app")
+	}
+	if alfPg.Environments["PGDATA"] != "/var/lib/postgresql/data" {
+		t.Errorf("expected PGDATA on alf-postgres, got %q", alfPg.Environments["PGDATA"])
+	}
+
+	// Alfresco solr
+	alfSolr := findApp("alf-solr")
+	if alfSolr == nil {
+		t.Fatal("expected alf-solr app")
+	}
+	if alfSolr.Kind != appdef.KindCiteckAdditional {
+		t.Errorf("expected alf-solr kind=KindCiteckAdditional, got %d", alfSolr.Kind)
+	}
+	if alfSolr.Environments["JAVA_OPTS"] != "-Xms1G -Xmx1G" {
+		t.Errorf("expected solr JAVA_OPTS=-Xms1G -Xmx1G, got %q", alfSolr.Environments["JAVA_OPTS"])
+	}
+}
+
+func TestNamespaceLevelDataSources(t *testing.T) {
+	cfg := &NamespaceConfig{
+		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+		Webapps: map[string]WebappProps{
+			"emodel": {
+				DataSources: map[string]bundle.DataSourceConfig{
+					"secondary": {URL: "jdbc:postgresql://${PG_HOST}:${PG_PORT}/custom_db"},
+				},
+			},
+		},
+	}
+	bun := &bundle.BundleDef{
+		Applications: map[string]bundle.BundleAppDef{
+			"emodel": {Image: "nexus.citeck.ru/emodel:1.0"},
+		},
+	}
+	wsCfg := &bundle.WorkspaceConfig{
+		Webapps: []bundle.WebappConfig{{
+			ID: "emodel",
+			DefaultProps: bundle.WebappDefaultProps{
+				DataSources: map[string]bundle.DataSourceConfig{
+					"main": {URL: "jdbc:postgresql://${PG_HOST}:${PG_PORT}/emodel"},
+				},
+			},
+		}},
+	}
+
+	resp := Generate(cfg, bun, wsCfg)
+	content := string(resp.Files["app/emodel/props/application-launcher.yml"])
+
+	// Both workspace datasource and namespace datasource should be present
+	if !strings.Contains(content, "postgres:5432/emodel") {
+		t.Errorf("expected workspace datasource URL, got:\n%s", content)
+	}
+	if !strings.Contains(content, "postgres:5432/custom_db") {
+		t.Errorf("expected namespace datasource URL, got:\n%s", content)
+	}
+}
+
+func TestWebappDefaultProps_ImageOverride(t *testing.T) {
+	cfg := &NamespaceConfig{
+		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+	}
+	bun := &bundle.BundleDef{
+		Applications: map[string]bundle.BundleAppDef{
+			"emodel": {Image: "nexus.citeck.ru/emodel:1.0"},
+		},
+	}
+	wsCfg := &bundle.WorkspaceConfig{
+		Webapps: []bundle.WebappConfig{{
+			ID: "emodel",
+			DefaultProps: bundle.WebappDefaultProps{
+				Image: "custom-registry/emodel:2.0",
+			},
+		}},
+	}
+
+	resp := Generate(cfg, bun, wsCfg)
+	for _, app := range resp.Applications {
+		if app.Name == "emodel" {
+			if app.Image != "custom-registry/emodel:2.0" {
+				t.Errorf("expected workspace default image override, got %s", app.Image)
+			}
+			return
+		}
+	}
+	t.Error("expected emodel app")
+}
+
+func TestDeepMergeMaps(t *testing.T) {
+	dst := map[string]any{
+		"a.b": 1,
+		"a.c": 2,
+	}
+	src := map[string]any{
+		"a.c": 3,
+		"a.d": 4,
+	}
+	deepMergeMaps(dst, src)
+	if dst["a.b"] != 1 {
+		t.Errorf("expected a.b=1, got %v", dst["a.b"])
+	}
+	if dst["a.c"] != 3 {
+		t.Errorf("expected a.c=3 (src wins), got %v", dst["a.c"])
+	}
+	if dst["a.d"] != 4 {
+		t.Errorf("expected a.d=4, got %v", dst["a.d"])
+	}
+}
+
+func TestDeepMergeMaps_NestedRecursion(t *testing.T) {
+	dst := map[string]any{
+		"outer": map[string]any{
+			"existing": "keep",
+			"shared":   "old",
+		},
+	}
+	src := map[string]any{
+		"outer": map[string]any{
+			"shared": "new",
+			"added":  "yes",
+		},
+	}
+	deepMergeMaps(dst, src)
+
+	outer := dst["outer"].(map[string]any)
+	if outer["existing"] != "keep" {
+		t.Errorf("expected existing=keep, got %v", outer["existing"])
+	}
+	if outer["shared"] != "new" {
+		t.Errorf("expected shared=new, got %v", outer["shared"])
+	}
+	if outer["added"] != "yes" {
+		t.Errorf("expected added=yes, got %v", outer["added"])
+	}
+}
+
+func TestCloudConfigDeepMerge(t *testing.T) {
+	// Workspace sets dataSources, namespace adds cloudConfig — both should be present
+	cfg := &NamespaceConfig{
+		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+		Webapps: map[string]WebappProps{
+			"emodel": {
+				CloudConfig: map[string]any{
+					"ecos.webapp.dataSources.main.xa": true,
+				},
+			},
+		},
+	}
+	bun := &bundle.BundleDef{
+		Applications: map[string]bundle.BundleAppDef{
+			"emodel": {Image: "nexus.citeck.ru/emodel:1.0"},
+		},
+	}
+	wsCfg := &bundle.WorkspaceConfig{
+		Webapps: []bundle.WebappConfig{{
+			ID: "emodel",
+			DefaultProps: bundle.WebappDefaultProps{
+				DataSources: map[string]bundle.DataSourceConfig{
+					"main": {URL: "jdbc:postgresql://${PG_HOST}:${PG_PORT}/emodel"},
+				},
+			},
+		}},
+	}
+
+	resp := Generate(cfg, bun, wsCfg)
+	content := string(resp.Files["app/emodel/props/application-launcher.yml"])
+
+	// Both workspace datasource URL and namespace cloudConfig xa should be present
+	if !strings.Contains(content, "postgres:5432/emodel") {
+		t.Errorf("expected datasource URL from workspace, got:\n%s", content)
+	}
+	if !strings.Contains(content, "xa: true") {
+		t.Errorf("expected xa from namespace cloudConfig deep merge, got:\n%s", content)
 	}
 }

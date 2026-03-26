@@ -92,14 +92,15 @@ export async function getDaemonLogs(tail = 200): Promise<string> {
   return res.text()
 }
 
-export async function getSystemDump(): Promise<void> {
-  const res = await fetch(`${API_BASE}/system/dump`)
+export async function getSystemDump(format: 'json' | 'zip' = 'json'): Promise<void> {
+  const query = format === 'zip' ? '?format=zip' : ''
+  const res = await fetch(`${API_BASE}/system/dump${query}`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = 'system-dump.json'
+  a.download = format === 'zip' ? 'system-dump.zip' : 'system-dump.json'
   a.style.display = 'none'
   document.body.appendChild(a)
   a.click()
@@ -107,7 +108,7 @@ export async function getSystemDump(): Promise<void> {
   setTimeout(() => URL.revokeObjectURL(url), 5000)
 }
 
-export async function getVolumes(): Promise<{ name: string; driver: string; mountpoint: string }[]> {
+export async function getVolumes(): Promise<{ name: string; path: string }[]> {
   return fetchJSON('/volumes')
 }
 
@@ -133,6 +134,38 @@ export async function putAppConfig(name: string, content: string): Promise<Actio
     const err = await res.json().catch(() => ({ message: `HTTP ${res.status}` }))
     throw new Error(err.message || `HTTP ${res.status}`)
   }
+  return res.json()
+}
+
+export async function getAppFiles(name: string): Promise<string[]> {
+  return fetchJSON<string[]>(`/apps/${name}/files`)
+}
+
+export async function getAppFile(name: string, path: string): Promise<string> {
+  const cleanPath = path.startsWith('./') ? path.slice(2) : path
+  const res = await fetch(`${API_BASE}/apps/${name}/files/${cleanPath}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.text()
+}
+
+export async function putAppFile(name: string, path: string, content: string): Promise<ActionResultDto> {
+  const cleanPath = path.startsWith('./') ? path.slice(2) : path
+  const res = await fetch(`${API_BASE}/apps/${name}/files/${cleanPath}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'text/plain' },
+    body: content,
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function putAppLock(name: string, locked: boolean): Promise<ActionResultDto> {
+  const res = await fetch(`${API_BASE}/apps/${name}/lock`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ locked }),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }
 
@@ -243,6 +276,30 @@ export async function postImportSnapshot(file: File): Promise<ActionResultDto> {
   const formData = new FormData()
   formData.append('file', file)
   const res = await fetch(`${API_BASE}/snapshots/import`, { method: 'POST', body: formData })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function getWorkspaceSnapshots(): Promise<{ id: string; name: string; url: string; size?: string }[]> {
+  return fetchJSON('/workspace/snapshots')
+}
+
+export async function postSnapshotDownload(url: string, name?: string): Promise<ActionResultDto> {
+  const res = await fetch(`${API_BASE}/snapshots/download`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url, name }),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function renameSnapshot(oldName: string, newName: string): Promise<ActionResultDto> {
+  const res = await fetch(`${API_BASE}/snapshots/${encodeURIComponent(oldName)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: newName }),
+  })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }

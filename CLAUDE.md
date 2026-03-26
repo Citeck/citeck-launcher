@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Citeck Launcher manages Citeck ECOS namespaces and Docker containers. It is a single Go binary (~14MB) that serves as both CLI and daemon, with an embedded React Web UI on `http://127.0.0.1:8088`. The original Kotlin code (Compose Desktop, Gradle) is kept as reference implementation.
+Citeck Launcher manages Citeck ECOS namespaces and Docker containers. It is a single Go binary (~14MB) that serves as both CLI and daemon, with an embedded React Web UI on `http://127.0.0.1:8088`.
 
 ## Build & Development Commands
 
@@ -22,16 +22,6 @@ golangci-lint run             # Go linter
 cd web && npm run lint        # Web linter
 ./citeck start --foreground   # Run daemon with web UI on 127.0.0.1:8088
 ```
-
-### Kotlin reference (read-only, not built)
-
-```bash
-./gradlew :app:run            # Run Compose Desktop app
-./gradlew test                # Run Kotlin tests
-./gradlew ktlintFormat        # Auto-fix Kotlin lint
-```
-
-The Kotlin code in `core/`, `cli/`, `app/` directories is reference-only. All new development is in Go + React.
 
 ## Architecture
 
@@ -95,14 +85,6 @@ React 19 + Vite + TypeScript + Tailwind CSS 4. Embedded into Go binary via `go:e
 
 `cmd/citeck/main.go` — CLI entry point (cobra root command).
 
-### Kotlin Reference (`core/`, `cli/`, `app/`)
-
-Original Kotlin implementation. Read-only reference for understanding business logic. Key files:
-- `core/namespace/gen/NamespaceGenerator.kt` — container generation logic
-- `core/namespace/NamespaceConfig.kt` — config model
-- `core/namespace/runtime/` — state machine, app lifecycle
-- `app/src/main/kotlin/ru/citeck/launcher/view/` — UI (forms, logs, dialogs, context menus)
-
 ## Code Style
 
 ### Go
@@ -114,10 +96,6 @@ Original Kotlin implementation. Read-only reference for understanding business l
 - Tailwind CSS 4 for styling
 - ESLint for linting
 - lucide-react for icons
-
-### Kotlin (reference only)
-- ktlint via `.editorconfig`, wildcard imports allowed
-- 4-space indentation, LF line endings, UTF-8
 
 ## Key Dependencies
 
@@ -144,7 +122,7 @@ Original Kotlin implementation. Read-only reference for understanding business l
 ## Current Status
 
 ### Web UI Phase 1 — COMPLETE (2026-03-25)
-Full feature parity with Kotlin Compose Desktop namespace screen. 18 commits, 5 review rounds (53 issues fixed).
+Full dashboard, app table, logs, config editor.
 
 ### Web UI Phase 2 — COMPLETE (2026-03-25)
 Full Web UI feature set: Welcome screen, wizard, secrets, diagnostics, context menus, form framework, journal browser, snapshot import/export, light theme, Playwright E2E.
@@ -155,10 +133,8 @@ Actions service, go-git, form validation, bind-mount volumes, snapshot export/im
 ### Phase 4: CLI Completion + Production Hardening — COMPLETE (2026-03-25)
 Snapshot URL download (HTTP resume, SHA256, retry), CLI clean/apply/diff/status --watch, git hardening (hard-reset, reclone on corruption, URL change detection), dead code cleanup. 3 code review passes.
 
-### Phase 5: Kotlin Parity — COMPLETE (2026-03-26)
-All 25 P0/P1 gaps closed across 8 sub-phases. 4 review passes, 28 issues fixed.
-Remaining P2 gaps (non-blocking): true log streaming (#26), citeck uninstall (#27).
-After Phase 5: delete Kotlin code (`core/`, `cli/`, `app/`, `gradle/`).
+### Phase 5: Full Parity — COMPLETE (2026-03-26)
+All 25 P0/P1 gaps closed across 8 sub-phases.
 
 ### Key Technical Decisions
 - SSE (not WebSocket) for real-time events
@@ -174,8 +150,11 @@ After Phase 5: delete Kotlin code (`core/`, `cli/`, `app/`, `gradle/`).
 - `reflect.DeepEqual` for config diff (not string comparison)
 - filepath.Join everywhere (no fmt.Sprintf for paths)
 
+### Phase 6: Final Parity + Kotlin Removal — COMPLETE (2026-03-26)
+14 backend gaps + 7 web UI gaps closed. Kotlin code removed.
+
 ### All Gaps Closed
-No remaining gaps vs Kotlin. All 29 items from Phase 5 plan are implemented.
+All gaps closed. Kotlin code fully removed.
 
 ### Other References
 - **`PROGRESS.md`** — tracks completed work

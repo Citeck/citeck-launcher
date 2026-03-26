@@ -37,10 +37,11 @@ const (
 	Forms = APIV1 + "/forms"
 
 	// Snapshots
-	Snapshots         = APIV1 + "/snapshots"
-	SnapshotsExport   = APIV1 + "/snapshots/export"
-	SnapshotsImport   = APIV1 + "/snapshots/import"
-	SnapshotsDownload = APIV1 + "/snapshots/download"
+	Snapshots           = APIV1 + "/snapshots"
+	SnapshotsExport     = APIV1 + "/snapshots/export"
+	SnapshotsImport     = APIV1 + "/snapshots/import"
+	SnapshotsDownload   = APIV1 + "/snapshots/download"
+	WorkspaceSnapshots  = APIV1 + "/workspace/snapshots"
 )
 
 func AppLogs(name string) string {

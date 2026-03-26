@@ -89,6 +89,7 @@ type ApplicationDef struct {
 	Name              string            `json:"name"`
 	NetworkAliases    []string          `json:"networkAliases,omitempty"`
 	Image             string            `json:"image"`
+	ImageDigest       string            `json:"imageDigest,omitempty"` // Docker image digest for change detection
 	Environments      map[string]string `json:"environments,omitempty"`
 	Cmd               []string          `json:"cmd,omitempty"`
 	Ports             []string          `json:"ports,omitempty"`
@@ -111,6 +112,9 @@ func (d *ApplicationDef) GetHash() string {
 	h := sha256.New()
 	fmt.Fprintf(h, "name=%s\n", d.Name)
 	fmt.Fprintf(h, "image=%s\n", d.Image)
+	if d.ImageDigest != "" {
+		fmt.Fprintf(h, "imageDigest=%s\n", d.ImageDigest)
+	}
 	fmt.Fprintf(h, "cmd=%s\n", strings.Join(d.Cmd, " "))
 	fmt.Fprintf(h, "shmSize=%s\n", d.ShmSize)
 	fmt.Fprintf(h, "vch=%s\n", d.VolumesContentHash)

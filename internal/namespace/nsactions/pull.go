@@ -3,6 +3,7 @@ package nsactions
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/actions"
@@ -24,9 +25,10 @@ const PullRetriesForExistingImage = 3
 
 // PullData carries the image pull parameters.
 type PullData struct {
-	AppName string
-	Image   string
-	Auth    *docker.RegistryAuth // optional registry credentials
+	AppName    string
+	Image      string
+	Auth       *docker.RegistryAuth   // optional registry credentials
+	ProgressFn docker.PullProgressFn  // optional progress callback
 }
 
 // PullExecutor pulls a Docker image with configurable retry delays and fallback to local.
@@ -51,7 +53,7 @@ func (e *PullExecutor) Execute(ctx context.Context, actx *actions.ActionContext)
 		return nil
 	}
 
-	err := e.Docker.PullImage(ctx, d.Image, d.Auth)
+	err := e.Docker.PullImageWithProgress(ctx, d.Image, d.Auth, d.ProgressFn)
 	if err == nil {
 		return nil
 	}
@@ -61,6 +63,12 @@ func (e *PullExecutor) Execute(ctx context.Context, actx *actions.ActionContext)
 		return nil
 	}
 
+	// Detect 401/403 and provide actionable message with registry host
+	errStr := err.Error()
+	if strings.Contains(errStr, "401") || strings.Contains(errStr, "403") || strings.Contains(errStr, "unauthorized") || strings.Contains(errStr, "denied") {
+		host := registryHost(d.Image)
+		return fmt.Errorf("pull %s: authentication failed — run: docker login %s", d.Image, host)
+	}
 	return fmt.Errorf("pull %s: %w", d.Image, err)
 }
 
@@ -78,4 +86,14 @@ func (e *PullExecutor) RetryDelay(actx *actions.ActionContext) time.Duration {
 		return -1 // stop retrying
 	}
 	return delays[actx.Attempt]
+}
+
+// registryHost extracts the registry host from a Docker image reference.
+func registryHost(img string) string {
+	// "nexus.citeck.ru/ecos-model:1.0" → "nexus.citeck.ru"
+	// "docker.io/library/postgres:17" → "docker.io"
+	if idx := strings.IndexByte(img, '/'); idx > 0 && strings.ContainsAny(img[:idx], ".:") {
+		return img[:idx]
+	}
+	return "docker.io"
 }

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"archive/zip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -130,10 +131,10 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 	if d.cloudCfgServer != nil {
 		d.cloudCfgServer.UpdateConfig(genResp.CloudConfig)
 	}
-	d.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(d.workspaceConfig, d.store))
+	d.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(resolveResult.Workspace, d.store))
 
-	// Phase 3: regenerate runtime (async stop + start)
-	d.runtime.Regenerate(d.appDefs)
+	// Phase 3: regenerate runtime (async stop + start) — use local var, not d.appDefs (avoids race)
+	d.runtime.Regenerate(genResp.Applications)
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "Reload requested"})
 }
 
@@ -381,14 +382,13 @@ func (d *Daemon) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate YAML by attempting to parse
-	var testCfg namespace.NamespaceConfig
-	if err := yaml.Unmarshal(body, &testCfg); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid YAML: %s", err.Error()))
+	// Validate by fully parsing through ParseNamespaceConfig (applies business rules)
+	if _, err := namespace.ParseNamespaceConfig(body); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid config: %s", err.Error()))
 		return
 	}
 
-	// Write file
+	// Write original body to preserve user comments and formatting
 	if err := os.WriteFile(cfgPath, body, 0o644); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to write config: %s", err.Error()))
 		return
@@ -470,20 +470,14 @@ func (d *Daemon) handleDaemonLogs(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(strings.Join(lines, "\n")))
 }
 
-func (d *Daemon) handleSystemDump(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
+func (d *Daemon) buildDumpData(ctx context.Context) map[string]any {
 	dump := make(map[string]any)
-
-	// Daemon info
 	dump["daemon"] = map[string]any{
 		"pid":     os.Getpid(),
 		"uptime":  time.Since(d.startTime).Milliseconds(),
 		"version": "dev",
 		"socket":  d.socketPath,
 	}
-
-	// Namespace info
 	if d.nsConfig != nil {
 		dump["namespace"] = map[string]any{
 			"id":     d.nsConfig.ID,
@@ -491,15 +485,11 @@ func (d *Daemon) handleSystemDump(w http.ResponseWriter, r *http.Request) {
 			"bundle": d.nsConfig.BundleRef.String(),
 		}
 	}
-
-	// Docker info
 	if err := d.dockerClient.Ping(ctx); err != nil {
 		dump["docker"] = map[string]any{"available": false, "error": err.Error()}
 	} else {
 		dump["docker"] = map[string]any{"available": true}
 	}
-
-	// Apps status
 	if d.runtime != nil {
 		apps := d.runtime.Apps()
 		appList := make([]map[string]string, 0, len(apps))
@@ -512,9 +502,71 @@ func (d *Daemon) handleSystemDump(w http.ResponseWriter, r *http.Request) {
 		}
 		dump["apps"] = appList
 	}
+	return dump
+}
+
+func (d *Daemon) handleSystemDump(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	dump := d.buildDumpData(ctx)
+
+	if r.URL.Query().Get("format") == "zip" {
+		d.writeSystemDumpZip(w, ctx, dump)
+		return
+	}
 
 	w.Header().Set("Content-Disposition", "attachment; filename=system-dump.json")
 	writeJSON(w, dump)
+}
+
+func (d *Daemon) writeSystemDumpZip(w http.ResponseWriter, ctx context.Context, dump map[string]any) {
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", "attachment; filename=system-dump.zip")
+
+	zw := zip.NewWriter(w)
+	defer zw.Close()
+
+	// system-info.json
+	if infoData, err := json.MarshalIndent(dump, "", "  "); err == nil {
+		if fw, err := zw.Create("system-info.json"); err == nil {
+			fw.Write(infoData)
+		}
+	}
+
+	// namespace.yml
+	if d.nsConfig != nil {
+		nsPath := d.activeConfigPath()
+		if data, err := os.ReadFile(nsPath); err == nil {
+			if fw, err := zw.Create("namespace.yml"); err == nil {
+				fw.Write(data)
+			}
+		}
+	}
+
+	// daemon.yml
+	daemonPath := config.DaemonConfigPath()
+	if data, err := os.ReadFile(daemonPath); err == nil {
+		if fw, err := zw.Create("daemon.yml"); err == nil {
+			fw.Write(data)
+		}
+	}
+
+	// Per-app logs
+	if d.runtime != nil {
+		for _, app := range d.runtime.Apps() {
+			if app.ContainerID == "" {
+				continue
+			}
+			logs, err := d.dockerClient.ContainerLogs(ctx, app.ContainerID, 500)
+			if err != nil {
+				continue
+			}
+			fname := fmt.Sprintf("logs/%s.log", app.Name)
+			if fw, err := zw.Create(fname); err == nil {
+				fw.Write([]byte(logs))
+			}
+		}
+	}
 }
 
 func (d *Daemon) volumesDir() string {
@@ -563,6 +615,14 @@ func (d *Daemon) handleDeleteVolume(w http.ResponseWriter, r *http.Request) {
 	if _, err := os.Stat(volPath); err != nil {
 		writeError(w, http.StatusNotFound, "volume not found")
 		return
+	}
+	// Refuse deletion if namespace is running — volumes may be mounted in containers
+	if d.runtime != nil {
+		status := d.runtime.Status()
+		if status != namespace.NsStatusStopped {
+			writeError(w, http.StatusConflict, "cannot delete volume while namespace is running — stop the namespace first")
+			return
+		}
 	}
 	if err := os.RemoveAll(volPath); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -622,6 +682,136 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("App %s config updated and restart requested", name)})
+}
+
+func (d *Daemon) handleListAppFiles(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	app := d.findApp(name)
+	if app == nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("app %q not found", name))
+		return
+	}
+
+	// Collect bind-mounted files from relative bind mounts (./app/... etc.)
+	var files []string
+	for _, v := range app.Def.Volumes {
+		parts := strings.SplitN(v, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		hostPath := parts[0]
+		if !strings.HasPrefix(hostPath, "./") {
+			continue
+		}
+		// Resolve and check if the path is a regular file (not a directory)
+		absPath := filepath.Join(d.volumesBase, hostPath[2:])
+		if info, err := os.Stat(absPath); err == nil && !info.IsDir() {
+			files = append(files, hostPath)
+		}
+	}
+	writeJSON(w, files)
+}
+
+func (d *Daemon) handleGetAppFile(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	filePath := r.PathValue("path")
+	app := d.findApp(name)
+	if app == nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("app %q not found", name))
+		return
+	}
+
+	// Validate path is a known bind mount
+	relPath := "./" + filePath
+	if !isAppBindMount(app, relPath) {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("file %q is not a bind mount of app %q", filePath, name))
+		return
+	}
+
+	absPath := filepath.Join(d.volumesBase, filePath)
+	if !isPathUnder(absPath, d.volumesBase) {
+		writeError(w, http.StatusForbidden, "path outside workspace")
+		return
+	}
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write(data)
+}
+
+func (d *Daemon) handlePutAppFile(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	filePath := r.PathValue("path")
+	app := d.findApp(name)
+	if app == nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("app %q not found", name))
+		return
+	}
+
+	relPath := "./" + filePath
+	if !isAppBindMount(app, relPath) {
+		writeError(w, http.StatusForbidden, fmt.Sprintf("file %q is not a bind mount of app %q", filePath, name))
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1024*1024))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read body")
+		return
+	}
+
+	absPath := filepath.Join(d.volumesBase, filePath)
+	if !isPathUnder(absPath, d.volumesBase) {
+		writeError(w, http.StatusForbidden, "path outside workspace")
+		return
+	}
+	if err := os.WriteFile(absPath, body, 0o644); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, api.ActionResultDto{Success: true, Message: "File updated"})
+}
+
+func isPathUnder(path, base string) bool {
+	cleanPath := filepath.Clean(path)
+	cleanBase := filepath.Clean(base)
+	return strings.HasPrefix(cleanPath, cleanBase+string(filepath.Separator))
+}
+
+func isAppBindMount(app *namespace.AppRuntime, relPath string) bool {
+	for _, v := range app.Def.Volumes {
+		parts := strings.SplitN(v, ":", 2)
+		if len(parts) >= 2 && parts[0] == relPath {
+			return true
+		}
+	}
+	return false
+}
+
+func (d *Daemon) handleAppLockToggle(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if d.runtime == nil {
+		writeError(w, http.StatusBadRequest, "no namespace configured")
+		return
+	}
+	if d.findApp(name) == nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("app %q not found", name))
+		return
+	}
+
+	var body struct {
+		Locked bool `json:"locked"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	d.runtime.SetAppLocked(name, body.Locked)
+	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("App %s lock=%v", name, body.Locked)})
 }
 
 func (d *Daemon) handleHealth(w http.ResponseWriter, r *http.Request) {

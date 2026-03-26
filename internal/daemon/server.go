@@ -461,6 +461,10 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	// App config
 	mux.HandleFunc("GET /api/v1/apps/{name}/config", d.handleGetAppConfig)
 	mux.HandleFunc("PUT /api/v1/apps/{name}/config", d.handlePutAppConfig)
+	mux.HandleFunc("PUT /api/v1/apps/{name}/lock", d.handleAppLockToggle)
+	mux.HandleFunc("GET /api/v1/apps/{name}/files", d.handleListAppFiles)
+	mux.HandleFunc("GET /api/v1/apps/{name}/files/{path...}", d.handleGetAppFile)
+	mux.HandleFunc("PUT /api/v1/apps/{name}/files/{path...}", d.handlePutAppFile)
 
 	// Daemon logs
 	mux.HandleFunc("GET /api/v1/daemon/logs", d.handleDaemonLogs)
@@ -499,6 +503,8 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+api.SnapshotsExport, d.handleExportSnapshot)
 	mux.HandleFunc("POST "+api.SnapshotsImport, d.handleImportSnapshot)
 	mux.HandleFunc("POST "+api.SnapshotsDownload, d.handleDownloadSnapshot)
+	mux.HandleFunc("GET "+api.WorkspaceSnapshots, d.handleWorkspaceSnapshots)
+	mux.HandleFunc("PUT /api/v1/snapshots/{name}", d.handleRenameSnapshot)
 
 	// Web UI (fallback)
 	mux.Handle("/", WebUIHandler())
@@ -562,31 +568,12 @@ func makeTokenLookup(store storage.Store) bundle.TokenLookupFunc {
 
 // makeRegistryAuthFunc creates a function that returns Docker registry credentials
 // by matching image host against workspace config's imageReposByHost and looking up
-// stored secrets.
+// stored secrets at call time (not cached — reflects secret create/delete/rotate).
 func makeRegistryAuthFunc(wsCfg *bundle.WorkspaceConfig, store storage.Store) namespace.RegistryAuthFunc {
 	if wsCfg == nil || store == nil {
 		return nil
 	}
 	reposByHost := wsCfg.ImageReposByHost()
-
-	// Pre-load and cache all secrets (avoids N+1 queries during parallel image pulls)
-	secrets, err := store.ListSecrets()
-	if err != nil {
-		return nil
-	}
-	secretCache := make(map[string]string) // scope → value
-	for _, s := range secrets {
-		sec, err := store.GetSecret(s.ID)
-		if err != nil {
-			continue
-		}
-		if s.Scope != "" {
-			secretCache[s.Scope] = sec.Value
-		}
-		if string(s.Type) != "" {
-			secretCache[string(s.Type)] = sec.Value
-		}
-	}
 
 	return func(img string) *docker.RegistryAuth {
 		host := img
@@ -597,13 +584,8 @@ func makeRegistryAuthFunc(wsCfg *bundle.WorkspaceConfig, store storage.Store) na
 		if !ok || repo.AuthType == "" {
 			return nil
 		}
-		// Look up from cached secrets
-		var value string
-		if v, ok := secretCache[repo.AuthType]; ok {
-			value = v
-		} else if v, ok := secretCache[host]; ok {
-			value = v
-		}
+		// Look up secrets live from the store (reflects latest secret mutations)
+		value := lookupSecretValue(store, repo.AuthType, host)
 		if value == "" {
 			return nil
 		}
@@ -617,6 +599,25 @@ func makeRegistryAuthFunc(wsCfg *bundle.WorkspaceConfig, store storage.Store) na
 			Registry: "https://" + host,
 		}
 	}
+}
+
+// lookupSecretValue looks up a secret value by matching scope against authType or host.
+// Scope-based matching only — avoids cross-registry credential leakage from type-based fallback.
+func lookupSecretValue(store storage.Store, authType, host string) string {
+	secrets, err := store.ListSecrets()
+	if err != nil {
+		return ""
+	}
+	for _, s := range secrets {
+		if s.Scope != "" && (s.Scope == authType || s.Scope == host) {
+			sec, err := store.GetSecret(s.ID)
+			if err != nil {
+				continue
+			}
+			return sec.Value
+		}
+	}
+	return ""
 }
 
 // importSnapshotIfNeeded checks for the snapshot field in namespace config and imports

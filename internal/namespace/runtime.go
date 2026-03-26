@@ -87,9 +87,12 @@ type Runtime struct {
 	history            *OperationHistory
 	manualStoppedApps  map[string]bool
 	editedApps         map[string]appdef.ApplicationDef // user-edited app defs
-	editedLockedApps   map[string]bool                  // locked edits survive regeneration
-	statusCond         *sync.Cond                       // signaled on every app status change
+	editedLockedApps       map[string]bool                  // locked edits survive regeneration
+	dependsOnDetachedApps  map[string]bool                  // detached apps that trigger regen on restart
+	lastApps               []appdef.ApplicationDef          // last app defs passed to doStart
+	statusCond             *sync.Cond                       // signaled on every app status change
 	cmdCh              chan command
+	pullSem            chan struct{}       // limits concurrent image pulls (capacity 4)
 	runCtx          context.Context    // set by doStart, cancelled by doStop
 	cancel          context.CancelFunc
 	wg              sync.WaitGroup
@@ -135,6 +138,25 @@ func (r *Runtime) RestoreEditedApps(edited map[string]appdef.ApplicationDef, loc
 	for _, name := range locked {
 		r.editedLockedApps[name] = true
 	}
+}
+
+// SetAppLocked sets or clears the lock flag for an edited app.
+func (r *Runtime) SetAppLocked(appName string, locked bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if locked {
+		r.editedLockedApps[appName] = true
+	} else {
+		delete(r.editedLockedApps, appName)
+	}
+	r.persistState()
+}
+
+// SetDependsOnDetachedApps stores which detached apps trigger regeneration when restarted.
+func (r *Runtime) SetDependsOnDetachedApps(apps map[string]bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.dependsOnDetachedApps = apps
 }
 
 // persistState saves the current runtime state to disk. Must be called with r.mu held.
@@ -204,6 +226,7 @@ func NewRuntimeWithActions(cfg *NamespaceConfig, dockerClient *docker.Client, wo
 		editedLockedApps:  make(map[string]bool),
 		statusCond:        sync.NewCond(&sync.Mutex{}),
 		cmdCh:             make(chan command, 16),
+		pullSem:           make(chan struct{}, 4),
 	}
 }
 
@@ -233,14 +256,18 @@ func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 	defer r.mu.RUnlock()
 	apps := make([]api.AppDto, 0, len(r.apps))
 	for _, app := range r.apps {
+		_, edited := r.editedApps[app.Name]
 		apps = append(apps, api.AppDto{
-			Name:   app.Name,
-			Status: string(app.Status),
-			Image:  app.Def.Image,
-			CPU:    app.CPU,
-			Memory: app.Memory,
-			Kind:   kindToString(app.Def.Kind),
-			Ports:  app.Def.Ports,
+			Name:       app.Name,
+			Status:     string(app.Status),
+			StatusText: app.StatusText,
+			Image:      app.Def.Image,
+			CPU:        app.CPU,
+			Memory:     app.Memory,
+			Kind:       kindToString(app.Def.Kind),
+			Ports:      app.Def.Ports,
+			Edited:     edited,
+			Locked:     r.editedLockedApps[app.Name],
 		})
 	}
 	return api.NamespaceDto{
@@ -310,23 +337,7 @@ func (r *Runtime) generateLinks() []api.LinkDto {
 }
 
 func (r *Runtime) proxyBaseURL() string {
-	scheme := "http"
-	if r.config.Proxy.TLS.Enabled {
-		scheme = "https"
-	}
-	host := r.config.Proxy.Host
-	if host == "" {
-		host = "localhost"
-	}
-	port := r.config.Proxy.Port
-	defaultPort := 80
-	if r.config.Proxy.TLS.Enabled {
-		defaultPort = 443
-	}
-	if port == 0 || port == defaultPort {
-		return fmt.Sprintf("%s://%s", scheme, host)
-	}
-	return fmt.Sprintf("%s://%s:%d", scheme, host, port)
+	return BuildProxyBaseURL(r.config.Proxy)
 }
 
 func (r *Runtime) Start(apps []appdef.ApplicationDef) {
@@ -430,7 +441,7 @@ func (r *Runtime) RestartApp(appName string) error {
 	ctx := r.runCtx
 	r.mu.RUnlock()
 	if ctx == nil {
-		ctx = context.Background()
+		return fmt.Errorf("runtime not started, cannot restart app %q", appName)
 	}
 	if hasContainer {
 		_ = r.docker.StopAndRemoveContainer(ctx, containerName)
@@ -442,7 +453,22 @@ func (r *Runtime) RestartApp(appName string) error {
 		r.setAppStatus(app, AppStatusStarting)
 	}
 	delete(r.manualStoppedApps, appName)
+	needsRegen := r.dependsOnDetachedApps[appName]
 	r.mu.Unlock()
+
+	// If this detached app is a dependency of other apps, trigger full regeneration
+	// so that dependents (e.g. proxy) get reconfigured with the dependency back
+	if needsRegen {
+		slog.Info("Restarting detached app triggers regeneration", "app", appName)
+		r.mu.RLock()
+		regenApps := r.lastApps
+		r.mu.RUnlock()
+		select {
+		case r.cmdCh <- command{typ: cmdRegenerate, apps: regenApps}:
+		default:
+		}
+		return nil
+	}
 
 	// Re-start in background
 	r.appWg.Add(1)
@@ -573,6 +599,7 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) {
 	r.mu.Lock()
 	r.runCtx = ctx
 	r.cancel = cancel
+	r.lastApps = apps
 	r.setStatus(NsStatusStarting)
 	r.mu.Unlock()
 
@@ -659,21 +686,58 @@ func (r *Runtime) pullAndStartApp(ctx context.Context, appName string) {
 	// THIRD_PARTY: never re-pull (stable images)
 	// Other apps: only re-pull if image tag contains "snapshot" (case-insensitive)
 	if appDef.Image != "" {
+		// Acquire pull semaphore (max 4 concurrent pulls)
+		select {
+		case r.pullSem <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
+
 		pullAlways := shouldPullImage(appDef.Kind, appDef.Image)
 		var auth *docker.RegistryAuth
 		if r.registryAuthFn != nil {
 			auth = r.registryAuthFn(appDef.Image)
 		}
+		var lastProgressReport time.Time
+		progressFn := func(currentMB, totalMB float64, pct int) {
+			now := time.Now()
+			if now.Sub(lastProgressReport) < time.Second {
+				return
+			}
+			lastProgressReport = now
+			r.mu.Lock()
+			app.StatusText = fmt.Sprintf("Pulling: %.0fmb %d%%", totalMB, pct)
+			r.mu.Unlock()
+		}
 		pullHandle := r.actionSvc.Execute(actions.ActionParams{
 			Executor: &nsactions.PullExecutor{Docker: r.docker, PullAlways: pullAlways},
-			Data:     &nsactions.PullData{AppName: appName, Image: appDef.Image, Auth: auth},
+			Data:     &nsactions.PullData{AppName: appName, Image: appDef.Image, Auth: auth, ProgressFn: progressFn},
 		})
-		if err := pullHandle.Wait(ctx); err != nil {
+		pullErr := pullHandle.Wait(ctx)
+
+		// Release pull semaphore
+		<-r.pullSem
+
+		if pullErr != nil {
+			if ctx.Err() != nil {
+				return // cancelled by shutdown — not a failure
+			}
 			r.mu.Lock()
 			r.setAppStatus(app, AppStatusPullFailed)
-			app.StatusText = err.Error()
+			app.StatusText = pullErr.Error()
 			r.mu.Unlock()
 			return
+		}
+
+		// Clear pull status text and fetch image digest for deployment hash
+		r.mu.Lock()
+		app.StatusText = ""
+		r.mu.Unlock()
+		if digest := r.docker.GetImageDigest(ctx, appDef.Image); digest != "" {
+			r.mu.Lock()
+			appDef.ImageDigest = digest
+			app.Def = appDef
+			r.mu.Unlock()
 		}
 	}
 
@@ -687,7 +751,14 @@ func (r *Runtime) pullAndStartApp(ctx context.Context, appName string) {
 	r.mu.Unlock()
 
 	// Run init containers
-	r.runInitContainers(ctx, appName, appDef)
+	if err := r.runInitContainers(ctx, appName, appDef); err != nil {
+		slog.Error("Init container failed", "app", appName, "err", err)
+		r.mu.Lock()
+		r.setAppStatus(app, AppStatusStartFailed)
+		app.StatusText = fmt.Sprintf("init container: %v", err)
+		r.mu.Unlock()
+		return
+	}
 
 	// Create and start container via action service
 	startData := &nsactions.StartData{
@@ -787,13 +858,14 @@ func (r *Runtime) waitForDeps(ctx context.Context, appName string) bool {
 	}
 }
 
-func (r *Runtime) runInitContainers(ctx context.Context, appName string, appDef appdef.ApplicationDef) {
+func (r *Runtime) runInitContainers(ctx context.Context, appName string, appDef appdef.ApplicationDef) error {
 	for _, initC := range appDef.InitContainers {
 		slog.Info("Running init container", "app", appName, "image", initC.Image)
 		initDef := appdef.ApplicationDef{
 			Name: appName + "-init", Image: initC.Image,
 			Cmd: initC.Cmd, Volumes: initC.Volumes, Environments: initC.Environments,
-			IsInit: true, // no restart policy for init containers
+			Resources: &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "100m"}},
+			IsInit:    true, // no restart policy for init containers
 		}
 
 		// Pull init image via action service
@@ -806,24 +878,27 @@ func (r *Runtime) runInitContainers(ctx context.Context, appName string, appDef 
 			Data:     &nsactions.PullData{AppName: appName, Image: initC.Image, Auth: initAuth},
 		})
 		if err := pullHandle.Wait(ctx); err != nil {
-			slog.Warn("Init container pull failed after retries", "app", appName, "image", initC.Image, "err", err)
-			continue
+			return fmt.Errorf("pull init image %s: %w", initC.Image, err)
 		}
 
 		initName := r.docker.ContainerName(appName + "-init")
 		_ = r.docker.StopAndRemoveContainer(ctx, initName)
 		initID, err := r.docker.CreateContainer(ctx, initDef, r.volumesBase)
 		if err != nil {
-			slog.Warn("Init container create failed", "app", appName, "err", err)
-			continue
+			return fmt.Errorf("create init container for %s: %w", appName, err)
 		}
 		if err := r.docker.StartContainer(ctx, initID); err != nil {
-			slog.Warn("Init container start failed", "app", appName, "err", err)
+			_ = r.docker.RemoveContainer(ctx, initID)
+			return fmt.Errorf("start init container for %s: %w", appName, err)
 		}
 		// Wait for init container to EXIT (not start)
-		r.docker.WaitForContainerExit(ctx, initID, 60*time.Second)
+		if err := r.docker.WaitForContainerExit(ctx, initID, 60*time.Second); err != nil {
+			_ = r.docker.RemoveContainer(ctx, initID)
+			return fmt.Errorf("init container exited with error for %s: %w", appName, err)
+		}
 		_ = r.docker.RemoveContainer(ctx, initID)
 	}
+	return nil
 }
 
 func (r *Runtime) waitForStartup(ctx context.Context, appName, containerID string, conditions []appdef.StartupCondition) error {
@@ -1128,6 +1203,10 @@ func (r *Runtime) checkStatus() {
 	}
 	if anyFailed && (r.status == NsStatusStarting || r.status == NsStatusRunning) {
 		r.setStatus(NsStatusStalled)
+	}
+	// Recover from STALLED when failed apps have recovered
+	if !anyFailed && r.status == NsStatusStalled {
+		r.setStatus(NsStatusStarting)
 	}
 }
 

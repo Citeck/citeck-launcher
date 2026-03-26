@@ -34,6 +34,7 @@ type DataSourceConfig struct {
 
 // WebappDefaultProps holds default properties for a webapp from workspace config.
 type WebappDefaultProps struct {
+	Image        string                       `yaml:"image"`
 	HeapSize     string                       `yaml:"heapSize"`
 	MemoryLimit  string                       `yaml:"memoryLimit"`
 	Environments map[string]string            `yaml:"environments"`
@@ -70,12 +71,13 @@ type NamespaceTemplate struct {
 
 // BundlesRepo describes a git repository containing bundle definitions.
 type BundlesRepo struct {
-	ID       string `yaml:"id"`
-	Name     string `yaml:"name"`
-	URL      string `yaml:"url,omitempty"`
-	Branch   string `yaml:"branch,omitempty"`
-	Path     string `yaml:"path,omitempty"`
-	AuthType string `yaml:"authType,omitempty"`
+	ID         string `yaml:"id"`
+	Name       string `yaml:"name"`
+	URL        string `yaml:"url,omitempty"`
+	Branch     string `yaml:"branch,omitempty"`
+	Path       string `yaml:"path,omitempty"`
+	AuthType   string `yaml:"authType,omitempty"`
+	PullPeriod string `yaml:"pullPeriod,omitempty"` // e.g. "30m", "2h" — defaults to 1h
 }
 
 // SnapshotDef describes a downloadable snapshot from workspace config.
@@ -222,9 +224,15 @@ func (r *Resolver) Resolve(ref BundleRef) (*ResolveResult, error) {
 	}
 
 	// Step 3: Clone or pull the actual bundle repo
+	pullPeriod := defaultPullPeriod
+	if bundleRepo != nil && bundleRepo.PullPeriod != "" {
+		if d, err := time.ParseDuration(bundleRepo.PullPeriod); err == nil && d > 0 {
+			pullPeriod = d
+		}
+	}
 	if err := git.CloneOrPullWithAuth(git.RepoOpts{
 		URL: repoURL, Branch: repoBranch, DestDir: repoDir,
-		Token: repoToken, PullPeriod: defaultPullPeriod,
+		Token: repoToken, PullPeriod: pullPeriod,
 	}); err != nil {
 		slog.Warn("Failed to sync bundle repo", "repo", ref.Repo, "err", err)
 	}
@@ -310,6 +318,9 @@ func buildAliasMap(cfg *WorkspaceConfig) map[string]string {
 	for _, alias := range cfg.CiteckProxy.Aliases {
 		m[alias] = "proxy"
 	}
+	for _, alias := range cfg.Alfresco.Aliases {
+		m[alias] = "alfresco"
+	}
 	return m
 }
 
@@ -335,26 +346,14 @@ func resolveImageURL(repository, tag string, imageRepoMap map[string]string) str
 	return repository + ":" + tag
 }
 
-// rawBundleEntry is a single app entry in the bundle YAML.
-type rawBundleEntry struct {
-	Image struct {
-		Repository string `yaml:"repository"`
-		Tag        string `yaml:"tag"`
-	} `yaml:"image"`
-	EcosAppsImages []struct {
-		Repository string `yaml:"repository"`
-		Tag        string `yaml:"tag"`
-	} `yaml:"ecosAppsImages"`
-}
-
 func parseBundleFile(path, version string, aliasMap map[string]string, imageRepoMap map[string]string) (*BundleDef, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read bundle %s: %w", version, err)
 	}
 
-	// Parse as map of raw entries
-	var raw map[string]rawBundleEntry
+	// Parse as generic map — needed for ecos: scope recursion
+	var raw map[string]any
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse bundle %s: %w", version, err)
 	}
@@ -362,42 +361,91 @@ func parseBundleFile(path, version string, aliasMap map[string]string, imageRepo
 	applications := make(map[string]BundleAppDef)
 	var citeckApps []BundleAppDef
 
-	for alias, entry := range raw {
-		image := resolveImageURL(entry.Image.Repository, entry.Image.Tag, imageRepoMap)
+	// processApp handles one bundle entry. When appName is "ecos", it recurses
+	// into sub-entries (Helm charts group core apps under an ecos: key).
+	var processApp func(appName string, value map[string]any)
+	processApp = func(appName string, value map[string]any) {
+		if appName == "" {
+			return
+		}
+		if appName == "ecos" {
+			// Recurse into nested entries under ecos: scope
+			for subName, subVal := range value {
+				if subMap, ok := subVal.(map[string]any); ok {
+					processApp(subName, subMap)
+				}
+			}
+			return
+		}
+
+		image := extractBundleImage(value, imageRepoMap)
 		if image == "" {
-			continue
+			return
 		}
 
 		// Map alias to canonical name
-		appName := alias
-		if canonical, ok := aliasMap[alias]; ok {
-			appName = canonical
+		canonical := appName
+		if mapped, ok := aliasMap[appName]; ok {
+			canonical = mapped
 		}
-
-		applications[appName] = BundleAppDef{Image: image}
+		applications[canonical] = BundleAppDef{Image: image}
 
 		// Collect citeck apps (ecos-apps init containers)
-		for _, ecosApp := range entry.EcosAppsImages {
-			citeckAppImage := resolveImageURL(ecosApp.Repository, ecosApp.Tag, imageRepoMap)
-			if citeckAppImage != "" {
-				citeckApps = append(citeckApps, BundleAppDef{Image: citeckAppImage})
+		if ecosApps, ok := value["ecosAppsImages"]; ok {
+			if ecosAppsList, ok := ecosApps.([]any); ok {
+				for _, ea := range ecosAppsList {
+					if eaMap, ok := ea.(map[string]any); ok {
+						citeckAppImage := resolveImageURL(strVal(eaMap, "repository"), strVal(eaMap, "tag"), imageRepoMap)
+						if citeckAppImage != "" {
+							citeckApps = append(citeckApps, BundleAppDef{Image: citeckAppImage})
+						}
+					}
+				}
 			}
 		}
 	}
 
-	// Parse raw content as generic map for bundle.content (used by license system)
-	var rawContent map[string]any
-	yaml.Unmarshal(data, &rawContent)
+	for appName, value := range raw {
+		if valueMap, ok := value.(map[string]any); ok {
+			processApp(appName, valueMap)
+		}
+	}
 
 	def := &BundleDef{
 		Key:          BundleKey{Version: version},
 		Applications: applications,
 		CiteckApps:   citeckApps,
-		Content:      rawContent,
+		Content:      raw,
 	}
 
 	slog.Info("Resolved bundle", "version", version, "apps", len(applications), "citeckApps", len(citeckApps))
 	return def, nil
+}
+
+// extractBundleImage extracts image URL from a bundle entry's image.repository + image.tag.
+func extractBundleImage(entry map[string]any, imageRepoMap map[string]string) string {
+	imgObj, ok := entry["image"]
+	if !ok {
+		return ""
+	}
+	imgMap, ok := imgObj.(map[string]any)
+	if !ok {
+		return ""
+	}
+	return resolveImageURL(strVal(imgMap, "repository"), strVal(imgMap, "tag"), imageRepoMap)
+}
+
+// strVal safely extracts a string value from a map.
+func strVal(m map[string]any, key string) string {
+	v, ok := m[key]
+	if !ok {
+		return ""
+	}
+	s, ok := v.(string)
+	if !ok {
+		return ""
+	}
+	return s
 }
 
 func findBundleFile(dir, key string) string {
@@ -414,6 +462,13 @@ func findBundleFile(dir, key string) string {
 	return ""
 }
 
+// isVersionString checks if a name looks like a version (starts with a digit).
+// Citeck bundle versions follow the format "YYYY.N" (e.g. "2025.10"), so all valid
+// version strings start with a digit. This filters out non-version files like README.yml.
+func isVersionString(name string) bool {
+	return len(name) > 0 && name[0] >= '0' && name[0] <= '9'
+}
+
 // ListBundleVersions lists available bundle version keys in a given bundles sub-directory.
 func ListBundleVersions(bundlesDir string) []string {
 	entries, err := os.ReadDir(bundlesDir)
@@ -428,7 +483,9 @@ func ListBundleVersions(bundlesDir string) []string {
 		name := e.Name()
 		name = strings.TrimSuffix(name, ".yaml")
 		name = strings.TrimSuffix(name, ".yml")
-		versions = append(versions, name)
+		if isVersionString(name) {
+			versions = append(versions, name)
+		}
 	}
 	return versions
 }
@@ -447,6 +504,9 @@ func findLatestBundle(bundlesDir string) (string, error) {
 		name := e.Name()
 		name = strings.TrimSuffix(name, ".yaml")
 		name = strings.TrimSuffix(name, ".yml")
+		if !isVersionString(name) {
+			continue
+		}
 		if latest == "" || compareBundleVersions(name, latest) > 0 {
 			latest = name
 		}

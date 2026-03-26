@@ -1,13 +1,20 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { getVolumes, deleteVolume, getSnapshots, postExportSnapshot, postImportSnapshot } from '../lib/api'
+import { getVolumes, deleteVolume, getSnapshots, postExportSnapshot, postImportSnapshot, getWorkspaceSnapshots, postSnapshotDownload, renameSnapshot } from '../lib/api'
 import type { SnapshotDto } from '../lib/types'
 import { ConfirmModal } from '../components/ConfirmModal'
-import { Trash2, Download, Upload, Archive, Loader2 } from 'lucide-react'
+import { Trash2, Download, Upload, Archive, Loader2, Pencil, Cloud } from 'lucide-react'
+
+interface WsSnapshot {
+  id: string
+  name: string
+  url: string
+  size?: string
+}
+
 
 interface VolumeInfo {
   name: string
-  driver: string
-  mountpoint: string
+  path: string
 }
 
 export function Volumes() {
@@ -20,11 +27,16 @@ export function Volumes() {
   const [exporting, setExporting] = useState(false)
   const [importing, setImporting] = useState(false)
   const [snapshotMsg, setSnapshotMsg] = useState<string | null>(null)
+  const [wsSnapshots, setWsSnapshots] = useState<WsSnapshot[]>([])
+  const [downloading, setDownloading] = useState<string | null>(null)
+  const [renaming, setRenaming] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const loadData = useCallback(() => {
     getVolumes().then(setVolumes).catch((e) => setError(e.message))
     getSnapshots().then(setSnapshots).catch(() => {})
+    getWorkspaceSnapshots().then(setWsSnapshots).catch(() => {})
   }, [])
 
   useEffect(() => { loadData() }, [loadData])
@@ -88,7 +100,7 @@ export function Volumes() {
         <thead>
           <tr className="text-left text-muted-foreground border-b border-border">
             <th className="py-1 pr-4 font-medium">Name</th>
-            <th className="py-1 pr-4 font-medium">Driver</th>
+            <th className="py-1 pr-4 font-medium">Path</th>
             <th className="py-1 font-medium text-right w-16"></th>
           </tr>
         </thead>
@@ -96,7 +108,7 @@ export function Volumes() {
           {volumes.map((v) => (
             <tr key={v.name} className="border-b border-border/20 hover:bg-muted/30">
               <td className="py-[3px] pr-4 font-mono">{v.name}</td>
-              <td className="py-[3px] pr-4 text-muted-foreground">{v.driver}</td>
+              <td className="py-[3px] pr-4 text-muted-foreground text-[11px] font-mono truncate max-w-xs" title={v.path}>{v.path}</td>
               <td className="py-[3px] text-right">
                 <button type="button" className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-muted"
                   title="Delete volume" onClick={() => setDeleteTarget(v.name)}>
@@ -169,7 +181,27 @@ export function Volumes() {
             <tbody>
               {snapshots.map((s) => (
                 <tr key={s.name} className="border-b border-border/20 hover:bg-muted/30">
-                  <td className="py-[3px] pr-4 font-mono">{s.name}</td>
+                  <td className="py-[3px] pr-4 font-mono">
+                    {renaming === s.name ? (
+                      <form className="inline-flex gap-1" onSubmit={async (e) => {
+                        e.preventDefault()
+                        try { await renameSnapshot(s.name, renameValue); setRenaming(null); loadData() } catch (e) { setSnapshotMsg(`Rename failed: ${(e as Error).message}`) }
+                      }}>
+                        <input className="border border-border rounded px-1 bg-background text-foreground text-xs font-mono w-40"
+                          value={renameValue} onChange={(e) => setRenameValue(e.target.value)} autoFocus />
+                        <button type="submit" className="text-primary text-[10px]">OK</button>
+                        <button type="button" className="text-muted-foreground text-[10px]" onClick={() => setRenaming(null)}>Cancel</button>
+                      </form>
+                    ) : (
+                      <span className="inline-flex items-center gap-1">
+                        {s.name}
+                        <button type="button" className="p-0.5 text-muted-foreground hover:text-foreground"
+                          title="Rename" onClick={() => { setRenaming(s.name); setRenameValue(s.name) }}>
+                          <Pencil size={10} />
+                        </button>
+                      </span>
+                    )}
+                  </td>
                   <td className="py-[3px] pr-4 text-muted-foreground">{formatSize(s.size)}</td>
                   <td className="py-[3px] pr-4 text-muted-foreground">{new Date(s.createdAt).toLocaleString()}</td>
                 </tr>
@@ -180,6 +212,49 @@ export function Volumes() {
           <div className="text-xs text-muted-foreground py-2">No snapshots yet. Export volumes to create one.</div>
         )}
       </div>
+
+      {/* Workspace snapshots section */}
+      {wsSnapshots.length > 0 && (
+        <div className="mt-6 border-t border-border pt-4">
+          <h2 className="text-sm font-semibold flex items-center gap-1.5 mb-3">
+            <Cloud size={14} />
+            Workspace Snapshots
+          </h2>
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr className="text-left text-muted-foreground border-b border-border">
+                <th className="py-1 pr-4 font-medium">Name</th>
+                <th className="py-1 pr-4 font-medium">Size</th>
+                <th className="py-1 font-medium text-right w-24"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {wsSnapshots.map((ws) => (
+                <tr key={ws.id} className="border-b border-border/20 hover:bg-muted/30">
+                  <td className="py-[3px] pr-4 font-mono">{ws.name}</td>
+                  <td className="py-[3px] pr-4 text-muted-foreground">{ws.size || '—'}</td>
+                  <td className="py-[3px] text-right">
+                    <button type="button"
+                      className="flex items-center gap-1 rounded border border-border px-2 py-0.5 text-xs hover:bg-muted disabled:opacity-50 ml-auto"
+                      disabled={downloading === ws.id}
+                      onClick={async () => {
+                        setDownloading(ws.id); setSnapshotMsg(null)
+                        try {
+                          const result = await postSnapshotDownload(ws.url, ws.id)
+                          setSnapshotMsg(result.message); loadData()
+                        } catch (e) { setSnapshotMsg(`Download failed: ${(e as Error).message}`) }
+                        finally { setDownloading(null) }
+                      }}>
+                      {downloading === ws.id ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
+                      Download
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <ConfirmModal
         open={!!deleteTarget}

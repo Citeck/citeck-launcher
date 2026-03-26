@@ -1,7 +1,9 @@
 package docker
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -318,6 +320,14 @@ type RegistryAuth struct {
 
 // PullImage pulls a Docker image, optionally with registry credentials.
 func (c *Client) PullImage(ctx context.Context, img string, auth *RegistryAuth) error {
+	return c.PullImageWithProgress(ctx, img, auth, nil)
+}
+
+// PullProgressFn is called during image pull with current/total bytes and percentage.
+type PullProgressFn func(currentMB, totalMB float64, pct int)
+
+// PullImageWithProgress pulls an image and reports download progress via callback.
+func (c *Client) PullImageWithProgress(ctx context.Context, img string, auth *RegistryAuth, progressFn PullProgressFn) error {
 	opts := image.PullOptions{}
 	if auth != nil && auth.Username != "" {
 		authCfg := registry.AuthConfig{
@@ -336,9 +346,13 @@ func (c *Client) PullImage(ctx context.Context, img string, auth *RegistryAuth) 
 		return fmt.Errorf("pull image %s: %w", img, err)
 	}
 	defer reader.Close()
-	// Consume the reader to completion
-	_, err = io.Copy(io.Discard, reader)
-	return err
+
+	if progressFn == nil {
+		_, err = io.Copy(io.Discard, reader)
+		return err
+	}
+
+	return parsePullProgress(reader, progressFn)
 }
 
 // ContainerLogsFollow returns a streaming reader for container logs with follow=true.
@@ -356,6 +370,61 @@ func (c *Client) ContainerLogsFollow(ctx context.Context, containerID string, ta
 func (c *Client) ImageExists(ctx context.Context, img string) bool {
 	_, _, err := c.cli.ImageInspectWithRaw(ctx, img)
 	return err == nil
+}
+
+// GetImageDigest returns the RepoDigest for a locally available image.
+// Returns empty string if the image is not found or has no digest.
+func (c *Client) GetImageDigest(ctx context.Context, img string) string {
+	inspect, _, err := c.cli.ImageInspectWithRaw(ctx, img)
+	if err != nil {
+		return ""
+	}
+	if len(inspect.RepoDigests) > 0 {
+		return inspect.RepoDigests[0]
+	}
+	return ""
+}
+
+// parsePullProgress reads Docker pull JSON stream and reports aggregated progress.
+func parsePullProgress(reader io.Reader, progressFn PullProgressFn) error {
+	type pullEvent struct {
+		Status         string `json:"status"`
+		ProgressDetail struct {
+			Current int64 `json:"current"`
+			Total   int64 `json:"total"`
+		} `json:"progressDetail"`
+		ID    string `json:"id"`
+		Error string `json:"error"`
+	}
+
+	layerCurrent := make(map[string]int64)
+	layerTotal := make(map[string]int64)
+	scanner := bufio.NewScanner(reader)
+	for scanner.Scan() {
+		var evt pullEvent
+		if err := json.Unmarshal(scanner.Bytes(), &evt); err != nil {
+			continue
+		}
+		if evt.Error != "" {
+			return fmt.Errorf("docker pull error: %s", evt.Error)
+		}
+		if evt.ID != "" && evt.ProgressDetail.Total > 0 {
+			layerCurrent[evt.ID] = evt.ProgressDetail.Current
+			layerTotal[evt.ID] = evt.ProgressDetail.Total
+		}
+
+		var totalBytes, currentBytes int64
+		for id, t := range layerTotal {
+			totalBytes += t
+			currentBytes += layerCurrent[id]
+		}
+		if totalBytes > 0 {
+			const mb = 1024 * 1024
+			pct := int(currentBytes * 100 / totalBytes)
+			progressFn(float64(currentBytes)/float64(mb), float64(totalBytes)/float64(mb), pct)
+		}
+	}
+	return scanner.Err()
 }
 
 // ContainerLogs returns logs from a container.

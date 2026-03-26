@@ -105,10 +105,11 @@ webapps:
 func TestListBundleVersions(t *testing.T) {
 	dir := t.TempDir()
 
-	// Create some bundle files
+	// Create some bundle files and non-version files
 	os.WriteFile(filepath.Join(dir, "1.0.yaml"), []byte("test"), 0o644)
 	os.WriteFile(filepath.Join(dir, "1.1.yaml"), []byte("test"), 0o644)
 	os.WriteFile(filepath.Join(dir, "2.0.yml"), []byte("test"), 0o644)
+	os.WriteFile(filepath.Join(dir, "README.yml"), []byte("test"), 0o644) // non-version, must be excluded
 	os.MkdirAll(filepath.Join(dir, "subdir"), 0o755)
 
 	versions := ListBundleVersions(dir)
@@ -202,4 +203,90 @@ func TestFindBundleRepo(t *testing.T) {
 	assert.Equal(t, "https://github.com/repo1.git", found.URL)
 
 	assert.Nil(t, findBundleRepo(cfg, "nonexistent"))
+}
+
+func TestParseBundleFile_EcosScopeRecursion(t *testing.T) {
+	dir := t.TempDir()
+	// Bundle with ecos: scope wrapping apps — Helm chart format
+	yml := `
+ecos:
+  EcosModelApp:
+    image:
+      repository: core/ecos-model
+      tag: "2.0"
+  EcosProcessApp:
+    image:
+      repository: core/ecos-process
+      tag: "3.0"
+EcosProxyApp:
+  image:
+    repository: core/ecos-proxy
+    tag: "1.0"
+`
+	path := filepath.Join(dir, "2025.1.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(yml), 0o644))
+
+	aliasMap := map[string]string{
+		"EcosModelApp":   "emodel",
+		"EcosProcessApp": "eproc",
+		"EcosProxyApp":   "proxy",
+	}
+	imageRepoMap := map[string]string{
+		"core": "nexus.citeck.ru",
+	}
+
+	def, err := parseBundleFile(path, "2025.1", aliasMap, imageRepoMap)
+	require.NoError(t, err)
+
+	// Apps under ecos: scope should be resolved
+	assert.Contains(t, def.Applications, "emodel")
+	assert.Equal(t, "nexus.citeck.ru/ecos-model:2.0", def.Applications["emodel"].Image)
+	assert.Contains(t, def.Applications, "eproc")
+	assert.Equal(t, "nexus.citeck.ru/ecos-process:3.0", def.Applications["eproc"].Image)
+
+	// Top-level apps should also work
+	assert.Contains(t, def.Applications, "proxy")
+	assert.Equal(t, "nexus.citeck.ru/ecos-proxy:1.0", def.Applications["proxy"].Image)
+}
+
+func TestParseBundleFile_CiteckApps(t *testing.T) {
+	dir := t.TempDir()
+	yml := `
+eapps:
+  image:
+    repository: core/ecos-apps
+    tag: "1.0"
+  ecosAppsImages:
+    - repository: core/ecos-data-app
+      tag: "2.0"
+    - repository: core/ecos-model-app
+      tag: "3.0"
+`
+	path := filepath.Join(dir, "test.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(yml), 0o644))
+
+	imageRepoMap := map[string]string{"core": "nexus.citeck.ru"}
+	def, err := parseBundleFile(path, "test", nil, imageRepoMap)
+	require.NoError(t, err)
+
+	assert.Contains(t, def.Applications, "eapps")
+	assert.Len(t, def.CiteckApps, 2)
+	assert.Equal(t, "nexus.citeck.ru/ecos-data-app:2.0", def.CiteckApps[0].Image)
+	assert.Equal(t, "nexus.citeck.ru/ecos-model-app:3.0", def.CiteckApps[1].Image)
+}
+
+func TestBuildAliasMap_IncludesAlfrescoAliases(t *testing.T) {
+	cfg := &WorkspaceConfig{
+		Webapps: []WebappConfig{
+			{ID: "emodel", Aliases: []string{"EcosModelApp"}},
+		},
+		CiteckProxy: ProxyConfig{Aliases: []string{"EcosProxyApp"}},
+		Alfresco:    AlfrescoProps{Aliases: []string{"AlfrescoApp", "AlfApp"}},
+	}
+
+	m := buildAliasMap(cfg)
+	assert.Equal(t, "emodel", m["EcosModelApp"])
+	assert.Equal(t, "proxy", m["EcosProxyApp"])
+	assert.Equal(t, "alfresco", m["AlfrescoApp"])
+	assert.Equal(t, "alfresco", m["AlfApp"])
 }

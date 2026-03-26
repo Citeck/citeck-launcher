@@ -6,11 +6,14 @@ export interface ActionResultDto {
 export interface AppDto {
   name: string
   status: string
+  statusText?: string
   image: string
   cpu: string
   memory: string
   kind: string
   ports?: string[]
+  edited?: boolean
+  locked?: boolean
 }
 
 export interface LinkDto {
@@ -107,6 +110,8 @@ export interface NamespaceCreateDto {
   bundleRepo: string
   bundleKey: string
   workspaceId?: string
+  snapshot?: string
+  template?: string
 }
 
 export interface BundleInfoDto {
@@ -154,5 +159,4 @@ export interface SnapshotDto {
   name: string
   createdAt: string
   size: number
-  volumes: string[]
 }

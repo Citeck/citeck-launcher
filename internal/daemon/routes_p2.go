@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -835,6 +836,8 @@ func (d *Daemon) handleDownloadSnapshot(w http.ResponseWriter, r *http.Request) 
 }
 
 // safeSnapshotFileName extracts and sanitizes a file name from a download URL.
+// safeSnapshotFileName extracts a safe filename from a download URL.
+// Used by both routes_p2.go (downloadAndImportSnapshot) and server.go (importSnapshotIfNeeded).
 func safeSnapshotFileName(rawURL string) string {
 	if idx := strings.LastIndex(rawURL, "/"); idx >= 0 {
 		name := rawURL[idx+1:]
@@ -959,4 +962,74 @@ func (d *Daemon) downloadAndImportSnapshot(snapshotID, wsID, nsID string) {
 		Type: "snapshot_complete", Timestamp: time.Now().UnixMilli(),
 		NamespaceID: nsID, After: fmt.Sprintf("imported %d volumes", len(meta.Volumes)),
 	})
+}
+
+func (d *Daemon) handleWorkspaceSnapshots(w http.ResponseWriter, _ *http.Request) {
+	d.configMu.RLock()
+	wsCfg := d.workspaceConfig
+	d.configMu.RUnlock()
+
+	if wsCfg == nil || len(wsCfg.Snapshots) == 0 {
+		writeJSON(w, []bundle.SnapshotDef{})
+		return
+	}
+	writeJSON(w, wsCfg.Snapshots)
+}
+
+func (d *Daemon) handleRenameSnapshot(w http.ResponseWriter, r *http.Request) {
+	oldName := r.PathValue("name")
+	if oldName == "" || !strings.HasSuffix(oldName, ".zip") {
+		writeError(w, http.StatusBadRequest, "invalid snapshot name")
+		return
+	}
+
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" {
+		writeError(w, http.StatusBadRequest, "missing new name")
+		return
+	}
+
+	// Validate names to prevent path traversal
+	oldBase := strings.TrimSuffix(oldName, ".zip")
+	if !safeIDPattern.MatchString(oldBase) {
+		writeError(w, http.StatusBadRequest, "invalid snapshot name")
+		return
+	}
+
+	dir, err := d.snapshotsDir()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Ensure new name ends with .zip and validate
+	newName := body.Name
+	if !strings.HasSuffix(newName, ".zip") {
+		newName += ".zip"
+	}
+	newBase := strings.TrimSuffix(newName, ".zip")
+	if !safeIDPattern.MatchString(newBase) {
+		writeError(w, http.StatusBadRequest, "invalid new name")
+		return
+	}
+
+	oldPath := filepath.Join(dir, oldName)
+	newPath := filepath.Join(dir, newName)
+
+	if _, err := os.Stat(oldPath); os.IsNotExist(err) {
+		writeError(w, http.StatusNotFound, "snapshot not found")
+		return
+	}
+	if _, err := os.Stat(newPath); err == nil {
+		writeError(w, http.StatusConflict, "target name already exists")
+		return
+	}
+
+	if err := os.Rename(oldPath, newPath); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("Renamed to %s", newName)})
 }

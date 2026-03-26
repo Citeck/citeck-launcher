@@ -6,7 +6,7 @@ import { useDashboardStore } from '../lib/store'
 import { useTabsStore } from '../lib/tabs'
 import { StatusBadge } from './StatusBadge'
 import { ConfirmModal } from './ConfirmModal'
-import { Square, Play, RotateCw, FileText, Settings } from 'lucide-react'
+import { Square, Play, RotateCw, FileText, Settings, Circle } from 'lucide-react'
 
 interface AppTableProps {
   apps: AppDto[]
@@ -132,7 +132,12 @@ function GroupRows({ label, apps, onAction }: { label: string; apps: AppDto[]; o
                 {app.name}
               </a>
             </td>
-            <td className="py-[3px] pr-4"><StatusBadge status={app.status} /></td>
+            <td className="py-[3px] pr-4">
+              <span className="inline-flex items-center gap-1.5">
+                <StatusBadge status={app.status} />
+                {app.statusText && <span className="text-muted-foreground text-[10px]">{app.statusText}</span>}
+              </span>
+            </td>
             <td className="py-[3px] pr-2 text-right font-mono text-muted-foreground">{app.cpu || ''}</td>
             <td className="py-[3px] pr-4 text-right font-mono text-muted-foreground">{app.memory ? app.memory.split(' / ')[0] : ''}</td>
             <td className="py-[3px] pr-4 font-mono text-muted-foreground whitespace-nowrap" title={app.ports?.join(', ')}>
@@ -158,9 +163,10 @@ function GroupRows({ label, apps, onAction }: { label: string; apps: AppDto[]; o
                   onClick={() => openInTab(`logs-${app.name}`, `Logs: ${app.name}`, `/apps/${app.name}/logs`)}>
                   <FileText size={14} />
                 </button>
-                <button type="button" className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted" title="Details"
+                <button type="button" className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted relative" title={app.edited ? (app.locked ? 'Edited (locked)' : 'Edited') : 'Details'}
                   onClick={() => openInTab(`app-${app.name}`, app.name, `/apps/${app.name}`)}>
                   <Settings size={14} />
+                  {app.edited && <Circle size={6} className="absolute top-0.5 right-0.5 fill-blue-500 text-blue-500" />}
                 </button>
               </div>
             </td>

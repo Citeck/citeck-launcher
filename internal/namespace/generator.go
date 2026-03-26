@@ -15,9 +15,10 @@ import (
 
 // NamespaceGenResp is the result of namespace generation.
 type NamespaceGenResp struct {
-	Applications []appdef.ApplicationDef
-	Files        map[string][]byte
-	CloudConfig  map[string]map[string]any // per-app ext cloud config for CloudConfigServer
+	Applications          []appdef.ApplicationDef
+	Files                 map[string][]byte
+	CloudConfig           map[string]map[string]any // per-app ext cloud config for CloudConfigServer
+	DependsOnDetachedApps map[string]bool           // apps whose reattachment triggers regeneration
 }
 
 // GenerateOpts holds optional parameters for namespace generation.
@@ -71,10 +72,27 @@ func Generate(cfg *NamespaceConfig, bun *bundle.BundleDef, wsCfg *bundle.Workspa
 		apps = append(apps, b.Build())
 	}
 
+	// Compute DependsOnDetachedApps: detached apps that are referenced as dependencies
+	// by other (non-detached) apps. Restarting these triggers regeneration.
+	dependsOnDetached := make(map[string]bool)
+	if len(ctx.DetachedApps) > 0 {
+		for _, a := range apps {
+			if ctx.DetachedApps[a.Name] {
+				continue
+			}
+			for dep := range a.DependsOn {
+				if ctx.DetachedApps[dep] {
+					dependsOnDetached[dep] = true
+				}
+			}
+		}
+	}
+
 	return &NamespaceGenResp{
-		Applications: apps,
-		Files:        ctx.Files,
-		CloudConfig:  ctx.CloudConfig,
+		Applications:          apps,
+		Files:                 ctx.Files,
+		CloudConfig:           ctx.CloudConfig,
+		DependsOnDetachedApps: dependsOnDetached,
 	}
 }
 
@@ -281,6 +299,7 @@ func generateAlfresco(ctx *NsGenContext) {
 	alfPg.Kind = appdef.KindThirdParty
 	alfPg.AddEnv("POSTGRES_USER", "postgres")
 	alfPg.AddEnv("POSTGRES_PASSWORD", "postgres")
+	alfPg.AddEnv("PGDATA", "/var/lib/postgresql/data")
 	alfPg.AddPort("54329:5432")
 	alfPg.AddVolume("alf_postgres:/var/lib/postgresql/data")
 	alfPg.AddVolume("./postgres/init_db_and_user.sh:/init_db_and_user.sh")
@@ -299,16 +318,15 @@ func generateAlfresco(ctx *NsGenContext) {
 	// 2. Alfresco app
 	alfApp := ctx.GetOrCreateApp(appdef.AppAlfresco)
 	alfApp.Image = alfImage
-	alfApp.Kind = appdef.KindThirdParty
+	alfApp.Kind = appdef.KindCiteckAdditional
 	alfPort := ctx.NextPort()
 	alfApp.AddPort(fmt.Sprintf("%d:8080", alfPort))
 	alfApp.AddDependsOn(appdef.AppAlfPostgres)
 	alfApp.AddVolume("alf_content:/content")
 	alfApp.AddVolume("./alfresco/alfresco_additional.properties:/tmp/alfresco/alfresco_additional.properties")
 	alfApp.StartupConditions = []appdef.StartupCondition{
-		{Probe: &appdef.AppProbeDef{HTTP: &appdef.HttpProbeDef{Path: "/alfresco/s/citeck/ecos/eureka-status", Port: alfPort}}},
+		{Probe: &appdef.AppProbeDef{HTTP: &appdef.HttpProbeDef{Path: "/alfresco/s/citeck/ecos/eureka-status", Port: 8080}}},
 	}
-	alfApp.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "6g"}}
 	alfApp.AddEnv("ALFRESCO_USER_STORE_ADMIN_PASSWORD", "fefdbb615556a4b1dbb36e7935d77cf2")
 	alfApp.AddEnv("USE_EXTERNAL_AUTH", "true")
 	alfApp.AddEnv("SOLR_HOST", appdef.AppAlfSolr)
@@ -343,13 +361,15 @@ func generateAlfresco(ctx *NsGenContext) {
 	// 3. Alfresco Solr
 	alfSolr := ctx.GetOrCreateApp(appdef.AppAlfSolr)
 	alfSolr.Image = "nexus.citeck.ru/ess:1.1.0"
-	alfSolr.Kind = appdef.KindThirdParty
+	alfSolr.Kind = appdef.KindCiteckAdditional
 	alfSolr.AddPort("38080:8080")
 	alfSolr.AddVolume("alf_solr_data:/opt/solr4_data")
 	alfSolr.AddEnv("TWEAK_SOLR", "true")
-	alfSolr.AddEnv("JAVA_OPTS", "-Xms512m -Xmx512m")
+	alfSolr.AddEnv("JAVA_OPTS", "-Xms1G -Xmx1G")
 	alfSolr.AddEnv("ALFRESCO_HOST", appdef.AppAlfresco)
 	alfSolr.AddEnv("ALFRESCO_PORT", "8080")
+	alfSolr.AddEnv("ALFRESCO_INDEX_TRANSFORM_CONTENT", "false")
+	alfSolr.AddEnv("ALFRESCO_RECORD_UNINDEXED_NODES", "false")
 	alfSolr.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "1g"}}
 }
 
@@ -629,13 +649,16 @@ func applyWebappDefaults(app *AppBuilder, props *bundle.WebappDefaultProps, cfg 
 	if props == nil {
 		return
 	}
+	if props.Image != "" {
+		app.Image = props.Image
+	}
 	for k, v := range props.Environments {
 		app.AddEnv(k, resolveTemplateVarsWithConfig(v, cfg))
 	}
 	if props.HeapSize != "" {
 		app.AddEnv("JAVA_OPTS", fmt.Sprintf("-Xmx%s -Xms%s", props.HeapSize, props.HeapSize))
 	}
-	if props.MemoryLimit != "" && app.Resources == nil {
+	if props.MemoryLimit != "" {
 		app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: props.MemoryLimit}}
 	}
 }
@@ -655,12 +678,20 @@ func processWebappDataSources(appName string, app *AppBuilder, ctx *NsGenContext
 		return
 	}
 
-	// Find webapp in workspace config
-	var dataSources map[string]bundle.DataSourceConfig
+	// Find webapp datasources: workspace defaults, then namespace overrides on top
+	dataSources := make(map[string]bundle.DataSourceConfig)
 	for _, webapp := range ctx.WorkspaceConfig.Webapps {
 		if webapp.ID == appName {
-			dataSources = webapp.DefaultProps.DataSources
+			for k, v := range webapp.DefaultProps.DataSources {
+				dataSources[k] = v
+			}
 			break
+		}
+	}
+	// Namespace-level dataSources override workspace defaults
+	if wp, ok := ctx.Config.Webapps[appName]; ok {
+		for k, v := range wp.DataSources {
+			dataSources[k] = v
 		}
 	}
 
@@ -720,10 +751,9 @@ func processWebappDataSources(appName string, app *AppBuilder, ctx *NsGenContext
 	}
 
 	// Merge webappProps.cloudConfig from namespace config (arbitrary per-webapp Spring properties)
+	// Uses deep merge so nested keys from workspace defaults are preserved.
 	if wp, ok := ctx.Config.Webapps[appName]; ok {
-		for k, v := range wp.CloudConfig {
-			webappCloudConfig[k] = v
-		}
+		deepMergeMaps(webappCloudConfig, wp.CloudConfig)
 	}
 
 	// License and bundle-key injection for eapps
@@ -759,6 +789,22 @@ func processWebappDataSources(appName string, app *AppBuilder, ctx *NsGenContext
 	// Store ext cloud config for CloudConfigServer
 	if len(extCloudConfig) > 0 {
 		ctx.CloudConfig[appName] = extCloudConfig
+	}
+}
+
+// deepMergeMaps recursively merges src into dst. For keys present in both maps,
+// if both values are map[string]any, they are merged recursively; otherwise src wins.
+func deepMergeMaps(dst, src map[string]any) {
+	for k, srcVal := range src {
+		if dstVal, ok := dst[k]; ok {
+			dstMap, dstIsMap := dstVal.(map[string]any)
+			srcMap, srcIsMap := srcVal.(map[string]any)
+			if dstIsMap && srcIsMap {
+				deepMergeMaps(dstMap, srcMap)
+				continue
+			}
+		}
+		dst[k] = srcVal
 	}
 }
 

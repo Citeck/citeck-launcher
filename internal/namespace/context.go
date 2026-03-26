@@ -92,15 +92,28 @@ func (c *NsGenContext) ProxyScheme() string {
 
 // ProxyBaseURL returns the full base URL for the proxy (includes port if non-standard).
 func (c *NsGenContext) ProxyBaseURL() string {
-	port := c.Config.Proxy.Port
+	return BuildProxyBaseURL(c.Config.Proxy)
+}
+
+// BuildProxyBaseURL builds a proxy base URL from proxy config.
+func BuildProxyBaseURL(p ProxyProps) string {
+	scheme := "http"
+	if p.TLS.Enabled {
+		scheme = "https"
+	}
+	host := p.Host
+	if host == "" {
+		host = "localhost"
+	}
+	port := p.Port
 	defaultPort := 80
-	if c.TLSEnabled() {
+	if p.TLS.Enabled {
 		defaultPort = 443
 	}
 	if port == 0 || port == defaultPort {
-		return fmt.Sprintf("%s://%s", c.ProxyScheme(), c.ProxyHost())
+		return fmt.Sprintf("%s://%s", scheme, host)
 	}
-	return fmt.Sprintf("%s://%s:%d", c.ProxyScheme(), c.ProxyHost(), port)
+	return fmt.Sprintf("%s://%s:%d", scheme, host, port)
 }
 
 // AppBuilder accumulates ApplicationDef properties during generation.

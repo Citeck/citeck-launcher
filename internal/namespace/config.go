@@ -44,16 +44,17 @@ type MongoDbProps struct {
 }
 
 type WebappProps struct {
-	Enabled        *bool             `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Image          string            `yaml:"image" json:"image"`
-	Environments   map[string]string `yaml:"environments,omitempty" json:"environments,omitempty"`
-	CloudConfig    map[string]any    `yaml:"cloudConfig,omitempty" json:"cloudConfig,omitempty"`
-	DebugPort      int               `yaml:"debugPort" json:"debugPort"`
-	HeapSize       string            `yaml:"heapSize" json:"heapSize"`
-	MemoryLimit    string            `yaml:"memoryLimit" json:"memoryLimit"`
-	ServerPort     int               `yaml:"serverPort" json:"serverPort"`
-	JavaOpts       string            `yaml:"javaOpts" json:"javaOpts"`
-	SpringProfiles string            `yaml:"springProfiles" json:"springProfiles"`
+	Enabled        *bool                                `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Image          string                               `yaml:"image" json:"image"`
+	Environments   map[string]string                    `yaml:"environments,omitempty" json:"environments,omitempty"`
+	CloudConfig    map[string]any                       `yaml:"cloudConfig,omitempty" json:"cloudConfig,omitempty"`
+	DataSources    map[string]bundle.DataSourceConfig   `yaml:"dataSources,omitempty" json:"dataSources,omitempty"`
+	DebugPort      int                                  `yaml:"debugPort" json:"debugPort"`
+	HeapSize       string                               `yaml:"heapSize" json:"heapSize"`
+	MemoryLimit    string                               `yaml:"memoryLimit" json:"memoryLimit"`
+	ServerPort     int                                  `yaml:"serverPort" json:"serverPort"`
+	JavaOpts       string                               `yaml:"javaOpts" json:"javaOpts"`
+	SpringProfiles string                               `yaml:"springProfiles" json:"springProfiles"`
 }
 
 type NamespaceConfig struct {
