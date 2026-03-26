@@ -485,7 +485,7 @@ func (c *Client) ContainerLogs(ctx context.Context, containerID string, tail int
 			return "", err2
 		}
 		defer reader2.Close()
-		data, _ := io.ReadAll(reader2)
+		data, _ := io.ReadAll(io.LimitReader(reader2, 50*1024*1024)) // 50MB cap
 		return string(data), nil
 	}
 

@@ -268,6 +268,13 @@ func importVolume(ctx context.Context, dc *docker.Client, vol VolumeSnapshotMeta
 	tarDir := filepath.Dir(tarPath)
 	tarFile := filepath.Base(tarPath)
 
+	// Sanitize tarFile to prevent shell injection from crafted meta.json.
+	// Also reject if it contains path separators after sanitization.
+	tarFile = sanitizeFileName(tarFile)
+	if strings.ContainsAny(tarFile, "/\\") || tarFile == "" {
+		return fmt.Errorf("invalid data file name after sanitization: %q", vol.DataFile)
+	}
+
 	cmd := []string{"sh", "-c", fmt.Sprintf(
 		`%s%star %s -xf "/source/%s" -C /dest`,
 		chownCmd, chmodCmd, tarFlag, tarFile,
