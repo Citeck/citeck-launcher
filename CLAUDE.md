@@ -136,20 +136,6 @@ Snapshot URL download (HTTP resume, SHA256, retry), CLI clean/apply/diff/status 
 ### Phase 5: Full Parity — COMPLETE (2026-03-26)
 All 25 P0/P1 gaps closed across 8 sub-phases.
 
-### Key Technical Decisions
-- SSE (not WebSocket) for real-time events
-- TCP bound to 127.0.0.1 (security)
-- stdcopy.StdCopy for Docker log demuxing
-- Namespace-scoped volume operations (bind-mounts, not Docker named volumes)
-- Two storage backends: flat files (server) / SQLite (desktop)
-- Desktop mode via explicit `--desktop` flag only
-- H2 MVStore read-only parser in Go for migration
-- Shared secrets at launcher level, not per-workspace
-- go-git (pure Go) for git operations — no external git binary required
-- Snapshot download with HTTP resume, SHA256 verification, retry (3 attempts)
-- `reflect.DeepEqual` for config diff (not string comparison)
-- filepath.Join everywhere (no fmt.Sprintf for paths)
-
 ### Phase 6: Final Parity + Kotlin Removal — COMPLETE (2026-03-26)
 14 backend gaps + 7 web UI gaps closed. Kotlin code removed.
 
@@ -166,8 +152,18 @@ Tested on remote server (community 2025.12). 13 gaps found and fixed:
 - HTTPS scheme for external hosts without local TLS (reverse proxy assumed)
 - Snapshot CLI (list/export/import), `citeck start` delegates to running daemon
 
-### Phase 7: Production Hardening — PLANNED
-See **`PLAN-phase7.md`** for the full plan: 37 issues across 3 sub-phases (7a critical, 7b production, 7c quality).
+### Phase 7: Production Hardening — COMPLETE (2026-03-26)
+37 issues fixed across 3 sub-phases + 2 review passes (15 additional fixes).
+Version forwarding, TCP timeouts, CORS wiring, reconciler retry with backoff,
+graceful shutdown groups, config validation, StartApp method, atomic state writes,
+ACME renewal tests, network orphan cleanup, self-signed cert auto-generation.
+
+### Phase 8: Production-Grade Hardening — NEXT
+See **`PLAN-phase8.md`** for the full plan: 68 issues across 4 sub-phases.
+- 8a: Race conditions, security, data integrity (12 issues)
+- 8b: Runtime robustness, Docker edge cases, ACME (16 issues)
+- 8c: CLI correctness, exit codes, UX (18 issues)
+- 8d: DoS protection, observability, tunability (12 issues)
 
 ### Key Technical Decisions
 - SSE (not WebSocket) for real-time events
@@ -187,10 +183,13 @@ See **`PLAN-phase7.md`** for the full plan: 37 issues across 3 sub-phases (7a cr
 - JWTSecret generated per-instance, persisted to `conf/jwt-secret`
 - ACME profiles via custom JWS (Go stdlib doesn't support profiles yet)
 - HTTPS scheme for external hosts even without local TLS
+- Graceful shutdown: phased stop groups (proxy → webapps → keycloak → infra)
+- Reconciler: exponential backoff retry for failed apps (1m → 30m max)
+- Config validation at parse time (port range, TLS host, LE host, auth users)
 
 ### Other References
-- **`PROGRESS.md`** — tracks completed work
-- **`PLAN-phase7.md`** — production hardening plan (37 issues)
+- **`PROGRESS.md`** — tracks completed work (historical)
+- **`PLAN-phase8.md`** — current plan (68 issues, 4 sub-phases)
 
 ## CI/CD
 
