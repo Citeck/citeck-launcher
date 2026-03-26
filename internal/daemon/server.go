@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/citeck/citeck-launcher/internal/acme"
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/appfiles"
@@ -52,6 +53,7 @@ type Daemon struct {
 	eventSubs       []chan api.EventDto
 	eventMu         sync.Mutex
 	configMu        sync.RWMutex // protects nsConfig, bundleDef, appDefs, workspaceConfig
+	acmeRenewal     *acme.RenewalService
 	shutdownOnce    sync.Once
 	bgCtx           context.Context    // cancelled on daemon shutdown
 	bgCancel        context.CancelFunc
@@ -191,6 +193,37 @@ func Start(opts StartOptions) error {
 
 		slog.Info("Using bundle", "ref", nsCfg.BundleRef, "apps", len(bundleDef.Applications))
 
+		// Let's Encrypt: obtain certificate if configured and not yet present
+		if nsCfg.Proxy.TLS.Enabled && nsCfg.Proxy.TLS.LetsEncrypt {
+			host := nsCfg.Proxy.Host
+			if host == "" || host == "localhost" {
+				slog.Warn("Let's Encrypt requires a public hostname, skipping")
+			} else {
+				acmeClient := acme.NewClient(config.DataDir(), config.ConfDir(), host)
+				certPath := acmeClient.CertPath()
+				keyPath := acmeClient.KeyPath()
+
+				// Obtain cert if not yet present
+				if _, err := os.Stat(certPath); err != nil {
+					slog.Info("Obtaining Let's Encrypt certificate", "host", host)
+					acmeCtx, acmeCancel := context.WithTimeout(context.Background(), 120*time.Second)
+					err := acmeClient.ObtainCertificate(acmeCtx)
+					acmeCancel()
+					if err != nil {
+						slog.Error("Let's Encrypt certificate obtainment failed", "err", err)
+					} else {
+						slog.Info("Let's Encrypt certificate obtained", "cert", certPath)
+					}
+				}
+
+				// Update config to use ACME cert paths
+				if _, err := os.Stat(certPath); err == nil {
+					nsCfg.Proxy.TLS.CertPath = certPath
+					nsCfg.Proxy.TLS.KeyPath = keyPath
+				}
+			}
+		}
+
 		// Extract appfiles to volumes base
 		if err := appfiles.ExtractTo(volumesBase); err != nil {
 			slog.Error("Failed to extract appfiles", "err", err)
@@ -293,6 +326,19 @@ func Start(opts StartOptions) error {
 		})
 	}
 
+	// Start ACME renewal service if Let's Encrypt is enabled
+	if nsCfg != nil && nsCfg.Proxy.TLS.Enabled && nsCfg.Proxy.TLS.LetsEncrypt && nsCfg.Proxy.Host != "" {
+		acmeClient := acme.NewClient(config.DataDir(), config.ConfDir(), nsCfg.Proxy.Host)
+		d.acmeRenewal = acme.NewRenewalService(acmeClient, func() {
+			if d.runtime != nil {
+				if err := d.runtime.RestartApp("proxy"); err != nil {
+					slog.Error("ACME: restart proxy after renewal failed", "err", err)
+				}
+			}
+		})
+		d.acmeRenewal.Start()
+	}
+
 	// Create HTTP server
 	mux := http.NewServeMux()
 	d.registerRoutes(mux)
@@ -381,6 +427,12 @@ func (d *Daemon) doShutdown() {
 	}
 	if d.cloudCfgServer != nil {
 		d.cloudCfgServer.Stop()
+	}
+	d.configMu.RLock()
+	renewal := d.acmeRenewal
+	d.configMu.RUnlock()
+	if renewal != nil {
+		renewal.Stop()
 	}
 
 	d.server.Shutdown(ctx)

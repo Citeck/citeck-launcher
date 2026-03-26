@@ -1,11 +1,17 @@
 package namespace
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
 	"sync/atomic"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
+	"github.com/citeck/citeck-launcher/internal/config"
 )
 
 // Infrastructure host/port constants.
@@ -21,8 +27,31 @@ const (
 	MongoPort      = 27017
 	MailhogHost    = "mailhog"
 	OnlyofficeHost = "onlyoffice"
-	JWTSecret      = "my-secret-key-which-should-be-changed-in-production-and-be-base64-encoded"
 )
+
+var (
+	jwtSecretOnce sync.Once
+	jwtSecretVal  string
+)
+
+// JWTSecret returns a stable JWT secret, generated once and persisted to disk.
+// This avoids hardcoding a well-known secret while ensuring all webapps share the same key.
+func JWTSecret() string {
+	jwtSecretOnce.Do(func() {
+		secretPath := filepath.Join(config.ConfDir(), "jwt-secret")
+		if data, err := os.ReadFile(secretPath); err == nil && len(data) > 0 {
+			jwtSecretVal = string(data)
+			return
+		}
+		// Generate 32-byte random secret, base64-encoded
+		b := make([]byte, 32)
+		rand.Read(b)
+		jwtSecretVal = base64.RawURLEncoding.EncodeToString(b)
+		os.MkdirAll(filepath.Dir(secretPath), 0o755)
+		os.WriteFile(secretPath, []byte(jwtSecretVal), 0o600)
+	})
+	return jwtSecretVal
+}
 
 // NsGenContext holds state during namespace generation.
 type NsGenContext struct {
@@ -82,9 +111,16 @@ func (c *NsGenContext) TLSEnabled() bool {
 	return c.Config.Proxy.TLS.Enabled
 }
 
+// IsLocalHost returns true if the proxy host is localhost/127.0.0.1/::1 or empty.
+func (c *NsGenContext) IsLocalHost() bool {
+	h := c.Config.Proxy.Host
+	return h == "" || h == "localhost" || h == "127.0.0.1" || h == "::1"
+}
+
 // ProxyScheme returns "https" or "http".
+// For non-local hosts, always returns "https" (assumed behind reverse proxy).
 func (c *NsGenContext) ProxyScheme() string {
-	if c.TLSEnabled() {
+	if c.TLSEnabled() || !c.IsLocalHost() {
 		return "https"
 	}
 	return "http"
@@ -96,19 +132,32 @@ func (c *NsGenContext) ProxyBaseURL() string {
 }
 
 // BuildProxyBaseURL builds a proxy base URL from proxy config.
+// For non-local hosts (not localhost/127.0.0.1), always uses https scheme
+// even when TLS is disabled locally — the server is assumed to be behind
+// a reverse proxy (Cloudflare, nginx) that terminates TLS.
 func BuildProxyBaseURL(p ProxyProps) string {
-	scheme := "http"
-	if p.TLS.Enabled {
-		scheme = "https"
-	}
 	host := p.Host
 	if host == "" {
 		host = "localhost"
 	}
+
+	isLocal := host == "localhost" || host == "127.0.0.1" || host == "::1"
+
+	scheme := "http"
+	if p.TLS.Enabled || !isLocal {
+		scheme = "https"
+	}
+
 	port := p.Port
+
 	defaultPort := 80
-	if p.TLS.Enabled {
+	if scheme == "https" {
 		defaultPort = 443
+	}
+	// For external hosts without local TLS, port 80 is the local listen port
+	// but clients connect via reverse proxy on 443 — omit port from URL.
+	if !isLocal && !p.TLS.Enabled && port == 80 {
+		return fmt.Sprintf("%s://%s", scheme, host)
 	}
 	if port == 0 || port == defaultPort {
 		return fmt.Sprintf("%s://%s", scheme, host)

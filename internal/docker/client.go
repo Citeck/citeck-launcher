@@ -215,6 +215,13 @@ func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef,
 		PortBindings:  portBindings,
 		NetworkMode:   container.NetworkMode(networkName),
 		RestartPolicy: restartPolicy,
+		LogConfig: container.LogConfig{
+			Type: "json-file",
+			Config: map[string]string{
+				"max-size": "50m",
+				"max-file": "3",
+			},
+		},
 	}
 	if memoryBytes > 0 {
 		hostConfig.Resources.Memory = memoryBytes
@@ -503,7 +510,6 @@ func (c *Client) ExecInContainer(ctx context.Context, containerID string, cmd []
 	return output, inspectResp.ExitCode, nil
 }
 
-// ContainerStats returns resource stats for a container.
 // GetPublishedPort returns the host port for a container's exposed port.
 func (c *Client) GetPublishedPort(ctx context.Context, containerID string, containerPort int) int {
 	inspect, err := c.cli.ContainerInspect(ctx, containerID)
@@ -520,6 +526,7 @@ func (c *Client) GetPublishedPort(ctx context.Context, containerID string, conta
 	return -1
 }
 
+// ContainerStats returns resource usage stats for a container.
 func (c *Client) ContainerStats(ctx context.Context, containerID string) (*ContainerStat, error) {
 	resp, err := c.cli.ContainerStatsOneShot(ctx, containerID)
 	if err != nil {

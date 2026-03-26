@@ -53,7 +53,17 @@ func (e *PullExecutor) Execute(ctx context.Context, actx *actions.ActionContext)
 		return nil
 	}
 
-	err := e.Docker.PullImageWithProgress(ctx, d.Image, d.Auth, d.ProgressFn)
+	// Wrap progress callback to send heartbeat on every progress update,
+	// preventing stall detection from cancelling long pulls (e.g. 4GB images).
+	progressFn := d.ProgressFn
+	wrappedProgress := func(currentMB, totalMB float64, pct int) {
+		actx.Heartbeat()
+		if progressFn != nil {
+			progressFn(currentMB, totalMB, pct)
+		}
+	}
+
+	err := e.Docker.PullImageWithProgress(ctx, d.Image, d.Auth, wrappedProgress)
 	if err == nil {
 		return nil
 	}

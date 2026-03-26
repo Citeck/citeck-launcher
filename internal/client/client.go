@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/api"
@@ -197,6 +198,24 @@ func (c *DaemonClient) StreamAppLogs(name string, tail int) (io.ReadCloser, erro
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
 	return resp.Body, nil
+}
+
+func (c *DaemonClient) ListSnapshots() ([]api.SnapshotDto, error) {
+	var snapshots []api.SnapshotDto
+	err := c.get(api.Snapshots, &snapshots)
+	return snapshots, err
+}
+
+func (c *DaemonClient) ExportSnapshot() (*api.ActionResultDto, error) {
+	var dto api.ActionResultDto
+	err := c.post(api.SnapshotsExport, nil, &dto)
+	return &dto, err
+}
+
+func (c *DaemonClient) ImportSnapshot(name string) (*api.ActionResultDto, error) {
+	var dto api.ActionResultDto
+	err := c.post(api.SnapshotsImport+"?name="+url.QueryEscape(name), nil, &dto)
+	return &dto, err
 }
 
 func (c *DaemonClient) RestartApp(name string) (*api.ActionResultDto, error) {

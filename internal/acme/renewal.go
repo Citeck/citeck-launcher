@@ -25,13 +25,19 @@ func NewRenewalService(client *Client, restartFn func()) *RenewalService {
 	}
 }
 
-// Start begins the 12-hour renewal check loop.
+// Start begins the renewal check loop: immediate check on start, then periodically.
+// For short-lived certs (< 30 days), checks every 6 hours; otherwise every 12 hours.
 func (s *RenewalService) Start() {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 
+	interval := s.renewalInterval()
+	slog.Info("ACME renewal service started", "interval", interval)
+
 	go func() {
-		ticker := time.NewTicker(12 * time.Hour)
+		s.checkAndRenew(ctx) // immediate check on startup
+
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
 		for {
@@ -43,8 +49,6 @@ func (s *RenewalService) Start() {
 			}
 		}
 	}()
-
-	slog.Info("ACME renewal service started (12h interval)")
 }
 
 // Stop stops the renewal service.
@@ -52,6 +56,29 @@ func (s *RenewalService) Stop() {
 	if s.cancel != nil {
 		s.cancel()
 	}
+}
+
+// renewalInterval returns the check interval based on current cert validity.
+// Short-lived certs (< 30 days) get 6h interval, otherwise 12h.
+func (s *RenewalService) renewalInterval() time.Duration {
+	certPath := s.client.CertPath()
+	data, err := os.ReadFile(certPath)
+	if err != nil {
+		return 12 * time.Hour
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return 12 * time.Hour
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return 12 * time.Hour
+	}
+	total := cert.NotAfter.Sub(cert.NotBefore)
+	if total < 30*24*time.Hour {
+		return 6 * time.Hour // short-lived cert (IP certs ~6 days)
+	}
+	return 12 * time.Hour
 }
 
 func (s *RenewalService) checkAndRenew(ctx context.Context) {

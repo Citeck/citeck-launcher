@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/citeck/citeck-launcher/internal/acme"
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/appfiles"
@@ -31,7 +32,7 @@ func (d *Daemon) handleDaemonStatus(w http.ResponseWriter, r *http.Request) {
 		PID:        int64(os.Getpid()),
 		Uptime:     time.Since(d.startTime).Milliseconds(),
 		Version:    "dev",
-		Workspace:  "daemon",
+		Workspace:  d.workspaceID,
 		SocketPath: d.socketPath,
 	})
 }
@@ -102,6 +103,32 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 
 	appfiles.ExtractTo(d.volumesBase)
 
+	// Let's Encrypt: obtain certificate if needed; prepare renewal service for Phase 2
+	var newRenewal *acme.RenewalService
+	if nsCfg.Proxy.TLS.Enabled && nsCfg.Proxy.TLS.LetsEncrypt && nsCfg.Proxy.Host != "" && nsCfg.Proxy.Host != "localhost" {
+		acmeClient := acme.NewClient(config.DataDir(), config.ConfDir(), nsCfg.Proxy.Host)
+		if _, err := os.Stat(acmeClient.CertPath()); err != nil {
+			slog.Info("Obtaining Let's Encrypt certificate on reload", "host", nsCfg.Proxy.Host)
+			acmeCtx, acmeCancel := context.WithTimeout(context.Background(), 120*time.Second)
+			err := acmeClient.ObtainCertificate(acmeCtx)
+			acmeCancel()
+			if err != nil {
+				slog.Error("Let's Encrypt failed on reload", "err", err)
+			}
+		}
+		if _, err := os.Stat(acmeClient.CertPath()); err == nil {
+			nsCfg.Proxy.TLS.CertPath = acmeClient.CertPath()
+			nsCfg.Proxy.TLS.KeyPath = acmeClient.KeyPath()
+		}
+		newRenewal = acme.NewRenewalService(acmeClient, func() {
+			if d.runtime != nil {
+				if err := d.runtime.RestartApp("proxy"); err != nil {
+					slog.Error("ACME: restart proxy after renewal failed", "err", err)
+				}
+			}
+		})
+	}
+
 	var genOpts namespace.GenerateOpts
 	if d.runtime != nil {
 		genOpts.DetachedApps = d.runtime.ManualStoppedApps()
@@ -126,7 +153,15 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 	d.bundleDef = resolveResult.Bundle
 	d.workspaceConfig = resolveResult.Workspace
 	d.appDefs = genResp.Applications
+	// Update ACME renewal service under lock to prevent data race with shutdown
+	if d.acmeRenewal != nil {
+		d.acmeRenewal.Stop()
+	}
+	d.acmeRenewal = newRenewal
 	d.configMu.Unlock()
+	if newRenewal != nil {
+		newRenewal.Start()
+	}
 
 	if d.cloudCfgServer != nil {
 		d.cloudCfgServer.UpdateConfig(genResp.CloudConfig)

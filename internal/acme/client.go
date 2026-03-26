@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -57,14 +58,28 @@ func (c *Client) ObtainCertificate(ctx context.Context) error {
 	// Register account (idempotent — auto-accepts TOS)
 	acct := &acme.Account{}
 	if _, err := client.Register(ctx, acct, acme.AcceptTOS); err != nil {
-		// Already registered is not an error
-		if err != acme.ErrAccountAlreadyExists {
+		if !errors.Is(err, acme.ErrAccountAlreadyExists) {
 			return fmt.Errorf("register account: %w", err)
 		}
 	}
 
-	// Create order
-	order, err := client.AuthorizeOrder(ctx, acme.DomainIDs(c.hostname))
+	// Create order — use IPIDs for IP addresses, DomainIDs for hostnames.
+	var ids []acme.AuthzID
+	isIP := net.ParseIP(c.hostname) != nil
+	if isIP {
+		ids = acme.IPIDs(c.hostname)
+		slog.Info("Requesting short-lived IP certificate (~6 days)", "ip", c.hostname)
+	} else {
+		ids = acme.DomainIDs(c.hostname)
+	}
+
+	var order *acme.Order
+	if isIP {
+		// IP certs require "shortlived" ACME profile — use custom JWS request
+		order, err = authorizeOrderWithProfile(ctx, client, ids, "shortlived")
+	} else {
+		order, err = client.AuthorizeOrder(ctx, ids)
+	}
 	if err != nil {
 		return fmt.Errorf("authorize order: %w", err)
 	}
@@ -132,10 +147,15 @@ func (c *Client) ObtainCertificate(ctx context.Context) error {
 		return fmt.Errorf("generate cert key: %w", err)
 	}
 
-	// Create CSR
-	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
-		Subject: pkix.Name{CommonName: c.hostname},
-	}, certKey)
+	// Create CSR — for IP addresses, use only SAN (no CommonName with IP per LE rules)
+	csrTemplate := &x509.CertificateRequest{}
+	if ip := net.ParseIP(c.hostname); ip != nil {
+		csrTemplate.IPAddresses = []net.IP{ip}
+	} else {
+		csrTemplate.Subject = pkix.Name{CommonName: c.hostname}
+		csrTemplate.DNSNames = []string{c.hostname}
+	}
+	csr, err := x509.CreateCertificateRequest(rand.Reader, csrTemplate, certKey)
 	if err != nil {
 		return fmt.Errorf("create CSR: %w", err)
 	}
@@ -160,7 +180,9 @@ func (c *Client) ObtainCertificate(ctx context.Context) error {
 	}
 	defer chainFile.Close()
 	for _, cert := range certs {
-		pem.Encode(chainFile, &pem.Block{Type: "CERTIFICATE", Bytes: cert})
+		if err := pem.Encode(chainFile, &pem.Block{Type: "CERTIFICATE", Bytes: cert}); err != nil {
+			return fmt.Errorf("write certificate: %w", err)
+		}
 	}
 
 	// Write privkey.pem
@@ -174,7 +196,9 @@ func (c *Client) ObtainCertificate(ctx context.Context) error {
 		return fmt.Errorf("create privkey: %w", err)
 	}
 	defer keyFile.Close()
-	pem.Encode(keyFile, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	if err := pem.Encode(keyFile, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}); err != nil {
+		return fmt.Errorf("write private key: %w", err)
+	}
 
 	slog.Info("ACME certificate obtained", "hostname", c.hostname, "cert", chainPath)
 	return nil

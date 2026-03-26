@@ -347,7 +347,11 @@ func (r *Runtime) Start(apps []appdef.ApplicationDef) {
 	}
 	r.wg.Add(1)
 	go r.runLoop()
-	r.cmdCh <- command{typ: cmdStart, apps: apps}
+	select {
+	case r.cmdCh <- command{typ: cmdStart, apps: apps}:
+	default:
+		slog.Warn("Start command dropped (channel full)")
+	}
 }
 
 func (r *Runtime) Stop() {
@@ -581,8 +585,7 @@ func (r *Runtime) runLoop() {
 				r.doStop()
 				return
 			case cmdRegenerate:
-				r.doStop()
-				r.doStart(cmd.apps)
+				r.doRegenerate(cmd.apps)
 			}
 		case <-ticker.C:
 			r.updateStats() // collects stats outside lock, then locks briefly to update
@@ -611,47 +614,98 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) {
 	// Check existing containers for deployment hash match
 	existingContainers := r.buildExistingContainerMap(ctx)
 
-	r.mu.Lock()
+	// Phase 1 (no lock): resolve image digests and compute hashes.
+	// This avoids holding the mutex during Docker API calls.
+	r.mu.RLock()
+	editedLocked := make(map[string]bool, len(r.editedLockedApps))
+	editedApps := make(map[string]appdef.ApplicationDef, len(r.editedApps))
+	for k, v := range r.editedLockedApps {
+		editedLocked[k] = v
+	}
+	for k, v := range r.editedApps {
+		editedApps[k] = v
+	}
+	r.mu.RUnlock()
 
-	// Initialize app runtimes — reuse containers with matching hash
-	// Apply locked edits: if an app was user-edited and locked, override the generated def
+	type appPlan struct {
+		def           appdef.ApplicationDef
+		hash          string
+		containerName string
+		reuse         bool   // true = keep running, false = recreate
+		containerID   string // set when reusing
+	}
+	plans := make([]appPlan, 0, len(apps))
+
 	for _, appDef := range apps {
-		if r.editedLockedApps[appDef.Name] {
-			if edited, ok := r.editedApps[appDef.Name]; ok {
+		if editedLocked[appDef.Name] {
+			if edited, ok := editedApps[appDef.Name]; ok {
 				slog.Info("Applying locked edit override", "app", appDef.Name)
 				appDef = edited
+			}
+		}
+		// Resolve image digest from local Docker cache (no lock needed)
+		if appDef.ImageDigest == "" {
+			if digest := r.docker.GetImageDigest(ctx, appDef.Image); digest != "" {
+				appDef.ImageDigest = digest
 			}
 		}
 		hash := appDef.GetHash()
 		containerName := r.docker.ContainerName(appDef.Name)
 
+		plan := appPlan{def: appDef, hash: hash, containerName: containerName}
 		if existing, ok := existingContainers[appDef.Name]; ok && existing.hash == hash && existing.running {
-			// Container exists with matching hash and is running — reuse it
-			slog.Info("Reusing existing container (hash match)", "app", appDef.Name)
-			r.apps[appDef.Name] = &AppRuntime{
-				Name: appDef.Name, Status: AppStatusRunning, Def: appDef,
-				ContainerID: existing.containerID,
+			plan.reuse = true
+			plan.containerID = existing.containerID
+		}
+		plans = append(plans, plan)
+	}
+
+	// Phase 2 (no lock): remove stale containers in parallel, wait for completion.
+	var removeWg sync.WaitGroup
+	for _, p := range plans {
+		if !p.reuse {
+			if _, ok := existingContainers[p.def.Name]; ok {
+				slog.Info("Removing stale container", "app", p.def.Name)
+				removeWg.Add(1)
+				go func(name string) {
+					defer removeWg.Done()
+					r.docker.StopAndRemoveContainer(ctx, name)
+				}(p.containerName)
+			}
+		}
+	}
+	// Remove containers no longer in the desired set
+	desiredNames := make(map[string]bool, len(plans))
+	for _, p := range plans {
+		desiredNames[p.def.Name] = true
+	}
+	for name := range existingContainers {
+		if !desiredNames[name] {
+			containerName := r.docker.ContainerName(name)
+			removeWg.Add(1)
+			go func(cn string) {
+				defer removeWg.Done()
+				r.docker.StopAndRemoveContainer(ctx, cn)
+			}(containerName)
+		}
+	}
+	removeWg.Wait()
+
+	// Phase 3 (lock): update in-memory state and launch apps.
+	r.mu.Lock()
+	for _, p := range plans {
+		if p.reuse {
+			slog.Info("Reusing existing container (hash match)", "app", p.def.Name)
+			r.apps[p.def.Name] = &AppRuntime{
+				Name: p.def.Name, Status: AppStatusRunning, Def: p.def,
+				ContainerID: p.containerID,
 			}
 		} else {
-			// Remove stale container if exists (hash mismatch or not running)
-			if _, ok := existingContainers[appDef.Name]; ok {
-				go r.docker.StopAndRemoveContainer(context.Background(), containerName)
-			}
-			r.apps[appDef.Name] = &AppRuntime{
-				Name: appDef.Name, Status: AppStatusReadyToPull, Def: appDef,
+			r.apps[p.def.Name] = &AppRuntime{
+				Name: p.def.Name, Status: AppStatusReadyToPull, Def: p.def,
 			}
 		}
 	}
-
-	// Remove containers that are no longer in the desired set
-	for name := range existingContainers {
-		if _, desired := r.apps[name]; !desired {
-			containerName := r.docker.ContainerName(name)
-			go r.docker.StopAndRemoveContainer(context.Background(), containerName)
-		}
-	}
-
-	// Launch apps that need starting
 	for _, app := range r.apps {
 		if app.Status == AppStatusReadyToPull {
 			r.setAppStatus(app, AppStatusPulling)
@@ -943,6 +997,7 @@ func (r *Runtime) waitForLogPattern(ctx context.Context, containerID string, con
 
 	// Pipe demuxed output for clean line scanning
 	pr, pw := io.Pipe()
+	defer pr.Close() // unblocks stdcopy goroutine on early return
 	go func() {
 		stdcopy.StdCopy(pw, pw, rawReader)
 		pw.Close()
@@ -1059,6 +1114,32 @@ func (r *Runtime) buildExistingContainerMap(ctx context.Context) map[string]exis
 		}
 	}
 	return result
+}
+
+// doRegenerate applies a new set of app definitions like docker-compose up:
+// containers with matching hash keep running, changed ones are recreated,
+// removed ones are stopped. No unnecessary restarts.
+func (r *Runtime) doRegenerate(apps []appdef.ApplicationDef) {
+	// 1. Cancel running goroutines (pull, start, reconciler)
+	r.mu.Lock()
+	if r.cancel != nil {
+		r.cancel()
+		r.cancel = nil
+	}
+	r.mu.Unlock()
+
+	// Wait for all goroutines to exit cleanly
+	r.reconcileWg.Wait()
+	r.appWg.Wait()
+
+	// 2. Clear in-memory state — Docker containers keep running
+	r.mu.Lock()
+	r.apps = make(map[string]*AppRuntime)
+	r.mu.Unlock()
+
+	// 3. Start with new definitions — doStart discovers running containers
+	//    via buildExistingContainerMap and reuses those with matching hash
+	r.doStart(apps)
 }
 
 func (r *Runtime) doStop() {

@@ -59,6 +59,7 @@ func NewRootCmd(version string) *cobra.Command {
 		newMigrateCmd(),
 		newInstallCmd(),
 		newUninstallCmd(),
+		newSnapshotCmd(),
 	)
 
 	return root

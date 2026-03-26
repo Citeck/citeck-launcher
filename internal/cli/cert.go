@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -14,7 +15,9 @@ import (
 	"path/filepath"
 	"time"
 
+	acmeLib "github.com/citeck/citeck-launcher/internal/acme"
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -24,7 +27,7 @@ func newCertCmd() *cobra.Command {
 		Use:   "cert",
 		Short: "Manage TLS certificates",
 	}
-	cmd.AddCommand(newCertStatusCmd(), newCertGenerateCmd())
+	cmd.AddCommand(newCertStatusCmd(), newCertGenerateCmd(), newCertLetsEncryptCmd())
 	return cmd
 }
 
@@ -124,6 +127,62 @@ func newCertGenerateCmd() *cobra.Command {
 	return cmd
 }
 
+func newCertLetsEncryptCmd() *cobra.Command {
+	var host string
+
+	cmd := &cobra.Command{
+		Use:   "letsencrypt",
+		Short: "Obtain a Let's Encrypt certificate via ACME HTTP-01 challenge",
+		Long:  "Obtains a free TLS certificate from Let's Encrypt. Requires port 80 to be available and the hostname to resolve to this server.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if host == "" {
+				// Try to read from namespace config
+				nsCfgPath := config.NamespaceConfigPath()
+				if nsCfg, err := namespace.LoadNamespaceConfig(nsCfgPath); err == nil && nsCfg.Proxy.Host != "" {
+					host = nsCfg.Proxy.Host
+				}
+				if host == "" || host == "localhost" {
+					return fmt.Errorf("--host is required (Let's Encrypt cannot issue certs for localhost or IPs)")
+				}
+			}
+
+			if ip := net.ParseIP(host); ip != nil {
+				output.PrintText("Note: IP certificates from Let's Encrypt are short-lived (~6 days)")
+			}
+
+			acmeClient := acmeLib.NewClient(config.DataDir(), config.ConfDir(), host)
+
+			output.PrintText("Obtaining Let's Encrypt certificate for %s...", host)
+			output.PrintText("Port 80 must be available for HTTP-01 challenge")
+
+			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+			defer cancel()
+
+			if err := acmeClient.ObtainCertificate(ctx); err != nil {
+				return fmt.Errorf("certificate obtainment failed: %w", err)
+			}
+
+			output.PrintResult(map[string]string{
+				"certPath": acmeClient.CertPath(),
+				"keyPath":  acmeClient.KeyPath(),
+			}, func() {
+				output.PrintText("Certificate obtained:")
+				output.PrintText("  Cert: %s", acmeClient.CertPath())
+				output.PrintText("  Key:  %s", acmeClient.KeyPath())
+				output.PrintText("\nTo use this certificate, update namespace.yml:")
+				output.PrintText("  proxy:")
+				output.PrintText("    tls:")
+				output.PrintText("      enabled: true")
+				output.PrintText("      letsEncrypt: true")
+			})
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&host, "host", "", "Hostname for the certificate")
+	return cmd
+}
+
 func generateSelfSignedCert(certPath, keyPath string, hosts []string, days int) error {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -162,7 +221,9 @@ func generateSelfSignedCert(certPath, keyPath string, hosts []string, days int) 
 		return err
 	}
 	defer certFile.Close()
-	pem.Encode(certFile, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	if err := pem.Encode(certFile, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
+		return fmt.Errorf("write certificate: %w", err)
+	}
 
 	keyDER, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
@@ -173,7 +234,9 @@ func generateSelfSignedCert(certPath, keyPath string, hosts []string, days int) 
 		return err
 	}
 	defer keyFile.Close()
-	pem.Encode(keyFile, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	if err := pem.Encode(keyFile, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}); err != nil {
+		return fmt.Errorf("write private key: %w", err)
+	}
 
 	return nil
 }

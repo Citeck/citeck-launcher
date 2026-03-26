@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
@@ -49,16 +50,22 @@ func Generate(cfg *NamespaceConfig, bun *bundle.BundleDef, wsCfg *bundle.Workspa
 
 	// Generate webapps from bundle — only for apps declared in workspace config
 	// (matching Kotlin: context.workspaceConfig.webappsById.contains(app.key))
+	// Sort names for deterministic port assignment via NextPort().
 	wsWebapps := make(map[string]bool)
 	if wsCfg != nil {
 		for _, w := range wsCfg.Webapps {
 			wsWebapps[w.ID] = true
 		}
 	}
+	webappNames := make([]string, 0, len(bun.Applications))
 	for name := range bun.Applications {
 		if len(wsWebapps) > 0 && !wsWebapps[name] {
 			continue
 		}
+		webappNames = append(webappNames, name)
+	}
+	sort.Strings(webappNames)
+	for _, name := range webappNames {
 		generateWebapp(name, ctx)
 	}
 
@@ -179,7 +186,7 @@ func generateZookeeper(ctx *NsGenContext) {
 	app.Image = img
 	app.Kind = appdef.KindThirdParty
 	app.AddPort(fmt.Sprintf("2181:%d", ZKPort))
-	app.AddPort(fmt.Sprintf("%d:8080", ctx.NextPort()))
+	app.AddPort("17018:8080") // fixed admin port — outside webapp counter range
 	app.AddEnv("ZOO_AUTOPURGE_PURGEINTERVAL", "1")
 	app.AddEnv("ZOO_AUTOPURGE_SNAPRETAINCOUNT", "3")
 	app.AddEnv("ALLOW_ANONYMOUS_LOGIN", "yes")
@@ -233,7 +240,9 @@ func generateKeycloak(ctx *NsGenContext) {
 	app.Kind = appdef.KindThirdParty
 	app.AddEnv("KC_BOOTSTRAP_ADMIN_USERNAME", "admin")
 	app.AddEnv("KC_BOOTSTRAP_ADMIN_PASSWORD", "admin")
-	app.AddEnv("KC_HOSTNAME_STRICT_HTTPS", fmt.Sprintf("%v", ctx.TLSEnabled()))
+	// Use strict HTTPS if TLS is enabled or if external host (behind reverse proxy)
+	strictHTTPS := ctx.TLSEnabled() || !ctx.IsLocalHost()
+	app.AddEnv("KC_HOSTNAME_STRICT_HTTPS", fmt.Sprintf("%v", strictHTTPS))
 	app.AddDependsOn(appdef.AppPostgres)
 	app.AddVolume("./keycloak/ecos-app-realm.json:/opt/keycloak/data/import/ecos-app-realm.json")
 	app.AddVolume("./keycloak/healthcheck.sh:/healthcheck.sh")
@@ -319,7 +328,7 @@ func generateAlfresco(ctx *NsGenContext) {
 	alfApp := ctx.GetOrCreateApp(appdef.AppAlfresco)
 	alfApp.Image = alfImage
 	alfApp.Kind = appdef.KindCiteckAdditional
-	alfPort := ctx.NextPort()
+	alfPort := 17019 // fixed port for alfresco — not part of webapp counter
 	alfApp.AddPort(fmt.Sprintf("%d:8080", alfPort))
 	alfApp.AddDependsOn(appdef.AppAlfPostgres)
 	alfApp.AddVolume("alf_content:/content")
@@ -608,7 +617,7 @@ func generateWebapp(name string, ctx *NsGenContext) {
 	app.AddEnv("ECOS_INIT_DELAY", "0")
 	app.AddEnv("SPRING_CLOUD_CONFIG_ENABLED", "false") // CloudConfigServer on :8761 is for local debug only
 	app.AddEnv("SPRING_CONFIG_IMPORT", "")
-	app.AddEnv("ECOS_WEBAPP_WEB_AUTHENTICATORS_JWT_SECRET", JWTSecret)
+	app.AddEnv("ECOS_WEBAPP_WEB_AUTHENTICATORS_JWT_SECRET", JWTSecret())
 	app.AddPort(fmt.Sprintf("%d:%d", port, port))
 	app.AddDependsOn(ZKHost)
 	app.AddDependsOn(RMQHost)

@@ -90,7 +90,7 @@ func (s *CloudConfigServer) handleConfig(w http.ResponseWriter, r *http.Request)
 
 	// Base property source: JWT secret (always present)
 	baseSrc := map[string]any{
-		"ecos.webapp.web.authenticators.jwt.secret": namespace.JWTSecret,
+		"ecos.webapp.web.authenticators.jwt.secret": namespace.JWTSecret(),
 		"configserver.status":                       "Citeck Launcher Config Server",
 	}
 	propertySources := []propertySource{

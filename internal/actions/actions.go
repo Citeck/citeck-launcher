@@ -34,6 +34,13 @@ type ActionContext struct {
 	startedAtNs atomic.Int64
 }
 
+// Heartbeat resets the stall timer, signaling that the action is still making progress.
+// Call this from long-running executors (e.g. image pull with progress) to prevent
+// stall detection from cancelling the action.
+func (actx *ActionContext) Heartbeat() {
+	actx.startedAtNs.Store(time.Now().UnixNano())
+}
+
 // ActionStatus represents the lifecycle state of an action.
 type ActionStatus int32
 
