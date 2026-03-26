@@ -153,11 +153,44 @@ All 25 P0/P1 gaps closed across 8 sub-phases.
 ### Phase 6: Final Parity + Kotlin Removal — COMPLETE (2026-03-26)
 14 backend gaps + 7 web UI gaps closed. Kotlin code removed.
 
-### All Gaps Closed
-All gaps closed. Kotlin code fully removed.
+### Server Deployment Testing — COMPLETE (2026-03-26)
+Tested on remote server (community 2025.12). 13 gaps found and fixed:
+- Docker container log rotation (json-file 50m/3 files)
+- Pull stall prevention via heartbeat
+- Smart regenerate: doRegenerate() keeps unchanged containers running (docker-compose up style)
+- 3-phase doStart: resolve digests (no lock) → remove stale (WaitGroup, no lock) → update state (lock)
+- Deterministic webapp ports (sorted names), fixed infra ports (zk=17018, alf=17019)
+- ImageDigest resolved before hash comparison, excluded from hash (set after pull)
+- Unified GetHash/GetHashInput; JWTSecret generated per-instance
+- Let's Encrypt: full ACME integration + IP cert via shortlived profile + auto-renewal
+- HTTPS scheme for external hosts without local TLS (reverse proxy assumed)
+- Snapshot CLI (list/export/import), `citeck start` delegates to running daemon
+
+### Phase 7: Production Hardening — PLANNED
+See **`PLAN-phase7.md`** for the full plan: 37 issues across 3 sub-phases (7a critical, 7b production, 7c quality).
+
+### Key Technical Decisions
+- SSE (not WebSocket) for real-time events
+- TCP bound to 127.0.0.1 (security)
+- stdcopy.StdCopy for Docker log demuxing
+- Namespace-scoped volume operations (bind-mounts, not Docker named volumes)
+- Two storage backends: flat files (server) / SQLite (desktop)
+- Desktop mode via explicit `--desktop` flag only
+- H2 MVStore read-only parser in Go for migration
+- Shared secrets at launcher level, not per-workspace
+- go-git (pure Go) for git operations — no external git binary required
+- Snapshot download with HTTP resume, SHA256 verification, retry (3 attempts)
+- `reflect.DeepEqual` for config diff (not string comparison)
+- filepath.Join everywhere (no fmt.Sprintf for paths)
+- Smart regenerate via deployment hash comparison (like docker-compose up)
+- 3-phase doStart: I/O outside lock, state update inside lock
+- JWTSecret generated per-instance, persisted to `conf/jwt-secret`
+- ACME profiles via custom JWS (Go stdlib doesn't support profiles yet)
+- HTTPS scheme for external hosts even without local TLS
 
 ### Other References
 - **`PROGRESS.md`** — tracks completed work
+- **`PLAN-phase7.md`** — production hardening plan (37 issues)
 
 ## CI/CD
 
