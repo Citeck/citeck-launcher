@@ -1,14 +1,15 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"reflect"
 	"time"
 
-	"github.com/niceteck/citeck-launcher/internal/client"
-	"github.com/niceteck/citeck-launcher/internal/namespace"
-	"github.com/niceteck/citeck-launcher/internal/output"
+	"github.com/citeck/citeck-launcher/internal/client"
+	"github.com/citeck/citeck-launcher/internal/namespace"
+	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -169,32 +170,38 @@ func diffMaps(prefix string, old, new_ map[string]any) []string {
 }
 
 func waitForRunning(c *client.DaemonClient, timeout time.Duration) error {
-	deadline := time.After(timeout)
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
 	output.Errf("Waiting for all apps to be running...")
 
+	// Use SSE events for instant notification instead of polling
+	events, err := c.StreamEvents(ctx)
+	if err != nil {
+		return fmt.Errorf("connect to event stream: %w", err)
+	}
+
+	// Check initial state first
+	if ns, err := c.GetNamespace(); err == nil && ns.Status == "RUNNING" {
+		output.PrintText("All apps running")
+		return nil
+	}
+
 	for {
 		select {
-		case <-deadline:
+		case <-ctx.Done():
 			return fmt.Errorf("timeout waiting for namespace to be running")
-		case <-ticker.C:
-			ns, err := c.GetNamespace()
-			if err != nil {
-				continue
+		case evt, ok := <-events:
+			if !ok {
+				return fmt.Errorf("event stream closed")
 			}
-			if ns.Status == "RUNNING" {
+			if evt.Type == "namespace_status" && evt.After == "RUNNING" {
 				output.PrintText("All apps running")
 				return nil
 			}
-			running := 0
-			for _, app := range ns.Apps {
-				if app.Status == "RUNNING" {
-					running++
-				}
+			if evt.Type == "namespace_status" && evt.After == "STALLED" {
+				return fmt.Errorf("namespace stalled — some apps failed to start")
 			}
-			output.Errf("  %d/%d apps running...", running, len(ns.Apps))
 		}
 	}
 }
@@ -278,39 +285,54 @@ func newWaitCmd() *cobra.Command {
 			}
 			defer c.Close()
 
-			deadline := time.After(time.Duration(timeout) * time.Second)
-			ticker := time.NewTicker(2 * time.Second)
-			defer ticker.Stop()
+			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+			defer cancel()
+
+			// Check initial state
+			if healthy {
+				if h, err := c.GetHealth(); err == nil && h.Healthy {
+					output.PrintText("Healthy")
+					return nil
+				}
+			} else if ns, err := c.GetNamespace(); err == nil {
+				if app != "" {
+					for _, a := range ns.Apps {
+						if a.Name == app && matchStatus(a.Status, status) {
+							output.PrintText("App %s: %s", app, a.Status)
+							return nil
+						}
+					}
+				} else if matchStatus(ns.Status, status) {
+					output.PrintText("Namespace: %s", ns.Status)
+					return nil
+				}
+			}
+
+			// Use SSE events for instant notification
+			events, err := c.StreamEvents(ctx)
+			if err != nil {
+				return fmt.Errorf("connect to event stream: %w", err)
+			}
 
 			for {
 				select {
-				case <-deadline:
+				case <-ctx.Done():
 					os.Exit(ExitTimeout)
 					return nil
-				case <-ticker.C:
-					if healthy {
-						h, err := c.GetHealth()
-						if err == nil && h.Healthy {
-							output.PrintText("Healthy")
-							return nil
-						}
-						continue
+				case evt, ok := <-events:
+					if !ok {
+						return fmt.Errorf("event stream closed")
 					}
-
-					ns, err := c.GetNamespace()
-					if err != nil {
-						continue
+					if healthy && evt.Type == "namespace_status" && evt.After == "RUNNING" {
+						output.PrintText("Healthy")
+						return nil
 					}
-
-					if app != "" {
-						for _, a := range ns.Apps {
-							if a.Name == app && matchStatus(a.Status, status) {
-								output.PrintText("App %s: %s", app, a.Status)
-								return nil
-							}
-						}
-					} else if matchStatus(ns.Status, status) {
-						output.PrintText("Namespace: %s", ns.Status)
+					if app != "" && evt.Type == "app_status" && evt.AppName == app && matchStatus(evt.After, status) {
+						output.PrintText("App %s: %s", app, evt.After)
+						return nil
+					}
+					if app == "" && evt.Type == "namespace_status" && matchStatus(evt.After, status) {
+						output.PrintText("Namespace: %s", evt.After)
 						return nil
 					}
 				}

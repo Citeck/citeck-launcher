@@ -3,7 +3,7 @@ package namespace
 import (
 	"testing"
 
-	"github.com/niceteck/citeck-launcher/internal/bundle"
+	"github.com/citeck/citeck-launcher/internal/bundle"
 )
 
 func makeCtx(port int, host string, tlsEnabled bool) *NsGenContext {

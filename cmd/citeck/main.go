@@ -1,6 +1,6 @@
 package main
 
-import "github.com/niceteck/citeck-launcher/internal/cli"
+import "github.com/citeck/citeck-launcher/internal/cli"
 
 var version = "dev"
 

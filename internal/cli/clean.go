@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/niceteck/citeck-launcher/internal/config"
-	"github.com/niceteck/citeck-launcher/internal/docker"
-	"github.com/niceteck/citeck-launcher/internal/namespace"
-	"github.com/niceteck/citeck-launcher/internal/output"
+	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/docker"
+	"github.com/citeck/citeck-launcher/internal/namespace"
+	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/spf13/cobra"
 )
 

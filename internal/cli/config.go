@@ -3,9 +3,11 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 
-	"github.com/niceteck/citeck-launcher/internal/config"
-	"github.com/niceteck/citeck-launcher/internal/output"
+	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/namespace"
+	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -72,8 +74,13 @@ func newConfigValidateCmd() *cobra.Command {
 				errors = append(errors, "config file is empty")
 			}
 
-			// Semantic validation planned for Phase 5G
-			// (auth type, port range, TLS files, bundle ref format)
+			// Parse and run semantic validation
+			cfg, parseErr := namespace.ParseNamespaceConfig(data)
+			if parseErr != nil {
+				errors = append(errors, fmt.Sprintf("YAML parse error: %s", parseErr.Error()))
+			} else {
+				errors = append(errors, validateNamespaceConfig(cfg)...)
+			}
 
 			result := map[string]any{
 				"path":   path,
@@ -96,4 +103,51 @@ func newConfigValidateCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// validateNamespaceConfig performs semantic validation of a namespace config.
+func validateNamespaceConfig(cfg *namespace.NamespaceConfig) []string {
+	var errors []string
+
+	// Auth type
+	switch cfg.Authentication.Type {
+	case namespace.AuthBasic, namespace.AuthKeycloak:
+		// valid
+	default:
+		errors = append(errors, fmt.Sprintf("invalid authentication.type: %q (expected BASIC or KEYCLOAK)", cfg.Authentication.Type))
+	}
+
+	// Users required for BASIC auth
+	if cfg.Authentication.Type == namespace.AuthBasic && len(cfg.Authentication.Users) == 0 {
+		errors = append(errors, "authentication.users must not be empty when type=BASIC")
+	}
+
+	// Port range
+	if cfg.Proxy.Port < 1 || cfg.Proxy.Port > 65535 {
+		errors = append(errors, fmt.Sprintf("proxy.port %d out of range (1-65535)", cfg.Proxy.Port))
+	}
+
+	// TLS cert/key files exist
+	if cfg.Proxy.TLS.Enabled && !cfg.Proxy.TLS.LetsEncrypt {
+		if cfg.Proxy.TLS.CertPath != "" {
+			if _, err := os.Stat(cfg.Proxy.TLS.CertPath); err != nil {
+				errors = append(errors, fmt.Sprintf("TLS cert file not found: %s", cfg.Proxy.TLS.CertPath))
+			}
+		}
+		if cfg.Proxy.TLS.KeyPath != "" {
+			if _, err := os.Stat(cfg.Proxy.TLS.KeyPath); err != nil {
+				errors = append(errors, fmt.Sprintf("TLS key file not found: %s", cfg.Proxy.TLS.KeyPath))
+			}
+		}
+	}
+
+	// BundleRef format
+	if !cfg.BundleRef.IsEmpty() {
+		ref := cfg.BundleRef.String()
+		if !strings.Contains(ref, ":") {
+			errors = append(errors, fmt.Sprintf("invalid bundleRef format: %q (expected repo:version)", ref))
+		}
+	}
+
+	return errors
 }

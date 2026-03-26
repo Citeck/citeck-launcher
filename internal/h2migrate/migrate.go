@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/niceteck/citeck-launcher/internal/storage"
+	"github.com/citeck/citeck-launcher/internal/storage"
 )
 
 // MigrateResult holds the result of an H2 → SQLite migration.

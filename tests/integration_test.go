@@ -7,9 +7,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/niceteck/citeck-launcher/internal/api"
-	"github.com/niceteck/citeck-launcher/internal/client"
-	"github.com/niceteck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/api"
+	"github.com/citeck/citeck-launcher/internal/client"
+	"github.com/citeck/citeck-launcher/internal/config"
 )
 
 func skipIfNoDaemon(t *testing.T) *client.DaemonClient {

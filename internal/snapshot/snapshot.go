@@ -25,14 +25,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/niceteck/citeck-launcher/internal/docker"
+	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/docker"
 )
 
 const (
-	launcherUtilsImage = "registry.citeck.ru/community/launcher-utils:1.0"
-	metaFileName       = "meta.json"
-	compressionExt     = "zst" // zstd by default
+	metaFileName   = "meta.json"
+	compressionExt = "zst" // zstd by default
 )
+
+var launcherUtilsImage = config.UtilsImage()
 
 // NamespaceSnapshotMeta is the top-level snapshot metadata.
 type NamespaceSnapshotMeta struct {
@@ -281,7 +283,7 @@ func ensureUtilsImage(ctx context.Context, dc *docker.Client) error {
 		return nil
 	}
 	slog.Info("Pulling launcher-utils image", "image", launcherUtilsImage)
-	return dc.PullImage(ctx, launcherUtilsImage)
+	return dc.PullImage(ctx, launcherUtilsImage, nil)
 }
 
 // createZip creates a ZIP file from all files in srcDir.

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/niceteck/citeck-launcher/internal/git"
+	"github.com/citeck/citeck-launcher/internal/git"
 	"gopkg.in/yaml.v3"
 )
 
@@ -21,8 +21,9 @@ const (
 
 // ImageRepo maps a short prefix like "core" to a full registry URL like "nexus.citeck.ru".
 type ImageRepo struct {
-	ID  string `yaml:"id"`
-	URL string `yaml:"url"`
+	ID       string `yaml:"id"`
+	URL      string `yaml:"url"`
+	AuthType string `yaml:"authType,omitempty"` // "BASIC" if registry requires authentication
 }
 
 // DataSourceConfig describes a datasource with at least a URL.
@@ -86,6 +87,46 @@ type SnapshotDef struct {
 	SHA256 string `yaml:"sha256,omitempty"`
 }
 
+// Infrastructure image override structs — workspace-level defaults for infra containers.
+type PostgresProps struct {
+	Image string `yaml:"image,omitempty"`
+}
+
+type KeycloakProps struct {
+	Image string `yaml:"image,omitempty"`
+}
+
+type ZookeeperProps struct {
+	Image string `yaml:"image,omitempty"`
+}
+
+type OnlyOfficeProps struct {
+	Image       string `yaml:"image,omitempty"`
+	MemoryLimit string `yaml:"memoryLimit,omitempty"`
+}
+
+type PgAdminWsProps struct {
+	Image string `yaml:"image,omitempty"`
+}
+
+type AlfrescoProps struct {
+	Enabled bool     `yaml:"enabled,omitempty"`
+	Aliases []string `yaml:"aliases,omitempty"`
+}
+
+// LicenseInstance represents a Citeck enterprise license.
+type LicenseInstance struct {
+	ID         string `json:"id" yaml:"id"`
+	Tenant     string `json:"tenant" yaml:"tenant"`
+	Priority   int64  `json:"priority" yaml:"priority"`
+	IssuedTo   string `json:"issuedTo" yaml:"issuedTo"`
+	IssuedAt   string `json:"issuedAt" yaml:"issuedAt"`
+	ValidFrom  string `json:"validFrom" yaml:"validFrom"`
+	ValidUntil string `json:"validUntil" yaml:"validUntil"`
+	Content    any    `json:"content" yaml:"content"`
+	Signatures []any  `json:"signatures" yaml:"signatures"`
+}
+
 // WorkspaceConfig is the top-level workspace-v1.yml structure.
 type WorkspaceConfig struct {
 	QuickStartVariants []QuickStartVariant `yaml:"quickStartVariants,omitempty"`
@@ -96,6 +137,26 @@ type WorkspaceConfig struct {
 	CiteckProxy        ProxyConfig         `yaml:"citeckProxy"`
 	DefaultWebappProps WebappDefaultProps  `yaml:"defaultWebappProps,omitempty"`
 	Webapps            []WebappConfig      `yaml:"webapps"`
+	Postgres           PostgresProps       `yaml:"postgres,omitempty"`
+	Keycloak           KeycloakProps       `yaml:"keycloak,omitempty"`
+	Zookeeper          ZookeeperProps      `yaml:"zookeeper,omitempty"`
+	OnlyOffice         OnlyOfficeProps     `yaml:"onlyoffice,omitempty"`
+	PgAdmin            PgAdminWsProps      `yaml:"pgadmin,omitempty"`
+	Alfresco           AlfrescoProps       `yaml:"alfresco,omitempty"`
+	Licenses           []LicenseInstance   `yaml:"licenses,omitempty"`
+}
+
+// ImageReposByHost builds a map from registry host to ImageRepo for auth lookup.
+func (w *WorkspaceConfig) ImageReposByHost() map[string]ImageRepo {
+	m := make(map[string]ImageRepo)
+	for _, repo := range w.ImageRepos {
+		host := repo.URL
+		if idx := strings.Index(host, "/"); idx > 0 {
+			host = host[:idx]
+		}
+		m[host] = repo
+	}
+	return m
 }
 
 // TokenLookupFunc returns an auth token for a given repo auth type.
@@ -324,10 +385,15 @@ func parseBundleFile(path, version string, aliasMap map[string]string, imageRepo
 		}
 	}
 
+	// Parse raw content as generic map for bundle.content (used by license system)
+	var rawContent map[string]any
+	yaml.Unmarshal(data, &rawContent)
+
 	def := &BundleDef{
 		Key:          BundleKey{Version: version},
 		Applications: applications,
 		CiteckApps:   citeckApps,
+		Content:      rawContent,
 	}
 
 	slog.Info("Resolved bundle", "version", version, "apps", len(applications), "citeckApps", len(citeckApps))

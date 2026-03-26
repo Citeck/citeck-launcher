@@ -1,5 +1,12 @@
 package appdef
 
+import (
+	"crypto/sha256"
+	"fmt"
+	"sort"
+	"strings"
+)
+
 // ApplicationKind categorizes apps by their role.
 type ApplicationKind int
 
@@ -98,6 +105,62 @@ type ApplicationDef struct {
 	IsInit            bool              `json:"-"` // true for init containers (no restart policy)
 }
 
+// GetHash computes a SHA-256 hash of the application definition.
+// Used to detect if a container needs recreation.
+func (d *ApplicationDef) GetHash() string {
+	h := sha256.New()
+	fmt.Fprintf(h, "name=%s\n", d.Name)
+	fmt.Fprintf(h, "image=%s\n", d.Image)
+	fmt.Fprintf(h, "cmd=%s\n", strings.Join(d.Cmd, " "))
+	fmt.Fprintf(h, "shmSize=%s\n", d.ShmSize)
+	fmt.Fprintf(h, "vch=%s\n", d.VolumesContentHash)
+
+	// Sort environments for deterministic hash
+	envKeys := make([]string, 0, len(d.Environments))
+	for k := range d.Environments {
+		envKeys = append(envKeys, k)
+	}
+	sort.Strings(envKeys)
+	for _, k := range envKeys {
+		fmt.Fprintf(h, "env:%s=%s\n", k, d.Environments[k])
+	}
+
+	sort.Strings(d.Ports)
+	for _, p := range d.Ports {
+		fmt.Fprintf(h, "port=%s\n", p)
+	}
+	for _, v := range d.Volumes {
+		fmt.Fprintf(h, "vol=%s\n", v)
+	}
+
+	// Dependencies
+	depKeys := make([]string, 0, len(d.DependsOn))
+	for k := range d.DependsOn {
+		depKeys = append(depKeys, k)
+	}
+	sort.Strings(depKeys)
+	for _, k := range depKeys {
+		fmt.Fprintf(h, "dep=%s\n", k)
+	}
+
+	// Init actions
+	for _, ia := range d.InitActions {
+		fmt.Fprintf(h, "initAction=%s\n", strings.Join(ia.Exec, " "))
+	}
+
+	// Init containers
+	for _, ic := range d.InitContainers {
+		fmt.Fprintf(h, "initContainer=%s\n", ic.Image)
+	}
+
+	// Resources
+	if d.Resources != nil {
+		fmt.Fprintf(h, "mem=%s\n", d.Resources.Limits.Memory)
+	}
+
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
 // App name constants.
 const (
 	AppProxy           = "proxy"
@@ -117,4 +180,7 @@ const (
 	AppKeycloak        = "keycloak"
 	AppPgadmin         = "pgadmin"
 	AppOnlyoffice      = "onlyoffice"
+	AppAlfresco        = "alfresco"
+	AppAlfPostgres     = "alf-postgres"
+	AppAlfSolr         = "alf-solr"
 )

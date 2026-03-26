@@ -14,14 +14,15 @@ import (
 
 	"log/slog"
 
-	"github.com/niceteck/citeck-launcher/internal/api"
-	"github.com/niceteck/citeck-launcher/internal/bundle"
-	"github.com/niceteck/citeck-launcher/internal/config"
-	"github.com/niceteck/citeck-launcher/internal/form"
-	"github.com/niceteck/citeck-launcher/internal/git"
-	"github.com/niceteck/citeck-launcher/internal/namespace"
-	"github.com/niceteck/citeck-launcher/internal/snapshot"
-	"github.com/niceteck/citeck-launcher/internal/storage"
+	"github.com/citeck/citeck-launcher/internal/api"
+	"github.com/citeck/citeck-launcher/internal/bundle"
+	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/form"
+	"github.com/citeck/citeck-launcher/internal/git"
+	"github.com/citeck/citeck-launcher/internal/namespace"
+	"github.com/citeck/citeck-launcher/internal/snapshot"
+	"github.com/citeck/citeck-launcher/internal/storage"
+	"gopkg.in/yaml.v3"
 )
 
 // safeIDPattern allows only alphanumeric, hyphens, underscores, dots.
@@ -131,9 +132,9 @@ func (d *Daemon) handleDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleGetTemplates(w http.ResponseWriter, _ *http.Request) {
-	d.configMu.Lock()
+	d.configMu.RLock()
 	wsCfg := d.workspaceConfig
-	d.configMu.Unlock()
+	d.configMu.RUnlock()
 
 	var templates []api.TemplateDto
 	if wsCfg != nil {
@@ -152,9 +153,9 @@ func (d *Daemon) handleGetTemplates(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (d *Daemon) handleGetQuickStarts(w http.ResponseWriter, _ *http.Request) {
-	d.configMu.Lock()
+	d.configMu.RLock()
 	wsCfg := d.workspaceConfig
-	d.configMu.Unlock()
+	d.configMu.RUnlock()
 
 	var quickStarts []api.QuickStartDto
 	if wsCfg != nil {
@@ -212,8 +213,37 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Generate namespace config
+	// Generate namespace config — start from template if specified
 	nsCfg := namespace.DefaultNamespaceConfig()
+
+	// Apply namespace template if specified
+	templateID := req.Template
+	if templateID == "" {
+		templateID = "default" // use default template if none specified
+	}
+	d.configMu.RLock()
+	wsCfg := d.workspaceConfig
+	d.configMu.RUnlock()
+	if wsCfg != nil {
+		for _, tmpl := range wsCfg.NamespaceTemplates {
+			if tmpl.ID == templateID {
+				// Apply template config as base by marshalling to YAML and re-parsing
+				if len(tmpl.Config) > 0 {
+					if tmplData, err := yaml.Marshal(tmpl.Config); err == nil {
+						yaml.Unmarshal(tmplData, &nsCfg)
+					}
+				}
+				// Set template ID for runtime use
+				nsCfg.Template = templateID
+				break
+			}
+		}
+		// If no bundleRef from template or request, use first bundle repo + LATEST
+		if nsCfg.BundleRef.IsEmpty() && req.BundleRepo == "" && len(wsCfg.BundleRepos) > 0 {
+			nsCfg.BundleRef = bundle.BundleRef{Repo: wsCfg.BundleRepos[0].ID, Key: "LATEST"}
+		}
+	}
+
 	nsCfg.Name = req.Name
 	nsCfg.ID = sanitizeName(req.Name)
 	if nsCfg.ID == "" {
@@ -286,9 +316,9 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleListBundles(w http.ResponseWriter, _ *http.Request) {
-	d.configMu.Lock()
+	d.configMu.RLock()
 	wsCfg := d.workspaceConfig
-	d.configMu.Unlock()
+	d.configMu.RUnlock()
 
 	var result []api.BundleInfoDto
 	if wsCfg != nil {
@@ -414,9 +444,9 @@ func (d *Daemon) handleTestSecret(w http.ResponseWriter, r *http.Request) {
 	case storage.SecretGitToken:
 		// Resolve the repo URL for this secret's scope from workspace config
 		var repoURL string
-		d.configMu.Lock()
+		d.configMu.RLock()
 		wsCfg := d.workspaceConfig
-		d.configMu.Unlock()
+		d.configMu.RUnlock()
 		if wsCfg != nil && secret.Scope != "" {
 			for _, repo := range wsCfg.BundleRepos {
 				if repo.AuthType == secret.Scope && repo.URL != "" {
@@ -636,16 +666,30 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 	fileName := fmt.Sprintf("%s_%s.zip", nsName, time.Now().Format("2006-01-02_15-04-05"))
 	outputPath := filepath.Join(dir, fileName)
 
-	ctx := r.Context()
-	meta, err := snapshot.Export(ctx, d.dockerClient, outputPath, d.volumesBase)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
+	nsID := d.activeNsID()
+	go func() {
+		d.broadcastEvent(api.EventDto{
+			Type: "snapshot_export", Timestamp: time.Now().UnixMilli(),
+			NamespaceID: nsID, After: fmt.Sprintf("exporting to %s", fileName),
+		})
+		meta, err := snapshot.Export(d.bgCtx, d.dockerClient, outputPath, d.volumesBase)
+		if err != nil {
+			slog.Error("Snapshot export failed", "err", err)
+			d.broadcastEvent(api.EventDto{
+				Type: "snapshot_error", Timestamp: time.Now().UnixMilli(),
+				NamespaceID: nsID, After: err.Error(),
+			})
+			return
+		}
+		d.broadcastEvent(api.EventDto{
+			Type: "snapshot_complete", Timestamp: time.Now().UnixMilli(),
+			NamespaceID: nsID, After: fmt.Sprintf("exported %d volumes to %s", len(meta.Volumes), fileName),
+		})
+	}()
 
 	writeJSON(w, api.ActionResultDto{
 		Success: true,
-		Message: fmt.Sprintf("Exported %d volumes to %s", len(meta.Volumes), fileName),
+		Message: fmt.Sprintf("Export started: %s", fileName),
 	})
 }
 
@@ -770,7 +814,7 @@ func (d *Daemon) handleDownloadSnapshot(w http.ResponseWriter, r *http.Request) 
 			Type: "snapshot_download", Timestamp: time.Now().UnixMilli(),
 			NamespaceID: nsID, After: fmt.Sprintf("downloading %s", fileName),
 		})
-		if err := snapshot.Download(context.Background(), req.URL, destPath, req.SHA256, nil); err != nil {
+		if err := snapshot.Download(d.bgCtx, req.URL, destPath, req.SHA256, nil); err != nil {
 			slog.Error("Snapshot download failed", "url", req.URL, "err", err)
 			d.broadcastEvent(api.EventDto{
 				Type: "snapshot_error", Timestamp: time.Now().UnixMilli(),
@@ -807,9 +851,9 @@ func safeSnapshotFileName(rawURL string) string {
 
 // downloadAndImportSnapshot downloads a snapshot in the background and imports it into the namespace.
 func (d *Daemon) downloadAndImportSnapshot(snapshotID, wsID, nsID string) {
-	d.configMu.Lock()
+	d.configMu.RLock()
 	wsCfg := d.workspaceConfig
-	d.configMu.Unlock()
+	d.configMu.RUnlock()
 
 	snapDef := bundle.FindSnapshot(wsCfg, snapshotID)
 	if snapDef == nil {
@@ -870,7 +914,7 @@ func (d *Daemon) downloadAndImportSnapshot(snapshotID, wsID, nsID string) {
 		const maxRetries = 3
 		var downloadErr error
 		for attempt := 1; attempt <= maxRetries; attempt++ {
-			downloadErr = snapshot.Download(context.Background(), snapDef.URL, destPath, snapDef.SHA256, progress)
+			downloadErr = snapshot.Download(d.bgCtx, snapDef.URL, destPath, snapDef.SHA256, progress)
 			if downloadErr == nil {
 				break
 			}
@@ -900,7 +944,7 @@ func (d *Daemon) downloadAndImportSnapshot(snapshotID, wsID, nsID string) {
 		NamespaceID: nsID, After: "importing snapshot",
 	})
 
-	meta, err := snapshot.Import(context.Background(), d.dockerClient, destPath, volumesBase)
+	meta, err := snapshot.Import(d.bgCtx, d.dockerClient, destPath, volumesBase)
 	if err != nil {
 		slog.Error("Snapshot import failed", "err", err)
 		d.broadcastEvent(api.EventDto{

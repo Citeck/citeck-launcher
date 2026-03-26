@@ -9,13 +9,14 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/niceteck/citeck-launcher/internal/api"
+	"github.com/citeck/citeck-launcher/internal/api"
 )
 
 type DaemonClient struct {
-	httpClient *http.Client
-	baseURL    string
-	token      string
+	httpClient    *http.Client
+	streamClient  *http.Client // no timeout, for streaming (log follow, SSE)
+	baseURL       string
+	token         string
 }
 
 // New creates a client; returns error if daemon is not reachable.
@@ -25,9 +26,10 @@ func New(host, token string) (*DaemonClient, error) {
 		return nil, err
 	}
 	return &DaemonClient{
-		httpClient: NewHTTPClient(tc),
-		baseURL:    tc.BaseURL(),
-		token:      tc.Token,
+		httpClient:   NewHTTPClient(tc),
+		streamClient: NewStreamingHTTPClient(tc),
+		baseURL:      tc.BaseURL(),
+		token:        tc.Token,
 	}, nil
 }
 
@@ -172,6 +174,29 @@ func (c *DaemonClient) ReloadNamespace() (*api.ActionResultDto, error) {
 func (c *DaemonClient) GetAppLogs(name string, tail int) (string, error) {
 	path := fmt.Sprintf("%s?tail=%d", api.AppLogs(name), tail)
 	return c.getRaw(path)
+}
+
+// StreamAppLogs returns a streaming reader for container logs (follow mode).
+// The caller must close the returned ReadCloser.
+func (c *DaemonClient) StreamAppLogs(name string, tail int) (io.ReadCloser, error) {
+	url := c.baseURL + fmt.Sprintf("%s?tail=%d&follow=true", api.AppLogs(name), tail)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.streamClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	return resp.Body, nil
 }
 
 func (c *DaemonClient) RestartApp(name string) (*api.ActionResultDto, error) {

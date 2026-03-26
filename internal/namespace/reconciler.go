@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/niceteck/citeck-launcher/internal/appdef"
-	"github.com/niceteck/citeck-launcher/internal/docker"
+	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/docker"
 )
 
 // ReconcilerConfig holds reconciliation settings.
@@ -34,9 +34,9 @@ func (r *Runtime) RunReconciler(ctx context.Context, cfg ReconcilerConfig) {
 		return
 	}
 
-	r.wg.Add(1)
+	r.reconcileWg.Add(1)
 	go func() {
-		defer r.wg.Done()
+		defer r.reconcileWg.Done()
 		ticker := time.NewTicker(time.Duration(cfg.IntervalSeconds) * time.Second)
 		defer ticker.Stop()
 
@@ -51,9 +51,9 @@ func (r *Runtime) RunReconciler(ctx context.Context, cfg ReconcilerConfig) {
 	}()
 
 	if cfg.LivenessEnabled {
-		r.wg.Add(1)
+		r.reconcileWg.Add(1)
 		go func() {
-			defer r.wg.Done()
+			defer r.reconcileWg.Done()
 			ticker := time.NewTicker(cfg.LivenessPeriod)
 			defer ticker.Stop()
 

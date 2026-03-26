@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/niceteck/citeck-launcher/internal/bundle"
+	"github.com/citeck/citeck-launcher/internal/bundle"
 	"gopkg.in/yaml.v3"
 )
 
@@ -47,6 +47,7 @@ type WebappProps struct {
 	Enabled        *bool             `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	Image          string            `yaml:"image" json:"image"`
 	Environments   map[string]string `yaml:"environments,omitempty" json:"environments,omitempty"`
+	CloudConfig    map[string]any    `yaml:"cloudConfig,omitempty" json:"cloudConfig,omitempty"`
 	DebugPort      int               `yaml:"debugPort" json:"debugPort"`
 	HeapSize       string            `yaml:"heapSize" json:"heapSize"`
 	MemoryLimit    string            `yaml:"memoryLimit" json:"memoryLimit"`

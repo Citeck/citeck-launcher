@@ -11,18 +11,20 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
-	"github.com/niceteck/citeck-launcher/internal/api"
-	"github.com/niceteck/citeck-launcher/internal/appdef"
-	"github.com/niceteck/citeck-launcher/internal/appfiles"
-	"github.com/niceteck/citeck-launcher/internal/bundle"
-	"github.com/niceteck/citeck-launcher/internal/config"
-	"github.com/niceteck/citeck-launcher/internal/docker"
-	"github.com/niceteck/citeck-launcher/internal/namespace"
-	"github.com/niceteck/citeck-launcher/internal/storage"
+	"github.com/citeck/citeck-launcher/internal/api"
+	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/appfiles"
+	"github.com/citeck/citeck-launcher/internal/bundle"
+	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/docker"
+	"github.com/citeck/citeck-launcher/internal/namespace"
+	"github.com/citeck/citeck-launcher/internal/snapshot"
+	"github.com/citeck/citeck-launcher/internal/storage"
 )
 
 // StartOptions controls daemon startup behavior.
@@ -33,23 +35,26 @@ type StartOptions struct {
 
 // Daemon is the main daemon server.
 type Daemon struct {
-	dockerClient   *docker.Client
-	runtime        *namespace.Runtime
-	nsConfig       *namespace.NamespaceConfig
-	bundleDef      *bundle.BundleDef
+	dockerClient    *docker.Client
+	runtime         *namespace.Runtime
+	nsConfig        *namespace.NamespaceConfig
+	bundleDef       *bundle.BundleDef
 	workspaceConfig *bundle.WorkspaceConfig
-	appDefs        []appdef.ApplicationDef
-	server         *http.Server
-	tcpServer      *http.Server
-	store          storage.Store
-	socketPath     string
-	volumesBase    string
-	workspaceID    string
-	startTime      time.Time
-	eventSubs      []chan api.EventDto
-	eventMu        sync.Mutex
-	configMu       sync.Mutex // protects nsConfig, bundleDef, appDefs, workspaceConfig
-	shutdownOnce   sync.Once
+	appDefs         []appdef.ApplicationDef
+	server          *http.Server
+	tcpServer       *http.Server
+	cloudCfgServer  *CloudConfigServer
+	store           storage.Store
+	socketPath      string
+	volumesBase     string
+	workspaceID     string
+	startTime       time.Time
+	eventSubs       []chan api.EventDto
+	eventMu         sync.Mutex
+	configMu        sync.RWMutex // protects nsConfig, bundleDef, appDefs, workspaceConfig
+	shutdownOnce    sync.Once
+	bgCtx           context.Context    // cancelled on daemon shutdown
+	bgCancel        context.CancelFunc
 }
 
 // Start runs the daemon.
@@ -166,6 +171,7 @@ func Start(opts StartOptions) error {
 	var wsCfg *bundle.WorkspaceConfig
 	var runtime *namespace.Runtime
 	var appDefs []appdef.ApplicationDef
+	var cloudCfgSrv *CloudConfigServer
 	volumesBase := config.ResolveVolumesBase(wsID, nsID)
 
 	if nsCfg != nil {
@@ -174,25 +180,7 @@ func Start(opts StartOptions) error {
 		}
 
 		// Resolve bundle + workspace config (with auth from stored secrets)
-		tokenLookup := func(authType string) string {
-			if store == nil {
-				return ""
-			}
-			secrets, err := store.ListSecrets()
-			if err != nil {
-				return ""
-			}
-			for _, s := range secrets {
-				if string(s.Type) == authType || s.Scope == authType {
-					sec, err := store.GetSecret(s.ID)
-					if err == nil {
-						return sec.Value
-					}
-				}
-			}
-			return ""
-		}
-		resolver := bundle.NewResolverWithAuth(config.DataDir(), tokenLookup)
+		resolver := bundle.NewResolverWithAuth(config.DataDir(), makeTokenLookup(store))
 		resolveResult, err := resolver.Resolve(nsCfg.BundleRef)
 		if err != nil {
 			slog.Error("Failed to resolve bundle", "ref", nsCfg.BundleRef, "err", err)
@@ -210,8 +198,18 @@ func Start(opts StartOptions) error {
 			slog.Info("Extracted appfiles", "dir", volumesBase)
 		}
 
+		// Load persisted state for detached apps and status recovery
+		persistedState := namespace.LoadNsState(volumesBase, nsID)
+		var genOpts namespace.GenerateOpts
+		if persistedState != nil {
+			genOpts.DetachedApps = make(map[string]bool)
+			for _, name := range persistedState.ManualStoppedApps {
+				genOpts.DetachedApps[name] = true
+			}
+		}
+
 		// Generate namespace
-		genResp := namespace.Generate(nsCfg, bundleDef, resolveResult.Workspace)
+		genResp := namespace.Generate(nsCfg, bundleDef, resolveResult.Workspace, genOpts)
 
 		// Write generated files (cloud config YAMLs, etc.) to volumes base
 		for filePath, content := range genResp.Files {
@@ -228,8 +226,48 @@ func Start(opts StartOptions) error {
 
 		appDefs = genResp.Applications
 		runtime = namespace.NewRuntime(nsCfg, dockerClient, wsID, volumesBase)
-		runtime.Start(appDefs)
+
+		// Wire registry auth and operation history into runtime
+		runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(wsCfg, store))
+		runtime.SetHistory(namespace.NewOperationHistory(config.LogDir()))
+
+		// Restore persisted state: manual stopped apps, edited apps, locked apps
+		if persistedState != nil {
+			if len(persistedState.ManualStoppedApps) > 0 {
+				stopped := make(map[string]bool)
+				for _, name := range persistedState.ManualStoppedApps {
+					stopped[name] = true
+				}
+				runtime.SetManualStoppedApps(stopped)
+			}
+			runtime.RestoreEditedApps(persistedState.EditedApps, persistedState.EditedLockedApps)
+		}
+
+		// Start CloudConfigServer with generated ext cloud config
+		cloudCfgSrv = NewCloudConfigServer()
+		cloudCfgSrv.UpdateConfig(genResp.CloudConfig)
+		if err := cloudCfgSrv.Start(); err != nil {
+			slog.Warn("CloudConfigServer failed to start", "err", err)
+		}
+
+		// Status recovery: if previous status was RUNNING/STARTING/STALLED → start namespace
+		// If STOPPING → leave stopped (interrupted stop completed by clean restart)
+		shouldStart := true
+		if persistedState != nil && persistedState.Status == namespace.NsStatusStopping {
+			slog.Info("Previous status was STOPPING — not auto-starting")
+			shouldStart = false
+		}
+		if shouldStart {
+			runtime.Start(appDefs)
+		}
+
+		// Snapshot auto-import in background (non-blocking startup)
+		if nsCfg.Snapshot != "" {
+			go importSnapshotIfNeeded(nsCfg, wsCfg, dockerClient, volumesBase)
+		}
 	}
+
+	bgCtx, bgCancel := context.WithCancel(context.Background())
 
 	d := &Daemon{
 		dockerClient:    dockerClient,
@@ -238,11 +276,14 @@ func Start(opts StartOptions) error {
 		bundleDef:       bundleDef,
 		workspaceConfig: wsCfg,
 		appDefs:         appDefs,
+		cloudCfgServer:  cloudCfgSrv,
 		store:           store,
 		socketPath:      socketPath,
 		volumesBase:     volumesBase,
 		workspaceID:     wsID,
 		startTime:       time.Now(),
+		bgCtx:           bgCtx,
+		bgCancel:        bgCancel,
 	}
 
 	// Wire up event broadcasting
@@ -278,7 +319,13 @@ func Start(opts StartOptions) error {
 		if err != nil {
 			slog.Warn("TCP listener failed, Web UI unavailable", "addr", tcpAddr, "err", err)
 		} else {
-			d.tcpServer = &http.Server{Handler: mux}
+			// Wrap with token auth middleware for TCP connections (Unix socket skips auth)
+			var tcpHandler http.Handler = mux
+			if daemonCfg.Server.Token != "" {
+				tcpHandler = TokenAuthMiddleware(daemonCfg.Server.Token, mux)
+				slog.Info("Token auth enabled on TCP listener")
+			}
+			d.tcpServer = &http.Server{Handler: tcpHandler}
 			go func() {
 				slog.Info("Web UI available", "url", "http://"+tcpAddr)
 				if err := d.tcpServer.Serve(tcpListener); err != nil && err != http.ErrServerClosed {
@@ -326,8 +373,14 @@ func (d *Daemon) doShutdown() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// Cancel background goroutines (downloads, snapshot imports)
+	d.bgCancel()
+
 	if d.runtime != nil {
 		d.runtime.Shutdown()
+	}
+	if d.cloudCfgServer != nil {
+		d.cloudCfgServer.Stop()
 	}
 
 	d.server.Shutdown(ctx)
@@ -349,13 +402,14 @@ func (d *Daemon) broadcastEvent(evt api.EventDto) {
 	for _, ch := range d.eventSubs {
 		select {
 		case ch <- evt:
-		default: // drop if subscriber is slow
+		default:
+			slog.Warn("Event dropped for slow subscriber", "type", evt.Type)
 		}
 	}
 }
 
 func (d *Daemon) addSubscriber() chan api.EventDto {
-	ch := make(chan api.EventDto, 64)
+	ch := make(chan api.EventDto, 256)
 	d.eventMu.Lock()
 	d.eventSubs = append(d.eventSubs, ch)
 	d.eventMu.Unlock()
@@ -482,4 +536,150 @@ func (d *Daemon) activeConfigPath() string {
 
 func readJSON(r *http.Request, v any) error {
 	return json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(v) // 1MB max
+}
+
+// makeTokenLookup creates a function that looks up auth tokens from the secret store.
+func makeTokenLookup(store storage.Store) bundle.TokenLookupFunc {
+	return func(authType string) string {
+		if store == nil {
+			return ""
+		}
+		secrets, err := store.ListSecrets()
+		if err != nil {
+			return ""
+		}
+		for _, s := range secrets {
+			if string(s.Type) == authType || s.Scope == authType {
+				sec, err := store.GetSecret(s.ID)
+				if err == nil {
+					return sec.Value
+				}
+			}
+		}
+		return ""
+	}
+}
+
+// makeRegistryAuthFunc creates a function that returns Docker registry credentials
+// by matching image host against workspace config's imageReposByHost and looking up
+// stored secrets.
+func makeRegistryAuthFunc(wsCfg *bundle.WorkspaceConfig, store storage.Store) namespace.RegistryAuthFunc {
+	if wsCfg == nil || store == nil {
+		return nil
+	}
+	reposByHost := wsCfg.ImageReposByHost()
+
+	// Pre-load and cache all secrets (avoids N+1 queries during parallel image pulls)
+	secrets, err := store.ListSecrets()
+	if err != nil {
+		return nil
+	}
+	secretCache := make(map[string]string) // scope → value
+	for _, s := range secrets {
+		sec, err := store.GetSecret(s.ID)
+		if err != nil {
+			continue
+		}
+		if s.Scope != "" {
+			secretCache[s.Scope] = sec.Value
+		}
+		if string(s.Type) != "" {
+			secretCache[string(s.Type)] = sec.Value
+		}
+	}
+
+	return func(img string) *docker.RegistryAuth {
+		host := img
+		if idx := strings.Index(host, "/"); idx > 0 {
+			host = host[:idx]
+		}
+		repo, ok := reposByHost[host]
+		if !ok || repo.AuthType == "" {
+			return nil
+		}
+		// Look up from cached secrets
+		var value string
+		if v, ok := secretCache[repo.AuthType]; ok {
+			value = v
+		} else if v, ok := secretCache[host]; ok {
+			value = v
+		}
+		if value == "" {
+			return nil
+		}
+		parts := strings.SplitN(value, ":", 2)
+		if len(parts) != 2 {
+			return nil
+		}
+		return &docker.RegistryAuth{
+			Username: parts[0],
+			Password: parts[1],
+			Registry: "https://" + host,
+		}
+	}
+}
+
+// importSnapshotIfNeeded checks for the snapshot field in namespace config and imports
+// the snapshot if it hasn't been imported yet (tracked by a marker file).
+func importSnapshotIfNeeded(nsCfg *namespace.NamespaceConfig, wsCfg *bundle.WorkspaceConfig, dc *docker.Client, volumesBase string) {
+	if nsCfg.Snapshot == "" || wsCfg == nil {
+		return
+	}
+
+	markerDir := filepath.Join(volumesBase, "snapshots")
+	os.MkdirAll(markerDir, 0o755)
+	markerFile := filepath.Join(markerDir, "imported-"+nsCfg.ID)
+
+	// Check marker — if already imported this snapshot, skip
+	if data, err := os.ReadFile(markerFile); err == nil {
+		if strings.TrimSpace(string(data)) == nsCfg.Snapshot {
+			slog.Info("Snapshot already imported", "snapshot", nsCfg.Snapshot, "ns", nsCfg.ID)
+			return
+		}
+	}
+
+	snapDef := bundle.FindSnapshot(wsCfg, nsCfg.Snapshot)
+	if snapDef == nil {
+		slog.Warn("Snapshot not found in workspace config", "id", nsCfg.Snapshot)
+		return
+	}
+
+	slog.Info("Auto-importing snapshot on startup", "snapshot", snapDef.Name, "ns", nsCfg.ID)
+
+	// Download to snapshots dir — strip query params for safe filename
+	fileName := safeSnapshotFileName(snapDef.URL)
+	if !strings.HasSuffix(fileName, ".zip") {
+		fileName += ".zip"
+	}
+	destPath := filepath.Join(markerDir, fileName)
+
+	// Download if needed; verify SHA256 of existing file
+	needsDownload := true
+	if _, err := os.Stat(destPath); err == nil {
+		if snapDef.SHA256 != "" {
+			if actual, err := snapshot.FileSHA256(destPath); err == nil && strings.EqualFold(actual, snapDef.SHA256) {
+				needsDownload = false
+			} else {
+				os.Remove(destPath) // corrupted — re-download
+			}
+		} else {
+			needsDownload = false
+		}
+	}
+	if needsDownload {
+		if dlErr := snapshot.Download(context.Background(), snapDef.URL, destPath, snapDef.SHA256, nil); dlErr != nil {
+			slog.Error("Snapshot download failed", "url", snapDef.URL, "err", dlErr)
+			return
+		}
+	}
+
+	// Import
+	if _, err := snapshot.Import(context.Background(), dc, destPath, volumesBase); err != nil {
+		slog.Error("Snapshot import failed", "err", err)
+		return
+	}
+
+	// Write marker
+	os.WriteFile(markerFile, []byte(nsCfg.Snapshot), 0o644)
+	slog.Info("Snapshot auto-import completed", "snapshot", nsCfg.Snapshot, "ns", nsCfg.ID)
 }

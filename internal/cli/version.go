@@ -3,7 +3,7 @@ package cli
 import (
 	"runtime"
 
-	"github.com/niceteck/citeck-launcher/internal/output"
+	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/spf13/cobra"
 )
 

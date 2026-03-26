@@ -3,10 +3,10 @@ package cli
 import (
 	"fmt"
 
-	"github.com/niceteck/citeck-launcher/internal/config"
-	"github.com/niceteck/citeck-launcher/internal/h2migrate"
-	"github.com/niceteck/citeck-launcher/internal/output"
-	"github.com/niceteck/citeck-launcher/internal/storage"
+	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/h2migrate"
+	"github.com/citeck/citeck-launcher/internal/output"
+	"github.com/citeck/citeck-launcher/internal/storage"
 	"github.com/spf13/cobra"
 )
 

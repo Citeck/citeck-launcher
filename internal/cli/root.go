@@ -3,7 +3,7 @@ package cli
 import (
 	"os"
 
-	"github.com/niceteck/citeck-launcher/internal/output"
+	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -57,6 +57,8 @@ func NewRootCmd(version string) *cobra.Command {
 		newCertCmd(),
 		newCleanCmd(),
 		newMigrateCmd(),
+		newInstallCmd(),
+		newUninstallCmd(),
 	)
 
 	return root

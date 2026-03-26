@@ -1,8 +1,8 @@
 package cli
 
 import (
-	"github.com/niceteck/citeck-launcher/internal/config"
-	"github.com/niceteck/citeck-launcher/internal/daemon"
+	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/daemon"
 	"github.com/spf13/cobra"
 )
 

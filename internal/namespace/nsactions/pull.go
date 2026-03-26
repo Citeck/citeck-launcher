@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/niceteck/citeck-launcher/internal/actions"
-	"github.com/niceteck/citeck-launcher/internal/docker"
+	"github.com/citeck/citeck-launcher/internal/actions"
+	"github.com/citeck/citeck-launcher/internal/docker"
 )
 
 // Standard pull retry delays matching Kotlin RETRY_DELAYS: [1s, 1s, 1s, 5s, 10s]
@@ -26,6 +26,7 @@ const PullRetriesForExistingImage = 3
 type PullData struct {
 	AppName string
 	Image   string
+	Auth    *docker.RegistryAuth // optional registry credentials
 }
 
 // PullExecutor pulls a Docker image with configurable retry delays and fallback to local.
@@ -50,7 +51,7 @@ func (e *PullExecutor) Execute(ctx context.Context, actx *actions.ActionContext)
 		return nil
 	}
 
-	err := e.Docker.PullImage(ctx, d.Image)
+	err := e.Docker.PullImage(ctx, d.Image, d.Auth)
 	if err == nil {
 		return nil
 	}

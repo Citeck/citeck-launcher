@@ -5,8 +5,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/niceteck/citeck-launcher/internal/client"
-	"github.com/niceteck/citeck-launcher/internal/output"
+	"github.com/citeck/citeck-launcher/internal/client"
+	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/spf13/cobra"
 )
 

@@ -171,7 +171,8 @@ type NamespaceCreateDto struct {
 	BundleRepo     string   `json:"bundleRepo"`
 	BundleKey      string   `json:"bundleKey"`
 	WorkspaceID    string   `json:"workspaceId,omitempty"`
-	Snapshot       string   `json:"snapshot,omitempty"` // snapshot ID from workspace config
+	Snapshot       string   `json:"snapshot,omitempty"`  // snapshot ID from workspace config
+	Template       string   `json:"template,omitempty"`  // namespace template ID
 }
 
 type SnapshotDownloadDto struct {

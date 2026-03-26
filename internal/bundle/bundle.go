@@ -68,6 +68,7 @@ type BundleDef struct {
 	Key          BundleKey              `json:"key" yaml:"key"`
 	Applications map[string]BundleAppDef `json:"applications" yaml:"applications"`
 	CiteckApps   []BundleAppDef         `json:"citeckApps,omitempty" yaml:"citeckApps,omitempty"`
+	Content      map[string]any         `json:"content,omitempty" yaml:"content,omitempty"` // raw bundle YAML as map
 }
 
 var EmptyBundleDef = BundleDef{

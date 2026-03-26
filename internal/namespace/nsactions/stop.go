@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/niceteck/citeck-launcher/internal/actions"
-	"github.com/niceteck/citeck-launcher/internal/docker"
+	"github.com/citeck/citeck-launcher/internal/actions"
+	"github.com/citeck/citeck-launcher/internal/docker"
 )
 
 // StopData carries the container stop parameters.

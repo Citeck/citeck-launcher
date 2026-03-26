@@ -6,18 +6,21 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/registry"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
-	"github.com/niceteck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/appdef"
 )
 
 // Labels used to track Citeck containers.
@@ -158,10 +161,10 @@ func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef,
 			source := parts[0]
 			if strings.HasPrefix(source, "./") && volumesBaseDir != "" {
 				// Relative path — resolve against volumesBase
-				v = volumesBaseDir + "/" + source[2:] + ":" + parts[1]
+				v = filepath.Join(volumesBaseDir, source[2:]) + ":" + parts[1]
 			} else if !strings.ContainsAny(source, "/.") && volumesBaseDir != "" {
 				// Named volume — convert to bind mount in runtime dir
-				hostDir := volumesBaseDir + "/volumes/" + source
+				hostDir := filepath.Join(volumesBaseDir, "volumes", source)
 				os.MkdirAll(hostDir, 0o755)
 				v = hostDir + ":" + parts[1]
 			}
@@ -175,6 +178,7 @@ func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef,
 		LabelWorkspace:   c.workspace,
 		LabelNamespace:   c.namespace,
 		LabelAppName:     app.Name,
+		LabelAppHash:     app.GetHash(),
 		LabelComposeProj: fmt.Sprintf("citeck_launcher_%s_%s", c.namespace, c.workspace),
 	}
 
@@ -305,9 +309,29 @@ func (c *Client) InspectContainer(ctx context.Context, id string) (types.Contain
 	return c.cli.ContainerInspect(ctx, id)
 }
 
-// PullImage pulls a Docker image.
-func (c *Client) PullImage(ctx context.Context, img string) error {
-	reader, err := c.cli.ImagePull(ctx, img, image.PullOptions{})
+// RegistryAuth holds credentials for a Docker registry.
+type RegistryAuth struct {
+	Username string
+	Password string
+	Registry string // e.g. "https://harbor.citeck.ru"
+}
+
+// PullImage pulls a Docker image, optionally with registry credentials.
+func (c *Client) PullImage(ctx context.Context, img string, auth *RegistryAuth) error {
+	opts := image.PullOptions{}
+	if auth != nil && auth.Username != "" {
+		authCfg := registry.AuthConfig{
+			Username:      auth.Username,
+			Password:      auth.Password,
+			ServerAddress: auth.Registry,
+		}
+		encoded, err := registry.EncodeAuthConfig(authCfg)
+		if err != nil {
+			return fmt.Errorf("encode auth for %s: %w", img, err)
+		}
+		opts.RegistryAuth = encoded
+	}
+	reader, err := c.cli.ImagePull(ctx, img, opts)
 	if err != nil {
 		return fmt.Errorf("pull image %s: %w", img, err)
 	}
@@ -315,6 +339,17 @@ func (c *Client) PullImage(ctx context.Context, img string) error {
 	// Consume the reader to completion
 	_, err = io.Copy(io.Discard, reader)
 	return err
+}
+
+// ContainerLogsFollow returns a streaming reader for container logs with follow=true.
+// The caller must close the returned reader.
+func (c *Client) ContainerLogsFollow(ctx context.Context, containerID string, tail int) (io.ReadCloser, error) {
+	return c.cli.ContainerLogs(ctx, containerID, container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     true,
+		Tail:       fmt.Sprintf("%d", tail),
+	})
 }
 
 // ImageExists checks if an image exists locally.
@@ -427,16 +462,24 @@ func (c *Client) ContainerStats(ctx context.Context, containerID string) (*Conta
 
 // WaitForContainer waits for a container to start running.
 func (c *Client) WaitForContainer(ctx context.Context, containerID string, timeout time.Duration) error {
-	deadline := time.After(timeout)
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
+	// Quick check if already running
+	inspect, err := c.cli.ContainerInspect(timeoutCtx, containerID)
+	if err == nil && inspect.State.Running {
+		return nil
+	}
+
+	// Poll with short interval — ContainerWait only supports "not-running" condition
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
 	for {
 		select {
-		case <-deadline:
+		case <-timeoutCtx.Done():
 			return fmt.Errorf("timeout waiting for container %s", containerID)
 		case <-ticker.C:
-			inspect, err := c.cli.ContainerInspect(ctx, containerID)
+			inspect, err := c.cli.ContainerInspect(timeoutCtx, containerID)
 			if err != nil {
 				continue
 			}
@@ -451,27 +494,22 @@ func (c *Client) WaitForContainer(ctx context.Context, containerID string, timeo
 }
 
 // WaitForContainerExit waits for a container to finish and exit (for init containers).
+// Uses Docker's ContainerWait API for instant notification instead of polling.
 func (c *Client) WaitForContainerExit(ctx context.Context, containerID string, timeout time.Duration) error {
-	deadline := time.After(timeout)
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
-	for {
-		select {
-		case <-deadline:
-			return fmt.Errorf("timeout waiting for container exit %s", containerID)
-		case <-ticker.C:
-			inspect, err := c.cli.ContainerInspect(ctx, containerID)
-			if err != nil {
-				continue
-			}
-			if !inspect.State.Running {
-				if inspect.State.ExitCode != 0 {
-					return fmt.Errorf("init container exited with code %d", inspect.State.ExitCode)
-				}
-				return nil
-			}
+	waitCh, errCh := c.cli.ContainerWait(timeoutCtx, containerID, container.WaitConditionNotRunning)
+	select {
+	case <-timeoutCtx.Done():
+		return fmt.Errorf("timeout waiting for container exit %s", containerID)
+	case err := <-errCh:
+		return fmt.Errorf("wait error for %s: %w", containerID, err)
+	case result := <-waitCh:
+		if result.StatusCode != 0 {
+			return fmt.Errorf("init container exited with code %d", result.StatusCode)
 		}
+		return nil
 	}
 }
 
@@ -510,7 +548,7 @@ type ContainerStat struct {
 // RunUtilsContainer runs a command in a temporary launcher-utils container with the given bind mounts.
 // It creates the container, starts it, waits for exit, captures output, and removes it.
 func (c *Client) RunUtilsContainer(ctx context.Context, cmd []string, binds []string) (string, int, error) {
-	const utilsImage = "registry.citeck.ru/community/launcher-utils:1.0"
+	utilsImage := config.UtilsImage()
 
 	containerName := c.ContainerName("launcher-utils-tmp")
 	_ = c.StopAndRemoveContainer(ctx, containerName)

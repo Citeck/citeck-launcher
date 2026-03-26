@@ -4,7 +4,7 @@ set -e
 # Citeck Launcher install script
 # Usage: curl -fsSL https://get.citeck.ru | sh
 
-REPO="niceteck/citeck-launcher"
+REPO="citeck/citeck-launcher"
 INSTALL_DIR="/usr/local/bin"
 
 detect_os() {

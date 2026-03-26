@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/niceteck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/config"
 )
 
 type TransportType int
@@ -73,6 +73,25 @@ func NewHTTPClient(tc *TransportConfig) *http.Client {
 		}
 	default:
 		return http.DefaultClient
+	}
+}
+
+// NewStreamingHTTPClient creates an HTTP client without an overall timeout,
+// suitable for long-lived streaming connections (log follow, SSE events).
+func NewStreamingHTTPClient(tc *TransportConfig) *http.Client {
+	switch tc.Type {
+	case TransportUnix:
+		return &http.Client{
+			Transport: &http.Transport{
+				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+					return net.DialTimeout("unix", tc.SocketPath, 5*time.Second)
+				},
+			},
+		}
+	case TransportTCP:
+		return &http.Client{}
+	default:
+		return &http.Client{}
 	}
 }
 

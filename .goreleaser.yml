@@ -41,5 +41,5 @@ changelog:
 
 release:
   github:
-    owner: niceteck
+    owner: citeck
     name: citeck-launcher

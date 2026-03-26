@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,11 +14,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/niceteck/citeck-launcher/internal/api"
-	"github.com/niceteck/citeck-launcher/internal/appdef"
-	"github.com/niceteck/citeck-launcher/internal/bundle"
-	"github.com/niceteck/citeck-launcher/internal/config"
-	"github.com/niceteck/citeck-launcher/internal/namespace"
+	"github.com/citeck/citeck-launcher/internal/api"
+	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/appfiles"
+	"github.com/citeck/citeck-launcher/internal/bundle"
+	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/namespace"
 	"gopkg.in/yaml.v3"
 )
 
@@ -49,54 +52,87 @@ func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
-	if d.runtime == nil || d.appDefs == nil {
+	d.configMu.RLock()
+	runtime, appDefs := d.runtime, d.appDefs
+	d.configMu.RUnlock()
+	if runtime == nil || appDefs == nil {
 		writeError(w, http.StatusBadRequest, "no namespace configured")
 		return
 	}
-	d.runtime.Start(d.appDefs)
+	runtime.Start(appDefs)
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "Namespace start requested"})
 }
 
 func (d *Daemon) handleStopNamespace(w http.ResponseWriter, r *http.Request) {
-	if d.runtime == nil {
+	d.configMu.RLock()
+	runtime := d.runtime
+	d.configMu.RUnlock()
+	if runtime == nil {
 		writeError(w, http.StatusBadRequest, "no namespace configured")
 		return
 	}
-	d.runtime.Stop()
+	runtime.Stop()
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "Namespace stop requested"})
 }
 
 func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
+	d.configMu.RLock()
 	if d.runtime == nil || d.nsConfig == nil || d.bundleDef == nil {
+		d.configMu.RUnlock()
 		writeError(w, http.StatusBadRequest, "no namespace configured")
 		return
 	}
+	nsID := d.nsConfig.ID
+	d.configMu.RUnlock()
 
-	d.configMu.Lock()
-	defer d.configMu.Unlock()
-
-	// Re-read config from disk (mode-aware path)
-	nsCfg, err := namespace.LoadNamespaceConfig(config.ResolveNamespaceConfigPath(d.workspaceID, d.nsConfig.ID))
+	// Phase 1: slow I/O outside lock (config read, git pull, bundle resolution)
+	nsCfg, err := namespace.LoadNamespaceConfig(config.ResolveNamespaceConfigPath(d.workspaceID, nsID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("reload config: %s", err.Error()))
 		return
 	}
-	d.nsConfig = nsCfg
 
-	// Re-resolve bundle
-	resolver := bundle.NewResolver(config.DataDir())
+	resolver := bundle.NewResolverWithAuth(config.DataDir(), makeTokenLookup(d.store))
 	resolveResult, err := resolver.Resolve(nsCfg.BundleRef)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("resolve bundle: %s", err.Error()))
 		return
 	}
+
+	appfiles.ExtractTo(d.volumesBase)
+
+	var genOpts namespace.GenerateOpts
+	if d.runtime != nil {
+		genOpts.DetachedApps = d.runtime.ManualStoppedApps()
+	}
+	genResp := namespace.Generate(nsCfg, resolveResult.Bundle, resolveResult.Workspace, genOpts)
+
+	// Write generated files
+	for filePath, content := range genResp.Files {
+		destPath := filepath.Join(d.volumesBase, filePath)
+		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+			slog.Error("Failed to create dir for generated file", "path", destPath, "err", err)
+			continue
+		}
+		if err := os.WriteFile(destPath, content, 0o644); err != nil {
+			slog.Error("Failed to write generated file", "path", destPath, "err", err)
+		}
+	}
+
+	// Phase 2: update shared state briefly under write lock
+	d.configMu.Lock()
+	d.nsConfig = nsCfg
 	d.bundleDef = resolveResult.Bundle
-
-	// Re-generate namespace
-	genResp := namespace.Generate(nsCfg, d.bundleDef, resolveResult.Workspace)
+	d.workspaceConfig = resolveResult.Workspace
 	d.appDefs = genResp.Applications
+	d.configMu.Unlock()
 
-	// Regenerate runtime (stop + start with new config)
+	if d.cloudCfgServer != nil {
+		d.cloudCfgServer.UpdateConfig(genResp.CloudConfig)
+	}
+	d.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(d.workspaceConfig, d.store))
+
+	// Phase 3: regenerate runtime (async stop + start)
 	d.runtime.Regenerate(d.appDefs)
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "Reload requested"})
 }
@@ -110,6 +146,7 @@ func (d *Daemon) handleAppLogs(w http.ResponseWriter, r *http.Request) {
 			tail = n
 		}
 	}
+	follow := r.URL.Query().Get("follow") == "true"
 
 	app := d.findApp(name)
 	if app == nil {
@@ -117,16 +154,59 @@ func (d *Daemon) handleAppLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawLogs, err := d.dockerClient.ContainerLogs(context.Background(), app.ContainerID, tail)
+	if follow {
+		d.handleAppLogsFollow(w, r, app.ContainerID, tail)
+		return
+	}
+
+	logCtx, logCancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer logCancel()
+	rawLogs, err := d.dockerClient.ContainerLogs(logCtx, app.ContainerID, tail)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	// Strip ANSI escape codes and normalize
 	logs := stripAnsi(rawLogs)
 	w.Header().Set("Content-Type", "text/plain")
 	w.Write([]byte(logs))
+}
+
+// handleAppLogsFollow streams container logs using Docker follow with proper stdcopy demux.
+func (d *Daemon) handleAppLogsFollow(w http.ResponseWriter, r *http.Request, containerID string, tail int) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
+
+	ctx := r.Context()
+	reader, err := d.dockerClient.ContainerLogsFollow(ctx, containerID, tail)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer reader.Close()
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("Transfer-Encoding", "chunked")
+	w.Header().Set("Cache-Control", "no-cache")
+
+	// Use stdcopy to demux Docker multiplex headers, writing clean text to the response.
+	// stdcopy.StdCopy blocks until the reader is closed (context cancellation or container stop).
+	stdcopy.StdCopy(flushWriter{w, flusher}, flushWriter{w, flusher}, reader)
+}
+
+// flushWriter wraps an http.ResponseWriter to flush after every write.
+type flushWriter struct {
+	w http.ResponseWriter
+	f http.Flusher
+}
+
+func (fw flushWriter) Write(p []byte) (int, error) {
+	n, err := fw.w.Write(p)
+	fw.f.Flush()
+	return n, err
 }
 
 func (d *Daemon) handleAppRestart(w http.ResponseWriter, r *http.Request) {
@@ -206,7 +286,9 @@ func (d *Daemon) handleAppInspect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inspect, err := d.dockerClient.InspectContainer(context.Background(), app.ContainerID)
+	inspCtx, inspCancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer inspCancel()
+	inspect, err := d.dockerClient.InspectContainer(inspCtx, app.ContainerID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -265,7 +347,9 @@ func (d *Daemon) handleAppExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	output, exitCode, err := d.dockerClient.ExecInContainer(context.Background(), app.ContainerID, req.Command)
+	execCtx, execCancel := context.WithTimeout(r.Context(), 120*time.Second)
+	defer execCancel()
+	output, exitCode, err := d.dockerClient.ExecInContainer(execCtx, app.ContainerID, req.Command)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -387,7 +471,8 @@ func (d *Daemon) handleDaemonLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleSystemDump(w http.ResponseWriter, r *http.Request) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
 	dump := make(map[string]any)
 
 	// Daemon info
@@ -528,7 +613,7 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	newDef.Name = name
-	if err := d.runtime.UpdateAppDef(name, newDef); err != nil {
+	if err := d.runtime.UpdateAppDef(name, newDef, true); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -540,7 +625,8 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleHealth(w http.ResponseWriter, r *http.Request) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
 	var checks []api.HealthCheckDto
 
 	// Docker check

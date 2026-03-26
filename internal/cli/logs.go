@@ -5,10 +5,9 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
-	"github.com/niceteck/citeck-launcher/internal/client"
-	"github.com/niceteck/citeck-launcher/internal/output"
+	"github.com/citeck/citeck-launcher/internal/client"
+	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -29,6 +28,11 @@ func newLogsCmd() *cobra.Command {
 			}
 			defer c.Close()
 
+			// Follow mode: stream directly (the server sends tail+follow in one stream)
+			if follow {
+				return followLogs(c, appName, tail)
+			}
+
 			logs, err := c.GetAppLogs(appName, tail)
 			if err != nil {
 				return fmt.Errorf("get logs for %q: %w", appName, err)
@@ -43,11 +47,6 @@ func newLogsCmd() *cobra.Command {
 			}
 
 			fmt.Print(logs)
-
-			if follow {
-				return followLogs(c, appName, tail)
-			}
-
 			return nil
 		},
 	}
@@ -59,25 +58,34 @@ func newLogsCmd() *cobra.Command {
 }
 
 func followLogs(c *client.DaemonClient, appName string, lastTail int) error {
+	reader, err := c.StreamAppLogs(appName, lastTail)
+	if err != nil {
+		return fmt.Errorf("stream logs: %w", err)
+	}
+	defer reader.Close()
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-sigCh:
-			return nil
-		case <-ticker.C:
-			logs, err := c.GetAppLogs(appName, lastTail)
-			if err != nil {
-				output.Errf("Error fetching logs: %v", err)
-				continue
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf := make([]byte, 4096)
+		for {
+			n, readErr := reader.Read(buf)
+			if n > 0 {
+				os.Stdout.Write(buf[:n])
 			}
-			if logs != "" {
-				fmt.Print(logs)
+			if readErr != nil {
+				return
 			}
 		}
+	}()
+
+	select {
+	case <-sigCh:
+		return nil
+	case <-done:
+		return nil
 	}
 }

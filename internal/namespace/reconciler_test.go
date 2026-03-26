@@ -3,7 +3,7 @@ package namespace
 import (
 	"testing"
 
-	"github.com/niceteck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/appdef"
 )
 
 func TestGracefulShutdownOrder(t *testing.T) {

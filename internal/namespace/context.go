@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"github.com/niceteck/citeck-launcher/internal/appdef"
-	"github.com/niceteck/citeck-launcher/internal/bundle"
+	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/bundle"
 )
 
 // Infrastructure host/port constants.
@@ -32,6 +32,7 @@ type NsGenContext struct {
 	DetachedApps    map[string]bool
 	Files           map[string][]byte
 	Applications    map[string]*AppBuilder
+	CloudConfig     map[string]map[string]any // per-app ext cloud config (for CloudConfigServer on :8761)
 	portsCounter    atomic.Int32
 }
 
@@ -42,17 +43,16 @@ func NewNsGenContext(cfg *NamespaceConfig, bun *bundle.BundleDef) *NsGenContext 
 		DetachedApps: make(map[string]bool),
 		Files:        make(map[string][]byte),
 		Applications: make(map[string]*AppBuilder),
+		CloudConfig:  make(map[string]map[string]any),
 	}
 	ctx.portsCounter.Store(17020)
 	return ctx
 }
 
-// NextPort returns current port value and increments for next call (pre-increment).
-// Matches Kotlin's AtomicInteger.getAndIncrement() behavior.
+// NextPort atomically returns the current port value and increments for next call.
+// Equivalent to Kotlin's AtomicInteger.getAndIncrement().
 func (c *NsGenContext) NextPort() int {
-	prev := c.portsCounter.Load()
-	c.portsCounter.Add(1)
-	return int(prev)
+	return int(c.portsCounter.Add(1) - 1)
 }
 
 func (c *NsGenContext) GetOrCreateApp(name string) *AppBuilder {
@@ -97,7 +97,7 @@ func (c *NsGenContext) ProxyBaseURL() string {
 	if c.TLSEnabled() {
 		defaultPort = 443
 	}
-	if port == defaultPort {
+	if port == 0 || port == defaultPort {
 		return fmt.Sprintf("%s://%s", c.ProxyScheme(), c.ProxyHost())
 	}
 	return fmt.Sprintf("%s://%s:%d", c.ProxyScheme(), c.ProxyHost(), port)
