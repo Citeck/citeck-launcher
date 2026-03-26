@@ -181,8 +181,12 @@ func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef,
 		if len(parts) == 2 {
 			source := parts[0]
 			if strings.HasPrefix(source, "./") && volumesBaseDir != "" {
-				// Relative path — resolve against volumesBase
-				v = filepath.Join(volumesBaseDir, source[2:]) + ":" + parts[1]
+				// Relative path — resolve against volumesBase.
+				// Ensure the parent directory exists so Docker doesn't create
+				// a directory at the file path (its default for missing bind sources).
+				hostPath := filepath.Join(volumesBaseDir, source[2:])
+				os.MkdirAll(filepath.Dir(hostPath), 0o755)
+				v = hostPath + ":" + parts[1]
 			} else if !strings.ContainsAny(source, "/.") && volumesBaseDir != "" {
 				// Named volume — convert to bind mount in runtime dir
 				hostDir := filepath.Join(volumesBaseDir, "volumes", source)

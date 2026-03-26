@@ -2,17 +2,10 @@ package daemon
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"log/slog"
-	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -33,6 +26,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/snapshot"
 	"github.com/citeck/citeck-launcher/internal/storage"
+	"github.com/citeck/citeck-launcher/internal/tlsutil"
 )
 
 // StartOptions controls daemon startup behavior.
@@ -245,12 +239,6 @@ func Start(opts StartOptions) error {
 			os.MkdirAll(tlsDir, 0o755)
 			certPath := filepath.Join(tlsDir, "server.crt")
 			keyPath := filepath.Join(tlsDir, "server.key")
-			// Clean up stale directories at cert paths
-			for _, p := range []string{certPath, keyPath} {
-				if fi, err := os.Stat(p); err == nil && fi.IsDir() {
-					os.RemoveAll(p)
-				}
-			}
 			if !isRegularFile(certPath) {
 				slog.Info("Generating self-signed certificate", "host", host)
 				if err := generateSelfSignedCert(certPath, keyPath, host); err != nil {
@@ -270,14 +258,6 @@ func Start(opts StartOptions) error {
 				acmeClient := acme.NewClient(config.DataDir(), config.ConfDir(), host)
 				certPath := acmeClient.CertPath()
 				keyPath := acmeClient.KeyPath()
-
-				// Clean up stale directories at cert paths (Docker creates dirs for missing bind mounts)
-				for _, p := range []string{certPath, keyPath} {
-					if fi, err := os.Stat(p); err == nil && fi.IsDir() {
-						slog.Warn("Removing stale directory at cert path", "path", p)
-						os.RemoveAll(p)
-					}
-				}
 
 				// Obtain cert if not yet present or if host changed
 				if !acmeClient.CertMatchesHost() {
@@ -861,55 +841,13 @@ func importSnapshotIfNeeded(nsCfg *namespace.NamespaceConfig, wsCfg *bundle.Work
 	slog.Info("Snapshot auto-import completed", "snapshot", nsCfg.Snapshot, "ns", nsCfg.ID)
 }
 
-// isRegularFile returns true if path exists and is a regular file (not a directory).
+// isRegularFile returns true if path exists and is a regular file.
 func isRegularFile(path string) bool {
 	fi, err := os.Stat(path)
-	return err == nil && !fi.IsDir()
+	return err == nil && fi.Mode().IsRegular()
 }
 
-// generateSelfSignedCert creates a self-signed TLS certificate.
+// generateSelfSignedCert creates a self-signed TLS certificate (365-day validity).
 func generateSelfSignedCert(certPath, keyPath, host string) error {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return fmt.Errorf("generate key: %w", err)
-	}
-	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		return err
-	}
-	template := x509.Certificate{
-		SerialNumber: serialNumber,
-		Subject:      pkix.Name{CommonName: host},
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		template.IPAddresses = append(template.IPAddresses, ip)
-	} else {
-		template.DNSNames = append(template.DNSNames, host)
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
-	if err != nil {
-		return fmt.Errorf("create certificate: %w", err)
-	}
-	certFile, err := os.Create(certPath)
-	if err != nil {
-		return err
-	}
-	defer certFile.Close()
-	if err := pem.Encode(certFile, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
-		return err
-	}
-	keyDER, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		return err
-	}
-	keyFile, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	defer keyFile.Close()
-	return pem.Encode(keyFile, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	return tlsutil.GenerateSelfSignedCert(certPath, keyPath, []string{host}, 365)
 }

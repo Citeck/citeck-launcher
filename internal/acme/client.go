@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"golang.org/x/crypto/acme"
 )
@@ -214,7 +215,8 @@ func (c *Client) KeyPath() string {
 	return filepath.Join(c.confDir, "privkey.pem")
 }
 
-// CertMatchesHost returns true if the existing cert at CertPath() is valid for the configured hostname.
+// CertMatchesHost returns true if the existing cert at CertPath() is valid
+// for the configured hostname and has not expired.
 func (c *Client) CertMatchesHost() bool {
 	data, err := os.ReadFile(c.CertPath())
 	if err != nil {
@@ -228,10 +230,7 @@ func (c *Client) CertMatchesHost() bool {
 	if err != nil {
 		return false
 	}
-	if err := cert.VerifyHostname(c.hostname); err == nil {
-		return true
-	}
-	return false
+	return cert.VerifyHostname(c.hostname) == nil && time.Now().Before(cert.NotAfter)
 }
 
 // loadOrCreateAccountKey loads the account key from disk, or generates a new one.

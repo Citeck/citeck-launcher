@@ -96,3 +96,56 @@ func TestCheckAndRenew_SkipsWhenMoreThanHalfValid(t *testing.T) {
 		t.Error("restartFn should not be called when cert has >50% validity remaining")
 	}
 }
+
+// writeTempCertWithSAN creates a cert with a DNS SAN for hostname verification tests.
+func writeTempCertWithSAN(t *testing.T, dir string, hostname string, notBefore, notAfter time.Time) {
+	t.Helper()
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	template := x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: hostname},
+		DNSNames:     []string{hostname},
+		NotBefore:    notBefore,
+		NotAfter:     notAfter,
+	}
+	certDER, _ := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	f, _ := os.Create(filepath.Join(dir, "fullchain.pem"))
+	pem.Encode(f, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	f.Close()
+}
+
+func TestCertMatchesHost_Valid(t *testing.T) {
+	dir := t.TempDir()
+	writeTempCertWithSAN(t, dir, "example.com", time.Now().Add(-time.Hour), time.Now().Add(24*time.Hour))
+	client := &Client{confDir: dir, hostname: "example.com"}
+	if !client.CertMatchesHost() {
+		t.Error("expected CertMatchesHost=true for matching hostname")
+	}
+}
+
+func TestCertMatchesHost_WrongHost(t *testing.T) {
+	dir := t.TempDir()
+	writeTempCertWithSAN(t, dir, "example.com", time.Now().Add(-time.Hour), time.Now().Add(24*time.Hour))
+	client := &Client{confDir: dir, hostname: "other.com"}
+	if client.CertMatchesHost() {
+		t.Error("expected CertMatchesHost=false for wrong hostname")
+	}
+}
+
+func TestCertMatchesHost_Expired(t *testing.T) {
+	dir := t.TempDir()
+	writeTempCertWithSAN(t, dir, "example.com", time.Now().Add(-48*time.Hour), time.Now().Add(-1*time.Hour))
+	client := &Client{confDir: dir, hostname: "example.com"}
+	if client.CertMatchesHost() {
+		t.Error("expected CertMatchesHost=false for expired cert")
+	}
+}
+
+func TestCertMatchesHost_NoCert(t *testing.T) {
+	dir := t.TempDir()
+	client := &Client{confDir: dir, hostname: "example.com"}
+	if client.CertMatchesHost() {
+		t.Error("expected CertMatchesHost=false when no cert exists")
+	}
+}

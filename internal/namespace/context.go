@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -45,7 +46,10 @@ func JWTSecret() string {
 		}
 		// Generate 64-byte random secret, base64-encoded (~86 chars = 688 bits, HS512 needs >= 512)
 		b := make([]byte, 64)
-		rand.Read(b)
+		if _, err := rand.Read(b); err != nil {
+			slog.Error("Failed to generate JWT secret", "err", err)
+			return
+		}
 		jwtSecretVal = base64.RawURLEncoding.EncodeToString(b)
 		os.MkdirAll(filepath.Dir(secretPath), 0o755)
 		os.WriteFile(secretPath, []byte(jwtSecretVal), 0o600)
