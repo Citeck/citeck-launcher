@@ -115,7 +115,7 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 	var newRenewal *acme.RenewalService
 	if nsCfg.Proxy.TLS.Enabled && nsCfg.Proxy.TLS.LetsEncrypt && nsCfg.Proxy.Host != "" && nsCfg.Proxy.Host != "localhost" {
 		acmeClient := acme.NewClient(config.DataDir(), config.ConfDir(), nsCfg.Proxy.Host)
-		if _, err := os.Stat(acmeClient.CertPath()); err != nil {
+		if !acmeClient.CertMatchesHost() {
 			slog.Info("Obtaining Let's Encrypt certificate on reload", "host", nsCfg.Proxy.Host)
 			acmeCtx, acmeCancel := context.WithTimeout(context.Background(), 120*time.Second)
 			err := acmeClient.ObtainCertificate(acmeCtx)
@@ -124,7 +124,7 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 				slog.Error("Let's Encrypt failed on reload", "err", err)
 			}
 		}
-		if _, err := os.Stat(acmeClient.CertPath()); err == nil {
+		if acmeClient.CertMatchesHost() {
 			nsCfg.Proxy.TLS.CertPath = acmeClient.CertPath()
 			nsCfg.Proxy.TLS.KeyPath = acmeClient.KeyPath()
 		}

@@ -478,13 +478,14 @@ func generateProxy(ctx *NsGenContext) {
 	app.Image = proxyImg
 
 	proxyTarget := fmt.Sprintf("%s:%s", appdef.AppGateway, gatewayPort)
+	hasTLSCert := ctx.TLSEnabled() && ctx.Config.Proxy.TLS.CertPath != ""
 	containerPort := 80
-	if ctx.TLSEnabled() {
+	if hasTLSCert {
 		containerPort = 443
 	}
 
 	var startupProbe *appdef.AppProbeDef
-	if ctx.TLSEnabled() {
+	if hasTLSCert {
 		startupProbe = &appdef.AppProbeDef{Exec: &appdef.ExecProbeDef{
 			Command: []string{"sh", "-c", "curl -sf -o /dev/null http://localhost:80/eis.json"},
 		}}
@@ -510,7 +511,7 @@ func generateProxy(ctx *NsGenContext) {
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "128m"}}
 	app.StartupConditions = []appdef.StartupCondition{{Probe: startupProbe}}
 
-	if ctx.TLSEnabled() {
+	if hasTLSCert {
 		tls := ctx.Config.Proxy.TLS
 		app.AddEnv("ENABLE_HTTPS", "true")
 		app.AddEnv("SERVER_TLS_CERT", "/app/tls/server.crt")

@@ -25,9 +25,13 @@ func ExtractTo(targetDir string) error {
 
 		destPath := filepath.Join(targetDir, path)
 
-		// Skip if file already exists
-		if _, err := os.Stat(destPath); err == nil {
-			return nil
+		// If a directory exists at the file path (stale Docker bind mount artifact), remove it
+		if fi, err := os.Stat(destPath); err == nil {
+			if fi.IsDir() {
+				os.RemoveAll(destPath)
+			} else {
+				return nil // regular file already exists, skip
+			}
 		}
 
 		data, err := files.ReadFile(path)

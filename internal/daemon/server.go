@@ -245,7 +245,13 @@ func Start(opts StartOptions) error {
 			os.MkdirAll(tlsDir, 0o755)
 			certPath := filepath.Join(tlsDir, "server.crt")
 			keyPath := filepath.Join(tlsDir, "server.key")
-			if _, err := os.Stat(certPath); err != nil {
+			// Clean up stale directories at cert paths
+			for _, p := range []string{certPath, keyPath} {
+				if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+					os.RemoveAll(p)
+				}
+			}
+			if !isRegularFile(certPath) {
 				slog.Info("Generating self-signed certificate", "host", host)
 				if err := generateSelfSignedCert(certPath, keyPath, host); err != nil {
 					slog.Error("Failed to generate self-signed cert", "err", err)
@@ -265,8 +271,16 @@ func Start(opts StartOptions) error {
 				certPath := acmeClient.CertPath()
 				keyPath := acmeClient.KeyPath()
 
-				// Obtain cert if not yet present
-				if _, err := os.Stat(certPath); err != nil {
+				// Clean up stale directories at cert paths (Docker creates dirs for missing bind mounts)
+				for _, p := range []string{certPath, keyPath} {
+					if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+						slog.Warn("Removing stale directory at cert path", "path", p)
+						os.RemoveAll(p)
+					}
+				}
+
+				// Obtain cert if not yet present or if host changed
+				if !acmeClient.CertMatchesHost() {
 					slog.Info("Obtaining Let's Encrypt certificate", "host", host)
 					acmeCtx, acmeCancel := context.WithTimeout(context.Background(), 120*time.Second)
 					err := acmeClient.ObtainCertificate(acmeCtx)
@@ -278,8 +292,8 @@ func Start(opts StartOptions) error {
 					}
 				}
 
-				// Update config to use ACME cert paths
-				if _, err := os.Stat(certPath); err == nil {
+				// Update config to use ACME cert paths (only if cert is a regular file)
+				if isRegularFile(certPath) {
 					nsCfg.Proxy.TLS.CertPath = certPath
 					nsCfg.Proxy.TLS.KeyPath = keyPath
 				}
@@ -845,6 +859,12 @@ func importSnapshotIfNeeded(nsCfg *namespace.NamespaceConfig, wsCfg *bundle.Work
 	// Write marker
 	os.WriteFile(markerFile, []byte(nsCfg.Snapshot), 0o644)
 	slog.Info("Snapshot auto-import completed", "snapshot", nsCfg.Snapshot, "ns", nsCfg.ID)
+}
+
+// isRegularFile returns true if path exists and is a regular file (not a directory).
+func isRegularFile(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && !fi.IsDir()
 }
 
 // generateSelfSignedCert creates a self-signed TLS certificate.

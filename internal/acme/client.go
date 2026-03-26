@@ -214,6 +214,26 @@ func (c *Client) KeyPath() string {
 	return filepath.Join(c.confDir, "privkey.pem")
 }
 
+// CertMatchesHost returns true if the existing cert at CertPath() is valid for the configured hostname.
+func (c *Client) CertMatchesHost() bool {
+	data, err := os.ReadFile(c.CertPath())
+	if err != nil {
+		return false
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return false
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return false
+	}
+	if err := cert.VerifyHostname(c.hostname); err == nil {
+		return true
+	}
+	return false
+}
+
 // loadOrCreateAccountKey loads the account key from disk, or generates a new one.
 // Uses PEM-encoded ECDSA key for safe serialization/deserialization.
 func (c *Client) loadOrCreateAccountKey() (*ecdsa.PrivateKey, error) {

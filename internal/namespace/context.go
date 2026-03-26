@@ -43,8 +43,8 @@ func JWTSecret() string {
 			jwtSecretVal = string(data)
 			return
 		}
-		// Generate 32-byte random secret, base64-encoded
-		b := make([]byte, 32)
+		// Generate 64-byte random secret, base64-encoded (~86 chars = 688 bits, HS512 needs >= 512)
+		b := make([]byte, 64)
 		rand.Read(b)
 		jwtSecretVal = base64.RawURLEncoding.EncodeToString(b)
 		os.MkdirAll(filepath.Dir(secretPath), 0o755)
