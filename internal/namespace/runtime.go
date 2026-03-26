@@ -94,7 +94,8 @@ type Runtime struct {
 	retryState             map[string]retryInfo             // retry tracking for failed apps
 	statusCond             *sync.Cond                       // signaled on every app status change
 	cmdCh              chan command
-	pullSem            chan struct{}       // limits concurrent image pulls (capacity 4)
+	pullSem            chan struct{}       // limits concurrent image pulls
+	reconcilerCfg      *ReconcilerConfig  // optional override from daemon.yml
 	statsRunning       atomic.Bool        // guards against overlapping updateStats goroutines
 	runCtx          context.Context    // set by doStart, cancelled by doStop
 	cancel          context.CancelFunc
@@ -111,6 +112,18 @@ func (r *Runtime) SetRegistryAuthFunc(fn RegistryAuthFunc) {
 // SetHistory sets the operation history logger.
 func (r *Runtime) SetHistory(h *OperationHistory) {
 	r.history = h
+}
+
+// SetReconcilerConfig overrides default reconciler settings (from daemon.yml).
+func (r *Runtime) SetReconcilerConfig(cfg ReconcilerConfig) {
+	r.reconcilerCfg = &cfg
+}
+
+// SetPullConcurrency overrides the pull semaphore capacity (from daemon.yml).
+func (r *Runtime) SetPullConcurrency(n int) {
+	if n > 0 {
+		r.pullSem = make(chan struct{}, n)
+	}
 }
 
 // ManualStoppedApps returns a copy of manually stopped apps (for generator detached apps).
@@ -835,7 +848,11 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) {
 	r.mu.Unlock()
 
 	// Start reconciler using runCtx — stops automatically when namespace stops
-	r.RunReconciler(ctx, DefaultReconcilerConfig())
+	rcfg := DefaultReconcilerConfig()
+	if r.reconcilerCfg != nil {
+		rcfg = *r.reconcilerCfg
+	}
+	r.RunReconciler(ctx, rcfg)
 
 	// Record start operation
 	if r.history != nil {

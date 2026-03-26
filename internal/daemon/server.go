@@ -69,6 +69,7 @@ type Daemon struct {
 	bgCancel        context.CancelFunc
 	bgWg            sync.WaitGroup     // tracks background goroutines (snapshot, downloads)
 	snapshotMu      sync.Mutex         // guards concurrent snapshot import/export
+	daemonCfg       config.DaemonConfig
 }
 
 // Start runs the daemon.
@@ -325,6 +326,21 @@ func Start(opts StartOptions) error {
 		runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(wsCfg, store))
 		runtime.SetHistory(namespace.NewOperationHistory(config.LogDir()))
 
+		// Apply daemon.yml overrides for reconciler and pull concurrency
+		if daemonCfg.Reconciler.IntervalSeconds > 0 || daemonCfg.Reconciler.LivenessPeriodMs > 0 {
+			rcfg := namespace.DefaultReconcilerConfig()
+			if daemonCfg.Reconciler.IntervalSeconds > 0 {
+				rcfg.IntervalSeconds = daemonCfg.Reconciler.IntervalSeconds
+			}
+			if daemonCfg.Reconciler.LivenessPeriodMs > 0 {
+				rcfg.LivenessPeriod = time.Duration(daemonCfg.Reconciler.LivenessPeriodMs) * time.Millisecond
+			}
+			runtime.SetReconcilerConfig(rcfg)
+		}
+		if daemonCfg.Docker.PullConcurrency > 0 {
+			runtime.SetPullConcurrency(daemonCfg.Docker.PullConcurrency)
+		}
+
 		// Restore persisted state: manual stopped apps, edited apps, locked apps
 		if persistedState != nil {
 			if len(persistedState.ManualStoppedApps) > 0 {
@@ -381,6 +397,7 @@ func Start(opts StartOptions) error {
 		startTime:       time.Now(),
 		bgCtx:           bgCtx,
 		bgCancel:        bgCancel,
+		daemonCfg:       daemonCfg,
 	}
 
 	// Wire up event broadcasting
@@ -547,12 +564,15 @@ func (d *Daemon) broadcastEvent(evt api.EventDto) {
 
 const maxSSESubscribers = 100
 
-func (d *Daemon) addSubscriber() chan api.EventDto {
-	ch := make(chan api.EventDto, 256)
+func (d *Daemon) addSubscriber() (chan api.EventDto, bool) {
 	d.eventMu.Lock()
+	defer d.eventMu.Unlock()
+	if len(d.eventSubs) >= maxSSESubscribers {
+		return nil, false
+	}
+	ch := make(chan api.EventDto, 256)
 	d.eventSubs = append(d.eventSubs, ch)
-	d.eventMu.Unlock()
-	return ch
+	return ch, true
 }
 
 func (d *Daemon) removeSubscriber(ch chan api.EventDto) {

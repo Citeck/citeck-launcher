@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -82,10 +84,10 @@ func followLogs(c *client.DaemonClient, appName string, lastTail int) error {
 				os.Stdout.Write(buf[:n])
 			}
 			if readErr != nil {
-				if readErr.Error() != "EOF" {
-					errCh <- readErr
-				} else {
+				if errors.Is(readErr, io.EOF) {
 					errCh <- nil
+				} else {
+					errCh <- readErr
 				}
 				return
 			}

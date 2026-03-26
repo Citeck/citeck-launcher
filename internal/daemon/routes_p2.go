@@ -645,23 +645,26 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "another snapshot operation is in progress")
 		return
 	}
-	defer d.snapshotMu.Unlock()
-
+	// Validation under lock — unlock on early return
 	if d.runtime != nil && d.runtime.Status() != namespace.NsStatusStopped {
+		d.snapshotMu.Unlock()
 		writeError(w, http.StatusConflict, "namespace must be stopped before export")
 		return
 	}
 	if d.dockerClient == nil {
+		d.snapshotMu.Unlock()
 		writeError(w, http.StatusServiceUnavailable, "docker client not available")
 		return
 	}
 
 	dir, err := d.snapshotsDir()
 	if err != nil {
+		d.snapshotMu.Unlock()
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
+		d.snapshotMu.Unlock()
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -678,7 +681,9 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 
 	nsID := d.activeNsID()
 	d.bgWg.Add(1)
+	// Lock ownership transferred to goroutine — unlocked when export completes
 	go func() {
+		defer d.snapshotMu.Unlock()
 		defer d.bgWg.Done()
 		d.broadcastEvent(api.EventDto{
 			Type: "snapshot_export", Timestamp: time.Now().UnixMilli(),
@@ -710,13 +715,14 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "another snapshot operation is in progress")
 		return
 	}
-	defer d.snapshotMu.Unlock()
-
+	// Validation under lock — unlock on early return
 	if d.runtime != nil && d.runtime.Status() != namespace.NsStatusStopped {
+		d.snapshotMu.Unlock()
 		writeError(w, http.StatusConflict, "namespace must be stopped before import")
 		return
 	}
 	if d.dockerClient == nil {
+		d.snapshotMu.Unlock()
 		writeError(w, http.StatusServiceUnavailable, "docker client not available")
 		return
 	}
@@ -724,31 +730,37 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 	// Accept multipart file upload or a snapshot name query parameter
 	snapshotName := r.URL.Query().Get("name")
 	var zipPath string
+	var tmpPath string // non-empty if we created a temp file that needs cleanup
 
 	if snapshotName != "" {
 		// Import from existing snapshot file
 		if !strings.HasSuffix(snapshotName, ".zip") || !validateID(strings.TrimSuffix(snapshotName, ".zip")) {
+			d.snapshotMu.Unlock()
 			writeError(w, http.StatusBadRequest, "invalid snapshot name")
 			return
 		}
 		snapDir, err := d.snapshotsDir()
 		if err != nil {
+			d.snapshotMu.Unlock()
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		zipPath = filepath.Join(snapDir, snapshotName)
 		if _, err := os.Stat(zipPath); err != nil {
+			d.snapshotMu.Unlock()
 			writeError(w, http.StatusNotFound, "snapshot not found")
 			return
 		}
 	} else {
 		// Accept file upload
 		if err := r.ParseMultipartForm(32 << 20); err != nil { // 32MB in memory, Go spills to disk
+			d.snapshotMu.Unlock()
 			writeError(w, http.StatusBadRequest, "invalid multipart form")
 			return
 		}
 		file, _, err := r.FormFile("file")
 		if err != nil {
+			d.snapshotMu.Unlock()
 			writeError(w, http.StatusBadRequest, "file field required")
 			return
 		}
@@ -756,25 +768,33 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 
 		tmpFile, err := os.CreateTemp("", "citeck-snapshot-upload-*.zip")
 		if err != nil {
+			d.snapshotMu.Unlock()
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		defer os.Remove(tmpFile.Name())
 
 		if _, err := io.Copy(tmpFile, file); err != nil {
 			tmpFile.Close()
+			os.Remove(tmpFile.Name())
+			d.snapshotMu.Unlock()
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		tmpFile.Close()
 		zipPath = tmpFile.Name()
+		tmpPath = tmpFile.Name() // goroutine will clean up
 	}
 
-	// Launch import in background and return 202 immediately
+	// Launch import in background and return 202 immediately.
+	// Lock ownership transferred to goroutine.
 	importPath := zipPath
 	d.bgWg.Add(1)
 	go func() {
+		defer d.snapshotMu.Unlock()
 		defer d.bgWg.Done()
+		if tmpPath != "" {
+			defer os.Remove(tmpPath)
+		}
 		meta, err := snapshot.Import(d.bgCtx, d.dockerClient, importPath, d.volumesBase)
 		if err != nil {
 			slog.Error("Snapshot import failed", "err", err)

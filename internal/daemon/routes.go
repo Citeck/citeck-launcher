@@ -467,15 +467,11 @@ func (d *Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	d.eventMu.Lock()
-	if len(d.eventSubs) >= maxSSESubscribers {
-		d.eventMu.Unlock()
+	ch, ok2 := d.addSubscriber()
+	if !ok2 {
 		writeError(w, http.StatusServiceUnavailable, "too many SSE subscribers")
 		return
 	}
-	d.eventMu.Unlock()
-
-	ch := d.addSubscriber()
 	defer d.removeSubscriber(ch)
 
 	ctx := r.Context()

@@ -87,10 +87,12 @@ func matchCORSOrigin(origin string) bool {
 	return false
 }
 
-// RateLimitMiddleware limits requests per IP using a token bucket.
+// RateLimitMiddleware limits requests per IP using a token bucket with automatic eviction.
 func RateLimitMiddleware(rps int, next http.Handler) http.Handler {
 	var mu sync.Mutex
 	limiters := make(map[string]*rateLimiterEntry)
+	const maxEntries = 10000
+	const evictAge = 5 * time.Minute
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
@@ -98,14 +100,24 @@ func RateLimitMiddleware(rps int, next http.Handler) http.Handler {
 			ip = r.RemoteAddr
 		}
 
+		now := time.Now()
 		mu.Lock()
+
+		// Evict stale entries when map grows too large
+		if len(limiters) > maxEntries {
+			for k, v := range limiters {
+				if now.Sub(v.last) > evictAge {
+					delete(limiters, k)
+				}
+			}
+		}
+
 		entry, ok := limiters[ip]
 		if !ok {
-			entry = &rateLimiterEntry{tokens: float64(rps), last: time.Now()}
+			entry = &rateLimiterEntry{tokens: float64(rps), last: now}
 			limiters[ip] = entry
 		}
 		// Refill tokens
-		now := time.Now()
 		elapsed := now.Sub(entry.last).Seconds()
 		entry.tokens += elapsed * float64(rps)
 		if entry.tokens > float64(rps) {

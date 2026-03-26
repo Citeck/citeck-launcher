@@ -35,27 +35,9 @@ func newStopCmd() *cobra.Command {
 			})
 
 			if wait {
-				ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
-				defer cancel()
-				events, err := c.StreamEvents(ctx)
-				if err != nil {
-					return fmt.Errorf("connect to event stream: %w", err)
+				if err := waitForStop(c, timeout); err != nil {
+					return err
 				}
-				for {
-					select {
-					case <-ctx.Done():
-						return exitWithCode(ExitTimeout, "timeout waiting for stop")
-					case evt, ok := <-events:
-						if !ok {
-							return nil
-						}
-						if evt.Type == "namespace_status" && evt.After == "STOPPED" {
-							output.PrintText("Namespace stopped")
-							goto done
-						}
-					}
-				}
-			done:
 			}
 
 			if shutdown {
@@ -77,4 +59,27 @@ func newStopCmd() *cobra.Command {
 	cmd.Flags().IntVar(&timeout, "timeout", 120, "Timeout in seconds (with --wait)")
 
 	return cmd
+}
+
+func waitForStop(c *client.DaemonClient, timeoutSec int) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
+	defer cancel()
+	events, err := c.StreamEvents(ctx)
+	if err != nil {
+		return fmt.Errorf("connect to event stream: %w", err)
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return exitWithCode(ExitTimeout, "timeout waiting for stop")
+		case evt, ok := <-events:
+			if !ok {
+				return nil
+			}
+			if evt.Type == "namespace_status" && evt.After == "STOPPED" {
+				output.PrintText("Namespace stopped")
+				return nil
+			}
+		}
+	}
 }
