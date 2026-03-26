@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"gopkg.in/yaml.v3"
 )
 
@@ -87,5 +88,5 @@ func SaveDaemonConfig(cfg DaemonConfig) error {
 		return fmt.Errorf("marshal daemon config: %w", err)
 	}
 
-	return os.WriteFile(path, data, 0o644)
+	return fsutil.AtomicWriteFile(path, data, 0o644)
 }

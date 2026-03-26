@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/citeck/citeck-launcher/internal/fsutil"
 )
 
 // FileStore implements Store using flat files. Used in server mode.
@@ -121,23 +123,7 @@ func (s *FileStore) SaveSecret(secret Secret) error {
 		return fmt.Errorf("marshal secret: %w", err)
 	}
 
-	// Atomic write: temp file + rename to prevent corruption on crash
-	secretDir := s.secretsDir()
-	tmpFile, err := os.CreateTemp(secretDir, ".secret-*.json")
-	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
-	}
-	if _, err := tmpFile.Write(data); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpFile.Name())
-		return fmt.Errorf("write temp file: %w", err)
-	}
-	tmpFile.Close()
-	if err := os.Rename(tmpFile.Name(), s.secretPath(secret.ID)); err != nil {
-		os.Remove(tmpFile.Name())
-		return fmt.Errorf("rename temp file: %w", err)
-	}
-	return nil
+	return fsutil.AtomicWriteFile(s.secretPath(secret.ID), data, 0o600)
 }
 
 func (s *FileStore) DeleteSecret(id string) error {
@@ -183,7 +169,7 @@ func (s *FileStore) SetState(state LauncherState) error {
 	if err != nil {
 		return fmt.Errorf("marshal state: %w", err)
 	}
-	return os.WriteFile(s.statePath(), data, 0o644)
+	return fsutil.AtomicWriteFile(s.statePath(), data, 0o644)
 }
 
 func (s *FileStore) Close() error {

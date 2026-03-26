@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"golang.org/x/crypto/acme"
 )
 
@@ -173,32 +174,25 @@ func (c *Client) ObtainCertificate(ctx context.Context) error {
 		return fmt.Errorf("create cert: %w", err)
 	}
 
-	// Write fullchain.pem
-	chainPath := filepath.Join(c.confDir, "fullchain.pem")
-	chainFile, err := os.OpenFile(chainPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-	if err != nil {
-		return fmt.Errorf("create fullchain: %w", err)
-	}
-	defer chainFile.Close()
-	for _, cert := range certs {
-		if err := pem.Encode(chainFile, &pem.Block{Type: "CERTIFICATE", Bytes: cert}); err != nil {
-			return fmt.Errorf("write certificate: %w", err)
-		}
-	}
-
-	// Write privkey.pem
+	// Atomic write: key first, then cert — cert presence signals completion.
 	keyPath := filepath.Join(c.confDir, "privkey.pem")
 	keyDER, err := x509.MarshalECPrivateKey(certKey)
 	if err != nil {
 		return fmt.Errorf("marshal key: %w", err)
 	}
-	keyFile, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return fmt.Errorf("create privkey: %w", err)
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	if err := fsutil.AtomicWriteFile(keyPath, keyPEM, 0o600); err != nil {
+		return fmt.Errorf("write privkey: %w", err)
 	}
-	defer keyFile.Close()
-	if err := pem.Encode(keyFile, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}); err != nil {
-		return fmt.Errorf("write private key: %w", err)
+
+	// Build fullchain PEM in memory, then write atomically
+	chainPath := filepath.Join(c.confDir, "fullchain.pem")
+	var chainBuf []byte
+	for _, cert := range certs {
+		chainBuf = append(chainBuf, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert})...)
+	}
+	if err := fsutil.AtomicWriteFile(chainPath, chainBuf, 0o644); err != nil {
+		return fmt.Errorf("write fullchain: %w", err)
 	}
 
 	slog.Info("ACME certificate obtained", "hostname", c.hostname, "cert", chainPath)

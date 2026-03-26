@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/fsutil"
 )
 
 // NsPersistedState holds runtime state that survives daemon restarts.
@@ -29,12 +30,7 @@ func SaveNsState(volumesBase, nsID string, state *NsPersistedState) error {
 	}
 	path := statePath(volumesBase, nsID)
 	os.MkdirAll(filepath.Dir(path), 0o755)
-	// Atomic write: write to temp file then rename (POSIX atomic)
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
+	return fsutil.AtomicWriteFile(path, data, 0o644)
 }
 
 // LoadNsState reads the persisted namespace state from disk.
