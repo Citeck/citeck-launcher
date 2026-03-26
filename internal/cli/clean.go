@@ -130,7 +130,7 @@ func newCleanCmd() *cobra.Command {
 			removed := 0
 			failed := 0
 			for _, o := range orphans {
-				if err := dc.StopAndRemoveContainer(execCtx, o.Name); err != nil {
+				if err := dc.StopAndRemoveContainer(execCtx, o.Name, 0); err != nil {
 					output.Errf("Failed to remove %s: %v", o.Name, err)
 					failed++
 				} else {

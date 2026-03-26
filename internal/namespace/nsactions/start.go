@@ -36,7 +36,7 @@ func (e *StartExecutor) Execute(ctx context.Context, actx *actions.ActionContext
 	containerName := e.Docker.ContainerName(d.AppName)
 
 	// Remove existing container to avoid conflicts
-	_ = e.Docker.StopAndRemoveContainer(ctx, containerName)
+	_ = e.Docker.StopAndRemoveContainer(ctx, containerName, 0)
 
 	id, err := e.Docker.CreateContainer(ctx, d.AppDef, d.VolumesBase)
 	if err != nil {

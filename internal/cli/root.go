@@ -19,14 +19,14 @@ func Host() string  { return flagHost }
 func Token() string { return flagToken }
 func Yes() bool     { return flagYes }
 
-func NewRootCmd(version string, extra ...string) *cobra.Command {
-	commit, buildDate := "", ""
-	if len(extra) > 0 {
-		commit = extra[0]
-	}
-	if len(extra) > 1 {
-		buildDate = extra[1]
-	}
+// BuildInfo holds version metadata injected via ldflags.
+type BuildInfo struct {
+	Version   string
+	Commit    string
+	BuildDate string
+}
+
+func NewRootCmd(info BuildInfo) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "citeck",
 		Short: "Citeck Launcher CLI",
@@ -46,8 +46,8 @@ func NewRootCmd(version string, extra ...string) *cobra.Command {
 	root.PersistentFlags().BoolVar(&flagYes, "yes", false, "Skip confirmation prompts")
 
 	root.AddCommand(
-		newVersionCmd(version, commit, buildDate),
-		newStartCmd(version),
+		newVersionCmd(info),
+		newStartCmd(info.Version),
 		newStopCmd(),
 		newStatusCmd(),
 		newHealthCmd(),
@@ -73,15 +73,8 @@ func NewRootCmd(version string, extra ...string) *cobra.Command {
 	return root
 }
 
-func Execute(version string, extra ...string) {
-	commit, buildDate := "", ""
-	if len(extra) > 0 {
-		commit = extra[0]
-	}
-	if len(extra) > 1 {
-		buildDate = extra[1]
-	}
-	root := NewRootCmd(version, commit, buildDate)
+func Execute(info BuildInfo) {
+	root := NewRootCmd(info)
 	if err := root.Execute(); err != nil {
 		var ece ExitCodeError
 		if errors.As(err, &ece) {

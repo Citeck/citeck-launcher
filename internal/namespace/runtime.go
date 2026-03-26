@@ -96,6 +96,7 @@ type Runtime struct {
 	cmdCh              chan command
 	pullSem            chan struct{}       // limits concurrent image pulls
 	reconcilerCfg      *ReconcilerConfig  // optional override from daemon.yml
+	shutdownOnce       sync.Once
 	statsRunning       atomic.Bool        // guards against overlapping updateStats goroutines
 	runCtx          context.Context    // set by doStart, cancelled by doStop
 	cancel          context.CancelFunc
@@ -439,14 +440,16 @@ func (r *Runtime) Stop() {
 }
 
 func (r *Runtime) Shutdown() {
-	if r.running.Load() {
-		r.Stop()
-		r.wg.Wait()
-	}
-	close(r.eventCh) // stops dispatchLoop
-	if r.ownsActions {
-		r.actionSvc.Shutdown()
-	}
+	r.shutdownOnce.Do(func() {
+		if r.running.Load() {
+			r.Stop()
+			r.wg.Wait()
+		}
+		close(r.eventCh) // stops dispatchLoop
+		if r.ownsActions {
+			r.actionSvc.Shutdown()
+		}
+	})
 }
 
 func (r *Runtime) Regenerate(apps []appdef.ApplicationDef) {
@@ -492,7 +495,7 @@ func (r *Runtime) StopApp(appName string) error {
 
 	// Blocking Docker call outside the lock
 	ctx := context.Background()
-	if err := r.docker.StopAndRemoveContainer(ctx, containerName); err != nil {
+	if err := r.docker.StopAndRemoveContainer(ctx, containerName, 0); err != nil {
 		return fmt.Errorf("stop app %q: %w", appName, err)
 	}
 
@@ -560,7 +563,7 @@ func (r *Runtime) RestartApp(appName string) error {
 		return fmt.Errorf("runtime not started, cannot restart app %q", appName)
 	}
 	if hasContainer {
-		_ = r.docker.StopAndRemoveContainer(ctx, containerName)
+		_ = r.docker.StopAndRemoveContainer(ctx, containerName, 0)
 	}
 
 	r.mu.Lock()
@@ -608,7 +611,7 @@ func (r *Runtime) restartApp(ctx context.Context, appName string) {
 
 	// Create and start container
 	containerName := r.docker.ContainerName(appName)
-	_ = r.docker.StopAndRemoveContainer(ctx, containerName)
+	_ = r.docker.StopAndRemoveContainer(ctx, containerName, 0)
 
 	id, err := r.docker.CreateContainer(ctx, appDef, r.volumesBase)
 	if err != nil {
@@ -783,7 +786,7 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) {
 				removeWg.Add(1)
 				go func(name string) {
 					defer removeWg.Done()
-					if err := r.docker.StopAndRemoveContainer(ctx, name); err != nil {
+					if err := r.docker.StopAndRemoveContainer(ctx, name, 0); err != nil {
 						slog.Warn("Failed to remove stale container", "name", name, "err", err)
 					}
 				}(p.containerName)
@@ -801,7 +804,7 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) {
 			removeWg.Add(1)
 			go func(cn string) {
 				defer removeWg.Done()
-				r.docker.StopAndRemoveContainer(ctx, cn)
+				r.docker.StopAndRemoveContainer(ctx, cn, 0)
 			}(containerName)
 		}
 	}
@@ -876,44 +879,37 @@ func (r *Runtime) pullAndStartApp(ctx context.Context, appName string) {
 	// THIRD_PARTY: never re-pull (stable images)
 	// Other apps: only re-pull if image tag contains "snapshot" (case-insensitive)
 	if appDef.Image != "" {
-		// Acquire pull semaphore (max 4 concurrent pulls)
-		select {
-		case r.pullSem <- struct{}{}:
-		case <-ctx.Done():
-			return
-		}
-		pullDone := false
-		defer func() {
-			if !pullDone {
-				<-r.pullSem
+		// Pull image under semaphore (max concurrent pulls)
+		pullErr := func() error {
+			select {
+			case r.pullSem <- struct{}{}:
+			case <-ctx.Done():
+				return ctx.Err()
 			}
+			defer func() { <-r.pullSem }()
+
+			pullAlways := shouldPullImage(appDef.Kind, appDef.Image)
+			var auth *docker.RegistryAuth
+			if r.registryAuthFn != nil {
+				auth = r.registryAuthFn(appDef.Image)
+			}
+			var lastProgressReport time.Time
+			progressFn := func(currentMB, totalMB float64, pct int) {
+				now := time.Now()
+				if now.Sub(lastProgressReport) < time.Second {
+					return
+				}
+				lastProgressReport = now
+				r.mu.Lock()
+				app.StatusText = fmt.Sprintf("Pulling: %.0fmb %d%%", totalMB, pct)
+				r.mu.Unlock()
+			}
+			pullHandle := r.actionSvc.Execute(actions.ActionParams{
+				Executor: &nsactions.PullExecutor{Docker: r.docker, PullAlways: pullAlways},
+				Data:     &nsactions.PullData{AppName: appName, Image: appDef.Image, Auth: auth, ProgressFn: progressFn},
+			})
+			return pullHandle.Wait(ctx)
 		}()
-
-		pullAlways := shouldPullImage(appDef.Kind, appDef.Image)
-		var auth *docker.RegistryAuth
-		if r.registryAuthFn != nil {
-			auth = r.registryAuthFn(appDef.Image)
-		}
-		var lastProgressReport time.Time
-		progressFn := func(currentMB, totalMB float64, pct int) {
-			now := time.Now()
-			if now.Sub(lastProgressReport) < time.Second {
-				return
-			}
-			lastProgressReport = now
-			r.mu.Lock()
-			app.StatusText = fmt.Sprintf("Pulling: %.0fmb %d%%", totalMB, pct)
-			r.mu.Unlock()
-		}
-		pullHandle := r.actionSvc.Execute(actions.ActionParams{
-			Executor: &nsactions.PullExecutor{Docker: r.docker, PullAlways: pullAlways},
-			Data:     &nsactions.PullData{AppName: appName, Image: appDef.Image, Auth: auth, ProgressFn: progressFn},
-		})
-		pullErr := pullHandle.Wait(ctx)
-
-		// Release pull semaphore (defer won't double-release)
-		<-r.pullSem
-		pullDone = true
 
 		if pullErr != nil {
 			if ctx.Err() != nil {
@@ -1079,7 +1075,7 @@ func (r *Runtime) runInitContainers(ctx context.Context, appName string, appDef 
 		}
 
 		initName := r.docker.ContainerName(appName + "-init")
-		_ = r.docker.StopAndRemoveContainer(ctx, initName)
+		_ = r.docker.StopAndRemoveContainer(ctx, initName, 0)
 		initID, err := r.docker.CreateContainer(ctx, initDef, r.volumesBase)
 		if err != nil {
 			return fmt.Errorf("create init container for %s: %w", appName, err)
@@ -1330,7 +1326,7 @@ func (r *Runtime) doStop() {
 			go func(app *AppRuntime) {
 				defer wg.Done()
 				slog.Info("Stopping app", "app", app.Name)
-				if err := r.docker.StopAndRemoveContainer(groupCtx, r.docker.ContainerName(app.Name)); err != nil {
+				if err := r.docker.StopAndRemoveContainer(groupCtx, r.docker.ContainerName(app.Name), app.Def.StopTimeout); err != nil {
 					slog.Warn("Failed to stop container", "app", app.Name, "err", err)
 				}
 			}(a)

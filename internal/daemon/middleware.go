@@ -80,7 +80,7 @@ func CORSMiddleware(next http.Handler) http.Handler {
 
 func matchCORSOrigin(origin string) bool {
 	for _, allowed := range defaultCORSOrigins {
-		if strings.HasPrefix(origin, allowed) {
+		if origin == allowed || strings.HasPrefix(origin, allowed+":") {
 			return true
 		}
 	}

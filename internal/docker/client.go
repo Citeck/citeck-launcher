@@ -286,13 +286,12 @@ func (c *Client) RemoveContainer(ctx context.Context, id string) error {
 }
 
 // StopAndRemoveContainer stops and removes a container by name.
-// stopTimeout is in seconds; 0 uses default (10s).
-func (c *Client) StopAndRemoveContainer(ctx context.Context, name string, stopTimeout ...int) error {
-	timeout := 10
-	if len(stopTimeout) > 0 && stopTimeout[0] > 0 {
-		timeout = stopTimeout[0]
+// timeoutSec is the stop timeout in seconds; 0 uses default (10s).
+func (c *Client) StopAndRemoveContainer(ctx context.Context, name string, timeoutSec int) error {
+	if timeoutSec <= 0 {
+		timeoutSec = 10
 	}
-	if err := c.StopContainer(ctx, name, timeout); err != nil {
+	if err := c.StopContainer(ctx, name, timeoutSec); err != nil {
 		slog.Debug("stop container", "name", name, "err", err)
 	}
 	return c.RemoveContainer(ctx, name)
@@ -333,7 +332,7 @@ func (c *Client) CleanupStaleContainers(ctx context.Context) {
 			name = name[1:]
 		}
 		slog.Info("Removing stale container", "name", name)
-		_ = c.StopAndRemoveContainer(ctx, name)
+		_ = c.StopAndRemoveContainer(ctx, name, 0)
 	}
 }
 
@@ -651,7 +650,7 @@ func (c *Client) RunUtilsContainer(ctx context.Context, cmd []string, binds []st
 	utilsImage := config.UtilsImage()
 
 	containerName := c.ContainerName("launcher-utils-tmp")
-	_ = c.StopAndRemoveContainer(ctx, containerName)
+	_ = c.StopAndRemoveContainer(ctx, containerName, 0)
 
 	resp, err := c.cli.ContainerCreate(ctx, &container.Config{
 		Image: utilsImage,

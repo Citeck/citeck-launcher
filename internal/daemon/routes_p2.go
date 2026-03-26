@@ -76,24 +76,29 @@ func (d *Daemon) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
 				summary.BundleRef = cfg.BundleRef.String()
 			}
 			// Check if this is the active namespace
+			d.configMu.RLock()
 			if d.runtime != nil && d.nsConfig != nil && d.nsConfig.ID == ns.NamespaceID {
 				summary.Status = string(d.runtime.Status())
 			}
+			d.configMu.RUnlock()
 			result = append(result, summary)
 		}
 	} else {
 		// Server mode: single namespace
-		if d.nsConfig != nil {
+		d.configMu.RLock()
+		nsCfg := d.nsConfig
+		d.configMu.RUnlock()
+		if nsCfg != nil {
 			status := string(namespace.NsStatusStopped)
 			if d.runtime != nil {
 				status = string(d.runtime.Status())
 			}
 			result = append(result, api.NamespaceSummaryDto{
-				ID:          d.nsConfig.ID,
+				ID:          nsCfg.ID,
 				WorkspaceID: d.workspaceID,
-				Name:        d.nsConfig.Name,
+				Name:        nsCfg.Name,
 				Status:      status,
-				BundleRef:   d.nsConfig.BundleRef.String(),
+				BundleRef:   nsCfg.BundleRef.String(),
 			})
 		}
 	}
@@ -112,7 +117,13 @@ func (d *Daemon) handleDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Don't allow deleting the active namespace
-	if d.nsConfig != nil && d.nsConfig.ID == nsID && d.runtime != nil && d.runtime.Status() != namespace.NsStatusStopped {
+	d.configMu.RLock()
+	activeID := ""
+	if d.nsConfig != nil {
+		activeID = d.nsConfig.ID
+	}
+	d.configMu.RUnlock()
+	if activeID == nsID && d.runtime != nil && d.runtime.Status() != namespace.NsStatusStopped {
 		writeError(w, http.StatusConflict, "cannot delete active namespace; stop it first")
 		return
 	}
@@ -601,6 +612,8 @@ func (d *Daemon) snapshotsDir() (string, error) {
 }
 
 func (d *Daemon) activeNsID() string {
+	d.configMu.RLock()
+	defer d.configMu.RUnlock()
 	if d.nsConfig != nil {
 		return d.nsConfig.ID
 	}
@@ -670,12 +683,14 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	nsName := "namespace"
+	d.configMu.RLock()
 	if d.nsConfig != nil {
 		nsName = sanitizeName(d.nsConfig.Name)
 		if nsName == "" {
 			nsName = d.nsConfig.ID
 		}
 	}
+	d.configMu.RUnlock()
 	fileName := fmt.Sprintf("%s_%s.zip", nsName, time.Now().Format("2006-01-02_15-04-05"))
 	outputPath := filepath.Join(dir, fileName)
 

@@ -1,6 +1,9 @@
 package cli
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestExitCodes_UniqueValues(t *testing.T) {
 	codes := map[int]string{
@@ -44,5 +47,28 @@ func TestExitCodes_CorrectValues(t *testing.T) {
 		if tt.code != tt.want {
 			t.Errorf("%s: got %d, want %d", tt.name, tt.code, tt.want)
 		}
+	}
+}
+
+func TestExitCodeError(t *testing.T) {
+	err := exitWithCode(ExitTimeout, "timed out after %ds", 30)
+
+	// Should implement error interface
+	if err.Error() != "timed out after 30s" {
+		t.Errorf("Error() = %q", err.Error())
+	}
+
+	// Should be extractable via errors.As
+	var ece ExitCodeError
+	if !errors.As(err, &ece) {
+		t.Fatal("errors.As failed for ExitCodeError")
+	}
+	if ece.Code != ExitTimeout {
+		t.Errorf("Code = %d, want %d", ece.Code, ExitTimeout)
+	}
+
+	// Unwrap should return inner error
+	if err.Unwrap() == nil {
+		t.Fatal("Unwrap returned nil")
 	}
 }

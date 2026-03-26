@@ -22,7 +22,7 @@ type StopExecutor struct {
 
 func (e *StopExecutor) Execute(ctx context.Context, actx *actions.ActionContext) error {
 	d := actx.Data.(*StopData)
-	if err := e.Docker.StopAndRemoveContainer(ctx, d.ContainerName); err != nil {
+	if err := e.Docker.StopAndRemoveContainer(ctx, d.ContainerName, 0); err != nil {
 		return fmt.Errorf("stop %s: %w", d.AppName, err)
 	}
 	return nil

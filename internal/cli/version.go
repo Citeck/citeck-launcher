@@ -7,7 +7,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newVersionCmd(version, commit, buildDate string) *cobra.Command {
+func newVersionCmd(info BuildInfo) *cobra.Command {
+	version, commit, buildDate := info.Version, info.Commit, info.BuildDate
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Show version information",

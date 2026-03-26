@@ -214,7 +214,7 @@ func doPull(ctx context.Context, opts RepoOpts) error {
 		pullOpts.Auth = auth
 	}
 
-	if err := wt.Pull(pullOpts); err != nil && err != gogit.NoErrAlreadyUpToDate {
+	if err := wt.PullContext(ctx, pullOpts); err != nil && err != gogit.NoErrAlreadyUpToDate {
 		// 8b-13: auth errors should not trigger reclone
 		errStr := strings.ToLower(err.Error())
 		if strings.Contains(errStr, "authentication") || strings.Contains(errStr, "unauthorized") {

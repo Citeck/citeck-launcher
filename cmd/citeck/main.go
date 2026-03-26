@@ -9,5 +9,5 @@ var (
 )
 
 func main() {
-	cli.Execute(version, gitCommit, buildDate)
+	cli.Execute(cli.BuildInfo{Version: version, Commit: gitCommit, BuildDate: buildDate})
 }
