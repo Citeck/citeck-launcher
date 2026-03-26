@@ -168,6 +168,13 @@ func Import(ctx context.Context, dc *docker.Client, zipPath, volumesBase string)
 		return nil, fmt.Errorf("snapshot contains no volumes")
 	}
 
+	// Validate volume metadata from untrusted meta.json before any filesystem operations
+	for _, vol := range meta.Volumes {
+		if err := validateVolumeSnapshotMeta(vol); err != nil {
+			return nil, err
+		}
+	}
+
 	// Ensure launcher-utils image
 	if err := ensureUtilsImage(ctx, dc); err != nil {
 		return nil, err
@@ -267,13 +274,6 @@ func importVolume(ctx context.Context, dc *docker.Client, vol VolumeSnapshotMeta
 
 	tarDir := filepath.Dir(tarPath)
 	tarFile := filepath.Base(tarPath)
-
-	// Sanitize tarFile to prevent shell injection from crafted meta.json.
-	// Also reject if it contains path separators after sanitization.
-	tarFile = sanitizeFileName(tarFile)
-	if strings.ContainsAny(tarFile, "/\\") || tarFile == "" {
-		return fmt.Errorf("invalid data file name after sanitization: %q", vol.DataFile)
-	}
 
 	cmd := []string{"sh", "-c", fmt.Sprintf(
 		`%s%star %s -xf "/source/%s" -C /dest`,
@@ -416,6 +416,21 @@ func availableDiskSpace(path string) int64 {
 		return 0
 	}
 	return int64(stat.Bavail) * int64(stat.Bsize)
+}
+
+// validateVolumeSnapshotMeta rejects untrusted meta.json entries with path traversal
+// or shell-injection characters before they reach any filesystem or shell operation.
+func validateVolumeSnapshotMeta(vol VolumeSnapshotMeta) error {
+	if vol.Name == "" || filepath.Base(vol.Name) != vol.Name {
+		return fmt.Errorf("invalid volume name in snapshot: %q", vol.Name)
+	}
+	if vol.DataFile == "" || filepath.Base(vol.DataFile) != vol.DataFile {
+		return fmt.Errorf("invalid dataFile in snapshot: %q", vol.DataFile)
+	}
+	if sanitizeFileName(vol.DataFile) != vol.DataFile {
+		return fmt.Errorf("dataFile contains unsafe characters: %q", vol.DataFile)
+	}
+	return nil
 }
 
 // isValidChown validates "uid:gid" format (digits only).

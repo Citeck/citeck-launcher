@@ -13,6 +13,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/fsutil"
 )
 
 // Infrastructure host/port constants.
@@ -55,7 +56,7 @@ func JWTSecret() string {
 		}
 		jwtSecretVal = base64.RawURLEncoding.EncodeToString(b)
 		os.MkdirAll(filepath.Dir(secretPath), 0o755)
-		os.WriteFile(secretPath, []byte(jwtSecretVal), 0o600)
+		fsutil.AtomicWriteFile(secretPath, []byte(jwtSecretVal), 0o600)
 	})
 	return jwtSecretVal
 }
@@ -72,12 +73,11 @@ func OIDCSecret() string {
 		b := make([]byte, 32)
 		if _, err := rand.Read(b); err != nil {
 			slog.Error("Failed to generate OIDC secret", "err", err)
-			oidcSecretVal = "2996117d-9a33-4e06-b48a-867ce6a235db" // fallback to old value
 			return
 		}
 		oidcSecretVal = fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 		os.MkdirAll(filepath.Dir(secretPath), 0o755)
-		os.WriteFile(secretPath, []byte(oidcSecretVal), 0o600)
+		fsutil.AtomicWriteFile(secretPath, []byte(oidcSecretVal), 0o600)
 	})
 	return oidcSecretVal
 }

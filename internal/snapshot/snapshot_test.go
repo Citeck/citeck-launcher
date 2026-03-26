@@ -56,6 +56,33 @@ func TestIsValidChmod(t *testing.T) {
 	}
 }
 
+func TestValidateVolumeSnapshotMeta(t *testing.T) {
+	valid := []VolumeSnapshotMeta{
+		{Name: "postgres", DataFile: "postgres.tar.zst", RootStat: "999:999|0755"},
+		{Name: "my-volume", DataFile: "my-volume.tar.xz", RootStat: "0:0|0755"},
+	}
+	for _, v := range valid {
+		if err := validateVolumeSnapshotMeta(v); err != nil {
+			t.Errorf("validateVolumeSnapshotMeta(%+v) = %v, want nil", v, err)
+		}
+	}
+
+	invalid := []VolumeSnapshotMeta{
+		{Name: "", DataFile: "ok.tar.zst"},                             // empty name
+		{Name: "ok", DataFile: ""},                                     // empty dataFile
+		{Name: "../escape", DataFile: "ok.tar.zst"},                    // path traversal in name
+		{Name: "ok", DataFile: "../escape.tar.zst"},                    // path traversal in dataFile
+		{Name: "ok", DataFile: `"; echo PWNED; ".tar.zst`},            // shell injection in dataFile
+		{Name: "sub/dir", DataFile: "ok.tar.zst"},                     // path separator in name
+		{Name: "ok", DataFile: "has spaces.tar.zst"},                  // unsafe chars in dataFile
+	}
+	for _, v := range invalid {
+		if err := validateVolumeSnapshotMeta(v); err == nil {
+			t.Errorf("validateVolumeSnapshotMeta(%+v) = nil, want error", v)
+		}
+	}
+}
+
 func TestExtractZip_ZipSlipPrevention(t *testing.T) {
 	// Create a ZIP with a path traversal entry
 	zipPath := filepath.Join(t.TempDir(), "evil.zip")
