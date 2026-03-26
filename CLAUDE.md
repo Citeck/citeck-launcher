@@ -158,12 +158,23 @@ Version forwarding, TCP timeouts, CORS wiring, reconciler retry with backoff,
 graceful shutdown groups, config validation, StartApp method, atomic state writes,
 ACME renewal tests, network orphan cleanup, self-signed cert auto-generation.
 
-### Phase 8: Production-Grade Hardening — NEXT
-See **`PLAN-phase8.md`** for the full plan: 57 issues across 4 sub-phases.
-- 8a: Race conditions, security, data integrity (12 issues)
-- 8b: Runtime robustness, Docker edge cases, ACME (16 issues)
-- 8c: CLI correctness, exit codes, UX (17 issues)
-- 8d: DoS protection, observability, tunability (12 issues)
+### Phase 8: Production-Grade Hardening — COMPLETE (2026-03-26)
+57 issues across 4 sub-phases (8a–8d). 2 code review passes (15 additional fixes).
+
+### Server Deployment Testing Round 2 — COMPLETE (2026-03-26)
+Tested on remote server with community 2026.1. Found and fixed:
+- JWT secret size (32→64 bytes for HS512 compatibility)
+- TLS cert stale directory detection and root cause fix (docker/client.go parent dir creation)
+- ACME cert hostname mismatch on host change (CertMatchesHost with expiry check)
+- Self-signed cert missing on reload path
+- Deduplication: tlsutil package, ensureSelfSignedCert shared helper
+- 8 new tests (CertMatchesHost, GenerateSelfSignedCert)
+
+### Phase 9: Production Hardening for Scale — COMPLETE (2026-03-27)
+12 issues across 3 sub-phases + 1 code review pass (4 additional fixes).
+- 9a: Atomic writes — shared `fsutil.AtomicWriteFile` (temp+fsync+rename)
+- 9b: Security — snapshot input validation, log memory limit
+- 9c: Concurrency — reconciler 3-phase lock, timeouts, ACME rate limit, OIDC secret
 
 ### Key Technical Decisions
 - SSE (not WebSocket) for real-time events
@@ -189,7 +200,8 @@ See **`PLAN-phase8.md`** for the full plan: 57 issues across 4 sub-phases.
 
 ### Other References
 - **`PROGRESS.md`** — tracks completed work (historical)
-- **`PLAN-phase8.md`** — current plan (68 issues, 4 sub-phases)
+- **`PLAN-phase8.md`** — Phase 8 plan (COMPLETE, 57 issues)
+- **`PLAN-phase9.md`** — Phase 9 plan (COMPLETE, 12 issues)
 
 ## CI/CD
 

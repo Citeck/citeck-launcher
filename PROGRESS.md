@@ -30,7 +30,9 @@
 | Phase 6 | Final parity + Kotlin removal | 2026-03-26 |
 | Server test | Deployment testing on remote server (13 gaps fixed) | 2026-03-26 |
 | Phase 7 | Production hardening (37 issues + 15 review fixes) | 2026-03-26 |
+| Phase 8 | Production-grade hardening (57 issues, 4 sub-phases) | 2026-03-26 |
+| Server test 2 | Deployment testing round 2 (5 bugs + 9 review issues fixed) | 2026-03-26 |
 
-## Next: Phase 8
+## Next: Phase 9
 
-See `PLAN-phase8.md` — 68 issues across 4 sub-phases (8a-8d).
+See `PLAN-phase9.md` — 12 issues across 3 sub-phases (atomic writes, security, concurrency).

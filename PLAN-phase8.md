@@ -1,4 +1,6 @@
-# Phase 8: Production-Grade Hardening
+# Phase 8: Production-Grade Hardening — COMPLETE
+
+> **Status: ALL DONE.** Implemented in commits `0a6ac7d`, `efdf9f1`, `85844f6`. See PLAN-phase9.md for current work.
 
 Deep audit identified **57 unique issues** across 25 files. Grouped into 4 sub-phases by blast radius.
 
