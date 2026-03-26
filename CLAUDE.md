@@ -159,10 +159,10 @@ graceful shutdown groups, config validation, StartApp method, atomic state write
 ACME renewal tests, network orphan cleanup, self-signed cert auto-generation.
 
 ### Phase 8: Production-Grade Hardening — NEXT
-See **`PLAN-phase8.md`** for the full plan: 68 issues across 4 sub-phases.
+See **`PLAN-phase8.md`** for the full plan: 57 issues across 4 sub-phases.
 - 8a: Race conditions, security, data integrity (12 issues)
 - 8b: Runtime robustness, Docker edge cases, ACME (16 issues)
-- 8c: CLI correctness, exit codes, UX (18 issues)
+- 8c: CLI correctness, exit codes, UX (17 issues)
 - 8d: DoS protection, observability, tunability (12 issues)
 
 ### Key Technical Decisions

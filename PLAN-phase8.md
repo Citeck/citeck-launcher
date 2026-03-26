@@ -1,6 +1,6 @@
 # Phase 8: Production-Grade Hardening
 
-Deep audit identified **68 unique issues** across 25 files. Grouped into 4 sub-phases by blast radius.
+Deep audit identified **57 unique issues** across 25 files. Grouped into 4 sub-phases by blast radius.
 
 ## Sub-phase 8a: Critical Safety (12 issues)
 
@@ -32,11 +32,11 @@ func (r *Runtime) setStatusAndEmit(s NsRuntimeStatus) api.EventDto {
 
 ### 8a-3: Daemon fields read without configMu
 
-**Files:** `internal/daemon/routes.go:49-57, 519-543, 661`
+**Files:** `internal/daemon/routes.go:49-57, 519-543, 861`, `internal/daemon/server.go:659`
 
 **Problem:** `d.nsConfig`, `d.bundleError` read without `configMu.RLock()`. Concurrent reload writes these under `configMu.Lock()`.
 
-**Fix:** Add `d.configMu.RLock()/RUnlock()` in `handleGetNamespace`, `buildDumpData`, `activeConfigPath`, `handleHealth`.
+**Fix:** Add `d.configMu.RLock()/RUnlock()` in `handleGetNamespace`, `buildDumpData`, `handleHealth` (routes.go), and `activeConfigPath` (server.go).
 
 ### 8a-4: pullSem not released via defer — permanent depletion on panic
 
@@ -217,73 +217,69 @@ Fixes that prevent silent failures, resource leaks, and Docker edge cases.
 
 **Fix:** Apply correct exit codes: `ExitDaemonNotRunning` when daemon unreachable, `ExitConfigError` for bad config, `ExitNotFound` for missing app, `ExitTimeout` for timeouts.
 
-### 8c-2: `apply --wait` subscribes SSE after reload — race still possible
-
-**Fix:** Subscribe SSE BEFORE `c.ReloadNamespace()`, same pattern as `snapshotWithWait`.
-
-### 8c-3: `stop` has no `--wait` / `--timeout` flags
+### 8c-2: `stop` has no `--wait` / `--timeout` flags
 
 **Fix:** Add `--wait` + `--timeout`, subscribe SSE, wait for `namespace_status→STOPPED`.
 
-### 8c-4: `stop` exits 0 when daemon not running
+### 8c-3: `stop` exits 0 when daemon not running
 
 **Fix:** Return `ExitDaemonNotRunning` (or exit 0 with stderr warning, matching `kubectl delete` pattern).
 
-### 8c-5: `restart` has no `--wait` flag
+### 8c-4: `restart` has no `--wait` flag
 
 **Fix:** Add `--wait` + `--timeout`, wait for app status → RUNNING.
 
-### 8c-6: `promptChoice` returns raw invalid input silently
+### 8c-5: `promptChoice` returns raw invalid input silently
 
 **Files:** `internal/cli/install.go:228-242`
 
 **Fix:** Re-prompt until valid choice entered (loop).
 
-### 8c-7: `clean` uses `fmt.Scanln` (inconsistent, breaks with piped input)
+### 8c-6: `clean` uses `fmt.Scanln` (inconsistent, breaks with piped input)
 
 **Fix:** Use `bufio.NewScanner(os.Stdin)` like install/uninstall.
 
-### 8c-8: `diagnose` hardcodes `/var/run/docker.sock` — ignores DOCKER_HOST
+### 8c-7: `diagnose` hardcodes `/var/run/docker.sock` — ignores DOCKER_HOST
 
 **Fix:** Create Docker client and call Ping instead.
 
-### 8c-9: `logs` follow mode silently swallows read errors
+### 8c-8: `logs` follow mode silently swallows read errors
 
 **Fix:** Print non-EOF errors to stderr; exit non-zero.
 
-### 8c-10: `describe` exposes secrets in env vars
+### 8c-9: `describe` exposes secrets in env vars
 
 **Fix:** Mask `*_PASSWORD`, `*_SECRET`, `*_TOKEN`, `*_KEY` values as `***`.
 
-### 8c-11: `token generate` restart note outside PrintResult — broken JSON mode
+### 8c-10: `token generate` restart note outside PrintResult — broken JSON mode
 
 **Fix:** Move inside text callback.
 
-### 8c-12: `cert letsencrypt` overwrites existing cert without backup/confirm
+### 8c-11: `cert letsencrypt` overwrites existing cert without backup/confirm
 
 **Fix:** Check existing cert; require `--force` to overwrite; backup old cert.
 
-### 8c-13: `apply` reads file twice (TOCTOU)
+### 8c-12: `apply` reads file twice (TOCTOU)
 
 **Fix:** Single `os.ReadFile`, then `ParseNamespaceConfig(data)`.
 
-### 8c-14: `diff --file` missing prints usage and exits 0
+### 8c-13: `diff --file` missing prints usage and exits 0
 
 **Fix:** `cmd.MarkFlagRequired("file")` or return error.
 
-### 8c-15: `install` plaintext passwords in 0644 config file
+### 8c-14: `install` plaintext passwords in 0644 config file
 
 **Fix:** Write namespace.yml with `0o600`.
 
-### 8c-16: `install` only tries ifconfig.me for IP detection
+### 8c-15: `install` only tries ifconfig.me for IP detection
 
 **Fix:** Try 3 services in order: ifconfig.me, api.ipify.org, checkip.amazonaws.com.
 
-### 8c-17: `reload` exits 0 when result.Success == false
+### 8c-16: `reload` exits 0 when result.Success == false
 
 **Fix:** Return error if `!result.Success`.
 
-### 8c-18: `version` lacks build commit and timestamp
+### 8c-17: `version` lacks build commit and timestamp
 
 **Fix:** Add `gitCommit`, `buildDate` ldflags.
 
@@ -351,7 +347,9 @@ Fixes that prevent silent failures, resource leaks, and Docker edge cases.
 
 1. **8a (12 issues):** Race conditions + security + data integrity. Build + test after each.
 2. **8b (16 issues):** Runtime robustness, Docker edge cases, ACME. Build + test.
-3. **8c (18 issues):** CLI correctness, exit codes, UX. Build + test.
+   - 8b-5 (stop timeout parameter) before 8b-10 (per-group timeout) — both touch doStop callers.
+3. **8c (17 issues):** CLI correctness, exit codes, UX. Build + test.
+   - 8c-1 (exit codes) depends on 8a-7 (ExitCodeError type) being done first.
 4. **8d (12 issues):** DoS protection, observability, tuning. Build + test.
 
 ## Verification
