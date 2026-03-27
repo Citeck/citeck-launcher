@@ -1475,6 +1475,16 @@ func formatMemory(usage, limit int64) string {
 	return fmt.Sprintf("%s / %s", formatBytes(usage), formatBytes(limit))
 }
 
+// probeClient is a shared HTTP client for health probes.
+// Reuses connections across probe invocations. Timeouts are set per-request via context.
+var probeClient = &http.Client{
+	Transport: &http.Transport{
+		MaxIdleConns:        20,
+		MaxIdleConnsPerHost: 2,
+		IdleConnTimeout:     90 * time.Second,
+	},
+}
+
 func httpProbeCheck(ctx context.Context, port int, path string, timeoutSec int) bool {
 	if timeoutSec <= 0 {
 		timeoutSec = 5
@@ -1485,8 +1495,7 @@ func httpProbeCheck(ctx context.Context, port int, path string, timeoutSec int) 
 	if err != nil {
 		return false
 	}
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := probeClient.Do(req)
 	if err != nil {
 		return false
 	}

@@ -10,14 +10,19 @@ import (
 )
 
 func TestMTLSIdentityMiddleware_WithCert(t *testing.T) {
+	var capturedCN string
 	handler := MTLSIdentityMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Verify we can read the CN from within the handler chain
+		if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+			capturedCN = r.TLS.PeerCertificates[0].Subject.CommonName
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 
 	req := httptest.NewRequest("GET", "/api/v1/status", nil)
 	req.TLS = &tls.ConnectionState{
 		PeerCertificates: []*x509.Certificate{
-			{Subject: pkix.Name{CommonName: "admin"}},
+			{Subject: pkix.Name{CommonName: "admin-user"}},
 		},
 	}
 	rec := httptest.NewRecorder()
@@ -25,6 +30,9 @@ func TestMTLSIdentityMiddleware_WithCert(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", rec.Code)
+	}
+	if capturedCN != "admin-user" {
+		t.Errorf("expected CN 'admin-user', got %q", capturedCN)
 	}
 }
 
@@ -39,6 +47,21 @@ func TestMTLSIdentityMiddleware_NoCert(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected 200 (no TLS = pass through), got %d", rec.Code)
+	}
+}
+
+func TestMTLSIdentityMiddleware_EmptyPeerCerts(t *testing.T) {
+	handler := MTLSIdentityMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/api/v1/status", nil)
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{}}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
 	}
 }
 

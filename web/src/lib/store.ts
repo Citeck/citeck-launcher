@@ -22,9 +22,11 @@ interface DashboardState {
   stopEventStream: () => void
 }
 
+export const useDashboardStore = create<DashboardState>((set, get) => {
+
 let fetchDebounceTimer: ReturnType<typeof setTimeout> | null = null
 
-export const useDashboardStore = create<DashboardState>((set, get) => ({
+return ({
   namespace: null,
   health: null,
   loading: true,
@@ -88,7 +90,11 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
 
   stopEventStream: () => {
     const { stream, reconnectGen } = get()
+    if (fetchDebounceTimer) {
+      clearTimeout(fetchDebounceTimer)
+      fetchDebounceTimer = null
+    }
     set({ stream: null, reconnectDelay: 1000, lastSeq: 0, reconnectGen: reconnectGen + 1 })
     stream?.close()
   },
-}))
+})})

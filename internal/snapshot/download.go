@@ -32,7 +32,17 @@ type ProgressFunc func(received, total int64)
 
 // Download fetches a snapshot ZIP from rawURL, saves it to destPath, and verifies SHA256 if provided.
 // Supports resumable downloads via HTTP Range header. Only http/https URLs are accepted.
+// DownloadWithClient is like Download but uses the provided HTTP client.
+// Use this with a SSRF-safe client when the URL comes from user input.
+func DownloadWithClient(ctx context.Context, client *http.Client, rawURL, destPath, expectedSHA256 string, progress ProgressFunc) error {
+	return download(ctx, client, rawURL, destPath, expectedSHA256, progress)
+}
+
 func Download(ctx context.Context, rawURL, destPath, expectedSHA256 string, progress ProgressFunc) error {
+	return download(ctx, httpClient, rawURL, destPath, expectedSHA256, progress)
+}
+
+func download(ctx context.Context, client *http.Client, rawURL, destPath, expectedSHA256 string, progress ProgressFunc) error {
 	if err := validateURL(rawURL); err != nil {
 		return err
 	}
@@ -50,7 +60,7 @@ func Download(ctx context.Context, rawURL, destPath, expectedSHA256 string, prog
 		offset = info.Size()
 	}
 
-	resp, err := doGet(ctx, rawURL, offset)
+	resp, err := doGet(ctx, client, rawURL, offset)
 	if err != nil {
 		return err
 	}
@@ -128,7 +138,7 @@ func Download(ctx context.Context, rawURL, destPath, expectedSHA256 string, prog
 
 // doGet performs an HTTP GET, handling Range requests and 416 retries.
 // Returns a single response that the caller must close.
-func doGet(ctx context.Context, rawURL string, offset int64) (*http.Response, error) {
+func doGet(ctx context.Context, client *http.Client, rawURL string, offset int64) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
@@ -137,7 +147,7 @@ func doGet(ctx context.Context, rawURL string, offset int64) (*http.Response, er
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
 	}
 
-	resp, err := httpClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("download %s: %w", rawURL, err)
 	}

@@ -20,8 +20,7 @@ function Layout() {
   // Fetch namespace status on mount to determine which screen to show
   useEffect(() => {
     fetchData()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [fetchData])
 
   const hasNamespace = namespace !== null
 

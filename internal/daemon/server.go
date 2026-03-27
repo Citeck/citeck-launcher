@@ -76,7 +76,7 @@ func Start(opts StartOptions) error {
 	logDir := config.LogDir()
 	os.MkdirAll(logDir, 0o755)
 	logPath := config.DaemonLogPath()
-	logWriter := newRotatingWriter(logPath, 50*1024*1024, 3)
+	logWriter := fsutil.NewRotatingWriter(logPath, 50*1024*1024, 3)
 	logHandler := slog.NewTextHandler(io.MultiWriter(os.Stderr, logWriter), &slog.HandlerOptions{})
 	slog.SetDefault(slog.New(logHandler))
 
@@ -704,10 +704,11 @@ func (d *Daemon) registerRoutes(socketMux, tcpMux *http.ServeMux) {
 		tcpMux.HandleFunc(pattern, handler)
 	}
 
-	// --- Socket-only routes (dangerous: exec, shutdown, full config write, reload) ---
+	// --- Socket-only routes (dangerous: exec, shutdown, config write, reload, app config) ---
 	socketMux.HandleFunc("POST "+api.DaemonShutdown, d.handleDaemonShutdown)
 	socketMux.HandleFunc("POST /api/v1/apps/{name}/exec", d.handleAppExec)
 	socketMux.HandleFunc("PUT /api/v1/config", d.handlePutConfig)
+	socketMux.HandleFunc("PUT /api/v1/apps/{name}/config", d.handlePutAppConfig)
 	socketMux.HandleFunc("POST "+api.NamespaceReload, d.handleReloadNamespace)
 
 	// --- Routes available on both muxes ---
@@ -737,9 +738,8 @@ func (d *Daemon) registerRoutes(socketMux, tcpMux *http.ServeMux) {
 	both("GET /api/v1/volumes", d.handleListVolumes)
 	both("DELETE /api/v1/volumes/{name}", d.handleDeleteVolume)
 
-	// App config
+	// App config (write is socket-only above — env injection risk from localhost TCP)
 	both("GET /api/v1/apps/{name}/config", d.handleGetAppConfig)
-	both("PUT /api/v1/apps/{name}/config", d.handlePutAppConfig)
 	both("PUT /api/v1/apps/{name}/lock", d.handleAppLockToggle)
 	both("GET /api/v1/apps/{name}/files", d.handleListAppFiles)
 	both("GET /api/v1/apps/{name}/files/{path...}", d.handleGetAppFile)
@@ -840,24 +840,31 @@ func readJSON(r *http.Request, v any) error {
 }
 
 // makeTokenLookup creates a function that looks up auth tokens from the secret store.
+// Tokens are pre-fetched at creation time into an immutable map for efficiency.
+// Rebuilt on each reload to reflect secret mutations.
 func makeTokenLookup(store storage.Store) bundle.TokenLookupFunc {
-	return func(authType string) string {
-		if store == nil {
-			return ""
-		}
-		secrets, err := store.ListSecrets()
-		if err != nil {
-			return ""
-		}
+	if store == nil {
+		return func(string) string { return "" }
+	}
+	// Pre-fetch all secrets into a lookup map
+	tokensByScope := make(map[string]string)
+	secrets, err := store.ListSecrets()
+	if err == nil {
 		for _, s := range secrets {
-			if string(s.Type) == authType || s.Scope == authType {
-				sec, err := store.GetSecret(s.ID)
-				if err == nil {
-					return sec.Value
-				}
+			sec, err := store.GetSecret(s.ID)
+			if err != nil {
+				continue
+			}
+			if string(s.Type) != "" {
+				tokensByScope[string(s.Type)] = sec.Value
+			}
+			if s.Scope != "" {
+				tokensByScope[s.Scope] = sec.Value
 			}
 		}
-		return ""
+	}
+	return func(authType string) string {
+		return tokensByScope[authType]
 	}
 }
 
@@ -1004,67 +1011,6 @@ func importSnapshotIfNeeded(nsCfg *namespace.NamespaceConfig, wsCfg *bundle.Work
 func isRegularFile(path string) bool {
 	fi, err := os.Stat(path)
 	return err == nil && fi.Mode().IsRegular()
-}
-
-// rotatingWriter is a simple log file writer that rotates when maxBytes is reached.
-type rotatingWriter struct {
-	mu       sync.Mutex
-	path     string
-	maxBytes int64
-	maxFiles int
-	file     *os.File
-	size     int64
-}
-
-func newRotatingWriter(path string, maxBytes int64, maxFiles int) *rotatingWriter {
-	rw := &rotatingWriter{path: path, maxBytes: maxBytes, maxFiles: maxFiles}
-	rw.openOrCreate()
-	return rw
-}
-
-func (rw *rotatingWriter) openOrCreate() {
-	f, err := os.OpenFile(rw.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return
-	}
-	info, _ := f.Stat()
-	rw.file = f
-	if info != nil {
-		rw.size = info.Size()
-	}
-}
-
-func (rw *rotatingWriter) Write(p []byte) (int, error) {
-	rw.mu.Lock()
-	defer rw.mu.Unlock()
-	if rw.file == nil {
-		rw.openOrCreate()
-		if rw.file == nil {
-			return 0, fmt.Errorf("log file not available")
-		}
-	}
-	if rw.size+int64(len(p)) > rw.maxBytes {
-		rw.rotate()
-	}
-	n, err := rw.file.Write(p)
-	rw.size += int64(n)
-	return n, err
-}
-
-func (rw *rotatingWriter) rotate() {
-	if rw.file != nil {
-		rw.file.Close()
-		rw.file = nil
-	}
-	// Delete oldest file, then shift: .2 → .3, .1 → .2, current → .1
-	os.Remove(fmt.Sprintf("%s.%d", rw.path, rw.maxFiles))
-	for i := rw.maxFiles - 1; i >= 1; i-- {
-		src := fmt.Sprintf("%s.%d", rw.path, i)
-		dst := fmt.Sprintf("%s.%d", rw.path, i+1)
-		os.Rename(src, dst)
-	}
-	os.Rename(rw.path, rw.path+".1")
-	rw.openOrCreate()
 }
 
 // ensureSelfSignedCert generates a self-signed cert if TLS is enabled without LE and no cert is configured.

@@ -931,7 +931,6 @@ func (d *Daemon) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	// Determine overall status: healthy / degraded / unhealthy
 	overallStatus := "healthy"
-	healthy := true
 
 	if d.runtime != nil {
 		apps := d.runtime.Apps()
@@ -978,25 +977,20 @@ func (d *Daemon) handleHealth(w http.ResponseWriter, r *http.Request) {
 		// Overall status
 		if nsStatus == namespace.NsStatusStalled || (len(apps) > 0 && running == 0) {
 			overallStatus = "unhealthy"
-			healthy = false
 		} else if failed > 0 || (len(apps) > 0 && running < len(apps)) {
 			overallStatus = "degraded"
-			healthy = false
 		}
 	}
 
 	// Check for critical check errors — escalate to unhealthy
 	for _, c := range checks {
 		if c.Status == "error" {
-			healthy = false
-			if overallStatus != "unhealthy" {
-				overallStatus = "unhealthy"
-			}
+			overallStatus = "unhealthy"
 			break
 		}
 	}
 
-	writeJSON(w, api.HealthDto{Status: overallStatus, Healthy: healthy, Checks: checks})
+	writeJSON(w, api.HealthDto{Status: overallStatus, Healthy: overallStatus == "healthy", Checks: checks})
 }
 
 func (d *Daemon) handleMetrics(w http.ResponseWriter, r *http.Request) {

@@ -20,6 +20,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/form"
+	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/git"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/snapshot"
@@ -315,7 +316,7 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		configPath = config.NamespaceConfigPath()
 	}
 
-	if err := os.WriteFile(configPath, data, 0o644); err != nil {
+	if err := fsutil.AtomicWriteFile(configPath, data, 0o644); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -548,7 +549,7 @@ func (d *Daemon) handleGetDiagnostics(w http.ResponseWriter, _ *http.Request) {
 			status = "error"
 			msg = fmt.Sprintf("Disk critically low: %.1f GB free", freeGB)
 		} else if freeGB < 5.0 {
-			status = "warn"
+			status = "warning"
 			msg = fmt.Sprintf("Disk space low: %.1f GB free of %.1f GB", freeGB, totalGB)
 		}
 		checks = append(checks, api.DiagnosticCheckDto{
@@ -898,7 +899,7 @@ func (d *Daemon) handleDownloadSnapshot(w http.ResponseWriter, r *http.Request) 
 			Type: "snapshot_download", Timestamp: time.Now().UnixMilli(),
 			NamespaceID: nsID, After: fmt.Sprintf("downloading %s", fileName),
 		})
-		if err := snapshot.Download(d.bgCtx, req.URL, destPath, req.SHA256, nil); err != nil {
+		if err := snapshot.DownloadWithClient(d.bgCtx, ssrfSafeClient(), req.URL, destPath, req.SHA256, nil); err != nil {
 			slog.Error("Snapshot download failed", "url", req.URL, "err", err)
 			d.broadcastEvent(api.EventDto{
 				Type: "snapshot_error", Timestamp: time.Now().UnixMilli(),
@@ -918,9 +919,8 @@ func (d *Daemon) handleDownloadSnapshot(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// safeSnapshotFileName extracts and sanitizes a file name from a download URL.
 // safeSnapshotFileName extracts a safe filename from a download URL.
-// Used by both routes_p2.go (downloadAndImportSnapshot) and server.go (importSnapshotIfNeeded).
+// Strips query parameters and path components.
 func safeSnapshotFileName(rawURL string) string {
 	if idx := strings.LastIndex(rawURL, "/"); idx >= 0 {
 		name := rawURL[idx+1:]
@@ -1147,6 +1147,40 @@ func validateSnapshotURL(rawURL string) error {
 		}
 	}
 	return nil
+}
+
+// ssrfSafeClient returns an HTTP client whose DialContext validates resolved IPs
+// against SSRF blocked ranges. This prevents DNS rebinding attacks where a hostname
+// resolves to a public IP at validation time but a private IP at connection time.
+func ssrfSafeClient() *http.Client {
+	dialer := &net.Dialer{Timeout: 30 * time.Second}
+	return &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				host, port, err := net.SplitHostPort(addr)
+				if err != nil {
+					return nil, err
+				}
+				ips, err := net.DefaultResolver.LookupHost(ctx, host)
+				if err != nil {
+					return nil, err
+				}
+				for _, ipStr := range ips {
+					ip := net.ParseIP(ipStr)
+					if ip != nil && isBlockedIP(ip) {
+						return nil, fmt.Errorf("SSRF blocked: resolved IP %s for %s", ipStr, host)
+					}
+				}
+				// Connect to the first non-blocked IP
+				if len(ips) > 0 {
+					return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0], port))
+				}
+				return nil, fmt.Errorf("no valid IPs for %s", host)
+			},
+			ResponseHeaderTimeout: 30 * time.Second,
+			IdleConnTimeout:       90 * time.Second,
+		},
+	}
 }
 
 // isBlockedIP returns true if the IP is in a range that should not be accessed via SSRF.
