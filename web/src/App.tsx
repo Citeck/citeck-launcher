@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { useDashboardStore } from './lib/store'
 import { Dashboard } from './pages/Dashboard'
 import { AppDetail } from './pages/AppDetail'
@@ -52,9 +53,11 @@ function Layout() {
 
 function App() {
   return (
-    <BrowserRouter>
-      <Layout />
-    </BrowserRouter>
+    <ErrorBoundary>
+      <BrowserRouter>
+        <Layout />
+      </BrowserRouter>
+    </ErrorBoundary>
   )
 }
 

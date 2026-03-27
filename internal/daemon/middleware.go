@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"log/slog"
 	"net"
 	"net/http"
@@ -21,25 +23,26 @@ func MTLSIdentityMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// defaultCORSOrigins lists origins allowed by default for the web UI.
-var defaultCORSOrigins = []string{
-	"http://127.0.0.1",
-	"http://localhost",
-}
+// CORSMiddleware validates Origin against the exact daemon listen address.
+// Only the Web UI served by this daemon should be allowed — no prefix matching.
+func CORSMiddleware(next http.Handler, listenAddr string) http.Handler {
+	allowed := buildCORSAllowedOrigins(listenAddr)
 
-// CORSMiddleware validates Origin against allowed patterns and reflects the matching origin.
-func CORSMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin != "" && matchCORSOrigin(origin) {
+		if origin != "" && allowed[origin] {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept")
 			w.Header().Set("Vary", "Origin")
-		}
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept")
 
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusNoContent)
+			if r.Method == "OPTIONS" {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		} else if r.Method == "OPTIONS" {
+			// Reject preflight from unknown origins
+			w.WriteHeader(http.StatusForbidden)
 			return
 		}
 
@@ -47,13 +50,25 @@ func CORSMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func matchCORSOrigin(origin string) bool {
-	for _, allowed := range defaultCORSOrigins {
-		if origin == allowed || strings.HasPrefix(origin, allowed+":") {
-			return true
-		}
+// buildCORSAllowedOrigins creates the set of exact origins allowed for the daemon.
+func buildCORSAllowedOrigins(listenAddr string) map[string]bool {
+	origins := make(map[string]bool)
+	host, port, err := net.SplitHostPort(listenAddr)
+	if err != nil {
+		return origins
 	}
-	return false
+	// Normalize host
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		// Bound to all interfaces — allow both localhost aliases with the exact port
+		for _, h := range []string{"127.0.0.1", "localhost"} {
+			origins["http://"+h+":"+port] = true
+			origins["https://"+h+":"+port] = true
+		}
+	} else {
+		origins["http://"+host+":"+port] = true
+		origins["https://"+host+":"+port] = true
+	}
+	return origins
 }
 
 // RateLimitMiddleware limits requests per IP using a token bucket with automatic eviction.
@@ -121,7 +136,13 @@ func (sr *statusRecorder) WriteHeader(code int) {
 	sr.ResponseWriter.WriteHeader(code)
 }
 
-// LoggingMiddleware logs HTTP requests with method, path, status, and duration.
+// Unwrap allows http.ResponseController to reach the underlying ResponseWriter
+// for SetWriteDeadline and other per-connection controls.
+func (sr *statusRecorder) Unwrap() http.ResponseWriter {
+	return sr.ResponseWriter
+}
+
+// LoggingMiddleware logs HTTP requests with method, path, status, duration, remote addr, request ID, and mTLS CN.
 func LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Skip logging for static files
@@ -129,9 +150,32 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+
+		// Generate and set X-Request-Id
+		reqID := generateRequestID()
+		w.Header().Set("X-Request-Id", reqID)
+
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		slog.Info("HTTP request", "method", r.Method, "path", r.URL.Path, "status", rec.status, "duration", time.Since(start).String())
+		attrs := []any{
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rec.status,
+			"duration", time.Since(start).String(),
+			"remote", r.RemoteAddr,
+			"reqId", reqID,
+		}
+		if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+			attrs = append(attrs, "cn", r.TLS.PeerCertificates[0].Subject.CommonName)
+		}
+		slog.Info("HTTP request", attrs...)
 	})
+}
+
+// generateRequestID returns an 8-character hex string (4 random bytes).
+func generateRequestID() string {
+	var b [4]byte
+	rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }

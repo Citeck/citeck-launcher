@@ -46,6 +46,7 @@ type LinkDto struct {
 
 type EventDto struct {
 	Type        string `json:"type"`
+	Seq         int64  `json:"seq"`
 	Timestamp   int64  `json:"timestamp"`
 	NamespaceID string `json:"namespaceId"`
 	AppName     string `json:"appName"`
@@ -54,7 +55,8 @@ type EventDto struct {
 }
 
 type HealthDto struct {
-	Healthy bool           `json:"healthy"`
+	Status  string           `json:"status"` // "healthy", "degraded", "unhealthy"
+	Healthy bool             `json:"healthy"`
 	Checks  []HealthCheckDto `json:"checks"`
 }
 
@@ -91,9 +93,22 @@ type AppInspectDto struct {
 
 type ErrorDto struct {
 	Error   string `json:"error"`
+	Code    string `json:"code,omitempty"`
 	Message string `json:"message"`
-	Details string `json:"details"`
+	Details string `json:"details,omitempty"`
 }
+
+// Machine-readable error codes for API consumers.
+const (
+	ErrCodeAppNotFound        = "APP_NOT_FOUND"
+	ErrCodeNamespaceStopped   = "NAMESPACE_STOPPED"
+	ErrCodeSnapshotInProgress = "SNAPSHOT_IN_PROGRESS"
+	ErrCodeInvalidConfig      = "INVALID_CONFIG"
+	ErrCodeInvalidRequest     = "INVALID_REQUEST"
+	ErrCodeSSRFBlocked        = "SSRF_BLOCKED"
+	ErrCodeRateLimited        = "RATE_LIMITED"
+	ErrCodeNotConfigured      = "NOT_CONFIGURED"
+)
 
 // --- Welcome Screen ---
 

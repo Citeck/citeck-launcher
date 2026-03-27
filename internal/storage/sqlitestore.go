@@ -27,6 +27,9 @@ func NewSQLiteStore(dir string) (*SQLiteStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
+	// Serialize all database access — correct for single-tenant desktop app,
+	// prevents concurrent write deadlocks with pure-Go SQLite driver.
+	db.SetMaxOpenConns(1)
 
 	store := &SQLiteStore{db: db}
 	if err := store.migrate(); err != nil {

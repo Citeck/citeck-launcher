@@ -42,25 +42,62 @@ func TestMTLSIdentityMiddleware_NoCert(t *testing.T) {
 	}
 }
 
-func TestMatchCORSOrigin(t *testing.T) {
-	tests := []struct {
-		origin string
-		want   bool
-	}{
-		{"http://localhost", true},
-		{"http://localhost:5173", true},
-		{"http://127.0.0.1", true},
-		{"http://127.0.0.1:8088", true},
-		{"http://localhost.evil.com", false},
-		{"http://127.0.0.1.evil.com", false},
-		{"https://example.com", false},
-		{"", false},
+func TestBuildCORSAllowedOrigins(t *testing.T) {
+	// Exact listen address — only that host:port is allowed
+	origins := buildCORSAllowedOrigins("127.0.0.1:8088")
+	if !origins["http://127.0.0.1:8088"] {
+		t.Error("expected http://127.0.0.1:8088 to be allowed")
 	}
-	for _, tt := range tests {
-		got := matchCORSOrigin(tt.origin)
-		if got != tt.want {
-			t.Errorf("matchCORSOrigin(%q) = %v, want %v", tt.origin, got, tt.want)
-		}
+	if origins["http://127.0.0.1:5173"] {
+		t.Error("different port should not be allowed")
+	}
+	if origins["http://localhost:8088"] {
+		t.Error("localhost should not match when bound to 127.0.0.1")
+	}
+
+	// Wildcard listen (0.0.0.0) — both localhost and 127.0.0.1 with exact port
+	origins2 := buildCORSAllowedOrigins("0.0.0.0:8088")
+	if !origins2["http://127.0.0.1:8088"] {
+		t.Error("expected http://127.0.0.1:8088 for wildcard bind")
+	}
+	if !origins2["http://localhost:8088"] {
+		t.Error("expected http://localhost:8088 for wildcard bind")
+	}
+	if origins2["http://localhost:3000"] {
+		t.Error("different port should not be allowed on wildcard")
+	}
+}
+
+func TestCORSMiddleware_RejectsOtherPort(t *testing.T) {
+	handler := CORSMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}), "127.0.0.1:8088")
+
+	// Same origin — no CORS header needed (browser same-origin)
+	req := httptest.NewRequest("GET", "/api/v1/status", nil)
+	req.Header.Set("Origin", "http://127.0.0.1:8088")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Header().Get("Access-Control-Allow-Origin") != "http://127.0.0.1:8088" {
+		t.Error("expected CORS allow for exact listen origin")
+	}
+
+	// Different port — should NOT get CORS header
+	req2 := httptest.NewRequest("GET", "/api/v1/status", nil)
+	req2.Header.Set("Origin", "http://localhost:3000")
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, req2)
+	if rec2.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Error("expected CORS reject for different port")
+	}
+
+	// Evil origin
+	req3 := httptest.NewRequest("GET", "/api/v1/status", nil)
+	req3.Header.Set("Origin", "http://localhost.evil.com:8088")
+	rec3 := httptest.NewRecorder()
+	handler.ServeHTTP(rec3, req3)
+	if rec3.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Error("expected CORS reject for evil origin")
 	}
 }
 

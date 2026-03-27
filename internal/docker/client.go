@@ -331,6 +331,9 @@ func (c *Client) CleanupStaleContainers(ctx context.Context) {
 		return
 	}
 	for _, ctr := range containers {
+		if len(ctr.Names) == 0 {
+			continue
+		}
 		name := ctr.Names[0]
 		if strings.HasPrefix(name, "/") {
 			name = name[1:]

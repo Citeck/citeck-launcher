@@ -52,7 +52,7 @@ func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 	bundleErr := d.bundleError
 	d.configMu.RUnlock()
 	if runtime == nil {
-		writeError(w, http.StatusNotFound, "no namespace configured")
+		writeErrorCode(w, http.StatusNotFound, api.ErrCodeNotConfigured, "no namespace configured")
 		return
 	}
 	dto := runtime.ToNamespaceDto()
@@ -147,14 +147,14 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 	genResp := namespace.Generate(nsCfg, resolveResult.Bundle, resolveResult.Workspace, genOpts)
 
-	// Write generated files
+	// Write generated files atomically (prevent partial writes on crash)
 	for filePath, content := range genResp.Files {
 		destPath := filepath.Join(d.volumesBase, filePath)
 		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
 			slog.Error("Failed to create dir for generated file", "path", destPath, "err", err)
 			continue
 		}
-		if err := os.WriteFile(destPath, content, 0o644); err != nil {
+		if err := fsutil.AtomicWriteFile(destPath, content, 0o644); err != nil {
 			slog.Error("Failed to write generated file", "path", destPath, "err", err)
 		}
 	}
@@ -230,6 +230,10 @@ func (d *Daemon) handleAppLogsFollow(w http.ResponseWriter, r *http.Request, con
 		writeError(w, http.StatusInternalServerError, "streaming not supported")
 		return
 	}
+
+	// Disable write deadline for long-lived log stream
+	rc := http.NewResponseController(w)
+	rc.SetWriteDeadline(time.Time{})
 
 	ctx := r.Context()
 	reader, err := d.dockerClient.ContainerLogsFollow(ctx, containerID, tail)
@@ -392,6 +396,8 @@ func (d *Daemon) handleAppExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Limit request body to 64KB (command array doesn't need more)
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 	var req api.ExecRequestDto
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -404,6 +410,12 @@ func (d *Daemon) handleAppExec(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+
+	// Cap output at 1MB to prevent OOM
+	const maxExecOutput = 1 << 20
+	if len(output) > maxExecOutput {
+		output = output[:maxExecOutput] + "\n... (output truncated at 1MB)"
 	}
 
 	writeJSON(w, api.ExecResultDto{
@@ -452,6 +464,10 @@ func (d *Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "streaming not supported")
 		return
 	}
+
+	// Disable write deadline for long-lived SSE stream
+	rc := http.NewResponseController(w)
+	rc.SetWriteDeadline(time.Time{})
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -578,6 +594,10 @@ func (d *Daemon) handleSystemDump(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) writeSystemDumpZip(w http.ResponseWriter, ctx context.Context, dump map[string]any) {
+	// Extend write deadline for potentially large ZIP with per-app logs
+	rc := http.NewResponseController(w)
+	rc.SetWriteDeadline(time.Now().Add(5 * time.Minute))
+
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", "attachment; filename=system-dump.zip")
 
@@ -728,7 +748,26 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Security: only allow safe mutable fields (environments, resources,
+	// startupConditions, livenessProbe, stopTimeout).
+	// All structural fields are locked to the original definition to prevent
+	// container escape via the unauthenticated localhost TCP listener.
+	oldDef := app.Def
 	newDef.Name = name
+	newDef.Image = oldDef.Image
+	newDef.ImageDigest = oldDef.ImageDigest
+	newDef.Cmd = oldDef.Cmd
+	newDef.Ports = oldDef.Ports
+	newDef.Volumes = oldDef.Volumes
+	newDef.VolumesContentHash = oldDef.VolumesContentHash
+	newDef.InitContainers = oldDef.InitContainers
+	newDef.InitActions = oldDef.InitActions
+	newDef.NetworkAliases = oldDef.NetworkAliases
+	newDef.Kind = oldDef.Kind
+	newDef.IsInit = oldDef.IsInit
+	newDef.DependsOn = oldDef.DependsOn
+	newDef.ShmSize = oldDef.ShmSize
+
 	if err := d.runtime.UpdateAppDef(name, newDef, true); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -890,24 +929,38 @@ func (d *Daemon) handleHealth(w http.ResponseWriter, r *http.Request) {
 		checks = append(checks, api.HealthCheckDto{Name: "docker", Status: "ok", Message: "Docker daemon is reachable"})
 	}
 
-	// App checks
+	// Determine overall status: healthy / degraded / unhealthy
+	overallStatus := "healthy"
+	healthy := true
+
 	if d.runtime != nil {
 		apps := d.runtime.Apps()
-		running := 0
+		running, failed := 0, 0
 		for _, app := range apps {
-			if app.Status == namespace.AppStatusRunning {
+			switch app.Status {
+			case namespace.AppStatusRunning:
 				running++
+			case namespace.AppStatusStartFailed, namespace.AppStatusPullFailed:
+				failed++
 			}
 		}
 
-		status := "ok"
-		if running < len(apps) {
-			status = "warning"
+		nsStatus := d.runtime.Status()
+
+		// Determine container-level check status
+		containerStatus := "ok"
+		if len(apps) == 0 {
+			// Namespace stopped or no apps — not a health failure
+			containerStatus = "ok"
+		} else if running == 0 {
+			containerStatus = "error"
+		} else if running < len(apps) {
+			containerStatus = "warning"
 		}
 		checks = append(checks, api.HealthCheckDto{
 			Name:    "containers",
-			Status:  status,
-			Message: fmt.Sprintf("%d/%d apps running", running, len(apps)),
+			Status:  containerStatus,
+			Message: fmt.Sprintf("%d/%d apps running, %d failed", running, len(apps), failed),
 		})
 
 		for _, app := range apps {
@@ -921,28 +974,45 @@ func (d *Daemon) handleHealth(w http.ResponseWriter, r *http.Request) {
 				Message: string(app.Status),
 			})
 		}
+
+		// Overall status
+		if nsStatus == namespace.NsStatusStalled || (len(apps) > 0 && running == 0) {
+			overallStatus = "unhealthy"
+			healthy = false
+		} else if failed > 0 || (len(apps) > 0 && running < len(apps)) {
+			overallStatus = "degraded"
+			healthy = false
+		}
 	}
 
-	healthy := true
+	// Check for critical check errors — escalate to unhealthy
 	for _, c := range checks {
 		if c.Status == "error" {
 			healthy = false
+			if overallStatus != "unhealthy" {
+				overallStatus = "unhealthy"
+			}
 			break
 		}
 	}
 
-	writeJSON(w, api.HealthDto{Healthy: healthy, Checks: checks})
+	writeJSON(w, api.HealthDto{Status: overallStatus, Healthy: healthy, Checks: checks})
 }
 
 func (d *Daemon) handleMetrics(w http.ResponseWriter, r *http.Request) {
-	metrics := map[string]any{
-		"uptime_ms":    time.Since(d.startTime).Milliseconds(),
-		"pid":          os.Getpid(),
-	}
+	var b strings.Builder
+
+	uptimeSeconds := time.Since(d.startTime).Seconds()
+	fmt.Fprintf(&b, "# HELP citeck_uptime_seconds Daemon uptime in seconds.\n")
+	fmt.Fprintf(&b, "# TYPE citeck_uptime_seconds gauge\n")
+	fmt.Fprintf(&b, "citeck_uptime_seconds %.1f\n", uptimeSeconds)
 
 	d.eventMu.Lock()
-	metrics["sse_subscribers"] = len(d.eventSubs)
+	sseCount := len(d.eventSubs)
 	d.eventMu.Unlock()
+	fmt.Fprintf(&b, "# HELP citeck_sse_subscribers Current SSE subscriber count.\n")
+	fmt.Fprintf(&b, "# TYPE citeck_sse_subscribers gauge\n")
+	fmt.Fprintf(&b, "citeck_sse_subscribers %d\n", sseCount)
 
 	if d.runtime != nil {
 		apps := d.runtime.Apps()
@@ -955,25 +1025,58 @@ func (d *Daemon) handleMetrics(w http.ResponseWriter, r *http.Request) {
 				failed++
 			}
 		}
-		metrics["namespace_status"] = string(d.runtime.Status())
-		metrics["apps_total"] = total
-		metrics["apps_running"] = running
-		metrics["apps_failed"] = failed
+
+		nsStatus := string(d.runtime.Status())
+		fmt.Fprintf(&b, "# HELP citeck_namespace_status Current namespace status (1=active).\n")
+		fmt.Fprintf(&b, "# TYPE citeck_namespace_status gauge\n")
+		for _, s := range []string{"STOPPED", "STARTING", "RUNNING", "STOPPING", "STALLED"} {
+			val := 0
+			if s == nsStatus {
+				val = 1
+			}
+			fmt.Fprintf(&b, "citeck_namespace_status{status=\"%s\"} %d\n", s, val)
+		}
+
+		fmt.Fprintf(&b, "# HELP citeck_apps_total Total number of apps.\n")
+		fmt.Fprintf(&b, "# TYPE citeck_apps_total gauge\n")
+		fmt.Fprintf(&b, "citeck_apps_total %d\n", total)
+		fmt.Fprintf(&b, "# HELP citeck_apps_running Number of running apps.\n")
+		fmt.Fprintf(&b, "# TYPE citeck_apps_running gauge\n")
+		fmt.Fprintf(&b, "citeck_apps_running %d\n", running)
+		fmt.Fprintf(&b, "# HELP citeck_apps_failed Number of failed apps.\n")
+		fmt.Fprintf(&b, "# TYPE citeck_apps_failed gauge\n")
+		fmt.Fprintf(&b, "citeck_apps_failed %d\n", failed)
+
+		// Per-app status gauge
+		fmt.Fprintf(&b, "# HELP citeck_app_status Per-app status (1=running, 0=not running).\n")
+		fmt.Fprintf(&b, "# TYPE citeck_app_status gauge\n")
+		for _, app := range apps {
+			val := 0
+			if app.Status == namespace.AppStatusRunning {
+				val = 1
+			}
+			fmt.Fprintf(&b, "citeck_app_status{app=\"%s\",status=\"%s\"} %d\n", promEscape(app.Name), promEscape(string(app.Status)), val)
+		}
 	}
 
-	writeJSON(w, metrics)
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	w.Write([]byte(b.String()))
+}
+
+// promEscape escapes a label value for Prometheus text exposition format.
+// Only \, \n, and " need escaping per the spec.
+func promEscape(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, "\n", `\n`)
+	return s
 }
 
 func (d *Daemon) findApp(name string) *namespace.AppRuntime {
 	if d.runtime == nil {
 		return nil
 	}
-	for _, app := range d.runtime.Apps() {
-		if app.Name == name {
-			return app
-		}
-	}
-	return nil
+	return d.runtime.FindApp(name)
 }
 
 // stripAnsi removes ANSI escape codes and normalizes tabs (matching Kotlin LogsUtils.normalizeMessage)

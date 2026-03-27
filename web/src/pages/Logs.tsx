@@ -1,11 +1,11 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { useParams, Link } from 'react-router'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { getAppLogs } from '../lib/api'
 
 type LogLevel = 'ERROR' | 'WARN' | 'INFO' | 'DEBUG' | 'TRACE'
 
 const LOG_LEVELS: LogLevel[] = ['ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE']
-const MAX_RENDER_LINES = 2000
 
 // Kotlin-matching colors
 const LEVEL_COLORS: Record<LogLevel, string> = {
@@ -18,13 +18,13 @@ const LEVEL_COLORS: Record<LogLevel, string> = {
 
 // 7 regex patterns matching Kotlin LogLevelDetector (ordered by confidence)
 const LEVEL_PATTERNS: [RegExp, number][] = [
-  [/\[(ERROR|WARN|INFO|DEBUG|TRACE)]/i, 1],                           // [ERROR]
-  [/\|-(ERROR|WARN|INFO|DEBUG|TRACE)\b/i, 1],                         // |-ERROR (logback)
-  [/\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\s+(ERROR|WARN|INFO|DEBUG|TRACE)\b/i, 1], // After timestamp
-  [/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^\s]*\s+(ERROR|WARN|INFO|DEBUG|TRACE)\s/i, 1], // Spring Boot ISO
-  [/^(ERROR|WARN|INFO|DEBUG|TRACE):/i, 1],                             // Python format
-  [/\s(ERROR|WARN|INFO|DEBUG|TRACE)\s/i, 1],                           // Whitespace-surrounded
-  [/^(ERROR|WARN|INFO|DEBUG|TRACE)[\s:\-[]/i, 1],                      // At line start
+  [/\[(ERROR|WARN|INFO|DEBUG|TRACE)]/i, 1],
+  [/\|-(ERROR|WARN|INFO|DEBUG|TRACE)\b/i, 1],
+  [/\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\s+(ERROR|WARN|INFO|DEBUG|TRACE)\b/i, 1],
+  [/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^\s]*\s+(ERROR|WARN|INFO|DEBUG|TRACE)\s/i, 1],
+  [/^(ERROR|WARN|INFO|DEBUG|TRACE):/i, 1],
+  [/\s(ERROR|WARN|INFO|DEBUG|TRACE)\s/i, 1],
+  [/^(ERROR|WARN|INFO|DEBUG|TRACE)[\s:\-[]/i, 1],
 ]
 
 function detectLevel(line: string): LogLevel | null {
@@ -35,7 +35,6 @@ function detectLevel(line: string): LogLevel | null {
   return null
 }
 
-// Apply level inheritance — lines without level inherit from previous (stack traces etc.)
 function detectLevels(lines: string[]): (LogLevel | null)[] {
   const result: (LogLevel | null)[] = []
   let lastLevel: LogLevel | null = null
@@ -45,11 +44,13 @@ function detectLevels(lines: string[]): (LogLevel | null)[] {
       lastLevel = level
       result.push(level)
     } else {
-      result.push(lastLevel) // inherit from previous
+      result.push(lastLevel)
     }
   }
   return result
 }
+
+const API_BASE = '/api/v1'
 
 export function Logs() {
   const { name } = useParams<{ name: string }>()
@@ -63,17 +64,21 @@ export function Logs() {
   const [enabledLevels, setEnabledLevels] = useState<Set<LogLevel>>(new Set(LOG_LEVELS))
   const [error, setError] = useState<string | null>(null)
   const [matchIndex, setMatchIndex] = useState(0)
-  const logRef = useRef<HTMLDivElement>(null)
+  const parentRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
+  const abortRef = useRef<AbortController | null>(null)
+  const followRef = useRef(follow)
+  followRef.current = follow
 
-  // Debounce search input (300ms) and limit pattern length
+  // Debounce search input (300ms)
   useEffect(() => {
     const trimmed = search.slice(0, 200)
     const timer = setTimeout(() => setDebouncedSearch(trimmed), 300)
     return () => clearTimeout(timer)
   }, [search])
 
-  const fetchLogs = useCallback(() => {
+  // Initial load via REST, then stream via follow endpoint
+  const fetchInitialLogs = useCallback(() => {
     if (!name) return
     getAppLogs(name, tail)
       .then((data) => {
@@ -84,22 +89,50 @@ export function Logs() {
   }, [name, tail])
 
   useEffect(() => {
-    fetchLogs()
-  }, [fetchLogs])
+    fetchInitialLogs()
+  }, [fetchInitialLogs])
 
-  // Auto-refresh when follow is on
+  // Streaming follow using chunked response (not SSE, not polling)
   useEffect(() => {
-    if (!follow) return
-    const interval = setInterval(fetchLogs, 2000)
-    return () => clearInterval(interval)
-  }, [follow, fetchLogs])
+    if (!follow || !name) return
 
-  // Scroll to bottom when following
-  useEffect(() => {
-    if (follow && logRef.current) {
-      logRef.current.scrollTop = logRef.current.scrollHeight
+    // Cancel previous stream
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+
+    const startStream = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/apps/${name}/logs?follow=true&tail=${tail}`, {
+          signal: controller.signal,
+        })
+        if (!res.ok || !res.body) return
+
+        const reader = res.body.getReader()
+        const decoder = new TextDecoder()
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          const chunk = decoder.decode(value, { stream: true })
+          setLogs((prev) => prev + chunk)
+        }
+      } catch (e) {
+        if (e instanceof DOMException && e.name === 'AbortError') return
+        // Reconnect after 3s on error
+        setTimeout(() => {
+          if (followRef.current) startStream()
+        }, 3000)
+      }
     }
-  }, [logs, follow])
+
+    // Clear and start streaming
+    startStream()
+
+    return () => {
+      controller.abort()
+    }
+  }, [follow, name, tail])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -125,7 +158,7 @@ export function Logs() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  // Detect levels with inheritance, then filter (memoized for performance)
+  // Detect levels with inheritance, then filter
   const { filteredLines, filteredLevels, totalLineCount } = useMemo(() => {
     const lines = logs.split('\n')
     const allLevels = detectLevels(lines)
@@ -159,8 +192,32 @@ export function Logs() {
     ? ((matchIndex % matchIndices.length) + matchIndices.length) % matchIndices.length
     : 0
 
-  // Reset match index when matches change (log refresh, filter change)
   useEffect(() => { setMatchIndex(0) }, [searchMatches])
+
+  // Virtual list
+  const virtualizer = useVirtualizer({
+    count: filteredLines.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 20,
+    overscan: 30,
+  })
+
+  // Scroll to bottom when following and new logs arrive
+  useEffect(() => {
+    if (follow && filteredLines.length > 0) {
+      virtualizer.scrollToIndex(filteredLines.length - 1, { align: 'end' })
+    }
+  }, [filteredLines.length, follow, virtualizer])
+
+  // Scroll to current search match
+  useEffect(() => {
+    if (matchIndices.length > 0) {
+      const targetIdx = matchIndices[safeMatchIndex]
+      if (targetIdx !== undefined) {
+        virtualizer.scrollToIndex(targetIdx, { align: 'center' })
+      }
+    }
+  }, [safeMatchIndex, matchIndices, virtualizer])
 
   function toggleLevel(level: LogLevel) {
     setEnabledLevels((prev) => {
@@ -284,7 +341,7 @@ export function Logs() {
           type="button"
           className={`rounded px-2 py-1.5 text-xs border ${follow ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted'}`}
           onClick={() => setFollow(!follow)}
-          title="Auto-scroll to bottom"
+          title="Stream logs (follow)"
         >
           Follow
         </button>
@@ -327,7 +384,7 @@ export function Logs() {
         <button
           type="button"
           className="rounded px-2 py-1.5 text-xs border border-border text-muted-foreground hover:bg-muted"
-          onClick={fetchLogs}
+          onClick={fetchInitialLogs}
         >
           Refresh
         </button>
@@ -335,13 +392,13 @@ export function Logs() {
 
       {error && <div className="text-destructive text-sm mb-2">Error: {error}</div>}
 
-      {/* Log output */}
+      {/* Log output — virtualized */}
       <div
-        ref={logRef}
-        className={`flex-1 overflow-auto rounded-lg border border-border bg-card p-4 font-mono text-xs ${wordWrap ? 'whitespace-pre-wrap' : 'whitespace-pre'}`}
+        ref={parentRef}
+        className={`flex-1 overflow-auto rounded-lg border border-border bg-card p-4 font-mono text-xs ${wordWrap ? '' : 'overflow-x-auto'}`}
         onScroll={() => {
-          if (!logRef.current) return
-          const { scrollTop, scrollHeight, clientHeight } = logRef.current
+          if (!parentRef.current) return
+          const { scrollTop, scrollHeight, clientHeight } = parentRef.current
           if (scrollHeight - scrollTop - clientHeight > 50) {
             setFollow(false)
           }
@@ -350,26 +407,39 @@ export function Logs() {
         {filteredLines.length === 0 ? (
           <span className="text-muted-foreground">No logs available</span>
         ) : (
-          <>
-            {filteredLines.length > MAX_RENDER_LINES && (
-              <div className="text-xs text-warning mb-1">Showing last {MAX_RENDER_LINES} of {filteredLines.length} lines</div>
-            )}
-            {filteredLines.slice(-MAX_RENDER_LINES).map((line, i) => {
-              const realIdx = Math.max(0, filteredLines.length - MAX_RENDER_LINES) + i
-              const level = filteredLevels[realIdx]
+          <div
+            style={{
+              height: `${virtualizer.getTotalSize()}px`,
+              width: '100%',
+              position: 'relative',
+            }}
+          >
+            {virtualizer.getVirtualItems().map((virtualItem) => {
+              const idx = virtualItem.index
+              const line = filteredLines[idx]
+              const level = filteredLevels[idx]
               const colorClass = level ? LEVEL_COLORS[level] : 'text-foreground'
-              const isCurrentMatch = matchIndices[safeMatchIndex] === realIdx
+              const isCurrentMatch = matchIndices[safeMatchIndex] === idx
 
               return (
                 <div
-                  key={realIdx}
-                  className={`${colorClass} ${isCurrentMatch ? 'bg-primary/20' : searchMatches.has(realIdx) ? 'bg-primary/10' : ''}`}
+                  key={virtualItem.key}
+                  data-index={idx}
+                  ref={virtualizer.measureElement}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    transform: `translateY(${virtualItem.start}px)`,
+                  }}
+                  className={`${colorClass} ${wordWrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'} ${isCurrentMatch ? 'bg-primary/20' : searchMatches.has(idx) ? 'bg-primary/10' : ''}`}
                 >
                   {search ? highlightSearch(line, search, useRegex) : line}
                 </div>
               )
             })}
-          </>
+          </div>
         )}
       </div>
 
@@ -380,7 +450,7 @@ export function Logs() {
           {filteredLines.length !== totalLineCount && ` (${totalLineCount} total)`}
         </span>
         <span>
-          {follow && '⬇ Following'} | Ctrl+F search | F3 next | Shift+F3 prev | Esc clear
+          {follow && 'Streaming'} | Ctrl+F search | F3 next | Shift+F3 prev | Esc clear
         </span>
       </div>
     </div>
@@ -392,7 +462,6 @@ function highlightSearch(line: string, search: string, useRegex: boolean): React
     const regex = useRegex ? new RegExp(`(${search})`, 'gi') : new RegExp(`(${escapeRegExp(search)})`, 'gi')
     const parts = line.split(regex)
     if (parts.length === 1) return line
-    // After split with capturing group, odd indices are matches
     return parts.map((part, i) =>
       i % 2 === 1 ? (
         <mark key={i} className="bg-warning/40 text-inherit rounded-sm px-0.5">

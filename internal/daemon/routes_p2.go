@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -851,6 +852,12 @@ func (d *Daemon) handleDownloadSnapshot(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// SSRF protection: validate URL scheme and resolved IP
+	if err := validateSnapshotURL(req.URL); err != nil {
+		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeSSRFBlocked, fmt.Sprintf("blocked URL: %s", err.Error()))
+		return
+	}
+
 	dir, err := d.snapshotsDir()
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -1108,4 +1115,48 @@ func (d *Daemon) handleRenameSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("Renamed to %s", newName)})
+}
+
+// validateSnapshotURL checks that a URL is safe for server-side download (SSRF protection).
+// Only http/https schemes are allowed, and the resolved IP must not be private/loopback/link-local.
+func validateSnapshotURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("scheme %q not allowed (http/https only)", u.Scheme)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("empty hostname")
+	}
+
+	// Resolve hostname to IPs and check each
+	ips, err := net.LookupHost(host)
+	if err != nil {
+		return fmt.Errorf("DNS resolution failed: %w", err)
+	}
+	for _, ipStr := range ips {
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			continue
+		}
+		if isBlockedIP(ip) {
+			return fmt.Errorf("resolved IP %s is blocked (private/loopback/link-local)", ipStr)
+		}
+	}
+	return nil
+}
+
+// isBlockedIP returns true if the IP is in a range that should not be accessed via SSRF.
+func isBlockedIP(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+		return true
+	}
+	// Cloud metadata endpoint (169.254.169.254 — already covered by IsLinkLocalUnicast, explicit for clarity)
+	if ip.Equal(net.ParseIP("169.254.169.254")) {
+		return true
+	}
+	return false
 }

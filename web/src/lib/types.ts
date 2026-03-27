@@ -54,6 +54,7 @@ export interface DaemonStatusDto {
 
 export interface EventDto {
   type: string
+  seq: number
   timestamp: number
   namespaceId: string
   appName: string

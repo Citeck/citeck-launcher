@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/docker"
+	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/snapshot"
 	"github.com/citeck/citeck-launcher/internal/storage"
@@ -65,10 +67,19 @@ type Daemon struct {
 	bgWg            sync.WaitGroup     // tracks background goroutines (snapshot, downloads)
 	snapshotMu      sync.Mutex         // guards concurrent snapshot import/export
 	daemonCfg       config.DaemonConfig
+	eventSeq        atomic.Int64       // monotonic event sequence counter
 }
 
 // Start runs the daemon.
 func Start(opts StartOptions) error {
+	// Set up log rotation (50MB max, 3 retained files)
+	logDir := config.LogDir()
+	os.MkdirAll(logDir, 0o755)
+	logPath := config.DaemonLogPath()
+	logWriter := newRotatingWriter(logPath, 50*1024*1024, 3)
+	logHandler := slog.NewTextHandler(io.MultiWriter(os.Stderr, logWriter), &slog.HandlerOptions{})
+	slog.SetDefault(slog.New(logHandler))
+
 	slog.Info("Starting daemon",
 		"foreground", opts.Foreground,
 		"desktop", config.IsDesktopMode(),
@@ -290,7 +301,7 @@ func Start(opts StartOptions) error {
 				slog.Error("Failed to create dir for generated file", "path", destPath, "err", err)
 				continue
 			}
-			if err := os.WriteFile(destPath, content, 0o644); err != nil {
+			if err := fsutil.AtomicWriteFile(destPath, content, 0o644); err != nil {
 				slog.Error("Failed to write generated file", "path", destPath, "err", err)
 			}
 		}
@@ -397,13 +408,14 @@ func Start(opts StartOptions) error {
 		d.acmeRenewal.Start()
 	}
 
-	// Create HTTP server
-	mux := http.NewServeMux()
-	d.registerRoutes(mux)
+	// Create HTTP server — two muxes for security isolation
+	socketMux := http.NewServeMux()
+	tcpMux := http.NewServeMux()
+	d.registerRoutes(socketMux, tcpMux)
 	d.server = &http.Server{
-		Handler:        mux,
+		Handler:        socketMux,
 		ReadTimeout:    30 * time.Second,
-		WriteTimeout:   0, // 0 for SSE/log streaming on Unix socket
+		WriteTimeout:   30 * time.Second,
 		MaxHeaderBytes: 1 << 20, // 1MB
 	}
 
@@ -413,9 +425,6 @@ func Start(opts StartOptions) error {
 		return fmt.Errorf("listen on %s: %w", socketPath, err)
 	}
 	socketPerm := os.FileMode(0o600)
-	if config.IsDesktopMode() {
-		socketPerm = 0o666
-	}
 	if err := os.Chmod(socketPath, socketPerm); err != nil {
 		slog.Warn("Failed to chmod socket", "path", socketPath, "err", err)
 	}
@@ -427,22 +436,25 @@ func Start(opts StartOptions) error {
 		if err != nil {
 			slog.Warn("TCP listener failed, Web UI unavailable", "addr", tcpAddr, "err", err)
 		} else {
-			var tcpHandler http.Handler = mux
-			tcpHandler = RateLimitMiddleware(100, tcpHandler)
-			tcpHandler = LoggingMiddleware(tcpHandler)
-
 			localhost := isLocalhostAddr(tcpAddr)
 			mtlsActive := false
+			// mTLS clients are authenticated — give them full access (socketMux).
+			// Localhost TCP gets restricted tcpMux (no shutdown, no exec).
+			var tcpBaseMux http.Handler = tcpMux
 			if !localhost {
 				var err error
-				tcpListener, tcpHandler, mtlsActive, err = d.setupMTLS(tcpListener, tcpHandler, nsCfg, tcpAddr)
+				tcpListener, tcpBaseMux, mtlsActive, err = d.setupMTLS(tcpListener, socketMux, nsCfg, tcpAddr)
 				if err != nil {
 					slog.Error("mTLS setup failed — Web UI not started", "err", err)
 				}
 			}
 
+			var tcpHandler http.Handler = tcpBaseMux
+			tcpHandler = RateLimitMiddleware(100, tcpHandler)
+			tcpHandler = LoggingMiddleware(tcpHandler)
+
 			if tcpListener != nil {
-				tcpHandler = CORSMiddleware(tcpHandler)
+				tcpHandler = CORSMiddleware(tcpHandler, tcpAddr)
 				scheme := "http"
 				if mtlsActive {
 					scheme = "https"
@@ -450,7 +462,7 @@ func Start(opts StartOptions) error {
 				d.tcpServer = &http.Server{
 					Handler:        tcpHandler,
 					ReadTimeout:    30 * time.Second,
-					WriteTimeout:   0, // 0 for SSE streaming — use per-handler timeouts for non-SSE
+					WriteTimeout:   30 * time.Second,
 					IdleTimeout:    120 * time.Second,
 					MaxHeaderBytes: 1 << 20,
 				}
@@ -645,6 +657,7 @@ func resolveServerCertHost(tcpAddr string, nsCfg *namespace.NamespaceConfig) str
 }
 
 func (d *Daemon) broadcastEvent(evt api.EventDto) {
+	evt.Seq = d.eventSeq.Add(1)
 	d.eventMu.Lock()
 	defer d.eventMu.Unlock()
 	for _, ch := range d.eventSubs {
@@ -681,87 +694,102 @@ func (d *Daemon) removeSubscriber(ch chan api.EventDto) {
 	close(ch)
 }
 
-func (d *Daemon) registerRoutes(mux *http.ServeMux) {
-	// Daemon routes
-	mux.HandleFunc("GET "+api.DaemonStatus, d.handleDaemonStatus)
-	mux.HandleFunc("POST "+api.DaemonShutdown, d.handleDaemonShutdown)
+// registerRoutes registers API routes on two muxes.
+// socketMux gets ALL routes (used by Unix socket and mTLS TCP).
+// tcpMux gets safe routes only — no shutdown, no exec (used by localhost TCP).
+func (d *Daemon) registerRoutes(socketMux, tcpMux *http.ServeMux) {
+	// Helper: register on both muxes (safe routes)
+	both := func(pattern string, handler http.HandlerFunc) {
+		socketMux.HandleFunc(pattern, handler)
+		tcpMux.HandleFunc(pattern, handler)
+	}
 
-	// Namespace routes
-	mux.HandleFunc("GET "+api.Namespace, d.handleGetNamespace)
-	mux.HandleFunc("POST "+api.NamespaceStart, d.handleStartNamespace)
-	mux.HandleFunc("POST "+api.NamespaceStop, d.handleStopNamespace)
-	mux.HandleFunc("POST "+api.NamespaceReload, d.handleReloadNamespace)
+	// --- Socket-only routes (dangerous: exec, shutdown, full config write, reload) ---
+	socketMux.HandleFunc("POST "+api.DaemonShutdown, d.handleDaemonShutdown)
+	socketMux.HandleFunc("POST /api/v1/apps/{name}/exec", d.handleAppExec)
+	socketMux.HandleFunc("PUT /api/v1/config", d.handlePutConfig)
+	socketMux.HandleFunc("POST "+api.NamespaceReload, d.handleReloadNamespace)
+
+	// --- Routes available on both muxes ---
+
+	// Daemon
+	both("GET "+api.DaemonStatus, d.handleDaemonStatus)
+
+	// Namespace
+	both("GET "+api.Namespace, d.handleGetNamespace)
+	both("POST "+api.NamespaceStart, d.handleStartNamespace)
+	both("POST "+api.NamespaceStop, d.handleStopNamespace)
 
 	// App routes
-	mux.HandleFunc("GET /api/v1/apps/{name}/logs", d.handleAppLogs)
-	mux.HandleFunc("POST /api/v1/apps/{name}/restart", d.handleAppRestart)
-	mux.HandleFunc("POST /api/v1/apps/{name}/stop", d.handleAppStop)
-	mux.HandleFunc("POST /api/v1/apps/{name}/start", d.handleAppStart)
-	mux.HandleFunc("GET /api/v1/apps/{name}/inspect", d.handleAppInspect)
-	mux.HandleFunc("POST /api/v1/apps/{name}/exec", d.handleAppExec)
+	both("GET /api/v1/apps/{name}/logs", d.handleAppLogs)
+	both("POST /api/v1/apps/{name}/restart", d.handleAppRestart)
+	both("POST /api/v1/apps/{name}/stop", d.handleAppStop)
+	both("POST /api/v1/apps/{name}/start", d.handleAppStart)
+	both("GET /api/v1/apps/{name}/inspect", d.handleAppInspect)
 
-	// Config
-	mux.HandleFunc("GET /api/v1/config", d.handleGetConfig)
-	mux.HandleFunc("PUT /api/v1/config", d.handlePutConfig)
+	// Config (read-only on tcpMux; write is socket-only above)
+	both("GET /api/v1/config", d.handleGetConfig)
 
 	// Events (SSE)
-	mux.HandleFunc("GET "+api.Events, d.handleEvents)
+	both("GET "+api.Events, d.handleEvents)
 
 	// Volumes
-	mux.HandleFunc("GET /api/v1/volumes", d.handleListVolumes)
-	mux.HandleFunc("DELETE /api/v1/volumes/{name}", d.handleDeleteVolume)
+	both("GET /api/v1/volumes", d.handleListVolumes)
+	both("DELETE /api/v1/volumes/{name}", d.handleDeleteVolume)
 
 	// App config
-	mux.HandleFunc("GET /api/v1/apps/{name}/config", d.handleGetAppConfig)
-	mux.HandleFunc("PUT /api/v1/apps/{name}/config", d.handlePutAppConfig)
-	mux.HandleFunc("PUT /api/v1/apps/{name}/lock", d.handleAppLockToggle)
-	mux.HandleFunc("GET /api/v1/apps/{name}/files", d.handleListAppFiles)
-	mux.HandleFunc("GET /api/v1/apps/{name}/files/{path...}", d.handleGetAppFile)
-	mux.HandleFunc("PUT /api/v1/apps/{name}/files/{path...}", d.handlePutAppFile)
+	both("GET /api/v1/apps/{name}/config", d.handleGetAppConfig)
+	both("PUT /api/v1/apps/{name}/config", d.handlePutAppConfig)
+	both("PUT /api/v1/apps/{name}/lock", d.handleAppLockToggle)
+	both("GET /api/v1/apps/{name}/files", d.handleListAppFiles)
+	both("GET /api/v1/apps/{name}/files/{path...}", d.handleGetAppFile)
+	both("PUT /api/v1/apps/{name}/files/{path...}", d.handlePutAppFile)
 
 	// Daemon logs
-	mux.HandleFunc("GET /api/v1/daemon/logs", d.handleDaemonLogs)
+	both("GET /api/v1/daemon/logs", d.handleDaemonLogs)
 
 	// System dump
-	mux.HandleFunc("GET /api/v1/system/dump", d.handleSystemDump)
+	both("GET /api/v1/system/dump", d.handleSystemDump)
 
 	// Health + Metrics
-	mux.HandleFunc("GET "+api.Health, d.handleHealth)
-	mux.HandleFunc("GET /api/v1/metrics", d.handleMetrics)
+	both("GET "+api.Health, d.handleHealth)
+	both("GET /api/v1/metrics", d.handleMetrics)
 
-	// Phase E1: Namespaces
-	mux.HandleFunc("GET "+api.Namespaces, d.handleListNamespaces)
-	mux.HandleFunc("POST "+api.Namespaces, d.handleCreateNamespace)
-	mux.HandleFunc("DELETE /api/v1/namespaces/{id}", d.handleDeleteNamespace)
-	mux.HandleFunc("GET "+api.Templates, d.handleGetTemplates)
-	mux.HandleFunc("GET "+api.QuickStarts, d.handleGetQuickStarts)
+	// Namespaces
+	both("GET "+api.Namespaces, d.handleListNamespaces)
+	both("POST "+api.Namespaces, d.handleCreateNamespace)
+	both("DELETE /api/v1/namespaces/{id}", d.handleDeleteNamespace)
+	both("GET "+api.Templates, d.handleGetTemplates)
+	both("GET "+api.QuickStarts, d.handleGetQuickStarts)
 
-	// Phase E3: Bundles
-	mux.HandleFunc("GET "+api.Bundles, d.handleListBundles)
+	// Bundles
+	both("GET "+api.Bundles, d.handleListBundles)
 
-	// Phase F1: Secrets
-	mux.HandleFunc("GET "+api.Secrets, d.handleListSecrets)
-	mux.HandleFunc("POST "+api.Secrets, d.handleCreateSecret)
-	mux.HandleFunc("DELETE /api/v1/secrets/{id}", d.handleDeleteSecret)
-	mux.HandleFunc("GET /api/v1/secrets/{id}/test", d.handleTestSecret)
+	// Secrets
+	both("GET "+api.Secrets, d.handleListSecrets)
+	both("POST "+api.Secrets, d.handleCreateSecret)
+	both("DELETE /api/v1/secrets/{id}", d.handleDeleteSecret)
+	both("GET /api/v1/secrets/{id}/test", d.handleTestSecret)
 
 	// Forms
-	mux.HandleFunc("GET /api/v1/forms/{formId}", d.handleGetForm)
+	both("GET /api/v1/forms/{formId}", d.handleGetForm)
 
-	// Phase F2: Diagnostics
-	mux.HandleFunc("GET "+api.Diagnostics, d.handleGetDiagnostics)
-	mux.HandleFunc("POST "+api.DiagnosticsFix, d.handleDiagnosticsFix)
+	// Diagnostics
+	both("GET "+api.Diagnostics, d.handleGetDiagnostics)
+	both("POST "+api.DiagnosticsFix, d.handleDiagnosticsFix)
 
-	// Phase F3: Snapshots
-	mux.HandleFunc("GET "+api.Snapshots, d.handleListSnapshots)
-	mux.HandleFunc("POST "+api.SnapshotsExport, d.handleExportSnapshot)
-	mux.HandleFunc("POST "+api.SnapshotsImport, d.handleImportSnapshot)
-	mux.HandleFunc("POST "+api.SnapshotsDownload, d.handleDownloadSnapshot)
-	mux.HandleFunc("GET "+api.WorkspaceSnapshots, d.handleWorkspaceSnapshots)
-	mux.HandleFunc("PUT /api/v1/snapshots/{name}", d.handleRenameSnapshot)
+	// Snapshots
+	both("GET "+api.Snapshots, d.handleListSnapshots)
+	both("POST "+api.SnapshotsExport, d.handleExportSnapshot)
+	both("POST "+api.SnapshotsImport, d.handleImportSnapshot)
+	both("POST "+api.SnapshotsDownload, d.handleDownloadSnapshot)
+	both("GET "+api.WorkspaceSnapshots, d.handleWorkspaceSnapshots)
+	both("PUT /api/v1/snapshots/{name}", d.handleRenameSnapshot)
 
 	// Web UI (fallback)
-	mux.Handle("/", WebUIHandler())
+	webUI := WebUIHandler()
+	socketMux.Handle("/", webUI)
+	tcpMux.Handle("/", webUI)
 }
 
 // JSON helpers
@@ -776,11 +804,22 @@ func writeJSON(w http.ResponseWriter, v any) {
 	w.Write(data)
 }
 
-func writeError(w http.ResponseWriter, code int, msg string) {
+func writeError(w http.ResponseWriter, httpCode int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
+	w.WriteHeader(httpCode)
 	json.NewEncoder(w).Encode(api.ErrorDto{
-		Error:   http.StatusText(code),
+		Error:   http.StatusText(httpCode),
+		Message: msg,
+	})
+}
+
+// writeErrorCode writes a JSON error response with a machine-readable error code.
+func writeErrorCode(w http.ResponseWriter, httpCode int, errCode, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(httpCode)
+	json.NewEncoder(w).Encode(api.ErrorDto{
+		Error:   http.StatusText(httpCode),
+		Code:    errCode,
 		Message: msg,
 	})
 }
@@ -823,57 +862,74 @@ func makeTokenLookup(store storage.Store) bundle.TokenLookupFunc {
 }
 
 // makeRegistryAuthFunc creates a function that returns Docker registry credentials
-// by matching image host against workspace config's imageReposByHost and looking up
-// stored secrets at call time (not cached — reflects secret create/delete/rotate).
+// by matching image host against workspace config's imageReposByHost.
+// Registry secrets are pre-fetched into a map at creation time for efficiency.
+// The function is rebuilt on namespace reload to reflect secret mutations.
 func makeRegistryAuthFunc(wsCfg *bundle.WorkspaceConfig, store storage.Store) namespace.RegistryAuthFunc {
 	if wsCfg == nil || store == nil {
 		return nil
 	}
 	reposByHost := wsCfg.ImageReposByHost()
 
+	// Pre-fetch all registry credentials into an immutable map
+	authByHost := buildRegistryAuthCache(reposByHost, store)
+	if len(authByHost) == 0 {
+		return nil
+	}
+
 	return func(img string) *docker.RegistryAuth {
 		host := img
 		if idx := strings.Index(host, "/"); idx > 0 {
 			host = host[:idx]
 		}
-		repo, ok := reposByHost[host]
-		if !ok || repo.AuthType == "" {
+		auth, ok := authByHost[host]
+		if !ok {
 			return nil
 		}
-		// Look up secrets live from the store (reflects latest secret mutations)
-		value := lookupSecretValue(store, repo.AuthType, host)
+		return auth
+	}
+}
+
+// buildRegistryAuthCache pre-fetches all registry secrets into a map keyed by host.
+func buildRegistryAuthCache(reposByHost map[string]bundle.ImageRepo, store storage.Store) map[string]*docker.RegistryAuth {
+	result := make(map[string]*docker.RegistryAuth)
+	secrets, err := store.ListSecrets()
+	if err != nil {
+		return result
+	}
+	// Build scope→value map from all secrets (single ListSecrets + GetSecret per secret)
+	scopeValues := make(map[string]string)
+	for _, s := range secrets {
+		if s.Scope != "" {
+			sec, err := store.GetSecret(s.ID)
+			if err != nil {
+				continue
+			}
+			scopeValues[s.Scope] = sec.Value
+		}
+	}
+	for host, repo := range reposByHost {
+		if repo.AuthType == "" {
+			continue
+		}
+		value := scopeValues[repo.AuthType]
 		if value == "" {
-			return nil
+			value = scopeValues[host]
+		}
+		if value == "" {
+			continue
 		}
 		parts := strings.SplitN(value, ":", 2)
 		if len(parts) != 2 {
-			return nil
+			continue
 		}
-		return &docker.RegistryAuth{
+		result[host] = &docker.RegistryAuth{
 			Username: parts[0],
 			Password: parts[1],
 			Registry: "https://" + host,
 		}
 	}
-}
-
-// lookupSecretValue looks up a secret value by matching scope against authType or host.
-// Scope-based matching only — avoids cross-registry credential leakage from type-based fallback.
-func lookupSecretValue(store storage.Store, authType, host string) string {
-	secrets, err := store.ListSecrets()
-	if err != nil {
-		return ""
-	}
-	for _, s := range secrets {
-		if s.Scope != "" && (s.Scope == authType || s.Scope == host) {
-			sec, err := store.GetSecret(s.ID)
-			if err != nil {
-				continue
-			}
-			return sec.Value
-		}
-	}
-	return ""
+	return result
 }
 
 // importSnapshotIfNeeded checks for the snapshot field in namespace config and imports
@@ -948,6 +1004,67 @@ func importSnapshotIfNeeded(nsCfg *namespace.NamespaceConfig, wsCfg *bundle.Work
 func isRegularFile(path string) bool {
 	fi, err := os.Stat(path)
 	return err == nil && fi.Mode().IsRegular()
+}
+
+// rotatingWriter is a simple log file writer that rotates when maxBytes is reached.
+type rotatingWriter struct {
+	mu       sync.Mutex
+	path     string
+	maxBytes int64
+	maxFiles int
+	file     *os.File
+	size     int64
+}
+
+func newRotatingWriter(path string, maxBytes int64, maxFiles int) *rotatingWriter {
+	rw := &rotatingWriter{path: path, maxBytes: maxBytes, maxFiles: maxFiles}
+	rw.openOrCreate()
+	return rw
+}
+
+func (rw *rotatingWriter) openOrCreate() {
+	f, err := os.OpenFile(rw.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return
+	}
+	info, _ := f.Stat()
+	rw.file = f
+	if info != nil {
+		rw.size = info.Size()
+	}
+}
+
+func (rw *rotatingWriter) Write(p []byte) (int, error) {
+	rw.mu.Lock()
+	defer rw.mu.Unlock()
+	if rw.file == nil {
+		rw.openOrCreate()
+		if rw.file == nil {
+			return 0, fmt.Errorf("log file not available")
+		}
+	}
+	if rw.size+int64(len(p)) > rw.maxBytes {
+		rw.rotate()
+	}
+	n, err := rw.file.Write(p)
+	rw.size += int64(n)
+	return n, err
+}
+
+func (rw *rotatingWriter) rotate() {
+	if rw.file != nil {
+		rw.file.Close()
+		rw.file = nil
+	}
+	// Delete oldest file, then shift: .2 → .3, .1 → .2, current → .1
+	os.Remove(fmt.Sprintf("%s.%d", rw.path, rw.maxFiles))
+	for i := rw.maxFiles - 1; i >= 1; i-- {
+		src := fmt.Sprintf("%s.%d", rw.path, i)
+		dst := fmt.Sprintf("%s.%d", rw.path, i+1)
+		os.Rename(src, dst)
+	}
+	os.Rename(rw.path, rw.path+".1")
+	rw.openOrCreate()
 }
 
 // ensureSelfSignedCert generates a self-signed cert if TLS is enabled without LE and no cert is configured.

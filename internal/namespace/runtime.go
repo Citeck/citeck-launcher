@@ -329,6 +329,19 @@ func (r *Runtime) Apps() []*AppRuntime {
 	return result
 }
 
+// FindApp returns a copy of the named app, or nil if not found.
+// Uses direct map lookup under RLock — O(1) instead of O(n).
+func (r *Runtime) FindApp(name string) *AppRuntime {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	app, ok := r.apps[name]
+	if !ok {
+		return nil
+	}
+	cp := *app
+	return &cp
+}
+
 func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -1216,7 +1229,7 @@ func (r *Runtime) waitForProbe(ctx context.Context, containerID string, probe *a
 					"containerPort", probe.HTTP.Port, "publishedPort", publishedPort,
 					"path", probe.HTTP.Path, "attempt", attempt)
 			}
-			if publishedPort > 0 && httpProbeCheck(publishedPort, probe.HTTP.Path, probe.TimeoutSeconds) {
+			if publishedPort > 0 && httpProbeCheck(ctx, publishedPort, probe.HTTP.Path, probe.TimeoutSeconds) {
 				slog.Info("HTTP probe passed", "container", shortID, "port", publishedPort, "attempt", attempt)
 				return nil
 			}
@@ -1462,12 +1475,18 @@ func formatMemory(usage, limit int64) string {
 	return fmt.Sprintf("%s / %s", formatBytes(usage), formatBytes(limit))
 }
 
-func httpProbeCheck(port int, path string, timeoutSec int) bool {
+func httpProbeCheck(ctx context.Context, port int, path string, timeoutSec int) bool {
 	if timeoutSec <= 0 {
 		timeoutSec = 5
 	}
-	client := &http.Client{Timeout: time.Duration(timeoutSec) * time.Second}
-	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d%s", port, path))
+	probeCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, "GET", fmt.Sprintf("http://127.0.0.1:%d%s", port, path), nil)
+	if err != nil {
+		return false
+	}
+	client := &http.Client{}
+	resp, err := client.Do(req)
 	if err != nil {
 		return false
 	}

@@ -14,11 +14,15 @@ interface DashboardState {
   error: string | null
   stream: EventStream | null
   reconnectDelay: number
+  lastSeq: number
+  reconnectGen: number  // prevents race: two reconnects creating two EventSource streams
 
   fetchData: () => Promise<void>
   startEventStream: () => void
   stopEventStream: () => void
 }
+
+let fetchDebounceTimer: ReturnType<typeof setTimeout> | null = null
 
 export const useDashboardStore = create<DashboardState>((set, get) => ({
   namespace: null,
@@ -27,6 +31,8 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   error: null,
   stream: null,
   reconnectDelay: 1000,
+  lastSeq: 0,
+  reconnectGen: 0,
 
   fetchData: async () => {
     set({ loading: true, error: null })
@@ -39,33 +45,50 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   },
 
   startEventStream: () => {
-    if (get().stream) return
+    // Close existing stream if any
+    const prev = get().stream
+    if (prev) prev.close()
+
+    const gen = get().reconnectGen + 1
+    set({ reconnectGen: gen })
 
     const stream = connectEvents(
-      () => {
-        get().fetchData()
+      (event) => {
+        // Detect sequence gap — fetch fresh state to catch up
+        const { lastSeq } = get()
+        if (lastSeq > 0 && event.seq > lastSeq + 1) {
+          get().fetchData()
+        }
+        set({ lastSeq: event.seq })
+        // Debounce: coalesce rapid event bursts into a single fetchData
+        if (fetchDebounceTimer) clearTimeout(fetchDebounceTimer)
+        fetchDebounceTimer = setTimeout(() => {
+          fetchDebounceTimer = null
+          get().fetchData()
+        }, 100)
       },
       () => {
+        // Only reconnect if this is still the current generation
+        if (get().reconnectGen !== gen) return
         const delay = get().reconnectDelay
-        const nextDelay = Math.min(delay * 2, 30000) // exponential backoff, max 30s
-        set({ reconnectDelay: nextDelay })
+        const nextDelay = Math.min(delay * 2, 30000)
+        set({ reconnectDelay: nextDelay, stream: null })
         setTimeout(() => {
-          if (get().stream === stream) {
-            set({ stream: null })
+          if (get().reconnectGen === gen) {
             get().startEventStream()
           }
         }, delay)
       },
       () => {
-        set({ reconnectDelay: 1000 }) // reset backoff on successful connection open
+        set({ reconnectDelay: 1000 })
       },
     )
     set({ stream })
   },
 
   stopEventStream: () => {
-    const { stream } = get()
-    set({ stream: null, reconnectDelay: 1000 })
+    const { stream, reconnectGen } = get()
+    set({ stream: null, reconnectDelay: 1000, lastSeq: 0, reconnectGen: reconnectGen + 1 })
     stream?.close()
   },
 }))

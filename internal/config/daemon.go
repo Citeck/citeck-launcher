@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
+	"net"
 	"os"
 
 	"github.com/citeck/citeck-launcher/internal/fsutil"
@@ -70,6 +72,24 @@ func LoadDaemonConfig() (DaemonConfig, error) {
 	// Ensure defaults for empty values
 	if cfg.Server.WebUI.Listen == "" {
 		cfg.Server.WebUI.Listen = "127.0.0.1:8088"
+	}
+
+	// Validate listen address format
+	if cfg.Server.WebUI.Enabled {
+		host, _, err := net.SplitHostPort(cfg.Server.WebUI.Listen)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid webui listen address %q: %w", cfg.Server.WebUI.Listen, err)
+		}
+		if host != "" && host != "0.0.0.0" && host != "::" && host != "localhost" && host != "127.0.0.1" && host != "::1" {
+			// Non-localhost binding — warn if no mTLS certs
+			caDir := WebUICADir()
+			if entries, err := os.ReadDir(caDir); err != nil || len(entries) == 0 {
+				slog.Warn("Non-localhost listen address without mTLS client certs",
+					"listen", cfg.Server.WebUI.Listen,
+					"caDir", caDir,
+					"hint", "run: citeck cert generate --name admin")
+			}
+		}
 	}
 
 	return cfg, nil
