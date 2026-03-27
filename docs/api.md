@@ -48,7 +48,7 @@ curl --unix-socket /run/citeck/daemon.sock http://localhost/api/v1/daemon/status
 ```
 
 ```json
-{"running": true, "pid": 1234, "uptime": 60000, "version": "1.4.0", "workspace": "daemon", "socketPath": "/run/citeck/daemon.sock"}
+{"running": true, "pid": 1234, "uptime": 60000, "version": "2.0.0", "workspace": "daemon", "socketPath": "/run/citeck/daemon.sock"}
 ```
 
 ### POST /api/v1/daemon/shutdown
@@ -322,7 +322,7 @@ Status: `healthy`, `degraded`, `unhealthy`.
 Prometheus text exposition format.
 
 ```
-citeck_build_info{version="1.4.0"} 1
+citeck_build_info{version="2.0.0"} 1
 citeck_uptime_seconds 3600.0
 citeck_apps_total 20
 citeck_apps_running 20

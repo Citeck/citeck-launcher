@@ -1,4 +1,4 @@
-# Release 1.4.0
+# Release 2.0.0
 
 ## Major changes
 
