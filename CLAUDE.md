@@ -253,6 +253,7 @@ Tested on remote server with community 2025.12 (clean deployment). Found and fix
 - **`PLAN-phase10.md`** — Phase 10 plan (COMPLETE, mTLS + production hardening, 25 issues)
 - **`PLAN-phase11.md`** — Phase 11 plan (COMPLETE, production readiness, 26 issues)
 - **`PLAN-phase12.md`** — Phase 12 plan (COMPLETE, GA readiness, 23 issues)
+- **`PLAN-phase13.md`** — Phase 13 plan (production hardening for scale: secrets masking, security headers, HTTP metrics, validate command)
 
 ### Phase 12: GA Readiness — COMPLETE (2026-03-27)
 23 issues across 5 sub-phases + 3 code review passes (8 additional fixes).
