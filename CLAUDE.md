@@ -226,12 +226,33 @@ Tested on remote server with community 2025.12 (clean deployment). Found and fix
 - Dedicated `stopCh` (buffered 1) for stop signal — cannot be dropped unlike `cmdCh` send
 - Token auth removed entirely — mTLS is the only auth mechanism for non-localhost
 
+### Phase 11: Production Readiness — COMPLETE (2026-03-27)
+26 issues across 5 sub-phases + 3 code review passes (19 additional fixes).
+- 11a: P0 security — two-mux architecture (socketMux + tcpMux), dangerous endpoints socket-only, CORS exact origin validation, exec output cap (1MB), PutAppConfig field whitelist
+- 11b: HTTP hardening — WriteTimeout 30s + ResponseController for streaming, access logs with remote addr/CN/X-Request-Id, health 3-state (healthy/degraded/unhealthy), SSRF protection (DNS resolution + blocked IP ranges + ssrfSafeClient with DialContext), atomic file writes
+- 11c: Reliability — streaming logs (chunked ReadableStream, not polling), virtual list (@tanstack/react-virtual), registry auth pre-cached, context-aware HTTP probes, FindApp O(1) map lookup, SQLite MaxOpenConns(1)
+- 11d: Observability — machine-readable error codes, Prometheus /metrics (text exposition), daemon log rotation (50MB/3 files, fsutil.RotatingWriter), SSE sequence numbers + gap detection, X-Request-Id (8 hex, crypto/rand), SSE fetchData debounced
+- 11e: Remaining — socket permissions 0o600, React ErrorBoundary, SSE reconnect generation counter, Docker Names[0] bounds check, daemon.yml listen validation
+
+### Key Technical Decisions (Phase 11)
+- Two-mux architecture: `socketMux` (all routes, socket + mTLS) vs `tcpMux` (safe routes only, localhost TCP)
+- Socket-only: shutdown, exec, config write, reload, app config write, app file write
+- CORS exact origin:port validation (no prefix matching); OPTIONS rejected for unknown origins
+- SSRF double defense: validateSnapshotURL (pre-check) + ssrfSafeClient (DialContext re-validation at connect time, prevents DNS rebinding)
+- WriteTimeout 30s globally; streaming handlers disable via `http.ResponseController.SetWriteDeadline(time.Time{})`
+- `statusRecorder.Unwrap()` for proper ResponseController chain through middleware
+- Prometheus metrics hand-written (no dependency); label values escaped per exposition spec
+- Daemon log rotation via `fsutil.RotatingWriter` (thread-safe, Close() on shutdown)
+- WebUI mTLS server cert issued for 100 years (36500 days)
+- PutAppConfig whitelist: only env, resources, probes mutable; image/volumes/cmd/ports locked (defense-in-depth, endpoint also socket-only)
+
 ### Other References
 - **`PROGRESS.md`** — tracks completed work (historical)
 - **`PLAN-phase8.md`** — Phase 8 plan (COMPLETE, 57 issues)
 - **`PLAN-phase9.md`** — Phase 9 plan (COMPLETE, 12 issues)
 - **`PLAN-phase10.md`** — Phase 10 plan (COMPLETE, mTLS + production hardening, 25 issues)
-- **`PLAN-phase11.md`** — Phase 11 plan (production readiness, 26 issues)
+- **`PLAN-phase11.md`** — Phase 11 plan (COMPLETE, production readiness, 26 issues)
+- **`PLAN-phase12.md`** — Phase 12 plan (GA readiness: CSRF, stability, CLI, docs, UI polish)
 
 ## CI/CD
 

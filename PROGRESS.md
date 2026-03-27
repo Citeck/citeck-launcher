@@ -35,7 +35,8 @@
 | Phase 9 | Atomic writes, security, concurrency (12 issues) | 2026-03-27 |
 | Server test 3 | Clean deployment, host switching, snapshot cycle | 2026-03-27 |
 | Phase 10 | mTLS + production hardening (25 issues, 5 sub-phases) | 2026-03-27 |
+| Phase 11 | Production readiness (26 issues + 19 review fixes, 5 sub-phases) | 2026-03-27 |
 
-## Next: Phase 11
+## Next: Phase 12
 
-See `PLAN-phase11.md` — Production readiness (26 issues, 5 sub-phases: P0 security, HTTP hardening, reliability/perf, observability, remaining).
+See `PLAN-phase12.md` — GA readiness (23 issues, 5 sub-phases: CSRF + security + tests, stability, CLI + observability, documentation, Web UI polish).
