@@ -67,7 +67,7 @@ func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
 	runtime, appDefs := d.runtime, d.appDefs
 	d.configMu.RUnlock()
 	if runtime == nil || appDefs == nil {
-		writeError(w, http.StatusBadRequest, "no namespace configured")
+		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
 		return
 	}
 	runtime.Start(appDefs)
@@ -79,7 +79,7 @@ func (d *Daemon) handleStopNamespace(w http.ResponseWriter, r *http.Request) {
 	runtime := d.runtime
 	d.configMu.RUnlock()
 	if runtime == nil {
-		writeError(w, http.StatusBadRequest, "no namespace configured")
+		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
 		return
 	}
 	runtime.Stop()
@@ -90,7 +90,7 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 	d.configMu.RLock()
 	if d.runtime == nil || d.nsConfig == nil || d.bundleDef == nil {
 		d.configMu.RUnlock()
-		writeError(w, http.StatusBadRequest, "no namespace configured")
+		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
 		return
 	}
 	nsID := d.nsConfig.ID
@@ -201,7 +201,7 @@ func (d *Daemon) handleAppLogs(w http.ResponseWriter, r *http.Request) {
 
 	app := d.findApp(name)
 	if app == nil {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("app %q not found", name))
+		writeErrorCode(w, http.StatusNotFound, api.ErrCodeAppNotFound, fmt.Sprintf("app %q not found", name))
 		return
 	}
 
@@ -267,12 +267,12 @@ func (fw flushWriter) Write(p []byte) (int, error) {
 func (d *Daemon) handleAppRestart(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if d.runtime == nil {
-		writeError(w, http.StatusBadRequest, "no namespace configured")
+		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
 		return
 	}
 	app := d.findApp(name)
 	if app == nil {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("app %q not found", name))
+		writeErrorCode(w, http.StatusNotFound, api.ErrCodeAppNotFound, fmt.Sprintf("app %q not found", name))
 		return
 	}
 
@@ -286,11 +286,11 @@ func (d *Daemon) handleAppRestart(w http.ResponseWriter, r *http.Request) {
 func (d *Daemon) handleAppStop(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if d.runtime == nil {
-		writeError(w, http.StatusBadRequest, "no namespace configured")
+		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
 		return
 	}
 	if d.findApp(name) == nil {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("app %q not found", name))
+		writeErrorCode(w, http.StatusNotFound, api.ErrCodeAppNotFound, fmt.Sprintf("app %q not found", name))
 		return
 	}
 
@@ -304,16 +304,16 @@ func (d *Daemon) handleAppStop(w http.ResponseWriter, r *http.Request) {
 func (d *Daemon) handleAppStart(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if d.runtime == nil {
-		writeError(w, http.StatusBadRequest, "no namespace configured")
+		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
 		return
 	}
 	app := d.findApp(name)
 	if app == nil {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("app %q not found", name))
+		writeErrorCode(w, http.StatusNotFound, api.ErrCodeAppNotFound, fmt.Sprintf("app %q not found", name))
 		return
 	}
 	if app.Status == namespace.AppStatusRunning {
-		writeError(w, http.StatusConflict, fmt.Sprintf("app %q is already running", name))
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeAppAlreadyRunning, fmt.Sprintf("app %q is already running", name))
 		return
 	}
 
@@ -328,7 +328,7 @@ func (d *Daemon) handleAppInspect(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	app := d.findApp(name)
 	if app == nil {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("app %q not found", name))
+		writeErrorCode(w, http.StatusNotFound, api.ErrCodeAppNotFound, fmt.Sprintf("app %q not found", name))
 		return
 	}
 
@@ -392,7 +392,7 @@ func (d *Daemon) handleAppExec(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	app := d.findApp(name)
 	if app == nil {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("app %q not found", name))
+		writeErrorCode(w, http.StatusNotFound, api.ErrCodeAppNotFound, fmt.Sprintf("app %q not found", name))
 		return
 	}
 
@@ -446,7 +446,7 @@ func (d *Daemon) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 
 	// Validate by fully parsing through ParseNamespaceConfig (applies business rules)
 	if _, err := namespace.ParseNamespaceConfig(body); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid config: %s", err.Error()))
+		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeInvalidConfig, fmt.Sprintf("invalid config: %s", err.Error()))
 		return
 	}
 
@@ -523,7 +523,10 @@ func (d *Daemon) handleDaemonLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	readSize := stat.Size()
 	if readSize > maxReadSize {
-		f.Seek(-maxReadSize, io.SeekEnd)
+		if _, err := f.Seek(-maxReadSize, io.SeekEnd); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 		readSize = maxReadSize
 	}
 	data, err := io.ReadAll(io.LimitReader(f, readSize))
@@ -585,7 +588,15 @@ func (d *Daemon) handleSystemDump(w http.ResponseWriter, r *http.Request) {
 	dump := d.buildDumpData(ctx)
 
 	if r.URL.Query().Get("format") == "zip" {
-		d.writeSystemDumpZip(w, ctx, dump)
+		// Marshal configs under lock to avoid data races (slices/maps are reference types)
+		d.configMu.RLock()
+		var nsCfgYAML []byte
+		if d.nsConfig != nil {
+			nsCfgYAML, _ = namespace.MarshalNamespaceConfig(d.nsConfig)
+		}
+		daemonCfgYAML, _ := yaml.Marshal(d.daemonCfg)
+		d.configMu.RUnlock()
+		d.writeSystemDumpZip(w, ctx, dump, nsCfgYAML, daemonCfgYAML)
 		return
 	}
 
@@ -593,7 +604,7 @@ func (d *Daemon) handleSystemDump(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, dump)
 }
 
-func (d *Daemon) writeSystemDumpZip(w http.ResponseWriter, ctx context.Context, dump map[string]any) {
+func (d *Daemon) writeSystemDumpZip(w http.ResponseWriter, ctx context.Context, dump map[string]any, nsCfgYAML, daemonCfgYAML []byte) {
 	// Extend write deadline for potentially large ZIP with per-app logs
 	rc := http.NewResponseController(w)
 	rc.SetWriteDeadline(time.Now().Add(5 * time.Minute))
@@ -611,18 +622,33 @@ func (d *Daemon) writeSystemDumpZip(w http.ResponseWriter, ctx context.Context, 
 		}
 	}
 
-	// namespace.yml — marshal through struct to avoid leaking raw file with any sensitive data
-	if d.nsConfig != nil {
-		if data, err := namespace.MarshalNamespaceConfig(d.nsConfig); err == nil {
-			if fw, err := zw.Create("namespace.yml"); err == nil {
-				fw.Write(data)
-			}
+	// namespace.yml (pre-marshaled under configMu lock)
+	if len(nsCfgYAML) > 0 {
+		if fw, err := zw.Create("namespace.yml"); err == nil {
+			fw.Write(nsCfgYAML)
 		}
 	}
 
-	// daemon.yml — marshal through struct for consistency
-	if data, err := yaml.Marshal(d.daemonCfg); err == nil {
+	// daemon.yml (pre-marshaled under configMu lock)
+	if len(daemonCfgYAML) > 0 {
 		if fw, err := zw.Create("daemon.yml"); err == nil {
+			fw.Write(daemonCfgYAML)
+		}
+	}
+
+	// Daemon logs (daemon.log + rotated variants)
+	const maxDaemonLogSize = 2 * 1024 * 1024 // 2MB cap per file
+	for _, suffix := range []string{"", ".1", ".2", ".3"} {
+		logFile := config.DaemonLogPath() + suffix
+		data, err := os.ReadFile(logFile)
+		if err != nil {
+			continue
+		}
+		if len(data) > maxDaemonLogSize {
+			data = data[len(data)-maxDaemonLogSize:]
+		}
+		fname := "daemon-logs/" + filepath.Base(logFile)
+		if fw, err := zw.Create(fname); err == nil {
 			fw.Write(data)
 		}
 	}
@@ -696,7 +722,7 @@ func (d *Daemon) handleDeleteVolume(w http.ResponseWriter, r *http.Request) {
 	if d.runtime != nil {
 		status := d.runtime.Status()
 		if status != namespace.NsStatusStopped {
-			writeError(w, http.StatusConflict, "cannot delete volume while namespace is running — stop the namespace first")
+			writeErrorCode(w, http.StatusConflict, api.ErrCodeNamespaceRunning, "cannot delete volume while namespace is running — stop the namespace first")
 			return
 		}
 	}
@@ -711,7 +737,7 @@ func (d *Daemon) handleGetAppConfig(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	app := d.findApp(name)
 	if app == nil {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("app %q not found", name))
+		writeErrorCode(w, http.StatusNotFound, api.ErrCodeAppNotFound, fmt.Sprintf("app %q not found", name))
 		return
 	}
 	// Serialize ApplicationDef to YAML
@@ -727,12 +753,12 @@ func (d *Daemon) handleGetAppConfig(w http.ResponseWriter, r *http.Request) {
 func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if d.runtime == nil {
-		writeError(w, http.StatusBadRequest, "no namespace configured")
+		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
 		return
 	}
 	app := d.findApp(name)
 	if app == nil {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("app %q not found", name))
+		writeErrorCode(w, http.StatusNotFound, api.ErrCodeAppNotFound, fmt.Sprintf("app %q not found", name))
 		return
 	}
 
@@ -783,7 +809,7 @@ func (d *Daemon) handleListAppFiles(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	app := d.findApp(name)
 	if app == nil {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("app %q not found", name))
+		writeErrorCode(w, http.StatusNotFound, api.ErrCodeAppNotFound, fmt.Sprintf("app %q not found", name))
 		return
 	}
 
@@ -812,7 +838,7 @@ func (d *Daemon) handleGetAppFile(w http.ResponseWriter, r *http.Request) {
 	filePath := r.PathValue("path")
 	app := d.findApp(name)
 	if app == nil {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("app %q not found", name))
+		writeErrorCode(w, http.StatusNotFound, api.ErrCodeAppNotFound, fmt.Sprintf("app %q not found", name))
 		return
 	}
 
@@ -842,7 +868,7 @@ func (d *Daemon) handlePutAppFile(w http.ResponseWriter, r *http.Request) {
 	filePath := r.PathValue("path")
 	app := d.findApp(name)
 	if app == nil {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("app %q not found", name))
+		writeErrorCode(w, http.StatusNotFound, api.ErrCodeAppNotFound, fmt.Sprintf("app %q not found", name))
 		return
 	}
 
@@ -889,11 +915,11 @@ func isAppBindMount(app *namespace.AppRuntime, relPath string) bool {
 func (d *Daemon) handleAppLockToggle(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if d.runtime == nil {
-		writeError(w, http.StatusBadRequest, "no namespace configured")
+		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
 		return
 	}
 	if d.findApp(name) == nil {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("app %q not found", name))
+		writeErrorCode(w, http.StatusNotFound, api.ErrCodeAppNotFound, fmt.Sprintf("app %q not found", name))
 		return
 	}
 
@@ -1053,6 +1079,11 @@ func (d *Daemon) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Build info
+	fmt.Fprintf(&b, "# HELP citeck_build_info Build version and metadata.\n")
+	fmt.Fprintf(&b, "# TYPE citeck_build_info gauge\n")
+	fmt.Fprintf(&b, "citeck_build_info{version=\"%s\"} 1\n", promEscape(d.version))
+
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	w.Write([]byte(b.String()))
 }
@@ -1064,6 +1095,37 @@ func promEscape(s string) string {
 	s = strings.ReplaceAll(s, `"`, `\"`)
 	s = strings.ReplaceAll(s, "\n", `\n`)
 	return s
+}
+
+func (d *Daemon) handleSetLogLevel(w http.ResponseWriter, r *http.Request) {
+	if d.logLevel == nil {
+		writeError(w, http.StatusServiceUnavailable, "log level control not available")
+		return
+	}
+	var req struct {
+		Level string `json:"level"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	var level slog.Level
+	switch strings.ToLower(req.Level) {
+	case "debug":
+		level = slog.LevelDebug
+	case "info":
+		level = slog.LevelInfo
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown level %q (debug, info, warn, error)", req.Level))
+		return
+	}
+	d.logLevel.Set(level)
+	slog.Info("Log level changed", "level", level.String())
+	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("log level set to %s", level.String())})
 }
 
 func (d *Daemon) findApp(name string) *namespace.AppRuntime {

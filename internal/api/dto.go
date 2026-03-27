@@ -101,13 +101,16 @@ type ErrorDto struct {
 // Machine-readable error codes for API consumers.
 const (
 	ErrCodeAppNotFound        = "APP_NOT_FOUND"
-	ErrCodeNamespaceStopped   = "NAMESPACE_STOPPED"
 	ErrCodeSnapshotInProgress = "SNAPSHOT_IN_PROGRESS"
 	ErrCodeInvalidConfig      = "INVALID_CONFIG"
 	ErrCodeInvalidRequest     = "INVALID_REQUEST"
 	ErrCodeSSRFBlocked        = "SSRF_BLOCKED"
 	ErrCodeRateLimited        = "RATE_LIMITED"
 	ErrCodeNotConfigured      = "NOT_CONFIGURED"
+	ErrCodeAppAlreadyRunning  = "APP_ALREADY_RUNNING"
+	ErrCodeNamespaceRunning   = "NAMESPACE_RUNNING"
+	ErrCodeCSRFMissing        = "CSRF_MISSING"
+	ErrCodeInternalError      = "INTERNAL_ERROR"
 )
 
 // --- Welcome Screen ---

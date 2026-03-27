@@ -28,6 +28,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/docker"
+	"github.com/citeck/citeck-launcher/internal/fsutil"
 )
 
 const (
@@ -124,6 +125,17 @@ func Export(ctx context.Context, dc *docker.Client, outputPath, volumesBase stri
 	// Create ZIP archive
 	if err := createZip(outputPath, tmpDir); err != nil {
 		return nil, fmt.Errorf("create zip: %w", err)
+	}
+
+	// Write SHA256 sidecar file
+	hash, err := FileSHA256(outputPath)
+	if err != nil {
+		slog.Warn("Failed to compute snapshot SHA256", "err", err)
+	} else {
+		sha256Path := outputPath + ".sha256"
+		if wErr := fsutil.AtomicWriteFile(sha256Path, []byte(hash+"  "+filepath.Base(outputPath)+"\n"), 0o644); wErr != nil {
+			slog.Warn("Failed to write SHA256 sidecar", "err", wErr)
+		}
 	}
 
 	slog.Info("Snapshot exported", "path", outputPath, "volumes", len(meta.Volumes))

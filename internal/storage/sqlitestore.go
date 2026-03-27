@@ -37,36 +37,94 @@ func NewSQLiteStore(dir string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("migrate sqlite: %w", err)
 	}
 
+	// Restrict DB file permissions — contains secrets in desktop mode.
+	// Must be after migrate() since sql.Open is lazy and the file is created on first query.
+	if err := os.Chmod(dbPath, 0o600); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("chmod db file: %w", err)
+	}
+
 	return store, nil
 }
 
 func (s *SQLiteStore) migrate() error {
-	stmts := []string{
-		`CREATE TABLE IF NOT EXISTS workspaces (
-			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL DEFAULT '',
-			repo_url TEXT NOT NULL DEFAULT '',
-			repo_branch TEXT NOT NULL DEFAULT 'main'
-		)`,
-		`CREATE TABLE IF NOT EXISTS secrets (
-			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL DEFAULT '',
-			type TEXT NOT NULL DEFAULT '',
-			value TEXT NOT NULL DEFAULT '',
-			scope TEXT NOT NULL DEFAULT 'global',
-			created_at TEXT NOT NULL DEFAULT ''
-		)`,
-		`CREATE TABLE IF NOT EXISTS launcher_state (
-			key TEXT PRIMARY KEY,
-			value TEXT NOT NULL DEFAULT ''
-		)`,
+	// Ensure schema_version table exists
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`); err != nil {
+		return err
 	}
-	for _, stmt := range stmts {
-		if _, err := s.db.Exec(stmt); err != nil {
+
+	var currentVersion int
+	err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&currentVersion)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read schema_version: %w", err)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		currentVersion = 0
+		if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (0)"); err != nil {
 			return err
 		}
 	}
+
+	// Sequential migrations
+	migrations := []struct {
+		version int
+		stmts   []string
+	}{
+		{
+			version: 1,
+			stmts: []string{
+				`CREATE TABLE IF NOT EXISTS workspaces (
+					id TEXT PRIMARY KEY,
+					name TEXT NOT NULL DEFAULT '',
+					repo_url TEXT NOT NULL DEFAULT '',
+					repo_branch TEXT NOT NULL DEFAULT 'main'
+				)`,
+				`CREATE TABLE IF NOT EXISTS secrets (
+					id TEXT PRIMARY KEY,
+					name TEXT NOT NULL DEFAULT '',
+					type TEXT NOT NULL DEFAULT '',
+					value TEXT NOT NULL DEFAULT '',
+					scope TEXT NOT NULL DEFAULT 'global',
+					created_at TEXT NOT NULL DEFAULT ''
+				)`,
+				`CREATE TABLE IF NOT EXISTS launcher_state (
+					key TEXT PRIMARY KEY,
+					value TEXT NOT NULL DEFAULT ''
+				)`,
+			},
+		},
+		// Future migrations go here:
+		// { version: 2, stmts: []string{`ALTER TABLE ...`} },
+	}
+
+	for _, m := range migrations {
+		if m.version <= currentVersion {
+			continue
+		}
+		if err := s.applyMigration(m.version, m.stmts); err != nil {
+			return err
+		}
+	}
+
 	return nil
+}
+
+func (s *SQLiteStore) applyMigration(version int, stmts []string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin migration v%d: %w", version, err)
+	}
+	defer tx.Rollback()
+
+	for _, stmt := range stmts {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("migration v%d: %w", version, err)
+		}
+	}
+	if _, err := tx.Exec("UPDATE schema_version SET version = ?", version); err != nil {
+		return fmt.Errorf("update schema_version to v%d: %w", version, err)
+	}
+	return tx.Commit()
 }
 
 // --- Workspaces ---

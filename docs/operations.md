@@ -1,0 +1,201 @@
+# Operator Runbook
+
+## Log Locations
+
+| Log | Path | Rotation |
+|---|---|---|
+| Daemon log | `$CITECK_HOME/log/daemon.log` | 50 MB, 3 retained (`.1`, `.2`, `.3`) |
+| Container logs | Docker json-file driver | 50 MB, 3 files per container |
+| systemd journal | `journalctl -u citeck` | System defaults |
+
+## Starting and Stopping
+
+```bash
+# Start
+sudo systemctl start citeck
+
+# Stop (graceful — stops all containers in order)
+sudo systemctl stop citeck
+
+# Or via CLI
+citeck stop
+
+# Restart with config reload
+citeck reload
+```
+
+## Upgrade
+
+1. Download the new binary
+2. Replace `/usr/local/bin/citeck`
+3. Restart: `sudo systemctl restart citeck`
+
+The daemon will detect changed images on restart and pull updates automatically.
+
+## Backup / Restore via Snapshots
+
+### Export
+
+```bash
+citeck snapshot export
+# Creates: $CITECK_HOME/volumes/default/snapshots/<timestamp>.zip
+```
+
+### Import
+
+```bash
+# Stop namespace first
+citeck stop
+
+# Import snapshot
+citeck snapshot import /path/to/snapshot.zip
+
+# Start
+citeck start
+```
+
+### List
+
+```bash
+citeck snapshot list
+```
+
+## mTLS Certificate Management
+
+Required when Web UI listens on non-localhost (`0.0.0.0`).
+
+### Generate Client Certificate
+
+```bash
+citeck cert generate --name admin
+# Output: cert and key paths
+```
+
+### List Certificates
+
+```bash
+citeck cert list
+```
+
+### Revoke Certificate
+
+```bash
+citeck cert revoke --name admin
+```
+
+Certificate changes take effect immediately (dynamic CA pool reload).
+
+### Using Client Certificate
+
+```bash
+curl --cert /path/client.crt --key /path/client.key \
+  --cacert $CITECK_HOME/conf/webui-tls/server.crt \
+  https://your-host:8088/api/v1/daemon/status
+```
+
+## Debugging Startup Failures
+
+### Daemon won't start
+
+```bash
+# Check if another instance is running
+pgrep -a citeck
+
+# Check socket
+ls -la /run/citeck/daemon.sock
+
+# Run in foreground with debug logging
+citeck start --foreground
+# Then via socket:
+curl --unix-socket /run/citeck/daemon.sock -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"level":"debug"}' http://localhost/api/v1/daemon/loglevel
+```
+
+### Container won't start
+
+```bash
+# Check app status
+citeck status
+
+# View app logs
+citeck logs <app-name> --follow
+
+# Inspect container details
+curl --unix-socket /run/citeck/daemon.sock http://localhost/api/v1/apps/<name>/inspect
+
+# Run diagnostics
+citeck diagnose
+```
+
+### Health check
+
+```bash
+citeck health
+# Exit code 0 = healthy, 1 = degraded/unhealthy
+
+# Or via API
+curl --unix-socket /run/citeck/daemon.sock http://localhost/api/v1/health
+```
+
+## System Dump
+
+Collect full diagnostic bundle:
+
+```bash
+curl --unix-socket /run/citeck/daemon.sock \
+  'http://localhost/api/v1/system/dump?format=zip' > system-dump.zip
+```
+
+Contents: `system-info.json`, `namespace.yml`, `daemon.yml`, `daemon-logs/`, `logs/<app>.log`.
+
+## Prometheus Monitoring
+
+```bash
+curl --unix-socket /run/citeck/daemon.sock http://localhost/api/v1/metrics
+```
+
+Key metrics:
+- `citeck_build_info{version="..."}` — build version
+- `citeck_apps_running` / `citeck_apps_total` — app counts
+- `citeck_apps_failed` — failed apps (alert on > 0)
+- `citeck_namespace_status{status="RUNNING"}` — namespace state
+- `citeck_uptime_seconds` — daemon uptime
+
+## Common Error Codes
+
+| Code | Meaning | Action |
+|---|---|---|
+| `NOT_CONFIGURED` | No namespace.yml found | Run `citeck install` or create config |
+| `APP_NOT_FOUND` | App name doesn't exist | Check `citeck status` for available apps |
+| `SNAPSHOT_IN_PROGRESS` | Another snapshot op running | Wait and retry |
+| `INVALID_CONFIG` | Config parse error | Fix namespace.yml syntax |
+| `NAMESPACE_RUNNING` | Op requires stopped namespace | Run `citeck stop` first |
+| `CSRF_MISSING` | Missing X-Citeck-CSRF header | Add header to POST/PUT/DELETE requests |
+
+## Secret Rotation
+
+Secrets are stored in `$CITECK_HOME/conf/secrets/` (server mode) or `launcher.db` (desktop).
+
+```bash
+# Via CLI (if implemented)
+citeck secret create --id gitlab-token --value "new-token"
+
+# Via API
+curl --unix-socket /run/citeck/daemon.sock -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{"id":"gitlab-token","name":"GitLab","type":"token","value":"new-value"}' \
+  http://localhost/api/v1/secrets
+```
+
+After rotating, run `citeck reload` to apply.
+
+## Let's Encrypt
+
+Certificates are auto-obtained and auto-renewed when:
+- `proxy.tls.enabled: true`
+- `proxy.tls.letsEncrypt: true`
+- `proxy.host` is a public hostname (not `localhost`)
+- Port 443 is accessible from the internet
+
+Certs are stored in `$CITECK_HOME/data/acme/`. Renewal runs automatically; on success, the proxy container is restarted.

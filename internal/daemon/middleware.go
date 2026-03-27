@@ -3,13 +3,63 @@ package daemon
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/citeck/citeck-launcher/internal/api"
 )
+
+// recoveryWriter tracks whether any response has been written.
+type recoveryWriter struct {
+	http.ResponseWriter
+	written bool
+}
+
+func (rw *recoveryWriter) WriteHeader(code int) {
+	rw.written = true
+	rw.ResponseWriter.WriteHeader(code)
+}
+
+func (rw *recoveryWriter) Write(b []byte) (int, error) {
+	rw.written = true
+	return rw.ResponseWriter.Write(b)
+}
+
+func (rw *recoveryWriter) Unwrap() http.ResponseWriter {
+	return rw.ResponseWriter
+}
+
+// RecoveryMiddleware catches panics in handlers and returns 500 with INTERNAL_ERROR code.
+// Logs the full stack trace via slog.Error. Applied to both socketMux and tcpMux.
+// If the response was already started before the panic, only the log is emitted
+// (cannot change the HTTP status after headers are sent).
+func RecoveryMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rw := &recoveryWriter{ResponseWriter: w}
+		defer func() {
+			if err := recover(); err != nil {
+				stack := debug.Stack()
+				slog.Error("Panic recovered in HTTP handler",
+					"error", fmt.Sprint(err),
+					"method", r.Method,
+					"path", r.URL.Path,
+					"stack", string(stack),
+				)
+				if !rw.written {
+					writeMiddlewareError(w, http.StatusInternalServerError, api.ErrCodeInternalError, "internal server error")
+				}
+			}
+		}()
+		next.ServeHTTP(rw, r)
+	})
+}
 
 // MTLSIdentityMiddleware extracts the client identity from mTLS peer certificates.
 // Logs the CN of the authenticated client for auditing.
@@ -33,7 +83,7 @@ func CORSMiddleware(next http.Handler, listenAddr string) http.Handler {
 		if origin != "" && allowed[origin] {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, X-Citeck-CSRF")
 			w.Header().Set("Vary", "Origin")
 
 			if r.Method == "OPTIONS" {
@@ -69,6 +119,22 @@ func buildCORSAllowedOrigins(listenAddr string) map[string]bool {
 		origins["https://"+host+":"+port] = true
 	}
 	return origins
+}
+
+// CSRFMiddleware requires the X-Citeck-CSRF header on all mutating requests (POST/PUT/DELETE).
+// Custom headers force CORS preflight → preflight rejected for unknown origins → CSRF prevented.
+// Applied to tcpMux only; socket and mTLS connections don't need it.
+func CSRFMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost, http.MethodPut, http.MethodDelete:
+			if r.Header.Get("X-Citeck-CSRF") == "" {
+				writeMiddlewareError(w, http.StatusForbidden, api.ErrCodeCSRFMissing, "X-Citeck-CSRF header required")
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // RateLimitMiddleware limits requests per IP using a token bucket with automatic eviction.
@@ -110,7 +176,7 @@ func RateLimitMiddleware(rps int, next http.Handler) http.Handler {
 		entry.last = now
 		if entry.tokens < 1 {
 			mu.Unlock()
-			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			writeMiddlewareError(w, http.StatusTooManyRequests, api.ErrCodeRateLimited, "rate limit exceeded")
 			return
 		}
 		entry.tokens--
@@ -170,6 +236,18 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 			attrs = append(attrs, "cn", r.TLS.PeerCertificates[0].Subject.CommonName)
 		}
 		slog.Info("HTTP request", attrs...)
+	})
+}
+
+// writeMiddlewareError writes a structured JSON error response from middleware.
+// Uses the same ErrorDto format as route handlers for API consistency.
+func writeMiddlewareError(w http.ResponseWriter, httpCode int, errCode, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(httpCode)
+	json.NewEncoder(w).Encode(api.ErrorDto{
+		Error:   http.StatusText(httpCode),
+		Code:    errCode,
+		Message: msg,
 	})
 }
 

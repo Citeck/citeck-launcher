@@ -58,6 +58,7 @@ type WebappProps struct {
 }
 
 type NamespaceConfig struct {
+	APIVersion     string              `yaml:"apiVersion,omitempty" json:"apiVersion,omitempty"`
 	ID             string              `yaml:"id" json:"id"`
 	Name           string              `yaml:"name" json:"name"`
 	Snapshot       string              `yaml:"snapshot" json:"snapshot"`
@@ -90,7 +91,11 @@ func LoadNamespaceConfig(path string) (*NamespaceConfig, error) {
 }
 
 func MarshalNamespaceConfig(cfg *NamespaceConfig) ([]byte, error) {
-	return yaml.Marshal(cfg)
+	out := *cfg
+	if out.APIVersion == "" {
+		out.APIVersion = "v1"
+	}
+	return yaml.Marshal(&out)
 }
 
 func ParseNamespaceConfig(data []byte) (*NamespaceConfig, error) {

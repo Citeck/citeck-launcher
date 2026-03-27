@@ -667,7 +667,7 @@ func (d *Daemon) handleListSnapshots(w http.ResponseWriter, _ *http.Request) {
 
 func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 	if !d.snapshotMu.TryLock() {
-		writeError(w, http.StatusConflict, "another snapshot operation is in progress")
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeSnapshotInProgress, "another snapshot operation is in progress")
 		return
 	}
 	// Validation under lock — unlock on early return
@@ -742,7 +742,7 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 2<<30)
 
 	if !d.snapshotMu.TryLock() {
-		writeError(w, http.StatusConflict, "another snapshot operation is in progress")
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeSnapshotInProgress, "another snapshot operation is in progress")
 		return
 	}
 	// Validation under lock — unlock on early return
@@ -1005,7 +1005,7 @@ func (d *Daemon) downloadAndImportSnapshot(snapshotID, wsID, nsID string) {
 		const maxRetries = 3
 		var downloadErr error
 		for attempt := 1; attempt <= maxRetries; attempt++ {
-			downloadErr = snapshot.Download(d.bgCtx, snapDef.URL, destPath, snapDef.SHA256, progress)
+			downloadErr = snapshot.DownloadWithClient(d.bgCtx, ssrfSafeClient, snapDef.URL, destPath, snapDef.SHA256, progress)
 			if downloadErr == nil {
 				break
 			}

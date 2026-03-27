@@ -25,7 +25,27 @@ export function Dashboard() {
   const openTab = useTabsStore((s) => s.openTab)
 
   if (loading && !namespace) {
-    return <div className="text-muted-foreground text-xs p-4">Loading...</div>
+    return (
+      <div className="flex h-full">
+        {/* Skeleton left panel */}
+        <div className="w-52 shrink-0 border-r border-border bg-card p-3 flex flex-col gap-3">
+          <div className="h-4 w-32 bg-muted rounded animate-pulse" />
+          <div className="h-3 w-24 bg-muted rounded animate-pulse" />
+          <div className="h-6 w-20 bg-muted rounded animate-pulse" />
+          <div className="h-px bg-border my-1" />
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="h-3 w-full bg-muted rounded animate-pulse" />
+          ))}
+        </div>
+        {/* Skeleton table */}
+        <div className="flex-1 p-4 space-y-3">
+          <div className="h-5 w-48 bg-muted rounded animate-pulse" />
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="h-8 w-full bg-muted rounded animate-pulse" />
+          ))}
+        </div>
+      </div>
+    )
   }
 
   if (error && !namespace) {

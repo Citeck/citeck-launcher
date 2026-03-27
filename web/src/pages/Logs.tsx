@@ -51,6 +51,7 @@ function detectLevels(lines: string[]): (LogLevel | null)[] {
 }
 
 const API_BASE = '/api/v1'
+const MAX_LOG_LINES = 50_000
 
 export function Logs() {
   const { name } = useParams<{ name: string }>()
@@ -115,7 +116,14 @@ export function Logs() {
           const { done, value } = await reader.read()
           if (done) break
           const chunk = decoder.decode(value, { stream: true })
-          setLogs((prev) => prev + chunk)
+          setLogs((prev) => {
+            const combined = prev + chunk
+            const lines = combined.split('\n')
+            if (lines.length > MAX_LOG_LINES) {
+              return lines.slice(-MAX_LOG_LINES).join('\n')
+            }
+            return combined
+          })
         }
       } catch (e) {
         if (e instanceof DOMException && e.name === 'AbortError') return

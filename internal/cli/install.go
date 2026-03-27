@@ -14,6 +14,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/citeck/citeck-launcher/internal/tlsutil"
@@ -199,7 +200,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
-	if err := os.WriteFile(nsCfgPath, data, 0o600); err != nil {
+	if err := fsutil.AtomicWriteFile(nsCfgPath, data, 0o600); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 	output.PrintText("\nNamespace config written to: %s", nsCfgPath)

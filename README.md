@@ -1,89 +1,153 @@
 ![Citeck Logo](https://github.com/Citeck/ecos-ui/raw/develop/public/img/logo/ecos-logo.svg)
 
-# `Citeck Launcher`
+# Citeck Launcher
 
-Welcome to the Citeck Launcher repository!
+Citeck Launcher manages Citeck ECOS namespaces and Docker containers. It is a single Go binary (~14 MB) that serves as both CLI and daemon, with an embedded React Web UI.
 
-## Download
+## Quick Start
 
-Download the latest version from our [website](https://citeck.github.io/citeck-launcher/) or the [releases page](https://github.com/Citeck/citeck-launcher/releases).
+### Prerequisites
 
-## Dependencies
+- Docker (running)
 
-To run this application the following are needed:
+### Install
 
-* docker
-
-## Development
-
-To start the desktop application from source code:
+Download the latest binary from the [releases page](https://github.com/Citeck/citeck-launcher/releases), then run:
 
 ```bash
-./gradlew :app:run
+chmod +x citeck
+sudo mv citeck /usr/local/bin/
+
+# Interactive install wizard (creates config, optional systemd service)
+citeck install
 ```
 
-### Building for production
-
-Desktop application (GUI):
+### Start
 
 ```bash
-./gradlew :app:packageDist -PtargetOs=linux_x64
+# Foreground (for development or debugging)
+citeck start --foreground
+
+# As a systemd service (if installed via wizard)
+sudo systemctl start citeck
 ```
 
-Values for `targetOs`: `linux_x64`, `linux_arm64`, `macos_x64`, `macos_arm64`, `windows_x64`, `windows_arm64`
+The Web UI is available at `http://127.0.0.1:8088` by default.
 
-Output:
-- Linux: `app/build/compose/binaries/main/deb/`
-- macOS: `app/build/compose/binaries/main/dmg/`
-- Windows: `app/build/compose/binaries/main/msi/`
+## CLI Usage
 
-### Building CLI
+```
+citeck start [--foreground] [--no-ui]   Start daemon and namespace
+citeck stop                             Stop namespace and daemon
+citeck status [--watch]                 Show namespace status
+citeck health                           Health check (exit code 0/1)
+citeck reload                           Reload config and regenerate containers
+citeck logs <app> [--follow]            Stream app logs
+citeck exec <app> -- <command>          Execute command in container
+citeck restart <app>                    Restart an app
+citeck apply <file>                     Apply namespace config
+citeck diff                             Diff running config vs file
+citeck snapshot list|export|import      Manage volume snapshots
+citeck cert generate|list|revoke        Manage mTLS client certificates
+citeck diagnose                         Run diagnostics
+citeck config show|edit                 View/edit namespace config
+citeck completion bash|zsh|fish         Generate shell completion
+citeck install                          Interactive setup wizard
+citeck uninstall                        Remove systemd service and config
+```
 
-CLI tool (headless daemon for servers). See [cli/README.md](cli/README.md) for
-full documentation (commands, configuration, architecture, API).
+Global flags: `--host`, `--tls-cert`, `--tls-key`, `--server-cert`, `--insecure`, `--output json`.
+
+## Architecture
+
+### Go Daemon (`internal/`)
+
+| Package | Purpose |
+|---|---|
+| `cli/` | Cobra CLI commands |
+| `daemon/` | HTTP server, API routes, SSE events, middleware |
+| `namespace/` | Config parsing, container generator, runtime state machine, reconciler |
+| `docker/` | Docker SDK wrapper (containers, images, exec, logs, probes) |
+| `bundle/` | Bundle definitions and resolution from git repos |
+| `git/` | Git clone/pull via go-git (pure Go) |
+| `config/` | Filesystem paths, daemon config |
+| `storage/` | Store interface + FileStore (server) + SQLiteStore (desktop) |
+| `snapshot/` | Volume snapshot export/import |
+| `tlsutil/` | TLS cert utilities (self-signed, client cert, CA pool) |
+| `acme/` | ACME/Let's Encrypt client + auto-renewal |
+| `client/` | DaemonClient (Unix socket + mTLS TCP transport) |
+
+### Web UI (`web/`)
+
+React 19 + Vite + TypeScript + Tailwind CSS 4. Embedded into Go binary via `go:embed`.
+
+Pages: Dashboard, App Detail, Logs (virtual list), Config Editor, Volumes, Daemon Logs, Welcome, Wizard, Secrets, Diagnostics.
+
+### Entry Point
+
+`cmd/citeck/main.go`
+
+## Build from Source
 
 ```bash
-./gradlew :cli:dist
+# Full build (Go binary + React web UI)
+make build
+
+# Go only (skip web rebuild)
+make build-fast
+
+# Tests
+go test -race ./internal/...
+cd web && npx vitest run
+
+# Lint
+golangci-lint run
+cd web && npm run lint
 ```
 
-Output:
-- `cli/build/dist/citeck-cli-{version}-linux_x64.tar.gz`
-- `cli/build/dist/citeck-install.sh`
+Requires: Go 1.22+, Node.js 20+.
 
-## CLI (Server Mode)
+## Configuration
 
-Run Citeck on headless servers without a GUI.
-Full documentation: **[cli/README.md](cli/README.md)**
+### daemon.yml
 
-Quick start:
+Controls the daemon server. Located at `$CITECK_HOME/conf/daemon.yml`.
 
-```bash
-curl -fsSL https://github.com/Citeck/citeck-launcher/releases/latest/download/citeck-install.sh | sudo bash -s install
+```yaml
+server:
+  webui:
+    enabled: true
+    listen: "127.0.0.1:8088"    # 0.0.0.0 enables mTLS
+reconciler:
+  intervalSeconds: 30
+docker:
+  pullConcurrency: 3
 ```
 
-Commands:
+### namespace.yml
 
-| Command | Description |
-|---------|-------------|
-| `sudo citeck install` | Interactive setup wizard |
-| `sudo citeck uninstall` | Uninstall platform |
-| `citeck start [--foreground]` | Start platform (auto-starts daemon if needed) |
-| `citeck stop [--shutdown]` | Stop platform (`--shutdown` also stops daemon) |
-| `citeck status [--watch] [--apps]` | Show status (`--watch` streams events) |
-| `citeck reload` | Reload configuration from YAML files |
+Defines the ECOS namespace. Located at `$CITECK_HOME/conf/namespace.yml`.
 
-## Useful Links
+```yaml
+id: default
+name: My Namespace
+bundleRef: "community/2025.12"
+authentication:
+  type: BASIC                   # or KEYCLOAK
+  users: ["admin:admin"]
+proxy:
+  host: localhost
+  port: 443
+  tls:
+    enabled: false
+```
 
-- [Documentation](https://citeck-ecos.readthedocs.io/ru/latest/index.html) provides more in-depth information.
+## Security
 
-## Contributing
-
-We welcome contributions from the community to make Citeck even better. Everyone interacting in the Citeck project's codebases, issue trackers, chat rooms, and forum is expected to follow the [contributor code of conduct](https://github.com/rubygems/rubygems/blob/master/CODE_OF_CONDUCT.md).
-
-## Support
-
-If you need any assistance or have any questions regarding Citeck Launcher, please create an issue in this repository or reach out to our [support team](mailto:support@citeck.ru).
+- **Unix socket**: full access (CLI only)
+- **mTLS TCP** (non-localhost): full access, authenticated by client certificate
+- **Localhost TCP**: restricted routes + CSRF header (`X-Citeck-CSRF`) required for mutations
 
 ## License
 
-Citeck Launcher is released under the [GNU Lesser General Public License](LICENSE).
+See [LICENSE](LICENSE).

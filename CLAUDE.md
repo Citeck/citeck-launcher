@@ -252,7 +252,23 @@ Tested on remote server with community 2025.12 (clean deployment). Found and fix
 - **`PLAN-phase9.md`** — Phase 9 plan (COMPLETE, 12 issues)
 - **`PLAN-phase10.md`** — Phase 10 plan (COMPLETE, mTLS + production hardening, 25 issues)
 - **`PLAN-phase11.md`** — Phase 11 plan (COMPLETE, production readiness, 26 issues)
-- **`PLAN-phase12.md`** — Phase 12 plan (GA readiness: CSRF, stability, CLI, docs, UI polish)
+- **`PLAN-phase12.md`** — Phase 12 plan (COMPLETE, GA readiness, 23 issues)
+
+### Phase 12: GA Readiness — COMPLETE (2026-03-27)
+23 issues across 5 sub-phases + 3 code review passes (8 additional fixes).
+- 12a: CSRF + security — CSRFMiddleware (X-Citeck-CSRF header) on tcpMux, Web UI CSRF header on all POST/PUT/DELETE, ssrfSafeClient for downloadAndImportSnapshot, HTTP handler tests, two-mux boundary test
+- 12b: Stability — RecoveryMiddleware (panic → 500 + slog), Logs page 50K line ring buffer, SQLite schema versioning (schema_version table), DB chmod 0o600 after migrate, install wizard atomic config write
+- 12c: CLI + observability — shell completion (bash/zsh/fish/powershell), citeck_build_info Prometheus metric, error codes on ~15 high-value sites, daemon.log in system dump ZIP, runtime log level control (PUT /api/v1/daemon/loglevel, socket-only)
+- 12d: Documentation — README.md rewrite (Go binary), API reference (docs/api.md), config reference (docs/config.md), operator runbook (docs/operations.md)
+- 12e: UI polish — Dashboard loading skeleton, Welcome page error handling (show error + keep list), snapshot export SHA256 sidecar, namespace config apiVersion field
+
+### Key Technical Decisions (Phase 12)
+- CSRF via custom header (X-Citeck-CSRF) forces CORS preflight → preflight rejected for unknown origins → no body-free POST attacks
+- CSRF on tcpMux only; socket and mTLS don't need it (already authenticated)
+- RecoveryMiddleware outermost on TCP path (catches panics in all middleware layers)
+- SQLite schema versioning: sequential migrations with schema_version table; errors.Is(sql.ErrNoRows) for version check
+- slog.LevelVar for runtime log level control without daemon restart
+- MarshalNamespaceConfig shallow-copies config to avoid mutating live state
 
 ## CI/CD
 

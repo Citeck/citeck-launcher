@@ -69,6 +69,7 @@ type Daemon struct {
 	daemonCfg       config.DaemonConfig
 	eventSeq        atomic.Int64       // monotonic event sequence counter
 	logWriter       *fsutil.RotatingWriter
+	logLevel        *slog.LevelVar
 }
 
 // Start runs the daemon.
@@ -78,7 +79,8 @@ func Start(opts StartOptions) error {
 	os.MkdirAll(logDir, 0o755)
 	logPath := config.DaemonLogPath()
 	logWriter := fsutil.NewRotatingWriter(logPath, 50*1024*1024, 3)
-	logHandler := slog.NewTextHandler(io.MultiWriter(os.Stderr, logWriter), &slog.HandlerOptions{})
+	var logLevel slog.LevelVar // default INFO
+	logHandler := slog.NewTextHandler(io.MultiWriter(os.Stderr, logWriter), &slog.HandlerOptions{Level: &logLevel})
 	slog.SetDefault(slog.New(logHandler))
 
 	slog.Info("Starting daemon",
@@ -388,6 +390,7 @@ func Start(opts StartOptions) error {
 		bgCancel:        bgCancel,
 		daemonCfg:       daemonCfg,
 		logWriter:       logWriter,
+		logLevel:        &logLevel,
 	}
 
 	// Wire up event broadcasting
@@ -415,7 +418,7 @@ func Start(opts StartOptions) error {
 	tcpMux := http.NewServeMux()
 	d.registerRoutes(socketMux, tcpMux)
 	d.server = &http.Server{
-		Handler:        socketMux,
+		Handler:        RecoveryMiddleware(socketMux),
 		ReadTimeout:    30 * time.Second,
 		WriteTimeout:   30 * time.Second,
 		MaxHeaderBytes: 1 << 20, // 1MB
@@ -452,8 +455,13 @@ func Start(opts StartOptions) error {
 			}
 
 			var tcpHandler http.Handler = tcpBaseMux
+			// CSRF only for localhost TCP (unauthenticated); mTLS clients are already authenticated
+			if !mtlsActive {
+				tcpHandler = CSRFMiddleware(tcpHandler)
+			}
 			tcpHandler = RateLimitMiddleware(100, tcpHandler)
 			tcpHandler = LoggingMiddleware(tcpHandler)
+			tcpHandler = RecoveryMiddleware(tcpHandler)
 
 			if tcpListener != nil {
 				tcpHandler = CORSMiddleware(tcpHandler, tcpAddr)
@@ -716,6 +724,7 @@ func (d *Daemon) registerRoutes(socketMux, tcpMux *http.ServeMux) {
 	socketMux.HandleFunc("PUT /api/v1/apps/{name}/config", d.handlePutAppConfig)
 	socketMux.HandleFunc("PUT /api/v1/apps/{name}/files/{path...}", d.handlePutAppFile)
 	socketMux.HandleFunc("POST "+api.NamespaceReload, d.handleReloadNamespace)
+	socketMux.HandleFunc("PUT /api/v1/daemon/loglevel", d.handleSetLogLevel)
 
 	// --- Routes available on both muxes ---
 

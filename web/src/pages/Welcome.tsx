@@ -19,6 +19,7 @@ export function Welcome() {
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [deleteError, setDeleteError] = useState('')
   const [starting, setStarting] = useState(false)
+  const [startError, setStartError] = useState<string | null>(null)
   const navigate = useNavigate()
   const openTab = useTabsStore((s) => s.openTab)
   const fetchData = useDashboardStore((s) => s.fetchData)
@@ -47,12 +48,15 @@ export function Welcome() {
     if (ns.status === 'STOPPED' || ns.status === 'STALLED') {
       // Start the namespace, then navigate
       setStarting(true)
+      setStartError(null)
       try {
         await postNamespaceStart()
         await fetchData()
         startEventStream()
-      } catch {
-        // ignore — will show dashboard with current state
+      } catch (e) {
+        setStarting(false)
+        setStartError(e instanceof Error ? e.message : 'Failed to start namespace')
+        return
       }
       setStarting(false)
     } else {
@@ -103,6 +107,9 @@ export function Welcome() {
           <div className="text-center text-[#ef5350] text-sm py-4">Error: {loadError}</div>
         ) : (
           <>
+            {startError && (
+              <div className="text-center text-[#ef5350] text-sm py-2 mb-2">Start failed: {startError}</div>
+            )}
             {namespaces.map((ns) => (
               <div key={`${ns.workspaceId}:${ns.id}`} className="relative">
                 <button
