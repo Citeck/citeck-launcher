@@ -70,6 +70,14 @@ export function Config() {
 
   const hasChanges = editing && editText !== configText
 
+  // Warn before page unload when unsaved edits exist
+  useEffect(() => {
+    if (!hasChanges) return
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault() }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [hasChanges])
+
   return (
     <div className="space-y-6">
       <div>

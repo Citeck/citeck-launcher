@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -324,7 +325,11 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		if wsID == "" {
 			wsID = d.workspaceID
 		}
-		go d.downloadAndImportSnapshot(req.Snapshot, wsID, nsCfg.ID)
+		d.bgWg.Add(1)
+		go func() {
+			defer d.bgWg.Done()
+			d.downloadAndImportSnapshot(req.Snapshot, wsID, nsCfg.ID)
+		}()
 	}
 
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("namespace %q created", nsCfg.Name)})
@@ -726,6 +731,9 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
+	// Limit upload body to 2GB to prevent unbounded memory/disk usage
+	r.Body = http.MaxBytesReader(w, r.Body, 2<<30)
+
 	if !d.snapshotMu.TryLock() {
 		writeError(w, http.StatusConflict, "another snapshot operation is in progress")
 		return
@@ -824,8 +832,9 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 		})
 	}()
 
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	writeJSON(w, api.ActionResultDto{
+	json.NewEncoder(w).Encode(api.ActionResultDto{
 		Success: true,
 		Message: "Import started",
 	})

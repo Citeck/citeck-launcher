@@ -4,23 +4,17 @@ package tests
 
 import (
 	"encoding/json"
-	"os"
 	"testing"
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/client"
-	"github.com/citeck/citeck-launcher/internal/config"
 )
 
 func skipIfNoDaemon(t *testing.T) *client.DaemonClient {
 	t.Helper()
-	socketPath := config.SocketPath()
-	if _, err := os.Stat(socketPath); err != nil {
-		t.Skipf("daemon not running (no socket at %s)", socketPath)
-	}
-	c, err := client.New("", "")
+	c, err := client.New(client.ClientOptions{})
 	if err != nil {
-		t.Skipf("cannot connect to daemon: %v", err)
+		t.Skipf("daemon not running: %v", err)
 	}
 	return c
 }

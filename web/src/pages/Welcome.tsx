@@ -14,6 +14,7 @@ export function Welcome() {
   const [namespaces, setNamespaces] = useState<NamespaceSummaryDto[]>([])
   const [quickStarts, setQuickStarts] = useState<QuickStartDto[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<NamespaceSummaryDto | null>(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [deleteError, setDeleteError] = useState('')
@@ -34,8 +35,9 @@ export function Welcome() {
       const [ns, qs] = await Promise.all([getNamespaces(), getQuickStarts()])
       setNamespaces(ns)
       setQuickStarts(qs)
-    } catch {
-      // ignore
+      setLoadError(null)
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Failed to load data')
     } finally {
       setLoading(false)
     }
@@ -97,6 +99,8 @@ export function Welcome() {
       <div className="w-full max-w-md flex flex-col gap-3">
         {loading ? (
           <div className="text-center text-muted-foreground text-sm py-4">Loading...</div>
+        ) : loadError ? (
+          <div className="text-center text-[#ef5350] text-sm py-4">Error: {loadError}</div>
         ) : (
           <>
             {namespaces.map((ns) => (

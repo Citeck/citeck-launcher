@@ -38,7 +38,7 @@ cd web && npm run lint        # Web linter
 | `internal/config/` | Filesystem paths, daemon config (daemon.yml), workspace dir scanner |
 | `internal/storage/` | Store interface + FileStore (server) + SQLiteStore (desktop) |
 | `internal/h2migrate/` | H2 MVStore read-only parser, LZF decompressor, H2→SQLite migration |
-| `internal/client/` | DaemonClient (Unix socket + TCP transport) |
+| `internal/client/` | DaemonClient (Unix socket + mTLS TCP transport) |
 | `internal/output/` | Text/JSON output formatter, tables, colors |
 | `internal/api/` | Shared API types (DTOs), path constants |
 | `internal/appdef/` | Application definition models (ApplicationDef, ApplicationKind) |
@@ -46,6 +46,9 @@ cd web && npm run lint        # Web linter
 | `internal/actions/` | Namespace lifecycle actions (pull, start, stop executors) |
 | `internal/form/` | Form field specs, built-in field definitions, validation |
 | `internal/snapshot/` | Volume snapshot export/import (ZIP + tar.xz) |
+| `internal/tlsutil/` | TLS cert utilities (self-signed, client cert, CA pool loader) |
+| `internal/fsutil/` | Atomic file write (temp+fsync+rename) |
+| `internal/acme/` | ACME/Let's Encrypt client + auto-renewal service |
 | `internal/namespace/nsactions/` | Action executors wired to Docker + runtime |
 
 ### Web UI (`web/`)
@@ -150,7 +153,7 @@ Tested on remote server (community 2025.12). 13 gaps found and fixed:
 - Unified GetHash/GetHashInput; JWTSecret generated per-instance
 - Let's Encrypt: full ACME integration + IP cert via shortlived profile + auto-renewal
 - HTTPS scheme for external hosts without local TLS (reverse proxy assumed)
-- Snapshot CLI (list/export/import), `citeck start` delegates to running daemon
+- Snapshot CLI (list/export/import), `citeck start` delegates to running daemon via Unix socket
 
 ### Phase 7: Production Hardening — COMPLETE (2026-03-26)
 37 issues fixed across 3 sub-phases + 2 review passes (15 additional fixes).
@@ -162,7 +165,7 @@ ACME renewal tests, network orphan cleanup, self-signed cert auto-generation.
 57 issues across 4 sub-phases (8a–8d). 2 code review passes (15 additional fixes).
 
 ### Server Deployment Testing Round 2 — COMPLETE (2026-03-26)
-Tested on remote server with community 2026.1. Found and fixed:
+Tested on remote server with community 2025.12 (second round). Found and fixed:
 - JWT secret size (32→64 bytes for HS512 compatibility)
 - TLS cert stale directory detection and root cause fix (docker/client.go parent dir creation)
 - ACME cert hostname mismatch on host change (CertMatchesHost with expiry check)
@@ -176,9 +179,17 @@ Tested on remote server with community 2026.1. Found and fixed:
 - 9b: Security — snapshot input validation, log memory limit
 - 9c: Concurrency — reconciler 3-phase lock, timeouts, ACME rate limit, OIDC secret
 
+### Phase 10: mTLS for Web UI + Production Hardening — COMPLETE (2026-03-27)
+25 issues across 5 sub-phases + 2 code review passes.
+- 10a: P0 shutdown safety — appWg/reconcileWg wait before close(eventCh), bgWg tracking for snapshot download
+- 10b: mTLS infrastructure — GenerateClientCert, LoadCACertPool, atomic selfcert, WebUICADir/WebUITLSDir paths, cert CLI (generate/list/revoke)
+- 10c: mTLS server+client — tls.RequireAndVerifyClientCert for non-localhost, dynamic cert pool reload via GetConfigForClient, CLI --tls-cert/--tls-key/--server-cert/--insecure flags, install wizard auto-generates client cert
+- 10d: P1 bugs — channel-based waitForDeps (replaces statusCond), StopApp re-lookup, RestartApp timeout context, phased doShutdown, ACME server timeouts, snapshot vol.Name sanitization, rate limiter reduced to 1000 entries
+- 10e: P2 fixes — fsutil.AtomicWriteFile for config, MaxBytesReader for snapshot upload, blocking Stop via stopCh, WaitForContainerExit pre-check, system dump through struct marshal, Logs.tsx debounced search, Welcome.tsx error state, SSE backoff reset on open, Config.tsx beforeunload
+
 ### Key Technical Decisions
 - SSE (not WebSocket) for real-time events
-- TCP bound to 127.0.0.1 (security)
+- TCP bound to 127.0.0.1 by default; non-localhost requires mTLS (client certs in webui-ca/, dynamic pool reload)
 - stdcopy.StdCopy for Docker log demuxing
 - Namespace-scoped volume operations (bind-mounts, not Docker named volumes)
 - Two storage backends: flat files (server) / SQLite (desktop)
@@ -198,10 +209,29 @@ Tested on remote server with community 2026.1. Found and fixed:
 - Reconciler: exponential backoff retry for failed apps (1m → 30m max)
 - Config validation at parse time (port range, TLS host, LE host, auth users)
 
+### Server Deployment Testing Round 3 — COMPLETE (2026-03-27)
+Tested on remote server with community 2025.12 (clean deployment). Found and fixed:
+- Stale Unix socket detection: `DetectTransport` now dials socket instead of `os.Stat` (client/transport.go)
+- `citeck start --foreground` no longer fails when stale socket exists
+- All 19 services start correctly (BASIC and Keycloak auth modes)
+- Host switching (launcher2.sipaha.ru ↔ launcher.sipaha.ru) with automatic LE cert obtainment
+- Snapshot export/import cycle verified
+- Playwright browser testing: HTTPS + Keycloak OIDC login + full dashboard
+
+### Key Technical Decisions (Phase 10)
+- mTLS for non-localhost Web UI: self-signed client certs in `conf/webui-ca/`, server cert in `conf/webui-tls/`
+- Dynamic cert pool reload via `tls.Config.GetConfigForClient` (no daemon restart on cert add/revoke)
+- CLI `--tls-cert/--tls-key/--server-cert/--insecure` flags; auto-discover from env vars and local confdir
+- Channel-based `statusNotify` (replaces `sync.Cond` — eliminates lock inversion in `waitForDeps`)
+- Dedicated `stopCh` (buffered 1) for stop signal — cannot be dropped unlike `cmdCh` send
+- Token auth removed entirely — mTLS is the only auth mechanism for non-localhost
+
 ### Other References
 - **`PROGRESS.md`** — tracks completed work (historical)
 - **`PLAN-phase8.md`** — Phase 8 plan (COMPLETE, 57 issues)
 - **`PLAN-phase9.md`** — Phase 9 plan (COMPLETE, 12 issues)
+- **`PLAN-phase10.md`** — Phase 10 plan (COMPLETE, mTLS + production hardening, 25 issues)
+- **`PLAN-phase11.md`** — Phase 11 plan (production readiness, 26 issues)
 
 ## CI/CD
 

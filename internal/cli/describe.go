@@ -17,7 +17,7 @@ func newDescribeCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			appName := args[0]
 
-			c, err := client.New(flagHost, flagToken)
+			c, err := client.New(clientOpts())
 			if err != nil {
 				return err
 			}

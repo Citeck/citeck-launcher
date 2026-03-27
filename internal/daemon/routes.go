@@ -21,9 +21,10 @@ import (
 	"github.com/citeck/citeck-launcher/internal/appfiles"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/docker/docker/pkg/stdcopy"
-	"github.com/citeck/citeck-launcher/internal/config"
-	"github.com/citeck/citeck-launcher/internal/namespace"
 	"gopkg.in/yaml.v3"
+	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/fsutil"
+	"github.com/citeck/citeck-launcher/internal/namespace"
 )
 
 func (d *Daemon) handleDaemonStatus(w http.ResponseWriter, r *http.Request) {
@@ -437,21 +438,7 @@ func (d *Daemon) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Atomic write: temp file + rename to prevent corruption on crash
-	tmpFile, err := os.CreateTemp(filepath.Dir(cfgPath), ".namespace-*.yml")
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create temp file: %s", err.Error()))
-		return
-	}
-	if _, err := tmpFile.Write(body); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpFile.Name())
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to write config: %s", err.Error()))
-		return
-	}
-	tmpFile.Close()
-	if err := os.Rename(tmpFile.Name(), cfgPath); err != nil {
-		os.Remove(tmpFile.Name())
+	if err := fsutil.AtomicWriteFile(cfgPath, body, 0o600); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to save config: %s", err.Error()))
 		return
 	}
@@ -604,19 +591,17 @@ func (d *Daemon) writeSystemDumpZip(w http.ResponseWriter, ctx context.Context, 
 		}
 	}
 
-	// namespace.yml
+	// namespace.yml — marshal through struct to avoid leaking raw file with any sensitive data
 	if d.nsConfig != nil {
-		nsPath := d.activeConfigPath()
-		if data, err := os.ReadFile(nsPath); err == nil {
+		if data, err := namespace.MarshalNamespaceConfig(d.nsConfig); err == nil {
 			if fw, err := zw.Create("namespace.yml"); err == nil {
 				fw.Write(data)
 			}
 		}
 	}
 
-	// daemon.yml
-	daemonPath := config.DaemonConfigPath()
-	if data, err := os.ReadFile(daemonPath); err == nil {
+	// daemon.yml — marshal through struct for consistency
+	if data, err := yaml.Marshal(d.daemonCfg); err == nil {
 		if fw, err := zw.Create("daemon.yml"); err == nil {
 			fw.Write(data)
 		}

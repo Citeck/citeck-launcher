@@ -54,7 +54,7 @@ func newApplyCmd() *cobra.Command {
 				return nil
 			}
 
-			c, err := client.New(flagHost, flagToken)
+			c, err := client.New(clientOpts())
 			if err != nil {
 				return fmt.Errorf("connect to daemon: %w", err)
 			}
@@ -203,7 +203,7 @@ func newDiffCmd() *cobra.Command {
 		Use:   "diff",
 		Short: "Show pending configuration changes",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := client.New(flagHost, flagToken)
+			c, err := client.New(clientOpts())
 			if err != nil {
 				return fmt.Errorf("connect to daemon: %w", err)
 			}
@@ -268,7 +268,7 @@ func newWaitCmd() *cobra.Command {
 		Short: "Wait for a condition",
 		Long:  "Block until a condition is met. Like kubectl wait.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := client.New(flagHost, flagToken)
+			c, err := client.New(clientOpts())
 			if err != nil {
 				return err
 			}

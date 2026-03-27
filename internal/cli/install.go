@@ -204,6 +204,40 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	}
 	output.PrintText("\nNamespace config written to: %s", nsCfgPath)
 
+	// 10. Remote Web UI access
+	remoteUI := promptYesNo(scanner, "\nEnable remote Web UI access (listen on 0.0.0.0)?", false)
+	if remoteUI {
+		daemonCfg := config.DefaultDaemonConfig()
+		daemonCfg.Server.WebUI.Listen = fmt.Sprintf("0.0.0.0:%d", 8088)
+		if err := config.SaveDaemonConfig(daemonCfg); err != nil {
+			return fmt.Errorf("save daemon config: %w", err)
+		}
+		output.PrintText("daemon.yml written with listen: %s", daemonCfg.Server.WebUI.Listen)
+
+		// Auto-generate first client cert for mTLS
+		output.PrintText("\nGenerating mTLS client certificate for remote access...")
+		certPath := filepath.Join(config.WebUICADir(), "admin.crt")
+		certPEM, keyPEM, err := tlsutil.GenerateClientCert(certPath, "admin", 365)
+		if err != nil {
+			output.PrintText("Warning: failed to generate client cert: %v", err)
+		} else {
+			output.PrintText("Certificate saved to: %s", certPath)
+			output.PrintText("")
+			output.PrintText("=== PRIVATE KEY (save this — it will NOT be shown again) ===")
+			output.PrintText("%s", strings.TrimSpace(string(keyPEM)))
+			output.PrintText("")
+			output.PrintText("=== CERTIFICATE ===")
+			output.PrintText("%s", strings.TrimSpace(string(certPEM)))
+			output.PrintText("")
+			output.PrintText("To create PKCS12 for browser import, save the key above to a file, then:")
+			output.PrintText("  openssl pkcs12 -export -in %s -inkey <key-file> -out admin.p12", certPath)
+			output.PrintText("")
+			output.PrintText("For CLI access from a remote machine, copy the server cert after first start:")
+			output.PrintText("  scp server:%s ./server.crt", filepath.Join(config.WebUITLSDir(), "server.crt"))
+			output.PrintText("  citeck --host <server>:8088 --tls-cert admin.crt --tls-key admin.key --server-cert server.crt status")
+		}
+	}
+
 	// Systemd + Firewall
 	setupSystemd(scanner)
 	setupFirewall(scanner, port)

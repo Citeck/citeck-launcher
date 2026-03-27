@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	acmeLib "github.com/citeck/citeck-launcher/internal/acme"
@@ -23,7 +24,13 @@ func newCertCmd() *cobra.Command {
 		Use:   "cert",
 		Short: "Manage TLS certificates",
 	}
-	cmd.AddCommand(newCertStatusCmd(), newCertGenerateCmd(), newCertLetsEncryptCmd())
+	cmd.AddCommand(
+		newCertStatusCmd(),
+		newCertGenerateCmd(),
+		newCertListCmd(),
+		newCertRevokeCmd(),
+		newCertLetsEncryptCmd(),
+	)
 	return cmd
 }
 
@@ -64,14 +71,14 @@ func newCertStatusCmd() *cobra.Command {
 			daysLeft := int(time.Until(cert.NotAfter).Hours() / 24)
 
 			result := map[string]any{
-				"subject":    cert.Subject.CommonName,
-				"issuer":     cert.Issuer.CommonName,
-				"notBefore":  cert.NotBefore.Format(time.RFC3339),
-				"notAfter":   cert.NotAfter.Format(time.RFC3339),
-				"daysLeft":   daysLeft,
-				"dnsNames":   cert.DNSNames,
+				"subject":     cert.Subject.CommonName,
+				"issuer":      cert.Issuer.CommonName,
+				"notBefore":   cert.NotBefore.Format(time.RFC3339),
+				"notAfter":    cert.NotAfter.Format(time.RFC3339),
+				"daysLeft":    daysLeft,
+				"dnsNames":    cert.DNSNames,
 				"ipAddresses": cert.IPAddresses,
-				"selfSigned": cert.Issuer.CommonName == cert.Subject.CommonName,
+				"selfSigned":  cert.Issuer.CommonName == cert.Subject.CommonName,
 			}
 
 			output.PrintResult(result, func() {
@@ -96,42 +103,202 @@ func newCertStatusCmd() *cobra.Command {
 }
 
 func newCertGenerateCmd() *cobra.Command {
+	var name string
 	var hosts []string
 	var days int
 
 	cmd := &cobra.Command{
 		Use:   "generate",
-		Short: "Generate self-signed TLS certificate",
+		Short: "Generate TLS certificate (--name for mTLS client cert, --host for server cert)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(hosts) == 0 {
-				hosts = []string{"localhost"}
+			if name != "" {
+				return generateClientCert(name, days)
+			}
+			return generateServerCert(hosts, days)
+		},
+	}
+
+	cmd.Flags().StringVar(&name, "name", "", "Client cert name (generates mTLS client certificate)")
+	cmd.Flags().StringSliceVar(&hosts, "host", nil, "Hostnames and IPs for server certificate")
+	cmd.Flags().IntVar(&days, "days", 365, "Certificate validity in days")
+
+	return cmd
+}
+
+func validateCertName(name string) error {
+	if name == "" {
+		return fmt.Errorf("--name is required")
+	}
+	if strings.ContainsAny(name, `/\`) || name == ".." || strings.Contains(name, "..") {
+		return fmt.Errorf("invalid certificate name %q: must not contain path separators or '..'", name)
+	}
+	return nil
+}
+
+func generateClientCert(name string, days int) error {
+	if err := validateCertName(name); err != nil {
+		return err
+	}
+
+	certPath := filepath.Join(config.WebUICADir(), name+".crt")
+
+	certPEM, keyPEM, err := tlsutil.GenerateClientCert(certPath, name, days)
+	if err != nil {
+		return err
+	}
+
+	output.PrintResult(map[string]any{
+		"name":     name,
+		"certPath": certPath,
+	}, func() {
+		output.PrintText("Client certificate generated for %q", name)
+		output.PrintText("")
+		output.PrintText("Certificate saved to: %s", certPath)
+		output.PrintText("")
+		output.PrintText("=== PRIVATE KEY (save this — it will NOT be shown again) ===")
+		output.PrintText("%s", strings.TrimSpace(string(keyPEM)))
+		output.PrintText("")
+		output.PrintText("=== CERTIFICATE ===")
+		output.PrintText("%s", strings.TrimSpace(string(certPEM)))
+		output.PrintText("")
+		output.PrintText("To create PKCS12 for browser import, save the key above to a file, then:")
+		output.PrintText("  openssl pkcs12 -export -in %s -inkey <key-file> -out %s.p12", certPath, name)
+	})
+	return nil
+}
+
+func generateServerCert(hosts []string, days int) error {
+	if len(hosts) == 0 {
+		hosts = []string{"localhost"}
+	}
+
+	tlsDir := filepath.Join(config.ConfDir(), "tls")
+	if err := os.MkdirAll(tlsDir, 0o755); err != nil {
+		return err
+	}
+
+	certPath := filepath.Join(tlsDir, "server.crt")
+	keyPath := filepath.Join(tlsDir, "server.key")
+
+	if err := tlsutil.GenerateSelfSignedCert(certPath, keyPath, hosts, days); err != nil {
+		return err
+	}
+
+	output.PrintResult(map[string]string{"certPath": certPath, "keyPath": keyPath}, func() {
+		output.PrintText("Certificate generated:")
+		output.PrintText("  Cert: %s", certPath)
+		output.PrintText("  Key:  %s", keyPath)
+		output.PrintText("  Hosts: %v", hosts)
+		output.PrintText("  Valid: %d days", days)
+	})
+	return nil
+}
+
+func newCertListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List trusted client certificates (mTLS)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			caDir := config.WebUICADir()
+			entries, err := os.ReadDir(caDir)
+			if err != nil {
+				if os.IsNotExist(err) {
+					output.PrintText("No client certificates found in %s", caDir)
+					return nil
+				}
+				return fmt.Errorf("read CA dir: %w", err)
 			}
 
-			tlsDir := filepath.Join(config.ConfDir(), "tls")
-			if err := os.MkdirAll(tlsDir, 0o755); err != nil {
+			type certInfo struct {
+				Name    string `json:"name"`
+				CN      string `json:"cn"`
+				Expires string `json:"expires"`
+				Days    int    `json:"daysLeft"`
+			}
+			var certs []certInfo
+
+			for _, entry := range entries {
+				if entry.IsDir() {
+					continue
+				}
+				ext := strings.ToLower(filepath.Ext(entry.Name()))
+				if ext != ".crt" && ext != ".pem" {
+					continue
+				}
+
+				data, err := os.ReadFile(filepath.Join(caDir, entry.Name()))
+				if err != nil {
+					continue
+				}
+				block, _ := pem.Decode(data)
+				if block == nil {
+					continue
+				}
+				cert, err := x509.ParseCertificate(block.Bytes)
+				if err != nil {
+					continue
+				}
+
+				daysLeft := int(time.Until(cert.NotAfter).Hours() / 24)
+				certs = append(certs, certInfo{
+					Name:    strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name())),
+					CN:      cert.Subject.CommonName,
+					Expires: cert.NotAfter.Format("2006-01-02"),
+					Days:    daysLeft,
+				})
+			}
+
+			if len(certs) == 0 {
+				output.PrintText("No client certificates found in %s", caDir)
+				return nil
+			}
+
+			output.PrintResult(certs, func() {
+				output.PrintText("%-20s %-20s %-12s %s", "NAME", "CN", "EXPIRES", "DAYS LEFT")
+				for _, c := range certs {
+					daysStr := fmt.Sprintf("%d", c.Days)
+					if c.Days <= 0 {
+						daysStr = output.Colorize(output.Red, "EXPIRED")
+					} else if c.Days <= 30 {
+						daysStr = output.Colorize(output.Yellow, daysStr)
+					}
+					output.PrintText("%-20s %-20s %-12s %s", c.Name, c.CN, c.Expires, daysStr)
+				}
+			})
+			return nil
+		},
+	}
+}
+
+func newCertRevokeCmd() *cobra.Command {
+	var name string
+
+	cmd := &cobra.Command{
+		Use:   "revoke",
+		Short: "Revoke a client certificate (remove from trusted list)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateCertName(name); err != nil {
 				return err
 			}
 
-			certPath := filepath.Join(tlsDir, "server.crt")
-			keyPath := filepath.Join(tlsDir, "server.key")
-
-			if err := tlsutil.GenerateSelfSignedCert(certPath, keyPath, hosts, days); err != nil {
-				return err
+			certPath := filepath.Join(config.WebUICADir(), name+".crt")
+			if _, err := os.Stat(certPath); os.IsNotExist(err) {
+				return fmt.Errorf("client cert %q not found at %s", name, certPath)
 			}
 
-			output.PrintResult(map[string]string{"certPath": certPath, "keyPath": keyPath}, func() {
-				output.PrintText("Certificate generated:")
-				output.PrintText("  Cert: %s", certPath)
-				output.PrintText("  Key:  %s", keyPath)
-				output.PrintText("  Hosts: %v", hosts)
-				output.PrintText("  Valid: %d days", days)
+			if err := os.Remove(certPath); err != nil {
+				return fmt.Errorf("remove cert: %w", err)
+			}
+
+			output.PrintResult(map[string]string{"name": name, "status": "revoked"}, func() {
+				output.PrintText("Client certificate %q revoked (removed from %s)", name, config.WebUICADir())
 			})
 			return nil
 		},
 	}
 
-	cmd.Flags().StringSliceVar(&hosts, "host", nil, "Hostnames and IPs for the certificate")
-	cmd.Flags().IntVar(&days, "days", 365, "Certificate validity in days")
+	cmd.Flags().StringVar(&name, "name", "", "Name of the client cert to revoke")
+	_ = cmd.MarkFlagRequired("name")
 
 	return cmd
 }
@@ -204,4 +371,3 @@ func newCertLetsEncryptCmd() *cobra.Command {
 	cmd.Flags().StringVar(&host, "host", "", "Hostname for the certificate")
 	return cmd
 }
-

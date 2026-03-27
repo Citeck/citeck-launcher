@@ -18,7 +18,6 @@ type DaemonConfig struct {
 // ServerConfig holds server-level settings.
 type ServerConfig struct {
 	WebUI WebUIConfig `yaml:"webui" json:"webui"`
-	Token string      `yaml:"token,omitempty" json:"token,omitempty"` // auth token for TCP connections
 }
 
 // WebUIConfig controls the embedded web UI.

@@ -18,7 +18,7 @@ func newStartCmd(version string) *cobra.Command {
 		Short: "Start the daemon and namespace",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// If daemon is already running, send namespace start command
-			if c := client.TryNew(flagHost, flagToken); c != nil {
+			if c := client.TryNew(clientOpts()); c != nil {
 				defer c.Close()
 				result, err := c.StartNamespace()
 				if err != nil {

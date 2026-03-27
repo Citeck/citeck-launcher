@@ -3,10 +3,10 @@
 ## Current State
 
 **Binary:** 14MB single Go binary with embedded React web UI
-**CLI commands:** 24 total, all support `-o json`
+**CLI commands:** 24 total (token cmd removed), all support `-o json`
 **Web UI:** 10 pages, 18 API endpoints, Darcula/Lens dark theme + light theme
 **Tests:** 72+ Go unit + 4 ACME renewal + 13 Vitest component + Playwright E2E
-**All 5 test configs pass** from clean start with full browser verification
+**Auth:** mTLS for non-localhost Web UI access, no token auth
 
 ## Completed Phases
 
@@ -32,7 +32,10 @@
 | Phase 7 | Production hardening (37 issues + 15 review fixes) | 2026-03-26 |
 | Phase 8 | Production-grade hardening (57 issues, 4 sub-phases) | 2026-03-26 |
 | Server test 2 | Deployment testing round 2 (5 bugs + 9 review issues fixed) | 2026-03-26 |
+| Phase 9 | Atomic writes, security, concurrency (12 issues) | 2026-03-27 |
+| Server test 3 | Clean deployment, host switching, snapshot cycle | 2026-03-27 |
+| Phase 10 | mTLS + production hardening (25 issues, 5 sub-phases) | 2026-03-27 |
 
-## Next: Phase 9
+## Next: Phase 11
 
-See `PLAN-phase9.md` — 12 issues across 3 sub-phases (atomic writes, security, concurrency).
+See `PLAN-phase11.md` — Production readiness (26 issues, 5 sub-phases: P0 security, HTTP hardening, reliability/perf, observability, remaining).

@@ -4,20 +4,38 @@ import (
 	"errors"
 	"os"
 
+	"github.com/citeck/citeck-launcher/internal/client"
 	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/spf13/cobra"
 )
 
+// clientOpts returns ClientOptions from the global CLI flags.
+func clientOpts() client.ClientOptions {
+	return client.ClientOptions{
+		Host:       flagHost,
+		TLSCert:    flagTLSCert,
+		TLSKey:     flagTLSKey,
+		ServerCert: flagServerCert,
+		Insecure:   flagInsecure,
+	}
+}
+
 var (
-	flagOutput string
-	flagHost   string
-	flagToken  string
-	flagYes    bool
+	flagOutput     string
+	flagHost       string
+	flagYes        bool
+	flagTLSCert    string
+	flagTLSKey     string
+	flagServerCert string
+	flagInsecure   bool
 )
 
-func Host() string  { return flagHost }
-func Token() string { return flagToken }
-func Yes() bool     { return flagYes }
+func Host() string       { return flagHost }
+func TLSCert() string    { return flagTLSCert }
+func TLSKey() string     { return flagTLSKey }
+func ServerCert() string { return flagServerCert }
+func Insecure() bool     { return flagInsecure }
+func Yes() bool          { return flagYes }
 
 // BuildInfo holds version metadata injected via ldflags.
 type BuildInfo struct {
@@ -42,7 +60,10 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 
 	root.PersistentFlags().StringVarP(&flagOutput, "output", "o", "text", "Output format: text or json")
 	root.PersistentFlags().StringVar(&flagHost, "host", "", "Remote daemon host:port")
-	root.PersistentFlags().StringVar(&flagToken, "token", "", "Auth token for remote connections")
+	root.PersistentFlags().StringVar(&flagTLSCert, "tls-cert", "", "Client certificate for mTLS")
+	root.PersistentFlags().StringVar(&flagTLSKey, "tls-key", "", "Client private key for mTLS")
+	root.PersistentFlags().StringVar(&flagServerCert, "server-cert", "", "Pin server certificate (adds to TLS roots)")
+	root.PersistentFlags().BoolVar(&flagInsecure, "insecure", false, "Skip server certificate verification")
 	root.PersistentFlags().BoolVar(&flagYes, "yes", false, "Skip confirmation prompts")
 
 	root.AddCommand(
@@ -61,7 +82,6 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 		newLogsCmd(),
 		newExecCmd(),
 		newRestartCmd(),
-		newTokenCmd(),
 		newCertCmd(),
 		newCleanCmd(),
 		newMigrateCmd(),

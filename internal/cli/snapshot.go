@@ -29,7 +29,7 @@ func newSnapshotListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List available snapshots",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := client.New(flagHost, flagToken)
+			c, err := client.New(clientOpts())
 			if err != nil {
 				return err
 			}
@@ -62,7 +62,7 @@ func newSnapshotExportCmd() *cobra.Command {
 		Use:   "export",
 		Short: "Export namespace volumes to a snapshot (namespace must be stopped)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := client.New(flagHost, flagToken)
+			c, err := client.New(clientOpts())
 			if err != nil {
 				return err
 			}
@@ -84,7 +84,7 @@ func newSnapshotImportCmd() *cobra.Command {
 		Short: "Import a snapshot into namespace volumes (namespace must be stopped)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := client.New(flagHost, flagToken)
+			c, err := client.New(clientOpts())
 			if err != nil {
 				return err
 			}

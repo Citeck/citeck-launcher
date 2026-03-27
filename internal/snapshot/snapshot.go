@@ -424,6 +424,9 @@ func validateVolumeSnapshotMeta(vol VolumeSnapshotMeta) error {
 	if vol.Name == "" || filepath.Base(vol.Name) != vol.Name {
 		return fmt.Errorf("invalid volume name in snapshot: %q", vol.Name)
 	}
+	if sanitizeFileName(vol.Name) != vol.Name {
+		return fmt.Errorf("volume name contains unsafe characters: %q", vol.Name)
+	}
 	if vol.DataFile == "" || filepath.Base(vol.DataFile) != vol.DataFile {
 		return fmt.Errorf("invalid dataFile in snapshot: %q", vol.DataFile)
 	}

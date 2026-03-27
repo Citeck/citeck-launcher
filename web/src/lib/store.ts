@@ -43,7 +43,6 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
 
     const stream = connectEvents(
       () => {
-        set({ reconnectDelay: 1000 }) // reset backoff on successful event
         get().fetchData()
       },
       () => {
@@ -56,6 +55,9 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
             get().startEventStream()
           }
         }, delay)
+      },
+      () => {
+        set({ reconnectDelay: 1000 }) // reset backoff on successful connection open
       },
     )
     set({ stream })

@@ -92,8 +92,9 @@ type Runtime struct {
 	dependsOnDetachedApps  map[string]bool                  // detached apps that trigger regen on restart
 	lastApps               []appdef.ApplicationDef          // last app defs passed to doStart
 	retryState             map[string]retryInfo             // retry tracking for failed apps
-	statusCond             *sync.Cond                       // signaled on every app status change
+	statusNotify           chan struct{}                     // closed+recreated on every app status change
 	cmdCh              chan command
+	stopCh             chan struct{}       // dedicated stop signal that can't be dropped
 	pullSem            chan struct{}       // limits concurrent image pulls
 	reconcilerCfg      *ReconcilerConfig  // optional override from daemon.yml
 	shutdownOnce       sync.Once
@@ -245,7 +246,6 @@ type commandType int
 
 const (
 	cmdStart commandType = iota
-	cmdStop
 	cmdRegenerate
 )
 
@@ -280,8 +280,9 @@ func NewRuntimeWithActions(cfg *NamespaceConfig, dockerClient *docker.Client, wo
 		manualStoppedApps: make(map[string]bool),
 		editedApps:        make(map[string]appdef.ApplicationDef),
 		editedLockedApps:  make(map[string]bool),
-		statusCond:        sync.NewCond(&sync.Mutex{}),
+		statusNotify:      make(chan struct{}),
 		cmdCh:             make(chan command, 16),
+		stopCh:            make(chan struct{}, 1),
 		pullSem:           make(chan struct{}, 4),
 		eventCh:           make(chan api.EventDto, 256),
 	}
@@ -433,9 +434,9 @@ func (r *Runtime) Start(apps []appdef.ApplicationDef) {
 
 func (r *Runtime) Stop() {
 	select {
-	case r.cmdCh <- command{typ: cmdStop}:
+	case r.stopCh <- struct{}{}:
 	default:
-		slog.Warn("Stop command dropped (channel full)")
+		// Already signaled
 	}
 }
 
@@ -445,6 +446,11 @@ func (r *Runtime) Shutdown() {
 			r.Stop()
 			r.wg.Wait()
 		}
+		// Wait for all app/reconciler goroutines to finish before closing eventCh.
+		// doStop already waits, but this is a belt-and-suspenders guard in case
+		// Shutdown is called after running was already cleared.
+		r.appWg.Wait()
+		r.reconcileWg.Wait()
 		close(r.eventCh) // stops dispatchLoop
 		if r.ownsActions {
 			r.actionSvc.Shutdown()
@@ -501,8 +507,11 @@ func (r *Runtime) StopApp(appName string) error {
 	}
 
 	r.mu.Lock()
-	app.ContainerID = ""
-	r.setAppStatus(app, AppStatusStopped)
+	// Re-lookup app after releasing lock — the map may have changed during the Docker call
+	if app, ok = r.apps[appName]; ok {
+		app.ContainerID = ""
+		r.setAppStatus(app, AppStatusStopped)
+	}
 	r.manualStoppedApps[appName] = true
 	r.persistState()
 	r.mu.Unlock()
@@ -556,15 +565,18 @@ func (r *Runtime) RestartApp(appName string) error {
 	hasContainer := app.ContainerID != ""
 	r.mu.Unlock()
 
-	// Use runtime context so restarts are cancelled on shutdown
+	// Use a fresh timeout context for the Docker stop — not runCtx which gets
+	// cancelled on shutdown (would abort the stop mid-way).
 	r.mu.RLock()
-	ctx := r.runCtx
+	running := r.runCtx != nil
 	r.mu.RUnlock()
-	if ctx == nil {
+	if !running {
 		return fmt.Errorf("runtime not started, cannot restart app %q", appName)
 	}
 	if hasContainer {
-		_ = r.docker.StopAndRemoveContainer(ctx, containerName, 0)
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		_ = r.docker.StopAndRemoveContainer(stopCtx, containerName, 0)
+		stopCancel()
 	}
 
 	r.mu.Lock()
@@ -591,9 +603,12 @@ func (r *Runtime) RestartApp(appName string) error {
 		return nil
 	}
 
-	// Re-start in background
+	// Re-start in background using runCtx for the new container lifecycle
+	r.mu.RLock()
+	runCtx := r.runCtx
+	r.mu.RUnlock()
 	r.appWg.Add(1)
-	go r.restartApp(ctx, appName)
+	go r.restartApp(runCtx, appName)
 	return nil
 }
 
@@ -677,7 +692,8 @@ func (r *Runtime) setAppStatus(app *AppRuntime, s AppRuntimeStatus) {
 		NamespaceID: r.nsID, AppName: app.Name, Before: string(old), After: string(s),
 	})
 	// Wake all goroutines waiting for dependency status changes
-	r.statusCond.Broadcast()
+	close(r.statusNotify)
+	r.statusNotify = make(chan struct{})
 }
 
 func (r *Runtime) runLoop() {
@@ -694,12 +710,12 @@ func (r *Runtime) runLoop() {
 			switch cmd.typ {
 			case cmdStart:
 				r.doStart(cmd.apps)
-			case cmdStop:
-				r.doStop()
-				return
 			case cmdRegenerate:
 				r.doRegenerate(cmd.apps)
 			}
+		case <-r.stopCh:
+			r.doStop()
+			return
 		case <-ticker.C:
 			if r.statsRunning.CompareAndSwap(false, true) {
 				go func() {
@@ -1016,24 +1032,7 @@ func (r *Runtime) waitForDeps(ctx context.Context, appName string) bool {
 	r.setAppStatus(app, AppStatusDepsWaiting)
 	r.mu.Unlock()
 
-	// Use statusCond to wake instantly when any app status changes (instead of polling)
-	// Run a background goroutine to signal the Cond when ctx is cancelled
-	done := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			r.statusCond.Broadcast() // wake waiters on cancellation
-		case <-done:
-		}
-	}()
-	defer close(done)
-
-	r.statusCond.L.Lock()
 	for {
-		if ctx.Err() != nil {
-			r.statusCond.L.Unlock()
-			return false
-		}
 		r.mu.RLock()
 		allReady := true
 		for dep := range deps {
@@ -1043,12 +1042,20 @@ func (r *Runtime) waitForDeps(ctx context.Context, appName string) bool {
 				break
 			}
 		}
+		// Capture current notify channel under the same lock to avoid races
+		notify := r.statusNotify
 		r.mu.RUnlock()
+
 		if allReady {
-			r.statusCond.L.Unlock()
 			return true
 		}
-		r.statusCond.Wait() // blocks until Broadcast() from setAppStatus or ctx cancel
+
+		select {
+		case <-ctx.Done():
+			return false
+		case <-notify:
+			// Status changed, re-check deps
+		}
 	}
 }
 

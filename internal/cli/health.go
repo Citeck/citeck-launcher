@@ -13,7 +13,7 @@ func newHealthCmd() *cobra.Command {
 		Use:   "health",
 		Short: "System health check",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := client.New(flagHost, flagToken)
+			c, err := client.New(clientOpts())
 			if err != nil {
 				if output.IsJSON() {
 					output.PrintJSON(map[string]any{"healthy": false, "error": err.Error()})

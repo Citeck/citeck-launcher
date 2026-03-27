@@ -112,7 +112,12 @@ func (c *Client) ObtainCertificate(ctx context.Context) error {
 		}
 		challengePath := client.HTTP01ChallengePath(token)
 
-		srv := &http.Server{Addr: ":80"}
+		srv := &http.Server{
+			Addr:         ":80",
+			ReadTimeout:  10 * time.Second,
+			WriteTimeout: 10 * time.Second,
+			IdleTimeout:  30 * time.Second,
+		}
 		mux := http.NewServeMux()
 		mux.HandleFunc(challengePath, func(w http.ResponseWriter, r *http.Request) {
 			w.Write([]byte(response))

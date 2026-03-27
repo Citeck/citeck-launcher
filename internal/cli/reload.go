@@ -13,7 +13,7 @@ func newReloadCmd() *cobra.Command {
 		Use:   "reload",
 		Short: "Hot-reload namespace configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c := client.TryNew(flagHost, flagToken)
+			c := client.TryNew(clientOpts())
 			if c == nil || !c.IsRunning() {
 				output.PrintText("Platform is not running")
 				return nil

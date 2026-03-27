@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -426,30 +427,40 @@ func Start(opts StartOptions) error {
 		if err != nil {
 			slog.Warn("TCP listener failed, Web UI unavailable", "addr", tcpAddr, "err", err)
 		} else {
-			// Wrap middleware for TCP connections.
-			// Order (outermost first): CORS → TokenAuth → Logging → mux
-			// CORS must be outermost so OPTIONS preflight bypasses auth.
 			var tcpHandler http.Handler = mux
 			tcpHandler = RateLimitMiddleware(100, tcpHandler)
 			tcpHandler = LoggingMiddleware(tcpHandler)
-			if daemonCfg.Server.Token != "" {
-				tcpHandler = TokenAuthMiddleware(daemonCfg.Server.Token, tcpHandler)
-				slog.Info("Token auth enabled on TCP listener")
-			}
-			tcpHandler = CORSMiddleware(tcpHandler)
-			d.tcpServer = &http.Server{
-				Handler:        tcpHandler,
-				ReadTimeout:    30 * time.Second,
-				WriteTimeout:   0, // 0 for SSE streaming — use per-handler timeouts for non-SSE
-				IdleTimeout:    120 * time.Second,
-				MaxHeaderBytes: 1 << 20,
-			}
-			go func() {
-				slog.Info("Web UI available", "url", "http://"+tcpAddr)
-				if err := d.tcpServer.Serve(tcpListener); err != nil && err != http.ErrServerClosed {
-					slog.Error("TCP server error", "err", err)
+
+			localhost := isLocalhostAddr(tcpAddr)
+			mtlsActive := false
+			if !localhost {
+				var err error
+				tcpListener, tcpHandler, mtlsActive, err = d.setupMTLS(tcpListener, tcpHandler, nsCfg, tcpAddr)
+				if err != nil {
+					slog.Error("mTLS setup failed — Web UI not started", "err", err)
 				}
-			}()
+			}
+
+			if tcpListener != nil {
+				tcpHandler = CORSMiddleware(tcpHandler)
+				scheme := "http"
+				if mtlsActive {
+					scheme = "https"
+				}
+				d.tcpServer = &http.Server{
+					Handler:        tcpHandler,
+					ReadTimeout:    30 * time.Second,
+					WriteTimeout:   0, // 0 for SSE streaming — use per-handler timeouts for non-SSE
+					IdleTimeout:    120 * time.Second,
+					MaxHeaderBytes: 1 << 20,
+				}
+				go func() {
+					slog.Info("Web UI available", "url", scheme+"://"+tcpAddr)
+					if err := d.tcpServer.Serve(tcpListener); err != nil && err != http.ErrServerClosed {
+						slog.Error("TCP server error", "err", err)
+					}
+				}()
+			}
 		}
 	} else {
 		slog.Info("Web UI disabled")
@@ -493,13 +504,17 @@ func (d *Daemon) shutdown() {
 }
 
 func (d *Daemon) doShutdown() {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Cancel background goroutines (downloads, snapshot imports) and wait
+	// Phase 1: Cancel background goroutines with 10s timeout
 	d.bgCancel()
-	d.bgWg.Wait()
+	bgDone := make(chan struct{})
+	go func() { d.bgWg.Wait(); close(bgDone) }()
+	select {
+	case <-bgDone:
+	case <-time.After(10 * time.Second):
+		slog.Warn("Background goroutines did not finish in 10s")
+	}
 
+	// Phase 2: Shutdown runtime (has its own internal timeouts for container stops)
 	if d.runtime != nil {
 		d.runtime.Shutdown()
 	}
@@ -513,9 +528,12 @@ func (d *Daemon) doShutdown() {
 		renewal.Stop()
 	}
 
-	d.server.Shutdown(ctx)
+	// Phase 3: Drain HTTP connections with 10s timeout
+	httpCtx, httpCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer httpCancel()
+	d.server.Shutdown(httpCtx)
 	if d.tcpServer != nil {
-		d.tcpServer.Shutdown(ctx)
+		d.tcpServer.Shutdown(httpCtx)
 	}
 	if d.store != nil {
 		d.store.Close()
@@ -524,6 +542,106 @@ func (d *Daemon) doShutdown() {
 	os.Remove(d.socketPath)
 
 	slog.Info("Daemon stopped")
+}
+
+// isLocalhostAddr returns true if the listen address is bound to localhost only.
+func isLocalhostAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return true // parse error → assume localhost (safe default)
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		return false
+	}
+	if host == "localhost" || host == "::1" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// setupMTLS configures mTLS on the TCP listener for non-localhost access.
+// Returns the (possibly wrapped) listener, handler, whether mTLS is active, and any error.
+// On error, the listener is closed and returned as nil.
+func (d *Daemon) setupMTLS(ln net.Listener, handler http.Handler, nsCfg *namespace.NamespaceConfig, tcpAddr string) (net.Listener, http.Handler, bool, error) {
+	caPool, certCount, err := tlsutil.LoadCACertPool(config.WebUICADir())
+	if err != nil {
+		ln.Close()
+		return nil, handler, false, fmt.Errorf("load client CA pool: %w", err)
+	}
+	if certCount == 0 {
+		ln.Close()
+		return nil, handler, false, fmt.Errorf("no client certs in %s — run: citeck cert generate --name admin", config.WebUICADir())
+	}
+
+	// Ensure server cert exists
+	webuiTLSDir := config.WebUITLSDir()
+	os.MkdirAll(webuiTLSDir, 0o755)
+	serverCertPath := filepath.Join(webuiTLSDir, "server.crt")
+	serverKeyPath := filepath.Join(webuiTLSDir, "server.key")
+	if _, statErr := os.Stat(serverCertPath); os.IsNotExist(statErr) {
+		certHost := resolveServerCertHost(tcpAddr, nsCfg)
+		slog.Info("Generating Web UI server certificate", "host", certHost)
+		if err := tlsutil.GenerateSelfSignedCert(serverCertPath, serverKeyPath, []string{certHost}, 365); err != nil {
+			ln.Close()
+			return nil, handler, false, fmt.Errorf("generate server cert: %w", err)
+		}
+	}
+
+	serverCert, err := tls.LoadX509KeyPair(serverCertPath, serverKeyPath)
+	if err != nil {
+		ln.Close()
+		return nil, handler, false, fmt.Errorf("load server cert: %w", err)
+	}
+
+	handler = MTLSIdentityMiddleware(handler)
+
+	// Dynamic cert pool reload via GetConfigForClient
+	var caMu sync.Mutex
+	var caMtime time.Time
+	cachedPool := caPool
+
+	tlsCfg := &tls.Config{
+		Certificates: []tls.Certificate{serverCert},
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    caPool,
+		MinVersion:   tls.VersionTLS12,
+	}
+	tlsCfg.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+		caMu.Lock()
+		defer caMu.Unlock()
+		info, statErr := os.Stat(config.WebUICADir())
+		if statErr != nil {
+			return nil, nil // use existing config
+		}
+		if info.ModTime().After(caMtime) {
+			newPool, n, loadErr := tlsutil.LoadCACertPool(config.WebUICADir())
+			if loadErr == nil {
+				cachedPool = newPool
+				caMtime = info.ModTime()
+				slog.Info("Reloaded client CA pool", "count", n)
+			}
+		}
+		fresh := tlsCfg.Clone()
+		fresh.ClientCAs = cachedPool
+		fresh.GetConfigForClient = nil // returned config must not carry the callback
+		return fresh, nil
+	}
+
+	slog.Info("mTLS enabled on Web UI", "trustedCerts", certCount)
+	return tls.NewListener(ln, tlsCfg), handler, true, nil
+}
+
+// resolveServerCertHost determines the hostname for the server certificate SAN.
+func resolveServerCertHost(tcpAddr string, nsCfg *namespace.NamespaceConfig) string {
+	host, _, _ := net.SplitHostPort(tcpAddr)
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		if nsCfg != nil && nsCfg.Proxy.Host != "" && nsCfg.Proxy.Host != "localhost" {
+			return nsCfg.Proxy.Host
+		}
+		return "localhost"
+	}
+	return host
 }
 
 func (d *Daemon) broadcastEvent(evt api.EventDto) {

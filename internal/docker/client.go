@@ -599,6 +599,15 @@ func (c *Client) WaitForContainer(ctx context.Context, containerID string, timeo
 // WaitForContainerExit waits for a container to finish and exit (for init containers).
 // Uses Docker's ContainerWait API for instant notification instead of polling.
 func (c *Client) WaitForContainerExit(ctx context.Context, containerID string, timeout time.Duration) error {
+	// Pre-check: if container already exited, return immediately
+	info, err := c.cli.ContainerInspect(ctx, containerID)
+	if err == nil && !info.State.Running {
+		if info.State.ExitCode != 0 {
+			return fmt.Errorf("init container exited with code %d", info.State.ExitCode)
+		}
+		return nil
+	}
+
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 

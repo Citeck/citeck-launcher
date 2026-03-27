@@ -56,6 +56,7 @@ export function Logs() {
   const [logs, setLogs] = useState('')
   const [tail, setTail] = useState(500)
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [useRegex, setUseRegex] = useState(false)
   const [follow, setFollow] = useState(true)
   const [wordWrap, setWordWrap] = useState(true)
@@ -64,6 +65,13 @@ export function Logs() {
   const [matchIndex, setMatchIndex] = useState(0)
   const logRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
+
+  // Debounce search input (300ms) and limit pattern length
+  useEffect(() => {
+    const trimmed = search.slice(0, 200)
+    const timer = setTimeout(() => setDebouncedSearch(trimmed), 300)
+    return () => clearTimeout(timer)
+  }, [search])
 
   const fetchLogs = useCallback(() => {
     if (!name) return
@@ -133,18 +141,18 @@ export function Logs() {
 
   const searchMatches = useMemo(() => {
     const matches = new Set<number>()
-    if (search) {
+    if (debouncedSearch) {
       try {
-        const pattern = useRegex ? new RegExp(search, 'i') : null
+        const pattern = useRegex ? new RegExp(debouncedSearch, 'i') : null
         filteredLines.forEach((line, i) => {
-          if (pattern ? pattern.test(line) : line.toLowerCase().includes(search.toLowerCase())) {
+          if (pattern ? pattern.test(line) : line.toLowerCase().includes(debouncedSearch.toLowerCase())) {
             matches.add(i)
           }
         })
       } catch { /* invalid regex */ }
     }
     return matches
-  }, [filteredLines, search, useRegex])
+  }, [filteredLines, debouncedSearch, useRegex])
 
   const matchIndices = Array.from(searchMatches).sort((a, b) => a - b)
   const safeMatchIndex = matchIndices.length > 0

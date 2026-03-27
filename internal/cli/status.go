@@ -21,7 +21,7 @@ func newStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Show namespace and app status",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c := client.TryNew(flagHost, flagToken)
+			c := client.TryNew(clientOpts())
 			if c == nil {
 				if output.IsJSON() {
 					output.PrintJSON(map[string]any{"running": false})

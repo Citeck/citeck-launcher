@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"crypto/subtle"
 	"log/slog"
 	"net"
 	"net/http"
@@ -10,46 +9,16 @@ import (
 	"time"
 )
 
-// TokenAuthMiddleware checks for a valid Bearer token on TCP connections.
-// Unix socket connections skip authentication.
-func TokenAuthMiddleware(token string, next http.Handler) http.Handler {
-	if token == "" {
-		return next // No token configured, skip auth
-	}
-
+// MTLSIdentityMiddleware extracts the client identity from mTLS peer certificates.
+// Logs the CN of the authenticated client for auditing.
+func MTLSIdentityMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Skip auth for Unix socket connections (local)
-		if isUnixSocket(r) {
-			next.ServeHTTP(w, r)
-			return
+		if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+			cn := r.TLS.PeerCertificates[0].Subject.CommonName
+			slog.Debug("mTLS client authenticated", "cn", cn, "remote", r.RemoteAddr)
 		}
-
-		// Check Authorization header
-		auth := r.Header.Get("Authorization")
-		if auth == "" {
-			writeError(w, http.StatusUnauthorized, "authentication required")
-			return
-		}
-
-		parts := strings.SplitN(auth, " ", 2)
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || subtle.ConstantTimeCompare([]byte(parts[1]), []byte(token)) != 1 {
-			writeError(w, http.StatusUnauthorized, "invalid token")
-			return
-		}
-
 		next.ServeHTTP(w, r)
 	})
-}
-
-// isUnixSocket detects if the connection came via Unix domain socket.
-func isUnixSocket(r *http.Request) bool {
-	// If the remote address is empty or a Unix path, it's a local connection
-	if r.RemoteAddr == "" {
-		return true
-	}
-	// Unix socket connections typically have no port
-	_, _, err := net.SplitHostPort(r.RemoteAddr)
-	return err != nil
 }
 
 // defaultCORSOrigins lists origins allowed by default for the web UI.
@@ -91,7 +60,7 @@ func matchCORSOrigin(origin string) bool {
 func RateLimitMiddleware(rps int, next http.Handler) http.Handler {
 	var mu sync.Mutex
 	limiters := make(map[string]*rateLimiterEntry)
-	const maxEntries = 10000
+	const maxEntries = 1000
 	const evictAge = 5 * time.Minute
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

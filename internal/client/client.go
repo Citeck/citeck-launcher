@@ -15,29 +15,42 @@ import (
 )
 
 type DaemonClient struct {
-	httpClient    *http.Client
-	streamClient  *http.Client // no timeout, for streaming (log follow, SSE)
-	baseURL       string
-	token         string
+	httpClient   *http.Client
+	streamClient *http.Client // no timeout, for streaming (log follow, SSE)
+	baseURL      string
 }
 
-// New creates a client; returns error if daemon is not reachable.
-func New(host, token string) (*DaemonClient, error) {
-	tc, err := DetectTransport(host, token)
+// ClientOptions holds options for creating a DaemonClient.
+type ClientOptions struct {
+	Host       string
+	TLSCert    string
+	TLSKey     string
+	ServerCert string
+	Insecure   bool
+}
+
+// New creates a client; returns error if daemon is not reachable or TLS config is invalid.
+func New(opts ClientOptions) (*DaemonClient, error) {
+	tc, err := DetectTransport(opts.Host, opts.TLSCert, opts.TLSKey, opts.ServerCert, opts.Insecure)
 	if err != nil {
 		return nil, err
+	}
+	// Validate TLS config eagerly so misconfiguration is reported clearly
+	if tc.useTLS() {
+		if _, err := tc.buildTLSConfig(); err != nil {
+			return nil, fmt.Errorf("TLS configuration error: %w", err)
+		}
 	}
 	return &DaemonClient{
 		httpClient:   NewHTTPClient(tc),
 		streamClient: NewStreamingHTTPClient(tc),
 		baseURL:      tc.BaseURL(),
-		token:        tc.Token,
 	}, nil
 }
 
 // TryNew creates a client; returns nil if daemon is not reachable.
-func TryNew(host, token string) *DaemonClient {
-	c, err := New(host, token)
+func TryNew(opts ClientOptions) *DaemonClient {
+	c, err := New(opts)
 	if err != nil {
 		return nil
 	}
@@ -101,9 +114,7 @@ func (c *DaemonClient) doRequest(method, path string, body any) (*http.Response,
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
+
 
 	return c.httpClient.Do(req)
 }
@@ -196,9 +207,7 @@ func (c *DaemonClient) StreamAppLogs(name string, tail int) (io.ReadCloser, erro
 	if err != nil {
 		return nil, err
 	}
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
+
 	resp, err := c.streamClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -265,9 +274,7 @@ func (c *DaemonClient) PutConfig(yamlData []byte) (*api.ActionResultDto, error) 
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "text/yaml")
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -288,9 +295,7 @@ func (c *DaemonClient) StreamEvents(ctx context.Context) (<-chan api.EventDto, e
 		return nil, err
 	}
 	req.Header.Set("Accept", "text/event-stream")
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
+
 
 	resp, err := c.streamClient.Do(req)
 	if err != nil {

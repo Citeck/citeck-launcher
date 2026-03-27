@@ -11,12 +11,14 @@ import (
 	"fmt"
 	"math/big"
 	"net"
-	"os"
 	"time"
+
+	"github.com/citeck/citeck-launcher/internal/fsutil"
 )
 
 // GenerateSelfSignedCert creates a self-signed TLS certificate for the given hosts.
 // Each host can be an IP address or a DNS name.
+// Write order: key first, cert second — cert presence signals completion.
 func GenerateSelfSignedCert(certPath, keyPath string, hosts []string, days int) error {
 	if len(hosts) == 0 {
 		return fmt.Errorf("at least one host is required")
@@ -31,11 +33,12 @@ func GenerateSelfSignedCert(certPath, keyPath string, hosts []string, days int) 
 		return fmt.Errorf("generate serial: %w", err)
 	}
 
+	now := time.Now().Add(-1 * time.Minute) // backdate to avoid clock skew
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject:      pkix.Name{CommonName: hosts[0]},
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(time.Duration(days) * 24 * time.Hour),
+		NotBefore:    now,
+		NotAfter:     now.Add(time.Duration(days) * 24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
@@ -53,26 +56,20 @@ func GenerateSelfSignedCert(certPath, keyPath string, hosts []string, days int) 
 		return fmt.Errorf("create certificate: %w", err)
 	}
 
-	certFile, err := os.Create(certPath)
-	if err != nil {
-		return err
-	}
-	defer certFile.Close()
-	if err := pem.Encode(certFile, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
-		return fmt.Errorf("write certificate: %w", err)
-	}
-
 	keyDER, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal key: %w", err)
 	}
-	keyFile, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
+
+	// Write key first, cert second — cert presence = completion signal
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	if err := fsutil.AtomicWriteFile(keyPath, keyPEM, 0o600); err != nil {
+		return fmt.Errorf("write key: %w", err)
 	}
-	defer keyFile.Close()
-	if err := pem.Encode(keyFile, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}); err != nil {
-		return fmt.Errorf("write private key: %w", err)
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	if err := fsutil.AtomicWriteFile(certPath, certPEM, 0o644); err != nil {
+		return fmt.Errorf("write cert: %w", err)
 	}
 
 	return nil

@@ -113,6 +113,16 @@ func LogDir() string {
 	return filepath.Join(HomeDir(), "log")
 }
 
+// WebUICADir returns the directory for trusted client certificates (mTLS).
+func WebUICADir() string {
+	return filepath.Join(ConfDir(), "webui-ca")
+}
+
+// WebUITLSDir returns the directory for Web UI server cert+key (mTLS/HTTPS).
+func WebUITLSDir() string {
+	return filepath.Join(ConfDir(), "webui-tls")
+}
+
 // NamespaceConfigPath returns the default namespace config path (server mode).
 // In desktop mode, use WorkspaceNamespaceConfigPath instead.
 func NamespaceConfigPath() string {
