@@ -599,7 +599,7 @@ func (d *Daemon) setupMTLS(ln net.Listener, handler http.Handler, nsCfg *namespa
 	if _, statErr := os.Stat(serverCertPath); os.IsNotExist(statErr) {
 		certHost := resolveServerCertHost(tcpAddr, nsCfg)
 		slog.Info("Generating Web UI server certificate", "host", certHost)
-		if err := tlsutil.GenerateSelfSignedCert(serverCertPath, serverKeyPath, []string{certHost}, 365); err != nil {
+		if err := tlsutil.GenerateSelfSignedCert(serverCertPath, serverKeyPath, []string{certHost}, 36500); err != nil {
 			ln.Close()
 			return nil, handler, false, fmt.Errorf("generate server cert: %w", err)
 		}
