@@ -28,7 +28,7 @@ type StartData struct {
 
 // StartExecutor creates and starts a container with retry on conflict.
 type StartExecutor struct {
-	Docker docker.Interface
+	Docker docker.RuntimeClient
 }
 
 func (e *StartExecutor) Execute(ctx context.Context, actx *actions.ActionContext) error {

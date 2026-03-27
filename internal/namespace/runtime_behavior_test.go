@@ -15,15 +15,21 @@ import (
 	"github.com/docker/docker/api/types/container"
 )
 
-// mockDocker implements docker.Interface for behavioral tests.
+// mockContainer tracks a mock container's ID and labels.
+type mockContainer struct {
+	id     string
+	labels map[string]string
+}
+
+// mockDocker implements docker.RuntimeClient for behavioral tests.
 type mockDocker struct {
 	mu         sync.Mutex
-	containers map[string]string // name → id
+	containers map[string]mockContainer // app name → container
 	nextID     int
 }
 
 func newMockDocker() *mockDocker {
-	return &mockDocker{containers: make(map[string]string)}
+	return &mockDocker{containers: make(map[string]mockContainer)}
 }
 
 func (m *mockDocker) ContainerName(appName string) string {
@@ -41,7 +47,14 @@ func (m *mockDocker) CreateContainer(ctx context.Context, app appdef.Application
 	defer m.mu.Unlock()
 	m.nextID++
 	id := fmt.Sprintf("container-%d", m.nextID)
-	m.containers[app.Name] = id
+	m.containers[app.Name] = mockContainer{
+		id: id,
+		labels: map[string]string{
+			"citeck.launcher.app.name": app.Name,
+			"citeck.launcher.app.hash": app.GetHash(),
+			"citeck.launcher":          "true",
+		},
+	}
 	return id, nil
 }
 
@@ -61,13 +74,12 @@ func (m *mockDocker) GetContainers(ctx context.Context) ([]dtypes.Container, err
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var result []dtypes.Container
-	for name, id := range m.containers {
+	for name, c := range m.containers {
 		result = append(result, dtypes.Container{
-			ID:    id,
-			Names: []string{"/" + m.ContainerName(name)},
-			Labels: map[string]string{
-				"citeck.launcher.app.name": name,
-			},
+			ID:     c.id,
+			Names:  []string{"/" + m.ContainerName(name)},
+			Labels: c.labels,
+			State:  "running",
 		})
 	}
 	return result, nil
@@ -76,7 +88,7 @@ func (m *mockDocker) GetContainers(ctx context.Context) ([]dtypes.Container, err
 func (m *mockDocker) InspectContainer(ctx context.Context, id string) (dtypes.ContainerJSON, error) {
 	return dtypes.ContainerJSON{
 		ContainerJSONBase: &dtypes.ContainerJSONBase{
-			State: &dtypes.ContainerState{Running: true, StartedAt: time.Now().Format(time.RFC3339)},
+			State: &dtypes.ContainerState{Status: "running", Running: true, StartedAt: time.Now().Format(time.RFC3339)},
 		},
 		Config: &container.Config{Labels: map[string]string{}},
 	}, nil
@@ -143,27 +155,52 @@ func simpleApp(name, image string, deps ...string) appdef.ApplicationDef {
 	}
 }
 
+// waitForStatus blocks until the runtime reaches the target namespace status,
+// using the statusNotify channel for event-driven wakeup instead of polling.
 func waitForStatus(r *Runtime, target NsRuntimeStatus, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	for {
 		if r.Status() == target {
 			return true
 		}
-		time.Sleep(10 * time.Millisecond)
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return false
+		}
+		// Wait for next status change or timeout
+		r.mu.RLock()
+		ch := r.statusNotify
+		r.mu.RUnlock()
+		select {
+		case <-ch:
+		case <-time.After(remaining):
+			return r.Status() == target
+		}
 	}
-	return false
 }
 
+// waitForAppStatus blocks until the named app reaches the target status.
 func waitForAppStatus(r *Runtime, appName string, target AppRuntimeStatus, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	for {
 		app := r.FindApp(appName)
 		if app != nil && app.Status == target {
 			return true
 		}
-		time.Sleep(10 * time.Millisecond)
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return false
+		}
+		r.mu.RLock()
+		ch := r.statusNotify
+		r.mu.RUnlock()
+		select {
+		case <-ch:
+		case <-time.After(remaining):
+			app = r.FindApp(appName)
+			return app != nil && app.Status == target
+		}
 	}
-	return false
 }
 
 func TestStartAndStop(t *testing.T) {
@@ -246,9 +283,9 @@ func TestRegeneratePreservesRunning(t *testing.T) {
 		t.Fatalf("namespace did not reach RUNNING")
 	}
 
-	// Get container ID before regenerate
+	// Track create count before regenerate
 	md.mu.Lock()
-	idBefore := md.containers["postgres"]
+	createCountBefore := md.nextID
 	md.mu.Unlock()
 
 	// Regenerate with same app definition — container should be preserved (hash match)
@@ -260,13 +297,13 @@ func TestRegeneratePreservesRunning(t *testing.T) {
 		t.Fatalf("namespace did not return to RUNNING after regenerate")
 	}
 
-	// Container ID should be the same (not recreated)
+	// Container should NOT have been recreated (hash match → preserve running container)
 	md.mu.Lock()
-	idAfter := md.containers["postgres"]
+	createCountAfterPreserve := md.nextID
 	md.mu.Unlock()
 
-	if idBefore != idAfter {
-		t.Logf("container was recreated (id changed from %s to %s) — this is OK if hash comparison used digest", idBefore, idAfter)
+	if createCountAfterPreserve != createCountBefore {
+		t.Fatalf("container should NOT have been recreated for unchanged app, create count before=%d after=%d", createCountBefore, createCountAfterPreserve)
 	}
 }
 

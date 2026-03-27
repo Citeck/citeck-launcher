@@ -9,9 +9,12 @@ import (
 	"github.com/docker/docker/api/types"
 )
 
-// Interface defines the Docker operations used by the namespace runtime.
-// *Client implements this interface. Tests can substitute a mock.
-type Interface interface {
+// RuntimeClient defines the Docker operations required by the namespace runtime
+// (internal/namespace). This is a subset of *Client — the daemon HTTP handlers
+// use *Client directly because they need additional methods (ContainerLogs,
+// NetworkName, Ping, Close, etc.) that are HTTP-handler-specific and not part
+// of the runtime's concern.
+type RuntimeClient interface {
 	ContainerName(appName string) string
 	CreateNetwork(ctx context.Context) (string, error)
 	RemoveNetwork(ctx context.Context) error
@@ -34,5 +37,5 @@ type Interface interface {
 	WaitForContainerExit(ctx context.Context, containerID string, timeout time.Duration) error
 }
 
-// Verify *Client implements Interface at compile time.
-var _ Interface = (*Client)(nil)
+// Verify *Client implements RuntimeClient at compile time.
+var _ RuntimeClient = (*Client)(nil)

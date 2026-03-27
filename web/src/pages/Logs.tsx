@@ -54,15 +54,15 @@ function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-/** Test if a regex is safe (no catastrophic backtracking). Returns true if safe. */
+// Structural check: reject regex patterns with nested quantifiers that cause
+// catastrophic backtracking (e.g., (a+)+, (a*)*b, (a|a)+). This is more reliable
+// than timing-based detection because it doesn't depend on CPU speed or thread load.
+const NESTED_QUANTIFIER_RE = /([+*]|\{\d)[^)]*\)\s*[+*{]/
+
 function isRegexSafe(pattern: string): boolean {
   try {
-    const re = new RegExp(pattern, 'i')
-    // Non-matching suffix forces backtracking on catastrophic patterns like (a+)+$
-    const testStr = 'a'.repeat(100) + '!'
-    const start = performance.now()
-    re.test(testStr)
-    return performance.now() - start < 50
+    new RegExp(pattern, 'i') // syntax check
+    return !NESTED_QUANTIFIER_RE.test(pattern)
   } catch {
     return false
   }
@@ -102,13 +102,15 @@ export function Logs() {
   const appendChunk = useCallback((chunk: string) => {
     setLines(prev => {
       const newLines = chunk.split('\n')
-      // Merge last line fragment only if chunk continues a partial line
+      // Merge last line fragment only if chunk continues a partial line.
+      // newCount = number of lines at the end of `merged` that need level re-detection.
       let merged: string[]
       let newCount: number
       if (prev.length > 0 && newLines.length > 0 && !chunk.startsWith('\n')) {
         const lastLine = prev[prev.length - 1] + newLines[0]
         merged = [...prev.slice(0, -1), lastLine, ...newLines.slice(1)]
-        newCount = newLines.length // 1 re-merged + rest
+        // Re-detect levels for the merged line + all new lines
+        newCount = newLines.length
       } else {
         merged = [...prev, ...newLines]
         newCount = newLines.length

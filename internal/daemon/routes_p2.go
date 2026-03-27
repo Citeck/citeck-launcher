@@ -335,6 +335,7 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	excl.Close()
 
 	if err := fsutil.AtomicWriteFile(configPath, data, 0o644); err != nil {
+		os.Remove(configPath) // remove empty placeholder from O_EXCL open
 		writeInternalError(w, err)
 		return
 	}

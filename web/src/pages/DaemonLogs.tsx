@@ -1,6 +1,9 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { getDaemonLogs } from '../lib/api'
 
+// DaemonLogs uses polling (not streaming) because daemon logs are read from
+// a rotated file on disk, not from a Docker container stream. The backend
+// /api/v1/daemon/logs endpoint returns the tail of the log file as plain text.
 export function DaemonLogs() {
   const [logs, setLogs] = useState('')
   const [error, setError] = useState<string | null>(null)

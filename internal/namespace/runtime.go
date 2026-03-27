@@ -75,7 +75,7 @@ type Runtime struct {
 	status          NsRuntimeStatus
 	config          *NamespaceConfig
 	apps            map[string]*AppRuntime
-	docker          docker.Interface
+	docker          docker.RuntimeClient
 	actionSvc       *actions.Service
 	ownsActions     bool // true if this runtime created its own action service
 	running         atomic.Bool
@@ -263,13 +263,13 @@ type command struct {
 }
 
 // NewRuntime creates a new namespace runtime with a dedicated action service.
-func NewRuntime(cfg *NamespaceConfig, dockerClient docker.Interface, workspace, volumesBase string) *Runtime {
+func NewRuntime(cfg *NamespaceConfig, dockerClient docker.RuntimeClient, workspace, volumesBase string) *Runtime {
 	return NewRuntimeWithActions(cfg, dockerClient, workspace, volumesBase, nil)
 }
 
 // NewRuntimeWithActions creates a runtime with an externally provided action service.
 // If actionSvc is nil, a new dedicated service is created.
-func NewRuntimeWithActions(cfg *NamespaceConfig, dockerClient docker.Interface, workspace, volumesBase string, actionSvc *actions.Service) *Runtime {
+func NewRuntimeWithActions(cfg *NamespaceConfig, dockerClient docker.RuntimeClient, workspace, volumesBase string, actionSvc *actions.Service) *Runtime {
 	ownsActions := false
 	if actionSvc == nil {
 		actionSvc = actions.NewService(actions.ServiceConfig{})

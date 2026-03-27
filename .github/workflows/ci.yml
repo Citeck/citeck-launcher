@@ -19,6 +19,11 @@ jobs:
       - name: Go vet
         run: go vet ./...
 
+      - name: Go lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
       - name: Go tests (race detector)
         run: |
           mkdir -p internal/daemon/webdist

@@ -110,12 +110,17 @@ func TestClose(t *testing.T) {
 		t.Fatalf("close error: %v", err)
 	}
 
-	// Subsequent writes should fail
+	// After close, file handle is nil. Write re-opens the file automatically
+	// (self-healing behavior — the writer recovers from transient failures).
 	_, err := rw.Write([]byte("after close\n"))
-	// After close, file is nil. Write will try to openOrCreate and succeed
-	// (since the path is still valid). This is by design — the writer recovers.
 	if err != nil {
-		t.Logf("write after close returned error (expected): %v", err)
+		t.Fatalf("write after close should succeed (self-healing): %v", err)
+	}
+
+	// Verify data was written
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), "after close") {
+		t.Fatal("expected 'after close' in log file after self-healing write")
 	}
 
 	// Double close should not panic
