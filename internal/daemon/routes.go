@@ -863,7 +863,7 @@ func (d *Daemon) handlePutAppFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "path outside workspace")
 		return
 	}
-	if err := os.WriteFile(absPath, body, 0o644); err != nil {
+	if err := fsutil.AtomicWriteFile(absPath, body, 0o644); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
