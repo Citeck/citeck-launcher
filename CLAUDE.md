@@ -47,7 +47,7 @@ cd web && npm run lint        # Web linter
 | `internal/form/` | Form field specs, built-in field definitions, validation |
 | `internal/snapshot/` | Volume snapshot export/import (ZIP + tar.xz) |
 | `internal/tlsutil/` | TLS cert utilities (self-signed, client cert, CA pool loader) |
-| `internal/fsutil/` | Atomic file write (temp+fsync+rename) |
+| `internal/fsutil/` | Atomic file write (temp+fsync+rename), RotatingWriter (log rotation) |
 | `internal/acme/` | ACME/Let's Encrypt client + auto-renewal service |
 | `internal/namespace/nsactions/` | Action executors wired to Docker + runtime |
 
@@ -78,10 +78,11 @@ React 19 + Vite + TypeScript + Tailwind CSS 4. Embedded into Go binary via `go:e
 - `JournalDialog.tsx` — data table dialog with search, selection, custom buttons
 
 **Lib:**
-- `api.ts` — REST API client (fetch wrapper)
+- `api.ts` — REST API client (fetchWithTimeout wrapper, extractErrorMessage for server ErrorDto)
 - `store.ts` — Zustand dashboard store (SSE events, exponential backoff reconnect)
 - `websocket.ts` — SSE EventSource wrapper (not WebSocket despite filename)
 - `tabs.ts` — Tab state management (zustand)
+- `toast.ts` — Toast notification store (zustand, auto-dismiss)
 - `types.ts` — TypeScript interfaces matching Go DTOs
 
 ### Entry Point
@@ -254,7 +255,8 @@ Tested on remote server with community 2025.12 (clean deployment). Found and fix
 - **`PLAN-phase11.md`** — Phase 11 plan (COMPLETE, production readiness, 26 issues)
 - **`PLAN-phase12.md`** — Phase 12 plan (COMPLETE, GA readiness, 23 issues)
 - **`PLAN-phase13.md`** — Phase 13 plan (COMPLETE, secrets masking, security headers, HTTP metrics, validate command, 20 issues)
-- **`PLAN-phase14.md`** — Phase 14 plan (production hardening at scale: SSE heartbeat, reclone safety, Logs perf, fetch errors, CI, runtime tests)
+- **`PLAN-phase14.md`** — Phase 14 plan (COMPLETE, SSE heartbeat, reclone safety, Logs perf, fetch errors, CI, runtime tests, 20 issues)
+- **`PLAN-phase15.md`** — Phase 15 plan (Lens-inspired UI redesign: right drawer, bottom panel, server mode)
 
 ### Phase 12: GA Readiness — COMPLETE (2026-03-27)
 23 issues across 5 sub-phases + 3 code review passes (8 additional fixes).
@@ -288,6 +290,23 @@ Tested on remote server with community 2025.12 (clean deployment). Found and fix
 - `numHistogramBuckets` const with init() panic guard — prevents silent array size mismatch
 - History rotateMu protects concurrent rotateIfNeeded calls
 
+### Phase 14: Production Hardening at Scale — COMPLETE (2026-03-27)
+20 issues across 4 sub-phases + 2 code review passes (11 additional fixes).
+- 14a: Backend reliability — SSE heartbeat (15s keepalive), safe reclone (clone to .tmp, atomic swap), namespace ID collision (O_EXCL, 409), concurrent reload guard (TryLock, 409)
+- 14b: Web UI reliability — Logs string[] storage + incremental level detection, ReDoS structural check, fetchJSON error body parsing, fetchWithTimeout (30s AbortController), no skeleton flash on SSE refresh, DaemonLogs visibility-aware polling (5s), middleware Flush() for streaming
+- 14c: Test coverage & CI — runtime behavioral tests (5 tests with docker.RuntimeClient mock), RotatingWriter tests, -race in Makefile, pre-merge CI workflow (go vet + golangci-lint + go test -race + vitest), removed stale Kotlin workflow
+- 14d: UX polish — AppDetail AbortController for stale fetches, restart error toast, Config fetch error display, SSE lastSeq reset on reconnect, follow mode skips initial REST fetch
+
+### Key Technical Decisions (Phase 14)
+- `docker.RuntimeClient` interface extracted for testability — daemon uses `*docker.Client` directly for richer method set
+- Runtime behavioral tests use `statusNotify` channel (event-driven, not polling)
+- ReDoS: structural nested-quantifier check (`NESTED_QUANTIFIER_RE`) instead of timing heuristic
+- `fetchWithTimeout` wrapper with signal composition for all non-streaming requests
+- Middleware `Flush()` added to `recoveryWriter`/`statusRecorder` — fixes SSE/log streaming through middleware chain
+- CI: golangci-lint + go test -race + vitest; release workflow uses `go-version-file: go.mod`
+
 ## CI/CD
 
-GitHub Actions release workflow (`.github/workflows/release-go.yml`): triggered by `v*.*.*` tags, builds on Linux/Windows/macOS (x64 + arm64), creates GitHub release. Note: `.github/workflows/release.yml` is a stale Kotlin workflow (scheduled for removal in Phase 14c-4).
+GitHub Actions:
+- **Release workflow** (`.github/workflows/release-go.yml`): triggered by `v*.*.*` tags, builds on Linux/Windows/macOS (x64 + arm64), creates GitHub release. Uses `go-version-file: go.mod`.
+- **CI workflow** (`.github/workflows/ci.yml`): triggered on push/PR to master. Runs `go vet`, `golangci-lint`, `go test -race ./internal/...`, `npx vitest run`.

@@ -5,7 +5,7 @@
 **Binary:** 14MB single Go binary with embedded React web UI
 **CLI commands:** 23 total (incl. completion + validate), all support `-o json`
 **Web UI:** 10 pages, Darcula/Lens dark theme + light theme, toast notifications
-**Tests:** 160 Go unit tests + 13 Vitest component tests + Playwright E2E
+**Tests:** 169 Go unit tests + 13 Vitest component tests + Playwright E2E
 **Auth:** mTLS for non-localhost Web UI access, no token auth
 
 ## Completed Phases
@@ -38,7 +38,8 @@
 | Phase 11 | Production readiness (26 issues + 19 review fixes, 5 sub-phases) | 2026-03-27 |
 | Phase 12 | GA readiness — CSRF, stability, CLI, docs, UI polish (23 issues + 11 review fixes) | 2026-03-27 |
 | Phase 13 | Production hardening for scale — secrets masking, security headers, HTTP metrics, validate, toast (20 issues + 6 review fixes) | 2026-03-27 |
+| Phase 14 | Production hardening at scale — SSE heartbeat, reclone safety, Logs perf, fetch errors, runtime tests, CI (20 issues + 11 review fixes) | 2026-03-27 |
 
-## Next: Phase 14
+## Next: Phase 15
 
-See `PLAN-phase14.md` — production hardening at scale (20 issues, 4 sub-phases: SSE heartbeat, reclone safety, Logs perf, fetch errors, runtime tests, CI).
+See `PLAN-phase15.md` — Lens-inspired UI redesign: right overlay drawer for app details, bottom panel for logs/config/daemon-logs, server mode (skip Welcome screen).
