@@ -99,14 +99,14 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 	// Phase 1: slow I/O outside lock (config read, git pull, bundle resolution)
 	nsCfg, err := namespace.LoadNamespaceConfig(config.ResolveNamespaceConfigPath(d.workspaceID, nsID))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("reload config: %s", err.Error()))
+		writeInternalError(w, fmt.Errorf("reload config: %w", err))
 		return
 	}
 
 	resolver := bundle.NewResolverWithAuth(config.DataDir(), makeTokenLookup(d.store))
 	resolveResult, err := resolver.Resolve(nsCfg.BundleRef)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("resolve bundle: %s", err.Error()))
+		writeInternalError(w, fmt.Errorf("resolve bundle: %w", err))
 		return
 	}
 
@@ -187,6 +187,9 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 
 func (d *Daemon) handleAppLogs(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if !validateAppName(w, name) {
+		return
+	}
 	tailStr := r.URL.Query().Get("tail")
 	tail := 100
 	if tailStr != "" {
@@ -214,7 +217,7 @@ func (d *Daemon) handleAppLogs(w http.ResponseWriter, r *http.Request) {
 	defer logCancel()
 	rawLogs, err := d.dockerClient.ContainerLogs(logCtx, app.ContainerID, tail)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 
@@ -238,7 +241,7 @@ func (d *Daemon) handleAppLogsFollow(w http.ResponseWriter, r *http.Request, con
 	ctx := r.Context()
 	reader, err := d.dockerClient.ContainerLogsFollow(ctx, containerID, tail)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	defer reader.Close()
@@ -266,6 +269,9 @@ func (fw flushWriter) Write(p []byte) (int, error) {
 
 func (d *Daemon) handleAppRestart(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if !validateAppName(w, name) {
+		return
+	}
 	if d.runtime == nil {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
 		return
@@ -277,7 +283,7 @@ func (d *Daemon) handleAppRestart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := d.runtime.RestartApp(name); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("Restart requested for %s", name)})
@@ -285,6 +291,9 @@ func (d *Daemon) handleAppRestart(w http.ResponseWriter, r *http.Request) {
 
 func (d *Daemon) handleAppStop(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if !validateAppName(w, name) {
+		return
+	}
 	if d.runtime == nil {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
 		return
@@ -295,7 +304,7 @@ func (d *Daemon) handleAppStop(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := d.runtime.StopApp(name); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("App %s stopped", name)})
@@ -303,6 +312,9 @@ func (d *Daemon) handleAppStop(w http.ResponseWriter, r *http.Request) {
 
 func (d *Daemon) handleAppStart(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if !validateAppName(w, name) {
+		return
+	}
 	if d.runtime == nil {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
 		return
@@ -318,7 +330,7 @@ func (d *Daemon) handleAppStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := d.runtime.StartApp(name); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("App %s start requested", name)})
@@ -326,6 +338,9 @@ func (d *Daemon) handleAppStart(w http.ResponseWriter, r *http.Request) {
 
 func (d *Daemon) handleAppInspect(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if !validateAppName(w, name) {
+		return
+	}
 	app := d.findApp(name)
 	if app == nil {
 		writeErrorCode(w, http.StatusNotFound, api.ErrCodeAppNotFound, fmt.Sprintf("app %q not found", name))
@@ -345,7 +360,7 @@ func (d *Daemon) handleAppInspect(w http.ResponseWriter, r *http.Request) {
 	defer inspCancel()
 	inspect, err := d.dockerClient.InspectContainer(inspCtx, app.ContainerID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 
@@ -361,8 +376,10 @@ func (d *Daemon) handleAppInspect(w http.ResponseWriter, r *http.Request) {
 		volumes = append(volumes, fmt.Sprintf("%s:%s", m.Source, m.Destination))
 	}
 
-	var envVars []string
-	envVars = append(envVars, inspect.Config.Env...)
+	envVars := make([]string, len(inspect.Config.Env))
+	for i, e := range inspect.Config.Env {
+		envVars[i] = api.MaskSecretEnv(e)
+	}
 
 	dto := api.AppInspectDto{
 		Name:         app.Name,
@@ -390,6 +407,9 @@ func (d *Daemon) handleAppInspect(w http.ResponseWriter, r *http.Request) {
 
 func (d *Daemon) handleAppExec(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if !validateAppName(w, name) {
+		return
+	}
 	app := d.findApp(name)
 	if app == nil {
 		writeErrorCode(w, http.StatusNotFound, api.ErrCodeAppNotFound, fmt.Sprintf("app %q not found", name))
@@ -408,7 +428,7 @@ func (d *Daemon) handleAppExec(w http.ResponseWriter, r *http.Request) {
 	defer execCancel()
 	output, exitCode, err := d.dockerClient.ExecInContainer(execCtx, app.ContainerID, req.Command)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 
@@ -451,7 +471,7 @@ func (d *Daemon) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := fsutil.AtomicWriteFile(cfgPath, body, 0o600); err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to save config: %s", err.Error()))
+		writeInternalError(w, fmt.Errorf("save config: %w", err))
 		return
 	}
 
@@ -518,20 +538,20 @@ func (d *Daemon) handleDaemonLogs(w http.ResponseWriter, r *http.Request) {
 
 	stat, err := f.Stat()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	readSize := stat.Size()
 	if readSize > maxReadSize {
 		if _, err := f.Seek(-maxReadSize, io.SeekEnd); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err)
 			return
 		}
 		readSize = maxReadSize
 	}
 	data, err := io.ReadAll(io.LimitReader(f, readSize))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 
@@ -592,7 +612,8 @@ func (d *Daemon) handleSystemDump(w http.ResponseWriter, r *http.Request) {
 		d.configMu.RLock()
 		var nsCfgYAML []byte
 		if d.nsConfig != nil {
-			nsCfgYAML, _ = namespace.MarshalNamespaceConfig(d.nsConfig)
+			masked := maskNamespaceConfigSecrets(d.nsConfig)
+			nsCfgYAML, _ = namespace.MarshalNamespaceConfig(masked)
 		}
 		daemonCfgYAML, _ := yaml.Marshal(d.daemonCfg)
 		d.configMu.RUnlock()
@@ -683,7 +704,7 @@ func (d *Daemon) handleListVolumes(w http.ResponseWriter, _ *http.Request) {
 			writeJSON(w, []any{})
 			return
 		}
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	type volumeDto struct {
@@ -707,10 +728,18 @@ func (d *Daemon) handleListVolumes(w http.ResponseWriter, _ *http.Request) {
 
 var validNameRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 
+// validateAppName checks if the name matches the valid pattern. Returns false and writes 400 if invalid.
+func validateAppName(w http.ResponseWriter, name string) bool {
+	if !validNameRegex.MatchString(name) {
+		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeInvalidRequest, fmt.Sprintf("invalid app name %q", name))
+		return false
+	}
+	return true
+}
+
 func (d *Daemon) handleDeleteVolume(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !validNameRegex.MatchString(name) {
-		writeError(w, http.StatusBadRequest, "invalid volume name")
+	if !validateAppName(w, name) {
 		return
 	}
 	volPath := filepath.Join(d.volumesDir(), name)
@@ -727,7 +756,7 @@ func (d *Daemon) handleDeleteVolume(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := os.RemoveAll(volPath); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("Volume %s deleted", name)})
@@ -735,6 +764,9 @@ func (d *Daemon) handleDeleteVolume(w http.ResponseWriter, r *http.Request) {
 
 func (d *Daemon) handleGetAppConfig(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if !validateAppName(w, name) {
+		return
+	}
 	app := d.findApp(name)
 	if app == nil {
 		writeErrorCode(w, http.StatusNotFound, api.ErrCodeAppNotFound, fmt.Sprintf("app %q not found", name))
@@ -743,7 +775,7 @@ func (d *Daemon) handleGetAppConfig(w http.ResponseWriter, r *http.Request) {
 	// Serialize ApplicationDef to YAML
 	data, err := yaml.Marshal(app.Def)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/yaml")
@@ -752,6 +784,9 @@ func (d *Daemon) handleGetAppConfig(w http.ResponseWriter, r *http.Request) {
 
 func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if !validateAppName(w, name) {
+		return
+	}
 	if d.runtime == nil {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
 		return
@@ -795,11 +830,11 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 	newDef.ShmSize = oldDef.ShmSize
 
 	if err := d.runtime.UpdateAppDef(name, newDef, true); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	if err := d.runtime.RestartApp(name); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("App %s config updated and restart requested", name)})
@@ -807,6 +842,9 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 
 func (d *Daemon) handleListAppFiles(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if !validateAppName(w, name) {
+		return
+	}
 	app := d.findApp(name)
 	if app == nil {
 		writeErrorCode(w, http.StatusNotFound, api.ErrCodeAppNotFound, fmt.Sprintf("app %q not found", name))
@@ -835,6 +873,9 @@ func (d *Daemon) handleListAppFiles(w http.ResponseWriter, r *http.Request) {
 
 func (d *Daemon) handleGetAppFile(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if !validateAppName(w, name) {
+		return
+	}
 	filePath := r.PathValue("path")
 	app := d.findApp(name)
 	if app == nil {
@@ -865,6 +906,9 @@ func (d *Daemon) handleGetAppFile(w http.ResponseWriter, r *http.Request) {
 
 func (d *Daemon) handlePutAppFile(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if !validateAppName(w, name) {
+		return
+	}
 	filePath := r.PathValue("path")
 	app := d.findApp(name)
 	if app == nil {
@@ -890,7 +934,7 @@ func (d *Daemon) handlePutAppFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := fsutil.AtomicWriteFile(absPath, body, 0o644); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "File updated"})
@@ -914,6 +958,9 @@ func isAppBindMount(app *namespace.AppRuntime, relPath string) bool {
 
 func (d *Daemon) handleAppLockToggle(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if !validateAppName(w, name) {
+		return
+	}
 	if d.runtime == nil {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
 		return
@@ -1084,6 +1131,14 @@ func (d *Daemon) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(&b, "# TYPE citeck_build_info gauge\n")
 	fmt.Fprintf(&b, "citeck_build_info{version=\"%s\"} 1\n", promEscape(d.version))
 
+	// HTTP request metrics
+	httpMetrics.writePrometheus(&b)
+
+	// SSE dropped events
+	fmt.Fprintf(&b, "# HELP citeck_sse_events_dropped_total Total SSE events dropped due to slow consumers.\n")
+	fmt.Fprintf(&b, "# TYPE citeck_sse_events_dropped_total counter\n")
+	fmt.Fprintf(&b, "citeck_sse_events_dropped_total %d\n", d.sseDropped.Load())
+
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	w.Write([]byte(b.String()))
 }
@@ -1144,3 +1199,22 @@ func stripAnsi(s string) string {
 	s = strings.ReplaceAll(s, "\t", "    ")
 	return s
 }
+
+// maskNamespaceConfigSecrets returns a shallow copy of the config with passwords in
+// authentication.users replaced by "***". Does not mutate the original config.
+func maskNamespaceConfigSecrets(cfg *namespace.NamespaceConfig) *namespace.NamespaceConfig {
+	out := *cfg
+	if len(out.Authentication.Users) > 0 {
+		masked := make([]string, len(out.Authentication.Users))
+		for i, u := range out.Authentication.Users {
+			if idx := strings.Index(u, ":"); idx >= 0 {
+				masked[i] = u[:idx+1] + "***"
+			} else {
+				masked[i] = u
+			}
+		}
+		out.Authentication.Users = masked
+	}
+	return &out
+}
+

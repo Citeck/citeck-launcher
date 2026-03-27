@@ -12,6 +12,7 @@ import { Wizard } from './pages/Wizard'
 import { Secrets } from './pages/Secrets'
 import { Diagnostics } from './pages/Diagnostics'
 import { TabBar } from './components/TabBar'
+import { ToastContainer } from './components/Toast'
 import { useEffect } from 'react'
 
 function Layout() {
@@ -56,6 +57,7 @@ function App() {
       <BrowserRouter>
         <Layout />
       </BrowserRouter>
+      <ToastContainer />
     </ErrorBoundary>
   )
 }

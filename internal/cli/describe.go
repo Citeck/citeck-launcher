@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/client"
 	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/spf13/cobra"
@@ -65,7 +66,7 @@ func newDescribeCmd() *cobra.Command {
 					fmt.Println()
 					output.PrintText(output.Colorize(output.Bold, "Environment:"))
 					for _, e := range inspect.Env {
-						output.PrintText("  %s", maskSecretEnv(e))
+						output.PrintText("  %s", api.MaskSecretEnv(e))
 					}
 				}
 			})
@@ -73,21 +74,6 @@ func newDescribeCmd() *cobra.Command {
 			return nil
 		},
 	}
-}
-
-// maskSecretEnv masks values of env vars whose keys end with _PASSWORD, _SECRET, _TOKEN, _KEY.
-func maskSecretEnv(envLine string) string {
-	eqIdx := strings.Index(envLine, "=")
-	if eqIdx < 0 {
-		return envLine
-	}
-	key := strings.ToUpper(envLine[:eqIdx])
-	for _, suffix := range []string{"_PASSWORD", "_SECRET", "_TOKEN", "_KEY"} {
-		if strings.HasSuffix(key, suffix) {
-			return envLine[:eqIdx+1] + "***"
-		}
-	}
-	return envLine
 }
 
 func formatUptime(ms int64) string {

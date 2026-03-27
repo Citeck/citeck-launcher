@@ -68,6 +68,7 @@ type Daemon struct {
 	snapshotMu      sync.Mutex         // guards concurrent snapshot import/export
 	daemonCfg       config.DaemonConfig
 	eventSeq        atomic.Int64       // monotonic event sequence counter
+	sseDropped      atomic.Int64       // SSE events dropped due to slow consumers
 	logWriter       *fsutil.RotatingWriter
 	logLevel        *slog.LevelVar
 }
@@ -331,6 +332,9 @@ func Start(opts StartOptions) error {
 		if daemonCfg.Docker.PullConcurrency > 0 {
 			runtime.SetPullConcurrency(daemonCfg.Docker.PullConcurrency)
 		}
+		if daemonCfg.Docker.StopTimeout > 0 {
+			runtime.SetDefaultStopTimeout(daemonCfg.Docker.StopTimeout)
+		}
 
 		// Restore persisted state: manual stopped apps, edited apps, locked apps
 		if persistedState != nil {
@@ -418,7 +422,7 @@ func Start(opts StartOptions) error {
 	tcpMux := http.NewServeMux()
 	d.registerRoutes(socketMux, tcpMux)
 	d.server = &http.Server{
-		Handler:        RecoveryMiddleware(socketMux),
+		Handler:        RecoveryMiddleware(LoggingMiddleware(socketMux)),
 		ReadTimeout:    30 * time.Second,
 		WriteTimeout:   30 * time.Second,
 		MaxHeaderBytes: 1 << 20, // 1MB
@@ -460,6 +464,7 @@ func Start(opts StartOptions) error {
 				tcpHandler = CSRFMiddleware(tcpHandler)
 			}
 			tcpHandler = RateLimitMiddleware(100, tcpHandler)
+			tcpHandler = SecurityHeadersMiddleware(mtlsActive, tcpHandler)
 			tcpHandler = LoggingMiddleware(tcpHandler)
 			tcpHandler = RecoveryMiddleware(tcpHandler)
 
@@ -630,7 +635,7 @@ func (d *Daemon) setupMTLS(ln net.Listener, handler http.Handler, nsCfg *namespa
 		Certificates: []tls.Certificate{serverCert},
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 		ClientCAs:    caPool,
-		MinVersion:   tls.VersionTLS12,
+		MinVersion:   tls.VersionTLS13,
 	}
 	tlsCfg.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 		caMu.Lock()
@@ -677,6 +682,7 @@ func (d *Daemon) broadcastEvent(evt api.EventDto) {
 		select {
 		case ch <- evt:
 		default:
+			d.sseDropped.Add(1)
 			slog.Warn("Event dropped for slow subscriber", "type", evt.Type)
 		}
 	}
@@ -836,6 +842,12 @@ func writeErrorCode(w http.ResponseWriter, httpCode int, errCode, msg string) {
 		Code:    errCode,
 		Message: msg,
 	})
+}
+
+// writeInternalError logs the full error and returns a generic 500 response to the client.
+func writeInternalError(w http.ResponseWriter, err error) {
+	slog.Error("handler error", "err", err)
+	writeErrorCode(w, http.StatusInternalServerError, api.ErrCodeInternalError, "internal error")
 }
 
 // activeConfigPath returns the namespace config path for the currently loaded namespace.

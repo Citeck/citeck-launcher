@@ -185,12 +185,16 @@ func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef,
 				// Ensure the parent directory exists so Docker doesn't create
 				// a directory at the file path (its default for missing bind sources).
 				hostPath := filepath.Join(volumesBaseDir, source[2:])
-				os.MkdirAll(filepath.Dir(hostPath), 0o755)
+				if err := os.MkdirAll(filepath.Dir(hostPath), 0o755); err != nil {
+					return "", fmt.Errorf("create bind-mount directory %s: %w", filepath.Dir(hostPath), err)
+				}
 				v = hostPath + ":" + parts[1]
 			} else if !strings.ContainsAny(source, "/.") && volumesBaseDir != "" {
 				// Named volume — convert to bind mount in runtime dir
 				hostDir := filepath.Join(volumesBaseDir, "volumes", source)
-				os.MkdirAll(hostDir, 0o755)
+				if err := os.MkdirAll(hostDir, 0o755); err != nil {
+					return "", fmt.Errorf("create bind-mount directory %s: %w", hostDir, err)
+				}
 				v = hostDir + ":" + parts[1]
 			}
 		}

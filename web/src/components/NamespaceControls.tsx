@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { postNamespaceStart, postNamespaceStop, postNamespaceReload } from '../lib/api'
 import { useDashboardStore } from '../lib/store'
+import { toast } from '../lib/toast'
 import { ConfirmModal } from './ConfirmModal'
 import { Play, Square, RefreshCw } from 'lucide-react'
 
@@ -49,9 +50,11 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
     setActionError(null)
     try {
       await actionConfig[pendingAction].fn()
+      toast(`Namespace ${pendingAction} requested`, 'success')
       setPendingAction(null)
       setTimeout(fetchData, 500)
     } catch (err) {
+      toast((err as Error).message, 'error')
       setActionError((err as Error).message)
     } finally {
       setLoading(false)

@@ -78,7 +78,26 @@ export function AppDetail() {
     </div>
   )
 
-  if (!inspect) return <div className="text-muted-foreground text-xs p-3">Loading...</div>
+  if (!inspect) return (
+    <div className="p-3 space-y-3">
+      <div className="flex items-center gap-2">
+        <div className="h-4 w-6 bg-muted rounded animate-pulse" />
+        <div className="h-5 w-32 bg-muted rounded animate-pulse" />
+        <div className="h-4 w-16 bg-muted rounded animate-pulse" />
+      </div>
+      <div className="rounded border border-border bg-card p-2 space-y-1.5">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="h-3 w-full bg-muted rounded animate-pulse" />
+        ))}
+      </div>
+      <div className="rounded border border-border bg-card p-2 space-y-1.5">
+        <div className="h-3 w-24 bg-muted rounded animate-pulse" />
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div key={i} className="h-3 w-full bg-muted rounded animate-pulse" />
+        ))}
+      </div>
+    </div>
+  )
 
   return (
     <div className="p-3 space-y-3">
@@ -122,9 +141,18 @@ export function AppDetail() {
         <div className="rounded border border-border bg-card p-2">
           <div className="text-xs font-medium mb-1">Environment</div>
           <div className="max-h-40 overflow-y-auto">
-            {inspect.env!.map((e, i) => (
-              <div key={i} className="text-[11px] font-mono text-muted-foreground break-all">{e}</div>
-            ))}
+            {inspect.env!.map((e, i) => {
+              const isMasked = e.endsWith('=***')
+              return (
+                <div key={i} className="text-[11px] font-mono overflow-hidden text-ellipsis whitespace-nowrap" title={e}>
+                  {isMasked ? (
+                    <><span className="text-muted-foreground">{e.slice(0, e.length - 3)}</span><span className="text-muted-foreground/50">***</span></>
+                  ) : (
+                    <span className="text-muted-foreground">{e}</span>
+                  )}
+                </div>
+              )
+            })}
           </div>
         </div>
       )}

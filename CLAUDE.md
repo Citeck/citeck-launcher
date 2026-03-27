@@ -253,7 +253,8 @@ Tested on remote server with community 2025.12 (clean deployment). Found and fix
 - **`PLAN-phase10.md`** — Phase 10 plan (COMPLETE, mTLS + production hardening, 25 issues)
 - **`PLAN-phase11.md`** — Phase 11 plan (COMPLETE, production readiness, 26 issues)
 - **`PLAN-phase12.md`** — Phase 12 plan (COMPLETE, GA readiness, 23 issues)
-- **`PLAN-phase13.md`** — Phase 13 plan (production hardening for scale: secrets masking, security headers, HTTP metrics, validate command)
+- **`PLAN-phase13.md`** — Phase 13 plan (COMPLETE, secrets masking, security headers, HTTP metrics, validate command, 20 issues)
+- **`PLAN-phase14.md`** — Phase 14 plan (production hardening at scale: SSE heartbeat, reclone safety, Logs perf, fetch errors, CI, runtime tests)
 
 ### Phase 12: GA Readiness — COMPLETE (2026-03-27)
 23 issues across 5 sub-phases + 3 code review passes (8 additional fixes).
@@ -271,6 +272,22 @@ Tested on remote server with community 2025.12 (clean deployment). Found and fix
 - slog.LevelVar for runtime log level control without daemon restart
 - MarshalNamespaceConfig shallow-copies config to avoid mutating live state
 
+### Phase 13: Production Hardening for Scale — COMPLETE (2026-03-27)
+20 issues across 5 sub-phases + 2 code review passes (6 additional fixes).
+- 13a: Security — `api.MaskSecretEnv` (shared, server-side in handleAppInspect), SecurityHeadersMiddleware (X-Frame-Options, CSP, HSTS), TLS 1.3 minimum for mTLS, maskNamespaceConfigSecrets in system dump
+- 13b: Reliability — daemon.yml `docker.stopTimeout` wired to runtime, restartApp independent stop context (context.Background), socket server access logging, bind-mount MkdirAll error propagation
+- 13c: Observability — HTTP request metrics (counter + histogram, hand-coded Prometheus), OperationRecord caller identity (RequestID, ClientCN), history rotation via fsutil.AtomicWriteFile + mutex, SSE drop counter metric
+- 13d: API + CLI — `citeck validate` command, validateAppName on all app-scoped handlers, error codes on remaining sites (NAMESPACE_RUNNING), writeInternalError helper (log + generic 500)
+- 13e: Web UI — env var display (masked values muted, ellipsis), AppDetail loading skeleton, toast notification system (zustand + auto-dismiss), SSE reconnect toast
+
+### Key Technical Decisions (Phase 13)
+- `api.MaskSecretEnv` in shared `internal/api/secrets.go` — used by both CLI and daemon, no duplication
+- SecurityHeadersMiddleware signature `func(bool, http.Handler) http.Handler` — matches codebase convention
+- Histogram buckets: exclusive recording (break on first match), cumulative output in writePrometheus
+- `writeInternalError` logs full error via slog.Error, returns generic "internal error" to client — prevents internal path/message leakage
+- `numHistogramBuckets` const with init() panic guard — prevents silent array size mismatch
+- History rotateMu protects concurrent rotateIfNeeded calls
+
 ## CI/CD
 
-GitHub Actions release workflow (`.github/workflows/release.yml`): triggered by `v*.*.*` tags, builds on Linux/Windows/macOS (x64 + arm64), creates GitHub release.
+GitHub Actions release workflow (`.github/workflows/release-go.yml`): triggered by `v*.*.*` tags, builds on Linux/Windows/macOS (x64 + arm64), creates GitHub release. Note: `.github/workflows/release.yml` is a stale Kotlin workflow (scheduled for removal in Phase 14c-4).

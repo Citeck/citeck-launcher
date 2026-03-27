@@ -6,11 +6,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
+	"regexp"
 	"runtime/debug"
+	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/api"
@@ -68,6 +72,20 @@ func MTLSIdentityMiddleware(next http.Handler) http.Handler {
 		if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
 			cn := r.TLS.PeerCertificates[0].Subject.CommonName
 			slog.Debug("mTLS client authenticated", "cn", cn, "remote", r.RemoteAddr)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// SecurityHeadersMiddleware adds browser security headers to all responses.
+func SecurityHeadersMiddleware(mtlsActive bool, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		if mtlsActive {
+			w.Header().Set("Strict-Transport-Security", "max-age=63072000")
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -236,6 +254,9 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 			attrs = append(attrs, "cn", r.TLS.PeerCertificates[0].Subject.CommonName)
 		}
 		slog.Info("HTTP request", attrs...)
+
+		// Record metrics
+		httpMetrics.record(r.Method, r.URL.Path, rec.status, time.Since(start))
 	})
 }
 
@@ -256,4 +277,153 @@ func generateRequestID() string {
 	var b [4]byte
 	rand.Read(b[:])
 	return hex.EncodeToString(b[:])
+}
+
+// --- HTTP request metrics ---
+
+// pathParamRe matches path segments that look like dynamic parameters (UUIDs, names with dots/dashes).
+var pathParamRe = regexp.MustCompile(`/api/v1/(?:apps|namespaces|volumes|snapshots)/([^/]+)`)
+
+// normalizePath replaces dynamic path segments with :name to limit cardinality.
+func normalizePath(path string) string {
+	return pathParamRe.ReplaceAllStringFunc(path, func(m string) string {
+		// Keep the prefix, replace the captured segment
+		idx := strings.LastIndex(m, "/")
+		return m[:idx] + "/:name"
+	})
+}
+
+// metricsKey uniquely identifies a request counter bucket.
+type metricsKey struct {
+	method string
+	path   string
+	status int
+}
+
+// histogramKey identifies a latency histogram bucket.
+type histogramKey struct {
+	path string
+}
+
+var histogramBuckets = []float64{0.01, 0.05, 0.1, 0.5, 1, 5, 30}
+
+const numHistogramBuckets = 7 // must match len(histogramBuckets)
+
+type histogramData struct {
+	buckets [numHistogramBuckets]atomic.Int64
+	count   atomic.Int64
+	sum     atomic.Int64 // sum in microseconds (avoids float atomics)
+}
+
+func init() {
+	if len(histogramBuckets) != numHistogramBuckets {
+		panic("histogramBuckets length mismatch with numHistogramBuckets")
+	}
+}
+
+// metricsCollector tracks HTTP request metrics without external dependencies.
+type metricsCollector struct {
+	mu         sync.RWMutex
+	counters   map[metricsKey]*atomic.Int64
+	histograms map[histogramKey]*histogramData
+}
+
+var httpMetrics = &metricsCollector{
+	counters:   make(map[metricsKey]*atomic.Int64),
+	histograms: make(map[histogramKey]*histogramData),
+}
+
+func (mc *metricsCollector) record(method, path string, status int, duration time.Duration) {
+	normalized := normalizePath(path)
+
+	// Counter
+	ck := metricsKey{method: method, path: normalized, status: status}
+	mc.mu.RLock()
+	counter := mc.counters[ck]
+	mc.mu.RUnlock()
+	if counter == nil {
+		mc.mu.Lock()
+		counter = mc.counters[ck]
+		if counter == nil {
+			counter = &atomic.Int64{}
+			mc.counters[ck] = counter
+		}
+		mc.mu.Unlock()
+	}
+	counter.Add(1)
+
+	// Histogram
+	hk := histogramKey{path: normalized}
+	mc.mu.RLock()
+	hist := mc.histograms[hk]
+	mc.mu.RUnlock()
+	if hist == nil {
+		mc.mu.Lock()
+		hist = mc.histograms[hk]
+		if hist == nil {
+			hist = &histogramData{}
+			mc.histograms[hk] = hist
+		}
+		mc.mu.Unlock()
+	}
+	secs := duration.Seconds()
+	for i, bound := range histogramBuckets {
+		if secs <= bound {
+			hist.buckets[i].Add(1)
+			break // only the tightest bucket; writePrometheus cumulates on output
+		}
+	}
+	hist.count.Add(1)
+	hist.sum.Add(int64(math.Round(secs * 1e6))) // store as microseconds
+}
+
+// writePrometheus appends HTTP metrics in Prometheus text exposition format.
+func (mc *metricsCollector) writePrometheus(b *strings.Builder) {
+	mc.mu.RLock()
+	defer mc.mu.RUnlock()
+
+	if len(mc.counters) > 0 {
+		b.WriteString("# HELP citeck_http_requests_total Total HTTP requests.\n")
+		b.WriteString("# TYPE citeck_http_requests_total counter\n")
+		// Sort keys for deterministic output
+		keys := make([]metricsKey, 0, len(mc.counters))
+		for k := range mc.counters {
+			keys = append(keys, k)
+		}
+		sort.Slice(keys, func(i, j int) bool {
+			if keys[i].path != keys[j].path {
+				return keys[i].path < keys[j].path
+			}
+			if keys[i].method != keys[j].method {
+				return keys[i].method < keys[j].method
+			}
+			return keys[i].status < keys[j].status
+		})
+		for _, k := range keys {
+			fmt.Fprintf(b, "citeck_http_requests_total{method=\"%s\",path=\"%s\",status=\"%d\"} %d\n",
+				promEscape(k.method), promEscape(k.path), k.status, mc.counters[k].Load())
+		}
+	}
+
+	if len(mc.histograms) > 0 {
+		b.WriteString("# HELP citeck_http_request_duration_seconds HTTP request latency.\n")
+		b.WriteString("# TYPE citeck_http_request_duration_seconds histogram\n")
+		hkeys := make([]string, 0, len(mc.histograms))
+		for k := range mc.histograms {
+			hkeys = append(hkeys, k.path)
+		}
+		sort.Strings(hkeys)
+		for _, path := range hkeys {
+			hist := mc.histograms[histogramKey{path: path}]
+			ep := promEscape(path)
+			var cumulative int64
+			for i, bound := range histogramBuckets {
+				cumulative += hist.buckets[i].Load()
+				fmt.Fprintf(b, "citeck_http_request_duration_seconds_bucket{path=\"%s\",le=\"%.2f\"} %d\n", ep, bound, cumulative)
+			}
+			fmt.Fprintf(b, "citeck_http_request_duration_seconds_bucket{path=\"%s\",le=\"+Inf\"} %d\n", ep, hist.count.Load())
+			fmt.Fprintf(b, "citeck_http_request_duration_seconds_count{path=\"%s\"} %d\n", ep, hist.count.Load())
+			fmt.Fprintf(b, "citeck_http_request_duration_seconds_sum{path=\"%s\"} %.6f\n", ep, float64(hist.sum.Load())/1e6)
+		}
+	}
 }

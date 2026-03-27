@@ -97,6 +97,7 @@ type Runtime struct {
 	stopCh             chan struct{}       // dedicated stop signal that can't be dropped
 	pullSem            chan struct{}       // limits concurrent image pulls
 	reconcilerCfg      *ReconcilerConfig  // optional override from daemon.yml
+	defaultStopTimeout int                // from daemon.yml docker.stopTimeout; 0 = use hardcoded default (10s)
 	shutdownOnce       sync.Once
 	statsRunning       atomic.Bool        // guards against overlapping updateStats goroutines
 	runCtx          context.Context    // set by doStart, cancelled by doStop
@@ -125,6 +126,13 @@ func (r *Runtime) SetReconcilerConfig(cfg ReconcilerConfig) {
 func (r *Runtime) SetPullConcurrency(n int) {
 	if n > 0 {
 		r.pullSem = make(chan struct{}, n)
+	}
+}
+
+// SetDefaultStopTimeout overrides the default stop timeout (from daemon.yml docker.stopTimeout).
+func (r *Runtime) SetDefaultStopTimeout(seconds int) {
+	if seconds > 0 {
+		r.defaultStopTimeout = seconds
 	}
 }
 
@@ -638,9 +646,18 @@ func (r *Runtime) restartApp(ctx context.Context, appName string) {
 	appDef := app.Def
 	r.mu.RUnlock()
 
-	// Create and start container
+	// Stop phase uses independent context so daemon shutdown doesn't interrupt the stop call
 	containerName := r.docker.ContainerName(appName)
-	_ = r.docker.StopAndRemoveContainer(ctx, containerName, 0)
+	stopTimeout := appDef.StopTimeout
+	if stopTimeout == 0 {
+		stopTimeout = r.defaultStopTimeout
+	}
+	if stopTimeout == 0 {
+		stopTimeout = 10
+	}
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), time.Duration(stopTimeout+5)*time.Second)
+	_ = r.docker.StopAndRemoveContainer(stopCtx, containerName, stopTimeout)
+	stopCancel()
 
 	id, err := r.docker.CreateContainer(ctx, appDef, r.volumesBase)
 	if err != nil {
@@ -1337,9 +1354,20 @@ func (r *Runtime) doStop() {
 	}
 	r.mu.Unlock()
 
-	// Stop in graceful order: proxy → webapps/other → keycloak → infra (30s per group)
+	// Stop in graceful order: proxy → webapps/other → keycloak → infra
 	stopGroup := func(apps []*AppRuntime) {
-		groupCtx, groupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		// Determine the max stop timeout across all apps in the group
+		maxTimeout := 10 // default minimum
+		for _, a := range apps {
+			t := a.Def.StopTimeout
+			if t == 0 {
+				t = r.defaultStopTimeout
+			}
+			if t > maxTimeout {
+				maxTimeout = t
+			}
+		}
+		groupCtx, groupCancel := context.WithTimeout(context.Background(), time.Duration(maxTimeout+5)*time.Second)
 		defer groupCancel()
 		var wg sync.WaitGroup
 		for _, a := range apps {
@@ -1347,7 +1375,11 @@ func (r *Runtime) doStop() {
 			go func(app *AppRuntime) {
 				defer wg.Done()
 				slog.Info("Stopping app", "app", app.Name)
-				if err := r.docker.StopAndRemoveContainer(groupCtx, r.docker.ContainerName(app.Name), app.Def.StopTimeout); err != nil {
+				timeout := app.Def.StopTimeout
+				if timeout == 0 {
+					timeout = r.defaultStopTimeout
+				}
+				if err := r.docker.StopAndRemoveContainer(groupCtx, r.docker.ContainerName(app.Name), timeout); err != nil {
 					slog.Warn("Failed to stop container", "app", app.Name, "err", err)
 				}
 			}(a)

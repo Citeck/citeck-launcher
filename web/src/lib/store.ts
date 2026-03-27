@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { NamespaceDto, HealthDto } from './types'
 import { getNamespace, getHealth } from './api'
 import { connectEvents } from './websocket'
+import { toast } from './toast'
 
 interface EventStream {
   close: () => void
@@ -59,6 +60,7 @@ return ({
         // Detect sequence gap — fetch fresh state to catch up
         const { lastSeq } = get()
         if (lastSeq > 0 && event.seq > lastSeq + 1) {
+          toast('Connection restored, state refreshed', 'info')
           get().fetchData()
         }
         set({ lastSeq: event.seq })

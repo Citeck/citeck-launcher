@@ -16,6 +16,15 @@
 * Snapshot export with SHA256 integrity sidecar
 * Namespace config `apiVersion` field for future schema evolution
 * Full API documentation (`docs/api.md`, `docs/config.md`, `docs/operations.md`)
+* Server-side secret masking in API responses (`_PASSWORD`, `_SECRET`, `_TOKEN`, `_KEY`)
+* HTTP security headers (X-Frame-Options, CSP, X-Content-Type-Options, HSTS)
+* TLS 1.3 minimum for mTLS connections
+* HTTP request metrics (counter + latency histogram) in Prometheus format
+* `citeck validate` command for offline config validation
+* App name validation on all API endpoints
+* Internal error suppression (generic 500 to client, full error in daemon log)
+* Toast notification system in Web UI
+* SSE event drop counter metric
 
 # Release 1.3.8
 

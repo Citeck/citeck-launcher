@@ -1,6 +1,10 @@
 package cli
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/citeck/citeck-launcher/internal/api"
+)
 
 func TestFormatUptime(t *testing.T) {
 	tests := []struct {
@@ -45,7 +49,7 @@ func TestMaskSecretEnv(t *testing.T) {
 		{"EMPTY_PASSWORD=", "EMPTY_PASSWORD=***"},
 	}
 	for _, tt := range tests {
-		got := maskSecretEnv(tt.input)
+		got := api.MaskSecretEnv(tt.input)
 		if got != tt.want {
 			t.Errorf("maskSecretEnv(%q) = %q, want %q", tt.input, got, tt.want)
 		}

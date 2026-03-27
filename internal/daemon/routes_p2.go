@@ -63,7 +63,7 @@ func (d *Daemon) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
 	if config.IsDesktopMode() {
 		namespaces, err := config.ListAllNamespaces()
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err)
 			return
 		}
 		for _, ns := range namespaces {
@@ -127,14 +127,14 @@ func (d *Daemon) handleDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 	d.configMu.RUnlock()
 	if activeID == nsID && d.runtime != nil && d.runtime.Status() != namespace.NsStatusStopped {
-		writeError(w, http.StatusConflict, "cannot delete active namespace; stop it first")
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeNamespaceRunning, "cannot delete active namespace; stop it first")
 		return
 	}
 
 	if config.IsDesktopMode() {
 		configPath := config.WorkspaceNamespaceConfigPath(d.workspaceID, nsID)
 		if err := os.Remove(configPath); err != nil && !os.IsNotExist(err) {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err)
 			return
 		}
 	} else {
@@ -296,7 +296,7 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	// Serialize to YAML
 	data, err := namespace.MarshalNamespaceConfig(&nsCfg)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 
@@ -313,7 +313,7 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		}
 		nsDir := config.NamespaceDir(wsID, nsCfg.ID)
 		if err := os.MkdirAll(nsDir, 0o755); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err)
 			return
 		}
 		configPath = config.WorkspaceNamespaceConfigPath(wsID, nsCfg.ID)
@@ -322,7 +322,7 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := fsutil.AtomicWriteFile(configPath, data, 0o644); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 
@@ -375,7 +375,7 @@ func (d *Daemon) handleListSecrets(w http.ResponseWriter, _ *http.Request) {
 
 	secrets, err := d.store.ListSecrets()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 
@@ -423,7 +423,7 @@ func (d *Daemon) handleCreateSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := d.store.SaveSecret(secret); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 
@@ -442,7 +442,7 @@ func (d *Daemon) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := d.store.DeleteSecret(id); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 
@@ -673,7 +673,7 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 	// Validation under lock — unlock on early return
 	if d.runtime != nil && d.runtime.Status() != namespace.NsStatusStopped {
 		d.snapshotMu.Unlock()
-		writeError(w, http.StatusConflict, "namespace must be stopped before export")
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeNamespaceRunning, "namespace must be stopped before export")
 		return
 	}
 	if d.dockerClient == nil {
@@ -690,7 +690,7 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		d.snapshotMu.Unlock()
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 
@@ -748,7 +748,7 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 	// Validation under lock — unlock on early return
 	if d.runtime != nil && d.runtime.Status() != namespace.NsStatusStopped {
 		d.snapshotMu.Unlock()
-		writeError(w, http.StatusConflict, "namespace must be stopped before import")
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeNamespaceRunning, "namespace must be stopped before import")
 		return
 	}
 	if d.dockerClient == nil {
@@ -799,7 +799,7 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 		tmpFile, err := os.CreateTemp("", "citeck-snapshot-upload-*.zip")
 		if err != nil {
 			d.snapshotMu.Unlock()
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err)
 			return
 		}
 
@@ -807,7 +807,7 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 			tmpFile.Close()
 			os.Remove(tmpFile.Name())
 			d.snapshotMu.Unlock()
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err)
 			return
 		}
 		tmpFile.Close()
@@ -870,7 +870,7 @@ func (d *Daemon) handleDownloadSnapshot(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 
@@ -1088,7 +1088,7 @@ func (d *Daemon) handleRenameSnapshot(w http.ResponseWriter, r *http.Request) {
 
 	dir, err := d.snapshotsDir()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 
@@ -1116,7 +1116,7 @@ func (d *Daemon) handleRenameSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := os.Rename(oldPath, newPath); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("Renamed to %s", newName)})
