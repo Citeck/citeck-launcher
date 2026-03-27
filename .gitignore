@@ -1,57 +1,30 @@
-.gradle
-build/
-!gradle/wrapper/gradle-wrapper.jar
-!**/src/main/**/build/
-!**/src/test/**/build/
-*.log
-node_modules
-
-### IntelliJ IDEA ###
-.idea
-*.iws
-*.iml
-*.ipr
-out/
-!**/src/main/**/out/
-!**/src/test/**/out/
-
-### Eclipse ###
-.apt_generated
-.classpath
-.factorypath
-.project
-.settings
-.springBeans
-.sts4-cache
-bin/
-!**/src/main/**/bin/
-!**/src/test/**/bin/
-!**/src/dist/**/bin/
-
-### NetBeans ###
-/nbproject/private/
-/nbbuild/
-/dist/
-/nbdist/
-/.nb-gradle/
-
-### VS Code ###
-.vscode/
-
-### Mac OS ###
-.DS_Store
-
-### Kotlin ###
-.kotlin
-
 ### Go ###
 citeck
 internal/daemon/webdist/
 
 ### Web ###
 web/dist/
+node_modules
+
+### IDE ###
+.idea
+.vscode/
+*.iws
+*.iml
+*.ipr
+
+### OS ###
+.DS_Store
+*.log
+
+### Legacy (Kotlin era) ###
+.gradle
+.kotlin
+build/
+
+### Test ###
+test-results/
 
 ### Custom ###
 *.png
 !icons/**/*.png
-test-results/
