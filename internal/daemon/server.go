@@ -68,6 +68,7 @@ type Daemon struct {
 	snapshotMu      sync.Mutex         // guards concurrent snapshot import/export
 	daemonCfg       config.DaemonConfig
 	eventSeq        atomic.Int64       // monotonic event sequence counter
+	logWriter       *fsutil.RotatingWriter
 }
 
 // Start runs the daemon.
@@ -386,6 +387,7 @@ func Start(opts StartOptions) error {
 		bgCtx:           bgCtx,
 		bgCancel:        bgCancel,
 		daemonCfg:       daemonCfg,
+		logWriter:       logWriter,
 	}
 
 	// Wire up event broadcasting
@@ -554,6 +556,9 @@ func (d *Daemon) doShutdown() {
 	os.Remove(d.socketPath)
 
 	slog.Info("Daemon stopped")
+	if d.logWriter != nil {
+		d.logWriter.Close()
+	}
 }
 
 // isLocalhostAddr returns true if the listen address is bound to localhost only.
@@ -709,6 +714,7 @@ func (d *Daemon) registerRoutes(socketMux, tcpMux *http.ServeMux) {
 	socketMux.HandleFunc("POST /api/v1/apps/{name}/exec", d.handleAppExec)
 	socketMux.HandleFunc("PUT /api/v1/config", d.handlePutConfig)
 	socketMux.HandleFunc("PUT /api/v1/apps/{name}/config", d.handlePutAppConfig)
+	socketMux.HandleFunc("PUT /api/v1/apps/{name}/files/{path...}", d.handlePutAppFile)
 	socketMux.HandleFunc("POST "+api.NamespaceReload, d.handleReloadNamespace)
 
 	// --- Routes available on both muxes ---
@@ -743,7 +749,6 @@ func (d *Daemon) registerRoutes(socketMux, tcpMux *http.ServeMux) {
 	both("PUT /api/v1/apps/{name}/lock", d.handleAppLockToggle)
 	both("GET /api/v1/apps/{name}/files", d.handleListAppFiles)
 	both("GET /api/v1/apps/{name}/files/{path...}", d.handleGetAppFile)
-	both("PUT /api/v1/apps/{name}/files/{path...}", d.handlePutAppFile)
 
 	// Daemon logs
 	both("GET /api/v1/daemon/logs", d.handleDaemonLogs)

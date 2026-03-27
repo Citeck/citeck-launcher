@@ -222,7 +222,12 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 			for i, fe := range fieldErrs {
 				fields[i] = api.FieldErrorDto{Key: fe.Key, Message: fe.Message}
 			}
-			writeError(w, http.StatusBadRequest, fields[0].Message)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(api.ValidationErrorDto{
+				Error:  "validation failed",
+				Fields: fields,
+			})
 			return
 		}
 	}
@@ -899,7 +904,7 @@ func (d *Daemon) handleDownloadSnapshot(w http.ResponseWriter, r *http.Request) 
 			Type: "snapshot_download", Timestamp: time.Now().UnixMilli(),
 			NamespaceID: nsID, After: fmt.Sprintf("downloading %s", fileName),
 		})
-		if err := snapshot.DownloadWithClient(d.bgCtx, ssrfSafeClient(), req.URL, destPath, req.SHA256, nil); err != nil {
+		if err := snapshot.DownloadWithClient(d.bgCtx, ssrfSafeClient, req.URL, destPath, req.SHA256, nil); err != nil {
 			slog.Error("Snapshot download failed", "url", req.URL, "err", err)
 			d.broadcastEvent(api.EventDto{
 				Type: "snapshot_error", Timestamp: time.Now().UnixMilli(),
@@ -1149,38 +1154,35 @@ func validateSnapshotURL(rawURL string) error {
 	return nil
 }
 
-// ssrfSafeClient returns an HTTP client whose DialContext validates resolved IPs
-// against SSRF blocked ranges. This prevents DNS rebinding attacks where a hostname
+// ssrfSafeClient is a shared HTTP client whose DialContext validates resolved IPs
+// against SSRF blocked ranges. Prevents DNS rebinding attacks where a hostname
 // resolves to a public IP at validation time but a private IP at connection time.
-func ssrfSafeClient() *http.Client {
-	dialer := &net.Dialer{Timeout: 30 * time.Second}
-	return &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				host, port, err := net.SplitHostPort(addr)
-				if err != nil {
-					return nil, err
+var ssrfSafeClient = &http.Client{
+	Transport: &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			ips, err := net.DefaultResolver.LookupHost(ctx, host)
+			if err != nil {
+				return nil, err
+			}
+			for _, ipStr := range ips {
+				ip := net.ParseIP(ipStr)
+				if ip != nil && isBlockedIP(ip) {
+					return nil, fmt.Errorf("SSRF blocked: resolved IP %s for %s", ipStr, host)
 				}
-				ips, err := net.DefaultResolver.LookupHost(ctx, host)
-				if err != nil {
-					return nil, err
-				}
-				for _, ipStr := range ips {
-					ip := net.ParseIP(ipStr)
-					if ip != nil && isBlockedIP(ip) {
-						return nil, fmt.Errorf("SSRF blocked: resolved IP %s for %s", ipStr, host)
-					}
-				}
-				// Connect to the first non-blocked IP
-				if len(ips) > 0 {
-					return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0], port))
-				}
-				return nil, fmt.Errorf("no valid IPs for %s", host)
-			},
-			ResponseHeaderTimeout: 30 * time.Second,
-			IdleConnTimeout:       90 * time.Second,
+			}
+			if len(ips) > 0 {
+				dialer := &net.Dialer{Timeout: 30 * time.Second}
+				return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0], port))
+			}
+			return nil, fmt.Errorf("no valid IPs for %s", host)
 		},
-	}
+		ResponseHeaderTimeout: 30 * time.Second,
+		IdleConnTimeout:       90 * time.Second,
+	},
 }
 
 // isBlockedIP returns true if the IP is in a range that should not be accessed via SSRF.

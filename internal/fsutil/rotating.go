@@ -53,6 +53,18 @@ func (rw *RotatingWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// Close closes the underlying log file.
+func (rw *RotatingWriter) Close() error {
+	rw.mu.Lock()
+	defer rw.mu.Unlock()
+	if rw.file != nil {
+		err := rw.file.Close()
+		rw.file = nil
+		return err
+	}
+	return nil
+}
+
 func (rw *RotatingWriter) rotate() {
 	if rw.file != nil {
 		rw.file.Close()

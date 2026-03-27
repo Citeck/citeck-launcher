@@ -162,7 +162,7 @@ func doGet(ctx context.Context, client *http.Client, rawURL string, offset int64
 		if err != nil {
 			return nil, fmt.Errorf("create retry request: %w", err)
 		}
-		resp, err = httpClient.Do(retryReq)
+		resp, err = client.Do(retryReq)
 		if err != nil {
 			return nil, fmt.Errorf("download %s: %w", rawURL, err)
 		}

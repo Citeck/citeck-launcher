@@ -33,6 +33,7 @@ export interface NamespaceDto {
 }
 
 export interface HealthDto {
+  status: string   // "healthy" | "degraded" | "unhealthy"
   healthy: boolean
   checks: HealthCheckDto[]
 }
