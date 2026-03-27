@@ -33,7 +33,7 @@ type PullData struct {
 
 // PullExecutor pulls a Docker image with configurable retry delays and fallback to local.
 type PullExecutor struct {
-	Docker      *docker.Client
+	Docker      docker.Interface
 	RetryDelays []time.Duration // if nil, uses PullRetryDelays
 	PullAlways  bool            // if true, pull even if image exists locally (for updates)
 }

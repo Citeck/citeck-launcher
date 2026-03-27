@@ -5,6 +5,7 @@ import type { AppInspectDto } from '../lib/types'
 import { StatusBadge } from '../components/StatusBadge'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { useDashboardStore } from '../lib/store'
+import { toast } from '../lib/toast'
 import { RotateCw, FileCode, Lock, Unlock } from 'lucide-react'
 
 function formatUptime(ms: number): string {
@@ -40,20 +41,31 @@ export function AppDetail() {
   const isEdited = appMeta?.edited ?? false
   const isLocked = appMeta?.locked ?? false
 
-  const load = useCallback(() => {
+  const load = useCallback((signal?: AbortSignal) => {
     if (!name) return
-    getAppInspect(name).then(setInspect).catch((e) => setError(e.message))
-    getAppLogs(name, 30).then(setLogs).catch(() => setLogs('(logs unavailable)'))
-    getAppConfig(name).then((y) => { setConfigYaml(y); setEditYaml(y) }).catch(() => {})
-    getAppFiles(name).then(setFiles).catch(() => {})
+    const opts = signal ? { signal } : undefined
+    getAppInspect(name).then((d) => { if (!signal?.aborted) setInspect(d) }).catch((e) => { if (!signal?.aborted) setError(e.message) })
+    getAppLogs(name, 30).then((d) => { if (!signal?.aborted) setLogs(d) }).catch(() => { if (!signal?.aborted) setLogs('(logs unavailable)') })
+    getAppConfig(name).then((y) => { if (!signal?.aborted) { setConfigYaml(y); setEditYaml(y) } }).catch(() => {})
+    getAppFiles(name).then((f) => { if (!signal?.aborted) setFiles(f) }).catch(() => {})
   }, [name])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    const controller = new AbortController()
+    load(controller.signal)
+    return () => controller.abort()
+  }, [load])
 
   const handleRestart = async () => {
     if (!name) return
     setRestarting(true)
-    try { await postAppRestart(name) } finally { setRestarting(false) }
+    try {
+      await postAppRestart(name)
+    } catch (e) {
+      toast((e as Error).message, 'error')
+    } finally {
+      setRestarting(false)
+    }
   }
 
   async function handleApplyConfig() {

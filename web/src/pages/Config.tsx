@@ -19,10 +19,13 @@ export function Config() {
     try {
       const [h, cfg] = await Promise.all([
         getHealth().catch(() => null),
-        getConfigContent().catch(() => null),
+        getConfigContent().catch((e: Error) => {
+          setError(e.message)
+          return null
+        }),
       ])
       if (h) setHealth(h)
-      if (cfg) {
+      if (cfg !== null) {
         setConfigText(cfg)
         setEditText(cfg)
       }
@@ -180,6 +183,10 @@ export function Config() {
           ) : (
             <YamlViewer content={configText} />
           )
+        ) : error ? (
+          <p className="text-sm text-destructive">
+            Failed to load configuration: {error}
+          </p>
         ) : (
           <p className="text-sm text-muted-foreground">
             No configuration file found. Use{' '}

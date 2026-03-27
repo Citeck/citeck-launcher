@@ -1,18 +1,48 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { getDaemonLogs } from '../lib/api'
 
 export function DaemonLogs() {
   const [logs, setLogs] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const fetchLogs = useCallback(() => {
-    getDaemonLogs(500).then(setLogs).catch((e) => setError(e.message))
+    getDaemonLogs(500)
+      .then((data) => { setLogs(data); setError(null) })
+      .catch((e) => setError(e.message))
   }, [])
 
   useEffect(() => {
     fetchLogs()
-    const interval = setInterval(fetchLogs, 3000)
-    return () => clearInterval(interval)
+
+    const startPolling = () => {
+      if (!intervalRef.current) {
+        intervalRef.current = setInterval(fetchLogs, 5000)
+      }
+    }
+    const stopPolling = () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
+    }
+
+    startPolling()
+
+    const handleVisibility = () => {
+      if (document.hidden) {
+        stopPolling()
+      } else {
+        fetchLogs()
+        startPolling()
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+
+    return () => {
+      stopPolling()
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
   }, [fetchLogs])
 
   return (

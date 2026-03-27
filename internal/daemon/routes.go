@@ -87,6 +87,12 @@ func (d *Daemon) handleStopNamespace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
+	if !d.reloadMu.TryLock() {
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeReloadInProgress, "reload already in progress")
+		return
+	}
+	defer d.reloadMu.Unlock()
+
 	d.configMu.RLock()
 	if d.runtime == nil || d.nsConfig == nil || d.bundleDef == nil {
 		d.configMu.RUnlock()
@@ -501,6 +507,8 @@ func (d *Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 	defer d.removeSubscriber(ch)
 
 	ctx := r.Context()
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -508,6 +516,10 @@ func (d *Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 		case evt := <-ch:
 			data, _ := json.Marshal(evt)
 			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+			ticker.Reset(15 * time.Second)
+		case <-ticker.C:
+			fmt.Fprint(w, ": keepalive\n\n")
 			flusher.Flush()
 		}
 	}

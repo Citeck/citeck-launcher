@@ -35,19 +35,37 @@ function detectLevel(line: string): LogLevel | null {
   return null
 }
 
-function detectLevels(lines: string[]): (LogLevel | null)[] {
-  const result: (LogLevel | null)[] = []
-  let lastLevel: LogLevel | null = null
+function detectLevelsForLines(lines: string[], lastLevel: LogLevel | null): { levels: (LogLevel | null)[], lastLevel: LogLevel | null } {
+  const levels: (LogLevel | null)[] = []
+  let current = lastLevel
   for (const line of lines) {
     const level = detectLevel(line)
     if (level) {
-      lastLevel = level
-      result.push(level)
+      current = level
+      levels.push(level)
     } else {
-      result.push(lastLevel)
+      levels.push(current)
     }
   }
-  return result
+  return { levels, lastLevel: current }
+}
+
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** Test if a regex is safe (no catastrophic backtracking). Returns true if safe. */
+function isRegexSafe(pattern: string): boolean {
+  try {
+    const re = new RegExp(pattern, 'i')
+    // Non-matching suffix forces backtracking on catastrophic patterns like (a+)+$
+    const testStr = 'a'.repeat(100) + '!'
+    const start = performance.now()
+    re.test(testStr)
+    return performance.now() - start < 50
+  } catch {
+    return false
+  }
 }
 
 const API_BASE = '/api/v1'
@@ -55,7 +73,9 @@ const MAX_LOG_LINES = 50_000
 
 export function Logs() {
   const { name } = useParams<{ name: string }>()
-  const [logs, setLogs] = useState('')
+  const [lines, setLines] = useState<string[]>([])
+  const [levels, setLevels] = useState<(LogLevel | null)[]>([])
+  const lastLevelRef = useRef<LogLevel | null>(null)
   const [tail, setTail] = useState(500)
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
@@ -71,6 +91,52 @@ export function Logs() {
   const followRef = useRef(follow)
   followRef.current = follow
 
+  const setLinesWithLevels = useCallback((newLines: string[]) => {
+    lastLevelRef.current = null
+    const { levels: newLevels, lastLevel } = detectLevelsForLines(newLines, null)
+    lastLevelRef.current = lastLevel
+    setLines(newLines)
+    setLevels(newLevels)
+  }, [])
+
+  const appendChunk = useCallback((chunk: string) => {
+    setLines(prev => {
+      const newLines = chunk.split('\n')
+      // Merge last line fragment only if chunk continues a partial line
+      let merged: string[]
+      let newCount: number
+      if (prev.length > 0 && newLines.length > 0 && !chunk.startsWith('\n')) {
+        const lastLine = prev[prev.length - 1] + newLines[0]
+        merged = [...prev.slice(0, -1), lastLine, ...newLines.slice(1)]
+        newCount = newLines.length // 1 re-merged + rest
+      } else {
+        merged = [...prev, ...newLines]
+        newCount = newLines.length
+      }
+      const trimmed = merged.length > MAX_LOG_LINES
+      if (trimmed) {
+        merged = merged.slice(-MAX_LOG_LINES)
+      }
+      if (trimmed) {
+        // After trim, re-detect all levels (rare path — only on overflow)
+        const { levels: allLevels, lastLevel } = detectLevelsForLines(merged, null)
+        lastLevelRef.current = lastLevel
+        setLevels(allLevels)
+      } else {
+        // Detect levels for new/changed lines only
+        const appendStart = Math.max(0, merged.length - newCount)
+        const appendedLines = merged.slice(appendStart)
+        const { levels: newLevels, lastLevel } = detectLevelsForLines(appendedLines, lastLevelRef.current)
+        lastLevelRef.current = lastLevel
+        setLevels(prevLevels => {
+          const kept = prevLevels.slice(0, appendStart)
+          return [...kept, ...newLevels]
+        })
+      }
+      return merged
+    })
+  }, [])
+
   // Debounce search input (300ms)
   useEffect(() => {
     const trimmed = search.slice(0, 200)
@@ -83,15 +149,15 @@ export function Logs() {
     if (!name) return
     getAppLogs(name, tail)
       .then((data) => {
-        setLogs(data)
+        setLinesWithLevels(data.split('\n'))
         setError(null)
       })
       .catch((e) => setError(e.message))
-  }, [name, tail])
+  }, [name, tail, setLinesWithLevels])
 
   useEffect(() => {
-    fetchInitialLogs()
-  }, [fetchInitialLogs])
+    if (!follow) fetchInitialLogs()
+  }, [fetchInitialLogs, follow])
 
   // Streaming follow using chunked response (not SSE, not polling)
   useEffect(() => {
@@ -116,14 +182,7 @@ export function Logs() {
           const { done, value } = await reader.read()
           if (done) break
           const chunk = decoder.decode(value, { stream: true })
-          setLogs((prev) => {
-            const combined = prev + chunk
-            const lines = combined.split('\n')
-            if (lines.length > MAX_LOG_LINES) {
-              return lines.slice(-MAX_LOG_LINES).join('\n')
-            }
-            return combined
-          })
+          appendChunk(chunk)
         }
       } catch (e) {
         if (e instanceof DOMException && e.name === 'AbortError') return
@@ -134,13 +193,12 @@ export function Logs() {
       }
     }
 
-    // Clear and start streaming
     startStream()
 
     return () => {
       controller.abort()
     }
-  }, [follow, name, tail])
+  }, [follow, name, tail, appendChunk])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -155,7 +213,7 @@ export function Logs() {
       }
       if ((e.ctrlKey || e.metaKey) && e.key === 'l') {
         e.preventDefault()
-        setLogs('')
+        setLinesWithLevels([])
       }
       if (e.key === 'Escape') {
         setSearch('')
@@ -164,36 +222,52 @@ export function Logs() {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  }, [setLinesWithLevels])
 
   // Detect levels with inheritance, then filter
   const { filteredLines, filteredLevels, totalLineCount } = useMemo(() => {
-    const lines = logs.split('\n')
-    const allLevels = detectLevels(lines)
     const entries = lines
-      .map((line, i) => ({ line, level: allLevels[i] }))
+      .map((line, i) => ({ line, level: levels[i] ?? null }))
       .filter(({ level }) => !level || enabledLevels.has(level))
     return {
       filteredLines: entries.map((e) => e.line),
       filteredLevels: entries.map((e) => e.level),
       totalLineCount: lines.length,
     }
-  }, [logs, enabledLevels])
+  }, [lines, levels, enabledLevels])
+
+  // Build safe search regex with ReDoS protection
+  const { safeSearchRegex, regexWarning } = useMemo(() => {
+    if (!debouncedSearch) {
+      return { safeSearchRegex: null, regexWarning: null }
+    }
+    if (useRegex) {
+      try {
+        new RegExp(debouncedSearch, 'i') // syntax check
+      } catch {
+        return { safeSearchRegex: null, regexWarning: null }
+      }
+      if (!isRegexSafe(debouncedSearch)) {
+        return {
+          safeSearchRegex: new RegExp(escapeRegExp(debouncedSearch), 'gi'),
+          regexWarning: 'Regex too complex — using literal match',
+        }
+      }
+      return { safeSearchRegex: new RegExp(debouncedSearch, 'gi'), regexWarning: null }
+    }
+    return { safeSearchRegex: new RegExp(escapeRegExp(debouncedSearch), 'gi'), regexWarning: null }
+  }, [debouncedSearch, useRegex])
 
   const searchMatches = useMemo(() => {
     const matches = new Set<number>()
-    if (debouncedSearch) {
-      try {
-        const pattern = useRegex ? new RegExp(debouncedSearch, 'i') : null
-        filteredLines.forEach((line, i) => {
-          if (pattern ? pattern.test(line) : line.toLowerCase().includes(debouncedSearch.toLowerCase())) {
-            matches.add(i)
-          }
-        })
-      } catch { /* invalid regex */ }
+    if (safeSearchRegex) {
+      filteredLines.forEach((line, i) => {
+        safeSearchRegex.lastIndex = 0
+        if (safeSearchRegex.test(line)) matches.add(i)
+      })
     }
     return matches
-  }, [filteredLines, debouncedSearch, useRegex])
+  }, [filteredLines, safeSearchRegex])
 
   const matchIndices = Array.from(searchMatches).sort((a, b) => a - b)
   const safeMatchIndex = matchIndices.length > 0
@@ -305,6 +379,9 @@ export function Logs() {
               </span>
             </>
           )}
+          {regexWarning && (
+            <span className="text-xs text-warning">{regexWarning}</span>
+          )}
         </div>
 
         <div className="h-5 w-px bg-border" />
@@ -384,7 +461,7 @@ export function Logs() {
         <button
           type="button"
           className="rounded px-2 py-1.5 text-xs border border-border text-muted-foreground hover:bg-muted"
-          onClick={() => setLogs('')}
+          onClick={() => setLinesWithLevels([])}
           title="Clear logs (Ctrl+L)"
         >
           Clear
@@ -443,7 +520,7 @@ export function Logs() {
                   }}
                   className={`${colorClass} ${wordWrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'} ${isCurrentMatch ? 'bg-primary/20' : searchMatches.has(idx) ? 'bg-primary/10' : ''}`}
                 >
-                  {search ? highlightSearch(line, search, useRegex) : line}
+                  {safeSearchRegex ? highlightSearch(line, safeSearchRegex) : line}
                 </div>
               )
             })}
@@ -465,25 +542,23 @@ export function Logs() {
   )
 }
 
-function highlightSearch(line: string, search: string, useRegex: boolean): React.ReactNode {
-  try {
-    const regex = useRegex ? new RegExp(`(${search})`, 'gi') : new RegExp(`(${escapeRegExp(search)})`, 'gi')
-    const parts = line.split(regex)
-    if (parts.length === 1) return line
-    return parts.map((part, i) =>
-      i % 2 === 1 ? (
+function highlightSearch(line: string, regex: RegExp): React.ReactNode {
+  regex.lastIndex = 0
+  const parts = line.split(regex)
+  if (parts.length === 1) return line
+  regex.lastIndex = 0
+  const matches = line.match(regex)
+  if (!matches) return line
+  const result: React.ReactNode[] = []
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i]) result.push(parts[i])
+    if (i < matches.length) {
+      result.push(
         <mark key={i} className="bg-warning/40 text-inherit rounded-sm px-0.5">
-          {part}
-        </mark>
-      ) : (
-        part
-      ),
-    )
-  } catch {
-    return line
+          {matches[i]}
+        </mark>,
+      )
+    }
   }
-}
-
-function escapeRegExp(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return result
 }

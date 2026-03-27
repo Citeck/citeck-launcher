@@ -40,6 +40,12 @@ func (rw *recoveryWriter) Unwrap() http.ResponseWriter {
 	return rw.ResponseWriter
 }
 
+func (rw *recoveryWriter) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // RecoveryMiddleware catches panics in handlers and returns 500 with INTERNAL_ERROR code.
 // Logs the full stack trace via slog.Error. Applied to both socketMux and tcpMux.
 // If the response was already started before the panic, only the log is emitted
@@ -224,6 +230,12 @@ func (sr *statusRecorder) WriteHeader(code int) {
 // for SetWriteDeadline and other per-connection controls.
 func (sr *statusRecorder) Unwrap() http.ResponseWriter {
 	return sr.ResponseWriter
+}
+
+func (sr *statusRecorder) Flush() {
+	if f, ok := sr.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 // LoggingMiddleware logs HTTP requests with method, path, status, duration, remote addr, request ID, and mTLS CN.

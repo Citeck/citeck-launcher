@@ -20,12 +20,30 @@ const API_BASE = '/api/v1'
 
 const CSRF_HEADER = { 'X-Citeck-CSRF': '1' }
 
+async function extractErrorMessage(res: Response): Promise<string> {
+  try {
+    const body = await res.json()
+    if (body.message) return body.message
+  } catch { /* not JSON, use statusText */ }
+  return res.statusText || `HTTP ${res.status}`
+}
+
+function fetchWithTimeout(url: string, opts?: RequestInit, timeoutMs = 30_000): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  // If caller provided a signal, forward its abort to our controller
+  if (opts?.signal) {
+    opts.signal.addEventListener('abort', () => controller.abort(), { once: true })
+  }
+  return fetch(url, { ...opts, signal: controller.signal }).finally(() => clearTimeout(timer))
+}
+
 async function fetchJSON<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetchWithTimeout(`${API_BASE}${path}`, {
     headers: { Accept: 'application/json' },
   })
   if (!res.ok) {
-    throw new Error(`HTTP ${res.status}: ${res.statusText}`)
+    throw new Error(await extractErrorMessage(res))
   }
   return res.json()
 }
@@ -43,8 +61,8 @@ export async function getDaemonStatus(): Promise<DaemonStatusDto> {
 }
 
 export async function getAppLogs(name: string, tail = 100): Promise<string> {
-  const res = await fetch(`${API_BASE}/apps/${name}/logs?tail=${tail}`)
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const res = await fetchWithTimeout(`${API_BASE}/apps/${name}/logs?tail=${tail}`)
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.text()
 }
 
@@ -53,51 +71,51 @@ export async function getAppInspect(name: string): Promise<AppInspectDto> {
 }
 
 export async function postAppRestart(name: string): Promise<ActionResultDto> {
-  const res = await fetch(`${API_BASE}/apps/${name}/restart`, { method: 'POST', headers: CSRF_HEADER })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const res = await fetchWithTimeout(`${API_BASE}/apps/${name}/restart`, { method: 'POST', headers: CSRF_HEADER })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
 
 export async function postAppStop(name: string): Promise<ActionResultDto> {
-  const res = await fetch(`${API_BASE}/apps/${name}/stop`, { method: 'POST', headers: CSRF_HEADER })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const res = await fetchWithTimeout(`${API_BASE}/apps/${name}/stop`, { method: 'POST', headers: CSRF_HEADER })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
 
 export async function postAppStart(name: string): Promise<ActionResultDto> {
-  const res = await fetch(`${API_BASE}/apps/${name}/start`, { method: 'POST', headers: CSRF_HEADER })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const res = await fetchWithTimeout(`${API_BASE}/apps/${name}/start`, { method: 'POST', headers: CSRF_HEADER })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
 
 export async function postNamespaceStart(): Promise<ActionResultDto> {
-  const res = await fetch(`${API_BASE}/namespace/start`, { method: 'POST', headers: CSRF_HEADER })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const res = await fetchWithTimeout(`${API_BASE}/namespace/start`, { method: 'POST', headers: CSRF_HEADER })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
 
 export async function postNamespaceStop(): Promise<ActionResultDto> {
-  const res = await fetch(`${API_BASE}/namespace/stop`, { method: 'POST', headers: CSRF_HEADER })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const res = await fetchWithTimeout(`${API_BASE}/namespace/stop`, { method: 'POST', headers: CSRF_HEADER })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
 
 export async function postNamespaceReload(): Promise<ActionResultDto> {
-  const res = await fetch(`${API_BASE}/namespace/reload`, { method: 'POST', headers: CSRF_HEADER })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const res = await fetchWithTimeout(`${API_BASE}/namespace/reload`, { method: 'POST', headers: CSRF_HEADER })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
 
 export async function getDaemonLogs(tail = 200): Promise<string> {
-  const res = await fetch(`${API_BASE}/daemon/logs?tail=${tail}`)
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const res = await fetchWithTimeout(`${API_BASE}/daemon/logs?tail=${tail}`)
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.text()
 }
 
 export async function getSystemDump(format: 'json' | 'zip' = 'json'): Promise<void> {
   const query = format === 'zip' ? '?format=zip' : ''
-  const res = await fetch(`${API_BASE}/system/dump${query}`)
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const res = await fetchWithTimeout(`${API_BASE}/system/dump${query}`, undefined, 60_000)
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -115,27 +133,24 @@ export async function getVolumes(): Promise<{ name: string; path: string }[]> {
 }
 
 export async function deleteVolume(name: string): Promise<ActionResultDto> {
-  const res = await fetch(`${API_BASE}/volumes/${name}`, { method: 'DELETE', headers: CSRF_HEADER })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const res = await fetchWithTimeout(`${API_BASE}/volumes/${name}`, { method: 'DELETE', headers: CSRF_HEADER })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
 
 export async function getAppConfig(name: string): Promise<string> {
-  const res = await fetch(`${API_BASE}/apps/${name}/config`)
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const res = await fetchWithTimeout(`${API_BASE}/apps/${name}/config`)
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.text()
 }
 
 export async function putAppConfig(name: string, content: string): Promise<ActionResultDto> {
-  const res = await fetch(`${API_BASE}/apps/${name}/config`, {
+  const res = await fetchWithTimeout(`${API_BASE}/apps/${name}/config`, {
     method: 'PUT',
     headers: { 'Content-Type': 'text/yaml', ...CSRF_HEADER },
     body: content,
   })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ message: `HTTP ${res.status}` }))
-    throw new Error(err.message || `HTTP ${res.status}`)
-  }
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
 
@@ -145,48 +160,45 @@ export async function getAppFiles(name: string): Promise<string[]> {
 
 export async function getAppFile(name: string, path: string): Promise<string> {
   const cleanPath = path.startsWith('./') ? path.slice(2) : path
-  const res = await fetch(`${API_BASE}/apps/${name}/files/${cleanPath}`)
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const res = await fetchWithTimeout(`${API_BASE}/apps/${name}/files/${cleanPath}`)
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.text()
 }
 
 export async function putAppFile(name: string, path: string, content: string): Promise<ActionResultDto> {
   const cleanPath = path.startsWith('./') ? path.slice(2) : path
-  const res = await fetch(`${API_BASE}/apps/${name}/files/${cleanPath}`, {
+  const res = await fetchWithTimeout(`${API_BASE}/apps/${name}/files/${cleanPath}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'text/plain', ...CSRF_HEADER },
     body: content,
   })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
 
 export async function putAppLock(name: string, locked: boolean): Promise<ActionResultDto> {
-  const res = await fetch(`${API_BASE}/apps/${name}/lock`, {
+  const res = await fetchWithTimeout(`${API_BASE}/apps/${name}/lock`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
     body: JSON.stringify({ locked }),
   })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
 
 export async function getConfigContent(): Promise<string> {
-  const res = await fetch(`${API_BASE}/config`)
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const res = await fetchWithTimeout(`${API_BASE}/config`)
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.text()
 }
 
 export async function putConfigContent(content: string): Promise<ActionResultDto> {
-  const res = await fetch(`${API_BASE}/config`, {
+  const res = await fetchWithTimeout(`${API_BASE}/config`, {
     method: 'PUT',
     headers: { 'Content-Type': 'text/yaml', ...CSRF_HEADER },
     body: content,
   })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ message: `HTTP ${res.status}` }))
-    throw new Error(err.message || `HTTP ${res.status}`)
-  }
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
 
@@ -196,8 +208,8 @@ export async function getNamespaces(): Promise<NamespaceSummaryDto[]> {
 }
 
 export async function deleteNamespace(id: string): Promise<ActionResultDto> {
-  const res = await fetch(`${API_BASE}/namespaces/${id}`, { method: 'DELETE', headers: CSRF_HEADER })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const res = await fetchWithTimeout(`${API_BASE}/namespaces/${id}`, { method: 'DELETE', headers: CSRF_HEADER })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
 
@@ -211,15 +223,12 @@ export async function getQuickStarts(): Promise<QuickStartDto[]> {
 
 // Phase E3: Namespace creation
 export async function createNamespace(data: NamespaceCreateDto): Promise<ActionResultDto> {
-  const res = await fetch(`${API_BASE}/namespaces`, {
+  const res = await fetchWithTimeout(`${API_BASE}/namespaces`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
     body: JSON.stringify(data),
   })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ message: `HTTP ${res.status}` }))
-    throw new Error(err.message || `HTTP ${res.status}`)
-  }
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
 
@@ -233,18 +242,18 @@ export async function getSecrets(): Promise<SecretMetaDto[]> {
 }
 
 export async function createSecret(data: SecretCreateDto): Promise<ActionResultDto> {
-  const res = await fetch(`${API_BASE}/secrets`, {
+  const res = await fetchWithTimeout(`${API_BASE}/secrets`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
     body: JSON.stringify(data),
   })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
 
 export async function deleteSecret(id: string): Promise<ActionResultDto> {
-  const res = await fetch(`${API_BASE}/secrets/${id}`, { method: 'DELETE', headers: CSRF_HEADER })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const res = await fetchWithTimeout(`${API_BASE}/secrets/${id}`, { method: 'DELETE', headers: CSRF_HEADER })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
 
@@ -258,8 +267,8 @@ export async function getDiagnostics(): Promise<DiagnosticsDto> {
 }
 
 export async function postDiagnosticsFix(): Promise<DiagFixResultDto> {
-  const res = await fetch(`${API_BASE}/diagnostics/fix`, { method: 'POST', headers: CSRF_HEADER })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const res = await fetchWithTimeout(`${API_BASE}/diagnostics/fix`, { method: 'POST', headers: CSRF_HEADER })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
 
@@ -269,20 +278,20 @@ export async function getSnapshots(): Promise<SnapshotDto[]> {
 }
 
 export async function postExportSnapshot(): Promise<ActionResultDto> {
-  const res = await fetch(`${API_BASE}/snapshots/export`, { method: 'POST', headers: CSRF_HEADER })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const res = await fetchWithTimeout(`${API_BASE}/snapshots/export`, { method: 'POST', headers: CSRF_HEADER }, 300_000)
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
 
 export async function postImportSnapshot(file: File): Promise<ActionResultDto> {
   const formData = new FormData()
   formData.append('file', file)
-  const res = await fetch(`${API_BASE}/snapshots/import`, {
+  const res = await fetchWithTimeout(`${API_BASE}/snapshots/import`, {
     method: 'POST',
     headers: CSRF_HEADER,
     body: formData,
-  })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  }, 300_000)
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
 
@@ -291,21 +300,21 @@ export async function getWorkspaceSnapshots(): Promise<{ id: string; name: strin
 }
 
 export async function postSnapshotDownload(url: string, name?: string): Promise<ActionResultDto> {
-  const res = await fetch(`${API_BASE}/snapshots/download`, {
+  const res = await fetchWithTimeout(`${API_BASE}/snapshots/download`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
     body: JSON.stringify({ url, name }),
   })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
 
 export async function renameSnapshot(oldName: string, newName: string): Promise<ActionResultDto> {
-  const res = await fetch(`${API_BASE}/snapshots/${encodeURIComponent(oldName)}`, {
+  const res = await fetchWithTimeout(`${API_BASE}/snapshots/${encodeURIComponent(oldName)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
     body: JSON.stringify({ name: newName }),
   })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }

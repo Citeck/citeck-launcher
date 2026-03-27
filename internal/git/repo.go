@@ -58,10 +58,7 @@ func cloneOrPullInner(ctx context.Context, opts RepoOpts) error {
 		// Check if URL or branch changed — re-clone if so
 		if repoConfigChanged(opts) {
 			slog.Info("Repo config changed, re-cloning", "dir", opts.DestDir, "url", opts.URL, "branch", opts.Branch)
-			if err := os.RemoveAll(opts.DestDir); err != nil {
-				return fmt.Errorf("remove stale repo %s: %w", opts.DestDir, err)
-			}
-			err := doClone(ctx, opts)
+			err := reclone(ctx, opts, fmt.Errorf("config changed: url=%s branch=%s", opts.URL, opts.Branch))
 			if err == nil {
 				recordSync(opts)
 			}
@@ -225,11 +222,30 @@ func doPull(ctx context.Context, opts RepoOpts) error {
 	return nil
 }
 
-// reclone deletes the existing repo and clones fresh. Used when the local repo is corrupted.
+// reclone clones to a temp directory and swaps on success. If clone fails, the old
+// directory is kept intact so the daemon can continue with stale data.
 func reclone(ctx context.Context, opts RepoOpts, cause error) error {
 	slog.Warn("Repo corrupted, re-cloning", "dir", opts.DestDir, "cause", cause)
-	if err := os.RemoveAll(opts.DestDir); err != nil {
-		return fmt.Errorf("remove corrupted repo %s: %w", opts.DestDir, err)
+
+	tmpDir := opts.DestDir + ".tmp"
+	// Clean up any leftover temp dir from a previous failed attempt
+	os.RemoveAll(tmpDir)
+
+	tmpOpts := opts
+	tmpOpts.DestDir = tmpDir
+	if err := doClone(ctx, tmpOpts); err != nil {
+		os.RemoveAll(tmpDir)
+		slog.Warn("Reclone failed, keeping stale repo", "dir", opts.DestDir, "err", err)
+		return fmt.Errorf("reclone %s: %w", opts.URL, err)
 	}
-	return doClone(ctx, opts)
+
+	if err := os.RemoveAll(opts.DestDir); err != nil {
+		os.RemoveAll(tmpDir)
+		return fmt.Errorf("remove old repo %s: %w", opts.DestDir, err)
+	}
+	if err := os.Rename(tmpDir, opts.DestDir); err != nil {
+		os.RemoveAll(tmpDir)
+		return fmt.Errorf("rename %s -> %s: %w", tmpDir, opts.DestDir, err)
+	}
+	return nil
 }

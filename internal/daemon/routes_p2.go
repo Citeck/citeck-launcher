@@ -321,6 +321,19 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		configPath = config.NamespaceConfigPath()
 	}
 
+	// Atomic existence check — O_EXCL fails if file already exists (no TOCTOU race)
+	excl, err := os.OpenFile(configPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		if os.IsExist(err) {
+			writeErrorCode(w, http.StatusConflict, api.ErrCodeNamespaceExists,
+				fmt.Sprintf("namespace %q already exists", nsCfg.ID))
+			return
+		}
+		writeInternalError(w, err)
+		return
+	}
+	excl.Close()
+
 	if err := fsutil.AtomicWriteFile(configPath, data, 0o644); err != nil {
 		writeInternalError(w, err)
 		return

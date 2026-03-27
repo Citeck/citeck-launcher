@@ -71,6 +71,7 @@ type Daemon struct {
 	sseDropped      atomic.Int64       // SSE events dropped due to slow consumers
 	logWriter       *fsutil.RotatingWriter
 	logLevel        *slog.LevelVar
+	reloadMu        sync.Mutex         // guards concurrent reload requests
 }
 
 // Start runs the daemon.

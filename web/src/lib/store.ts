@@ -38,7 +38,9 @@ return ({
   reconnectGen: 0,
 
   fetchData: async () => {
-    set({ loading: true, error: null })
+    const isInitial = get().namespace === null
+    if (isInitial) set({ loading: true })
+    set({ error: null })
     try {
       const [namespace, health] = await Promise.all([getNamespace(), getHealth()])
       set({ namespace, health, loading: false })
@@ -84,7 +86,7 @@ return ({
         }, delay)
       },
       () => {
-        set({ reconnectDelay: 1000 })
+        set({ reconnectDelay: 1000, lastSeq: 0 })
       },
     )
     set({ stream })

@@ -17,7 +17,7 @@ type StopData struct {
 
 // StopExecutor stops and removes a container with 1s retry.
 type StopExecutor struct {
-	Docker *docker.Client
+	Docker docker.Interface
 }
 
 func (e *StopExecutor) Execute(ctx context.Context, actx *actions.ActionContext) error {

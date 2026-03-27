@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Go tests (race detector)
+        run: |
+          mkdir -p internal/daemon/webdist
+          echo '<html></html>' > internal/daemon/webdist/index.html
+          go test -race ./internal/...
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Web UI tests
+        run: cd web && npm ci && npx vitest run

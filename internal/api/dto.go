@@ -111,6 +111,8 @@ const (
 	ErrCodeNamespaceRunning   = "NAMESPACE_RUNNING"
 	ErrCodeCSRFMissing        = "CSRF_MISSING"
 	ErrCodeInternalError      = "INTERNAL_ERROR"
+	ErrCodeNamespaceExists    = "NAMESPACE_EXISTS"
+	ErrCodeReloadInProgress   = "RELOAD_IN_PROGRESS"
 )
 
 // --- Welcome Screen ---
