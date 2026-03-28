@@ -39,7 +39,4 @@
 | Phase 12 | GA readiness — CSRF, stability, CLI, docs, UI polish (23 issues + 11 review fixes) | 2026-03-27 |
 | Phase 13 | Production hardening for scale — secrets masking, security headers, HTTP metrics, validate, toast (20 issues + 6 review fixes) | 2026-03-27 |
 | Phase 14 | Production hardening at scale — SSE heartbeat, reclone safety, Logs perf, fetch errors, runtime tests, CI (20 issues + 11 review fixes) | 2026-03-27 |
-
-## Next: Phase 15
-
-See `PLAN-phase15.md` — Lens-inspired UI redesign: right overlay drawer for app details, bottom panel for logs/config/daemon-logs, server mode (skip Welcome screen).
+| Phase 15 | Lens-inspired UI redesign — drawer, bottom panel, i18n (8 languages), UX hardening, design polish, apps visible when stopped | 2026-03-28 |

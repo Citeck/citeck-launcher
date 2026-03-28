@@ -4,27 +4,47 @@
 
 * Complete rewrite from Kotlin/Compose to Go + React (single 14MB binary)
 * Embedded React Web UI served on `http://127.0.0.1:7088`
+
+## Web UI
+
+* Lens-inspired UI: right overlay drawer for app details, bottom panel with tabs for logs/config
+* Drag-to-resize bottom panel, lazy tab mounting, active-only streaming
+* i18n: 8 languages (English, Russian, Chinese, Spanish, German, French, Portuguese, Japanese)
+* Language selector with flags in tab bar, auto-detection from browser
+* Full service catalog visible even when namespace is stopped
+* Human-readable status names (Waiting, Queued, Ready instead of raw enums)
+* Toast notifications on all actions (start/stop/restart, config save, secret create/delete, etc.)
+* Loading skeletons on Volumes and Secrets pages
+* Refined Darcula palette with active tab accent lines, status dot indicators
+* Server mode: Dashboard shown directly at root (no Welcome screen)
+
+## CLI
+
+* Interactive install wizard with language selection, port availability check
+* Shell completion (bash/zsh/fish/powershell)
+* `citeck validate` command for offline config validation
+
+## Security
+
 * mTLS for non-localhost Web UI access (client certificates)
 * CSRF protection for localhost TCP (X-Citeck-CSRF header)
 * Unix socket + TCP two-mux security architecture
-* Shell completion (bash/zsh/fish/powershell)
-* ACME/Let's Encrypt auto-renewal
-* Prometheus metrics endpoint (`/api/v1/metrics`)
-* System dump with daemon logs (`/api/v1/system/dump?format=zip`)
-* Runtime log level control (`PUT /api/v1/daemon/loglevel`)
-* SQLite schema versioning with transactional migrations
-* Snapshot export with SHA256 integrity sidecar
-* Namespace config `apiVersion` field for future schema evolution
-* Full API documentation (`docs/api.md`, `docs/config.md`, `docs/operations.md`)
-* Server-side secret masking in API responses (`_PASSWORD`, `_SECRET`, `_TOKEN`, `_KEY`)
 * HTTP security headers (X-Frame-Options, CSP, X-Content-Type-Options, HSTS)
 * TLS 1.3 minimum for mTLS connections
-* HTTP request metrics (counter + latency histogram) in Prometheus format
-* `citeck validate` command for offline config validation
-* App name validation on all API endpoints
+* Server-side secret masking in API responses
 * Internal error suppression (generic 500 to client, full error in daemon log)
-* Toast notification system in Web UI
-* SSE event drop counter metric
+
+## Infrastructure
+
+* ACME/Let's Encrypt auto-renewal
+* Prometheus metrics endpoint (`/api/v1/metrics`)
+* HTTP request metrics (counter + latency histogram)
+* SSE heartbeat, event sequence numbers, gap detection
+* System dump with daemon logs
+* Runtime log level control
+* SQLite schema versioning with transactional migrations
+* Snapshot export with SHA256 integrity sidecar
+* Locale field in daemon.yml for server-wide language preference
 
 # Release 1.3.8
 

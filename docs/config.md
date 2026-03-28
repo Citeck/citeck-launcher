@@ -5,6 +5,8 @@
 Controls the daemon server. Located at `$CITECK_HOME/conf/daemon.yml`.
 
 ```yaml
+locale: en                     # UI language: en, ru, zh, es, de, fr, pt, ja
+
 server:
   webui:
     enabled: true              # Enable/disable Web UI TCP listener
@@ -23,6 +25,7 @@ docker:
 
 | Field | Type | Default | Description |
 |---|---|---|---|
+| `locale` | string | `""` (auto-detect) | UI language code: en, ru, zh, es, de, fr, pt, ja |
 | `server.webui.enabled` | bool | `true` | Enable Web UI |
 | `server.webui.listen` | string | `127.0.0.1:7088` | TCP listen address. Set to `0.0.0.0:7088` for remote access (requires mTLS) |
 | `reconciler.interval` | int | `60` | Seconds between reconciliation loops |

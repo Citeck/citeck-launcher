@@ -56,34 +56,50 @@ cd web && npm run lint        # Web linter
 React 19 + Vite + TypeScript + Tailwind CSS 4. Embedded into Go binary via `go:embed`. Darcula/Lens dark theme.
 
 **Pages:**
-- `Dashboard.tsx` — namespace info panel + grouped app table
-- `AppDetail.tsx` — container info, ports, volumes, env, per-app YAML config editor
-- `Logs.tsx` — full log viewer (7-pattern level detection, ANSI strip, regex search, follow, copy/download)
-- `Config.tsx` — namespace.yml viewer/editor with YAML highlighting
+- `Dashboard.tsx` — sidebar + app table + right drawer overlay + bottom panel
+- `AppDetail.tsx` — full-page fallback (composes AppDrawerContent + AppConfigEditor)
+- `Logs.tsx` — thin wrapper for LogViewer
+- `Config.tsx` — health checks + ConfigEditor
 - `Volumes.tsx` — Docker volume management (namespace-scoped, list/delete)
-- `DaemonLogs.tsx` — launcher daemon logs viewer
+- `DaemonLogs.tsx` — thin wrapper for DaemonLogsViewer
 - `Welcome.tsx` — namespace list, quick start buttons, create/delete
-- `Wizard.tsx` — multi-step namespace creation (8 steps)
+- `Wizard.tsx` — multi-step namespace creation (8 steps, language-aware)
 - `Secrets.tsx` — secret CRUD with type selector and test button
 - `Diagnostics.tsx` — system health checks with fix actions
 
 **Components:**
-- `AppTable.tsx` — grouped table (Core/Extensions/Additional/ThirdParty), lucide-react icons
-- `TabBar.tsx` — IDE-style tab navigation
-- `ConfirmModal.tsx` — reusable confirm dialog (always mounted, showModal/close)
+- `AppTable.tsx` — grouped table with panel actions (openDrawer, openBottomTab)
+- `BottomPanel.tsx` — IDE-style bottom panel (lazy mount, drag-resize, collapse)
+- `RightDrawer.tsx` — overlay drawer with slide animation
+- `LogViewer.tsx` — log viewer (virtual list, regex search, level filter, streaming, active prop)
+- `ConfigEditor.tsx` — namespace.yml viewer/editor with YAML highlighting
+- `DaemonLogsViewer.tsx` — daemon logs with polling and visibility-aware pause
+- `AppDrawerContent.tsx` — app inspect details + action buttons (logs, config, restart)
+- `AppConfigEditor.tsx` — per-app YAML config + mounted files editor
+- `YamlViewer.tsx` — shared YAML syntax highlighter
+- `TabBar.tsx` — IDE-style tab navigation + language selector + theme toggle
+- `StatusBadge.tsx` — color-coded status with dot indicator and i18n display names
 - `NamespaceControls.tsx` — Start/Stop/Reload with confirm
-- `StatusBadge.tsx` — color-coded status labels
+- `ConfirmModal.tsx` — reusable confirm dialog (always mounted, showModal/close)
+- `Toast.tsx` — toast notifications (theme-aware colors)
+- `ErrorBoundary.tsx` — React error boundary with reload button
 - `ContextMenu.tsx` — right-click context menu with items/dividers
 - `FormDialog.tsx` — spec-driven form dialog (text/number/password/select/checkbox)
 - `JournalDialog.tsx` — data table dialog with search, selection, custom buttons
 
 **Lib:**
-- `api.ts` — REST API client (fetchWithTimeout wrapper, extractErrorMessage for server ErrorDto)
+- `api.ts` — REST API client (fetchWithTimeout, CSRF, exported API_BASE)
 - `store.ts` — Zustand dashboard store (SSE events, exponential backoff reconnect)
+- `panels.ts` — Zustand panel store (drawer, bottom tabs, height persistence)
+- `i18n.ts` — i18n store (8 locales, lazy loading, t() + useTranslation())
 - `websocket.ts` — SSE EventSource wrapper (not WebSocket despite filename)
 - `tabs.ts` — Tab state management (zustand)
 - `toast.ts` — Toast notification store (zustand, auto-dismiss)
 - `types.ts` — TypeScript interfaces matching Go DTOs
+
+**Hooks:**
+- `useResizeHandle.ts` — pointer-capture drag hook for bottom panel resize
+- `useContextMenu.ts` — context menu state management
 
 ### Entry Point
 

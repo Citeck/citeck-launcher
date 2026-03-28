@@ -22,6 +22,8 @@ sudo mv citeck /usr/local/bin/
 citeck install
 ```
 
+The install wizard guides you through language selection, namespace setup, TLS, port configuration, and optional systemd service.
+
 ### Start
 
 ```bash
@@ -33,6 +35,18 @@ sudo systemctl start citeck
 ```
 
 The Web UI is available at `http://127.0.0.1:7088` by default.
+
+## Features
+
+- **Lens-inspired Web UI** with right overlay drawer, bottom panel with tabs (logs, config), and drag-to-resize
+- **i18n** with 8 languages: English, Russian, Chinese, Spanish, German, French, Portuguese, Japanese
+- **Real-time updates** via SSE events (app status, resource usage)
+- **Full service catalog** visible even when namespace is stopped
+- **Log viewer** with virtual scrolling (50K lines), regex search, level filtering, streaming follow
+- **Volume snapshots** with export/import (ZIP + tar.xz)
+- **mTLS** for secure remote Web UI access (client certificates)
+- **Let's Encrypt** integration with auto-renewal
+- **Shell completion** for bash, zsh, fish, powershell
 
 ## CLI Usage
 
@@ -81,7 +95,13 @@ Global flags: `--host`, `--tls-cert`, `--tls-key`, `--server-cert`, `--insecure`
 
 React 19 + Vite + TypeScript + Tailwind CSS 4. Embedded into Go binary via `go:embed`.
 
-Pages: Dashboard, App Detail, Logs (virtual list), Config Editor, Volumes, Daemon Logs, Welcome, Wizard, Secrets, Diagnostics.
+**Layout:** IDE-style with left sidebar, app table, right overlay drawer, and bottom panel with tabs.
+
+**Pages:** Dashboard, App Detail, Logs (virtual list), Config Editor, Volumes, Daemon Logs, Welcome, Wizard, Secrets, Diagnostics.
+
+**Components:** LogViewer, ConfigEditor, AppDrawerContent, AppConfigEditor, BottomPanel, RightDrawer, YamlViewer, StatusBadge, NamespaceControls.
+
+**i18n:** 8 languages with lazy-loaded locale files and auto-detection.
 
 ### Entry Point
 
@@ -114,14 +134,15 @@ Requires: Go 1.22+, Node.js 20+.
 Controls the daemon server. Located at `$CITECK_HOME/conf/daemon.yml`.
 
 ```yaml
+locale: en                      # UI language: en, ru, zh, es, de, fr, pt, ja
 server:
   webui:
     enabled: true
     listen: "127.0.0.1:7088"    # 0.0.0.0 enables mTLS
 reconciler:
-  intervalSeconds: 30
+  interval: 30
 docker:
-  pullConcurrency: 3
+  pullConcurrency: 4
 ```
 
 ### namespace.yml

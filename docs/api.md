@@ -48,7 +48,7 @@ curl --unix-socket /run/citeck/daemon.sock http://localhost/api/v1/daemon/status
 ```
 
 ```json
-{"running": true, "pid": 1234, "uptime": 60000, "version": "2.0.0", "workspace": "daemon", "socketPath": "/run/citeck/daemon.sock"}
+{"running": true, "pid": 1234, "uptime": 60000, "version": "2.0.0", "workspace": "daemon", "socketPath": "/run/citeck/daemon.sock", "desktop": false, "locale": "en"}
 ```
 
 ### POST /api/v1/daemon/shutdown
