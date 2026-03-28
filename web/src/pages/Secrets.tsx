@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { getSecrets, createSecret, deleteSecret, testSecret } from '../lib/api'
 import type { SecretMetaDto } from '../lib/types'
 import { ConfirmModal } from '../components/ConfirmModal'
+import { toast } from '../lib/toast'
 import { Trash2, Plus, FlaskConical, CheckCircle, XCircle, KeyRound } from 'lucide-react'
 
 interface SecretFormData {
@@ -17,6 +18,7 @@ const emptyForm: SecretFormData = { id: '', name: '', type: 'GIT_TOKEN', value: 
 
 export function Secrets() {
   const [secrets, setSecrets] = useState<SecretMetaDto[]>([])
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState<SecretFormData>(emptyForm)
@@ -28,7 +30,8 @@ export function Secrets() {
   const [testResult, setTestResult] = useState<Record<string, 'ok' | 'fail'>>({})
 
   const loadSecrets = useCallback(() => {
-    getSecrets().then(setSecrets).catch((e) => setError(e.message))
+    setLoading(true)
+    getSecrets().then(setSecrets).catch((e) => setError(e.message)).finally(() => setLoading(false))
   }, [])
 
   useEffect(() => { loadSecrets() }, [loadSecrets])
@@ -43,6 +46,7 @@ export function Secrets() {
       setForm(emptyForm)
       setShowForm(false)
       loadSecrets()
+      toast('Secret created', 'success')
     } catch (err) {
       setCreateError((err as Error).message)
     } finally {
@@ -58,6 +62,7 @@ export function Secrets() {
       await deleteSecret(deleteTarget)
       setDeleteTarget(null)
       loadSecrets()
+      toast('Secret deleted', 'success')
     } catch (err) {
       setDeleteError((err as Error).message)
     } finally {
@@ -76,6 +81,14 @@ export function Secrets() {
 
   return (
     <div className="p-3">
+      {loading && (
+        <div className="space-y-3 mb-4">
+          <div className="h-5 w-24 bg-muted rounded animate-pulse" />
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="h-6 w-full bg-muted rounded animate-pulse" />
+          ))}
+        </div>
+      )}
       <div className="flex items-center justify-between mb-2">
         <h1 className="text-base font-semibold flex items-center gap-1.5">
           <KeyRound size={16} />

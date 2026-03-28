@@ -305,6 +305,25 @@ Tested on remote server with community 2025.12 (clean deployment). Found and fix
 - Middleware `Flush()` added to `recoveryWriter`/`statusRecorder` — fixes SSE/log streaming through middleware chain
 - CI: golangci-lint + go test -race + vitest; release workflow uses `go-version-file: go.mod`
 
+### Phase 15: Lens-Inspired UI Redesign — COMPLETE (2026-03-28)
+5 sub-phases, 2 code review passes (5 additional fixes).
+- 15a: Panel infrastructure — `lib/panels.ts` (Zustand panel store), `useResizeHandle.ts` (pointer-capture drag), `BottomPanel.tsx` (lazy mount, tab strip, collapse), `RightDrawer.tsx` (overlay with slide animation)
+- 15b: Extract reusable components — `LogViewer.tsx` (from Logs.tsx, +compact/active props), `ConfigEditor.tsx` (from Config.tsx), `DaemonLogsViewer.tsx` (from DaemonLogs.tsx), `AppDrawerContent.tsx` (inspect + actions), `AppConfigEditor.tsx` (YAML + files editor)
+- 15c: Dashboard integration — sidebar + app table + right drawer overlay + bottom panel, AppTable click → openDrawer/openBottomTab (no navigation), TabBar settings → bottom panel, sidebar gear icon for ns config, panel reset on Dashboard unmount
+- 15d: Polish — Escape key (close drawer → collapse panel), height persistence in localStorage, active-tab-only streaming, drawer row highlight
+- 15e: Server mode — `desktop` field in DaemonStatusDto, conditional Welcome screen (server mode skips Welcome at root)
+
+### Key Technical Decisions (Phase 15)
+- Bottom panel renders inside Dashboard only (not globally) — clean unmount, no stale state
+- Lazy tab mounting via `mountedRef` (Set<string>) — tab component created on first activation, stays mounted until closed
+- `active` prop on LogViewer/DaemonLogsViewer controls streaming — `active=false` aborts stream, `active=true` resumes
+- `bottomPanelOpen` gates `active` in BottomPanel — collapsed panel pauses all streaming
+- `resetPanels()` called in Welcome on namespace switch — prevents stale drawer/tabs surviving namespace change
+- Stopped namespace shows full app catalog from `d.appDefs` via `appDefsToStoppedApps()` — apps always visible like k8s desired state
+- RightDrawer is absolute-positioned inside content area (not portal) — doesn't interfere with bottom panel
+- `pointercancel` handled in useResizeHandle — prevents stuck resize state on touch interruption
+- Server mode detection via single `getDaemonStatus()` call on app mount
+
 ## CI/CD
 
 GitHub Actions:

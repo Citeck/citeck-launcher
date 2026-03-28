@@ -1,21 +1,22 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router'
 import type { AppDto } from '../lib/types'
 import { postAppStop, postAppStart, postAppRestart } from '../lib/api'
-import { useDashboardStore } from '../lib/store'
-import { useTabsStore } from '../lib/tabs'
+import { usePanelStore } from '../lib/panels'
+import { toast } from '../lib/toast'
 import { StatusBadge } from './StatusBadge'
 import { ConfirmModal } from './ConfirmModal'
 import { Square, Play, RotateCw, FileText, Settings, Circle } from 'lucide-react'
 
 interface AppTableProps {
   apps: AppDto[]
+  highlightedApp?: string | null
 }
 
 type AppAction = { type: 'stop' | 'start' | 'restart'; appName: string } | null
 
 const RUNNING = ['RUNNING']
 const STOPPED = ['STOPPED', 'START_FAILED', 'PULL_FAILED', 'FAILED', 'STOPPING_FAILED']
+const TRANSITIONAL = ['STARTING', 'PULLING', 'DEPS_WAITING', 'READY_TO_PULL', 'READY_TO_START', 'STOPPING']
 
 const KIND_ORDER: Record<string, number> = { CITECK_CORE: 0, CITECK_CORE_EXTENSION: 1, CITECK_ADDITIONAL: 2, THIRD_PARTY: 3 }
 const KIND_LABELS: Record<string, string> = { CITECK_CORE: 'Citeck Core', CITECK_CORE_EXTENSION: 'Citeck Core Extensions', CITECK_ADDITIONAL: 'Citeck Additional', THIRD_PARTY: 'Third Party' }
@@ -48,11 +49,10 @@ function portsShort(p?: string[]) {
   return `${hostPorts[0]} ..`
 }
 
-export function AppTable({ apps }: AppTableProps) {
+export function AppTable({ apps, highlightedApp }: AppTableProps) {
   const [action, setAction] = useState<AppAction>(null)
   const [loading, setLoading] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
-  const fetchData = useDashboardStore((s) => s.fetchData)
   const groups = groupByKind(apps)
 
   async function handleConfirm() {
@@ -62,7 +62,8 @@ export function AppTable({ apps }: AppTableProps) {
       if (action.type === 'stop') await postAppStop(action.appName)
       else if (action.type === 'start') await postAppStart(action.appName)
       else await postAppRestart(action.appName)
-      setAction(null); setTimeout(fetchData, 500)
+      toast(`${action.type.charAt(0).toUpperCase() + action.type.slice(1)} requested for ${action.appName}`, 'success')
+      setAction(null)
     } catch (err) { setActionError((err as Error).message) }
     finally { setLoading(false) }
   }
@@ -89,7 +90,7 @@ export function AppTable({ apps }: AppTableProps) {
         </thead>
         <tbody>
           {groups.map((g) => (
-            <GroupRows key={g.kind} label={g.label} apps={g.apps} onAction={setAction} />
+            <GroupRows key={g.kind} label={g.label} apps={g.apps} onAction={setAction} highlightedApp={highlightedApp} />
           ))}
         </tbody>
       </table>
@@ -105,32 +106,28 @@ export function AppTable({ apps }: AppTableProps) {
   )
 }
 
-function GroupRows({ label, apps, onAction }: { label: string; apps: AppDto[]; onAction: (a: AppAction) => void }) {
-  const navigate = useNavigate()
-  const openTab = useTabsStore((s) => s.openTab)
-
-  function openInTab(id: string, title: string, path: string) {
-    openTab({ id, title, path })
-    navigate(path)
-  }
+function GroupRows({ label, apps, onAction, highlightedApp }: { label: string; apps: AppDto[]; onAction: (a: AppAction) => void; highlightedApp?: string | null }) {
+  const { openDrawer, openBottomTab } = usePanelStore()
 
   return (
     <>
       <tr>
-        <td colSpan={7} className="pt-3 pb-1 text-xs font-bold text-foreground">
+        <td colSpan={7} className="pt-4 pb-1 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
           {label}
         </td>
       </tr>
       {apps.map((app) => {
         const isRun = RUNNING.includes(app.status)
         const isStop = STOPPED.includes(app.status)
+        const isTransitional = TRANSITIONAL.includes(app.status)
+        const isHighlighted = highlightedApp === app.name
         return (
-          <tr key={app.name} className="border-b border-border/20 hover:bg-muted/30">
+          <tr key={app.name} className={`border-b border-border/20 ${isHighlighted ? 'bg-primary/8' : 'hover:bg-accent'}`}>
             <td className="py-[3px] pr-4 font-mono">
-              <a href={`/apps/${app.name}`} className="text-primary hover:underline cursor-pointer"
-                onClick={(e) => { e.preventDefault(); openInTab(`app-${app.name}`, app.name, `/apps/${app.name}`) }}>
+              <button type="button" className="text-primary hover:underline cursor-pointer"
+                onClick={() => openDrawer(app.name)}>
                 {app.name}
-              </a>
+              </button>
             </td>
             <td className="py-[3px] pr-4">
               <span className="inline-flex items-center gap-1.5">
@@ -159,12 +156,16 @@ function GroupRows({ label, apps, onAction }: { label: string; apps: AppDto[]; o
                 {isStop && (
                   <IconBtn icon={Play} title="Start" color="hover:text-success" onClick={() => onAction({ type: 'start', appName: app.name })} />
                 )}
+                {isTransitional && (
+                  <IconBtn icon={Square} title="Stop" color="hover:text-destructive" onClick={() => onAction({ type: 'stop', appName: app.name })} />
+                )}
                 <button type="button" className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted" title="Logs"
-                  onClick={() => openInTab(`logs-${app.name}`, `Logs: ${app.name}`, `/apps/${app.name}/logs`)}>
+                  onClick={() => openBottomTab({ id: `logs:${app.name}`, type: 'logs', title: `Logs: ${app.name}`, appName: app.name })}>
                   <FileText size={14} />
                 </button>
-                <button type="button" className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted relative" title={app.edited ? (app.locked ? 'Edited (locked)' : 'Edited') : 'Details'}
-                  onClick={() => openInTab(`app-${app.name}`, app.name, `/apps/${app.name}`)}>
+                <button type="button" className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted relative"
+                  title={app.edited ? (app.locked ? 'Edited (locked)' : 'Edited') : 'Config'}
+                  onClick={() => openBottomTab({ id: `app-config:${app.name}`, type: 'app-config', title: `Config: ${app.name}`, appName: app.name })}>
                   <Settings size={14} />
                   {app.edited && <Circle size={6} className="absolute top-0.5 right-0.5 fill-blue-500 text-blue-500" />}
                 </button>

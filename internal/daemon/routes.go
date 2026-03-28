@@ -35,6 +35,7 @@ func (d *Daemon) handleDaemonStatus(w http.ResponseWriter, r *http.Request) {
 		Version:    d.version,
 		Workspace:  d.workspaceID,
 		SocketPath: d.socketPath,
+		Desktop:    config.IsDesktopMode(),
 	})
 }
 
@@ -50,6 +51,7 @@ func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 	d.configMu.RLock()
 	runtime := d.runtime
 	bundleErr := d.bundleError
+	appDefs := d.appDefs
 	d.configMu.RUnlock()
 	if runtime == nil {
 		writeErrorCode(w, http.StatusNotFound, api.ErrCodeNotConfigured, "no namespace configured")
@@ -59,7 +61,31 @@ func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 	if bundleErr != "" {
 		dto.BundleError = bundleErr
 	}
+	// When namespace is stopped, runtime clears the app list. Populate from
+	// the resolved config so the UI always shows the full service catalog.
+	if len(dto.Apps) == 0 && len(appDefs) > 0 {
+		dto.Apps = appDefsToStoppedApps(appDefs)
+	}
 	writeJSON(w, dto)
+}
+
+// appDefsToStoppedApps converts resolved app definitions into AppDto entries
+// with STOPPED status. Used to populate the UI when namespace is not running.
+func appDefsToStoppedApps(defs []appdef.ApplicationDef) []api.AppDto {
+	apps := make([]api.AppDto, 0, len(defs))
+	for _, def := range defs {
+		if def.IsInit {
+			continue // skip init containers
+		}
+		apps = append(apps, api.AppDto{
+			Name:   def.Name,
+			Status: "STOPPED",
+			Image:  def.Image,
+			Kind:   namespace.KindToString(def.Kind),
+			Ports:  def.Ports,
+		})
+	}
+	return apps
 }
 
 func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {

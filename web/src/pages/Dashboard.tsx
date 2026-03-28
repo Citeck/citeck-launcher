@@ -2,16 +2,27 @@ import { useEffect } from 'react'
 import { useNavigate } from 'react-router'
 import { useDashboardStore } from '../lib/store'
 import { useTabsStore } from '../lib/tabs'
+import { usePanelStore } from '../lib/panels'
 import { getSystemDump } from '../lib/api'
 import { StatusBadge } from '../components/StatusBadge'
 import { AppTable } from '../components/AppTable'
 import { NamespaceControls } from '../components/NamespaceControls'
-import { ExternalLink, Globe, FileText, Download, AlertTriangle, HardDrive, Key, Stethoscope } from 'lucide-react'
+import { BottomPanel } from '../components/BottomPanel'
+import { RightDrawer } from '../components/RightDrawer'
+import { AppDrawerContent } from '../components/AppDrawerContent'
+import { LogViewer } from '../components/LogViewer'
+import { ConfigEditor } from '../components/ConfigEditor'
+import { DaemonLogsViewer } from '../components/DaemonLogsViewer'
+import { AppConfigEditor } from '../components/AppConfigEditor'
+import type { BottomPanelTab } from '../lib/panels'
+import { toast } from '../lib/toast'
+import { ExternalLink, Globe, Download, AlertTriangle, HardDrive, Key, Stethoscope, FileText, Settings } from 'lucide-react'
 
 export function Dashboard() {
   const { namespace, health, loading, error, fetchData, startEventStream, stopEventStream } =
     useDashboardStore()
   const setHomeTab = useTabsStore((s) => s.setHomeTab)
+  const { drawerAppName, closeDrawer, bottomTabs, openBottomTab } = usePanelStore()
 
   useEffect(() => {
     setHomeTab('Dashboard')
@@ -21,6 +32,24 @@ export function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- store methods are stable
   }, [])
 
+  // Escape key: close drawer first, then collapse bottom panel.
+  // Skip if an input/textarea is focused (LogViewer search uses Escape to clear).
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      const { drawerAppName, bottomPanelOpen, closeDrawer, toggleBottomPanel } = usePanelStore.getState()
+      if (drawerAppName) {
+        closeDrawer()
+      } else if (bottomPanelOpen) {
+        toggleBottomPanel()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
   const navigate = useNavigate()
   const openTab = useTabsStore((s) => s.openTab)
 
@@ -28,7 +57,7 @@ export function Dashboard() {
     return (
       <div className="flex h-full">
         {/* Skeleton left panel */}
-        <div className="w-52 shrink-0 border-r border-border bg-card p-3 flex flex-col gap-3">
+        <div className="w-56 shrink-0 border-r border-border bg-card p-3 flex flex-col gap-3">
           <div className="h-4 w-32 bg-muted rounded animate-pulse" />
           <div className="h-3 w-24 bg-muted rounded animate-pulse" />
           <div className="h-6 w-20 bg-muted rounded animate-pulse" />
@@ -62,7 +91,6 @@ export function Dashboard() {
   const proxyUrl = links.find((l) => l.name === 'ECOS UI')?.url
   const serviceLinks = links.filter((l) => l.name !== 'ECOS UI')
 
-  // Namespace stats summary
   const runningApps = namespace.apps.filter((a) => a.status === 'RUNNING')
   const totalCpu = runningApps.reduce((sum, a) => sum + (parseFloat(a.cpu) || 0), 0)
   const totalMem = runningApps.reduce((sum, a) => {
@@ -73,97 +101,142 @@ export function Dashboard() {
     return sum
   }, 0)
 
+  // Drawer title info
+  const drawerApp = drawerAppName ? namespace.apps.find((a) => a.name === drawerAppName) : null
+
+  function renderBottomTab(tab: BottomPanelTab, active: boolean) {
+    switch (tab.type) {
+      case 'logs':
+        return <LogViewer appName={tab.appName!} compact active={active} />
+      case 'ns-config':
+        return <ConfigEditor compact />
+      case 'daemon-logs':
+        return <DaemonLogsViewer compact active={active} />
+      case 'app-config':
+        return <AppConfigEditor appName={tab.appName!} />
+      default:
+        return null
+    }
+  }
+
   return (
-    <div className="flex h-full">
-      {/* Left info panel */}
-      <div className="w-52 shrink-0 border-r border-border bg-card p-3 flex flex-col gap-2 overflow-y-auto">
-        <div>
-          <div className="text-sm font-semibold">{namespace.name}</div>
-          <div className="text-[11px] text-muted-foreground mt-0.5">{namespace.bundleRef}</div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <StatusBadge status={namespace.status} />
-          <span className="text-xs text-muted-foreground">{runningCount}/{namespace.apps.length}</span>
-        </div>
-
-        {/* Namespace stats */}
-        {runningApps.length > 0 && (
-          <div className="text-[11px] space-y-0.5">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">CPU</span>
-              <span className="font-mono">{totalCpu.toFixed(1)}%</span>
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Top: sidebar + table + drawer overlay */}
+      <div className="flex flex-1 min-h-0 relative">
+        {/* Left info panel */}
+        <aside className="w-56 shrink-0 border-r border-border bg-card p-3 flex flex-col gap-2 overflow-y-auto">
+          <div className="flex items-center justify-between">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold truncate">{namespace.name}</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5 truncate">{namespace.bundleRef}</div>
             </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">MEM</span>
-              <span className="font-mono">{totalMem >= 1024 ? `${(totalMem / 1024).toFixed(1)}G` : `${Math.round(totalMem)}M`}</span>
-            </div>
+            <button
+              type="button"
+              className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted shrink-0"
+              title="Namespace config"
+              onClick={() => openBottomTab({ id: 'ns-config', type: 'ns-config', title: 'Config: ns.yml' })}
+            >
+              <Settings size={14} />
+            </button>
           </div>
-        )}
 
-        <NamespaceControls status={namespace.status} />
+          <div className="flex items-center gap-2">
+            <StatusBadge status={namespace.status} />
+            <span className="text-xs text-muted-foreground">{runningCount}/{namespace.apps.length}</span>
+          </div>
 
-        {proxyUrl && (
-          <a
-            href={proxyUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={`flex items-center gap-1.5 rounded border px-2 py-1.5 text-xs ${
-              isRunning
-                ? 'border-primary/40 text-primary hover:bg-primary/10'
-                : 'border-border text-muted-foreground cursor-not-allowed opacity-50'
-            }`}
-            onClick={(e) => { if (!isRunning) e.preventDefault() }}
-            title={isRunning ? 'Open Citeck in browser\nDefault: admin / admin' : 'Start namespace first'}
+          {runningApps.length > 0 && (
+            <div className="text-[11px] space-y-0.5">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">CPU</span>
+                <span className="font-mono">{totalCpu.toFixed(1)}%</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">MEM</span>
+                <span className="font-mono">{totalMem >= 1024 ? `${(totalMem / 1024).toFixed(1)}G` : `${Math.round(totalMem)}M`}</span>
+              </div>
+            </div>
+          )}
+
+          <NamespaceControls status={namespace.status} />
+
+          {proxyUrl && (
+            <a
+              href={proxyUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`flex items-center gap-1.5 rounded border px-2 py-1.5 text-xs ${
+                isRunning
+                  ? 'border-primary/40 text-primary hover:bg-primary/10'
+                  : 'border-border text-muted-foreground cursor-not-allowed opacity-50'
+              }`}
+              onClick={(e) => { if (!isRunning) e.preventDefault() }}
+              title={isRunning ? 'Open Citeck in browser\nDefault: admin / admin' : 'Start namespace first'}
+            >
+              <Globe size={14} />
+              Open In Browser
+            </a>
+          )}
+
+          {dockerError && (
+            <div className="rounded border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-[11px] text-destructive">
+              <AlertTriangle size={12} className="inline mr-1" />
+              Docker: {dockerError}
+              <button type="button" className="underline ml-1" onClick={fetchData}>Retry</button>
+            </div>
+          )}
+
+          {serviceLinks.length > 0 && (
+            <div>
+              <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider mb-1">Links</div>
+              <div className="flex flex-col gap-0.5">
+                {serviceLinks.map((l) => (
+                  <a key={l.name} href={l.url} target="_blank" rel="noopener noreferrer"
+                    className={`flex items-center gap-1 text-xs py-0.5 ${
+                      (isRunning || l.order >= 100) ? 'text-primary hover:underline' : 'text-muted-foreground cursor-not-allowed'
+                    }`}
+                    onClick={(e) => { if (!isRunning && l.order < 100) e.preventDefault() }}>
+                    <ExternalLink size={11} />
+                    {l.name}
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="mt-auto pt-2 border-t border-border flex flex-col gap-1">
+            <SidebarBtn icon={HardDrive} label="Volumes"
+              onClick={() => { openTab({ id: 'volumes', title: 'Volumes', path: '/volumes' }); navigate('/volumes') }} />
+            <SidebarBtn icon={Key} label="Secrets"
+              onClick={() => { openTab({ id: 'secrets', title: 'Secrets', path: '/secrets' }); navigate('/secrets') }} />
+            <SidebarBtn icon={Stethoscope} label="Diagnostics"
+              onClick={() => { openTab({ id: 'diagnostics', title: 'Diagnostics', path: '/diagnostics' }); navigate('/diagnostics') }} />
+            <SidebarBtn icon={FileText} label="Launcher Logs"
+              onClick={() => openBottomTab({ id: 'daemon-logs', type: 'daemon-logs', title: 'Daemon Logs' })} />
+            <SidebarBtn icon={Download} label="System Dump"
+              onClick={() => getSystemDump('zip').then(() => toast('System dump downloaded', 'success')).catch((e) => toast((e as Error).message, 'error'))} />
+          </div>
+        </aside>
+
+        {/* Main table area */}
+        <div className="flex-1 min-w-0 p-2 overflow-auto">
+          <AppTable apps={namespace.apps} highlightedApp={drawerAppName} />
+        </div>
+
+        {/* Right drawer overlay */}
+        {drawerAppName && (
+          <RightDrawer
+            title={drawerAppName}
+            subtitle={drawerApp && <StatusBadge status={drawerApp.status} />}
+            onClose={closeDrawer}
           >
-            <Globe size={14} />
-            Open In Browser
-          </a>
+            <AppDrawerContent appName={drawerAppName} />
+          </RightDrawer>
         )}
-
-        {dockerError && (
-          <div className="rounded border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-[11px] text-destructive">
-            <AlertTriangle size={12} className="inline mr-1" />
-            Docker: {dockerError}
-            <button type="button" className="underline ml-1" onClick={fetchData}>Retry</button>
-          </div>
-        )}
-
-        {serviceLinks.length > 0 && (
-          <div>
-            <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider mb-1">Links</div>
-            <div className="flex flex-col gap-0.5">
-              {serviceLinks.map((l) => (
-                <a key={l.name} href={l.url} target="_blank" rel="noopener noreferrer"
-                  className={`flex items-center gap-1 text-xs py-0.5 ${
-                    (isRunning || l.order >= 100) ? 'text-primary hover:underline' : 'text-muted-foreground cursor-not-allowed'
-                  }`}
-                  onClick={(e) => { if (!isRunning && l.order < 100) e.preventDefault() }}>
-                  <ExternalLink size={11} />
-                  {l.name}
-                </a>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="mt-auto pt-2 border-t border-border flex flex-col gap-1">
-          <SidebarBtn icon={HardDrive} label="Volumes"
-            onClick={() => { openTab({ id: 'volumes', title: 'Volumes', path: '/volumes' }); navigate('/volumes') }} />
-          <SidebarBtn icon={Key} label="Secrets"
-            onClick={() => { openTab({ id: 'secrets', title: 'Secrets', path: '/secrets' }); navigate('/secrets') }} />
-          <SidebarBtn icon={Stethoscope} label="Diagnostics"
-            onClick={() => { openTab({ id: 'diagnostics', title: 'Diagnostics', path: '/diagnostics' }); navigate('/diagnostics') }} />
-          <SidebarBtn icon={FileText} label="Launcher Logs"
-            onClick={() => { openTab({ id: 'daemon-logs', title: 'Daemon Logs', path: '/daemon-logs' }); navigate('/daemon-logs') }} />
-          <SidebarBtn icon={Download} label="System Dump"
-            onClick={() => getSystemDump('zip').catch((e) => console.error('Dump failed:', e))} />
-        </div>
       </div>
 
-      <div className="flex-1 min-w-0 p-2 overflow-auto">
-        <AppTable apps={namespace.apps} />
-      </div>
+      {/* Bottom panel */}
+      {bottomTabs.length > 0 && <BottomPanel renderTab={renderBottomTab} />}
     </div>
   )
 }

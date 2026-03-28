@@ -7,7 +7,7 @@ export interface Tab {
 }
 
 // Namespace-level tab IDs that should be closed when switching to Welcome
-const NAMESPACE_TAB_IDS = new Set(['config', 'volumes'])
+const NAMESPACE_TAB_IDS = new Set(['volumes'])
 
 interface TabsState {
   tabs: Tab[]

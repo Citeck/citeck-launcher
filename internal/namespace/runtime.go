@@ -363,7 +363,7 @@ func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 			Image:      app.Def.Image,
 			CPU:        app.CPU,
 			Memory:     app.Memory,
-			Kind:       kindToString(app.Def.Kind),
+			Kind:       KindToString(app.Def.Kind),
 			Ports:      app.Def.Ports,
 			Edited:     edited,
 			Locked:     r.editedLockedApps[app.Name],
@@ -379,7 +379,8 @@ func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 	}
 }
 
-func kindToString(k appdef.ApplicationKind) string {
+// KindToString converts an ApplicationKind to its API string representation.
+func KindToString(k appdef.ApplicationKind) string {
 	switch k {
 	case appdef.KindCiteckCore:
 		return "CITECK_CORE"

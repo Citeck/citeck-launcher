@@ -51,6 +51,7 @@ export interface DaemonStatusDto {
   version: string
   workspace: string
   socketPath: string
+  desktop: boolean
 }
 
 export interface EventDto {

@@ -66,7 +66,7 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
   return (
     <>
       <div className="flex items-center gap-1.5">
-        {(isStopped || status === 'STARTING') && (
+        {isStopped && (
           <button type="button" className="flex items-center gap-1 rounded border border-success/40 px-2 py-1 text-xs text-success hover:bg-success/10"
             onClick={() => setPendingAction('start')}><Play size={12} /> Start</button>
         )}
@@ -76,7 +76,7 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
         )}
         {isRunning && (
           <button type="button" className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-            onClick={() => setPendingAction('reload')}><RefreshCw size={12} /></button>
+            onClick={() => setPendingAction('reload')}><RefreshCw size={12} /> Reload</button>
         )}
       </div>
 

@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { getVolumes, deleteVolume, getSnapshots, postExportSnapshot, postImportSnapshot, getWorkspaceSnapshots, postSnapshotDownload, renameSnapshot } from '../lib/api'
 import type { SnapshotDto } from '../lib/types'
 import { ConfirmModal } from '../components/ConfirmModal'
+import { toast } from '../lib/toast'
 import { Trash2, Download, Upload, Archive, Loader2, Pencil, Cloud } from 'lucide-react'
 
 interface WsSnapshot {
@@ -20,6 +21,7 @@ interface VolumeInfo {
 export function Volumes() {
   const [volumes, setVolumes] = useState<VolumeInfo[]>([])
   const [snapshots, setSnapshots] = useState<SnapshotDto[]>([])
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -34,9 +36,12 @@ export function Volumes() {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const loadData = useCallback(() => {
-    getVolumes().then(setVolumes).catch((e) => setError(e.message))
-    getSnapshots().then(setSnapshots).catch(() => {})
-    getWorkspaceSnapshots().then(setWsSnapshots).catch(() => {})
+    setLoading(true)
+    Promise.all([
+      getVolumes().then(setVolumes).catch((e) => setError(e.message)),
+      getSnapshots().then(setSnapshots).catch(() => {}),
+      getWorkspaceSnapshots().then(setWsSnapshots).catch(() => {}),
+    ]).finally(() => setLoading(false))
   }, [])
 
   useEffect(() => { loadData() }, [loadData])
@@ -49,6 +54,7 @@ export function Volumes() {
       await deleteVolume(deleteTarget)
       setDeleteTarget(null)
       loadData()
+      toast('Volume deleted', 'success')
     } catch (e) {
       setDeleteError((e as Error).message)
     } finally {
@@ -89,6 +95,17 @@ export function Volumes() {
     if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
     if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`
     return `${bytes} B`
+  }
+
+  if (loading) {
+    return (
+      <div className="p-3 space-y-3">
+        <div className="h-5 w-32 bg-muted rounded animate-pulse" />
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className="h-6 w-full bg-muted rounded animate-pulse" />
+        ))}
+      </div>
+    )
   }
 
   return (

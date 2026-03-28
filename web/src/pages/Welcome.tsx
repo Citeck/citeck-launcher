@@ -8,6 +8,7 @@ import type { ContextMenuItem } from '../components/ContextMenu'
 import { useContextMenu } from '../hooks/useContextMenu'
 import { useTabsStore } from '../lib/tabs'
 import { useDashboardStore } from '../lib/store'
+import { usePanelStore } from '../lib/panels'
 import { MoreHorizontal, Plus } from 'lucide-react'
 
 export function Welcome() {
@@ -24,6 +25,7 @@ export function Welcome() {
   const openTab = useTabsStore((s) => s.openTab)
   const fetchData = useDashboardStore((s) => s.fetchData)
   const startEventStream = useDashboardStore((s) => s.startEventStream)
+  const resetPanels = usePanelStore((s) => s.resetPanels)
   const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu()
 
   useEffect(() => {
@@ -63,6 +65,7 @@ export function Welcome() {
       await fetchData()
       startEventStream()
     }
+    resetPanels()
     openTab({ id: 'home', title: 'Dashboard', path: '/' })
     navigate('/')
   }
@@ -75,8 +78,8 @@ export function Welcome() {
       await deleteNamespace(deleteTarget.id)
       setDeleteTarget(null)
       loadData()
-    } catch (err: any) {
-      setDeleteError(err.message)
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : String(err))
     } finally {
       setDeleteLoading(false)
     }
@@ -104,11 +107,11 @@ export function Welcome() {
         {loading ? (
           <div className="text-center text-muted-foreground text-sm py-4">Loading...</div>
         ) : loadError ? (
-          <div className="text-center text-[#ef5350] text-sm py-4">Error: {loadError}</div>
+          <div className="text-center text-destructive text-sm py-4">Error: {loadError}</div>
         ) : (
           <>
             {startError && (
-              <div className="text-center text-[#ef5350] text-sm py-2 mb-2">Start failed: {startError}</div>
+              <div className="text-center text-destructive text-sm py-2 mb-2">Start failed: {startError}</div>
             )}
             {namespaces.map((ns) => (
               <div key={`${ns.workspaceId}:${ns.id}`} className="relative">

@@ -16,7 +16,7 @@ import type {
   SnapshotDto,
 } from './types'
 
-const API_BASE = '/api/v1'
+export const API_BASE = '/api/v1'
 
 const CSRF_HEADER = { 'X-Citeck-CSRF': '1' }
 

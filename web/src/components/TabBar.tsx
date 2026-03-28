@@ -1,10 +1,12 @@
 import { useNavigate, useLocation } from 'react-router'
 import { useTabsStore } from '../lib/tabs'
+import { usePanelStore } from '../lib/panels'
 import { X, Settings, Sun, Moon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 export function TabBar() {
-  const { tabs, activeTabId, setActiveTab, closeTab, openTab } = useTabsStore()
+  const { tabs, activeTabId, setActiveTab, closeTab } = useTabsStore()
+  const openBottomTab = usePanelStore((s) => s.openBottomTab)
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -26,8 +28,8 @@ export function TabBar() {
               key={tab.id}
               className={`group flex items-center gap-1 px-3 py-1.5 text-xs border-r border-border cursor-pointer shrink-0 select-none ${
                 isActive
-                  ? 'bg-background text-foreground'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/30'
+                  ? 'bg-background text-foreground border-b-2 border-b-primary -mb-px'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-accent'
               }`}
               onClick={() => {
                 setActiveTab(tab.id)
@@ -60,8 +62,11 @@ export function TabBar() {
           className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted"
           title="Settings"
           onClick={() => {
-            openTab({ id: 'config', title: 'Config', path: '/config' })
-            navigate('/config')
+            if (location.pathname === '/') {
+              openBottomTab({ id: 'ns-config', type: 'ns-config', title: 'Config: ns.yml' })
+            } else {
+              navigate('/config')
+            }
           }}
         >
           <Settings size={14} />

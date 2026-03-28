@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
 import { createNamespace } from '../lib/api'
+import { toast } from '../lib/toast'
 import { Wand2, ChevronLeft, ChevronRight, Check } from 'lucide-react'
 
 interface WizardState {
@@ -82,6 +83,7 @@ export function Wizard() {
         bundleRepo: '',
         bundleKey: '',
       })
+      toast('Namespace created successfully', 'success')
       navigate('/')
     } catch (e) {
       setError((e as Error).message)
@@ -269,15 +271,24 @@ export function Wizard() {
 
       {/* Navigation */}
       <div className="flex justify-between">
-        <button
-          type="button"
-          className="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted disabled:opacity-50 disabled:pointer-events-none"
-          onClick={handleBack}
-          disabled={isFirst}
-        >
-          <ChevronLeft size={14} />
-          Back
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted disabled:opacity-50 disabled:pointer-events-none"
+            onClick={handleBack}
+            disabled={isFirst}
+          >
+            <ChevronLeft size={14} />
+            Back
+          </button>
+          <button
+            type="button"
+            className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+            onClick={() => navigate('/')}
+          >
+            Cancel
+          </button>
+        </div>
         {isLast ? (
           <button
             type="button"
