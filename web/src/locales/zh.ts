@@ -72,6 +72,8 @@ const zh: Translations = {
   'wizard.next': '下一步',
   'wizard.create': '创建',
   'wizard.creating': '创建中...',
+  'wizard.enabled': '已启用',
+  'wizard.disabled': '已禁用',
   'wizard.success': 'Namespace 创建成功',
 
   // -- Volumes --
@@ -83,6 +85,10 @@ const zh: Translations = {
   'volumes.delete.title': '删除存储卷 {name}？',
   'volumes.delete.message': '此操作将永久删除该存储卷及其所有数据。',
   'volumes.delete.success': '存储卷已删除',
+  'volumes.export.failed': '导出失败：{error}',
+  'volumes.import.failed': '导入失败：{error}',
+  'volumes.rename.failed': '重命名失败：{error}',
+  'volumes.download.failed': '下载失败：{error}',
   'volumes.snapshots': '快照',
   'volumes.snapshots.export': '导出',
   'volumes.snapshots.exporting': '导出中...',
@@ -137,6 +143,7 @@ const zh: Translations = {
   'diagnostics.table.fixable': '可修复',
   'diagnostics.fixable.yes': '是',
   'diagnostics.fixable.no': '否',
+  'diagnostics.fixResult': '已修复：{fixed}，失败：{failed}。{message}',
   'diagnostics.empty': '无可用的诊断检查',
   'diagnostics.running': '检查中...',
 
@@ -209,6 +216,7 @@ const zh: Translations = {
   'appConfig.confirm.message': '保存配置并重启应用？',
   'appConfig.saved': '应用配置已保存',
   'appConfig.fileSaved': '文件已保存',
+  'appConfig.tabTitle': '配置：{name}',
 
   // -- Config Editor --
   'configEditor.title': 'namespace.yml',
@@ -225,6 +233,9 @@ const zh: Translations = {
 
   // -- Log Viewer --
   'logViewer.search': '搜索...（Ctrl+F）',
+  'logViewer.toggleRegex': '切换正则表达式',
+  'logViewer.prevMatch': '上一个匹配 (Shift+F3)',
+  'logViewer.nextMatch': '下一个匹配 (F3)',
   'logViewer.regexWarning': '正则表达式过于复杂——使用精确匹配',
   'logViewer.follow': '跟踪',
   'logViewer.follow.tooltip': '实时跟踪日志',
@@ -291,6 +302,7 @@ const zh: Translations = {
 
   // -- Error Boundary --
   'error.title': '出现问题',
+  'error.unexpected': '发生了意外错误',
   'error.reload': '重新加载',
 
   // -- Theme --

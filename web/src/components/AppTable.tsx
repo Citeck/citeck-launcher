@@ -168,7 +168,7 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
                 </button>
                 <button type="button" className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted relative"
                   title={app.edited ? (app.locked ? `${t('common.edit')} (${t('appConfig.lock.locked').toLowerCase()})` : t('common.edit')) : t('config.title')}
-                  onClick={() => openBottomTab({ id: `app-config:${app.name}`, type: 'app-config', title: `Config: ${app.name}`, appName: app.name })}>
+                  onClick={() => openBottomTab({ id: `app-config:${app.name}`, type: 'app-config', title: t('appConfig.tabTitle', { name: app.name }), appName: app.name })}>
                   <Settings size={14} />
                   {app.edited && <Circle size={6} className="absolute top-0.5 right-0.5 fill-blue-500 text-blue-500" />}
                 </button>

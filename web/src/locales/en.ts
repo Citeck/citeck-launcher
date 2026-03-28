@@ -72,6 +72,8 @@ const en: Translations = {
   'wizard.next': 'Next',
   'wizard.create': 'Create',
   'wizard.creating': 'Creating...',
+  'wizard.enabled': 'Enabled',
+  'wizard.disabled': 'Disabled',
   'wizard.success': 'Namespace created successfully',
 
   // -- Volumes --
@@ -83,6 +85,10 @@ const en: Translations = {
   'volumes.delete.title': 'Delete volume {name}?',
   'volumes.delete.message': 'This will permanently delete the volume and all its data.',
   'volumes.delete.success': 'Volume deleted',
+  'volumes.export.failed': 'Export failed: {error}',
+  'volumes.import.failed': 'Import failed: {error}',
+  'volumes.rename.failed': 'Rename failed: {error}',
+  'volumes.download.failed': 'Download failed: {error}',
   'volumes.snapshots': 'Snapshots',
   'volumes.snapshots.export': 'Export',
   'volumes.snapshots.exporting': 'Exporting...',
@@ -137,6 +143,7 @@ const en: Translations = {
   'diagnostics.table.fixable': 'Fixable',
   'diagnostics.fixable.yes': 'Yes',
   'diagnostics.fixable.no': 'No',
+  'diagnostics.fixResult': 'Fixed: {fixed}, Failed: {failed}. {message}',
   'diagnostics.empty': 'No diagnostic checks available',
   'diagnostics.running': 'Running checks...',
 
@@ -209,6 +216,7 @@ const en: Translations = {
   'appConfig.confirm.message': 'Save config and restart the app?',
   'appConfig.saved': 'App config saved',
   'appConfig.fileSaved': 'File saved',
+  'appConfig.tabTitle': 'Config: {name}',
 
   // -- Config Editor --
   'configEditor.title': 'namespace.yml',
@@ -225,6 +233,9 @@ const en: Translations = {
 
   // -- Log Viewer --
   'logViewer.search': 'Search... (Ctrl+F)',
+  'logViewer.toggleRegex': 'Toggle regex',
+  'logViewer.prevMatch': 'Previous match (Shift+F3)',
+  'logViewer.nextMatch': 'Next match (F3)',
   'logViewer.regexWarning': 'Regex too complex \u2014 using literal match',
   'logViewer.follow': 'Follow',
   'logViewer.follow.tooltip': 'Stream logs (follow)',
@@ -291,6 +302,7 @@ const en: Translations = {
 
   // -- Error Boundary --
   'error.title': 'Something went wrong',
+  'error.unexpected': 'An unexpected error occurred',
   'error.reload': 'Reload',
 
   // -- Theme --

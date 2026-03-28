@@ -45,7 +45,7 @@ export function Diagnostics() {
     setFixMessage(null)
     try {
       const result = await postDiagnosticsFix()
-      setFixMessage(`Fixed: ${result.fixed}, Failed: ${result.failed}. ${result.message}`)
+      setFixMessage(t('diagnostics.fixResult', { fixed: result.fixed, failed: result.failed, message: result.message }))
       await runChecks()
     } catch (e) {
       setFixMessage((e as Error).message)

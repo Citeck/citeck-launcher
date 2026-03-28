@@ -348,16 +348,16 @@ export function LogViewer({ appName, compact = false, active = true }: LogViewer
             type="button"
             className={`rounded px-2 py-1 text-xs border ${useRegex ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted'}`}
             onClick={() => setUseRegex(!useRegex)}
-            title="Toggle regex"
+            title={t('logViewer.toggleRegex')}
           >
             .*
           </button>
           {matchIndices.length > 0 && (
             <>
               <button type="button" className="rounded px-1.5 py-1 text-xs border border-border text-muted-foreground hover:bg-muted"
-                onClick={() => setMatchIndex((p) => p - 1)} title="Previous match (Shift+F3)">&uarr;</button>
+                onClick={() => setMatchIndex((p) => p - 1)} title={t('logViewer.prevMatch')}>&uarr;</button>
               <button type="button" className="rounded px-1.5 py-1 text-xs border border-border text-muted-foreground hover:bg-muted"
-                onClick={() => setMatchIndex((p) => p + 1)} title="Next match (F3)">&darr;</button>
+                onClick={() => setMatchIndex((p) => p + 1)} title={t('logViewer.nextMatch')}>&darr;</button>
               <span className="text-xs text-muted-foreground">{safeMatchIndex + 1}/{matchIndices.length}</span>
             </>
           )}

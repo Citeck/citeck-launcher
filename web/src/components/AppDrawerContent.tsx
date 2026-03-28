@@ -138,7 +138,7 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
         <button
           type="button"
           className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted"
-          onClick={() => openBottomTab({ id: `app-config:${appName}`, type: 'app-config', title: `Config: ${appName}`, appName })}
+          onClick={() => openBottomTab({ id: `app-config:${appName}`, type: 'app-config', title: t('appConfig.tabTitle', { name: appName }), appName })}
         >
           <Settings size={12} /> {t('drawer.editConfig')}
         </button>

@@ -72,6 +72,8 @@ const fr: Translations = {
   'wizard.next': 'Suivant',
   'wizard.create': 'Cr\u00e9er',
   'wizard.creating': 'Cr\u00e9ation...',
+  'wizard.enabled': 'Activ\u00e9',
+  'wizard.disabled': 'D\u00e9sactiv\u00e9',
   'wizard.success': 'Namespace cr\u00e9\u00e9 avec succ\u00e8s',
 
   // -- Volumes --
@@ -83,6 +85,10 @@ const fr: Translations = {
   'volumes.delete.title': 'Supprimer le volume {name} ?',
   'volumes.delete.message': 'Cette action supprimera d\u00e9finitivement le volume et toutes ses donn\u00e9es.',
   'volumes.delete.success': 'Volume supprim\u00e9',
+  'volumes.export.failed': '\u00c9chec de l\u2019exportation : {error}',
+  'volumes.import.failed': '\u00c9chec de l\u2019importation : {error}',
+  'volumes.rename.failed': '\u00c9chec du renommage : {error}',
+  'volumes.download.failed': '\u00c9chec du t\u00e9l\u00e9chargement : {error}',
   'volumes.snapshots': 'Snapshots',
   'volumes.snapshots.export': 'Exporter',
   'volumes.snapshots.exporting': 'Exportation...',
@@ -137,6 +143,7 @@ const fr: Translations = {
   'diagnostics.table.fixable': 'Corrigeable',
   'diagnostics.fixable.yes': 'Oui',
   'diagnostics.fixable.no': 'Non',
+  'diagnostics.fixResult': 'Corrig\u00e9s : {fixed}, \u00c9chou\u00e9s : {failed}. {message}',
   'diagnostics.empty': 'Aucune v\u00e9rification de diagnostic disponible',
   'diagnostics.running': 'V\u00e9rifications en cours...',
 
@@ -209,6 +216,7 @@ const fr: Translations = {
   'appConfig.confirm.message': 'Enregistrer la configuration et red\u00e9marrer l\u2019application ?',
   'appConfig.saved': 'Configuration de l\u2019application enregistr\u00e9e',
   'appConfig.fileSaved': 'Fichier enregistr\u00e9',
+  'appConfig.tabTitle': 'Configuration : {name}',
 
   // -- Config Editor --
   'configEditor.title': 'namespace.yml',
@@ -225,6 +233,9 @@ const fr: Translations = {
 
   // -- Log Viewer --
   'logViewer.search': 'Rechercher... (Ctrl+F)',
+  'logViewer.toggleRegex': 'Activer/d\u00e9sactiver la regex',
+  'logViewer.prevMatch': 'Correspondance pr\u00e9c\u00e9dente (Shift+F3)',
+  'logViewer.nextMatch': 'Correspondance suivante (F3)',
   'logViewer.regexWarning': 'Expression r\u00e9guli\u00e8re trop complexe \u2014 recherche litt\u00e9rale utilis\u00e9e',
   'logViewer.follow': 'Suivre',
   'logViewer.follow.tooltip': 'Suivre les journaux en continu',
@@ -291,6 +302,7 @@ const fr: Translations = {
 
   // -- Error Boundary --
   'error.title': 'Une erreur est survenue',
+  'error.unexpected': 'Une erreur inattendue s\u2019est produite',
   'error.reload': 'Recharger',
 
   // -- Theme --

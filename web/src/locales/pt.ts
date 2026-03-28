@@ -72,6 +72,8 @@ const pt: Translations = {
   'wizard.next': 'Pr\u00f3ximo',
   'wizard.create': 'Criar',
   'wizard.creating': 'Criando...',
+  'wizard.enabled': 'Ativado',
+  'wizard.disabled': 'Desativado',
   'wizard.success': 'Namespace criado com sucesso',
 
   // -- Volumes --
@@ -83,6 +85,10 @@ const pt: Translations = {
   'volumes.delete.title': 'Excluir o volume {name}?',
   'volumes.delete.message': 'Esta a\u00e7\u00e3o excluir\u00e1 permanentemente o volume e todos os seus dados.',
   'volumes.delete.success': 'Volume exclu\u00eddo',
+  'volumes.export.failed': 'Falha na exporta\u00e7\u00e3o: {error}',
+  'volumes.import.failed': 'Falha na importa\u00e7\u00e3o: {error}',
+  'volumes.rename.failed': 'Falha ao renomear: {error}',
+  'volumes.download.failed': 'Falha no download: {error}',
   'volumes.snapshots': 'Snapshots',
   'volumes.snapshots.export': 'Exportar',
   'volumes.snapshots.exporting': 'Exportando...',
@@ -137,6 +143,7 @@ const pt: Translations = {
   'diagnostics.table.fixable': 'Correg\u00edvel',
   'diagnostics.fixable.yes': 'Sim',
   'diagnostics.fixable.no': 'N\u00e3o',
+  'diagnostics.fixResult': 'Corrigidos: {fixed}, Falharam: {failed}. {message}',
   'diagnostics.empty': 'Nenhuma verifica\u00e7\u00e3o de diagn\u00f3stico dispon\u00edvel',
   'diagnostics.running': 'Executando verifica\u00e7\u00f5es...',
 
@@ -209,6 +216,7 @@ const pt: Translations = {
   'appConfig.confirm.message': 'Salvar a configura\u00e7\u00e3o e reiniciar o aplicativo?',
   'appConfig.saved': 'Configura\u00e7\u00e3o do aplicativo salva',
   'appConfig.fileSaved': 'Arquivo salvo',
+  'appConfig.tabTitle': 'Configura\u00e7\u00e3o: {name}',
 
   // -- Config Editor --
   'configEditor.title': 'namespace.yml',
@@ -225,6 +233,9 @@ const pt: Translations = {
 
   // -- Log Viewer --
   'logViewer.search': 'Pesquisar... (Ctrl+F)',
+  'logViewer.toggleRegex': 'Alternar regex',
+  'logViewer.prevMatch': 'Correspond\u00eancia anterior (Shift+F3)',
+  'logViewer.nextMatch': 'Pr\u00f3xima correspond\u00eancia (F3)',
   'logViewer.regexWarning': 'Express\u00e3o regular muito complexa \u2014 usando correspond\u00eancia literal',
   'logViewer.follow': 'Seguir',
   'logViewer.follow.tooltip': 'Acompanhar logs em tempo real',
@@ -291,6 +302,7 @@ const pt: Translations = {
 
   // -- Error Boundary --
   'error.title': 'Algo deu errado',
+  'error.unexpected': 'Ocorreu um erro inesperado',
   'error.reload': 'Recarregar',
 
   // -- Theme --

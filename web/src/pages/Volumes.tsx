@@ -72,7 +72,7 @@ export function Volumes() {
       setSnapshotMsg(result.message)
       loadData()
     } catch (e) {
-      setSnapshotMsg(`Export failed: ${(e as Error).message}`)
+      setSnapshotMsg(t('volumes.export.failed', { error: (e as Error).message }))
     } finally {
       setExporting(false)
     }
@@ -86,7 +86,7 @@ export function Volumes() {
       setSnapshotMsg(result.message)
       loadData()
     } catch (e) {
-      setSnapshotMsg(`Import failed: ${(e as Error).message}`)
+      setSnapshotMsg(t('volumes.import.failed', { error: (e as Error).message }))
     } finally {
       setImporting(false)
     }
@@ -204,7 +204,7 @@ export function Volumes() {
                     {renaming === s.name ? (
                       <form className="inline-flex gap-1" onSubmit={async (e) => {
                         e.preventDefault()
-                        try { await renameSnapshot(s.name, renameValue); setRenaming(null); loadData() } catch (e) { setSnapshotMsg(`Rename failed: ${(e as Error).message}`) }
+                        try { await renameSnapshot(s.name, renameValue); setRenaming(null); loadData() } catch (e) { setSnapshotMsg(t('volumes.rename.failed', { error: (e as Error).message })) }
                       }}>
                         <input className="border border-border rounded px-1 bg-background text-foreground text-xs font-mono w-40"
                           value={renameValue} onChange={(e) => setRenameValue(e.target.value)} autoFocus />
@@ -261,7 +261,7 @@ export function Volumes() {
                         try {
                           const result = await postSnapshotDownload(ws.url, ws.id)
                           setSnapshotMsg(result.message); loadData()
-                        } catch (e) { setSnapshotMsg(`Download failed: ${(e as Error).message}`) }
+                        } catch (e) { setSnapshotMsg(t('volumes.download.failed', { error: (e as Error).message })) }
                         finally { setDownloading(null) }
                       }}>
                       {downloading === ws.id ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}

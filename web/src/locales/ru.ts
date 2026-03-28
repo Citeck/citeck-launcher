@@ -72,6 +72,8 @@ const ru: Translations = {
   'wizard.next': 'Далее',
   'wizard.create': 'Создать',
   'wizard.creating': 'Создание...',
+  'wizard.enabled': 'Включено',
+  'wizard.disabled': 'Отключено',
   'wizard.success': 'Namespace успешно создан',
 
   // -- Volumes --
@@ -83,6 +85,10 @@ const ru: Translations = {
   'volumes.delete.title': 'Удалить том {name}?',
   'volumes.delete.message': 'Том и все его данные будут безвозвратно удалены.',
   'volumes.delete.success': 'Том удалён',
+  'volumes.export.failed': 'Ошибка экспорта: {error}',
+  'volumes.import.failed': 'Ошибка импорта: {error}',
+  'volumes.rename.failed': 'Ошибка переименования: {error}',
+  'volumes.download.failed': 'Ошибка скачивания: {error}',
   'volumes.snapshots': 'Снапшоты',
   'volumes.snapshots.export': 'Экспорт',
   'volumes.snapshots.exporting': 'Экспорт...',
@@ -137,6 +143,7 @@ const ru: Translations = {
   'diagnostics.table.fixable': 'Исправимо',
   'diagnostics.fixable.yes': 'Да',
   'diagnostics.fixable.no': 'Нет',
+  'diagnostics.fixResult': 'Исправлено: {fixed}, Не удалось: {failed}. {message}',
   'diagnostics.empty': 'Диагностические проверки недоступны',
   'diagnostics.running': 'Проверка...',
 
@@ -209,6 +216,7 @@ const ru: Translations = {
   'appConfig.confirm.message': 'Сохранить конфигурацию и перезапустить приложение?',
   'appConfig.saved': 'Конфигурация приложения сохранена',
   'appConfig.fileSaved': 'Файл сохранён',
+  'appConfig.tabTitle': 'Конфигурация: {name}',
 
   // -- Config Editor --
   'configEditor.title': 'namespace.yml',
@@ -225,6 +233,9 @@ const ru: Translations = {
 
   // -- Log Viewer --
   'logViewer.search': 'Поиск... (Ctrl+F)',
+  'logViewer.toggleRegex': 'Переключить регулярное выражение',
+  'logViewer.prevMatch': 'Предыдущее совпадение (Shift+F3)',
+  'logViewer.nextMatch': 'Следующее совпадение (F3)',
   'logViewer.regexWarning': 'Слишком сложное регулярное выражение — используется точное совпадение',
   'logViewer.follow': 'Следить',
   'logViewer.follow.tooltip': 'Следить за логами в реальном времени',
@@ -291,6 +302,7 @@ const ru: Translations = {
 
   // -- Error Boundary --
   'error.title': 'Что-то пошло не так',
+  'error.unexpected': 'Произошла непредвиденная ошибка',
   'error.reload': 'Перезагрузить',
 
   // -- Theme --

@@ -72,6 +72,8 @@ const ja: Translations = {
   'wizard.next': '\u6b21\u3078',
   'wizard.create': '\u4f5c\u6210',
   'wizard.creating': '\u4f5c\u6210\u4e2d...',
+  'wizard.enabled': '\u6709\u52b9',
+  'wizard.disabled': '\u7121\u52b9',
   'wizard.success': 'namespace \u304c\u6b63\u5e38\u306b\u4f5c\u6210\u3055\u308c\u307e\u3057\u305f',
 
   // -- Volumes --
@@ -83,6 +85,10 @@ const ja: Translations = {
   'volumes.delete.title': '\u30dc\u30ea\u30e5\u30fc\u30e0 {name} \u3092\u524a\u9664\u3057\u307e\u3059\u304b\uff1f',
   'volumes.delete.message': '\u30dc\u30ea\u30e5\u30fc\u30e0\u3068\u305d\u306e\u3059\u3079\u3066\u306e\u30c7\u30fc\u30bf\u304c\u5b8c\u5168\u306b\u524a\u9664\u3055\u308c\u307e\u3059\u3002',
   'volumes.delete.success': '\u30dc\u30ea\u30e5\u30fc\u30e0\u3092\u524a\u9664\u3057\u307e\u3057\u305f',
+  'volumes.export.failed': '\u30a8\u30af\u30b9\u30dd\u30fc\u30c8\u306b\u5931\u6557: {error}',
+  'volumes.import.failed': '\u30a4\u30f3\u30dd\u30fc\u30c8\u306b\u5931\u6557: {error}',
+  'volumes.rename.failed': '\u540d\u524d\u5909\u66f4\u306b\u5931\u6557: {error}',
+  'volumes.download.failed': '\u30c0\u30a6\u30f3\u30ed\u30fc\u30c9\u306b\u5931\u6557: {error}',
   'volumes.snapshots': '\u30b9\u30ca\u30c3\u30d7\u30b7\u30e7\u30c3\u30c8',
   'volumes.snapshots.export': '\u30a8\u30af\u30b9\u30dd\u30fc\u30c8',
   'volumes.snapshots.exporting': '\u30a8\u30af\u30b9\u30dd\u30fc\u30c8\u4e2d...',
@@ -137,6 +143,7 @@ const ja: Translations = {
   'diagnostics.table.fixable': '\u4fee\u6b63\u53ef\u80fd',
   'diagnostics.fixable.yes': '\u306f\u3044',
   'diagnostics.fixable.no': '\u3044\u3044\u3048',
+  'diagnostics.fixResult': '\u4fee\u6b63\u6e08\u307f: {fixed}\u3001\u5931\u6557: {failed}\u3002{message}',
   'diagnostics.empty': '\u8a3a\u65ad\u30c1\u30a7\u30c3\u30af\u306f\u3042\u308a\u307e\u305b\u3093',
   'diagnostics.running': '\u30c1\u30a7\u30c3\u30af\u3092\u5b9f\u884c\u4e2d...',
 
@@ -209,6 +216,7 @@ const ja: Translations = {
   'appConfig.confirm.message': '\u8a2d\u5b9a\u3092\u4fdd\u5b58\u3057\u3066\u30a2\u30d7\u30ea\u3092\u518d\u8d77\u52d5\u3057\u307e\u3059\u304b\uff1f',
   'appConfig.saved': '\u30a2\u30d7\u30ea\u8a2d\u5b9a\u3092\u4fdd\u5b58\u3057\u307e\u3057\u305f',
   'appConfig.fileSaved': '\u30d5\u30a1\u30a4\u30eb\u3092\u4fdd\u5b58\u3057\u307e\u3057\u305f',
+  'appConfig.tabTitle': '\u8a2d\u5b9a: {name}',
 
   // -- Config Editor --
   'configEditor.title': 'namespace.yml',
@@ -225,6 +233,9 @@ const ja: Translations = {
 
   // -- Log Viewer --
   'logViewer.search': '\u691c\u7d22... (Ctrl+F)',
+  'logViewer.toggleRegex': '\u6b63\u898f\u8868\u73fe\u306e\u5207\u308a\u66ff\u3048',
+  'logViewer.prevMatch': '\u524d\u306e\u4e00\u81f4 (Shift+F3)',
+  'logViewer.nextMatch': '\u6b21\u306e\u4e00\u81f4 (F3)',
   'logViewer.regexWarning': '\u6b63\u898f\u8868\u73fe\u304c\u8907\u96d1\u3059\u304e\u307e\u3059 \u2014 \u30ea\u30c6\u30e9\u30eb\u691c\u7d22\u3092\u4f7f\u7528\u3057\u307e\u3059',
   'logViewer.follow': '\u30d5\u30a9\u30ed\u30fc',
   'logViewer.follow.tooltip': '\u30ed\u30b0\u3092\u30ea\u30a2\u30eb\u30bf\u30a4\u30e0\u3067\u8ffd\u8de1',
@@ -291,6 +302,7 @@ const ja: Translations = {
 
   // -- Error Boundary --
   'error.title': '\u554f\u984c\u304c\u767a\u751f\u3057\u307e\u3057\u305f',
+  'error.unexpected': '\u4e88\u671f\u3057\u306a\u3044\u30a8\u30e9\u30fc\u304c\u767a\u751f\u3057\u307e\u3057\u305f',
   'error.reload': '\u30ea\u30ed\u30fc\u30c9',
 
   // -- Theme --

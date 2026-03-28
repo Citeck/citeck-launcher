@@ -112,7 +112,7 @@ export function Wizard() {
     { label: t('wizard.step.host'), value: state.host || 'localhost' },
     { label: t('wizard.step.tls'), value: state.tls },
     { label: t('wizard.step.port'), value: String(state.port) },
-    { label: t('wizard.step.pgadmin'), value: state.pgAdmin ? 'Enabled' : 'Disabled' },
+    { label: t('wizard.step.pgadmin'), value: state.pgAdmin ? t('wizard.enabled') : t('wizard.disabled') },
   ]
 
   return (

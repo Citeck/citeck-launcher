@@ -72,6 +72,8 @@ const de: Translations = {
   'wizard.next': 'Weiter',
   'wizard.create': 'Erstellen',
   'wizard.creating': 'Wird erstellt...',
+  'wizard.enabled': 'Aktiviert',
+  'wizard.disabled': 'Deaktiviert',
   'wizard.success': 'Namespace erfolgreich erstellt',
 
   // -- Volumes --
@@ -83,6 +85,10 @@ const de: Translations = {
   'volumes.delete.title': 'Volume {name} löschen?',
   'volumes.delete.message': 'Das Volume und alle zugehörigen Daten werden unwiderruflich gelöscht.',
   'volumes.delete.success': 'Volume gelöscht',
+  'volumes.export.failed': 'Export fehlgeschlagen: {error}',
+  'volumes.import.failed': 'Import fehlgeschlagen: {error}',
+  'volumes.rename.failed': 'Umbenennung fehlgeschlagen: {error}',
+  'volumes.download.failed': 'Download fehlgeschlagen: {error}',
   'volumes.snapshots': 'Snapshots',
   'volumes.snapshots.export': 'Exportieren',
   'volumes.snapshots.exporting': 'Wird exportiert...',
@@ -137,6 +143,7 @@ const de: Translations = {
   'diagnostics.table.fixable': 'Behebbar',
   'diagnostics.fixable.yes': 'Ja',
   'diagnostics.fixable.no': 'Nein',
+  'diagnostics.fixResult': 'Behoben: {fixed}, Fehlgeschlagen: {failed}. {message}',
   'diagnostics.empty': 'Keine Diagnoseprüfungen verfügbar',
   'diagnostics.running': 'Prüfungen werden ausgeführt...',
 
@@ -209,6 +216,7 @@ const de: Translations = {
   'appConfig.confirm.message': 'Konfiguration speichern und App neustarten?',
   'appConfig.saved': 'App-Konfiguration gespeichert',
   'appConfig.fileSaved': 'Datei gespeichert',
+  'appConfig.tabTitle': 'Konfiguration: {name}',
 
   // -- Config Editor --
   'configEditor.title': 'namespace.yml',
@@ -225,6 +233,9 @@ const de: Translations = {
 
   // -- Log Viewer --
   'logViewer.search': 'Suchen... (Strg+F)',
+  'logViewer.toggleRegex': 'Regex umschalten',
+  'logViewer.prevMatch': 'Vorheriger Treffer (Umschalt+F3)',
+  'logViewer.nextMatch': 'Nächster Treffer (F3)',
   'logViewer.regexWarning': 'Regulärer Ausdruck zu komplex — verwende exakte Suche',
   'logViewer.follow': 'Folgen',
   'logViewer.follow.tooltip': 'Protokolle in Echtzeit verfolgen',
@@ -291,6 +302,7 @@ const de: Translations = {
 
   // -- Error Boundary --
   'error.title': 'Etwas ist schiefgelaufen',
+  'error.unexpected': 'Ein unerwarteter Fehler ist aufgetreten',
   'error.reload': 'Neu laden',
 
   // -- Theme --

@@ -42,7 +42,7 @@ export function Welcome() {
       setQuickStarts(qs)
       setLoadError(null)
     } catch (e) {
-      setLoadError(e instanceof Error ? e.message : 'Failed to load data')
+      setLoadError(e instanceof Error ? e.message : String(e))
     } finally {
       setLoading(false)
     }
@@ -59,7 +59,7 @@ export function Welcome() {
         startEventStream()
       } catch (e) {
         setStarting(false)
-        setStartError(e instanceof Error ? e.message : 'Failed to start namespace')
+        setStartError(e instanceof Error ? e.message : String(e))
         return
       }
       setStarting(false)

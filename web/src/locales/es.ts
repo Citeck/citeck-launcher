@@ -72,6 +72,8 @@ const es: Translations = {
   'wizard.next': 'Siguiente',
   'wizard.create': 'Crear',
   'wizard.creating': 'Creando...',
+  'wizard.enabled': 'Habilitado',
+  'wizard.disabled': 'Deshabilitado',
   'wizard.success': 'Namespace creado correctamente',
 
   // -- Volumes --
@@ -83,6 +85,10 @@ const es: Translations = {
   'volumes.delete.title': '¿Eliminar el volumen {name}?',
   'volumes.delete.message': 'Se eliminará permanentemente el volumen y todos sus datos.',
   'volumes.delete.success': 'Volumen eliminado',
+  'volumes.export.failed': 'Error en la exportación: {error}',
+  'volumes.import.failed': 'Error en la importación: {error}',
+  'volumes.rename.failed': 'Error al renombrar: {error}',
+  'volumes.download.failed': 'Error en la descarga: {error}',
   'volumes.snapshots': 'Instantáneas',
   'volumes.snapshots.export': 'Exportar',
   'volumes.snapshots.exporting': 'Exportando...',
@@ -137,6 +143,7 @@ const es: Translations = {
   'diagnostics.table.fixable': 'Corregible',
   'diagnostics.fixable.yes': 'Sí',
   'diagnostics.fixable.no': 'No',
+  'diagnostics.fixResult': 'Corregidos: {fixed}, Fallidos: {failed}. {message}',
   'diagnostics.empty': 'No hay comprobaciones de diagnóstico disponibles',
   'diagnostics.running': 'Ejecutando comprobaciones...',
 
@@ -209,6 +216,7 @@ const es: Translations = {
   'appConfig.confirm.message': '¿Guardar la configuración y reiniciar la aplicación?',
   'appConfig.saved': 'Configuración de la app guardada',
   'appConfig.fileSaved': 'Archivo guardado',
+  'appConfig.tabTitle': 'Configuración: {name}',
 
   // -- Config Editor --
   'configEditor.title': 'namespace.yml',
@@ -225,6 +233,9 @@ const es: Translations = {
 
   // -- Log Viewer --
   'logViewer.search': 'Buscar... (Ctrl+F)',
+  'logViewer.toggleRegex': 'Alternar regex',
+  'logViewer.prevMatch': 'Coincidencia anterior (Shift+F3)',
+  'logViewer.nextMatch': 'Siguiente coincidencia (F3)',
   'logViewer.regexWarning': 'Expresión regular demasiado compleja — usando coincidencia literal',
   'logViewer.follow': 'Seguir',
   'logViewer.follow.tooltip': 'Seguir registros en tiempo real',
@@ -291,6 +302,7 @@ const es: Translations = {
 
   // -- Error Boundary --
   'error.title': 'Algo salió mal',
+  'error.unexpected': 'Ocurrió un error inesperado',
   'error.reload': 'Recargar',
 
   // -- Theme --
