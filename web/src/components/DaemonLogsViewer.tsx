@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { getDaemonLogs } from '../lib/api'
+import { useTranslation } from '../lib/i18n'
 
 interface DaemonLogsViewerProps {
   compact?: boolean
@@ -7,6 +8,7 @@ interface DaemonLogsViewerProps {
 }
 
 export function DaemonLogsViewer({ compact = false, active = true }: DaemonLogsViewerProps) {
+  const { t } = useTranslation()
   const [logs, setLogs] = useState('')
   const [error, setError] = useState<string | null>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -61,13 +63,13 @@ export function DaemonLogsViewer({ compact = false, active = true }: DaemonLogsV
   return (
     <div className={compact ? 'flex flex-col h-full px-2 py-1' : 'p-3 flex flex-col h-full'}>
       <div className="flex items-center justify-between mb-1 shrink-0">
-        <h2 className={compact ? 'text-xs font-medium' : 'text-base font-semibold'}>Daemon Logs</h2>
+        <h2 className={compact ? 'text-xs font-medium' : 'text-base font-semibold'}>{t('daemonLogs.title')}</h2>
         <button type="button" className="rounded border border-border px-2 py-0.5 text-xs hover:bg-muted"
-          onClick={fetchLogs}>Refresh</button>
+          onClick={fetchLogs}>{t('daemonLogs.refresh')}</button>
       </div>
       {error && <div className="text-destructive text-xs mb-1 shrink-0">{error}</div>}
       <pre className="flex-1 min-h-0 overflow-auto rounded border border-border bg-background p-2 text-[11px] font-mono text-foreground whitespace-pre-wrap">
-        {logs || 'No logs available'}
+        {logs || t('daemonLogs.empty')}
       </pre>
     </div>
   )

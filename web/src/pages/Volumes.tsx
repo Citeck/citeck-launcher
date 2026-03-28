@@ -3,6 +3,7 @@ import { getVolumes, deleteVolume, getSnapshots, postExportSnapshot, postImportS
 import type { SnapshotDto } from '../lib/types'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { toast } from '../lib/toast'
+import { useTranslation } from '../lib/i18n'
 import { Trash2, Download, Upload, Archive, Loader2, Pencil, Cloud } from 'lucide-react'
 
 interface WsSnapshot {
@@ -19,6 +20,7 @@ interface VolumeInfo {
 }
 
 export function Volumes() {
+  const { t } = useTranslation()
   const [volumes, setVolumes] = useState<VolumeInfo[]>([])
   const [snapshots, setSnapshots] = useState<SnapshotDto[]>([])
   const [loading, setLoading] = useState(true)
@@ -54,7 +56,7 @@ export function Volumes() {
       await deleteVolume(deleteTarget)
       setDeleteTarget(null)
       loadData()
-      toast('Volume deleted', 'success')
+      toast(t('volumes.delete.success'), 'success')
     } catch (e) {
       setDeleteError((e as Error).message)
     } finally {
@@ -110,14 +112,14 @@ export function Volumes() {
 
   return (
     <div className="p-3">
-      <h1 className="text-base font-semibold mb-2">Docker Volumes</h1>
+      <h1 className="text-base font-semibold mb-2">{t('volumes.title')}</h1>
       {error && <div className="text-destructive text-xs mb-2">{error}</div>}
 
       <table className="w-full text-xs border-collapse">
         <thead>
           <tr className="text-left text-muted-foreground border-b border-border">
-            <th className="py-1 pr-4 font-medium">Name</th>
-            <th className="py-1 pr-4 font-medium">Path</th>
+            <th className="py-1 pr-4 font-medium">{t('volumes.table.name')}</th>
+            <th className="py-1 pr-4 font-medium">{t('volumes.table.path')}</th>
             <th className="py-1 font-medium text-right w-16"></th>
           </tr>
         </thead>
@@ -128,14 +130,14 @@ export function Volumes() {
               <td className="py-[3px] pr-4 text-muted-foreground text-[11px] font-mono truncate max-w-xs" title={v.path}>{v.path}</td>
               <td className="py-[3px] text-right">
                 <button type="button" className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-muted"
-                  title="Delete volume" onClick={() => setDeleteTarget(v.name)}>
+                  title={t('volumes.delete.tooltip')} onClick={() => setDeleteTarget(v.name)}>
                   <Trash2 size={14} />
                 </button>
               </td>
             </tr>
           ))}
           {volumes.length === 0 && (
-            <tr><td colSpan={3} className="py-4 text-center text-muted-foreground">No volumes found</td></tr>
+            <tr><td colSpan={3} className="py-4 text-center text-muted-foreground">{t('volumes.empty')}</td></tr>
           )}
         </tbody>
       </table>
@@ -145,7 +147,7 @@ export function Volumes() {
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-semibold flex items-center gap-1.5">
             <Archive size={14} />
-            Snapshots
+            {t('volumes.snapshots')}
           </h2>
           <div className="flex items-center gap-2">
             <button
@@ -153,20 +155,20 @@ export function Volumes() {
               className="flex items-center gap-1 rounded border border-border px-2.5 py-1 text-xs hover:bg-muted disabled:opacity-50"
               onClick={handleExport}
               disabled={exporting || volumes.length === 0}
-              title="Export all volumes to a snapshot ZIP"
+              title={t('volumes.snapshots.export.tooltip')}
             >
               {exporting ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
-              {exporting ? 'Exporting...' : 'Export'}
+              {exporting ? t('volumes.snapshots.exporting') : t('volumes.snapshots.export')}
             </button>
             <button
               type="button"
               className="flex items-center gap-1 rounded border border-border px-2.5 py-1 text-xs hover:bg-muted disabled:opacity-50"
               onClick={() => fileInputRef.current?.click()}
               disabled={importing}
-              title="Import volumes from a snapshot ZIP"
+              title={t('volumes.snapshots.import.tooltip')}
             >
               {importing ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
-              {importing ? 'Importing...' : 'Import'}
+              {importing ? t('volumes.snapshots.importing') : t('volumes.snapshots.import')}
             </button>
             <input
               ref={fileInputRef}
@@ -190,9 +192,9 @@ export function Volumes() {
           <table className="w-full text-xs border-collapse">
             <thead>
               <tr className="text-left text-muted-foreground border-b border-border">
-                <th className="py-1 pr-4 font-medium">Name</th>
-                <th className="py-1 pr-4 font-medium">Size</th>
-                <th className="py-1 pr-4 font-medium">Created</th>
+                <th className="py-1 pr-4 font-medium">{t('volumes.snapshots.name')}</th>
+                <th className="py-1 pr-4 font-medium">{t('volumes.snapshots.size')}</th>
+                <th className="py-1 pr-4 font-medium">{t('volumes.snapshots.created')}</th>
               </tr>
             </thead>
             <tbody>
@@ -206,14 +208,14 @@ export function Volumes() {
                       }}>
                         <input className="border border-border rounded px-1 bg-background text-foreground text-xs font-mono w-40"
                           value={renameValue} onChange={(e) => setRenameValue(e.target.value)} autoFocus />
-                        <button type="submit" className="text-primary text-[10px]">OK</button>
-                        <button type="button" className="text-muted-foreground text-[10px]" onClick={() => setRenaming(null)}>Cancel</button>
+                        <button type="submit" className="text-primary text-[10px]">{t('volumes.snapshots.rename.ok')}</button>
+                        <button type="button" className="text-muted-foreground text-[10px]" onClick={() => setRenaming(null)}>{t('volumes.snapshots.rename.cancel')}</button>
                       </form>
                     ) : (
                       <span className="inline-flex items-center gap-1">
                         {s.name}
                         <button type="button" className="p-0.5 text-muted-foreground hover:text-foreground"
-                          title="Rename" onClick={() => { setRenaming(s.name); setRenameValue(s.name) }}>
+                          title={t('volumes.snapshots.rename')} onClick={() => { setRenaming(s.name); setRenameValue(s.name) }}>
                           <Pencil size={10} />
                         </button>
                       </span>
@@ -226,7 +228,7 @@ export function Volumes() {
             </tbody>
           </table>
         ) : (
-          <div className="text-xs text-muted-foreground py-2">No snapshots yet. Export volumes to create one.</div>
+          <div className="text-xs text-muted-foreground py-2">{t('volumes.snapshots.empty')}</div>
         )}
       </div>
 
@@ -235,13 +237,13 @@ export function Volumes() {
         <div className="mt-6 border-t border-border pt-4">
           <h2 className="text-sm font-semibold flex items-center gap-1.5 mb-3">
             <Cloud size={14} />
-            Workspace Snapshots
+            {t('volumes.workspace')}
           </h2>
           <table className="w-full text-xs border-collapse">
             <thead>
               <tr className="text-left text-muted-foreground border-b border-border">
-                <th className="py-1 pr-4 font-medium">Name</th>
-                <th className="py-1 pr-4 font-medium">Size</th>
+                <th className="py-1 pr-4 font-medium">{t('volumes.workspace.name')}</th>
+                <th className="py-1 pr-4 font-medium">{t('volumes.workspace.size')}</th>
                 <th className="py-1 font-medium text-right w-24"></th>
               </tr>
             </thead>
@@ -263,7 +265,7 @@ export function Volumes() {
                         finally { setDownloading(null) }
                       }}>
                       {downloading === ws.id ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
-                      Download
+                      {t('volumes.workspace.download')}
                     </button>
                   </td>
                 </tr>
@@ -275,9 +277,9 @@ export function Volumes() {
 
       <ConfirmModal
         open={!!deleteTarget}
-        title={`Delete volume ${deleteTarget}?`}
-        message="This will permanently delete the volume and all its data."
-        confirmLabel="Delete"
+        title={t('volumes.delete.title', { name: deleteTarget || '' })}
+        message={t('volumes.delete.message')}
+        confirmLabel={t('common.delete')}
         confirmVariant="danger"
         loading={deleting}
         error={deleteError}

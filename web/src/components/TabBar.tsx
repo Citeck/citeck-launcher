@@ -1,6 +1,7 @@
 import { useNavigate, useLocation } from 'react-router'
 import { useTabsStore } from '../lib/tabs'
 import { usePanelStore } from '../lib/panels'
+import { useTranslation, LOCALES, useI18nStore } from '../lib/i18n'
 import { X, Settings, Sun, Moon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
@@ -9,6 +10,7 @@ export function TabBar() {
   const openBottomTab = usePanelStore((s) => s.openBottomTab)
   const navigate = useNavigate()
   const location = useLocation()
+  const { t } = useTranslation()
 
   // Sync active tab with current location
   useEffect(() => {
@@ -56,14 +58,15 @@ export function TabBar() {
       </div>
       {/* Right-side buttons */}
       <div className="flex items-center border-l border-border shrink-0">
+        <LanguageSelector />
         <ThemeToggle />
         <button
           type="button"
           className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted"
-          title="Settings"
+          title={t('common.settings')}
           onClick={() => {
             if (location.pathname === '/') {
-              openBottomTab({ id: 'ns-config', type: 'ns-config', title: 'Config: ns.yml' })
+              openBottomTab({ id: 'ns-config', type: 'ns-config', title: t('configEditor.title') })
             } else {
               navigate('/config')
             }
@@ -77,6 +80,7 @@ export function TabBar() {
 }
 
 function ThemeToggle() {
+  const { t } = useTranslation()
   const [isDark, setIsDark] = useState(() => {
     try {
       const stored = localStorage.getItem('theme')
@@ -96,10 +100,29 @@ function ThemeToggle() {
     <button
       type="button"
       className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted"
-      title={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+      title={isDark ? t('theme.toLight') : t('theme.toDark')}
       onClick={() => setIsDark((d) => !d)}
     >
       {isDark ? <Sun size={14} /> : <Moon size={14} />}
     </button>
+  )
+}
+
+function LanguageSelector() {
+  const locale = useI18nStore((s) => s.locale)
+  const setLocale = useI18nStore((s) => s.setLocale)
+
+  return (
+    <select
+      className="bg-transparent text-xs text-muted-foreground hover:text-foreground px-1.5 py-1 border-none outline-none cursor-pointer"
+      value={locale}
+      onChange={(e) => setLocale(e.target.value as typeof locale)}
+    >
+      {LOCALES.map((l) => (
+        <option key={l.code} value={l.code}>
+          {l.flag} {l.name}
+        </option>
+      ))}
+    </select>
   )
 }

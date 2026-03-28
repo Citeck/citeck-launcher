@@ -3,8 +3,10 @@ import { Link } from 'react-router'
 import { getHealth } from '../lib/api'
 import type { HealthDto } from '../lib/types'
 import { ConfigEditor } from '../components/ConfigEditor'
+import { useTranslation } from '../lib/i18n'
 
 export function Config() {
+  const { t } = useTranslation()
   const [health, setHealth] = useState<HealthDto | null>(null)
 
   useEffect(() => {
@@ -15,15 +17,15 @@ export function Config() {
     <div className="space-y-6">
       <div>
         <Link to="/" className="text-sm text-primary hover:underline">
-          &larr; Back to dashboard
+          {t('config.back')}
         </Link>
-        <h1 className="text-2xl font-semibold mt-2">Configuration</h1>
+        <h1 className="text-2xl font-semibold mt-2">{t('config.title')}</h1>
       </div>
 
       {/* Health checks */}
       {health && (
         <div className="rounded-lg border border-border bg-card p-4 space-y-3">
-          <h2 className="text-lg font-medium">System Health</h2>
+          <h2 className="text-lg font-medium">{t('config.health.title')}</h2>
           <div
             className={`rounded-md px-3 py-2 text-sm ${
               health.healthy
@@ -31,7 +33,7 @@ export function Config() {
                 : 'bg-destructive/10 text-destructive border border-destructive/20'
             }`}
           >
-            {health.healthy ? 'All systems healthy' : 'Issues detected'}
+            {health.healthy ? t('config.health.ok') : t('config.health.issues')}
           </div>
           <div className="space-y-1">
             {health.checks.map((check) => (

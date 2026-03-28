@@ -3,6 +3,7 @@ import { getSecrets, createSecret, deleteSecret, testSecret } from '../lib/api'
 import type { SecretMetaDto } from '../lib/types'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { toast } from '../lib/toast'
+import { useTranslation } from '../lib/i18n'
 import { Trash2, Plus, FlaskConical, CheckCircle, XCircle, KeyRound } from 'lucide-react'
 
 interface SecretFormData {
@@ -17,6 +18,7 @@ const SECRET_TYPES = ['GIT_TOKEN', 'BASIC_AUTH', 'REGISTRY_AUTH'] as const
 const emptyForm: SecretFormData = { id: '', name: '', type: 'GIT_TOKEN', value: '' }
 
 export function Secrets() {
+  const { t } = useTranslation()
   const [secrets, setSecrets] = useState<SecretMetaDto[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -46,7 +48,7 @@ export function Secrets() {
       setForm(emptyForm)
       setShowForm(false)
       loadSecrets()
-      toast('Secret created', 'success')
+      toast(t('secrets.create.success'), 'success')
     } catch (err) {
       setCreateError((err as Error).message)
     } finally {
@@ -62,7 +64,7 @@ export function Secrets() {
       await deleteSecret(deleteTarget)
       setDeleteTarget(null)
       loadSecrets()
-      toast('Secret deleted', 'success')
+      toast(t('secrets.delete.success'), 'success')
     } catch (err) {
       setDeleteError((err as Error).message)
     } finally {
@@ -92,7 +94,7 @@ export function Secrets() {
       <div className="flex items-center justify-between mb-2">
         <h1 className="text-base font-semibold flex items-center gap-1.5">
           <KeyRound size={16} />
-          Secrets
+          {t('secrets.title')}
         </h1>
         <button
           type="button"
@@ -100,7 +102,7 @@ export function Secrets() {
           onClick={() => { setShowForm(!showForm); setCreateError(null) }}
         >
           <Plus size={13} />
-          Add Secret
+          {t('secrets.add')}
         </button>
       </div>
 
@@ -110,49 +112,49 @@ export function Secrets() {
         <form onSubmit={handleCreate} className="mb-3 rounded border border-border bg-card p-3 space-y-2">
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block text-[11px] text-muted-foreground mb-0.5">ID</label>
+              <label className="block text-[11px] text-muted-foreground mb-0.5">{t('secrets.form.id')}</label>
               <input
                 type="text"
                 className="w-full rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:border-primary"
                 value={form.id}
                 onChange={(e) => setForm({ ...form, id: e.target.value })}
-                placeholder="unique-id"
+                placeholder={t('secrets.form.id.placeholder')}
                 required
               />
             </div>
             <div>
-              <label className="block text-[11px] text-muted-foreground mb-0.5">Name</label>
+              <label className="block text-[11px] text-muted-foreground mb-0.5">{t('secrets.form.name')}</label>
               <input
                 type="text"
                 className="w-full rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:border-primary"
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder="My Secret"
+                placeholder={t('secrets.form.name.placeholder')}
                 required
               />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block text-[11px] text-muted-foreground mb-0.5">Type</label>
+              <label className="block text-[11px] text-muted-foreground mb-0.5">{t('secrets.form.type')}</label>
               <select
                 className="w-full rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:border-primary"
                 value={form.type}
                 onChange={(e) => setForm({ ...form, type: e.target.value })}
               >
-                {SECRET_TYPES.map((t) => (
-                  <option key={t} value={t}>{t}</option>
+                {SECRET_TYPES.map((st) => (
+                  <option key={st} value={st}>{st}</option>
                 ))}
               </select>
             </div>
             <div>
-              <label className="block text-[11px] text-muted-foreground mb-0.5">Value</label>
+              <label className="block text-[11px] text-muted-foreground mb-0.5">{t('secrets.form.value')}</label>
               <input
                 type="password"
                 className="w-full rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:border-primary"
                 value={form.value}
                 onChange={(e) => setForm({ ...form, value: e.target.value })}
-                placeholder="secret value"
+                placeholder={t('secrets.form.value.placeholder')}
                 required
               />
             </div>
@@ -164,14 +166,14 @@ export function Secrets() {
               disabled={creating}
               className="rounded-md bg-primary text-primary-foreground px-3 py-1 text-xs font-medium hover:bg-primary/90 disabled:opacity-50"
             >
-              {creating ? 'Creating...' : 'Create'}
+              {creating ? t('secrets.form.creating') : t('secrets.form.create')}
             </button>
             <button
               type="button"
               className="rounded-md border border-border px-3 py-1 text-xs hover:bg-muted"
               onClick={() => { setShowForm(false); setCreateError(null) }}
             >
-              Cancel
+              {t('secrets.form.cancel')}
             </button>
           </div>
         </form>
@@ -180,10 +182,10 @@ export function Secrets() {
       <table className="w-full text-xs border-collapse">
         <thead>
           <tr className="text-left text-muted-foreground border-b border-border">
-            <th className="py-1 pr-4 font-medium">Name</th>
-            <th className="py-1 pr-4 font-medium">Type</th>
-            <th className="py-1 pr-4 font-medium">Scope</th>
-            <th className="py-1 pr-4 font-medium">Created</th>
+            <th className="py-1 pr-4 font-medium">{t('secrets.table.name')}</th>
+            <th className="py-1 pr-4 font-medium">{t('secrets.table.type')}</th>
+            <th className="py-1 pr-4 font-medium">{t('secrets.table.scope')}</th>
+            <th className="py-1 pr-4 font-medium">{t('secrets.table.created')}</th>
             <th className="py-1 font-medium text-right w-24"></th>
           </tr>
         </thead>
@@ -198,7 +200,7 @@ export function Secrets() {
                 <button
                   type="button"
                   className="p-1 rounded text-muted-foreground hover:text-primary hover:bg-muted"
-                  title="Test secret"
+                  title={t('secrets.test.tooltip')}
                   onClick={() => handleTest(s.id)}
                 >
                   {testResult[s.id] === 'ok' ? (
@@ -212,7 +214,7 @@ export function Secrets() {
                 <button
                   type="button"
                   className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-muted"
-                  title="Delete secret"
+                  title={t('common.delete')}
                   onClick={() => setDeleteTarget(s.id)}
                 >
                   <Trash2 size={14} />
@@ -221,16 +223,16 @@ export function Secrets() {
             </tr>
           ))}
           {secrets.length === 0 && (
-            <tr><td colSpan={5} className="py-4 text-center text-muted-foreground">No secrets configured</td></tr>
+            <tr><td colSpan={5} className="py-4 text-center text-muted-foreground">{t('secrets.empty')}</td></tr>
           )}
         </tbody>
       </table>
 
       <ConfirmModal
         open={!!deleteTarget}
-        title={`Delete secret?`}
-        message={`This will permanently delete the secret "${secrets.find((s) => s.id === deleteTarget)?.name ?? deleteTarget}". Any namespaces using it will lose access.`}
-        confirmLabel="Delete"
+        title={t('secrets.delete.title')}
+        message={t('secrets.delete.message', { name: secrets.find((s) => s.id === deleteTarget)?.name ?? deleteTarget ?? '' })}
+        confirmLabel={t('common.delete')}
         confirmVariant="danger"
         loading={deleting}
         error={deleteError}

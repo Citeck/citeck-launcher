@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { getDiagnostics, postDiagnosticsFix } from '../lib/api'
 import type { DiagnosticCheckDto } from '../lib/types'
+import { useTranslation } from '../lib/i18n'
 import { Stethoscope, RefreshCw, Wrench } from 'lucide-react'
 
 const statusColor: Record<string, string> = {
@@ -16,6 +17,7 @@ const statusBg: Record<string, string> = {
 }
 
 export function Diagnostics() {
+  const { t } = useTranslation()
   const [checks, setChecks] = useState<DiagnosticCheckDto[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -59,7 +61,7 @@ export function Diagnostics() {
       <div className="flex items-center justify-between mb-2">
         <h1 className="text-base font-semibold flex items-center gap-1.5">
           <Stethoscope size={16} />
-          Diagnostics
+          {t('diagnostics.title')}
         </h1>
         <div className="flex items-center gap-2">
           <button
@@ -69,7 +71,7 @@ export function Diagnostics() {
             disabled={loading}
           >
             <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
-            Run Checks
+            {t('diagnostics.runChecks')}
           </button>
           <button
             type="button"
@@ -78,7 +80,7 @@ export function Diagnostics() {
             disabled={!hasFixable || fixing}
           >
             <Wrench size={13} />
-            {fixing ? 'Fixing...' : 'Fix All'}
+            {fixing ? t('diagnostics.fixing') : t('diagnostics.fixAll')}
           </button>
         </div>
       </div>
@@ -91,10 +93,10 @@ export function Diagnostics() {
       <table className="w-full text-xs border-collapse">
         <thead>
           <tr className="text-left text-muted-foreground border-b border-border">
-            <th className="py-1 pr-4 font-medium">Name</th>
-            <th className="py-1 pr-4 font-medium w-20">Status</th>
-            <th className="py-1 pr-4 font-medium">Message</th>
-            <th className="py-1 font-medium w-16">Fixable</th>
+            <th className="py-1 pr-4 font-medium">{t('diagnostics.table.name')}</th>
+            <th className="py-1 pr-4 font-medium w-20">{t('diagnostics.table.status')}</th>
+            <th className="py-1 pr-4 font-medium">{t('diagnostics.table.message')}</th>
+            <th className="py-1 font-medium w-16">{t('diagnostics.table.fixable')}</th>
           </tr>
         </thead>
         <tbody>
@@ -107,14 +109,14 @@ export function Diagnostics() {
                 </span>
               </td>
               <td className="py-[3px] pr-4 text-muted-foreground">{c.message}</td>
-              <td className="py-[3px] text-muted-foreground">{c.fixable ? 'Yes' : 'No'}</td>
+              <td className="py-[3px] text-muted-foreground">{c.fixable ? t('diagnostics.fixable.yes') : t('diagnostics.fixable.no')}</td>
             </tr>
           ))}
           {checks.length === 0 && !loading && (
-            <tr><td colSpan={4} className="py-4 text-center text-muted-foreground">No diagnostic checks available</td></tr>
+            <tr><td colSpan={4} className="py-4 text-center text-muted-foreground">{t('diagnostics.empty')}</td></tr>
           )}
           {loading && checks.length === 0 && (
-            <tr><td colSpan={4} className="py-4 text-center text-muted-foreground">Running checks...</td></tr>
+            <tr><td colSpan={4} className="py-4 text-center text-muted-foreground">{t('diagnostics.running')}</td></tr>
           )}
         </tbody>
       </table>

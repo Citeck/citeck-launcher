@@ -1,8 +1,10 @@
 import { useParams, Link } from 'react-router'
 import { LogViewer } from '../components/LogViewer'
+import { useTranslation } from '../lib/i18n'
 
 export function Logs() {
   const { name } = useParams<{ name: string }>()
+  const { t } = useTranslation()
 
   if (!name) return null
 
@@ -11,9 +13,9 @@ export function Logs() {
       <div className="flex items-center justify-between mb-4">
         <div>
           <Link to={`/apps/${name}`} className="text-sm text-primary hover:underline">
-            &larr; Back to {name}
+            {t('logs.back', { name })}
           </Link>
-          <h1 className="text-2xl font-semibold mt-1">Logs: {name}</h1>
+          <h1 className="text-2xl font-semibold mt-1">{t('logs.title', { name })}</h1>
         </div>
       </div>
       <div className="flex-1 min-h-0">

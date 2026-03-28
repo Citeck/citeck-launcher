@@ -1,6 +1,7 @@
 import { useRef, useCallback, useLayoutEffect, type ReactNode } from 'react'
 import { usePanelStore, type BottomPanelTab } from '../lib/panels'
 import { useResizeHandle } from '../hooks/useResizeHandle'
+import { useTranslation } from '../lib/i18n'
 import { X, ChevronDown, ChevronUp } from 'lucide-react'
 
 /** Registry of tab content renderers — populated by the integrating page (Dashboard). */
@@ -11,6 +12,7 @@ interface BottomPanelProps {
 }
 
 export function BottomPanel({ renderTab }: BottomPanelProps) {
+  const { t } = useTranslation()
   const {
     bottomTabs, activeBottomTabId, bottomPanelOpen, bottomPanelHeight,
     closeBottomTab, setActiveBottomTab, setBottomPanelHeight, toggleBottomPanel,
@@ -53,7 +55,7 @@ export function BottomPanel({ renderTab }: BottomPanelProps) {
           type="button"
           className="p-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted shrink-0"
           onClick={toggleBottomPanel}
-          title={bottomPanelOpen ? 'Collapse' : 'Expand'}
+          title={bottomPanelOpen ? t('panel.collapse') : t('panel.expand')}
         >
           {bottomPanelOpen ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
         </button>
@@ -71,7 +73,7 @@ export function BottomPanel({ renderTab }: BottomPanelProps) {
               {tab.title}
             </button>
             <button type="button" className="hover:bg-border rounded p-px mr-0.5"
-              onClick={(e) => onCloseTab(e, tab.id)} title="Close tab">
+              onClick={(e) => onCloseTab(e, tab.id)} title={t('panel.closeTab')}>
               <X size={12} />
             </button>
           </div>

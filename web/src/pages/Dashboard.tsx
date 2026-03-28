@@ -4,6 +4,7 @@ import { useDashboardStore } from '../lib/store'
 import { useTabsStore } from '../lib/tabs'
 import { usePanelStore } from '../lib/panels'
 import { getSystemDump } from '../lib/api'
+import { useTranslation } from '../lib/i18n'
 import { StatusBadge } from '../components/StatusBadge'
 import { AppTable } from '../components/AppTable'
 import { NamespaceControls } from '../components/NamespaceControls'
@@ -23,9 +24,10 @@ export function Dashboard() {
     useDashboardStore()
   const setHomeTab = useTabsStore((s) => s.setHomeTab)
   const { drawerAppName, closeDrawer, bottomTabs, openBottomTab } = usePanelStore()
+  const { t } = useTranslation()
 
   useEffect(() => {
-    setHomeTab('Dashboard')
+    setHomeTab(t('dashboard.title'))
     fetchData()
     startEventStream()
     return () => stopEventStream()
@@ -78,7 +80,7 @@ export function Dashboard() {
   }
 
   if (error && !namespace) {
-    return <div className="text-destructive text-xs p-4">Error: {error}</div>
+    return <div className="text-destructive text-xs p-4">{t('dashboard.error', { error })}</div>
   }
 
   if (!namespace) return null
@@ -133,8 +135,8 @@ export function Dashboard() {
             <button
               type="button"
               className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted shrink-0"
-              title="Namespace config"
-              onClick={() => openBottomTab({ id: 'ns-config', type: 'ns-config', title: 'Config: ns.yml' })}
+              title={t('dashboard.nsConfig')}
+              onClick={() => openBottomTab({ id: 'ns-config', type: 'ns-config', title: t('configEditor.title') })}
             >
               <Settings size={14} />
             </button>
@@ -148,11 +150,11 @@ export function Dashboard() {
           {runningApps.length > 0 && (
             <div className="text-[11px] space-y-0.5">
               <div className="flex justify-between">
-                <span className="text-muted-foreground">CPU</span>
+                <span className="text-muted-foreground">{t('dashboard.cpu')}</span>
                 <span className="font-mono">{totalCpu.toFixed(1)}%</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">MEM</span>
+                <span className="text-muted-foreground">{t('dashboard.mem')}</span>
                 <span className="font-mono">{totalMem >= 1024 ? `${(totalMem / 1024).toFixed(1)}G` : `${Math.round(totalMem)}M`}</span>
               </div>
             </div>
@@ -171,24 +173,24 @@ export function Dashboard() {
                   : 'border-border text-muted-foreground cursor-not-allowed opacity-50'
               }`}
               onClick={(e) => { if (!isRunning) e.preventDefault() }}
-              title={isRunning ? 'Open Citeck in browser\nDefault: admin / admin' : 'Start namespace first'}
+              title={isRunning ? t('dashboard.openInBrowser.tooltip') : t('dashboard.openInBrowser.disabled')}
             >
               <Globe size={14} />
-              Open In Browser
+              {t('dashboard.openInBrowser')}
             </a>
           )}
 
           {dockerError && (
             <div className="rounded border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-[11px] text-destructive">
               <AlertTriangle size={12} className="inline mr-1" />
-              Docker: {dockerError}
-              <button type="button" className="underline ml-1" onClick={fetchData}>Retry</button>
+              {t('dashboard.docker.error', { error: dockerError })}
+              <button type="button" className="underline ml-1" onClick={fetchData}>{t('dashboard.docker.retry')}</button>
             </div>
           )}
 
           {serviceLinks.length > 0 && (
             <div>
-              <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider mb-1">Links</div>
+              <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider mb-1">{t('dashboard.links')}</div>
               <div className="flex flex-col gap-0.5">
                 {serviceLinks.map((l) => (
                   <a key={l.name} href={l.url} target="_blank" rel="noopener noreferrer"
@@ -205,16 +207,16 @@ export function Dashboard() {
           )}
 
           <div className="mt-auto pt-2 border-t border-border flex flex-col gap-1">
-            <SidebarBtn icon={HardDrive} label="Volumes"
-              onClick={() => { openTab({ id: 'volumes', title: 'Volumes', path: '/volumes' }); navigate('/volumes') }} />
-            <SidebarBtn icon={Key} label="Secrets"
-              onClick={() => { openTab({ id: 'secrets', title: 'Secrets', path: '/secrets' }); navigate('/secrets') }} />
-            <SidebarBtn icon={Stethoscope} label="Diagnostics"
-              onClick={() => { openTab({ id: 'diagnostics', title: 'Diagnostics', path: '/diagnostics' }); navigate('/diagnostics') }} />
-            <SidebarBtn icon={FileText} label="Launcher Logs"
-              onClick={() => openBottomTab({ id: 'daemon-logs', type: 'daemon-logs', title: 'Daemon Logs' })} />
-            <SidebarBtn icon={Download} label="System Dump"
-              onClick={() => getSystemDump('zip').then(() => toast('System dump downloaded', 'success')).catch((e) => toast((e as Error).message, 'error'))} />
+            <SidebarBtn icon={HardDrive} label={t('dashboard.volumes')}
+              onClick={() => { openTab({ id: 'volumes', title: t('dashboard.volumes'), path: '/volumes' }); navigate('/volumes') }} />
+            <SidebarBtn icon={Key} label={t('dashboard.secrets')}
+              onClick={() => { openTab({ id: 'secrets', title: t('dashboard.secrets'), path: '/secrets' }); navigate('/secrets') }} />
+            <SidebarBtn icon={Stethoscope} label={t('dashboard.diagnostics')}
+              onClick={() => { openTab({ id: 'diagnostics', title: t('dashboard.diagnostics'), path: '/diagnostics' }); navigate('/diagnostics') }} />
+            <SidebarBtn icon={FileText} label={t('dashboard.launcherLogs')}
+              onClick={() => openBottomTab({ id: 'daemon-logs', type: 'daemon-logs', title: t('daemonLogs.title') })} />
+            <SidebarBtn icon={Download} label={t('dashboard.systemDump')}
+              onClick={() => getSystemDump('zip').then(() => toast(t('dashboard.systemDump.success'), 'success')).catch((e) => toast((e as Error).message, 'error'))} />
           </div>
         </aside>
 

@@ -37,9 +37,9 @@ describe('AppTable', () => {
 
   it('renders status badges for each app', () => {
     renderWithRouter(<AppTable apps={mockApps} />)
-    expect(screen.getByText('RUNNING')).toBeInTheDocument()
-    expect(screen.getByText('STARTING')).toBeInTheDocument()
-    expect(screen.getByText('FAILED')).toBeInTheDocument()
+    expect(screen.getByText('Running')).toBeInTheDocument()
+    expect(screen.getByText('Starting')).toBeInTheDocument()
+    expect(screen.getByText('Failed')).toBeInTheDocument()
   })
 
   it('renders empty table with header', () => {
@@ -62,7 +62,7 @@ describe('AppTable', () => {
 
   it('clicking logs icon opens log tab in bottom panel', () => {
     renderWithRouter(<AppTable apps={mockApps} />)
-    const logBtns = screen.getAllByTitle('Logs')
+    const logBtns = screen.getAllByTitle(/^Logs:/)
     fireEvent.click(logBtns[0]) // first app in sorted order
     const { bottomTabs, activeBottomTabId, bottomPanelOpen } = usePanelStore.getState()
     expect(bottomTabs).toHaveLength(1)
@@ -74,7 +74,7 @@ describe('AppTable', () => {
 
   it('clicking config icon opens app-config tab in bottom panel', () => {
     renderWithRouter(<AppTable apps={mockApps} />)
-    const configBtns = screen.getAllByTitle('Config')
+    const configBtns = screen.getAllByTitle(/Configuration|Edit/)
     fireEvent.click(configBtns[0])
     const { bottomTabs } = usePanelStore.getState()
     expect(bottomTabs).toHaveLength(1)

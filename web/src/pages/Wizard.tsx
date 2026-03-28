@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router'
 import { createNamespace } from '../lib/api'
 import { toast } from '../lib/toast'
+import { useTranslation } from '../lib/i18n'
 import { Wand2, ChevronLeft, ChevronRight, Check } from 'lucide-react'
 
 interface WizardState {
@@ -15,14 +16,14 @@ interface WizardState {
 }
 
 const STEPS = [
-  { label: 'Name', key: 'name' },
-  { label: 'Authentication', key: 'auth' },
-  { label: 'Users', key: 'users' },
-  { label: 'Hostname', key: 'host' },
-  { label: 'TLS', key: 'tls' },
-  { label: 'Port', key: 'port' },
-  { label: 'PgAdmin', key: 'pgadmin' },
-  { label: 'Review', key: 'review' },
+  { labelKey: 'wizard.step.name', key: 'name' },
+  { labelKey: 'wizard.step.auth', key: 'auth' },
+  { labelKey: 'wizard.step.users', key: 'users' },
+  { labelKey: 'wizard.step.host', key: 'host' },
+  { labelKey: 'wizard.step.tls', key: 'tls' },
+  { labelKey: 'wizard.step.port', key: 'port' },
+  { labelKey: 'wizard.step.pgadmin', key: 'pgadmin' },
+  { labelKey: 'wizard.step.review', key: 'review' },
 ] as const
 
 function defaultPort(tls: string): number {
@@ -31,6 +32,7 @@ function defaultPort(tls: string): number {
 
 export function Wizard() {
   const navigate = useNavigate()
+  const { t } = useTranslation()
   const [step, setStep] = useState(0)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -83,7 +85,7 @@ export function Wizard() {
         bundleRepo: '',
         bundleKey: '',
       })
-      toast('Namespace created successfully', 'success')
+      toast(t('wizard.success'), 'success')
       navigate('/')
     } catch (e) {
       setError((e as Error).message)
@@ -104,20 +106,20 @@ export function Wizard() {
   }
 
   const reviewItems: { label: string; value: string }[] = [
-    { label: 'Name', value: state.name },
-    { label: 'Authentication', value: state.authType },
-    ...(state.authType === 'BASIC' && state.users ? [{ label: 'Users', value: state.users }] : []),
-    { label: 'Hostname', value: state.host || 'localhost' },
-    { label: 'TLS', value: state.tls },
-    { label: 'Port', value: String(state.port) },
-    { label: 'PgAdmin', value: state.pgAdmin ? 'Enabled' : 'Disabled' },
+    { label: t('wizard.step.name'), value: state.name },
+    { label: t('wizard.step.auth'), value: state.authType },
+    ...(state.authType === 'BASIC' && state.users ? [{ label: t('wizard.step.users'), value: state.users }] : []),
+    { label: t('wizard.step.host'), value: state.host || 'localhost' },
+    { label: t('wizard.step.tls'), value: state.tls },
+    { label: t('wizard.step.port'), value: String(state.port) },
+    { label: t('wizard.step.pgadmin'), value: state.pgAdmin ? 'Enabled' : 'Disabled' },
   ]
 
   return (
     <div className="p-3 max-w-xl mx-auto">
       <h1 className="text-base font-semibold flex items-center gap-1.5 mb-4">
         <Wand2 size={16} />
-        Create Namespace
+        {t('wizard.title')}
       </h1>
 
       {/* Step indicators */}
@@ -137,7 +139,7 @@ export function Wizard() {
               {i < step ? <Check size={12} /> : i + 1}
             </div>
             <span className={`text-xs ${i === step ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>
-              {s.label}
+              {t(s.labelKey)}
             </span>
           </div>
         ))}
@@ -147,14 +149,14 @@ export function Wizard() {
       <div className="rounded border border-border bg-card p-4 mb-4 min-h-[120px]">
         {currentStep.key === 'name' && (
           <div>
-            <label className="block text-sm font-medium mb-1">Namespace Name</label>
-            <p className="text-xs text-muted-foreground mb-2">Choose a unique name for your namespace.</p>
+            <label className="block text-sm font-medium mb-1">{t('wizard.name.label')}</label>
+            <p className="text-xs text-muted-foreground mb-2">{t('wizard.name.hint')}</p>
             <input
               type="text"
               className="w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary"
               value={state.name}
               onChange={(e) => update('name', e.target.value)}
-              placeholder="my-namespace"
+              placeholder={t('wizard.name.placeholder')}
               autoFocus
             />
           </div>
@@ -162,68 +164,68 @@ export function Wizard() {
 
         {currentStep.key === 'auth' && (
           <div>
-            <label className="block text-sm font-medium mb-1">Authentication Type</label>
-            <p className="text-xs text-muted-foreground mb-2">Select how users will authenticate.</p>
+            <label className="block text-sm font-medium mb-1">{t('wizard.auth.label')}</label>
+            <p className="text-xs text-muted-foreground mb-2">{t('wizard.auth.hint')}</p>
             <select
               className="w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary"
               value={state.authType}
               onChange={(e) => update('authType', e.target.value as 'BASIC' | 'KEYCLOAK')}
             >
-              <option value="BASIC">Basic Authentication</option>
-              <option value="KEYCLOAK">Keycloak SSO</option>
+              <option value="BASIC">{t('wizard.auth.basic')}</option>
+              <option value="KEYCLOAK">{t('wizard.auth.keycloak')}</option>
             </select>
           </div>
         )}
 
         {currentStep.key === 'users' && (
           <div>
-            <label className="block text-sm font-medium mb-1">Users</label>
-            <p className="text-xs text-muted-foreground mb-2">Comma-separated list of usernames to create.</p>
+            <label className="block text-sm font-medium mb-1">{t('wizard.users.label')}</label>
+            <p className="text-xs text-muted-foreground mb-2">{t('wizard.users.hint')}</p>
             <input
               type="text"
               className="w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary"
               value={state.users}
               onChange={(e) => update('users', e.target.value)}
-              placeholder="admin, user1, user2"
+              placeholder={t('wizard.users.placeholder')}
             />
           </div>
         )}
 
         {currentStep.key === 'host' && (
           <div>
-            <label className="block text-sm font-medium mb-1">Hostname</label>
-            <p className="text-xs text-muted-foreground mb-2">The hostname for the namespace.</p>
+            <label className="block text-sm font-medium mb-1">{t('wizard.host.label')}</label>
+            <p className="text-xs text-muted-foreground mb-2">{t('wizard.host.hint')}</p>
             <input
               type="text"
               className="w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary"
               value={state.host}
               onChange={(e) => update('host', e.target.value)}
-              placeholder="localhost"
+              placeholder={t('wizard.host.placeholder')}
             />
           </div>
         )}
 
         {currentStep.key === 'tls' && (
           <div>
-            <label className="block text-sm font-medium mb-1">TLS Configuration</label>
-            <p className="text-xs text-muted-foreground mb-2">Choose the TLS/HTTPS mode.</p>
+            <label className="block text-sm font-medium mb-1">{t('wizard.tls.label')}</label>
+            <p className="text-xs text-muted-foreground mb-2">{t('wizard.tls.hint')}</p>
             <select
               className="w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary"
               value={state.tls}
               onChange={(e) => update('tls', e.target.value as WizardState['tls'])}
             >
-              <option value="none">None (HTTP only)</option>
-              <option value="self-signed">Self-Signed Certificate</option>
-              <option value="letsencrypt">Let&apos;s Encrypt</option>
+              <option value="none">{t('wizard.tls.none')}</option>
+              <option value="self-signed">{t('wizard.tls.selfSigned')}</option>
+              <option value="letsencrypt">{t('wizard.tls.letsencrypt')}</option>
             </select>
           </div>
         )}
 
         {currentStep.key === 'port' && (
           <div>
-            <label className="block text-sm font-medium mb-1">Port</label>
+            <label className="block text-sm font-medium mb-1">{t('wizard.port.label')}</label>
             <p className="text-xs text-muted-foreground mb-2">
-              The port number for the namespace (default: {defaultPort(state.tls)}).
+              {t('wizard.port.hint')}
             </p>
             <input
               type="number"
@@ -238,8 +240,8 @@ export function Wizard() {
 
         {currentStep.key === 'pgadmin' && (
           <div>
-            <label className="block text-sm font-medium mb-1">PgAdmin</label>
-            <p className="text-xs text-muted-foreground mb-2">Enable PgAdmin for database management.</p>
+            <label className="block text-sm font-medium mb-1">{t('wizard.pgadmin.label')}</label>
+            <p className="text-xs text-muted-foreground mb-2">{t('wizard.pgadmin.hint')}</p>
             <label className="flex items-center gap-2 text-sm cursor-pointer">
               <input
                 type="checkbox"
@@ -247,14 +249,14 @@ export function Wizard() {
                 checked={state.pgAdmin}
                 onChange={(e) => update('pgAdmin', e.target.checked)}
               />
-              Enable PgAdmin
+              {t('wizard.pgadmin.enable')}
             </label>
           </div>
         )}
 
         {currentStep.key === 'review' && (
           <div>
-            <label className="block text-sm font-medium mb-2">Review Configuration</label>
+            <label className="block text-sm font-medium mb-2">{t('wizard.review.label')}</label>
             <div className="space-y-1">
               {reviewItems.map((item) => (
                 <div key={item.label} className="flex justify-between text-xs py-0.5 border-b border-border/20">
@@ -279,14 +281,14 @@ export function Wizard() {
             disabled={isFirst}
           >
             <ChevronLeft size={14} />
-            Back
+            {t('wizard.back')}
           </button>
           <button
             type="button"
             className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
             onClick={() => navigate('/')}
           >
-            Cancel
+            {t('wizard.cancel')}
           </button>
         </div>
         {isLast ? (
@@ -296,7 +298,7 @@ export function Wizard() {
             onClick={handleCreate}
             disabled={creating}
           >
-            {creating ? 'Creating...' : 'Create'}
+            {creating ? t('wizard.creating') : t('wizard.create')}
             <Check size={14} />
           </button>
         ) : (
@@ -305,7 +307,7 @@ export function Wizard() {
             className="flex items-center gap-1 rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-xs font-medium hover:bg-primary/90"
             onClick={handleNext}
           >
-            Next
+            {t('wizard.next')}
             <ChevronRight size={14} />
           </button>
         )}

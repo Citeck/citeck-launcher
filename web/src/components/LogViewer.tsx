@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { getAppLogs, API_BASE } from '../lib/api'
+import { useTranslation } from '../lib/i18n'
 
 type LogLevel = 'ERROR' | 'WARN' | 'INFO' | 'DEBUG' | 'TRACE'
 
@@ -71,6 +72,7 @@ interface LogViewerProps {
 }
 
 export function LogViewer({ appName, compact = false, active = true }: LogViewerProps) {
+  const { t } = useTranslation()
   const [lines, setLines] = useState<string[]>([])
   const [levels, setLevels] = useState<(LogLevel | null)[]>([])
   const lastLevelRef = useRef<LogLevel | null>(null)
@@ -339,7 +341,7 @@ export function LogViewer({ appName, compact = false, active = true }: LogViewer
             type="text"
             value={search}
             onChange={(e) => { setSearch(e.target.value); setMatchIndex(0) }}
-            placeholder="Search... (Ctrl+F)"
+            placeholder={t('logViewer.search')}
             className={`rounded-md border border-border bg-card px-2 py-1 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary ${compact ? 'w-40 text-xs' : 'w-56 text-sm py-1.5 px-3'}`}
           />
           <button
@@ -359,7 +361,7 @@ export function LogViewer({ appName, compact = false, active = true }: LogViewer
               <span className="text-xs text-muted-foreground">{safeMatchIndex + 1}/{matchIndices.length}</span>
             </>
           )}
-          {regexWarning && <span className="text-xs text-warning">{regexWarning}</span>}
+          {regexWarning && <span className="text-xs text-warning">{t('logViewer.regexWarning')}</span>}
         </div>
 
         <div className="h-5 w-px bg-border" />
@@ -402,33 +404,33 @@ export function LogViewer({ appName, compact = false, active = true }: LogViewer
           type="button"
           className={`rounded px-2 py-1 text-xs border ${follow ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted'}`}
           onClick={() => setFollow(!follow)}
-          title="Stream logs (follow)"
+          title={t('logViewer.follow.tooltip')}
         >
-          Follow
+          {t('logViewer.follow')}
         </button>
         <button
           type="button"
           className={`rounded px-2 py-1 text-xs border ${wordWrap ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted'}`}
           onClick={() => setWordWrap(!wordWrap)}
-          title="Toggle word wrap"
+          title={t('logViewer.wrap.tooltip')}
         >
-          Wrap
+          {t('logViewer.wrap')}
         </button>
 
         <div className="flex-1" />
 
         {/* Actions */}
         <button type="button" className="rounded px-2 py-1 text-xs border border-border text-muted-foreground hover:bg-muted"
-          onClick={copyToClipboard} title="Copy all to clipboard">Copy</button>
+          onClick={copyToClipboard} title={t('logViewer.copy.tooltip')}>{t('logViewer.copy')}</button>
         <button type="button" className="rounded px-2 py-1 text-xs border border-border text-muted-foreground hover:bg-muted"
-          onClick={downloadLogs} title="Download as file">Download</button>
+          onClick={downloadLogs} title={t('logViewer.download.tooltip')}>{t('logViewer.download')}</button>
         <button type="button" className="rounded px-2 py-1 text-xs border border-border text-muted-foreground hover:bg-muted"
-          onClick={() => setLinesWithLevels([])} title="Clear logs (Ctrl+L)">Clear</button>
+          onClick={() => setLinesWithLevels([])} title={t('logViewer.clear.tooltip')}>{t('logViewer.clear')}</button>
         <button type="button" className="rounded px-2 py-1 text-xs border border-border text-muted-foreground hover:bg-muted"
-          onClick={fetchInitialLogs}>Refresh</button>
+          onClick={fetchInitialLogs}>{t('logViewer.refresh')}</button>
       </div>
 
-      {error && <div className="text-destructive text-sm mb-2 px-2">Error: {error}</div>}
+      {error && <div className="text-destructive text-sm mb-2 px-2">{t('common.error', { error })}</div>}
 
       {/* Log output — virtualized */}
       <div
@@ -443,7 +445,7 @@ export function LogViewer({ appName, compact = false, active = true }: LogViewer
         }}
       >
         {filteredLines.length === 0 ? (
-          <span className="text-muted-foreground">No logs available</span>
+          <span className="text-muted-foreground">{t('logViewer.empty')}</span>
         ) : (
           <div
             style={{
@@ -484,11 +486,12 @@ export function LogViewer({ appName, compact = false, active = true }: LogViewer
       {/* Status bar */}
       <div className={`flex items-center justify-between text-xs text-muted-foreground ${compact ? 'px-2 py-0.5' : 'mt-2'}`}>
         <span>
-          {filteredLines.length} lines
-          {filteredLines.length !== totalLineCount && ` (${totalLineCount} total)`}
+          {filteredLines.length !== totalLineCount
+            ? t('logViewer.linesTotal', { count: filteredLines.length, total: totalLineCount })
+            : t('logViewer.lines', { count: filteredLines.length })}
         </span>
         <span>
-          {follow && 'Streaming'} | Ctrl+F search | F3 next | Shift+F3 prev | Esc clear
+          {follow && t('logViewer.streaming')} | {t('logViewer.shortcuts')}
         </span>
       </div>
     </div>

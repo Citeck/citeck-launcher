@@ -4,6 +4,7 @@ import { useDashboardStore } from '../lib/store'
 import { ConfirmModal } from './ConfirmModal'
 import { YamlViewer } from './YamlViewer'
 import { toast } from '../lib/toast'
+import { useTranslation } from '../lib/i18n'
 import { FileCode, Lock, Unlock } from 'lucide-react'
 
 interface AppConfigEditorProps {
@@ -11,6 +12,7 @@ interface AppConfigEditorProps {
 }
 
 export function AppConfigEditor({ appName }: AppConfigEditorProps) {
+  const { t } = useTranslation()
   const [configYaml, setConfigYaml] = useState<string | null>(null)
   const [editYaml, setEditYaml] = useState<string | null>(null)
   const [configEditing, setConfigEditing] = useState(false)
@@ -55,7 +57,7 @@ export function AppConfigEditor({ appName }: AppConfigEditorProps) {
       setConfigYaml(editYaml)
       setConfigEditing(false)
       setShowApplyConfirm(false)
-      toast('App config saved', 'success')
+      toast(t('appConfig.saved'), 'success')
     } catch (e) {
       setConfigError((e as Error).message)
     } finally {
@@ -80,30 +82,30 @@ export function AppConfigEditor({ appName }: AppConfigEditorProps) {
         <div className="rounded border border-border bg-card p-2">
           <div className="flex items-center justify-between mb-1">
             <div className="flex items-center gap-1 text-xs font-medium">
-              <FileCode size={13} /> App Config (YAML)
-              {isEdited && <span className="text-[10px] text-blue-500 font-normal ml-1">(edited{isLocked ? ', locked' : ''})</span>}
+              <FileCode size={13} /> {t('appConfig.title')}
+              {isEdited && <span className="text-[10px] text-blue-500 font-normal ml-1">{t('appConfig.edited', { detail: isLocked ? ', locked' : '' })}</span>}
             </div>
             <div className="flex items-center gap-1">
               {isEdited && (
                 <button type="button"
                   className={`flex items-center gap-0.5 rounded border border-border px-2 py-0.5 text-xs hover:bg-muted ${isLocked ? 'text-blue-500' : 'text-muted-foreground'}`}
-                  title={isLocked ? 'Unlock: edits will NOT survive regeneration' : 'Lock: edits survive regeneration'}
+                  title={isLocked ? t('appConfig.lock.unlockTooltip') : t('appConfig.lock.lockTooltip')}
                   onClick={() => putAppLock(appName, !isLocked).catch((e) => setConfigError((e as Error).message))}>
                   {isLocked ? <Lock size={11} /> : <Unlock size={11} />}
-                  {isLocked ? 'Locked' : 'Unlocked'}
+                  {isLocked ? t('appConfig.lock.locked') : t('appConfig.lock.unlocked')}
                 </button>
               )}
               {!configEditing ? (
                 <button type="button" className="rounded border border-border px-2 py-0.5 text-xs hover:bg-muted"
                   onClick={() => { setEditYaml(configYaml); setConfigEditing(true); setConfigError(null) }}>
-                  Edit
+                  {t('common.edit')}
                 </button>
               ) : (
                 <div className="flex gap-1">
                   <button type="button" className="rounded border border-border px-2 py-0.5 text-xs hover:bg-muted"
-                    onClick={() => setConfigEditing(false)}>Cancel</button>
+                    onClick={() => setConfigEditing(false)}>{t('common.cancel')}</button>
                   <button type="button" className="rounded bg-primary px-2 py-0.5 text-xs text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-                    onClick={() => setShowApplyConfirm(true)} disabled={editYaml === configYaml}>Apply</button>
+                    onClick={() => setShowApplyConfirm(true)} disabled={editYaml === configYaml}>{t('common.apply')}</button>
                 </div>
               )}
             </div>
@@ -121,14 +123,14 @@ export function AppConfigEditor({ appName }: AppConfigEditorProps) {
         </div>
       ) : (
         <div className="rounded border border-border bg-card p-2 text-xs text-muted-foreground">
-          No custom config
+          {t('appConfig.noConfig')}
         </div>
       )}
 
       {/* Mounted Files */}
       {files.length > 0 && (
         <div className="rounded border border-border bg-card p-2">
-          <div className="text-xs font-medium mb-1">Mounted Files</div>
+          <div className="text-xs font-medium mb-1">{t('appConfig.files')}</div>
           {files.map((f) => (
             <div key={f} className="flex items-center gap-2 text-[11px] font-mono">
               <span className="text-muted-foreground flex-1 break-all">{f}</span>
@@ -138,7 +140,7 @@ export function AppConfigEditor({ appName }: AppConfigEditorProps) {
                     const content = await getAppFile(appName, f)
                     setEditingFile(f); setFileContent(content); setFileError(null)
                   } catch (e) { setFileError((e as Error).message) }
-                }}>Edit</button>
+                }}>{t('common.edit')}</button>
             </div>
           ))}
           {fileError && !editingFile && <div className="text-[10px] text-destructive mt-1">{fileError}</div>}
@@ -148,7 +150,7 @@ export function AppConfigEditor({ appName }: AppConfigEditorProps) {
                 <span className="text-[11px] font-mono text-muted-foreground">{editingFile}</span>
                 <div className="flex gap-1">
                   <button type="button" className="rounded border border-border px-2 py-0.5 text-xs hover:bg-muted"
-                    onClick={() => { setEditingFile(null); setFileError(null) }}>Cancel</button>
+                    onClick={() => { setEditingFile(null); setFileError(null) }}>{t('common.cancel')}</button>
                   <button type="button" className="rounded bg-primary px-2 py-0.5 text-xs text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
                     disabled={fileSaving}
                     onClick={async () => {
@@ -156,10 +158,10 @@ export function AppConfigEditor({ appName }: AppConfigEditorProps) {
                       try {
                         await putAppFile(appName, editingFile, fileContent)
                         setEditingFile(null)
-                        toast('File saved', 'success')
+                        toast(t('appConfig.fileSaved'), 'success')
                       } catch (e) { setFileError((e as Error).message) }
                       finally { setFileSaving(false) }
-                    }}>{fileSaving ? 'Saving...' : 'Save'}</button>
+                    }}>{fileSaving ? t('common.saving') : t('common.save')}</button>
                 </div>
               </div>
               {fileError && <div className="text-[10px] text-destructive mb-1">{fileError}</div>}
@@ -171,9 +173,9 @@ export function AppConfigEditor({ appName }: AppConfigEditorProps) {
         </div>
       )}
 
-      <ConfirmModal open={showApplyConfirm} title="Apply config changes?"
-        message="Save config and restart the app?"
-        confirmLabel="Apply" loading={configSaving}
+      <ConfirmModal open={showApplyConfirm} title={t('appConfig.confirm.title')}
+        message={t('appConfig.confirm.message')}
+        confirmLabel={t('common.apply')} loading={configSaving}
         onConfirm={handleApplyConfig} onCancel={() => setShowApplyConfirm(false)} />
     </div>
   )

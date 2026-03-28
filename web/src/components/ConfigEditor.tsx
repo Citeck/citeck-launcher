@@ -3,12 +3,14 @@ import { getConfigContent, putConfigContent, postNamespaceReload } from '../lib/
 import { ConfirmModal } from './ConfirmModal'
 import { YamlViewer } from './YamlViewer'
 import { toast } from '../lib/toast'
+import { useTranslation } from '../lib/i18n'
 
 interface ConfigEditorProps {
   compact?: boolean
 }
 
 export function ConfigEditor({ compact = false }: ConfigEditorProps) {
+  const { t } = useTranslation()
   const [configText, setConfigText] = useState<string | null>(null)
   const [editText, setEditText] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
@@ -52,7 +54,7 @@ export function ConfigEditor({ compact = false }: ConfigEditorProps) {
       await postNamespaceReload()
       setConfigText(editText)
       setEditing(false)
-      toast('Configuration saved and reload requested', 'success')
+      toast(t('configEditor.saved'), 'success')
       setShowApplyConfirm(false)
     } catch (err) {
       setError((err as Error).message)
@@ -82,7 +84,7 @@ export function ConfigEditor({ compact = false }: ConfigEditorProps) {
       {/* Config editor */}
       <div className={compact ? 'flex flex-col flex-1 min-h-0' : 'rounded-lg border border-border bg-card p-4 space-y-3'}>
         <div className="flex items-center justify-between shrink-0">
-          <h2 className={compact ? 'text-xs font-medium' : 'text-lg font-medium'}>namespace.yml</h2>
+          <h2 className={compact ? 'text-xs font-medium' : 'text-lg font-medium'}>{t('configEditor.title')}</h2>
           <div className="flex items-center gap-2">
             {!editing ? (
               <button
@@ -91,17 +93,17 @@ export function ConfigEditor({ compact = false }: ConfigEditorProps) {
                 onClick={startEditing}
                 disabled={!configText}
               >
-                Edit
+                {t('common.edit')}
               </button>
             ) : (
               <>
                 <button type="button" className="rounded-md border border-border px-3 py-1 text-xs font-medium hover:bg-muted"
-                  onClick={cancelEditing}>Cancel</button>
+                  onClick={cancelEditing}>{t('common.cancel')}</button>
                 <button type="button"
                   className="rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
                   onClick={() => setShowApplyConfirm(true)}
                   disabled={!hasChanges || saving}>
-                  {saving ? 'Saving...' : 'Apply'}
+                  {saving ? t('common.saving') : t('common.apply')}
                 </button>
               </>
             )}
@@ -124,21 +126,20 @@ export function ConfigEditor({ compact = false }: ConfigEditorProps) {
           )
         ) : error ? (
           <p className="text-sm text-destructive">
-            Failed to load configuration: {error}
+            {t('configEditor.failedToLoad', { error: error || '' })}
           </p>
         ) : (
           <p className="text-sm text-muted-foreground">
-            No configuration file found. Use{' '}
-            <code className="rounded bg-muted px-1 py-0.5 text-xs">citeck install</code> to create one.
+            {t('configEditor.noConfig', { cmd: 'citeck install' })}
           </p>
         )}
       </div>
 
       <ConfirmModal
         open={showApplyConfirm}
-        title="Apply Configuration"
-        message="Save the configuration and reload the namespace? Running apps may be restarted."
-        confirmLabel="Apply"
+        title={t('configEditor.confirm.title')}
+        message={t('configEditor.confirm.message')}
+        confirmLabel={t('common.apply')}
         loading={saving}
         onConfirm={handleApply}
         onCancel={() => setShowApplyConfirm(false)}

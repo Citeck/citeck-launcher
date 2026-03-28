@@ -3,6 +3,7 @@ import { getAppInspect, postAppRestart } from '../lib/api'
 import type { AppInspectDto } from '../lib/types'
 import { useDashboardStore } from '../lib/store'
 import { usePanelStore } from '../lib/panels'
+import { useTranslation } from '../lib/i18n'
 import { StatusBadge } from './StatusBadge'
 import { toast } from '../lib/toast'
 import { RotateCw, FileText, Settings } from 'lucide-react'
@@ -27,6 +28,7 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
   const nsApps = useDashboardStore((s) => s.namespace?.apps)
   const appMeta = nsApps?.find((a) => a.name === appName)
   const openBottomTab = usePanelStore((s) => s.openBottomTab)
+  const { t } = useTranslation()
 
   const load = useCallback(() => {
     const controller = new AbortController()
@@ -45,7 +47,7 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
     setRestarting(true)
     try {
       await postAppRestart(appName)
-      toast('Restart requested', 'success')
+      toast(t('drawer.restartRequested'), 'success')
     } catch (e) {
       toast((e as Error).message, 'error')
     } finally {
@@ -54,7 +56,7 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
   }
 
   if (error) {
-    return <div className="text-destructive text-xs">Error: {error}</div>
+    return <div className="text-destructive text-xs">{t('drawer.error', { error })}</div>
   }
 
   if (!inspect) {
@@ -81,20 +83,20 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
 
       {/* Details grid */}
       <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
-        <D l="Container" v={inspect.containerId?.slice(0, 12) || '—'} dim={isStopped} />
-        <D l="Image" v={inspect.image} />
-        <D l="State" v={inspect.state} dim={isStopped} />
-        <D l="Network" v={inspect.network} />
-        <D l="Started" v={inspect.startedAt ? new Date(inspect.startedAt).toLocaleString() : '—'} dim={isStopped} />
-        <D l="Uptime" v={formatUptime(inspect.uptime)} dim={isStopped} />
-        <D l="Restarts" v={String(inspect.restartCount)} />
-        <D l="Ports" v={inspect.ports?.join(', ') || '—'} />
+        <D l={t('drawer.container')} v={inspect.containerId?.slice(0, 12) || '—'} dim={isStopped} />
+        <D l={t('drawer.image')} v={inspect.image} />
+        <D l={t('drawer.state')} v={inspect.state} dim={isStopped} />
+        <D l={t('drawer.network')} v={inspect.network} />
+        <D l={t('drawer.started')} v={inspect.startedAt ? new Date(inspect.startedAt).toLocaleString() : '—'} dim={isStopped} />
+        <D l={t('drawer.uptime')} v={formatUptime(inspect.uptime)} dim={isStopped} />
+        <D l={t('drawer.restarts')} v={String(inspect.restartCount)} />
+        <D l={t('drawer.ports')} v={inspect.ports?.join(', ') || '—'} />
       </div>
 
       {/* Volumes */}
       {(inspect.volumes?.length ?? 0) > 0 && (
         <div>
-          <div className="text-xs font-medium mb-0.5">Volumes</div>
+          <div className="text-xs font-medium mb-0.5">{t('drawer.volumes')}</div>
           <div className="max-h-24 overflow-y-auto">
             {inspect.volumes!.map((v, i) => (
               <div key={i} className="text-[11px] font-mono text-muted-foreground break-all">{v}</div>
@@ -106,7 +108,7 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
       {/* Environment */}
       {(inspect.env?.length ?? 0) > 0 && (
         <div>
-          <div className="text-xs font-medium mb-0.5">Environment</div>
+          <div className="text-xs font-medium mb-0.5">{t('drawer.env')}</div>
           <div className="max-h-32 overflow-y-auto">
             {inspect.env!.map((e, i) => {
               const isMasked = e.endsWith('=***')
@@ -129,16 +131,16 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
         <button
           type="button"
           className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted"
-          onClick={() => openBottomTab({ id: `logs:${appName}`, type: 'logs', title: `Logs: ${appName}`, appName })}
+          onClick={() => openBottomTab({ id: `logs:${appName}`, type: 'logs', title: t('logs.title', { name: appName }), appName })}
         >
-          <FileText size={12} /> View Logs
+          <FileText size={12} /> {t('drawer.viewLogs')}
         </button>
         <button
           type="button"
           className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted"
           onClick={() => openBottomTab({ id: `app-config:${appName}`, type: 'app-config', title: `Config: ${appName}`, appName })}
         >
-          <Settings size={12} /> Edit Config
+          <Settings size={12} /> {t('drawer.editConfig')}
         </button>
         <button
           type="button"
@@ -146,7 +148,7 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
           onClick={handleRestart}
           disabled={restarting}
         >
-          <RotateCw size={12} /> {restarting ? 'Restarting...' : 'Restart'}
+          <RotateCw size={12} /> {restarting ? t('drawer.restarting') : t('drawer.restart')}
         </button>
       </div>
     </div>

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { AppDto } from '../lib/types'
 import { postAppStop, postAppStart, postAppRestart } from '../lib/api'
 import { usePanelStore } from '../lib/panels'
+import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
 import { StatusBadge } from './StatusBadge'
 import { ConfirmModal } from './ConfirmModal'
@@ -19,7 +20,7 @@ const STOPPED = ['STOPPED', 'START_FAILED', 'PULL_FAILED', 'FAILED', 'STOPPING_F
 const TRANSITIONAL = ['STARTING', 'PULLING', 'DEPS_WAITING', 'READY_TO_PULL', 'READY_TO_START', 'STOPPING']
 
 const KIND_ORDER: Record<string, number> = { CITECK_CORE: 0, CITECK_CORE_EXTENSION: 1, CITECK_ADDITIONAL: 2, THIRD_PARTY: 3 }
-const KIND_LABELS: Record<string, string> = { CITECK_CORE: 'Citeck Core', CITECK_CORE_EXTENSION: 'Citeck Core Extensions', CITECK_ADDITIONAL: 'Citeck Additional', THIRD_PARTY: 'Third Party' }
+const KIND_I18N: Record<string, string> = { CITECK_CORE: 'table.group.core', CITECK_CORE_EXTENSION: 'table.group.coreExt', CITECK_ADDITIONAL: 'table.group.additional', THIRD_PARTY: 'table.group.thirdParty' }
 
 function groupByKind(apps: AppDto[]) {
   const groups = new Map<string, AppDto[]>()
@@ -32,7 +33,7 @@ function groupByKind(apps: AppDto[]) {
     .sort(([a], [b]) => (KIND_ORDER[a] ?? 99) - (KIND_ORDER[b] ?? 99))
     .map(([kind, apps]) => ({
       kind,
-      label: KIND_LABELS[kind] ?? kind,
+      labelKey: KIND_I18N[kind] ?? kind,
       apps: apps.sort((a, b) => a.name.localeCompare(b.name)),
     }))
 }
@@ -54,6 +55,7 @@ export function AppTable({ apps, highlightedApp }: AppTableProps) {
   const [loading, setLoading] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const groups = groupByKind(apps)
+  const { t } = useTranslation()
 
   async function handleConfirm() {
     if (!action) return
@@ -62,16 +64,16 @@ export function AppTable({ apps, highlightedApp }: AppTableProps) {
       if (action.type === 'stop') await postAppStop(action.appName)
       else if (action.type === 'start') await postAppStart(action.appName)
       else await postAppRestart(action.appName)
-      toast(`${action.type.charAt(0).toUpperCase() + action.type.slice(1)} requested for ${action.appName}`, 'success')
+      toast(t('table.toast.success', { action: action.type.charAt(0).toUpperCase() + action.type.slice(1), name: action.appName }), 'success')
       setAction(null)
     } catch (err) { setActionError((err as Error).message) }
     finally { setLoading(false) }
   }
 
   const mc = action ? {
-    stop: { title: `Stop ${action.appName}?`, msg: `Stop container ${action.appName}?`, label: 'Stop', variant: 'danger' as const },
-    start: { title: `Start ${action.appName}?`, msg: `Start container ${action.appName}?`, label: 'Start', variant: 'primary' as const },
-    restart: { title: `Restart ${action.appName}?`, msg: `Restart ${action.appName}?`, label: 'Restart', variant: 'primary' as const },
+    stop: { title: t('table.confirm.stop.title', { name: action.appName }), msg: t('table.confirm.stop.message', { name: action.appName }), label: t('table.action.stop'), variant: 'danger' as const },
+    start: { title: t('table.confirm.start.title', { name: action.appName }), msg: t('table.confirm.start.message', { name: action.appName }), label: t('table.action.start'), variant: 'primary' as const },
+    restart: { title: t('table.confirm.restart.title', { name: action.appName }), msg: t('table.confirm.restart.message', { name: action.appName }), label: t('table.action.restart'), variant: 'primary' as const },
   }[action.type] : null
 
   return (
@@ -79,18 +81,18 @@ export function AppTable({ apps, highlightedApp }: AppTableProps) {
       <table className="w-full text-xs border-collapse">
         <thead>
           <tr className="text-left text-muted-foreground border-b border-border">
-            <th className="py-1 pr-4 font-medium">Name</th>
-            <th className="py-1 pr-4 font-medium">Status</th>
-            <th className="py-1 pr-2 font-medium text-right w-16">CPU</th>
-            <th className="py-1 pr-4 font-medium text-right w-20">MEM</th>
-            <th className="py-1 pr-4 font-medium w-20">Ports</th>
-            <th className="py-1 pr-4 font-medium">Tag</th>
-            <th className="py-1 font-medium text-right w-24">Actions</th>
+            <th className="py-1 pr-4 font-medium">{t('table.name')}</th>
+            <th className="py-1 pr-4 font-medium">{t('table.status')}</th>
+            <th className="py-1 pr-2 font-medium text-right w-16">{t('table.cpu')}</th>
+            <th className="py-1 pr-4 font-medium text-right w-20">{t('table.mem')}</th>
+            <th className="py-1 pr-4 font-medium w-20">{t('table.ports')}</th>
+            <th className="py-1 pr-4 font-medium">{t('table.tag')}</th>
+            <th className="py-1 font-medium text-right w-24">{t('table.actions')}</th>
           </tr>
         </thead>
         <tbody>
           {groups.map((g) => (
-            <GroupRows key={g.kind} label={g.label} apps={g.apps} onAction={setAction} highlightedApp={highlightedApp} />
+            <GroupRows key={g.kind} labelKey={g.labelKey} apps={g.apps} onAction={setAction} highlightedApp={highlightedApp} />
           ))}
         </tbody>
       </table>
@@ -106,14 +108,15 @@ export function AppTable({ apps, highlightedApp }: AppTableProps) {
   )
 }
 
-function GroupRows({ label, apps, onAction, highlightedApp }: { label: string; apps: AppDto[]; onAction: (a: AppAction) => void; highlightedApp?: string | null }) {
+function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: string; apps: AppDto[]; onAction: (a: AppAction) => void; highlightedApp?: string | null }) {
   const { openDrawer, openBottomTab } = usePanelStore()
+  const { t } = useTranslation()
 
   return (
     <>
       <tr>
         <td colSpan={7} className="pt-4 pb-1 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-          {label}
+          {t(labelKey)}
         </td>
       </tr>
       {apps.map((app) => {
@@ -141,7 +144,7 @@ function GroupRows({ label, apps, onAction, highlightedApp }: { label: string; a
               {portsShort(app.ports)}
             </td>
             <td className="py-[3px] pr-4 font-mono text-muted-foreground cursor-pointer hover:text-foreground"
-              title={`Click to copy: ${app.image}`}
+              title={t('table.copy', { image: app.image })}
               onClick={() => navigator.clipboard.writeText(app.image)}>
               {tag(app.image)}
             </td>
@@ -149,22 +152,22 @@ function GroupRows({ label, apps, onAction, highlightedApp }: { label: string; a
               <div className="inline-flex items-center gap-0.5">
                 {isRun && (
                   <>
-                    <IconBtn icon={Square} title="Stop" color="hover:text-destructive" onClick={() => onAction({ type: 'stop', appName: app.name })} />
-                    <IconBtn icon={RotateCw} title="Restart" onClick={() => onAction({ type: 'restart', appName: app.name })} />
+                    <IconBtn icon={Square} title={t('table.action.stop')} color="hover:text-destructive" onClick={() => onAction({ type: 'stop', appName: app.name })} />
+                    <IconBtn icon={RotateCw} title={t('table.action.restart')} onClick={() => onAction({ type: 'restart', appName: app.name })} />
                   </>
                 )}
                 {isStop && (
-                  <IconBtn icon={Play} title="Start" color="hover:text-success" onClick={() => onAction({ type: 'start', appName: app.name })} />
+                  <IconBtn icon={Play} title={t('table.action.start')} color="hover:text-success" onClick={() => onAction({ type: 'start', appName: app.name })} />
                 )}
                 {isTransitional && (
-                  <IconBtn icon={Square} title="Stop" color="hover:text-destructive" onClick={() => onAction({ type: 'stop', appName: app.name })} />
+                  <IconBtn icon={Square} title={t('table.action.stop')} color="hover:text-destructive" onClick={() => onAction({ type: 'stop', appName: app.name })} />
                 )}
-                <button type="button" className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted" title="Logs"
-                  onClick={() => openBottomTab({ id: `logs:${app.name}`, type: 'logs', title: `Logs: ${app.name}`, appName: app.name })}>
+                <button type="button" className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted" title={t('logs.title', { name: app.name })}
+                  onClick={() => openBottomTab({ id: `logs:${app.name}`, type: 'logs', title: t('logs.title', { name: app.name }), appName: app.name })}>
                   <FileText size={14} />
                 </button>
                 <button type="button" className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted relative"
-                  title={app.edited ? (app.locked ? 'Edited (locked)' : 'Edited') : 'Config'}
+                  title={app.edited ? (app.locked ? `${t('common.edit')} (${t('appConfig.lock.locked').toLowerCase()})` : t('common.edit')) : t('config.title')}
                   onClick={() => openBottomTab({ id: `app-config:${app.name}`, type: 'app-config', title: `Config: ${app.name}`, appName: app.name })}>
                   <Settings size={14} />
                   {app.edited && <Circle size={6} className="absolute top-0.5 right-0.5 fill-blue-500 text-blue-500" />}

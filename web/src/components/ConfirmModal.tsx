@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { useTranslation } from '../lib/i18n'
 
 interface ConfirmModalProps {
   open: boolean
@@ -16,13 +17,14 @@ export function ConfirmModal({
   open,
   title,
   message,
-  confirmLabel = 'Confirm',
+  confirmLabel,
   confirmVariant = 'primary',
   loading = false,
   error,
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
+  const { t } = useTranslation()
   const dialogRef = useRef<HTMLDialogElement>(null)
 
   useEffect(() => {
@@ -61,7 +63,7 @@ export function ConfirmModal({
             onClick={onCancel}
             disabled={loading}
           >
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             type="button"
@@ -69,7 +71,7 @@ export function ConfirmModal({
             onClick={onConfirm}
             disabled={loading}
           >
-            {loading ? 'Working...' : confirmLabel}
+            {loading ? t('common.working') : (confirmLabel || t('common.confirm'))}
           </button>
         </div>
       </div>

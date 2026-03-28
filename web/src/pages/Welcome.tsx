@@ -9,9 +9,11 @@ import { useContextMenu } from '../hooks/useContextMenu'
 import { useTabsStore } from '../lib/tabs'
 import { useDashboardStore } from '../lib/store'
 import { usePanelStore } from '../lib/panels'
+import { useTranslation } from '../lib/i18n'
 import { MoreHorizontal, Plus } from 'lucide-react'
 
 export function Welcome() {
+  const { t } = useTranslation()
   const [namespaces, setNamespaces] = useState<NamespaceSummaryDto[]>([])
   const [quickStarts, setQuickStarts] = useState<QuickStartDto[]>([])
   const [loading, setLoading] = useState(true)
@@ -66,7 +68,7 @@ export function Welcome() {
       startEventStream()
     }
     resetPanels()
-    openTab({ id: 'home', title: 'Dashboard', path: '/' })
+    openTab({ id: 'home', title: t('dashboard.title'), path: '/' })
     navigate('/')
   }
 
@@ -86,32 +88,32 @@ export function Welcome() {
   }
 
   function handleCreateNew() {
-    openTab({ id: 'wizard', title: 'New Namespace', path: '/wizard' })
+    openTab({ id: 'wizard', title: t('welcome.createNew'), path: '/wizard' })
     navigate('/wizard')
   }
 
   function nsContextItems(ns: NamespaceSummaryDto): ContextMenuItem[] {
     return [
-      { label: 'Open', onClick: () => handleOpenNamespace(ns) },
-      { label: 'Delete', variant: 'danger', onClick: () => setDeleteTarget(ns) },
+      { label: t('welcome.context.open'), onClick: () => handleOpenNamespace(ns) },
+      { label: t('welcome.context.delete'), variant: 'danger', onClick: () => setDeleteTarget(ns) },
     ]
   }
 
   return (
     <div className="flex flex-col items-center justify-center min-h-full p-8">
       {/* Title */}
-      <h1 className="text-3xl font-bold text-foreground mb-12">Welcome To Citeck Launcher!</h1>
+      <h1 className="text-3xl font-bold text-foreground mb-12">{t('welcome.title')}</h1>
 
       {/* Namespace buttons */}
       <div className="w-full max-w-md flex flex-col gap-3">
         {loading ? (
-          <div className="text-center text-muted-foreground text-sm py-4">Loading...</div>
+          <div className="text-center text-muted-foreground text-sm py-4">{t('welcome.loading')}</div>
         ) : loadError ? (
-          <div className="text-center text-destructive text-sm py-4">Error: {loadError}</div>
+          <div className="text-center text-destructive text-sm py-4">{t('welcome.error', { error: loadError })}</div>
         ) : (
           <>
             {startError && (
-              <div className="text-center text-destructive text-sm py-2 mb-2">Start failed: {startError}</div>
+              <div className="text-center text-destructive text-sm py-2 mb-2">{t('welcome.startFailed', { error: startError })}</div>
             )}
             {namespaces.map((ns) => (
               <div key={`${ns.workspaceId}:${ns.id}`} className="relative">
@@ -144,7 +146,7 @@ export function Welcome() {
                 onClick={handleCreateNew}
                 className="w-full rounded-lg bg-muted hover:bg-muted/70 px-6 py-3.5 text-center transition-colors"
               >
-                <div className="text-sm font-semibold text-foreground">Quick Start</div>
+                <div className="text-sm font-semibold text-foreground">{t('welcome.quickStart')}</div>
                 <div className="text-xs text-muted-foreground mt-0.5">{quickStarts[0]?.name}</div>
               </button>
             )}
@@ -156,7 +158,7 @@ export function Welcome() {
                 onClick={handleCreateNew}
                 className="w-full rounded-lg bg-muted hover:bg-muted/70 px-6 py-3 text-center text-sm font-medium text-foreground transition-colors"
               >
-                More
+                {t('welcome.more')}
               </button>
             )}
 
@@ -167,7 +169,7 @@ export function Welcome() {
               className="w-full rounded-lg bg-muted hover:bg-muted/70 px-6 py-3 text-center transition-colors flex items-center justify-center gap-2"
             >
               <Plus size={16} className="text-foreground" />
-              <span className="text-sm font-medium text-foreground">Create New Namespace</span>
+              <span className="text-sm font-medium text-foreground">{t('welcome.createNew')}</span>
             </button>
           </>
         )}
@@ -184,9 +186,9 @@ export function Welcome() {
 
       <ConfirmModal
         open={!!deleteTarget}
-        title="Delete Namespace"
-        message={`Delete namespace "${deleteTarget?.name || deleteTarget?.id}"? This will remove the configuration file.`}
-        confirmLabel="Delete"
+        title={t('welcome.delete.title')}
+        message={t('welcome.delete.message', { name: deleteTarget?.name || deleteTarget?.id || '' })}
+        confirmLabel={t('common.delete')}
         confirmVariant="danger"
         loading={deleteLoading}
         error={deleteError}
