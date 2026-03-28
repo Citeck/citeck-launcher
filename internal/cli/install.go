@@ -50,6 +50,21 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// 0. Language selection
+	output.PrintText("Select language / Выберите язык:")
+	locale := promptChoice(scanner, "Language", []string{
+		"en (English)",
+		"ru (Русский)",
+		"zh (简体中文)",
+		"es (Español)",
+		"de (Deutsch)",
+		"fr (Français)",
+		"pt (Português)",
+		"ja (日本語)",
+	}, "en (English)")
+	// Extract locale code from selection (e.g., "en (English)" -> "en")
+	localeCode := strings.SplitN(locale, " ", 2)[0]
+
 	nsCfg := namespace.DefaultNamespaceConfig()
 
 	// 1. Display name
@@ -205,15 +220,18 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	}
 	output.PrintText("\nNamespace config written to: %s", nsCfgPath)
 
-	// 10. Remote Web UI access
+	// 10. Remote Web UI access + daemon config
+	daemonCfg := config.DefaultDaemonConfig()
+	daemonCfg.Locale = localeCode
 	remoteUI := promptYesNo(scanner, "\nEnable remote Web UI access (listen on 0.0.0.0)?", false)
 	if remoteUI {
-		daemonCfg := config.DefaultDaemonConfig()
 		daemonCfg.Server.WebUI.Listen = fmt.Sprintf("0.0.0.0:%d", 8088)
-		if err := config.SaveDaemonConfig(daemonCfg); err != nil {
-			return fmt.Errorf("save daemon config: %w", err)
-		}
-		output.PrintText("daemon.yml written with listen: %s", daemonCfg.Server.WebUI.Listen)
+	}
+	if err := config.SaveDaemonConfig(daemonCfg); err != nil {
+		return fmt.Errorf("save daemon config: %w", err)
+	}
+	output.PrintText("daemon.yml written (locale: %s, listen: %s)", localeCode, daemonCfg.Server.WebUI.Listen)
+	if remoteUI {
 
 		// Auto-generate first client cert for mTLS
 		output.PrintText("\nGenerating mTLS client certificate for remote access...")

@@ -12,6 +12,7 @@ import (
 
 // DaemonConfig represents daemon.yml configuration.
 type DaemonConfig struct {
+	Locale     string           `yaml:"locale,omitempty" json:"locale,omitempty"` // UI language (en, ru, zh, es, de, fr, pt, ja)
 	Server     ServerConfig     `yaml:"server" json:"server"`
 	Reconciler ReconcilerConfig `yaml:"reconciler,omitempty" json:"reconciler,omitempty"`
 	Docker     DockerConfig     `yaml:"docker,omitempty" json:"docker,omitempty"`

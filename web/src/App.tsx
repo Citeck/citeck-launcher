@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { useDashboardStore } from './lib/store'
 import { getDaemonStatus } from './lib/api'
+import { useI18nStore, type Locale } from './lib/i18n'
 import { Dashboard } from './pages/Dashboard'
 import { AppDetail } from './pages/AppDetail'
 import { Logs } from './pages/Logs'
@@ -20,9 +21,15 @@ function Layout() {
   const { namespace, fetchData } = useDashboardStore()
   const [isDesktop, setIsDesktop] = useState(false)
 
-  // Fetch daemon status once on mount to detect server/desktop mode
+  // Fetch daemon status once on mount to detect server/desktop mode and locale
   useEffect(() => {
-    getDaemonStatus().then((s) => setIsDesktop(s.desktop)).catch(() => setIsDesktop(false))
+    getDaemonStatus().then((s) => {
+      setIsDesktop(s.desktop)
+      // Apply server-configured locale if set and user hasn't manually chosen one
+      if (s.locale && !localStorage.getItem('citeck-locale')) {
+        useI18nStore.getState().setLocale(s.locale as Locale)
+      }
+    }).catch(() => setIsDesktop(false))
   }, [])
 
   // Fetch namespace status on mount to determine which screen to show

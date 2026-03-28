@@ -36,6 +36,7 @@ func (d *Daemon) handleDaemonStatus(w http.ResponseWriter, r *http.Request) {
 		Workspace:  d.workspaceID,
 		SocketPath: d.socketPath,
 		Desktop:    config.IsDesktopMode(),
+		Locale:     d.daemonCfg.Locale,
 	})
 }
 

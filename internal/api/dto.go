@@ -26,6 +26,7 @@ type DaemonStatusDto struct {
 	Workspace  string `json:"workspace"`
 	SocketPath string `json:"socketPath"`
 	Desktop    bool   `json:"desktop"`
+	Locale     string `json:"locale,omitempty"`
 }
 
 type NamespaceDto struct {
