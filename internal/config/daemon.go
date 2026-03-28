@@ -47,7 +47,7 @@ func DefaultDaemonConfig() DaemonConfig {
 		Server: ServerConfig{
 			WebUI: WebUIConfig{
 				Enabled: true,
-				Listen:  "127.0.0.1:8088",
+				Listen:  "127.0.0.1:7088",
 			},
 		},
 	}
@@ -72,7 +72,7 @@ func LoadDaemonConfig() (DaemonConfig, error) {
 
 	// Ensure defaults for empty values
 	if cfg.Server.WebUI.Listen == "" {
-		cfg.Server.WebUI.Listen = "127.0.0.1:8088"
+		cfg.Server.WebUI.Listen = "127.0.0.1:7088"
 	}
 
 	// Validate listen address format

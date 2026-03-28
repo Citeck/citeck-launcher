@@ -8,7 +8,7 @@ Controls the daemon server. Located at `$CITECK_HOME/conf/daemon.yml`.
 server:
   webui:
     enabled: true              # Enable/disable Web UI TCP listener
-    listen: "127.0.0.1:8088"   # Listen address (0.0.0.0 enables mTLS)
+    listen: "127.0.0.1:7088"   # Listen address (0.0.0.0 enables mTLS)
 
 reconciler:
   interval: 60                 # Reconciliation interval (seconds)
@@ -24,7 +24,7 @@ docker:
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `server.webui.enabled` | bool | `true` | Enable Web UI |
-| `server.webui.listen` | string | `127.0.0.1:8088` | TCP listen address. Set to `0.0.0.0:8088` for remote access (requires mTLS) |
+| `server.webui.listen` | string | `127.0.0.1:7088` | TCP listen address. Set to `0.0.0.0:7088` for remote access (requires mTLS) |
 | `reconciler.interval` | int | `60` | Seconds between reconciliation loops |
 | `reconciler.livenessPeriod` | int | `30000` | Milliseconds between liveness checks |
 | `docker.pullConcurrency` | int | `4` | Max concurrent image pulls |

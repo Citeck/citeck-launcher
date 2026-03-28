@@ -11,8 +11,8 @@ func TestDefaultDaemonConfig(t *testing.T) {
 	if !cfg.Server.WebUI.Enabled {
 		t.Error("Default WebUI.Enabled should be true")
 	}
-	if cfg.Server.WebUI.Listen != "127.0.0.1:8088" {
-		t.Errorf("Default WebUI.Listen = %q, want 127.0.0.1:8088", cfg.Server.WebUI.Listen)
+	if cfg.Server.WebUI.Listen != "127.0.0.1:7088" {
+		t.Errorf("Default WebUI.Listen = %q, want 127.0.0.1:7088", cfg.Server.WebUI.Listen)
 	}
 }
 

@@ -3,7 +3,7 @@
 ## Major changes
 
 * Complete rewrite from Kotlin/Compose to Go + React (single 14MB binary)
-* Embedded React Web UI served on `http://127.0.0.1:8088`
+* Embedded React Web UI served on `http://127.0.0.1:7088`
 * mTLS for non-localhost Web UI access (client certificates)
 * CSRF protection for localhost TCP (X-Citeck-CSRF header)
 * Unix socket + TCP two-mux security architecture

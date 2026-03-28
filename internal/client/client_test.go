@@ -8,20 +8,20 @@ import (
 )
 
 func TestDetectTransport_HostFlag(t *testing.T) {
-	tc, err := DetectTransport("prod.example.com:8088", "", "", "", false)
+	tc, err := DetectTransport("prod.example.com:7088", "", "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if tc.Type != TransportTCP {
 		t.Error("expected TCP transport when --host is set")
 	}
-	if tc.Host != "prod.example.com:8088" {
-		t.Errorf("expected host prod.example.com:8088, got %s", tc.Host)
+	if tc.Host != "prod.example.com:7088" {
+		t.Errorf("expected host prod.example.com:7088, got %s", tc.Host)
 	}
 }
 
 func TestDetectTransport_EnvHost(t *testing.T) {
-	t.Setenv("CITECK_HOST", "staging.co:8088")
+	t.Setenv("CITECK_HOST", "staging.co:7088")
 
 	tc, err := DetectTransport("", "", "", "", false)
 	if err != nil {
@@ -30,8 +30,8 @@ func TestDetectTransport_EnvHost(t *testing.T) {
 	if tc.Type != TransportTCP {
 		t.Error("expected TCP transport via CITECK_HOST env")
 	}
-	if tc.Host != "staging.co:8088" {
-		t.Errorf("expected host staging.co:8088, got %s", tc.Host)
+	if tc.Host != "staging.co:7088" {
+		t.Errorf("expected host staging.co:7088, got %s", tc.Host)
 	}
 }
 
@@ -89,13 +89,13 @@ func TestDetectTransport_NoDaemon(t *testing.T) {
 }
 
 func TestDetectTransport_HostFlagOverridesEnv(t *testing.T) {
-	t.Setenv("CITECK_HOST", "env-host:8088")
+	t.Setenv("CITECK_HOST", "env-host:7088")
 
-	tc, err := DetectTransport("flag-host:8088", "", "", "", false)
+	tc, err := DetectTransport("flag-host:7088", "", "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tc.Host != "flag-host:8088" {
+	if tc.Host != "flag-host:7088" {
 		t.Errorf("expected flag host to override env, got %s", tc.Host)
 	}
 }
@@ -108,22 +108,22 @@ func TestBaseURL_Unix(t *testing.T) {
 }
 
 func TestBaseURL_TCP(t *testing.T) {
-	tc := &TransportConfig{Type: TransportTCP, Host: "prod.co:8088"}
-	if tc.BaseURL() != "http://prod.co:8088" {
-		t.Errorf("expected http://prod.co:8088, got %s", tc.BaseURL())
+	tc := &TransportConfig{Type: TransportTCP, Host: "prod.co:7088"}
+	if tc.BaseURL() != "http://prod.co:7088" {
+		t.Errorf("expected http://prod.co:7088, got %s", tc.BaseURL())
 	}
 }
 
 func TestBaseURL_TCP_TLS(t *testing.T) {
-	tc := &TransportConfig{Type: TransportTCP, Host: "prod.co:8088", TLSCert: "/tmp/cert.pem"}
-	if tc.BaseURL() != "https://prod.co:8088" {
-		t.Errorf("expected https://prod.co:8088, got %s", tc.BaseURL())
+	tc := &TransportConfig{Type: TransportTCP, Host: "prod.co:7088", TLSCert: "/tmp/cert.pem"}
+	if tc.BaseURL() != "https://prod.co:7088" {
+		t.Errorf("expected https://prod.co:7088, got %s", tc.BaseURL())
 	}
 }
 
 func TestBaseURL_TCP_Insecure(t *testing.T) {
-	tc := &TransportConfig{Type: TransportTCP, Host: "prod.co:8088", Insecure: true}
-	if tc.BaseURL() != "https://prod.co:8088" {
-		t.Errorf("expected https://prod.co:8088, got %s", tc.BaseURL())
+	tc := &TransportConfig{Type: TransportTCP, Host: "prod.co:7088", Insecure: true}
+	if tc.BaseURL() != "https://prod.co:7088" {
+		t.Errorf("expected https://prod.co:7088, got %s", tc.BaseURL())
 	}
 }

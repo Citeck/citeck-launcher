@@ -32,7 +32,7 @@ citeck start --foreground
 sudo systemctl start citeck
 ```
 
-The Web UI is available at `http://127.0.0.1:8088` by default.
+The Web UI is available at `http://127.0.0.1:7088` by default.
 
 ## CLI Usage
 
@@ -117,7 +117,7 @@ Controls the daemon server. Located at `$CITECK_HOME/conf/daemon.yml`.
 server:
   webui:
     enabled: true
-    listen: "127.0.0.1:8088"    # 0.0.0.0 enables mTLS
+    listen: "127.0.0.1:7088"    # 0.0.0.0 enables mTLS
 reconciler:
   intervalSeconds: 30
 docker:

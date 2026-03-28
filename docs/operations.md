@@ -90,7 +90,7 @@ Certificate changes take effect immediately (dynamic CA pool reload).
 ```bash
 curl --cert /path/client.crt --key /path/client.key \
   --cacert $CITECK_HOME/conf/webui-tls/server.crt \
-  https://your-host:8088/api/v1/daemon/status
+  https://your-host:7088/api/v1/daemon/status
 ```
 
 ## Debugging Startup Failures

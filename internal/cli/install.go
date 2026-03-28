@@ -224,9 +224,28 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	daemonCfg := config.DefaultDaemonConfig()
 	daemonCfg.Locale = localeCode
 	remoteUI := promptYesNo(scanner, "\nEnable remote Web UI access (listen on 0.0.0.0)?", false)
+
+	// Check if default Web UI port is available, offer to change if busy
+	webuiHost := "127.0.0.1"
 	if remoteUI {
-		daemonCfg.Server.WebUI.Listen = fmt.Sprintf("0.0.0.0:%d", 8088)
+		webuiHost = "0.0.0.0"
 	}
+	webuiPort := 7088
+	for {
+		addr := fmt.Sprintf("%s:%d", webuiHost, webuiPort)
+		ln, listenErr := net.Listen("tcp", addr)
+		if listenErr == nil {
+			ln.Close()
+			break
+		}
+		output.PrintText("Warning: port %d is already in use", webuiPort)
+		portStr := prompt(scanner, "Web UI port", strconv.Itoa(webuiPort+1))
+		p, err := strconv.Atoi(portStr)
+		if err == nil && p > 0 && p <= 65535 {
+			webuiPort = p
+		}
+	}
+	daemonCfg.Server.WebUI.Listen = fmt.Sprintf("%s:%d", webuiHost, webuiPort)
 	if err := config.SaveDaemonConfig(daemonCfg); err != nil {
 		return fmt.Errorf("save daemon config: %w", err)
 	}
@@ -253,7 +272,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 			output.PrintText("")
 			output.PrintText("For CLI access from a remote machine, copy the server cert after first start:")
 			output.PrintText("  scp server:%s ./server.crt", filepath.Join(config.WebUITLSDir(), "server.crt"))
-			output.PrintText("  citeck --host <server>:8088 --tls-cert admin.crt --tls-key admin.key --server-cert server.crt status")
+			output.PrintText("  citeck --host <server>:7088 --tls-cert admin.crt --tls-key admin.key --server-cert server.crt status")
 		}
 	}
 

@@ -1,6 +1,6 @@
 import { test, expect, request as playwrightRequest } from '@playwright/test'
 
-const DAEMON = 'http://127.0.0.1:8088'
+const DAEMON = 'http://127.0.0.1:7088'
 
 interface PlatformInfo {
   baseUrl: string

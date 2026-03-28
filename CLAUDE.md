@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Citeck Launcher manages Citeck ECOS namespaces and Docker containers. It is a single Go binary (~14MB) that serves as both CLI and daemon, with an embedded React Web UI on `http://127.0.0.1:8088`.
+Citeck Launcher manages Citeck ECOS namespaces and Docker containers. It is a single Go binary (~14MB) that serves as both CLI and daemon, with an embedded React Web UI on `http://127.0.0.1:7088`.
 
 ## Build & Development Commands
 
@@ -20,7 +20,7 @@ cd web && npx vitest run      # React component tests
 cd web && npx playwright test # E2E browser tests
 golangci-lint run             # Go linter
 cd web && npm run lint        # Web linter
-./citeck start --foreground   # Run daemon with web UI on 127.0.0.1:8088
+./citeck start --foreground   # Run daemon with web UI on 127.0.0.1:7088
 ```
 
 ## Architecture
