@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -32,11 +33,23 @@ import (
 	"github.com/citeck/citeck-launcher/internal/tlsutil"
 )
 
+// ErrShutdownRequested is returned by Start when an external context is cancelled.
+var ErrShutdownRequested = errors.New("shutdown requested")
+
+var (
+	logInitOnce     sync.Once
+	globalLogLevel  slog.LevelVar
+	globalLogWriter *fsutil.RotatingWriter
+)
+
 // StartOptions controls daemon startup behavior.
 type StartOptions struct {
 	Foreground bool
-	NoUI       bool   // disable web UI (TCP listener)
-	Version    string // build version injected via ldflags
+	Desktop    bool           // desktop mode: file-only logging, no signal handler
+	NoUI       bool           // disable web UI (TCP listener)
+	Version    string         // build version injected via ldflags
+	Ctx        context.Context // external context (desktop provides; nil = CLI uses signals)
+	ReadyCh    chan<- string   // receives Web UI URL when ready (empty string if no UI); nil = ignored
 }
 
 // Daemon is the main daemon server.
@@ -71,23 +84,38 @@ type Daemon struct {
 	sseDropped      atomic.Int64       // SSE events dropped due to slow consumers
 	logWriter       *fsutil.RotatingWriter
 	logLevel        *slog.LevelVar
+	desktop         bool               // desktop mode: log writer shared across restarts
 	reloadMu        sync.Mutex         // guards concurrent reload requests
 }
 
 // Start runs the daemon.
 func Start(opts StartOptions) error {
-	// Set up log rotation (50MB max, 3 retained files)
-	logDir := config.LogDir()
-	os.MkdirAll(logDir, 0o755)
-	logPath := config.DaemonLogPath()
-	logWriter := fsutil.NewRotatingWriter(logPath, 50*1024*1024, 3)
-	var logLevel slog.LevelVar // default INFO
-	logHandler := slog.NewTextHandler(io.MultiWriter(os.Stderr, logWriter), &slog.HandlerOptions{Level: &logLevel})
-	slog.SetDefault(slog.New(logHandler))
+	// Set up log rotation once — survives daemon restarts in desktop mode.
+	// The RotatingWriter and slog default are process-global; re-creating them
+	// on every Start() would close the previous writer while the new logger
+	// references a fresh one, leaving a gap where slog writes to a closed writer.
+	logInitOnce.Do(func() {
+		logDir := config.LogDir()
+		os.MkdirAll(logDir, 0o755)
+		logPath := config.DaemonLogPath()
+		globalLogWriter = fsutil.NewRotatingWriter(logPath, 50*1024*1024, 3)
+		var logDest io.Writer
+		if opts.Desktop {
+			logDest = globalLogWriter
+		} else {
+			logDest = io.MultiWriter(os.Stderr, globalLogWriter)
+		}
+		logHandler := slog.NewTextHandler(logDest, &slog.HandlerOptions{Level: &globalLogLevel})
+		slog.SetDefault(slog.New(logHandler))
+	})
+
+	if opts.Desktop {
+		config.SetDesktopMode(true)
+	}
 
 	slog.Info("Starting daemon",
 		"foreground", opts.Foreground,
-		"desktop", config.IsDesktopMode(),
+		"desktop", opts.Desktop,
 		"noUI", opts.NoUI,
 		"home", config.HomeDir(),
 	)
@@ -394,8 +422,9 @@ func Start(opts StartOptions) error {
 		bgCtx:           bgCtx,
 		bgCancel:        bgCancel,
 		daemonCfg:       daemonCfg,
-		logWriter:       logWriter,
-		logLevel:        &logLevel,
+		logWriter:       globalLogWriter,
+		logLevel:        &globalLogLevel,
+		desktop:         opts.Desktop,
 	}
 
 	// Wire up event broadcasting
@@ -494,6 +523,16 @@ func Start(opts StartOptions) error {
 		slog.Info("Web UI disabled")
 	}
 
+	// Notify ready URL
+	readyURL := ""
+	if daemonCfg.Server.WebUI.Enabled && d.tcpServer != nil {
+		scheme := "http"
+		if !isLocalhostAddr(tcpAddr) {
+			scheme = "https"
+		}
+		readyURL = scheme + "://" + tcpAddr
+	}
+
 	slog.Info("Citeck Daemon started",
 		"socket", socketPath,
 		"webui", daemonCfg.Server.WebUI.Enabled,
@@ -501,29 +540,47 @@ func Start(opts StartOptions) error {
 		"pid", os.Getpid(),
 	)
 
-	// Handle shutdown — second signal forces immediate exit
-	sigCh := make(chan os.Signal, 2)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
-	go func() {
-		<-sigCh
-		slog.Info("Shutdown signal received")
+	// Handle shutdown: external context (desktop) or signal-based (CLI)
+	if opts.Ctx != nil {
+		// Desktop mode: context provided externally (Wails owns lifecycle)
+		go func() {
+			<-opts.Ctx.Done()
+			slog.Info("External context cancelled, shutting down")
+			d.shutdown()
+		}()
+	} else {
+		// CLI mode: first SIGINT/SIGTERM → graceful, second → force exit
+		sigCh := make(chan os.Signal, 2)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		go func() {
 			<-sigCh
-			slog.Warn("Second signal received, forcing exit")
-			os.Exit(1)
+			slog.Info("Shutdown signal received")
+			go func() {
+				<-sigCh
+				slog.Warn("Second signal received, forcing exit")
+				os.Exit(1)
+			}()
+			d.shutdown()
 		}()
-		d.shutdown()
-	}()
+	}
 
 	// Startup complete — disable cleanup defers
 	startupFailed = false
+
+	// Notify caller that the daemon is ready
+	if opts.ReadyCh != nil {
+		opts.ReadyCh <- readyURL
+	}
 
 	// Serve (blocks until shutdown)
 	if err := d.server.Serve(listener); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("server error: %w", err)
 	}
 
+	// Return ErrShutdownRequested when external context triggered the shutdown
+	if opts.Ctx != nil && opts.Ctx.Err() != nil {
+		return ErrShutdownRequested
+	}
 	return nil
 }
 
@@ -570,7 +627,9 @@ func (d *Daemon) doShutdown() {
 	os.Remove(d.socketPath)
 
 	slog.Info("Daemon stopped")
-	if d.logWriter != nil {
+	// In desktop mode, the log writer is shared across daemon restarts — don't close it.
+	// In CLI mode (single Start), close the writer on exit.
+	if d.logWriter != nil && !d.desktop {
 		d.logWriter.Close()
 	}
 }

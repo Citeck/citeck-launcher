@@ -2,7 +2,6 @@ package cli
 
 import (
 	"github.com/citeck/citeck-launcher/internal/client"
-	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/daemon"
 	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/spf13/cobra"
@@ -30,11 +29,9 @@ func newStartCmd(version string) *cobra.Command {
 				return nil
 			}
 
-			if desktop {
-				config.SetDesktopMode(true)
-			}
 			return daemon.Start(daemon.StartOptions{
 				Foreground: foreground,
+				Desktop:    desktop,
 				NoUI:       noUI,
 				Version:    version,
 			})

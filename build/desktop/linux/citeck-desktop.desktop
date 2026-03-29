@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Citeck Launcher
+Comment=Citeck ECOS Platform Launcher
+Exec=citeck-desktop
+Icon=citeck-desktop
+Terminal=false
+Categories=Development;
+StartupWMClass=citeck-desktop

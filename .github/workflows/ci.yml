@@ -16,6 +16,9 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Install Linux dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
       - name: Go vet
         run: go vet ./...
 
@@ -36,3 +39,14 @@ jobs:
 
       - name: Web UI tests
         run: cd web && npm ci && npx vitest run
+
+      - name: Build server binary
+        run: |
+          mkdir -p internal/daemon/webdist
+          echo '<html></html>' > internal/daemon/webdist/index.html
+          go build -o citeck ./cmd/citeck
+
+      - name: Build desktop binary
+        env:
+          CGO_ENABLED: "1"
+        run: go build -o citeck-desktop ./cmd/citeck-desktop
