@@ -126,7 +126,7 @@ export function Dashboard() {
       {/* Top: sidebar + table + drawer overlay */}
       <div className="flex flex-1 min-h-0 relative">
         {/* Left info panel */}
-        <aside className="w-56 shrink-0 border-r border-border bg-card p-3 flex flex-col gap-2 overflow-y-auto">
+        <aside className="w-56 shrink-0 border-r border-border bg-card p-3 flex flex-col gap-2 overflow-y-auto h-full">
           <div className="flex items-center justify-between">
             <div className="min-w-0">
               <div className="text-sm font-semibold truncate">{namespace.name}</div>

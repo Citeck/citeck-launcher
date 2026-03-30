@@ -62,8 +62,8 @@ public class H2Export {
             int totalEntries = 0;
 
             for (String name : names) {
-                // Skip internal/undoLog maps
-                if (name.startsWith("undoLog") || name.startsWith("openTransactions")) continue;
+                // Skip internal H2 maps (transaction metadata, undo logs)
+                if (name.equals("_") || name.startsWith("undoLog") || name.startsWith("openTransactions")) continue;
 
                 try {
                     TransactionMap<String, byte[]> map = tx.openMap(name);
