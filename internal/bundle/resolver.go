@@ -466,10 +466,13 @@ func findBundleFile(dir, key string) string {
 	candidates := []string{
 		filepath.Join(dir, key+".yaml"),
 		filepath.Join(dir, key+".yml"),
+		filepath.Join(dir, key, "values.yaml"),
+		filepath.Join(dir, key, "values.yml"),
 		filepath.Join(dir, key),
 	}
 	for _, path := range candidates {
-		if _, err := os.Stat(path); err == nil {
+		info, err := os.Stat(path)
+		if err == nil && !info.IsDir() {
 			return path
 		}
 	}
