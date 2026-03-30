@@ -28,6 +28,7 @@ export interface NamespaceDto {
   name: string
   status: string
   bundleRef: string
+  bundleError?: string
   apps: AppDto[]
   links?: LinkDto[]
 }

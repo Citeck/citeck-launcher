@@ -37,9 +37,10 @@ export function Dashboard() {
   useEffect(() => {
     if (masterPwdChecked || showMasterPwd) return
     const apps = namespace?.apps ?? []
+    const bundleErr = namespace?.bundleError ?? ''
     const hasAuthError = apps.some((a) =>
-      a.statusMessage?.includes('authentication failed') || a.statusMessage?.includes('Access denied')
-    )
+      a.statusText?.includes('authentication failed') || a.statusText?.includes('Access denied')
+    ) || bundleErr.includes('authentication') || bundleErr.includes('Access denied')
     if (!hasAuthError) return
     getMigrationStatus().then((s) => {
       if (s.hasPendingSecrets) setShowMasterPwd(true)
