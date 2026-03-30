@@ -194,22 +194,25 @@ func (r *Resolver) Resolve(ref BundleRef) (*ResolveResult, error) {
 		return &ResolveResult{Bundle: &EmptyBundleDef, Workspace: &WorkspaceConfig{}}, nil
 	}
 
-	// Step 1: Sync the default workspace repo to get workspace-v1.yml (bundleRepos, aliases, etc.)
-	// This is a shared cache that contains workspace config for all bundle repos.
-	defaultRepoDir := filepath.Join(r.dataDir, "bundles", "_workspace")
-	gitCtx, gitCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	err := git.CloneOrPullWithAuth(gitCtx, git.RepoOpts{
-		URL: defaultBundlesRepo, Branch: defaultBundlesBranch,
-		DestDir: defaultRepoDir, PullPeriod: defaultPullPeriod,
-	})
-	gitCancel()
-	if err != nil {
-		slog.Warn("Failed to sync workspace repo", "err", err)
-	}
-	wsCfg := loadWorkspaceConfig(defaultRepoDir)
-	// Fallback: try Kotlin launcher's repo/ dir (desktop migration compat)
+	// Step 1: Load workspace config (bundleRepos, aliases, imageRepos, etc.)
+	// Priority: per-workspace repo/ dir (from Kotlin launcher or manual setup),
+	// then fall back to cloning the default GitHub workspace repo.
+	var wsCfg *WorkspaceConfig
+	localRepoDir := filepath.Join(r.dataDir, "repo")
+	wsCfg = loadWorkspaceConfig(localRepoDir)
+
 	if wsCfg == nil {
-		wsCfg = loadWorkspaceConfig(filepath.Join(r.dataDir, "repo"))
+		defaultRepoDir := filepath.Join(r.dataDir, "bundles", "_workspace")
+		gitCtx, gitCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		err := git.CloneOrPullWithAuth(gitCtx, git.RepoOpts{
+			URL: defaultBundlesRepo, Branch: defaultBundlesBranch,
+			DestDir: defaultRepoDir, PullPeriod: defaultPullPeriod,
+		})
+		gitCancel()
+		if err != nil {
+			slog.Warn("Failed to sync workspace repo", "err", err)
+		}
+		wsCfg = loadWorkspaceConfig(defaultRepoDir)
 	}
 
 	// Step 2: Resolve the actual repo URL for ref.Repo from workspace config
@@ -239,7 +242,7 @@ func (r *Resolver) Resolve(ref BundleRef) (*ResolveResult, error) {
 		}
 	}
 	gitCtx2, gitCancel2 := context.WithTimeout(context.Background(), 2*time.Minute)
-	err = git.CloneOrPullWithAuth(gitCtx2, git.RepoOpts{
+	err := git.CloneOrPullWithAuth(gitCtx2, git.RepoOpts{
 		URL: repoURL, Branch: repoBranch, DestDir: repoDir,
 		Token: repoToken, PullPeriod: pullPeriod,
 	})

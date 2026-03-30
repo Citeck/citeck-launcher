@@ -16,14 +16,14 @@ func TestRunDaemonLoop_CleanQuitOnContextCancel(t *testing.T) {
 		done <- RunDaemonLoop(ctx, DaemonOpts{Version: "test"})
 	}()
 
-	// Give the loop time to enter daemon.Start
-	time.Sleep(200 * time.Millisecond)
+	// Give the loop time to enter daemon.Start (may block on git operations)
+	time.Sleep(500 * time.Millisecond)
 	cancel()
 
 	select {
 	case err := <-done:
 		assert.NoError(t, err)
-	case <-time.After(10 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("RunDaemonLoop did not exit after context cancel")
 	}
 }
