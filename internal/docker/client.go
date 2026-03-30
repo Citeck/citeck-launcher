@@ -190,12 +190,17 @@ func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef,
 				}
 				v = hostPath + ":" + parts[1]
 			} else if !strings.ContainsAny(source, "/.") && volumesBaseDir != "" {
-				// Named volume — convert to bind mount in runtime dir
-				hostDir := filepath.Join(volumesBaseDir, "volumes", source)
-				if err := os.MkdirAll(hostDir, 0o755); err != nil {
-					return "", fmt.Errorf("create bind-mount directory %s: %w", hostDir, err)
+				if config.IsDesktopMode() {
+					// Desktop mode: keep Docker named volumes (compatible with Kotlin launcher).
+					// v stays as "name:/path" — Docker creates/reuses the named volume.
+				} else {
+					// Server mode: convert to bind mount in runtime dir for direct access.
+					hostDir := filepath.Join(volumesBaseDir, "volumes", source)
+					if err := os.MkdirAll(hostDir, 0o755); err != nil {
+						return "", fmt.Errorf("create bind-mount directory %s: %w", hostDir, err)
+					}
+					v = hostDir + ":" + parts[1]
 				}
-				v = hostDir + ":" + parts[1]
 			}
 		}
 		binds = append(binds, v)
