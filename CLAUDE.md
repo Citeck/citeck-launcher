@@ -6,6 +6,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Citeck Launcher manages Citeck ECOS namespaces and Docker containers. It is a single Go binary (~14MB) that serves as both CLI and daemon, with an embedded React Web UI on `http://127.0.0.1:7088`.
 
+### History
+
+This is a **Go rewrite** (v2.0) of the original Kotlin/JVM launcher (v1.x). The Kotlin source is in the same repo under tags `v1.0.0`–`v1.3.9` (branch `master` before Go rewrite). Use `git show v1.3.8:path/to/file` to read Kotlin source.
+
+**Kotlin launcher key details:**
+- Built with Gradle, Kotlin, Compose Desktop (JVM)
+- Storage: H2 MVStore (`storage.db`) — binary key-value store with compressed chunks
+- Secrets: AES-256-GCM encrypted with master password (PBKDF2-HMAC-SHA256, 1M iterations, 16-byte salt)
+- Encrypted payload: `EncryptedStorage { key: KeyParams, alg: 0, iv: byte[], tagLen: 128, data: byte[] }`
+- Entity storage: JSON serialized to ByteArray in MVStore maps like `entities/{wsId}!{entityType}`
+- Namespace configs stored in H2 (not as YAML files) under `entities/{wsId}!namespace`
+- Secrets stored encrypted in `secrets!data` map → key `"storage"` → encrypted blob containing all auth secrets
+- State: `launcher!state` (selectedWorkspace), `workspace-state!{wsId}` (selectedNamespace)
+- Key source files: `Database.kt`, `SecretsEncryptor.kt`, `SecretsStorage.kt`, `EncryptedStorage.kt`, `EntitiesService.kt`
+
 ## Build & Development Commands
 
 ### Go + Web UI (primary)
