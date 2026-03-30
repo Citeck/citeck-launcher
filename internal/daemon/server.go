@@ -302,8 +302,13 @@ func Start(opts StartOptions) error {
 			nsCfg.ID = nsID
 		}
 
-		// Resolve bundle + workspace config (with auth from stored secrets)
-		resolver := bundle.NewResolverWithAuth(config.DataDir(), makeTokenLookup(store))
+		// Resolve bundle + workspace config (with auth from stored secrets).
+		// Desktop mode uses per-workspace bundles dir; server mode uses global data dir.
+		bundlesDataDir := config.DataDir()
+		if config.IsDesktopMode() {
+			bundlesDataDir = filepath.Join(config.HomeDir(), "ws", wsID)
+		}
+		resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(store))
 		resolveResult, err := resolver.Resolve(nsCfg.BundleRef)
 		if err != nil {
 			slog.Error("Failed to resolve bundle — daemon starts with 0 apps", "ref", nsCfg.BundleRef, "err", err)

@@ -207,6 +207,10 @@ func (r *Resolver) Resolve(ref BundleRef) (*ResolveResult, error) {
 		slog.Warn("Failed to sync workspace repo", "err", err)
 	}
 	wsCfg := loadWorkspaceConfig(defaultRepoDir)
+	// Fallback: try Kotlin launcher's repo/ dir (desktop migration compat)
+	if wsCfg == nil {
+		wsCfg = loadWorkspaceConfig(filepath.Join(r.dataDir, "repo"))
+	}
 
 	// Step 2: Resolve the actual repo URL for ref.Repo from workspace config
 	repoDir := filepath.Join(r.dataDir, "bundles", ref.Repo)

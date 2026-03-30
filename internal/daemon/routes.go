@@ -136,7 +136,11 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resolver := bundle.NewResolverWithAuth(config.DataDir(), makeTokenLookup(d.store))
+	bundlesDataDir := config.DataDir()
+	if config.IsDesktopMode() {
+		bundlesDataDir = filepath.Join(config.HomeDir(), "ws", d.workspaceID)
+	}
+	resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(d.store))
 	resolveResult, err := resolver.Resolve(nsCfg.BundleRef)
 	if err != nil {
 		writeInternalError(w, fmt.Errorf("resolve bundle: %w", err))
