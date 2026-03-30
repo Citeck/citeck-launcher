@@ -30,6 +30,10 @@ func ExtractTo(targetDir string) error {
 			if fi.IsDir() {
 				os.RemoveAll(destPath)
 			} else {
+				// Fix permissions on existing .sh files (may have been written as 0644 by older version)
+				if strings.HasSuffix(path, ".sh") && fi.Mode().Perm() != 0o755 {
+					os.Chmod(destPath, 0o755)
+				}
 				return nil // regular file already exists, skip
 			}
 		}
