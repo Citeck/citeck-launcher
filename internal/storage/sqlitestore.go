@@ -257,6 +257,21 @@ func (s *SQLiteStore) SetState(state LauncherState) error {
 	return tx.Commit()
 }
 
+func (s *SQLiteStore) PutSecretBlob(base64Data string) error {
+	stmt := `INSERT INTO launcher_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`
+	_, err := s.db.Exec(stmt, "secret_blob", base64Data)
+	return err
+}
+
+func (s *SQLiteStore) GetSecretBlob() (string, error) {
+	var val string
+	err := s.db.QueryRow(`SELECT value FROM launcher_state WHERE key = ?`, "secret_blob").Scan(&val)
+	if err != nil {
+		return "", err
+	}
+	return val, nil
+}
+
 func (s *SQLiteStore) Close() error {
 	return s.db.Close()
 }

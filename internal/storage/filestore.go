@@ -172,6 +172,18 @@ func (s *FileStore) SetState(state LauncherState) error {
 	return fsutil.AtomicWriteFile(s.statePath(), data, 0o644)
 }
 
+func (s *FileStore) PutSecretBlob(base64Data string) error {
+	return fsutil.AtomicWriteFile(filepath.Join(s.baseDir, "secret_blob.dat"), []byte(base64Data), 0o600)
+}
+
+func (s *FileStore) GetSecretBlob() (string, error) {
+	data, err := os.ReadFile(filepath.Join(s.baseDir, "secret_blob.dat"))
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
 func (s *FileStore) Close() error {
 	return nil
 }

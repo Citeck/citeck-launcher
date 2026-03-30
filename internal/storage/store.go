@@ -54,6 +54,10 @@ type Store interface {
 	SaveSecret(secret Secret) error
 	DeleteSecret(id string) error
 
+	// Encrypted secrets blob (migrated from Kotlin launcher)
+	PutSecretBlob(base64Data string) error
+	GetSecretBlob() (string, error)
+
 	// Launcher state
 	GetState() (*LauncherState, error)
 	SetState(state LauncherState) error

@@ -161,17 +161,35 @@ func Start(opts StartOptions) error {
 		wsID = "default"
 
 		// Auto-migrate H2 → SQLite BEFORE any SQLite access (transparent upgrade from Kotlin).
-		// Must happen here because NewSQLiteStore below creates the file if missing.
-		if needed, _ := h2migrate.NeedsMigration(config.HomeDir()); needed {
-			slog.Info("Kotlin H2 database detected, running auto-migration")
+		// Uses JAR tool to read H2 MVStore via Java, exports to JSON, then imports into SQLite.
+		migStatus := h2migrate.CheckMigration(config.HomeDir())
+		if migStatus.Needed && migStatus.JavaPath != "" {
+			slog.Info("Kotlin H2 database detected, running JAR-based migration", "java", migStatus.JavaPath)
 			if migStore, migErr := storage.NewSQLiteStore(config.HomeDir()); migErr == nil {
-				result, migErr := h2migrate.Migrate(config.HomeDir(), migStore)
+				result, migErr := h2migrate.RunJarMigration(config.HomeDir(), migStatus.JavaPath, migStore)
 				if migErr != nil {
-					slog.Error("H2 auto-migration failed", "err", migErr)
-				} else {
-					slog.Info("H2 auto-migration complete",
+					slog.Error("H2 JAR migration failed, trying filesystem fallback", "err", migErr)
+					result, migErr = h2migrate.Migrate(config.HomeDir(), migStore)
+					if migErr != nil {
+						slog.Error("Filesystem fallback also failed", "err", migErr)
+					}
+				}
+				if result != nil {
+					slog.Info("H2 migration complete",
 						"workspaces", result.Workspaces,
 						"secrets", result.Secrets,
+						"namespaces", result.Namespaces,
+					)
+				}
+				migStore.Close()
+			}
+		} else if migStatus.Needed {
+			slog.Warn("H2 migration needed but Java not found — using filesystem fallback")
+			if migStore, migErr := storage.NewSQLiteStore(config.HomeDir()); migErr == nil {
+				result, _ := h2migrate.Migrate(config.HomeDir(), migStore)
+				if result != nil {
+					slog.Info("Filesystem migration complete",
+						"workspaces", result.Workspaces,
 						"namespaces", result.Namespaces,
 					)
 				}
