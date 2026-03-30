@@ -100,12 +100,7 @@ func Start(opts StartOptions) error {
 		os.MkdirAll(logDir, 0o755)
 		logPath := config.DaemonLogPath()
 		globalLogWriter = fsutil.NewRotatingWriter(logPath, 50*1024*1024, 3)
-		var logDest io.Writer
-		if opts.Desktop {
-			logDest = globalLogWriter
-		} else {
-			logDest = io.MultiWriter(os.Stderr, globalLogWriter)
-		}
+		logDest := io.MultiWriter(os.Stderr, globalLogWriter)
 		logHandler := slog.NewTextHandler(logDest, &slog.HandlerOptions{Level: &globalLogLevel})
 		slog.SetDefault(slog.New(logHandler))
 	})
