@@ -225,6 +225,13 @@ func doPull(ctx context.Context, opts RepoOpts) error {
 // reclone clones to a temp directory and swaps on success. If clone fails, the old
 // directory is kept intact so the daemon can continue with stale data.
 func reclone(ctx context.Context, opts RepoOpts, cause error) error {
+	// If reclone requires auth we don't have, skip the attempt entirely —
+	// the stale repo is usable and the reclone would fail anyway.
+	if opts.Token == "" && requiresAuth(opts.URL) {
+		slog.Info("Skipping reclone (no auth token, using stale repo)", "dir", opts.DestDir, "cause", cause)
+		return fmt.Errorf("repo needs repair but auth unavailable for %s: %w", opts.URL, cause)
+	}
+
 	slog.Warn("Repo corrupted, re-cloning", "dir", opts.DestDir, "cause", cause)
 
 	tmpDir := opts.DestDir + ".tmp"
@@ -235,7 +242,11 @@ func reclone(ctx context.Context, opts RepoOpts, cause error) error {
 	tmpOpts.DestDir = tmpDir
 	if err := doClone(ctx, tmpOpts); err != nil {
 		os.RemoveAll(tmpDir)
-		slog.Warn("Reclone failed, keeping stale repo", "dir", opts.DestDir, "err", err)
+		if isAuthError(err) {
+			slog.Info("Reclone auth failed, keeping stale repo", "dir", opts.DestDir)
+		} else {
+			slog.Warn("Reclone failed, keeping stale repo", "dir", opts.DestDir, "err", err)
+		}
 		return fmt.Errorf("reclone %s: %w", opts.URL, err)
 	}
 
@@ -248,4 +259,22 @@ func reclone(ctx context.Context, opts RepoOpts, cause error) error {
 		return fmt.Errorf("rename %s -> %s: %w", tmpDir, opts.DestDir, err)
 	}
 	return nil
+}
+
+// isAuthError checks if an error is caused by authentication failure.
+func isAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "authentication") || strings.Contains(errStr, "unauthorized")
+}
+
+// requiresAuth checks if the URL likely requires authentication (non-public git hosts).
+func requiresAuth(url string) bool {
+	lower := strings.ToLower(url)
+	// Public hosts that allow anonymous read access are rare; most private
+	// GitLab/GitHub repos require auth. Check for common private patterns.
+	return strings.Contains(lower, "gitlab.") || strings.Contains(lower, "github.") ||
+		strings.Contains(lower, "bitbucket.")
 }
