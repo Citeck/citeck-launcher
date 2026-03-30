@@ -13,8 +13,7 @@ import (
 // DaemonOpts configures the daemon restart loop.
 type DaemonOpts struct {
 	Version string
-	ReadyCh chan<- string // notified once when daemon socket is listening; nil = ignored
-	NoUI    bool         // disable TCP listener (desktop proxies via socket)
+	ReadyCh chan<- string // notified once when daemon HTTP server is ready; nil = ignored
 }
 
 // RunDaemonLoop runs the daemon with automatic restart on crash.
@@ -56,7 +55,6 @@ func RunDaemonLoop(ctx context.Context, opts DaemonOpts) error {
 		err := daemon.Start(daemon.StartOptions{
 			Ctx:     ctx,
 			Desktop: true,
-			NoUI:    opts.NoUI,
 			Version: opts.Version,
 			ReadyCh: ch,
 		})

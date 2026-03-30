@@ -113,32 +113,35 @@ func DecryptSecretBlob(blobBase64 string, masterPassword string) (map[string]jso
 }
 
 // ImportDecryptedSecrets parses auth secrets from decrypted data and saves them to the store.
+// Kotlin stores auth-secrets as a map: { "secretId": { type, id, token/username/password } }
 func ImportDecryptedSecrets(decrypted map[string]json.RawMessage, store storage.Store) (int, error) {
 	raw, ok := decrypted["auth-secrets"]
 	if !ok {
 		return 0, nil
 	}
 
-	var secrets []AuthSecret
-	if err := json.Unmarshal(raw, &secrets); err != nil {
+	var secretsMap map[string]AuthSecret
+	if err := json.Unmarshal(raw, &secretsMap); err != nil {
 		return 0, fmt.Errorf("parse auth-secrets: %w", err)
 	}
 
 	count := 0
-	for _, s := range secrets {
+	for id, s := range secretsMap {
 		secret := storage.Secret{
 			SecretMeta: storage.SecretMeta{
-				ID:   s.ID,
-				Name: s.ID,
+				ID:   id,
+				Name: id,
 			},
 		}
 		switch s.Type {
-		case "token":
+		case "TOKEN":
 			secret.Type = storage.SecretGitToken
 			secret.Value = s.Token
-		case "basic":
-			secret.Type = storage.SecretBasicAuth
+			secret.Scope = id // e.g. "ws:py2iwgi:repo"
+		case "BASIC":
+			secret.Type = storage.SecretRegistryAuth
 			secret.Value = s.Username + ":" + s.Password
+			secret.Scope = id // e.g. "images-repo:harbor.citeck.ru"
 		default:
 			continue
 		}

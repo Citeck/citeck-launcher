@@ -43,29 +43,33 @@ function Layout() {
   const showWelcomeAtRoot = isDesktop !== false && !hasNamespace
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="h-screen bg-background flex flex-col overflow-hidden">
       <TabBar />
-      <main className="flex-1 min-h-0 overflow-auto">
+      <main className="flex-1 min-h-0 flex flex-col">
         <Routes>
           {/* Root: Dashboard or Welcome depending on mode and namespace */}
           <Route index element={showWelcomeAtRoot ? <Welcome /> : <Dashboard />} />
 
-          {/* Workspace-level pages (always accessible) */}
-          <Route path="/welcome" element={<Welcome />} />
-          <Route path="/wizard" element={<Wizard />} />
-          <Route path="/secrets" element={<Secrets />} />
-          <Route path="/diagnostics" element={<Diagnostics />} />
-          <Route path="/daemon-logs" element={<DaemonLogs />} />
+          {/* Workspace-level pages (scrollable) */}
+          <Route path="/welcome" element={<Scroll><Welcome /></Scroll>} />
+          <Route path="/wizard" element={<Scroll><Wizard /></Scroll>} />
+          <Route path="/secrets" element={<Scroll><Secrets /></Scroll>} />
+          <Route path="/diagnostics" element={<Scroll><Diagnostics /></Scroll>} />
+          <Route path="/daemon-logs" element={<Scroll><DaemonLogs /></Scroll>} />
 
-          {/* Namespace-level pages (redirect to Welcome if no namespace) */}
-          <Route path="/apps/:name" element={hasNamespace ? <AppDetail /> : <Navigate to="/" />} />
-          <Route path="/apps/:name/logs" element={hasNamespace ? <Logs /> : <Navigate to="/" />} />
-          <Route path="/config" element={hasNamespace ? <Config /> : <Navigate to="/" />} />
-          <Route path="/volumes" element={hasNamespace ? <Volumes /> : <Navigate to="/" />} />
+          {/* Namespace-level pages (scrollable, redirect to Welcome if no namespace) */}
+          <Route path="/apps/:name" element={hasNamespace ? <Scroll><AppDetail /></Scroll> : <Navigate to="/" />} />
+          <Route path="/apps/:name/logs" element={hasNamespace ? <Scroll><Logs /></Scroll> : <Navigate to="/" />} />
+          <Route path="/config" element={hasNamespace ? <Scroll><Config /></Scroll> : <Navigate to="/" />} />
+          <Route path="/volumes" element={hasNamespace ? <Scroll><Volumes /></Scroll> : <Navigate to="/" />} />
         </Routes>
       </main>
     </div>
   )
+}
+
+function Scroll({ children }: { children: React.ReactNode }) {
+  return <div className="flex-1 overflow-auto">{children}</div>
 }
 
 function App() {
