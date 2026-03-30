@@ -442,6 +442,18 @@ func (d *Daemon) handleCreateSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Rebuild registry auth and retry pull-failed apps
+	if d.runtime != nil {
+		d.configMu.RLock()
+		wsCfg := d.workspaceConfig
+		d.configMu.RUnlock()
+		d.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(wsCfg, d.store))
+		retried := d.runtime.RetryPullFailedApps()
+		if retried > 0 {
+			slog.Info("Retrying pull-failed apps after secret change", "count", retried)
+		}
+	}
+
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "secret saved"})
 }
 
@@ -559,6 +571,10 @@ func (d *Daemon) handleSubmitMasterPassword(w http.ResponseWriter, r *http.Reque
 		wsCfg := d.workspaceConfig
 		d.configMu.RUnlock()
 		d.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(wsCfg, d.store))
+		retried := d.runtime.RetryPullFailedApps()
+		if retried > 0 {
+			slog.Info("Retrying pull-failed apps after secrets import", "count", retried)
+		}
 	}
 
 	slog.Info("Master password accepted, secrets decrypted", "count", count)

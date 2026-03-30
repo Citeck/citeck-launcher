@@ -575,6 +575,29 @@ func (r *Runtime) StartApp(appName string) error {
 	}
 }
 
+// RetryPullFailedApps re-queues all apps in PULL_FAILED state for pull+start.
+// Called after secrets change so that apps that failed due to missing auth can recover.
+func (r *Runtime) RetryPullFailedApps() int {
+	r.mu.Lock()
+	ctx := r.runCtx
+	if ctx == nil {
+		r.mu.Unlock()
+		return 0
+	}
+	var retried int
+	for _, app := range r.apps {
+		if app.Status == AppStatusPullFailed {
+			r.setAppStatus(app, AppStatusPulling)
+			r.resetRetry(app.Name)
+			r.appWg.Add(1)
+			go r.pullAndStartApp(ctx, app.Name)
+			retried++
+		}
+	}
+	r.mu.Unlock()
+	return retried
+}
+
 // RestartApp stops and re-starts a single app.
 func (r *Runtime) RestartApp(appName string) error {
 	r.mu.Lock()
