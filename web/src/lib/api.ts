@@ -318,3 +318,20 @@ export async function renameSnapshot(oldName: string, newName: string): Promise<
   if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
+
+// Migration
+export async function getMigrationStatus(): Promise<{ hasPendingSecrets: boolean }> {
+  const res = await fetchWithTimeout(`${API_BASE}/migration/status`)
+  if (!res.ok) return { hasPendingSecrets: false }
+  return res.json()
+}
+
+export async function submitMasterPassword(password: string): Promise<ActionResultDto> {
+  const res = await fetchWithTimeout(`${API_BASE}/migration/master-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
+    body: JSON.stringify({ password }),
+  })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  return res.json()
+}

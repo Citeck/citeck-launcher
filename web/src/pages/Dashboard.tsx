@@ -1,9 +1,9 @@
-import { useEffect } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router'
 import { useDashboardStore } from '../lib/store'
 import { useTabsStore } from '../lib/tabs'
 import { usePanelStore } from '../lib/panels'
-import { getSystemDump } from '../lib/api'
+import { getSystemDump, getMigrationStatus, submitMasterPassword } from '../lib/api'
 import { useTranslation } from '../lib/i18n'
 import { StatusBadge } from '../components/StatusBadge'
 import { AppTable } from '../components/AppTable'
@@ -25,6 +25,39 @@ export function Dashboard() {
   const setHomeTab = useTabsStore((s) => s.setHomeTab)
   const { drawerAppName, closeDrawer, bottomTabs, openBottomTab } = usePanelStore()
   const { t } = useTranslation()
+
+  const [showMasterPwd, setShowMasterPwd] = useState(false)
+  const [masterPwd, setMasterPwd] = useState('')
+  const [masterPwdError, setMasterPwdError] = useState('')
+  const [masterPwdLoading, setMasterPwdLoading] = useState(false)
+
+  // Check if there are pending encrypted secrets that need master password
+  useEffect(() => {
+    getMigrationStatus().then((s) => {
+      if (s.hasPendingSecrets) setShowMasterPwd(true)
+    }).catch(() => {})
+  }, [])
+
+  const handleMasterPwdSubmit = useCallback(async () => {
+    if (!masterPwd) return
+    setMasterPwdLoading(true)
+    setMasterPwdError('')
+    try {
+      await submitMasterPassword(masterPwd)
+      setShowMasterPwd(false)
+      setMasterPwd('')
+      toast(t('migration.secretsImported'), 'success')
+      fetchData() // refresh to pick up new secrets
+    } catch (e) {
+      setMasterPwdError(t('migration.wrongPassword'))
+    } finally {
+      setMasterPwdLoading(false)
+    }
+  }, [masterPwd, fetchData, t])
+
+  const handleSkipMasterPwd = useCallback(() => {
+    setShowMasterPwd(false)
+  }, [])
 
   useEffect(() => {
     setHomeTab(t('dashboard.title'))
@@ -123,6 +156,39 @@ export function Dashboard() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
+      {/* Master password dialog for Kotlin migration */}
+      {showMasterPwd && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-card border border-border rounded-lg p-6 w-96 shadow-xl">
+            <h2 className="text-lg font-semibold mb-2">{t('migration.title')}</h2>
+            <p className="text-sm text-muted-foreground mb-4">{t('migration.description')}</p>
+            <input
+              type="password"
+              className="w-full px-3 py-2 bg-background border border-border rounded text-foreground mb-2"
+              placeholder={t('migration.passwordPlaceholder')}
+              value={masterPwd}
+              onChange={(e) => setMasterPwd(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleMasterPwdSubmit()}
+              autoFocus
+            />
+            {masterPwdError && <p className="text-destructive text-sm mb-2">{masterPwdError}</p>}
+            <div className="flex justify-between mt-4">
+              <button type="button" className="text-sm text-muted-foreground hover:text-foreground" onClick={handleSkipMasterPwd}>
+                {t('migration.skip')}
+              </button>
+              <button
+                type="button"
+                className="px-4 py-1.5 bg-primary text-primary-foreground rounded text-sm font-medium disabled:opacity-50"
+                onClick={handleMasterPwdSubmit}
+                disabled={masterPwdLoading || !masterPwd}
+              >
+                {masterPwdLoading ? '...' : t('migration.confirm')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Top: sidebar + table + drawer overlay */}
       <div className="flex flex-1 min-h-0 relative">
         {/* Left info panel */}

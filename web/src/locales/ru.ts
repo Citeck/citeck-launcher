@@ -308,6 +308,15 @@ const ru: Translations = {
   // -- Theme --
   'theme.toDark': 'Переключить на тёмную тему',
   'theme.toLight': 'Переключить на светлую тему',
+
+  // -- Migration --
+  'migration.title': 'Введите мастер-пароль',
+  'migration.description': 'Обнаружены зашифрованные секреты от предыдущей версии лончера. Введите мастер-пароль для их расшифровки.',
+  'migration.passwordPlaceholder': 'Мастер-пароль',
+  'migration.confirm': 'Подтвердить',
+  'migration.skip': 'Пропустить',
+  'migration.wrongPassword': 'Неверный пароль',
+  'migration.secretsImported': 'Секреты расшифрованы и импортированы',
 }
 
 export default ru

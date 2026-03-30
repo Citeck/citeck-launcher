@@ -18,6 +18,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/bundle"
+	"github.com/citeck/citeck-launcher/internal/h2migrate"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/form"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
@@ -508,6 +509,55 @@ func (d *Daemon) handleTestSecret(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, api.ActionResultDto{Success: true, Message: "secret exists"})
 	}
+}
+
+// --- Migration (master password for Kotlin secrets) ---
+
+// handleGetMigrationStatus returns whether encrypted secrets from Kotlin need to be unlocked.
+func (d *Daemon) handleGetMigrationStatus(w http.ResponseWriter, _ *http.Request) {
+	blob, err := d.store.GetSecretBlob()
+	hasBlob := err == nil && blob != ""
+	writeJSON(w, map[string]any{
+		"hasPendingSecrets": hasBlob,
+	})
+}
+
+// handleSubmitMasterPassword decrypts the Kotlin secrets blob and imports individual secrets.
+func (d *Daemon) handleSubmitMasterPassword(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Password == "" {
+		writeError(w, http.StatusBadRequest, "password required")
+		return
+	}
+
+	blob, err := d.store.GetSecretBlob()
+	if err != nil || blob == "" {
+		writeError(w, http.StatusNotFound, "no pending secrets to decrypt")
+		return
+	}
+
+	decrypted, err := h2migrate.DecryptSecretBlob(blob, req.Password)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid password")
+		return
+	}
+
+	count, err := h2migrate.ImportDecryptedSecrets(decrypted, d.store)
+	if err != nil {
+		writeInternalError(w, err)
+		return
+	}
+
+	// Clear the encrypted blob — secrets are now stored individually
+	d.store.PutSecretBlob("")
+
+	slog.Info("Master password accepted, secrets decrypted", "count", count)
+	writeJSON(w, api.ActionResultDto{
+		Success: true,
+		Message: fmt.Sprintf("%d secrets imported", count),
+	})
 }
 
 // --- Diagnostics ---

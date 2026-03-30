@@ -898,6 +898,10 @@ func (d *Daemon) registerRoutes(socketMux, tcpMux *http.ServeMux) {
 	both("DELETE /api/v1/secrets/{id}", d.handleDeleteSecret)
 	both("GET /api/v1/secrets/{id}/test", d.handleTestSecret)
 
+	// Migration (master password for Kotlin encrypted secrets)
+	both("GET /api/v1/migration/status", d.handleGetMigrationStatus)
+	both("POST /api/v1/migration/master-password", d.handleSubmitMasterPassword)
+
 	// Forms
 	both("GET /api/v1/forms/{formId}", d.handleGetForm)
 

@@ -308,6 +308,15 @@ const en: Translations = {
   // -- Theme --
   'theme.toDark': 'Switch to dark theme',
   'theme.toLight': 'Switch to light theme',
+
+  // -- Migration --
+  'migration.title': 'Enter Master Password',
+  'migration.description': 'Encrypted secrets from the previous launcher were found. Enter your master password to decrypt them.',
+  'migration.passwordPlaceholder': 'Master password',
+  'migration.confirm': 'Confirm',
+  'migration.skip': 'Skip',
+  'migration.wrongPassword': 'Invalid password',
+  'migration.secretsImported': 'Secrets decrypted and imported',
 }
 
 export default en
