@@ -45,7 +45,15 @@ return ({
       const [namespace, health] = await Promise.all([getNamespace(), getHealth()])
       set({ namespace, health, loading: false })
     } catch (err) {
-      set({ error: (err as Error).message, loading: false })
+      const msg = (err as Error).message
+      // Daemon still starting — retry silently instead of showing error
+      if (msg.includes('Service Unavailable') || msg.includes('503') || msg.includes('DAEMON_STARTING') || msg.includes('Failed to fetch')) {
+        if (isInitial) {
+          setTimeout(() => get().fetchData(), 1000)
+          return
+        }
+      }
+      set({ error: msg, loading: false })
     }
   },
 

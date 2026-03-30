@@ -42,7 +42,13 @@ export function Welcome() {
       setQuickStarts(qs)
       setLoadError(null)
     } catch (e) {
-      setLoadError(e instanceof Error ? e.message : String(e))
+      const msg = e instanceof Error ? e.message : String(e)
+      // Daemon still starting — retry silently
+      if (msg.includes('Service Unavailable') || msg.includes('503') || msg.includes('Failed to fetch')) {
+        setTimeout(loadData, 1000)
+        return
+      }
+      setLoadError(msg)
     } finally {
       setLoading(false)
     }
