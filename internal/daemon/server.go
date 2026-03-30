@@ -1056,6 +1056,10 @@ func buildRegistryAuthCache(reposByHost map[string]bundle.ImageRepo, store stora
 			value = scopeValues[host]
 		}
 		if value == "" {
+			// Kotlin migration compat: scope = "images-repo:{host}"
+			value = scopeValues["images-repo:"+host]
+		}
+		if value == "" {
 			continue
 		}
 		parts := strings.SplitN(value, ":", 2)

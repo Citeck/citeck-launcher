@@ -553,6 +553,14 @@ func (d *Daemon) handleSubmitMasterPassword(w http.ResponseWriter, r *http.Reque
 	// Clear the encrypted blob — secrets are now stored individually
 	d.store.PutSecretBlob("")
 
+	// Rebuild registry auth cache so new secrets take effect for docker pulls
+	if d.runtime != nil {
+		d.configMu.RLock()
+		wsCfg := d.workspaceConfig
+		d.configMu.RUnlock()
+		d.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(wsCfg, d.store))
+	}
+
 	slog.Info("Master password accepted, secrets decrypted", "count", count)
 	writeJSON(w, api.ActionResultDto{
 		Success: true,
