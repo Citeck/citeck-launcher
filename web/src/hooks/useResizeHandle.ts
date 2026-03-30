@@ -16,6 +16,11 @@ export function useResizeHandle({
   const [isResizing, setIsResizing] = useState(false)
   const startY = useRef(0)
   const startHeight = useRef(0)
+  const heightRef = useRef(currentHeight)
+  heightRef.current = currentHeight
+
+  const onResizeRef = useRef(onResize)
+  onResizeRef.current = onResize
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
@@ -23,14 +28,14 @@ export function useResizeHandle({
       const el = e.currentTarget as HTMLElement
       el.setPointerCapture(e.pointerId)
       startY.current = e.clientY
-      startHeight.current = currentHeight
+      startHeight.current = heightRef.current
       setIsResizing(true)
 
       const onPointerMove = (ev: PointerEvent) => {
         const delta = startY.current - ev.clientY
         const maxH = Math.floor(window.innerHeight * maxHeightFraction)
         const newH = Math.max(minHeight, Math.min(startHeight.current + delta, maxH))
-        onResize(newH)
+        onResizeRef.current(newH)
       }
 
       const cleanup = () => {
@@ -44,7 +49,7 @@ export function useResizeHandle({
       el.addEventListener('pointerup', cleanup)
       el.addEventListener('pointercancel', cleanup)
     },
-    [currentHeight, onResize, minHeight, maxHeightFraction],
+    [minHeight, maxHeightFraction],
   )
 
   const handleProps = {

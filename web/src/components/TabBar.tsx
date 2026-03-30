@@ -114,12 +114,13 @@ function LanguageSelector() {
 
   return (
     <select
-      className="bg-background text-xs text-muted-foreground hover:text-foreground px-1.5 py-1 border-none outline-none cursor-pointer"
+      className="text-xs text-muted-foreground hover:text-foreground px-1.5 py-1 border-none outline-none cursor-pointer"
+      style={{ backgroundColor: 'var(--color-background)', color: 'var(--color-foreground)' }}
       value={locale}
       onChange={(e) => setLocale(e.target.value as typeof locale)}
     >
       {LOCALES.map((l) => (
-        <option key={l.code} value={l.code} className="bg-background text-foreground">
+        <option key={l.code} value={l.code} style={{ backgroundColor: 'var(--color-background)', color: 'var(--color-foreground)' }}>
           {l.flag} {l.name}
         </option>
       ))}
