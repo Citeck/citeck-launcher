@@ -27,6 +27,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
+	"github.com/citeck/citeck-launcher/internal/h2migrate"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/snapshot"
 	"github.com/citeck/citeck-launcher/internal/storage"
@@ -223,6 +224,25 @@ func Start(opts StartOptions) error {
 	// Initialize storage backend
 	var store storage.Store
 	if config.IsDesktopMode() {
+		// Auto-migrate H2 → SQLite on first desktop start (transparent upgrade from Kotlin)
+		if needed, _ := h2migrate.NeedsMigration(config.HomeDir()); needed {
+			slog.Info("Kotlin H2 database detected, running auto-migration")
+			tmpStore, tmpErr := storage.NewSQLiteStore(config.HomeDir())
+			if tmpErr == nil {
+				result, migErr := h2migrate.Migrate(config.HomeDir(), tmpStore)
+				if migErr != nil {
+					slog.Error("H2 auto-migration failed (secrets may be unavailable)", "err", migErr)
+				} else {
+					slog.Info("H2 auto-migration complete",
+						"workspaces", result.Workspaces,
+						"secrets", result.Secrets,
+						"namespaces", result.Namespaces,
+					)
+				}
+				tmpStore.Close()
+			}
+		}
+
 		store, err = storage.NewSQLiteStore(config.HomeDir())
 		if err != nil {
 			return fmt.Errorf("create sqlite store: %w", err)
