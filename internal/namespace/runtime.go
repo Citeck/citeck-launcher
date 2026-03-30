@@ -881,7 +881,7 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) {
 	}
 	removeWg.Wait()
 
-	// Verify reused containers are actually running (fast Docker inspect)
+	// Verify reused containers are actually running (fast Docker inspect + health probe)
 	for i, p := range plans {
 		if p.reuse {
 			inspCtx, inspCancel := context.WithTimeout(ctx, 5*time.Second)
@@ -891,6 +891,18 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) {
 				slog.Warn("Reused container not running, will recreate", "app", p.def.Name)
 				plans[i].reuse = false
 				plans[i].containerID = ""
+				continue
+			}
+			// Run health probe on reused container to detect crashed apps
+			if p.def.LivenessProbe != nil {
+				probeCtx, probeCancel := context.WithTimeout(ctx, 10*time.Second)
+				alive := r.runLivenessProbe(probeCtx, p.containerID, p.def.LivenessProbe)
+				probeCancel()
+				if !alive {
+					slog.Warn("Reused container health probe failed, will recreate", "app", p.def.Name)
+					plans[i].reuse = false
+					plans[i].containerID = ""
+				}
 			}
 		}
 	}
