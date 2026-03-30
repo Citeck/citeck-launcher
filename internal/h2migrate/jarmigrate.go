@@ -2,6 +2,7 @@ package h2migrate
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/base64"
@@ -30,8 +31,10 @@ const (
 
 // MigrateStatus describes the current migration state.
 type MigrateStatus struct {
-	Needed   bool
-	JavaPath string // empty if Java not found
+	Needed           bool
+	HasJava          bool   // true if Java found in PATH
+	JavaPath         string // path to java binary (empty if not found)
+	JREDownloadSizeMB int   // size of JRE download in MB (0 if Java found)
 }
 
 // CheckMigration checks if migration is needed and whether Java is available.
@@ -41,29 +44,35 @@ func CheckMigration(homeDir string) MigrateStatus {
 		return MigrateStatus{}
 	}
 	javaPath := findJava()
-	return MigrateStatus{Needed: true, JavaPath: javaPath}
+	status := MigrateStatus{Needed: true, HasJava: javaPath != "", JavaPath: javaPath}
+	if !status.HasJava {
+		if p, ok := jrePlatforms[jrePlatformKey()]; ok {
+			status.JREDownloadSizeMB = p.sizeMB
+		}
+	}
+	return status
 }
 
-// RunJarMigration downloads the H2 export JAR (and JRE if needed), runs it, and imports the result.
+// DownloadJRE downloads a minimal Adoptium JRE and returns the java binary path.
+// Caller should call CleanupJRE when done.
+func DownloadJRE(homeDir string) (javaPath string, err error) {
+	_, javaPath, err = downloadJRE(homeDir)
+	return
+}
+
+// CleanupJRE removes the downloaded JRE directory.
+func CleanupJRE(homeDir string) {
+	os.RemoveAll(filepath.Join(homeDir, "tmp-jre"))
+}
+
+// RunJarMigration runs the embedded H2 export JAR and imports the result.
+// javaPath must be a valid path to a java binary (system or downloaded JRE).
 func RunJarMigration(homeDir string, javaPath string, store storage.Store) (*MigrateResult, error) {
 	h2Path := filepath.Join(homeDir, "storage.db")
 	jarPath := filepath.Join(homeDir, JarName)
 	exportPath := filepath.Join(homeDir, "h2-export.json")
 
-	// Step 1: Ensure Java is available
-	jreDir := ""
-	if javaPath == "" {
-		slog.Info("Java not found, downloading minimal JRE")
-		var err error
-		jreDir, javaPath, err = downloadJRE(homeDir)
-		if err != nil {
-			return nil, fmt.Errorf("download JRE: %w", err)
-		}
-		defer os.RemoveAll(jreDir) // cleanup JRE after migration
-		slog.Info("JRE downloaded", "java", javaPath)
-	}
-
-	// Step 2: Write embedded JAR to disk
+	// Step 1: Write embedded JAR to disk
 	if err := os.WriteFile(jarPath, embedded.H2ExportJar, 0o644); err != nil {
 		return nil, fmt.Errorf("write h2-export.jar: %w", err)
 	}
@@ -83,87 +92,104 @@ func RunJarMigration(homeDir string, javaPath string, store storage.Store) (*Mig
 	return ImportExportJSON(homeDir, exportPath, store)
 }
 
-// jreAdoptiumURL returns the Adoptium Temurin JRE download URL for the current platform.
-// Uses JRE 17 (LTS) for broad compatibility — supports Java 8 bytecode.
-func jreAdoptiumURL() string {
-	os := runtime.GOOS
-	arch := runtime.GOARCH
+// jrePlatform holds download URL, SHA256, and size for a specific OS/arch.
+type jrePlatform struct {
+	url    string
+	sha256 string
+	sizeMB int // approximate download size in MB
+}
 
-	// Map Go arch to Adoptium arch names
-	adoptiumArch := "x64"
-	if arch == "arm64" {
-		adoptiumArch = "aarch64"
-	}
+// Adoptium Temurin JRE 17.0.18+8 — pinned URLs, SHA256 checksums, and sizes.
+var jrePlatforms = map[string]jrePlatform{
+	"linux/amd64": {
+		url:    "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.18%2B8/OpenJDK17U-jre_x64_linux_hotspot_17.0.18_8.tar.gz",
+		sha256: "8b418e38cca87945858ae911988401720095eb671357d47437b4adb49c28dcab",
+		sizeMB: 44,
+	},
+	"linux/arm64": {
+		url:    "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.18%2B8/OpenJDK17U-jre_aarch64_linux_hotspot_17.0.18_8.tar.gz",
+		sha256: "88727c16610d118c0e739f62e6c99dc1cb5a7b4a93a27054fe2a3aa7150e7b5d",
+		sizeMB: 42,
+	},
+	"darwin/amd64": {
+		url:    "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.18%2B8/OpenJDK17U-jre_x64_mac_hotspot_17.0.18_8.tar.gz",
+		sha256: "486ab329956941fae40012f42d9f4bcbd48d036e11249b924e259fe7a86ee3dc",
+		sizeMB: 44,
+	},
+	"darwin/arm64": {
+		url:    "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.18%2B8/OpenJDK17U-jre_aarch64_mac_hotspot_17.0.18_8.tar.gz",
+		sha256: "6853987fa37340b157d7e8e895db0148efa13c3b2d6e6f3b289aac42e437d32e",
+		sizeMB: 42,
+	},
+	"windows/amd64": {
+		url:    "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.18%2B8/OpenJDK17U-jre_x64_windows_hotspot_17.0.18_8.zip",
+		sha256: "95c9ebe3ee16baab7239531757513d9a03799ca06483ef2f3b530e81e93e7b5b",
+		sizeMB: 41,
+	},
+}
 
-	// Map Go OS to Adoptium OS names
-	adoptiumOS := os
-	if os == "darwin" {
-		adoptiumOS = "mac"
-	}
-
-	return fmt.Sprintf(
-		"https://api.adoptium.net/v3/binary/latest/17/ga/%s/%s/jre/hotspot/normal/eclipse",
-		adoptiumOS, adoptiumArch,
-	)
+func jrePlatformKey() string {
+	return runtime.GOOS + "/" + runtime.GOARCH
 }
 
 // downloadJRE downloads and extracts a minimal Adoptium JRE.
 // Returns (jreDir, javaPath, error). Caller must os.RemoveAll(jreDir) when done.
 func downloadJRE(homeDir string) (string, string, error) {
+	platform, ok := jrePlatforms[jrePlatformKey()]
+	if !ok {
+		return "", "", fmt.Errorf("no JRE available for %s", jrePlatformKey())
+	}
+
 	jreDir := filepath.Join(homeDir, "tmp-jre")
-	os.RemoveAll(jreDir) // clean previous attempt
+	os.RemoveAll(jreDir)
 	os.MkdirAll(jreDir, 0o755)
 
-	url := jreAdoptiumURL()
-	slog.Info("Downloading JRE", "url", url)
-
+	isWindows := runtime.GOOS == "windows"
 	archivePath := filepath.Join(jreDir, "jre.tar.gz")
-	if runtime.GOOS == "windows" {
+	if isWindows {
 		archivePath = filepath.Join(jreDir, "jre.zip")
 	}
 
-	if err := downloadFile(archivePath, url); err != nil {
+	slog.Info("Downloading JRE", "platform", jrePlatformKey(), "sizeMB", platform.sizeMB)
+	if err := downloadFile(archivePath, platform.url); err != nil {
 		return "", "", fmt.Errorf("download JRE: %w", err)
 	}
 
-	// Verify JRE SHA256 via Adoptium checksum endpoint
-	checksumURL := url + ".sha256.txt"
-	expectedHash, err := fetchText(checksumURL)
+	// Verify SHA256
+	actualHash, err := fileSHA256(archivePath)
 	if err != nil {
-		slog.Warn("Could not fetch JRE checksum", "err", err)
-	} else {
-		expectedHash = strings.TrimSpace(strings.Fields(expectedHash)[0])
-		actualHash, err := fileSHA256(archivePath)
-		if err != nil {
-			return "", "", fmt.Errorf("compute JRE hash: %w", err)
-		}
-		if actualHash != expectedHash {
-			os.RemoveAll(jreDir)
-			return "", "", fmt.Errorf("JRE SHA256 mismatch: got %s, want %s", actualHash, expectedHash)
-		}
-		slog.Info("JRE SHA256 verified", "hash", actualHash)
+		os.RemoveAll(jreDir)
+		return "", "", fmt.Errorf("compute JRE hash: %w", err)
 	}
+	if actualHash != platform.sha256 {
+		os.RemoveAll(jreDir)
+		return "", "", fmt.Errorf("JRE SHA256 mismatch: got %s, want %s", actualHash, platform.sha256)
+	}
+	slog.Info("JRE SHA256 verified")
 
 	// Extract
-	if runtime.GOOS == "windows" {
-		return "", "", fmt.Errorf("Windows JRE extraction not implemented — install Java manually")
-	}
-
-	if err := extractTarGz(archivePath, jreDir); err != nil {
-		return "", "", fmt.Errorf("extract JRE: %w", err)
+	if isWindows {
+		if err := extractZip(archivePath, jreDir); err != nil {
+			return "", "", fmt.Errorf("extract JRE: %w", err)
+		}
+	} else {
+		if err := extractTarGz(archivePath, jreDir); err != nil {
+			return "", "", fmt.Errorf("extract JRE: %w", err)
+		}
 	}
 	os.Remove(archivePath)
 
-	// Find java binary inside extracted dir (it's in a subdirectory like jdk-17.0.x-jre/)
+	// Find java binary (java on Unix, java.exe on Windows)
+	javaBin := "java"
+	if isWindows {
+		javaBin = "java.exe"
+	}
 	javaPath := ""
 	filepath.Walk(jreDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
+		if err != nil || info.IsDir() {
 			return nil
 		}
-		if info.IsDir() {
-			return nil
-		}
-		if filepath.Base(path) == "java" && strings.Contains(path, "bin") {
+		if filepath.Base(path) == javaBin && strings.Contains(path, "bin") {
 			javaPath = path
 			return filepath.SkipAll
 		}
@@ -175,6 +201,39 @@ func downloadJRE(homeDir string) (string, string, error) {
 
 	os.Chmod(javaPath, 0o755)
 	return jreDir, javaPath, nil
+}
+
+func extractZip(zipPath, destDir string) error {
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
+	for _, f := range r.File {
+		target := filepath.Join(destDir, f.Name)
+		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(destDir)) {
+			continue
+		}
+		if f.FileInfo().IsDir() {
+			os.MkdirAll(target, 0o755)
+			continue
+		}
+		os.MkdirAll(filepath.Dir(target), 0o755)
+		rc, err := f.Open()
+		if err != nil {
+			continue
+		}
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY, f.Mode())
+		if err != nil {
+			rc.Close()
+			continue
+		}
+		io.Copy(out, rc)
+		out.Close()
+		rc.Close()
+	}
+	return nil
 }
 
 func extractTarGz(archivePath, destDir string) error {
@@ -431,23 +490,6 @@ func findJava() string {
 		}
 	}
 	return ""
-}
-
-func fetchText(url string) (string, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Get(url)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
 }
 
 func downloadFile(dest, url string) error {

@@ -161,19 +161,34 @@ func Start(opts StartOptions) error {
 		wsID = "default"
 
 		// Auto-migrate H2 → SQLite BEFORE any SQLite access (transparent upgrade from Kotlin).
-		// Downloads JAR + JRE (if needed), exports H2 to JSON, imports into SQLite.
+		// JAR is embedded in the binary. JRE downloaded from Adoptium if Java not in PATH.
 		// Falls back to filesystem migration if JAR approach fails.
 		migStatus := h2migrate.CheckMigration(config.HomeDir())
 		if migStatus.Needed {
-			slog.Info("Kotlin H2 database detected, running migration", "javaFound", migStatus.JavaPath != "")
+			javaPath := migStatus.JavaPath
+			if !migStatus.HasJava {
+				slog.Info("Java not found, downloading Adoptium JRE for migration")
+				var dlErr error
+				javaPath, dlErr = h2migrate.DownloadJRE(config.HomeDir())
+				if dlErr != nil {
+					slog.Error("JRE download failed", "err", dlErr)
+				}
+				defer h2migrate.CleanupJRE(config.HomeDir())
+			}
+
 			if migStore, migErr := storage.NewSQLiteStore(config.HomeDir()); migErr == nil {
-				result, migErr := h2migrate.RunJarMigration(config.HomeDir(), migStatus.JavaPath, migStore)
-				if migErr != nil {
-					slog.Error("JAR migration failed, trying filesystem fallback", "err", migErr)
-					result, migErr = h2migrate.Migrate(config.HomeDir(), migStore)
+				var result *h2migrate.MigrateResult
+				if javaPath != "" {
+					slog.Info("Running H2 migration", "java", javaPath)
+					var migErr error
+					result, migErr = h2migrate.RunJarMigration(config.HomeDir(), javaPath, migStore)
 					if migErr != nil {
-						slog.Error("Filesystem fallback also failed", "err", migErr)
+						slog.Error("JAR migration failed, trying filesystem fallback", "err", migErr)
 					}
+				}
+				if result == nil {
+					slog.Warn("Using filesystem fallback migration (no secrets, no namespace names)")
+					result, _ = h2migrate.Migrate(config.HomeDir(), migStore)
 				}
 				if result != nil {
 					slog.Info("H2 migration complete",
