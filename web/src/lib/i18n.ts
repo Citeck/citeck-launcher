@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import enDefault from '../locales/en'
 
 export type Locale = 'en' | 'ru' | 'zh' | 'es' | 'de' | 'fr' | 'pt' | 'ja'
 
@@ -23,9 +24,12 @@ export const LOCALES: LocaleMeta[] = [
 
 const STORAGE_KEY = 'citeck-locale'
 
-// Lazy-loaded locale modules
+// English is bundled synchronously — always available on first render
+const enTranslations: Translations = enDefault
+
+// Lazy-loaded locale modules (non-English)
 const loaders: Record<Locale, () => Promise<{ default: Translations }>> = {
-  en: () => import('../locales/en'),
+  en: () => Promise.resolve({ default: enTranslations }),
   ru: () => import('../locales/ru'),
   zh: () => import('../locales/zh'),
   es: () => import('../locales/es'),
@@ -52,13 +56,13 @@ interface I18nState {
   setLocale: (locale: Locale) => void
 }
 
-// English is bundled inline (sync), others are lazy-loaded
-let enTranslations: Translations = {}
+const initialLocale = detectLocale()
 
 export const useI18nStore = create<I18nState>((set, get) => ({
-  locale: 'en',
-  translations: {},
-  loading: true,
+  // Start with English translations immediately — no flash of raw keys
+  locale: initialLocale === 'en' ? 'en' : 'en',
+  translations: enTranslations,
+  loading: initialLocale !== 'en',
 
   setLocale: async (locale: Locale) => {
     try {
@@ -76,21 +80,14 @@ export const useI18nStore = create<I18nState>((set, get) => ({
   },
 }))
 
-// Initialize on load
-async function init() {
-  const locale = detectLocale()
-  // Always load English as fallback for missing keys
-  const enMod = await loaders.en()
-  enTranslations = enMod.default
-  if (locale === 'en') {
-    useI18nStore.setState({ locale, translations: enTranslations, loading: false })
-  } else {
-    const mod = await loaders[locale]()
-    useI18nStore.setState({ locale, translations: mod.default, loading: false })
-  }
+// Load non-English locale if detected
+if (initialLocale !== 'en') {
+  loaders[initialLocale]().then(mod => {
+    useI18nStore.setState({ locale: initialLocale, translations: mod.default, loading: false })
+  }).catch(() => {
+    useI18nStore.setState({ loading: false })
+  })
 }
-
-init()
 
 /**
  * Translation function. Supports simple interpolation: t('key', { name: 'value' })
