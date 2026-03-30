@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/storage"
+	"gopkg.in/yaml.v3"
 )
 
 // MigrateResult holds the result of an H2 → SQLite migration.
@@ -192,8 +193,8 @@ func migrateNamespaceConfigs(homeDir string, result *MigrateResult) error {
 	return nil
 }
 
-// migrateFromFilesystem is a fallback that creates workspace records from the directory structure
-// when the H2 file can't be parsed.
+// migrateFromFilesystem is a fallback that creates workspace records and stub namespace.yml
+// files from the directory structure when the H2 file can't be parsed.
 func migrateFromFilesystem(homeDir string, store storage.Store) (*MigrateResult, error) {
 	result := &MigrateResult{}
 	slog.Info("Using filesystem fallback migration")
@@ -213,9 +214,9 @@ func migrateFromFilesystem(homeDir string, store storage.Store) (*MigrateResult,
 		}
 		wsID := entry.Name()
 
-		// Check if workspace has a repo dir (valid workspace)
-		repoDir := filepath.Join(wsDir, wsID, "repo")
-		if _, err := os.Stat(repoDir); err != nil {
+		// Check if workspace has a namespace dir (valid workspace)
+		nsDir := filepath.Join(wsDir, wsID, "ns")
+		if _, err := os.Stat(nsDir); err != nil {
 			continue
 		}
 
@@ -230,20 +231,65 @@ func migrateFromFilesystem(homeDir string, store storage.Store) (*MigrateResult,
 		}
 		result.Workspaces++
 
-		// Count namespaces
-		nsDir := filepath.Join(wsDir, wsID, "ns")
+		// Read default bundleRef from workspace-v1.yml template (if available)
+		defaultBundleRef := ""
+		wsCfgPath := filepath.Join(wsDir, wsID, "repo", "workspace-v1.yml")
+		if data, err := os.ReadFile(wsCfgPath); err == nil {
+			defaultBundleRef = extractDefaultBundleRef(data)
+		}
+
+		// Create stub namespace.yml for namespaces that don't have one
 		nsEntries, err := os.ReadDir(nsDir)
 		if err != nil {
 			continue
 		}
 		for _, ns := range nsEntries {
-			if ns.IsDir() {
-				result.Namespaces++
+			if !ns.IsDir() {
+				continue
 			}
+			nsID := ns.Name()
+			nsConfigPath := filepath.Join(nsDir, nsID, "namespace.yml")
+			if _, err := os.Stat(nsConfigPath); err == nil {
+				result.Namespaces++ // already has config
+				continue
+			}
+			// Create minimal namespace.yml so the launcher can manage this namespace
+			stub := fmt.Sprintf("id: %s\nname: %s\n", nsID, nsID)
+			if defaultBundleRef != "" {
+				stub += fmt.Sprintf("bundleRef: '%s'\n", defaultBundleRef)
+			}
+			if err := os.WriteFile(nsConfigPath, []byte(stub), 0o644); err != nil {
+				slog.Warn("Failed to create namespace config", "ns", nsID, "err", err)
+				result.Errors++
+				continue
+			}
+			result.Namespaces++
+			slog.Info("Created stub namespace config", "ws", wsID, "ns", nsID, "bundleRef", defaultBundleRef)
 		}
 	}
 
 	return result, nil
+}
+
+// extractDefaultBundleRef reads the first namespaceTemplate bundleRef from workspace-v1.yml.
+func extractDefaultBundleRef(data []byte) string {
+	// Simple YAML extraction without full unmarshal
+	var cfg struct {
+		NamespaceTemplates []struct {
+			Config struct {
+				BundleRef string `yaml:"bundleRef"`
+			} `yaml:"config"`
+		} `yaml:"namespaceTemplates"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return ""
+	}
+	for _, t := range cfg.NamespaceTemplates {
+		if t.Config.BundleRef != "" {
+			return t.Config.BundleRef
+		}
+	}
+	return ""
 }
 
 // parseWorkspaceJSON parses a workspace entity from Jackson JSON bytes.

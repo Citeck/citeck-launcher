@@ -27,16 +27,26 @@ func TestReadVarIntSingleByte(t *testing.T) {
 	}
 }
 
-func TestReadVarIntTwoBytes(t *testing.T) {
-	// 10xxxxxx: 2 bytes, 14 bits
-	// 0x80 | (high 6 bits), low 8 bits
-	data := []byte{0x80 | 0x01, 0x00} // value = 256
+func TestReadVarIntLEB128(t *testing.T) {
+	// LEB128: 0x80 | low7, high7 → value = (high7 << 7) | low7
+	// 128 = 0x80 → encoded as [0x80, 0x01] (low 7 bits = 0, continuation; then 1)
+	data := []byte{0x80, 0x01}
 	got, n, err := readVarInt(data, 0)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
-	if got != 256 || n != 2 {
-		t.Errorf("got (%d, %d), want (256, 2)", got, n)
+	if got != 128 || n != 2 {
+		t.Errorf("got (%d, %d), want (128, 2)", got, n)
+	}
+
+	// 300 = 0x12C → encoded as [0xAC, 0x02] (0x2C | 0x80, 0x02)
+	data = []byte{0xAC, 0x02}
+	got, n, err = readVarInt(data, 0)
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if got != 300 || n != 2 {
+		t.Errorf("got (%d, %d), want (300, 2)", got, n)
 	}
 }
 

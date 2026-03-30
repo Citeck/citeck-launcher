@@ -160,6 +160,25 @@ func Start(opts StartOptions) error {
 	if config.IsDesktopMode() {
 		wsID = "default"
 
+		// Auto-migrate H2 → SQLite BEFORE any SQLite access (transparent upgrade from Kotlin).
+		// Must happen here because NewSQLiteStore below creates the file if missing.
+		if needed, _ := h2migrate.NeedsMigration(config.HomeDir()); needed {
+			slog.Info("Kotlin H2 database detected, running auto-migration")
+			if migStore, migErr := storage.NewSQLiteStore(config.HomeDir()); migErr == nil {
+				result, migErr := h2migrate.Migrate(config.HomeDir(), migStore)
+				if migErr != nil {
+					slog.Error("H2 auto-migration failed", "err", migErr)
+				} else {
+					slog.Info("H2 auto-migration complete",
+						"workspaces", result.Workspaces,
+						"secrets", result.Secrets,
+						"namespaces", result.Namespaces,
+					)
+				}
+				migStore.Close()
+			}
+		}
+
 		// Try SQLiteStore for preferred workspace/namespace from launcher_state
 		if sqlStore, sqlErr := storage.NewSQLiteStore(config.HomeDir()); sqlErr == nil {
 			if state, stateErr := sqlStore.GetState(); stateErr == nil {
@@ -224,25 +243,6 @@ func Start(opts StartOptions) error {
 	// Initialize storage backend
 	var store storage.Store
 	if config.IsDesktopMode() {
-		// Auto-migrate H2 → SQLite on first desktop start (transparent upgrade from Kotlin)
-		if needed, _ := h2migrate.NeedsMigration(config.HomeDir()); needed {
-			slog.Info("Kotlin H2 database detected, running auto-migration")
-			tmpStore, tmpErr := storage.NewSQLiteStore(config.HomeDir())
-			if tmpErr == nil {
-				result, migErr := h2migrate.Migrate(config.HomeDir(), tmpStore)
-				if migErr != nil {
-					slog.Error("H2 auto-migration failed (secrets may be unavailable)", "err", migErr)
-				} else {
-					slog.Info("H2 auto-migration complete",
-						"workspaces", result.Workspaces,
-						"secrets", result.Secrets,
-						"namespaces", result.Namespaces,
-					)
-				}
-				tmpStore.Close()
-			}
-		}
-
 		store, err = storage.NewSQLiteStore(config.HomeDir())
 		if err != nil {
 			return fmt.Errorf("create sqlite store: %w", err)

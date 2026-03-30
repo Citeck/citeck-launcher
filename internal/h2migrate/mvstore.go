@@ -19,9 +19,10 @@ import (
 //
 // Reference: org.h2.mvstore.MVStore, org.h2.mvstore.Chunk
 type MVStore struct {
-	file   *os.File
-	header map[string]string
-	chunks []chunkMeta
+	file           *os.File
+	header         map[string]string
+	chunks         []chunkMeta
+	currentChunkID int // ID of the chunk whose data is being processed
 }
 
 // chunkMeta holds parsed chunk header fields.
@@ -33,7 +34,7 @@ type chunkMeta struct {
 	compressType   int // 0=none, 1=LZF, 2=deflate
 	lenOnDisk      int // length on disk (after header)
 	lenDecompressed int
-	rootMapPos     int64 // position of root page within chunk data
+	rootMapPos     int64 // encoded page position: (chunkId << 38) | (offset << 6) | type
 }
 
 // pageType constants
@@ -71,18 +72,23 @@ func (s *MVStore) readHeader() error {
 	}
 
 	s.header = parseHeaderBlock(buf)
-	if s.header["H"] != "3" {
+	if !isSupportedMVStoreVersion(s.header["H"]) {
 		// Try backup header
 		if _, err := s.file.ReadAt(buf, 4096); err != nil {
 			return fmt.Errorf("read backup header: %w", err)
 		}
 		s.header = parseHeaderBlock(buf)
-		if s.header["H"] != "3" {
+		if !isSupportedMVStoreVersion(s.header["H"]) {
 			return fmt.Errorf("unsupported MVStore format version: %s", s.header["H"])
 		}
 	}
 
 	return nil
+}
+
+// isSupportedMVStoreVersion returns true for H:2 and H:3 header versions.
+func isSupportedMVStoreVersion(v string) bool {
+	return v == "2" || v == "3"
 }
 
 // parseHeaderBlock parses "key:value,key:value\n" format from a 4K block.
@@ -156,30 +162,84 @@ func (s *MVStore) ReadMap(mapName string) (map[string][]byte, error) {
 }
 
 // readMetaMap reads the "meta" map (always map 0, stored in the last chunk).
-func (s *MVStore) readMetaMap() (map[string]string, error) {
-	if err := s.scanChunks(); err != nil {
-		return nil, err
+// decodePagePos extracts chunk ID and offset from an encoded page position.
+// H2 MVStore encodes: (chunkId << 38) | (offset << 6) | type
+func decodePagePos(pos int64) (chunkID int, offset int) {
+	chunkID = int(pos >> 38)
+	offset = int((pos >> 6) & ((1 << 32) - 1))
+	return
+}
+
+// readChunkAt reads a chunk header at the given file offset and returns parsed metadata.
+func (s *MVStore) readChunkAt(offset int64) (chunkMeta, error) {
+	buf := make([]byte, 4096)
+	if _, err := s.file.ReadAt(buf, offset); err != nil {
+		return chunkMeta{}, fmt.Errorf("read chunk at %d: %w", offset, err)
 	}
-
-	if len(s.chunks) == 0 {
-		return nil, fmt.Errorf("no chunks found in mvstore")
+	if string(buf[:6]) != "chunk:" {
+		return chunkMeta{}, fmt.Errorf("no chunk header at offset %d", offset)
 	}
-
-	// Use the last chunk (most recent)
-	lastChunk := s.chunks[len(s.chunks)-1]
-
-	// Read meta root from chunk
-	chunkData, err := s.readChunkData(lastChunk)
+	c, err := parseChunkHeader(buf)
 	if err != nil {
-		return nil, fmt.Errorf("read last chunk: %w", err)
+		return chunkMeta{}, err
+	}
+	c.blockStart = offset
+	return c, nil
+}
+
+func (s *MVStore) readMetaMap() (map[string]string, error) {
+	// The file header's "block" field points to the newest chunk.
+	// Read it directly instead of scanning all chunks from offset 8192.
+	blockStr := s.header["block"]
+	if blockStr == "" {
+		return nil, fmt.Errorf("no block field in header")
+	}
+	blockNum, err := strconv.ParseInt(blockStr, 16, 64)
+	if err != nil {
+		return nil, fmt.Errorf("parse header block: %w", err)
 	}
 
-	// The meta map root is at the position indicated by the chunk header
-	if lastChunk.rootMapPos <= 0 || int(lastChunk.rootMapPos) >= len(chunkData) {
-		return nil, fmt.Errorf("invalid meta root position: %d", lastChunk.rootMapPos)
+	newestChunk, err := s.readChunkAt(blockNum * 4096)
+	if err != nil {
+		return nil, fmt.Errorf("read newest chunk: %w", err)
 	}
 
-	entries, err := s.readLeafPage(chunkData, int(lastChunk.rootMapPos))
+	// Decode root page position — encoded as (chunkId << 38) | (offset << 6) | type
+	rootChunkID, rootOffset := decodePagePos(newestChunk.rootMapPos)
+
+	// Read the chunk that contains the root page (may differ from newest)
+	var rootChunk chunkMeta
+	if rootChunkID == newestChunk.id {
+		rootChunk = newestChunk
+	} else {
+		// Root page is in a different chunk — find it via the newest chunk's "toc" or scan
+		if err := s.scanChunks(); err != nil {
+			return nil, err
+		}
+		found := false
+		for _, c := range s.chunks {
+			if c.id == rootChunkID {
+				rootChunk = c
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("root chunk %d not found", rootChunkID)
+		}
+	}
+
+	chunkData, err := s.readChunkData(rootChunk)
+	if err != nil {
+		return nil, fmt.Errorf("read root chunk %d: %w", rootChunkID, err)
+	}
+
+	if rootOffset <= 0 || rootOffset >= len(chunkData) {
+		return nil, fmt.Errorf("invalid meta root offset: %d (chunk %d, data len %d)", rootOffset, rootChunkID, len(chunkData))
+	}
+
+	s.currentChunkID = rootChunkID
+	entries, err := s.readLeafPage(chunkData, rootOffset)
 	if err != nil {
 		return nil, fmt.Errorf("read meta map: %w", err)
 	}
@@ -189,6 +249,27 @@ func (s *MVStore) readMetaMap() (map[string]string, error) {
 		result[k] = string(v)
 	}
 	return result, nil
+}
+
+// findChunk returns the chunk with the given ID.
+// It first checks already-loaded chunks, then tries to read from the file header's "toc" data,
+// and finally falls back to a full scan.
+func (s *MVStore) findChunk(id int) (chunkMeta, error) {
+	for _, c := range s.chunks {
+		if c.id == id {
+			return c, nil
+		}
+	}
+	// Try full scan if not found
+	if err := s.scanChunks(); err != nil {
+		return chunkMeta{}, err
+	}
+	for _, c := range s.chunks {
+		if c.id == id {
+			return c, nil
+		}
+	}
+	return chunkMeta{}, fmt.Errorf("chunk %d not found", id)
 }
 
 // scanChunks finds all chunks in the file by scanning from offset 8192.
@@ -259,6 +340,15 @@ func parseChunkHeader(data []byte) (chunkMeta, error) {
 	text := string(data[:end])
 
 	var c chunkMeta
+	// All MVStore header values are hex-encoded
+	hexInt := func(s string) int {
+		v, _ := strconv.ParseInt(s, 16, 64)
+		return int(v)
+	}
+	hexInt64 := func(s string) int64 {
+		v, _ := strconv.ParseInt(s, 16, 64)
+		return v
+	}
 	for _, part := range strings.Split(text, ",") {
 		kv := strings.SplitN(part, ":", 2)
 		if len(kv) != 2 {
@@ -267,24 +357,21 @@ func parseChunkHeader(data []byte) (chunkMeta, error) {
 		key, val := kv[0], kv[1]
 		switch key {
 		case "chunk":
-			c.id, _ = strconv.Atoi(val)
+			c.id = hexInt(val)
 		case "block":
-			v, _ := strconv.ParseInt(val, 10, 64)
-			c.blockStart = v * 4096
+			c.blockStart = hexInt64(val) * 4096
 		case "blocks":
-			c.blockCount, _ = strconv.Atoi(val)
+			c.blockCount = hexInt(val)
 		case "len":
-			c.lenOnDisk, _ = strconv.Atoi(val)
+			c.lenOnDisk = hexInt(val)
 		case "lenD":
-			c.lenDecompressed, _ = strconv.Atoi(val)
+			c.lenDecompressed = hexInt(val)
 		case "compress":
-			c.compressType, _ = strconv.Atoi(val)
+			c.compressType = hexInt(val)
 		case "pages":
-			c.pageCount, _ = strconv.Atoi(val)
+			c.pageCount = hexInt(val)
 		case "root":
-			// Root page position is encoded as hex
-			v, _ := strconv.ParseInt(val, 16, 64)
-			c.rootMapPos = v
+			c.rootMapPos = hexInt64(val)
 		}
 	}
 
@@ -307,21 +394,8 @@ func (s *MVStore) readChunkData(c chunkMeta) ([]byte, error) {
 		return nil, err
 	}
 
-	// Find end of header line
-	headerEnd := 0
-	for i, b := range chunkBytes {
-		if b == '\n' {
-			headerEnd = i + 1
-			break
-		}
-	}
-
-	data := chunkBytes[headerEnd:]
-
-	// Trim to actual data length
-	if c.lenOnDisk > 0 && c.lenOnDisk < len(data) {
-		data = data[:c.lenOnDisk]
-	}
+	// Return full chunk block — page offsets are relative to block start (not data start).
+	data := chunkBytes
 
 	// Decompress if needed
 	if c.compressType == 1 && c.lenDecompressed > 0 { // LZF
@@ -367,40 +441,38 @@ func (s *MVStore) readPageTree(rootPos int64) (map[string][]byte, error) {
 }
 
 // readLeafPage reads entries from a leaf page.
-// This is a simplified reader that handles the common case of string keys and byte[] values.
+// Page format: int32 pageLength | int16 checkValue | varint pageNo | varint mapId | varint keyCount | byte type | ...
 func (s *MVStore) readLeafPage(data []byte, offset int) (map[string][]byte, error) {
 	result := make(map[string][]byte)
 
-	if offset >= len(data) {
+	if offset+6 >= len(data) {
 		return result, nil
 	}
 
 	pos := offset
 
-	// Read page header
-	if pos+4 > len(data) {
-		return result, nil
-	}
-
-	// Page length (4 bytes, big-endian)
+	// Page length (4 bytes, big-endian) — includes these 4 bytes
 	pageLen := int(binary.BigEndian.Uint32(data[pos:]))
 	pos += 4
 
-	if pageLen <= 0 || pos+pageLen > len(data) {
+	if pageLen <= 0 || offset+pageLen > len(data) {
 		return result, nil
 	}
 
-	pageEnd := pos + pageLen
+	pageEnd := offset + pageLen // pageLen includes the 4-byte length field
 
-	// Check byte
-	if pos >= pageEnd {
-		return result, nil
-	}
-	checkByte := data[pos]
-	pos++
+	// Check value (2 bytes, big-endian short) — skip
+	pos += 2
 
-	// Map ID (varint)
+	// Page number (varint) — skip
 	_, n, err := readVarInt(data, pos)
+	if err != nil {
+		return result, nil
+	}
+	pos += n
+
+	// Map ID (varint) — skip
+	_, n, err = readVarInt(data, pos)
 	if err != nil {
 		return result, nil
 	}
@@ -413,10 +485,63 @@ func (s *MVStore) readLeafPage(data []byte, offset int) (map[string][]byte, erro
 	}
 	pos += n
 
-	isLeaf := (checkByte & 1) == 0
+	// Type byte
+	if pos >= pageEnd {
+		return result, nil
+	}
+	typeByte := data[pos]
+	pos++
+
+	isLeaf := (typeByte & 1) == 0
 
 	if !isLeaf {
-		return result, fmt.Errorf("internal B-tree page at offset %d (need leaf); map has grown beyond single-page size — use filesystem fallback", offset)
+		// Internal B-tree node: read child page positions and recurse.
+		// Format: (keyCount+1) x int64 BE child positions, then (keyCount+1) x varlong counts, then keys
+		childCount := int(keyCount) + 1
+		childPositions := make([]int64, childCount)
+		for i := 0; i < childCount; i++ {
+			if pos+8 > len(data) {
+				return result, nil
+			}
+			childPositions[i] = int64(binary.BigEndian.Uint64(data[pos:]))
+			pos += 8
+		}
+		// Skip descendant counts (varlong per child)
+		for i := 0; i < childCount; i++ {
+			_, n, err := readVarInt(data, pos)
+			if err != nil {
+				return result, nil
+			}
+			pos += n
+		}
+		// Recurse into each child — they may be in the same or different chunks
+		for _, childPos := range childPositions {
+			childChunkID, childOffset := decodePagePos(childPos)
+			var childData []byte
+			if childChunkID == s.currentChunkID {
+				childData = data
+			} else {
+				// Load chunk on demand
+				chunk, err := s.findChunk(childChunkID)
+				if err != nil {
+					continue
+				}
+				childData, err = s.readChunkData(chunk)
+				if err != nil {
+					continue
+				}
+			}
+			if childOffset >= 0 && childOffset < len(childData) {
+				entries, err := s.readLeafPage(childData, childOffset)
+				if err != nil {
+					continue
+				}
+				for k, v := range entries {
+					result[k] = v
+				}
+			}
+		}
+		return result, nil
 	}
 
 	// Leaf page: read keys and values
