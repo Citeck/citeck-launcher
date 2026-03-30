@@ -454,20 +454,30 @@ func importSecrets(maps map[string]map[string]string, store storage.Store, resul
 }
 
 func importState(maps map[string]map[string]string, store storage.Store) {
-	stateMap, ok := maps["launcher!state"]
-	if !ok {
-		return
-	}
-	for key, b64 := range stateMap {
-		raw, _ := base64.StdEncoding.DecodeString(b64)
-		if key == "selectedWorkspace" {
-			var val string
-			if json.Unmarshal(raw, &val) == nil && val != "" {
-				store.SetState(storage.LauncherState{WorkspaceID: val})
-				slog.Info("Migrated launcher state", "selectedWorkspace", val)
-			}
+	// Read selectedWorkspace from launcher!state
+	var wsID string
+	if stateMap, ok := maps["launcher!state"]; ok {
+		if b64, ok := stateMap["selectedWorkspace"]; ok {
+			raw, _ := base64.StdEncoding.DecodeString(b64)
+			json.Unmarshal(raw, &wsID)
 		}
 	}
+	if wsID == "" {
+		return
+	}
+
+	// Read selectedNamespace from workspace-state!{wsId}
+	var nsID string
+	wsStateKey := "workspace-state!" + wsID
+	if wsState, ok := maps[wsStateKey]; ok {
+		if b64, ok := wsState["selectedNamespace"]; ok {
+			raw, _ := base64.StdEncoding.DecodeString(b64)
+			json.Unmarshal(raw, &nsID)
+		}
+	}
+
+	store.SetState(storage.LauncherState{WorkspaceID: wsID, NamespaceID: nsID})
+	slog.Info("Migrated launcher state", "workspace", wsID, "namespace", nsID)
 }
 
 // findJava searches for a Java executable in PATH and common locations.
