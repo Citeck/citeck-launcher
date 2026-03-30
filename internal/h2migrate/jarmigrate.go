@@ -18,16 +18,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/citeck/citeck-launcher/internal/h2migrate/embedded"
 	"github.com/citeck/citeck-launcher/internal/storage"
 	"gopkg.in/yaml.v3"
 )
 
 const (
-	// JarURL is the download URL for the H2 export JAR.
-	JarURL = "https://github.com/Citeck/citeck-launcher/releases/download/v2.0.0/h2-export.jar"
-	// JarSHA256 is the expected SHA256 hash of the JAR file.
-	JarSHA256 = "" // TODO: set after first release build
-	// JarName is the filename for the downloaded JAR.
+	// JarName is the filename for the temporary JAR extracted from embedded data.
 	JarName = "h2-export.jar"
 )
 
@@ -66,29 +63,13 @@ func RunJarMigration(homeDir string, javaPath string, store storage.Store) (*Mig
 		slog.Info("JRE downloaded", "java", javaPath)
 	}
 
-	// Step 2: Download JAR
-	slog.Info("Downloading H2 export tool", "url", JarURL)
-	if err := downloadFile(jarPath, JarURL); err != nil {
-		return nil, fmt.Errorf("download h2-export.jar: %w", err)
+	// Step 2: Write embedded JAR to disk
+	if err := os.WriteFile(jarPath, embedded.H2ExportJar, 0o644); err != nil {
+		return nil, fmt.Errorf("write h2-export.jar: %w", err)
 	}
 	defer os.Remove(jarPath)
 
-	// Step 3: Verify SHA256
-	if JarSHA256 != "" {
-		hash, err := fileSHA256(jarPath)
-		if err != nil {
-			return nil, fmt.Errorf("compute jar hash: %w", err)
-		}
-		if hash != JarSHA256 {
-			os.Remove(jarPath)
-			return nil, fmt.Errorf("jar SHA256 mismatch: got %s, want %s", hash, JarSHA256)
-		}
-		slog.Info("JAR SHA256 verified", "hash", hash)
-	} else {
-		slog.Warn("JAR SHA256 not configured, skipping verification")
-	}
-
-	// Step 4: Run JAR
+	// Step 3: Run JAR
 	slog.Info("Running H2 export", "jar", jarPath, "db", h2Path)
 	cmd := exec.Command(javaPath, "-jar", jarPath, h2Path, exportPath)
 	cmd.Stderr = os.Stderr
