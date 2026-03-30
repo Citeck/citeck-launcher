@@ -30,13 +30,22 @@ export function Dashboard() {
   const [masterPwd, setMasterPwd] = useState('')
   const [masterPwdError, setMasterPwdError] = useState('')
   const [masterPwdLoading, setMasterPwdLoading] = useState(false)
+  const [masterPwdChecked, setMasterPwdChecked] = useState(false)
 
-  // Check if there are pending encrypted secrets that need master password
+  // Show master password dialog only when apps have auth errors AND encrypted blob exists.
+  // Never show proactively — only when the user actually hits a problem.
   useEffect(() => {
+    if (masterPwdChecked || showMasterPwd) return
+    const apps = namespace?.apps ?? []
+    const hasAuthError = apps.some((a) =>
+      a.statusMessage?.includes('authentication failed') || a.statusMessage?.includes('Access denied')
+    )
+    if (!hasAuthError) return
     getMigrationStatus().then((s) => {
       if (s.hasPendingSecrets) setShowMasterPwd(true)
+      setMasterPwdChecked(true)
     }).catch(() => {})
-  }, [])
+  }, [namespace, masterPwdChecked, showMasterPwd])
 
   const handleMasterPwdSubmit = useCallback(async () => {
     if (!masterPwd) return
