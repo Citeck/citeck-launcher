@@ -275,6 +275,81 @@ eapps:
 	assert.Equal(t, "nexus.citeck.ru/ecos-model-app:3.0", def.CiteckApps[1].Image)
 }
 
+func TestFindBundleFile_YamlExtension(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "2025.12.yaml"), []byte("apps: {}"), 0o644))
+
+	result := findBundleFile(dir, "2025.12")
+	assert.Equal(t, filepath.Join(dir, "2025.12.yaml"), result)
+}
+
+func TestFindBundleFile_YmlExtension(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "2025.12.yml"), []byte("apps: {}"), 0o644))
+
+	result := findBundleFile(dir, "2025.12")
+	assert.Equal(t, filepath.Join(dir, "2025.12.yml"), result)
+}
+
+func TestFindBundleFile_YamlPreferredOverYml(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "2025.12.yaml"), []byte("yaml"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "2025.12.yml"), []byte("yml"), 0o644))
+
+	// .yaml is checked first, so it should win
+	result := findBundleFile(dir, "2025.12")
+	assert.Equal(t, filepath.Join(dir, "2025.12.yaml"), result)
+}
+
+func TestFindBundleFile_DirValuesYaml(t *testing.T) {
+	dir := t.TempDir()
+	subDir := filepath.Join(dir, "2025.12")
+	require.NoError(t, os.MkdirAll(subDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(subDir, "values.yaml"), []byte("apps: {}"), 0o644))
+
+	result := findBundleFile(dir, "2025.12")
+	assert.Equal(t, filepath.Join(subDir, "values.yaml"), result)
+}
+
+func TestFindBundleFile_DirValuesYml(t *testing.T) {
+	dir := t.TempDir()
+	subDir := filepath.Join(dir, "2025.12")
+	require.NoError(t, os.MkdirAll(subDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(subDir, "values.yml"), []byte("apps: {}"), 0o644))
+
+	result := findBundleFile(dir, "2025.12")
+	assert.Equal(t, filepath.Join(subDir, "values.yml"), result)
+}
+
+func TestFindBundleFile_DirectorySkipped(t *testing.T) {
+	dir := t.TempDir()
+	// Create a directory with the same name as the key — should not match
+	// because findBundleFile checks !info.IsDir()
+	subDir := filepath.Join(dir, "2025.12")
+	require.NoError(t, os.MkdirAll(subDir, 0o755))
+
+	// No values.yaml inside the dir, so it should not match
+	result := findBundleFile(dir, "2025.12")
+	assert.Empty(t, result, "bare directory without values.yaml should not match")
+}
+
+func TestFindBundleFile_NotFound(t *testing.T) {
+	dir := t.TempDir()
+
+	result := findBundleFile(dir, "nonexistent")
+	assert.Empty(t, result)
+}
+
+func TestFindBundleFile_BareFileWithoutExtension(t *testing.T) {
+	dir := t.TempDir()
+	// A regular file named exactly "2025.12" (no extension) should match
+	// as the last candidate
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "2025.12"), []byte("apps: {}"), 0o644))
+
+	result := findBundleFile(dir, "2025.12")
+	assert.Equal(t, filepath.Join(dir, "2025.12"), result)
+}
+
 func TestBuildAliasMap_IncludesAlfrescoAliases(t *testing.T) {
 	cfg := &WorkspaceConfig{
 		Webapps: []WebappConfig{
