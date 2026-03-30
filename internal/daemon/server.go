@@ -519,9 +519,9 @@ func Start(opts StartOptions) error {
 		} else {
 			localhost := isLocalhostAddr(tcpAddr)
 			mtlsActive := false
-			// mTLS clients are authenticated — give them full access (socketMux).
-			// Localhost TCP gets restricted tcpMux (no shutdown, no exec).
-			var tcpBaseMux http.Handler = tcpMux
+			// Localhost TCP is trusted — give full access (socketMux), same as Unix socket.
+			// Non-localhost requires mTLS for full access.
+			var tcpBaseMux http.Handler = socketMux
 			if !localhost {
 				var err error
 				tcpListener, tcpBaseMux, mtlsActive, err = d.setupMTLS(tcpListener, socketMux, nsCfg, tcpAddr)
