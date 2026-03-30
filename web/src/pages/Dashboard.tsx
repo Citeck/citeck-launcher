@@ -202,7 +202,9 @@ export function Dashboard() {
       {/* Top: sidebar + table + drawer overlay */}
       <div className="flex flex-1 min-h-0 relative">
         {/* Left info panel */}
-        <aside className="w-56 shrink-0 border-r border-border bg-card p-3 flex flex-col gap-2 overflow-y-auto h-full">
+        <aside className="w-56 shrink-0 border-r border-border bg-card flex flex-col h-full">
+          {/* Scrollable content */}
+          <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-2">
           <div className="flex items-center justify-between">
             <div className="min-w-0">
               <div className="text-sm font-semibold truncate">{namespace.name}</div>
@@ -282,7 +284,9 @@ export function Dashboard() {
             </div>
           )}
 
-          <div className="mt-auto pt-2 border-t border-border flex flex-col gap-1">
+          </div>
+          {/* Fixed footer — always visible at bottom */}
+          <div className="shrink-0 p-3 pt-2 border-t border-border flex flex-col gap-1">
             <SidebarBtn icon={HardDrive} label={t('dashboard.volumes')}
               onClick={() => { openTab({ id: 'volumes', title: t('dashboard.volumes'), path: '/volumes' }); navigate('/volumes') }} />
             <SidebarBtn icon={Key} label={t('dashboard.secrets')}
