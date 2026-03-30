@@ -26,7 +26,7 @@ const splashHTML = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<meta http-equiv="refresh" content="2">
+<meta http-equiv="refresh" content="1">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
