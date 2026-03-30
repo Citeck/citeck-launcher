@@ -22,6 +22,46 @@ import (
 
 var version = "dev"
 
+const splashHTML = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="2">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #1e1f22; color: #dfe1e5;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 100vh; font-size: 14px;
+  }
+  .title { font-size: 22px; font-weight: 600; margin-bottom: 12px; }
+  .status { color: #9da0a8; margin-bottom: 32px; }
+  .spinner {
+    width: 36px; height: 36px; border: 3px solid #43454a;
+    border-top-color: #4d9cf6; border-radius: 50%;
+    animation: spin 0.8s linear infinite; margin-bottom: 32px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .links { display: flex; gap: 20px; margin-top: 16px; }
+  .links a {
+    color: #4d9cf6; text-decoration: none; font-size: 13px;
+    padding: 6px 14px; border: 1px solid #43454a; border-radius: 4px;
+  }
+  .links a:hover { background: #2b2d30; }
+</style>
+</head>
+<body>
+  <div class="spinner"></div>
+  <div class="title">Citeck Launcher</div>
+  <div class="status">Starting daemon...</div>
+  <div class="links">
+    <a href="/api/v1/daemon/logs?lines=200" target="_blank">Show Logs</a>
+    <a href="/api/v1/system/dump?format=zip">System Dump</a>
+  </div>
+</body>
+</html>`
+
 func main() {
 	// Set desktop mode early so config paths are correct
 	config.SetDesktopMode(true)
@@ -63,6 +103,20 @@ func main() {
 			r.SetURL(&url.URL{Scheme: "http", Host: "localhost"})
 		},
 		FlushInterval: -1,
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			// Daemon not ready yet — return splash page for HTML requests, 503 for API
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Retry-After", "2")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				w.Write([]byte(`{"error":"daemon starting","code":"DAEMON_STARTING"}`))
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Retry-After", "2")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(splashHTML))
+		},
 	}
 
 	// Static assets are embedded in the binary via daemon.WebUIHandler().
