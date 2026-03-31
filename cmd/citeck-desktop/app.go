@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/desktop"
 )
 
 // dumpSystemInfo downloads a diagnostic ZIP from the daemon via Unix socket.
@@ -54,4 +55,13 @@ func dumpSystemInfo(socketPath string) {
 	}
 
 	slog.Info("System dump created", "path", zipPath)
+}
+
+// DesktopService exposes OS-level features to the Wails webview via JS bindings.
+// Methods are callable from JavaScript: wails.Call("main.DesktopService.OpenURL", url)
+type DesktopService struct{}
+
+// OpenURL opens a URL in the system default browser.
+func (*DesktopService) OpenURL(url string) error {
+	return desktop.OpenBrowser(url)
 }

@@ -907,9 +907,6 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+api.WorkspaceSnapshots, d.handleWorkspaceSnapshots)
 	mux.HandleFunc("PUT /api/v1/snapshots/{name}", d.handleRenameSnapshot)
 
-	// Desktop: open URL in system browser (only in desktop mode)
-	mux.HandleFunc("POST /api/v1/open-url", d.handleOpenURL)
-
 	// Web UI (fallback)
 	mux.Handle("/", WebUIHandler())
 }

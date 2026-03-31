@@ -337,9 +337,12 @@ export async function submitMasterPassword(password: string): Promise<ActionResu
 }
 
 export async function openExternal(url: string): Promise<void> {
-  await fetchWithTimeout(`${API_BASE}/open-url`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
-    body: JSON.stringify({ url }),
-  })
+  // Wails desktop: call Go service directly via injected runtime
+  const w = (window as any).wails
+  if (w?.Call) {
+    await w.Call.ByName('main.DesktopService.OpenURL', url)
+    return
+  }
+  // Browser fallback: open in new tab
+  window.open(url, '_blank')
 }
