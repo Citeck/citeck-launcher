@@ -337,18 +337,16 @@ export async function submitMasterPassword(password: string): Promise<ActionResu
 }
 
 export async function openExternal(url: string): Promise<void> {
-  // Wails desktop: POST /wails/runtime with Browser.OpenURL call.
-  // Wails v3 runtime JS does the same but fails for external URLs because
-  // it targets window.location.origin which is our daemon, not Wails AssetServer.
-  // We handle /wails/runtime in the daemon (desktop mode only).
+  // Wails desktop: webview is served through Wails AssetServer (reverse proxy),
+  // so /wails/runtime is available natively. Use Browser.OpenURL API.
   try {
-    const res = await fetch(window.location.origin + '/wails/runtime', {
+    const res = await fetch('/wails/runtime', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ object: 9, method: 0, args: { url } }),
     })
     if (res.ok) return
-  } catch { /* not desktop */ }
+  } catch { /* not in Wails webview */ }
   // Browser fallback
   window.open(url, '_blank')
 }

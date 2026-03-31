@@ -9,10 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
-	goruntime "runtime"
 	"strings"
 	"time"
 
@@ -1289,54 +1287,4 @@ func isBlockedIP(ip net.IP) bool {
 	return false
 }
 
-// --- Wails runtime handler (desktop mode only) ---
-// Handles POST /wails/runtime — Wails v3 JS runtime sends API calls here.
-// We implement only the subset needed (Browser.OpenURL); unknown calls return 404.
-
-func (d *Daemon) handleWailsRuntime(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Object int             `json:"object"`
-		Method int             `json:"method"`
-		Args   json.RawMessage `json:"args"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	// object=9 is Browser, method=0 is OpenURL (from Wails objectNames)
-	const objectBrowser = 9
-	const methodOpenURL = 0
-	if req.Object == objectBrowser && req.Method == methodOpenURL {
-		var args struct {
-			URL string `json:"url"`
-		}
-		json.Unmarshal(req.Args, &args)
-		if args.URL == "" {
-			http.Error(w, "missing url", http.StatusBadRequest)
-			return
-		}
-		parsed, err := url.Parse(args.URL)
-		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-			http.Error(w, "invalid url", http.StatusBadRequest)
-			return
-		}
-		openSystemBrowser(args.URL)
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	http.Error(w, "unsupported wails call", http.StatusNotFound)
-}
-
-func openSystemBrowser(rawURL string) {
-	var cmd *exec.Cmd
-	switch goruntime.GOOS {
-	case "darwin":
-		cmd = exec.Command("open", rawURL)
-	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", rawURL)
-	default:
-		cmd = exec.Command("xdg-open", rawURL)
-	}
-	cmd.Start()
-}
 

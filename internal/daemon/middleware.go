@@ -152,10 +152,6 @@ func CSRFMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPost, http.MethodPut, http.MethodDelete:
-			// Wails runtime calls /wails/runtime without our CSRF header
-			if strings.HasPrefix(r.URL.Path, "/wails/") {
-				break
-			}
 			if r.Header.Get("X-Citeck-CSRF") == "" {
 				writeMiddlewareError(w, http.StatusForbidden, api.ErrCodeCSRFMissing, "X-Citeck-CSRF header required")
 				return
