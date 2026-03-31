@@ -33,10 +33,10 @@ export function DaemonLogsViewer({ compact = false, active = true }: DaemonLogsV
   }, [active])
 
   // Initial fetch + streaming follow
+  // Streaming follow — the endpoint replays last `tail` lines then streams new data.
+  // No separate REST fetch needed (would duplicate the same lines).
   useEffect(() => {
     if (!active) return
-
-    fetchInitial()
 
     abortRef.current?.abort()
     const controller = new AbortController()
@@ -47,21 +47,32 @@ export function DaemonLogsViewer({ compact = false, active = true }: DaemonLogsV
         const res = await fetch(`${API_BASE}/daemon/logs?follow=true&tail=500`, {
           signal: controller.signal,
         })
-        if (!res.ok || !res.body) return
+        if (!res.ok || !res.body) {
+          // Fallback to one-shot REST fetch if streaming not supported
+          fetchInitial()
+          return
+        }
 
         const reader = res.body.getReader()
         const decoder = new TextDecoder()
+        let isFirst = true
 
         while (true) {
           const { done, value } = await reader.read()
           if (done) break
           const chunk = decoder.decode(value, { stream: true })
-          setLogs(prev => {
-            const merged = prev + chunk
-            return merged.length > MAX_LOG_SIZE
-              ? merged.slice(-MAX_LOG_SIZE)
-              : merged
-          })
+          if (isFirst) {
+            // First chunk is the tail replay — replace state entirely
+            setLogs(chunk)
+            isFirst = false
+          } else {
+            setLogs(prev => {
+              const merged = prev + chunk
+              return merged.length > MAX_LOG_SIZE
+                ? merged.slice(-MAX_LOG_SIZE)
+                : merged
+            })
+          }
         }
       } catch (e) {
         if (e instanceof DOMException && e.name === 'AbortError') return

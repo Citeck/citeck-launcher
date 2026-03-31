@@ -162,12 +162,13 @@ export function LogViewer({ appName, compact = false, active = true }: LogViewer
       .catch((e) => setError(e.message))
   }, [appName, tail, setLinesWithLevels])
 
-  // Always fetch initial logs on mount/activation (covers both follow and non-follow modes)
+  // Non-follow mode: load via REST
   useEffect(() => {
-    if (active) fetchInitialLogs()
-  }, [fetchInitialLogs, active])
+    if (!follow && active) fetchInitialLogs()
+  }, [fetchInitialLogs, follow, active])
 
-  // Streaming follow
+  // Streaming follow — the endpoint replays last `tail` lines then streams.
+  // First chunk replaces state (backlog), subsequent chunks append.
   useEffect(() => {
     if (!follow || !appName || !active) return
 
@@ -184,12 +185,19 @@ export function LogViewer({ appName, compact = false, active = true }: LogViewer
 
         const reader = res.body.getReader()
         const decoder = new TextDecoder()
+        let isFirst = true
 
         while (true) {
           const { done, value } = await reader.read()
           if (done) break
           const chunk = decoder.decode(value, { stream: true })
-          appendChunk(chunk)
+          if (isFirst) {
+            // First chunk is the tail backlog — replace state to avoid duplication
+            setLinesWithLevels(chunk.split('\n'))
+            isFirst = false
+          } else {
+            appendChunk(chunk)
+          }
         }
       } catch (e) {
         if (e instanceof DOMException && e.name === 'AbortError') return
@@ -209,7 +217,7 @@ export function LogViewer({ appName, compact = false, active = true }: LogViewer
         retryTimerRef.current = null
       }
     }
-  }, [follow, appName, tail, appendChunk, active])
+  }, [follow, appName, tail, appendChunk, setLinesWithLevels, active])
 
   // Keyboard shortcuts
   useEffect(() => {

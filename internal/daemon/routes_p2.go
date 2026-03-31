@@ -389,7 +389,7 @@ func (d *Daemon) handleListSecrets(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 
-	secrets, err := d.store.ListSecrets()
+	secrets, err := d.secretReaderFunc().ListSecrets()
 	if err != nil {
 		writeInternalError(w, err)
 		return
@@ -535,6 +535,11 @@ func (d *Daemon) handleTestSecret(w http.ResponseWriter, r *http.Request) {
 // handleGetMigrationStatus returns whether encrypted secrets from Kotlin need to be unlocked,
 // and the current encryption/lock state.
 func (d *Daemon) handleGetMigrationStatus(w http.ResponseWriter, _ *http.Request) {
+	if d.store == nil {
+		writeJSON(w, map[string]any{"hasPendingSecrets": false, "encrypted": false, "locked": false})
+		return
+	}
+
 	blob, err := d.store.GetSecretBlob()
 	hasBlob := err == nil && blob != ""
 
@@ -653,7 +658,7 @@ func (d *Daemon) handleSetupPassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := d.secretService.SetMasterPassword(req.Password); err != nil {
-		if strings.Contains(err.Error(), "already configured") {
+		if errors.Is(err, storage.ErrAlreadyEncrypted) {
 			writeError(w, http.StatusConflict, err.Error())
 			return
 		}

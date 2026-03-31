@@ -18,6 +18,10 @@ import (
 // has not been provided yet (via Unlock or SetMasterPassword).
 var ErrSecretsLocked = errors.New("secrets are locked: master password required")
 
+// ErrAlreadyEncrypted is returned when SetMasterPassword is called but encryption
+// is already configured.
+var ErrAlreadyEncrypted = errors.New("encryption already configured")
+
 const (
 	verifyPlaintext    = "citeck-secrets-v1"
 	defaultIterations  = 1_000_000
@@ -46,7 +50,10 @@ type SecretService struct {
 // It reads encryption state from launcher_state on creation.
 func NewSecretService(store *SQLiteStore) (*SecretService, error) {
 	ss := &SecretService{store: store}
-	enc, _ := store.GetStateValue(stateEncrypted)
+	enc, err := store.GetStateValue(stateEncrypted)
+	if err != nil {
+		return nil, fmt.Errorf("read encryption state: %w", err)
+	}
 	ss.encrypted = (enc == "true")
 	return ss, nil
 }
@@ -73,7 +80,7 @@ func (ss *SecretService) SetMasterPassword(password string) error {
 	defer ss.mu.Unlock()
 
 	if ss.encrypted {
-		return fmt.Errorf("encryption already configured")
+		return ErrAlreadyEncrypted
 	}
 
 	// Generate 16-byte random salt

@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"database/sql"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -224,8 +223,7 @@ func TestSetMasterPasswordAlreadyEncrypted(t *testing.T) {
 	require.NoError(t, svc.SetMasterPassword("first"))
 
 	err = svc.SetMasterPassword("second")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "already configured")
+	require.ErrorIs(t, err, ErrAlreadyEncrypted)
 }
 
 func TestUnlockNotEncrypted(t *testing.T) {
@@ -316,12 +314,3 @@ func TestUnlockIdempotent(t *testing.T) {
 	assert.False(t, svc2.IsLocked())
 }
 
-// --- Helpers ---
-
-func getRawSecretValue(t *testing.T, db *sql.DB, id string) string {
-	t.Helper()
-	var val string
-	err := db.QueryRow("SELECT value FROM secrets WHERE id = ?", id).Scan(&val)
-	require.NoError(t, err)
-	return val
-}
