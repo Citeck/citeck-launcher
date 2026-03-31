@@ -56,6 +56,8 @@ func main() {
 	// This makes Wails the webview origin, so /wails/runtime (Browser.OpenURL etc.) works natively.
 	daemonTarget, _ := url.Parse(daemonURL)
 	proxy := httputil.NewSingleHostReverseProxy(daemonTarget)
+	// Flush immediately for SSE and streaming log endpoints
+	proxy.FlushInterval = -1
 	// Don't log proxy errors before daemon is ready
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		http.Error(w, "daemon not ready", http.StatusBadGateway)
