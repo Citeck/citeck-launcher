@@ -544,10 +544,16 @@ func (d *Daemon) handleGetMigrationStatus(w http.ResponseWriter, _ *http.Request
 		locked = d.secretService.IsLocked()
 	}
 
+	hasSecrets := false
+	if secrets, listErr := d.secretReaderFunc().ListSecrets(); listErr == nil {
+		hasSecrets = len(secrets) > 0
+	}
+
 	writeJSON(w, map[string]any{
 		"hasPendingSecrets": hasBlob,
 		"encrypted":         encrypted,
 		"locked":            locked,
+		"hasSecrets":        hasSecrets,
 	})
 }
 

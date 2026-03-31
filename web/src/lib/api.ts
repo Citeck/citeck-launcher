@@ -320,9 +320,9 @@ export async function renameSnapshot(oldName: string, newName: string): Promise<
 }
 
 // Migration
-export async function getMigrationStatus(): Promise<{ hasPendingSecrets: boolean; encrypted: boolean; locked: boolean }> {
+export async function getMigrationStatus(): Promise<{ hasPendingSecrets: boolean; encrypted: boolean; locked: boolean; hasSecrets: boolean }> {
   const res = await fetchWithTimeout(`${API_BASE}/migration/status`)
-  if (!res.ok) return { hasPendingSecrets: false, encrypted: false, locked: false }
+  if (!res.ok) return { hasPendingSecrets: false, encrypted: false, locked: false, hasSecrets: false }
   return res.json()
 }
 

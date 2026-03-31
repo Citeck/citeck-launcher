@@ -37,7 +37,11 @@ export function Dashboard() {
   const [kotlinPassword, setKotlinPassword] = useState('')  // preserved across step transition
   const [showPassword, setShowPassword] = useState(false)
 
-  // On mount: detect which dialog step is needed
+  // On mount: detect which dialog step is needed.
+  // Master password is ALWAYS required once per daemon restart:
+  // - hasPendingSecrets → decrypt Kotlin blob first
+  // - encrypted && locked → unlock with existing password
+  // - !encrypted && hasSecrets → must set a password to protect secrets
   useEffect(() => {
     if (dialogChecked || dialogStep) return
     if (!namespace) return
@@ -45,6 +49,7 @@ export function Dashboard() {
     getMigrationStatus().then((s) => {
       if (s.hasPendingSecrets) setDialogStep('kotlin-decrypt')
       else if (s.encrypted && s.locked) setDialogStep('unlock')
+      else if (!s.encrypted && s.hasSecrets) setDialogStep('setup-password')
     }).catch(() => {})
   }, [namespace, dialogChecked, dialogStep])
 
@@ -250,33 +255,8 @@ export function Dashboard() {
             {dialogStep === 'setup-password' && (<>
               <h2 className="text-lg font-semibold mb-2">{t('migration.setupPassword.title')}</h2>
               <p className="text-sm text-muted-foreground mb-4">{t('migration.setupPassword.description')}</p>
-              {showNewPwdInput ? (
-                <>
-                  <input
-                    type="password"
-                    className="w-full px-3 py-2 bg-background border border-border rounded text-foreground mb-2"
-                    placeholder={t('migration.passwordPlaceholder')}
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && newPassword && handleSetupPassword(newPassword)}
-                    autoFocus
-                  />
-                  {dialogError && <p className="text-destructive text-sm mb-2">{dialogError}</p>}
-                  <div className="flex justify-end gap-2 mt-4">
-                    <button type="button" className="text-sm text-muted-foreground hover:text-foreground" onClick={() => setShowNewPwdInput(false)}>
-                      {t('common.back')}
-                    </button>
-                    <button
-                      type="button"
-                      className="px-4 py-1.5 bg-primary text-primary-foreground rounded text-sm font-medium disabled:opacity-50"
-                      onClick={() => handleSetupPassword(newPassword)}
-                      disabled={dialogLoading || !newPassword}
-                    >
-                      {dialogLoading ? '...' : t('migration.confirm')}
-                    </button>
-                  </div>
-                </>
-              ) : (
+              {/* After Kotlin import: offer "same password" shortcut */}
+              {kotlinPassword && !showNewPwdInput ? (
                 <>
                   {dialogError && <p className="text-destructive text-sm mb-2">{dialogError}</p>}
                   <div className="flex flex-col gap-2 mt-2">
@@ -284,7 +264,7 @@ export function Dashboard() {
                       type="button"
                       className="w-full px-4 py-2 bg-primary text-primary-foreground rounded text-sm font-medium disabled:opacity-50"
                       onClick={() => handleSetupPassword(kotlinPassword)}
-                      disabled={dialogLoading || !kotlinPassword}
+                      disabled={dialogLoading}
                     >
                       {dialogLoading ? '...' : t('migration.setupPassword.samePassword')}
                     </button>
@@ -295,8 +275,39 @@ export function Dashboard() {
                     >
                       {t('migration.setupPassword.differentPassword')}
                     </button>
-                    <button type="button" className="text-sm text-muted-foreground hover:text-foreground mt-1" onClick={handleSkipDialog}>
-                      {t('migration.setupPassword.skip')}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="relative mb-2">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      className="w-full px-3 py-2 pr-10 bg-background border border-border rounded text-foreground"
+                      placeholder={t('migration.passwordPlaceholder')}
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && newPassword && handleSetupPassword(newPassword)}
+                      autoFocus
+                    />
+                    <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      onClick={() => setShowPassword(!showPassword)} tabIndex={-1}>
+                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                  {dialogError && <p className="text-destructive text-sm mb-2">{dialogError}</p>}
+                  <div className="flex justify-between mt-4">
+                    {kotlinPassword ? (
+                      <button type="button" className="text-sm text-muted-foreground hover:text-foreground" onClick={() => setShowNewPwdInput(false)}>
+                        {t('common.back')}
+                      </button>
+                    ) : <span />}
+                    <button
+                      type="button"
+                      className="px-4 py-1.5 bg-primary text-primary-foreground rounded text-sm font-medium disabled:opacity-50"
+                      onClick={() => handleSetupPassword(newPassword)}
+                      disabled={dialogLoading || !newPassword}
+                    >
+                      {dialogLoading ? '...' : t('migration.confirm')}
                     </button>
                   </div>
                 </>
