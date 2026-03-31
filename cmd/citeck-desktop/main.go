@@ -60,9 +60,6 @@ func main() {
 		Name:        "Citeck Launcher",
 		Description: "Citeck ECOS Platform Launcher",
 		Icon:        icons.ApplicationDarkMode256,
-		Services: []application.Service{
-			application.NewService(&DesktopService{}),
-		},
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: false,
 		},

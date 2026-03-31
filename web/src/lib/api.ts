@@ -337,10 +337,10 @@ export async function submitMasterPassword(password: string): Promise<ActionResu
 }
 
 export async function openExternal(url: string): Promise<void> {
-  // Wails desktop: call Go service directly via injected runtime
+  // Wails desktop: use built-in Browser.OpenURL from injected runtime
   const w = (window as any).wails
-  if (w?.Call) {
-    await w.Call.ByName('main.DesktopService.OpenURL', url)
+  if (w?.Browser?.OpenURL) {
+    await w.Browser.OpenURL(url)
     return
   }
   // Browser fallback: open in new tab
