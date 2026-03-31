@@ -907,9 +907,11 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+api.WorkspaceSnapshots, d.handleWorkspaceSnapshots)
 	mux.HandleFunc("PUT /api/v1/snapshots/{name}", d.handleRenameSnapshot)
 
-	// Desktop-only: open URL in system browser
+	// Desktop-only: handle Wails runtime calls (Browser.OpenURL, etc.)
+	// Wails v3 runtime JS is injected into the webview and makes POST /wails/runtime
+	// for API calls. Our daemon serves the webview, so we must handle these.
 	if config.IsDesktopMode() {
-		mux.HandleFunc("POST /api/v1/open-url", d.handleOpenURL)
+		mux.HandleFunc("POST /wails/runtime", d.handleWailsRuntime)
 	}
 
 	// Web UI (fallback)

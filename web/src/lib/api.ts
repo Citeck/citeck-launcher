@@ -337,15 +337,18 @@ export async function submitMasterPassword(password: string): Promise<ActionResu
 }
 
 export async function openExternal(url: string): Promise<void> {
-  // Desktop mode: daemon opens system browser via xdg-open/open
+  // Wails desktop: POST /wails/runtime with Browser.OpenURL call.
+  // Wails v3 runtime JS does the same but fails for external URLs because
+  // it targets window.location.origin which is our daemon, not Wails AssetServer.
+  // We handle /wails/runtime in the daemon (desktop mode only).
   try {
-    const res = await fetchWithTimeout(`${API_BASE}/open-url`, {
+    const res = await fetch(window.location.origin + '/wails/runtime', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
-      body: JSON.stringify({ url }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ object: 9, method: 0, args: { url } }),
     })
     if (res.ok) return
-  } catch { /* not desktop or endpoint unavailable */ }
+  } catch { /* not desktop */ }
   // Browser fallback
   window.open(url, '_blank')
 }

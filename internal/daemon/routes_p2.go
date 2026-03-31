@@ -1289,29 +1289,45 @@ func isBlockedIP(ip net.IP) bool {
 	return false
 }
 
-// --- Open URL in system browser (desktop mode only) ---
+// --- Wails runtime handler (desktop mode only) ---
+// Handles POST /wails/runtime — Wails v3 JS runtime sends API calls here.
+// We implement only the subset needed (Browser.OpenURL); unknown calls return 404.
 
-func (d *Daemon) handleOpenURL(w http.ResponseWriter, r *http.Request) {
+func (d *Daemon) handleWailsRuntime(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		URL string `json:"url"`
+		Object int             `json:"object"`
+		Method int             `json:"method"`
+		Args   json.RawMessage `json:"args"`
 	}
-	if err := readJSON(r, &req); err != nil || req.URL == "" {
-		writeError(w, http.StatusBadRequest, "url required")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	parsed, err := url.Parse(req.URL)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		writeError(w, http.StatusBadRequest, "invalid url: only http/https allowed")
+	// object=9 is Browser, method=0 is OpenURL (from Wails objectNames)
+	const objectBrowser = 9
+	const methodOpenURL = 0
+	if req.Object == objectBrowser && req.Method == methodOpenURL {
+		var args struct {
+			URL string `json:"url"`
+		}
+		json.Unmarshal(req.Args, &args)
+		if args.URL == "" {
+			http.Error(w, "missing url", http.StatusBadRequest)
+			return
+		}
+		parsed, err := url.Parse(args.URL)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			http.Error(w, "invalid url", http.StatusBadRequest)
+			return
+		}
+		openSystemBrowser(args.URL)
+		w.WriteHeader(http.StatusOK)
 		return
 	}
-	if err := openSystemBrowser(req.URL); err != nil {
-		writeInternalError(w, err)
-		return
-	}
-	writeJSON(w, api.ActionResultDto{Success: true})
+	http.Error(w, "unsupported wails call", http.StatusNotFound)
 }
 
-func openSystemBrowser(rawURL string) error {
+func openSystemBrowser(rawURL string) {
 	var cmd *exec.Cmd
 	switch goruntime.GOOS {
 	case "darwin":
@@ -1321,6 +1337,6 @@ func openSystemBrowser(rawURL string) error {
 	default:
 		cmd = exec.Command("xdg-open", rawURL)
 	}
-	return cmd.Start()
+	cmd.Start()
 }
 
