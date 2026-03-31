@@ -78,8 +78,12 @@ func main() {
 		e.Cancel()
 	})
 
-	// System tray
+	// System tray — SetLabel sets the D-Bus Id/Title used by StatusNotifierItem
+	// on Linux (Cinnamon, KDE, GNOME with AppIndicator extension).
+	// SetTooltip is a no-op on Linux in Wails v3 alpha, so SetLabel is essential
+	// for the tray to register with a proper name instead of "Wails".
 	tray := app.SystemTray.New()
+	tray.SetLabel("Citeck Launcher")
 	tray.SetTooltip("Citeck Launcher")
 	if runtime.GOOS == "darwin" {
 		tray.SetTemplateIcon(icons.SystrayMacTemplate)
