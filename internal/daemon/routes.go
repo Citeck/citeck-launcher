@@ -852,10 +852,10 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Security: only allow safe mutable fields (environments, resources,
+	// Defense-in-depth: only allow safe mutable fields (environments, resources,
 	// startupConditions, livenessProbe, stopTimeout).
-	// All structural fields are locked to the original definition to prevent
-	// container escape via the unauthenticated localhost TCP listener.
+	// Structural fields (image, cmd, ports, volumes) are locked to the original
+	// definition to prevent container escape.
 	oldDef := app.Def
 	newDef.Name = name
 	newDef.Image = oldDef.Image

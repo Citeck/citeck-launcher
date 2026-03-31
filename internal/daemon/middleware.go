@@ -47,7 +47,7 @@ func (rw *recoveryWriter) Flush() {
 }
 
 // RecoveryMiddleware catches panics in handlers and returns 500 with INTERNAL_ERROR code.
-// Logs the full stack trace via slog.Error. Applied to both socketMux and tcpMux.
+// Logs the full stack trace via slog.Error. Applied to both socket and TCP servers.
 // If the response was already started before the panic, only the log is emitted
 // (cannot change the HTTP status after headers are sent).
 func RecoveryMiddleware(next http.Handler) http.Handler {
@@ -147,7 +147,7 @@ func buildCORSAllowedOrigins(listenAddr string) map[string]bool {
 
 // CSRFMiddleware requires the X-Citeck-CSRF header on all mutating requests (POST/PUT/DELETE).
 // Custom headers force CORS preflight → preflight rejected for unknown origins → CSRF prevented.
-// Applied to tcpMux only; socket and mTLS connections don't need it.
+// Applied to localhost TCP only. Unix socket and mTLS connections are already authenticated.
 func CSRFMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {

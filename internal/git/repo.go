@@ -3,6 +3,7 @@ package git
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -14,6 +15,7 @@ import (
 	gogit "github.com/go-git/go-git/v5"
 	gogitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/http"
 	"golang.org/x/sync/singleflight"
 )
@@ -259,7 +261,11 @@ func isAuthError(err error) bool {
 	if err == nil {
 		return false
 	}
+	if errors.Is(err, transport.ErrAuthenticationRequired) || errors.Is(err, transport.ErrAuthorizationFailed) {
+		return true
+	}
+	// Fallback: some transports wrap auth errors without using sentinel values
 	errStr := strings.ToLower(err.Error())
-	return strings.Contains(errStr, "authentication") || strings.Contains(errStr, "unauthorized")
+	return strings.Contains(errStr, "unauthorized")
 }
 

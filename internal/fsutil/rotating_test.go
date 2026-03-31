@@ -100,6 +100,33 @@ func TestConcurrentWrites(t *testing.T) {
 	wg.Wait()
 }
 
+func TestStaleFdDetection(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+	rw := NewRotatingWriter(path, 1<<20, 3) // 1MB — no rotation during test
+	defer rw.Close()
+
+	rw.Write([]byte("before delete\n"))
+
+	// Delete the file while fd is still open
+	os.Remove(path)
+
+	// On Linux, writes to the unlinked fd succeed silently.
+	// Write staleCheckInterval times to trigger the stat check.
+	for i := 0; i < staleCheckInterval; i++ {
+		rw.Write([]byte("x\n"))
+	}
+
+	// After the check boundary, the file should be recreated
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("log file should be recreated after stale-fd detection: %v", err)
+	}
+	if len(data) == 0 {
+		t.Fatal("recreated log file should contain data")
+	}
+}
+
 func TestClose(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.log")

@@ -6,6 +6,10 @@ import (
 	"sync"
 )
 
+// staleCheckInterval is how often (in writes) we check whether the log file was
+// deleted externally. On Linux, writes to a deleted fd succeed silently.
+const staleCheckInterval = 1000
+
 // RotatingWriter is a thread-safe log file writer that rotates when maxBytes is reached.
 // Old files are renamed with numeric suffixes (.1, .2, etc.) up to maxFiles.
 type RotatingWriter struct {
@@ -50,7 +54,7 @@ func (rw *RotatingWriter) Write(p []byte) (int, error) {
 	// On Linux, writes to a deleted file succeed (inode stays alive).
 	// Periodically check if the file was unlinked so we reopen to a fresh path.
 	rw.writeCount++
-	if rw.writeCount%1000 == 0 {
+	if rw.writeCount%staleCheckInterval == 0 {
 		if _, err := os.Stat(rw.path); os.IsNotExist(err) {
 			rw.file.Close()
 			rw.file = nil

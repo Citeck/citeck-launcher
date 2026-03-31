@@ -563,7 +563,9 @@ func (d *Daemon) handleSubmitMasterPassword(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Clear the encrypted blob — secrets are now stored individually
-	d.store.PutSecretBlob("")
+	if err := d.store.PutSecretBlob(""); err != nil {
+		slog.Error("Failed to clear secret blob after import", "err", err)
+	}
 
 	// Rebuild registry auth cache so new secrets take effect for docker pulls
 	if d.runtime != nil {
