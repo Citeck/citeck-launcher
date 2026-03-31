@@ -144,10 +144,10 @@ export function Secrets() {
           <KeyRound size={16} />
           {t('secrets.title')}
           {encStatus?.encrypted && !encStatus.locked && (
-            <ShieldCheck size={14} className="text-green-500" title={t('secrets.encrypted.badge')} />
+            <span title={t('secrets.encrypted.badge')}><ShieldCheck size={14} className="text-green-500" /></span>
           )}
           {encStatus?.locked && (
-            <Lock size={14} className="text-yellow-500" title={t('secrets.locked')} />
+            <span title={t('secrets.locked')}><Lock size={14} className="text-yellow-500" /></span>
           )}
         </h1>
         <div className="flex items-center gap-2">
