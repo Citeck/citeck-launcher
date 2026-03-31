@@ -32,19 +32,13 @@ export function Dashboard() {
   const [masterPwdLoading, setMasterPwdLoading] = useState(false)
   const [masterPwdChecked, setMasterPwdChecked] = useState(false)
 
-  // Show master password dialog only when apps have auth errors AND encrypted blob exists.
-  // Never show proactively — only when the user actually hits a problem.
+  // Show master password dialog if encrypted secrets from Kotlin need decryption.
   useEffect(() => {
     if (masterPwdChecked || showMasterPwd) return
-    const apps = namespace?.apps ?? []
-    const bundleErr = namespace?.bundleError ?? ''
-    const hasAuthError = apps.some((a) =>
-      a.statusText?.includes('authentication failed') || a.statusText?.includes('Access denied')
-    ) || bundleErr.includes('authentication') || bundleErr.includes('Access denied')
-    if (!hasAuthError) return
+    if (!namespace) return
+    setMasterPwdChecked(true)
     getMigrationStatus().then((s) => {
       if (s.hasPendingSecrets) setShowMasterPwd(true)
-      setMasterPwdChecked(true)
     }).catch(() => {})
   }, [namespace, masterPwdChecked, showMasterPwd])
 
