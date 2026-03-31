@@ -60,6 +60,12 @@ type secretReader interface {
 	GetSecret(id string) (*storage.Secret, error)
 }
 
+// secretWriter is the minimal interface for writing secrets.
+// Satisfied by both storage.Store (server mode) and *storage.SecretService (desktop mode).
+type secretWriter interface {
+	SaveSecret(secret storage.Secret) error
+}
+
 // Daemon is the main daemon server.
 type Daemon struct {
 	dockerClient    *docker.Client
@@ -100,6 +106,15 @@ type Daemon struct {
 // secretReaderFunc returns a secretReader that decrypts via SecretService
 // when available, otherwise reads directly from the store.
 func (d *Daemon) secretReaderFunc() secretReader {
+	if d.secretService != nil {
+		return d.secretService
+	}
+	return d.store
+}
+
+// secretWriterFunc returns a secretWriter that encrypts via SecretService
+// when available, otherwise writes directly to the store.
+func (d *Daemon) secretWriterFunc() secretWriter {
 	if d.secretService != nil {
 		return d.secretService
 	}
@@ -957,8 +972,8 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+api.SecretsSetupPassword, d.handleSetupPassword)
 
 	// Migration (master password for Kotlin encrypted secrets)
-	mux.HandleFunc("GET /api/v1/migration/status", d.handleGetMigrationStatus)
-	mux.HandleFunc("POST /api/v1/migration/master-password", d.handleSubmitMasterPassword)
+	mux.HandleFunc("GET "+api.MigrationStatus, d.handleGetMigrationStatus)
+	mux.HandleFunc("POST "+api.MigrationMasterPassword, d.handleSubmitMasterPassword)
 
 	// Forms
 	mux.HandleFunc("GET /api/v1/forms/{formId}", d.handleGetForm)

@@ -32,6 +32,10 @@ const (
 	SecretsUnlock        = Secrets + "/unlock"
 	SecretsSetupPassword = Secrets + "/setup-password"
 
+	// Migration
+	MigrationStatus         = APIV1 + "/migration/status"
+	MigrationMasterPassword = APIV1 + "/migration/master-password"
+
 	// Diagnostics
 	Diagnostics    = APIV1 + "/diagnostics"
 	DiagnosticsFix = APIV1 + "/diagnostics/fix"

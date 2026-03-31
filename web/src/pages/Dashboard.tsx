@@ -34,6 +34,7 @@ export function Dashboard() {
   const [dialogLoading, setDialogLoading] = useState(false)
   const [dialogChecked, setDialogChecked] = useState(false)
   const [showNewPwdInput, setShowNewPwdInput] = useState(false)
+  const [kotlinPassword, setKotlinPassword] = useState('')  // preserved across step transition
 
   // On mount: detect which dialog step is needed
   useEffect(() => {
@@ -54,6 +55,8 @@ export function Dashboard() {
     try {
       await submitMasterPassword(password)
       toast(t('migration.secretsImported'), 'success')
+      // Save Kotlin password for "Use same password" in the next step
+      setKotlinPassword(password)
       // Transition to setup-password step (offer to encrypt with Go)
       setDialogStep('setup-password')
       setDialogError('')
@@ -273,8 +276,8 @@ export function Dashboard() {
                     <button
                       type="button"
                       className="w-full px-4 py-2 bg-primary text-primary-foreground rounded text-sm font-medium disabled:opacity-50"
-                      onClick={() => handleSetupPassword(password)}
-                      disabled={dialogLoading}
+                      onClick={() => handleSetupPassword(kotlinPassword)}
+                      disabled={dialogLoading || !kotlinPassword}
                     >
                       {dialogLoading ? '...' : t('migration.setupPassword.samePassword')}
                     </button>

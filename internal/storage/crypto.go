@@ -22,6 +22,9 @@ var ErrSecretsLocked = errors.New("secrets are locked: master password required"
 // is already configured.
 var ErrAlreadyEncrypted = errors.New("encryption already configured")
 
+// ErrCorruptedKeystore is returned when encryption metadata is missing or unreadable.
+var ErrCorruptedKeystore = errors.New("keystore is corrupted or missing key params")
+
 const (
 	verifyPlaintext    = "citeck-secrets-v1"
 	defaultIterations  = 1_000_000
@@ -141,7 +144,10 @@ func (ss *SecretService) SetMasterPassword(password string) error {
 		Iterations: defaultIterations,
 		KeySize:    256,
 	}
-	paramsJSON, _ := json.Marshal(keyParams)
+	paramsJSON, err := json.Marshal(keyParams)
+	if err != nil {
+		return fmt.Errorf("marshal key params: %w", err)
+	}
 
 	if _, err := tx.Exec(upsert, stateEncrypted, "true"); err != nil {
 		return fmt.Errorf("set %s: %w", stateEncrypted, err)
@@ -176,23 +182,23 @@ func (ss *SecretService) Unlock(password string) error {
 
 	paramsStr, err := ss.store.GetStateValue(stateKeyParams)
 	if err != nil || paramsStr == "" {
-		return fmt.Errorf("missing key params")
+		return fmt.Errorf("%w: missing key params", ErrCorruptedKeystore)
 	}
 	var params CryptoKeyParams
 	if err := json.Unmarshal([]byte(paramsStr), &params); err != nil {
-		return fmt.Errorf("parse key params: %w", err)
+		return fmt.Errorf("%w: parse key params: %v", ErrCorruptedKeystore, err)
 	}
 
 	salt, err := base64.StdEncoding.DecodeString(params.Salt)
 	if err != nil {
-		return fmt.Errorf("decode salt: %w", err)
+		return fmt.Errorf("%w: decode salt: %v", ErrCorruptedKeystore, err)
 	}
 
 	key := deriveKey(password, salt, params.Iterations)
 
 	verifyEnc, err := ss.store.GetStateValue(stateVerify)
 	if err != nil || verifyEnc == "" {
-		return fmt.Errorf("missing verify token")
+		return fmt.Errorf("%w: missing verify token", ErrCorruptedKeystore)
 	}
 
 	plaintext, err := decryptValue(key, verifyEnc)
@@ -231,6 +237,8 @@ func (ss *SecretService) GetSecret(id string) (*Secret, error) {
 }
 
 // SaveSecret encrypts the value (if encryption is active) and saves to the store.
+// Uses RLock because it only reads derivedKey/encrypted — the underlying SQLite
+// DB serializes concurrent writes via MaxOpenConns(1).
 func (ss *SecretService) SaveSecret(secret Secret) error {
 	ss.mu.RLock()
 	defer ss.mu.RUnlock()

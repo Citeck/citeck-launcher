@@ -165,8 +165,8 @@ func TestAllRoutesRegistered(t *testing.T) {
 		{"POST", api.SecretsUnlock},
 		{"POST", api.SecretsSetupPassword},
 		// Migration
-		{"GET", "/api/v1/migration/status"},
-		{"POST", "/api/v1/migration/master-password"},
+		{"GET", api.MigrationStatus},
+		{"POST", api.MigrationMasterPassword},
 		// Forms
 		{"GET", "/api/v1/forms/test-form"},
 		// Diagnostics

@@ -438,21 +438,13 @@ func (d *Daemon) handleCreateSecret(w http.ResponseWriter, r *http.Request) {
 		Value: req.Value,
 	}
 
-	// Save through SecretService (encrypts value) if available
-	if d.secretService != nil {
-		if err := d.secretService.SaveSecret(secret); err != nil {
-			if errors.Is(err, storage.ErrSecretsLocked) {
-				writeError(w, http.StatusLocked, "secrets are locked")
-				return
-			}
-			writeInternalError(w, err)
+	if err := d.secretWriterFunc().SaveSecret(secret); err != nil {
+		if errors.Is(err, storage.ErrSecretsLocked) {
+			writeError(w, http.StatusLocked, "secrets are locked")
 			return
 		}
-	} else {
-		if err := d.store.SaveSecret(secret); err != nil {
-			writeInternalError(w, err)
-			return
-		}
+		writeInternalError(w, err)
+		return
 	}
 
 	d.rebuildAuthCaches()
@@ -475,6 +467,8 @@ func (d *Daemon) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w, err)
 		return
 	}
+
+	d.rebuildAuthCaches()
 
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "secret deleted"})
 }
@@ -631,6 +625,10 @@ func (d *Daemon) handleUnlockSecrets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := d.secretService.Unlock(req.Password); err != nil {
+		if errors.Is(err, storage.ErrCorruptedKeystore) {
+			writeInternalError(w, err)
+			return
+		}
 		writeError(w, http.StatusUnauthorized, "invalid password")
 		return
 	}

@@ -35,6 +35,8 @@ export function DaemonLogsViewer({ compact = false, active = true }: DaemonLogsV
   // Initial fetch + streaming follow
   // Streaming follow — the endpoint replays last `tail` lines then streams new data.
   // No separate REST fetch needed (would duplicate the same lines).
+  // Note: isFirst chunk detection assumes the tail replay arrives as one read() call.
+  // This holds on localhost; over TLS/network the tail could split across reads.
   useEffect(() => {
     if (!active) return
 
