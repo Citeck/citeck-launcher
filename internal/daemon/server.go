@@ -53,6 +53,13 @@ type StartOptions struct {
 	ReadyCh    chan<- string   // receives Web UI URL when ready (empty string if no UI); nil = ignored
 }
 
+// secretReader is the minimal interface for reading secrets.
+// Satisfied by both storage.Store (server mode) and *storage.SecretService (desktop mode).
+type secretReader interface {
+	ListSecrets() ([]storage.SecretMeta, error)
+	GetSecret(id string) (*storage.Secret, error)
+}
+
 // Daemon is the main daemon server.
 type Daemon struct {
 	dockerClient    *docker.Client
@@ -65,6 +72,7 @@ type Daemon struct {
 	tcpServer       *http.Server
 	cloudCfgServer  *CloudConfigServer
 	store           storage.Store
+	secretService   *storage.SecretService // non-nil in desktop mode only
 	socketPath      string
 	volumesBase     string
 	workspaceID     string
@@ -87,6 +95,31 @@ type Daemon struct {
 	logLevel        *slog.LevelVar
 	desktop         bool               // desktop mode: log writer shared across restarts
 	reloadMu        sync.Mutex         // guards concurrent reload requests
+}
+
+// secretReaderFunc returns a secretReader that decrypts via SecretService
+// when available, otherwise reads directly from the store.
+func (d *Daemon) secretReaderFunc() secretReader {
+	if d.secretService != nil {
+		return d.secretService
+	}
+	return d.store
+}
+
+// rebuildAuthCaches rebuilds token lookup and registry auth caches from current secrets,
+// then retries any pull-failed apps.
+func (d *Daemon) rebuildAuthCaches() {
+	if d.runtime == nil {
+		return
+	}
+	d.configMu.RLock()
+	wsCfg := d.workspaceConfig
+	d.configMu.RUnlock()
+	d.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(wsCfg, d.secretReaderFunc()))
+	retried := d.runtime.RetryPullFailedApps()
+	if retried > 0 {
+		slog.Info("Retrying pull-failed apps after secrets change", "count", retried)
+	}
 }
 
 // Start runs the daemon.
@@ -276,6 +309,20 @@ func Start(opts StartOptions) error {
 		}
 	}()
 
+	// Initialize SecretService for desktop mode (transparent encryption layer)
+	var secretSvc *storage.SecretService
+	if config.IsDesktopMode() {
+		if sqlStore, ok := store.(*storage.SQLiteStore); ok {
+			secretSvc, err = storage.NewSecretService(sqlStore)
+			if err != nil {
+				return fmt.Errorf("create secret service: %w", err)
+			}
+			if secretSvc.IsEncrypted() {
+				slog.Info("Secrets are encrypted, waiting for unlock")
+			}
+		}
+	}
+
 	// Load namespace config (mode-aware path)
 	nsCfgPath := config.ResolveNamespaceConfigPath(wsID, nsID)
 	nsCfg, err := namespace.LoadNamespaceConfig(nsCfgPath)
@@ -303,7 +350,11 @@ func Start(opts StartOptions) error {
 		if config.IsDesktopMode() {
 			bundlesDataDir = filepath.Join(config.HomeDir(), "ws", wsID)
 		}
-		resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(store))
+		var reader secretReader = store
+		if secretSvc != nil {
+			reader = secretSvc
+		}
+		resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(reader))
 		resolveResult, err := resolver.Resolve(nsCfg.BundleRef)
 		if err != nil {
 			slog.Error("Failed to resolve bundle — daemon starts with 0 apps", "ref", nsCfg.BundleRef, "err", err)
@@ -386,7 +437,7 @@ func Start(opts StartOptions) error {
 		runtime = namespace.NewRuntime(nsCfg, dockerClient, wsID, volumesBase)
 
 		// Wire registry auth and operation history into runtime
-		runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(wsCfg, store))
+		runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(wsCfg, reader))
 		runtime.SetHistory(namespace.NewOperationHistory(config.LogDir()))
 
 		// Apply daemon.yml overrides for reconciler and pull concurrency
@@ -455,6 +506,7 @@ func Start(opts StartOptions) error {
 		appDefs:         appDefs,
 		cloudCfgServer:  cloudCfgSrv,
 		store:           store,
+		secretService:   secretSvc,
 		socketPath:      socketPath,
 		volumesBase:     volumesBase,
 		workspaceID:     wsID,
@@ -977,18 +1029,18 @@ func readJSON(r *http.Request, v any) error {
 // makeTokenLookup creates a function that looks up auth tokens from the secret store.
 // Tokens are pre-fetched at creation time into an immutable map for efficiency.
 // Rebuilt on each reload to reflect secret mutations.
-func makeTokenLookup(store storage.Store) bundle.TokenLookupFunc {
-	if store == nil {
+func makeTokenLookup(reader secretReader) bundle.TokenLookupFunc {
+	if reader == nil {
 		return func(string) string { return "" }
 	}
 	// Pre-fetch all secrets into a lookup map
 	tokensByScope := make(map[string]string)
-	secrets, err := store.ListSecrets()
+	secrets, err := reader.ListSecrets()
 	if err == nil {
 		for _, s := range secrets {
-			sec, err := store.GetSecret(s.ID)
+			sec, err := reader.GetSecret(s.ID)
 			if err != nil {
-				continue
+				continue // ErrSecretsLocked → skip gracefully
 			}
 			if string(s.Type) != "" {
 				tokensByScope[string(s.Type)] = sec.Value
@@ -1007,14 +1059,14 @@ func makeTokenLookup(store storage.Store) bundle.TokenLookupFunc {
 // by matching image host against workspace config's imageReposByHost.
 // Registry secrets are pre-fetched into a map at creation time for efficiency.
 // The function is rebuilt on namespace reload to reflect secret mutations.
-func makeRegistryAuthFunc(wsCfg *bundle.WorkspaceConfig, store storage.Store) namespace.RegistryAuthFunc {
-	if wsCfg == nil || store == nil {
+func makeRegistryAuthFunc(wsCfg *bundle.WorkspaceConfig, reader secretReader) namespace.RegistryAuthFunc {
+	if wsCfg == nil || reader == nil {
 		return nil
 	}
 	reposByHost := wsCfg.ImageReposByHost()
 
 	// Pre-fetch all registry credentials into an immutable map
-	authByHost := buildRegistryAuthCache(reposByHost, store)
+	authByHost := buildRegistryAuthCache(reposByHost, reader)
 	if len(authByHost) == 0 {
 		return nil
 	}
@@ -1033,9 +1085,9 @@ func makeRegistryAuthFunc(wsCfg *bundle.WorkspaceConfig, store storage.Store) na
 }
 
 // buildRegistryAuthCache pre-fetches all registry secrets into a map keyed by host.
-func buildRegistryAuthCache(reposByHost map[string]bundle.ImageRepo, store storage.Store) map[string]*docker.RegistryAuth {
+func buildRegistryAuthCache(reposByHost map[string]bundle.ImageRepo, reader secretReader) map[string]*docker.RegistryAuth {
 	result := make(map[string]*docker.RegistryAuth)
-	secrets, err := store.ListSecrets()
+	secrets, err := reader.ListSecrets()
 	if err != nil {
 		return result
 	}
@@ -1043,9 +1095,9 @@ func buildRegistryAuthCache(reposByHost map[string]bundle.ImageRepo, store stora
 	scopeValues := make(map[string]string)
 	for _, s := range secrets {
 		if s.Scope != "" {
-			sec, err := store.GetSecret(s.ID)
+			sec, err := reader.GetSecret(s.ID)
 			if err != nil {
-				continue
+				continue // ErrSecretsLocked → skip gracefully
 			}
 			scopeValues[s.Scope] = sec.Value
 		}

@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -437,22 +438,24 @@ func (d *Daemon) handleCreateSecret(w http.ResponseWriter, r *http.Request) {
 		Value: req.Value,
 	}
 
-	if err := d.store.SaveSecret(secret); err != nil {
-		writeInternalError(w, err)
-		return
-	}
-
-	// Rebuild registry auth and retry pull-failed apps
-	if d.runtime != nil {
-		d.configMu.RLock()
-		wsCfg := d.workspaceConfig
-		d.configMu.RUnlock()
-		d.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(wsCfg, d.store))
-		retried := d.runtime.RetryPullFailedApps()
-		if retried > 0 {
-			slog.Info("Retrying pull-failed apps after secret change", "count", retried)
+	// Save through SecretService (encrypts value) if available
+	if d.secretService != nil {
+		if err := d.secretService.SaveSecret(secret); err != nil {
+			if errors.Is(err, storage.ErrSecretsLocked) {
+				writeError(w, http.StatusLocked, "secrets are locked")
+				return
+			}
+			writeInternalError(w, err)
+			return
+		}
+	} else {
+		if err := d.store.SaveSecret(secret); err != nil {
+			writeInternalError(w, err)
+			return
 		}
 	}
+
+	d.rebuildAuthCaches()
 
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "secret saved"})
 }
@@ -487,8 +490,12 @@ func (d *Daemon) handleTestSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	secret, err := d.store.GetSecret(id)
+	secret, err := d.secretReaderFunc().GetSecret(id)
 	if err != nil {
+		if errors.Is(err, storage.ErrSecretsLocked) {
+			writeError(w, http.StatusLocked, "secrets are locked")
+			return
+		}
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
@@ -567,17 +574,7 @@ func (d *Daemon) handleSubmitMasterPassword(w http.ResponseWriter, r *http.Reque
 		slog.Error("Failed to clear secret blob after import", "err", err)
 	}
 
-	// Rebuild registry auth cache so new secrets take effect for docker pulls
-	if d.runtime != nil {
-		d.configMu.RLock()
-		wsCfg := d.workspaceConfig
-		d.configMu.RUnlock()
-		d.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(wsCfg, d.store))
-		retried := d.runtime.RetryPullFailedApps()
-		if retried > 0 {
-			slog.Info("Retrying pull-failed apps after secrets import", "count", retried)
-		}
-	}
+	d.rebuildAuthCaches()
 
 	slog.Info("Master password accepted, secrets decrypted", "count", count)
 	writeJSON(w, api.ActionResultDto{

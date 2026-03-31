@@ -140,7 +140,7 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 	if config.IsDesktopMode() {
 		bundlesDataDir = filepath.Join(config.HomeDir(), "ws", d.workspaceID)
 	}
-	resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(d.store))
+	resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(d.secretReaderFunc()))
 	resolveResult, err := resolver.Resolve(nsCfg.BundleRef)
 	if err != nil {
 		writeInternalError(w, fmt.Errorf("resolve bundle: %w", err))
@@ -215,7 +215,7 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 	if d.cloudCfgServer != nil {
 		d.cloudCfgServer.UpdateConfig(genResp.CloudConfig)
 	}
-	d.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(resolveResult.Workspace, d.store))
+	d.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(resolveResult.Workspace, d.secretReaderFunc()))
 
 	// Phase 3: regenerate runtime (async stop + start) — use local var, not d.appDefs (avoids race)
 	d.runtime.Regenerate(genResp.Applications)
