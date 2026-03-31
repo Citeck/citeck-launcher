@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	goruntime "runtime"
 	"strings"
 	"time"
 
@@ -1285,5 +1287,40 @@ func isBlockedIP(ip net.IP) bool {
 		return true
 	}
 	return false
+}
+
+// --- Open URL in system browser (desktop mode only) ---
+
+func (d *Daemon) handleOpenURL(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		URL string `json:"url"`
+	}
+	if err := readJSON(r, &req); err != nil || req.URL == "" {
+		writeError(w, http.StatusBadRequest, "url required")
+		return
+	}
+	parsed, err := url.Parse(req.URL)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		writeError(w, http.StatusBadRequest, "invalid url: only http/https allowed")
+		return
+	}
+	if err := openSystemBrowser(req.URL); err != nil {
+		writeInternalError(w, err)
+		return
+	}
+	writeJSON(w, api.ActionResultDto{Success: true})
+}
+
+func openSystemBrowser(rawURL string) error {
+	var cmd *exec.Cmd
+	switch goruntime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", rawURL)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", rawURL)
+	default:
+		cmd = exec.Command("xdg-open", rawURL)
+	}
+	return cmd.Start()
 }
 

@@ -337,12 +337,15 @@ export async function submitMasterPassword(password: string): Promise<ActionResu
 }
 
 export async function openExternal(url: string): Promise<void> {
-  // Wails desktop: use built-in Browser.OpenURL from injected runtime
-  const w = (window as any).wails
-  if (w?.Browser?.OpenURL) {
-    await w.Browser.OpenURL(url)
-    return
-  }
-  // Browser fallback: open in new tab
+  // Desktop mode: daemon opens system browser via xdg-open/open
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/open-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
+      body: JSON.stringify({ url }),
+    })
+    if (res.ok) return
+  } catch { /* not desktop or endpoint unavailable */ }
+  // Browser fallback
   window.open(url, '_blank')
 }
