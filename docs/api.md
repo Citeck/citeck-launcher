@@ -8,7 +8,7 @@ All endpoints are under `/api/v1`. Responses are JSON unless noted.
 |---|---|---|---|
 | Unix socket | socketMux (all routes) | implicit (local) | not required |
 | mTLS TCP (non-localhost) | socketMux (all routes) | client certificate | not required |
-| Localhost TCP | tcpMux (safe routes only) | none | `X-Citeck-CSRF: 1` required on POST/PUT/DELETE |
+| Localhost TCP | socketMux (all routes) | none | `X-Citeck-CSRF: 1` required on POST/PUT/DELETE |
 
 ## Error Response
 

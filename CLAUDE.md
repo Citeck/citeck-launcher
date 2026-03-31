@@ -267,8 +267,7 @@ Tested on remote server with community 2025.12 (clean deployment). Found and fix
 - 11e: Remaining — socket permissions 0o600, React ErrorBoundary, SSE reconnect generation counter, Docker Names[0] bounds check, daemon.yml listen validation
 
 ### Key Technical Decisions (Phase 11)
-- Two-mux architecture: `socketMux` (all routes, socket + mTLS) vs `tcpMux` (safe routes only, localhost TCP)
-- Socket-only: shutdown, exec, config write, reload, app config write, app file write
+- Single-mux architecture: all routes on `socketMux`, shared by Unix socket, localhost TCP, and mTLS TCP. Localhost TCP is trusted (desktop thin client); non-localhost requires mTLS. CSRF protects localhost TCP from cross-origin attacks.
 - CORS exact origin:port validation (no prefix matching); OPTIONS rejected for unknown origins
 - SSRF double defense: validateSnapshotURL (pre-check) + ssrfSafeClient (DialContext re-validation at connect time, prevents DNS rebinding)
 - WriteTimeout 30s globally; streaming handlers disable via `http.ResponseController.SetWriteDeadline(time.Time{})`
@@ -276,7 +275,7 @@ Tested on remote server with community 2025.12 (clean deployment). Found and fix
 - Prometheus metrics hand-written (no dependency); label values escaped per exposition spec
 - Daemon log rotation via `fsutil.RotatingWriter` (thread-safe, Close() on shutdown)
 - WebUI mTLS server cert issued for 100 years (36500 days)
-- PutAppConfig whitelist: only env, resources, probes mutable; image/volumes/cmd/ports locked (defense-in-depth, endpoint also socket-only)
+- PutAppConfig whitelist: only env, resources, probes mutable; image/volumes/cmd/ports locked (defense-in-depth)
 
 ### Other References
 - **`PROGRESS.md`** — tracks completed work (historical)

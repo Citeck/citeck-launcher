@@ -101,6 +101,14 @@ button, a, [role="button"] {
   background: var(--color-muted-foreground);
 }
 
+/* Hide scrollbar utility */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  scrollbar-width: none;
+}
+
 /* Dialog backdrop */
 dialog::backdrop {
   background: rgba(0, 0, 0, 0.55);

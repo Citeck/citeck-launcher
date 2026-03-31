@@ -22,7 +22,7 @@ export function TabBar() {
 
   return (
     <div className="flex items-center border-b border-border bg-card shrink-0">
-      <div className="flex items-center overflow-x-auto flex-1 min-w-0">
+      <div className="flex items-center overflow-x-auto flex-1 min-w-0 scrollbar-hide">
         {tabs.map((tab) => {
           const isActive = tab.id === activeTabId
           return (
