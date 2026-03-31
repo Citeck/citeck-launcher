@@ -260,7 +260,7 @@ Tested on remote server with community 2025.12 (clean deployment). Found and fix
 
 ### Phase 11: Production Readiness — COMPLETE (2026-03-27)
 26 issues across 5 sub-phases + 3 code review passes (19 additional fixes).
-- 11a: P0 security — two-mux architecture (socketMux + tcpMux), dangerous endpoints socket-only, CORS exact origin validation, exec output cap (1MB), PutAppConfig field whitelist
+- 11a: P0 security — single-mux architecture (socketMux for all transports), CORS exact origin validation, exec output cap (1MB), PutAppConfig field whitelist
 - 11b: HTTP hardening — WriteTimeout 30s + ResponseController for streaming, access logs with remote addr/CN/X-Request-Id, health 3-state (healthy/degraded/unhealthy), SSRF protection (DNS resolution + blocked IP ranges + ssrfSafeClient with DialContext), atomic file writes
 - 11c: Reliability — streaming logs (chunked ReadableStream, not polling), virtual list (@tanstack/react-virtual), registry auth pre-cached, context-aware HTTP probes, FindApp O(1) map lookup, SQLite MaxOpenConns(1)
 - 11d: Observability — machine-readable error codes, Prometheus /metrics (text exposition), daemon log rotation (50MB/3 files, fsutil.RotatingWriter), SSE sequence numbers + gap detection, X-Request-Id (8 hex, crypto/rand), SSE fetchData debounced
@@ -279,14 +279,7 @@ Tested on remote server with community 2025.12 (clean deployment). Found and fix
 
 ### Other References
 - **`PROGRESS.md`** — tracks completed work (historical)
-- **`PLAN-phase8.md`** — Phase 8 plan (COMPLETE, 57 issues)
-- **`PLAN-phase9.md`** — Phase 9 plan (COMPLETE, 12 issues)
-- **`PLAN-phase10.md`** — Phase 10 plan (COMPLETE, mTLS + production hardening, 25 issues)
-- **`PLAN-phase11.md`** — Phase 11 plan (COMPLETE, production readiness, 26 issues)
-- **`PLAN-phase12.md`** — Phase 12 plan (COMPLETE, GA readiness, 23 issues)
-- **`PLAN-phase13.md`** — Phase 13 plan (COMPLETE, secrets masking, security headers, HTTP metrics, validate command, 20 issues)
-- **`PLAN-phase14.md`** — Phase 14 plan (COMPLETE, SSE heartbeat, reclone safety, Logs perf, fetch errors, CI, runtime tests, 20 issues)
-- **`PLAN-phase15.md`** — Phase 15 plan (Lens-inspired UI redesign: right drawer, bottom panel, server mode)
+- **`PLAN-desktop-phase2.md`** — Current: secrets encryption + desktop bug fixes
 
 ### Phase 12: GA Readiness — COMPLETE (2026-03-27)
 23 issues across 5 sub-phases + 3 code review passes (8 additional fixes).
