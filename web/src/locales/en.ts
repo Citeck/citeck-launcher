@@ -311,7 +311,7 @@ const en: Translations = {
 
   // -- Migration --
   'migration.title': 'Enter Master Password',
-  'migration.description': 'Encrypted secrets from the previous launcher were found. Enter your master password to decrypt them.',
+  'migration.description': 'Encrypted secrets were found. Enter your master password to decrypt them.',
   'migration.passwordPlaceholder': 'Master password',
   'migration.confirm': 'Confirm',
   'migration.skip': 'Skip',

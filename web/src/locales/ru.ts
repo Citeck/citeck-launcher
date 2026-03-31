@@ -311,7 +311,7 @@ const ru: Translations = {
 
   // -- Migration --
   'migration.title': 'Введите мастер-пароль',
-  'migration.description': 'Обнаружены зашифрованные секреты от предыдущей версии лончера. Введите мастер-пароль для их расшифровки.',
+  'migration.description': 'Обнаружены зашифрованные секреты. Введите мастер-пароль для их расшифровки.',
   'migration.passwordPlaceholder': 'Мастер-пароль',
   'migration.confirm': 'Подтвердить',
   'migration.skip': 'Пропустить',
