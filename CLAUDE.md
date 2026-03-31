@@ -26,8 +26,8 @@ This is a **Go rewrite** (v2.0) of the original Kotlin/JVM launcher (v1.x). The 
 ### Go + Web UI (primary)
 
 ```bash
-make build                    # Build Go binary + embed React web UI
-make build-fast               # Build Go only (skip web rebuild)
+make build                    # Build Go binary + embed React web UI → build/bin/citeck
+make build-fast               # Build Go only (skip web rebuild) → build/bin/citeck
 make test                     # Run all tests (Go + Vitest)
 go test ./...                 # Go tests only
 go test ./internal/...        # Go unit tests only
@@ -35,7 +35,7 @@ cd web && npx vitest run      # React component tests
 cd web && npx playwright test # E2E browser tests
 golangci-lint run             # Go linter
 cd web && npm run lint        # Web linter
-./citeck start --foreground   # Run daemon with web UI on 127.0.0.1:7088
+build/bin/citeck start --foreground   # Run daemon with web UI on 127.0.0.1:7088
 ```
 
 ## Architecture
