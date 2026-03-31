@@ -126,13 +126,13 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
         const isHighlighted = highlightedApp === app.name
         return (
           <tr key={app.name} className={`border-b border-border/20 ${isHighlighted ? 'bg-primary/8' : 'hover:bg-accent'}`}>
-            <td className="py-[3px] pr-4 font-mono">
+            <td className="py-[3px] pr-4 font-mono whitespace-nowrap">
               <button type="button" className="text-primary hover:underline cursor-pointer"
                 onClick={() => openDrawer(app.name)}>
                 {app.name}
               </button>
             </td>
-            <td className="py-[3px] pr-4">
+            <td className="py-[3px] pr-4 whitespace-nowrap">
               <span className="inline-flex items-center gap-1.5">
                 <StatusBadge status={app.status} />
                 {app.statusText && <span className="text-muted-foreground text-[10px]">{app.statusText}</span>}
@@ -143,7 +143,7 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
             <td className="py-[3px] pr-4 font-mono text-muted-foreground whitespace-nowrap" title={app.ports?.join(', ')}>
               {portsShort(app.ports)}
             </td>
-            <td className="py-[3px] pr-4 font-mono text-muted-foreground cursor-pointer hover:text-foreground"
+            <td className="py-[3px] pr-4 font-mono text-muted-foreground whitespace-nowrap cursor-pointer hover:text-foreground"
               title={t('table.copy', { image: app.image })}
               onClick={() => navigator.clipboard.writeText(app.image)}>
               {tag(app.image)}

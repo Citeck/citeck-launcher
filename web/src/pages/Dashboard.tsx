@@ -202,7 +202,7 @@ export function Dashboard() {
       {/* Top: sidebar + table + drawer overlay */}
       <div className="flex flex-1 min-h-0 relative">
         {/* Left info panel */}
-        <aside className="w-56 shrink-0 border-r border-border bg-card flex flex-col h-full">
+        <aside className="w-60 shrink-0 border-r border-border bg-card flex flex-col h-full">
           {/* Scrollable content */}
           <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-2">
           <div className="flex items-center justify-between">
@@ -241,21 +241,19 @@ export function Dashboard() {
           <NamespaceControls status={namespace.status} />
 
           {proxyUrl && (
-            <a
-              href={proxyUrl}
-              target="_blank"
-              rel="noopener noreferrer"
+            <button
+              type="button"
               className={`flex items-center gap-1.5 rounded border px-2 py-1.5 text-xs ${
                 isRunning
-                  ? 'border-primary/40 text-primary hover:bg-primary/10'
+                  ? 'border-primary/40 text-primary hover:bg-primary/10 cursor-pointer'
                   : 'border-border text-muted-foreground cursor-not-allowed opacity-50'
               }`}
-              onClick={(e) => { if (!isRunning) e.preventDefault() }}
+              onClick={() => { if (isRunning) window.open(proxyUrl, '_blank') }}
               title={isRunning ? t('dashboard.openInBrowser.tooltip') : t('dashboard.openInBrowser.disabled')}
             >
               <Globe size={14} />
               {t('dashboard.openInBrowser')}
-            </a>
+            </button>
           )}
 
           {dockerError && (
@@ -275,7 +273,11 @@ export function Dashboard() {
                     className={`flex items-center gap-1 text-xs py-0.5 ${
                       (isRunning || l.order >= 100) ? 'text-primary hover:underline' : 'text-muted-foreground cursor-not-allowed'
                     }`}
-                    onClick={(e) => { if (!isRunning && l.order < 100) e.preventDefault() }}>
+                    onClick={(e) => {
+                      e.preventDefault()
+                      if (!isRunning && l.order < 100) return
+                      window.open(l.url, '_blank')
+                    }}>
                     <ExternalLink size={11} />
                     {l.name}
                   </a>
