@@ -23,6 +23,8 @@ build/
 
 ### Test ###
 test-results/
+coverage.out
+coverage.html
 
 ### Custom ###
 *.png

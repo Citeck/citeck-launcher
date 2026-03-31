@@ -116,24 +116,24 @@ func (ss *SecretService) SetMasterPassword(password string) error {
 	var secrets []idValue
 	for rows.Next() {
 		var iv idValue
-		if err := rows.Scan(&iv.id, &iv.value); err != nil {
-			rows.Close()
-			return fmt.Errorf("scan secret: %w", err)
+		if scanErr := rows.Scan(&iv.id, &iv.value); scanErr != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan secret: %w", scanErr)
 		}
 		secrets = append(secrets, iv)
 	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate secrets: %w", err)
+	_ = rows.Close()
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return fmt.Errorf("iterate secrets: %w", rowsErr)
 	}
 
 	for _, s := range secrets {
-		enc, err := encryptValue(key, []byte(s.value))
-		if err != nil {
-			return fmt.Errorf("encrypt secret %s: %w", s.id, err)
+		encrypted, encErr := encryptValue(key, []byte(s.value))
+		if encErr != nil {
+			return fmt.Errorf("encrypt secret %s: %w", s.id, encErr)
 		}
-		if _, err := tx.Exec("UPDATE secrets SET value = ? WHERE id = ?", enc, s.id); err != nil {
-			return fmt.Errorf("update secret %s: %w", s.id, err)
+		if _, execErr := tx.Exec("UPDATE secrets SET value = ? WHERE id = ?", encrypted, s.id); execErr != nil {
+			return fmt.Errorf("update secret %s: %w", s.id, execErr)
 		}
 	}
 
@@ -185,13 +185,13 @@ func (ss *SecretService) Unlock(password string) error {
 		return fmt.Errorf("%w: missing key params", ErrCorruptedKeystore)
 	}
 	var params CryptoKeyParams
-	if err := json.Unmarshal([]byte(paramsStr), &params); err != nil {
-		return fmt.Errorf("%w: parse key params: %v", ErrCorruptedKeystore, err)
+	if unmarshalErr := json.Unmarshal([]byte(paramsStr), &params); unmarshalErr != nil {
+		return fmt.Errorf("%w: parse key params", ErrCorruptedKeystore)
 	}
 
 	salt, err := base64.StdEncoding.DecodeString(params.Salt)
 	if err != nil {
-		return fmt.Errorf("%w: decode salt: %v", ErrCorruptedKeystore, err)
+		return fmt.Errorf("%w: decode salt", ErrCorruptedKeystore)
 	}
 
 	key := deriveKey(password, salt, params.Iterations)
