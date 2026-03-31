@@ -532,12 +532,23 @@ func (d *Daemon) handleTestSecret(w http.ResponseWriter, r *http.Request) {
 
 // --- Migration (master password for Kotlin secrets) ---
 
-// handleGetMigrationStatus returns whether encrypted secrets from Kotlin need to be unlocked.
+// handleGetMigrationStatus returns whether encrypted secrets from Kotlin need to be unlocked,
+// and the current encryption/lock state.
 func (d *Daemon) handleGetMigrationStatus(w http.ResponseWriter, _ *http.Request) {
 	blob, err := d.store.GetSecretBlob()
 	hasBlob := err == nil && blob != ""
+
+	encrypted := false
+	locked := false
+	if d.secretService != nil {
+		encrypted = d.secretService.IsEncrypted()
+		locked = d.secretService.IsLocked()
+	}
+
 	writeJSON(w, map[string]any{
 		"hasPendingSecrets": hasBlob,
+		"encrypted":         encrypted,
+		"locked":            locked,
 	})
 }
 
@@ -581,6 +592,79 @@ func (d *Daemon) handleSubmitMasterPassword(w http.ResponseWriter, r *http.Reque
 		Success: true,
 		Message: fmt.Sprintf("%d secrets imported", count),
 	})
+}
+
+// --- Secrets Encryption ---
+
+// handleGetSecretsStatus returns the encryption and lock state of secrets.
+func (d *Daemon) handleGetSecretsStatus(w http.ResponseWriter, _ *http.Request) {
+	encrypted := false
+	locked := false
+	if d.secretService != nil {
+		encrypted = d.secretService.IsEncrypted()
+		locked = d.secretService.IsLocked()
+	}
+	writeJSON(w, map[string]any{
+		"encrypted": encrypted,
+		"locked":    locked,
+	})
+}
+
+// handleUnlockSecrets derives the key from the password and unlocks encrypted secrets.
+func (d *Daemon) handleUnlockSecrets(w http.ResponseWriter, r *http.Request) {
+	if d.secretService == nil {
+		writeError(w, http.StatusBadRequest, "encryption not available in server mode")
+		return
+	}
+
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := readJSON(r, &req); err != nil || req.Password == "" {
+		writeError(w, http.StatusBadRequest, "password required")
+		return
+	}
+
+	if err := d.secretService.Unlock(req.Password); err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid password")
+		return
+	}
+
+	d.rebuildAuthCaches()
+
+	slog.Info("Secrets unlocked successfully")
+	writeJSON(w, api.ActionResultDto{Success: true, Message: "secrets unlocked"})
+}
+
+// handleSetupPassword sets up encryption for the first time — generates salt,
+// encrypts all existing plaintext secrets in a single transaction.
+func (d *Daemon) handleSetupPassword(w http.ResponseWriter, r *http.Request) {
+	if d.secretService == nil {
+		writeError(w, http.StatusBadRequest, "encryption not available in server mode")
+		return
+	}
+
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := readJSON(r, &req); err != nil || req.Password == "" {
+		writeError(w, http.StatusBadRequest, "password required")
+		return
+	}
+
+	if err := d.secretService.SetMasterPassword(req.Password); err != nil {
+		if strings.Contains(err.Error(), "already configured") {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeInternalError(w, err)
+		return
+	}
+
+	d.rebuildAuthCaches()
+
+	slog.Info("Master password set, all secrets encrypted")
+	writeJSON(w, api.ActionResultDto{Success: true, Message: "encryption configured"})
 }
 
 // --- Diagnostics ---

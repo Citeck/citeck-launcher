@@ -950,6 +950,11 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/secrets/{id}", d.handleDeleteSecret)
 	mux.HandleFunc("GET /api/v1/secrets/{id}/test", d.handleTestSecret)
 
+	// Secrets encryption management
+	mux.HandleFunc("GET "+api.SecretsStatus, d.handleGetSecretsStatus)
+	mux.HandleFunc("POST "+api.SecretsUnlock, d.handleUnlockSecrets)
+	mux.HandleFunc("POST "+api.SecretsSetupPassword, d.handleSetupPassword)
+
 	// Migration (master password for Kotlin encrypted secrets)
 	mux.HandleFunc("GET /api/v1/migration/status", d.handleGetMigrationStatus)
 	mux.HandleFunc("POST /api/v1/migration/master-password", d.handleSubmitMasterPassword)

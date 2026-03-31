@@ -161,6 +161,9 @@ func TestAllRoutesRegistered(t *testing.T) {
 		{"POST", api.Secrets},
 		{"DELETE", "/api/v1/secrets/test-id"},
 		{"GET", "/api/v1/secrets/test-id/test"},
+		{"GET", api.SecretsStatus},
+		{"POST", api.SecretsUnlock},
+		{"POST", api.SecretsSetupPassword},
 		// Migration
 		{"GET", "/api/v1/migration/status"},
 		{"POST", "/api/v1/migration/master-password"},

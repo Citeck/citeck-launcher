@@ -27,7 +27,10 @@ const (
 	Bundles = APIV1 + "/bundles"
 
 	// Secrets
-	Secrets = APIV1 + "/secrets"
+	Secrets              = APIV1 + "/secrets"
+	SecretsStatus        = Secrets + "/status"
+	SecretsUnlock        = Secrets + "/unlock"
+	SecretsSetupPassword = Secrets + "/setup-password"
 
 	// Diagnostics
 	Diagnostics    = APIV1 + "/diagnostics"
