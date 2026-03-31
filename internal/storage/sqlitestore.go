@@ -272,6 +272,31 @@ func (s *SQLiteStore) GetSecretBlob() (string, error) {
 	return val, nil
 }
 
+// GetStateValue reads a single key from launcher_state. Returns "" if not found.
+func (s *SQLiteStore) GetStateValue(key string) (string, error) {
+	var val string
+	err := s.db.QueryRow("SELECT value FROM launcher_state WHERE key = ?", key).Scan(&val)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return val, nil
+}
+
+// SetStateValue writes a single key to launcher_state (upsert).
+func (s *SQLiteStore) SetStateValue(key, value string) error {
+	stmt := `INSERT INTO launcher_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`
+	_, err := s.db.Exec(stmt, key, value)
+	return err
+}
+
+// DB returns the underlying *sql.DB for transactional operations.
+func (s *SQLiteStore) DB() *sql.DB {
+	return s.db
+}
+
 func (s *SQLiteStore) Close() error {
 	return s.db.Close()
 }
