@@ -45,6 +45,15 @@ func (rw *RotatingWriter) Write(p []byte) (int, error) {
 			return 0, fmt.Errorf("log file not available")
 		}
 	}
+	// Recreate file if it was deleted externally (stale fd detection)
+	if _, err := os.Stat(rw.path); os.IsNotExist(err) {
+		rw.file.Close()
+		rw.file = nil
+		rw.openOrCreate()
+		if rw.file == nil {
+			return 0, fmt.Errorf("log file not available")
+		}
+	}
 	if rw.size+int64(len(p)) > rw.maxBytes {
 		rw.rotate()
 	}
