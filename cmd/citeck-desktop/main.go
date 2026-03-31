@@ -16,6 +16,16 @@ import (
 
 var version = "dev"
 
+const loadingHTML = `<!DOCTYPE html>
+<html><head><style>
+body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;
+background:#1e1e1e;color:#888;font-family:system-ui,sans-serif;font-size:14px}
+.loader{text-align:center}
+.spinner{width:28px;height:28px;border:3px solid #333;border-top:3px solid #888;
+border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 12px}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style></head><body><div class="loader"><div class="spinner"></div>Starting...</div></body></html>`
+
 func main() {
 	// Set desktop mode early so config paths are correct
 	config.SetDesktopMode(true)
@@ -59,14 +69,13 @@ func main() {
 		},
 	})
 
-	// Create main window pointing directly at the daemon HTTP server
+	// Create main window with loading screen — daemon URL is set after readyCh
 	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:   "main",
 		Title:  "Citeck Launcher",
 		Width:  1280,
 		Height: 800,
-		Hidden: true,
-		URL:    daemonURL,
+		HTML:   loadingHTML,
 		Windows: application.WindowsWindow{
 			HiddenOnTaskbar: false,
 		},
@@ -114,18 +123,17 @@ func main() {
 		window.Focus()
 	})
 
-	// Show window once daemon is ready or after timeout
+	// Navigate to daemon URL once ready (window already shows loading screen)
 	go func() {
 		select {
 		case <-readyCh:
-			slog.Info("Daemon ready", "url", daemonURL)
+			slog.Info("Daemon ready, navigating to Web UI", "url", daemonURL)
 		case <-time.After(30 * time.Second):
-			slog.Warn("Daemon not ready after 30s, showing window anyway")
+			slog.Warn("Daemon not ready after 30s, navigating anyway")
 		case <-ctx.Done():
 			return
 		}
-		window.Show()
-		window.Focus()
+		window.SetURL(daemonURL)
 	}()
 
 	if err := app.Run(); err != nil {
