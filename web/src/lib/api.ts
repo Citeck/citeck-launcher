@@ -335,3 +335,11 @@ export async function submitMasterPassword(password: string): Promise<ActionResu
   if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
+
+export async function openExternal(url: string): Promise<void> {
+  await fetchWithTimeout(`${API_BASE}/open-url`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
+    body: JSON.stringify({ url }),
+  })
+}

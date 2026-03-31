@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router'
 import { useDashboardStore } from '../lib/store'
 import { useTabsStore } from '../lib/tabs'
 import { usePanelStore } from '../lib/panels'
-import { getSystemDump, getMigrationStatus, submitMasterPassword } from '../lib/api'
+import { getSystemDump, getMigrationStatus, submitMasterPassword, openExternal } from '../lib/api'
 import { useTranslation } from '../lib/i18n'
 import { StatusBadge } from '../components/StatusBadge'
 import { AppTable } from '../components/AppTable'
@@ -165,7 +165,7 @@ export function Dashboard() {
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
       {/* Master password dialog for Kotlin migration */}
       {showMasterPwd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
@@ -248,7 +248,7 @@ export function Dashboard() {
                   ? 'border-primary/40 text-primary hover:bg-primary/10 cursor-pointer'
                   : 'border-border text-muted-foreground cursor-not-allowed opacity-50'
               }`}
-              onClick={() => { if (isRunning) window.open(proxyUrl, '_blank') }}
+              onClick={() => { if (isRunning) openExternal(proxyUrl) }}
               title={isRunning ? t('dashboard.openInBrowser.tooltip') : t('dashboard.openInBrowser.disabled')}
             >
               <Globe size={14} />
@@ -276,7 +276,7 @@ export function Dashboard() {
                     onClick={(e) => {
                       e.preventDefault()
                       if (!isRunning && l.order < 100) return
-                      window.open(l.url, '_blank')
+                      openExternal(l.url)
                     }}>
                     <ExternalLink size={11} />
                     {l.name}
