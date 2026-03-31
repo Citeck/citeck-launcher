@@ -148,7 +148,7 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	appfiles.ExtractTo(d.volumesBase)
+	_ = appfiles.ExtractTo(d.volumesBase)
 
 	// Self-signed cert: generate if TLS enabled + no cert paths + no LE
 	ensureSelfSignedCert(nsCfg)
@@ -261,7 +261,7 @@ func (d *Daemon) handleAppLogs(w http.ResponseWriter, r *http.Request) {
 
 	logs := stripAnsi(rawLogs)
 	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte(logs))
+	_, _ = w.Write([]byte(logs))
 }
 
 // handleAppLogsFollow streams container logs using Docker follow with proper stdcopy demux.
@@ -274,7 +274,7 @@ func (d *Daemon) handleAppLogsFollow(w http.ResponseWriter, r *http.Request, con
 
 	// Disable write deadline for long-lived log stream
 	rc := http.NewResponseController(w)
-	rc.SetWriteDeadline(time.Time{})
+	_ = rc.SetWriteDeadline(time.Time{})
 
 	ctx := r.Context()
 	reader, err := d.dockerClient.ContainerLogsFollow(ctx, containerID, tail)
@@ -290,7 +290,7 @@ func (d *Daemon) handleAppLogsFollow(w http.ResponseWriter, r *http.Request, con
 
 	// Use stdcopy to demux Docker multiplex headers, writing clean text to the response.
 	// stdcopy.StdCopy blocks until the reader is closed (context cancellation or container stop).
-	stdcopy.StdCopy(flushWriter{w, flusher}, flushWriter{w, flusher}, reader)
+	_, _ = stdcopy.StdCopy(flushWriter{w, flusher}, flushWriter{w, flusher}, reader)
 }
 
 // flushWriter wraps an http.ResponseWriter to flush after every write.
@@ -302,7 +302,10 @@ type flushWriter struct {
 func (fw flushWriter) Write(p []byte) (int, error) {
 	n, err := fw.w.Write(p)
 	fw.f.Flush()
-	return n, err
+	if err != nil {
+		return n, fmt.Errorf("flush write: %w", err)
+	}
+	return n, nil
 }
 
 func (d *Daemon) handleAppRestart(w http.ResponseWriter, r *http.Request) {
@@ -409,7 +412,7 @@ func (d *Daemon) handleAppInspect(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var volumes []string
+	volumes := make([]string, 0, len(inspect.Mounts))
 	for _, m := range inspect.Mounts {
 		volumes = append(volumes, fmt.Sprintf("%s:%s", m.Source, m.Destination))
 	}
@@ -490,7 +493,7 @@ func (d *Daemon) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/yaml")
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 func (d *Daemon) handlePutConfig(w http.ResponseWriter, r *http.Request) {
@@ -525,7 +528,7 @@ func (d *Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	// Disable write deadline for long-lived SSE stream
 	rc := http.NewResponseController(w)
-	rc.SetWriteDeadline(time.Time{})
+	_ = rc.SetWriteDeadline(time.Time{})
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -610,12 +613,12 @@ func (d *Daemon) handleDaemonLogs(w http.ResponseWriter, r *http.Request) {
 	// can be up to 2MB and may exceed the server's 30s WriteTimeout on slow connections.
 	if follow {
 		if rc := http.NewResponseController(w); rc != nil {
-			rc.SetWriteDeadline(time.Time{})
+			_ = rc.SetWriteDeadline(time.Time{})
 		}
 	}
 
 	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte(strings.Join(lines, "\n")))
+	_, _ = w.Write([]byte(strings.Join(lines, "\n")))
 
 	if !follow {
 		return
@@ -635,13 +638,13 @@ func (d *Daemon) handleDaemonLogs(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case <-ticker.C:
-			f2, err := os.Open(logPath)
+			f2, err := os.Open(logPath) //nolint:gosec // G304: logPath is derived from internal config
 			if err != nil {
 				return
 			}
 			st, err := f2.Stat()
 			if err != nil {
-				f2.Close()
+				_ = f2.Close()
 				return
 			}
 			newSize := st.Size()
@@ -650,15 +653,15 @@ func (d *Daemon) handleDaemonLogs(w http.ResponseWriter, r *http.Request) {
 				if newSize < offset {
 					offset = 0
 				}
-				f2.Close()
+				_ = f2.Close()
 				continue
 			}
 			if _, seekErr := f2.Seek(offset, io.SeekStart); seekErr != nil {
-				f2.Close()
+				_ = f2.Close()
 				return
 			}
 			chunk, readErr := io.ReadAll(io.LimitReader(f2, newSize-offset))
-			f2.Close()
+			_ = f2.Close()
 			if readErr != nil || len(chunk) == 0 {
 				continue
 			}
@@ -726,7 +729,7 @@ func (d *Daemon) handleSystemDump(w http.ResponseWriter, r *http.Request) {
 		}
 		daemonCfgYAML, _ := yaml.Marshal(d.daemonCfg)
 		d.configMu.RUnlock()
-		d.writeSystemDumpZip(w, ctx, dump, nsCfgYAML, daemonCfgYAML)
+		d.writeSystemDumpZip(ctx, w, dump, nsCfgYAML, daemonCfgYAML)
 		return
 	}
 
@@ -734,10 +737,10 @@ func (d *Daemon) handleSystemDump(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, dump)
 }
 
-func (d *Daemon) writeSystemDumpZip(w http.ResponseWriter, ctx context.Context, dump map[string]any, nsCfgYAML, daemonCfgYAML []byte) {
+func (d *Daemon) writeSystemDumpZip(ctx context.Context, w http.ResponseWriter, dump map[string]any, nsCfgYAML, daemonCfgYAML []byte) {
 	// Extend write deadline for potentially large ZIP with per-app logs
 	rc := http.NewResponseController(w)
-	rc.SetWriteDeadline(time.Now().Add(5 * time.Minute))
+	_ = rc.SetWriteDeadline(time.Now().Add(5 * time.Minute))
 
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", "attachment; filename=system-dump.zip")
@@ -748,21 +751,21 @@ func (d *Daemon) writeSystemDumpZip(w http.ResponseWriter, ctx context.Context, 
 	// system-info.json
 	if infoData, err := json.MarshalIndent(dump, "", "  "); err == nil {
 		if fw, err := zw.Create("system-info.json"); err == nil {
-			fw.Write(infoData)
+			_, _ = fw.Write(infoData)
 		}
 	}
 
 	// namespace.yml (pre-marshaled under configMu lock)
 	if len(nsCfgYAML) > 0 {
 		if fw, err := zw.Create("namespace.yml"); err == nil {
-			fw.Write(nsCfgYAML)
+			_, _ = fw.Write(nsCfgYAML)
 		}
 	}
 
 	// daemon.yml (pre-marshaled under configMu lock)
 	if len(daemonCfgYAML) > 0 {
 		if fw, err := zw.Create("daemon.yml"); err == nil {
-			fw.Write(daemonCfgYAML)
+			_, _ = fw.Write(daemonCfgYAML)
 		}
 	}
 
@@ -770,7 +773,7 @@ func (d *Daemon) writeSystemDumpZip(w http.ResponseWriter, ctx context.Context, 
 	const maxDaemonLogSize = 2 * 1024 * 1024 // 2MB cap per file
 	for _, suffix := range []string{"", ".1", ".2", ".3"} {
 		logFile := config.DaemonLogPath() + suffix
-		data, err := os.ReadFile(logFile)
+		data, err := os.ReadFile(logFile) //nolint:gosec // G304: logFile path is derived from internal config
 		if err != nil {
 			continue
 		}
@@ -779,7 +782,7 @@ func (d *Daemon) writeSystemDumpZip(w http.ResponseWriter, ctx context.Context, 
 		}
 		fname := "daemon-logs/" + filepath.Base(logFile)
 		if fw, err := zw.Create(fname); err == nil {
-			fw.Write(data)
+			_, _ = fw.Write(data)
 		}
 	}
 
@@ -795,7 +798,7 @@ func (d *Daemon) writeSystemDumpZip(w http.ResponseWriter, ctx context.Context, 
 			}
 			fname := fmt.Sprintf("logs/%s.log", app.Name)
 			if fw, err := zw.Create(fname); err == nil {
-				fw.Write([]byte(logs))
+				_, _ = fw.Write([]byte(logs))
 			}
 		}
 	}
@@ -888,7 +891,7 @@ func (d *Daemon) handleGetAppConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/yaml")
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
@@ -1004,13 +1007,13 @@ func (d *Daemon) handleGetAppFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "path outside workspace")
 		return
 	}
-	data, err := os.ReadFile(absPath)
+	data, err := os.ReadFile(absPath) //nolint:gosec // G304: absPath is validated against workspace root above
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 func (d *Daemon) handlePutAppFile(w http.ResponseWriter, r *http.Request) {
@@ -1250,7 +1253,7 @@ func (d *Daemon) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(&b, "citeck_sse_events_dropped_total %d\n", d.sseDropped.Load())
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
-	w.Write([]byte(b.String()))
+	_, _ = w.Write([]byte(b.String()))
 }
 
 // promEscape escapes a label value for Prometheus text exposition format.
@@ -1312,7 +1315,7 @@ func stripAnsi(s string) string {
 
 // maskNamespaceConfigSecrets returns a shallow copy of the config with passwords in
 // authentication.users replaced by "***". Does not mutate the original config.
-func maskNamespaceConfigSecrets(cfg *namespace.NamespaceConfig) *namespace.NamespaceConfig {
+func maskNamespaceConfigSecrets(cfg *namespace.Config) *namespace.Config {
 	out := *cfg
 	if len(out.Authentication.Users) > 0 {
 		masked := make([]string, len(out.Authentication.Users))

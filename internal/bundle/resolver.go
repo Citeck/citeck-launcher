@@ -58,7 +58,7 @@ type ProxyConfig struct {
 type QuickStartVariant struct {
 	Name     string    `yaml:"name"`
 	Snapshot string    `yaml:"snapshot,omitempty"`
-	Bundle   BundleRef `yaml:"bundleRef,omitempty"`
+	Bundle   Ref `yaml:"bundleRef,omitempty"`
 	Template string    `yaml:"template,omitempty"`
 }
 
@@ -90,28 +90,33 @@ type SnapshotDef struct {
 	SHA256 string `yaml:"sha256,omitempty" json:"sha256,omitempty"`
 }
 
-// Infrastructure image override structs — workspace-level defaults for infra containers.
+// PostgresProps holds workspace-level overrides for the PostgreSQL container.
 type PostgresProps struct {
 	Image string `yaml:"image,omitempty"`
 }
 
+// KeycloakProps holds workspace-level overrides for the Keycloak container.
 type KeycloakProps struct {
 	Image string `yaml:"image,omitempty"`
 }
 
+// ZookeeperProps holds workspace-level overrides for the Zookeeper container.
 type ZookeeperProps struct {
 	Image string `yaml:"image,omitempty"`
 }
 
+// OnlyOfficeProps holds workspace-level overrides for the OnlyOffice container.
 type OnlyOfficeProps struct {
 	Image       string `yaml:"image,omitempty"`
 	MemoryLimit string `yaml:"memoryLimit,omitempty"`
 }
 
+// PgAdminWsProps holds workspace-level overrides for the PgAdmin container.
 type PgAdminWsProps struct {
 	Image string `yaml:"image,omitempty"`
 }
 
+// AlfrescoProps holds workspace-level overrides for the Alfresco container.
 type AlfrescoProps struct {
 	Enabled bool     `yaml:"enabled,omitempty"`
 	Aliases []string `yaml:"aliases,omitempty"`
@@ -184,14 +189,14 @@ func NewResolverWithAuth(dataDir string, tokenLookup TokenLookupFunc) *Resolver 
 
 // ResolveResult contains the bundle definition and workspace config.
 type ResolveResult struct {
-	Bundle    *BundleDef
+	Bundle    *Def
 	Workspace *WorkspaceConfig
 }
 
 // Resolve fetches and parses a bundle definition along with workspace config.
-func (r *Resolver) Resolve(ref BundleRef) (*ResolveResult, error) {
+func (r *Resolver) Resolve(ref Ref) (*ResolveResult, error) {
 	if ref.IsEmpty() {
-		return &ResolveResult{Bundle: &EmptyBundleDef, Workspace: &WorkspaceConfig{}}, nil
+		return &ResolveResult{Bundle: &EmptyDef, Workspace: &WorkspaceConfig{}}, nil
 	}
 
 	// Step 1: Load workspace config (bundleRepos, aliases, imageRepos, etc.)
@@ -360,8 +365,8 @@ func resolveImageURL(repository, tag string, imageRepoMap map[string]string) str
 	return repository + ":" + tag
 }
 
-func parseBundleFile(path, version string, aliasMap, imageRepoMap map[string]string) (*BundleDef, error) {
-	data, err := os.ReadFile(path)
+func parseBundleFile(path, version string, aliasMap, imageRepoMap map[string]string) (*Def, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // G304: path is constructed from internal bundle dir
 	if err != nil {
 		return nil, fmt.Errorf("read bundle %s: %w", version, err)
 	}
@@ -372,8 +377,8 @@ func parseBundleFile(path, version string, aliasMap, imageRepoMap map[string]str
 		return nil, fmt.Errorf("parse bundle %s: %w", version, err)
 	}
 
-	applications := make(map[string]BundleAppDef)
-	var citeckApps []BundleAppDef
+	applications := make(map[string]AppDef)
+	var citeckApps []AppDef
 
 	// processApp handles one bundle entry. When appName is "ecos", it recurses
 	// into sub-entries (Helm charts group core apps under an ecos: key).
@@ -402,7 +407,7 @@ func parseBundleFile(path, version string, aliasMap, imageRepoMap map[string]str
 		if mapped, ok := aliasMap[appName]; ok {
 			canonical = mapped
 		}
-		applications[canonical] = BundleAppDef{Image: image}
+		applications[canonical] = AppDef{Image: image}
 
 		// Collect citeck apps (ecos-apps init containers)
 		citeckApps = collectCiteckApps(value, imageRepoMap, citeckApps)
@@ -414,8 +419,8 @@ func parseBundleFile(path, version string, aliasMap, imageRepoMap map[string]str
 		}
 	}
 
-	def := &BundleDef{
-		Key:          BundleKey{Version: version},
+	def := &Def{
+		Key:          Key{Version: version},
 		Applications: applications,
 		CiteckApps:   citeckApps,
 		Content:      raw,
@@ -426,7 +431,7 @@ func parseBundleFile(path, version string, aliasMap, imageRepoMap map[string]str
 }
 
 // collectCiteckApps extracts ecos-apps init container images from a bundle entry.
-func collectCiteckApps(value map[string]any, imageRepoMap map[string]string, citeckApps []BundleAppDef) []BundleAppDef {
+func collectCiteckApps(value map[string]any, imageRepoMap map[string]string, citeckApps []AppDef) []AppDef {
 	ecosApps, ok := value["ecosAppsImages"]
 	if !ok {
 		return citeckApps
@@ -442,7 +447,7 @@ func collectCiteckApps(value map[string]any, imageRepoMap map[string]string, cit
 		}
 		citeckAppImage := resolveImageURL(strVal(eaMap, "repository"), strVal(eaMap, "tag"), imageRepoMap)
 		if citeckAppImage != "" {
-			citeckApps = append(citeckApps, BundleAppDef{Image: citeckAppImage})
+			citeckApps = append(citeckApps, AppDef{Image: citeckAppImage})
 		}
 	}
 	return citeckApps
@@ -547,12 +552,12 @@ func findLatestBundle(bundlesDir string) (string, error) {
 }
 
 // compareBundleVersions compares two dot-separated version strings numerically.
-// "2025.10" > "2025.9", matching the Kotlin BundleKey.compareTo behavior.
+// "2025.10" > "2025.9", matching the Kotlin Key.compareTo behavior.
 func compareBundleVersions(a, b string) int {
 	aParts := strings.Split(a, ".")
 	bParts := strings.Split(b, ".")
 	n := min(len(aParts), len(bParts))
-	for i := 0; i < n; i++ {
+	for i := range n {
 		ai, _ := strconv.Atoi(aParts[i])
 		bi, _ := strconv.Atoi(bParts[i])
 		if ai != bi {

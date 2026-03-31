@@ -17,7 +17,7 @@ func TestCSRFMiddleware_BlocksPostWithoutHeader(t *testing.T) {
 	}))
 
 	for _, method := range []string{"POST", "PUT", "DELETE"} {
-		req := httptest.NewRequest(method, "/api/v1/namespace/start", nil)
+		req := httptest.NewRequest(method, "/api/v1/namespace/start", http.NoBody)
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 		if rec.Code != http.StatusForbidden {
@@ -35,7 +35,7 @@ func TestCSRFMiddleware_AllowsWithHeader(t *testing.T) {
 	}))
 
 	for _, method := range []string{"POST", "PUT", "DELETE"} {
-		req := httptest.NewRequest(method, "/api/v1/namespace/start", nil)
+		req := httptest.NewRequest(method, "/api/v1/namespace/start", http.NoBody)
 		req.Header.Set("X-Citeck-CSRF", "1")
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
@@ -50,7 +50,7 @@ func TestCSRFMiddleware_AllowsGETWithoutHeader(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest("GET", "/api/v1/namespace", nil)
+	req := httptest.NewRequest("GET", "/api/v1/namespace", http.NoBody)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -185,7 +185,7 @@ func TestAllRoutesRegistered(t *testing.T) {
 	// We only care that the route is registered (handler dispatched, not 404).
 	handler := RecoveryMiddleware(mux)
 	for _, rt := range routes {
-		req := httptest.NewRequest(rt.method, rt.path, nil)
+		req := httptest.NewRequest(rt.method, rt.path, http.NoBody)
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 		// Handler ran if we get JSON (normal response) or 500 (panic caught by recovery).

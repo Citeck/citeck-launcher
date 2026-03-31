@@ -50,7 +50,7 @@ func NewSQLiteStore(dir string) (*SQLiteStore, error) {
 func (s *SQLiteStore) migrate() error {
 	// Ensure schema_version table exists
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`); err != nil {
-		return err
+		return fmt.Errorf("create schema_version table: %w", err)
 	}
 
 	var currentVersion int
@@ -61,7 +61,7 @@ func (s *SQLiteStore) migrate() error {
 	if errors.Is(err, sql.ErrNoRows) {
 		currentVersion = 0
 		if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (0)"); err != nil {
-			return err
+			return fmt.Errorf("insert initial schema version: %w", err)
 		}
 	}
 
@@ -124,7 +124,10 @@ func (s *SQLiteStore) applyMigration(version int, stmts []string) error {
 	if _, err := tx.Exec("UPDATE schema_version SET version = ?", version); err != nil {
 		return fmt.Errorf("update schema_version to v%d: %w", version, err)
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit migration v%d: %w", version, err)
+	}
+	return nil
 }
 
 // --- Workspaces ---
@@ -133,7 +136,7 @@ func (s *SQLiteStore) applyMigration(version int, stmts []string) error {
 func (s *SQLiteStore) ListWorkspaces() ([]WorkspaceDto, error) {
 	rows, err := s.db.Query("SELECT id, name, repo_url, repo_branch FROM workspaces ORDER BY id")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query workspaces: %w", err)
 	}
 	defer rows.Close()
 
@@ -141,11 +144,14 @@ func (s *SQLiteStore) ListWorkspaces() ([]WorkspaceDto, error) {
 	for rows.Next() {
 		var ws WorkspaceDto
 		if err := rows.Scan(&ws.ID, &ws.Name, &ws.RepoURL, &ws.RepoBranch); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scan workspace row: %w", err)
 		}
 		result = append(result, ws)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate workspaces: %w", err)
+	}
+	return result, nil
 }
 
 // GetWorkspace returns a single workspace by ID.
@@ -158,7 +164,7 @@ func (s *SQLiteStore) GetWorkspace(id string) (*WorkspaceDto, error) {
 		return nil, fmt.Errorf("workspace %q not found", id)
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query workspace %s: %w", id, err)
 	}
 	return &ws, nil
 }
@@ -169,13 +175,18 @@ func (s *SQLiteStore) SaveWorkspace(ws WorkspaceDto) error {
 		INSERT INTO workspaces (id, name, repo_url, repo_branch) VALUES (?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET name=excluded.name, repo_url=excluded.repo_url, repo_branch=excluded.repo_branch
 	`, ws.ID, ws.Name, ws.RepoURL, ws.RepoBranch)
-	return err
+	if err != nil {
+		return fmt.Errorf("save workspace %s: %w", ws.ID, err)
+	}
+	return nil
 }
 
 // DeleteWorkspace removes a workspace by ID.
 func (s *SQLiteStore) DeleteWorkspace(id string) error {
-	_, err := s.db.Exec("DELETE FROM workspaces WHERE id = ?", id)
-	return err
+	if _, err := s.db.Exec("DELETE FROM workspaces WHERE id = ?", id); err != nil {
+		return fmt.Errorf("delete workspace %s: %w", id, err)
+	}
+	return nil
 }
 
 // --- Secrets ---
@@ -184,7 +195,7 @@ func (s *SQLiteStore) DeleteWorkspace(id string) error {
 func (s *SQLiteStore) ListSecrets() ([]SecretMeta, error) {
 	rows, err := s.db.Query("SELECT id, name, type, scope, created_at FROM secrets ORDER BY id")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query secrets: %w", err)
 	}
 	defer rows.Close()
 
@@ -193,12 +204,15 @@ func (s *SQLiteStore) ListSecrets() ([]SecretMeta, error) {
 		var sm SecretMeta
 		var createdStr string
 		if err := rows.Scan(&sm.ID, &sm.Name, &sm.Type, &sm.Scope, &createdStr); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scan secret row: %w", err)
 		}
 		sm.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 		result = append(result, sm)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate secrets: %w", err)
+	}
+	return result, nil
 }
 
 // GetSecret returns a secret including its value.
@@ -212,7 +226,7 @@ func (s *SQLiteStore) GetSecret(id string) (*Secret, error) {
 		return nil, fmt.Errorf("secret %q not found", id)
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query secret %s: %w", id, err)
 	}
 	sec.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 	return &sec, nil
@@ -230,13 +244,18 @@ func (s *SQLiteStore) SaveSecret(secret Secret) error {
 		INSERT INTO secrets (id, name, type, value, scope, created_at) VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET name=excluded.name, type=excluded.type, value=excluded.value, scope=excluded.scope
 	`, secret.ID, secret.Name, secret.Type, secret.Value, secret.Scope, secret.CreatedAt.Format(time.RFC3339))
-	return err
+	if err != nil {
+		return fmt.Errorf("save secret %s: %w", secret.ID, err)
+	}
+	return nil
 }
 
 // DeleteSecret removes a secret by ID.
 func (s *SQLiteStore) DeleteSecret(id string) error {
-	_, err := s.db.Exec("DELETE FROM secrets WHERE id = ?", id)
-	return err
+	if _, err := s.db.Exec("DELETE FROM secrets WHERE id = ?", id); err != nil {
+		return fmt.Errorf("delete secret %s: %w", id, err)
+	}
+	return nil
 }
 
 // --- Launcher State ---
@@ -253,33 +272,37 @@ func (s *SQLiteStore) GetState() (*LauncherState, error) {
 func (s *SQLiteStore) SetState(state LauncherState) error {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return err
+		return fmt.Errorf("begin state tx: %w", err)
 	}
 	defer tx.Rollback()
 
 	stmt := `INSERT INTO launcher_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`
 	if _, err := tx.Exec(stmt, "workspace_id", state.WorkspaceID); err != nil {
-		return err
+		return fmt.Errorf("set workspace_id: %w", err)
 	}
 	if _, err := tx.Exec(stmt, "namespace_id", state.NamespaceID); err != nil {
-		return err
+		return fmt.Errorf("set namespace_id: %w", err)
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit state: %w", err)
+	}
+	return nil
 }
 
 // PutSecretBlob stores the encrypted secrets blob (migrated from Kotlin launcher).
 func (s *SQLiteStore) PutSecretBlob(base64Data string) error {
 	stmt := `INSERT INTO launcher_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`
-	_, err := s.db.Exec(stmt, "secret_blob", base64Data)
-	return err
+	if _, err := s.db.Exec(stmt, "secret_blob", base64Data); err != nil {
+		return fmt.Errorf("put secret blob: %w", err)
+	}
+	return nil
 }
 
 // GetSecretBlob retrieves the encrypted secrets blob.
 func (s *SQLiteStore) GetSecretBlob() (string, error) {
 	var val string
-	err := s.db.QueryRow(`SELECT value FROM launcher_state WHERE key = ?`, "secret_blob").Scan(&val)
-	if err != nil {
-		return "", err
+	if err := s.db.QueryRow(`SELECT value FROM launcher_state WHERE key = ?`, "secret_blob").Scan(&val); err != nil {
+		return "", fmt.Errorf("get secret blob: %w", err)
 	}
 	return val, nil
 }
@@ -292,7 +315,7 @@ func (s *SQLiteStore) GetStateValue(key string) (string, error) {
 		return "", nil
 	}
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("get state %s: %w", key, err)
 	}
 	return val, nil
 }
@@ -300,8 +323,10 @@ func (s *SQLiteStore) GetStateValue(key string) (string, error) {
 // SetStateValue writes a single key to launcher_state (upsert).
 func (s *SQLiteStore) SetStateValue(key, value string) error {
 	stmt := `INSERT INTO launcher_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`
-	_, err := s.db.Exec(stmt, key, value)
-	return err
+	if _, err := s.db.Exec(stmt, key, value); err != nil {
+		return fmt.Errorf("set state %s: %w", key, err)
+	}
+	return nil
 }
 
 // DB returns the underlying *sql.DB for transactional operations.
@@ -311,5 +336,8 @@ func (s *SQLiteStore) DB() *sql.DB {
 
 // Close releases the database connection.
 func (s *SQLiteStore) Close() error {
-	return s.db.Close()
+	if err := s.db.Close(); err != nil {
+		return fmt.Errorf("close database: %w", err)
+	}
+	return nil
 }

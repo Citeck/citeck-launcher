@@ -1,8 +1,8 @@
 // Package form provides server-side form specifications and validation.
 package form
 
-// FormSpec defines a form's structure and validation rules.
-type FormSpec struct {
+// Spec defines a form's structure and validation rules.
+type Spec struct {
 	ID         string          `json:"id"`
 	Name       string          `json:"name"`
 	Components []ComponentSpec `json:"components"`

@@ -51,7 +51,10 @@ func CloneOrPullWithAuth(ctx context.Context, opts RepoOpts) error {
 	_, err, _ := cloneFlight.Do(opts.DestDir, func() (any, error) {
 		return nil, cloneOrPullInner(ctx, opts)
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("clone or pull %s: %w", opts.DestDir, err)
+	}
+	return nil
 }
 
 func cloneOrPullInner(ctx context.Context, opts RepoOpts) error {
@@ -116,7 +119,7 @@ func repoConfigChanged(opts RepoOpts) bool {
 func saveRepoMeta(opts RepoOpts) {
 	meta := repoMeta{URL: opts.URL, Branch: opts.Branch}
 	data, _ := json.Marshal(meta)
-	os.WriteFile(repoMetaPath(opts.DestDir), data, 0o644)
+	_ = os.WriteFile(repoMetaPath(opts.DestDir), data, 0o644) //nolint:gosec // G306: repo meta needs 0o644 for readability
 }
 
 func recordSync(opts RepoOpts) {
@@ -141,7 +144,7 @@ func doClone(ctx context.Context, opts RepoOpts) error {
 	start := time.Now()
 
 	if err := os.MkdirAll(filepath.Dir(opts.DestDir), 0o750); err != nil {
-		return err
+		return fmt.Errorf("create parent dir for %s: %w", opts.DestDir, err)
 	}
 
 	cloneOpts := &gogit.CloneOptions{
@@ -233,12 +236,12 @@ func reclone(ctx context.Context, opts RepoOpts, cause error) error {
 
 	tmpDir := opts.DestDir + ".tmp"
 	// Clean up any leftover temp dir from a previous failed attempt
-	os.RemoveAll(tmpDir)
+	_ = os.RemoveAll(tmpDir)
 
 	tmpOpts := opts
 	tmpOpts.DestDir = tmpDir
 	if err := doClone(ctx, tmpOpts); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		if isAuthError(err) {
 			slog.Info("Reclone auth failed, keeping stale repo", "dir", opts.DestDir)
 		} else {
@@ -248,11 +251,11 @@ func reclone(ctx context.Context, opts RepoOpts, cause error) error {
 	}
 
 	if err := os.RemoveAll(opts.DestDir); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		return fmt.Errorf("remove old repo %s: %w", opts.DestDir, err)
 	}
 	if err := os.Rename(tmpDir, opts.DestDir); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		return fmt.Errorf("rename %s -> %s: %w", tmpDir, opts.DestDir, err)
 	}
 	return nil

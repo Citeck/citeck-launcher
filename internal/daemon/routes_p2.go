@@ -228,7 +228,7 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(api.ValidationErrorDto{
+			_ = json.NewEncoder(w).Encode(api.ValidationErrorDto{
 				Error:  "validation failed",
 				Fields: fields,
 			})
@@ -253,7 +253,7 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 				// Apply template config as base by marshaling to YAML and re-parsing
 				if len(tmpl.Config) > 0 {
 					if tmplData, err := yaml.Marshal(tmpl.Config); err == nil {
-						yaml.Unmarshal(tmplData, &nsCfg)
+						_ = yaml.Unmarshal(tmplData, &nsCfg)
 					}
 				}
 				// Set template ID for runtime use
@@ -263,7 +263,7 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		}
 		// If no bundleRef from template or request, use first bundle repo + LATEST
 		if nsCfg.BundleRef.IsEmpty() && req.BundleRepo == "" && len(wsCfg.BundleRepos) > 0 {
-			nsCfg.BundleRef = bundle.BundleRef{Repo: wsCfg.BundleRepos[0].ID, Key: "LATEST"}
+			nsCfg.BundleRef = bundle.Ref{Repo: wsCfg.BundleRepos[0].ID, Key: "LATEST"}
 		}
 	}
 
@@ -294,7 +294,7 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 	nsCfg.PgAdmin.Enabled = req.PgAdminEnabled
 	if req.BundleRepo != "" && req.BundleKey != "" {
-		nsCfg.BundleRef = bundle.BundleRef{Repo: req.BundleRepo, Key: req.BundleKey}
+		nsCfg.BundleRef = bundle.Ref{Repo: req.BundleRepo, Key: req.BundleKey}
 	}
 
 	// Serialize to YAML
@@ -336,10 +336,10 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w, err)
 		return
 	}
-	excl.Close()
+	_ = excl.Close()
 
 	if err := fsutil.AtomicWriteFile(configPath, data, 0o644); err != nil {
-		os.Remove(configPath) // remove empty placeholder from O_EXCL open
+		_ = os.Remove(configPath) // remove empty placeholder from O_EXCL open
 		writeInternalError(w, err)
 		return
 	}
@@ -779,7 +779,7 @@ func (d *Daemon) handleDiagnosticsFix(w http.ResponseWriter, _ *http.Request) {
 				fixed++
 			}
 		} else {
-			conn.Close()
+			_ = conn.Close()
 		}
 	}
 
@@ -975,13 +975,13 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if _, err := io.Copy(tmpFile, file); err != nil {
-			tmpFile.Close()
-			os.Remove(tmpFile.Name())
+			_ = tmpFile.Close()
+			_ = os.Remove(tmpFile.Name())
 			d.snapshotMu.Unlock()
 			writeInternalError(w, err)
 			return
 		}
-		tmpFile.Close()
+		_ = tmpFile.Close()
 		zipPath = tmpFile.Name()
 		tmpPath = tmpFile.Name() // goroutine will clean up
 	}
@@ -1010,7 +1010,7 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(api.ActionResultDto{
+	_ = json.NewEncoder(w).Encode(api.ActionResultDto{
 		Success: true,
 		Message: "Import started",
 	})
@@ -1150,7 +1150,7 @@ func (d *Daemon) downloadAndImportSnapshot(snapshotID, wsID, nsID string) {
 			if actual, err := snapshot.FileSHA256(destPath); err == nil && strings.EqualFold(actual, snapDef.SHA256) {
 				needsDownload = false
 			} else {
-				os.Remove(destPath) // stale or corrupted — re-download
+				_ = os.Remove(destPath) // stale or corrupted — re-download
 			}
 		} else {
 			needsDownload = false // no hash to verify, trust existing file
@@ -1330,11 +1330,11 @@ var ssrfSafeClient = &http.Client{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			host, port, err := net.SplitHostPort(addr)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("split host:port %q: %w", addr, err)
 			}
 			ips, err := net.DefaultResolver.LookupHost(ctx, host)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("resolve host %q: %w", host, err)
 			}
 			for _, ipStr := range ips {
 				ip := net.ParseIP(ipStr)

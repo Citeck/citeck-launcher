@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"fmt"
+
 	"github.com/citeck/citeck-launcher/internal/client"
 	"github.com/citeck/citeck-launcher/internal/daemon"
 	"github.com/citeck/citeck-launcher/internal/output"
@@ -21,7 +23,7 @@ func newStartCmd(version string) *cobra.Command {
 				defer c.Close()
 				result, err := c.StartNamespace()
 				if err != nil {
-					return err
+					return fmt.Errorf("start namespace: %w", err)
 				}
 				output.PrintResult(result, func() {
 					output.PrintText("%s", result.Message)

@@ -76,7 +76,7 @@ func (s *FileStore) ListSecrets() ([]SecretMeta, error) {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("list secrets dir: %w", err)
 	}
 
 	result := make([]SecretMeta, 0, len(entries))
@@ -130,7 +130,10 @@ func (s *FileStore) SaveSecret(secret Secret) error {
 		return fmt.Errorf("marshal secret: %w", err)
 	}
 
-	return fsutil.AtomicWriteFile(s.secretPath(secret.ID), data, 0o600)
+	if err := fsutil.AtomicWriteFile(s.secretPath(secret.ID), data, 0o600); err != nil {
+		return fmt.Errorf("write secret %s: %w", secret.ID, err)
+	}
+	return nil
 }
 
 // DeleteSecret removes a secret JSON file.
@@ -140,7 +143,7 @@ func (s *FileStore) DeleteSecret(id string) error {
 
 	path := s.secretPath(id)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
+		return fmt.Errorf("delete secret %s: %w", id, err)
 	}
 	return nil
 }
@@ -161,11 +164,11 @@ func (s *FileStore) GetState() (*LauncherState, error) {
 		if os.IsNotExist(err) {
 			return &LauncherState{}, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("read state file: %w", err)
 	}
 	var state LauncherState
 	if err := json.Unmarshal(data, &state); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse state JSON: %w", err)
 	}
 	return &state, nil
 }
@@ -179,19 +182,25 @@ func (s *FileStore) SetState(state LauncherState) error {
 	if err != nil {
 		return fmt.Errorf("marshal state: %w", err)
 	}
-	return fsutil.AtomicWriteFile(s.statePath(), data, 0o644)
+	if err := fsutil.AtomicWriteFile(s.statePath(), data, 0o644); err != nil {
+		return fmt.Errorf("write state: %w", err)
+	}
+	return nil
 }
 
 // PutSecretBlob stores the encrypted secrets blob to a file.
 func (s *FileStore) PutSecretBlob(base64Data string) error {
-	return fsutil.AtomicWriteFile(filepath.Join(s.baseDir, "secret_blob.dat"), []byte(base64Data), 0o600)
+	if err := fsutil.AtomicWriteFile(filepath.Join(s.baseDir, "secret_blob.dat"), []byte(base64Data), 0o600); err != nil {
+		return fmt.Errorf("write secret blob: %w", err)
+	}
+	return nil
 }
 
 // GetSecretBlob retrieves the encrypted secrets blob from a file.
 func (s *FileStore) GetSecretBlob() (string, error) {
 	data, err := os.ReadFile(filepath.Join(s.baseDir, "secret_blob.dat"))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("read secret blob: %w", err)
 	}
 	return string(data), nil
 }
@@ -214,11 +223,11 @@ type secretFile struct {
 func (s *FileStore) readSecret(path string) (*Secret, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // G304: path is constructed from internal baseDir + secret ID
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read secret file %s: %w", path, err)
 	}
 	var sf secretFile
 	if err := json.Unmarshal(data, &sf); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse secret JSON %s: %w", path, err)
 	}
 	return &Secret{
 		SecretMeta: SecretMeta{

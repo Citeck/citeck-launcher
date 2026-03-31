@@ -30,14 +30,14 @@ var httpClient = &http.Client{
 // Total may be -1 if the server does not send Content-Length.
 type ProgressFunc func(received, total int64)
 
-// Download fetches a snapshot ZIP from rawURL, saves it to destPath, and verifies SHA256 if provided.
-// Supports resumable downloads via HTTP Range header. Only http/https URLs are accepted.
-// DownloadWithClient is like Download but uses the provided HTTP client.
+// DownloadWithClient fetches a snapshot ZIP using the provided HTTP client.
 // Use this with a SSRF-safe client when the URL comes from user input.
 func DownloadWithClient(ctx context.Context, client *http.Client, rawURL, destPath, expectedSHA256 string, progress ProgressFunc) error {
 	return download(ctx, client, rawURL, destPath, expectedSHA256, progress)
 }
 
+// Download fetches a snapshot ZIP from rawURL, saves it to destPath, and verifies SHA256 if provided.
+// Supports resumable downloads via HTTP Range header. Only http/https URLs are accepted.
 func Download(ctx context.Context, rawURL, destPath, expectedSHA256 string, progress ProgressFunc) error {
 	return download(ctx, httpClient, rawURL, destPath, expectedSHA256, progress)
 }
@@ -48,7 +48,7 @@ func download(ctx context.Context, client *http.Client, rawURL, destPath, expect
 	}
 
 	dir := filepath.Dir(destPath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // G301: snapshot directory needs 0o755 for Docker volume access
 		return fmt.Errorf("create dir %s: %w", dir, err)
 	}
 
@@ -85,7 +85,7 @@ func download(ctx context.Context, client *http.Client, rawURL, destPath, expect
 		flags |= os.O_TRUNC
 		offset = 0
 	}
-	f, err := os.OpenFile(partPath, flags, 0o644)
+	f, err := os.OpenFile(partPath, flags, 0o644) //nolint:gosec // G302: snapshot files need 0o644 for readability
 	if err != nil {
 		return fmt.Errorf("open %s: %w", partPath, err)
 	}
@@ -96,7 +96,7 @@ func download(ctx context.Context, client *http.Client, rawURL, destPath, expect
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
 			if _, wErr := f.Write(buf[:n]); wErr != nil {
-				f.Close()
+				_ = f.Close()
 				return fmt.Errorf("write %s: %w", partPath, wErr)
 			}
 			received += int64(n)
@@ -108,7 +108,7 @@ func download(ctx context.Context, client *http.Client, rawURL, destPath, expect
 			break
 		}
 		if readErr != nil {
-			f.Close()
+			_ = f.Close()
 			return fmt.Errorf("read body: %w", readErr)
 		}
 	}
@@ -123,7 +123,7 @@ func download(ctx context.Context, client *http.Client, rawURL, destPath, expect
 			return fmt.Errorf("compute sha256: %w", err)
 		}
 		if !strings.EqualFold(actual, expectedSHA256) {
-			os.Remove(partPath)
+			_ = os.Remove(partPath)
 			return fmt.Errorf("sha256 mismatch: expected %s, got %s", expectedSHA256, actual)
 		}
 	}
@@ -139,7 +139,7 @@ func download(ctx context.Context, client *http.Client, rawURL, destPath, expect
 // doGet performs an HTTP GET, handling Range requests and 416 retries.
 // Returns a single response that the caller must close.
 func doGet(ctx context.Context, client *http.Client, rawURL string, offset int64) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -157,8 +157,8 @@ func doGet(ctx context.Context, client *http.Client, rawURL string, offset int64
 		return resp, nil
 	case http.StatusRequestedRangeNotSatisfiable:
 		// Range not satisfiable — close and retry from scratch with a fresh request
-		resp.Body.Close()
-		retryReq, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+		_ = resp.Body.Close()
+		retryReq, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, http.NoBody)
 		if err != nil {
 			return nil, fmt.Errorf("create retry request: %w", err)
 		}
@@ -167,12 +167,12 @@ func doGet(ctx context.Context, client *http.Client, rawURL string, offset int64
 			return nil, fmt.Errorf("download %s: %w", rawURL, err)
 		}
 		if resp.StatusCode != http.StatusOK {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("download %s: HTTP %d", rawURL, resp.StatusCode)
 		}
 		return resp, nil
 	default:
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, fmt.Errorf("download %s: HTTP %d", rawURL, resp.StatusCode)
 	}
 }
@@ -197,15 +197,15 @@ func validateURL(rawURL string) error {
 
 // FileSHA256 computes the SHA256 hex digest of a file.
 func FileSHA256(path string) (string, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // G304: path is an internal snapshot path
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("open %s: %w", path, err)
 	}
 	defer f.Close()
 
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
-		return "", err
+		return "", fmt.Errorf("hash %s: %w", path, err)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }

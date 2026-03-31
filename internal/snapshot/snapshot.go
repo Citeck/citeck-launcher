@@ -166,7 +166,7 @@ func Import(ctx context.Context, dc *docker.Client, zipPath, volumesBase string)
 	}
 
 	// Read meta.json
-	metaData, err := os.ReadFile(filepath.Join(tmpDir, metaFileName))
+	metaData, err := os.ReadFile(filepath.Join(tmpDir, metaFileName)) //nolint:gosec // G304: tmpDir is an internal temp directory
 	if err != nil {
 		return nil, fmt.Errorf("read meta.json: %w", err)
 	}
@@ -262,7 +262,7 @@ func exportVolume(ctx context.Context, dc *docker.Client, hostPath, outputPath s
 func importVolume(ctx context.Context, dc *docker.Client, vol VolumeSnapshotMeta, tarPath, volumesBase string) error {
 	// Create host directory for this volume
 	hostDir := filepath.Join(volumesBase, "volumes", vol.Name)
-	if err := os.MkdirAll(hostDir, 0o755); err != nil {
+	if err := os.MkdirAll(hostDir, 0o755); err != nil { //nolint:gosec // G301: volume dirs need 0o755 for Docker access
 		return fmt.Errorf("create volume dir %s: %w", hostDir, err)
 	}
 
@@ -312,50 +312,59 @@ func ensureUtilsImage(ctx context.Context, dc *docker.Client) error {
 		return nil
 	}
 	slog.Info("Pulling launcher-utils image", "image", launcherUtilsImage)
-	return dc.PullImage(ctx, launcherUtilsImage, nil)
+	if err := dc.PullImage(ctx, launcherUtilsImage, nil); err != nil {
+		return fmt.Errorf("pull utils image: %w", err)
+	}
+	return nil
 }
 
 // createZip creates a ZIP file from all files in srcDir.
 func createZip(zipPath, srcDir string) error {
-	f, err := os.Create(zipPath)
+	f, err := os.Create(zipPath) //nolint:gosec // G304: zipPath is an internal snapshot path
 	if err != nil {
-		return err
+		return fmt.Errorf("create zip %s: %w", zipPath, err)
 	}
 	defer f.Close()
 
 	w := zip.NewWriter(f)
 	defer w.Close()
 
-	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+	walkErr := filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return err
 		}
-		relPath, err := filepath.Rel(srcDir, path)
-		if err != nil {
-			return err
+		relPath, relErr := filepath.Rel(srcDir, path)
+		if relErr != nil {
+			return fmt.Errorf("relative path %s: %w", path, relErr)
 		}
 
-		header, err := zip.FileInfoHeader(info)
-		if err != nil {
-			return err
+		header, headerErr := zip.FileInfoHeader(info)
+		if headerErr != nil {
+			return fmt.Errorf("zip header for %s: %w", relPath, headerErr)
 		}
 		header.Name = relPath
 		header.Method = zip.Store // already compressed (zstd/xz)
 
-		writer, err := w.CreateHeader(header)
-		if err != nil {
-			return err
+		writer, createErr := w.CreateHeader(header)
+		if createErr != nil {
+			return fmt.Errorf("create zip entry %s: %w", relPath, createErr)
 		}
 
-		file, err := os.Open(path)
-		if err != nil {
-			return err
+		file, openErr := os.Open(path) //nolint:gosec // G304: path comes from internal filesystem walk
+		if openErr != nil {
+			return fmt.Errorf("open %s: %w", path, openErr)
 		}
 		defer file.Close()
 
-		_, err = io.Copy(writer, file)
-		return err
+		if _, copyErr := io.Copy(writer, file); copyErr != nil {
+			return fmt.Errorf("write %s to zip: %w", relPath, copyErr)
+		}
+		return nil
 	})
+	if walkErr != nil {
+		return fmt.Errorf("walk %s: %w", srcDir, walkErr)
+	}
+	return nil
 }
 
 // maxExtractSize is the aggregate extraction size limit (50 GB) to prevent zip bombs.
@@ -365,7 +374,7 @@ const maxExtractSize int64 = 50 << 30
 func extractZip(zipPath, destDir string) error {
 	r, err := zip.OpenReader(zipPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("open zip %s: %w", zipPath, err)
 	}
 	defer r.Close()
 
@@ -379,39 +388,39 @@ func extractZip(zipPath, destDir string) error {
 		}
 
 		if f.FileInfo().IsDir() {
-			os.MkdirAll(destPath, 0o755)
+			os.MkdirAll(destPath, 0o755) //nolint:gosec // G301: extraction dirs need 0o755
 			continue
 		}
 
-		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
-			return err
+		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil { //nolint:gosec // G301: extraction dirs need 0o755
+			return fmt.Errorf("mkdir for %s: %w", f.Name, err)
 		}
 
-		outFile, err := os.Create(destPath)
+		outFile, err := os.Create(destPath) //nolint:gosec // G304: destPath is validated against zip slip above
 		if err != nil {
-			return err
+			return fmt.Errorf("create %s: %w", destPath, err)
 		}
 
 		rc, err := f.Open()
 		if err != nil {
-			outFile.Close()
-			return err
+			_ = outFile.Close()
+			return fmt.Errorf("open zip entry %s: %w", f.Name, err)
 		}
 
 		// Limit per-file (10 GB) and aggregate (50 GB)
 		remaining := maxExtractSize - totalWritten
 		if remaining <= 0 {
-			rc.Close()
-			outFile.Close()
+			_ = rc.Close()
+			_ = outFile.Close()
 			return fmt.Errorf("zip extraction aborted: aggregate size exceeds %d GB", maxExtractSize>>30)
 		}
 		perFileLimit := min(remaining, int64(10<<30))
 		n, err := io.Copy(outFile, io.LimitReader(rc, perFileLimit))
 		totalWritten += n
-		rc.Close()
-		outFile.Close()
+		_ = rc.Close()
+		_ = outFile.Close()
 		if err != nil {
-			return err
+			return fmt.Errorf("extract %s: %w", f.Name, err)
 		}
 	}
 
@@ -424,7 +433,7 @@ func availableDiskSpace(path string) int64 {
 	if err := syscall.Statfs(path, &stat); err != nil {
 		return 0
 	}
-	return int64(stat.Bavail) * int64(stat.Bsize) //nolint:gosec // overflow not possible for filesystem block counts
+	return int64(stat.Bavail) * stat.Bsize //nolint:gosec // overflow not possible for filesystem block counts
 }
 
 // validateVolumeSnapshotMeta rejects untrusted meta.json entries with path traversal

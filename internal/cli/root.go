@@ -30,12 +30,23 @@ var (
 	flagInsecure   bool
 )
 
-func Host() string       { return flagHost }
-func TLSCert() string    { return flagTLSCert }
-func TLSKey() string     { return flagTLSKey }
+// Host returns the --host flag value.
+func Host() string { return flagHost }
+
+// TLSCert returns the --tls-cert flag value.
+func TLSCert() string { return flagTLSCert }
+
+// TLSKey returns the --tls-key flag value.
+func TLSKey() string { return flagTLSKey }
+
+// ServerCert returns the --server-cert flag value.
 func ServerCert() string { return flagServerCert }
-func Insecure() bool     { return flagInsecure }
-func Yes() bool          { return flagYes }
+
+// Insecure returns the --insecure flag value.
+func Insecure() bool { return flagInsecure }
+
+// Yes returns the --yes flag value.
+func Yes() bool { return flagYes }
 
 // BuildInfo holds version metadata injected via ldflags.
 type BuildInfo struct {
@@ -44,6 +55,7 @@ type BuildInfo struct {
 	BuildDate string
 }
 
+// NewRootCmd creates the top-level CLI command with all subcommands registered.
 func NewRootCmd(info BuildInfo) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "citeck",
@@ -95,6 +107,7 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 	return root
 }
 
+// Execute runs the root command and exits with the appropriate code.
 func Execute(info BuildInfo) {
 	root := NewRootCmd(info)
 	if err := root.Execute(); err != nil {

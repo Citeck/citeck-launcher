@@ -40,14 +40,14 @@ func decompressLZF(compressed []byte, decompressedLen int) ([]byte, error) {
 }
 
 // decompressLiteral handles a literal run: copy ctrl+1 bytes from input to output.
-func decompressLiteral(out, compressed []byte, opos, ipos, ctrl int) (int, int) {
+func decompressLiteral(out, compressed []byte, opos, ipos, ctrl int) (newOpos, newIpos int) {
 	length := ctrl + 1
 	copy(out[opos:], compressed[ipos:ipos+length])
 	return opos + length, ipos + length
 }
 
 // decompressBackRef handles a back-reference: copy length bytes from earlier in output.
-func decompressBackRef(out, compressed []byte, opos, ipos, ctrl, decompressedLen int) (int, int, error) {
+func decompressBackRef(out, compressed []byte, opos, ipos, ctrl, decompressedLen int) (newOpos, newIpos int, _ error) {
 	length := (ctrl >> 5) + 2
 	if ipos >= len(compressed) {
 		return 0, 0, fmt.Errorf("lzf: back-reference overflows input at ipos=%d", ipos)

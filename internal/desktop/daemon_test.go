@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRunDaemonLoop_CleanQuitOnContextCancel(t *testing.T) {
@@ -22,7 +22,7 @@ func TestRunDaemonLoop_CleanQuitOnContextCancel(t *testing.T) {
 
 	select {
 	case err := <-done:
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	case <-time.After(30 * time.Second):
 		t.Fatal("RunDaemonLoop did not exit after context cancel")
 	}

@@ -11,7 +11,7 @@ import (
 func diskSpace(path string) (freeGB, totalGB float64, err error) {
 	var stat syscall.Statfs_t
 	if err := syscall.Statfs(path, &stat); err != nil {
-		return 0, 0, err
+		return 0, 0, fmt.Errorf("statfs %s: %w", path, err)
 	}
 	if stat.Bsize <= 0 {
 		return 0, 0, fmt.Errorf("invalid block size: %d", stat.Bsize)

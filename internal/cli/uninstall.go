@@ -38,7 +38,7 @@ func runUninstall(deleteData bool) error {
 
 	// Wait for socket to disappear (up to 30s)
 	socketPath := config.SocketPath()
-	for i := 0; i < 30; i++ {
+	for range 30 {
 		if _, err := os.Stat(socketPath); err != nil {
 			break // socket gone
 		}

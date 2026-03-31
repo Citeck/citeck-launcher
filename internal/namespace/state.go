@@ -2,6 +2,7 @@ package namespace
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -26,18 +27,21 @@ func statePath(volumesBase, nsID string) string {
 func SaveNsState(volumesBase, nsID string, state *NsPersistedState) error {
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal state: %w", err)
 	}
 	path := statePath(volumesBase, nsID)
-	os.MkdirAll(filepath.Dir(path), 0o755)
-	return fsutil.AtomicWriteFile(path, data, 0o644)
+	_ = os.MkdirAll(filepath.Dir(path), 0o750)
+	if err := fsutil.AtomicWriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("write state: %w", err)
+	}
+	return nil
 }
 
 // LoadNsState reads the persisted namespace state from disk.
 // Returns nil if no state file exists.
 func LoadNsState(volumesBase, nsID string) *NsPersistedState {
 	path := statePath(volumesBase, nsID)
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // path is from trusted volumesBase + nsID
 	if err != nil {
 		return nil
 	}

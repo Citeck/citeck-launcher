@@ -58,7 +58,7 @@ func LoadDaemonConfig() (DaemonConfig, error) {
 	cfg := DefaultDaemonConfig()
 	path := DaemonConfigPath()
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // G304: path is derived from internal config, not user input
 	if err != nil {
 		if os.IsNotExist(err) {
 			return cfg, nil
@@ -108,5 +108,8 @@ func SaveDaemonConfig(cfg DaemonConfig) error {
 		return fmt.Errorf("marshal daemon config: %w", err)
 	}
 
-	return fsutil.AtomicWriteFile(path, data, 0o644)
+	if err := fsutil.AtomicWriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("write daemon config: %w", err)
+	}
+	return nil
 }

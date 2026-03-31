@@ -43,8 +43,8 @@ func NewClient(dataDir, confDir, hostname string) *Client {
 
 // ObtainCertificate performs the full ACME flow: account registration, order, HTTP-01 challenge, CSR, certificate download.
 func (c *Client) ObtainCertificate(ctx context.Context) error {
-	os.MkdirAll(c.dataDir, 0o755)
-	os.MkdirAll(c.confDir, 0o755)
+	_ = os.MkdirAll(c.dataDir, 0o755) //nolint:gosec // G301: ACME data dirs need 0o755
+	_ = os.MkdirAll(c.confDir, 0o755) //nolint:gosec // G301: ACME conf dirs need 0o755
 
 	// Load or create account key
 	accountKey, err := c.loadOrCreateAccountKey()
@@ -106,9 +106,9 @@ func (c *Client) ObtainCertificate(ctx context.Context) error {
 
 		// Start temporary HTTP server on :80 for challenge
 		token := challenge.Token
-		response, err := client.HTTP01ChallengeResponse(token)
-		if err != nil {
-			return fmt.Errorf("challenge response: %w", err)
+		response, respErr := client.HTTP01ChallengeResponse(token)
+		if respErr != nil {
+			return fmt.Errorf("challenge response: %w", respErr)
 		}
 		challengePath := client.HTTP01ChallengePath(token)
 
@@ -119,33 +119,33 @@ func (c *Client) ObtainCertificate(ctx context.Context) error {
 			IdleTimeout:  30 * time.Second,
 		}
 		mux := http.NewServeMux()
-		mux.HandleFunc(challengePath, func(w http.ResponseWriter, r *http.Request) {
-			w.Write([]byte(response))
+		mux.HandleFunc(challengePath, func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(response))
 		})
 		srv.Handler = mux
 
 		// Start challenge server and wait for it to be ready
-		listener, listenErr := net.Listen("tcp", ":80")
+		listener, listenErr := net.Listen("tcp", ":80") //nolint:gosec // G102: ACME HTTP-01 challenge requires binding :80 on all interfaces
 		if listenErr != nil {
 			return fmt.Errorf("listen :80 for ACME challenge: %w", listenErr)
 		}
 		go func() {
-			srv.Serve(listener)
+			_ = srv.Serve(listener)
 		}()
 
 		// Accept the challenge
-		if _, err := client.Accept(ctx, challenge); err != nil {
-			srv.Close()
-			return fmt.Errorf("accept challenge: %w", err)
+		if _, acceptErr := client.Accept(ctx, challenge); acceptErr != nil {
+			_ = srv.Close()
+			return fmt.Errorf("accept challenge: %w", acceptErr)
 		}
 
 		// Wait for authorization
-		if _, err := client.WaitAuthorization(ctx, authzURL); err != nil {
-			srv.Close()
-			return fmt.Errorf("wait authorization: %w", err)
+		if _, waitErr := client.WaitAuthorization(ctx, authzURL); waitErr != nil {
+			_ = srv.Close()
+			return fmt.Errorf("wait authorization: %w", waitErr)
 		}
 
-		srv.Close()
+		_ = srv.Close()
 	}
 
 	// Generate certificate key
@@ -237,7 +237,7 @@ func (c *Client) CertMatchesHost() bool {
 func (c *Client) loadOrCreateAccountKey() (*ecdsa.PrivateKey, error) {
 	keyPath := filepath.Join(c.dataDir, "account-key.pem")
 
-	data, err := os.ReadFile(keyPath)
+	data, err := os.ReadFile(keyPath) //nolint:gosec // G304: keyPath is derived from internal dataDir
 	if err == nil {
 		block, _ := pem.Decode(data)
 		if block != nil {
@@ -252,7 +252,7 @@ func (c *Client) loadOrCreateAccountKey() (*ecdsa.PrivateKey, error) {
 	// Generate new key
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("generate ECDSA key: %w", err)
 	}
 
 	// Persist as PEM
@@ -260,9 +260,9 @@ func (c *Client) loadOrCreateAccountKey() (*ecdsa.PrivateKey, error) {
 	if err != nil {
 		return key, nil // use in memory, persist failed
 	}
-	os.MkdirAll(filepath.Dir(keyPath), 0o755)
+	_ = os.MkdirAll(filepath.Dir(keyPath), 0o755) //nolint:gosec // G301: ACME key dir needs 0o755
 	pemData := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-	os.WriteFile(keyPath, pemData, 0o600)
+	_ = os.WriteFile(keyPath, pemData, 0o600)
 
 	return key, nil
 }

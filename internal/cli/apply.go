@@ -61,7 +61,7 @@ func newApplyCmd() *cobra.Command {
 			defer c.Close()
 
 			// Read config file once (avoid TOCTOU)
-			yamlData, err := os.ReadFile(file)
+			yamlData, err := os.ReadFile(file) //nolint:gosec // G304: file is a CLI argument
 			if err != nil {
 				return fmt.Errorf("read config file: %w", err)
 			}
@@ -137,15 +137,15 @@ func showConfigDiffData(c *client.DaemonClient, newData []byte) {
 		return // daemon may not have config loaded yet
 	}
 
-	var current, new_ map[string]any
+	var current, updated map[string]any
 	if yaml.Unmarshal([]byte(currentYAML), &current) != nil {
 		return
 	}
-	if yaml.Unmarshal(newData, &new_) != nil {
+	if yaml.Unmarshal(newData, &updated) != nil {
 		return
 	}
 
-	changes := diffMaps("", current, new_)
+	changes := diffMaps("", current, updated)
 	if len(changes) == 0 {
 		output.PrintText("No configuration changes detected.")
 		return
@@ -159,10 +159,10 @@ func showConfigDiffData(c *client.DaemonClient, newData []byte) {
 }
 
 // diffMaps recursively compares two YAML maps and returns human-readable change descriptions.
-func diffMaps(prefix string, old, new_ map[string]any) []string {
+func diffMaps(prefix string, old, updated map[string]any) []string {
 	var changes []string
 
-	for key, newVal := range new_ {
+	for key, newVal := range updated {
 		path := key
 		if prefix != "" {
 			path = prefix + "." + key
@@ -188,7 +188,7 @@ func diffMaps(prefix string, old, new_ map[string]any) []string {
 		if prefix != "" {
 			path = prefix + "." + key
 		}
-		if _, exists := new_[key]; !exists {
+		if _, exists := updated[key]; !exists {
 			changes = append(changes, fmt.Sprintf("- %s", path))
 		}
 	}
@@ -218,20 +218,20 @@ func newDiffCmd() *cobra.Command {
 				return fmt.Errorf("fetch current config: %w", err)
 			}
 
-			newData, err := os.ReadFile(file)
+			newData, err := os.ReadFile(file) //nolint:gosec // G304: file is a CLI argument
 			if err != nil {
 				return fmt.Errorf("read file: %w", err)
 			}
 
-			var current, new_ map[string]any
+			var current, updated map[string]any
 			if err := yaml.Unmarshal([]byte(currentYAML), &current); err != nil {
 				return fmt.Errorf("parse current config: %w", err)
 			}
-			if err := yaml.Unmarshal(newData, &new_); err != nil {
+			if err := yaml.Unmarshal(newData, &updated); err != nil {
 				return fmt.Errorf("parse new config: %w", err)
 			}
 
-			changes := diffMaps("", current, new_)
+			changes := diffMaps("", current, updated)
 
 			output.PrintResult(map[string]any{
 				"file":    file,
@@ -270,7 +270,7 @@ func newWaitCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client.New(clientOpts())
 			if err != nil {
-				return err
+				return fmt.Errorf("connect to daemon: %w", err)
 			}
 			defer c.Close()
 
@@ -278,7 +278,7 @@ func newWaitCmd() *cobra.Command {
 			defer cancel()
 
 			// Check initial state
-			if healthy {
+			if healthy { //nolint:nestif // inherent complexity in health-check polling loop
 				if h, healthErr := c.GetHealth(); healthErr == nil && h.Healthy {
 					output.PrintText("Healthy")
 					return nil

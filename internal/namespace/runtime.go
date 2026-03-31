@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"regexp"
 	"strings"
@@ -75,7 +76,7 @@ type RegistryAuthFunc func(image string) *docker.RegistryAuth
 type Runtime struct {
 	mu              sync.RWMutex
 	status          NsRuntimeStatus
-	config          *NamespaceConfig
+	config          *Config
 	apps            map[string]*AppRuntime
 	docker          docker.RuntimeClient
 	actionSvc       *actions.Service
@@ -143,9 +144,7 @@ func (r *Runtime) ManualStoppedApps() map[string]bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	result := make(map[string]bool, len(r.manualStoppedApps))
-	for k, v := range r.manualStoppedApps {
-		result[k] = v
-	}
+	maps.Copy(result, r.manualStoppedApps)
 	return result
 }
 
@@ -221,9 +220,7 @@ func (r *Runtime) persistState() {
 	}
 	if len(r.editedApps) > 0 {
 		state.EditedApps = make(map[string]appdef.ApplicationDef, len(r.editedApps))
-		for k, v := range r.editedApps {
-			state.EditedApps[k] = v
-		}
+		maps.Copy(state.EditedApps, r.editedApps)
 	}
 	for name := range r.editedLockedApps {
 		state.EditedLockedApps = append(state.EditedLockedApps, name)
@@ -285,13 +282,13 @@ type command struct {
 }
 
 // NewRuntime creates a new namespace runtime with a dedicated action service.
-func NewRuntime(cfg *NamespaceConfig, dockerClient docker.RuntimeClient, workspace, volumesBase string) *Runtime {
+func NewRuntime(cfg *Config, dockerClient docker.RuntimeClient, workspace, volumesBase string) *Runtime {
 	return NewRuntimeWithActions(cfg, dockerClient, workspace, volumesBase, nil)
 }
 
 // NewRuntimeWithActions creates a runtime with an externally provided action service.
 // If actionSvc is nil, a new dedicated service is created.
-func NewRuntimeWithActions(cfg *NamespaceConfig, dockerClient docker.RuntimeClient, workspace, volumesBase string, actionSvc *actions.Service) *Runtime {
+func NewRuntimeWithActions(cfg *Config, dockerClient docker.RuntimeClient, workspace, volumesBase string, actionSvc *actions.Service) *Runtime {
 	ownsActions := false
 	if actionSvc == nil {
 		actionSvc = actions.NewService(actions.ServiceConfig{})
@@ -490,6 +487,7 @@ func (r *Runtime) Stop() {
 	}
 }
 
+// Shutdown stops the runtime and waits for all goroutines to complete.
 func (r *Runtime) Shutdown() {
 	r.shutdownOnce.Do(func() {
 		if r.running.Load() {
@@ -508,6 +506,7 @@ func (r *Runtime) Shutdown() {
 	})
 }
 
+// Regenerate sends a regeneration command to the runtime loop.
 func (r *Runtime) Regenerate(apps []appdef.ApplicationDef) {
 	select {
 	case r.cmdCh <- command{typ: cmdRegenerate, apps: apps}:
@@ -836,12 +835,8 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) { //nolint:gocyclo // or
 	r.mu.RLock()
 	editedLocked := make(map[string]bool, len(r.editedLockedApps))
 	editedApps := make(map[string]appdef.ApplicationDef, len(r.editedApps))
-	for k, v := range r.editedLockedApps {
-		editedLocked[k] = v
-	}
-	for k, v := range r.editedApps {
-		editedApps[k] = v
-	}
+	maps.Copy(editedLocked, r.editedLockedApps)
+	maps.Copy(editedApps, r.editedApps)
 	r.mu.RUnlock()
 
 	type appPlan struct {
@@ -904,7 +899,7 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) { //nolint:gocyclo // or
 			removeWg.Add(1)
 			go func(cn string) {
 				defer removeWg.Done()
-				r.docker.StopAndRemoveContainer(ctx, cn, 0)
+				_ = r.docker.StopAndRemoveContainer(ctx, cn, 0)
 			}(containerName)
 		}
 	}
@@ -1248,8 +1243,8 @@ func (r *Runtime) waitForLogPattern(ctx context.Context, containerID string, con
 	pr, pw := io.Pipe()
 	defer pr.Close() // unblocks stdcopy goroutine on early return
 	go func() {
-		stdcopy.StdCopy(pw, pw, rawReader)
-		pw.Close()
+		_, _ = stdcopy.StdCopy(pw, pw, rawReader)
+		_ = pw.Close()
 	}()
 
 	scanner := bufio.NewScanner(pr)
@@ -1263,7 +1258,7 @@ func (r *Runtime) waitForLogPattern(ctx context.Context, containerID string, con
 	}
 
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return fmt.Errorf("wait for log pattern %q in %s: %w", cond.Pattern, shortID, ctx.Err())
 	}
 	return fmt.Errorf("log pattern %q not found in %s after %v", cond.Pattern, shortID, timeout)
 }
@@ -1285,7 +1280,7 @@ func (r *Runtime) waitForProbe(ctx context.Context, containerID string, probe *a
 	// Context-aware initial delay
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("probe initial delay: %w", ctx.Err())
 	case <-time.After(time.Duration(delay) * time.Second):
 	}
 
@@ -1294,7 +1289,7 @@ func (r *Runtime) waitForProbe(ctx context.Context, containerID string, probe *a
 	for attempt := 0; attempt < threshold; attempt++ {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("probe attempt %d: %w", attempt, ctx.Err())
 		default:
 		}
 
@@ -1320,7 +1315,7 @@ func (r *Runtime) waitForProbe(ctx context.Context, containerID string, probe *a
 		// Context-aware period sleep
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("probe period sleep: %w", ctx.Err())
 		case <-time.After(time.Duration(period) * time.Second):
 		}
 	}
@@ -1597,7 +1592,7 @@ func httpProbeCheck(ctx context.Context, port int, path string, timeoutSec int) 
 	if err != nil {
 		return false
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	return resp.StatusCode == 200
 }
 

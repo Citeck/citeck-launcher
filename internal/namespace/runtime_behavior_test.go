@@ -73,7 +73,7 @@ func (m *mockDocker) StopAndRemoveContainer(ctx context.Context, name string, ti
 func (m *mockDocker) GetContainers(ctx context.Context) ([]dtypes.Container, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var result []dtypes.Container
+	result := make([]dtypes.Container, 0, len(m.containers))
 	for name, c := range m.containers {
 		result = append(result, dtypes.Container{
 			ID:     c.id,
@@ -112,7 +112,7 @@ func (m *mockDocker) ContainerLogsFollow(ctx context.Context, containerID string
 	return io.NopCloser(strings.NewReader("")), nil
 }
 
-func (m *mockDocker) ExecInContainer(ctx context.Context, containerID string, cmd []string) (string, int, error) {
+func (m *mockDocker) ExecInContainer(_ context.Context, _ string, _ []string) (output string, exitCode int, err error) {
 	return "", 0, nil
 }
 
@@ -132,8 +132,8 @@ func (m *mockDocker) WaitForContainerExit(ctx context.Context, containerID strin
 	return nil
 }
 
-func testConfig() *NamespaceConfig {
-	return &NamespaceConfig{
+func testConfig() *Config {
+	return &Config{
 		ID:   "test",
 		Name: "Test NS",
 	}

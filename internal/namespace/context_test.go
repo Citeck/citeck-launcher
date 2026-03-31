@@ -7,14 +7,14 @@ import (
 )
 
 func makeCtx(port int, host string, tlsEnabled bool) *NsGenContext {
-	cfg := &NamespaceConfig{
+	cfg := &Config{
 		Proxy: ProxyProps{
 			Port: port,
 			Host: host,
 			TLS:  TlsConfig{Enabled: tlsEnabled},
 		},
 	}
-	return NewNsGenContext(cfg, &bundle.EmptyBundleDef)
+	return NewNsGenContext(cfg, &bundle.EmptyDef)
 }
 
 func TestProxyBaseURL_HTTP_80(t *testing.T) {

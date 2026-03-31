@@ -28,7 +28,7 @@ func newExecCmd() *cobra.Command {
 
 			c, err := client.New(clientOpts())
 			if err != nil {
-				return err
+				return fmt.Errorf("connect to daemon: %w", err)
 			}
 			defer c.Close()
 

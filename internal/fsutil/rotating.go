@@ -69,7 +69,10 @@ func (rw *RotatingWriter) Write(p []byte) (int, error) {
 	}
 	n, err := rw.file.Write(p)
 	rw.size += int64(n)
-	return n, err
+	if err != nil {
+		return n, fmt.Errorf("write log: %w", err)
+	}
+	return n, nil
 }
 
 // Close closes the underlying log file.
@@ -79,7 +82,9 @@ func (rw *RotatingWriter) Close() error {
 	if rw.file != nil {
 		err := rw.file.Close()
 		rw.file = nil
-		return err
+		if err != nil {
+			return fmt.Errorf("close log file: %w", err)
+		}
 	}
 	return nil
 }

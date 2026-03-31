@@ -31,13 +31,13 @@ func newSnapshotListCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client.New(clientOpts())
 			if err != nil {
-				return err
+				return fmt.Errorf("connect to daemon: %w", err)
 			}
 			defer c.Close()
 
 			snapshots, err := c.ListSnapshots()
 			if err != nil {
-				return err
+				return fmt.Errorf("list snapshots: %w", err)
 			}
 
 			if len(snapshots) == 0 {
@@ -64,7 +64,7 @@ func newSnapshotExportCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client.New(clientOpts())
 			if err != nil {
-				return err
+				return fmt.Errorf("connect to daemon: %w", err)
 			}
 			defer c.Close()
 
@@ -86,7 +86,7 @@ func newSnapshotImportCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client.New(clientOpts())
 			if err != nil {
-				return err
+				return fmt.Errorf("connect to daemon: %w", err)
 			}
 			defer c.Close()
 

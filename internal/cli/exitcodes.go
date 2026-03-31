@@ -2,6 +2,7 @@ package cli
 
 import "fmt"
 
+// CLI exit codes for structured error reporting.
 const (
 	ExitOK               = 0
 	ExitError            = 1

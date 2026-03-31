@@ -182,7 +182,7 @@ func knownNamespaceIDs() (map[string]bool, error) {
 	if config.IsDesktopMode() {
 		namespaces, err := config.ListAllNamespaces()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("list namespaces: %w", err)
 		}
 		for _, ns := range namespaces {
 			known[ns.NamespaceID] = true
@@ -200,7 +200,7 @@ func knownNamespaceIDs() (map[string]bool, error) {
 func findOrphanContainers(ctx context.Context, dc *docker.Client, knownNS map[string]bool) ([]orphanContainer, error) {
 	containers, err := dc.ListAllLauncherContainers(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list containers: %w", err)
 	}
 
 	orphans := make([]orphanContainer, 0, len(containers))
@@ -228,7 +228,7 @@ func findOrphanContainers(ctx context.Context, dc *docker.Client, knownNS map[st
 func findOrphanNetworks(ctx context.Context, dc *docker.Client, knownNS map[string]bool) ([]string, error) {
 	networks, err := dc.ListLauncherNetworks(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list networks: %w", err)
 	}
 	orphans := make([]string, 0, len(networks))
 	for _, net := range networks {

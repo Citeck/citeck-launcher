@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"fmt"
 	"os/exec"
 	"runtime"
 )
@@ -16,5 +17,8 @@ func OpenBrowser(url string) error {
 	default:
 		cmd = exec.Command("xdg-open", url)
 	}
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("launch browser: %w", err)
+	}
+	return nil
 }

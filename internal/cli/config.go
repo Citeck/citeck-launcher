@@ -32,7 +32,7 @@ func newConfigViewCmd() *cobra.Command {
 		Short:   "Display current namespace.yml",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := config.NamespaceConfigPath()
-			data, err := os.ReadFile(path)
+			data, err := os.ReadFile(path) //nolint:gosec // G304: path is from internal config
 			if err != nil {
 				if os.IsNotExist(err) {
 					return fmt.Errorf("config file not found: %s", path)
@@ -59,7 +59,7 @@ func newConfigValidateCmd() *cobra.Command {
 		Short: "Validate namespace configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := config.NamespaceConfigPath()
-			data, err := os.ReadFile(path)
+			data, err := os.ReadFile(path) //nolint:gosec // G304: path is from internal config
 			if err != nil {
 				if os.IsNotExist(err) {
 					return fmt.Errorf("config file not found: %s", path)
@@ -108,7 +108,7 @@ func newConfigValidateCmd() *cobra.Command {
 }
 
 // validateNamespaceConfig performs semantic validation of a namespace config.
-func validateNamespaceConfig(cfg *namespace.NamespaceConfig) []string {
+func validateNamespaceConfig(cfg *namespace.Config) []string {
 	var errors []string
 
 	// Auth type
@@ -143,7 +143,7 @@ func validateNamespaceConfig(cfg *namespace.NamespaceConfig) []string {
 	return errors
 }
 
-func validateTLSFiles(cfg *namespace.NamespaceConfig) []string {
+func validateTLSFiles(cfg *namespace.Config) []string {
 	if !cfg.Proxy.TLS.Enabled || cfg.Proxy.TLS.LetsEncrypt {
 		return nil
 	}

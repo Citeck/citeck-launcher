@@ -8,7 +8,7 @@ import (
 )
 
 // Validate checks form data against a spec and returns field errors.
-func Validate(spec *FormSpec, data map[string]any) []FieldError {
+func Validate(spec *Spec, data map[string]any) []FieldError {
 	var errs []FieldError
 	for _, comp := range spec.Components {
 		val, exists := data[comp.Key]
@@ -142,7 +142,7 @@ func compilePattern(pattern string) (*regexp.Regexp, error) {
 
 	re, err := regexp.Compile(pattern)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("compile pattern %q: %w", pattern, err)
 	}
 
 	patternMu.Lock()

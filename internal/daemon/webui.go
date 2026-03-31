@@ -10,6 +10,7 @@ import (
 //go:embed all:webdist
 var webDist embed.FS
 
+// WebUIHandler returns an HTTP handler that serves the embedded React web UI.
 func WebUIHandler() http.Handler {
 	distFS, err := fs.Sub(webDist, "webdist")
 	if err != nil {

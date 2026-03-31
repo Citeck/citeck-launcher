@@ -33,7 +33,11 @@ func (rw *recoveryWriter) WriteHeader(code int) {
 
 func (rw *recoveryWriter) Write(b []byte) (int, error) {
 	rw.written = true
-	return rw.ResponseWriter.Write(b)
+	n, err := rw.ResponseWriter.Write(b)
+	if err != nil {
+		return n, fmt.Errorf("write response: %w", err)
+	}
+	return n, nil
 }
 
 func (rw *recoveryWriter) Unwrap() http.ResponseWriter {
@@ -277,7 +281,7 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 func writeMiddlewareError(w http.ResponseWriter, httpCode int, errCode, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(httpCode)
-	json.NewEncoder(w).Encode(api.ErrorDto{
+	_ = json.NewEncoder(w).Encode(api.ErrorDto{
 		Error:   http.StatusText(httpCode),
 		Code:    errCode,
 		Message: msg,
@@ -287,7 +291,7 @@ func writeMiddlewareError(w http.ResponseWriter, httpCode int, errCode, msg stri
 // generateRequestID returns an 8-character hex string (4 random bytes).
 func generateRequestID() string {
 	var b [4]byte
-	rand.Read(b[:])
+	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
 }
 

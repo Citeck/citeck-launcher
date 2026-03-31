@@ -58,6 +58,7 @@ func TryNew(opts Options) *DaemonClient {
 	return c
 }
 
+// Close releases idle connections held by the underlying HTTP client.
 func (c *DaemonClient) Close() {
 	c.httpClient.CloseIdleConnections()
 }
@@ -79,7 +80,7 @@ func (c *DaemonClient) getRaw(path string) (string, error) {
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("read response body: %w", err)
 	}
 	if resp.StatusCode >= 400 {
 		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
@@ -108,7 +109,7 @@ func (c *DaemonClient) doRequest(method, path string, body any) (*http.Response,
 
 	req, err := http.NewRequest(method, c.baseURL+path, bodyReader)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create %s request: %w", method, err)
 	}
 
 	req.Header.Set("Accept", "application/json")
@@ -116,8 +117,11 @@ func (c *DaemonClient) doRequest(method, path string, body any) (*http.Response,
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-
-	return c.httpClient.Do(req)
+	resp, doErr := c.httpClient.Do(req)
+	if doErr != nil {
+		return nil, fmt.Errorf("execute %s %s: %w", method, path, doErr)
+	}
+	return resp, nil
 }
 
 func decodeResponse(resp *http.Response, result any) error {
@@ -142,49 +146,55 @@ func decodeResponse(resp *http.Response, result any) error {
 	return nil
 }
 
-// High-level API methods
-
+// GetStatus retrieves the daemon's current status.
 func (c *DaemonClient) GetStatus() (*api.DaemonStatusDto, error) {
 	var dto api.DaemonStatusDto
 	err := c.get(api.DaemonStatus, &dto)
 	return &dto, err
 }
 
+// IsRunning reports whether the daemon is reachable and running.
 func (c *DaemonClient) IsRunning() bool {
 	status, err := c.GetStatus()
 	return err == nil && status.Running
 }
 
+// Shutdown requests a graceful daemon shutdown.
 func (c *DaemonClient) Shutdown() (*api.ActionResultDto, error) {
 	var dto api.ActionResultDto
 	err := c.post(api.DaemonShutdown, nil, &dto)
 	return &dto, err
 }
 
+// GetNamespace retrieves the current namespace configuration and state.
 func (c *DaemonClient) GetNamespace() (*api.NamespaceDto, error) {
 	var dto api.NamespaceDto
 	err := c.get(api.Namespace, &dto)
 	return &dto, err
 }
 
+// StartNamespace starts the active namespace's containers.
 func (c *DaemonClient) StartNamespace() (*api.ActionResultDto, error) {
 	var dto api.ActionResultDto
 	err := c.post(api.NamespaceStart, nil, &dto)
 	return &dto, err
 }
 
+// StopNamespace stops the active namespace's containers.
 func (c *DaemonClient) StopNamespace() (*api.ActionResultDto, error) {
 	var dto api.ActionResultDto
 	err := c.post(api.NamespaceStop, nil, &dto)
 	return &dto, err
 }
 
+// ReloadNamespace re-reads the config and reconciles the namespace.
 func (c *DaemonClient) ReloadNamespace() (*api.ActionResultDto, error) {
 	var dto api.ActionResultDto
 	err := c.post(api.NamespaceReload, nil, &dto)
 	return &dto, err
 }
 
+// GetAppLogs retrieves container logs for the named application.
 func (c *DaemonClient) GetAppLogs(name string, tail int, since, until string, timestamps bool) (string, error) {
 	params := url.Values{"tail": {strconv.Itoa(tail)}}
 	if since != "" {
@@ -206,12 +216,12 @@ func (c *DaemonClient) StreamAppLogs(name string, tail int) (io.ReadCloser, erro
 	logsURL := c.baseURL + fmt.Sprintf("%s?tail=%d&follow=true", api.AppLogs(name), tail)
 	req, err := http.NewRequest(http.MethodGet, logsURL, http.NoBody)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create log stream request: %w", err)
 	}
 
 	resp, err := c.streamClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connect to log stream: %w", err)
 	}
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)
@@ -221,42 +231,49 @@ func (c *DaemonClient) StreamAppLogs(name string, tail int) (io.ReadCloser, erro
 	return resp.Body, nil
 }
 
+// ListSnapshots returns available volume snapshots.
 func (c *DaemonClient) ListSnapshots() ([]api.SnapshotDto, error) {
 	var snapshots []api.SnapshotDto
 	err := c.get(api.Snapshots, &snapshots)
 	return snapshots, err
 }
 
+// ExportSnapshot triggers a volume snapshot export.
 func (c *DaemonClient) ExportSnapshot() (*api.ActionResultDto, error) {
 	var dto api.ActionResultDto
 	err := c.post(api.SnapshotsExport, nil, &dto)
 	return &dto, err
 }
 
+// ImportSnapshot imports a named snapshot into the namespace volumes.
 func (c *DaemonClient) ImportSnapshot(name string) (*api.ActionResultDto, error) {
 	var dto api.ActionResultDto
 	err := c.post(api.SnapshotsImport+"?name="+url.QueryEscape(name), nil, &dto)
 	return &dto, err
 }
 
+// RestartApp restarts the named application container.
 func (c *DaemonClient) RestartApp(name string) (*api.ActionResultDto, error) {
 	var dto api.ActionResultDto
 	err := c.post(api.AppRestart(name), nil, &dto)
 	return &dto, err
 }
 
+// InspectApp returns detailed info about a running application container.
 func (c *DaemonClient) InspectApp(name string) (*api.AppInspectDto, error) {
 	var dto api.AppInspectDto
 	err := c.get(api.AppInspect(name), &dto)
 	return &dto, err
 }
 
+// ExecApp runs a command inside the named application's container.
 func (c *DaemonClient) ExecApp(name string, command []string) (*api.ExecResultDto, error) {
 	var dto api.ExecResultDto
 	err := c.post(api.AppExec(name), api.ExecRequestDto{Command: command}, &dto)
 	return &dto, err
 }
 
+// GetHealth returns the aggregate health status of all applications.
 func (c *DaemonClient) GetHealth() (*api.HealthDto, error) {
 	var dto api.HealthDto
 	err := c.get(api.Health, &dto)
@@ -272,13 +289,13 @@ func (c *DaemonClient) GetConfig() (string, error) {
 func (c *DaemonClient) PutConfig(yamlData []byte) (*api.ActionResultDto, error) {
 	req, err := http.NewRequest(http.MethodPut, c.baseURL+api.Config, bytes.NewReader(yamlData))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create config PUT request: %w", err)
 	}
 	req.Header.Set("Content-Type", "text/yaml")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upload config: %w", err)
 	}
 	defer resp.Body.Close()
 	var dto api.ActionResultDto
@@ -293,10 +310,9 @@ func (c *DaemonClient) PutConfig(yamlData []byte) (*api.ActionResultDto, error) 
 func (c *DaemonClient) StreamEvents(ctx context.Context) (<-chan api.EventDto, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+api.Events, http.NoBody)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create event stream request: %w", err)
 	}
 	req.Header.Set("Accept", "text/event-stream")
-
 
 	resp, err := c.streamClient.Do(req)
 	if err != nil {

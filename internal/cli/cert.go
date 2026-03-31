@@ -53,7 +53,7 @@ func newCertStatusCmd() *cobra.Command {
 			if certPath == "" {
 				certPath = filepath.Join(config.ConfDir(), "tls", "server.crt")
 			}
-			data, err := os.ReadFile(certPath)
+			data, err := os.ReadFile(certPath) //nolint:gosec // G304: certPath is from internal config
 			if err != nil {
 				return fmt.Errorf("read cert: %w", err)
 			}
@@ -144,7 +144,7 @@ func generateClientCert(name string, days int) error {
 
 	certPEM, keyPEM, err := tlsutil.GenerateClientCert(certPath, name, days)
 	if err != nil {
-		return err
+		return fmt.Errorf("generate client cert: %w", err)
 	}
 
 	output.PrintResult(map[string]any{
@@ -173,15 +173,15 @@ func generateServerCert(hosts []string, days int) error {
 	}
 
 	tlsDir := filepath.Join(config.ConfDir(), "tls")
-	if err := os.MkdirAll(tlsDir, 0o755); err != nil {
-		return err
+	if err := os.MkdirAll(tlsDir, 0o755); err != nil { //nolint:gosec // G301: TLS dir needs 0o755 for server access
+		return fmt.Errorf("create TLS dir: %w", err)
 	}
 
 	certPath := filepath.Join(tlsDir, "server.crt")
 	keyPath := filepath.Join(tlsDir, "server.key")
 
 	if err := tlsutil.GenerateSelfSignedCert(certPath, keyPath, hosts, days); err != nil {
-		return err
+		return fmt.Errorf("generate server cert: %w", err)
 	}
 
 	output.PrintResult(map[string]string{"certPath": certPath, "keyPath": keyPath}, func() {
@@ -226,7 +226,7 @@ func newCertListCmd() *cobra.Command {
 					continue
 				}
 
-				data, err := os.ReadFile(filepath.Join(caDir, entry.Name()))
+				data, err := os.ReadFile(filepath.Join(caDir, entry.Name())) //nolint:gosec // G304: caDir is from internal config
 				if err != nil {
 					continue
 				}
@@ -336,7 +336,7 @@ func newCertLetsEncryptCmd() *cobra.Command {
 				// Backup existing cert
 				backupPath := acmeClient.CertPath() + ".bak"
 				if data, err := os.ReadFile(acmeClient.CertPath()); err == nil {
-					os.WriteFile(backupPath, data, 0o644)
+					_ = os.WriteFile(backupPath, data, 0o644) //nolint:gosec // G306: backup cert needs 0o644 for readability
 					output.PrintText("Existing cert backed up to %s", backupPath)
 				}
 			}

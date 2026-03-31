@@ -51,7 +51,7 @@ func authorizeOrderWithProfile(ctx context.Context, client *goacme.Client, ids [
 
 	payload, err := json.Marshal(orderReq)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("marshal order request: %w", err)
 	}
 
 	// Get nonce
@@ -74,13 +74,13 @@ func authorizeOrderWithProfile(ctx context.Context, client *goacme.Client, ids [
 	// POST to newOrder
 	req, err := http.NewRequestWithContext(ctx, "POST", dir.OrderURL, bytes.NewReader(jws))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create order request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/jose+json")
 
 	resp, err := (&http.Client{}).Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("POST order: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -115,9 +115,9 @@ func authorizeOrderWithProfile(ctx context.Context, client *goacme.Client, ids [
 func fetchNonce(nonceURL string) (string, error) {
 	resp, err := http.Head(nonceURL) //nolint:gosec // nonceURL comes from ACME directory discovery, not user input
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("HEAD %s: %w", nonceURL, err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	return resp.Header.Get("Replay-Nonce"), nil
 }
 
@@ -139,7 +139,7 @@ func signJWSWithKID(key *ecdsa.PrivateKey, kid, nonce, url string, payload []byt
 	hash := sha256.Sum256([]byte(signingInput))
 	r, s, err := ecdsa.Sign(rand.Reader, key, hash[:])
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("ECDSA sign: %w", err)
 	}
 
 	// ES256 signature: r and s as 32-byte big-endian integers concatenated
@@ -161,6 +161,10 @@ func signJWSWithKID(key *ecdsa.PrivateKey, kid, nonce, url string, payload []byt
 		"payload":   payloadB64,
 		"signature": sigB64,
 	}
-	return json.Marshal(jws)
+	result, marshalErr := json.Marshal(jws)
+	if marshalErr != nil {
+		return nil, fmt.Errorf("marshal JWS: %w", marshalErr)
+	}
+	return result, nil
 }
 

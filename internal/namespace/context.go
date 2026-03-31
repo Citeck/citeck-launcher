@@ -55,7 +55,7 @@ func JWTSecret() string {
 			return
 		}
 		jwtSecretVal = base64.RawURLEncoding.EncodeToString(b)
-		_ = os.MkdirAll(filepath.Dir(secretPath), 0o755)
+		_ = os.MkdirAll(filepath.Dir(secretPath), 0o755) //nolint:gosec // conf dir needs standard perms
 		_ = fsutil.AtomicWriteFile(secretPath, []byte(jwtSecretVal), 0o600)
 	})
 	return jwtSecretVal
@@ -76,7 +76,7 @@ func OIDCSecret() string {
 			return
 		}
 		oidcSecretVal = fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
-		_ = os.MkdirAll(filepath.Dir(secretPath), 0o755)
+		_ = os.MkdirAll(filepath.Dir(secretPath), 0o755) //nolint:gosec // conf dir needs standard perms
 		_ = fsutil.AtomicWriteFile(secretPath, []byte(oidcSecretVal), 0o600)
 	})
 	return oidcSecretVal
@@ -84,8 +84,8 @@ func OIDCSecret() string {
 
 // NsGenContext holds state during namespace generation.
 type NsGenContext struct {
-	Config          *NamespaceConfig
-	Bundle          *bundle.BundleDef
+	Config          *Config
+	Bundle          *bundle.Def
 	WorkspaceConfig *bundle.WorkspaceConfig
 	DetachedApps    map[string]bool
 	Files           map[string][]byte
@@ -95,7 +95,7 @@ type NsGenContext struct {
 }
 
 // NewNsGenContext creates a new generation context for the given config and bundle.
-func NewNsGenContext(cfg *NamespaceConfig, bun *bundle.BundleDef) *NsGenContext {
+func NewNsGenContext(cfg *Config, bun *bundle.Def) *NsGenContext {
 	ctx := &NsGenContext{
 		Config:       cfg,
 		Bundle:       bun,

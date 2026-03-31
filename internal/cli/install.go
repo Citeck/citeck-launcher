@@ -36,7 +36,7 @@ func runInstall(cmd *cobra.Command, args []string) error { //nolint:gocyclo // i
 	// Check Docker is available
 	dockerConn, err := net.DialTimeout("unix", "/var/run/docker.sock", 2*time.Second)
 	if err != nil {
-		return fmt.Errorf("Docker is not reachable at /var/run/docker.sock. Install Docker first: https://docs.docker.com/engine/install/")
+		return fmt.Errorf("docker is not reachable at /var/run/docker.sock — install Docker first: https://docs.docker.com/engine/install/")
 	}
 	dockerConn.Close()
 
@@ -78,7 +78,7 @@ func runInstall(cmd *cobra.Command, args []string) error { //nolint:gocyclo // i
 	if nsCfg.Authentication.Type == namespace.AuthBasic {
 		usersStr := prompt(scanner, "Users (comma-separated user:password)", "admin:admin")
 		var users []string
-		for _, u := range strings.Split(usersStr, ",") {
+		for u := range strings.SplitSeq(usersStr, ",") {
 			u = strings.TrimSpace(u)
 			if u != "" {
 				// If no colon, use user:user format
@@ -118,7 +118,7 @@ func runInstall(cmd *cobra.Command, args []string) error { //nolint:gocyclo // i
 			host = "localhost"
 		}
 		tlsDir := filepath.Join(config.ConfDir(), "tls")
-		os.MkdirAll(tlsDir, 0o755)
+		os.MkdirAll(tlsDir, 0o755) //nolint:gosec // G301: TLS dir needs 0o755
 		certPath := filepath.Join(tlsDir, "server.crt")
 		keyPath := filepath.Join(tlsDir, "server.key")
 		if certErr := tlsutil.GenerateSelfSignedCert(certPath, keyPath, []string{host}, 365); certErr != nil {
@@ -167,7 +167,7 @@ func runInstall(cmd *cobra.Command, args []string) error { //nolint:gocyclo // i
 
 	// 8. Bundle
 	resolver := bundle.NewResolver(config.DataDir())
-	resolveResult, err := resolver.Resolve(bundle.BundleRef{})
+	resolveResult, err := resolver.Resolve(bundle.Ref{})
 	var bundleVersions []string
 	if err == nil && resolveResult.Workspace != nil {
 		for _, repo := range resolveResult.Workspace.BundleRepos {
@@ -188,16 +188,16 @@ func runInstall(cmd *cobra.Command, args []string) error { //nolint:gocyclo // i
 			output.PrintText("  %d) %s", i+1, v)
 		}
 		bundleIdx := prompt(scanner, "Select bundle (number or repo:version)", "1")
-		idx, err := strconv.Atoi(bundleIdx)
-		if err == nil && idx >= 1 && idx <= len(bundleVersions) {
-			ref, _ := bundle.ParseBundleRef(bundleVersions[idx-1])
+		idx, atoiErr := strconv.Atoi(bundleIdx)
+		if atoiErr == nil && idx >= 1 && idx <= len(bundleVersions) {
+			ref, _ := bundle.ParseRef(bundleVersions[idx-1])
 			nsCfg.BundleRef = ref
-		} else if ref, err := bundle.ParseBundleRef(bundleIdx); err == nil {
+		} else if ref, parseErr := bundle.ParseRef(bundleIdx); parseErr == nil {
 			nsCfg.BundleRef = ref
 		}
 	} else {
 		bundleStr := prompt(scanner, "Bundle ref (repo:version)", "community:LATEST")
-		if ref, err := bundle.ParseBundleRef(bundleStr); err == nil {
+		if ref, parseErr := bundle.ParseRef(bundleStr); parseErr == nil {
 			nsCfg.BundleRef = ref
 		}
 	}
@@ -210,7 +210,7 @@ func runInstall(cmd *cobra.Command, args []string) error { //nolint:gocyclo // i
 	}
 
 	// Write namespace.yml
-	os.MkdirAll(filepath.Dir(nsCfgPath), 0o755)
+	os.MkdirAll(filepath.Dir(nsCfgPath), 0o755) //nolint:gosec // G301: namespace config dir needs 0o755
 	data, err := namespace.MarshalNamespaceConfig(&nsCfg)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
@@ -388,7 +388,7 @@ WantedBy=multi-user.target
 		return
 	}
 
-	if err := os.WriteFile(servicePath, []byte(unit), 0o644); err != nil {
+	if err := os.WriteFile(servicePath, []byte(unit), 0o644); err != nil { //nolint:gosec // G306: systemd unit files require 0o644
 		output.PrintText("Failed to write service file: %v", err)
 		return
 	}
@@ -414,7 +414,7 @@ func setupFirewall(scanner *bufio.Scanner, port int) {
 			output.PrintText("Not running as root. Run: sudo ufw allow %s/tcp", portStr)
 			return
 		}
-		exec.Command("ufw", "allow", portStr+"/tcp").Run()
+		_ = exec.Command("ufw", "allow", portStr+"/tcp").Run() //nolint:gosec // G204: portStr is validated numeric input
 		output.PrintText("ufw: opened port %s/tcp", portStr)
 		return
 	}
@@ -425,7 +425,7 @@ func setupFirewall(scanner *bufio.Scanner, port int) {
 			output.PrintText("Not running as root. Run: sudo firewall-cmd --permanent --add-port=%s/tcp && sudo firewall-cmd --reload", portStr)
 			return
 		}
-		exec.Command("firewall-cmd", "--permanent", "--add-port="+portStr+"/tcp").Run()
+		_ = exec.Command("firewall-cmd", "--permanent", "--add-port="+portStr+"/tcp").Run() //nolint:gosec // G204: portStr is validated numeric input
 		exec.Command("firewall-cmd", "--reload").Run()
 		output.PrintText("firewall-cmd: opened port %s/tcp", portStr)
 		return

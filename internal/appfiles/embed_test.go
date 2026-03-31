@@ -29,7 +29,7 @@ func TestExtractTo_NewShFilesAreExecutable(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	assert.Greater(t, shFiles, 0, "should find at least one .sh file in embedded appfiles")
+	assert.Positive(t, shFiles, "should find at least one .sh file in embedded appfiles")
 }
 
 func TestExtractTo_ExistingShFileGetsChmoded(t *testing.T) {
@@ -87,7 +87,7 @@ func TestExtractTo_NonShFilesAre0644(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	assert.Greater(t, nonShFiles, 0, "should find at least one non-.sh file")
+	assert.Positive(t, nonShFiles, "should find at least one non-.sh file")
 }
 
 func TestExtractTo_SkipsExistingRegularFiles(t *testing.T) {
@@ -156,10 +156,10 @@ func TestExtractTo_RemovesStaleDirAtFilePath(t *testing.T) {
 func TestGetFiles_ReturnsNonEmpty(t *testing.T) {
 	files, err := GetFiles()
 	require.NoError(t, err)
-	assert.Greater(t, len(files), 0, "embedded files should not be empty")
+	assert.NotEmpty(t, files, "embedded files should not be empty")
 
 	// Verify all files have non-empty content
 	for path, content := range files {
-		assert.Greater(t, len(content), 0, "file %s should have content", path)
+		assert.NotEmpty(t, content, "file %s should have content", path)
 	}
 }

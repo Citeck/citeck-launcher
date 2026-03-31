@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-func writeTempCert(t *testing.T, dir string, notBefore, notAfter time.Time) string {
+func writeTempCert(t *testing.T, dir string, notBefore, notAfter time.Time) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -43,7 +43,6 @@ func writeTempCert(t *testing.T, dir string, notBefore, notAfter time.Time) stri
 		t.Fatal(err)
 	}
 	f.Close()
-	return certPath
 }
 
 func TestRenewalInterval_NormalCert(t *testing.T) {

@@ -15,8 +15,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// NamespaceGenResp is the result of namespace generation. //nolint:revive // stuttering name used across packages
-type NamespaceGenResp struct {
+// GenResp is the result of namespace generation.
+type GenResp struct {
 	Applications          []appdef.ApplicationDef
 	Files                 map[string][]byte
 	CloudConfig           map[string]map[string]any // per-app ext cloud config for CloudConfigServer
@@ -29,7 +29,7 @@ type GenerateOpts struct {
 }
 
 // Generate creates container definitions from a namespace config, bundle, and workspace config.
-func Generate(cfg *NamespaceConfig, bun *bundle.BundleDef, wsCfg *bundle.WorkspaceConfig, opts ...GenerateOpts) *NamespaceGenResp {
+func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, opts ...GenerateOpts) *GenResp {
 	ctx := NewNsGenContext(cfg, bun)
 	ctx.WorkspaceConfig = wsCfg
 	if len(opts) > 0 && opts[0].DetachedApps != nil {
@@ -96,7 +96,7 @@ func Generate(cfg *NamespaceConfig, bun *bundle.BundleDef, wsCfg *bundle.Workspa
 		}
 	}
 
-	return &NamespaceGenResp{
+	return &GenResp{
 		Applications:          apps,
 		Files:                 ctx.Files,
 		CloudConfig:           ctx.CloudConfig,
@@ -344,7 +344,7 @@ func generateAlfresco(ctx *NsGenContext) {
 	alfApp.AddVolume("alf_content:/content")
 	alfApp.AddVolume("./alfresco/alfresco_additional.properties:/tmp/alfresco/alfresco_additional.properties")
 	alfApp.StartupConditions = []appdef.StartupCondition{
-		{Probe: &appdef.AppProbeDef{HTTP: &appdef.HttpProbeDef{Path: "/alfresco/s/citeck/ecos/eureka-status", Port: 8080}}},
+		{Probe: &appdef.AppProbeDef{HTTP: &appdef.HTTPProbeDef{Path: "/alfresco/s/citeck/ecos/eureka-status", Port: 8080}}},
 	}
 	alfApp.AddEnv("ALFRESCO_USER_STORE_ADMIN_PASSWORD", "fefdbb615556a4b1dbb36e7935d77cf2")
 	alfApp.AddEnv("USE_EXTERNAL_AUTH", "true")
@@ -468,9 +468,9 @@ func generateProxy(ctx *NsGenContext) {
 		// Substitute OIDC secret in realm JSON
 		realmKey := "keycloak/ecos-app-realm.json"
 		if realmBytes, ok := ctx.Files[realmKey]; ok {
-			realm := strings.Replace(string(realmBytes),
-				`"secret": "2996117d-9a33-4e06-b48a-867ce6a235db"`,
-				fmt.Sprintf(`"secret": "%s"`, oidcSecret), 1)
+			oldSecret := `"secret": "2996117d-9a33-4e06-b48a-867ce6a235db"` //nolint:gosec // template placeholder, not a real credential
+			newSecret := `"secret": "` + oidcSecret + `"`
+			realm := strings.Replace(string(realmBytes), oldSecret, newSecret, 1)
 			ctx.Files[realmKey] = []byte(realm)
 		}
 
@@ -514,7 +514,7 @@ func generateProxy(ctx *NsGenContext) {
 			Command: []string{"sh", "-c", "curl -sf -o /dev/null http://localhost:80/eis.json"},
 		}}
 	} else {
-		startupProbe = &appdef.AppProbeDef{HTTP: &appdef.HttpProbeDef{Path: "/eis.json", Port: 80}}
+		startupProbe = &appdef.AppProbeDef{HTTP: &appdef.HTTPProbeDef{Path: "/eis.json", Port: 80}}
 	}
 
 	app.AddEnv("DEFAULT_LOCATION_V2", "true")
@@ -656,7 +656,7 @@ func generateWebapp(name string, ctx *NsGenContext) {
 
 	// Startup probe: HTTP health check
 	app.StartupConditions = []appdef.StartupCondition{
-		{Probe: &appdef.AppProbeDef{HTTP: &appdef.HttpProbeDef{
+		{Probe: &appdef.AppProbeDef{HTTP: &appdef.HTTPProbeDef{
 			Path: "/management/health",
 			Port: port,
 		}}},
@@ -679,7 +679,7 @@ func generateWebapp(name string, ctx *NsGenContext) {
 }
 
 // applyWebappDefaults applies a WebappDefaultProps layer to an app builder.
-func applyWebappDefaults(app *AppBuilder, props *bundle.WebappDefaultProps, cfg *NamespaceConfig) {
+func applyWebappDefaults(app *AppBuilder, props *bundle.WebappDefaultProps, cfg *Config) {
 	if props == nil {
 		return
 	}
@@ -882,7 +882,7 @@ func flatMapToYAML(m map[string]any) string {
 
 // resolveTemplateVars replaces ${VAR} placeholders in datasource URLs.
 // resolveTemplateVarsWithConfig resolves template variables including config-dependent ones.
-func resolveTemplateVarsWithConfig(s string, cfg *NamespaceConfig) string {
+func resolveTemplateVarsWithConfig(s string, cfg *Config) string {
 	kkEnabled := "false"
 	if cfg != nil && cfg.Authentication.Type == AuthKeycloak {
 		kkEnabled = "true"

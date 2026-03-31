@@ -127,7 +127,7 @@ func (r *Runtime) reconcile(ctx context.Context) {
 	}
 
 	// Phase 3: re-acquire write lock, update state
-	var toRestart []string
+	toRestart := make([]string, 0, len(missing))
 	now := time.Now()
 
 	r.mu.Lock()

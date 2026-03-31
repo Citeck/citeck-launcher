@@ -1,6 +1,7 @@
 package snapshot
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -26,7 +27,7 @@ func TestDownload_Success(t *testing.T) {
 		t.Fatalf("Download failed: %v", err)
 	}
 	got, _ := os.ReadFile(dest)
-	if string(got) != string(content) {
+	if !bytes.Equal(got, content) {
 		t.Errorf("content mismatch: got %q, want %q", string(got), string(content))
 	}
 	// Verify .part file was cleaned up
@@ -127,7 +128,7 @@ func TestDownload_Resume(t *testing.T) {
 	}
 
 	got, _ := os.ReadFile(dest)
-	if string(got) != string(fullContent) {
+	if !bytes.Equal(got, fullContent) {
 		t.Errorf("content mismatch: got %q, want %q", string(got), string(fullContent))
 	}
 }
@@ -140,7 +141,7 @@ func TestDownload_ContextCancellation(t *testing.T) {
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
-		time.Sleep(5 * time.Second) // slow — will be cancelled
+		time.Sleep(5 * time.Second) // slow — will be canceled
 		w.Write([]byte("end"))
 	}))
 	defer srv.Close()
@@ -148,10 +149,10 @@ func TestDownload_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	dest := filepath.Join(t.TempDir(), "cancelled.zip")
+	dest := filepath.Join(t.TempDir(), "canceled.zip")
 	err := Download(ctx, srv.URL+"/slow.zip", dest, "", nil)
 	if err == nil {
-		t.Fatal("Download should fail when context is cancelled")
+		t.Fatal("Download should fail when context is canceled")
 	}
 }
 

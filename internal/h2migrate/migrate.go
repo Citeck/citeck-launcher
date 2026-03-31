@@ -70,16 +70,10 @@ func Migrate(homeDir string, store storage.Store) (*MigrateResult, error) {
 	slog.Info("H2 maps found", "count", len(mapNames), "names", mapNames)
 
 	// Extract workspaces
-	if err := migrateWorkspaces(mvs, mapNames, store, result); err != nil {
-		slog.Error("Workspace migration failed", "err", err)
-		result.Errors++
-	}
+	migrateWorkspaces(mvs, mapNames, store, result)
 
 	// Extract secrets/auth
-	if err := migrateSecrets(mvs, mapNames, store, result); err != nil {
-		slog.Error("Secret migration failed", "err", err)
-		result.Errors++
-	}
+	migrateSecrets(mvs, mapNames, store, result)
 
 	// Migrate namespace configs from workspace directories (they're already YAML files)
 	if err := migrateNamespaceConfigs(homeDir, result); err != nil {
@@ -92,7 +86,7 @@ func Migrate(homeDir string, store storage.Store) (*MigrateResult, error) {
 }
 
 // migrateWorkspaces extracts workspace entities from H2 maps.
-func migrateWorkspaces(mvs *MVStore, mapNames []string, store storage.Store, result *MigrateResult) error {
+func migrateWorkspaces(mvs *MVStore, mapNames []string, store storage.Store, result *MigrateResult) {
 	// Workspace entities are stored in maps named like "entities!workspace"
 	for _, name := range mapNames {
 		if !strings.Contains(name, "workspace") {
@@ -119,11 +113,10 @@ func migrateWorkspaces(mvs *MVStore, mapNames []string, store storage.Store, res
 			slog.Info("Migrated workspace", "id", ws.ID, "name", ws.Name)
 		}
 	}
-	return nil
 }
 
 // migrateSecrets extracts auth/secret data from H2 maps.
-func migrateSecrets(mvs *MVStore, mapNames []string, store storage.Store, result *MigrateResult) error {
+func migrateSecrets(mvs *MVStore, mapNames []string, store storage.Store, result *MigrateResult) {
 	// Auth data is stored in maps named like "auth" or containing "secret"
 	for _, name := range mapNames {
 		if !strings.Contains(name, "auth") && !strings.Contains(name, "secret") {
@@ -150,7 +143,6 @@ func migrateSecrets(mvs *MVStore, mapNames []string, store storage.Store, result
 			slog.Info("Migrated secret", "id", secret.ID, "type", secret.Type)
 		}
 	}
-	return nil
 }
 
 // migrateNamespaceConfigs ensures namespace YAML configs exist in the workspace dir structure.
@@ -164,7 +156,7 @@ func migrateNamespaceConfigs(homeDir string, result *MigrateResult) error {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("read workspaces dir: %w", err)
 	}
 
 	for _, wsEntry := range entries {
@@ -205,7 +197,7 @@ func migrateFromFilesystem(homeDir string, store storage.Store) (*MigrateResult,
 		if os.IsNotExist(err) {
 			return result, nil
 		}
-		return result, err
+		return result, fmt.Errorf("read workspaces dir: %w", err)
 	}
 
 	for _, entry := range entries {
@@ -234,7 +226,7 @@ func migrateFromFilesystem(homeDir string, store storage.Store) (*MigrateResult,
 		// Read default bundleRef from workspace-v1.yml template (if available)
 		defaultBundleRef := ""
 		wsCfgPath := filepath.Join(wsDir, wsID, "repo", "workspace-v1.yml")
-		if data, err := os.ReadFile(wsCfgPath); err == nil {
+		if data, err := os.ReadFile(wsCfgPath); err == nil { //nolint:gosec // G304: wsCfgPath is constructed from internal workspace dir
 			defaultBundleRef = extractDefaultBundleRef(data)
 		}
 
@@ -297,7 +289,7 @@ func parseWorkspaceJSON(id string, data []byte) (*storage.WorkspaceDto, error) {
 	// Kotlin stores workspace data as Jackson JSON
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unmarshal workspace %s: %w", id, err)
 	}
 
 	ws := &storage.WorkspaceDto{ID: id}
@@ -323,7 +315,7 @@ func parseWorkspaceJSON(id string, data []byte) (*storage.WorkspaceDto, error) {
 func parseSecretJSON(id string, data []byte) (*storage.Secret, error) {
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unmarshal secret %s: %w", id, err)
 	}
 
 	secret := &storage.Secret{

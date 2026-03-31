@@ -62,7 +62,7 @@ func DownloadJRE(homeDir string) (javaPath string, err error) {
 
 // CleanupJRE removes the downloaded JRE directory.
 func CleanupJRE(homeDir string) {
-	os.RemoveAll(filepath.Join(homeDir, "tmp-jre"))
+	_ = os.RemoveAll(filepath.Join(homeDir, "tmp-jre"))
 }
 
 // RunJarMigration runs the embedded H2 export JAR and imports the result.
@@ -134,15 +134,15 @@ func jrePlatformKey() string {
 
 // downloadJRE downloads and extracts a minimal Adoptium JRE.
 // Returns (jreDir, javaPath, error). Caller must os.RemoveAll(jreDir) when done.
-func downloadJRE(homeDir string) (jreDir string, javaPath string, _ error) {
+func downloadJRE(homeDir string) (jreDir, javaPath string, _ error) {
 	platform, ok := jrePlatforms[jrePlatformKey()]
 	if !ok {
 		return "", "", fmt.Errorf("no JRE available for %s", jrePlatformKey())
 	}
 
 	jreDir = filepath.Join(homeDir, "tmp-jre")
-	os.RemoveAll(jreDir)
-	os.MkdirAll(jreDir, 0o755)
+	_ = os.RemoveAll(jreDir)
+	_ = os.MkdirAll(jreDir, 0o755) //nolint:gosec // G301: temp dir needs 0o755 for JRE binary execution
 
 	isWindows := runtime.GOOS == "windows"
 	archivePath := filepath.Join(jreDir, "jre.tar.gz")
@@ -158,11 +158,11 @@ func downloadJRE(homeDir string) (jreDir string, javaPath string, _ error) {
 	// Verify SHA256
 	actualHash, err := fileSHA256(archivePath)
 	if err != nil {
-		os.RemoveAll(jreDir)
+		_ = os.RemoveAll(jreDir)
 		return "", "", fmt.Errorf("compute JRE hash: %w", err)
 	}
 	if actualHash != platform.sha256 {
-		os.RemoveAll(jreDir)
+		_ = os.RemoveAll(jreDir)
 		return "", "", fmt.Errorf("JRE SHA256 mismatch: got %s, want %s", actualHash, platform.sha256)
 	}
 	slog.Info("JRE SHA256 verified")
@@ -177,7 +177,7 @@ func downloadJRE(homeDir string) (jreDir string, javaPath string, _ error) {
 			return "", "", fmt.Errorf("extract JRE: %w", err)
 		}
 	}
-	os.Remove(archivePath)
+	_ = os.Remove(archivePath)
 
 	// Find java binary (java on Unix, java.exe on Windows)
 	javaBin := "java"
@@ -185,7 +185,7 @@ func downloadJRE(homeDir string) (jreDir string, javaPath string, _ error) {
 		javaBin = "java.exe"
 	}
 	javaPath = ""
-	filepath.Walk(jreDir, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(jreDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
 		}
@@ -199,14 +199,14 @@ func downloadJRE(homeDir string) (jreDir string, javaPath string, _ error) {
 		return "", "", fmt.Errorf("java binary not found in extracted JRE")
 	}
 
-	os.Chmod(javaPath, 0o755)
+	_ = os.Chmod(javaPath, 0o755) //nolint:gosec // G302: java binary needs execute permission
 	return jreDir, javaPath, nil
 }
 
 func extractZip(zipPath, destDir string) error {
 	r, err := zip.OpenReader(zipPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("open zip %s: %w", zipPath, err)
 	}
 	defer r.Close()
 
@@ -217,36 +217,36 @@ func extractZip(zipPath, destDir string) error {
 			continue
 		}
 		if f.FileInfo().IsDir() {
-			os.MkdirAll(target, 0o755)
+			_ = os.MkdirAll(target, 0o755) //nolint:gosec // G301: extraction dirs need 0o755
 			continue
 		}
-		os.MkdirAll(filepath.Dir(target), 0o755)
+		_ = os.MkdirAll(filepath.Dir(target), 0o755) //nolint:gosec // G301: extraction dirs need 0o755
 		rc, err := f.Open()
 		if err != nil {
 			continue
 		}
 		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY, f.Mode())
 		if err != nil {
-			rc.Close()
+			_ = rc.Close()
 			continue
 		}
-		io.Copy(out, rc)
-		out.Close()
-		rc.Close()
+		_, _ = io.Copy(out, rc) //nolint:gosec // G110: zip content is a known JRE archive from trusted source
+		_ = out.Close()
+		_ = rc.Close()
 	}
 	return nil
 }
 
 func extractTarGz(archivePath, destDir string) error {
-	f, err := os.Open(archivePath)
+	f, err := os.Open(archivePath) //nolint:gosec // G304: archivePath is an internal temp path, not user input
 	if err != nil {
-		return err
+		return fmt.Errorf("open archive %s: %w", archivePath, err)
 	}
 	defer f.Close()
 
 	gz, err := gzip.NewReader(f)
 	if err != nil {
-		return err
+		return fmt.Errorf("open gzip: %w", err)
 	}
 	defer gz.Close()
 
@@ -257,7 +257,7 @@ func extractTarGz(archivePath, destDir string) error {
 			break
 		}
 		if err != nil {
-			return err
+			return fmt.Errorf("read tar entry: %w", err)
 		}
 
 		target := filepath.Join(destDir, header.Name) //nolint:gosec // path traversal prevented by prefix check below
@@ -268,15 +268,15 @@ func extractTarGz(archivePath, destDir string) error {
 
 		switch header.Typeflag {
 		case tar.TypeDir:
-			os.MkdirAll(target, 0o755)
+			_ = os.MkdirAll(target, 0o755) //nolint:gosec // G301: extraction dirs need 0o755
 		case tar.TypeReg:
-			os.MkdirAll(filepath.Dir(target), 0o755)
+			_ = os.MkdirAll(filepath.Dir(target), 0o755) //nolint:gosec // G301: extraction dirs need 0o755
 			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY, os.FileMode(header.Mode)) //nolint:gosec // mode is from trusted JRE tar archive
 			if err != nil {
 				continue
 			}
-			io.Copy(out, tr)
-			out.Close()
+			_, _ = io.Copy(out, tr) //nolint:gosec // G110: tar content is a known JRE archive from trusted source
+			_ = out.Close()
 		}
 	}
 	return nil
@@ -288,8 +288,9 @@ type h2ExportJSON struct {
 	Maps    map[string]map[string]string `json:"maps"` // mapName → key → base64(value)
 }
 
+// ImportExportJSON imports data from an H2 export JSON file into the store.
 func ImportExportJSON(homeDir, exportPath string, store storage.Store) (*MigrateResult, error) {
-	data, err := os.ReadFile(exportPath)
+	data, err := os.ReadFile(exportPath) //nolint:gosec // G304: exportPath is an internal temp path, not user input
 	if err != nil {
 		return nil, fmt.Errorf("read export file: %w", err)
 	}
@@ -391,8 +392,8 @@ func importNamespaces(homeDir string, maps map[string]map[string]string, result 
 				Snapshot       string         `json:"snapshot"`
 				Template       string         `json:"template"`
 			}
-			if err := json.Unmarshal(raw, &ns); err != nil {
-				slog.Warn("Failed to parse namespace", "ws", wsID, "ns", nsID, "err", err)
+			if unmarshalErr := json.Unmarshal(raw, &ns); unmarshalErr != nil {
+				slog.Warn("Failed to parse namespace", "ws", wsID, "ns", nsID, "err", unmarshalErr)
 				continue
 			}
 
@@ -420,7 +421,7 @@ func importNamespaces(homeDir string, maps map[string]map[string]string, result 
 			}
 
 			nsDir := filepath.Join(homeDir, "ws", wsID, "ns", nsID)
-			os.MkdirAll(nsDir, 0o755)
+			_ = os.MkdirAll(nsDir, 0o755) //nolint:gosec // G301: namespace dirs need 0o755
 			nsConfigPath := filepath.Join(nsDir, "namespace.yml")
 
 			if err := os.WriteFile(nsConfigPath, yamlBytes, 0o644); err != nil { //nolint:gosec // config file needs to be readable
@@ -460,7 +461,7 @@ func importState(maps map[string]map[string]string, store storage.Store) {
 	if stateMap, ok := maps["launcher!state"]; ok {
 		if b64, ok := stateMap["selectedWorkspace"]; ok {
 			raw, _ := base64.StdEncoding.DecodeString(b64)
-			json.Unmarshal(raw, &wsID)
+			_ = json.Unmarshal(raw, &wsID)
 		}
 	}
 	if wsID == "" {
@@ -473,11 +474,11 @@ func importState(maps map[string]map[string]string, store storage.Store) {
 	if wsState, ok := maps[wsStateKey]; ok {
 		if b64, ok := wsState["selectedNamespace"]; ok {
 			raw, _ := base64.StdEncoding.DecodeString(b64)
-			json.Unmarshal(raw, &nsID)
+			_ = json.Unmarshal(raw, &nsID)
 		}
 	}
 
-	store.SetState(storage.LauncherState{WorkspaceID: wsID, NamespaceID: nsID})
+	_ = store.SetState(storage.LauncherState{WorkspaceID: wsID, NamespaceID: nsID})
 	slog.Info("Migrated launcher state", "workspace", wsID, "namespace", nsID)
 }
 
@@ -505,9 +506,9 @@ func findJava() string {
 
 func downloadFile(dest, url string) error {
 	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Get(url)
+	resp, err := client.Get(url) //nolint:gosec // URL is an internal constant, not user input
 	if err != nil {
-		return err
+		return fmt.Errorf("download %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 
@@ -515,28 +516,28 @@ func downloadFile(dest, url string) error {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	f, err := os.Create(dest)
+	f, err := os.Create(dest) //nolint:gosec // G304: dest is an internal temp path
 	if err != nil {
-		return err
+		return fmt.Errorf("create file %s: %w", dest, err)
 	}
 	defer f.Close()
 
 	if _, err := io.Copy(f, resp.Body); err != nil {
-		os.Remove(dest)
-		return err
+		_ = os.Remove(dest)
+		return fmt.Errorf("write file %s: %w", dest, err)
 	}
 	return nil
 }
 
 func fileSHA256(path string) (string, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // G304: path is an internal temp path
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("open %s: %w", path, err)
 	}
 	defer f.Close()
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
-		return "", err
+		return "", fmt.Errorf("hash %s: %w", path, err)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }

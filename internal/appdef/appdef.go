@@ -26,7 +26,7 @@ func (k ApplicationKind) IsCiteckApp() bool {
 // AppProbeDef defines a startup/liveness probe.
 type AppProbeDef struct {
 	Exec               *ExecProbeDef `json:"exec,omitempty" yaml:"exec,omitempty"`
-	HTTP               *HttpProbeDef `json:"http,omitempty" yaml:"http,omitempty"`
+	HTTP               *HTTPProbeDef `json:"http,omitempty" yaml:"http,omitempty"`
 	InitialDelaySeconds int          `json:"initialDelaySeconds,omitempty" yaml:"initialDelaySeconds,omitempty"`
 	PeriodSeconds       int          `json:"periodSeconds,omitempty" yaml:"periodSeconds,omitempty"`
 	FailureThreshold    int          `json:"failureThreshold,omitempty" yaml:"failureThreshold,omitempty"`
@@ -48,8 +48,8 @@ type ExecProbeDef struct {
 	Command []string `json:"command" yaml:"command"`
 }
 
-// HttpProbeDef defines an HTTP-based probe. //nolint:revive // HttpProbeDef name matches YAML serialization format
-type HttpProbeDef struct {
+// HTTPProbeDef defines an HTTP-based probe.
+type HTTPProbeDef struct {
 	Path string `json:"path" yaml:"path"`
 	Port int    `json:"port" yaml:"port"`
 }

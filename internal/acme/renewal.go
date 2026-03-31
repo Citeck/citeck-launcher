@@ -66,7 +66,7 @@ func (s *RenewalService) Stop() {
 // Short-lived certs (< 30 days) get 6h interval, otherwise 12h.
 func (s *RenewalService) renewalInterval() time.Duration {
 	certPath := s.client.CertPath()
-	data, err := os.ReadFile(certPath)
+	data, err := os.ReadFile(certPath) //nolint:gosec // G304: certPath is derived from internal confDir
 	if err != nil {
 		return 12 * time.Hour
 	}
@@ -106,8 +106,8 @@ func (s *RenewalService) isRateLimited() bool {
 // setRateLimited writes a rate limit marker with a 1-hour backoff.
 func (s *RenewalService) setRateLimited() {
 	until := time.Now().Add(1 * time.Hour)
-	os.MkdirAll(filepath.Dir(s.rateLimitPath()), 0o755)
-	os.WriteFile(s.rateLimitPath(), []byte(until.Format(time.RFC3339)), 0o644)
+	_ = os.MkdirAll(filepath.Dir(s.rateLimitPath()), 0o755) //nolint:gosec // G301: ACME rate limit dir
+	_ = os.WriteFile(s.rateLimitPath(), []byte(until.Format(time.RFC3339)), 0o644) //nolint:gosec // G306: rate limit file is non-sensitive
 }
 
 func (s *RenewalService) checkAndRenew(ctx context.Context) {
@@ -124,7 +124,7 @@ func (s *RenewalService) checkAndRenew(ctx context.Context) {
 	}
 
 	certPath := s.client.CertPath()
-	data, err := os.ReadFile(certPath)
+	data, err := os.ReadFile(certPath) //nolint:gosec // G304: certPath is derived from internal confDir
 	if err != nil {
 		slog.Warn("ACME renewal: cannot read cert", "err", err)
 		return

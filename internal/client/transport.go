@@ -14,13 +14,16 @@ import (
 	"github.com/citeck/citeck-launcher/internal/config"
 )
 
+// TransportType indicates the daemon connection mechanism.
 type TransportType int
 
+// Transport type constants.
 const (
 	TransportUnix TransportType = iota
 	TransportTCP
 )
 
+// TransportConfig holds resolved connection parameters for the daemon.
 type TransportConfig struct {
 	Type       TransportType
 	SocketPath string
@@ -31,7 +34,8 @@ type TransportConfig struct {
 	Insecure   bool   // skip server cert verification
 }
 
-func DetectTransport(host string, tlsCert, tlsKey, serverCert string, insecure bool) (*TransportConfig, error) {
+// DetectTransport probes Unix socket or TCP to determine how to reach the daemon.
+func DetectTransport(host, tlsCert, tlsKey, serverCert string, insecure bool) (*TransportConfig, error) {
 	// Explicit host flag or CITECK_HOST env var → TCP
 	if host == "" {
 		host = os.Getenv("CITECK_HOST")
@@ -130,7 +134,7 @@ func (tc *TransportConfig) newHTTPClientWithTimeout(timeout time.Duration) *http
 		return &http.Client{
 			Timeout: timeout,
 			Transport: &http.Transport{
-				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
 					return net.DialTimeout("unix", tc.SocketPath, 5*time.Second)
 				},
 			},
@@ -156,6 +160,7 @@ func (tc *TransportConfig) newHTTPClientWithTimeout(timeout time.Duration) *http
 	}
 }
 
+// NewHTTPClient creates an HTTP client with a 30-second timeout.
 func NewHTTPClient(tc *TransportConfig) *http.Client {
 	return tc.newHTTPClientWithTimeout(30 * time.Second)
 }
@@ -166,6 +171,7 @@ func NewStreamingHTTPClient(tc *TransportConfig) *http.Client {
 	return tc.newHTTPClientWithTimeout(0)
 }
 
+// BaseURL returns the HTTP(S) base URL for API calls.
 func (tc *TransportConfig) BaseURL() string {
 	switch tc.Type {
 	case TransportUnix:

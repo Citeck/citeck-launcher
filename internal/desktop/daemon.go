@@ -17,7 +17,7 @@ type DaemonOpts struct {
 }
 
 // RunDaemonLoop runs the daemon with automatic restart on crash.
-// It blocks until ctx is cancelled or max consecutive failures is reached.
+// It blocks until ctx is canceled or max consecutive failures is reached.
 func RunDaemonLoop(ctx context.Context, opts DaemonOpts) error {
 	backoff := 5 * time.Second
 	maxBackoff := 60 * time.Second

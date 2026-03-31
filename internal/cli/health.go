@@ -18,7 +18,7 @@ func newHealthCmd() *cobra.Command {
 				if output.IsJSON() {
 					output.PrintJSON(map[string]any{"healthy": false, "error": err.Error()})
 				}
-				return err
+				return fmt.Errorf("connect to daemon: %w", err)
 			}
 			defer c.Close()
 

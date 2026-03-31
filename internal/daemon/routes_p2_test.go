@@ -24,7 +24,7 @@ func TestHandleGetMigrationStatus_HasPendingSecrets(t *testing.T) {
 
 	d := &Daemon{store: store}
 
-	req := httptest.NewRequest("GET", "/api/v1/migration/status", nil)
+	req := httptest.NewRequest("GET", "/api/v1/migration/status", http.NoBody)
 	rec := httptest.NewRecorder()
 	d.handleGetMigrationStatus(rec, req)
 
@@ -43,7 +43,7 @@ func TestHandleGetMigrationStatus_NoPendingSecrets(t *testing.T) {
 	// No secret blob stored
 	d := &Daemon{store: store}
 
-	req := httptest.NewRequest("GET", "/api/v1/migration/status", nil)
+	req := httptest.NewRequest("GET", "/api/v1/migration/status", http.NoBody)
 	rec := httptest.NewRecorder()
 	d.handleGetMigrationStatus(rec, req)
 
@@ -64,7 +64,7 @@ func TestHandleGetMigrationStatus_EmptyBlob(t *testing.T) {
 
 	d := &Daemon{store: store}
 
-	req := httptest.NewRequest("GET", "/api/v1/migration/status", nil)
+	req := httptest.NewRequest("GET", "/api/v1/migration/status", http.NoBody)
 	rec := httptest.NewRecorder()
 	d.handleGetMigrationStatus(rec, req)
 

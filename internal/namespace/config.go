@@ -65,15 +65,15 @@ type WebappProps struct {
 	SpringProfiles string                               `yaml:"springProfiles" json:"springProfiles"`
 }
 
-// NamespaceConfig is the top-level namespace configuration (namespace.yml).
-type NamespaceConfig struct {
+// Config is the top-level namespace configuration (namespace.yml).
+type Config struct {
 	APIVersion     string              `yaml:"apiVersion,omitempty" json:"apiVersion,omitempty"`
 	ID             string              `yaml:"id" json:"id"`
 	Name           string              `yaml:"name" json:"name"`
 	Snapshot       string              `yaml:"snapshot" json:"snapshot"`
 	Template       string              `yaml:"template" json:"template"`
 	Authentication AuthenticationProps `yaml:"authentication" json:"authentication"`
-	BundleRef      bundle.BundleRef    `yaml:"bundleRef" json:"bundleRef"`
+	BundleRef      bundle.Ref    `yaml:"bundleRef" json:"bundleRef"`
 	PgAdmin        PgAdminProps        `yaml:"pgAdmin" json:"pgAdmin"`
 	MongoDB        MongoDbProps        `yaml:"mongodb" json:"mongodb"`
 	Proxy          ProxyProps          `yaml:"proxy" json:"proxy"`
@@ -81,8 +81,8 @@ type NamespaceConfig struct {
 }
 
 // DefaultNamespaceConfig returns a namespace config with sensible defaults.
-func DefaultNamespaceConfig() NamespaceConfig {
-	return NamespaceConfig{
+func DefaultNamespaceConfig() Config {
+	return Config{
 		Authentication: AuthenticationProps{
 			Type:  AuthBasic,
 			Users: []string{"admin"},
@@ -93,7 +93,7 @@ func DefaultNamespaceConfig() NamespaceConfig {
 }
 
 // LoadNamespaceConfig reads and parses a namespace config from the given file path.
-func LoadNamespaceConfig(path string) (*NamespaceConfig, error) {
+func LoadNamespaceConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // path is from trusted config directory
 	if err != nil {
 		return nil, fmt.Errorf("read namespace config: %w", err)
@@ -102,7 +102,7 @@ func LoadNamespaceConfig(path string) (*NamespaceConfig, error) {
 }
 
 // MarshalNamespaceConfig serializes a namespace config to YAML.
-func MarshalNamespaceConfig(cfg *NamespaceConfig) ([]byte, error) {
+func MarshalNamespaceConfig(cfg *Config) ([]byte, error) {
 	out := *cfg
 	if out.APIVersion == "" {
 		out.APIVersion = "v1"
@@ -111,7 +111,7 @@ func MarshalNamespaceConfig(cfg *NamespaceConfig) ([]byte, error) {
 }
 
 // ParseNamespaceConfig parses YAML data into a namespace config, applying defaults and validation.
-func ParseNamespaceConfig(data []byte) (*NamespaceConfig, error) {
+func ParseNamespaceConfig(data []byte) (*Config, error) {
 	cfg := DefaultNamespaceConfig()
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse namespace config: %w", err)
@@ -126,7 +126,7 @@ func ParseNamespaceConfig(data []byte) (*NamespaceConfig, error) {
 }
 
 // ValidateNamespaceConfig checks namespace config for common errors.
-func ValidateNamespaceConfig(cfg *NamespaceConfig) error {
+func ValidateNamespaceConfig(cfg *Config) error {
 	if cfg.Proxy.Port < 1 || cfg.Proxy.Port > 65535 {
 		return fmt.Errorf("proxy port must be 1-65535, got %d", cfg.Proxy.Port)
 	}

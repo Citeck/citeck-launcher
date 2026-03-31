@@ -277,7 +277,7 @@ func TestShutdown_CancelsWorkers(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	svc.Shutdown()
 
-	// After shutdown, the action should have completed or been cancelled
+	// After shutdown, the action should have completed or been canceled
 	status := h.Status()
 	if status == StatusPending || status == StatusRunning {
 		t.Errorf("expected action to be resolved after shutdown, got %s", status)

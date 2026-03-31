@@ -27,7 +27,7 @@ type memoryStats struct {
 func parseContainerStats(reader io.Reader) (*ContainerStat, error) {
 	var stats dockerStats
 	if err := json.NewDecoder(reader).Decode(&stats); err != nil {
-		return nil, err
+		return nil, err //nolint:wrapcheck // JSON decode in thin wrapper
 	}
 
 	cpuPercent := 0.0

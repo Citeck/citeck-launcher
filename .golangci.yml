@@ -34,6 +34,9 @@ linters:
         - performance
         - style
         - experimental
+    gosec:
+      excludes:
+        - G104  # "Errors unhandled" — too noisy for cleanup (Close, Remove, MkdirAll)
     govet:
       enable:
         - shadow
@@ -51,6 +54,9 @@ linters:
           - revive
         text: should have a package comment
       - linters:
+          - revive
+        text: "var-naming: avoid meaningless package names"
+      - linters:
           - dupl
           - gosec
         path: _test\.go
@@ -60,6 +66,14 @@ linters:
           - unused
         path: _test\.go$
         text: unused-parameter
+      - linters:
+          - revive
+        text: unused-parameter
+        path: internal/cli/
+      - linters:
+          - revive
+        text: unused-parameter
+        path: internal/daemon/
     paths:
       - vendor
       - third_party$

@@ -70,8 +70,8 @@ type secretWriter interface {
 type Daemon struct {
 	dockerClient    *docker.Client
 	runtime         *namespace.Runtime
-	nsConfig        *namespace.NamespaceConfig
-	bundleDef       *bundle.BundleDef
+	nsConfig        *namespace.Config
+	bundleDef       *bundle.Def
 	workspaceConfig *bundle.WorkspaceConfig
 	appDefs         []appdef.ApplicationDef
 	server          *http.Server
@@ -147,7 +147,7 @@ func Start(opts StartOptions) error {
 	// references a fresh one, leaving a gap where slog writes to a closed writer.
 	logInitOnce.Do(func() {
 		logDir := config.LogDir()
-		os.MkdirAll(logDir, 0o755)
+		_ = os.MkdirAll(logDir, 0o755) //nolint:gosec // G301: log dir needs 0o755
 		logPath := config.DaemonLogPath()
 		globalLogWriter = fsutil.NewRotatingWriter(logPath, 50*1024*1024, 3)
 		logDest := io.MultiWriter(os.Stderr, globalLogWriter)
@@ -174,7 +174,7 @@ func Start(opts StartOptions) error {
 		dirs = append(dirs, config.WorkspacesDir())
 	}
 	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // G301: daemon dirs need 0o755 for Docker and service access
 			return fmt.Errorf("create directory %s: %w", dir, err)
 		}
 	}
@@ -193,11 +193,11 @@ func Start(opts StartOptions) error {
 
 	// Check if another daemon is already running via socket lock
 	if conn, dialErr := net.DialTimeout("unix", socketPath, 2*time.Second); dialErr == nil {
-		conn.Close()
+		_ = conn.Close()
 		return fmt.Errorf("another daemon is already running (socket %s is active)", socketPath)
 	}
 	// Socket exists but nobody listening — stale, safe to remove
-	os.Remove(socketPath)
+	_ = os.Remove(socketPath)
 
 	// Determine workspace and namespace IDs
 	wsID := "daemon"
@@ -242,7 +242,7 @@ func Start(opts StartOptions) error {
 						"namespaces", result.Namespaces,
 					)
 				}
-				migStore.Close()
+				_ = migStore.Close()
 			}
 		}
 
@@ -256,7 +256,7 @@ func Start(opts StartOptions) error {
 					nsID = state.NamespaceID
 				}
 			}
-			sqlStore.Close()
+			_ = sqlStore.Close()
 		}
 
 		// Fallback: use first available workspace if stored one doesn't exist
@@ -303,7 +303,7 @@ func Start(opts StartOptions) error {
 	startupFailed := true
 	defer func() {
 		if startupFailed {
-			dockerClient.Close()
+			_ = dockerClient.Close()
 		}
 	}()
 
@@ -322,7 +322,7 @@ func Start(opts StartOptions) error {
 	}
 	defer func() {
 		if startupFailed {
-			store.Close()
+			_ = store.Close()
 		}
 	}()
 
@@ -348,7 +348,7 @@ func Start(opts StartOptions) error {
 		nsCfg = nil
 	}
 
-	var bundleDef *bundle.BundleDef
+	var bundleDef *bundle.Def
 	var wsCfg *bundle.WorkspaceConfig
 	var runtime *namespace.Runtime
 	var appDefs []appdef.ApplicationDef
@@ -376,7 +376,7 @@ func Start(opts StartOptions) error {
 		if resolveErr != nil {
 			slog.Error("Failed to resolve bundle — daemon starts with 0 apps", "ref", nsCfg.BundleRef, "err", resolveErr)
 			bundleError = resolveErr.Error()
-			resolveResult = &bundle.ResolveResult{Bundle: &bundle.EmptyBundleDef, Workspace: &bundle.WorkspaceConfig{}}
+			resolveResult = &bundle.ResolveResult{Bundle: &bundle.EmptyDef, Workspace: &bundle.WorkspaceConfig{}}
 		}
 		bundleDef = resolveResult.Bundle
 		wsCfg = resolveResult.Workspace
@@ -440,7 +440,7 @@ func Start(opts StartOptions) error {
 		// Write generated files (cloud config YAMLs, etc.) to volumes base
 		for filePath, content := range genResp.Files {
 			destPath := filepath.Join(volumesBase, filePath)
-			if mkdirErr := os.MkdirAll(filepath.Dir(destPath), 0o755); mkdirErr != nil {
+			if mkdirErr := os.MkdirAll(filepath.Dir(destPath), 0o755); mkdirErr != nil { //nolint:gosec // G301: volume dirs need 0o755 for Docker access
 				slog.Error("Failed to create dir for generated file", "path", destPath, "err", mkdirErr)
 				continue
 			}
@@ -490,8 +490,8 @@ func Start(opts StartOptions) error {
 		// Start CloudConfigServer with generated ext cloud config
 		cloudCfgSrv = NewCloudConfigServer()
 		cloudCfgSrv.UpdateConfig(genResp.CloudConfig)
-		if err := cloudCfgSrv.Start(); err != nil {
-			slog.Warn("CloudConfigServer failed to start", "err", err)
+		if startErr := cloudCfgSrv.Start(); startErr != nil {
+			slog.Warn("CloudConfigServer failed to start", "err", startErr)
 		}
 
 		// Status recovery: if previous status was RUNNING/STARTING/STALLED → start namespace
@@ -550,8 +550,8 @@ func Start(opts StartOptions) error {
 		acmeClient := acme.NewClient(config.DataDir(), config.ConfDir(), nsCfg.Proxy.Host)
 		d.acmeRenewal = acme.NewRenewalService(acmeClient, func() {
 			if d.runtime != nil {
-				if err := d.runtime.RestartApp("proxy"); err != nil {
-					slog.Error("ACME: restart proxy after renewal failed", "err", err)
+				if restartErr := d.runtime.RestartApp("proxy"); restartErr != nil {
+					slog.Error("ACME: restart proxy after renewal failed", "err", restartErr)
 				}
 			}
 		})
@@ -601,7 +601,7 @@ func Start(opts StartOptions) error {
 				}
 			}
 
-			var tcpHandler http.Handler = tcpBaseMux
+			tcpHandler := tcpBaseMux
 			if config.IsDesktopMode() {
 				// Desktop: requests come from Wails reverse proxy (trusted).
 				// Skip CSRF/CORS — Wails AssetServer is the real origin.
@@ -747,21 +747,21 @@ func (d *Daemon) doShutdown() {
 	// Phase 3: Drain HTTP connections with 10s timeout
 	httpCtx, httpCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer httpCancel()
-	d.server.Shutdown(httpCtx)
+	_ = d.server.Shutdown(httpCtx)
 	if d.tcpServer != nil {
-		d.tcpServer.Shutdown(httpCtx)
+		_ = d.tcpServer.Shutdown(httpCtx)
 	}
 	if d.store != nil {
-		d.store.Close()
+		_ = d.store.Close()
 	}
-	d.dockerClient.Close()
-	os.Remove(d.socketPath)
+	_ = d.dockerClient.Close()
+	_ = os.Remove(d.socketPath)
 
 	slog.Info("Daemon stopped")
 	// In desktop mode, the log writer is shared across daemon restarts — don't close it.
 	// In CLI mode (single Start), close the writer on exit.
 	if d.logWriter != nil && !d.desktop {
-		d.logWriter.Close()
+		_ = d.logWriter.Close()
 	}
 }
 
@@ -784,20 +784,20 @@ func isLocalhostAddr(addr string) bool {
 // setupMTLS configures mTLS on the TCP listener for non-localhost access.
 // Returns the (possibly wrapped) listener, handler, whether mTLS is active, and any error.
 // On error, the listener is closed and returned as nil.
-func (d *Daemon) setupMTLS(ln net.Listener, handler http.Handler, nsCfg *namespace.NamespaceConfig, tcpAddr string) (net.Listener, http.Handler, bool, error) {
+func (d *Daemon) setupMTLS(ln net.Listener, handler http.Handler, nsCfg *namespace.Config, tcpAddr string) (net.Listener, http.Handler, bool, error) {
 	caPool, certCount, err := tlsutil.LoadCACertPool(config.WebUICADir())
 	if err != nil {
-		ln.Close()
+		_ = ln.Close()
 		return nil, handler, false, fmt.Errorf("load client CA pool: %w", err)
 	}
 	if certCount == 0 {
-		ln.Close()
+		_ = ln.Close()
 		return nil, handler, false, fmt.Errorf("no client certs in %s — run: citeck cert generate --name admin", config.WebUICADir())
 	}
 
 	// Ensure server cert exists
 	webuiTLSDir := config.WebUITLSDir()
-	os.MkdirAll(webuiTLSDir, 0o755)
+	os.MkdirAll(webuiTLSDir, 0o755) //nolint:gosec // G301: TLS dir needs 0o755
 	serverCertPath := filepath.Join(webuiTLSDir, "server.crt")
 	serverKeyPath := filepath.Join(webuiTLSDir, "server.key")
 	if _, statErr := os.Stat(serverCertPath); os.IsNotExist(statErr) {
@@ -828,7 +828,7 @@ func (d *Daemon) setupMTLS(ln net.Listener, handler http.Handler, nsCfg *namespa
 		ClientCAs:    caPool,
 		MinVersion:   tls.VersionTLS13,
 	}
-	tlsCfg.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+	tlsCfg.GetConfigForClient = func(_ *tls.ClientHelloInfo) (*tls.Config, error) {
 		caMu.Lock()
 		defer caMu.Unlock()
 		info, statErr := os.Stat(config.WebUICADir())
@@ -854,7 +854,7 @@ func (d *Daemon) setupMTLS(ln net.Listener, handler http.Handler, nsCfg *namespa
 }
 
 // resolveServerCertHost determines the hostname for the server certificate SAN.
-func resolveServerCertHost(tcpAddr string, nsCfg *namespace.NamespaceConfig) string {
+func resolveServerCertHost(tcpAddr string, nsCfg *namespace.Config) string {
 	host, _, _ := net.SplitHostPort(tcpAddr)
 	if host == "" || host == "0.0.0.0" || host == "::" {
 		if nsCfg != nil && nsCfg.Proxy.Host != "" && nsCfg.Proxy.Host != "localhost" {
@@ -1046,7 +1046,10 @@ func (d *Daemon) activeConfigPath() string {
 }
 
 func readJSON(r *http.Request, v any) error {
-	return json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(v) // 1MB max
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(v); err != nil { // 1MB max
+		return fmt.Errorf("decode JSON body: %w", err)
+	}
+	return nil
 }
 
 // makeTokenLookup creates a function that looks up auth tokens from the secret store.
@@ -1156,17 +1159,17 @@ func buildRegistryAuthCache(reposByHost map[string]bundle.ImageRepo, reader secr
 // importSnapshotIfNeeded checks for the snapshot field in namespace config and imports
 // the snapshot if it hasn't been imported yet (tracked by a marker file).
 //nolint:nestif // snapshot import requires nested SHA256 verification and download fallback logic
-func importSnapshotIfNeeded(nsCfg *namespace.NamespaceConfig, wsCfg *bundle.WorkspaceConfig, dc *docker.Client, volumesBase string) {
+func importSnapshotIfNeeded(nsCfg *namespace.Config, wsCfg *bundle.WorkspaceConfig, dc *docker.Client, volumesBase string) {
 	if nsCfg.Snapshot == "" || wsCfg == nil {
 		return
 	}
 
 	markerDir := filepath.Join(volumesBase, "snapshots")
-	os.MkdirAll(markerDir, 0o755)
+	os.MkdirAll(markerDir, 0o755) //nolint:gosec // G301: marker dir needs 0o755
 	markerFile := filepath.Join(markerDir, "imported-"+nsCfg.ID)
 
 	// Check marker — if already imported this snapshot, skip
-	if data, err := os.ReadFile(markerFile); err == nil {
+	if data, err := os.ReadFile(markerFile); err == nil { //nolint:gosec // G304: markerFile is derived from internal config
 		if strings.TrimSpace(string(data)) == nsCfg.Snapshot {
 			slog.Info("Snapshot already imported", "snapshot", nsCfg.Snapshot, "ns", nsCfg.ID)
 			return
@@ -1218,7 +1221,7 @@ func importSnapshotIfNeeded(nsCfg *namespace.NamespaceConfig, wsCfg *bundle.Work
 	}
 
 	// Write marker
-	os.WriteFile(markerFile, []byte(nsCfg.Snapshot), 0o644)
+	os.WriteFile(markerFile, []byte(nsCfg.Snapshot), 0o644) //nolint:gosec // G306: marker file is non-sensitive
 	slog.Info("Snapshot auto-import completed", "snapshot", nsCfg.Snapshot, "ns", nsCfg.ID)
 }
 
@@ -1229,7 +1232,7 @@ func isRegularFile(path string) bool {
 }
 
 // ensureSelfSignedCert generates a self-signed cert if TLS is enabled without LE and no cert is configured.
-func ensureSelfSignedCert(nsCfg *namespace.NamespaceConfig) {
+func ensureSelfSignedCert(nsCfg *namespace.Config) {
 	if !nsCfg.Proxy.TLS.Enabled || nsCfg.Proxy.TLS.LetsEncrypt || nsCfg.Proxy.TLS.CertPath != "" {
 		return
 	}
@@ -1238,7 +1241,7 @@ func ensureSelfSignedCert(nsCfg *namespace.NamespaceConfig) {
 		host = "localhost"
 	}
 	tlsDir := filepath.Join(config.ConfDir(), "tls")
-	os.MkdirAll(tlsDir, 0o755)
+	os.MkdirAll(tlsDir, 0o755) //nolint:gosec // G301: TLS dir needs 0o755
 	certPath := filepath.Join(tlsDir, "server.crt")
 	keyPath := filepath.Join(tlsDir, "server.key")
 	if !isRegularFile(certPath) {

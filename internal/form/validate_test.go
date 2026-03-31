@@ -5,7 +5,7 @@ import (
 )
 
 func TestValidate_Required(t *testing.T) {
-	spec := &FormSpec{
+	spec := &Spec{
 		Components: []ComponentSpec{
 			{Key: "name", Label: "Name", Type: "text", Required: true},
 		},
@@ -37,7 +37,7 @@ func TestValidate_Required(t *testing.T) {
 }
 
 func TestValidate_MinMaxLength(t *testing.T) {
-	spec := &FormSpec{
+	spec := &Spec{
 		Components: []ComponentSpec{
 			{
 				Key: "name", Label: "Name", Type: "text",
@@ -66,7 +66,7 @@ func TestValidate_MinMaxLength(t *testing.T) {
 }
 
 func TestValidate_Pattern(t *testing.T) {
-	spec := &FormSpec{
+	spec := &Spec{
 		Components: []ComponentSpec{
 			{
 				Key: "name", Label: "Name", Type: "text",
@@ -89,7 +89,7 @@ func TestValidate_Pattern(t *testing.T) {
 }
 
 func TestValidate_MinMax(t *testing.T) {
-	spec := &FormSpec{
+	spec := &Spec{
 		Components: []ComponentSpec{
 			{
 				Key: "port", Label: "Port", Type: "number",
@@ -118,7 +118,7 @@ func TestValidate_MinMax(t *testing.T) {
 }
 
 func TestValidate_OptionalField(t *testing.T) {
-	spec := &FormSpec{
+	spec := &Spec{
 		Components: []ComponentSpec{
 			{Key: "host", Label: "Host", Type: "text", Required: false},
 		},
@@ -157,6 +157,7 @@ func TestGetSpec(t *testing.T) {
 	spec := GetSpec(NamespaceCreateFormID)
 	if spec == nil {
 		t.Fatal("expected non-nil spec")
+		return // unreachable, satisfies static analysis
 	}
 	if spec.ID != NamespaceCreateFormID {
 		t.Errorf("expected ID %q, got %q", NamespaceCreateFormID, spec.ID)

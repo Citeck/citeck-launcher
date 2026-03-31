@@ -72,12 +72,12 @@ func TestRewriteDataSourceURLForLocalhost_NoMatch(t *testing.T) {
 }
 
 func TestGenerateWebapp_FiltersByWorkspaceConfig(t *testing.T) {
-	cfg := &NamespaceConfig{
+	cfg := &Config{
 		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
 		Proxy:          ProxyProps{Port: 80},
 	}
-	bun := &bundle.BundleDef{
-		Applications: map[string]bundle.BundleAppDef{
+	bun := &bundle.Def{
+		Applications: map[string]bundle.AppDef{
 			"emodel":  {Image: "nexus.citeck.ru/emodel:1.0"},
 			"unknown": {Image: "nexus.citeck.ru/unknown:1.0"},
 		},
@@ -149,12 +149,12 @@ func TestGetHash_DifferentImage(t *testing.T) {
 }
 
 func TestProcessWebappDataSources_JDBC(t *testing.T) {
-	cfg := &NamespaceConfig{
+	cfg := &Config{
 		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
 		Proxy:          ProxyProps{Port: 80},
 	}
-	bun := &bundle.BundleDef{
-		Applications: map[string]bundle.BundleAppDef{
+	bun := &bundle.Def{
+		Applications: map[string]bundle.AppDef{
 			"emodel": {Image: "nexus.citeck.ru/emodel:1.0"},
 		},
 	}
@@ -237,7 +237,7 @@ func TestProcessWebappDataSources_JDBC(t *testing.T) {
 
 func TestProcessWebappDataSources_CloudConfigOnly(t *testing.T) {
 	// Test that cloudConfig from namespace config is merged even when there are no datasources
-	cfg := &NamespaceConfig{
+	cfg := &Config{
 		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
 		Proxy:          ProxyProps{Port: 80},
 		Webapps: map[string]WebappProps{
@@ -248,8 +248,8 @@ func TestProcessWebappDataSources_CloudConfigOnly(t *testing.T) {
 			},
 		},
 	}
-	bun := &bundle.BundleDef{
-		Applications: map[string]bundle.BundleAppDef{
+	bun := &bundle.Def{
+		Applications: map[string]bundle.AppDef{
 			"emodel": {Image: "nexus.citeck.ru/emodel:1.0"},
 		},
 	}
@@ -269,12 +269,12 @@ func TestProcessWebappDataSources_CloudConfigOnly(t *testing.T) {
 }
 
 func TestPerAppMemoryLimitOverridesGlobal(t *testing.T) {
-	cfg := &NamespaceConfig{
+	cfg := &Config{
 		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
 		Proxy:          ProxyProps{Port: 80},
 	}
-	bun := &bundle.BundleDef{
-		Applications: map[string]bundle.BundleAppDef{
+	bun := &bundle.Def{
+		Applications: map[string]bundle.AppDef{
 			"eproc": {Image: "nexus.citeck.ru/eproc:1.0"},
 		},
 	}
@@ -299,12 +299,12 @@ func TestPerAppMemoryLimitOverridesGlobal(t *testing.T) {
 }
 
 func TestAlfrescoContainerDefs(t *testing.T) {
-	cfg := &NamespaceConfig{
+	cfg := &Config{
 		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
 		Proxy:          ProxyProps{Port: 80},
 	}
-	bun := &bundle.BundleDef{
-		Applications: map[string]bundle.BundleAppDef{
+	bun := &bundle.Def{
+		Applications: map[string]bundle.AppDef{
 			"alfresco": {Image: "citeck/alfresco:1.0"},
 		},
 	}
@@ -355,7 +355,7 @@ func TestAlfrescoContainerDefs(t *testing.T) {
 }
 
 func TestNamespaceLevelDataSources(t *testing.T) {
-	cfg := &NamespaceConfig{
+	cfg := &Config{
 		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
 		Proxy:          ProxyProps{Port: 80},
 		Webapps: map[string]WebappProps{
@@ -366,8 +366,8 @@ func TestNamespaceLevelDataSources(t *testing.T) {
 			},
 		},
 	}
-	bun := &bundle.BundleDef{
-		Applications: map[string]bundle.BundleAppDef{
+	bun := &bundle.Def{
+		Applications: map[string]bundle.AppDef{
 			"emodel": {Image: "nexus.citeck.ru/emodel:1.0"},
 		},
 	}
@@ -395,12 +395,12 @@ func TestNamespaceLevelDataSources(t *testing.T) {
 }
 
 func TestWebappDefaultProps_ImageOverride(t *testing.T) {
-	cfg := &NamespaceConfig{
+	cfg := &Config{
 		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
 		Proxy:          ProxyProps{Port: 80},
 	}
-	bun := &bundle.BundleDef{
-		Applications: map[string]bundle.BundleAppDef{
+	bun := &bundle.Def{
+		Applications: map[string]bundle.AppDef{
 			"emodel": {Image: "nexus.citeck.ru/emodel:1.0"},
 		},
 	}
@@ -475,7 +475,7 @@ func TestDeepMergeMaps_NestedRecursion(t *testing.T) {
 
 func TestCloudConfigDeepMerge(t *testing.T) {
 	// Workspace sets dataSources, namespace adds cloudConfig — both should be present
-	cfg := &NamespaceConfig{
+	cfg := &Config{
 		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
 		Proxy:          ProxyProps{Port: 80},
 		Webapps: map[string]WebappProps{
@@ -486,8 +486,8 @@ func TestCloudConfigDeepMerge(t *testing.T) {
 			},
 		},
 	}
-	bun := &bundle.BundleDef{
-		Applications: map[string]bundle.BundleAppDef{
+	bun := &bundle.Def{
+		Applications: map[string]bundle.AppDef{
 			"emodel": {Image: "nexus.citeck.ru/emodel:1.0"},
 		},
 	}

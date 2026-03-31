@@ -72,21 +72,24 @@ func detectDockerSocket() string {
 		os.Getenv("HOME") + "/.docker/desktop/docker.sock",
 	}
 	for _, path := range candidates {
-		if fi, err := os.Stat(path); err == nil && fi.Mode()&os.ModeSocket != 0 {
+		if fi, err := os.Stat(path); err == nil && fi.Mode()&os.ModeSocket != 0 { //nolint:gosec // hardcoded socket paths
 			return path
 		}
 	}
 	return ""
 }
 
+// Close releases the Docker client connection.
 func (c *Client) Close() error {
-	return c.cli.Close()
+	return c.cli.Close() //nolint:wrapcheck // transparent close
 }
 
 // Ping checks Docker connectivity.
 func (c *Client) Ping(ctx context.Context) error {
-	_, err := c.cli.Ping(ctx)
-	return err
+	if _, err := c.cli.Ping(ctx); err != nil {
+		return fmt.Errorf("docker ping: %w", err)
+	}
+	return nil
 }
 
 // ContainerName generates the Docker container name.
@@ -108,7 +111,7 @@ func (c *Client) CreateNetwork(ctx context.Context) (string, error) {
 		Filters: filters.NewArgs(filters.Arg("name", name)),
 	})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("list networks: %w", err)
 	}
 	for _, n := range networks {
 		if n.Name == name {
@@ -125,26 +128,36 @@ func (c *Client) CreateNetwork(ctx context.Context) (string, error) {
 		},
 	})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("create network %s: %w", name, err)
 	}
 	return resp.ID, nil
 }
 
 // RemoveNetwork removes the namespace network.
 func (c *Client) RemoveNetwork(ctx context.Context) error {
-	return c.cli.NetworkRemove(ctx, c.NetworkName())
+	if err := c.cli.NetworkRemove(ctx, c.NetworkName()); err != nil {
+		return fmt.Errorf("remove network %s: %w", c.NetworkName(), err)
+	}
+	return nil
 }
 
 // RemoveNetworkByName removes a Docker network by its exact name.
 func (c *Client) RemoveNetworkByName(ctx context.Context, name string) error {
-	return c.cli.NetworkRemove(ctx, name)
+	if err := c.cli.NetworkRemove(ctx, name); err != nil {
+		return fmt.Errorf("remove network %s: %w", name, err)
+	}
+	return nil
 }
 
 // ListLauncherNetworks returns networks with the citeck.launcher label.
 func (c *Client) ListLauncherNetworks(ctx context.Context) ([]network.Summary, error) {
-	return c.cli.NetworkList(ctx, network.ListOptions{
+	result, err := c.cli.NetworkList(ctx, network.ListOptions{
 		Filters: filters.NewArgs(filters.Arg("label", LabelLauncher+"=true")),
 	})
+	if err != nil {
+		return nil, fmt.Errorf("list launcher networks: %w", err)
+	}
+	return result, nil
 }
 
 // CreateContainer creates a container from an ApplicationDef.
@@ -175,32 +188,28 @@ func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef,
 	// Volumes (binds)
 	// Named volumes (e.g. "mongo2:/data/db") are converted to bind mounts
 	// at {volumesBaseDir}/{name} so data stays in the runtime directory.
-	var binds []string
+	binds := make([]string, 0, len(app.Volumes))
 	for _, v := range app.Volumes {
 		parts := strings.SplitN(v, ":", 2)
-		if len(parts) == 2 {
+		if len(parts) == 2 { //nolint:nestif // volume source resolution logic
 			source := parts[0]
 			if strings.HasPrefix(source, "./") && volumesBaseDir != "" {
 				// Relative path — resolve against volumesBase.
 				// Ensure the parent directory exists so Docker doesn't create
 				// a directory at the file path (its default for missing bind sources).
 				hostPath := filepath.Join(volumesBaseDir, source[2:])
-				if err := os.MkdirAll(filepath.Dir(hostPath), 0o755); err != nil {
+				if err := os.MkdirAll(filepath.Dir(hostPath), 0o755); err != nil { //nolint:gosec // Docker bind-mount dirs need container-accessible perms
 					return "", fmt.Errorf("create bind-mount directory %s: %w", filepath.Dir(hostPath), err)
 				}
 				v = hostPath + ":" + parts[1]
-			} else if !strings.ContainsAny(source, "/.") && volumesBaseDir != "" {
-				if config.IsDesktopMode() {
-					// Desktop mode: keep Docker named volumes (compatible with Kotlin launcher).
-					// v stays as "name:/path" — Docker creates/reuses the named volume.
-				} else {
-					// Server mode: convert to bind mount in runtime dir for direct access.
-					hostDir := filepath.Join(volumesBaseDir, "volumes", source)
-					if err := os.MkdirAll(hostDir, 0o755); err != nil {
-						return "", fmt.Errorf("create bind-mount directory %s: %w", hostDir, err)
-					}
-					v = hostDir + ":" + parts[1]
+			} else if !strings.ContainsAny(source, "/.") && volumesBaseDir != "" && !config.IsDesktopMode() {
+				// Server mode: convert named volume to bind mount in runtime dir.
+				// Desktop mode keeps Docker named volumes (compatible with Kotlin launcher).
+				hostDir := filepath.Join(volumesBaseDir, "volumes", source)
+				if err := os.MkdirAll(hostDir, 0o755); err != nil { //nolint:gosec // Docker bind-mount dirs need container-accessible perms
+					return "", fmt.Errorf("create bind-mount directory %s: %w", hostDir, err)
 				}
+				v = hostDir + ":" + parts[1]
 			}
 		}
 		binds = append(binds, v)
@@ -228,7 +237,7 @@ func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef,
 		shmSize = parseMemory(app.ShmSize)
 	}
 
-	config := &container.Config{
+	ctrConfig := &container.Config{
 		Image:        app.Image,
 		Env:          env,
 		Cmd:          app.Cmd,
@@ -256,14 +265,15 @@ func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef,
 		},
 	}
 	if memoryBytes > 0 {
-		hostConfig.Resources.Memory = memoryBytes
+		hostConfig.Memory = memoryBytes
 	}
 	if shmSize > 0 {
 		hostConfig.ShmSize = shmSize
 	}
 
 	// Network aliases: app name + any additional aliases
-	aliases := []string{app.Name}
+	aliases := make([]string, 0, 1+len(app.NetworkAliases))
+	aliases = append(aliases, app.Name)
 	aliases = append(aliases, app.NetworkAliases...)
 
 	networkConfig := &network.NetworkingConfig{
@@ -274,7 +284,7 @@ func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef,
 		},
 	}
 
-	resp, err := c.cli.ContainerCreate(ctx, config, hostConfig, networkConfig, nil, containerName)
+	resp, err := c.cli.ContainerCreate(ctx, ctrConfig, hostConfig, networkConfig, nil, containerName)
 	if err != nil {
 		return "", fmt.Errorf("create container %s: %w", containerName, err)
 	}
@@ -284,18 +294,27 @@ func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef,
 
 // StartContainer starts a container by ID.
 func (c *Client) StartContainer(ctx context.Context, id string) error {
-	return c.cli.ContainerStart(ctx, id, container.StartOptions{})
+	if err := c.cli.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
+		return fmt.Errorf("start container %s: %w", id, err)
+	}
+	return nil
 }
 
 // StopContainer stops a container with a timeout.
 func (c *Client) StopContainer(ctx context.Context, id string, timeoutSec int) error {
 	timeout := timeoutSec
-	return c.cli.ContainerStop(ctx, id, container.StopOptions{Timeout: &timeout})
+	if err := c.cli.ContainerStop(ctx, id, container.StopOptions{Timeout: &timeout}); err != nil {
+		return fmt.Errorf("stop container %s: %w", id, err)
+	}
+	return nil
 }
 
 // RemoveContainer removes a container.
 func (c *Client) RemoveContainer(ctx context.Context, id string) error {
-	return c.cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true})
+	if err := c.cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true}); err != nil {
+		return fmt.Errorf("remove container %s: %w", id, err)
+	}
+	return nil
 }
 
 // StopAndRemoveContainer stops and removes a container by name.
@@ -312,24 +331,32 @@ func (c *Client) StopAndRemoveContainer(ctx context.Context, name string, timeou
 
 // GetContainers returns containers for this namespace.
 func (c *Client) GetContainers(ctx context.Context) ([]types.Container, error) {
-	return c.cli.ContainerList(ctx, container.ListOptions{
+	result, err := c.cli.ContainerList(ctx, container.ListOptions{
 		All: true,
 		Filters: filters.NewArgs(
 			filters.Arg("label", LabelWorkspace+"="+c.workspace),
 			filters.Arg("label", LabelNamespace+"="+c.namespace),
 		),
 	})
+	if err != nil {
+		return nil, fmt.Errorf("list containers: %w", err)
+	}
+	return result, nil
 }
 
 // ListAllLauncherContainers returns ALL containers with the citeck.launcher label,
 // regardless of workspace/namespace. Used by the clean command to find orphans.
 func (c *Client) ListAllLauncherContainers(ctx context.Context) ([]types.Container, error) {
-	return c.cli.ContainerList(ctx, container.ListOptions{
+	result, err := c.cli.ContainerList(ctx, container.ListOptions{
 		All: true,
 		Filters: filters.NewArgs(
 			filters.Arg("label", LabelLauncher+"=true"),
 		),
 	})
+	if err != nil {
+		return nil, fmt.Errorf("list all launcher containers: %w", err)
+	}
+	return result, nil
 }
 
 // CleanupStaleContainers stops and removes all containers from this namespace.
@@ -343,10 +370,7 @@ func (c *Client) CleanupStaleContainers(ctx context.Context) {
 		if len(ctr.Names) == 0 {
 			continue
 		}
-		name := ctr.Names[0]
-		if strings.HasPrefix(name, "/") {
-			name = name[1:]
-		}
+		name := strings.TrimPrefix(ctr.Names[0], "/")
 		slog.Info("Removing stale container", "name", name)
 		_ = c.StopAndRemoveContainer(ctx, name, 0)
 	}
@@ -354,7 +378,7 @@ func (c *Client) CleanupStaleContainers(ctx context.Context) {
 
 // InspectContainer returns container details.
 func (c *Client) InspectContainer(ctx context.Context, id string) (types.ContainerJSON, error) {
-	return c.cli.ContainerInspect(ctx, id)
+	return c.cli.ContainerInspect(ctx, id) //nolint:wrapcheck // thin Docker SDK wrapper
 }
 
 // RegistryAuth holds credentials for a Docker registry.
@@ -395,7 +419,7 @@ func (c *Client) PullImageWithProgress(ctx context.Context, img string, auth *Re
 
 	if progressFn == nil {
 		_, err = io.Copy(io.Discard, reader)
-		return err
+		return err //nolint:wrapcheck // transparent I/O drain
 	}
 
 	return parsePullProgress(reader, progressFn)
@@ -404,7 +428,7 @@ func (c *Client) PullImageWithProgress(ctx context.Context, img string, auth *Re
 // ContainerLogsFollow returns a streaming reader for container logs with follow=true.
 // The caller must close the returned reader.
 func (c *Client) ContainerLogsFollow(ctx context.Context, containerID string, tail int) (io.ReadCloser, error) {
-	return c.cli.ContainerLogs(ctx, containerID, container.LogsOptions{
+	return c.cli.ContainerLogs(ctx, containerID, container.LogsOptions{ //nolint:wrapcheck // thin Docker SDK wrapper
 		ShowStdout: true,
 		ShowStderr: true,
 		Follow:     true,
@@ -470,7 +494,7 @@ func parsePullProgress(reader io.Reader, progressFn PullProgressFn) error {
 			progressFn(float64(currentBytes)/float64(mb), float64(totalBytes)/float64(mb), pct)
 		}
 	}
-	return scanner.Err()
+	return scanner.Err() //nolint:wrapcheck // transparent scanner error
 }
 
 // ContainerLogs returns logs from a container.
@@ -481,7 +505,7 @@ func (c *Client) ContainerLogs(ctx context.Context, containerID string, tail int
 		Tail:       fmt.Sprintf("%d", tail),
 	})
 	if err != nil {
-		return "", err
+		return "", err //nolint:wrapcheck // thin Docker SDK wrapper
 	}
 	defer reader.Close()
 
@@ -494,7 +518,7 @@ func (c *Client) ContainerLogs(ctx context.Context, containerID string, tail int
 			ShowStdout: true, ShowStderr: true, Tail: fmt.Sprintf("%d", tail),
 		})
 		if err2 != nil {
-			return "", err2
+			return "", err2 //nolint:wrapcheck // thin Docker SDK wrapper
 		}
 		defer reader2.Close()
 		data, _ := io.ReadAll(io.LimitReader(reader2, 50*1024*1024)) // 50MB cap
@@ -509,7 +533,7 @@ func (c *Client) ContainerLogs(ctx context.Context, containerID string, tail int
 }
 
 // ExecInContainer runs a command inside a running container.
-func (c *Client) ExecInContainer(ctx context.Context, containerID string, cmd []string) (string, int, error) {
+func (c *Client) ExecInContainer(ctx context.Context, containerID string, cmd []string) (output string, exitCode int, err error) {
 	execConfig := container.ExecOptions{
 		Cmd:          cmd,
 		AttachStdout: true,
@@ -518,12 +542,12 @@ func (c *Client) ExecInContainer(ctx context.Context, containerID string, cmd []
 
 	execResp, err := c.cli.ContainerExecCreate(ctx, containerID, execConfig)
 	if err != nil {
-		return "", -1, err
+		return "", -1, err //nolint:wrapcheck // thin Docker SDK wrapper
 	}
 
 	attachResp, err := c.cli.ContainerExecAttach(ctx, execResp.ID, container.ExecStartOptions{})
 	if err != nil {
-		return "", -1, err
+		return "", -1, err //nolint:wrapcheck // thin Docker SDK wrapper
 	}
 	defer attachResp.Close()
 
@@ -533,17 +557,17 @@ func (c *Client) ExecInContainer(ctx context.Context, containerID string, cmd []
 	if err != nil {
 		// Fallback for TTY-mode exec
 		data, _ := io.ReadAll(attachResp.Reader)
-		output := string(data)
+		output = string(data)
 		inspectResp, _ := c.cli.ContainerExecInspect(ctx, execResp.ID)
 		return output, inspectResp.ExitCode, nil
 	}
 
-	output := stdout.String() + stderr.String()
+	output = stdout.String() + stderr.String()
 
 	// Get exit code
 	inspectResp, err := c.cli.ContainerExecInspect(ctx, execResp.ID)
 	if err != nil {
-		return output, -1, err
+		return output, -1, err //nolint:wrapcheck // thin Docker SDK wrapper
 	}
 
 	return output, inspectResp.ExitCode, nil
@@ -558,7 +582,7 @@ func (c *Client) GetPublishedPort(ctx context.Context, containerID string, conta
 	for port, bindings := range inspect.NetworkSettings.Ports {
 		if port.Int() == containerPort && len(bindings) > 0 {
 			var hostPort int
-			fmt.Sscanf(bindings[0].HostPort, "%d", &hostPort)
+			_, _ = fmt.Sscanf(bindings[0].HostPort, "%d", &hostPort)
 			return hostPort
 		}
 	}
@@ -569,7 +593,7 @@ func (c *Client) GetPublishedPort(ctx context.Context, containerID string, conta
 func (c *Client) ContainerStats(ctx context.Context, containerID string) (*ContainerStat, error) {
 	resp, err := c.cli.ContainerStatsOneShot(ctx, containerID)
 	if err != nil {
-		return nil, err
+		return nil, err //nolint:wrapcheck // thin Docker SDK wrapper
 	}
 	defer resp.Body.Close()
 	return parseContainerStats(resp.Body)
@@ -658,7 +682,7 @@ func parseMemory(s string) int64 {
 	}
 
 	var n int64
-	fmt.Sscanf(s, "%d", &n)
+	_, _ = fmt.Sscanf(s, "%d", &n)
 	return n * multiplier
 }
 
@@ -671,7 +695,7 @@ type ContainerStat struct {
 
 // RunUtilsContainer runs a command in a temporary launcher-utils container with the given bind mounts.
 // It creates the container, starts it, waits for exit, captures output, and removes it.
-func (c *Client) RunUtilsContainer(ctx context.Context, cmd []string, binds []string) (string, int, error) {
+func (c *Client) RunUtilsContainer(ctx context.Context, cmd, binds []string) (output string, exitCode int, err error) {
 	utilsImage := config.UtilsImage()
 
 	containerName := c.ContainerName("launcher-utils-tmp")
@@ -695,18 +719,18 @@ func (c *Client) RunUtilsContainer(ctx context.Context, cmd []string, binds []st
 	containerID := resp.ID
 	defer func() { _ = c.RemoveContainer(ctx, containerID) }()
 
-	if err := c.cli.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
-		return "", -1, fmt.Errorf("start utils container: %w", err)
+	if startErr := c.cli.ContainerStart(ctx, containerID, container.StartOptions{}); startErr != nil {
+		return "", -1, fmt.Errorf("start utils container: %w", startErr)
 	}
 
-	if err := c.WaitForContainerExit(ctx, containerID, 5*time.Minute); err != nil {
-		return "", -1, fmt.Errorf("wait for utils container: %w", err)
+	if waitErr := c.WaitForContainerExit(ctx, containerID, 5*time.Minute); waitErr != nil {
+		return "", -1, fmt.Errorf("wait for utils container: %w", waitErr)
 	}
 
-	output, _ := c.ContainerLogs(ctx, containerID, 1000)
+	output, _ = c.ContainerLogs(ctx, containerID, 1000)
 
-	inspect, err := c.cli.ContainerInspect(ctx, containerID)
-	if err != nil {
+	inspect, inspErr := c.cli.ContainerInspect(ctx, containerID)
+	if inspErr != nil {
 		return output, -1, nil
 	}
 	return output, inspect.State.ExitCode, nil

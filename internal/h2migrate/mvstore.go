@@ -39,22 +39,19 @@ type chunkMeta struct {
 	rootMapPos     int64 // encoded page position: (chunkId << 38) | (offset << 6) | type
 }
 
-// pageType constants
-const (
-	pageTypeLeaf     = 0
-	pageTypeInternal = 1
-)
+// Page type constants for MVStore B-tree format.
+// Leaf = 0, Internal = 1. Checked via bitwise operations in readPage().
 
 // OpenMVStore opens an MVStore file for reading.
 func OpenMVStore(path string) (*MVStore, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // G304: path is an internal H2 database path
 	if err != nil {
 		return nil, fmt.Errorf("open mvstore: %w", err)
 	}
 
 	s := &MVStore{file: f}
 	if err := s.readHeader(); err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, err
 	}
 
@@ -63,7 +60,10 @@ func OpenMVStore(path string) (*MVStore, error) {
 
 // Close releases the file.
 func (s *MVStore) Close() error {
-	return s.file.Close()
+	if err := s.file.Close(); err != nil {
+		return fmt.Errorf("close MVStore: %w", err)
+	}
+	return nil
 }
 
 // readHeader parses the text header at offset 0.
@@ -180,10 +180,7 @@ func (s *MVStore) readChunkAt(offset int64) (chunkMeta, error) {
 	if string(buf[:6]) != "chunk:" {
 		return chunkMeta{}, fmt.Errorf("no chunk header at offset %d", offset)
 	}
-	c, err := parseChunkHeader(buf)
-	if err != nil {
-		return chunkMeta{}, err
-	}
+	c := parseChunkHeader(buf)
 	c.blockStart = offset
 	return c, nil
 }
@@ -284,7 +281,7 @@ func (s *MVStore) scanChunks() error {
 
 	fi, err := s.file.Stat()
 	if err != nil {
-		return err
+		return fmt.Errorf("stat MVStore file: %w", err)
 	}
 	fileSize := fi.Size()
 
@@ -295,7 +292,7 @@ func (s *MVStore) scanChunks() error {
 	for offset < fileSize {
 		n, err := s.file.ReadAt(buf, offset)
 		if err != nil && !errors.Is(err, io.EOF) {
-			return err
+			return fmt.Errorf("read chunk at offset %d: %w", offset, err)
 		}
 		if n < 2 {
 			break
@@ -308,11 +305,7 @@ func (s *MVStore) scanChunks() error {
 			continue
 		}
 
-		chunk, err := parseChunkHeader(buf[:n])
-		if err != nil {
-			offset += 4096
-			continue
-		}
+		chunk := parseChunkHeader(buf[:n])
 		chunk.blockStart = offset
 
 		s.chunks = append(s.chunks, chunk)
@@ -330,7 +323,7 @@ func (s *MVStore) scanChunks() error {
 
 // parseChunkHeader parses the text header of a chunk.
 // Format: "chunk:id,block:N,len:N,map:N,max:N,next:N,pages:N,root:N,time:N,version:N\n"
-func parseChunkHeader(data []byte) (chunkMeta, error) {
+func parseChunkHeader(data []byte) chunkMeta {
 	end := len(data)
 	for i, b := range data {
 		if b == '\n' || b == 0 {
@@ -379,7 +372,7 @@ func parseChunkHeader(data []byte) (chunkMeta, error) {
 		c.blockCount = 1
 	}
 
-	return c, nil
+	return c
 }
 
 // readChunkData reads and optionally decompresses a chunk's data (after the header line).
@@ -391,7 +384,7 @@ func (s *MVStore) readChunkData(c chunkMeta) ([]byte, error) {
 	}
 	chunkBytes := make([]byte, int64(c.blockCount)*4096)
 	if _, err := s.file.ReadAt(chunkBytes, c.blockStart); err != nil && err != io.EOF {
-		return nil, err
+		return nil, fmt.Errorf("read chunk %d data: %w", c.id, err)
 	}
 
 	// Return full chunk block — page offsets are relative to block start (not data start).

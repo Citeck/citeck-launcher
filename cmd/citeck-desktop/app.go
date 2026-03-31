@@ -23,7 +23,7 @@ func dumpSystemInfo(socketPath string) {
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
 				return net.DialTimeout("unix", socketPath, 5*time.Second)
 			},
 		},

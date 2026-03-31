@@ -153,7 +153,7 @@ func main() {
 		dumpSystemInfo(socketPath)
 	})
 	menu.Add("Open Launcher Dir").OnClick(func(_ *application.Context) {
-		desktop.OpenBrowser("file://" + config.HomeDir())
+		_ = desktop.OpenBrowser("file://" + config.HomeDir())
 	})
 	menu.AddSeparator()
 	menu.Add("Exit").OnClick(func(_ *application.Context) {

@@ -4,8 +4,8 @@ package form
 const NamespaceCreateFormID = "namespace-create"
 
 // NamespaceCreateSpec returns the built-in form spec for namespace creation.
-func NamespaceCreateSpec() *FormSpec {
-	return &FormSpec{
+func NamespaceCreateSpec() *Spec {
+	return &Spec{
 		ID:   NamespaceCreateFormID,
 		Name: "Create Namespace",
 		Components: []ComponentSpec{
@@ -58,11 +58,11 @@ func NamespaceCreateSpec() *FormSpec {
 }
 
 // builtinForms is the registry of built-in form specs.
-var builtinForms = map[string]*FormSpec{
+var builtinForms = map[string]*Spec{
 	NamespaceCreateFormID: NamespaceCreateSpec(),
 }
 
 // GetSpec returns a form spec by ID, or nil if not found.
-func GetSpec(formID string) *FormSpec {
+func GetSpec(formID string) *Spec {
 	return builtinForms[formID]
 }

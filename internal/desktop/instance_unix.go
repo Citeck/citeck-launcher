@@ -11,15 +11,16 @@ import (
 	"github.com/citeck/citeck-launcher/internal/config"
 )
 
-type instanceLock struct {
+// InstanceLock represents a file-based single-instance lock for the desktop process.
+type InstanceLock struct {
 	file *os.File
 }
 
 // AcquireInstanceLock ensures only one desktop process runs at a time.
 // Returns a lock that must be released on exit.
-func AcquireInstanceLock() (*instanceLock, error) {
+func AcquireInstanceLock() (*InstanceLock, error) {
 	pidPath := filepath.Join(config.RunDir(), "desktop.pid")
-	if err := os.MkdirAll(filepath.Dir(pidPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(pidPath), 0o750); err != nil {
 		return nil, fmt.Errorf("create run dir: %w", err)
 	}
 
@@ -30,25 +31,25 @@ func AcquireInstanceLock() (*instanceLock, error) {
 
 	err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	if err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, fmt.Errorf("another Citeck Desktop instance is already running")
 	}
 
-	f.Truncate(0)
-	f.Seek(0, 0)
+	_ = f.Truncate(0)
+	_, _ = f.Seek(0, 0)
 	fmt.Fprintf(f, "%d\n", os.Getpid())
-	f.Sync()
+	_ = f.Sync()
 
-	return &instanceLock{file: f}, nil
+	return &InstanceLock{file: f}, nil
 }
 
 // Release releases the instance lock.
-func (l *instanceLock) Release() {
+func (l *InstanceLock) Release() {
 	if l.file != nil {
-		syscall.Flock(int(l.file.Fd()), syscall.LOCK_UN)
+		_ = syscall.Flock(int(l.file.Fd()), syscall.LOCK_UN)
 		name := l.file.Name()
-		l.file.Close()
-		os.Remove(name)
+		_ = l.file.Close()
+		_ = os.Remove(name)
 	}
 }
 

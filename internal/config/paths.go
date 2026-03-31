@@ -7,6 +7,7 @@ import (
 	"sync"
 )
 
+// Default paths and image references.
 const (
 	defaultServerHome  = "/opt/citeck"
 	defaultRun         = "/run/citeck"
@@ -91,6 +92,7 @@ func desktopHomeDir() string {
 	return defaultServerHome
 }
 
+// RunDir returns the runtime directory for PID files and sockets.
 func RunDir() string {
 	if v := os.Getenv("CITECK_RUN"); v != "" {
 		return v
@@ -101,14 +103,17 @@ func RunDir() string {
 	return defaultRun
 }
 
+// ConfDir returns the configuration directory.
 func ConfDir() string {
 	return filepath.Join(HomeDir(), "conf")
 }
 
+// DataDir returns the data directory for bundles and repos.
 func DataDir() string {
 	return filepath.Join(HomeDir(), "data")
 }
 
+// LogDir returns the log directory.
 func LogDir() string {
 	return filepath.Join(HomeDir(), "log")
 }
@@ -129,14 +134,17 @@ func NamespaceConfigPath() string {
 	return filepath.Join(ConfDir(), "namespace.yml")
 }
 
+// SocketPath returns the Unix domain socket path for daemon communication.
 func SocketPath() string {
 	return filepath.Join(RunDir(), socketFile)
 }
 
+// DaemonLogPath returns the path to the daemon log file.
 func DaemonLogPath() string {
 	return filepath.Join(LogDir(), "daemon.log")
 }
 
+// DaemonConfigPath returns the path to daemon.yml.
 func DaemonConfigPath() string {
 	return filepath.Join(ConfDir(), "daemon.yml")
 }

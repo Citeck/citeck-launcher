@@ -34,7 +34,7 @@ func readVarInt(data []byte, pos int) (result int64, consumed int, _ error) {
 
 // readVarString reads an H2 MVStore string: varint(charCount) + modified-UTF8 bytes.
 // For ASCII strings (all meta map keys), charCount == byteCount.
-func readVarString(data []byte, pos int) (string, int, error) {
+func readVarString(data []byte, pos int) (s string, n int, _ error) {
 	charCount, n, err := readVarInt(data, pos)
 	if err != nil {
 		return "", 0, err
@@ -44,7 +44,7 @@ func readVarString(data []byte, pos int) (string, int, error) {
 
 	// Read charCount characters in modified UTF-8
 	buf := make([]byte, 0, int(charCount))
-	for i := int64(0); i < charCount; i++ {
+	for range charCount {
 		if pos >= len(data) {
 			return "", 0, io.ErrUnexpectedEOF
 		}

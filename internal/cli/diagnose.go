@@ -32,7 +32,7 @@ func newDiagnoseCmd() *cobra.Command {
 
 			// Check 1: Socket file
 			socketPath := config.SocketPath()
-			if _, err := os.Stat(socketPath); err == nil {
+			if _, err := os.Stat(socketPath); err == nil { //nolint:nestif // diagnostic checks have inherent branching
 				// Socket exists — check if daemon is listening
 				conn, err := net.DialTimeout("unix", socketPath, 2*time.Second)
 				if err != nil {
@@ -43,12 +43,12 @@ func newDiagnoseCmd() *cobra.Command {
 						Fixable: true,
 					})
 					if fix && !dryRun {
-						os.Remove(socketPath)
+						_ = os.Remove(socketPath)
 						checks[len(checks)-1].Message += " — FIXED (removed)"
 						checks[len(checks)-1].Status = "ok"
 					}
 				} else {
-					conn.Close()
+					_ = conn.Close()
 					checks = append(checks, diagnoseCheck{
 						Name: "socket", Status: "ok", Message: "Daemon socket is responsive",
 					})
@@ -102,7 +102,7 @@ func newDiagnoseCmd() *cobra.Command {
 						Fixable: true,
 					})
 					if fix && !dryRun {
-						os.MkdirAll(dir, 0o755)
+						os.MkdirAll(dir, 0o755) //nolint:gosec // G301: data dir needs 0o755
 						checks[len(checks)-1].Message += " — FIXED (created)"
 						checks[len(checks)-1].Status = "ok"
 					}
