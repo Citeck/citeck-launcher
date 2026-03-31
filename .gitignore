@@ -21,6 +21,11 @@ node_modules
 .kotlin
 build/
 
+### H2 export tool (Gradle project — wrapper must be tracked) ###
+!tools/h2-export/gradle/
+!tools/h2-export/gradlew
+!tools/h2-export/gradlew.bat
+
 ### Test ###
 test-results/
 coverage.out
