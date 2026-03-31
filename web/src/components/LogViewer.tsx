@@ -162,9 +162,10 @@ export function LogViewer({ appName, compact = false, active = true }: LogViewer
       .catch((e) => setError(e.message))
   }, [appName, tail, setLinesWithLevels])
 
+  // Always fetch initial logs on mount/activation (covers both follow and non-follow modes)
   useEffect(() => {
-    if (!follow && active) fetchInitialLogs()
-  }, [fetchInitialLogs, follow, active])
+    if (active) fetchInitialLogs()
+  }, [fetchInitialLogs, active])
 
   // Streaming follow
   useEffect(() => {
