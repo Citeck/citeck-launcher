@@ -5,9 +5,9 @@ import (
 	_ "embed"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
-	"net/url"
 	"runtime"
 	"strings"
 	"time"
@@ -41,10 +41,7 @@ func main() {
 	// ReadyCh receives notification when daemon HTTP server is ready
 	readyCh := make(chan string, 1)
 
-	// Load daemon config to get listen address
-	daemonCfg, _ := config.LoadDaemonConfig()
-	listenAddr := daemonCfg.Server.WebUI.Listen // e.g. "127.0.0.1:7088"
-	daemonURL := "http://" + listenAddr
+	socketPath := config.SocketPath()
 
 	// Start daemon in background
 	go desktop.RunDaemonLoop(ctx, desktop.DaemonOpts{
@@ -52,15 +49,25 @@ func main() {
 		ReadyCh: readyCh,
 	})
 
-	// Reverse proxy to daemon — Wails AssetServer proxies all requests.
-	// This makes Wails the webview origin, so /wails/runtime (Browser.OpenURL etc.) works natively.
-	daemonTarget, _ := url.Parse(daemonURL)
-	proxy := httputil.NewSingleHostReverseProxy(daemonTarget)
-	// Flush immediately for SSE and streaming log endpoints
-	proxy.FlushInterval = -1
-	// Don't log proxy errors before daemon is ready
-	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		http.Error(w, "daemon not ready", http.StatusBadGateway)
+	// Reverse proxy to daemon via Unix socket — avoids TCP port exposure.
+	// Wails AssetServer proxies all requests, making the webview origin,
+	// so /wails/runtime (Browser.OpenURL etc.) works natively.
+	proxy := &httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			req.URL.Scheme = "http"
+			req.URL.Host = "localhost"
+		},
+		Transport: &http.Transport{
+			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+				return net.Dial("unix", socketPath)
+			},
+		},
+		// Flush immediately for SSE and streaming log endpoints
+		FlushInterval: -1,
+		// Don't log proxy errors before daemon is ready
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, "daemon not ready", http.StatusBadGateway)
+		},
 	}
 
 	// Wait for daemon in a goroutine, set ready flag
@@ -68,7 +75,7 @@ func main() {
 	go func() {
 		select {
 		case <-readyCh:
-			slog.Info("Daemon ready", "url", daemonURL)
+			slog.Info("Daemon ready", "socket", socketPath)
 		case <-time.After(30 * time.Second):
 			slog.Warn("Daemon not ready after 30s, proxying anyway")
 		case <-ctx.Done():
@@ -137,7 +144,6 @@ func main() {
 		tray.SetIcon(citeckLogo)
 	}
 
-	socketPath := config.SocketPath()
 	menu := app.NewMenu()
 	menu.Add("Open").OnClick(func(ctx *application.Context) {
 		window.Show()

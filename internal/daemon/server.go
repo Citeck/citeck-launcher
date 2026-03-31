@@ -563,9 +563,10 @@ func Start(opts StartOptions) error {
 		slog.Warn("Failed to chmod socket", "path", socketPath, "err", err)
 	}
 
-	// TCP listener for Web UI (controlled by daemon.yml and --no-ui flag)
+	// TCP listener for Web UI (controlled by daemon.yml and --no-ui flag).
+	// Desktop mode: Wails proxies through the Unix socket directly — no TCP needed.
 	tcpAddr := daemonCfg.Server.WebUI.Listen
-	if daemonCfg.Server.WebUI.Enabled {
+	if daemonCfg.Server.WebUI.Enabled && !config.IsDesktopMode() {
 		tcpListener, err := net.Listen("tcp", tcpAddr)
 		if err != nil {
 			slog.Warn("TCP listener failed, Web UI unavailable", "addr", tcpAddr, "err", err)
