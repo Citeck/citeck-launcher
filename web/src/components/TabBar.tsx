@@ -2,8 +2,8 @@ import { useNavigate, useLocation } from 'react-router'
 import { useTabsStore } from '../lib/tabs'
 import { usePanelStore } from '../lib/panels'
 import { useTranslation, LOCALES, useI18nStore } from '../lib/i18n'
-import { X, Settings, Sun, Moon } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { X, Settings, Sun, Moon, ChevronDown } from 'lucide-react'
+import { useEffect, useState, useRef } from 'react'
 
 export function TabBar() {
   const { tabs, activeTabId, setActiveTab, closeTab } = useTabsStore()
@@ -111,19 +111,45 @@ function ThemeToggle() {
 function LanguageSelector() {
   const locale = useI18nStore((s) => s.locale)
   const setLocale = useI18nStore((s) => s.setLocale)
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const current = LOCALES.find((l) => l.code === locale) ?? LOCALES[0]
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
 
   return (
-    <select
-      className="text-xs text-muted-foreground hover:text-foreground px-1.5 py-1 border-none outline-none cursor-pointer"
-      style={{ backgroundColor: 'var(--color-background)', color: 'var(--color-foreground)' }}
-      value={locale}
-      onChange={(e) => setLocale(e.target.value as typeof locale)}
-    >
-      {LOCALES.map((l) => (
-        <option key={l.code} value={l.code} style={{ backgroundColor: 'var(--color-background)', color: 'var(--color-foreground)' }}>
-          {l.flag} {l.name}
-        </option>
-      ))}
-    </select>
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        className="flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground px-1.5 py-1 cursor-pointer"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span>{current.flag}</span>
+        <ChevronDown size={10} />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-0.5 z-50 min-w-[140px] border border-border rounded bg-card shadow-lg py-0.5">
+          {LOCALES.map((l) => (
+            <button
+              key={l.code}
+              type="button"
+              className={`w-full text-left text-xs px-2.5 py-1 hover:bg-accent cursor-pointer ${
+                l.code === locale ? 'text-foreground font-medium' : 'text-muted-foreground'
+              }`}
+              onClick={() => { setLocale(l.code); setOpen(false) }}
+            >
+              {l.flag} {l.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
