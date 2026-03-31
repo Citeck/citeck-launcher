@@ -570,6 +570,8 @@ func (d *Daemon) handleDaemonLogs(w http.ResponseWriter, r *http.Request) {
 		tail = 10000
 	}
 
+	follow := r.URL.Query().Get("follow") == "true"
+
 	// Read at most last 2MB of the file to avoid OOM on large logs
 	const maxReadSize = 2 * 1024 * 1024
 	f, err := os.Open(logPath)
@@ -605,6 +607,65 @@ func (d *Daemon) handleDaemonLogs(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/plain")
 	w.Write([]byte(strings.Join(lines, "\n")))
+
+	if !follow {
+		return
+	}
+
+	// Streaming follow: disable write deadline, then poll for new data
+	if rc := http.NewResponseController(w); rc != nil {
+		rc.SetWriteDeadline(time.Time{})
+	}
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+
+	// Track file position for incremental reads
+	offset := stat.Size()
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			f2, err := os.Open(logPath)
+			if err != nil {
+				return
+			}
+			st, err := f2.Stat()
+			if err != nil {
+				f2.Close()
+				return
+			}
+			newSize := st.Size()
+			if newSize <= offset {
+				// File was rotated or truncated — reset
+				if newSize < offset {
+					offset = 0
+				}
+				f2.Close()
+				continue
+			}
+			if _, err := f2.Seek(offset, io.SeekStart); err != nil {
+				f2.Close()
+				return
+			}
+			chunk, err := io.ReadAll(io.LimitReader(f2, newSize-offset))
+			f2.Close()
+			if err != nil || len(chunk) == 0 {
+				continue
+			}
+			offset = newSize
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+		}
+	}
 }
 
 func (d *Daemon) buildDumpData(ctx context.Context) map[string]any {
