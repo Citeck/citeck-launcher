@@ -1,10 +1,10 @@
 import { useEffect, useState, useCallback } from 'react'
-import { getSecrets, createSecret, deleteSecret, testSecret } from '../lib/api'
+import { getSecrets, createSecret, deleteSecret, testSecret, getSecretsStatus, setupSecretsPassword } from '../lib/api'
 import type { SecretMetaDto } from '../lib/types'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { toast } from '../lib/toast'
 import { useTranslation } from '../lib/i18n'
-import { Trash2, Plus, FlaskConical, CheckCircle, XCircle, KeyRound } from 'lucide-react'
+import { Trash2, Plus, FlaskConical, CheckCircle, XCircle, KeyRound, Lock, ShieldCheck } from 'lucide-react'
 
 interface SecretFormData {
   id: string
@@ -30,6 +30,11 @@ export function Secrets() {
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<Record<string, 'ok' | 'fail'>>({})
+  const [encStatus, setEncStatus] = useState<{ encrypted: boolean; locked: boolean } | null>(null)
+  const [showSetPwd, setShowSetPwd] = useState(false)
+  const [setPwd, setSetPwd] = useState('')
+  const [setPwdLoading, setSetPwdLoading] = useState(false)
+  const [setPwdError, setSetPwdError] = useState<string | null>(null)
 
   const loadSecrets = useCallback(() => {
     setLoading(true)
@@ -37,6 +42,28 @@ export function Secrets() {
   }, [])
 
   useEffect(() => { loadSecrets() }, [loadSecrets])
+
+  useEffect(() => {
+    getSecretsStatus().then(setEncStatus).catch(() => {})
+  }, [])
+
+  async function handleSetPassword(e: React.FormEvent) {
+    e.preventDefault()
+    if (!setPwd) return
+    setSetPwdLoading(true)
+    setSetPwdError(null)
+    try {
+      await setupSecretsPassword(setPwd)
+      setShowSetPwd(false)
+      setSetPwd('')
+      setEncStatus({ encrypted: true, locked: false })
+      toast(t('secrets.encrypted.success'), 'success')
+    } catch (err) {
+      setSetPwdError((err as Error).message)
+    } finally {
+      setSetPwdLoading(false)
+    }
+  }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
@@ -95,16 +122,72 @@ export function Secrets() {
         <h1 className="text-base font-semibold flex items-center gap-1.5">
           <KeyRound size={16} />
           {t('secrets.title')}
+          {encStatus?.encrypted && !encStatus.locked && (
+            <ShieldCheck size={14} className="text-green-500" title={t('secrets.encrypted.badge')} />
+          )}
+          {encStatus?.locked && (
+            <Lock size={14} className="text-yellow-500" title={t('secrets.locked')} />
+          )}
         </h1>
-        <button
-          type="button"
-          className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs hover:bg-muted"
-          onClick={() => { setShowForm(!showForm); setCreateError(null) }}
-        >
-          <Plus size={13} />
-          {t('secrets.add')}
-        </button>
+        <div className="flex items-center gap-2">
+          {encStatus && !encStatus.encrypted && secrets.length > 0 && (
+            <button
+              type="button"
+              className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs hover:bg-muted"
+              onClick={() => { setShowSetPwd(!showSetPwd); setSetPwdError(null) }}
+            >
+              <Lock size={13} />
+              {t('secrets.setPassword')}
+            </button>
+          )}
+          <button
+            type="button"
+            className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs hover:bg-muted"
+            onClick={() => { setShowForm(!showForm); setCreateError(null) }}
+          >
+            <Plus size={13} />
+            {t('secrets.add')}
+          </button>
+        </div>
       </div>
+
+      {encStatus?.locked && (
+        <div className="flex items-center gap-2 mb-2 p-2 rounded border border-yellow-500/30 bg-yellow-500/5 text-xs text-yellow-500">
+          <Lock size={13} />
+          {t('secrets.locked')}
+        </div>
+      )}
+
+      {showSetPwd && (
+        <form onSubmit={handleSetPassword} className="mb-3 rounded border border-border bg-card p-3 space-y-2">
+          <p className="text-xs text-muted-foreground">{t('secrets.setPassword.description')}</p>
+          <input
+            type="password"
+            className="w-full rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:border-primary"
+            placeholder={t('migration.passwordPlaceholder')}
+            value={setPwd}
+            onChange={(e) => setSetPwd(e.target.value)}
+            autoFocus
+          />
+          {setPwdError && <div className="text-destructive text-xs">{setPwdError}</div>}
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              disabled={setPwdLoading || !setPwd}
+              className="rounded-md bg-primary text-primary-foreground px-3 py-1 text-xs font-medium hover:bg-primary/90 disabled:opacity-50"
+            >
+              {setPwdLoading ? '...' : t('migration.confirm')}
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-border px-3 py-1 text-xs hover:bg-muted"
+              onClick={() => { setShowSetPwd(false); setSetPwdError(null) }}
+            >
+              {t('secrets.form.cancel')}
+            </button>
+          </div>
+        </form>
+      )}
 
       {error && <div className="text-destructive text-xs mb-2">{error}</div>}
 

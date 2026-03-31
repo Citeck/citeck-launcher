@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router'
 import { useDashboardStore } from '../lib/store'
 import { useTabsStore } from '../lib/tabs'
 import { usePanelStore } from '../lib/panels'
-import { getSystemDump, getMigrationStatus, submitMasterPassword, openExternal } from '../lib/api'
+import { getSystemDump, getMigrationStatus, submitMasterPassword, unlockSecrets, setupSecretsPassword, openExternal } from '../lib/api'
 import { useTranslation } from '../lib/i18n'
 import { StatusBadge } from '../components/StatusBadge'
 import { AppTable } from '../components/AppTable'
@@ -26,41 +26,86 @@ export function Dashboard() {
   const { drawerAppName, closeDrawer, bottomTabs, openBottomTab } = usePanelStore()
   const { t } = useTranslation()
 
-  const [showMasterPwd, setShowMasterPwd] = useState(false)
-  const [masterPwd, setMasterPwd] = useState('')
-  const [masterPwdError, setMasterPwdError] = useState('')
-  const [masterPwdLoading, setMasterPwdLoading] = useState(false)
-  const [masterPwdChecked, setMasterPwdChecked] = useState(false)
+  // Multi-step dialog: kotlin-decrypt → setup-password → unlock
+  const [dialogStep, setDialogStep] = useState<'kotlin-decrypt' | 'setup-password' | 'unlock' | null>(null)
+  const [password, setPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [dialogError, setDialogError] = useState('')
+  const [dialogLoading, setDialogLoading] = useState(false)
+  const [dialogChecked, setDialogChecked] = useState(false)
+  const [showNewPwdInput, setShowNewPwdInput] = useState(false)
 
-  // Show master password dialog if encrypted secrets from Kotlin need decryption.
+  // On mount: detect which dialog step is needed
   useEffect(() => {
-    if (masterPwdChecked || showMasterPwd) return
+    if (dialogChecked || dialogStep) return
     if (!namespace) return
-    setMasterPwdChecked(true)
+    setDialogChecked(true)
     getMigrationStatus().then((s) => {
-      if (s.hasPendingSecrets) setShowMasterPwd(true)
+      if (s.hasPendingSecrets) setDialogStep('kotlin-decrypt')
+      else if (s.encrypted && s.locked) setDialogStep('unlock')
     }).catch(() => {})
-  }, [namespace, masterPwdChecked, showMasterPwd])
+  }, [namespace, dialogChecked, dialogStep])
 
-  const handleMasterPwdSubmit = useCallback(async () => {
-    if (!masterPwd) return
-    setMasterPwdLoading(true)
-    setMasterPwdError('')
+  // Kotlin decrypt → import secrets
+  const handleKotlinDecrypt = useCallback(async () => {
+    if (!password) return
+    setDialogLoading(true)
+    setDialogError('')
     try {
-      await submitMasterPassword(masterPwd)
-      setShowMasterPwd(false)
-      setMasterPwd('')
+      await submitMasterPassword(password)
       toast(t('migration.secretsImported'), 'success')
-      fetchData() // refresh to pick up new secrets
-    } catch (e) {
-      setMasterPwdError(t('migration.wrongPassword'))
+      // Transition to setup-password step (offer to encrypt with Go)
+      setDialogStep('setup-password')
+      setDialogError('')
+      setShowNewPwdInput(false)
+    } catch {
+      setDialogError(t('migration.wrongPassword'))
     } finally {
-      setMasterPwdLoading(false)
+      setDialogLoading(false)
     }
-  }, [masterPwd, fetchData, t])
+  }, [password, t])
 
-  const handleSkipMasterPwd = useCallback(() => {
-    setShowMasterPwd(false)
+  // Setup password — encrypt all secrets
+  const handleSetupPassword = useCallback(async (pwd: string) => {
+    setDialogLoading(true)
+    setDialogError('')
+    try {
+      await setupSecretsPassword(pwd)
+      toast(t('migration.setupPassword.success'), 'success')
+      setDialogStep(null)
+      setPassword('')
+      setNewPassword('')
+      fetchData()
+    } catch (e) {
+      setDialogError((e as Error).message)
+    } finally {
+      setDialogLoading(false)
+    }
+  }, [fetchData, t])
+
+  // Unlock encrypted secrets
+  const handleUnlock = useCallback(async () => {
+    if (!password) return
+    setDialogLoading(true)
+    setDialogError('')
+    try {
+      await unlockSecrets(password)
+      toast(t('migration.unlock.success'), 'success')
+      setDialogStep(null)
+      setPassword('')
+      fetchData()
+    } catch {
+      setDialogError(t('migration.wrongPassword'))
+    } finally {
+      setDialogLoading(false)
+    }
+  }, [password, fetchData, t])
+
+  const handleSkipDialog = useCallback(() => {
+    setDialogStep(null)
+    setPassword('')
+    setNewPassword('')
+    setDialogError('')
   }, [])
 
   useEffect(() => {
@@ -160,35 +205,121 @@ export function Dashboard() {
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-      {/* Master password dialog for Kotlin migration */}
-      {showMasterPwd && (
+      {/* Multi-step dialog: kotlin-decrypt / setup-password / unlock */}
+      {dialogStep && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
           <div className="bg-card border border-border rounded-lg p-6 w-96 shadow-xl">
-            <h2 className="text-lg font-semibold mb-2">{t('migration.title')}</h2>
-            <p className="text-sm text-muted-foreground mb-4">{t('migration.description')}</p>
-            <input
-              type="password"
-              className="w-full px-3 py-2 bg-background border border-border rounded text-foreground mb-2"
-              placeholder={t('migration.passwordPlaceholder')}
-              value={masterPwd}
-              onChange={(e) => setMasterPwd(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleMasterPwdSubmit()}
-              autoFocus
-            />
-            {masterPwdError && <p className="text-destructive text-sm mb-2">{masterPwdError}</p>}
-            <div className="flex justify-between mt-4">
-              <button type="button" className="text-sm text-muted-foreground hover:text-foreground" onClick={handleSkipMasterPwd}>
-                {t('migration.skip')}
-              </button>
-              <button
-                type="button"
-                className="px-4 py-1.5 bg-primary text-primary-foreground rounded text-sm font-medium disabled:opacity-50"
-                onClick={handleMasterPwdSubmit}
-                disabled={masterPwdLoading || !masterPwd}
-              >
-                {masterPwdLoading ? '...' : t('migration.confirm')}
-              </button>
-            </div>
+            {dialogStep === 'kotlin-decrypt' && (<>
+              <h2 className="text-lg font-semibold mb-2">{t('migration.title')}</h2>
+              <p className="text-sm text-muted-foreground mb-4">{t('migration.description')}</p>
+              <input
+                type="password"
+                className="w-full px-3 py-2 bg-background border border-border rounded text-foreground mb-2"
+                placeholder={t('migration.passwordPlaceholder')}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleKotlinDecrypt()}
+                autoFocus
+              />
+              {dialogError && <p className="text-destructive text-sm mb-2">{dialogError}</p>}
+              <div className="flex justify-between mt-4">
+                <button type="button" className="text-sm text-muted-foreground hover:text-foreground" onClick={handleSkipDialog}>
+                  {t('migration.skip')}
+                </button>
+                <button
+                  type="button"
+                  className="px-4 py-1.5 bg-primary text-primary-foreground rounded text-sm font-medium disabled:opacity-50"
+                  onClick={handleKotlinDecrypt}
+                  disabled={dialogLoading || !password}
+                >
+                  {dialogLoading ? '...' : t('migration.confirm')}
+                </button>
+              </div>
+            </>)}
+
+            {dialogStep === 'setup-password' && (<>
+              <h2 className="text-lg font-semibold mb-2">{t('migration.setupPassword.title')}</h2>
+              <p className="text-sm text-muted-foreground mb-4">{t('migration.setupPassword.description')}</p>
+              {showNewPwdInput ? (
+                <>
+                  <input
+                    type="password"
+                    className="w-full px-3 py-2 bg-background border border-border rounded text-foreground mb-2"
+                    placeholder={t('migration.passwordPlaceholder')}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && newPassword && handleSetupPassword(newPassword)}
+                    autoFocus
+                  />
+                  {dialogError && <p className="text-destructive text-sm mb-2">{dialogError}</p>}
+                  <div className="flex justify-end gap-2 mt-4">
+                    <button type="button" className="text-sm text-muted-foreground hover:text-foreground" onClick={() => setShowNewPwdInput(false)}>
+                      {t('common.back')}
+                    </button>
+                    <button
+                      type="button"
+                      className="px-4 py-1.5 bg-primary text-primary-foreground rounded text-sm font-medium disabled:opacity-50"
+                      onClick={() => handleSetupPassword(newPassword)}
+                      disabled={dialogLoading || !newPassword}
+                    >
+                      {dialogLoading ? '...' : t('migration.confirm')}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {dialogError && <p className="text-destructive text-sm mb-2">{dialogError}</p>}
+                  <div className="flex flex-col gap-2 mt-2">
+                    <button
+                      type="button"
+                      className="w-full px-4 py-2 bg-primary text-primary-foreground rounded text-sm font-medium disabled:opacity-50"
+                      onClick={() => handleSetupPassword(password)}
+                      disabled={dialogLoading}
+                    >
+                      {dialogLoading ? '...' : t('migration.setupPassword.samePassword')}
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full px-4 py-2 border border-border rounded text-sm hover:bg-muted"
+                      onClick={() => { setShowNewPwdInput(true); setDialogError('') }}
+                    >
+                      {t('migration.setupPassword.differentPassword')}
+                    </button>
+                    <button type="button" className="text-sm text-muted-foreground hover:text-foreground mt-1" onClick={handleSkipDialog}>
+                      {t('migration.setupPassword.skip')}
+                    </button>
+                  </div>
+                </>
+              )}
+            </>)}
+
+            {dialogStep === 'unlock' && (<>
+              <h2 className="text-lg font-semibold mb-2">{t('migration.unlock.title')}</h2>
+              <p className="text-sm text-muted-foreground mb-4">{t('migration.unlock.description')}</p>
+              <input
+                type="password"
+                className="w-full px-3 py-2 bg-background border border-border rounded text-foreground mb-2"
+                placeholder={t('migration.passwordPlaceholder')}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleUnlock()}
+                autoFocus
+              />
+              {dialogError && <p className="text-destructive text-sm mb-2">{dialogError}</p>}
+              <div className="flex justify-between mt-4">
+                <button type="button" className="text-sm text-muted-foreground hover:text-foreground" onClick={handleSkipDialog}>
+                  {t('migration.skip')}
+                </button>
+                <button
+                  type="button"
+                  className="px-4 py-1.5 bg-primary text-primary-foreground rounded text-sm font-medium disabled:opacity-50"
+                  onClick={handleUnlock}
+                  disabled={dialogLoading || !password}
+                >
+                  {dialogLoading ? '...' : t('migration.unlock.confirm')}
+                </button>
+              </div>
+            </>)}
           </div>
         </div>
       )}

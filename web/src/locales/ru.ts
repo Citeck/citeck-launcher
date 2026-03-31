@@ -317,6 +317,26 @@ const ru: Translations = {
   'migration.skip': 'Пропустить',
   'migration.wrongPassword': 'Неверный пароль',
   'migration.secretsImported': 'Секреты расшифрованы и импортированы',
+
+  'migration.setupPassword.title': 'Защитите ваши секреты',
+  'migration.setupPassword.description': 'Зашифровать импортированные секреты мастер-паролем? Он потребуется при каждом запуске лончера.',
+  'migration.setupPassword.samePassword': 'Использовать тот же пароль',
+  'migration.setupPassword.differentPassword': 'Задать другой пароль',
+  'migration.setupPassword.skip': 'Пропустить',
+  'migration.setupPassword.success': 'Секреты зашифрованы',
+
+  'migration.unlock.title': 'Разблокировка секретов',
+  'migration.unlock.description': 'Ваши секреты зашифрованы. Введите мастер-пароль для разблокировки.',
+  'migration.unlock.confirm': 'Разблокировать',
+  'migration.unlock.success': 'Секреты разблокированы',
+
+  'secrets.encrypted.badge': 'Зашифровано',
+  'secrets.encrypted.success': 'Секреты зашифрованы',
+  'secrets.locked': 'Секреты заблокированы — введите мастер-пароль',
+  'secrets.setPassword': 'Задать пароль',
+  'secrets.setPassword.description': 'Зашифруйте секреты мастер-паролем. Он потребуется при каждом запуске лончера.',
+
+  'common.back': 'Назад',
 }
 
 export default ru

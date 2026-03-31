@@ -317,6 +317,29 @@ const en: Translations = {
   'migration.skip': 'Skip',
   'migration.wrongPassword': 'Invalid password',
   'migration.secretsImported': 'Secrets decrypted and imported',
+
+  // -- Migration: setup password --
+  'migration.setupPassword.title': 'Protect Your Secrets',
+  'migration.setupPassword.description': 'Would you like to encrypt your imported secrets with a master password? You will need it each time you start the launcher.',
+  'migration.setupPassword.samePassword': 'Use same password',
+  'migration.setupPassword.differentPassword': 'Set different password',
+  'migration.setupPassword.skip': 'Skip for now',
+  'migration.setupPassword.success': 'Secrets encrypted successfully',
+
+  // -- Migration: unlock --
+  'migration.unlock.title': 'Unlock Secrets',
+  'migration.unlock.description': 'Your secrets are encrypted. Enter the master password to unlock them.',
+  'migration.unlock.confirm': 'Unlock',
+  'migration.unlock.success': 'Secrets unlocked',
+
+  // -- Secrets encryption --
+  'secrets.encrypted.badge': 'Encrypted',
+  'secrets.encrypted.success': 'Secrets encrypted successfully',
+  'secrets.locked': 'Secrets are locked — enter master password to access',
+  'secrets.setPassword': 'Set Password',
+  'secrets.setPassword.description': 'Encrypt your secrets with a master password. You will need it each time you start the launcher.',
+
+  'common.back': 'Back',
 }
 
 export default en

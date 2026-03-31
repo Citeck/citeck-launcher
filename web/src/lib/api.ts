@@ -320,14 +320,39 @@ export async function renameSnapshot(oldName: string, newName: string): Promise<
 }
 
 // Migration
-export async function getMigrationStatus(): Promise<{ hasPendingSecrets: boolean }> {
+export async function getMigrationStatus(): Promise<{ hasPendingSecrets: boolean; encrypted: boolean; locked: boolean }> {
   const res = await fetchWithTimeout(`${API_BASE}/migration/status`)
-  if (!res.ok) return { hasPendingSecrets: false }
+  if (!res.ok) return { hasPendingSecrets: false, encrypted: false, locked: false }
   return res.json()
 }
 
 export async function submitMasterPassword(password: string): Promise<ActionResultDto> {
   const res = await fetchWithTimeout(`${API_BASE}/migration/master-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
+    body: JSON.stringify({ password }),
+  })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  return res.json()
+}
+
+// Secrets encryption
+export async function getSecretsStatus(): Promise<{ encrypted: boolean; locked: boolean }> {
+  return fetchJSON('/secrets/status')
+}
+
+export async function unlockSecrets(password: string): Promise<ActionResultDto> {
+  const res = await fetchWithTimeout(`${API_BASE}/secrets/unlock`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
+    body: JSON.stringify({ password }),
+  })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  return res.json()
+}
+
+export async function setupSecretsPassword(password: string): Promise<ActionResultDto> {
+  const res = await fetchWithTimeout(`${API_BASE}/secrets/setup-password`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
     body: JSON.stringify({ password }),
