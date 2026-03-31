@@ -234,8 +234,14 @@ func (r *Resolver) Resolve(ref Ref) (*ResolveResult, error) {
 		if bundleRepo.Branch != "" {
 			repoBranch = bundleRepo.Branch
 		}
-		if bundleRepo.AuthType != "" && r.tokenLookup != nil {
-			repoToken = r.tokenLookup(bundleRepo.AuthType)
+		if r.tokenLookup != nil {
+			if bundleRepo.AuthType != "" {
+				repoToken = r.tokenLookup(bundleRepo.AuthType)
+			}
+			// Fallback: try GIT_TOKEN type (covers Kotlin-migrated secrets with scope ws:{wsId}:repo)
+			if repoToken == "" {
+				repoToken = r.tokenLookup("GIT_TOKEN")
+			}
 		}
 	}
 
