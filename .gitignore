@@ -27,3 +27,4 @@ test-results/
 ### Custom ###
 *.png
 !icons/**/*.png
+!cmd/citeck-desktop/logo.png

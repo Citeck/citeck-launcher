@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"log"
 	"log/slog"
 	"net/http"
@@ -15,8 +16,10 @@ import (
 	"github.com/citeck/citeck-launcher/internal/desktop"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
-	"github.com/wailsapp/wails/v3/pkg/icons"
 )
+
+//go:embed logo.png
+var citeckLogo []byte
 
 var version = "dev"
 
@@ -92,7 +95,7 @@ func main() {
 	app := application.New(application.Options{
 		Name:        "Citeck Launcher",
 		Description: "Citeck ECOS Platform Launcher",
-		Icon:        icons.ApplicationDarkMode256,
+		Icon:        citeckLogo,
 		Assets: application.AssetOptions{
 			Handler: loadingHandler,
 		},
@@ -127,9 +130,9 @@ func main() {
 	tray.SetLabel("Citeck Launcher")
 	tray.SetTooltip("Citeck Launcher")
 	if runtime.GOOS == "darwin" {
-		tray.SetTemplateIcon(icons.SystrayMacTemplate)
+		tray.SetTemplateIcon(citeckLogo)
 	} else {
-		tray.SetIcon(icons.ApplicationDarkMode256)
+		tray.SetIcon(citeckLogo)
 	}
 
 	socketPath := config.SocketPath()
