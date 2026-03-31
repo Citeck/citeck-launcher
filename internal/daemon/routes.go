@@ -605,6 +605,14 @@ func (d *Daemon) handleDaemonLogs(w http.ResponseWriter, r *http.Request) {
 		lines = lines[len(lines)-tail:]
 	}
 
+	// Disable write deadline before any write in follow mode — the initial tail
+	// can be up to 2MB and may exceed the server's 30s WriteTimeout on slow connections.
+	if follow {
+		if rc := http.NewResponseController(w); rc != nil {
+			rc.SetWriteDeadline(time.Time{})
+		}
+	}
+
 	w.Header().Set("Content-Type", "text/plain")
 	w.Write([]byte(strings.Join(lines, "\n")))
 
@@ -612,10 +620,6 @@ func (d *Daemon) handleDaemonLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Streaming follow: disable write deadline, then poll for new data
-	if rc := http.NewResponseController(w); rc != nil {
-		rc.SetWriteDeadline(time.Time{})
-	}
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
 	}

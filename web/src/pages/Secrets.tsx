@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { getSecrets, createSecret, deleteSecret, testSecret, getSecretsStatus, setupSecretsPassword } from '../lib/api'
+import { getSecrets, createSecret, deleteSecret, testSecret, getSecretsStatus, setupSecretsPassword, unlockSecrets } from '../lib/api'
 import type { SecretMetaDto } from '../lib/types'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { toast } from '../lib/toast'
@@ -35,6 +35,9 @@ export function Secrets() {
   const [setPwd, setSetPwd] = useState('')
   const [setPwdLoading, setSetPwdLoading] = useState(false)
   const [setPwdError, setSetPwdError] = useState<string | null>(null)
+  const [unlockPwd, setUnlockPwd] = useState('')
+  const [unlockLoading, setUnlockLoading] = useState(false)
+  const [unlockError, setUnlockError] = useState<string | null>(null)
 
   const loadSecrets = useCallback(() => {
     setLoading(true)
@@ -62,6 +65,24 @@ export function Secrets() {
       setSetPwdError((err as Error).message)
     } finally {
       setSetPwdLoading(false)
+    }
+  }
+
+  async function handleUnlock(e: React.FormEvent) {
+    e.preventDefault()
+    if (!unlockPwd) return
+    setUnlockLoading(true)
+    setUnlockError(null)
+    try {
+      await unlockSecrets(unlockPwd)
+      setUnlockPwd('')
+      setEncStatus({ encrypted: true, locked: false })
+      loadSecrets()
+      toast(t('migration.unlock.success'), 'success')
+    } catch (err) {
+      setUnlockError((err as Error).message)
+    } finally {
+      setUnlockLoading(false)
     }
   }
 
@@ -152,10 +173,28 @@ export function Secrets() {
       </div>
 
       {encStatus?.locked && (
-        <div className="flex items-center gap-2 mb-2 p-2 rounded border border-yellow-500/30 bg-yellow-500/5 text-xs text-yellow-500">
-          <Lock size={13} />
-          {t('secrets.locked')}
-        </div>
+        <form onSubmit={handleUnlock} className="mb-3 rounded border border-yellow-500/30 bg-yellow-500/5 p-3 space-y-2">
+          <div className="flex items-center gap-2 text-xs text-yellow-500">
+            <Lock size={13} />
+            {t('secrets.locked')}
+          </div>
+          <input
+            type="password"
+            className="w-full rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:border-primary"
+            placeholder={t('migration.passwordPlaceholder')}
+            value={unlockPwd}
+            onChange={(e) => setUnlockPwd(e.target.value)}
+            autoFocus
+          />
+          {unlockError && <div className="text-destructive text-xs">{unlockError}</div>}
+          <button
+            type="submit"
+            disabled={unlockLoading || !unlockPwd}
+            className="rounded-md bg-primary text-primary-foreground px-3 py-1 text-xs font-medium hover:bg-primary/90 disabled:opacity-50"
+          >
+            {unlockLoading ? '...' : t('migration.unlock.confirm')}
+          </button>
+        </form>
       )}
 
       {showSetPwd && (
