@@ -147,6 +147,26 @@ func (r *Runtime) ManualStoppedApps() map[string]bool {
 	return result
 }
 
+// WaitForInitialReconcile blocks until the namespace leaves STARTING state
+// (transitions to RUNNING, STALLED, or any other state). Returns immediately
+// if the namespace is already past STARTING. Respects context cancellation.
+func (r *Runtime) WaitForInitialReconcile(ctx context.Context) {
+	for {
+		r.mu.RLock()
+		status := r.status
+		notify := r.statusNotify
+		r.mu.RUnlock()
+		if status != NsStatusStarting {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-notify:
+		}
+	}
+}
+
 // SetManualStoppedApps restores persisted manual stopped apps (called before Start).
 func (r *Runtime) SetManualStoppedApps(apps map[string]bool) {
 	r.mu.Lock()

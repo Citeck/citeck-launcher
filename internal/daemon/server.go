@@ -610,6 +610,14 @@ func Start(opts StartOptions) error {
 	// Startup complete — disable cleanup defers
 	startupFailed = false
 
+	// Wait for initial reconciliation before notifying caller — avoids
+	// the webview seeing all apps as STOPPED for a few seconds.
+	if d.runtime != nil && opts.ReadyCh != nil {
+		waitCtx, waitCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		d.runtime.WaitForInitialReconcile(waitCtx)
+		waitCancel()
+	}
+
 	// Notify caller that the daemon is ready
 	if opts.ReadyCh != nil {
 		opts.ReadyCh <- readyURL
