@@ -532,17 +532,27 @@ func Start(opts StartOptions) error {
 			}
 
 			var tcpHandler http.Handler = tcpBaseMux
-			// CSRF only for localhost TCP (unauthenticated); mTLS clients are already authenticated
-			if !mtlsActive {
-				tcpHandler = CSRFMiddleware(tcpHandler)
+			if config.IsDesktopMode() {
+				// Desktop: requests come from Wails reverse proxy (trusted).
+				// Skip CSRF/CORS — Wails AssetServer is the real origin.
+				tcpHandler = RateLimitMiddleware(100, tcpHandler)
+				tcpHandler = LoggingMiddleware(tcpHandler)
+				tcpHandler = RecoveryMiddleware(tcpHandler)
+			} else {
+				// Server mode: direct browser access needs CSRF + CORS
+				if !mtlsActive {
+					tcpHandler = CSRFMiddleware(tcpHandler)
+				}
+				tcpHandler = RateLimitMiddleware(100, tcpHandler)
+				tcpHandler = SecurityHeadersMiddleware(mtlsActive, tcpHandler)
+				tcpHandler = LoggingMiddleware(tcpHandler)
+				tcpHandler = RecoveryMiddleware(tcpHandler)
 			}
-			tcpHandler = RateLimitMiddleware(100, tcpHandler)
-			tcpHandler = SecurityHeadersMiddleware(mtlsActive, tcpHandler)
-			tcpHandler = LoggingMiddleware(tcpHandler)
-			tcpHandler = RecoveryMiddleware(tcpHandler)
 
 			if tcpListener != nil {
-				tcpHandler = CORSMiddleware(tcpHandler, tcpAddr)
+				if !config.IsDesktopMode() {
+					tcpHandler = CORSMiddleware(tcpHandler, tcpAddr)
+				}
 				scheme := "http"
 				if mtlsActive {
 					scheme = "https"
