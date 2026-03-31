@@ -59,8 +59,10 @@ interface I18nState {
 const initialLocale = detectLocale()
 
 export const useI18nStore = create<I18nState>((set, get) => ({
-  // Start with English translations immediately — no flash of raw keys
-  locale: initialLocale === 'en' ? 'en' : 'en',
+  // Start with English translations immediately — no flash of raw keys.
+  // locale reflects the detected preference; translations start as English
+  // until the async load completes for non-English locales.
+  locale: initialLocale,
   translations: enTranslations,
   loading: initialLocale !== 'en',
 

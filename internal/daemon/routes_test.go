@@ -95,7 +95,7 @@ func TestValidateSnapshotURL_AllowsPublicHTTPS(t *testing.T) {
 	}
 }
 
-// --- 12a-5: Two-mux boundary test ---
+// --- Route registration test ---
 
 // isJSONResponse checks whether the response came from an API handler (Content-Type: application/json)
 // vs the mux default 404 or WebUI fallback (text/plain or text/html).
@@ -104,61 +104,14 @@ func isJSONResponse(rec *httptest.ResponseRecorder) bool {
 	return strings.HasPrefix(ct, "application/json")
 }
 
-func TestTwoMuxBoundary_SocketOnlyRoutes(t *testing.T) {
+func TestAllRoutesRegistered(t *testing.T) {
 	d := &Daemon{}
+	mux := http.NewServeMux()
+	d.registerRoutes(mux)
 
-	socketMux := http.NewServeMux()
-	tcpMux := http.NewServeMux()
-	d.registerRoutes(socketMux, tcpMux)
-
-	// Socket-only routes must NOT be handled by the API handler on tcpMux.
-	// On tcpMux these fall through to either mux 405 (if GET exists for the path)
-	// or WebUI fallback (which returns 404 for /api/ paths).
-	// Either way, the API handler should NOT be invoked.
-	// Note: DaemonShutdown is excluded because it spawns a goroutine with side effects.
-	socketOnlyRoutes := []struct {
-		method string
-		path   string
-	}{
-		{"POST", "/api/v1/apps/test/exec"},
-		{"PUT", api.Config},
-		{"PUT", "/api/v1/apps/test/config"},
-		{"PUT", "/api/v1/apps/test/files/some/path"},
-		{"POST", api.NamespaceReload},
-	}
-
-	for _, rt := range socketOnlyRoutes {
-		req := httptest.NewRequest(rt.method, rt.path, nil)
-		rec := httptest.NewRecorder()
-		tcpMux.ServeHTTP(rec, req)
-		// The API handler on tcpMux should NOT have processed this.
-		// Mux returns 404/405, WebUI returns 404 for /api/ paths — all non-JSON.
-		if isJSONResponse(rec) {
-			t.Errorf("tcpMux %s %s: got JSON response (API handler ran, but route should be socket-only)", rt.method, rt.path)
-		}
-	}
-
-	// Verify socket-only routes ARE handled on socketMux (JSON response from handler).
-	for _, rt := range socketOnlyRoutes {
-		req := httptest.NewRequest(rt.method, rt.path, nil)
-		rec := httptest.NewRecorder()
-		socketMux.ServeHTTP(rec, req)
-		// Handler should run (may return 400/404 with JSON for nil runtime — that's fine).
-		if !isJSONResponse(rec) {
-			t.Errorf("socketMux %s %s: got non-JSON response (handler not registered)", rt.method, rt.path)
-		}
-	}
-}
-
-func TestTwoMuxBoundary_SharedRoutes(t *testing.T) {
-	d := &Daemon{}
-
-	socketMux := http.NewServeMux()
-	tcpMux := http.NewServeMux()
-	d.registerRoutes(socketMux, tcpMux)
-
-	// Shared routes (safe for nil Daemon) should return JSON on both muxes.
-	sharedRoutes := []struct {
+	// All routes should return JSON (handler runs, even with nil daemon fields).
+	// Note: DaemonShutdown excluded because it spawns a goroutine with side effects.
+	routes := []struct {
 		method string
 		path   string
 	}{
@@ -166,23 +119,22 @@ func TestTwoMuxBoundary_SharedRoutes(t *testing.T) {
 		{"GET", api.Namespace},
 		{"POST", api.NamespaceStart},
 		{"POST", api.NamespaceStop},
+		{"POST", api.NamespaceReload},
+		{"GET", api.Config},
+		{"PUT", api.Config},
+		{"POST", "/api/v1/apps/test/exec"},
+		{"PUT", "/api/v1/apps/test/config"},
+		{"PUT", "/api/v1/apps/test/files/some/path"},
+		{"GET", "/api/v1/apps/test/inspect"},
+		{"POST", "/api/v1/apps/test/restart"},
 	}
 
-	for _, rt := range sharedRoutes {
-		// socketMux
+	for _, rt := range routes {
 		req := httptest.NewRequest(rt.method, rt.path, nil)
 		rec := httptest.NewRecorder()
-		socketMux.ServeHTTP(rec, req)
+		mux.ServeHTTP(rec, req)
 		if !isJSONResponse(rec) {
-			t.Errorf("socketMux %s %s: expected JSON response, got %q", rt.method, rt.path, rec.Header().Get("Content-Type"))
-		}
-
-		// tcpMux
-		req2 := httptest.NewRequest(rt.method, rt.path, nil)
-		rec2 := httptest.NewRecorder()
-		tcpMux.ServeHTTP(rec2, req2)
-		if !isJSONResponse(rec2) {
-			t.Errorf("tcpMux %s %s: expected JSON response, got %q", rt.method, rt.path, rec2.Header().Get("Content-Type"))
+			t.Errorf("%s %s: expected JSON response (handler registered), got %q", rt.method, rt.path, rec.Header().Get("Content-Type"))
 		}
 	}
 }

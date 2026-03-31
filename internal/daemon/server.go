@@ -489,10 +489,11 @@ func Start(opts StartOptions) error {
 		d.acmeRenewal.Start()
 	}
 
-	// Create HTTP server — two muxes for security isolation
+	// Create HTTP server — single mux for all routes.
+	// Localhost TCP is trusted (desktop thin client), non-localhost requires mTLS.
+	// Both paths get full access to socketMux.
 	socketMux := http.NewServeMux()
-	tcpMux := http.NewServeMux()
-	d.registerRoutes(socketMux, tcpMux)
+	d.registerRoutes(socketMux)
 	d.server = &http.Server{
 		Handler:        RecoveryMiddleware(LoggingMiddleware(socketMux)),
 		ReadTimeout:    30 * time.Second,
@@ -815,107 +816,91 @@ func (d *Daemon) removeSubscriber(ch chan api.EventDto) {
 	close(ch)
 }
 
-// registerRoutes registers API routes on two muxes.
-// socketMux gets ALL routes (used by Unix socket and mTLS TCP).
-// tcpMux gets safe routes only — no shutdown, no exec (used by localhost TCP).
-func (d *Daemon) registerRoutes(socketMux, tcpMux *http.ServeMux) {
-	// Helper: register on both muxes (safe routes)
-	both := func(pattern string, handler http.HandlerFunc) {
-		socketMux.HandleFunc(pattern, handler)
-		tcpMux.HandleFunc(pattern, handler)
-	}
-
-	// --- Socket-only routes (dangerous: exec, shutdown, config write, reload, app config) ---
-	socketMux.HandleFunc("POST "+api.DaemonShutdown, d.handleDaemonShutdown)
-	socketMux.HandleFunc("POST /api/v1/apps/{name}/exec", d.handleAppExec)
-	socketMux.HandleFunc("PUT /api/v1/config", d.handlePutConfig)
-	socketMux.HandleFunc("PUT /api/v1/apps/{name}/config", d.handlePutAppConfig)
-	socketMux.HandleFunc("PUT /api/v1/apps/{name}/files/{path...}", d.handlePutAppFile)
-	socketMux.HandleFunc("POST "+api.NamespaceReload, d.handleReloadNamespace)
-	socketMux.HandleFunc("PUT /api/v1/daemon/loglevel", d.handleSetLogLevel)
-
-	// --- Routes available on both muxes ---
-
+// registerRoutes registers all API routes on the shared mux.
+// Both Unix socket and TCP listeners use the same mux — localhost TCP is trusted
+// (desktop thin client), non-localhost requires mTLS (which is also fully authenticated).
+func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	// Daemon
-	both("GET "+api.DaemonStatus, d.handleDaemonStatus)
+	mux.HandleFunc("GET "+api.DaemonStatus, d.handleDaemonStatus)
+	mux.HandleFunc("POST "+api.DaemonShutdown, d.handleDaemonShutdown)
+	mux.HandleFunc("PUT /api/v1/daemon/loglevel", d.handleSetLogLevel)
+	mux.HandleFunc("GET /api/v1/daemon/logs", d.handleDaemonLogs)
 
 	// Namespace
-	both("GET "+api.Namespace, d.handleGetNamespace)
-	both("POST "+api.NamespaceStart, d.handleStartNamespace)
-	both("POST "+api.NamespaceStop, d.handleStopNamespace)
+	mux.HandleFunc("GET "+api.Namespace, d.handleGetNamespace)
+	mux.HandleFunc("POST "+api.NamespaceStart, d.handleStartNamespace)
+	mux.HandleFunc("POST "+api.NamespaceStop, d.handleStopNamespace)
+	mux.HandleFunc("POST "+api.NamespaceReload, d.handleReloadNamespace)
+
+	// Config
+	mux.HandleFunc("GET /api/v1/config", d.handleGetConfig)
+	mux.HandleFunc("PUT /api/v1/config", d.handlePutConfig)
 
 	// App routes
-	both("GET /api/v1/apps/{name}/logs", d.handleAppLogs)
-	both("POST /api/v1/apps/{name}/restart", d.handleAppRestart)
-	both("POST /api/v1/apps/{name}/stop", d.handleAppStop)
-	both("POST /api/v1/apps/{name}/start", d.handleAppStart)
-	both("GET /api/v1/apps/{name}/inspect", d.handleAppInspect)
-
-	// Config (read-only on tcpMux; write is socket-only above)
-	both("GET /api/v1/config", d.handleGetConfig)
+	mux.HandleFunc("GET /api/v1/apps/{name}/logs", d.handleAppLogs)
+	mux.HandleFunc("GET /api/v1/apps/{name}/inspect", d.handleAppInspect)
+	mux.HandleFunc("POST /api/v1/apps/{name}/restart", d.handleAppRestart)
+	mux.HandleFunc("POST /api/v1/apps/{name}/stop", d.handleAppStop)
+	mux.HandleFunc("POST /api/v1/apps/{name}/start", d.handleAppStart)
+	mux.HandleFunc("POST /api/v1/apps/{name}/exec", d.handleAppExec)
+	mux.HandleFunc("GET /api/v1/apps/{name}/config", d.handleGetAppConfig)
+	mux.HandleFunc("PUT /api/v1/apps/{name}/config", d.handlePutAppConfig)
+	mux.HandleFunc("PUT /api/v1/apps/{name}/lock", d.handleAppLockToggle)
+	mux.HandleFunc("GET /api/v1/apps/{name}/files", d.handleListAppFiles)
+	mux.HandleFunc("GET /api/v1/apps/{name}/files/{path...}", d.handleGetAppFile)
+	mux.HandleFunc("PUT /api/v1/apps/{name}/files/{path...}", d.handlePutAppFile)
 
 	// Events (SSE)
-	both("GET "+api.Events, d.handleEvents)
+	mux.HandleFunc("GET "+api.Events, d.handleEvents)
 
 	// Volumes
-	both("GET /api/v1/volumes", d.handleListVolumes)
-	both("DELETE /api/v1/volumes/{name}", d.handleDeleteVolume)
-
-	// App config (write is socket-only above — env injection risk from localhost TCP)
-	both("GET /api/v1/apps/{name}/config", d.handleGetAppConfig)
-	both("PUT /api/v1/apps/{name}/lock", d.handleAppLockToggle)
-	both("GET /api/v1/apps/{name}/files", d.handleListAppFiles)
-	both("GET /api/v1/apps/{name}/files/{path...}", d.handleGetAppFile)
-
-	// Daemon logs
-	both("GET /api/v1/daemon/logs", d.handleDaemonLogs)
-
-	// System dump
-	both("GET /api/v1/system/dump", d.handleSystemDump)
+	mux.HandleFunc("GET /api/v1/volumes", d.handleListVolumes)
+	mux.HandleFunc("DELETE /api/v1/volumes/{name}", d.handleDeleteVolume)
 
 	// Health + Metrics
-	both("GET "+api.Health, d.handleHealth)
-	both("GET /api/v1/metrics", d.handleMetrics)
+	mux.HandleFunc("GET "+api.Health, d.handleHealth)
+	mux.HandleFunc("GET /api/v1/metrics", d.handleMetrics)
+
+	// System dump
+	mux.HandleFunc("GET /api/v1/system/dump", d.handleSystemDump)
 
 	// Namespaces
-	both("GET "+api.Namespaces, d.handleListNamespaces)
-	both("POST "+api.Namespaces, d.handleCreateNamespace)
-	both("DELETE /api/v1/namespaces/{id}", d.handleDeleteNamespace)
-	both("GET "+api.Templates, d.handleGetTemplates)
-	both("GET "+api.QuickStarts, d.handleGetQuickStarts)
+	mux.HandleFunc("GET "+api.Namespaces, d.handleListNamespaces)
+	mux.HandleFunc("POST "+api.Namespaces, d.handleCreateNamespace)
+	mux.HandleFunc("DELETE /api/v1/namespaces/{id}", d.handleDeleteNamespace)
+	mux.HandleFunc("GET "+api.Templates, d.handleGetTemplates)
+	mux.HandleFunc("GET "+api.QuickStarts, d.handleGetQuickStarts)
 
 	// Bundles
-	both("GET "+api.Bundles, d.handleListBundles)
+	mux.HandleFunc("GET "+api.Bundles, d.handleListBundles)
 
 	// Secrets
-	both("GET "+api.Secrets, d.handleListSecrets)
-	both("POST "+api.Secrets, d.handleCreateSecret)
-	both("DELETE /api/v1/secrets/{id}", d.handleDeleteSecret)
-	both("GET /api/v1/secrets/{id}/test", d.handleTestSecret)
+	mux.HandleFunc("GET "+api.Secrets, d.handleListSecrets)
+	mux.HandleFunc("POST "+api.Secrets, d.handleCreateSecret)
+	mux.HandleFunc("DELETE /api/v1/secrets/{id}", d.handleDeleteSecret)
+	mux.HandleFunc("GET /api/v1/secrets/{id}/test", d.handleTestSecret)
 
 	// Migration (master password for Kotlin encrypted secrets)
-	both("GET /api/v1/migration/status", d.handleGetMigrationStatus)
-	both("POST /api/v1/migration/master-password", d.handleSubmitMasterPassword)
+	mux.HandleFunc("GET /api/v1/migration/status", d.handleGetMigrationStatus)
+	mux.HandleFunc("POST /api/v1/migration/master-password", d.handleSubmitMasterPassword)
 
 	// Forms
-	both("GET /api/v1/forms/{formId}", d.handleGetForm)
+	mux.HandleFunc("GET /api/v1/forms/{formId}", d.handleGetForm)
 
 	// Diagnostics
-	both("GET "+api.Diagnostics, d.handleGetDiagnostics)
-	both("POST "+api.DiagnosticsFix, d.handleDiagnosticsFix)
+	mux.HandleFunc("GET "+api.Diagnostics, d.handleGetDiagnostics)
+	mux.HandleFunc("POST "+api.DiagnosticsFix, d.handleDiagnosticsFix)
 
 	// Snapshots
-	both("GET "+api.Snapshots, d.handleListSnapshots)
-	both("POST "+api.SnapshotsExport, d.handleExportSnapshot)
-	both("POST "+api.SnapshotsImport, d.handleImportSnapshot)
-	both("POST "+api.SnapshotsDownload, d.handleDownloadSnapshot)
-	both("GET "+api.WorkspaceSnapshots, d.handleWorkspaceSnapshots)
-	both("PUT /api/v1/snapshots/{name}", d.handleRenameSnapshot)
+	mux.HandleFunc("GET "+api.Snapshots, d.handleListSnapshots)
+	mux.HandleFunc("POST "+api.SnapshotsExport, d.handleExportSnapshot)
+	mux.HandleFunc("POST "+api.SnapshotsImport, d.handleImportSnapshot)
+	mux.HandleFunc("POST "+api.SnapshotsDownload, d.handleDownloadSnapshot)
+	mux.HandleFunc("GET "+api.WorkspaceSnapshots, d.handleWorkspaceSnapshots)
+	mux.HandleFunc("PUT /api/v1/snapshots/{name}", d.handleRenameSnapshot)
 
 	// Web UI (fallback)
-	webUI := WebUIHandler()
-	socketMux.Handle("/", webUI)
-	tcpMux.Handle("/", webUI)
+	mux.Handle("/", WebUIHandler())
 }
 
 // JSON helpers

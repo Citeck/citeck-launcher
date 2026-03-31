@@ -9,12 +9,13 @@ import (
 // RotatingWriter is a thread-safe log file writer that rotates when maxBytes is reached.
 // Old files are renamed with numeric suffixes (.1, .2, etc.) up to maxFiles.
 type RotatingWriter struct {
-	mu       sync.Mutex
-	path     string
-	maxBytes int64
-	maxFiles int
-	file     *os.File
-	size     int64
+	mu         sync.Mutex
+	path       string
+	maxBytes   int64
+	maxFiles   int
+	file       *os.File
+	size       int64
+	writeCount int // tracks writes for periodic stale-fd check
 }
 
 // NewRotatingWriter creates a rotating writer for the given log file path.
@@ -34,6 +35,7 @@ func (rw *RotatingWriter) openOrCreate() {
 	if info != nil {
 		rw.size = info.Size()
 	}
+	rw.writeCount = 0
 }
 
 func (rw *RotatingWriter) Write(p []byte) (int, error) {
@@ -45,13 +47,17 @@ func (rw *RotatingWriter) Write(p []byte) (int, error) {
 			return 0, fmt.Errorf("log file not available")
 		}
 	}
-	// Recreate file if it was deleted externally (stale fd detection)
-	if _, err := os.Stat(rw.path); os.IsNotExist(err) {
-		rw.file.Close()
-		rw.file = nil
-		rw.openOrCreate()
-		if rw.file == nil {
-			return 0, fmt.Errorf("log file not available")
+	// On Linux, writes to a deleted file succeed (inode stays alive).
+	// Periodically check if the file was unlinked so we reopen to a fresh path.
+	rw.writeCount++
+	if rw.writeCount%1000 == 0 {
+		if _, err := os.Stat(rw.path); os.IsNotExist(err) {
+			rw.file.Close()
+			rw.file = nil
+			rw.openOrCreate()
+			if rw.file == nil {
+				return 0, fmt.Errorf("log file not available")
+			}
 		}
 	}
 	if rw.size+int64(len(p)) > rw.maxBytes {
