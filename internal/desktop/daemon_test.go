@@ -29,7 +29,7 @@ func TestRunDaemonLoop_CleanQuitOnContextCancel(t *testing.T) {
 }
 
 func TestRunDaemonLoop_ReadyChNotifiedOnFailure(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	readyCh := make(chan string, 1)
@@ -50,7 +50,7 @@ func TestRunDaemonLoop_ReadyChNotifiedOnFailure(t *testing.T) {
 }
 
 func TestRunDaemonLoop_ReadyChNotifiedOnlyOnce(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	// Unbuffered — a second send would block and never be received by default case

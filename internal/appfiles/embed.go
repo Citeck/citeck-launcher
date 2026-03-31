@@ -26,7 +26,7 @@ func ExtractTo(targetDir string) error {
 		destPath := filepath.Join(targetDir, path)
 
 		// If a directory exists at the file path (stale Docker bind mount artifact), remove it
-		if fi, err := os.Stat(destPath); err == nil {
+		if fi, statErr := os.Stat(destPath); statErr == nil {
 			if fi.IsDir() {
 				os.RemoveAll(destPath)
 			} else {

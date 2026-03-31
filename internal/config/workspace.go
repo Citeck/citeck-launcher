@@ -32,7 +32,7 @@ func ListWorkspaces() ([]WorkspaceInfo, error) {
 		return nil, fmt.Errorf("read workspaces dir: %w", err)
 	}
 
-	var workspaces []WorkspaceInfo
+	workspaces := make([]WorkspaceInfo, 0, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -62,7 +62,7 @@ func listNamespacesInWorkspace(wsID string) ([]string, error) {
 		return nil, fmt.Errorf("read namespaces dir: %w", err)
 	}
 
-	var namespaces []string
+	namespaces := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue

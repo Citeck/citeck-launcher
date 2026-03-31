@@ -10,6 +10,7 @@ import (
 // ApplicationKind categorizes apps by their role.
 type ApplicationKind int
 
+// ApplicationKind constants categorize apps by their platform role.
 const (
 	KindCiteckCore          ApplicationKind = iota
 	KindCiteckCoreExtension
@@ -17,6 +18,7 @@ const (
 	KindThirdParty
 )
 
+// IsCiteckApp returns true if the application kind is a Citeck platform app.
 func (k ApplicationKind) IsCiteckApp() bool {
 	return k == KindCiteckCore || k == KindCiteckCoreExtension || k == KindCiteckAdditional
 }
@@ -31,6 +33,7 @@ type AppProbeDef struct {
 	TimeoutSeconds      int          `json:"timeoutSeconds,omitempty" yaml:"timeoutSeconds,omitempty"`
 }
 
+// DefaultProbe returns the default probe configuration.
 func DefaultProbe() AppProbeDef {
 	return AppProbeDef{
 		InitialDelaySeconds: 5,
@@ -40,10 +43,12 @@ func DefaultProbe() AppProbeDef {
 	}
 }
 
+// ExecProbeDef defines an exec-based probe.
 type ExecProbeDef struct {
 	Command []string `json:"command" yaml:"command"`
 }
 
+// HttpProbeDef defines an HTTP-based probe. //nolint:revive // HttpProbeDef name matches YAML serialization format
 type HttpProbeDef struct {
 	Path string `json:"path" yaml:"path"`
 	Port int    `json:"port" yaml:"port"`
@@ -55,6 +60,7 @@ type StartupCondition struct {
 	Log   *LogStartupCondition `json:"log,omitempty" yaml:"log,omitempty"`
 }
 
+// LogStartupCondition detects readiness via log output pattern matching.
 type LogStartupCondition struct {
 	Pattern        string `json:"pattern" yaml:"pattern"`
 	TimeoutSeconds int    `json:"timeoutSeconds,omitempty" yaml:"timeoutSeconds,omitempty"`
@@ -65,6 +71,7 @@ type AppResourcesDef struct {
 	Limits LimitsDef `json:"limits" yaml:"limits"`
 }
 
+// LimitsDef defines resource limits (memory).
 type LimitsDef struct {
 	Memory string `json:"memory" yaml:"memory"`
 }
@@ -107,9 +114,7 @@ type ApplicationDef struct {
 	StopTimeout       int               `json:"stopTimeout,omitempty" yaml:"stopTimeout,omitempty"` // seconds; 0 = default (10s webapps, 30s infra)
 }
 
-// GetHash computes a SHA-256 hash of the application definition.
-// Used to detect if a container needs recreation.
-// GetHashInput returns the string used to compute the hash (for debugging).
+// GetHashInput returns the string used to compute the application definition hash (for debugging).
 func (d *ApplicationDef) GetHashInput() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "name=%s\n", d.Name)
@@ -156,6 +161,7 @@ func (d *ApplicationDef) GetHashInput() string {
 	return b.String()
 }
 
+// GetHash computes a SHA-256 hash of the application definition for change detection.
 func (d *ApplicationDef) GetHash() string {
 	h := sha256.Sum256([]byte(d.GetHashInput()))
 	return fmt.Sprintf("%x", h[:])

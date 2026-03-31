@@ -1,10 +1,12 @@
 package api
 
+// ActionResultDto is the response for simple action endpoints.
 type ActionResultDto struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 }
 
+// AppDto represents an application in the namespace.
 type AppDto struct {
 	Name       string   `json:"name"`
 	Status     string   `json:"status"`
@@ -18,6 +20,7 @@ type AppDto struct {
 	Locked     bool     `json:"locked,omitempty"`
 }
 
+// DaemonStatusDto reports the daemon's runtime status.
 type DaemonStatusDto struct {
 	Running    bool   `json:"running"`
 	PID        int64  `json:"pid"`
@@ -29,6 +32,7 @@ type DaemonStatusDto struct {
 	Locale     string `json:"locale,omitempty"`
 }
 
+// NamespaceDto represents a namespace with its apps and links.
 type NamespaceDto struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
@@ -39,6 +43,7 @@ type NamespaceDto struct {
 	Links       []LinkDto `json:"links,omitempty"`
 }
 
+// LinkDto represents a named URL link associated with a namespace.
 type LinkDto struct {
 	Name  string  `json:"name"`
 	URL   string  `json:"url"`
@@ -46,6 +51,7 @@ type LinkDto struct {
 	Order float64 `json:"order"`
 }
 
+// EventDto represents a server-sent event for state changes.
 type EventDto struct {
 	Type        string `json:"type"`
 	Seq         int64  `json:"seq"`
@@ -56,27 +62,32 @@ type EventDto struct {
 	After       string `json:"after"`
 }
 
+// HealthDto reports the overall daemon health status.
 type HealthDto struct {
 	Status  string           `json:"status"` // "healthy", "degraded", "unhealthy"
 	Healthy bool             `json:"healthy"`
 	Checks  []HealthCheckDto `json:"checks"`
 }
 
+// HealthCheckDto represents a single health check result.
 type HealthCheckDto struct {
 	Name    string `json:"name"`
 	Status  string `json:"status"`
 	Message string `json:"message"`
 }
 
+// ExecResultDto is the response from executing a command in a container.
 type ExecResultDto struct {
 	ExitCode int64  `json:"exitCode"`
 	Output   string `json:"output"`
 }
 
+// ExecRequestDto is the request to execute a command in a container.
 type ExecRequestDto struct {
 	Command []string `json:"command"`
 }
 
+// AppInspectDto contains detailed container inspection data.
 type AppInspectDto struct {
 	Name         string            `json:"name"`
 	ContainerID  string            `json:"containerId"`
@@ -93,6 +104,7 @@ type AppInspectDto struct {
 	Uptime       int64             `json:"uptime"`
 }
 
+// ErrorDto is the standard error response format.
 type ErrorDto struct {
 	Error   string `json:"error"`
 	Code    string `json:"code,omitempty"`
@@ -100,7 +112,7 @@ type ErrorDto struct {
 	Details string `json:"details,omitempty"`
 }
 
-// Machine-readable error codes for API consumers.
+// ErrCodeAppNotFound and related constants are machine-readable error codes for API consumers.
 const (
 	ErrCodeAppNotFound        = "APP_NOT_FOUND"
 	ErrCodeSnapshotInProgress = "SNAPSHOT_IN_PROGRESS"
@@ -119,6 +131,7 @@ const (
 
 // --- Welcome Screen ---
 
+// NamespaceSummaryDto is a lightweight namespace representation for the welcome screen.
 type NamespaceSummaryDto struct {
 	ID          string `json:"id"`
 	WorkspaceID string `json:"workspaceId"`
@@ -127,12 +140,14 @@ type NamespaceSummaryDto struct {
 	BundleRef   string `json:"bundleRef"`
 }
 
+// QuickStartDto represents a quick-start template entry.
 type QuickStartDto struct {
 	Name     string `json:"name"`
 	Template string `json:"template"`
 	Snapshot string `json:"snapshot,omitempty"`
 }
 
+// TemplateDto represents a namespace template.
 type TemplateDto struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -140,6 +155,7 @@ type TemplateDto struct {
 
 // --- Secrets ---
 
+// SecretMetaDto contains non-sensitive secret metadata for API responses.
 type SecretMetaDto struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
@@ -148,6 +164,7 @@ type SecretMetaDto struct {
 	CreatedAt string `json:"createdAt"`
 }
 
+// SecretCreateDto is the request body for creating or updating a secret.
 type SecretCreateDto struct {
 	ID    string `json:"id"`
 	Name  string `json:"name"`
@@ -158,6 +175,7 @@ type SecretCreateDto struct {
 
 // --- Diagnostics ---
 
+// DiagnosticCheckDto represents a single diagnostic check result.
 type DiagnosticCheckDto struct {
 	Name    string `json:"name"`
 	Status  string `json:"status"` // "ok", "warning", "error"
@@ -165,10 +183,12 @@ type DiagnosticCheckDto struct {
 	Fixable bool   `json:"fixable"`
 }
 
+// DiagnosticsDto aggregates all diagnostic check results.
 type DiagnosticsDto struct {
 	Checks []DiagnosticCheckDto `json:"checks"`
 }
 
+// DiagFixResultDto reports the outcome of applying diagnostic fixes.
 type DiagFixResultDto struct {
 	Fixed   int    `json:"fixed"`
 	Failed  int    `json:"failed"`
@@ -177,6 +197,7 @@ type DiagFixResultDto struct {
 
 // --- Snapshots ---
 
+// SnapshotDto represents a snapshot file with metadata.
 type SnapshotDto struct {
 	Name      string `json:"name"`
 	CreatedAt string `json:"createdAt"`
@@ -185,6 +206,7 @@ type SnapshotDto struct {
 
 // --- Namespace creation ---
 
+// NamespaceCreateDto is the request body for creating a new namespace.
 type NamespaceCreateDto struct {
 	Name           string   `json:"name"`
 	AuthType       string   `json:"authType"`
@@ -201,12 +223,14 @@ type NamespaceCreateDto struct {
 	Template       string   `json:"template,omitempty"`  // namespace template ID
 }
 
+// SnapshotDownloadDto is the request body for downloading a snapshot from a URL.
 type SnapshotDownloadDto struct {
 	URL    string `json:"url"`
 	SHA256 string `json:"sha256,omitempty"`
 	Name   string `json:"name,omitempty"` // output file name (auto-generated if empty)
 }
 
+// BundleInfoDto describes a bundle repository and its available versions.
 type BundleInfoDto struct {
 	Repo     string   `json:"repo"`
 	Versions []string `json:"versions"`
@@ -218,6 +242,7 @@ type ValidationErrorDto struct {
 	Fields []FieldErrorDto `json:"fields"`
 }
 
+// FieldErrorDto identifies a specific form field validation error.
 type FieldErrorDto struct {
 	Key     string `json:"key"`
 	Message string `json:"message"`

@@ -12,7 +12,7 @@ import (
 
 func skipIfNoDaemon(t *testing.T) *client.DaemonClient {
 	t.Helper()
-	c, err := client.New(client.ClientOptions{})
+	c, err := client.New(client.Options{})
 	if err != nil {
 		t.Skipf("daemon not running: %v", err)
 	}

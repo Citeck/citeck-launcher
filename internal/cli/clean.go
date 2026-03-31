@@ -203,7 +203,7 @@ func findOrphanContainers(ctx context.Context, dc *docker.Client, knownNS map[st
 		return nil, err
 	}
 
-	var orphans []orphanContainer
+	orphans := make([]orphanContainer, 0, len(containers))
 	for _, ctr := range containers {
 		ns := ctr.Labels[docker.LabelNamespace]
 		if ns != "" && knownNS[ns] {
@@ -230,7 +230,7 @@ func findOrphanNetworks(ctx context.Context, dc *docker.Client, knownNS map[stri
 	if err != nil {
 		return nil, err
 	}
-	var orphans []string
+	orphans := make([]string, 0, len(networks))
 	for _, net := range networks {
 		ns := net.Labels[docker.LabelNamespace]
 		if ns != "" && knownNS[ns] {
@@ -242,58 +242,59 @@ func findOrphanNetworks(ctx context.Context, dc *docker.Client, knownNS map[stri
 }
 
 func findOrphanVolumeDirs(knownNS map[string]bool) []orphanVolumeDir {
-	var result []orphanVolumeDir
-
 	if config.IsDesktopMode() {
-		// In desktop mode, scan ws/*/ns/*/rtfiles/volumes/
-		workspaces, err := config.ListWorkspaces()
-		if err != nil {
-			return nil
-		}
-		for _, ws := range workspaces {
-			for _, nsID := range ws.Namespaces {
-				if knownNS[nsID] {
-					continue
-				}
-				// This namespace has no config but has a directory — scan for volume dirs
-				rtDir := config.NamespaceRtfilesDir(ws.ID, nsID)
-				volDir := filepath.Join(rtDir, "volumes")
-				if entries, err := os.ReadDir(volDir); err == nil {
-					for _, e := range entries {
-						if e.IsDir() {
-							result = append(result, orphanVolumeDir{
-								Path:      filepath.Join(volDir, e.Name()),
-								Namespace: nsID,
-								Name:      e.Name(),
-							})
-						}
-					}
-				}
-			}
-		}
-	} else {
-		// Server mode: scan data/runtime/*/volumes/
-		runtimeDir := filepath.Join(config.DataDir(), "runtime")
-		nsDirs, err := os.ReadDir(runtimeDir)
-		if err != nil {
-			return nil
-		}
-		for _, nsDir := range nsDirs {
-			if !nsDir.IsDir() || knownNS[nsDir.Name()] {
+		return findOrphanVolumeDesktop(knownNS)
+	}
+	return findOrphanVolumeServer(knownNS)
+}
+
+func findOrphanVolumeDesktop(knownNS map[string]bool) []orphanVolumeDir {
+	workspaces, err := config.ListWorkspaces()
+	if err != nil {
+		return nil
+	}
+	var result []orphanVolumeDir
+	for _, ws := range workspaces {
+		for _, nsID := range ws.Namespaces {
+			if knownNS[nsID] {
 				continue
 			}
-			volDir := filepath.Join(runtimeDir, nsDir.Name(), "volumes")
-			if entries, err := os.ReadDir(volDir); err == nil {
-				for _, e := range entries {
-					if e.IsDir() {
-						result = append(result, orphanVolumeDir{
-							Path:      filepath.Join(volDir, e.Name()),
-							Namespace: nsDir.Name(),
-							Name:      e.Name(),
-						})
-					}
-				}
-			}
+			rtDir := config.NamespaceRtfilesDir(ws.ID, nsID)
+			result = appendOrphanVolumes(result, filepath.Join(rtDir, "volumes"), nsID)
+		}
+	}
+	return result
+}
+
+func findOrphanVolumeServer(knownNS map[string]bool) []orphanVolumeDir {
+	runtimeDir := filepath.Join(config.DataDir(), "runtime")
+	nsDirs, err := os.ReadDir(runtimeDir)
+	if err != nil {
+		return nil
+	}
+	var result []orphanVolumeDir
+	for _, nsDir := range nsDirs {
+		if !nsDir.IsDir() || knownNS[nsDir.Name()] {
+			continue
+		}
+		volDir := filepath.Join(runtimeDir, nsDir.Name(), "volumes")
+		result = appendOrphanVolumes(result, volDir, nsDir.Name())
+	}
+	return result
+}
+
+func appendOrphanVolumes(result []orphanVolumeDir, volDir, nsID string) []orphanVolumeDir {
+	entries, err := os.ReadDir(volDir)
+	if err != nil {
+		return result
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			result = append(result, orphanVolumeDir{
+				Path:      filepath.Join(volDir, e.Name()),
+				Namespace: nsID,
+				Name:      e.Name(),
+			})
 		}
 	}
 	return result

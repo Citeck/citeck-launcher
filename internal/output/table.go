@@ -5,6 +5,7 @@ import (
 	"strings"
 )
 
+// FormatTable formats headers and rows into an aligned text table.
 func FormatTable(headers []string, rows [][]string) string {
 	if len(headers) == 0 {
 		return ""
@@ -35,7 +36,7 @@ func FormatTable(headers []string, rows [][]string) string {
 
 	// Rows
 	for _, row := range rows {
-		for i := 0; i < len(headers); i++ {
+		for i := range len(headers) {
 			if i > 0 {
 				sb.WriteString("  ")
 			}
@@ -58,6 +59,7 @@ func pad(s string, width int) string {
 	return s + strings.Repeat(" ", width-len(s))
 }
 
+// FormatKeyValue formats key-value pairs into an aligned two-column layout.
 func FormatKeyValue(pairs [][2]string) string {
 	maxKey := 0
 	for _, p := range pairs {

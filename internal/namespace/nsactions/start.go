@@ -31,6 +31,7 @@ type StartExecutor struct {
 	Docker docker.RuntimeClient
 }
 
+// Execute creates and starts the container.
 func (e *StartExecutor) Execute(ctx context.Context, actx *actions.ActionContext) error {
 	d := actx.Data.(*StartData)
 	containerName := e.Docker.ContainerName(d.AppName)
@@ -51,11 +52,13 @@ func (e *StartExecutor) Execute(ctx context.Context, actx *actions.ActionContext
 	return nil
 }
 
+// Name returns a human-readable description of the start action.
 func (e *StartExecutor) Name(actx *actions.ActionContext) string {
 	d := actx.Data.(*StartData)
 	return fmt.Sprintf("Start %s", d.AppName)
 }
 
+// RetryDelay returns the delay before the next container create retry.
 func (e *StartExecutor) RetryDelay(actx *actions.ActionContext) time.Duration {
 	if actx.Attempt >= ContainerCreateRetries {
 		return -1

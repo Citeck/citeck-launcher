@@ -8,20 +8,24 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// AuthenticationType defines the authentication mode for a namespace.
 type AuthenticationType string
 
+// Authentication modes.
 const (
 	AuthBasic    AuthenticationType = "BASIC"
 	AuthKeycloak AuthenticationType = "KEYCLOAK"
 )
 
-type TlsConfig struct {
+// TlsConfig holds TLS settings for the proxy.
+type TlsConfig struct { //nolint:revive // TLS acronym casing matches YAML config field naming
 	Enabled     bool   `yaml:"enabled" json:"enabled"`
 	CertPath    string `yaml:"certPath" json:"certPath"`
 	KeyPath     string `yaml:"keyPath" json:"keyPath"`
 	LetsEncrypt bool   `yaml:"letsEncrypt" json:"letsEncrypt"`
 }
 
+// ProxyProps holds proxy configuration for a namespace.
 type ProxyProps struct {
 	Image string    `yaml:"image" json:"image"`
 	Port  int       `yaml:"port" json:"port"`
@@ -29,20 +33,24 @@ type ProxyProps struct {
 	TLS   TlsConfig `yaml:"tls" json:"tls"`
 }
 
+// AuthenticationProps holds authentication settings.
 type AuthenticationProps struct {
 	Type  AuthenticationType `yaml:"type" json:"type"`
 	Users []string           `yaml:"users" json:"users"`
 }
 
+// PgAdminProps holds pgAdmin settings.
 type PgAdminProps struct {
 	Enabled bool   `yaml:"enabled" json:"enabled"`
 	Image   string `yaml:"image" json:"image"`
 }
 
+// MongoDbProps holds MongoDB image configuration.
 type MongoDbProps struct {
 	Image string `yaml:"image" json:"image"`
 }
 
+// WebappProps holds per-webapp overrides in namespace config.
 type WebappProps struct {
 	Enabled        *bool                                `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	Image          string                               `yaml:"image" json:"image"`
@@ -57,6 +65,7 @@ type WebappProps struct {
 	SpringProfiles string                               `yaml:"springProfiles" json:"springProfiles"`
 }
 
+// NamespaceConfig is the top-level namespace configuration (namespace.yml).
 type NamespaceConfig struct {
 	APIVersion     string              `yaml:"apiVersion,omitempty" json:"apiVersion,omitempty"`
 	ID             string              `yaml:"id" json:"id"`
@@ -71,6 +80,7 @@ type NamespaceConfig struct {
 	Webapps        map[string]WebappProps `yaml:"webapps,omitempty" json:"webapps,omitempty"`
 }
 
+// DefaultNamespaceConfig returns a namespace config with sensible defaults.
 func DefaultNamespaceConfig() NamespaceConfig {
 	return NamespaceConfig{
 		Authentication: AuthenticationProps{
@@ -82,22 +92,25 @@ func DefaultNamespaceConfig() NamespaceConfig {
 	}
 }
 
+// LoadNamespaceConfig reads and parses a namespace config from the given file path.
 func LoadNamespaceConfig(path string) (*NamespaceConfig, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // path is from trusted config directory
 	if err != nil {
 		return nil, fmt.Errorf("read namespace config: %w", err)
 	}
 	return ParseNamespaceConfig(data)
 }
 
+// MarshalNamespaceConfig serializes a namespace config to YAML.
 func MarshalNamespaceConfig(cfg *NamespaceConfig) ([]byte, error) {
 	out := *cfg
 	if out.APIVersion == "" {
 		out.APIVersion = "v1"
 	}
-	return yaml.Marshal(&out)
+	return yaml.Marshal(&out) //nolint:wrapcheck // transparent wrapper
 }
 
+// ParseNamespaceConfig parses YAML data into a namespace config, applying defaults and validation.
 func ParseNamespaceConfig(data []byte) (*NamespaceConfig, error) {
 	cfg := DefaultNamespaceConfig()
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
@@ -123,7 +136,7 @@ func ValidateNamespaceConfig(cfg *NamespaceConfig) error {
 	if cfg.Proxy.TLS.LetsEncrypt {
 		host := cfg.Proxy.Host
 		if host == "" || host == "localhost" || host == "127.0.0.1" {
-			return fmt.Errorf("Let's Encrypt requires a public hostname, got %q", host)
+			return fmt.Errorf("let's encrypt requires a public hostname, got %q", host)
 		}
 	}
 	if cfg.Authentication.Type == AuthBasic && len(cfg.Authentication.Users) == 0 {

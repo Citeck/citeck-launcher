@@ -262,9 +262,9 @@ func (r *Resolver) Resolve(ref BundleRef) (*ResolveResult, error) {
 	}
 	key := ref.Key
 	if strings.EqualFold(key, "LATEST") {
-		latest, err := findLatestBundle(bundlesDir)
-		if err != nil {
-			return nil, err
+		latest, latestErr := findLatestBundle(bundlesDir)
+		if latestErr != nil {
+			return nil, latestErr
 		}
 		key = latest
 	}
@@ -285,7 +285,7 @@ func loadWorkspaceConfig(repoDir string) *WorkspaceConfig {
 	candidates := []string{"workspace-v1.yml", "workspace-v1.yaml", "workspace.yml"}
 	for _, name := range candidates {
 		path := filepath.Join(repoDir, name)
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(path) //nolint:gosec // path is constructed from fixed filenames within repoDir
 		if err != nil {
 			continue
 		}
@@ -360,7 +360,7 @@ func resolveImageURL(repository, tag string, imageRepoMap map[string]string) str
 	return repository + ":" + tag
 }
 
-func parseBundleFile(path, version string, aliasMap map[string]string, imageRepoMap map[string]string) (*BundleDef, error) {
+func parseBundleFile(path, version string, aliasMap, imageRepoMap map[string]string) (*BundleDef, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read bundle %s: %w", version, err)
@@ -405,18 +405,7 @@ func parseBundleFile(path, version string, aliasMap map[string]string, imageRepo
 		applications[canonical] = BundleAppDef{Image: image}
 
 		// Collect citeck apps (ecos-apps init containers)
-		if ecosApps, ok := value["ecosAppsImages"]; ok {
-			if ecosAppsList, ok := ecosApps.([]any); ok {
-				for _, ea := range ecosAppsList {
-					if eaMap, ok := ea.(map[string]any); ok {
-						citeckAppImage := resolveImageURL(strVal(eaMap, "repository"), strVal(eaMap, "tag"), imageRepoMap)
-						if citeckAppImage != "" {
-							citeckApps = append(citeckApps, BundleAppDef{Image: citeckAppImage})
-						}
-					}
-				}
-			}
-		}
+		citeckApps = collectCiteckApps(value, imageRepoMap, citeckApps)
 	}
 
 	for appName, value := range raw {
@@ -434,6 +423,29 @@ func parseBundleFile(path, version string, aliasMap map[string]string, imageRepo
 
 	slog.Info("Resolved bundle", "version", version, "apps", len(applications), "citeckApps", len(citeckApps))
 	return def, nil
+}
+
+// collectCiteckApps extracts ecos-apps init container images from a bundle entry.
+func collectCiteckApps(value map[string]any, imageRepoMap map[string]string, citeckApps []BundleAppDef) []BundleAppDef {
+	ecosApps, ok := value["ecosAppsImages"]
+	if !ok {
+		return citeckApps
+	}
+	ecosAppsList, ok := ecosApps.([]any)
+	if !ok {
+		return citeckApps
+	}
+	for _, ea := range ecosAppsList {
+		eaMap, ok := ea.(map[string]any)
+		if !ok {
+			continue
+		}
+		citeckAppImage := resolveImageURL(strVal(eaMap, "repository"), strVal(eaMap, "tag"), imageRepoMap)
+		if citeckAppImage != "" {
+			citeckApps = append(citeckApps, BundleAppDef{Image: citeckAppImage})
+		}
+	}
+	return citeckApps
 }
 
 // extractBundleImage extracts image URL from a bundle entry's image.repository + image.tag.
@@ -483,7 +495,7 @@ func findBundleFile(dir, key string) string {
 // Citeck bundle versions follow the format "YYYY.N" (e.g. "2025.10"), so all valid
 // version strings start with a digit. This filters out non-version files like README.yml.
 func isVersionString(name string) bool {
-	return len(name) > 0 && name[0] >= '0' && name[0] <= '9'
+	return name != "" && name[0] >= '0' && name[0] <= '9'
 }
 
 // ListBundleVersions lists available bundle version keys in a given bundles sub-directory.
@@ -535,14 +547,11 @@ func findLatestBundle(bundlesDir string) (string, error) {
 }
 
 // compareBundleVersions compares two dot-separated version strings numerically.
-// "2025.10" > "2025.9", matching the Kotlin BundleKey.compareTo behaviour.
+// "2025.10" > "2025.9", matching the Kotlin BundleKey.compareTo behavior.
 func compareBundleVersions(a, b string) int {
 	aParts := strings.Split(a, ".")
 	bParts := strings.Split(b, ".")
-	n := len(aParts)
-	if len(bParts) < n {
-		n = len(bParts)
-	}
+	n := min(len(aParts), len(bParts))
 	for i := 0; i < n; i++ {
 		ai, _ := strconv.Atoi(aParts[i])
 		bi, _ := strconv.Atoi(bParts[i])

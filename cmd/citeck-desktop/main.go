@@ -34,7 +34,7 @@ func main() {
 	}
 	defer lock.Release()
 
-	// Context for daemon lifecycle — cancelled when Wails quits
+	// Context for daemon lifecycle — canceled when Wails quits
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -65,7 +65,7 @@ func main() {
 		// Flush immediately for SSE and streaming log endpoints
 		FlushInterval: -1,
 		// Don't log proxy errors before daemon is ready
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
 			http.Error(w, "daemon not ready", http.StatusBadGateway)
 		},
 	}
@@ -97,7 +97,7 @@ func main() {
 				return
 			}
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Write([]byte(loadingHTML))
+			_, _ = w.Write([]byte(loadingHTML))
 		}
 	})
 
@@ -145,18 +145,18 @@ func main() {
 	}
 
 	menu := app.NewMenu()
-	menu.Add("Open").OnClick(func(ctx *application.Context) {
+	menu.Add("Open").OnClick(func(_ *application.Context) {
 		window.Show()
 		window.Focus()
 	})
-	menu.Add("System Dump").OnClick(func(ctx *application.Context) {
+	menu.Add("System Dump").OnClick(func(_ *application.Context) {
 		dumpSystemInfo(socketPath)
 	})
-	menu.Add("Open Launcher Dir").OnClick(func(ctx *application.Context) {
+	menu.Add("Open Launcher Dir").OnClick(func(_ *application.Context) {
 		desktop.OpenBrowser("file://" + config.HomeDir())
 	})
 	menu.AddSeparator()
-	menu.Add("Exit").OnClick(func(ctx *application.Context) {
+	menu.Add("Exit").OnClick(func(_ *application.Context) {
 		app.Quit()
 	})
 
@@ -166,8 +166,8 @@ func main() {
 		window.Focus()
 	})
 
-	if err := app.Run(); err != nil {
-		log.Fatal(err)
+	if runErr := app.Run(); runErr != nil {
+		slog.Error("Application exited with error", "err", runErr)
 	}
 }
 

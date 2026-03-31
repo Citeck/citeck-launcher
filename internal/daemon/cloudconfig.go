@@ -71,7 +71,9 @@ func (s *CloudConfigServer) Stop() {
 	if s.server != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		s.server.Shutdown(ctx)
+		if err := s.server.Shutdown(ctx); err != nil {
+			slog.Warn("CloudConfigServer shutdown error", "err", err)
+		}
 	}
 }
 
@@ -83,7 +85,7 @@ func (s *CloudConfigServer) handleConfig(w http.ResponseWriter, r *http.Request)
 
 	var profiles []string
 	if profilesStr != "" {
-		for _, p := range strings.Split(profilesStr, ",") {
+		for p := range strings.SplitSeq(profilesStr, ",") {
 			p = strings.TrimSpace(p)
 			if p != "" {
 				profiles = append(profiles, p)

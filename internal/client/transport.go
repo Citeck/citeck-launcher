@@ -54,7 +54,7 @@ func DetectTransport(host string, tlsCert, tlsKey, serverCert string, insecure b
 	// Verify the socket is live by actually connecting, not just checking the file.
 	// A stale socket (e.g. after kill -9) would pass os.Stat but fail dial.
 	if conn, err := net.DialTimeout("unix", socketPath, 2*time.Second); err == nil {
-		conn.Close()
+		_ = conn.Close()
 		return &TransportConfig{
 			Type:       TransportUnix,
 			SocketPath: socketPath,

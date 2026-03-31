@@ -10,17 +10,17 @@ import (
 	"github.com/citeck/citeck-launcher/internal/docker"
 )
 
-// Standard pull retry delays matching Kotlin RETRY_DELAYS: [1s, 1s, 1s, 5s, 10s]
+// PullRetryDelays defines standard pull retry delays matching Kotlin RETRY_DELAYS: [1s, 1s, 1s, 5s, 10s].
 var PullRetryDelays = []time.Duration{
 	time.Second, time.Second, time.Second, 5 * time.Second, 10 * time.Second,
 }
 
-// Shorter delays for init container images.
+// InitPullRetryDelays defines shorter delays for init container images.
 var InitPullRetryDelays = []time.Duration{
 	time.Second, 2 * time.Second, 5 * time.Second,
 }
 
-// PullRetriesForExistingImage: after this many failures, use local image if present.
+// PullRetriesForExistingImage is the threshold after which a local image is used on pull failure.
 const PullRetriesForExistingImage = 3
 
 // PullData carries the image pull parameters.
@@ -45,6 +45,7 @@ func (e *PullExecutor) retryDelays() []time.Duration {
 	return PullRetryDelays
 }
 
+// Execute pulls the Docker image with retry and fallback logic.
 func (e *PullExecutor) Execute(ctx context.Context, actx *actions.ActionContext) error {
 	d := actx.Data.(*PullData)
 
@@ -54,7 +55,7 @@ func (e *PullExecutor) Execute(ctx context.Context, actx *actions.ActionContext)
 	}
 
 	// Wrap progress callback to send heartbeat on every progress update,
-	// preventing stall detection from cancelling long pulls (e.g. 4GB images).
+	// preventing stall detection from canceling long pulls (e.g. 4GB images).
 	progressFn := d.ProgressFn
 	wrappedProgress := func(currentMB, totalMB float64, pct int) {
 		actx.Heartbeat()
@@ -82,6 +83,7 @@ func (e *PullExecutor) Execute(ctx context.Context, actx *actions.ActionContext)
 	return fmt.Errorf("pull %s: %w", d.Image, err)
 }
 
+// Name returns a human-readable description of the pull action.
 func (e *PullExecutor) Name(actx *actions.ActionContext) string {
 	d := actx.Data.(*PullData)
 	if actx.Attempt > 0 {
@@ -90,6 +92,7 @@ func (e *PullExecutor) Name(actx *actions.ActionContext) string {
 	return fmt.Sprintf("Pull %s", d.AppName)
 }
 
+// RetryDelay returns the delay before the next pull retry attempt.
 func (e *PullExecutor) RetryDelay(actx *actions.ActionContext) time.Duration {
 	delays := e.retryDelays()
 	if actx.Attempt >= len(delays) {

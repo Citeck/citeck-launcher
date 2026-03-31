@@ -129,19 +129,8 @@ func validateNamespaceConfig(cfg *namespace.NamespaceConfig) []string {
 		errors = append(errors, fmt.Sprintf("proxy.port %d out of range (1-65535)", cfg.Proxy.Port))
 	}
 
-	// TLS cert/key files exist
-	if cfg.Proxy.TLS.Enabled && !cfg.Proxy.TLS.LetsEncrypt {
-		if cfg.Proxy.TLS.CertPath != "" {
-			if _, err := os.Stat(cfg.Proxy.TLS.CertPath); err != nil {
-				errors = append(errors, fmt.Sprintf("TLS cert file not found: %s", cfg.Proxy.TLS.CertPath))
-			}
-		}
-		if cfg.Proxy.TLS.KeyPath != "" {
-			if _, err := os.Stat(cfg.Proxy.TLS.KeyPath); err != nil {
-				errors = append(errors, fmt.Sprintf("TLS key file not found: %s", cfg.Proxy.TLS.KeyPath))
-			}
-		}
-	}
+	// TLS cert/key files exist (only check for manual TLS, not Let's Encrypt)
+	errors = append(errors, validateTLSFiles(cfg)...)
 
 	// BundleRef format
 	if !cfg.BundleRef.IsEmpty() {
@@ -152,4 +141,22 @@ func validateNamespaceConfig(cfg *namespace.NamespaceConfig) []string {
 	}
 
 	return errors
+}
+
+func validateTLSFiles(cfg *namespace.NamespaceConfig) []string {
+	if !cfg.Proxy.TLS.Enabled || cfg.Proxy.TLS.LetsEncrypt {
+		return nil
+	}
+	var errs []string
+	if cfg.Proxy.TLS.CertPath != "" {
+		if _, err := os.Stat(cfg.Proxy.TLS.CertPath); err != nil {
+			errs = append(errs, fmt.Sprintf("TLS cert file not found: %s", cfg.Proxy.TLS.CertPath))
+		}
+	}
+	if cfg.Proxy.TLS.KeyPath != "" {
+		if _, err := os.Stat(cfg.Proxy.TLS.KeyPath); err != nil {
+			errs = append(errs, fmt.Sprintf("TLS key file not found: %s", cfg.Proxy.TLS.KeyPath))
+		}
+	}
+	return errs
 }

@@ -20,6 +20,7 @@ type ReconcilerConfig struct {
 	LivenessPeriod  time.Duration
 }
 
+// DefaultReconcilerConfig returns the default reconciler settings.
 func DefaultReconcilerConfig() ReconcilerConfig {
 	return ReconcilerConfig{
 		Enabled:         true,
@@ -36,9 +37,7 @@ func (r *Runtime) RunReconciler(ctx context.Context, cfg ReconcilerConfig) {
 		return
 	}
 
-	r.reconcileWg.Add(1)
-	go func() {
-		defer r.reconcileWg.Done()
+	r.reconcileWg.Go(func() {
 		ticker := time.NewTicker(time.Duration(cfg.IntervalSeconds) * time.Second)
 		defer ticker.Stop()
 
@@ -50,12 +49,10 @@ func (r *Runtime) RunReconciler(ctx context.Context, cfg ReconcilerConfig) {
 				r.reconcile(ctx)
 			}
 		}
-	}()
+	})
 
 	if cfg.LivenessEnabled {
-		r.reconcileWg.Add(1)
-		go func() {
-			defer r.reconcileWg.Done()
+		r.reconcileWg.Go(func() {
 			ticker := time.NewTicker(cfg.LivenessPeriod)
 			defer ticker.Stop()
 
@@ -67,7 +64,7 @@ func (r *Runtime) RunReconciler(ctx context.Context, cfg ReconcilerConfig) {
 					r.checkLiveness(ctx)
 				}
 			}
-		}()
+		})
 	}
 }
 
@@ -153,19 +150,17 @@ func (r *Runtime) reconcile(ctx context.Context) {
 	}
 	// Retry failed apps with exponential backoff (1m, 2m, 4m, ..., max 30m)
 	for name, app := range r.apps {
-		if app.Status == AppStatusStartFailed || app.Status == AppStatusPullFailed {
-			retryCount := r.retryCount(name)
-			backoff := time.Duration(1<<retryCount) * time.Minute
-			if backoff > 30*time.Minute {
-				backoff = 30 * time.Minute
-			}
-			lastAttempt := r.retryLastAttempt(name)
-			if now.Sub(lastAttempt) >= backoff {
-				slog.Info("Reconciler: retrying failed app", "app", name, "attempt", retryCount+1)
-				r.setAppStatus(app, AppStatusPulling)
-				r.recordRetryAttempt(name)
-				toRestart = append(toRestart, name)
-			}
+		if app.Status != AppStatusStartFailed && app.Status != AppStatusPullFailed {
+			continue
+		}
+		retryCount := r.retryCount(name)
+		backoff := min(time.Duration(1<<retryCount)*time.Minute, 30*time.Minute)
+		lastAttempt := r.retryLastAttempt(name)
+		if now.Sub(lastAttempt) >= backoff {
+			slog.Info("Reconciler: retrying failed app", "app", name, "attempt", retryCount+1)
+			r.setAppStatus(app, AppStatusPulling)
+			r.recordRetryAttempt(name)
+			toRestart = append(toRestart, name)
 		}
 	}
 	r.mu.Unlock()

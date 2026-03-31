@@ -44,7 +44,7 @@ var (
 func JWTSecret() string {
 	jwtSecretOnce.Do(func() {
 		secretPath := filepath.Join(config.ConfDir(), "jwt-secret")
-		if data, err := os.ReadFile(secretPath); err == nil && len(data) > 0 {
+		if data, err := os.ReadFile(secretPath); err == nil && len(data) > 0 { //nolint:gosec // path from trusted confDir
 			jwtSecretVal = string(data)
 			return
 		}
@@ -55,8 +55,8 @@ func JWTSecret() string {
 			return
 		}
 		jwtSecretVal = base64.RawURLEncoding.EncodeToString(b)
-		os.MkdirAll(filepath.Dir(secretPath), 0o755)
-		fsutil.AtomicWriteFile(secretPath, []byte(jwtSecretVal), 0o600)
+		_ = os.MkdirAll(filepath.Dir(secretPath), 0o755)
+		_ = fsutil.AtomicWriteFile(secretPath, []byte(jwtSecretVal), 0o600)
 	})
 	return jwtSecretVal
 }
@@ -66,7 +66,7 @@ func JWTSecret() string {
 func OIDCSecret() string {
 	oidcSecretOnce.Do(func() {
 		secretPath := filepath.Join(config.ConfDir(), "oidc-secret")
-		if data, err := os.ReadFile(secretPath); err == nil && len(data) > 0 {
+		if data, err := os.ReadFile(secretPath); err == nil && len(data) > 0 { //nolint:gosec // path from trusted confDir
 			oidcSecretVal = string(data)
 			return
 		}
@@ -76,8 +76,8 @@ func OIDCSecret() string {
 			return
 		}
 		oidcSecretVal = fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
-		os.MkdirAll(filepath.Dir(secretPath), 0o755)
-		fsutil.AtomicWriteFile(secretPath, []byte(oidcSecretVal), 0o600)
+		_ = os.MkdirAll(filepath.Dir(secretPath), 0o755)
+		_ = fsutil.AtomicWriteFile(secretPath, []byte(oidcSecretVal), 0o600)
 	})
 	return oidcSecretVal
 }
@@ -94,6 +94,7 @@ type NsGenContext struct {
 	portsCounter    atomic.Int32
 }
 
+// NewNsGenContext creates a new generation context for the given config and bundle.
 func NewNsGenContext(cfg *NamespaceConfig, bun *bundle.BundleDef) *NsGenContext {
 	ctx := &NsGenContext{
 		Config:       cfg,
@@ -113,6 +114,7 @@ func (c *NsGenContext) NextPort() int {
 	return int(c.portsCounter.Add(1) - 1)
 }
 
+// GetOrCreateApp returns an existing AppBuilder or creates a new one for the given name.
 func (c *NsGenContext) GetOrCreateApp(name string) *AppBuilder {
 	if b, ok := c.Applications[name]; ok {
 		return b
@@ -214,26 +216,31 @@ type AppBuilder struct {
 	InitContainers    []appdef.InitContainerDef
 }
 
+// AddEnv sets an environment variable for the app.
 func (b *AppBuilder) AddEnv(key, value string) *AppBuilder {
 	b.Environments[key] = value
 	return b
 }
 
+// AddPort adds a port mapping to the app.
 func (b *AppBuilder) AddPort(port string) *AppBuilder {
 	b.Ports = append(b.Ports, port)
 	return b
 }
 
+// AddVolume adds a volume mount to the app.
 func (b *AppBuilder) AddVolume(volume string) *AppBuilder {
 	b.Volumes = append(b.Volumes, volume)
 	return b
 }
 
+// AddDependsOn adds a dependency on another app.
 func (b *AppBuilder) AddDependsOn(name string) *AppBuilder {
 	b.DependsOn[name] = true
 	return b
 }
 
+// Build converts the builder into an immutable ApplicationDef.
 func (b *AppBuilder) Build() appdef.ApplicationDef {
 	return appdef.ApplicationDef{
 		Name:              b.Name,

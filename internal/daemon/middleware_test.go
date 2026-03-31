@@ -19,7 +19,7 @@ func TestMTLSIdentityMiddleware_WithCert(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest("GET", "/api/v1/status", nil)
+	req := httptest.NewRequest("GET", "/api/v1/status", http.NoBody)
 	req.TLS = &tls.ConnectionState{
 		PeerCertificates: []*x509.Certificate{
 			{Subject: pkix.Name{CommonName: "admin-user"}},
@@ -41,7 +41,7 @@ func TestMTLSIdentityMiddleware_NoCert(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest("GET", "/api/v1/status", nil)
+	req := httptest.NewRequest("GET", "/api/v1/status", http.NoBody)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -55,7 +55,7 @@ func TestMTLSIdentityMiddleware_EmptyPeerCerts(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest("GET", "/api/v1/status", nil)
+	req := httptest.NewRequest("GET", "/api/v1/status", http.NoBody)
 	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{}}
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -97,7 +97,7 @@ func TestCORSMiddleware_RejectsOtherPort(t *testing.T) {
 	}), "127.0.0.1:7088")
 
 	// Same origin — no CORS header needed (browser same-origin)
-	req := httptest.NewRequest("GET", "/api/v1/status", nil)
+	req := httptest.NewRequest("GET", "/api/v1/status", http.NoBody)
 	req.Header.Set("Origin", "http://127.0.0.1:7088")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -106,7 +106,7 @@ func TestCORSMiddleware_RejectsOtherPort(t *testing.T) {
 	}
 
 	// Different port — should NOT get CORS header
-	req2 := httptest.NewRequest("GET", "/api/v1/status", nil)
+	req2 := httptest.NewRequest("GET", "/api/v1/status", http.NoBody)
 	req2.Header.Set("Origin", "http://localhost:3000")
 	rec2 := httptest.NewRecorder()
 	handler.ServeHTTP(rec2, req2)
@@ -115,7 +115,7 @@ func TestCORSMiddleware_RejectsOtherPort(t *testing.T) {
 	}
 
 	// Evil origin
-	req3 := httptest.NewRequest("GET", "/api/v1/status", nil)
+	req3 := httptest.NewRequest("GET", "/api/v1/status", http.NoBody)
 	req3.Header.Set("Origin", "http://localhost.evil.com:7088")
 	rec3 := httptest.NewRecorder()
 	handler.ServeHTTP(rec3, req3)
@@ -130,8 +130,8 @@ func TestRateLimitMiddleware(t *testing.T) {
 	}))
 
 	// First 2 requests should succeed (burst = rps)
-	for i := 0; i < 2; i++ {
-		req := httptest.NewRequest("GET", "/", nil)
+	for i := range 2 {
+		req := httptest.NewRequest("GET", "/", http.NoBody)
 		req.RemoteAddr = "192.168.1.1:12345"
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
@@ -141,7 +141,7 @@ func TestRateLimitMiddleware(t *testing.T) {
 	}
 
 	// Third request should be rate limited
-	req := httptest.NewRequest("GET", "/", nil)
+	req := httptest.NewRequest("GET", "/", http.NoBody)
 	req.RemoteAddr = "192.168.1.1:12345"
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -150,7 +150,7 @@ func TestRateLimitMiddleware(t *testing.T) {
 	}
 
 	// Different IP should not be limited
-	req2 := httptest.NewRequest("GET", "/", nil)
+	req2 := httptest.NewRequest("GET", "/", http.NoBody)
 	req2.RemoteAddr = "10.0.0.1:12345"
 	w2 := httptest.NewRecorder()
 	handler.ServeHTTP(w2, req2)

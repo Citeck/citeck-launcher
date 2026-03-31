@@ -36,7 +36,7 @@ type ActionContext struct {
 
 // Heartbeat resets the stall timer, signaling that the action is still making progress.
 // Call this from long-running executors (e.g. image pull with progress) to prevent
-// stall detection from cancelling the action.
+// stall detection from canceling the action.
 func (actx *ActionContext) Heartbeat() {
 	actx.startedAtNs.Store(time.Now().UnixNano())
 }
@@ -44,12 +44,13 @@ func (actx *ActionContext) Heartbeat() {
 // ActionStatus represents the lifecycle state of an action.
 type ActionStatus int32
 
+// Action lifecycle states.
 const (
 	StatusPending  ActionStatus = iota
 	StatusRunning
 	StatusDone
 	StatusFailed
-	StatusCancelled
+	StatusCanceled
 	StatusStalled
 )
 
@@ -63,8 +64,8 @@ func (s ActionStatus) String() string {
 		return "DONE"
 	case StatusFailed:
 		return "FAILED"
-	case StatusCancelled:
-		return "CANCELLED"
+	case StatusCanceled:
+		return "CANCELED"
 	case StatusStalled:
 		return "STALLED"
 	default:
@@ -101,7 +102,7 @@ func (h *ActionHandle) Wait(ctx context.Context) error {
 	case <-h.done:
 		return h.Err()
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("wait: %w", ctx.Err())
 	}
 }
 
@@ -222,11 +223,9 @@ func (s *Service) Execute(params ActionParams) *ActionHandle {
 	case s.queue <- entry:
 	default:
 		slog.Warn("Action queue full, running inline", "id", id)
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
+		s.wg.Go(func() {
 			s.runAction(entry)
-		}()
+		})
 	}
 
 	return handle
@@ -275,7 +274,7 @@ func (s *Service) watcher(svcCtx context.Context) {
 			return
 		case <-ticker.C:
 			now := time.Now()
-			s.active.Range(func(key, value any) bool {
+			s.active.Range(func(_, value any) bool {
 				entry := value.(*actionEntry)
 				handle := entry.handle
 				ns := entry.actx.startedAtNs.Load()
@@ -310,7 +309,7 @@ func (s *Service) runAction(entry *actionEntry) {
 		// Check action-level cancellation
 		select {
 		case <-ctx.Done():
-			s.finishCancelled(handle)
+			s.finishCanceled(handle)
 			return
 		default:
 		}
@@ -330,9 +329,9 @@ func (s *Service) runAction(entry *actionEntry) {
 
 		slog.Warn("Action failed", "id", actx.ID, "name", name, "attempt", actx.Attempt, "err", err)
 
-		// If context was cancelled (by Cancel() or stalled watcher), don't retry
+		// If context was canceled (by Cancel() or stalled watcher), don't retry
 		if ctx.Err() != nil {
-			s.finishCancelled(handle)
+			s.finishCanceled(handle)
 			return
 		}
 
@@ -348,7 +347,7 @@ func (s *Service) runAction(entry *actionEntry) {
 
 		select {
 		case <-ctx.Done():
-			s.finishCancelled(handle)
+			s.finishCanceled(handle)
 			return
 		case <-time.After(delay):
 			// continue to next attempt
@@ -356,10 +355,10 @@ func (s *Service) runAction(entry *actionEntry) {
 	}
 }
 
-// finishCancelled sets the final status for a cancelled action.
+// finishCanceled sets the final status for a canceled action.
 // If the watcher already marked it Stalled, that status is preserved.
-func (s *Service) finishCancelled(handle *ActionHandle) {
+func (s *Service) finishCanceled(handle *ActionHandle) {
 	if handle.Status() != StatusStalled {
-		handle.setStatus(StatusCancelled)
+		handle.setStatus(StatusCanceled)
 	}
 }

@@ -46,7 +46,7 @@ func TestImportExportJSON_SyntheticData(t *testing.T) {
 				"ns-abc": base64.StdEncoding.EncodeToString(nsJSON),
 			},
 			"secrets!data": {
-				"storage": "dGVzdC1ibG9i", // base64("test-blob")
+				"storage": "dGVzdC1ibG9i", // encodes "test-blob"
 			},
 			"launcher!state": {
 				"selectedWorkspace": base64.StdEncoding.EncodeToString([]byte(`"ws-001"`)),

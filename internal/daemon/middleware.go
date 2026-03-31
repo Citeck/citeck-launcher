@@ -327,7 +327,9 @@ type histogramData struct {
 	sum     atomic.Int64 // sum in microseconds (avoids float atomics)
 }
 
-func init() {
+// validateHistogramBuckets panics if the bucket count constant drifts from the actual slice length.
+// Called once from metricsCollector initialization.
+func validateHistogramBuckets() {
 	if len(histogramBuckets) != numHistogramBuckets {
 		panic("histogramBuckets length mismatch with numHistogramBuckets")
 	}
@@ -340,9 +342,14 @@ type metricsCollector struct {
 	histograms map[histogramKey]*histogramData
 }
 
-var httpMetrics = &metricsCollector{
-	counters:   make(map[metricsKey]*atomic.Int64),
-	histograms: make(map[histogramKey]*histogramData),
+var httpMetrics = newMetricsCollector()
+
+func newMetricsCollector() *metricsCollector {
+	validateHistogramBuckets()
+	return &metricsCollector{
+		counters:   make(map[metricsKey]*atomic.Int64),
+		histograms: make(map[histogramKey]*histogramData),
+	}
 }
 
 func (mc *metricsCollector) record(method, path string, status int, duration time.Duration) {

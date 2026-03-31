@@ -113,6 +113,7 @@ func (d *Daemon) handleStopNamespace(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "Namespace stop requested"})
 }
 
+//nolint:nestif // reload orchestrates config read, git pull, bundle resolution, ACME cert obtainment, and runtime regeneration
 func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 	if !d.reloadMu.TryLock() {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeReloadInProgress, "reload already in progress")
@@ -187,7 +188,7 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 	// Write generated files atomically (prevent partial writes on crash)
 	for filePath, content := range genResp.Files {
 		destPath := filepath.Join(d.volumesBase, filePath)
-		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil { //nolint:gosec // generated file dirs need 0o755 for container access
 			slog.Error("Failed to create dir for generated file", "path", destPath, "err", err)
 			continue
 		}
@@ -483,7 +484,7 @@ func (d *Daemon) handleAppExec(w http.ResponseWriter, r *http.Request) {
 
 func (d *Daemon) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	cfgPath := d.activeConfigPath()
-	data, err := os.ReadFile(cfgPath)
+	data, err := os.ReadFile(cfgPath) //nolint:gosec // path is constructed from daemon-internal config, not user input
 	if err != nil {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("config file not found: %s", cfgPath))
 		return
@@ -574,7 +575,7 @@ func (d *Daemon) handleDaemonLogs(w http.ResponseWriter, r *http.Request) {
 
 	// Read at most last 2MB of the file to avoid OOM on large logs
 	const maxReadSize = 2 * 1024 * 1024
-	f, err := os.Open(logPath)
+	f, err := os.Open(logPath) //nolint:gosec // path is from config.DaemonLogPath(), not user input
 	if err != nil {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("daemon log not found: %s", logPath))
 		return
@@ -588,8 +589,8 @@ func (d *Daemon) handleDaemonLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	readSize := stat.Size()
 	if readSize > maxReadSize {
-		if _, err := f.Seek(-maxReadSize, io.SeekEnd); err != nil {
-			writeInternalError(w, err)
+		if _, seekErr := f.Seek(-maxReadSize, io.SeekEnd); seekErr != nil {
+			writeInternalError(w, seekErr)
 			return
 		}
 		readSize = maxReadSize
@@ -652,13 +653,13 @@ func (d *Daemon) handleDaemonLogs(w http.ResponseWriter, r *http.Request) {
 				f2.Close()
 				continue
 			}
-			if _, err := f2.Seek(offset, io.SeekStart); err != nil {
+			if _, seekErr := f2.Seek(offset, io.SeekStart); seekErr != nil {
 				f2.Close()
 				return
 			}
-			chunk, err := io.ReadAll(io.LimitReader(f2, newSize-offset))
+			chunk, readErr := io.ReadAll(io.LimitReader(f2, newSize-offset))
 			f2.Close()
-			if err != nil || len(chunk) == 0 {
+			if readErr != nil || len(chunk) == 0 {
 				continue
 			}
 			offset = newSize
@@ -1090,6 +1091,7 @@ func (d *Daemon) handleAppLockToggle(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("App %s lock=%v", name, body.Locked)})
 }
 
+//nolint:nestif // health aggregation checks multiple subsystems with per-app status roll-up
 func (d *Daemon) handleHealth(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()

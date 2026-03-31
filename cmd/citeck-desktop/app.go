@@ -41,7 +41,7 @@ func dumpSystemInfo(socketPath string) {
 		return
 	}
 
-	f, err := os.Create(zipPath)
+	f, err := os.Create(zipPath) //nolint:gosec // path is constructed from homeDir + timestamp, not user input
 	if err != nil {
 		slog.Error("Failed to create dump file", "path", zipPath, "err", err)
 		return

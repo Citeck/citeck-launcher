@@ -6,8 +6,10 @@ import (
 	"os"
 )
 
+// Format controls the output mode (text or JSON).
 type Format string
 
+// FormatText and FormatJSON are the supported output formats.
 const (
 	FormatText Format = "text"
 	FormatJSON Format = "json"
@@ -15,6 +17,7 @@ const (
 
 var currentFormat = FormatText
 
+// SetFormat sets the global output format. JSON mode disables colors.
 func SetFormat(f Format) {
 	currentFormat = f
 	if f == FormatJSON {
@@ -22,10 +25,12 @@ func SetFormat(f Format) {
 	}
 }
 
+// GetFormat returns the current output format.
 func GetFormat() Format {
 	return currentFormat
 }
 
+// IsJSON returns true if the current output format is JSON.
 func IsJSON() bool {
 	return currentFormat == FormatJSON
 }

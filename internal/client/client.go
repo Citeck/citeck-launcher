@@ -14,14 +14,15 @@ import (
 	"github.com/citeck/citeck-launcher/internal/api"
 )
 
+// DaemonClient communicates with a running Citeck daemon over Unix socket or TCP.
 type DaemonClient struct {
 	httpClient   *http.Client
 	streamClient *http.Client // no timeout, for streaming (log follow, SSE)
 	baseURL      string
 }
 
-// ClientOptions holds options for creating a DaemonClient.
-type ClientOptions struct {
+// Options holds options for creating a DaemonClient.
+type Options struct {
 	Host       string
 	TLSCert    string
 	TLSKey     string
@@ -30,7 +31,7 @@ type ClientOptions struct {
 }
 
 // New creates a client; returns error if daemon is not reachable or TLS config is invalid.
-func New(opts ClientOptions) (*DaemonClient, error) {
+func New(opts Options) (*DaemonClient, error) {
 	tc, err := DetectTransport(opts.Host, opts.TLSCert, opts.TLSKey, opts.ServerCert, opts.Insecure)
 	if err != nil {
 		return nil, err
@@ -49,7 +50,7 @@ func New(opts ClientOptions) (*DaemonClient, error) {
 }
 
 // TryNew creates a client; returns nil if daemon is not reachable.
-func TryNew(opts ClientOptions) *DaemonClient {
+func TryNew(opts Options) *DaemonClient {
 	c, err := New(opts)
 	if err != nil {
 		return nil
@@ -86,7 +87,7 @@ func (c *DaemonClient) getRaw(path string) (string, error) {
 	return string(body), nil
 }
 
-func (c *DaemonClient) post(path string, body any, result any) error {
+func (c *DaemonClient) post(path string, body, result any) error {
 	resp, err := c.doRequest(http.MethodPost, path, body)
 	if err != nil {
 		return err
@@ -202,8 +203,8 @@ func (c *DaemonClient) GetAppLogs(name string, tail int, since, until string, ti
 // StreamAppLogs returns a streaming reader for container logs (follow mode).
 // The caller must close the returned ReadCloser.
 func (c *DaemonClient) StreamAppLogs(name string, tail int) (io.ReadCloser, error) {
-	url := c.baseURL + fmt.Sprintf("%s?tail=%d&follow=true", api.AppLogs(name), tail)
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	logsURL := c.baseURL + fmt.Sprintf("%s?tail=%d&follow=true", api.AppLogs(name), tail)
+	req, err := http.NewRequest(http.MethodGet, logsURL, http.NoBody)
 	if err != nil {
 		return nil, err
 	}
@@ -214,7 +215,7 @@ func (c *DaemonClient) StreamAppLogs(name string, tail int) (io.ReadCloser, erro
 	}
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
 	return resp.Body, nil
@@ -288,9 +289,9 @@ func (c *DaemonClient) PutConfig(yamlData []byte) (*api.ActionResultDto, error) 
 }
 
 // StreamEvents opens an SSE connection to the daemon and sends events to the channel.
-// Blocks until the context is cancelled. The channel is closed when the function returns.
+// Blocks until the context is canceled. The channel is closed when the function returns.
 func (c *DaemonClient) StreamEvents(ctx context.Context) (<-chan api.EventDto, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+api.Events, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+api.Events, http.NoBody)
 	if err != nil {
 		return nil, err
 	}
@@ -302,7 +303,7 @@ func (c *DaemonClient) StreamEvents(ctx context.Context) (<-chan api.EventDto, e
 		return nil, fmt.Errorf("connect to event stream: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, fmt.Errorf("event stream: HTTP %d", resp.StatusCode)
 	}
 
@@ -327,7 +328,7 @@ func (c *DaemonClient) StreamEvents(ctx context.Context) (<-chan api.EventDto, e
 					buf = buf[idx+2:]
 
 					// Extract "data: ..." line
-					for _, line := range strings.Split(msg, "\n") {
+					for line := range strings.SplitSeq(msg, "\n") {
 						if strings.HasPrefix(line, "data: ") {
 							payload := line[6:]
 							var evt api.EventDto

@@ -24,6 +24,7 @@ import (
 // NsRuntimeStatus represents namespace lifecycle states.
 type NsRuntimeStatus string
 
+// Namespace lifecycle states.
 const (
 	NsStatusStopped  NsRuntimeStatus = "STOPPED"
 	NsStatusStarting NsRuntimeStatus = "STARTING"
@@ -35,6 +36,7 @@ const (
 // AppRuntimeStatus represents per-app lifecycle states.
 type AppRuntimeStatus string
 
+// Per-app lifecycle states.
 const (
 	AppStatusReadyToPull    AppRuntimeStatus = "READY_TO_PULL"
 	AppStatusPulling        AppRuntimeStatus = "PULLING"
@@ -100,7 +102,7 @@ type Runtime struct {
 	defaultStopTimeout int                // from daemon.yml docker.stopTimeout; 0 = use hardcoded default (10s)
 	shutdownOnce       sync.Once
 	statsRunning       atomic.Bool        // guards against overlapping updateStats goroutines
-	runCtx          context.Context    // set by doStart, cancelled by doStop
+	runCtx          context.Context    // set by doStart, canceled by doStop
 	cancel          context.CancelFunc
 	wg              sync.WaitGroup
 	appWg           sync.WaitGroup     // tracks only app start/restart goroutines (not runLoop)
@@ -318,6 +320,7 @@ func NewRuntimeWithActions(cfg *NamespaceConfig, dockerClient docker.RuntimeClie
 	return r
 }
 
+// SetEventCallback registers a callback for namespace and app state change events.
 func (r *Runtime) SetEventCallback(cb EventCallback) {
 	r.eventCb.Store(&cb)
 }
@@ -340,12 +343,14 @@ func (r *Runtime) dispatchLoop() {
 	}
 }
 
+// Status returns the current namespace lifecycle status.
 func (r *Runtime) Status() NsRuntimeStatus {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.status
 }
 
+// Apps returns a snapshot of all app states.
 func (r *Runtime) Apps() []*AppRuntime {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -370,6 +375,7 @@ func (r *Runtime) FindApp(name string) *AppRuntime {
 	return &cp
 }
 
+// ToNamespaceDto converts the runtime state to an API DTO.
 func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -460,6 +466,7 @@ func (r *Runtime) proxyBaseURL() string {
 	return BuildProxyBaseURL(r.config.Proxy)
 }
 
+// Start begins the namespace lifecycle with the given app definitions.
 func (r *Runtime) Start(apps []appdef.ApplicationDef) {
 	if !r.running.CompareAndSwap(false, true) {
 		slog.Warn("Runtime already running, ignoring Start()")
@@ -474,6 +481,7 @@ func (r *Runtime) Start(apps []appdef.ApplicationDef) {
 	}
 }
 
+// Stop signals the runtime to begin shutting down.
 func (r *Runtime) Stop() {
 	select {
 	case r.stopCh <- struct{}{}:
@@ -606,13 +614,14 @@ func (r *Runtime) RetryPullFailedApps() int {
 	}
 	var retried int
 	for _, app := range r.apps {
-		if app.Status == AppStatusPullFailed {
-			r.setAppStatus(app, AppStatusPulling)
-			r.resetRetry(app.Name)
-			r.appWg.Add(1)
-			go r.pullAndStartApp(ctx, app.Name)
-			retried++
+		if app.Status != AppStatusPullFailed {
+			continue
 		}
+		r.setAppStatus(app, AppStatusPulling)
+		r.resetRetry(app.Name)
+		r.appWg.Add(1)
+		go r.pullAndStartApp(ctx, app.Name)
+		retried++
 	}
 	r.mu.Unlock()
 	return retried
@@ -631,7 +640,7 @@ func (r *Runtime) RestartApp(appName string) error {
 	r.mu.Unlock()
 
 	// Use a fresh timeout context for the Docker stop — not runCtx which gets
-	// cancelled on shutdown (would abort the stop mid-way).
+	// canceled on shutdown (would abort the stop mid-way).
 	r.mu.RLock()
 	running := r.runCtx != nil
 	r.mu.RUnlock()
@@ -804,7 +813,7 @@ func (r *Runtime) runLoop() {
 	}
 }
 
-func (r *Runtime) doStart(apps []appdef.ApplicationDef) {
+func (r *Runtime) doStart(apps []appdef.ApplicationDef) { //nolint:gocyclo // orchestration with 3-phase lock pattern
 	ctx, cancel := context.WithCancel(context.Background())
 
 	r.mu.Lock()
@@ -903,26 +912,27 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) {
 
 	// Verify reused containers are actually running (fast Docker inspect + health probe)
 	for i, p := range plans {
-		if p.reuse {
-			inspCtx, inspCancel := context.WithTimeout(ctx, 5*time.Second)
-			info, err := r.docker.InspectContainer(inspCtx, p.containerID)
-			inspCancel()
-			if err != nil || info.State == nil || info.State.Status != "running" {
-				slog.Warn("Reused container not running, will recreate", "app", p.def.Name)
+		if !p.reuse {
+			continue
+		}
+		inspCtx, inspCancel := context.WithTimeout(ctx, 5*time.Second)
+		info, err := r.docker.InspectContainer(inspCtx, p.containerID)
+		inspCancel()
+		if err != nil || info.State == nil || info.State.Status != "running" {
+			slog.Warn("Reused container not running, will recreate", "app", p.def.Name)
+			plans[i].reuse = false
+			plans[i].containerID = ""
+			continue
+		}
+		// Run health probe on reused container to detect crashed apps
+		if p.def.LivenessProbe != nil {
+			probeCtx, probeCancel := context.WithTimeout(ctx, 10*time.Second)
+			alive := r.runLivenessProbe(probeCtx, p.containerID, p.def.LivenessProbe)
+			probeCancel()
+			if !alive {
+				slog.Warn("Reused container health probe failed, will recreate", "app", p.def.Name)
 				plans[i].reuse = false
 				plans[i].containerID = ""
-				continue
-			}
-			// Run health probe on reused container to detect crashed apps
-			if p.def.LivenessProbe != nil {
-				probeCtx, probeCancel := context.WithTimeout(ctx, 10*time.Second)
-				alive := r.runLivenessProbe(probeCtx, p.containerID, p.def.LivenessProbe)
-				probeCancel()
-				if !alive {
-					slog.Warn("Reused container health probe failed, will recreate", "app", p.def.Name)
-					plans[i].reuse = false
-					plans[i].containerID = ""
-				}
 			}
 		}
 	}
@@ -981,7 +991,7 @@ func (r *Runtime) pullAndStartApp(ctx context.Context, appName string) {
 	// Pull image via action service — pull policy:
 	// THIRD_PARTY: never re-pull (stable images)
 	// Other apps: only re-pull if image tag contains "snapshot" (case-insensitive)
-	if appDef.Image != "" {
+	if appDef.Image != "" { //nolint:nestif // pull + semaphore + progress nesting is inherent
 		// Pull image under semaphore (max concurrent pulls)
 		pullErr := func() error {
 			select {
@@ -997,7 +1007,7 @@ func (r *Runtime) pullAndStartApp(ctx context.Context, appName string) {
 				auth = r.registryAuthFn(appDef.Image)
 			}
 			var lastProgressReport time.Time
-			progressFn := func(currentMB, totalMB float64, pct int) {
+			progressFn := func(_, totalMB float64, pct int) {
 				now := time.Now()
 				if now.Sub(lastProgressReport) < time.Second {
 					return
@@ -1016,7 +1026,7 @@ func (r *Runtime) pullAndStartApp(ctx context.Context, appName string) {
 
 		if pullErr != nil {
 			if ctx.Err() != nil {
-				return // cancelled by shutdown — not a failure
+				return // canceled by shutdown — not a failure
 			}
 			r.mu.Lock()
 			r.setAppStatus(app, AppStatusPullFailed)
@@ -1039,7 +1049,7 @@ func (r *Runtime) pullAndStartApp(ctx context.Context, appName string) {
 
 	// Wait for dependencies
 	if !r.waitForDeps(ctx, appName) {
-		return // context cancelled (shutdown)
+		return // context canceled (shutdown)
 	}
 
 	r.mu.Lock()
@@ -1194,7 +1204,7 @@ func (r *Runtime) runInitContainers(ctx context.Context, appName string, appDef 
 	return nil
 }
 
-func (r *Runtime) waitForStartup(ctx context.Context, appName, containerID string, conditions []appdef.StartupCondition) error {
+func (r *Runtime) waitForStartup(ctx context.Context, _, containerID string, conditions []appdef.StartupCondition) error {
 	for _, cond := range conditions {
 		if cond.Log != nil {
 			if err := r.waitForLogPattern(ctx, containerID, cond.Log); err != nil {
@@ -1579,7 +1589,7 @@ func httpProbeCheck(ctx context.Context, port int, path string, timeoutSec int) 
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(probeCtx, "GET", fmt.Sprintf("http://127.0.0.1:%d%s", port, path), nil)
+	req, err := http.NewRequestWithContext(probeCtx, "GET", fmt.Sprintf("http://127.0.0.1:%d%s", port, path), http.NoBody)
 	if err != nil {
 		return false
 	}

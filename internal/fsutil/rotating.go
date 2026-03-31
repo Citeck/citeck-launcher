@@ -30,7 +30,7 @@ func NewRotatingWriter(path string, maxBytes int64, maxFiles int) *RotatingWrite
 }
 
 func (rw *RotatingWriter) openOrCreate() {
-	f, err := os.OpenFile(rw.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(rw.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644) //nolint:gosec // G302: log files need 0o644 for readability by monitoring tools
 	if err != nil {
 		return
 	}
@@ -56,7 +56,7 @@ func (rw *RotatingWriter) Write(p []byte) (int, error) {
 	rw.writeCount++
 	if rw.writeCount%staleCheckInterval == 0 {
 		if _, err := os.Stat(rw.path); os.IsNotExist(err) {
-			rw.file.Close()
+			_ = rw.file.Close()
 			rw.file = nil
 			rw.openOrCreate()
 			if rw.file == nil {
@@ -86,16 +86,16 @@ func (rw *RotatingWriter) Close() error {
 
 func (rw *RotatingWriter) rotate() {
 	if rw.file != nil {
-		rw.file.Close()
+		_ = rw.file.Close()
 		rw.file = nil
 	}
 	// Delete oldest file, then shift: .2 → .3, .1 → .2, current → .1
-	os.Remove(fmt.Sprintf("%s.%d", rw.path, rw.maxFiles))
+	_ = os.Remove(fmt.Sprintf("%s.%d", rw.path, rw.maxFiles))
 	for i := rw.maxFiles - 1; i >= 1; i-- {
 		src := fmt.Sprintf("%s.%d", rw.path, i)
 		dst := fmt.Sprintf("%s.%d", rw.path, i+1)
-		os.Rename(src, dst)
+		_ = os.Rename(src, dst)
 	}
-	os.Rename(rw.path, rw.path+".1")
+	_ = os.Rename(rw.path, rw.path+".1")
 	rw.openOrCreate()
 }

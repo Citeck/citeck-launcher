@@ -29,18 +29,16 @@ func newValidateCmd() *cobra.Command {
 				nsPath = config.ResolveNamespaceConfigPath("daemon", "default")
 			}
 
-			if _, err := os.Stat(nsPath); err != nil {
-				if os.IsNotExist(err) {
-					output.PrintText("namespace config not found: %s", nsPath)
-					hasErrors = true
-				} else {
-					return fmt.Errorf("stat %s: %w", nsPath, err)
-				}
-			} else {
-				_, err := namespace.LoadNamespaceConfig(nsPath)
-				if err != nil {
+			switch _, err := os.Stat(nsPath); {
+			case err != nil && os.IsNotExist(err):
+				output.PrintText("namespace config not found: %s", nsPath)
+				hasErrors = true
+			case err != nil:
+				return fmt.Errorf("stat %s: %w", nsPath, err)
+			default:
+				if _, loadErr := namespace.LoadNamespaceConfig(nsPath); loadErr != nil {
 					output.PrintText("namespace config INVALID: %s", nsPath)
-					output.PrintText("  %v", err)
+					output.PrintText("  %v", loadErr)
 					hasErrors = true
 				} else {
 					output.PrintText("namespace config OK: %s", nsPath)

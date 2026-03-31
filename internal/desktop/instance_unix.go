@@ -23,7 +23,7 @@ func AcquireInstanceLock() (*instanceLock, error) {
 		return nil, fmt.Errorf("create run dir: %w", err)
 	}
 
-	f, err := os.OpenFile(pidPath, os.O_CREATE|os.O_RDWR, 0o644)
+	f, err := os.OpenFile(pidPath, os.O_CREATE|os.O_RDWR, 0o600) //nolint:gosec // lock file only needs owner access
 	if err != nil {
 		return nil, fmt.Errorf("open pid file: %w", err)
 	}

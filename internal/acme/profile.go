@@ -113,7 +113,7 @@ func authorizeOrderWithProfile(ctx context.Context, client *goacme.Client, ids [
 
 // fetchNonce gets a fresh nonce from the ACME server.
 func fetchNonce(nonceURL string) (string, error) {
-	resp, err := http.Head(nonceURL)
+	resp, err := http.Head(nonceURL) //nolint:gosec // nonceURL comes from ACME directory discovery, not user input
 	if err != nil {
 		return "", err
 	}

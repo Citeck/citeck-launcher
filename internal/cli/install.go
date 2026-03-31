@@ -30,7 +30,7 @@ func newInstallCmd() *cobra.Command {
 	}
 }
 
-func runInstall(cmd *cobra.Command, args []string) error {
+func runInstall(cmd *cobra.Command, args []string) error { //nolint:gocyclo // interactive wizard with sequential steps
 	scanner := bufio.NewScanner(os.Stdin)
 
 	// Check Docker is available
@@ -42,7 +42,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 
 	// Check if namespace.yml already exists — skip config prompts
 	nsCfgPath := config.NamespaceConfigPath()
-	if _, err := os.Stat(nsCfgPath); err == nil {
+	if _, statErr := os.Stat(nsCfgPath); statErr == nil {
 		output.PrintText("Namespace config already exists: %s", nsCfgPath)
 		output.PrintText("Skipping config prompts. Use 'citeck config edit' to modify.")
 		setupSystemd(scanner)
@@ -121,8 +121,8 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		os.MkdirAll(tlsDir, 0o755)
 		certPath := filepath.Join(tlsDir, "server.crt")
 		keyPath := filepath.Join(tlsDir, "server.key")
-		if err := tlsutil.GenerateSelfSignedCert(certPath, keyPath, []string{host}, 365); err != nil {
-			return fmt.Errorf("generate self-signed cert: %w", err)
+		if certErr := tlsutil.GenerateSelfSignedCert(certPath, keyPath, []string{host}, 365); certErr != nil {
+			return fmt.Errorf("generate self-signed cert: %w", certErr)
 		}
 		nsCfg.Proxy.TLS.CertPath = certPath
 		nsCfg.Proxy.TLS.KeyPath = keyPath
@@ -135,10 +135,10 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		nsCfg.Proxy.TLS.Enabled = true
 		nsCfg.Proxy.TLS.CertPath = prompt(scanner, "Certificate file path", "")
 		nsCfg.Proxy.TLS.KeyPath = prompt(scanner, "Private key file path", "")
-		if _, err := os.Stat(nsCfg.Proxy.TLS.CertPath); err != nil {
+		if _, certStatErr := os.Stat(nsCfg.Proxy.TLS.CertPath); certStatErr != nil {
 			return fmt.Errorf("certificate file not found: %s", nsCfg.Proxy.TLS.CertPath)
 		}
-		if _, err := os.Stat(nsCfg.Proxy.TLS.KeyPath); err != nil {
+		if _, keyStatErr := os.Stat(nsCfg.Proxy.TLS.KeyPath); keyStatErr != nil {
 			return fmt.Errorf("key file not found: %s", nsCfg.Proxy.TLS.KeyPath)
 		}
 	}

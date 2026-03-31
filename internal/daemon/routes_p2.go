@@ -35,7 +35,7 @@ var safeIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 
 // validateID checks that an ID is safe for use in file paths and SQL queries.
 func validateID(id string) bool {
-	return len(id) > 0 && len(id) <= 128 && safeIDPattern.MatchString(id) &&
+	return id != "" && len(id) <= 128 && safeIDPattern.MatchString(id) &&
 		!strings.Contains(id, "..") && !strings.ContainsAny(id, "/\\")
 }
 
@@ -59,6 +59,7 @@ func sanitizeName(name string) string {
 
 // --- Namespace list ---
 
+//nolint:nestif // listing namespaces requires mode-specific branching with active-namespace status overlay
 func (d *Daemon) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
 	var result []api.NamespaceSummaryDto
 
@@ -203,6 +204,7 @@ func (d *Daemon) handleGetForm(w http.ResponseWriter, r *http.Request) {
 
 // --- Namespace creation + Bundles ---
 
+//nolint:gocyclo,nestif // namespace creation orchestrates validation, template resolution, config generation, and async snapshot import
 func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	var req api.NamespaceCreateDto
 	if err := readJSON(r, &req); err != nil {
@@ -248,7 +250,7 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	if wsCfg != nil {
 		for _, tmpl := range wsCfg.NamespaceTemplates {
 			if tmpl.ID == templateID {
-				// Apply template config as base by marshalling to YAML and re-parsing
+				// Apply template config as base by marshaling to YAML and re-parsing
 				if len(tmpl.Config) > 0 {
 					if tmplData, err := yaml.Marshal(tmpl.Config); err == nil {
 						yaml.Unmarshal(tmplData, &nsCfg)
@@ -314,8 +316,8 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		nsDir := config.NamespaceDir(wsID, nsCfg.ID)
-		if err := os.MkdirAll(nsDir, 0o755); err != nil {
-			writeInternalError(w, err)
+		if mkdirErr := os.MkdirAll(nsDir, 0o755); mkdirErr != nil { //nolint:gosec // namespace dirs need 0o755 for container access
+			writeInternalError(w, mkdirErr)
 			return
 		}
 		configPath = config.WorkspaceNamespaceConfigPath(wsID, nsCfg.ID)
@@ -324,7 +326,7 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Atomic existence check — O_EXCL fails if file already exists (no TOCTOU race)
-	excl, err := os.OpenFile(configPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	excl, err := os.OpenFile(configPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644) //nolint:gosec // config files need 0o644 for readability
 	if err != nil {
 		if os.IsExist(err) {
 			writeErrorCode(w, http.StatusConflict, api.ErrCodeNamespaceExists,
@@ -348,11 +350,9 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		if wsID == "" {
 			wsID = d.workspaceID
 		}
-		d.bgWg.Add(1)
-		go func() {
-			defer d.bgWg.Done()
+		d.bgWg.Go(func() {
 			d.downloadAndImportSnapshot(req.Snapshot, wsID, nsCfg.ID)
-		}()
+		})
 	}
 
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("namespace %q created", nsCfg.Name)})
@@ -761,6 +761,7 @@ func (d *Daemon) handleGetDiagnostics(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, api.DiagnosticsDto{Checks: checks})
 }
 
+//nolint:nestif // fix logic requires checking socket state with nested error handling
 func (d *Daemon) handleDiagnosticsFix(w http.ResponseWriter, _ *http.Request) {
 	fixed := 0
 	failed := 0
@@ -818,7 +819,7 @@ func (d *Daemon) handleListSnapshots(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 
-	var result []api.SnapshotDto
+	result := make([]api.SnapshotDto, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".zip") {
 			continue
@@ -832,9 +833,6 @@ func (d *Daemon) handleListSnapshots(w http.ResponseWriter, _ *http.Request) {
 			CreatedAt: info.ModTime().Format(time.RFC3339),
 			Size:      info.Size(),
 		})
-	}
-	if result == nil {
-		result = []api.SnapshotDto{}
 	}
 	writeJSON(w, result)
 }
@@ -862,7 +860,7 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // snapshot dirs need 0o755 for container access
 		d.snapshotMu.Unlock()
 		writeInternalError(w, err)
 		return
@@ -881,11 +879,9 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 	outputPath := filepath.Join(dir, fileName)
 
 	nsID := d.activeNsID()
-	d.bgWg.Add(1)
 	// Lock ownership transferred to goroutine — unlocked when export completes
-	go func() {
+	d.bgWg.Go(func() {
 		defer d.snapshotMu.Unlock()
-		defer d.bgWg.Done()
 		d.broadcastEvent(api.EventDto{
 			Type: "snapshot_export", Timestamp: time.Now().UnixMilli(),
 			NamespaceID: nsID, After: fmt.Sprintf("exporting to %s", fileName),
@@ -903,7 +899,7 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 			Type: "snapshot_complete", Timestamp: time.Now().UnixMilli(),
 			NamespaceID: nsID, After: fmt.Sprintf("exported %d volumes to %s", len(meta.Volumes), fileName),
 		})
-	}()
+	})
 
 	writeJSON(w, api.ActionResultDto{
 		Success: true,
@@ -911,6 +907,7 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+//nolint:nestif // import handles both file upload and named snapshot paths with manual lock management
 func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 	// Limit upload body to 2GB to prevent unbounded memory/disk usage
 	r.Body = http.MaxBytesReader(w, r.Body, 2<<30)
@@ -992,10 +989,8 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 	// Launch import in background and return 202 immediately.
 	// Lock ownership transferred to goroutine.
 	importPath := zipPath
-	d.bgWg.Add(1)
-	go func() {
+	d.bgWg.Go(func() {
 		defer d.snapshotMu.Unlock()
-		defer d.bgWg.Done()
 		if tmpPath != "" {
 			defer os.Remove(tmpPath)
 		}
@@ -1011,7 +1006,7 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 		d.broadcastEvent(api.EventDto{
 			Type: "snapshot_import", After: "completed",
 		})
-	}()
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
@@ -1043,7 +1038,7 @@ func (d *Daemon) handleDownloadSnapshot(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // snapshot dirs need 0o755 for container access
 		writeInternalError(w, err)
 		return
 	}
@@ -1071,9 +1066,7 @@ func (d *Daemon) handleDownloadSnapshot(w http.ResponseWriter, r *http.Request) 
 
 	// Run download in background, report via SSE events
 	nsID := d.activeNsID()
-	d.bgWg.Add(1)
-	go func() {
-		defer d.bgWg.Done()
+	d.bgWg.Go(func() {
 		d.broadcastEvent(api.EventDto{
 			Type: "snapshot_download", Timestamp: time.Now().UnixMilli(),
 			NamespaceID: nsID, After: fmt.Sprintf("downloading %s", fileName),
@@ -1090,7 +1083,7 @@ func (d *Daemon) handleDownloadSnapshot(w http.ResponseWriter, r *http.Request) 
 			Type: "snapshot_complete", Timestamp: time.Now().UnixMilli(),
 			NamespaceID: nsID, After: fmt.Sprintf("downloaded %s", fileName),
 		})
-	}()
+	})
 
 	writeJSON(w, api.ActionResultDto{
 		Success: true,
@@ -1115,6 +1108,7 @@ func safeSnapshotFileName(rawURL string) string {
 }
 
 // downloadAndImportSnapshot downloads a snapshot in the background and imports it into the namespace.
+//nolint:nestif // download+import orchestration requires nested SHA256 verification and retry logic
 func (d *Daemon) downloadAndImportSnapshot(snapshotID, wsID, nsID string) {
 	d.configMu.RLock()
 	wsCfg := d.workspaceConfig
@@ -1133,7 +1127,7 @@ func (d *Daemon) downloadAndImportSnapshot(snapshotID, wsID, nsID string) {
 	// Use the new namespace's volumes base, not the active namespace
 	volumesBase := config.ResolveVolumesBase(wsID, nsID)
 	dir := filepath.Join(volumesBase, "snapshots")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // snapshot dirs need 0o755 for container access
 		slog.Error("Create snapshots dir", "err", err)
 		return
 	}

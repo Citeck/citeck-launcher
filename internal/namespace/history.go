@@ -38,6 +38,7 @@ const maxHistoryEntries = 1000
 const truncateToEntries = 500
 const rotateCheckInterval = 100 // check file size every N writes
 
+// NewOperationHistory creates a new operation history writer in the given log directory.
 func NewOperationHistory(logDir string) *OperationHistory {
 	return &OperationHistory{
 		path: filepath.Join(logDir, "operations.jsonl"),
@@ -50,6 +51,7 @@ type RecordOpts struct {
 	ClientCN  string
 }
 
+// Record appends an operation entry to the history log file.
 func (h *OperationHistory) Record(op, app, result string, duration time.Duration, err error, appCount int, opts ...RecordOpts) {
 	rec := OperationRecord{
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -73,7 +75,7 @@ func (h *OperationHistory) Record(op, app, result string, duration time.Duration
 		return
 	}
 
-	f, fileErr := os.OpenFile(h.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, fileErr := os.OpenFile(h.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if fileErr != nil {
 		slog.Warn("Failed to open history file", "path", h.path, "err", fileErr)
 		return

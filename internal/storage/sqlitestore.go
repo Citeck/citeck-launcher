@@ -19,7 +19,7 @@ type SQLiteStore struct {
 // NewSQLiteStore opens or creates a SQLite database at the given directory.
 // The database file is named "launcher.db".
 func NewSQLiteStore(dir string) (*SQLiteStore, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil { //nolint:gosec // G301: user home dir needs group access
 		return nil, fmt.Errorf("create store dir: %w", err)
 	}
 	dbPath := filepath.Join(dir, "launcher.db")
@@ -33,14 +33,14 @@ func NewSQLiteStore(dir string) (*SQLiteStore, error) {
 
 	store := &SQLiteStore{db: db}
 	if err := store.migrate(); err != nil {
-		db.Close()
+		_ = db.Close() // best-effort cleanup on migration failure
 		return nil, fmt.Errorf("migrate sqlite: %w", err)
 	}
 
 	// Restrict DB file permissions — contains secrets in desktop mode.
 	// Must be after migrate() since sql.Open is lazy and the file is created on first query.
 	if err := os.Chmod(dbPath, 0o600); err != nil {
-		db.Close()
+		_ = db.Close() // best-effort cleanup on chmod failure
 		return nil, fmt.Errorf("chmod db file: %w", err)
 	}
 
@@ -129,6 +129,7 @@ func (s *SQLiteStore) applyMigration(version int, stmts []string) error {
 
 // --- Workspaces ---
 
+// ListWorkspaces returns all workspaces ordered by ID.
 func (s *SQLiteStore) ListWorkspaces() ([]WorkspaceDto, error) {
 	rows, err := s.db.Query("SELECT id, name, repo_url, repo_branch FROM workspaces ORDER BY id")
 	if err != nil {
@@ -147,6 +148,7 @@ func (s *SQLiteStore) ListWorkspaces() ([]WorkspaceDto, error) {
 	return result, rows.Err()
 }
 
+// GetWorkspace returns a single workspace by ID.
 func (s *SQLiteStore) GetWorkspace(id string) (*WorkspaceDto, error) {
 	var ws WorkspaceDto
 	err := s.db.QueryRow(
@@ -161,6 +163,7 @@ func (s *SQLiteStore) GetWorkspace(id string) (*WorkspaceDto, error) {
 	return &ws, nil
 }
 
+// SaveWorkspace inserts or updates a workspace (upsert).
 func (s *SQLiteStore) SaveWorkspace(ws WorkspaceDto) error {
 	_, err := s.db.Exec(`
 		INSERT INTO workspaces (id, name, repo_url, repo_branch) VALUES (?, ?, ?, ?)
@@ -169,6 +172,7 @@ func (s *SQLiteStore) SaveWorkspace(ws WorkspaceDto) error {
 	return err
 }
 
+// DeleteWorkspace removes a workspace by ID.
 func (s *SQLiteStore) DeleteWorkspace(id string) error {
 	_, err := s.db.Exec("DELETE FROM workspaces WHERE id = ?", id)
 	return err
@@ -176,6 +180,7 @@ func (s *SQLiteStore) DeleteWorkspace(id string) error {
 
 // --- Secrets ---
 
+// ListSecrets returns metadata for all secrets (without values).
 func (s *SQLiteStore) ListSecrets() ([]SecretMeta, error) {
 	rows, err := s.db.Query("SELECT id, name, type, scope, created_at FROM secrets ORDER BY id")
 	if err != nil {
@@ -196,6 +201,7 @@ func (s *SQLiteStore) ListSecrets() ([]SecretMeta, error) {
 	return result, rows.Err()
 }
 
+// GetSecret returns a secret including its value.
 func (s *SQLiteStore) GetSecret(id string) (*Secret, error) {
 	var sec Secret
 	var createdStr string
@@ -212,6 +218,7 @@ func (s *SQLiteStore) GetSecret(id string) (*Secret, error) {
 	return &sec, nil
 }
 
+// SaveSecret inserts or updates a secret (upsert).
 func (s *SQLiteStore) SaveSecret(secret Secret) error {
 	if secret.Scope == "" {
 		secret.Scope = "global"
@@ -226,6 +233,7 @@ func (s *SQLiteStore) SaveSecret(secret Secret) error {
 	return err
 }
 
+// DeleteSecret removes a secret by ID.
 func (s *SQLiteStore) DeleteSecret(id string) error {
 	_, err := s.db.Exec("DELETE FROM secrets WHERE id = ?", id)
 	return err
@@ -233,6 +241,7 @@ func (s *SQLiteStore) DeleteSecret(id string) error {
 
 // --- Launcher State ---
 
+// GetState returns the persisted launcher state.
 func (s *SQLiteStore) GetState() (*LauncherState, error) {
 	state := &LauncherState{}
 	_ = s.db.QueryRow("SELECT value FROM launcher_state WHERE key = 'workspace_id'").Scan(&state.WorkspaceID)
@@ -240,6 +249,7 @@ func (s *SQLiteStore) GetState() (*LauncherState, error) {
 	return state, nil
 }
 
+// SetState persists the launcher state (workspace and namespace selection).
 func (s *SQLiteStore) SetState(state LauncherState) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -257,12 +267,14 @@ func (s *SQLiteStore) SetState(state LauncherState) error {
 	return tx.Commit()
 }
 
+// PutSecretBlob stores the encrypted secrets blob (migrated from Kotlin launcher).
 func (s *SQLiteStore) PutSecretBlob(base64Data string) error {
 	stmt := `INSERT INTO launcher_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`
 	_, err := s.db.Exec(stmt, "secret_blob", base64Data)
 	return err
 }
 
+// GetSecretBlob retrieves the encrypted secrets blob.
 func (s *SQLiteStore) GetSecretBlob() (string, error) {
 	var val string
 	err := s.db.QueryRow(`SELECT value FROM launcher_state WHERE key = ?`, "secret_blob").Scan(&val)
@@ -297,6 +309,7 @@ func (s *SQLiteStore) DB() *sql.DB {
 	return s.db
 }
 
+// Close releases the database connection.
 func (s *SQLiteStore) Close() error {
 	return s.db.Close()
 }

@@ -56,33 +56,35 @@ func CloneOrPullWithAuth(ctx context.Context, opts RepoOpts) error {
 
 func cloneOrPullInner(ctx context.Context, opts RepoOpts) error {
 	gitDir := filepath.Join(opts.DestDir, ".git")
-	if _, err := os.Stat(gitDir); err == nil {
-		// Check if URL or branch changed — re-clone if so
-		if repoConfigChanged(opts) {
-			slog.Info("Repo config changed, re-cloning", "dir", opts.DestDir, "url", opts.URL, "branch", opts.Branch)
-			err := reclone(ctx, opts, fmt.Errorf("config changed: url=%s branch=%s", opts.URL, opts.Branch))
-			if err == nil {
-				recordSync(opts)
-			}
-			return err
+	if _, err := os.Stat(gitDir); err != nil {
+		// No .git directory — fresh clone
+		cloneErr := doClone(ctx, opts)
+		if cloneErr == nil {
+			recordSync(opts)
 		}
+		return cloneErr
+	}
 
-		if opts.PullPeriod > 0 {
-			lastSyncMu.Lock()
-			lastSync := lastSyncTimes[opts.DestDir]
-			lastSyncMu.Unlock()
-			if time.Since(lastSync) < opts.PullPeriod {
-				slog.Debug("Skipping pull (within pull period)", "dir", opts.DestDir)
-				return nil
-			}
-		}
-		err := doPull(ctx, opts)
+	// Check if URL or branch changed — re-clone if so
+	if repoConfigChanged(opts) {
+		slog.Info("Repo config changed, re-cloning", "dir", opts.DestDir, "url", opts.URL, "branch", opts.Branch)
+		err := reclone(ctx, opts, fmt.Errorf("config changed: url=%s branch=%s", opts.URL, opts.Branch))
 		if err == nil {
 			recordSync(opts)
 		}
 		return err
 	}
-	err := doClone(ctx, opts)
+
+	if opts.PullPeriod > 0 {
+		lastSyncMu.Lock()
+		lastSync := lastSyncTimes[opts.DestDir]
+		lastSyncMu.Unlock()
+		if time.Since(lastSync) < opts.PullPeriod {
+			slog.Debug("Skipping pull (within pull period)", "dir", opts.DestDir)
+			return nil
+		}
+	}
+	err := doPull(ctx, opts)
 	if err == nil {
 		recordSync(opts)
 	}
@@ -138,7 +140,7 @@ func doClone(ctx context.Context, opts RepoOpts) error {
 	slog.Info("Cloning repository", "url", opts.URL, "branch", opts.Branch, "dir", opts.DestDir)
 	start := time.Now()
 
-	if err := os.MkdirAll(filepath.Dir(opts.DestDir), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(opts.DestDir), 0o750); err != nil {
 		return err
 	}
 
@@ -213,7 +215,7 @@ func doPull(ctx context.Context, opts RepoOpts) error {
 		pullOpts.Auth = auth
 	}
 
-	if err := wt.PullContext(ctx, pullOpts); err != nil && err != gogit.NoErrAlreadyUpToDate {
+	if err := wt.PullContext(ctx, pullOpts); err != nil && !errors.Is(err, gogit.NoErrAlreadyUpToDate) {
 		// 8b-13: auth errors should not trigger reclone
 		errStr := strings.ToLower(err.Error())
 		if strings.Contains(errStr, "authentication") || strings.Contains(errStr, "unauthorized") {

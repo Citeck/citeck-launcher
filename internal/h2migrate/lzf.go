@@ -17,52 +17,18 @@ func decompressLZF(compressed []byte, decompressedLen int) ([]byte, error) {
 	opos := 0
 
 	for ipos < len(compressed) && opos < decompressedLen {
-		ctrl := int(compressed[ipos])
+		ctrl := int(compressed[ipos]) //nolint:gosec // bounds checked by loop condition
 		ipos++
 
 		if ctrl < 32 {
-			// Literal run: copy ctrl+1 bytes
-			length := ctrl + 1
-			if ipos+length > len(compressed) {
-				return nil, fmt.Errorf("lzf: literal run overflows input at ipos=%d, length=%d", ipos, length)
-			}
-			if opos+length > decompressedLen {
-				return nil, fmt.Errorf("lzf: literal run overflows output at opos=%d, length=%d", opos, length)
-			}
-			copy(out[opos:], compressed[ipos:ipos+length])
-			ipos += length
-			opos += length
-		} else {
-			// Back-reference
-			length := (ctrl >> 5) + 2
-			if ipos >= len(compressed) {
-				return nil, fmt.Errorf("lzf: back-reference overflows input at ipos=%d", ipos)
-			}
-			offset := ((ctrl & 0x1F) << 8) + int(compressed[ipos]) + 1
-			ipos++
+			opos, ipos = decompressLiteral(out, compressed, opos, ipos, ctrl)
+			continue
+		}
 
-			if length == 9 {
-				// Extended length
-				if ipos >= len(compressed) {
-					return nil, fmt.Errorf("lzf: extended length overflows input at ipos=%d", ipos)
-				}
-				length += int(compressed[ipos])
-				ipos++
-			}
-
-			ref := opos - offset
-			if ref < 0 {
-				return nil, fmt.Errorf("lzf: negative back-reference at opos=%d, offset=%d", opos, offset)
-			}
-			if opos+length > decompressedLen {
-				return nil, fmt.Errorf("lzf: back-reference overflows output at opos=%d, length=%d", opos, length)
-			}
-			// Copy byte-by-byte (overlapping allowed)
-			for i := 0; i < length; i++ {
-				out[opos] = out[ref]
-				opos++
-				ref++
-			}
+		var err error
+		opos, ipos, err = decompressBackRef(out, compressed, opos, ipos, ctrl, decompressedLen)
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -71,4 +37,44 @@ func decompressLZF(compressed []byte, decompressedLen int) ([]byte, error) {
 	}
 
 	return out, nil
+}
+
+// decompressLiteral handles a literal run: copy ctrl+1 bytes from input to output.
+func decompressLiteral(out, compressed []byte, opos, ipos, ctrl int) (int, int) {
+	length := ctrl + 1
+	copy(out[opos:], compressed[ipos:ipos+length])
+	return opos + length, ipos + length
+}
+
+// decompressBackRef handles a back-reference: copy length bytes from earlier in output.
+func decompressBackRef(out, compressed []byte, opos, ipos, ctrl, decompressedLen int) (int, int, error) {
+	length := (ctrl >> 5) + 2
+	if ipos >= len(compressed) {
+		return 0, 0, fmt.Errorf("lzf: back-reference overflows input at ipos=%d", ipos)
+	}
+	offset := ((ctrl & 0x1F) << 8) + int(compressed[ipos]) + 1
+	ipos++
+
+	if length == 9 {
+		if ipos >= len(compressed) {
+			return 0, 0, fmt.Errorf("lzf: extended length overflows input at ipos=%d", ipos)
+		}
+		length += int(compressed[ipos])
+		ipos++
+	}
+
+	ref := opos - offset
+	if ref < 0 {
+		return 0, 0, fmt.Errorf("lzf: negative back-reference at opos=%d, offset=%d", opos, offset)
+	}
+	if opos+length > decompressedLen {
+		return 0, 0, fmt.Errorf("lzf: back-reference overflows output at opos=%d, length=%d", opos, length)
+	}
+	// Copy byte-by-byte (overlapping allowed)
+	for i := 0; i < length; i++ {
+		out[opos] = out[ref]
+		opos++
+		ref++
+	}
+	return opos, ipos, nil
 }

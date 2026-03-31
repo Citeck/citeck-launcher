@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"sort"
 	"strings"
 
@@ -14,7 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// NamespaceGenResp is the result of namespace generation.
+// NamespaceGenResp is the result of namespace generation. //nolint:revive // stuttering name used across packages
 type NamespaceGenResp struct {
 	Applications          []appdef.ApplicationDef
 	Files                 map[string][]byte
@@ -454,13 +455,13 @@ func generateProxy(ctx *NsGenContext) {
 		luaKey := "proxy/lua_oidc_full_access.lua"
 		if luaBytes, ok := ctx.Files[luaKey]; ok {
 			lua := string(luaBytes)
-			lua = strings.Replace(lua, `redirect_uri_scheme = "http"`, fmt.Sprintf(`redirect_uri_scheme = "%s"`, ctx.ProxyScheme()), 1)
+			lua = strings.Replace(lua, `redirect_uri_scheme = "http"`, fmt.Sprintf(`redirect_uri_scheme = %q`, ctx.ProxyScheme()), 1)
 			lua = strings.Replace(lua, `redirect_after_logout_uri = "http://localhost/ecos-idp/auth/realms/ecos-app/protocol/openid-connect/logout"`,
 				fmt.Sprintf(`redirect_after_logout_uri = "%s/ecos-idp/auth/realms/ecos-app/protocol/openid-connect/logout"`, ctx.ProxyBaseURL()), 1)
 			lua = strings.Replace(lua, `post_logout_redirect_uri = "http://localhost"`,
-				fmt.Sprintf(`post_logout_redirect_uri = "%s"`, ctx.ProxyBaseURL()), 1)
+				fmt.Sprintf(`post_logout_redirect_uri = %q`, ctx.ProxyBaseURL()), 1)
 			lua = strings.Replace(lua, `client_secret = "2996117d-9a33-4e06-b48a-867ce6a235db"`,
-				fmt.Sprintf(`client_secret = "%s"`, oidcSecret), 1)
+				fmt.Sprintf(`client_secret = %q`, oidcSecret), 1)
 			ctx.Files[luaKey] = []byte(lua)
 		}
 
@@ -474,15 +475,17 @@ func generateProxy(ctx *NsGenContext) {
 		}
 
 		app.AddVolume("./proxy/lua_oidc_full_access.lua:/tmp/lua_oidc_full_access.lua:ro")
-		app.InitActions = append(app.InitActions, appdef.AppInitAction{
-			Exec: []string{"sh", "-c", "cp /tmp/lua_oidc_full_access.lua /etc/nginx/includes/lua_oidc_full_access.lua"},
-		})
-		app.InitActions = append(app.InitActions, appdef.AppInitAction{
-			Exec: []string{"sh", "-c",
-				"sed -i -e '/location \\/ecos-idp\\/auth\\/ {/a\\\n" +
-					"    rewrite ^/ecos-idp/auth/(.*)\\$ /\\$1 break;\n' " +
-					"-e 's|http://keycloak:8080/auth/|http://keycloak:8080/|g' /etc/nginx/conf.d/default.conf"},
-		})
+		app.InitActions = append(app.InitActions,
+			appdef.AppInitAction{
+				Exec: []string{"sh", "-c", "cp /tmp/lua_oidc_full_access.lua /etc/nginx/includes/lua_oidc_full_access.lua"},
+			},
+			appdef.AppInitAction{
+				Exec: []string{"sh", "-c",
+					"sed -i -e '/location \\/ecos-idp\\/auth\\/ {/a\\\n" +
+						"    rewrite ^/ecos-idp/auth/(.*)\\$ /\\$1 break;\n' " +
+						"-e 's|http://keycloak:8080/auth/|http://keycloak:8080/|g' /etc/nginx/conf.d/default.conf"},
+			},
+		)
 		hasInitActions = true
 	}
 
@@ -585,7 +588,7 @@ func generateWebapp(name string, ctx *NsGenContext) {
 	var javaOpts string
 	var springProfiles string
 	var debugPort int
-	if wp, ok := ctx.Config.Webapps[name]; ok {
+	if wp, ok := ctx.Config.Webapps[name]; ok { //nolint:nestif // config override logic is inherently nested
 		if wp.HeapSize != "" {
 			javaOpts = fmt.Sprintf("-Xmx%s -Xms%s", wp.HeapSize, wp.HeapSize)
 		}
@@ -626,7 +629,7 @@ func generateWebapp(name string, ctx *NsGenContext) {
 	// Spring profiles: start with "dev,launcher", append custom profiles from config
 	profiles := []string{"dev", "launcher"}
 	if springProfiles != "" {
-		for _, p := range strings.Split(springProfiles, ",") {
+		for p := range strings.SplitSeq(springProfiles, ",") {
 			p = strings.TrimSpace(p)
 			if p != "" && p != "dev" && p != "launcher" {
 				profiles = append(profiles, p)
@@ -713,17 +716,13 @@ func processWebappDataSources(appName string, app *AppBuilder, ctx *NsGenContext
 	dataSources := make(map[string]bundle.DataSourceConfig)
 	for _, webapp := range ctx.WorkspaceConfig.Webapps {
 		if webapp.ID == appName {
-			for k, v := range webapp.DefaultProps.DataSources {
-				dataSources[k] = v
-			}
+			maps.Copy(dataSources, webapp.DefaultProps.DataSources)
 			break
 		}
 	}
 	// Namespace-level dataSources override workspace defaults
 	if wp, ok := ctx.Config.Webapps[appName]; ok {
-		for k, v := range wp.DataSources {
-			dataSources[k] = v
-		}
+		maps.Copy(dataSources, wp.DataSources)
 	}
 
 	pgApp := ctx.Applications[appdef.AppPostgres]
@@ -736,7 +735,7 @@ func processWebappDataSources(appName string, app *AppBuilder, ctx *NsGenContext
 		url := resolveTemplateVars(dsCfg.URL)
 		dsPrefix := "ecos.webapp.dataSources." + dsKey
 
-		if strings.HasPrefix(url, "jdbc:") {
+		if strings.HasPrefix(url, "jdbc:") { //nolint:nestif // datasource config wiring
 			app.AddDependsOn(appdef.AppPostgres)
 			dbName := extractDBName(url)
 
@@ -840,12 +839,12 @@ func deepMergeMaps(dst, src map[string]any) {
 }
 
 // rewriteDataSourceURLForLocalhost rewrites a datasource URL to use localhost with published ports.
-func rewriteDataSourceURLForLocalhost(url, prefix string) string {
+func rewriteDataSourceURLForLocalhost(url, _ string) string {
 	if strings.HasPrefix(url, "jdbc:postgresql://") {
-		// jdbc:postgresql://postgres:5432/dbname -> jdbc:postgresql://localhost:14523/dbname
+		// Rewrite postgres host:port to localhost with published port.
 		url = strings.Replace(url, fmt.Sprintf("%s:%d", PGHost, PGPort), "localhost:14523", 1)
 	} else if strings.HasPrefix(url, "mongodb://") {
-		// mongodb://mongo:27017/dbname -> mongodb://localhost:27017/dbname
+		// Rewrite mongo host:port to localhost with published port.
 		url = strings.Replace(url, fmt.Sprintf("%s:%d", MongoHost, MongoPort), "localhost:27017", 1)
 	}
 	return url
@@ -859,7 +858,7 @@ func flatMapToYAML(m map[string]any) string {
 		parts := strings.Split(k, ".")
 		current := root
 		for i, p := range parts {
-			if i == len(parts)-1 {
+			if i == len(parts)-1 { //nolint:nestif // nested map building
 				current[p] = v
 			} else {
 				if next, ok := current[p]; ok {
@@ -968,7 +967,5 @@ func loadAppFiles(ctx *NsGenContext) {
 	if err != nil {
 		return
 	}
-	for k, v := range files {
-		ctx.Files[k] = v
-	}
+	maps.Copy(ctx.Files, files)
 }

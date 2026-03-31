@@ -6,9 +6,12 @@ import "time"
 type SecretType string
 
 const (
-	SecretGitToken    SecretType = "GIT_TOKEN"
-	SecretBasicAuth   SecretType = "BASIC_AUTH"
-	SecretRegistryAuth SecretType = "REGISTRY_AUTH"
+	// SecretGitToken identifies a Git access token secret.
+	SecretGitToken SecretType = "GIT_TOKEN" //nolint:gosec // G101: constant name, not a credential
+	// SecretBasicAuth identifies a basic-auth credential secret.
+	SecretBasicAuth SecretType = "BASIC_AUTH"
+	// SecretRegistryAuth identifies a Docker registry credential secret.
+	SecretRegistryAuth SecretType = "REGISTRY_AUTH" //nolint:gosec // G101: constant name, not a credential
 )
 
 // WorkspaceDto represents a workspace record.

@@ -86,18 +86,13 @@ func formatUptime(ms int64) string {
 	hours := minutes / 60
 	days := hours / 24
 
-	parts := []string{}
+	var parts []string
 	if days > 0 {
-		parts = append(parts, fmt.Sprintf("%dd", days))
-		parts = append(parts, fmt.Sprintf("%dh", hours%24))
-		parts = append(parts, fmt.Sprintf("%dm", minutes%60))
+		parts = append(parts, fmt.Sprintf("%dd", days), fmt.Sprintf("%dh", hours%24), fmt.Sprintf("%dm", minutes%60))
 	} else if hours > 0 {
-		parts = append(parts, fmt.Sprintf("%dh", hours))
-		parts = append(parts, fmt.Sprintf("%dm", minutes%60))
-		parts = append(parts, fmt.Sprintf("%ds", seconds%60))
+		parts = append(parts, fmt.Sprintf("%dh", hours), fmt.Sprintf("%dm", minutes%60), fmt.Sprintf("%ds", seconds%60))
 	} else if minutes > 0 {
-		parts = append(parts, fmt.Sprintf("%dm", minutes))
-		parts = append(parts, fmt.Sprintf("%ds", seconds%60))
+		parts = append(parts, fmt.Sprintf("%dm", minutes), fmt.Sprintf("%ds", seconds%60))
 	} else {
 		parts = append(parts, fmt.Sprintf("%ds", seconds))
 	}

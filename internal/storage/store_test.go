@@ -119,8 +119,8 @@ func testStoreState(t *testing.T, store Store) {
 	}
 
 	// Set state
-	if err := store.SetState(LauncherState{WorkspaceID: "ws1", NamespaceID: "ns1"}); err != nil {
-		t.Fatalf("SetState() error: %v", err)
+	if setErr := store.SetState(LauncherState{WorkspaceID: "ws1", NamespaceID: "ns1"}); setErr != nil {
+		t.Fatalf("SetState() error: %v", setErr)
 	}
 
 	// Read back

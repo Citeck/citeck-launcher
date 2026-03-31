@@ -3,6 +3,7 @@ package actions
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -57,7 +58,7 @@ type slowExecutor struct {
 func (e *slowExecutor) Execute(ctx context.Context, _ *ActionContext) error {
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("slow executor: %w", ctx.Err())
 	case <-time.After(e.duration):
 		return nil
 	}
@@ -151,13 +152,10 @@ func TestExecute_Cancel(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	h.Cancel()
-	err := h.Wait(context.Background())
-	if err != nil && !errors.Is(err, context.Canceled) {
-		// Cancelled actions may or may not set an error
-	}
+	_ = h.Wait(context.Background()) // Canceled actions may or may not set an error
 	status := h.Status()
-	if status != StatusCancelled && status != StatusStalled {
-		t.Errorf("expected StatusCancelled, got %s", status)
+	if status != StatusCanceled && status != StatusStalled {
+		t.Errorf("expected StatusCanceled, got %s", status)
 	}
 }
 
@@ -176,8 +174,8 @@ func TestExecute_StalledDetection(t *testing.T) {
 	_ = h.Wait(ctx)
 
 	status := h.Status()
-	if status != StatusStalled && status != StatusCancelled {
-		t.Errorf("expected StatusStalled or StatusCancelled, got %s", status)
+	if status != StatusStalled && status != StatusCanceled {
+		t.Errorf("expected StatusStalled or StatusCanceled, got %s", status)
 	}
 }
 
@@ -191,7 +189,7 @@ func TestExecute_ConcurrentActions(t *testing.T) {
 	exec := &counterExecutor{}
 	handles := make([]*ActionHandle, n)
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		handles[i] = svc.Execute(ActionParams{Executor: exec})
 	}
 
@@ -295,7 +293,7 @@ func TestActionStatus_String(t *testing.T) {
 		{StatusRunning, "RUNNING"},
 		{StatusDone, "DONE"},
 		{StatusFailed, "FAILED"},
-		{StatusCancelled, "CANCELLED"},
+		{StatusCanceled, "CANCELED"},
 		{StatusStalled, "STALLED"},
 		{ActionStatus(99), "UNKNOWN"},
 	}

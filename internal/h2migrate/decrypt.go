@@ -47,7 +47,7 @@ type AuthSecret struct {
 
 // DecryptSecretBlob decrypts the Kotlin EncryptedStorage blob using the master password.
 // Returns the decrypted JSON as a map (keys like "auth-secrets" → JSON array).
-func DecryptSecretBlob(blobBase64 string, masterPassword string) (map[string]json.RawMessage, error) {
+func DecryptSecretBlob(blobBase64, masterPassword string) (map[string]json.RawMessage, error) {
 	// Decode the outer base64 wrapping (the blob is double-base64 encoded in migration)
 	outerJSON, err := base64.StdEncoding.DecodeString(blobBase64)
 	if err != nil {
@@ -64,8 +64,8 @@ func DecryptSecretBlob(blobBase64 string, masterPassword string) (map[string]jso
 	}
 
 	var es EncryptedStorage
-	if err := json.Unmarshal(outerJSON, &es); err != nil {
-		return nil, fmt.Errorf("parse EncryptedStorage: %w", err)
+	if unmarshalErr := json.Unmarshal(outerJSON, &es); unmarshalErr != nil {
+		return nil, fmt.Errorf("parse EncryptedStorage: %w", unmarshalErr)
 	}
 
 	if es.Alg != 0 || es.Key.Alg != 0 {

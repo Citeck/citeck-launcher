@@ -79,8 +79,8 @@ func Export(ctx context.Context, dc *docker.Client, outputPath, volumesBase stri
 	}
 
 	// Ensure launcher-utils image is available
-	if err := ensureUtilsImage(ctx, dc); err != nil {
-		return nil, err
+	if utilsErr := ensureUtilsImage(ctx, dc); utilsErr != nil {
+		return nil, utilsErr
 	}
 
 	// Create temp dir for export
@@ -101,9 +101,9 @@ func Export(ctx context.Context, dc *docker.Client, outputPath, volumesBase stri
 
 		slog.Info("Exporting volume", "volume", volName, "path", hostPath, "file", dataFile)
 
-		rootStat, err := exportVolume(ctx, dc, hostPath, filepath.Join(tmpDir, dataFile))
-		if err != nil {
-			return nil, fmt.Errorf("export volume %s: %w", volName, err)
+		rootStat, exportErr := exportVolume(ctx, dc, hostPath, filepath.Join(tmpDir, dataFile))
+		if exportErr != nil {
+			return nil, fmt.Errorf("export volume %s: %w", volName, exportErr)
 		}
 
 		meta.Volumes = append(meta.Volumes, VolumeSnapshotMeta{
@@ -118,13 +118,13 @@ func Export(ctx context.Context, dc *docker.Client, outputPath, volumesBase stri
 	if err != nil {
 		return nil, fmt.Errorf("marshal meta: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(tmpDir, metaFileName), metaData, 0o644); err != nil {
-		return nil, fmt.Errorf("write meta.json: %w", err)
+	if writeErr := os.WriteFile(filepath.Join(tmpDir, metaFileName), metaData, 0o644); writeErr != nil { //nolint:gosec // meta.json needs to be readable
+		return nil, fmt.Errorf("write meta.json: %w", writeErr)
 	}
 
 	// Create ZIP archive
-	if err := createZip(outputPath, tmpDir); err != nil {
-		return nil, fmt.Errorf("create zip: %w", err)
+	if zipErr := createZip(outputPath, tmpDir); zipErr != nil {
+		return nil, fmt.Errorf("create zip: %w", zipErr)
 	}
 
 	// Write SHA256 sidecar file
@@ -161,8 +161,8 @@ func Import(ctx context.Context, dc *docker.Client, zipPath, volumesBase string)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	if err := extractZip(zipPath, tmpDir); err != nil {
-		return nil, fmt.Errorf("extract zip: %w", err)
+	if extractErr := extractZip(zipPath, tmpDir); extractErr != nil {
+		return nil, fmt.Errorf("extract zip: %w", extractErr)
 	}
 
 	// Read meta.json
@@ -172,8 +172,8 @@ func Import(ctx context.Context, dc *docker.Client, zipPath, volumesBase string)
 	}
 
 	var meta NamespaceSnapshotMeta
-	if err := json.Unmarshal(metaData, &meta); err != nil {
-		return nil, fmt.Errorf("parse meta.json: %w", err)
+	if unmarshalErr := json.Unmarshal(metaData, &meta); unmarshalErr != nil {
+		return nil, fmt.Errorf("parse meta.json: %w", unmarshalErr)
 	}
 
 	if len(meta.Volumes) == 0 {
@@ -182,14 +182,14 @@ func Import(ctx context.Context, dc *docker.Client, zipPath, volumesBase string)
 
 	// Validate volume metadata from untrusted meta.json before any filesystem operations
 	for _, vol := range meta.Volumes {
-		if err := validateVolumeSnapshotMeta(vol); err != nil {
-			return nil, err
+		if valErr := validateVolumeSnapshotMeta(vol); valErr != nil {
+			return nil, valErr
 		}
 	}
 
 	// Ensure launcher-utils image
-	if err := ensureUtilsImage(ctx, dc); err != nil {
-		return nil, err
+	if utilsErr := ensureUtilsImage(ctx, dc); utilsErr != nil {
+		return nil, utilsErr
 	}
 
 	// Import each volume
@@ -373,8 +373,8 @@ func extractZip(zipPath, destDir string) error {
 
 	for _, f := range r.File {
 		// Security: prevent zip slip
-		destPath := filepath.Join(destDir, f.Name)
-		if !strings.HasPrefix(filepath.Clean(destPath), filepath.Clean(destDir)+string(os.PathSeparator)) {
+		destPath := filepath.Join(destDir, f.Name) //nolint:gosec // zip slip prevented by prefix check below
+		if !strings.HasPrefix(filepath.Clean(destPath)+string(os.PathSeparator), filepath.Clean(destDir)+string(os.PathSeparator)) {
 			return fmt.Errorf("zip slip detected: %s", f.Name)
 		}
 
@@ -405,10 +405,7 @@ func extractZip(zipPath, destDir string) error {
 			outFile.Close()
 			return fmt.Errorf("zip extraction aborted: aggregate size exceeds %d GB", maxExtractSize>>30)
 		}
-		perFileLimit := int64(10 << 30)
-		if remaining < perFileLimit {
-			perFileLimit = remaining
-		}
+		perFileLimit := min(remaining, int64(10<<30))
 		n, err := io.Copy(outFile, io.LimitReader(rc, perFileLimit))
 		totalWritten += n
 		rc.Close()
@@ -427,7 +424,7 @@ func availableDiskSpace(path string) int64 {
 	if err := syscall.Statfs(path, &stat); err != nil {
 		return 0
 	}
-	return int64(stat.Bavail) * int64(stat.Bsize)
+	return int64(stat.Bavail) * int64(stat.Bsize) //nolint:gosec // overflow not possible for filesystem block counts
 }
 
 // validateVolumeSnapshotMeta rejects untrusted meta.json entries with path traversal

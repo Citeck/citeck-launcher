@@ -59,9 +59,9 @@ func (c *Client) ObtainCertificate(ctx context.Context) error {
 
 	// Register account (idempotent — auto-accepts TOS)
 	acct := &acme.Account{}
-	if _, err := client.Register(ctx, acct, acme.AcceptTOS); err != nil {
-		if !errors.Is(err, acme.ErrAccountAlreadyExists) {
-			return fmt.Errorf("register account: %w", err)
+	if _, regErr := client.Register(ctx, acct, acme.AcceptTOS); regErr != nil {
+		if !errors.Is(regErr, acme.ErrAccountAlreadyExists) {
+			return fmt.Errorf("register account: %w", regErr)
 		}
 	}
 
@@ -88,9 +88,9 @@ func (c *Client) ObtainCertificate(ctx context.Context) error {
 
 	// Process HTTP-01 challenges
 	for _, authzURL := range order.AuthzURLs {
-		authz, err := client.GetAuthorization(ctx, authzURL)
-		if err != nil {
-			return fmt.Errorf("get authorization: %w", err)
+		authz, authzErr := client.GetAuthorization(ctx, authzURL)
+		if authzErr != nil {
+			return fmt.Errorf("get authorization: %w", authzErr)
 		}
 
 		var challenge *acme.Challenge
@@ -112,7 +112,7 @@ func (c *Client) ObtainCertificate(ctx context.Context) error {
 		}
 		challengePath := client.HTTP01ChallengePath(token)
 
-		srv := &http.Server{
+		srv := &http.Server{ //nolint:gosec // ACME HTTP-01 challenge requires binding :80 on all interfaces
 			Addr:         ":80",
 			ReadTimeout:  10 * time.Second,
 			WriteTimeout: 10 * time.Second,
@@ -241,11 +241,11 @@ func (c *Client) loadOrCreateAccountKey() (*ecdsa.PrivateKey, error) {
 	if err == nil {
 		block, _ := pem.Decode(data)
 		if block != nil {
-			key, err := x509.ParseECPrivateKey(block.Bytes)
-			if err == nil {
+			key, parseErr := x509.ParseECPrivateKey(block.Bytes)
+			if parseErr == nil {
 				return key, nil
 			}
-			slog.Warn("Failed to parse stored account key, regenerating", "err", err)
+			slog.Warn("Failed to parse stored account key, regenerating", "err", parseErr)
 		}
 	}
 

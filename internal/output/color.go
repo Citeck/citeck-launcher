@@ -2,6 +2,7 @@ package output
 
 import "os"
 
+// Reset and related constants are ANSI escape codes for terminal colors.
 const (
 	Reset  = "\033[0m"
 	Red    = "\033[31m"
@@ -12,18 +13,14 @@ const (
 	Dim    = "\033[2m"
 )
 
-var colorsEnabled = true
+var colorsEnabled = os.Getenv("NO_COLOR") == ""
 
-func init() {
-	if os.Getenv("NO_COLOR") != "" {
-		colorsEnabled = false
-	}
-}
-
+// SetColorsEnabled controls whether terminal color codes are emitted.
 func SetColorsEnabled(enabled bool) {
 	colorsEnabled = enabled
 }
 
+// Colorize wraps text with ANSI color codes if colors are enabled.
 func Colorize(color, text string) string {
 	if !colorsEnabled {
 		return text
@@ -31,6 +28,7 @@ func Colorize(color, text string) string {
 	return color + text + Reset
 }
 
+// StatusColor returns the ANSI color code for the given status string.
 func StatusColor(status string) string {
 	switch status {
 	case "RUNNING", "HEALTHY", "ok":
@@ -46,6 +44,7 @@ func StatusColor(status string) string {
 	}
 }
 
+// ColorizeStatus returns the status string wrapped in its corresponding color.
 func ColorizeStatus(status string) string {
 	c := StatusColor(status)
 	if c == "" {

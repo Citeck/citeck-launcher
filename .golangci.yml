@@ -19,7 +19,9 @@ linters:
     - unused
     - nestif
     - testifylint
+    - wrapcheck
     - errorlint
+    - modernize
   settings:
     gocritic:
       disabled-checks:

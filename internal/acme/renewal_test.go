@@ -98,7 +98,7 @@ func TestCheckAndRenew_SkipsWhenMoreThanHalfValid(t *testing.T) {
 }
 
 // writeTempCertWithSAN creates a cert with a DNS SAN for hostname verification tests.
-func writeTempCertWithSAN(t *testing.T, dir string, hostname string, notBefore, notAfter time.Time) {
+func writeTempCertWithSAN(t *testing.T, dir, hostname string, notBefore, notAfter time.Time) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

@@ -9,9 +9,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// clientOpts returns ClientOptions from the global CLI flags.
-func clientOpts() client.ClientOptions {
-	return client.ClientOptions{
+// clientOpts returns Options from the global CLI flags.
+func clientOpts() client.Options {
+	return client.Options{
 		Host:       flagHost,
 		TLSCert:    flagTLSCert,
 		TLSKey:     flagTLSKey,

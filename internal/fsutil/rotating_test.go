@@ -45,7 +45,7 @@ func TestMultipleRotations(t *testing.T) {
 	defer rw.Close()
 
 	// Write 4 chunks — causes 3 rotations, .3 should have oldest data
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		data := fmt.Sprintf("%s\n", strings.Repeat(string(rune('A'+i)), 49))
 		rw.Write([]byte(data))
 	}
@@ -84,11 +84,11 @@ func TestConcurrentWrites(t *testing.T) {
 	defer rw.Close()
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
+			for j := range 100 {
 				data := fmt.Sprintf("goroutine %d write %d\n", id, j)
 				if _, err := rw.Write([]byte(data)); err != nil {
 					t.Errorf("write error: %v", err)
@@ -113,7 +113,7 @@ func TestStaleFdDetection(t *testing.T) {
 
 	// On Linux, writes to the unlinked fd succeed silently.
 	// Write staleCheckInterval times to trigger the stat check.
-	for i := 0; i < staleCheckInterval; i++ {
+	for range staleCheckInterval {
 		rw.Write([]byte("x\n"))
 	}
 

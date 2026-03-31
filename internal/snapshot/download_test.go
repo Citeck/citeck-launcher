@@ -27,7 +27,7 @@ func TestDownload_Success(t *testing.T) {
 	}
 	got, _ := os.ReadFile(dest)
 	if string(got) != string(content) {
-		t.Errorf("content mismatch: got %q, want %q", got, content)
+		t.Errorf("content mismatch: got %q, want %q", string(got), string(content))
 	}
 	// Verify .part file was cleaned up
 	if _, err := os.Stat(dest + ".part"); !os.IsNotExist(err) {
@@ -128,7 +128,7 @@ func TestDownload_Resume(t *testing.T) {
 
 	got, _ := os.ReadFile(dest)
 	if string(got) != string(fullContent) {
-		t.Errorf("content mismatch: got %q, want %q", got, fullContent)
+		t.Errorf("content mismatch: got %q, want %q", string(got), string(fullContent))
 	}
 }
 

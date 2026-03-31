@@ -258,7 +258,7 @@ func migrateFromFilesystem(homeDir string, store storage.Store) (*MigrateResult,
 			if defaultBundleRef != "" {
 				stub += fmt.Sprintf("bundleRef: '%s'\n", defaultBundleRef)
 			}
-			if err := os.WriteFile(nsConfigPath, []byte(stub), 0o644); err != nil {
+			if err := os.WriteFile(nsConfigPath, []byte(stub), 0o644); err != nil { //nolint:gosec // config file needs to be readable
 				slog.Warn("Failed to create namespace config", "ns", nsID, "err", err)
 				result.Errors++
 				continue

@@ -68,8 +68,8 @@ func newApplyCmd() *cobra.Command {
 
 			// Show diff before applying
 			showConfigDiffData(c, yamlData)
-			if _, err := c.PutConfig(yamlData); err != nil {
-				return fmt.Errorf("upload config: %w", err)
+			if _, putErr := c.PutConfig(yamlData); putErr != nil {
+				return fmt.Errorf("upload config: %w", putErr)
 			}
 
 			// Reload the namespace with the new config
@@ -82,43 +82,43 @@ func newApplyCmd() *cobra.Command {
 				output.PrintText("Configuration applied: %s", result.Message)
 			})
 
-			if wait {
-				// Subscribe to SSE stream, then check initial state.
-				// This is race-safe: if RUNNING happened between reload and subscribe,
-				// GetNamespace below catches it; if between subscribe and GetNamespace, the event is buffered.
-				ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
-				defer cancel()
-				events, sseErr := c.StreamEvents(ctx)
-				if sseErr != nil {
-					return fmt.Errorf("connect to event stream: %w", sseErr)
-				}
+			if !wait {
+				return nil
+			}
 
-				output.Errf("Waiting for all apps to be running...")
-				// Check initial state after subscribing
-				if ns, err := c.GetNamespace(); err == nil && ns.Status == "RUNNING" {
-					output.PrintText("All apps running")
-					return nil
-				}
-				for {
-					select {
-					case <-ctx.Done():
-						return fmt.Errorf("timeout waiting for namespace to be running")
-					case evt, ok := <-events:
-						if !ok {
-							return fmt.Errorf("event stream closed")
-						}
-						if evt.Type == "namespace_status" && evt.After == "RUNNING" {
-							output.PrintText("All apps running")
-							return nil
-						}
-						if evt.Type == "namespace_status" && evt.After == "STALLED" {
-							return fmt.Errorf("namespace stalled — some apps failed to start")
-						}
+			// Subscribe to SSE stream, then check initial state.
+			// This is race-safe: if RUNNING happened between reload and subscribe,
+			// GetNamespace below catches it; if between subscribe and GetNamespace, the event is buffered.
+			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+			defer cancel()
+			events, sseErr := c.StreamEvents(ctx)
+			if sseErr != nil {
+				return fmt.Errorf("connect to event stream: %w", sseErr)
+			}
+
+			output.Errf("Waiting for all apps to be running...")
+			// Check initial state after subscribing
+			if ns, nsErr := c.GetNamespace(); nsErr == nil && ns.Status == "RUNNING" {
+				output.PrintText("All apps running")
+				return nil
+			}
+			for {
+				select {
+				case <-ctx.Done():
+					return fmt.Errorf("timeout waiting for namespace to be running")
+				case evt, ok := <-events:
+					if !ok {
+						return fmt.Errorf("event stream closed")
+					}
+					if evt.Type == "namespace_status" && evt.After == "RUNNING" {
+						output.PrintText("All apps running")
+						return nil
+					}
+					if evt.Type == "namespace_status" && evt.After == "STALLED" {
+						return fmt.Errorf("namespace stalled — some apps failed to start")
 					}
 				}
 			}
-
-			return nil
 		},
 	}
 
@@ -279,11 +279,11 @@ func newWaitCmd() *cobra.Command {
 
 			// Check initial state
 			if healthy {
-				if h, err := c.GetHealth(); err == nil && h.Healthy {
+				if h, healthErr := c.GetHealth(); healthErr == nil && h.Healthy {
 					output.PrintText("Healthy")
 					return nil
 				}
-			} else if ns, err := c.GetNamespace(); err == nil {
+			} else if ns, nsErr := c.GetNamespace(); nsErr == nil {
 				if app != "" {
 					for _, a := range ns.Apps {
 						if a.Name == app && matchStatus(a.Status, status) {

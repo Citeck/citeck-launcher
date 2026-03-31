@@ -33,10 +33,12 @@ func NewFileStore(baseDir string) (*FileStore, error) {
 
 const defaultWorkspaceID = "daemon"
 
+// ListWorkspaces returns the single implicit "daemon" workspace.
 func (s *FileStore) ListWorkspaces() ([]WorkspaceDto, error) {
 	return []WorkspaceDto{{ID: defaultWorkspaceID, Name: "Default"}}, nil
 }
 
+// GetWorkspace returns the default workspace if the ID matches.
 func (s *FileStore) GetWorkspace(id string) (*WorkspaceDto, error) {
 	if id == defaultWorkspaceID {
 		return &WorkspaceDto{ID: defaultWorkspaceID, Name: "Default"}, nil
@@ -44,10 +46,12 @@ func (s *FileStore) GetWorkspace(id string) (*WorkspaceDto, error) {
 	return nil, fmt.Errorf("workspace %q not found", id)
 }
 
+// SaveWorkspace is a no-op in server mode.
 func (s *FileStore) SaveWorkspace(_ WorkspaceDto) error {
 	return nil // no-op in server mode
 }
 
+// DeleteWorkspace is a no-op in server mode.
 func (s *FileStore) DeleteWorkspace(_ string) error {
 	return nil // no-op in server mode
 }
@@ -62,6 +66,7 @@ func (s *FileStore) secretPath(id string) string {
 	return filepath.Join(s.secretsDir(), id+".json")
 }
 
+// ListSecrets returns metadata for all secrets stored as JSON files.
 func (s *FileStore) ListSecrets() ([]SecretMeta, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -74,7 +79,7 @@ func (s *FileStore) ListSecrets() ([]SecretMeta, error) {
 		return nil, err
 	}
 
-	var result []SecretMeta
+	result := make([]SecretMeta, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
@@ -89,12 +94,14 @@ func (s *FileStore) ListSecrets() ([]SecretMeta, error) {
 	return result, nil
 }
 
+// GetSecret returns a secret including its value.
 func (s *FileStore) GetSecret(id string) (*Secret, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.readSecret(s.secretPath(id))
 }
 
+// SaveSecret writes a secret to a JSON file, preserving the original creation time on update.
 func (s *FileStore) SaveSecret(secret Secret) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -126,6 +133,7 @@ func (s *FileStore) SaveSecret(secret Secret) error {
 	return fsutil.AtomicWriteFile(s.secretPath(secret.ID), data, 0o600)
 }
 
+// DeleteSecret removes a secret JSON file.
 func (s *FileStore) DeleteSecret(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -143,6 +151,7 @@ func (s *FileStore) statePath() string {
 	return filepath.Join(s.baseDir, "state.json")
 }
 
+// GetState returns the persisted launcher state from state.json.
 func (s *FileStore) GetState() (*LauncherState, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -161,6 +170,7 @@ func (s *FileStore) GetState() (*LauncherState, error) {
 	return &state, nil
 }
 
+// SetState persists the launcher state to state.json atomically.
 func (s *FileStore) SetState(state LauncherState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -172,10 +182,12 @@ func (s *FileStore) SetState(state LauncherState) error {
 	return fsutil.AtomicWriteFile(s.statePath(), data, 0o644)
 }
 
+// PutSecretBlob stores the encrypted secrets blob to a file.
 func (s *FileStore) PutSecretBlob(base64Data string) error {
 	return fsutil.AtomicWriteFile(filepath.Join(s.baseDir, "secret_blob.dat"), []byte(base64Data), 0o600)
 }
 
+// GetSecretBlob retrieves the encrypted secrets blob from a file.
 func (s *FileStore) GetSecretBlob() (string, error) {
 	data, err := os.ReadFile(filepath.Join(s.baseDir, "secret_blob.dat"))
 	if err != nil {
@@ -184,6 +196,7 @@ func (s *FileStore) GetSecretBlob() (string, error) {
 	return string(data), nil
 }
 
+// Close is a no-op for FileStore (no resources to release).
 func (s *FileStore) Close() error {
 	return nil
 }
@@ -199,7 +212,7 @@ type secretFile struct {
 }
 
 func (s *FileStore) readSecret(path string) (*Secret, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // G304: path is constructed from internal baseDir + secret ID
 	if err != nil {
 		return nil, err
 	}

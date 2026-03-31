@@ -67,20 +67,20 @@ func CleanupJRE(homeDir string) {
 
 // RunJarMigration runs the embedded H2 export JAR and imports the result.
 // javaPath must be a valid path to a java binary (system or downloaded JRE).
-func RunJarMigration(homeDir string, javaPath string, store storage.Store) (*MigrateResult, error) {
+func RunJarMigration(homeDir, javaPath string, store storage.Store) (*MigrateResult, error) {
 	h2Path := filepath.Join(homeDir, "storage.db")
 	jarPath := filepath.Join(homeDir, JarName)
 	exportPath := filepath.Join(homeDir, "h2-export.json")
 
 	// Step 1: Write embedded JAR to disk
-	if err := os.WriteFile(jarPath, embedded.H2ExportJar, 0o644); err != nil {
+	if err := os.WriteFile(jarPath, embedded.H2ExportJar, 0o644); err != nil { //nolint:gosec // JAR needs to be readable by JVM
 		return nil, fmt.Errorf("write h2-export.jar: %w", err)
 	}
 	defer os.Remove(jarPath)
 
 	// Step 3: Run JAR
 	slog.Info("Running H2 export", "jar", jarPath, "db", h2Path)
-	cmd := exec.Command(javaPath, "-jar", jarPath, h2Path, exportPath)
+	cmd := exec.Command(javaPath, "-jar", jarPath, h2Path, exportPath) //nolint:gosec // all arguments are controlled (local file paths)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("run h2-export.jar: %w", err)
@@ -134,13 +134,13 @@ func jrePlatformKey() string {
 
 // downloadJRE downloads and extracts a minimal Adoptium JRE.
 // Returns (jreDir, javaPath, error). Caller must os.RemoveAll(jreDir) when done.
-func downloadJRE(homeDir string) (string, string, error) {
+func downloadJRE(homeDir string) (jreDir string, javaPath string, _ error) {
 	platform, ok := jrePlatforms[jrePlatformKey()]
 	if !ok {
 		return "", "", fmt.Errorf("no JRE available for %s", jrePlatformKey())
 	}
 
-	jreDir := filepath.Join(homeDir, "tmp-jre")
+	jreDir = filepath.Join(homeDir, "tmp-jre")
 	os.RemoveAll(jreDir)
 	os.MkdirAll(jreDir, 0o755)
 
@@ -184,7 +184,7 @@ func downloadJRE(homeDir string) (string, string, error) {
 	if isWindows {
 		javaBin = "java.exe"
 	}
-	javaPath := ""
+	javaPath = ""
 	filepath.Walk(jreDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
@@ -210,9 +210,10 @@ func extractZip(zipPath, destDir string) error {
 	}
 	defer r.Close()
 
+	cleanDest := filepath.Clean(destDir) + string(os.PathSeparator)
 	for _, f := range r.File {
-		target := filepath.Join(destDir, f.Name)
-		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(destDir)) {
+		target := filepath.Join(destDir, f.Name) //nolint:gosec // path traversal prevented by prefix check below
+		if !strings.HasPrefix(filepath.Clean(target)+string(os.PathSeparator), cleanDest) {
 			continue
 		}
 		if f.FileInfo().IsDir() {
@@ -259,9 +260,9 @@ func extractTarGz(archivePath, destDir string) error {
 			return err
 		}
 
-		target := filepath.Join(destDir, header.Name)
+		target := filepath.Join(destDir, header.Name) //nolint:gosec // path traversal prevented by prefix check below
 		// Prevent path traversal
-		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(destDir)) {
+		if !strings.HasPrefix(filepath.Clean(target)+string(os.PathSeparator), filepath.Clean(destDir)+string(os.PathSeparator)) {
 			continue
 		}
 
@@ -270,7 +271,7 @@ func extractTarGz(archivePath, destDir string) error {
 			os.MkdirAll(target, 0o755)
 		case tar.TypeReg:
 			os.MkdirAll(filepath.Dir(target), 0o755)
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY, os.FileMode(header.Mode))
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY, os.FileMode(header.Mode)) //nolint:gosec // mode is from trusted JRE tar archive
 			if err != nil {
 				continue
 			}
@@ -294,8 +295,8 @@ func ImportExportJSON(homeDir, exportPath string, store storage.Store) (*Migrate
 	}
 
 	var export h2ExportJSON
-	if err := json.Unmarshal(data, &export); err != nil {
-		return nil, fmt.Errorf("parse export file: %w", err)
+	if unmarshalErr := json.Unmarshal(data, &export); unmarshalErr != nil {
+		return nil, fmt.Errorf("parse export file: %w", unmarshalErr)
 	}
 
 	if export.Version != 1 {
@@ -422,7 +423,7 @@ func importNamespaces(homeDir string, maps map[string]map[string]string, result 
 			os.MkdirAll(nsDir, 0o755)
 			nsConfigPath := filepath.Join(nsDir, "namespace.yml")
 
-			if err := os.WriteFile(nsConfigPath, yamlBytes, 0o644); err != nil {
+			if err := os.WriteFile(nsConfigPath, yamlBytes, 0o644); err != nil { //nolint:gosec // config file needs to be readable
 				slog.Warn("Failed to write namespace config", "path", nsConfigPath, "err", err)
 				result.Errors++
 				continue

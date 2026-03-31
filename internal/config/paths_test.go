@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -163,10 +164,5 @@ func TestResolvePathsDesktopMode(t *testing.T) {
 }
 
 func containsDir(path, dir string) bool {
-	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
-		if part == dir {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strings.Split(filepath.ToSlash(path), "/"), dir)
 }

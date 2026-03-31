@@ -68,25 +68,26 @@ func runUninstall(deleteData bool) error {
 	}
 
 	// 3. Optionally delete data
-	if deleteData {
-		if !flagYes {
-			fmt.Printf("Delete ALL data in %s? [y/N]: ", config.HomeDir())
-			scanner.Scan()
-			if scanner.Text() != "y" && scanner.Text() != "yes" {
-				output.PrintText("Aborted — data preserved")
-				return nil
-			}
-		}
+	if !deleteData {
+		output.PrintText("Uninstall complete")
+		return nil
+	}
 
-		dirs := []string{config.HomeDir()}
-		for _, dir := range dirs {
-			if _, err := os.Stat(dir); err == nil {
-				if err := os.RemoveAll(dir); err != nil {
-					output.PrintText("Failed to remove %s: %v", dir, err)
-				} else {
-					output.PrintText("Removed %s", dir)
-				}
-			}
+	if !flagYes {
+		fmt.Printf("Delete ALL data in %s? [y/N]: ", config.HomeDir())
+		scanner.Scan()
+		if scanner.Text() != "y" && scanner.Text() != "yes" {
+			output.PrintText("Aborted — data preserved")
+			return nil
+		}
+	}
+
+	homeDir := config.HomeDir()
+	if _, err := os.Stat(homeDir); err == nil {
+		if err := os.RemoveAll(homeDir); err != nil {
+			output.PrintText("Failed to remove %s: %v", homeDir, err)
+		} else {
+			output.PrintText("Removed %s", homeDir)
 		}
 	}
 

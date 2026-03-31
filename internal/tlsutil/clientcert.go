@@ -55,7 +55,7 @@ func GenerateClientCert(certPath, cn string, days int) (certPEM, keyPEM []byte, 
 	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 
 	// Write ONLY the public cert to disk
-	if err := os.MkdirAll(filepath.Dir(certPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(certPath), 0o750); err != nil {
 		return nil, nil, fmt.Errorf("create cert dir: %w", err)
 	}
 	if err := fsutil.AtomicWriteFile(certPath, certPEM, 0o644); err != nil {
@@ -90,7 +90,7 @@ func LoadCACertPool(dir string) (*x509.CertPool, int, error) {
 		}
 
 		filePath := filepath.Join(dir, name)
-		data, err := os.ReadFile(filePath)
+		data, err := os.ReadFile(filePath) //nolint:gosec // filePath is constructed from directory listing, not user input
 		if err != nil {
 			slog.Warn("Failed to read CA cert file", "path", filePath, "err", err)
 			continue

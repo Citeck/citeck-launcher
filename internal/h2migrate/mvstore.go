@@ -2,8 +2,10 @@ package h2migrate
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"strconv"
 	"strings"
@@ -104,10 +106,9 @@ func parseHeaderBlock(data []byte) map[string]string {
 	text := string(data[:end])
 
 	result := make(map[string]string)
-	for _, part := range strings.Split(text, ",") {
-		kv := strings.SplitN(part, ":", 2)
-		if len(kv) == 2 {
-			result[kv[0]] = kv[1]
+	for part := range strings.SplitSeq(text, ",") {
+		if key, val, ok := strings.Cut(part, ":"); ok {
+			result[key] = val
 		}
 	}
 	return result
@@ -123,8 +124,8 @@ func (s *MVStore) ListMapNames() ([]string, error) {
 
 	var names []string
 	for k := range meta {
-		if strings.HasPrefix(k, "name.") {
-			names = append(names, strings.TrimPrefix(k, "name."))
+		if after, ok := strings.CutPrefix(k, "name."); ok {
+			names = append(names, after)
 		}
 	}
 	return names, nil
@@ -164,7 +165,7 @@ func (s *MVStore) ReadMap(mapName string) (map[string][]byte, error) {
 // readMetaMap reads the "meta" map (always map 0, stored in the last chunk).
 // decodePagePos extracts chunk ID and offset from an encoded page position.
 // H2 MVStore encodes: (chunkId << 38) | (offset << 6) | type
-func decodePagePos(pos int64) (chunkID int, offset int) {
+func decodePagePos(pos int64) (chunkID, offset int) {
 	chunkID = int(pos >> 38)
 	offset = int((pos >> 6) & ((1 << 32) - 1))
 	return
@@ -213,8 +214,8 @@ func (s *MVStore) readMetaMap() (map[string]string, error) {
 		rootChunk = newestChunk
 	} else {
 		// Root page is in a different chunk — find it via the newest chunk's "toc" or scan
-		if err := s.scanChunks(); err != nil {
-			return nil, err
+		if scanErr := s.scanChunks(); scanErr != nil {
+			return nil, scanErr
 		}
 		found := false
 		for _, c := range s.chunks {
@@ -293,7 +294,7 @@ func (s *MVStore) scanChunks() error {
 
 	for offset < fileSize {
 		n, err := s.file.ReadAt(buf, offset)
-		if err != nil && err != io.EOF {
+		if err != nil && !errors.Is(err, io.EOF) {
 			return err
 		}
 		if n < 2 {
@@ -349,12 +350,11 @@ func parseChunkHeader(data []byte) (chunkMeta, error) {
 		v, _ := strconv.ParseInt(s, 16, 64)
 		return v
 	}
-	for _, part := range strings.Split(text, ",") {
-		kv := strings.SplitN(part, ":", 2)
-		if len(kv) != 2 {
+	for part := range strings.SplitSeq(text, ",") {
+		key, val, ok := strings.Cut(part, ":")
+		if !ok {
 			continue
 		}
-		key, val := kv[0], kv[1]
 		switch key {
 		case "chunk":
 			c.id = hexInt(val)
@@ -495,58 +495,12 @@ func (s *MVStore) readLeafPage(data []byte, offset int) (map[string][]byte, erro
 	isLeaf := (typeByte & 1) == 0
 
 	if !isLeaf {
-		// Internal B-tree node: read child page positions and recurse.
-		// Format: (keyCount+1) x int64 BE child positions, then (keyCount+1) x varlong counts, then keys
-		childCount := int(keyCount) + 1
-		childPositions := make([]int64, childCount)
-		for i := 0; i < childCount; i++ {
-			if pos+8 > len(data) {
-				return result, nil
-			}
-			childPositions[i] = int64(binary.BigEndian.Uint64(data[pos:]))
-			pos += 8
-		}
-		// Skip descendant counts (varlong per child)
-		for i := 0; i < childCount; i++ {
-			_, n, err := readVarInt(data, pos)
-			if err != nil {
-				return result, nil
-			}
-			pos += n
-		}
-		// Recurse into each child — they may be in the same or different chunks
-		for _, childPos := range childPositions {
-			childChunkID, childOffset := decodePagePos(childPos)
-			var childData []byte
-			if childChunkID == s.currentChunkID {
-				childData = data
-			} else {
-				// Load chunk on demand
-				chunk, err := s.findChunk(childChunkID)
-				if err != nil {
-					continue
-				}
-				childData, err = s.readChunkData(chunk)
-				if err != nil {
-					continue
-				}
-			}
-			if childOffset >= 0 && childOffset < len(childData) {
-				entries, err := s.readLeafPage(childData, childOffset)
-				if err != nil {
-					continue
-				}
-				for k, v := range entries {
-					result[k] = v
-				}
-			}
-		}
-		return result, nil
+		return s.readInternalNode(data, pos, keyCount, result)
 	}
 
 	// Leaf page: read keys and values
 	keys := make([]string, keyCount)
-	for i := 0; i < int(keyCount); i++ {
+	for i := range int(keyCount) {
 		str, n, err := readVarString(data, pos)
 		if err != nil {
 			return result, nil
@@ -578,13 +532,63 @@ func (s *MVStore) readLeafPage(data []byte, offset int) (map[string][]byte, erro
 	return result, nil
 }
 
+// readInternalNode reads an internal B-tree node and recursively collects all leaf entries.
+func (s *MVStore) readInternalNode(data []byte, pos int, keyCount int64, result map[string][]byte) (map[string][]byte, error) {
+	// Read child page positions: (keyCount+1) x int64 big-endian
+	childCount := int(keyCount) + 1
+	childPositions := make([]int64, childCount)
+	for i := range childCount {
+		if pos+8 > len(data) {
+			return result, nil
+		}
+		childPositions[i] = int64(binary.BigEndian.Uint64(data[pos:])) //nolint:gosec // uint64→int64 is safe for page positions
+		pos += 8
+	}
+	// Skip descendant counts (varlong per child)
+	for range childCount {
+		_, n, err := readVarInt(data, pos)
+		if err != nil {
+			return result, nil
+		}
+		pos += n
+	}
+	// Recurse into each child — they may be in the same or different chunks
+	for _, childPos := range childPositions {
+		childChunkID, childOffset := decodePagePos(childPos)
+		childData, err := s.loadChunkData(childChunkID, data)
+		if err != nil {
+			continue
+		}
+		if childOffset >= 0 && childOffset < len(childData) {
+			entries, err := s.readLeafPage(childData, childOffset)
+			if err != nil {
+				continue
+			}
+			maps.Copy(result, entries)
+		}
+	}
+	return result, nil
+}
+
+// loadChunkData returns the chunk data for the given chunk ID, reusing the current
+// chunk's data buffer when possible.
+func (s *MVStore) loadChunkData(chunkID int, currentData []byte) ([]byte, error) {
+	if chunkID == s.currentChunkID {
+		return currentData, nil
+	}
+	chunk, err := s.findChunk(chunkID)
+	if err != nil {
+		return nil, err
+	}
+	return s.readChunkData(chunk)
+}
+
 // parseMapRoot extracts the root page position from a map info string.
 // Format: "root:hexvalue,..." or entries like "root:0x1234"
 func parseMapRoot(info string) int64 {
-	for _, part := range strings.Split(info, ",") {
-		kv := strings.SplitN(part, ":", 2)
-		if len(kv) == 2 && kv[0] == "root" {
-			v, _ := strconv.ParseInt(kv[1], 16, 64)
+	for part := range strings.SplitSeq(info, ",") {
+		if key, val, ok := strings.Cut(part, ":"); ok && key == "root" {
+			v, _ := strconv.ParseInt(val, 16, 64)
 			return v
 		}
 	}

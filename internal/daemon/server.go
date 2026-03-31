@@ -34,7 +34,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/tlsutil"
 )
 
-// ErrShutdownRequested is returned by Start when an external context is cancelled.
+// ErrShutdownRequested is returned by Start when an external context is canceled.
 var ErrShutdownRequested = errors.New("shutdown requested")
 
 var (
@@ -90,7 +90,7 @@ type Daemon struct {
 	bundleError     string // non-empty if bundle resolution failed
 	acmeRenewal     *acme.RenewalService
 	shutdownOnce    sync.Once
-	bgCtx           context.Context    // cancelled on daemon shutdown
+	bgCtx           context.Context    // canceled on daemon shutdown
 	bgCancel        context.CancelFunc
 	bgWg            sync.WaitGroup     // tracks background goroutines (snapshot, downloads)
 	snapshotMu      sync.Mutex         // guards concurrent snapshot import/export
@@ -138,6 +138,8 @@ func (d *Daemon) rebuildAuthCaches() {
 }
 
 // Start runs the daemon.
+//
+//nolint:gocyclo,nestif // Start() orchestrates the full daemon lifecycle: storage, Docker, config, TLS, ACME, runtime, and HTTP servers
 func Start(opts StartOptions) error {
 	// Set up log rotation once — survives daemon restarts in desktop mode.
 	// The RotatingWriter and slog default are process-global; re-creating them
@@ -190,7 +192,7 @@ func Start(opts StartOptions) error {
 	}
 
 	// Check if another daemon is already running via socket lock
-	if conn, err := net.DialTimeout("unix", socketPath, 2*time.Second); err == nil {
+	if conn, dialErr := net.DialTimeout("unix", socketPath, 2*time.Second); dialErr == nil {
 		conn.Close()
 		return fmt.Errorf("another daemon is already running (socket %s is active)", socketPath)
 	}
@@ -258,7 +260,7 @@ func Start(opts StartOptions) error {
 		}
 
 		// Fallback: use first available workspace if stored one doesn't exist
-		if workspaces, err := config.ListWorkspaces(); err == nil && len(workspaces) > 0 {
+		if workspaces, listErr := config.ListWorkspaces(); listErr == nil && len(workspaces) > 0 {
 			// Verify the stored wsID exists
 			wsExists := false
 			for _, ws := range workspaces {
@@ -370,10 +372,10 @@ func Start(opts StartOptions) error {
 			reader = secretSvc
 		}
 		resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(reader))
-		resolveResult, err := resolver.Resolve(nsCfg.BundleRef)
-		if err != nil {
-			slog.Error("Failed to resolve bundle — daemon starts with 0 apps", "ref", nsCfg.BundleRef, "err", err)
-			bundleError = err.Error()
+		resolveResult, resolveErr := resolver.Resolve(nsCfg.BundleRef)
+		if resolveErr != nil {
+			slog.Error("Failed to resolve bundle — daemon starts with 0 apps", "ref", nsCfg.BundleRef, "err", resolveErr)
+			bundleError = resolveErr.Error()
 			resolveResult = &bundle.ResolveResult{Bundle: &bundle.EmptyBundleDef, Workspace: &bundle.WorkspaceConfig{}}
 		}
 		bundleDef = resolveResult.Bundle
@@ -398,10 +400,10 @@ func Start(opts StartOptions) error {
 				if !acmeClient.CertMatchesHost() {
 					slog.Info("Obtaining Let's Encrypt certificate", "host", host)
 					acmeCtx, acmeCancel := context.WithTimeout(context.Background(), 120*time.Second)
-					err := acmeClient.ObtainCertificate(acmeCtx)
+					acmeErr := acmeClient.ObtainCertificate(acmeCtx)
 					acmeCancel()
-					if err != nil {
-						slog.Error("Let's Encrypt certificate obtainment failed", "err", err)
+					if acmeErr != nil {
+						slog.Error("Let's Encrypt certificate obtainment failed", "err", acmeErr)
 					} else {
 						slog.Info("Let's Encrypt certificate obtained", "cert", certPath)
 					}
@@ -416,8 +418,8 @@ func Start(opts StartOptions) error {
 		}
 
 		// Extract appfiles to volumes base
-		if err := appfiles.ExtractTo(volumesBase); err != nil {
-			slog.Error("Failed to extract appfiles", "err", err)
+		if extractErr := appfiles.ExtractTo(volumesBase); extractErr != nil {
+			slog.Error("Failed to extract appfiles", "err", extractErr)
 		} else {
 			slog.Info("Extracted appfiles", "dir", volumesBase)
 		}
@@ -438,12 +440,12 @@ func Start(opts StartOptions) error {
 		// Write generated files (cloud config YAMLs, etc.) to volumes base
 		for filePath, content := range genResp.Files {
 			destPath := filepath.Join(volumesBase, filePath)
-			if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
-				slog.Error("Failed to create dir for generated file", "path", destPath, "err", err)
+			if mkdirErr := os.MkdirAll(filepath.Dir(destPath), 0o755); mkdirErr != nil {
+				slog.Error("Failed to create dir for generated file", "path", destPath, "err", mkdirErr)
 				continue
 			}
-			if err := fsutil.AtomicWriteFile(destPath, content, 0o644); err != nil {
-				slog.Error("Failed to write generated file", "path", destPath, "err", err)
+			if writeErr := fsutil.AtomicWriteFile(destPath, content, 0o644); writeErr != nil {
+				slog.Error("Failed to write generated file", "path", destPath, "err", writeErr)
 			}
 		}
 		slog.Info("Generated namespace", "apps", len(genResp.Applications), "files", len(genResp.Files))
@@ -592,10 +594,10 @@ func Start(opts StartOptions) error {
 			// Non-localhost requires mTLS for full access.
 			var tcpBaseMux http.Handler = socketMux
 			if !localhost {
-				var err error
-				tcpListener, tcpBaseMux, mtlsActive, err = d.setupMTLS(tcpListener, socketMux, nsCfg, tcpAddr)
-				if err != nil {
-					slog.Error("mTLS setup failed — Web UI not started", "err", err)
+				var mtlsErr error
+				tcpListener, tcpBaseMux, mtlsActive, mtlsErr = d.setupMTLS(tcpListener, socketMux, nsCfg, tcpAddr)
+				if mtlsErr != nil {
+					slog.Error("mTLS setup failed — Web UI not started", "err", mtlsErr)
 				}
 			}
 
@@ -666,7 +668,7 @@ func Start(opts StartOptions) error {
 		// Desktop mode: context provided externally (Wails owns lifecycle)
 		go func() {
 			<-opts.Ctx.Done()
-			slog.Info("External context cancelled, shutting down")
+			slog.Info("External context canceled, shutting down")
 			d.shutdown()
 		}()
 	} else {
@@ -801,9 +803,9 @@ func (d *Daemon) setupMTLS(ln net.Listener, handler http.Handler, nsCfg *namespa
 	if _, statErr := os.Stat(serverCertPath); os.IsNotExist(statErr) {
 		certHost := resolveServerCertHost(tcpAddr, nsCfg)
 		slog.Info("Generating Web UI server certificate", "host", certHost)
-		if err := tlsutil.GenerateSelfSignedCert(serverCertPath, serverKeyPath, []string{certHost}, 36500); err != nil {
+		if genErr := tlsutil.GenerateSelfSignedCert(serverCertPath, serverKeyPath, []string{certHost}, 36500); genErr != nil {
 			ln.Close()
-			return nil, handler, false, fmt.Errorf("generate server cert: %w", err)
+			return nil, handler, false, fmt.Errorf("generate server cert: %w", genErr)
 		}
 	}
 
@@ -1153,6 +1155,7 @@ func buildRegistryAuthCache(reposByHost map[string]bundle.ImageRepo, reader secr
 
 // importSnapshotIfNeeded checks for the snapshot field in namespace config and imports
 // the snapshot if it hasn't been imported yet (tracked by a marker file).
+//nolint:nestif // snapshot import requires nested SHA256 verification and download fallback logic
 func importSnapshotIfNeeded(nsCfg *namespace.NamespaceConfig, wsCfg *bundle.WorkspaceConfig, dc *docker.Client, volumesBase string) {
 	if nsCfg.Snapshot == "" || wsCfg == nil {
 		return

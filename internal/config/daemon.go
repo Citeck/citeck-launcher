@@ -14,8 +14,8 @@ import (
 type DaemonConfig struct {
 	Locale     string           `yaml:"locale,omitempty" json:"locale,omitempty"` // UI language (en, ru, zh, es, de, fr, pt, ja)
 	Server     ServerConfig     `yaml:"server" json:"server"`
-	Reconciler ReconcilerConfig `yaml:"reconciler,omitempty" json:"reconciler,omitempty"`
-	Docker     DockerConfig     `yaml:"docker,omitempty" json:"docker,omitempty"`
+	Reconciler ReconcilerConfig `yaml:"reconciler,omitempty" json:"reconciler,omitzero"`
+	Docker     DockerConfig     `yaml:"docker,omitempty" json:"docker,omitzero"`
 }
 
 // ServerConfig holds server-level settings.
@@ -99,7 +99,7 @@ func LoadDaemonConfig() (DaemonConfig, error) {
 // SaveDaemonConfig writes daemon.yml to the conf dir.
 func SaveDaemonConfig(cfg DaemonConfig) error {
 	path := DaemonConfigPath()
-	if err := os.MkdirAll(ConfDir(), 0o755); err != nil {
+	if err := os.MkdirAll(ConfDir(), 0o755); err != nil { //nolint:gosec // conf dir needs 0o755 for readability
 		return fmt.Errorf("create conf dir: %w", err)
 	}
 

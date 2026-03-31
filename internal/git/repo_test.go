@@ -26,12 +26,12 @@ func TestCloneOrPull_PublicRepo(t *testing.T) {
 	}
 
 	// Verify .git exists
-	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+	if _, statErr := os.Stat(filepath.Join(dir, ".git")); statErr != nil {
 		t.Fatal(".git directory not found after clone")
 	}
 
 	// Verify workspace-v1.yml exists
-	if _, err := os.Stat(filepath.Join(dir, "workspace-v1.yml")); err != nil {
+	if _, statErr := os.Stat(filepath.Join(dir, "workspace-v1.yml")); statErr != nil {
 		t.Fatal("workspace-v1.yml not found after clone")
 	}
 
