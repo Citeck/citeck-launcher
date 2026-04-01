@@ -40,3 +40,4 @@
 | Phase 13 | Production hardening for scale — secrets masking, security headers, HTTP metrics, validate, toast (20 issues + 6 review fixes) | 2026-03-27 |
 | Phase 14 | Production hardening at scale — SSE heartbeat, reclone safety, Logs perf, fetch errors, runtime tests, CI (20 issues + 11 review fixes) | 2026-03-27 |
 | Phase 15 | Lens-inspired UI redesign — drawer, bottom panel, i18n (8 languages), UX hardening, design polish, apps visible when stopped | 2026-03-28 |
+| Phase 16 | Secrets encryption (AES-256-GCM), desktop fixes (Wails proxy, WAL cleanup, error pages), 21-linter config, locale test, per-page ErrorBoundary | 2026-03-31 |

@@ -306,10 +306,13 @@ Tested on remote server with community 2025.12 (clean deployment). Found and fix
 - Stale WAL/SHM cleanup on SQLiteStore open
 - .sh file permissions: explicit chmod after write
 
-**Lint Cleanup:**
-- `.golangci.yml` with 21 linters (from citeck-ci reference project)
+**Quality & Reliability:**
+- `.golangci.yml` with 21 linters (from citeck-ci reference project), 0 warnings
 - Makefile: `-s -w` ldflags, fmt/tidy/coverage/tools targets, pinned golangci-lint v2.7.2
-- All 347 warnings fixed across 142 files
+- Per-page ErrorBoundary — page crash shows inline error + retry, rest of app stays alive
+- Locale completeness test (`import.meta.glob`) — auto-discovers all locale files, verifies all keys present
+- All 8 locales (en/ru/de/es/fr/ja/pt/zh) fully translated for secrets/migration/encryption keys
+- Defensive null checks on API DTOs (namespace.apps ?? [])
 
 ### Key Technical Decisions (Phase 16)
 - Per-secret encryption (not single blob like Kotlin) — changing one secret doesn't re-encrypt all
@@ -320,6 +323,9 @@ Tested on remote server with community 2025.12 (clean deployment). Found and fix
 - `DaemonStatus` (atomic fields + LogBuffer) shared between daemon loop and proxy for informative error display
 - `CleanLogHandler` for human-readable slog output: ISO 8601 UTC, no quoted keys, padded level
 - Bundle resolver: GIT_TOKEN fallback when bundleRepo.AuthType is empty (Kotlin migration compat)
+- Per-page `<ErrorBoundary inline>` — crash in one page doesn't kill the whole app
+- Locale completeness test via `import.meta.glob` — auto-discovers locale files, no manual imports
+- Stale WAL/SHM cleanup on SQLiteStore open — prevents disk I/O errors after crash
 
 ### Other References
 - **`PROGRESS.md`** — tracks completed work (historical)
