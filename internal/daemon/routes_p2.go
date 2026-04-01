@@ -590,12 +590,21 @@ func (d *Daemon) handleSubmitMasterPassword(w http.ResponseWriter, r *http.Reque
 		slog.Error("Failed to clear secret blob after import", "err", err)
 	}
 
+	// Immediately encrypt with the same password — secrets must never stay plaintext on disk
+	if d.secretService != nil && !d.secretService.IsEncrypted() {
+		if encErr := d.secretService.SetMasterPassword(req.Password); encErr != nil {
+			slog.Error("Failed to encrypt secrets after import", "err", encErr)
+		} else {
+			slog.Info("Secrets encrypted with master password after import")
+		}
+	}
+
 	d.rebuildAuthCaches()
 
-	slog.Info("Master password accepted, secrets decrypted", "count", count)
+	slog.Info("Master password accepted, secrets imported and encrypted", "count", count)
 	writeJSON(w, api.ActionResultDto{
 		Success: true,
-		Message: fmt.Sprintf("%d secrets imported", count),
+		Message: fmt.Sprintf("%d secrets imported and encrypted", count),
 	})
 }
 
