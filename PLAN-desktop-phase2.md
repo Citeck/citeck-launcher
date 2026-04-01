@@ -1,8 +1,8 @@
-# Plan: Secrets Encryption + Desktop Bug Fixes
+# Plan: Secrets Encryption + Desktop Bug Fixes — COMPLETE (2026-03-31)
 
 ## Context
 
-Go launcher v2 хранит секреты **plaintext** в SQLite. Kotlin v1 шифровал AES-256-GCM + PBKDF2-HMAC-SHA256 (1M iterations). Критическая регрессия безопасности.
+Go launcher v2 хранил секреты **plaintext** в SQLite. Kotlin v1 шифровал AES-256-GCM + PBKDF2-HMAC-SHA256 (1M iterations). Критическая регрессия безопасности. **Исправлено** — секреты теперь шифруются AES-256-GCM с PBKDF2 1M iterations, никогда не хранятся plaintext на диске.
 
 ---
 

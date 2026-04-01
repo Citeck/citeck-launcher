@@ -28,14 +28,18 @@ This is a **Go rewrite** (v2.0) of the original Kotlin/JVM launcher (v1.x). The 
 ```bash
 make build                    # Build Go binary + embed React web UI → build/bin/citeck
 make build-fast               # Build Go only (skip web rebuild) → build/bin/citeck
+make build-desktop            # Build desktop (Wails) binary → build/bin/citeck-desktop
 make test                     # Run all tests (Go + Vitest)
-go test ./...                 # Go tests only
-go test ./internal/...        # Go unit tests only
-cd web && npx vitest run      # React component tests
-cd web && npx playwright test # E2E browser tests
-golangci-lint run             # Go linter
-cd web && npm run lint        # Web linter
+make test-unit                # Go unit tests only (./internal/...)
+make test-race                # Go tests with race detector + 120s timeout
+make test-coverage            # Go coverage report → coverage.html
+make lint                     # Run Go (golangci-lint) + Web (eslint) linters
+make fmt                      # Format Go code
+make tidy                     # go mod tidy
+make tools                    # Install golangci-lint v2.7.2
+make clean                    # Remove build artifacts
 build/bin/citeck start --foreground   # Run daemon with web UI on 127.0.0.1:7088
+./build/bin/citeck-desktop            # Run desktop app (Wails webview)
 ```
 
 ## Architecture
@@ -51,7 +55,7 @@ build/bin/citeck start --foreground   # Run daemon with web UI on 127.0.0.1:7088
 | `internal/bundle/` | Bundle definitions and resolution from git repos |
 | `internal/git/` | Git clone/pull via go-git (pure Go, with token auth, hard-reset, reclone) |
 | `internal/config/` | Filesystem paths, daemon config (daemon.yml), workspace dir scanner |
-| `internal/storage/` | Store interface + FileStore (server) + SQLiteStore (desktop) |
+| `internal/storage/` | Store interface + FileStore (server) + SQLiteStore (desktop) + SecretService (AES-256-GCM encryption) |
 | `internal/h2migrate/` | H2 MVStore read-only parser, LZF decompressor, H2→SQLite migration |
 | `internal/client/` | DaemonClient (Unix socket + mTLS TCP transport) |
 | `internal/output/` | Text/JSON output formatter, tables, colors |
@@ -62,7 +66,7 @@ build/bin/citeck start --foreground   # Run daemon with web UI on 127.0.0.1:7088
 | `internal/form/` | Form field specs, built-in field definitions, validation |
 | `internal/snapshot/` | Volume snapshot export/import (ZIP + tar.xz) |
 | `internal/tlsutil/` | TLS cert utilities (self-signed, client cert, CA pool loader) |
-| `internal/fsutil/` | Atomic file write (temp+fsync+rename), RotatingWriter (log rotation) |
+| `internal/fsutil/` | Atomic file write (temp+fsync+rename), RotatingWriter (log rotation), CleanLogHandler (human-readable slog) |
 | `internal/acme/` | ACME/Let's Encrypt client + auto-renewal service |
 | `internal/namespace/nsactions/` | Action executors wired to Docker + runtime |
 
@@ -79,7 +83,7 @@ React 19 + Vite + TypeScript + Tailwind CSS 4. Embedded into Go binary via `go:e
 - `DaemonLogs.tsx` — thin wrapper for DaemonLogsViewer
 - `Welcome.tsx` — namespace list, quick start buttons, create/delete
 - `Wizard.tsx` — multi-step namespace creation (8 steps, language-aware)
-- `Secrets.tsx` — secret CRUD with type selector and test button
+- `Secrets.tsx` — secret CRUD with type selector, test button, encryption status, inline unlock
 - `Diagnostics.tsx` — system health checks with fix actions
 
 **Components:**
@@ -88,7 +92,7 @@ React 19 + Vite + TypeScript + Tailwind CSS 4. Embedded into Go binary via `go:e
 - `RightDrawer.tsx` — overlay drawer with slide animation
 - `LogViewer.tsx` — log viewer (virtual list, regex search, level filter, streaming, active prop)
 - `ConfigEditor.tsx` — namespace.yml viewer/editor with YAML highlighting
-- `DaemonLogsViewer.tsx` — daemon logs with polling and visibility-aware pause
+- `DaemonLogsViewer.tsx` — daemon logs streaming (fetch-based, replaces polling)
 - `AppDrawerContent.tsx` — app inspect details + action buttons (logs, config, restart)
 - `AppConfigEditor.tsx` — per-app YAML config + mounted files editor
 - `YamlViewer.tsx` — shared YAML syntax highlighter
@@ -124,8 +128,9 @@ React 19 + Vite + TypeScript + Tailwind CSS 4. Embedded into Go binary via `go:e
 
 ### Go
 - Standard `gofmt` formatting
-- `golangci-lint` for linting
+- `golangci-lint` v2.7.2 with 21 linters (`.golangci.yml`): dupl, errorlint, gochecknoinits, gocritic, gocyclo, gosec, govet (shadow), ineffassign, misspell (US), modernize, nakedret, nestif, prealloc, revive, staticcheck, testifylint, unconvert, unparam, unused, wrapcheck
 - Tabs for indentation (Go standard)
+- Custom slog handler (`fsutil.CleanLogHandler`): `2026-04-01T02:58:51Z INFO  Message key=value`
 
 ### Web (React/TypeScript)
 - Tailwind CSS 4 for styling
@@ -277,9 +282,47 @@ Tested on remote server with community 2025.12 (clean deployment). Found and fix
 - WebUI mTLS server cert issued for 100 years (36500 days)
 - PutAppConfig whitelist: only env, resources, probes mutable; image/volumes/cmd/ports locked (defense-in-depth)
 
+### Phase 16: Secrets Encryption + Desktop Phase 2 — COMPLETE (2026-03-31)
+30+ commits across 9 steps + 3 code review rounds (17 issues fixed) + lint cleanup (347→0 warnings).
+
+**P0: Secrets Encryption:**
+- `SecretService` (AES-256-GCM, PBKDF2-HMAC-SHA256 1M iterations, per-secret random 12-byte IV)
+- Secrets NEVER stored plaintext on disk — Kotlin import auto-encrypts with same password
+- `secretReader`/`secretWriter` interfaces for uniform access through encryption layer
+- API: `GET /secrets/status`, `POST /secrets/unlock`, `POST /secrets/setup-password`
+- Dashboard: multi-step master password dialog (kotlin-decrypt / setup-password / unlock)
+- Secrets page: encryption badge, locked warning, inline unlock form
+- Sentinel errors: `ErrSecretsLocked`, `ErrAlreadyEncrypted`, `ErrCorruptedKeystore`
+- 15 crypto tests (round-trip, wrong password, locked state, restart simulation, raw DB verification)
+
+**P1: Desktop Bug Fixes:**
+- Citeck logo for window + tray icons (go:embed)
+- LogViewer: first-chunk replace (no REST+stream duplication)
+- DaemonLogsViewer: streaming via `?follow=true` (replaces 5s polling)
+- Desktop proxy: direct HTTP client via Unix socket (replaces httputil.ReverseProxy which dropped body with ContentLength=0 from Wails AssetServer)
+- TCP listener skipped in desktop mode (Wails proxies through socket)
+- Informative error page: daemon error + startup logs on failure, auto-refresh
+- DevTools menu item in system tray
+- Stale WAL/SHM cleanup on SQLiteStore open
+- .sh file permissions: explicit chmod after write
+
+**Lint Cleanup:**
+- `.golangci.yml` with 21 linters (from citeck-ci reference project)
+- Makefile: `-s -w` ldflags, fmt/tidy/coverage/tools targets, pinned golangci-lint v2.7.2
+- All 347 warnings fixed across 142 files
+
+### Key Technical Decisions (Phase 16)
+- Per-secret encryption (not single blob like Kotlin) — changing one secret doesn't re-encrypt all
+- `SecretService` wraps `SQLiteStore`, does NOT change `Store` interface — server mode unaffected
+- Verify token (`"citeck-secrets-v1"` encrypted with derived key) validates password without decrypting all secrets
+- Desktop mode: no TCP listener, Wails → direct HTTP client → Unix socket → daemon
+- Wails AssetServer sends POST body with ContentLength=0 (streamed) → httputil.ReverseProxy drops body → replaced with manual HTTP client that buffers body
+- `DaemonStatus` (atomic fields + LogBuffer) shared between daemon loop and proxy for informative error display
+- `CleanLogHandler` for human-readable slog output: ISO 8601 UTC, no quoted keys, padded level
+- Bundle resolver: GIT_TOKEN fallback when bundleRepo.AuthType is empty (Kotlin migration compat)
+
 ### Other References
 - **`PROGRESS.md`** — tracks completed work (historical)
-- **`PLAN-desktop-phase2.md`** — Current: secrets encryption + desktop bug fixes
 
 ### Phase 12: GA Readiness — COMPLETE (2026-03-27)
 23 issues across 5 sub-phases + 3 code review passes (8 additional fixes).
@@ -351,4 +394,5 @@ Tested on remote server with community 2025.12 (clean deployment). Found and fix
 
 GitHub Actions:
 - **Release workflow** (`.github/workflows/release-go.yml`): triggered by `v*.*.*` tags, builds on Linux/Windows/macOS (x64 + arm64), creates GitHub release. Uses `go-version-file: go.mod`.
-- **CI workflow** (`.github/workflows/ci.yml`): triggered on push/PR to master. Runs `go vet`, `golangci-lint`, `go test -race ./internal/...`, `npx vitest run`.
+- **CI workflow** (`.github/workflows/ci.yml`): triggered on push/PR to master. Runs `go vet`, `golangci-lint v2.7.2`, `go test -race ./internal/...`, `npx vitest run`.
+- **Linting**: `.golangci.yml` v2 format, 21 linters, G104 excluded (cleanup errors), test files relaxed for dupl/gosec/unparam.
