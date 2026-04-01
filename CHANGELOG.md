@@ -13,6 +13,18 @@
 * Auth type switching (KEYCLOAK ↔ BASIC) with minimal container churn
 * Host switching (domain ↔ IP) with automatic TLS cert handling
 
+## Cached bundle fallback
+
+* Last successfully resolved bundle persisted in namespace state file
+* On startup/reload: if bundle resolution fails (file deleted, network down), cached bundle used automatically
+* Matches Kotlin launcher behavior — platform survives bundle repo changes
+
+## CLI per-app commands
+
+* `citeck start [app]` — start a single app (removes from detached) or the full namespace
+* `citeck stop [app]` — stop a single app (marks as detached, won't auto-start) or the full namespace
+* `citeck logs [app]` — show daemon logs (no arg) or container logs (with app name)
+
 ## Bug fixes
 
 * Fixed workspace config fallback: `_workspace` repo now used when no local `repo/` dir exists

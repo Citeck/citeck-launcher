@@ -51,8 +51,8 @@ The Web UI is available at `http://127.0.0.1:7088` by default.
 ## CLI Usage
 
 ```
-citeck start [--foreground] [--no-ui]   Start daemon and namespace
-citeck stop                             Stop namespace and daemon
+citeck start [app] [--foreground]       Start daemon/namespace or a single app
+citeck stop [app]                       Stop namespace (or a single app)
 citeck status [--watch]                 Show namespace status
 citeck health                           Health check (exit code 0/1)
 citeck reload                           Reload config and regenerate containers

@@ -328,24 +328,40 @@ Tested on remote server with community 2025.12 (clean deployment). Found and fix
 - Stale WAL/SHM cleanup on SQLiteStore open — prevents disk I/O errors after crash
 
 ### Server Deployment Testing Round 4 — COMPLETE (2026-04-01)
-Bundle version upgrade + host/auth switching tested on remote server. 4 bugs found and fixed:
+Bundle version upgrade + host/auth switching tested on remote server. 5 bugs fixed + cached bundle fallback + CLI per-app commands.
+
+**Bug fixes:**
 - Workspace config fallback: `loadWorkspaceConfig()` returned empty struct instead of nil, preventing fallback to `_workspace` repo with `path: community` setting
 - `.sh` file permissions on reload: generated scripts written with 0644 instead of 0755 on reload path (initial startup was correct)
-- Bundle ref display: `runtime.config` not updated on reload → status always showed original bundle version. Added `Runtime.UpdateConfig()` method
+- Bundle ref display: `runtime.config` not updated on reload → status always showed original bundle version
 - Daemon shutdown hang: `Start()` returned nil instead of `ErrShutdownRequested` after HTTP-triggered shutdown → process never exited
+- Route constant: `handleDaemonLogs` route used hardcoded string instead of `api.DaemonLogs` constant
 
-Verified scenarios:
+**Cached bundle fallback (Kotlin parity):**
+- `NsPersistedState.CachedBundle` stores last successfully resolved `bundle.Def`
+- Written after every successful resolve (if changed), via `persistState()`
+- On startup/reload: if `Resolve()` fails → load cached bundle from state file → use it with WARN log
+- Verified: `community:2099.99` (non-existent) → fell back to cached `2026.1` with 14 apps
+
+**CLI per-app commands:**
+- `citeck start [app]` — start single app (removes from detached) or namespace
+- `citeck stop [app]` — stop single app (marks as detached) or namespace
+- `citeck logs [app]` — daemon logs if no app, container logs if app given
+- Client methods: `StopApp`, `StartApp`, `GetDaemonLogs`, `StreamDaemonLogs`
+
+**Verified scenarios (Playwright):**
 - Bundle upgrade: community:2025.12 → community:2026.1 (14 apps, 2 new: integrations + ecos-project-tracker)
 - Host switch: domain (LE cert) ↔ IP (self-signed) — only proxy+keycloak recreated
 - Auth switch: KEYCLOAK → BASIC — keycloak removed, proxy+emodel recreated
 - Auth switch: BASIC → KEYCLOAK — keycloak added, proxy+emodel recreated
-- All verified via Playwright (Keycloak OIDC login, HTTP Basic auth, dashboard rendering)
 
 ### Key Technical Decisions (Server Test 4)
 - `loadWorkspaceConfig()` returns nil (not empty struct) when no file found — enables fallback chain
 - `.sh` permissions handled identically in startup (server.go) and reload (routes.go) paths
-- `Runtime.UpdateConfig(cfg)` updates config under mutex before `Regenerate()` — status DTO reflects new bundle immediately
+- Atomic `Regenerate(apps, cfg, bundleDef)` — config + cached bundle update in dispatch loop (no UpdateConfig + Regenerate race)
 - `daemon.Start()` always returns `ErrShutdownRequested` after Serve() exits — caller handles as clean exit
+- `signal.Stop(sigCh)` cleanup in CLI log streaming — proper OS signal deregistration
+- Cached bundle stored per-namespace in `state-{nsID}.json` — same scope as Kotlin's H2 `namespace-runtime-state`
 
 ### Other References
 - **`PROGRESS.md`** — tracks completed work (historical)
