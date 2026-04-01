@@ -164,6 +164,9 @@ func main() {
 	menu.Add("Open Launcher Dir").OnClick(func(_ *application.Context) {
 		_ = desktop.OpenBrowser("file://" + config.HomeDir())
 	})
+	menu.Add("DevTools").OnClick(func(_ *application.Context) {
+		window.OpenDevTools()
+	})
 	menu.AddSeparator()
 	menu.Add("Exit").OnClick(func(_ *application.Context) {
 		app.Quit()
