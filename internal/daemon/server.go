@@ -642,7 +642,7 @@ func Start(opts StartOptions) error {
 				}()
 			}
 		}
-	} else {
+	} else if !config.IsDesktopMode() {
 		slog.Info("Web UI disabled")
 	}
 
