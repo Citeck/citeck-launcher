@@ -23,6 +23,9 @@ func NewSQLiteStore(dir string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("create store dir: %w", err)
 	}
 	dbPath := filepath.Join(dir, "launcher.db")
+	// Remove stale WAL/SHM files from unclean shutdown — prevents SQLITE_IOERR_SHORT_READ
+	_ = os.Remove(dbPath + "-wal")
+	_ = os.Remove(dbPath + "-shm")
 	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(wal)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
