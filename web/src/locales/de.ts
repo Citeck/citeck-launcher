@@ -308,6 +308,38 @@ const de: Translations = {
   // -- Theme --
   'theme.toDark': 'Zum dunklen Thema wechseln',
   'theme.toLight': 'Zum hellen Thema wechseln',
+
+  // -- Common (additional) --
+  'common.back': 'Zurück',
+
+  // -- Error (additional) --
+  'error.retry': 'Erneut versuchen',
+
+  // -- Migration --
+  'migration.title': 'Master-Passwort eingeben',
+  'migration.description': 'Verschlüsselte Geheimnisse wurden gefunden. Geben Sie Ihr Master-Passwort ein, um sie zu entschlüsseln.',
+  'migration.passwordPlaceholder': 'Master-Passwort',
+  'migration.confirm': 'Bestätigen',
+  'migration.skip': 'Überspringen',
+  'migration.wrongPassword': 'Ungültiges Passwort',
+  'migration.secretsImported': 'Geheimnisse entschlüsselt und importiert',
+  'migration.setupPassword.title': 'Ihre Geheimnisse schützen',
+  'migration.setupPassword.description': 'Möchten Sie Ihre importierten Geheimnisse mit einem Master-Passwort verschlüsseln? Sie benötigen es bei jedem Start des Launchers.',
+  'migration.setupPassword.samePassword': 'Gleiches Passwort verwenden',
+  'migration.setupPassword.differentPassword': 'Anderes Passwort festlegen',
+  'migration.setupPassword.skip': 'Vorerst überspringen',
+  'migration.setupPassword.success': 'Geheimnisse erfolgreich verschlüsselt',
+  'migration.unlock.title': 'Geheimnisse entsperren',
+  'migration.unlock.description': 'Ihre Geheimnisse sind verschlüsselt. Geben Sie das Master-Passwort ein, um sie zu entsperren.',
+  'migration.unlock.confirm': 'Entsperren',
+  'migration.unlock.success': 'Geheimnisse entsperrt',
+
+  // -- Secrets (additional) --
+  'secrets.encrypted.badge': 'Verschlüsselt',
+  'secrets.encrypted.success': 'Geheimnisse erfolgreich verschlüsselt',
+  'secrets.locked': 'Geheimnisse sind gesperrt — geben Sie das Master-Passwort ein, um darauf zuzugreifen',
+  'secrets.setPassword': 'Passwort festlegen',
+  'secrets.setPassword.description': 'Verschlüsseln Sie Ihre Geheimnisse mit einem Master-Passwort. Sie benötigen es bei jedem Start des Launchers.',
 }
 
 export default de

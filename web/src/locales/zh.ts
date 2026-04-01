@@ -308,6 +308,38 @@ const zh: Translations = {
   // -- Theme --
   'theme.toDark': '切换到深色主题',
   'theme.toLight': '切换到浅色主题',
+
+  // -- Common (additional) --
+  'common.back': '返回',
+
+  // -- Error (additional) --
+  'error.retry': '重试',
+
+  // -- Migration --
+  'migration.title': '输入主密码',
+  'migration.description': '发现加密的密钥。请输入您的主密码进行解密。',
+  'migration.passwordPlaceholder': '主密码',
+  'migration.confirm': '确认',
+  'migration.skip': '跳过',
+  'migration.wrongPassword': '密码错误',
+  'migration.secretsImported': '密钥已解密并导入',
+  'migration.setupPassword.title': '保护您的密钥',
+  'migration.setupPassword.description': '是否要使用主密码加密导入的密钥？每次启动启动器时都需要输入该密码。',
+  'migration.setupPassword.samePassword': '使用相同密码',
+  'migration.setupPassword.differentPassword': '设置其他密码',
+  'migration.setupPassword.skip': '暂时跳过',
+  'migration.setupPassword.success': '密钥加密成功',
+  'migration.unlock.title': '解锁密钥',
+  'migration.unlock.description': '您的密钥已加密。请输入主密码进行解锁。',
+  'migration.unlock.confirm': '解锁',
+  'migration.unlock.success': '密钥已解锁',
+
+  // -- Secrets (additional) --
+  'secrets.encrypted.badge': '已加密',
+  'secrets.encrypted.success': '密钥加密成功',
+  'secrets.locked': '密钥已锁定 — 请输入主密码以访问',
+  'secrets.setPassword': '设置密码',
+  'secrets.setPassword.description': '使用主密码加密您的密钥。每次启动启动器时都需要输入该密码。',
 }
 
 export default zh

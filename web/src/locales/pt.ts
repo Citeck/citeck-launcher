@@ -308,6 +308,38 @@ const pt: Translations = {
   // -- Theme --
   'theme.toDark': 'Mudar para tema escuro',
   'theme.toLight': 'Mudar para tema claro',
+
+  // -- Common (additional) --
+  'common.back': 'Voltar',
+
+  // -- Error (additional) --
+  'error.retry': 'Tentar novamente',
+
+  // -- Migration --
+  'migration.title': 'Inserir senha mestra',
+  'migration.description': 'Foram encontrados secrets criptografados. Insira sua senha mestra para descriptografá-los.',
+  'migration.passwordPlaceholder': 'Senha mestra',
+  'migration.confirm': 'Confirmar',
+  'migration.skip': 'Pular',
+  'migration.wrongPassword': 'Senha inválida',
+  'migration.secretsImported': 'Secrets descriptografados e importados',
+  'migration.setupPassword.title': 'Proteja seus secrets',
+  'migration.setupPassword.description': 'Deseja criptografar os secrets importados com uma senha mestra? Você precisará dela toda vez que iniciar o launcher.',
+  'migration.setupPassword.samePassword': 'Usar a mesma senha',
+  'migration.setupPassword.differentPassword': 'Definir outra senha',
+  'migration.setupPassword.skip': 'Pular por enquanto',
+  'migration.setupPassword.success': 'Secrets criptografados com sucesso',
+  'migration.unlock.title': 'Desbloquear secrets',
+  'migration.unlock.description': 'Seus secrets estão criptografados. Insira a senha mestra para desbloqueá-los.',
+  'migration.unlock.confirm': 'Desbloquear',
+  'migration.unlock.success': 'Secrets desbloqueados',
+
+  // -- Secrets (additional) --
+  'secrets.encrypted.badge': 'Criptografado',
+  'secrets.encrypted.success': 'Secrets criptografados com sucesso',
+  'secrets.locked': 'Os secrets estão bloqueados — insira a senha mestra para acessar',
+  'secrets.setPassword': 'Definir senha',
+  'secrets.setPassword.description': 'Criptografe seus secrets com uma senha mestra. Você precisará dela toda vez que iniciar o launcher.',
 }
 
 export default pt

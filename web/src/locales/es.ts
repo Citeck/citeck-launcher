@@ -308,6 +308,38 @@ const es: Translations = {
   // -- Theme --
   'theme.toDark': 'Cambiar a tema oscuro',
   'theme.toLight': 'Cambiar a tema claro',
+
+  // -- Common (additional) --
+  'common.back': 'Atrás',
+
+  // -- Error (additional) --
+  'error.retry': 'Reintentar',
+
+  // -- Migration --
+  'migration.title': 'Introducir contraseña maestra',
+  'migration.description': 'Se encontraron secretos cifrados. Introduzca su contraseña maestra para descifrarlos.',
+  'migration.passwordPlaceholder': 'Contraseña maestra',
+  'migration.confirm': 'Confirmar',
+  'migration.skip': 'Omitir',
+  'migration.wrongPassword': 'Contraseña incorrecta',
+  'migration.secretsImported': 'Secretos descifrados e importados',
+  'migration.setupPassword.title': 'Proteja sus secretos',
+  'migration.setupPassword.description': '¿Desea cifrar los secretos importados con una contraseña maestra? La necesitará cada vez que inicie el lanzador.',
+  'migration.setupPassword.samePassword': 'Usar la misma contraseña',
+  'migration.setupPassword.differentPassword': 'Establecer otra contraseña',
+  'migration.setupPassword.skip': 'Omitir por ahora',
+  'migration.setupPassword.success': 'Secretos cifrados correctamente',
+  'migration.unlock.title': 'Desbloquear secretos',
+  'migration.unlock.description': 'Sus secretos están cifrados. Introduzca la contraseña maestra para desbloquearlos.',
+  'migration.unlock.confirm': 'Desbloquear',
+  'migration.unlock.success': 'Secretos desbloqueados',
+
+  // -- Secrets (additional) --
+  'secrets.encrypted.badge': 'Cifrado',
+  'secrets.encrypted.success': 'Secretos cifrados correctamente',
+  'secrets.locked': 'Los secretos están bloqueados — introduzca la contraseña maestra para acceder',
+  'secrets.setPassword': 'Establecer contraseña',
+  'secrets.setPassword.description': 'Cifre sus secretos con una contraseña maestra. La necesitará cada vez que inicie el lanzador.',
 }
 
 export default es

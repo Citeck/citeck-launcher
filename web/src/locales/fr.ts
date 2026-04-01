@@ -308,6 +308,38 @@ const fr: Translations = {
   // -- Theme --
   'theme.toDark': 'Passer au th\u00e8me sombre',
   'theme.toLight': 'Passer au th\u00e8me clair',
+
+  // -- Common (additional) --
+  'common.back': 'Retour',
+
+  // -- Error (additional) --
+  'error.retry': 'R\u00e9essayer',
+
+  // -- Migration --
+  'migration.title': 'Saisir le mot de passe principal',
+  'migration.description': 'Des secrets chiffr\u00e9s ont \u00e9t\u00e9 trouv\u00e9s. Saisissez votre mot de passe principal pour les d\u00e9chiffrer.',
+  'migration.passwordPlaceholder': 'Mot de passe principal',
+  'migration.confirm': 'Confirmer',
+  'migration.skip': 'Ignorer',
+  'migration.wrongPassword': 'Mot de passe invalide',
+  'migration.secretsImported': 'Secrets d\u00e9chiffr\u00e9s et import\u00e9s',
+  'migration.setupPassword.title': 'Prot\u00e9gez vos secrets',
+  'migration.setupPassword.description': 'Souhaitez-vous chiffrer vos secrets import\u00e9s avec un mot de passe principal ? Vous en aurez besoin \u00e0 chaque d\u00e9marrage du lanceur.',
+  'migration.setupPassword.samePassword': 'Utiliser le m\u00eame mot de passe',
+  'migration.setupPassword.differentPassword': 'D\u00e9finir un autre mot de passe',
+  'migration.setupPassword.skip': 'Ignorer pour le moment',
+  'migration.setupPassword.success': 'Secrets chiffr\u00e9s avec succ\u00e8s',
+  'migration.unlock.title': 'D\u00e9verrouiller les secrets',
+  'migration.unlock.description': 'Vos secrets sont chiffr\u00e9s. Saisissez le mot de passe principal pour les d\u00e9verrouiller.',
+  'migration.unlock.confirm': 'D\u00e9verrouiller',
+  'migration.unlock.success': 'Secrets d\u00e9verrouill\u00e9s',
+
+  // -- Secrets (additional) --
+  'secrets.encrypted.badge': 'Chiffr\u00e9',
+  'secrets.encrypted.success': 'Secrets chiffr\u00e9s avec succ\u00e8s',
+  'secrets.locked': 'Les secrets sont verrouill\u00e9s \u2014 saisissez le mot de passe principal pour y acc\u00e9der',
+  'secrets.setPassword': 'D\u00e9finir le mot de passe',
+  'secrets.setPassword.description': 'Chiffrez vos secrets avec un mot de passe principal. Vous en aurez besoin \u00e0 chaque d\u00e9marrage du lanceur.',
 }
 
 export default fr
