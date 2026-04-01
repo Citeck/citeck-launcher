@@ -150,9 +150,7 @@ func TestCompareBundleVersions(t *testing.T) {
 func TestLoadWorkspaceConfig_MissingFile(t *testing.T) {
 	dir := t.TempDir()
 	cfg := loadWorkspaceConfig(dir)
-	assert.Empty(t, cfg.QuickStartVariants)
-	assert.Empty(t, cfg.BundleRepos)
-	assert.Empty(t, cfg.NamespaceTemplates)
+	assert.Nil(t, cfg, "should return nil when no workspace config file found")
 }
 
 func TestFindSnapshot(t *testing.T) {

@@ -17,6 +17,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/actions"
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/namespace/nsactions"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -94,6 +95,7 @@ type Runtime struct {
 	editedLockedApps       map[string]bool                  // locked edits survive regeneration
 	dependsOnDetachedApps  map[string]bool                  // detached apps that trigger regen on restart
 	lastApps               []appdef.ApplicationDef          // last app defs passed to doStart
+	cachedBundle           *bundle.Def                      // last successfully resolved bundle (persisted)
 	retryState             map[string]retryInfo             // retry tracking for failed apps
 	statusNotify           chan struct{}                     // closed+recreated on every app status change
 	cmdCh              chan command
@@ -168,6 +170,15 @@ func (r *Runtime) WaitForInitialReconcile(ctx context.Context) {
 	}
 }
 
+// SetCachedBundle updates the cached bundle definition (persisted for fallback on resolve failures).
+func (r *Runtime) SetCachedBundle(def *bundle.Def) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if def != nil && !def.IsEmpty() {
+		r.cachedBundle = def
+	}
+}
+
 // SetManualStoppedApps restores persisted manual stopped apps (called before Start).
 func (r *Runtime) SetManualStoppedApps(apps map[string]bool) {
 	r.mu.Lock()
@@ -225,6 +236,9 @@ func (r *Runtime) persistState() {
 	for name := range r.editedLockedApps {
 		state.EditedLockedApps = append(state.EditedLockedApps, name)
 	}
+	if r.cachedBundle != nil && !r.cachedBundle.IsEmpty() {
+		state.CachedBundle = r.cachedBundle
+	}
 	if err := SaveNsState(r.volumesBase, r.nsID, state); err != nil {
 		slog.Warn("Failed to persist namespace state", "err", err)
 	}
@@ -277,8 +291,10 @@ const (
 )
 
 type command struct {
-	typ  commandType
-	apps []appdef.ApplicationDef
+	typ       commandType
+	apps      []appdef.ApplicationDef
+	cfg       *Config     // non-nil for cmdRegenerate when config changed (reload)
+	bundleDef *bundle.Def // non-nil to update cached bundle (successful resolve)
 }
 
 // NewRuntime creates a new namespace runtime with a dedicated action service.
@@ -507,9 +523,11 @@ func (r *Runtime) Shutdown() {
 }
 
 // Regenerate sends a regeneration command to the runtime loop.
-func (r *Runtime) Regenerate(apps []appdef.ApplicationDef) {
+// If cfg is non-nil, the runtime config is atomically updated before regenerating.
+// If bundleDef is non-nil, it is persisted as the cached bundle for fallback on future resolve failures.
+func (r *Runtime) Regenerate(apps []appdef.ApplicationDef, cfg *Config, bundleDef *bundle.Def) {
 	select {
-	case r.cmdCh <- command{typ: cmdRegenerate, apps: apps}:
+	case r.cmdCh <- command{typ: cmdRegenerate, apps: apps, cfg: cfg, bundleDef: bundleDef}:
 	default:
 		slog.Warn("Regenerate command dropped (channel full)")
 	}
@@ -793,6 +811,16 @@ func (r *Runtime) runLoop() {
 			case cmdStart:
 				r.doStart(cmd.apps)
 			case cmdRegenerate:
+				if cmd.cfg != nil || cmd.bundleDef != nil {
+					r.mu.Lock()
+					if cmd.cfg != nil {
+						r.config = cmd.cfg
+					}
+					if cmd.bundleDef != nil && !cmd.bundleDef.IsEmpty() {
+						r.cachedBundle = cmd.bundleDef
+					}
+					r.mu.Unlock()
+				}
 				r.doRegenerate(cmd.apps)
 			}
 		case <-r.stopCh:

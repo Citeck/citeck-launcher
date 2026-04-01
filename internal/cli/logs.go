@@ -21,19 +21,35 @@ func newLogsCmd() *cobra.Command {
 	var timestamps bool
 
 	cmd := &cobra.Command{
-		Use:   "logs <app>",
-		Short: "Show container logs",
-		Args:  cobra.ExactArgs(1),
+		Use:   "logs [app]",
+		Short: "Show container logs (or daemon logs if no app specified)",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			appName := args[0]
-
 			c, err := client.New(clientOpts())
 			if err != nil {
 				return fmt.Errorf("connect to daemon: %w", err)
 			}
 			defer c.Close()
 
-			// Follow mode: stream directly (the server sends tail+follow in one stream)
+			// No app specified → daemon logs
+			if len(args) == 0 {
+				if follow {
+					return followDaemonLogs(c, tail)
+				}
+				logs, getErr := c.GetDaemonLogs(tail)
+				if getErr != nil {
+					return fmt.Errorf("get daemon logs: %w", getErr)
+				}
+				if output.IsJSON() {
+					output.PrintJSON(map[string]string{"logs": logs})
+					return nil
+				}
+				fmt.Print(logs)
+				return nil
+			}
+
+			// App specified → container logs
+			appName := args[0]
 			if follow {
 				return followLogs(c, appName, tail)
 			}
@@ -71,9 +87,22 @@ func followLogs(c *client.DaemonClient, appName string, lastTail int) error {
 		return fmt.Errorf("stream logs: %w", err)
 	}
 	defer reader.Close()
+	return streamToStdout(reader)
+}
 
+func followDaemonLogs(c *client.DaemonClient, lastTail int) error {
+	reader, err := c.StreamDaemonLogs(lastTail)
+	if err != nil {
+		return fmt.Errorf("stream daemon logs: %w", err)
+	}
+	defer reader.Close()
+	return streamToStdout(reader)
+}
+
+func streamToStdout(reader io.ReadCloser) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
 
 	errCh := make(chan error, 1)
 	go func() {

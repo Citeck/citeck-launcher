@@ -5,6 +5,21 @@
 * Complete rewrite from Kotlin/Compose to Go + React (single 14MB binary)
 * Embedded React Web UI served on `http://127.0.0.1:7088`
 
+## Bundle version upgrade support
+
+* Hot-reload bundle version via `citeck reload` (e.g. 2025.12 → 2026.1)
+* Smart regeneration: only recreated containers whose config/image changed, infrastructure reused via hash matching
+* New apps from updated bundles auto-created with database init actions
+* Auth type switching (KEYCLOAK ↔ BASIC) with minimal container churn
+* Host switching (domain ↔ IP) with automatic TLS cert handling
+
+## Bug fixes
+
+* Fixed workspace config fallback: `_workspace` repo now used when no local `repo/` dir exists
+* Fixed `.sh` file permissions on reload (was 0644, now 0755 — matching initial startup)
+* Fixed bundle ref display not updating after reload
+* Fixed daemon process not exiting after `stop --shutdown`
+
 ## Web UI
 
 * Lens-inspired UI: right overlay drawer for app details, bottom panel with tabs for logs/config

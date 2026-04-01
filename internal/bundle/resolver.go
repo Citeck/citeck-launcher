@@ -219,6 +219,9 @@ func (r *Resolver) Resolve(ref Ref) (*ResolveResult, error) {
 		}
 		wsCfg = loadWorkspaceConfig(defaultRepoDir)
 	}
+	if wsCfg == nil {
+		wsCfg = &WorkspaceConfig{}
+	}
 
 	// Step 2: Resolve the actual repo URL for ref.Repo from workspace config
 	repoDir := filepath.Join(r.dataDir, "bundles", ref.Repo)
@@ -307,7 +310,7 @@ func loadWorkspaceConfig(repoDir string) *WorkspaceConfig {
 		}
 		return &cfg
 	}
-	return &WorkspaceConfig{}
+	return nil
 }
 
 // FindSnapshot finds a SnapshotDef by ID in the workspace config.

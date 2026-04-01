@@ -56,7 +56,7 @@ citeck stop                             Stop namespace and daemon
 citeck status [--watch]                 Show namespace status
 citeck health                           Health check (exit code 0/1)
 citeck reload                           Reload config and regenerate containers
-citeck logs <app> [--follow]            Stream app logs
+citeck logs [app] [--follow]            Stream logs (daemon if no app)
 citeck exec <app> -- <command>          Execute command in container
 citeck restart <app>                    Restart an app
 citeck apply <file>                     Apply namespace config
@@ -152,7 +152,7 @@ Defines the ECOS namespace. Located at `$CITECK_HOME/conf/namespace.yml`.
 ```yaml
 id: default
 name: My Namespace
-bundleRef: "community/2025.12"
+bundleRef: "community:2026.1"
 authentication:
   type: BASIC                   # or KEYCLOAK
   users: ["admin:admin"]

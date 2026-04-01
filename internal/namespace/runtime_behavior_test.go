@@ -289,7 +289,7 @@ func TestRegeneratePreservesRunning(t *testing.T) {
 	md.mu.Unlock()
 
 	// Regenerate with same app definition — container should be preserved (hash match)
-	r.Regenerate(apps)
+	r.Regenerate(apps, nil, nil)
 
 	// Wait for regeneration to start and complete
 	waitForStatus(r, NsStatusStarting, 5*time.Second)
@@ -329,7 +329,7 @@ func TestRegenerateRestartsChanged(t *testing.T) {
 	apps2 := []appdef.ApplicationDef{
 		simpleApp("postgres", "postgres:18"),
 	}
-	r.Regenerate(apps2)
+	r.Regenerate(apps2, nil, nil)
 
 	// Wait for regeneration to start (leaves RUNNING)
 	waitForStatus(r, NsStatusStarting, 5*time.Second)

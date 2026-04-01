@@ -9,6 +9,7 @@ const APIV1 = "/api/v1"
 const (
 	DaemonStatus   = APIV1 + "/daemon/status"
 	DaemonShutdown = APIV1 + "/daemon/shutdown"
+	DaemonLogs     = APIV1 + "/daemon/logs"
 	Config         = APIV1 + "/config"
 
 	Namespace       = APIV1 + "/namespace"

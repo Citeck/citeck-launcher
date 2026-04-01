@@ -41,3 +41,4 @@
 | Phase 14 | Production hardening at scale — SSE heartbeat, reclone safety, Logs perf, fetch errors, runtime tests, CI (20 issues + 11 review fixes) | 2026-03-27 |
 | Phase 15 | Lens-inspired UI redesign — drawer, bottom panel, i18n (8 languages), UX hardening, design polish, apps visible when stopped | 2026-03-28 |
 | Phase 16 | Secrets encryption (AES-256-GCM), desktop fixes (Wails proxy, WAL cleanup, error pages), 21-linter config, locale test, per-page ErrorBoundary | 2026-03-31 |
+| Server test 4 | Bundle version upgrade (2025.12→2026.1), host switch (domain↔IP), auth switch (Keycloak↔BASIC). 4 bugs fixed: workspace config fallback, .sh permissions on reload, bundle ref display after reload, daemon shutdown hang | 2026-04-01 |

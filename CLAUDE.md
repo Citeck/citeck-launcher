@@ -327,6 +327,26 @@ Tested on remote server with community 2025.12 (clean deployment). Found and fix
 - Locale completeness test via `import.meta.glob` — auto-discovers locale files, no manual imports
 - Stale WAL/SHM cleanup on SQLiteStore open — prevents disk I/O errors after crash
 
+### Server Deployment Testing Round 4 — COMPLETE (2026-04-01)
+Bundle version upgrade + host/auth switching tested on remote server. 4 bugs found and fixed:
+- Workspace config fallback: `loadWorkspaceConfig()` returned empty struct instead of nil, preventing fallback to `_workspace` repo with `path: community` setting
+- `.sh` file permissions on reload: generated scripts written with 0644 instead of 0755 on reload path (initial startup was correct)
+- Bundle ref display: `runtime.config` not updated on reload → status always showed original bundle version. Added `Runtime.UpdateConfig()` method
+- Daemon shutdown hang: `Start()` returned nil instead of `ErrShutdownRequested` after HTTP-triggered shutdown → process never exited
+
+Verified scenarios:
+- Bundle upgrade: community:2025.12 → community:2026.1 (14 apps, 2 new: integrations + ecos-project-tracker)
+- Host switch: domain (LE cert) ↔ IP (self-signed) — only proxy+keycloak recreated
+- Auth switch: KEYCLOAK → BASIC — keycloak removed, proxy+emodel recreated
+- Auth switch: BASIC → KEYCLOAK — keycloak added, proxy+emodel recreated
+- All verified via Playwright (Keycloak OIDC login, HTTP Basic auth, dashboard rendering)
+
+### Key Technical Decisions (Server Test 4)
+- `loadWorkspaceConfig()` returns nil (not empty struct) when no file found — enables fallback chain
+- `.sh` permissions handled identically in startup (server.go) and reload (routes.go) paths
+- `Runtime.UpdateConfig(cfg)` updates config under mutex before `Regenerate()` — status DTO reflects new bundle immediately
+- `daemon.Start()` always returns `ErrShutdownRequested` after Serve() exits — caller handles as clean exit
+
 ### Other References
 - **`PROGRESS.md`** — tracks completed work (historical)
 

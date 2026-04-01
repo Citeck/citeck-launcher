@@ -231,6 +231,32 @@ func (c *DaemonClient) StreamAppLogs(name string, tail int) (io.ReadCloser, erro
 	return resp.Body, nil
 }
 
+// GetDaemonLogs returns daemon log lines.
+func (c *DaemonClient) GetDaemonLogs(tail int) (string, error) {
+	path := fmt.Sprintf("%s?tail=%d", api.DaemonLogs, tail)
+	return c.getRaw(path)
+}
+
+// StreamDaemonLogs returns a streaming reader for daemon logs (follow mode).
+func (c *DaemonClient) StreamDaemonLogs(tail int) (io.ReadCloser, error) {
+	logsURL := c.baseURL + fmt.Sprintf("%s?tail=%d&follow=true", api.DaemonLogs, tail)
+	req, err := http.NewRequest(http.MethodGet, logsURL, http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("create daemon log stream request: %w", err)
+	}
+
+	resp, err := c.streamClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("connect to daemon log stream: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	return resp.Body, nil
+}
+
 // ListSnapshots returns available volume snapshots.
 func (c *DaemonClient) ListSnapshots() ([]api.SnapshotDto, error) {
 	var snapshots []api.SnapshotDto
@@ -256,6 +282,20 @@ func (c *DaemonClient) ImportSnapshot(name string) (*api.ActionResultDto, error)
 func (c *DaemonClient) RestartApp(name string) (*api.ActionResultDto, error) {
 	var dto api.ActionResultDto
 	err := c.post(api.AppRestart(name), nil, &dto)
+	return &dto, err
+}
+
+// StopApp stops a single application.
+func (c *DaemonClient) StopApp(name string) (*api.ActionResultDto, error) {
+	var dto api.ActionResultDto
+	err := c.post(api.AppStop(name), nil, &dto)
+	return &dto, err
+}
+
+// StartApp starts a single application.
+func (c *DaemonClient) StartApp(name string) (*api.ActionResultDto, error) {
+	var dto api.ActionResultDto
+	err := c.post(api.AppStart(name), nil, &dto)
 	return &dto, err
 }
 

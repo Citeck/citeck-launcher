@@ -7,15 +7,17 @@ import (
 	"path/filepath"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
 )
 
 // NsPersistedState holds runtime state that survives daemon restarts.
 type NsPersistedState struct {
-	Status            NsRuntimeStatus              `json:"status"`
-	ManualStoppedApps []string                     `json:"manualStoppedApps,omitempty"`
+	Status            NsRuntimeStatus                  `json:"status"`
+	ManualStoppedApps []string                         `json:"manualStoppedApps,omitempty"`
 	EditedApps        map[string]appdef.ApplicationDef `json:"editedApps,omitempty"`
-	EditedLockedApps  []string                     `json:"editedLockedApps,omitempty"`
+	EditedLockedApps  []string                         `json:"editedLockedApps,omitempty"`
+	CachedBundle      *bundle.Def                      `json:"cachedBundle,omitempty"`
 }
 
 // statePath returns the path to the persisted state file (namespace-scoped).

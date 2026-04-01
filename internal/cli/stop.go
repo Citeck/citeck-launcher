@@ -16,8 +16,9 @@ func newStopCmd() *cobra.Command {
 	var timeout int
 
 	cmd := &cobra.Command{
-		Use:   "stop",
-		Short: "Stop the namespace",
+		Use:   "stop [app]",
+		Short: "Stop the namespace (or a single app)",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c := client.TryNew(clientOpts())
 			if c == nil || !c.IsRunning() {
@@ -26,6 +27,20 @@ func newStopCmd() *cobra.Command {
 			}
 			defer c.Close()
 
+			// App specified → stop single app
+			if len(args) == 1 {
+				appName := args[0]
+				result, err := c.StopApp(appName)
+				if err != nil {
+					return fmt.Errorf("stop %q: %w", appName, err)
+				}
+				output.PrintResult(result, func() {
+					output.PrintText(result.Message)
+				})
+				return nil
+			}
+
+			// No app → stop namespace
 			result, err := c.StopNamespace()
 			if err != nil {
 				return fmt.Errorf("stop namespace: %w", err)

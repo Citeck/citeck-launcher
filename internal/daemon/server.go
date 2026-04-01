@@ -380,9 +380,17 @@ func Start(opts StartOptions) error {
 		resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(reader))
 		resolveResult, resolveErr := resolver.Resolve(nsCfg.BundleRef)
 		if resolveErr != nil {
-			slog.Error("Failed to resolve bundle — daemon starts with 0 apps", "ref", nsCfg.BundleRef, "err", resolveErr)
-			bundleError = resolveErr.Error()
-			resolveResult = &bundle.ResolveResult{Bundle: &bundle.EmptyDef, Workspace: &bundle.WorkspaceConfig{}}
+			// Fallback to cached bundle from persisted state (survives bundle file deletion/move)
+			cachedState := namespace.LoadNsState(volumesBase, nsID)
+			if cachedState != nil && cachedState.CachedBundle != nil && !cachedState.CachedBundle.IsEmpty() {
+				slog.Warn("Bundle resolution failed, using cached bundle", "ref", nsCfg.BundleRef, "err", resolveErr,
+					"cachedVersion", cachedState.CachedBundle.Key.Version, "cachedApps", len(cachedState.CachedBundle.Applications))
+				resolveResult = &bundle.ResolveResult{Bundle: cachedState.CachedBundle, Workspace: &bundle.WorkspaceConfig{}}
+			} else {
+				slog.Error("Failed to resolve bundle and no cache available — daemon starts with 0 apps", "ref", nsCfg.BundleRef, "err", resolveErr)
+				bundleError = resolveErr.Error()
+				resolveResult = &bundle.ResolveResult{Bundle: &bundle.EmptyDef, Workspace: &bundle.WorkspaceConfig{}}
+			}
 		}
 		bundleDef = resolveResult.Bundle
 		wsCfg = resolveResult.Workspace
@@ -462,6 +470,11 @@ func Start(opts StartOptions) error {
 
 		appDefs = genResp.Applications
 		runtime = namespace.NewRuntime(nsCfg, dockerClient, wsID, volumesBase)
+
+		// Cache the successfully resolved bundle for fallback on future resolve failures
+		if !bundleDef.IsEmpty() {
+			runtime.SetCachedBundle(bundleDef)
+		}
 
 		// Wire registry auth and operation history into runtime
 		runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(wsCfg, reader))
@@ -718,11 +731,10 @@ func Start(opts StartOptions) error {
 		return fmt.Errorf("server error: %w", err)
 	}
 
-	// Return ErrShutdownRequested when external context triggered the shutdown
-	if opts.Ctx != nil && opts.Ctx.Err() != nil {
-		return ErrShutdownRequested
-	}
-	return nil
+	// Always return ErrShutdownRequested — whether shutdown came from an external
+	// context (desktop), SIGTERM, or the HTTP endpoint. The caller uses this to
+	// trigger os.Exit and avoid the process lingering on background goroutines.
+	return ErrShutdownRequested
 }
 
 func (d *Daemon) shutdown() {
@@ -922,7 +934,7 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+api.DaemonStatus, d.handleDaemonStatus)
 	mux.HandleFunc("POST "+api.DaemonShutdown, d.handleDaemonShutdown)
 	mux.HandleFunc("PUT /api/v1/daemon/loglevel", d.handleSetLogLevel)
-	mux.HandleFunc("GET /api/v1/daemon/logs", d.handleDaemonLogs)
+	mux.HandleFunc("GET "+api.DaemonLogs, d.handleDaemonLogs)
 
 	// Namespace
 	mux.HandleFunc("GET "+api.Namespace, d.handleGetNamespace)

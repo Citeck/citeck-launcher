@@ -144,8 +144,16 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 	resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(d.secretReaderFunc()))
 	resolveResult, err := resolver.Resolve(nsCfg.BundleRef)
 	if err != nil {
-		writeInternalError(w, fmt.Errorf("resolve bundle: %w", err))
-		return
+		// Fallback to cached bundle from persisted state
+		cachedState := namespace.LoadNsState(d.volumesBase, nsID)
+		if cachedState != nil && cachedState.CachedBundle != nil && !cachedState.CachedBundle.IsEmpty() {
+			slog.Warn("Bundle resolution failed on reload, using cached bundle", "ref", nsCfg.BundleRef, "err", err,
+				"cachedVersion", cachedState.CachedBundle.Key.Version)
+			resolveResult = &bundle.ResolveResult{Bundle: cachedState.CachedBundle, Workspace: d.workspaceConfig}
+		} else {
+			writeInternalError(w, fmt.Errorf("resolve bundle: %w", err))
+			return
+		}
 	}
 
 	_ = appfiles.ExtractTo(d.volumesBase)
@@ -192,7 +200,11 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 			slog.Error("Failed to create dir for generated file", "path", destPath, "err", err)
 			continue
 		}
-		if err := fsutil.AtomicWriteFile(destPath, content, 0o644); err != nil {
+		perm := os.FileMode(0o644)
+		if strings.HasSuffix(filePath, ".sh") {
+			perm = 0o755
+		}
+		if err := fsutil.AtomicWriteFile(destPath, content, perm); err != nil {
 			slog.Error("Failed to write generated file", "path", destPath, "err", err)
 		}
 	}
@@ -218,8 +230,8 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 	d.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(resolveResult.Workspace, d.secretReaderFunc()))
 
-	// Phase 3: regenerate runtime (async stop + start) — use local var, not d.appDefs (avoids race)
-	d.runtime.Regenerate(genResp.Applications)
+	// Phase 3: regenerate runtime with updated config (async stop + start)
+	d.runtime.Regenerate(genResp.Applications, nsCfg, resolveResult.Bundle)
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "Reload requested"})
 }
 
