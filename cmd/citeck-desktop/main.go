@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/http/httputil"
 	"runtime"
 	"strings"
 	"time"
@@ -56,32 +55,47 @@ func main() {
 		Status:  daemonStatus,
 	})
 
-	// Reverse proxy to daemon via Unix socket — avoids TCP port exposure.
-	proxy := &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-			req.URL.Scheme = "http"
-			req.URL.Host = "localhost"
-			// Wails AssetServer may send body with ContentLength=0 (streamed).
-			// ReverseProxy drops body when ContentLength==0, so read it into a buffer
-			// to set the correct ContentLength.
-			if req.Body != nil && req.ContentLength == 0 {
-				body, err := io.ReadAll(req.Body)
-				_ = req.Body.Close()
-				if err == nil && len(body) > 0 {
-					req.Body = io.NopCloser(bytes.NewReader(body))
-					req.ContentLength = int64(len(body))
-				} else {
-					req.Body = http.NoBody
-				}
-			}
-		},
+	// HTTP client that connects to daemon via Unix socket.
+	socketClient := &http.Client{
 		Transport: &http.Transport{
 			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
 				return net.Dial("unix", socketPath)
 			},
 		},
-		FlushInterval: -1,
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, proxyErr error) {
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	// proxyViaSockets forwards the request to the daemon via Unix socket manually.
+	// Wails AssetServer sends body with ContentLength=0 (streamed), which breaks
+	// httputil.ReverseProxy. Direct HTTP client handles this correctly.
+	proxyViaSocket := func(w http.ResponseWriter, r *http.Request) {
+		// Buffer body — Wails may stream it with ContentLength=0
+		var bodyReader io.Reader = http.NoBody
+		if r.Body != nil {
+			bodyBytes, _ := io.ReadAll(r.Body)
+			_ = r.Body.Close()
+			if len(bodyBytes) > 0 {
+				bodyReader = bytes.NewReader(bodyBytes)
+			}
+		}
+
+		targetURL := "http://localhost" + r.URL.RequestURI()
+		proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, bodyReader)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		// Copy headers
+		for k, vv := range r.Header {
+			for _, v := range vv {
+				proxyReq.Header.Add(k, v)
+			}
+		}
+
+		resp, err := socketClient.Do(proxyReq)
+		if err != nil {
 			if strings.HasPrefix(r.URL.Path, "/api/") {
 				msg := "daemon starting"
 				if lastErr := daemonStatus.LastError(); lastErr != "" {
@@ -91,8 +105,34 @@ func main() {
 				return
 			}
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write([]byte(errorPageHTML(daemonStatus, proxyErr)))
-		},
+			_, _ = w.Write([]byte(errorPageHTML(daemonStatus, err)))
+			return
+		}
+		defer resp.Body.Close()
+
+		// Copy response headers
+		for k, vv := range resp.Header {
+			for _, v := range vv {
+				w.Header().Add(k, v)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		// Stream response body (supports SSE and chunked logs)
+		if f, ok := w.(http.Flusher); ok {
+			buf := make([]byte, 4096)
+			for {
+				n, readErr := resp.Body.Read(buf)
+				if n > 0 {
+					_, _ = w.Write(buf[:n])
+					f.Flush()
+				}
+				if readErr != nil {
+					break
+				}
+			}
+		} else {
+			_, _ = io.Copy(w, resp.Body)
+		}
 	}
 
 	// Wait for daemon in a goroutine, set ready flag
@@ -113,7 +153,7 @@ func main() {
 	loadingHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-daemonReady:
-			proxy.ServeHTTP(w, r)
+			proxyViaSocket(w, r)
 		default:
 			if strings.HasPrefix(r.URL.Path, "/api/") {
 				http.Error(w, "daemon starting", http.StatusBadGateway)
