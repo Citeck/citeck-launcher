@@ -304,6 +304,7 @@ const en: Translations = {
   'error.title': 'Something went wrong',
   'error.unexpected': 'An unexpected error occurred',
   'error.reload': 'Reload',
+  'error.retry': 'Retry',
 
   // -- Theme --
   'theme.toDark': 'Switch to dark theme',

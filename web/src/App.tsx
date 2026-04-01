@@ -48,20 +48,20 @@ function Layout() {
       <main className="flex-1 min-h-0 flex flex-col">
         <Routes>
           {/* Root: Dashboard or Welcome depending on mode and namespace */}
-          <Route index element={showWelcomeAtRoot ? <Welcome /> : <Dashboard />} />
+          <Route index element={<Safe>{showWelcomeAtRoot ? <Welcome /> : <Dashboard />}</Safe>} />
 
           {/* Workspace-level pages (scrollable) */}
-          <Route path="/welcome" element={<Scroll><Welcome /></Scroll>} />
-          <Route path="/wizard" element={<Scroll><Wizard /></Scroll>} />
-          <Route path="/secrets" element={<Scroll><Secrets /></Scroll>} />
-          <Route path="/diagnostics" element={<Scroll><Diagnostics /></Scroll>} />
-          <Route path="/daemon-logs" element={<Scroll><DaemonLogs /></Scroll>} />
+          <Route path="/welcome" element={<Scroll><Safe><Welcome /></Safe></Scroll>} />
+          <Route path="/wizard" element={<Scroll><Safe><Wizard /></Safe></Scroll>} />
+          <Route path="/secrets" element={<Scroll><Safe><Secrets /></Safe></Scroll>} />
+          <Route path="/diagnostics" element={<Scroll><Safe><Diagnostics /></Safe></Scroll>} />
+          <Route path="/daemon-logs" element={<Scroll><Safe><DaemonLogs /></Safe></Scroll>} />
 
           {/* Namespace-level pages (scrollable, redirect to Welcome if no namespace) */}
-          <Route path="/apps/:name" element={hasNamespace ? <Scroll><AppDetail /></Scroll> : <Navigate to="/" />} />
-          <Route path="/apps/:name/logs" element={hasNamespace ? <Scroll><Logs /></Scroll> : <Navigate to="/" />} />
-          <Route path="/config" element={hasNamespace ? <Scroll><Config /></Scroll> : <Navigate to="/" />} />
-          <Route path="/volumes" element={hasNamespace ? <Scroll><Volumes /></Scroll> : <Navigate to="/" />} />
+          <Route path="/apps/:name" element={hasNamespace ? <Scroll><Safe><AppDetail /></Safe></Scroll> : <Navigate to="/" />} />
+          <Route path="/apps/:name/logs" element={hasNamespace ? <Scroll><Safe><Logs /></Safe></Scroll> : <Navigate to="/" />} />
+          <Route path="/config" element={hasNamespace ? <Scroll><Safe><Config /></Safe></Scroll> : <Navigate to="/" />} />
+          <Route path="/volumes" element={hasNamespace ? <Scroll><Safe><Volumes /></Safe></Scroll> : <Navigate to="/" />} />
         </Routes>
       </main>
     </div>
@@ -70,6 +70,11 @@ function Layout() {
 
 function Scroll({ children }: { children: React.ReactNode }) {
   return <div className="flex-1 overflow-auto">{children}</div>
+}
+
+/** Per-page ErrorBoundary — shows inline error + retry, doesn't kill the whole app. */
+function Safe({ children }: { children: React.ReactNode }) {
+  return <ErrorBoundary inline>{children}</ErrorBoundary>
 }
 
 function App() {

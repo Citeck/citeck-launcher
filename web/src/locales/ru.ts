@@ -304,6 +304,7 @@ const ru: Translations = {
   'error.title': 'Что-то пошло не так',
   'error.unexpected': 'Произошла непредвиденная ошибка',
   'error.reload': 'Перезагрузить',
+  'error.retry': 'Повторить',
 
   // -- Theme --
   'theme.toDark': 'Переключить на тёмную тему',
