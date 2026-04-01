@@ -173,13 +173,14 @@ export function Dashboard() {
 
   const dockerCheck = health?.checks.find((c) => c.name === 'docker')
   const dockerError = dockerCheck?.status === 'error' ? dockerCheck.message : null
-  const runningCount = namespace.apps.filter((a) => a.status === 'RUNNING').length
+  const apps = namespace.apps ?? []
+  const runningCount = apps.filter((a) => a.status === 'RUNNING').length
   const isRunning = namespace.status === 'RUNNING'
   const links = namespace.links ? [...namespace.links].sort((a, b) => a.order - b.order) : []
   const proxyUrl = links.find((l) => l.name === 'ECOS UI')?.url
   const serviceLinks = links.filter((l) => l.name !== 'ECOS UI')
 
-  const runningApps = namespace.apps.filter((a) => a.status === 'RUNNING')
+  const runningApps = apps.filter((a) => a.status === 'RUNNING')
   const totalCpu = runningApps.reduce((sum, a) => sum + (parseFloat(a.cpu) || 0), 0)
   const totalMem = runningApps.reduce((sum, a) => {
     const m = a.memory?.split(' / ')[0]
@@ -190,7 +191,7 @@ export function Dashboard() {
   }, 0)
 
   // Drawer title info
-  const drawerApp = drawerAppName ? namespace.apps.find((a) => a.name === drawerAppName) : null
+  const drawerApp = drawerAppName ? apps.find((a) => a.name === drawerAppName) : null
 
   function renderBottomTab(tab: BottomPanelTab, active: boolean) {
     switch (tab.type) {
@@ -338,7 +339,7 @@ export function Dashboard() {
 
           <div className="flex items-center gap-2">
             <StatusBadge status={namespace.status} />
-            <span className="text-xs text-muted-foreground">{runningCount}/{namespace.apps.length}</span>
+            <span className="text-xs text-muted-foreground">{runningCount}/{apps.length}</span>
           </div>
 
           {runningApps.length > 0 && (
@@ -420,7 +421,7 @@ export function Dashboard() {
 
         {/* Main table area */}
         <div className="flex-1 min-w-0 p-2 overflow-auto">
-          <AppTable apps={namespace.apps} highlightedApp={drawerAppName} />
+          <AppTable apps={apps} highlightedApp={drawerAppName} />
         </div>
 
         {/* Right drawer overlay */}
