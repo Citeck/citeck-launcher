@@ -444,7 +444,11 @@ func Start(opts StartOptions) error {
 				slog.Error("Failed to create dir for generated file", "path", destPath, "err", mkdirErr)
 				continue
 			}
-			if writeErr := fsutil.AtomicWriteFile(destPath, content, 0o644); writeErr != nil {
+			perm := os.FileMode(0o644)
+			if strings.HasSuffix(filePath, ".sh") {
+				perm = 0o755
+			}
+			if writeErr := fsutil.AtomicWriteFile(destPath, content, perm); writeErr != nil {
 				slog.Error("Failed to write generated file", "path", destPath, "err", writeErr)
 			}
 		}

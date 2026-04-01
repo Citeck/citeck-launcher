@@ -51,7 +51,11 @@ func ExtractTo(targetDir string) error {
 		if strings.HasSuffix(path, ".sh") {
 			perm = 0o755
 		}
-		return os.WriteFile(destPath, data, perm)
+		if writeErr := os.WriteFile(destPath, data, perm); writeErr != nil {
+			return writeErr
+		}
+		// Explicit chmod — WriteFile respects umask which may strip execute bit
+		return os.Chmod(destPath, perm)
 	})
 	if err != nil {
 		return fmt.Errorf("extract appfiles: %w", err)
