@@ -64,9 +64,14 @@ func main() {
 		},
 		// Flush immediately for SSE and streaming log endpoints
 		FlushInterval: -1,
-		// Don't log proxy errors before daemon is ready
-		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
-			http.Error(w, "daemon not ready", http.StatusBadGateway)
+		// Proxy error (daemon not ready or restarting) — return loading page with auto-refresh
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, _ error) {
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				http.Error(w, "daemon starting", http.StatusBadGateway)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(loadingHTML))
 		},
 	}
 
