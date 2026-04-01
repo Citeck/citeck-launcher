@@ -1097,9 +1097,11 @@ func (r *Runtime) pullAndStartApp(ctx context.Context, appName string) {
 	for _, action := range appDef.InitActions {
 		if len(action.Exec) > 0 {
 			slog.Info("Running init action", "app", appName, "cmd", action.Exec)
-			_, exitCode, err := r.docker.ExecInContainer(ctx, startData.ContainerID, action.Exec)
-			if err != nil || exitCode != 0 {
-				slog.Warn("Init action failed", "app", appName, "err", err, "exitCode", exitCode)
+			output, exitCode, execErr := r.docker.ExecInContainer(ctx, startData.ContainerID, action.Exec)
+			if execErr != nil {
+				slog.Warn("Init action exec error", "app", appName, "cmd", action.Exec, "err", execErr)
+			} else if exitCode != 0 {
+				slog.Warn("Init action exited with non-zero code", "app", appName, "cmd", action.Exec, "exitCode", exitCode, "output", output)
 			}
 		}
 	}
