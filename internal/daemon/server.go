@@ -151,7 +151,7 @@ func Start(opts StartOptions) error {
 		logPath := config.DaemonLogPath()
 		globalLogWriter = fsutil.NewRotatingWriter(logPath, 50*1024*1024, 3)
 		logDest := io.MultiWriter(os.Stderr, globalLogWriter)
-		logHandler := slog.NewTextHandler(logDest, &slog.HandlerOptions{Level: &globalLogLevel})
+		logHandler := fsutil.NewCleanLogHandler(logDest, &globalLogLevel)
 		slog.SetDefault(slog.New(logHandler))
 	})
 
