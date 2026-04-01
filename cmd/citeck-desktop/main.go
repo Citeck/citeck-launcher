@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	_ "embed"
+	"fmt"
 	"log"
 	"log/slog"
 	"net"
@@ -43,15 +44,17 @@ func main() {
 
 	socketPath := config.SocketPath()
 
+	// Observable daemon status — shared between daemon loop and proxy handlers
+	daemonStatus := &desktop.DaemonStatus{}
+
 	// Start daemon in background
 	go desktop.RunDaemonLoop(ctx, desktop.DaemonOpts{
 		Version: version,
 		ReadyCh: readyCh,
+		Status:  daemonStatus,
 	})
 
 	// Reverse proxy to daemon via Unix socket — avoids TCP port exposure.
-	// Wails AssetServer proxies all requests, making the webview origin,
-	// so /wails/runtime (Browser.OpenURL etc.) works natively.
 	proxy := &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
 			req.URL.Scheme = "http"
@@ -62,16 +65,18 @@ func main() {
 				return net.Dial("unix", socketPath)
 			},
 		},
-		// Flush immediately for SSE and streaming log endpoints
 		FlushInterval: -1,
-		// Proxy error (daemon not ready or restarting) — return loading page with auto-refresh
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, _ error) {
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, proxyErr error) {
 			if strings.HasPrefix(r.URL.Path, "/api/") {
-				http.Error(w, "daemon starting", http.StatusBadGateway)
+				msg := "daemon starting"
+				if lastErr := daemonStatus.LastError(); lastErr != "" {
+					msg = lastErr
+				}
+				http.Error(w, msg, http.StatusBadGateway)
 				return
 			}
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write([]byte(loadingHTML))
+			_, _ = w.Write([]byte(errorPageHTML(daemonStatus, proxyErr)))
 		},
 	}
 
@@ -89,20 +94,18 @@ func main() {
 		close(daemonReady)
 	}()
 
-	// Loading page handler — served until daemon is ready
+	// Loading/error page handler — served until daemon is ready, then proxies
 	loadingHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-daemonReady:
-			// Daemon ready — proxy the request
 			proxy.ServeHTTP(w, r)
 		default:
-			// Not ready yet — serve loading page for HTML requests, 502 for API
 			if strings.HasPrefix(r.URL.Path, "/api/") {
 				http.Error(w, "daemon starting", http.StatusBadGateway)
 				return
 			}
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write([]byte(loadingHTML))
+			_, _ = w.Write([]byte(errorPageHTML(daemonStatus, nil)))
 		}
 	})
 
@@ -177,12 +180,48 @@ func main() {
 	}
 }
 
-const loadingHTML = `<!DOCTYPE html>
+// errorPageHTML generates an informative loading/error page with auto-refresh.
+// Shows daemon startup progress, last error, and retry count.
+func errorPageHTML(status *desktop.DaemonStatus, proxyErr error) string {
+	title := "Starting..."
+	errMsg := ""
+	errClass := ""
+
+	if status != nil {
+		if lastErr := status.LastError(); lastErr != "" {
+			title = "Daemon restarting..."
+			errMsg = lastErr
+			errClass = "error"
+			if f := status.Failures(); f > 1 {
+				title = fmt.Sprintf("Daemon restarting (attempt %d)...", f+1)
+			}
+		}
+	}
+	if proxyErr != nil && errMsg == "" {
+		errMsg = proxyErr.Error()
+		errClass = "warn"
+		title = "Connecting to daemon..."
+	}
+
+	errorBlock := ""
+	if errMsg != "" {
+		errorBlock = fmt.Sprintf(`<div class="%s">%s</div>`, errClass, errMsg)
+	}
+
+	return fmt.Sprintf(`<!DOCTYPE html>
 <html><head><meta http-equiv="refresh" content="2"><style>
 body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;
 background:#1e1e1e;color:#888;font-family:system-ui,sans-serif;font-size:14px}
-.loader{text-align:center}
+.loader{text-align:center;max-width:600px;padding:20px}
 .spinner{width:28px;height:28px;border:3px solid #333;border-top:3px solid #888;
-border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 12px}
+border-radius:50%%;animation:spin 1s linear infinite;margin:0 auto 12px}
 @keyframes spin{to{transform:rotate(360deg)}}
-</style></head><body><div class="loader"><div class="spinner"></div>Starting...</div></body></html>`
+.error{margin-top:16px;padding:12px;background:#2a1a1a;border:1px solid #5c2020;
+border-radius:6px;color:#ef5350;font-size:12px;text-align:left;word-break:break-word;
+font-family:monospace;max-height:200px;overflow:auto}
+.warn{margin-top:16px;padding:12px;background:#2a2a1a;border:1px solid #5c5c20;
+border-radius:6px;color:#ffa726;font-size:12px;text-align:left;word-break:break-word;
+font-family:monospace}
+</style></head><body><div class="loader"><div class="spinner"></div>%s%s</div></body></html>`,
+		title, errorBlock)
+}
