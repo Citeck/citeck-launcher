@@ -181,47 +181,53 @@ func main() {
 }
 
 // errorPageHTML generates an informative loading/error page with auto-refresh.
-// Shows daemon startup progress, last error, and retry count.
+// On error: shows the error message and startup logs so the user (and developer) can see what happened.
+// On startup: shows a spinner with "Starting...".
 func errorPageHTML(status *desktop.DaemonStatus, proxyErr error) string {
 	title := "Starting..."
 	errMsg := ""
-	errClass := ""
+	logLines := ""
 
 	if status != nil {
 		if lastErr := status.LastError(); lastErr != "" {
-			title = "Daemon restarting..."
+			title = "Daemon failed to start"
 			errMsg = lastErr
-			errClass = "error"
 			if f := status.Failures(); f > 1 {
-				title = fmt.Sprintf("Daemon restarting (attempt %d)...", f+1)
+				title = fmt.Sprintf("Daemon failed to start (attempt %d)", f)
 			}
+			logLines = status.LogLines()
 		}
 	}
 	if proxyErr != nil && errMsg == "" {
 		errMsg = proxyErr.Error()
-		errClass = "warn"
 		title = "Connecting to daemon..."
 	}
 
 	errorBlock := ""
 	if errMsg != "" {
-		errorBlock = fmt.Sprintf(`<div class="%s">%s</div>`, errClass, errMsg)
+		errorBlock = `<div class="error-box">` + errMsg + `</div>`
+	}
+	logBlock := ""
+	if logLines != "" {
+		logBlock = `<div class="log-title">Startup log:</div><pre class="log-box">` + logLines + `</pre>`
 	}
 
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html><head><meta http-equiv="refresh" content="2"><style>
-body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
 background:#1e1e1e;color:#888;font-family:system-ui,sans-serif;font-size:14px}
-.loader{text-align:center;max-width:600px;padding:20px}
+.loader{text-align:center;max-width:800px;width:100%%;padding:24px}
 .spinner{width:28px;height:28px;border:3px solid #333;border-top:3px solid #888;
 border-radius:50%%;animation:spin 1s linear infinite;margin:0 auto 12px}
 @keyframes spin{to{transform:rotate(360deg)}}
-.error{margin-top:16px;padding:12px;background:#2a1a1a;border:1px solid #5c2020;
-border-radius:6px;color:#ef5350;font-size:12px;text-align:left;word-break:break-word;
-font-family:monospace;max-height:200px;overflow:auto}
-.warn{margin-top:16px;padding:12px;background:#2a2a1a;border:1px solid #5c5c20;
-border-radius:6px;color:#ffa726;font-size:12px;text-align:left;word-break:break-word;
-font-family:monospace}
-</style></head><body><div class="loader"><div class="spinner"></div>%s%s</div></body></html>`,
-		title, errorBlock)
+h2{margin:0 0 8px;color:#ccc;font-size:16px}
+.error-box{margin-top:12px;padding:10px 14px;background:#2a1a1a;border:1px solid #5c2020;
+border-radius:6px;color:#ef5350;font-size:13px;text-align:left;word-break:break-word;font-family:monospace}
+.log-title{margin-top:16px;font-size:12px;color:#666;text-align:left}
+.log-box{margin-top:4px;padding:10px 14px;background:#161616;border:1px solid #333;
+border-radius:6px;color:#999;font-size:11px;text-align:left;white-space:pre-wrap;word-break:break-all;
+font-family:monospace;max-height:400px;overflow:auto;line-height:1.5}
+</style></head><body><div class="loader"><div class="spinner"></div><h2>%s</h2>%s%s</div></body></html>`,
+		title, errorBlock, logBlock)
 }

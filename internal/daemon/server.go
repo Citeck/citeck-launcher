@@ -44,6 +44,7 @@ var (
 )
 
 // StartOptions controls daemon startup behavior.
+// StartOptions controls daemon startup behavior.
 type StartOptions struct {
 	Foreground bool
 	Desktop    bool           // desktop mode: file-only logging, no signal handler
@@ -51,6 +52,7 @@ type StartOptions struct {
 	Version    string         // build version injected via ldflags
 	Ctx        context.Context // external context (desktop provides; nil = CLI uses signals)
 	ReadyCh    chan<- string   // receives Web UI URL when ready (empty string if no UI); nil = ignored
+	LogWriter  io.Writer      // additional log destination (desktop captures startup logs); nil = ignored
 }
 
 // secretReader is the minimal interface for reading secrets.
@@ -150,10 +152,14 @@ func Start(opts StartOptions) error {
 		_ = os.MkdirAll(logDir, 0o755) //nolint:gosec // G301: log dir needs 0o755
 		logPath := config.DaemonLogPath()
 		globalLogWriter = fsutil.NewRotatingWriter(logPath, 50*1024*1024, 3)
-		logDest := io.MultiWriter(os.Stderr, globalLogWriter)
-		logHandler := fsutil.NewCleanLogHandler(logDest, &globalLogLevel)
-		slog.SetDefault(slog.New(logHandler))
 	})
+	// Rebuild slog handler on every Start — the optional LogWriter may change between retries.
+	logDest := io.MultiWriter(os.Stderr, globalLogWriter)
+	if opts.LogWriter != nil {
+		logDest = io.MultiWriter(os.Stderr, globalLogWriter, opts.LogWriter)
+	}
+	logHandler := fsutil.NewCleanLogHandler(logDest, &globalLogLevel)
+	slog.SetDefault(slog.New(logHandler))
 
 	if opts.Desktop {
 		config.SetDesktopMode(true)
