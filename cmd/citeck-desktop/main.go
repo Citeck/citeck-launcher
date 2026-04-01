@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"net"
@@ -59,6 +61,19 @@ func main() {
 		Director: func(req *http.Request) {
 			req.URL.Scheme = "http"
 			req.URL.Host = "localhost"
+			// Wails AssetServer may send body with ContentLength=0 (streamed).
+			// ReverseProxy drops body when ContentLength==0, so read it into a buffer
+			// to set the correct ContentLength.
+			if req.Body != nil && req.ContentLength == 0 {
+				body, err := io.ReadAll(req.Body)
+				_ = req.Body.Close()
+				if err == nil && len(body) > 0 {
+					req.Body = io.NopCloser(bytes.NewReader(body))
+					req.ContentLength = int64(len(body))
+				} else {
+					req.Body = http.NoBody
+				}
+			}
 		},
 		Transport: &http.Transport{
 			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
