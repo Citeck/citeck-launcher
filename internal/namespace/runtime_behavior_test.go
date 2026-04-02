@@ -120,6 +120,10 @@ func (m *mockDocker) GetPublishedPort(ctx context.Context, containerID string, c
 	return containerPort
 }
 
+func (m *mockDocker) GetContainerIP(ctx context.Context, containerID string) string {
+	return "172.18.0.2"
+}
+
 func (m *mockDocker) ContainerStats(ctx context.Context, containerID string) (*docker.ContainerStat, error) {
 	return &docker.ContainerStat{CPUPercent: 1.0, MemUsage: 100 * 1024 * 1024, MemLimit: 512 * 1024 * 1024}, nil
 }

@@ -88,7 +88,7 @@ func TestGenerateWebapp_FiltersByWorkspaceConfig(t *testing.T) {
 		},
 	}
 
-	resp := Generate(cfg, bun, wsCfg)
+	resp := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
 
 	hasEmodel := false
 	hasUnknown := false
@@ -169,7 +169,7 @@ func TestProcessWebappDataSources_JDBC(t *testing.T) {
 		}},
 	}
 
-	resp := Generate(cfg, bun, wsCfg)
+	resp := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
 
 	// Verify cloud config file was generated
 	content, ok := resp.Files["app/emodel/props/application-launcher.yml"]
@@ -257,7 +257,7 @@ func TestProcessWebappDataSources_CloudConfigOnly(t *testing.T) {
 		Webapps: []bundle.WebappConfig{{ID: "emodel"}},
 	}
 
-	resp := Generate(cfg, bun, wsCfg)
+	resp := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
 
 	content, ok := resp.Files["app/emodel/props/application-launcher.yml"]
 	if !ok {
@@ -286,7 +286,7 @@ func TestPerAppMemoryLimitOverridesGlobal(t *testing.T) {
 		}},
 	}
 
-	resp := Generate(cfg, bun, wsCfg)
+	resp := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
 	for _, app := range resp.Applications {
 		if app.Name == "eproc" {
 			if app.Resources == nil || app.Resources.Limits.Memory != "2g" {
@@ -312,7 +312,7 @@ func TestAlfrescoContainerDefs(t *testing.T) {
 		Alfresco: bundle.AlfrescoProps{Enabled: true},
 	}
 
-	resp := Generate(cfg, bun, wsCfg)
+	resp := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
 
 	findApp := func(name string) *appdef.ApplicationDef {
 		for i := range resp.Applications {
@@ -382,7 +382,7 @@ func TestNamespaceLevelDataSources(t *testing.T) {
 		}},
 	}
 
-	resp := Generate(cfg, bun, wsCfg)
+	resp := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
 	content := string(resp.Files["app/emodel/props/application-launcher.yml"])
 
 	// Both workspace datasource and namespace datasource should be present
@@ -413,7 +413,7 @@ func TestWebappDefaultProps_ImageOverride(t *testing.T) {
 		}},
 	}
 
-	resp := Generate(cfg, bun, wsCfg)
+	resp := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
 	for _, app := range resp.Applications {
 		if app.Name == "emodel" {
 			if app.Image != "custom-registry/emodel:2.0" {
@@ -502,7 +502,7 @@ func TestCloudConfigDeepMerge(t *testing.T) {
 		}},
 	}
 
-	resp := Generate(cfg, bun, wsCfg)
+	resp := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
 	content := string(resp.Files["app/emodel/props/application-launcher.yml"])
 
 	// Both workspace datasource URL and namespace cloudConfig xa should be present

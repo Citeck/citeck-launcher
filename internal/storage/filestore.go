@@ -205,6 +205,58 @@ func (s *FileStore) GetSecretBlob() (string, error) {
 	return string(data), nil
 }
 
+// --- Key-Value State ---
+
+func (s *FileStore) kvStatePath() string {
+	return filepath.Join(s.baseDir, "kv-state.json")
+}
+
+func (s *FileStore) readKVState() (map[string]string, error) {
+	data, err := os.ReadFile(s.kvStatePath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return make(map[string]string), nil
+		}
+		return nil, fmt.Errorf("read kv-state: %w", err)
+	}
+	var m map[string]string
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("parse kv-state: %w", err)
+	}
+	return m, nil
+}
+
+// GetStateValue reads a single key from kv-state.json. Returns "" if not found.
+func (s *FileStore) GetStateValue(key string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	m, err := s.readKVState()
+	if err != nil {
+		return "", err
+	}
+	return m[key], nil
+}
+
+// SetStateValue writes a single key to kv-state.json (read-modify-write).
+func (s *FileStore) SetStateValue(key, value string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, err := s.readKVState()
+	if err != nil {
+		return err
+	}
+	if value == "" {
+		delete(m, key)
+	} else {
+		m[key] = value
+	}
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal kv-state: %w", err)
+	}
+	return fsutil.AtomicWriteFile(s.kvStatePath(), data, 0o600)
+}
+
 // Close is a no-op for FileStore (no resources to release).
 func (s *FileStore) Close() error {
 	return nil

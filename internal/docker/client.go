@@ -589,6 +589,22 @@ func (c *Client) GetPublishedPort(ctx context.Context, containerID string, conta
 	return -1
 }
 
+// GetContainerIP returns the container's IP address in the Docker bridge network.
+// Returns empty string if the IP cannot be determined.
+func (c *Client) GetContainerIP(ctx context.Context, containerID string) string {
+	inspect, err := c.cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return ""
+	}
+	// Try the network matching our workspace-namespace network first
+	for _, net := range inspect.NetworkSettings.Networks {
+		if net.IPAddress != "" {
+			return net.IPAddress
+		}
+	}
+	return inspect.NetworkSettings.IPAddress
+}
+
 // ContainerStats returns resource usage stats for a container.
 func (c *Client) ContainerStats(ctx context.Context, containerID string) (*ContainerStat, error) {
 	resp, err := c.cli.ContainerStatsOneShot(ctx, containerID)

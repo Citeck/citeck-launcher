@@ -2,7 +2,9 @@ package daemon
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,15 +46,15 @@ var (
 )
 
 // StartOptions controls daemon startup behavior.
-// StartOptions controls daemon startup behavior.
 type StartOptions struct {
-	Foreground bool
-	Desktop    bool           // desktop mode: file-only logging, no signal handler
-	NoUI       bool           // disable web UI (TCP listener)
-	Version    string         // build version injected via ldflags
-	Ctx        context.Context // external context (desktop provides; nil = CLI uses signals)
-	ReadyCh    chan<- string   // receives Web UI URL when ready (empty string if no UI); nil = ignored
-	LogWriter  io.Writer      // additional log destination (desktop captures startup logs); nil = ignored
+	Foreground     bool
+	Desktop        bool           // desktop mode: file-only logging, no signal handler
+	NoUI           bool           // disable web UI (TCP listener)
+	Version        string         // build version injected via ldflags
+	MasterPassword string         // master password for secrets decryption (server mode)
+	Ctx            context.Context // external context (desktop provides; nil = CLI uses signals)
+	ReadyCh        chan<- string   // receives Web UI URL when ready (empty string if no UI); nil = ignored
+	LogWriter      io.Writer      // additional log destination (desktop captures startup logs); nil = ignored
 }
 
 // secretReader is the minimal interface for reading secrets.
@@ -80,7 +82,7 @@ type Daemon struct {
 	tcpServer       *http.Server
 	cloudCfgServer  *CloudConfigServer
 	store           storage.Store
-	secretService   *storage.SecretService // non-nil in desktop mode only
+	secretService   *storage.SecretService // always non-nil; wraps store with transparent encryption
 	socketPath      string
 	volumesBase     string
 	workspaceID     string
@@ -101,26 +103,19 @@ type Daemon struct {
 	sseDropped      atomic.Int64       // SSE events dropped due to slow consumers
 	logWriter       *fsutil.RotatingWriter
 	logLevel        *slog.LevelVar
-	desktop         bool               // desktop mode: log writer shared across restarts
-	reloadMu        sync.Mutex         // guards concurrent reload requests
+	systemSecrets   namespace.SystemSecrets // resolved JWT/OIDC secrets
+	desktop         bool                   // desktop mode: log writer shared across restarts
+	reloadMu        sync.Mutex             // guards concurrent reload requests
 }
 
-// secretReaderFunc returns a secretReader that decrypts via SecretService
-// when available, otherwise reads directly from the store.
+// secretReaderFunc returns the SecretService as a secretReader (transparent decryption).
 func (d *Daemon) secretReaderFunc() secretReader {
-	if d.secretService != nil {
-		return d.secretService
-	}
-	return d.store
+	return d.secretService
 }
 
-// secretWriterFunc returns a secretWriter that encrypts via SecretService
-// when available, otherwise writes directly to the store.
+// secretWriterFunc returns the SecretService as a secretWriter (transparent encryption).
 func (d *Daemon) secretWriterFunc() secretWriter {
-	if d.secretService != nil {
-		return d.secretService
-	}
-	return d.store
+	return d.secretService
 }
 
 // rebuildAuthCaches rebuilds token lookup and registry auth caches from current secrets,
@@ -332,17 +327,24 @@ func Start(opts StartOptions) error {
 		}
 	}()
 
-	// Initialize SecretService for desktop mode (transparent encryption layer)
-	var secretSvc *storage.SecretService
-	if config.IsDesktopMode() {
-		if sqlStore, ok := store.(*storage.SQLiteStore); ok {
-			secretSvc, err = storage.NewSecretService(sqlStore)
-			if err != nil {
-				return fmt.Errorf("create secret service: %w", err)
+	// Initialize SecretService (transparent encryption layer for all modes)
+	secretSvc, err := storage.NewSecretService(store)
+	if err != nil {
+		return fmt.Errorf("create secret service: %w", err)
+	}
+	if secretSvc.IsEncrypted() {
+		if config.IsDesktopMode() {
+			// Desktop mode: Web UI unlock flow — don't block startup
+			slog.Info("Secrets are encrypted, waiting for unlock via Web UI")
+		} else {
+			// Server mode: unlock now with password from CLI
+			if opts.MasterPassword == "" {
+				return fmt.Errorf("secrets are encrypted but no master password provided")
 			}
-			if secretSvc.IsEncrypted() {
-				slog.Info("Secrets are encrypted, waiting for unlock")
+			if unlockErr := secretSvc.Unlock(opts.MasterPassword); unlockErr != nil {
+				return fmt.Errorf("unlock secrets: %w", unlockErr)
 			}
+			slog.Info("Secrets unlocked successfully")
 		}
 	}
 
@@ -360,6 +362,7 @@ func Start(opts StartOptions) error {
 	var appDefs []appdef.ApplicationDef
 	var cloudCfgSrv *CloudConfigServer
 	var bundleError string
+	var systemSecrets namespace.SystemSecrets
 	volumesBase := config.ResolveVolumesBase(wsID, nsID)
 
 	if nsCfg != nil {
@@ -373,11 +376,7 @@ func Start(opts StartOptions) error {
 		if config.IsDesktopMode() {
 			bundlesDataDir = filepath.Join(config.HomeDir(), "ws", wsID)
 		}
-		var reader secretReader = store
-		if secretSvc != nil {
-			reader = secretSvc
-		}
-		resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(reader))
+		resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(secretSvc))
 		resolveResult, resolveErr := resolver.Resolve(nsCfg.BundleRef)
 		if resolveErr != nil {
 			// Fallback to cached bundle from persisted state (survives bundle file deletion/move)
@@ -438,6 +437,13 @@ func Start(opts StartOptions) error {
 			slog.Info("Extracted appfiles", "dir", volumesBase)
 		}
 
+		// Resolve system secrets (JWT, OIDC) — migrate from plain files or generate new
+		var sysErr error
+		systemSecrets, sysErr = resolveSystemSecrets(secretSvc)
+		if sysErr != nil {
+			return fmt.Errorf("resolve system secrets: %w", sysErr)
+		}
+
 		// Load persisted state for detached apps and status recovery
 		persistedState := namespace.LoadNsState(volumesBase, nsID)
 		var genOpts namespace.GenerateOpts
@@ -449,7 +455,7 @@ func Start(opts StartOptions) error {
 		}
 
 		// Generate namespace
-		genResp := namespace.Generate(nsCfg, bundleDef, resolveResult.Workspace, genOpts)
+		genResp := namespace.Generate(nsCfg, bundleDef, resolveResult.Workspace, systemSecrets, genOpts)
 
 		// Write generated files (cloud config YAMLs, etc.) to volumes base
 		for filePath, content := range genResp.Files {
@@ -477,7 +483,7 @@ func Start(opts StartOptions) error {
 		}
 
 		// Wire registry auth and operation history into runtime
-		runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(wsCfg, reader))
+		runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(wsCfg, secretSvc))
 		runtime.SetHistory(namespace.NewOperationHistory(config.LogDir()))
 
 		// Apply daemon.yml overrides for reconciler and pull concurrency
@@ -512,7 +518,7 @@ func Start(opts StartOptions) error {
 
 		// Start CloudConfigServer with generated ext cloud config
 		cloudCfgSrv = NewCloudConfigServer()
-		cloudCfgSrv.UpdateConfig(genResp.CloudConfig)
+		cloudCfgSrv.UpdateConfig(genResp.CloudConfig, systemSecrets.JWT)
 		if startErr := cloudCfgSrv.Start(); startErr != nil {
 			slog.Warn("CloudConfigServer failed to start", "err", startErr)
 		}
@@ -552,6 +558,7 @@ func Start(opts StartOptions) error {
 		workspaceID:     wsID,
 		version:         opts.Version,
 		bundleError:     bundleError,
+		systemSecrets:   systemSecrets,
 		startTime:       time.Now(),
 		bgCtx:           bgCtx,
 		bgCancel:        bgCancel,
@@ -1176,6 +1183,99 @@ func buildRegistryAuthCache(reposByHost map[string]bundle.ImageRepo, reader secr
 		}
 	}
 	return result
+}
+
+// resolveSystemSecrets reads or generates JWT and OIDC secrets.
+// Priority: Store → plain files (with migration) → generate new.
+func resolveSystemSecrets(svc *storage.SecretService) (namespace.SystemSecrets, error) {
+	var secrets namespace.SystemSecrets
+
+	// JWT
+	jwt, err := resolveOneSystemSecret(svc, "_jwt", func() string {
+		b := make([]byte, 64)
+		if _, err := rand.Read(b); err != nil {
+			slog.Error("Failed to generate JWT secret", "err", err)
+			return ""
+		}
+		return base64.StdEncoding.EncodeToString(b)
+	})
+	if err != nil {
+		return secrets, fmt.Errorf("resolve JWT secret: %w", err)
+	}
+	secrets.JWT = jwt
+
+	// OIDC
+	oidc, err := resolveOneSystemSecret(svc, "_oidc", func() string {
+		b := make([]byte, 32)
+		if _, err := rand.Read(b); err != nil {
+			slog.Error("Failed to generate OIDC secret", "err", err)
+			return ""
+		}
+		return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+	})
+	if err != nil {
+		return secrets, fmt.Errorf("resolve OIDC secret: %w", err)
+	}
+	secrets.OIDC = oidc
+
+	return secrets, nil
+}
+
+// resolveOneSystemSecret reads a system secret from Store, migrates from plain file, or generates new.
+func resolveOneSystemSecret(svc *storage.SecretService, id string, generate func() string) (string, error) {
+	// 1. Try Store
+	sec, err := svc.GetSecret(id)
+	if err == nil && sec.Value != "" {
+		return sec.Value, nil
+	}
+
+	// 2. Fallback: read plain file (migration from pre-encryption launcher)
+	plainFile := filepath.Join(config.ConfDir(), strings.TrimPrefix(id, "_")+"-secret")
+	if data, readErr := os.ReadFile(plainFile); readErr == nil && len(data) > 0 { //nolint:gosec // path from trusted confDir
+		value := string(data)
+		if id == "_jwt" {
+			value = migrateJWTSecretToStdBase64(value)
+		}
+		slog.Info("Migrating system secret from plain file to Store", "id", id)
+		if saveErr := svc.SaveSecret(storage.Secret{
+			SecretMeta: storage.SecretMeta{ID: id, Name: id, Type: storage.SecretSystem},
+			Value:      value,
+		}); saveErr != nil {
+			return "", fmt.Errorf("save migrated secret %s: %w", id, saveErr)
+		}
+		_ = os.Remove(plainFile)
+		return value, nil
+	}
+
+	// 3. Generate new
+	value := generate()
+	if value == "" {
+		return "", fmt.Errorf("failed to generate secret %s", id)
+	}
+	slog.Info("Generated new system secret", "id", id)
+	if saveErr := svc.SaveSecret(storage.Secret{
+		SecretMeta: storage.SecretMeta{ID: id, Name: id, Type: storage.SecretSystem},
+		Value:      value,
+	}); saveErr != nil {
+		return "", fmt.Errorf("save generated secret %s: %w", id, saveErr)
+	}
+	return value, nil
+}
+
+// migrateJWTSecretToStdBase64 ensures the JWT secret uses standard base64 encoding.
+// Old launcher versions used RawURLEncoding (no padding, URL-safe alphabet). If detected,
+// the secret is re-encoded to StdEncoding. The caller persists the corrected value.
+func migrateJWTSecretToStdBase64(stored string) string {
+	if _, err := base64.StdEncoding.DecodeString(stored); err == nil {
+		return stored // already standard base64
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(stored)
+	if err != nil {
+		slog.Warn("JWT secret is not valid base64, keeping as-is", "err", err)
+		return stored
+	}
+	slog.Info("Migrated JWT secret from RawURLEncoding to StdEncoding")
+	return base64.StdEncoding.EncodeToString(raw)
 }
 
 // importSnapshotIfNeeded checks for the snapshot field in namespace config and imports

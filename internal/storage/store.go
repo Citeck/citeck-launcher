@@ -12,6 +12,8 @@ const (
 	SecretBasicAuth SecretType = "BASIC_AUTH"
 	// SecretRegistryAuth identifies a Docker registry credential secret.
 	SecretRegistryAuth SecretType = "REGISTRY_AUTH" //nolint:gosec // G101: constant name, not a credential
+	// SecretSystem identifies a system-managed secret (JWT, OIDC).
+	SecretSystem SecretType = "SYSTEM" //nolint:gosec // G101: constant name, not a credential
 )
 
 // WorkspaceDto represents a workspace record.
@@ -64,6 +66,10 @@ type Store interface {
 	// Launcher state
 	GetState() (*LauncherState, error)
 	SetState(state LauncherState) error
+
+	// Key-value state (used by SecretService for encryption metadata)
+	GetStateValue(key string) (string, error)
+	SetStateValue(key, value string) error
 
 	// Close releases resources (e.g., database connections).
 	Close() error

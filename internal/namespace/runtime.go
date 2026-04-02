@@ -900,6 +900,26 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) { //nolint:gocyclo // or
 		plans = append(plans, plan)
 	}
 
+	// If gateway is being recreated, proxy must also be recreated — nginx caches
+	// upstream DNS at startup and won't follow gateway's new IP.
+	gatewayRecreated := false
+	for _, p := range plans {
+		if p.def.Name == appdef.AppGateway && !p.reuse {
+			gatewayRecreated = true
+			break
+		}
+	}
+	if gatewayRecreated {
+		for i, p := range plans {
+			if p.def.Name == appdef.AppProxy && p.reuse {
+				slog.Info("Recreating proxy because gateway was recreated (nginx DNS cache)")
+				plans[i].reuse = false
+				plans[i].containerID = ""
+				break
+			}
+		}
+	}
+
 	// Phase 2 (no lock): remove stale containers in parallel, wait for completion.
 	var removeWg sync.WaitGroup
 	for _, p := range plans {
@@ -1331,14 +1351,20 @@ func (r *Runtime) waitForProbe(ctx context.Context, containerID string, probe *a
 			}
 		}
 		if probe.HTTP != nil {
-			publishedPort := r.docker.GetPublishedPort(ctx, containerID, probe.HTTP.Port)
+			// Try published port first (localhost), fall back to container IP (Docker network)
+			probeHost := ""
+			probePort := r.docker.GetPublishedPort(ctx, containerID, probe.HTTP.Port)
+			if probePort <= 0 {
+				probeHost = r.docker.GetContainerIP(ctx, containerID)
+				probePort = probe.HTTP.Port
+			}
 			if attempt == 0 || attempt%10 == 0 {
 				slog.Info("HTTP probe", "container", shortID,
-					"containerPort", probe.HTTP.Port, "publishedPort", publishedPort,
+					"containerPort", probe.HTTP.Port, "probeHost", probeHost, "probePort", probePort,
 					"path", probe.HTTP.Path, "attempt", attempt)
 			}
-			if publishedPort > 0 && httpProbeCheck(ctx, publishedPort, probe.HTTP.Path, probe.TimeoutSeconds) {
-				slog.Info("HTTP probe passed", "container", shortID, "port", publishedPort, "attempt", attempt)
+			if probePort > 0 && httpProbeCheck(ctx, probeHost, probePort, probe.HTTP.Path, probe.TimeoutSeconds) {
+				slog.Info("HTTP probe passed", "container", shortID, "port", probePort, "attempt", attempt)
 				return nil
 			}
 		}
@@ -1608,13 +1634,16 @@ var probeClient = &http.Client{
 	},
 }
 
-func httpProbeCheck(ctx context.Context, port int, path string, timeoutSec int) bool {
+func httpProbeCheck(ctx context.Context, host string, port int, path string, timeoutSec int) bool {
 	if timeoutSec <= 0 {
 		timeoutSec = 5
 	}
+	if host == "" {
+		host = "127.0.0.1"
+	}
 	probeCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(probeCtx, "GET", fmt.Sprintf("http://127.0.0.1:%d%s", port, path), http.NoBody)
+	req, err := http.NewRequestWithContext(probeCtx, "GET", fmt.Sprintf("http://%s:%d%s", host, port, path), http.NoBody)
 	if err != nil {
 		return false
 	}

@@ -180,6 +180,8 @@ func (m *mockStore) PutSecretBlob(string) error                  { return nil }
 func (m *mockStore) GetSecretBlob() (string, error)              { return "", nil }
 func (m *mockStore) GetState() (*storage.LauncherState, error)   { return &storage.LauncherState{}, nil }
 func (m *mockStore) SetState(storage.LauncherState) error        { return nil }
+func (m *mockStore) GetStateValue(string) (string, error)        { return "", nil }
+func (m *mockStore) SetStateValue(string, string) error          { return nil }
 func (m *mockStore) Close() error                                { return nil }
 
 func TestImportDecryptedSecrets_TokenAndBasic(t *testing.T) {

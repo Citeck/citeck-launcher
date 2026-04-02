@@ -324,7 +324,14 @@ func (s *SQLiteStore) GetStateValue(key string) (string, error) {
 }
 
 // SetStateValue writes a single key to launcher_state (upsert).
+// Empty value deletes the key (consistent with FileStore).
 func (s *SQLiteStore) SetStateValue(key, value string) error {
+	if value == "" {
+		if _, err := s.db.Exec("DELETE FROM launcher_state WHERE key = ?", key); err != nil {
+			return fmt.Errorf("delete state %s: %w", key, err)
+		}
+		return nil
+	}
 	stmt := `INSERT INTO launcher_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`
 	if _, err := s.db.Exec(stmt, key, value); err != nil {
 		return fmt.Errorf("set state %s: %w", key, err)

@@ -1,26 +1,49 @@
 package cli
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
+	"net"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"sort"
+	"strings"
+	"syscall"
+	"time"
+
+	"golang.org/x/term"
 
 	"github.com/citeck/citeck-launcher/internal/client"
+	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/daemon"
 	"github.com/citeck/citeck-launcher/internal/output"
+	"github.com/citeck/citeck-launcher/internal/storage"
 	"github.com/spf13/cobra"
 )
+
+const defaultPassword = "citeck" //nolint:gosec // G101: well-known default, not a secret
 
 func newStartCmd(version string) *cobra.Command {
 	var foreground bool
 	var desktop bool
 	var noUI bool
+	var follow bool
+	var isDaemon bool
 
 	cmd := &cobra.Command{
 		Use:   "start [app]",
 		Short: "Start the daemon and namespace (or a single app)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// If daemon is already running, send start command
+			// Hidden --_daemon mode: read password from stdin, run daemon blocking
+			if isDaemon {
+				return runDaemonMode(version, desktop, noUI)
+			}
+
+			// If daemon is already running, send start command or stream status
 			if c := client.TryNew(clientOpts()); c != nil {
 				defer c.Close()
 
@@ -37,38 +60,311 @@ func newStartCmd(version string) *cobra.Command {
 					return nil
 				}
 
-				// No app → start namespace
+				// No app → start namespace + stream status
 				result, err := c.StartNamespace()
 				if err != nil {
 					return fmt.Errorf("start namespace: %w", err)
 				}
-				output.PrintResult(result, func() {
-					output.PrintText("%s", result.Message)
-				})
-				return nil
+				output.PrintText("%s", result.Message)
+				return streamLiveStatus(c, follow)
 			}
 
-			// Daemon not running → start daemon
+			// Daemon not running
 			if len(args) == 1 {
 				return fmt.Errorf("daemon is not running — start it first with 'citeck start'")
 			}
 
-			err := daemon.Start(daemon.StartOptions{
-				Foreground: foreground,
-				Desktop:    desktop,
-				NoUI:       noUI,
-				Version:    version,
-			})
-			if errors.Is(err, daemon.ErrShutdownRequested) {
-				return nil // clean shutdown, not an error
+			// Foreground mode: run daemon directly (backward compat)
+			if foreground {
+				password, err := resolvePassword(desktop)
+				if err != nil {
+					return err
+				}
+				err = daemon.Start(daemon.StartOptions{
+					Foreground:     true,
+					Desktop:        desktop,
+					NoUI:           noUI,
+					Version:        version,
+					MasterPassword: password,
+				})
+				if errors.Is(err, daemon.ErrShutdownRequested) {
+					return nil
+				}
+				return err
 			}
-			return err
+
+			// Normal mode: resolve password, fork daemon, stream status
+			password, err := resolvePassword(desktop)
+			if err != nil {
+				return err
+			}
+
+			if err := forkDaemon(password, desktop, noUI); err != nil {
+				return err
+			}
+
+			// Wait for daemon to be ready
+			c, err := waitForDaemon(30 * time.Second)
+			if err != nil {
+				return fmt.Errorf("daemon failed to start: %w (check %s)", err, filepath.Join(config.LogDir(), "daemon.log"))
+			}
+			defer c.Close()
+
+			return streamLiveStatus(c, follow)
 		},
 	}
 
-	cmd.Flags().BoolVarP(&foreground, "foreground", "f", false, "Run in foreground")
-	cmd.Flags().BoolVar(&desktop, "desktop", false, "Desktop mode: use ~/.citeck/launcher/ and workspace structure")
-	cmd.Flags().BoolVar(&noUI, "no-ui", false, "Disable Web UI (CLI-only, Unix socket only)")
+	cmd.Flags().BoolVarP(&foreground, "foreground", "f", false, "Run in foreground (don't fork)")
+	cmd.Flags().BoolVar(&desktop, "desktop", false, "Desktop mode")
+	cmd.Flags().BoolVar(&noUI, "no-ui", false, "Disable Web UI")
+	cmd.Flags().BoolVar(&follow, "follow", false, "Don't exit after all apps are running")
+	cmd.Flags().BoolVar(&isDaemon, "_daemon", false, "Internal: run as daemon process")
+	_ = cmd.Flags().MarkHidden("_daemon")
 
 	return cmd
+}
+
+// resolvePassword checks encryption state and returns the master password.
+func resolvePassword(desktop bool) (string, error) {
+	var store storage.Store
+	var err error
+	if desktop {
+		store, err = storage.NewSQLiteStore(config.HomeDir())
+	} else {
+		store, err = storage.NewFileStore(config.ConfDir())
+	}
+	if err != nil {
+		return "", fmt.Errorf("open store: %w", err)
+	}
+	defer store.Close()
+
+	svc, err := storage.NewSecretService(store)
+	if err != nil {
+		return "", fmt.Errorf("check encryption: %w", err)
+	}
+
+	if !svc.IsEncrypted() {
+		return "", nil // first run — no password needed
+	}
+
+	// Default password — try auto-unlock
+	if svc.IsDefaultPassword() {
+		if unlockErr := svc.Unlock(defaultPassword); unlockErr == nil {
+			return defaultPassword, nil
+		}
+		// Default flag set but password doesn't match — fall through to prompt
+	}
+
+	// Prompt for password
+	for attempt := 0; attempt < 3; attempt++ {
+		fmt.Print("Master password (empty to reset): ") //nolint:forbidigo // CLI prompt
+		pwdBytes, err := term.ReadPassword(int(syscall.Stdin))
+		fmt.Println() //nolint:forbidigo // newline after password
+		if err != nil {
+			return "", fmt.Errorf("read password: %w", err)
+		}
+		password := string(pwdBytes)
+
+		if password == "" {
+			return handlePasswordReset(svc)
+		}
+
+		if unlockErr := svc.Unlock(password); unlockErr == nil {
+			return password, nil
+		}
+		fmt.Println("Invalid password.") //nolint:forbidigo // CLI output
+	}
+	return "", fmt.Errorf("too many failed attempts")
+}
+
+// handlePasswordReset guides the user through resetting secrets.
+func handlePasswordReset(svc *storage.SecretService) (string, error) {
+	fmt.Print("All secrets will be regenerated. Continue? [y/N]: ") //nolint:forbidigo // CLI prompt
+	reader := bufio.NewReader(os.Stdin)
+	line, _ := reader.ReadString('\n')
+	line = strings.TrimSpace(strings.ToLower(line))
+	if line != "y" && line != "yes" {
+		return "", fmt.Errorf("reset cancelled")
+	}
+
+	if err := svc.ResetSecrets(); err != nil {
+		return "", fmt.Errorf("reset secrets: %w", err)
+	}
+
+	fmt.Print("New master password (empty for default): ") //nolint:forbidigo // CLI prompt
+	pwdBytes, err := term.ReadPassword(int(syscall.Stdin))
+	fmt.Println() //nolint:forbidigo // newline after password
+	if err != nil {
+		return "", fmt.Errorf("read password: %w", err)
+	}
+	newPassword := string(pwdBytes)
+	isDefault := false
+
+	if newPassword == "" {
+		newPassword = defaultPassword
+		isDefault = true
+	} else {
+		// Confirm password
+		fmt.Print("Confirm password: ") //nolint:forbidigo // CLI prompt
+		confirmBytes, err := term.ReadPassword(int(syscall.Stdin))
+		fmt.Println() //nolint:forbidigo // newline after password
+		if err != nil {
+			return "", fmt.Errorf("read confirmation: %w", err)
+		}
+		if string(confirmBytes) != newPassword {
+			return "", fmt.Errorf("passwords don't match")
+		}
+	}
+
+	if err := svc.SetMasterPassword(newPassword, isDefault); err != nil {
+		return "", fmt.Errorf("set password: %w", err)
+	}
+	fmt.Println("Password set. Secrets will be regenerated on start.") //nolint:forbidigo // CLI output
+	return newPassword, nil
+}
+
+// forkDaemon starts the daemon as a detached child process.
+func forkDaemon(password string, desktop, noUI bool) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve executable: %w", err)
+	}
+
+	logDir := config.LogDir()
+	if mkErr := os.MkdirAll(logDir, 0o755); mkErr != nil { //nolint:gosec // log dir needs 0o755
+		return fmt.Errorf("create log dir: %w", mkErr)
+	}
+	logFile, err := os.OpenFile(filepath.Join(logDir, "daemon.log"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644) //nolint:gosec // log file
+	if err != nil {
+		return fmt.Errorf("open log file: %w", err)
+	}
+
+	args := []string{"start", "--_daemon"}
+	if desktop {
+		args = append(args, "--desktop")
+	}
+	if noUI {
+		args = append(args, "--no-ui")
+	}
+	cmd := exec.Command(exe, args...) //nolint:gosec // G204: exe is our own binary
+	cmd.Stdin = strings.NewReader(password + "\n")
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+
+	if err := cmd.Start(); err != nil {
+		_ = logFile.Close()
+		return fmt.Errorf("fork daemon: %w", err)
+	}
+	_ = logFile.Close()
+
+	fmt.Printf("Daemon started (PID %d)\n", cmd.Process.Pid) //nolint:forbidigo // CLI output
+	return nil
+}
+
+// waitForDaemon polls the Unix socket until the daemon is ready.
+func waitForDaemon(timeout time.Duration) (*client.DaemonClient, error) {
+	deadline := time.Now().Add(timeout)
+	socketPath := config.SocketPath()
+
+	for time.Now().Before(deadline) {
+		// Try connecting to socket
+		conn, err := net.DialTimeout("unix", socketPath, 2*time.Second)
+		if err == nil {
+			_ = conn.Close()
+			// Socket is up — try creating a client
+			c := client.TryNew(clientOpts())
+			if c != nil {
+				return c, nil
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return nil, fmt.Errorf("timeout waiting for daemon socket at %s", socketPath)
+}
+
+// runDaemonMode reads password from stdin and runs the daemon (blocking).
+func runDaemonMode(version string, desktop, noUI bool) error {
+	reader := bufio.NewReader(os.Stdin)
+	line, _ := reader.ReadString('\n')
+	password := strings.TrimRight(line, "\n\r")
+
+	err := daemon.Start(daemon.StartOptions{
+		Foreground:     true,
+		Desktop:        desktop,
+		NoUI:           noUI,
+		Version:        version,
+		MasterPassword: password,
+	})
+	if errors.Is(err, daemon.ErrShutdownRequested) {
+		return nil
+	}
+	return err
+}
+
+// streamLiveStatus polls the daemon and shows an in-place table of app statuses.
+func streamLiveStatus(c *client.DaemonClient, follow bool) error {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	firstPrint := true
+	linesPrinted := 0
+
+	for {
+		select {
+		case <-sigCh:
+			fmt.Println() //nolint:forbidigo // clean newline on Ctrl+C
+			return nil
+		default:
+		}
+
+		ns, err := c.GetNamespace()
+		if err != nil {
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		apps := ns.Apps
+		sort.Slice(apps, func(i, j int) bool { return apps[i].Name < apps[j].Name })
+
+		// Clear previous output
+		if !firstPrint && linesPrinted > 0 {
+			// Move up and clear lines
+			for i := 0; i < linesPrinted; i++ {
+				fmt.Print("\033[A\033[2K") //nolint:forbidigo // ANSI clear
+			}
+		}
+		firstPrint = false
+
+		// Print status table
+		lines := 0
+		allRunning := true
+		total := len(apps)
+		running := 0
+
+		for _, app := range apps {
+			status := app.Status
+			marker := "○"
+			if status == "RUNNING" {
+				marker = "●"
+				running++
+			} else {
+				allRunning = false
+			}
+			fmt.Printf("  %s %-30s %s\n", marker, app.Name, status) //nolint:forbidigo // CLI table
+			lines++
+		}
+		fmt.Printf("\n  %d/%d running\n", running, total) //nolint:forbidigo // CLI summary
+		lines += 2
+		linesPrinted = lines
+
+		if allRunning && total > 0 && !follow {
+			fmt.Printf("\nAll %d apps started.\n", total) //nolint:forbidigo // CLI success
+			return nil
+		}
+
+		time.Sleep(2 * time.Second)
+	}
 }

@@ -1,19 +1,11 @@
 package namespace
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"fmt"
-	"log/slog"
-	"os"
-	"path/filepath"
-	"sync"
 	"sync/atomic"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
-	"github.com/citeck/citeck-launcher/internal/config"
-	"github.com/citeck/citeck-launcher/internal/fsutil"
 )
 
 // Infrastructure host/port constants.
@@ -29,57 +21,13 @@ const (
 	MongoPort      = 27017
 	MailhogHost    = "mailhog"
 	OnlyofficeHost = "onlyoffice"
+	ObsPGHost      = "observer-postgres"
 )
 
-var (
-	jwtSecretOnce sync.Once
-	jwtSecretVal  string
-
-	oidcSecretOnce sync.Once
-	oidcSecretVal  string
-)
-
-// JWTSecret returns a stable JWT secret, generated once and persisted to disk.
-// This avoids hardcoding a well-known secret while ensuring all webapps share the same key.
-func JWTSecret() string {
-	jwtSecretOnce.Do(func() {
-		secretPath := filepath.Join(config.ConfDir(), "jwt-secret")
-		if data, err := os.ReadFile(secretPath); err == nil && len(data) > 0 { //nolint:gosec // path from trusted confDir
-			jwtSecretVal = string(data)
-			return
-		}
-		// Generate 64-byte random secret, base64-encoded (~86 chars = 688 bits, HS512 needs >= 512)
-		b := make([]byte, 64)
-		if _, err := rand.Read(b); err != nil {
-			slog.Error("Failed to generate JWT secret", "err", err)
-			return
-		}
-		jwtSecretVal = base64.RawURLEncoding.EncodeToString(b)
-		_ = os.MkdirAll(filepath.Dir(secretPath), 0o755) //nolint:gosec // conf dir needs standard perms
-		_ = fsutil.AtomicWriteFile(secretPath, []byte(jwtSecretVal), 0o600)
-	})
-	return jwtSecretVal
-}
-
-// OIDCSecret returns a stable OIDC client secret, generated once and persisted to disk.
-// Replaces the hardcoded UUID that was identical across all deployments.
-func OIDCSecret() string {
-	oidcSecretOnce.Do(func() {
-		secretPath := filepath.Join(config.ConfDir(), "oidc-secret")
-		if data, err := os.ReadFile(secretPath); err == nil && len(data) > 0 { //nolint:gosec // path from trusted confDir
-			oidcSecretVal = string(data)
-			return
-		}
-		b := make([]byte, 32)
-		if _, err := rand.Read(b); err != nil {
-			slog.Error("Failed to generate OIDC secret", "err", err)
-			return
-		}
-		oidcSecretVal = fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
-		_ = os.MkdirAll(filepath.Dir(secretPath), 0o755) //nolint:gosec // conf dir needs standard perms
-		_ = fsutil.AtomicWriteFile(secretPath, []byte(oidcSecretVal), 0o600)
-	})
-	return oidcSecretVal
+// SystemSecrets holds system-managed secrets (JWT, OIDC) resolved at daemon startup.
+type SystemSecrets struct {
+	JWT  string
+	OIDC string
 }
 
 // NsGenContext holds state during namespace generation.
@@ -87,6 +35,7 @@ type NsGenContext struct {
 	Config          *Config
 	Bundle          *bundle.Def
 	WorkspaceConfig *bundle.WorkspaceConfig
+	Secrets         SystemSecrets
 	DetachedApps    map[string]bool
 	Files           map[string][]byte
 	Applications    map[string]*AppBuilder

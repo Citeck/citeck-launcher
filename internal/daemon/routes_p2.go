@@ -344,6 +344,22 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Set up secrets encryption if password provided
+	if !d.secretService.IsEncrypted() {
+		password := req.MasterPassword
+		isDefault := req.UseDefaultPassword
+		if isDefault {
+			password = "citeck"
+		}
+		if password != "" {
+			if encErr := d.secretService.SetMasterPassword(password, isDefault); encErr != nil {
+				slog.Error("Failed to set master password during namespace creation", "err", encErr)
+			} else {
+				slog.Info("Master password set during namespace creation")
+			}
+		}
+	}
+
 	// Trigger background snapshot download + import if specified
 	if req.Snapshot != "" {
 		wsID := req.WorkspaceID
@@ -594,8 +610,8 @@ func (d *Daemon) handleSubmitMasterPassword(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Immediately encrypt with the same password — secrets must never stay plaintext on disk
-	if d.secretService != nil && !d.secretService.IsEncrypted() {
-		if encErr := d.secretService.SetMasterPassword(req.Password); encErr != nil {
+	if !d.secretService.IsEncrypted() {
+		if encErr := d.secretService.SetMasterPassword(req.Password, false); encErr != nil {
 			slog.Error("Failed to encrypt secrets after import", "err", encErr)
 		} else {
 			slog.Info("Secrets encrypted with master password after import")
@@ -615,25 +631,14 @@ func (d *Daemon) handleSubmitMasterPassword(w http.ResponseWriter, r *http.Reque
 
 // handleGetSecretsStatus returns the encryption and lock state of secrets.
 func (d *Daemon) handleGetSecretsStatus(w http.ResponseWriter, _ *http.Request) {
-	encrypted := false
-	locked := false
-	if d.secretService != nil {
-		encrypted = d.secretService.IsEncrypted()
-		locked = d.secretService.IsLocked()
-	}
 	writeJSON(w, map[string]any{
-		"encrypted": encrypted,
-		"locked":    locked,
+		"encrypted": d.secretService.IsEncrypted(),
+		"locked":    d.secretService.IsLocked(),
 	})
 }
 
 // handleUnlockSecrets derives the key from the password and unlocks encrypted secrets.
 func (d *Daemon) handleUnlockSecrets(w http.ResponseWriter, r *http.Request) {
-	if d.secretService == nil {
-		writeError(w, http.StatusBadRequest, "encryption not available in server mode")
-		return
-	}
-
 	var req struct {
 		Password string `json:"password"`
 	}
@@ -657,14 +662,8 @@ func (d *Daemon) handleUnlockSecrets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "secrets unlocked"})
 }
 
-// handleSetupPassword sets up encryption for the first time — generates salt,
-// encrypts all existing plaintext secrets in a single transaction.
+// handleSetupPassword sets up encryption for the first time.
 func (d *Daemon) handleSetupPassword(w http.ResponseWriter, r *http.Request) {
-	if d.secretService == nil {
-		writeError(w, http.StatusBadRequest, "encryption not available in server mode")
-		return
-	}
-
 	var req struct {
 		Password string `json:"password"`
 	}
@@ -673,7 +672,7 @@ func (d *Daemon) handleSetupPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := d.secretService.SetMasterPassword(req.Password); err != nil {
+	if err := d.secretService.SetMasterPassword(req.Password, false); err != nil {
 		if errors.Is(err, storage.ErrAlreadyEncrypted) {
 			writeError(w, http.StatusConflict, err.Error())
 			return

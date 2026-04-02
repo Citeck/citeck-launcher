@@ -189,4 +189,6 @@ const (
 	AppAlfresco        = "alfresco"
 	AppAlfPostgres     = "alf-postgres"
 	AppAlfSolr         = "alf-solr"
+	AppObserver        = "observer"
+	AppObsPostgres     = "observer-postgres"
 )

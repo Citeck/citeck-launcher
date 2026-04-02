@@ -50,6 +50,12 @@ type MongoDbProps struct {
 	Image string `yaml:"image" json:"image"`
 }
 
+// ObserverProps holds citeck-observer settings.
+type ObserverProps struct {
+	Enabled bool   `yaml:"enabled" json:"enabled"`
+	Image   string `yaml:"image" json:"image"`
+}
+
 // WebappProps holds per-webapp overrides in namespace config.
 type WebappProps struct {
 	Enabled        *bool                                `yaml:"enabled,omitempty" json:"enabled,omitempty"`
@@ -77,6 +83,7 @@ type Config struct {
 	PgAdmin        PgAdminProps        `yaml:"pgAdmin" json:"pgAdmin"`
 	MongoDB        MongoDbProps        `yaml:"mongodb" json:"mongodb"`
 	Proxy          ProxyProps          `yaml:"proxy" json:"proxy"`
+	Observer       ObserverProps       `yaml:"observer" json:"observer"`
 	Webapps        map[string]WebappProps `yaml:"webapps,omitempty" json:"webapps,omitempty"`
 }
 

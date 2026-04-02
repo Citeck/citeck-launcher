@@ -117,6 +117,8 @@ export interface NamespaceCreateDto {
   workspaceId?: string
   snapshot?: string
   template?: string
+  masterPassword?: string
+  useDefaultPassword?: boolean
 }
 
 export interface BundleInfoDto {

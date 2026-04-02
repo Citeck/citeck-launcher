@@ -10,8 +10,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/citeck/citeck-launcher/internal/namespace"
 )
 
 // CloudConfigServer serves Spring Cloud Config responses on port 8761.
@@ -20,6 +18,7 @@ import (
 type CloudConfigServer struct {
 	mu          sync.RWMutex
 	cloudConfig map[string]map[string]any // per-app ext cloud config
+	jwtSecret   string                    // JWT secret for base property source
 	version     int64                     // monotonically increasing version
 	server      *http.Server
 }
@@ -30,10 +29,13 @@ func NewCloudConfigServer() *CloudConfigServer {
 }
 
 // UpdateConfig replaces the cloud config data (called after regeneration).
-func (s *CloudConfigServer) UpdateConfig(config map[string]map[string]any) {
+func (s *CloudConfigServer) UpdateConfig(config map[string]map[string]any, jwtSecret string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cloudConfig = config
+	if jwtSecret != "" {
+		s.jwtSecret = jwtSecret
+	}
 	s.version++
 }
 
@@ -93,20 +95,21 @@ func (s *CloudConfigServer) handleConfig(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// Read all shared state under a single lock
+	s.mu.RLock()
+	jwt := s.jwtSecret
+	appConfig := s.cloudConfig[appName]
+	version := s.version
+	s.mu.RUnlock()
+
 	// Base property source: JWT secret (always present)
 	baseSrc := map[string]any{
-		"ecos.webapp.web.authenticators.jwt.secret": namespace.JWTSecret(),
+		"ecos.webapp.web.authenticators.jwt.secret": jwt,
 		"configserver.status":                       "Citeck Launcher Config Server",
 	}
 	propertySources := []propertySource{
 		{Name: "citeck-launcher://application.yml", Source: baseSrc},
 	}
-
-	// Per-app property source from cloud config
-	s.mu.RLock()
-	appConfig := s.cloudConfig[appName]
-	version := s.version
-	s.mu.RUnlock()
 
 	if len(appConfig) > 0 {
 		propertySources = append(propertySources, propertySource{

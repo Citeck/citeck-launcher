@@ -191,7 +191,7 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 	if d.runtime != nil {
 		genOpts.DetachedApps = d.runtime.ManualStoppedApps()
 	}
-	genResp := namespace.Generate(nsCfg, resolveResult.Bundle, resolveResult.Workspace, genOpts)
+	genResp := namespace.Generate(nsCfg, resolveResult.Bundle, resolveResult.Workspace, d.systemSecrets, genOpts)
 
 	// Write generated files atomically (prevent partial writes on crash)
 	for filePath, content := range genResp.Files {
@@ -226,7 +226,7 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if d.cloudCfgServer != nil {
-		d.cloudCfgServer.UpdateConfig(genResp.CloudConfig)
+		d.cloudCfgServer.UpdateConfig(genResp.CloudConfig, d.systemSecrets.JWT)
 	}
 	d.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(resolveResult.Workspace, d.secretReaderFunc()))
 

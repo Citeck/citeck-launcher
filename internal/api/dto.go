@@ -208,19 +208,21 @@ type SnapshotDto struct {
 
 // NamespaceCreateDto is the request body for creating a new namespace.
 type NamespaceCreateDto struct {
-	Name           string   `json:"name"`
-	AuthType       string   `json:"authType"`
-	Users          []string `json:"users,omitempty"`
-	Host           string   `json:"host"`
-	Port           int      `json:"port"`
-	TLSEnabled     bool     `json:"tlsEnabled"`
-	TLSMode        string   `json:"tlsMode,omitempty"` // "self-signed", "letsencrypt", "custom"
-	PgAdminEnabled bool     `json:"pgAdminEnabled"`
-	BundleRepo     string   `json:"bundleRepo"`
-	BundleKey      string   `json:"bundleKey"`
-	WorkspaceID    string   `json:"workspaceId,omitempty"`
-	Snapshot       string   `json:"snapshot,omitempty"`  // snapshot ID from workspace config
-	Template       string   `json:"template,omitempty"`  // namespace template ID
+	Name               string   `json:"name"`
+	AuthType           string   `json:"authType"`
+	Users              []string `json:"users,omitempty"`
+	Host               string   `json:"host"`
+	Port               int      `json:"port"`
+	TLSEnabled         bool     `json:"tlsEnabled"`
+	TLSMode            string   `json:"tlsMode,omitempty"` // "self-signed", "letsencrypt", "custom"
+	PgAdminEnabled     bool     `json:"pgAdminEnabled"`
+	BundleRepo         string   `json:"bundleRepo"`
+	BundleKey          string   `json:"bundleKey"`
+	WorkspaceID        string   `json:"workspaceId,omitempty"`
+	Snapshot           string   `json:"snapshot,omitempty"`         // snapshot ID from workspace config
+	Template           string   `json:"template,omitempty"`         // namespace template ID
+	MasterPassword     string   `json:"masterPassword,omitempty"`   // encryption master password
+	UseDefaultPassword bool     `json:"useDefaultPassword"`         // use default "citeck" password
 }
 
 // SnapshotDownloadDto is the request body for downloading a snapshot from a URL.

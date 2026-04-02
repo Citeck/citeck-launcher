@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router'
 import { createNamespace } from '../lib/api'
 import { toast } from '../lib/toast'
 import { useTranslation } from '../lib/i18n'
-import { Wand2, ChevronLeft, ChevronRight, Check } from 'lucide-react'
+import { Wand2, ChevronLeft, ChevronRight, Check, AlertTriangle } from 'lucide-react'
 
 interface WizardState {
   name: string
@@ -13,6 +13,9 @@ interface WizardState {
   tls: 'none' | 'self-signed' | 'letsencrypt'
   port: number
   pgAdmin: boolean
+  useDefaultPassword: boolean
+  masterPassword: string
+  confirmPassword: string
 }
 
 const STEPS = [
@@ -23,6 +26,7 @@ const STEPS = [
   { labelKey: 'wizard.step.tls', key: 'tls' },
   { labelKey: 'wizard.step.port', key: 'port' },
   { labelKey: 'wizard.step.pgadmin', key: 'pgadmin' },
+  { labelKey: 'wizard.step.password', key: 'password' },
   { labelKey: 'wizard.step.review', key: 'review' },
 ] as const
 
@@ -44,6 +48,9 @@ export function Wizard() {
     tls: 'none',
     port: 80,
     pgAdmin: false,
+    useDefaultPassword: true,
+    masterPassword: '',
+    confirmPassword: '',
   })
 
   // Skip users step if auth is KEYCLOAK
@@ -58,6 +65,10 @@ export function Wizard() {
 
   function handleNext() {
     if (currentStep.key === 'name' && !state.name.trim()) return
+    if (currentStep.key === 'password' && !state.useDefaultPassword) {
+      if (!state.masterPassword) return
+      if (state.masterPassword !== state.confirmPassword) return
+    }
     if (!isLast) setStep(step + 1)
   }
 
@@ -84,6 +95,8 @@ export function Wizard() {
         pgAdminEnabled: state.pgAdmin,
         bundleRepo: '',
         bundleKey: '',
+        useDefaultPassword: state.useDefaultPassword,
+        masterPassword: state.useDefaultPassword ? undefined : state.masterPassword,
       })
       toast(t('wizard.success'), 'success')
       navigate('/')
@@ -113,6 +126,7 @@ export function Wizard() {
     { label: t('wizard.step.tls'), value: state.tls },
     { label: t('wizard.step.port'), value: String(state.port) },
     { label: t('wizard.step.pgadmin'), value: state.pgAdmin ? t('wizard.enabled') : t('wizard.disabled') },
+    { label: t('wizard.step.password'), value: state.useDefaultPassword ? t('wizard.password.default') : '********' },
   ]
 
   return (
@@ -251,6 +265,57 @@ export function Wizard() {
               />
               {t('wizard.pgadmin.enable')}
             </label>
+          </div>
+        )}
+
+        {currentStep.key === 'password' && (
+          <div>
+            <label className="block text-sm font-medium mb-1">{t('wizard.password.title')}</label>
+            <p className="text-xs text-muted-foreground mb-3">{t('wizard.password.hint')}</p>
+
+            <label className="flex items-center gap-2 text-sm cursor-pointer mb-3">
+              <input
+                type="checkbox"
+                className="rounded border-border"
+                checked={state.useDefaultPassword}
+                onChange={(e) => update('useDefaultPassword', e.target.checked)}
+              />
+              {t('wizard.password.useDefault')}
+            </label>
+
+            {state.useDefaultPassword && (
+              <div className="flex items-start gap-2 p-2.5 rounded border border-yellow-600/30 bg-yellow-600/5 text-xs text-yellow-200">
+                <AlertTriangle size={14} className="shrink-0 mt-0.5 text-yellow-500" />
+                <span>{t('wizard.password.warning')}</span>
+              </div>
+            )}
+
+            {!state.useDefaultPassword && (
+              <div className="space-y-2">
+                <input
+                  type="password"
+                  className="w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary"
+                  value={state.masterPassword}
+                  onChange={(e) => update('masterPassword', e.target.value)}
+                  placeholder={t('wizard.password.password')}
+                  autoFocus
+                />
+                <input
+                  type="password"
+                  className={`w-full rounded border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary ${
+                    state.confirmPassword && state.masterPassword !== state.confirmPassword
+                      ? 'border-destructive'
+                      : 'border-border'
+                  }`}
+                  value={state.confirmPassword}
+                  onChange={(e) => update('confirmPassword', e.target.value)}
+                  placeholder={t('wizard.password.confirm')}
+                />
+                {state.confirmPassword && state.masterPassword !== state.confirmPassword && (
+                  <p className="text-xs text-destructive">{t('wizard.password.mismatch')}</p>
+                )}
+              </div>
+            )}
           </div>
         )}
 

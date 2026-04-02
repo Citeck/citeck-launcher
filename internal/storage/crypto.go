@@ -26,11 +26,12 @@ var ErrAlreadyEncrypted = errors.New("encryption already configured")
 var ErrCorruptedKeystore = errors.New("keystore is corrupted or missing key params")
 
 const (
-	verifyPlaintext    = "citeck-secrets-v1"
-	defaultIterations  = 1_000_000
-	stateEncrypted     = "secrets_encrypted"
-	stateKeyParams     = "secrets_key_params"
-	stateVerify        = "secrets_verify"
+	verifyPlaintext      = "citeck-secrets-v1"
+	defaultIterations    = 1_000_000
+	stateEncrypted       = "secrets_encrypted"
+	stateKeyParams       = "secrets_key_params"
+	stateVerify          = "secrets_verify"
+	stateDefaultPassword = "secrets_default_password"
 )
 
 // CryptoKeyParams holds the PBKDF2 parameters used to derive the encryption key.
@@ -40,18 +41,18 @@ type CryptoKeyParams struct {
 	KeySize    int    `json:"keySize"`    // key size in bits (256)
 }
 
-// SecretService wraps a SQLiteStore and adds transparent AES-256-GCM
-// encryption/decryption for secret values. Used in desktop mode only.
+// SecretService wraps a Store and adds transparent AES-256-GCM
+// encryption/decryption for secret values.
 type SecretService struct {
-	store      *SQLiteStore
+	store      Store
 	mu         sync.RWMutex
 	derivedKey []byte // 32-byte AES key; nil when locked
-	encrypted  bool   // true when secrets_encrypted == "true" in launcher_state
+	encrypted  bool   // true when secrets_encrypted == "true" in state
 }
 
-// NewSecretService creates a SecretService wrapping the given SQLiteStore.
-// It reads encryption state from launcher_state on creation.
-func NewSecretService(store *SQLiteStore) (*SecretService, error) {
+// NewSecretService creates a SecretService wrapping the given Store.
+// It reads encryption state from key-value state on creation.
+func NewSecretService(store Store) (*SecretService, error) {
 	ss := &SecretService{store: store}
 	enc, err := store.GetStateValue(stateEncrypted)
 	if err != nil {
@@ -77,8 +78,9 @@ func (ss *SecretService) IsLocked() bool {
 
 // SetMasterPassword sets up encryption for the first time.
 // Generates a random salt, derives a key, creates a verify token,
-// and encrypts all existing plaintext secrets in a single transaction.
-func (ss *SecretService) SetMasterPassword(password string) error {
+// and encrypts all existing plaintext secrets.
+// If isDefault is true, the default password flag is stored so CLI can auto-unlock.
+func (ss *SecretService) SetMasterPassword(password string, isDefault bool) error {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 
@@ -100,45 +102,28 @@ func (ss *SecretService) SetMasterPassword(password string) error {
 		return fmt.Errorf("create verify token: %w", err)
 	}
 
-	// Encrypt all existing secrets in a transaction
-	db := ss.store.DB()
-	tx, err := db.Begin()
+	// Encrypt all existing secrets via Store interface
+	metas, err := ss.store.ListSecrets()
 	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
+		return fmt.Errorf("list secrets: %w", err)
 	}
-	defer tx.Rollback()
-
-	rows, err := tx.Query("SELECT id, value FROM secrets")
-	if err != nil {
-		return fmt.Errorf("read secrets: %w", err)
-	}
-	type idValue struct{ id, value string }
-	var secrets []idValue
-	for rows.Next() {
-		var iv idValue
-		if scanErr := rows.Scan(&iv.id, &iv.value); scanErr != nil {
-			_ = rows.Close()
-			return fmt.Errorf("scan secret: %w", scanErr)
+	for _, meta := range metas {
+		sec, getErr := ss.store.GetSecret(meta.ID)
+		if getErr != nil {
+			return fmt.Errorf("read secret %s: %w", meta.ID, getErr)
 		}
-		secrets = append(secrets, iv)
-	}
-	_ = rows.Close()
-	if rowsErr := rows.Err(); rowsErr != nil {
-		return fmt.Errorf("iterate secrets: %w", rowsErr)
-	}
-
-	for _, s := range secrets {
-		encrypted, encErr := encryptValue(key, []byte(s.value))
+		encrypted, encErr := encryptValue(key, []byte(sec.Value))
 		if encErr != nil {
-			return fmt.Errorf("encrypt secret %s: %w", s.id, encErr)
+			return fmt.Errorf("encrypt secret %s: %w", meta.ID, encErr)
 		}
-		if _, execErr := tx.Exec("UPDATE secrets SET value = ? WHERE id = ?", encrypted, s.id); execErr != nil {
-			return fmt.Errorf("update secret %s: %w", s.id, execErr)
+		sec.Value = encrypted
+		if saveErr := ss.store.SaveSecret(*sec); saveErr != nil {
+			return fmt.Errorf("save secret %s: %w", meta.ID, saveErr)
 		}
 	}
 
-	// Store metadata in launcher_state
-	upsert := `INSERT INTO launcher_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`
+	// Store metadata via key-value state.
+	// Set secrets_encrypted LAST — if we crash before this, retry will re-encrypt.
 	keyParams := CryptoKeyParams{
 		Salt:       base64.StdEncoding.EncodeToString(salt),
 		Iterations: defaultIterations,
@@ -148,19 +133,21 @@ func (ss *SecretService) SetMasterPassword(password string) error {
 	if err != nil {
 		return fmt.Errorf("marshal key params: %w", err)
 	}
-
-	if _, err := tx.Exec(upsert, stateEncrypted, "true"); err != nil {
-		return fmt.Errorf("set %s: %w", stateEncrypted, err)
-	}
-	if _, err := tx.Exec(upsert, stateKeyParams, string(paramsJSON)); err != nil {
+	if err := ss.store.SetStateValue(stateKeyParams, string(paramsJSON)); err != nil {
 		return fmt.Errorf("set %s: %w", stateKeyParams, err)
 	}
-	if _, err := tx.Exec(upsert, stateVerify, verifyEncrypted); err != nil {
+	if err := ss.store.SetStateValue(stateVerify, verifyEncrypted); err != nil {
 		return fmt.Errorf("set %s: %w", stateVerify, err)
 	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit: %w", err)
+	defaultPwd := "false"
+	if isDefault {
+		defaultPwd = "true"
+	}
+	if err := ss.store.SetStateValue(stateDefaultPassword, defaultPwd); err != nil {
+		return fmt.Errorf("set %s: %w", stateDefaultPassword, err)
+	}
+	if err := ss.store.SetStateValue(stateEncrypted, "true"); err != nil {
+		return fmt.Errorf("set %s: %w", stateEncrypted, err)
 	}
 
 	ss.derivedKey = key
@@ -266,9 +253,37 @@ func (ss *SecretService) DeleteSecret(id string) error {
 	return ss.store.DeleteSecret(id)
 }
 
-// Store returns the underlying Store for operations that don't involve secret values.
-func (ss *SecretService) Store() Store {
-	return ss.store
+// IsDefaultPassword returns true if the default password flag is set.
+func (ss *SecretService) IsDefaultPassword() bool {
+	val, _ := ss.store.GetStateValue(stateDefaultPassword)
+	return val == "true"
+}
+
+// ResetSecrets deletes all secrets and clears encryption metadata.
+// Used when the user forgets the master password and wants to start over.
+func (ss *SecretService) ResetSecrets() error {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+
+	metas, err := ss.store.ListSecrets()
+	if err != nil {
+		return fmt.Errorf("list secrets: %w", err)
+	}
+	for _, meta := range metas {
+		if delErr := ss.store.DeleteSecret(meta.ID); delErr != nil {
+			return fmt.Errorf("delete secret %s: %w", meta.ID, delErr)
+		}
+	}
+
+	for _, key := range []string{stateEncrypted, stateKeyParams, stateVerify, stateDefaultPassword} {
+		if setErr := ss.store.SetStateValue(key, ""); setErr != nil {
+			return fmt.Errorf("clear %s: %w", key, setErr)
+		}
+	}
+
+	ss.encrypted = false
+	ss.derivedKey = nil
+	return nil
 }
 
 // --- Crypto primitives ---

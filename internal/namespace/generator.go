@@ -29,9 +29,10 @@ type GenerateOpts struct {
 }
 
 // Generate creates container definitions from a namespace config, bundle, and workspace config.
-func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, opts ...GenerateOpts) *GenResp {
+func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secrets SystemSecrets, opts ...GenerateOpts) *GenResp {
 	ctx := NewNsGenContext(cfg, bun)
 	ctx.WorkspaceConfig = wsCfg
+	ctx.Secrets = secrets
 	if len(opts) > 0 && opts[0].DetachedApps != nil {
 		ctx.DetachedApps = opts[0].DetachedApps
 	}
@@ -48,6 +49,7 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, opts 
 	generateRabbitMQ(ctx)
 	generateKeycloak(ctx)
 	generateAlfresco(ctx)
+	generateObserver(ctx)
 
 	// Generate webapps from bundle — only for apps declared in workspace config
 	// (matching Kotlin: context.workspaceConfig.webappsById.contains(app.key))
@@ -73,6 +75,16 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, opts 
 	// Generate proxy (depends on gateway, onlyoffice)
 	generateProxy(ctx)
 	generateOnlyOffice(ctx)
+
+	// Server mode: only proxy publishes ports — all other apps are internal to Docker network.
+	// Desktop mode: all ports published for local debugging (CloudConfigServer, direct DB access, etc.)
+	if !config.IsDesktopMode() {
+		for _, b := range ctx.Applications {
+			if b.Name != appdef.AppProxy {
+				b.Ports = nil
+			}
+		}
+	}
 
 	// Build all applications
 	apps := make([]appdef.ApplicationDef, 0, len(ctx.Applications))
@@ -274,7 +286,7 @@ func generateKeycloak(ctx *NsGenContext) {
 	// Updates redirect URIs (if custom host) and OIDC client secret (always).
 	{
 		baseURL := ctx.ProxyBaseURL()
-		oidcSecret := OIDCSecret()
+		oidcSecret := ctx.Secrets.OIDC
 		var scriptParts []string
 		scriptParts = append(scriptParts, `#!/bin/bash
 KCADM=/opt/keycloak/bin/kcadm.sh
@@ -392,6 +404,135 @@ func generateAlfresco(ctx *NsGenContext) {
 	alfSolr.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "1g"}}
 }
 
+func generateObserver(ctx *NsGenContext) {
+	if !ctx.Config.Observer.Enabled {
+		return
+	}
+
+	obsImage := ctx.Config.Observer.Image
+	if obsImage == "" {
+		obsImage = bundleImageOr(ctx, appdef.AppObserver, "")
+	}
+	if obsImage == "" {
+		slog.Warn("Observer enabled but no image configured, skipping")
+		return
+	}
+
+	const (
+		obsHTTP     = 17016 // HTTP API + embedded UI
+		obsGRPC     = 17017 // OTLP gRPC receiver
+		obsOTLPHTTP = 17015 // OTLP HTTP/protobuf receiver
+		obsPGPort   = 14524 // published port for observer-postgres (local debugging)
+		obsDBName   = "observer"
+		obsDBUser   = "observer"
+		obsDBPass   = "observer"
+	)
+
+	// 1. Observer Postgres — separate instance tuned for observability workload:
+	// heavy writes (span/metric ingestion), aggregation queries, JSONB GIN lookups
+	obsPg := ctx.GetOrCreateApp(appdef.AppObsPostgres)
+	obsPg.Image = "postgres:18"
+	obsPg.Kind = appdef.KindThirdParty
+	obsPg.AddEnv("POSTGRES_DB", obsDBName)
+	obsPg.AddEnv("POSTGRES_USER", obsDBUser)
+	obsPg.AddEnv("POSTGRES_PASSWORD", obsDBPass)
+	obsPg.AddEnv("PGDATA", "/var/lib/postgresql/data")
+	obsPg.AddPort(fmt.Sprintf("%d:%d", obsPGPort, PGPort))
+	obsPg.AddVolume("obs_postgres:/var/lib/postgresql/data")
+	obsPg.Cmd = []string{
+		"-c", "shared_buffers=256MB",
+		"-c", "work_mem=32MB",
+		"-c", "maintenance_work_mem=128MB",
+		"-c", "effective_cache_size=1GB",
+		"-c", "random_page_cost=1.1",
+		"-c", "checkpoint_completion_target=0.9",
+		"-c", "wal_buffers=16MB",
+		"-c", "max_wal_size=1GB",
+		"-c", "min_wal_size=256MB",
+	}
+	obsPg.StartupConditions = []appdef.StartupCondition{
+		{Log: &appdef.LogStartupCondition{Pattern: ".*database system is ready to accept connections.*"}},
+		{Probe: &appdef.AppProbeDef{Exec: &appdef.ExecProbeDef{
+			Command: []string{"/bin/sh", "-c", fmt.Sprintf("pg_isready -U %s || exit 1", obsDBUser)},
+		}}},
+	}
+	obsPg.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "512m"}}
+
+	// 2. citeck-observer — env var names match the observer's Config struct
+	// (reflection-based: database.host → DATABASE_HOST, zookeeper.hosts → ZOOKEEPER_HOSTS, etc.)
+	obs := ctx.GetOrCreateApp(appdef.AppObserver)
+	obs.Image = obsImage
+	obs.Kind = appdef.KindThirdParty
+
+	// Core server
+	obs.AddEnv("SERVER_MODE", "dev")
+	obs.AddEnv("SERVER_PORT", fmt.Sprintf("%d", obsHTTP))
+	obs.AddEnv("OTLP_GRPC_PORT", fmt.Sprintf("%d", obsGRPC))
+	obs.AddEnv("OTLP_HTTP_PORT", fmt.Sprintf("%d", obsOTLPHTTP))
+
+	// Observer's own database
+	obs.AddEnv("DATABASE_HOST", ObsPGHost)
+	obs.AddEnv("DATABASE_PORT", fmt.Sprintf("%d", PGPort))
+	obs.AddEnv("DATABASE_NAME", obsDBName)
+	obs.AddEnv("DATABASE_USER", obsDBUser)
+	obs.AddEnv("DATABASE_PASSWORD", obsDBPass)
+	obs.AddEnv("DATABASE_TLS_SSL_MODE", "disable")
+
+	// ZooKeeper discovery
+	obs.AddEnv("ZOOKEEPER_HOSTS", fmt.Sprintf("%s:%d", ZKHost, ZKPort))
+	obs.AddEnv("DISCOVERY_HOST", appdef.AppObserver)
+
+	// Auth — same JWT secret as all webapps
+	obs.AddEnv("AUTH_JWT_SECRET", ctx.Secrets.JWT)
+	obs.AddEnv("CORS_ALLOWED_ORIGINS", "*")
+
+	// Infrastructure monitoring — RabbitMQ via Management API
+	obs.AddEnv("RMQ_MONITOR_ENABLED", "true")
+	obs.AddEnv("RMQ_MONITOR_URL", fmt.Sprintf("http://%s:15672", RMQHost))
+	obs.AddEnv("RMQ_MONITOR_USER", "admin")
+	obs.AddEnv("RMQ_MONITOR_PASSWORD", "admin")
+
+	// Infrastructure monitoring — ZooKeeper via "mntr" command
+	obs.AddEnv("ZK_MONITOR_ENABLED", "true")
+	obs.AddEnv("ZK_MONITOR_HOSTS", fmt.Sprintf("%s:%d", ZKHost, ZKPort))
+
+	obs.AddPort(fmt.Sprintf("%d:%d", obsHTTP, obsHTTP))
+	obs.AddPort(fmt.Sprintf("%d:%d", obsGRPC, obsGRPC))
+	obs.AddPort(fmt.Sprintf("%d:%d", obsOTLPHTTP, obsOTLPHTTP))
+	obs.AddDependsOn(appdef.AppObsPostgres)
+	obs.AddDependsOn(appdef.AppZookeeper)
+	obs.StartupConditions = []appdef.StartupCondition{
+		{Probe: &appdef.AppProbeDef{HTTP: &appdef.HTTPProbeDef{Path: "/health", Port: obsHTTP}}},
+	}
+	obs.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "512m"}}
+
+	// 3. Cloud config for CloudConfigServer (local debugging: "stop in launcher, run locally")
+	extCloudConfig := map[string]any{
+		// Observer's own database (localhost with published port)
+		"database.host":         "localhost",
+		"database.port":         obsPGPort,
+		"database.name":         obsDBName,
+		"database.user":         obsDBUser,
+		"database.password":     obsDBPass,
+		"database.tls.ssl_mode": "disable",
+		// ZooKeeper
+		"zookeeper.hosts": "localhost:2181",
+		// Auth
+		"auth.jwt_secret": ctx.Secrets.JWT,
+		// Infrastructure monitoring — RabbitMQ
+		"rmq_monitor.enabled":  true,
+		"rmq_monitor.url":      "http://localhost:15672",
+		"rmq_monitor.user":     "admin",
+		"rmq_monitor.password": "admin",
+		// Infrastructure monitoring — ZooKeeper
+		"zk_monitor.enabled": true,
+		"zk_monitor.hosts":   "localhost:2181",
+		// Infrastructure monitoring — main PostgreSQL (webapp databases)
+		"pg_monitor.enabled": true,
+	}
+	ctx.CloudConfig[appdef.AppObserver] = extCloudConfig
+}
+
 func generateOnlyOffice(ctx *NsGenContext) {
 	fallback := "onlyoffice/documentserver:9.1.0.1"
 	memLimit := "3g"
@@ -448,7 +589,7 @@ func generateProxy(ctx *NsGenContext) {
 		app.AddEnv("REALM_ID", "ecos-app")
 		app.AddEnv("EIS_LOCATION", "auth")
 		app.AddEnv("REDIRECT_LOGOUT_URI", ctx.ProxyBaseURL())
-		oidcSecret := OIDCSecret()
+		oidcSecret := ctx.Secrets.OIDC
 		app.AddEnv("CLIENT_SECRET", oidcSecret)
 
 		// Update lua file with correct scheme, URLs, and OIDC secret
@@ -642,7 +783,7 @@ func generateWebapp(name string, ctx *NsGenContext) {
 	app.AddEnv("ECOS_INIT_DELAY", "0")
 	app.AddEnv("SPRING_CLOUD_CONFIG_ENABLED", "false") // CloudConfigServer on :8761 is for local debug only
 	app.AddEnv("SPRING_CONFIG_IMPORT", "")
-	app.AddEnv("ECOS_WEBAPP_WEB_AUTHENTICATORS_JWT_SECRET", JWTSecret())
+	app.AddEnv("ECOS_WEBAPP_WEB_AUTHENTICATORS_JWT_SECRET", ctx.Secrets.JWT)
 	app.AddPort(fmt.Sprintf("%d:%d", port, port))
 	app.AddDependsOn(ZKHost)
 	app.AddDependsOn(RMQHost)
