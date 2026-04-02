@@ -492,6 +492,11 @@ func generateObserver(ctx *NsGenContext) {
 	obs.AddEnv("RMQ_MONITOR_USER", "admin")
 	obs.AddEnv("RMQ_MONITOR_PASSWORD", "admin")
 
+	// Infrastructure monitoring — PostgreSQL via pg_stat views
+	obs.AddEnv("PG_MONITOR_ENABLED", "true")
+	pgTarget := fmt.Sprintf(`[{"name":"citeck","host":"%s","port":%d,"user":"postgres","password":"postgres"}]`, PGHost, PGPort)
+	obs.AddEnv("PG_MONITOR_TARGETS", pgTarget)
+
 	// Infrastructure monitoring — ZooKeeper via "mntr" command
 	obs.AddEnv("ZK_MONITOR_ENABLED", "true")
 	obs.AddEnv("ZK_MONITOR_HOSTS", fmt.Sprintf("%s:%d", ZKHost, ZKPort))
