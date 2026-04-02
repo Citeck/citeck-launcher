@@ -202,6 +202,7 @@ func generateZookeeper(ctx *NsGenContext) {
 	app.AddPort("17018:8080") // fixed admin port — outside webapp counter range
 	app.AddEnv("ZOO_AUTOPURGE_PURGEINTERVAL", "1")
 	app.AddEnv("ZOO_AUTOPURGE_SNAPRETAINCOUNT", "3")
+	app.AddEnv("ZOO_4LW_COMMANDS_WHITELIST", "mntr,ruok,stat")
 	app.AddEnv("ALLOW_ANONYMOUS_LOGIN", "yes")
 	app.AddEnv("ZOO_DATA_DIR", "/citeck/zookeeper/data")
 	app.AddEnv("ZOO_DATA_LOG_DIR", "/citeck/zookeeper/datalog")
