@@ -437,11 +437,14 @@ func Start(opts StartOptions) error {
 			slog.Info("Extracted appfiles", "dir", volumesBase)
 		}
 
-		// Resolve system secrets (JWT, OIDC) — migrate from plain files or generate new
-		var sysErr error
-		systemSecrets, sysErr = resolveSystemSecrets(secretSvc)
-		if sysErr != nil {
-			return fmt.Errorf("resolve system secrets: %w", sysErr)
+		// Resolve system secrets (JWT, OIDC) — migrate from plain files or generate new.
+		// Skip when locked (desktop mode with encrypted secrets — resolved after Web UI unlock).
+		if !secretSvc.IsLocked() {
+			var sysErr error
+			systemSecrets, sysErr = resolveSystemSecrets(secretSvc)
+			if sysErr != nil {
+				return fmt.Errorf("resolve system secrets: %w", sysErr)
+			}
 		}
 
 		// Load persisted state for detached apps and status recovery

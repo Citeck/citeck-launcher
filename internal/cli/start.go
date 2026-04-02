@@ -180,9 +180,10 @@ func resolvePassword(desktop bool) (string, error) {
 // handlePasswordReset guides the user through resetting secrets.
 func handlePasswordReset(svc *storage.SecretService) (string, error) {
 	fmt.Print("All secrets will be regenerated. Continue? [y/N]: ") //nolint:forbidigo // CLI prompt
-	reader := bufio.NewReader(os.Stdin)
-	line, _ := reader.ReadString('\n')
-	line = strings.TrimSpace(strings.ToLower(line))
+	// Read confirmation directly from fd (not bufio) to avoid buffering conflict with term.ReadPassword
+	buf := make([]byte, 64)
+	n, _ := os.Stdin.Read(buf)
+	line := strings.TrimSpace(strings.ToLower(string(buf[:n])))
 	if line != "y" && line != "yes" {
 		return "", fmt.Errorf("reset cancelled")
 	}
@@ -309,6 +310,7 @@ func streamLiveStatus(c *client.DaemonClient, follow bool) error {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
 
+	isTTY := term.IsTerminal(int(os.Stdout.Fd()))
 	firstPrint := true
 	linesPrinted := 0
 
@@ -329,9 +331,8 @@ func streamLiveStatus(c *client.DaemonClient, follow bool) error {
 		apps := ns.Apps
 		sort.Slice(apps, func(i, j int) bool { return apps[i].Name < apps[j].Name })
 
-		// Clear previous output
-		if !firstPrint && linesPrinted > 0 {
-			// Move up and clear lines
+		// Clear previous output (only in TTY mode — avoids raw escape codes in redirected output)
+		if isTTY && !firstPrint && linesPrinted > 0 {
 			for i := 0; i < linesPrinted; i++ {
 				fmt.Print("\033[A\033[2K") //nolint:forbidigo // ANSI clear
 			}
