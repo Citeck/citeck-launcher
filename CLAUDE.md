@@ -245,6 +245,7 @@ Tested on remote server with community 2025.12 (second round). Found and fixed:
 - Graceful shutdown: phased stop groups (proxy → webapps → keycloak → infra)
 - Reconciler: exponential backoff retry for failed apps (1m → 30m max)
 - Config validation at parse time (port range, TLS host, LE host, auth users)
+- ZooKeeper: `ZOO_4LW_COMMANDS_WHITELIST=srvr,mntr,ruok,stat` — `srvr` required by zkServer.sh health, `mntr` required by observer ZK monitor
 
 ### Server Deployment Testing Round 3 — COMPLETE (2026-03-27)
 Tested on remote server with community 2025.12 (clean deployment). Found and fixed:
