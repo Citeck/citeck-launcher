@@ -68,7 +68,8 @@ type WebappProps struct {
 	MemoryLimit    string                               `yaml:"memoryLimit" json:"memoryLimit"`
 	ServerPort     int                                  `yaml:"serverPort" json:"serverPort"`
 	JavaOpts       string                               `yaml:"javaOpts" json:"javaOpts"`
-	SpringProfiles string                               `yaml:"springProfiles" json:"springProfiles"`
+	SpringProfiles   string                               `yaml:"springProfiles" json:"springProfiles"`
+	LivenessDisabled bool                                 `yaml:"livenessDisabled,omitempty" json:"livenessDisabled,omitempty"`
 }
 
 // Config is the top-level namespace configuration (namespace.yml).
