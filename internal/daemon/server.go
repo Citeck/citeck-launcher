@@ -490,13 +490,16 @@ func Start(opts StartOptions) error {
 		runtime.SetHistory(namespace.NewOperationHistory(config.LogDir()))
 
 		// Apply daemon.yml overrides for reconciler and pull concurrency
-		if daemonCfg.Reconciler.IntervalSeconds > 0 || daemonCfg.Reconciler.LivenessPeriodMs > 0 {
+		if daemonCfg.Reconciler.IntervalSeconds > 0 || daemonCfg.Reconciler.LivenessPeriodMs > 0 || daemonCfg.Reconciler.LivenessEnabled != nil {
 			rcfg := namespace.DefaultReconcilerConfig()
 			if daemonCfg.Reconciler.IntervalSeconds > 0 {
 				rcfg.IntervalSeconds = daemonCfg.Reconciler.IntervalSeconds
 			}
 			if daemonCfg.Reconciler.LivenessPeriodMs > 0 {
 				rcfg.LivenessPeriod = time.Duration(daemonCfg.Reconciler.LivenessPeriodMs) * time.Millisecond
+			}
+			if daemonCfg.Reconciler.LivenessEnabled != nil {
+				rcfg.LivenessEnabled = *daemonCfg.Reconciler.LivenessEnabled
 			}
 			runtime.SetReconcilerConfig(rcfg)
 		}
@@ -517,6 +520,7 @@ func Start(opts StartOptions) error {
 				runtime.SetManualStoppedApps(stopped)
 			}
 			runtime.RestoreEditedApps(persistedState.EditedApps, persistedState.EditedLockedApps)
+			runtime.RestoreRestartState(persistedState.RestartEvents, persistedState.RestartCounts)
 		}
 
 		// Start CloudConfigServer with generated ext cloud config
@@ -951,6 +955,8 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+api.NamespaceStart, d.handleStartNamespace)
 	mux.HandleFunc("POST "+api.NamespaceStop, d.handleStopNamespace)
 	mux.HandleFunc("POST "+api.NamespaceReload, d.handleReloadNamespace)
+	mux.HandleFunc("GET "+api.RestartEvents, d.handleRestartEvents)
+	mux.HandleFunc("GET /api/v1/diagnostics-file", d.handleDiagnosticsFile)
 
 	// Config
 	mux.HandleFunc("GET /api/v1/config", d.handleGetConfig)

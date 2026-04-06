@@ -1343,3 +1343,47 @@ func maskNamespaceConfigSecrets(cfg *namespace.Config) *namespace.Config {
 	return &out
 }
 
+func (d *Daemon) handleRestartEvents(w http.ResponseWriter, r *http.Request) {
+	d.configMu.RLock()
+	runtime := d.runtime
+	d.configMu.RUnlock()
+	if runtime == nil {
+		writeErrorCode(w, http.StatusNotFound, api.ErrCodeNotConfigured, "no namespace configured")
+		return
+	}
+	events := runtime.RestartEvents()
+	dtos := make([]api.RestartEventDto, len(events))
+	for i, e := range events {
+		dtos[i] = api.RestartEventDto{
+			Timestamp:   e.Timestamp,
+			App:         e.App,
+			Reason:      e.Reason,
+			Detail:      e.Detail,
+			Diagnostics: e.Diagnostics,
+		}
+	}
+	writeJSON(w, dtos)
+}
+
+func (d *Daemon) handleDiagnosticsFile(w http.ResponseWriter, r *http.Request) {
+	filePath := r.URL.Query().Get("path")
+	if filePath == "" {
+		writeError(w, http.StatusBadRequest, "missing path parameter")
+		return
+	}
+	diagDir := filepath.Join(d.volumesBase, "diagnostics")
+	absPath, err := filepath.Abs(filePath)
+	if err != nil || !strings.HasPrefix(absPath, diagDir) {
+		writeErrorCode(w, http.StatusForbidden, api.ErrCodeInvalidRequest, "path outside diagnostics directory")
+		return
+	}
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "diagnostics file not found")
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", filepath.Base(absPath)))
+	_, _ = w.Write(data)
+}
+
