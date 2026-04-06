@@ -17,6 +17,7 @@ const zh: Translations = {
   'dashboard.secrets': '密钥',
   'dashboard.diagnostics': '诊断',
   'dashboard.launcherLogs': '启动器日志',
+  'dashboard.restartEvents': '重启事件',
   'dashboard.systemDump': '系统转储',
   'dashboard.systemDump.success': '系统转储已下载',
 
@@ -178,6 +179,7 @@ const zh: Translations = {
   'table.ports': '端口',
   'table.tag': '标签',
   'table.actions': '操作',
+  'table.restartCount': '重启次数',
   'table.group.core': 'Citeck Core',
   'table.group.coreExt': 'Citeck Core Extensions',
   'table.group.additional': 'Citeck Additional',
@@ -296,7 +298,15 @@ const zh: Translations = {
   'status.STOPPED': '已停止',
   'status.STALLED': '已挂起',
 
+  // -- Restart Events --
+  'restartEvents.empty': '无重启事件',
+  'restartEvents.time': '时间',
+  'restartEvents.app': '应用',
+  'restartEvents.reason': '原因',
+  'restartEvents.detail': '详情',
+
   // -- Common --
+  'common.loading': '加载中...',
   'common.edit': '编辑',
   'common.cancel': '取消',
   'common.apply': '应用',

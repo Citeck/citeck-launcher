@@ -17,6 +17,7 @@ const es: Translations = {
   'dashboard.secrets': 'Secretos',
   'dashboard.diagnostics': 'Diagnósticos',
   'dashboard.launcherLogs': 'Registros del lanzador',
+  'dashboard.restartEvents': 'Reinicios',
   'dashboard.systemDump': 'Volcado del sistema',
   'dashboard.systemDump.success': 'Volcado del sistema descargado',
 
@@ -178,6 +179,7 @@ const es: Translations = {
   'table.ports': 'Puertos',
   'table.tag': 'Etiqueta',
   'table.actions': 'Acciones',
+  'table.restartCount': 'Reinicios',
   'table.group.core': 'Citeck Core',
   'table.group.coreExt': 'Citeck Core Extensions',
   'table.group.additional': 'Citeck Additional',
@@ -296,7 +298,15 @@ const es: Translations = {
   'status.STOPPED': 'Detenido',
   'status.STALLED': 'Bloqueado',
 
+  // -- Restart Events --
+  'restartEvents.empty': 'No hay eventos de reinicio',
+  'restartEvents.time': 'Hora',
+  'restartEvents.app': 'App',
+  'restartEvents.reason': 'Motivo',
+  'restartEvents.detail': 'Detalle',
+
   // -- Common --
+  'common.loading': 'Cargando...',
   'common.edit': 'Editar',
   'common.cancel': 'Cancelar',
   'common.apply': 'Aplicar',

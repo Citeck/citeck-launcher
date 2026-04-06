@@ -17,6 +17,7 @@ const fr: Translations = {
   'dashboard.secrets': 'Secrets',
   'dashboard.diagnostics': 'Diagnostics',
   'dashboard.launcherLogs': 'Journaux du Launcher',
+  'dashboard.restartEvents': 'Redemarrages',
   'dashboard.systemDump': 'Vidage syst\u00e8me',
   'dashboard.systemDump.success': 'Vidage syst\u00e8me t\u00e9l\u00e9charg\u00e9',
 
@@ -178,6 +179,7 @@ const fr: Translations = {
   'table.ports': 'Ports',
   'table.tag': 'Tag',
   'table.actions': 'Actions',
+  'table.restartCount': 'Redemarrages',
   'table.group.core': 'Citeck Core',
   'table.group.coreExt': 'Extensions Citeck Core',
   'table.group.additional': 'Citeck Suppl\u00e9mentaire',
@@ -296,7 +298,15 @@ const fr: Translations = {
   'status.STOPPED': 'Arr\u00eat\u00e9',
   'status.STALLED': 'Bloqu\u00e9',
 
+  // -- Restart Events --
+  'restartEvents.empty': 'Aucun evenement de redemarrage',
+  'restartEvents.time': 'Heure',
+  'restartEvents.app': 'App',
+  'restartEvents.reason': 'Raison',
+  'restartEvents.detail': 'Detail',
+
   // -- Common --
+  'common.loading': 'Chargement...',
   'common.edit': 'Modifier',
   'common.cancel': 'Annuler',
   'common.apply': 'Appliquer',

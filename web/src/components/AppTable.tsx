@@ -135,6 +135,12 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
             <td className="py-[3px] pr-4 whitespace-nowrap">
               <span className="inline-flex items-center gap-1.5">
                 <StatusBadge status={app.status} />
+                {(app.restartCount ?? 0) > 0 && (
+                  <span className="ml-1 inline-flex items-center rounded bg-destructive/10 px-1 py-0 text-[10px] font-medium text-destructive leading-4"
+                    title={t('table.restartCount')}>
+                    {'\u21bb'}{app.restartCount}
+                  </span>
+                )}
                 {app.statusText && <span className="text-muted-foreground text-[10px]">{app.statusText}</span>}
               </span>
             </td>

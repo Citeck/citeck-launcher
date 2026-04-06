@@ -17,6 +17,7 @@ const pt: Translations = {
   'dashboard.secrets': 'Secrets',
   'dashboard.diagnostics': 'Diagn\u00f3sticos',
   'dashboard.launcherLogs': 'Logs do Launcher',
+  'dashboard.restartEvents': 'Reinicializacoes',
   'dashboard.systemDump': 'Despejo do sistema',
   'dashboard.systemDump.success': 'Despejo do sistema baixado',
 
@@ -178,6 +179,7 @@ const pt: Translations = {
   'table.ports': 'Portas',
   'table.tag': 'Tag',
   'table.actions': 'A\u00e7\u00f5es',
+  'table.restartCount': 'Reinicializacoes',
   'table.group.core': 'Citeck Core',
   'table.group.coreExt': 'Extens\u00f5es Citeck Core',
   'table.group.additional': 'Citeck Adicional',
@@ -296,7 +298,15 @@ const pt: Translations = {
   'status.STOPPED': 'Parado',
   'status.STALLED': 'Travado',
 
+  // -- Restart Events --
+  'restartEvents.empty': 'Nenhum evento de reinicio',
+  'restartEvents.time': 'Hora',
+  'restartEvents.app': 'App',
+  'restartEvents.reason': 'Motivo',
+  'restartEvents.detail': 'Detalhe',
+
   // -- Common --
+  'common.loading': 'Carregando...',
   'common.edit': 'Editar',
   'common.cancel': 'Cancelar',
   'common.apply': 'Aplicar',

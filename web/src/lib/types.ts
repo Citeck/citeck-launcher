@@ -14,6 +14,15 @@ export interface AppDto {
   ports?: string[]
   edited?: boolean
   locked?: boolean
+  restartCount?: number
+}
+
+export interface RestartEventDto {
+  ts: string
+  app: string
+  reason: string
+  detail: string
+  diagnostics?: string
 }
 
 export interface LinkDto {

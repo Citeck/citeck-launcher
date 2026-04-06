@@ -17,6 +17,7 @@ const ru: Translations = {
   'dashboard.secrets': 'Секреты',
   'dashboard.diagnostics': 'Диагностика',
   'dashboard.launcherLogs': 'Логи лаунчера',
+  'dashboard.restartEvents': 'Перезапуски',
   'dashboard.systemDump': 'Дамп системы',
   'dashboard.systemDump.success': 'Дамп системы скачан',
 
@@ -178,6 +179,7 @@ const ru: Translations = {
   'table.ports': 'Порты',
   'table.tag': 'Тег',
   'table.actions': 'Действия',
+  'table.restartCount': 'Количество перезапусков',
   'table.group.core': 'Citeck Core',
   'table.group.coreExt': 'Citeck Core Extensions',
   'table.group.additional': 'Citeck Additional',
@@ -296,7 +298,15 @@ const ru: Translations = {
   'status.STOPPED': 'Остановлен',
   'status.STALLED': 'Зависло',
 
+  // -- Restart Events --
+  'restartEvents.empty': 'Нет событий перезапуска',
+  'restartEvents.time': 'Время',
+  'restartEvents.app': 'Приложение',
+  'restartEvents.reason': 'Причина',
+  'restartEvents.detail': 'Описание',
+
   // -- Common --
+  'common.loading': 'Загрузка...',
   'common.edit': 'Редактировать',
   'common.cancel': 'Отмена',
   'common.apply': 'Применить',

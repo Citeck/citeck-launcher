@@ -17,6 +17,7 @@ const ja: Translations = {
   'dashboard.secrets': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8',
   'dashboard.diagnostics': '\u8a3a\u65ad',
   'dashboard.launcherLogs': 'Launcher \u30ed\u30b0',
+  'dashboard.restartEvents': '\u518d\u8d77\u52d5\u30a4\u30d9\u30f3\u30c8',
   'dashboard.systemDump': '\u30b7\u30b9\u30c6\u30e0\u30c0\u30f3\u30d7',
   'dashboard.systemDump.success': '\u30b7\u30b9\u30c6\u30e0\u30c0\u30f3\u30d7\u3092\u30c0\u30a6\u30f3\u30ed\u30fc\u30c9\u3057\u307e\u3057\u305f',
 
@@ -178,6 +179,7 @@ const ja: Translations = {
   'table.ports': '\u30dd\u30fc\u30c8',
   'table.tag': '\u30bf\u30b0',
   'table.actions': '\u64cd\u4f5c',
+  'table.restartCount': '\u518d\u8d77\u52d5\u56de\u6570',
   'table.group.core': 'Citeck Core',
   'table.group.coreExt': 'Citeck Core \u62e1\u5f35',
   'table.group.additional': 'Citeck \u8ffd\u52a0',
@@ -296,7 +298,15 @@ const ja: Translations = {
   'status.STOPPED': '\u505c\u6b62\u6e08\u307f',
   'status.STALLED': '\u30b9\u30c8\u30fc\u30eb',
 
+  // -- Restart Events --
+  'restartEvents.empty': '\u518d\u8d77\u52d5\u30a4\u30d9\u30f3\u30c8\u306f\u3042\u308a\u307e\u305b\u3093',
+  'restartEvents.time': '\u6642\u523b',
+  'restartEvents.app': '\u30a2\u30d7\u30ea',
+  'restartEvents.reason': '\u539f\u56e0',
+  'restartEvents.detail': '\u8a73\u7d30',
+
   // -- Common --
+  'common.loading': '\u8aad\u307f\u8fbc\u307f\u4e2d...',
   'common.edit': '\u7de8\u96c6',
   'common.cancel': '\u30ad\u30e3\u30f3\u30bb\u30eb',
   'common.apply': '\u9069\u7528',

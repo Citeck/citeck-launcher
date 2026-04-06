@@ -15,6 +15,7 @@ import { LogViewer } from '../components/LogViewer'
 import { ConfigEditor } from '../components/ConfigEditor'
 import { DaemonLogsViewer } from '../components/DaemonLogsViewer'
 import { AppConfigEditor } from '../components/AppConfigEditor'
+import { RestartEvents } from '../components/RestartEvents'
 import type { BottomPanelTab } from '../lib/panels'
 import { toast } from '../lib/toast'
 import { ExternalLink, Globe, Download, AlertTriangle, HardDrive, Key, Stethoscope, FileText, Settings, Eye, EyeOff } from 'lucide-react'
@@ -203,6 +204,8 @@ export function Dashboard() {
         return <DaemonLogsViewer compact active={active} />
       case 'app-config':
         return <AppConfigEditor appName={tab.appName!} />
+      case 'restart-events':
+        return <RestartEvents active={active} />
       default:
         return null
     }
@@ -412,6 +415,8 @@ export function Dashboard() {
               onClick={() => { openTab({ id: 'secrets', title: t('dashboard.secrets'), path: '/secrets' }); navigate('/secrets') }} />
             <SidebarBtn icon={Stethoscope} label={t('dashboard.diagnostics')}
               onClick={() => { openTab({ id: 'diagnostics', title: t('dashboard.diagnostics'), path: '/diagnostics' }); navigate('/diagnostics') }} />
+            <SidebarBtn icon={AlertTriangle} label={t('dashboard.restartEvents')}
+              onClick={() => openBottomTab({ id: 'restart-events', type: 'restart-events', title: t('dashboard.restartEvents') })} />
             <SidebarBtn icon={FileText} label={t('dashboard.launcherLogs')}
               onClick={() => openBottomTab({ id: 'daemon-logs', type: 'daemon-logs', title: t('daemonLogs.title') })} />
             <SidebarBtn icon={Download} label={t('dashboard.systemDump')}

@@ -2,7 +2,7 @@ import { create } from 'zustand'
 
 export interface BottomPanelTab {
   id: string           // "logs:eapps" | "ns-config" | "daemon-logs" | "app-config:emodel"
-  type: 'logs' | 'ns-config' | 'daemon-logs' | 'app-config'
+  type: 'logs' | 'ns-config' | 'daemon-logs' | 'app-config' | 'restart-events'
   title: string
   appName?: string     // for logs and app-config types
 }

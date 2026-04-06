@@ -14,6 +14,7 @@ import type {
   DiagnosticsDto,
   DiagFixResultDto,
   SnapshotDto,
+  RestartEventDto,
 } from './types'
 
 export const API_BASE = '/api/v1'
@@ -104,6 +105,12 @@ export async function postNamespaceReload(): Promise<ActionResultDto> {
   const res = await fetchWithTimeout(`${API_BASE}/namespace/reload`, { method: 'POST', headers: CSRF_HEADER })
   if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
+}
+
+export async function fetchRestartEvents(): Promise<RestartEventDto[]> {
+  const resp = await fetchWithTimeout(`${API_BASE}/namespace/restart-events`)
+  if (!resp.ok) return []
+  return resp.json()
 }
 
 export async function getDaemonLogs(tail = 200): Promise<string> {
