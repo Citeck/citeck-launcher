@@ -21,12 +21,11 @@ export function RestartEvents({ active }: RestartEventsProps) {
   useEffect(() => {
     if (!active) return
     let cancelled = false
-    startTransition(() => {
-      fetchRestartEvents().then(data => {
-        if (!cancelled) {
-          setEvents([...data].reverse())
-        }
-      })
+    startTransition(async () => {
+      const data = await fetchRestartEvents()
+      if (!cancelled) {
+        setEvents([...data].reverse())
+      }
     })
     return () => { cancelled = true }
   }, [active, totalRestarts])
