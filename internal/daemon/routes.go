@@ -1377,7 +1377,7 @@ func (d *Daemon) handleDiagnosticsFile(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusForbidden, api.ErrCodeInvalidRequest, "path outside diagnostics directory")
 		return
 	}
-	data, err := os.ReadFile(absPath)
+	data, err := os.ReadFile(absPath) //nolint:gosec // G304: path validated via HasPrefix(absPath, diagDir)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "diagnostics file not found")
 		return
