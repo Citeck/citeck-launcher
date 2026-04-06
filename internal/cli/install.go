@@ -199,13 +199,20 @@ func runInstall(_ *cobra.Command, _ []string, workspaceZip string) error { //nol
 
 	// 8. Bundle
 	resolver := bundle.NewResolver(config.DataDir())
-	resolveResult, err := resolver.Resolve(bundle.Ref{})
+	wsCfg := resolver.ResolveWorkspaceOnly()
 	var bundleVersions []string
-	if err == nil && resolveResult.Workspace != nil {
-		for _, repo := range resolveResult.Workspace.BundleRepos {
-			bundlesDir := filepath.Join(config.DataDir(), "bundles", repo.ID)
+	if wsCfg != nil {
+		for _, repo := range wsCfg.BundleRepos {
+			// Check local workspace repo first, then cloned bundles dir
+			bundlesDir := filepath.Join(config.DataDir(), "repo")
 			if repo.Path != "" {
 				bundlesDir = filepath.Join(bundlesDir, repo.Path)
+			}
+			if _, statErr := os.Stat(bundlesDir); statErr != nil {
+				bundlesDir = filepath.Join(config.DataDir(), "bundles", repo.ID)
+				if repo.Path != "" {
+					bundlesDir = filepath.Join(bundlesDir, repo.Path)
+				}
 			}
 			versions := bundle.ListBundleVersions(bundlesDir)
 			for _, v := range versions {
