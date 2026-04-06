@@ -11,9 +11,8 @@ import (
 
 // RuntimeClient defines the Docker operations required by the namespace runtime
 // (internal/namespace). This is a subset of *Client — the daemon HTTP handlers
-// use *Client directly because they need additional methods (ContainerLogs,
-// NetworkName, Ping, Close, etc.) that are HTTP-handler-specific and not part
-// of the runtime's concern.
+// use *Client directly because they need additional methods (NetworkName, Ping,
+// Close, etc.) that are HTTP-handler-specific and not part of the runtime's concern.
 type RuntimeClient interface {
 	ContainerName(appName string) string
 	CreateNetwork(ctx context.Context) (string, error)
@@ -29,6 +28,7 @@ type RuntimeClient interface {
 	PullImageWithProgress(ctx context.Context, img string, auth *RegistryAuth, progressFn PullProgressFn) error
 	ImageExists(ctx context.Context, img string) bool
 	GetImageDigest(ctx context.Context, img string) string
+	ContainerLogs(ctx context.Context, containerID string, tail int) (string, error)
 	ContainerLogsFollow(ctx context.Context, containerID string, tail int) (io.ReadCloser, error)
 	ExecInContainer(ctx context.Context, containerID string, cmd []string) (string, int, error)
 	GetPublishedPort(ctx context.Context, containerID string, containerPort int) int

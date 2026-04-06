@@ -364,10 +364,7 @@ func (r *Runtime) captureDiagnostics(ctx context.Context, appName, containerID s
 
 // containerLogs fetches the last N lines from a container.
 func (r *Runtime) containerLogs(ctx context.Context, containerID string, tail int) (string, error) {
-	if c, ok := r.docker.(*docker.Client); ok {
-		return c.ContainerLogs(ctx, containerID, tail) //nolint:wrapcheck // thin wrapper
-	}
-	return "", nil
+	return r.docker.ContainerLogs(ctx, containerID, tail) //nolint:wrapcheck // thin wrapper
 }
 
 // cleanupOldDiagnostics removes diagnostics files older than 7 days.

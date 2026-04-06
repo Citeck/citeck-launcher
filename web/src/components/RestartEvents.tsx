@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { fetchRestartEvents } from '../lib/api'
+import { useDashboardStore } from '../lib/store'
 import { useTranslation } from '../lib/i18n'
 import type { RestartEventDto } from '../lib/types'
 
@@ -12,6 +13,11 @@ export function RestartEvents({ active }: RestartEventsProps) {
   const [events, setEvents] = useState<RestartEventDto[]>([])
   const [loading, setLoading] = useState(true)
 
+  // Derive total restart count from namespace — changes when SSE triggers fetchData()
+  const totalRestarts = useDashboardStore((s) =>
+    s.namespace?.apps?.reduce((sum, a) => sum + (a.restartCount ?? 0), 0) ?? 0
+  )
+
   useEffect(() => {
     if (!active) return
     let cancelled = false
@@ -23,7 +29,7 @@ export function RestartEvents({ active }: RestartEventsProps) {
       }
     })
     return () => { cancelled = true }
-  }, [active])
+  }, [active, totalRestarts])
 
   if (loading && active) {
     return <div className="p-4 text-muted-foreground text-sm">{t('common.loading')}</div>

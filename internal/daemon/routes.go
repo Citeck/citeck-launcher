@@ -1371,7 +1371,7 @@ func (d *Daemon) handleDiagnosticsFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing path parameter")
 		return
 	}
-	diagDir := filepath.Join(d.volumesBase, "diagnostics")
+	diagDir := filepath.Join(d.volumesBase, "diagnostics") + string(os.PathSeparator)
 	absPath, err := filepath.Abs(filePath)
 	if err != nil || !strings.HasPrefix(absPath, diagDir) {
 		writeErrorCode(w, http.StatusForbidden, api.ErrCodeInvalidRequest, "path outside diagnostics directory")

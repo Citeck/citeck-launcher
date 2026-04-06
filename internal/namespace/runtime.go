@@ -920,8 +920,6 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) { //nolint:gocyclo // or
 	r.runCtx = ctx
 	r.cancel = cancel
 	r.lastApps = apps
-	r.restartCounts = make(map[string]int)
-	r.restartEvents = nil
 	r.livenessFailures = make(map[string]int)
 	r.setStatus(NsStatusStarting)
 	r.mu.Unlock()
@@ -1592,7 +1590,11 @@ func (r *Runtime) doStop() {
 	_ = r.docker.RemoveNetwork(netCtx)
 	netCancel()
 	r.apps = make(map[string]*AppRuntime)
-	r.setStatus(NsStatusStopped)
+	// Clear restart tracking — fresh state on next Start
+	r.restartCounts = make(map[string]int)
+	r.restartEvents = nil
+	r.livenessFailures = make(map[string]int)
+	r.setStatus(NsStatusStopped) // persists state including cleared restart data
 	r.mu.Unlock()
 
 	// Record stop operation

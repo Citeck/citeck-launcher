@@ -456,7 +456,6 @@ func generateObserver(ctx *NsGenContext) {
 
 	const (
 		// Observer ports: 17014–17017 (before ZK admin 17018, Alfresco 17019, webapps 17020+)
-		obsLogUDP   = 17014 // UDP log receiver
 		obsOTLPHTTP = 17015 // OTLP HTTP/protobuf receiver
 		obsHTTP     = 17016 // HTTP API + embedded UI
 		obsGRPC     = 17017 // OTLP gRPC receiver
@@ -549,13 +548,9 @@ func generateObserver(ctx *NsGenContext) {
 	obs.AddEnv("ZK_MONITOR_ENABLED", "true")
 	obs.AddEnv("ZK_MONITOR_HOSTS", fmt.Sprintf("%s:%d", ZKHost, ZKPort))
 
-	// UDP log receiver
-	obs.AddEnv("LOG_RECEIVER_UDP_PORT", fmt.Sprintf("%d", obsLogUDP))
-
 	obs.AddPort(fmt.Sprintf("%d:%d", obsHTTP, obsHTTP))
 	obs.AddPort(fmt.Sprintf("%d:%d", obsGRPC, obsGRPC))
 	obs.AddPort(fmt.Sprintf("%d:%d", obsOTLPHTTP, obsOTLPHTTP))
-	obs.AddPort(fmt.Sprintf("%d:%d/udp", obsLogUDP, obsLogUDP))
 	obs.AddDependsOn(appdef.AppObsPostgres)
 	obs.AddDependsOn(appdef.AppZookeeper)
 	obs.StartupConditions = []appdef.StartupCondition{

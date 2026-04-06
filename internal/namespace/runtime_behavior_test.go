@@ -108,6 +108,10 @@ func (m *mockDocker) GetImageDigest(ctx context.Context, img string) string {
 	return "sha256:mock-digest-" + img
 }
 
+func (m *mockDocker) ContainerLogs(_ context.Context, _ string, _ int) (string, error) {
+	return "", nil
+}
+
 func (m *mockDocker) ContainerLogsFollow(ctx context.Context, containerID string, tail int) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("")), nil
 }
