@@ -56,13 +56,14 @@ const (
 
 // AppRuntime holds the state for a single app.
 type AppRuntime struct {
-	Name        string
-	Status      AppRuntimeStatus
-	StatusText  string
-	Def         appdef.ApplicationDef
-	ContainerID string
-	CPU         string
-	Memory      string
+	Name         string
+	Status       AppRuntimeStatus
+	StatusText   string
+	Def          appdef.ApplicationDef
+	ContainerID  string
+	CPU          string
+	Memory       string
+	RestartCount int
 }
 
 // EventCallback is called when namespace or app state changes.
@@ -97,6 +98,9 @@ type Runtime struct {
 	lastApps               []appdef.ApplicationDef          // last app defs passed to doStart
 	cachedBundle           *bundle.Def                      // last successfully resolved bundle (persisted)
 	retryState             map[string]retryInfo             // retry tracking for failed apps
+	livenessFailures       map[string]int                   // consecutive liveness probe failure counts
+	restartCounts          map[string]int                   // total restart counts per app
+	restartEvents          []RestartEvent                   // ring buffer of restart events
 	statusNotify           chan struct{}                     // closed+recreated on every app status change
 	cmdCh              chan command
 	stopCh             chan struct{}       // dedicated stop signal that can't be dropped
@@ -239,6 +243,14 @@ func (r *Runtime) persistState() {
 	if r.cachedBundle != nil && !r.cachedBundle.IsEmpty() {
 		state.CachedBundle = r.cachedBundle
 	}
+	if len(r.restartEvents) > 0 {
+		state.RestartEvents = make([]RestartEvent, len(r.restartEvents))
+		copy(state.RestartEvents, r.restartEvents)
+	}
+	if len(r.restartCounts) > 0 {
+		state.RestartCounts = make(map[string]int, len(r.restartCounts))
+		maps.Copy(state.RestartCounts, r.restartCounts)
+	}
 	if err := SaveNsState(r.volumesBase, r.nsID, state); err != nil {
 		slog.Warn("Failed to persist namespace state", "err", err)
 	}
@@ -276,10 +288,64 @@ func (r *Runtime) recordRetryAttempt(appName string) {
 	r.retryState[appName] = info
 }
 
+// RestartEvent records a container restart with its cause and diagnostics.
+type RestartEvent struct {
+	Timestamp   string `json:"ts"`
+	App         string `json:"app"`
+	Reason      string `json:"reason"`
+	Detail      string `json:"detail"`
+	Diagnostics string `json:"diagnostics"`
+}
+
+const maxRestartEvents = 100
+
 // resetRetry clears retry state for an app. Must be called with r.mu held.
 func (r *Runtime) resetRetry(appName string) {
 	if r.retryState != nil {
 		delete(r.retryState, appName)
+	}
+}
+
+// RestartEvents returns a copy of the restart event log.
+func (r *Runtime) RestartEvents() []RestartEvent {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make([]RestartEvent, len(r.restartEvents))
+	copy(result, r.restartEvents)
+	return result
+}
+
+// recordRestartEvent adds a restart event. Must be called with r.mu held.
+func (r *Runtime) recordRestartEvent(evt RestartEvent) {
+	r.restartEvents = append(r.restartEvents, evt)
+	if len(r.restartEvents) > maxRestartEvents {
+		r.restartEvents = r.restartEvents[len(r.restartEvents)-maxRestartEvents:]
+	}
+	r.emitEvent(api.EventDto{
+		Type: "restart_event", Timestamp: time.Now().UnixMilli(),
+		NamespaceID: r.nsID, AppName: evt.App, After: evt.Reason,
+	})
+}
+
+// incrementRestartCount bumps the restart counter. Must be called with r.mu held.
+func (r *Runtime) incrementRestartCount(appName string) {
+	r.restartCounts[appName]++
+	if app, ok := r.apps[appName]; ok {
+		app.RestartCount = r.restartCounts[appName]
+	}
+}
+
+// RestoreRestartState restores persisted restart events and counts (called before Start).
+func (r *Runtime) RestoreRestartState(events []RestartEvent, counts map[string]int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(events) > 0 {
+		r.restartEvents = make([]RestartEvent, len(events))
+		copy(r.restartEvents, events)
+	}
+	if len(counts) > 0 {
+		r.restartCounts = make(map[string]int, len(counts))
+		maps.Copy(r.restartCounts, counts)
 	}
 }
 
@@ -323,6 +389,8 @@ func NewRuntimeWithActions(cfg *Config, dockerClient docker.RuntimeClient, works
 		manualStoppedApps: make(map[string]bool),
 		editedApps:        make(map[string]appdef.ApplicationDef),
 		editedLockedApps:  make(map[string]bool),
+		livenessFailures:  make(map[string]int),
+		restartCounts:     make(map[string]int),
 		statusNotify:      make(chan struct{}),
 		cmdCh:             make(chan command, 16),
 		stopCh:            make(chan struct{}, 1),
@@ -404,8 +472,9 @@ func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 			Memory:     app.Memory,
 			Kind:       KindToString(app.Def.Kind),
 			Ports:      app.Def.Ports,
-			Edited:     edited,
-			Locked:     r.editedLockedApps[app.Name],
+			Edited:       edited,
+			Locked:       r.editedLockedApps[app.Name],
+			RestartCount: app.RestartCount,
 		})
 	}
 	return api.NamespaceDto{
@@ -791,6 +860,10 @@ func (r *Runtime) setAppStatus(app *AppRuntime, s AppRuntimeStatus) {
 		Type: "app_status", Timestamp: time.Now().UnixMilli(),
 		NamespaceID: r.nsID, AppName: app.Name, Before: string(old), After: string(s),
 	})
+	// Clear liveness failure counter when app leaves RUNNING state
+	if old == AppStatusRunning && s != AppStatusRunning {
+		delete(r.livenessFailures, app.Name)
+	}
 	// Wake all goroutines waiting for dependency status changes
 	close(r.statusNotify)
 	r.statusNotify = make(chan struct{})
@@ -847,6 +920,9 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) { //nolint:gocyclo // or
 	r.runCtx = ctx
 	r.cancel = cancel
 	r.lastApps = apps
+	r.restartCounts = make(map[string]int)
+	r.restartEvents = nil
+	r.livenessFailures = make(map[string]int)
 	r.setStatus(NsStatusStarting)
 	r.mu.Unlock()
 

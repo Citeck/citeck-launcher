@@ -16,6 +16,7 @@ const (
 	NamespaceStart  = APIV1 + "/namespace/start"
 	NamespaceStop   = APIV1 + "/namespace/stop"
 	NamespaceReload = APIV1 + "/namespace/reload"
+	RestartEvents   = APIV1 + "/namespace/restart-events"
 
 	Events = APIV1 + "/events"
 	Apps   = APIV1 + "/apps"

@@ -8,16 +8,26 @@ type ActionResultDto struct {
 
 // AppDto represents an application in the namespace.
 type AppDto struct {
-	Name       string   `json:"name"`
-	Status     string   `json:"status"`
-	StatusText string   `json:"statusText,omitempty"`
-	Image      string   `json:"image"`
-	CPU        string   `json:"cpu"`
-	Memory     string   `json:"memory"`
-	Kind       string   `json:"kind"`
-	Ports      []string `json:"ports,omitempty"`
-	Edited     bool     `json:"edited,omitempty"`
-	Locked     bool     `json:"locked,omitempty"`
+	Name         string   `json:"name"`
+	Status       string   `json:"status"`
+	StatusText   string   `json:"statusText,omitempty"`
+	Image        string   `json:"image"`
+	CPU          string   `json:"cpu"`
+	Memory       string   `json:"memory"`
+	Kind         string   `json:"kind"`
+	Ports        []string `json:"ports,omitempty"`
+	Edited       bool     `json:"edited,omitempty"`
+	Locked       bool     `json:"locked,omitempty"`
+	RestartCount int      `json:"restartCount,omitempty"`
+}
+
+// RestartEventDto represents a restart event for the API.
+type RestartEventDto struct {
+	Timestamp   string `json:"ts"`
+	App         string `json:"app"`
+	Reason      string `json:"reason"`
+	Detail      string `json:"detail"`
+	Diagnostics string `json:"diagnostics,omitempty"`
 }
 
 // DaemonStatusDto reports the daemon's runtime status.

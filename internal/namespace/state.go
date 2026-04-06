@@ -18,6 +18,8 @@ type NsPersistedState struct {
 	EditedApps        map[string]appdef.ApplicationDef `json:"editedApps,omitempty"`
 	EditedLockedApps  []string                         `json:"editedLockedApps,omitempty"`
 	CachedBundle      *bundle.Def                      `json:"cachedBundle,omitempty"`
+	RestartEvents     []RestartEvent                   `json:"restartEvents,omitempty"`
+	RestartCounts     map[string]int                   `json:"restartCounts,omitempty"`
 }
 
 // statePath returns the path to the persisted state file (namespace-scoped).
