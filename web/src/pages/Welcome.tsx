@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { getNamespaces, getQuickStarts, deleteNamespace, postNamespaceStart } from '../lib/api'
 import type { NamespaceSummaryDto, QuickStartDto } from '../lib/types'
@@ -30,11 +30,7 @@ export function Welcome() {
   const resetPanels = usePanelStore((s) => s.resetPanels)
   const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu()
 
-  useEffect(() => {
-    loadData()
-  }, [])
-
-  async function loadData() {
+  const loadData = useCallback(async () => {
     setLoading(true)
     try {
       const [ns, qs] = await Promise.all([getNamespaces(), getQuickStarts()])
@@ -52,7 +48,11 @@ export function Welcome() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    loadData()
+  }, [loadData])
 
   async function handleOpenNamespace(ns: NamespaceSummaryDto) {
     if (ns.status === 'STOPPED' || ns.status === 'STALLED') {

@@ -1,4 +1,4 @@
-import { useRef, useCallback, useLayoutEffect, type ReactNode } from 'react'
+import { useCallback, useState, type ReactNode } from 'react'
 import { usePanelStore, type BottomPanelTab } from '../lib/panels'
 import { useResizeHandle } from '../hooks/useResizeHandle'
 import { useTranslation } from '../lib/i18n'
@@ -23,15 +23,20 @@ export function BottomPanel({ renderTab }: BottomPanelProps) {
     onResize: setBottomPanelHeight,
   })
 
-  // Track which tabs have been activated at least once (lazy mount)
-  const mountedRef = useRef<Set<string>>(new Set())
-  useLayoutEffect(() => {
-    if (activeBottomTabId) mountedRef.current.add(activeBottomTabId)
-  }, [activeBottomTabId])
+  // Track which tabs have been activated at least once (lazy mount).
+  // Uses the "adjust state during render" pattern (React-supported, no effect needed).
+  const [mounted, setMounted] = useState<Set<string>>(new Set())
+  const [prevActiveTab, setPrevActiveTab] = useState(activeBottomTabId)
+  if (activeBottomTabId && activeBottomTabId !== prevActiveTab) {
+    setPrevActiveTab(activeBottomTabId)
+    if (!mounted.has(activeBottomTabId)) {
+      setMounted(new Set(mounted).add(activeBottomTabId))
+    }
+  }
 
   const onCloseTab = useCallback((e: React.MouseEvent, id: string) => {
     e.stopPropagation()
-    mountedRef.current.delete(id)
+    setMounted(prev => { const next = new Set(prev); next.delete(id); return next })
     closeBottomTab(id)
   }, [closeBottomTab])
 
@@ -85,7 +90,7 @@ export function BottomPanel({ renderTab }: BottomPanelProps) {
         style={bottomPanelOpen ? { height: bottomPanelHeight } : undefined}
       >
         {bottomTabs.map((tab) => {
-          if (!mountedRef.current.has(tab.id)) return null
+          if (!mounted.has(tab.id)) return null
           const isActive = tab.id === activeBottomTabId
           return (
             <div key={tab.id} className={`h-full ${isActive ? '' : 'hidden'}`}>

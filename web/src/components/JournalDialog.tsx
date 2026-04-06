@@ -44,10 +44,12 @@ export function JournalDialog({
     }
   }, [open])
 
-  // Reset selection when data changes
-  useEffect(() => {
+  // Reset selection when data changes — "adjust state during render" pattern
+  const [prevData, setPrevData] = useState(data)
+  if (data !== prevData) {
+    setPrevData(data)
     setSelected(new Set())
-  }, [data])
+  }
 
   // Stable row identity using the first column value
   function rowKey(row: Record<string, unknown>): string {

@@ -26,9 +26,12 @@ export function FormDialog({ title, fields, onSubmit, onCancel, open, loading = 
   const [values, setValues] = useState<Record<string, unknown>>({})
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({})
 
-  // Initialize default values when dialog opens or fields change while open
-  useEffect(() => {
-    if (!open) return
+  // Reset values when dialog opens or fields change — "adjust state during render" pattern
+  const [prevOpen, setPrevOpen] = useState(open)
+  const [prevFields, setPrevFields] = useState(fields)
+  if (open && (open !== prevOpen || fields !== prevFields)) {
+    setPrevOpen(open)
+    setPrevFields(fields)
     const defaults: Record<string, unknown> = {}
     for (const field of fields) {
       if (field.defaultValue !== undefined) {
@@ -43,7 +46,10 @@ export function FormDialog({ title, fields, onSubmit, onCancel, open, loading = 
     }
     setValues(defaults)
     setValidationErrors({})
-  }, [open, fields])
+  }
+  if (!open && open !== prevOpen) {
+    setPrevOpen(open)
+  }
 
   useEffect(() => {
     const dialog = dialogRef.current

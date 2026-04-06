@@ -16,7 +16,7 @@ export function DaemonLogsViewer({ compact = false, active = true }: DaemonLogsV
   const abortRef = useRef<AbortController | null>(null)
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const activeRef = useRef(active)
-  activeRef.current = active
+  useEffect(() => { activeRef.current = active }, [active])
   const preRef = useRef<HTMLPreElement>(null)
 
   const fetchInitial = useCallback(() => {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useTransition } from 'react'
 import { fetchRestartEvents } from '../lib/api'
 import { useDashboardStore } from '../lib/store'
 import { useTranslation } from '../lib/i18n'
@@ -11,7 +11,7 @@ interface RestartEventsProps {
 export function RestartEvents({ active }: RestartEventsProps) {
   const { t } = useTranslation()
   const [events, setEvents] = useState<RestartEventDto[]>([])
-  const [loading, setLoading] = useState(true)
+  const [isPending, startTransition] = useTransition()
 
   // Derive total restart count from namespace — changes when SSE triggers fetchData()
   const totalRestarts = useDashboardStore((s) =>
@@ -21,17 +21,17 @@ export function RestartEvents({ active }: RestartEventsProps) {
   useEffect(() => {
     if (!active) return
     let cancelled = false
-    setLoading(true)
-    fetchRestartEvents().then(data => {
-      if (!cancelled) {
-        setEvents([...data].reverse())
-        setLoading(false)
-      }
+    startTransition(() => {
+      fetchRestartEvents().then(data => {
+        if (!cancelled) {
+          setEvents([...data].reverse())
+        }
+      })
     })
     return () => { cancelled = true }
   }, [active, totalRestarts])
 
-  if (loading && active) {
+  if (isPending && events.length === 0 && active) {
     return <div className="p-4 text-muted-foreground text-sm">{t('common.loading')}</div>
   }
 

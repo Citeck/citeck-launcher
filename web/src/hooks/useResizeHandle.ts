@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 interface UseResizeHandleOptions {
   currentHeight: number
@@ -17,10 +17,10 @@ export function useResizeHandle({
   const startY = useRef(0)
   const startHeight = useRef(0)
   const heightRef = useRef(currentHeight)
-  heightRef.current = currentHeight
+  useEffect(() => { heightRef.current = currentHeight }, [currentHeight])
 
   const onResizeRef = useRef(onResize)
-  onResizeRef.current = onResize
+  useEffect(() => { onResizeRef.current = onResize }, [onResize])
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {

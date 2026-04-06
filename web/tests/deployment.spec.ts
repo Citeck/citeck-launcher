@@ -122,7 +122,7 @@ test.describe('Deployment: API Verification', () => {
     const diag = await res.json()
     expect(diag.checks.length).toBeGreaterThan(0)
     // Docker and Socket should be OK
-    const docker = diag.checks.find((c: any) => c.name === 'Docker')
+    const docker = diag.checks.find((c: { name: string; status: string }) => c.name === 'Docker')
     expect(docker?.status).toBe('ok')
   })
 
@@ -148,7 +148,7 @@ test.describe('Deployment: API Verification', () => {
     const vols = await res.json()
     expect(vols.length).toBeGreaterThan(0)
     // Should have postgres volume
-    const pgVol = vols.find((v: any) => v.name.includes('postgres'))
+    const pgVol = vols.find((v: { name: string }) => v.name.includes('postgres'))
     expect(pgVol).toBeDefined()
   })
 

@@ -15,7 +15,7 @@ async function getPlatformInfo(): Promise<PlatformInfo | null> {
     const resp = await ctx.get(`${DAEMON}/api/v1/namespace`)
     if (!resp.ok()) return null
     const ns = await resp.json()
-    const ecosLink = ns.links?.find((l: any) => l.name === 'ECOS UI')
+    const ecosLink = ns.links?.find((l: { name: string; url?: string }) => l.name === 'ECOS UI')
     if (!ecosLink?.url) return null
 
     // Get config for auth info
