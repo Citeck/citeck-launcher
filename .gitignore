@@ -19,7 +19,9 @@ node_modules
 ### Legacy (Kotlin era) ###
 .gradle
 .kotlin
-build/
+
+### Build artifacts ###
+build/bin/
 
 ### H2 export tool (Gradle project — wrapper must be tracked) ###
 !tools/h2-export/gradle/

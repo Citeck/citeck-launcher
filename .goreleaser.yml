@@ -2,7 +2,7 @@ version: 2
 
 before:
   hooks:
-    - cmd: cd web && npm ci && npm run build
+    - cmd: cd web && pnpm install --frozen-lockfile && pnpm run build
     - cmd: rm -rf internal/daemon/webdist && cp -r web/dist internal/daemon/webdist
 
 builds:
