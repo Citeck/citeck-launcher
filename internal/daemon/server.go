@@ -333,9 +333,16 @@ func Start(opts StartOptions) error {
 		return fmt.Errorf("create secret service: %w", err)
 	}
 	if secretSvc.IsEncrypted() {
-		if config.IsDesktopMode() {
+		if secretSvc.IsDefaultPassword() {
+			// Default password — auto-unlock
+			if unlockErr := secretSvc.Unlock("citeck"); unlockErr != nil {
+				slog.Warn("Auto-unlock with default password failed", "err", unlockErr)
+			} else {
+				slog.Info("Secrets auto-unlocked with default password")
+			}
+		} else if config.IsDesktopMode() {
 			// Desktop mode: Web UI unlock flow — don't block startup
-			slog.Info("Secrets are encrypted, waiting for unlock via Web UI")
+			slog.Info("Secrets are encrypted with custom password, waiting for unlock via Web UI")
 		} else {
 			// Server mode: unlock now with password from CLI
 			if opts.MasterPassword == "" {

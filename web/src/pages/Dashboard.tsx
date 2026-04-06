@@ -27,7 +27,11 @@ export function Dashboard() {
   const { drawerAppName, closeDrawer, bottomTabs, openBottomTab } = usePanelStore()
   const { t } = useTranslation()
 
-  // Multi-step dialog: kotlin-decrypt → setup-password → unlock
+  // Secret management dialog (Kotlin migration, setup, unlock)
+  // Server mode: daemon auto-encrypts/auto-unlocks with default password, so
+  // setup-password and unlock dialogs are never triggered. Only kotlin-decrypt
+  // needs user input (original Kotlin master password).
+  // Desktop mode: all three dialogs can appear.
   const [dialogStep, setDialogStep] = useState<'kotlin-decrypt' | 'setup-password' | 'unlock' | null>(null)
   const [password, setPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
@@ -37,10 +41,8 @@ export function Dashboard() {
   const [showPassword, setShowPassword] = useState(false)
 
   // On mount: detect which dialog step is needed.
-  // Master password is ALWAYS required once per daemon restart:
-  // - hasPendingSecrets → decrypt Kotlin blob first
-  // - encrypted && locked → unlock with existing password
-  // - !encrypted && hasSecrets → must set a password to protect secrets
+  // Server mode: daemon auto-encrypts + auto-unlocks with default password, so only
+  // kotlin-decrypt (Kotlin migration) ever triggers. Desktop mode: all three possible.
   useEffect(() => {
     if (dialogChecked || dialogStep) return
     if (!namespace) return
@@ -70,7 +72,7 @@ export function Dashboard() {
     }
   }, [password, fetchData, t])
 
-  // Setup password — encrypt all secrets
+  // Setup password — encrypt all secrets (desktop mode only)
   const handleSetupPassword = useCallback(async (pwd: string) => {
     setDialogLoading(true)
     setDialogError('')
@@ -88,7 +90,7 @@ export function Dashboard() {
     }
   }, [fetchData, t])
 
-  // Unlock encrypted secrets
+  // Unlock encrypted secrets (desktop mode only)
   const handleUnlock = useCallback(async () => {
     if (!password) return
     setDialogLoading(true)
@@ -315,6 +317,7 @@ export function Dashboard() {
                 </button>
               </div>
             </>)}
+
           </div>
         </div>
       )}

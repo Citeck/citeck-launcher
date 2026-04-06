@@ -344,19 +344,12 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set up secrets encryption if password provided
+	// Always encrypt secrets with the default password on namespace creation
 	if !d.secretService.IsEncrypted() {
-		password := req.MasterPassword
-		isDefault := req.UseDefaultPassword
-		if isDefault {
-			password = "citeck"
-		}
-		if password != "" {
-			if encErr := d.secretService.SetMasterPassword(password, isDefault); encErr != nil {
-				slog.Error("Failed to set master password during namespace creation", "err", encErr)
-			} else {
-				slog.Info("Master password set during namespace creation")
-			}
+		if encErr := d.secretService.SetMasterPassword("citeck", true); encErr != nil {
+			slog.Error("Failed to set up secrets encryption during namespace creation", "err", encErr)
+		} else {
+			slog.Info("Secrets encrypted with default password during namespace creation")
 		}
 	}
 
@@ -609,12 +602,19 @@ func (d *Daemon) handleSubmitMasterPassword(w http.ResponseWriter, r *http.Reque
 		slog.Error("Failed to clear secret blob after import", "err", err)
 	}
 
-	// Immediately encrypt with the same password — secrets must never stay plaintext on disk
+	// Encrypt imported secrets — secrets must never stay plaintext on disk.
+	// Server mode: default password. Desktop mode: use the Kotlin master password.
 	if !d.secretService.IsEncrypted() {
-		if encErr := d.secretService.SetMasterPassword(req.Password, false); encErr != nil {
+		encPassword := "citeck"
+		encIsDefault := true
+		if config.IsDesktopMode() {
+			encPassword = req.Password
+			encIsDefault = false
+		}
+		if encErr := d.secretService.SetMasterPassword(encPassword, encIsDefault); encErr != nil {
 			slog.Error("Failed to encrypt secrets after import", "err", encErr)
 		} else {
-			slog.Info("Secrets encrypted with master password after import")
+			slog.Info("Secrets encrypted after import", "isDefault", encIsDefault)
 		}
 	}
 
@@ -663,16 +663,25 @@ func (d *Daemon) handleUnlockSecrets(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleSetupPassword sets up encryption for the first time.
+// Server mode: always uses the default password "citeck" (auto-unlock on startup).
+// Desktop mode: accepts user-provided password from the request body.
 func (d *Daemon) handleSetupPassword(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Password string `json:"password"`
-	}
-	if err := readJSON(r, &req); err != nil || req.Password == "" {
-		writeError(w, http.StatusBadRequest, "password required")
-		return
+	password := "citeck"
+	isDefault := true
+
+	if config.IsDesktopMode() {
+		var req struct {
+			Password string `json:"password"`
+		}
+		if err := readJSON(r, &req); err != nil || req.Password == "" {
+			writeError(w, http.StatusBadRequest, "password required")
+			return
+		}
+		password = req.Password
+		isDefault = false
 	}
 
-	if err := d.secretService.SetMasterPassword(req.Password, false); err != nil {
+	if err := d.secretService.SetMasterPassword(password, isDefault); err != nil {
 		if errors.Is(err, storage.ErrAlreadyEncrypted) {
 			writeError(w, http.StatusConflict, err.Error())
 			return
@@ -683,7 +692,7 @@ func (d *Daemon) handleSetupPassword(w http.ResponseWriter, r *http.Request) {
 
 	d.rebuildAuthCaches()
 
-	slog.Info("Master password set, all secrets encrypted")
+	slog.Info("Secrets encryption configured", "isDefault", isDefault)
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "encryption configured"})
 }
 
