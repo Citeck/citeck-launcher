@@ -119,12 +119,16 @@ app.StartupConditions = []appdef.StartupCondition{
 }
 ```
 
-For infrastructure services, keep generous timeouts (postgres might need recovery):
-- postgres: 60 attempts × 10s = 10 minutes
-- keycloak: 60 attempts × 10s = 10 minutes
-- others: 30 attempts × 10s = 5 minutes
+For services that already have startup probes, set explicit thresholds:
+- **webapps**: 30 × 10s = 5 minutes (currently 0 → fallback 360 = 1 hour)
+- **postgres, observer-postgres**: 60 × 10s = 10 minutes (WAL recovery can be slow)
+- **keycloak**: 60 × 10s = 10 minutes (realm import on first start)
+- **observer**: 30 × 10s = 5 minutes
+- **proxy**: 30 × 10s = 5 minutes
 
-When startup probe exhausts the threshold, the container is stopped and retried with exponential backoff (existing reconciler logic handles this).
+Services without startup probes (zookeeper, rabbitmq, mongo) keep current behavior — no startup probe. Dependency readiness is handled by the webapps' own startup probes and Spring's built-in connection retry logic.
+
+When startup probe exhausts the threshold, the app goes to `StartFailed`. The reconciler retries with exponential backoff (existing logic).
 
 ### 5. Restart Events
 
@@ -182,7 +186,7 @@ separate log fetch with timing uncertainty. `jcmd` is synchronous and captures d
 **Step 2: Capture last logs**
 
 ```go
-logs := r.docker.GetContainerLogs(ctx, containerID, 500) // last 500 lines
+logs, _ := r.docker.ContainerLogs(ctx, containerID, 500) // last 500 lines
 ```
 
 **Step 3: Save to file**
@@ -236,7 +240,7 @@ State persistence: add `RestartEvents []RestartEvent` and `RestartCounts map[str
 | `internal/namespace/reconciler.go` | Failure counting, fix `runLivenessProbe`, pre-restart diagnostics, `captureDiagnostics()` |
 | `internal/namespace/runtime.go` | `RestartCount` in `AppRuntime`, `livenessFailures` map |
 | `internal/namespace/state.go` | Add `RestartEvents`, `RestartCounts` to `NsPersistedState` |
-| `internal/namespace/config.go` | Add `LivenessProbe *appdef.AppProbeDef` to `WebappProps` |
+| `internal/namespace/config.go` | Add `LivenessDisabled bool` to `WebappProps` |
 | `internal/daemon/routes.go` | `GET /restart-events` endpoint, `restartCount` in status DTO, diagnostics file download |
 | `internal/api/dto.go` | `RestartEventDto`, add `restartCount` to app status DTO |
 | `internal/config/daemon.go` | Add `LivenessEnabled` to `ReconcilerConfig` |
