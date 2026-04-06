@@ -4,11 +4,15 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/docker"
+	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/docker/docker/client"
 )
 
@@ -184,6 +188,8 @@ func (r *Runtime) reconcile(ctx context.Context) {
 		r.appWg.Add(1)
 		go r.pullAndStartApp(ctx, name)
 	}
+
+	r.cleanupOldDiagnostics()
 }
 
 // checkLiveness runs liveness probes on running apps.
@@ -308,10 +314,92 @@ func (r *Runtime) runLivenessProbe(ctx context.Context, containerID string, prob
 	return true
 }
 
-// captureDiagnostics collects diagnostic data before restarting an app.
-// Stub — will be implemented in a subsequent task.
-func (r *Runtime) captureDiagnostics(_ context.Context, _, _ string, _ bool, _ string) string {
-	return ""
+// captureDiagnostics captures thread dump and logs before restarting a container.
+// Returns the path to the diagnostics file, or "" if capture fails.
+func (r *Runtime) captureDiagnostics(ctx context.Context, appName, containerID string, isCiteck bool, reason string) string {
+	diagCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	var buf strings.Builder
+	fmt.Fprintf(&buf, "=== RESTART DIAGNOSTICS ===\n")
+	fmt.Fprintf(&buf, "App:       %s\n", appName)
+	fmt.Fprintf(&buf, "Reason:    %s\n", reason)
+	fmt.Fprintf(&buf, "Time:      %s\n", time.Now().UTC().Format(time.RFC3339))
+	fmt.Fprintf(&buf, "Container: %s\n\n", containerID)
+
+	// Thread dump for Java apps
+	if isCiteck {
+		output, exitCode, err := r.docker.ExecInContainer(diagCtx, containerID, []string{"jcmd", "1", "Thread.print"})
+		if err == nil && exitCode == 0 && output != "" {
+			fmt.Fprintf(&buf, "=== THREAD DUMP ===\n%s\n\n", output)
+		} else {
+			fmt.Fprintf(&buf, "=== THREAD DUMP ===\n(jcmd failed: exit=%d err=%v)\n\n", exitCode, err)
+		}
+	}
+
+	// Last 500 log lines
+	logs, err := r.containerLogs(diagCtx, containerID, 500)
+	if err == nil && logs != "" {
+		fmt.Fprintf(&buf, "=== LAST 500 LOG LINES ===\n%s\n", logs)
+	} else {
+		fmt.Fprintf(&buf, "=== LAST 500 LOG LINES ===\n(failed: %v)\n", err)
+	}
+
+	// Save to file
+	ts := time.Now().UTC().Format("20060102T150405Z")
+	dir := filepath.Join(r.volumesBase, "diagnostics", appName)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		slog.Warn("Failed to create diagnostics dir", "err", err)
+		return ""
+	}
+	path := filepath.Join(dir, ts+".txt")
+	if err := fsutil.AtomicWriteFile(path, []byte(buf.String()), 0o644); err != nil {
+		slog.Warn("Failed to write diagnostics", "err", err)
+		return ""
+	}
+
+	slog.Info("Captured pre-restart diagnostics", "app", appName, "path", path)
+	return path
+}
+
+// containerLogs fetches the last N lines from a container.
+func (r *Runtime) containerLogs(ctx context.Context, containerID string, tail int) (string, error) {
+	if c, ok := r.docker.(*docker.Client); ok {
+		return c.ContainerLogs(ctx, containerID, tail)
+	}
+	return "", nil
+}
+
+// cleanupOldDiagnostics removes diagnostics files older than 7 days.
+func (r *Runtime) cleanupOldDiagnostics() {
+	if r.volumesBase == "" {
+		return
+	}
+	diagDir := filepath.Join(r.volumesBase, "diagnostics")
+	entries, err := os.ReadDir(diagDir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-7 * 24 * time.Hour)
+	for _, appEntry := range entries {
+		if !appEntry.IsDir() {
+			continue
+		}
+		appDir := filepath.Join(diagDir, appEntry.Name())
+		files, err := os.ReadDir(appDir)
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			info, err := f.Info()
+			if err != nil {
+				continue
+			}
+			if info.ModTime().Before(cutoff) {
+				_ = os.Remove(filepath.Join(appDir, f.Name()))
+			}
+		}
+	}
 }
 
 // GracefulShutdownOrder returns apps in the correct shutdown order (flat list).
