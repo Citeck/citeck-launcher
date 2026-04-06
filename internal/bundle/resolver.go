@@ -203,8 +203,12 @@ func (r *Resolver) Resolve(ref Ref) (*ResolveResult, error) {
 	// Priority: per-workspace repo/ dir (from Kotlin launcher or manual setup),
 	// then fall back to cloning the default GitHub workspace repo.
 	var wsCfg *WorkspaceConfig
+	var wsRepoDir string // directory where workspace config was found (used as bundle source when URL is empty)
 	localRepoDir := filepath.Join(r.dataDir, "repo")
 	wsCfg = loadWorkspaceConfig(localRepoDir)
+	if wsCfg != nil {
+		wsRepoDir = localRepoDir
+	}
 
 	if wsCfg == nil {
 		defaultRepoDir := filepath.Join(r.dataDir, "bundles", "_workspace")
@@ -218,51 +222,65 @@ func (r *Resolver) Resolve(ref Ref) (*ResolveResult, error) {
 			slog.Warn("Failed to sync workspace repo", "err", err)
 		}
 		wsCfg = loadWorkspaceConfig(defaultRepoDir)
+		if wsCfg != nil {
+			wsRepoDir = defaultRepoDir
+		}
 	}
 	if wsCfg == nil {
 		wsCfg = &WorkspaceConfig{}
 	}
 
 	// Step 2: Resolve the actual repo URL for ref.Repo from workspace config
-	repoDir := filepath.Join(r.dataDir, "bundles", ref.Repo)
-	repoURL := defaultBundlesRepo
-	repoBranch := defaultBundlesBranch
-	var repoToken string
-
 	bundleRepo := findBundleRepo(wsCfg, ref.Repo)
-	if bundleRepo != nil {
-		if bundleRepo.URL != "" {
-			repoURL = bundleRepo.URL
-		}
-		if bundleRepo.Branch != "" {
-			repoBranch = bundleRepo.Branch
-		}
-		if r.tokenLookup != nil {
-			if bundleRepo.AuthType != "" {
-				repoToken = r.tokenLookup(bundleRepo.AuthType)
-			}
-			// Fallback: try GIT_TOKEN type (covers Kotlin-migrated secrets with scope ws:{wsId}:repo)
-			if repoToken == "" {
-				repoToken = r.tokenLookup("GIT_TOKEN")
-			}
-		}
-	}
 
-	// Step 3: Clone or pull the actual bundle repo
-	pullPeriod := defaultPullPeriod
-	if bundleRepo != nil && bundleRepo.PullPeriod != "" {
-		if d, err := time.ParseDuration(bundleRepo.PullPeriod); err == nil && d > 0 {
-			pullPeriod = d
+	// When bundleRepo.URL is empty, bundles are in the same repo as workspace config —
+	// use wsRepoDir directly, skip git clone/pull.
+	localBundles := bundleRepo != nil && bundleRepo.URL == "" && wsRepoDir != ""
+
+	var repoDir string
+	if localBundles {
+		repoDir = wsRepoDir
+		slog.Info("Bundle repo URL is empty, using workspace repo for bundles", "repo", ref.Repo, "dir", wsRepoDir)
+	} else {
+		repoDir = filepath.Join(r.dataDir, "bundles", ref.Repo)
+		repoURL := defaultBundlesRepo
+		repoBranch := defaultBundlesBranch
+		var repoToken string
+
+		if bundleRepo != nil {
+			if bundleRepo.URL != "" {
+				repoURL = bundleRepo.URL
+			}
+			if bundleRepo.Branch != "" {
+				repoBranch = bundleRepo.Branch
+			}
+			if r.tokenLookup != nil {
+				if bundleRepo.AuthType != "" {
+					repoToken = r.tokenLookup(bundleRepo.AuthType)
+				}
+				// Fallback: try GIT_TOKEN type (covers Kotlin-migrated secrets with scope ws:{wsId}:repo)
+				if repoToken == "" {
+					repoToken = r.tokenLookup("GIT_TOKEN")
+				}
+			}
 		}
-	}
-	gitCtx2, gitCancel2 := context.WithTimeout(context.Background(), 2*time.Minute)
-	err := git.CloneOrPullWithAuth(gitCtx2, git.RepoOpts{
-		URL: repoURL, Branch: repoBranch, DestDir: repoDir,
-		Token: repoToken, PullPeriod: pullPeriod,
-	})
-	gitCancel2()
-	if err != nil {
-		slog.Warn("Failed to sync bundle repo", "repo", ref.Repo, "err", err)
+
+		// Step 3: Clone or pull the actual bundle repo
+		pullPeriod := defaultPullPeriod
+		if bundleRepo != nil && bundleRepo.PullPeriod != "" {
+			if d, err := time.ParseDuration(bundleRepo.PullPeriod); err == nil && d > 0 {
+				pullPeriod = d
+			}
+		}
+		gitCtx2, gitCancel2 := context.WithTimeout(context.Background(), 2*time.Minute)
+		err := git.CloneOrPullWithAuth(gitCtx2, git.RepoOpts{
+			URL: repoURL, Branch: repoBranch, DestDir: repoDir,
+			Token: repoToken, PullPeriod: pullPeriod,
+		})
+		gitCancel2()
+		if err != nil {
+			slog.Warn("Failed to sync bundle repo", "repo", ref.Repo, "err", err)
+		}
 	}
 
 	// Build alias → canonical name map
