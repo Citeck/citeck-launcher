@@ -136,17 +136,32 @@ func (r *Runtime) reconcile(ctx context.Context) {
 		if !ok || app.Status != AppStatusRunning || containersByApp[m.name] {
 			continue // state changed while we were inspecting
 		}
+		var reason, detail string
 		if oomKilled[m.name] {
+			reason = "oom"
+			detail = "container OOM killed"
 			slog.Warn("Reconciler: container OOM killed, will restart", "app", m.name)
 			r.emitEvent(api.EventDto{
 				Type: "app_oom", Timestamp: time.Now().UnixMilli(),
 				NamespaceID: r.nsID, AppName: m.name, After: "OOMKilled",
 			})
 		} else {
+			reason = "crash"
+			detail = "container disappeared"
 			slog.Warn("Reconciler: container missing, will restart", "app", m.name)
 		}
+		r.incrementRestartCount(m.name)
+		r.recordRestartEvent(RestartEvent{
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+			App:       m.name,
+			Reason:    reason,
+			Detail:    detail,
+		})
 		r.setAppStatus(app, AppStatusReadyToPull)
 		toRestart = append(toRestart, m.name)
+	}
+	if len(missing) > 0 {
+		r.persistState()
 	}
 	// Retry failed apps with exponential backoff (1m, 2m, 4m, ..., max 30m)
 	for name, app := range r.apps {
@@ -172,26 +187,31 @@ func (r *Runtime) reconcile(ctx context.Context) {
 }
 
 // checkLiveness runs liveness probes on running apps.
+// Runs in both RUNNING and STALLED states so healthy apps continue to be monitored
+// even when one app has failed (STALLED means at least one app died).
 func (r *Runtime) checkLiveness(ctx context.Context) {
 	r.mu.RLock()
-	if r.status != NsStatusRunning {
+	if r.status != NsStatusRunning && r.status != NsStatusStalled {
 		r.mu.RUnlock()
 		return
 	}
 
-	var appsToCheck []struct {
+	type livenessCheck struct {
 		name        string
 		containerID string
 		probe       *appdef.AppProbeDef
+		isCiteck    bool
 	}
+	var appsToCheck []livenessCheck
 
 	for _, app := range r.apps {
 		if app.Status == AppStatusRunning && app.ContainerID != "" && app.Def.LivenessProbe != nil {
-			appsToCheck = append(appsToCheck, struct {
-				name        string
-				containerID string
-				probe       *appdef.AppProbeDef
-			}{app.Name, app.ContainerID, app.Def.LivenessProbe})
+			appsToCheck = append(appsToCheck, livenessCheck{
+				name:        app.Name,
+				containerID: app.ContainerID,
+				probe:       app.Def.LivenessProbe,
+				isCiteck:    app.Def.Kind.IsCiteckApp(),
+			})
 		}
 	}
 	r.mu.RUnlock()
@@ -199,33 +219,99 @@ func (r *Runtime) checkLiveness(ctx context.Context) {
 	var toRestart []string
 	for _, check := range appsToCheck {
 		alive := r.runLivenessProbe(ctx, check.containerID, check.probe)
-		if !alive {
-			slog.Warn("Liveness probe failed, will restart", "app", check.name)
+		if alive {
 			r.mu.Lock()
-			if app, ok := r.apps[check.name]; ok && app.Status == AppStatusRunning {
-				r.setAppStatus(app, AppStatusReadyToPull)
-				toRestart = append(toRestart, check.name)
-			}
+			delete(r.livenessFailures, check.name)
 			r.mu.Unlock()
+			continue
 		}
+
+		// Probe failed — increment failure counter
+		threshold := check.probe.FailureThreshold
+		if threshold <= 0 {
+			threshold = 3
+		}
+
+		r.mu.Lock()
+		r.livenessFailures[check.name]++
+		failures := r.livenessFailures[check.name]
+
+		if failures < threshold {
+			slog.Warn("Liveness probe failed (below threshold)",
+				"app", check.name, "failures", failures, "threshold", threshold)
+			r.mu.Unlock()
+			continue
+		}
+
+		// Threshold reached — verify app is still RUNNING before restarting
+		app, ok := r.apps[check.name]
+		if !ok || app.Status != AppStatusRunning {
+			r.mu.Unlock()
+			continue
+		}
+		containerID := app.ContainerID
+		slog.Error("Liveness probe failed, restarting app",
+			"app", check.name, "failures", failures, "threshold", threshold)
+		r.mu.Unlock()
+
+		// Capture diagnostics outside lock (may run Docker commands)
+		reason := fmt.Sprintf("liveness probe failed %d/%d", failures, threshold)
+		diag := r.captureDiagnostics(ctx, check.name, containerID, check.isCiteck, reason)
+
+		r.mu.Lock()
+		// Re-verify app still RUNNING after diagnostics (state may have changed)
+		app, ok = r.apps[check.name]
+		if !ok || app.Status != AppStatusRunning {
+			r.mu.Unlock()
+			continue
+		}
+		r.incrementRestartCount(check.name)
+		r.recordRestartEvent(RestartEvent{
+			Timestamp:   time.Now().UTC().Format(time.RFC3339),
+			App:         check.name,
+			Reason:      "liveness",
+			Detail:      reason,
+			Diagnostics: diag,
+		})
+		r.setAppStatus(app, AppStatusReadyToPull)
+		delete(r.livenessFailures, check.name)
+		r.persistState()
+		r.mu.Unlock()
+
+		toRestart = append(toRestart, check.name)
 	}
+
 	for _, name := range toRestart {
 		r.appWg.Add(1)
 		go r.pullAndStartApp(ctx, name)
 	}
 }
 
+// runLivenessProbe executes a liveness probe against a container.
+// HTTP probes use the container's network IP directly (no curl dependency).
 func (r *Runtime) runLivenessProbe(ctx context.Context, containerID string, probe *appdef.AppProbeDef) bool {
+	timeout := probe.TimeoutSeconds
+	if timeout <= 0 {
+		timeout = 5
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+	defer cancel()
+
 	if probe.Exec != nil {
-		_, exitCode, err := r.docker.ExecInContainer(ctx, containerID, probe.Exec.Command)
+		_, exitCode, err := r.docker.ExecInContainer(probeCtx, containerID, probe.Exec.Command)
 		return err == nil && exitCode == 0
 	}
 	if probe.HTTP != nil {
-		cmd := []string{"sh", "-c", fmt.Sprintf("curl -sf -o /dev/null http://localhost:%d%s", probe.HTTP.Port, probe.HTTP.Path)}
-		_, exitCode, err := r.docker.ExecInContainer(ctx, containerID, cmd)
-		return err == nil && exitCode == 0
+		host := r.docker.GetContainerIP(probeCtx, containerID)
+		return httpProbeCheck(probeCtx, host, probe.HTTP.Port, probe.HTTP.Path, timeout)
 	}
 	return true
+}
+
+// captureDiagnostics collects diagnostic data before restarting an app.
+// Stub — will be implemented in a subsequent task.
+func (r *Runtime) captureDiagnostics(_ context.Context, _, _ string, _ bool, _ string) string {
+	return ""
 }
 
 // GracefulShutdownOrder returns apps in the correct shutdown order (flat list).
