@@ -213,7 +213,7 @@ func waitForAppStatus(r *Runtime, appName string, target AppRuntimeStatus, timeo
 
 func TestStartAndStop(t *testing.T) {
 	md := newMockDocker()
-	r := NewRuntime(testConfig(), md, "test-ws", t.TempDir())
+	r := NewRuntime(testConfig(), md, t.TempDir())
 	defer r.Shutdown()
 
 	apps := []appdef.ApplicationDef{
@@ -249,7 +249,7 @@ func TestStartAndStop(t *testing.T) {
 
 func TestWaitForDeps(t *testing.T) {
 	md := newMockDocker()
-	r := NewRuntime(testConfig(), md, "test-ws", t.TempDir())
+	r := NewRuntime(testConfig(), md, t.TempDir())
 	defer r.Shutdown()
 
 	// B depends on A
@@ -279,7 +279,7 @@ func TestWaitForDeps(t *testing.T) {
 
 func TestRegeneratePreservesRunning(t *testing.T) {
 	md := newMockDocker()
-	r := NewRuntime(testConfig(), md, "test-ws", t.TempDir())
+	r := NewRuntime(testConfig(), md, t.TempDir())
 	defer r.Shutdown()
 
 	apps := []appdef.ApplicationDef{
@@ -317,7 +317,7 @@ func TestRegeneratePreservesRunning(t *testing.T) {
 
 func TestRegenerateRestartsChanged(t *testing.T) {
 	md := newMockDocker()
-	r := NewRuntime(testConfig(), md, "test-ws", t.TempDir())
+	r := NewRuntime(testConfig(), md, t.TempDir())
 	defer r.Shutdown()
 
 	apps := []appdef.ApplicationDef{
@@ -358,7 +358,7 @@ func TestRegenerateRestartsChanged(t *testing.T) {
 
 func TestStopWhileStarting(t *testing.T) {
 	md := newMockDocker()
-	r := NewRuntime(testConfig(), md, "test-ws", t.TempDir())
+	r := NewRuntime(testConfig(), md, t.TempDir())
 	defer r.Shutdown()
 
 	apps := []appdef.ApplicationDef{

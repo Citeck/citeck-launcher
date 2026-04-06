@@ -33,23 +33,23 @@ func TestDockerLabelsMatchKotlin(t *testing.T) {
 	}
 }
 
-// TestContainerNameFormat verifies container naming matches Kotlin DockerConstants.kt.
+// TestContainerNameFormat verifies the container naming scheme.
 func TestContainerNameFormat(t *testing.T) {
-	c := &Client{workspace: "default", namespace: "prod"}
+	c := &Client{namespace: "prod"}
 
 	name := c.ContainerName("proxy")
-	expected := "citeck_proxy_prod_default"
+	expected := "citeck_proxy_prod"
 	if name != expected {
 		t.Errorf("ContainerName() = %q, want %q", name, expected)
 	}
 }
 
-// TestNetworkNameFormat verifies network naming matches Kotlin.
+// TestNetworkNameFormat verifies the network naming scheme.
 func TestNetworkNameFormat(t *testing.T) {
-	c := &Client{workspace: "default", namespace: "prod"}
+	c := &Client{namespace: "prod"}
 
 	name := c.NetworkName()
-	expected := "citeck_network_prod_default"
+	expected := "citeck_network_prod"
 	if name != expected {
 		t.Errorf("NetworkName() = %q, want %q", name, expected)
 	}

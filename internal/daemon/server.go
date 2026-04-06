@@ -297,7 +297,7 @@ func Start(opts StartOptions) error {
 	}
 
 	// Create Docker client
-	dockerClient, err := docker.NewClient(wsID, nsID)
+	dockerClient, err := docker.NewClient(nsID)
 	if err != nil {
 		return fmt.Errorf("create docker client: %w", err)
 	}
@@ -487,7 +487,7 @@ func Start(opts StartOptions) error {
 		slog.Info("Generated namespace", "apps", len(genResp.Applications), "files", len(genResp.Files))
 
 		appDefs = genResp.Applications
-		runtime = namespace.NewRuntime(nsCfg, dockerClient, wsID, volumesBase)
+		runtime = namespace.NewRuntime(nsCfg, dockerClient, volumesBase)
 
 		// Cache the successfully resolved bundle for fallback on future resolve failures
 		if !bundleDef.IsEmpty() {

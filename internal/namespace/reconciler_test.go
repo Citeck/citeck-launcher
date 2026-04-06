@@ -70,7 +70,7 @@ func TestDefaultReconcilerConfig(t *testing.T) {
 func TestCheckLivenessFailureCounting(t *testing.T) {
 	md := newMockDocker()
 	cfg := testConfig()
-	r := NewRuntime(cfg, md, t.TempDir(), t.TempDir())
+	r := NewRuntime(cfg, md, t.TempDir())
 	defer r.Shutdown()
 
 	// Set up a running app with HTTP liveness probe (will fail — no HTTP server at mock IP)
@@ -122,7 +122,7 @@ func TestCheckLivenessFailureCounting(t *testing.T) {
 func TestCheckLivenessRunsInStalledState(t *testing.T) {
 	md := newMockDocker()
 	cfg := testConfig()
-	r := NewRuntime(cfg, md, t.TempDir(), t.TempDir())
+	r := NewRuntime(cfg, md, t.TempDir())
 	defer r.Shutdown()
 
 	r.mu.Lock()
@@ -153,7 +153,7 @@ func TestCheckLivenessRunsInStalledState(t *testing.T) {
 func TestCheckLivenessResetsOnSuccess(t *testing.T) {
 	md := newMockDocker()
 	cfg := testConfig()
-	r := NewRuntime(cfg, md, t.TempDir(), t.TempDir())
+	r := NewRuntime(cfg, md, t.TempDir())
 	defer r.Shutdown()
 
 	r.mu.Lock()

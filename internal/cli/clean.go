@@ -49,7 +49,7 @@ func newCleanCmd() *cobra.Command {
 				return fmt.Errorf("list namespaces: %w", err)
 			}
 
-			dc, err := docker.NewClient("", "")
+			dc, err := docker.NewClient("")
 			if err != nil {
 				return fmt.Errorf("docker: %w", err)
 			}

@@ -84,7 +84,6 @@ type Runtime struct {
 	actionSvc       *actions.Service
 	ownsActions     bool // true if this runtime created its own action service
 	running         atomic.Bool
-	workspace       string
 	nsID            string
 	volumesBase     string
 	eventCb            atomic.Pointer[EventCallback]
@@ -364,13 +363,13 @@ type command struct {
 }
 
 // NewRuntime creates a new namespace runtime with a dedicated action service.
-func NewRuntime(cfg *Config, dockerClient docker.RuntimeClient, workspace, volumesBase string) *Runtime {
-	return NewRuntimeWithActions(cfg, dockerClient, workspace, volumesBase, nil)
+func NewRuntime(cfg *Config, dockerClient docker.RuntimeClient, volumesBase string) *Runtime {
+	return NewRuntimeWithActions(cfg, dockerClient, volumesBase, nil)
 }
 
 // NewRuntimeWithActions creates a runtime with an externally provided action service.
 // If actionSvc is nil, a new dedicated service is created.
-func NewRuntimeWithActions(cfg *Config, dockerClient docker.RuntimeClient, workspace, volumesBase string, actionSvc *actions.Service) *Runtime {
+func NewRuntimeWithActions(cfg *Config, dockerClient docker.RuntimeClient, volumesBase string, actionSvc *actions.Service) *Runtime {
 	ownsActions := false
 	if actionSvc == nil {
 		actionSvc = actions.NewService(actions.ServiceConfig{})
@@ -383,7 +382,6 @@ func NewRuntimeWithActions(cfg *Config, dockerClient docker.RuntimeClient, works
 		docker:            dockerClient,
 		actionSvc:         actionSvc,
 		ownsActions:       ownsActions,
-		workspace:         workspace,
 		nsID:              cfg.ID,
 		volumesBase:       volumesBase,
 		manualStoppedApps: make(map[string]bool),
