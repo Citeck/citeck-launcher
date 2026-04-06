@@ -175,6 +175,7 @@ type TokenLookupFunc func(authType string) string
 type Resolver struct {
 	dataDir     string
 	tokenLookup TokenLookupFunc
+	offline     bool // skip all git operations, fail if local data missing
 }
 
 // NewResolver creates a resolver without auth support.
@@ -185,6 +186,12 @@ func NewResolver(dataDir string) *Resolver {
 // NewResolverWithAuth creates a resolver with token lookup for authenticated repos.
 func NewResolverWithAuth(dataDir string, tokenLookup TokenLookupFunc) *Resolver {
 	return &Resolver{dataDir: dataDir, tokenLookup: tokenLookup}
+}
+
+// SetOffline enables offline mode: all git operations are skipped,
+// and the resolver returns an error if required data is not available locally.
+func (r *Resolver) SetOffline(offline bool) {
+	r.offline = offline
 }
 
 // ResolveResult contains the bundle definition and workspace config.
@@ -202,6 +209,15 @@ func (r *Resolver) resolveWorkspace() (*WorkspaceConfig, string) {
 	localRepoDir := filepath.Join(r.dataDir, "repo")
 	if wsCfg := loadWorkspaceConfig(localRepoDir); wsCfg != nil {
 		return wsCfg, localRepoDir
+	}
+
+	if r.offline {
+		// Offline mode: no git, check existing cloned dir only
+		defaultRepoDir := filepath.Join(r.dataDir, "bundles", "_workspace")
+		if wsCfg := loadWorkspaceConfig(defaultRepoDir); wsCfg != nil {
+			return wsCfg, defaultRepoDir
+		}
+		return &WorkspaceConfig{}, ""
 	}
 
 	defaultRepoDir := filepath.Join(r.dataDir, "bundles", "_workspace")
@@ -286,21 +302,23 @@ func (r *Resolver) Resolve(ref Ref) (*ResolveResult, error) {
 			}
 		}
 
-		// Step 3: Clone or pull the actual bundle repo
-		pullPeriod := defaultPullPeriod
-		if bundleRepo != nil && bundleRepo.PullPeriod != "" {
-			if d, err := time.ParseDuration(bundleRepo.PullPeriod); err == nil && d > 0 {
-				pullPeriod = d
+		if !r.offline {
+			// Step 3: Clone or pull the actual bundle repo
+			pullPeriod := defaultPullPeriod
+			if bundleRepo != nil && bundleRepo.PullPeriod != "" {
+				if d, err := time.ParseDuration(bundleRepo.PullPeriod); err == nil && d > 0 {
+					pullPeriod = d
+				}
 			}
-		}
-		gitCtx2, gitCancel2 := context.WithTimeout(context.Background(), 2*time.Minute)
-		err := git.CloneOrPullWithAuth(gitCtx2, git.RepoOpts{
-			URL: repoURL, Branch: repoBranch, DestDir: repoDir,
-			Token: repoToken, PullPeriod: pullPeriod,
-		})
-		gitCancel2()
-		if err != nil {
-			slog.Warn("Failed to sync bundle repo", "repo", ref.Repo, "err", err)
+			gitCtx2, gitCancel2 := context.WithTimeout(context.Background(), 2*time.Minute)
+			err := git.CloneOrPullWithAuth(gitCtx2, git.RepoOpts{
+				URL: repoURL, Branch: repoBranch, DestDir: repoDir,
+				Token: repoToken, PullPeriod: pullPeriod,
+			})
+			gitCancel2()
+			if err != nil {
+				slog.Warn("Failed to sync bundle repo", "repo", ref.Repo, "err", err)
+			}
 		}
 	}
 

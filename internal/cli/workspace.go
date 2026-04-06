@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/spf13/cobra"
@@ -19,6 +20,7 @@ func newWorkspaceCmd() *cobra.Command {
 		Short: "Manage workspace configuration",
 	}
 	cmd.AddCommand(newWorkspaceImportCmd())
+	cmd.AddCommand(newWorkspaceUpdateCmd())
 	return cmd
 }
 
@@ -74,6 +76,42 @@ func runWorkspaceImport(_ *cobra.Command, args []string) error {
 
 	output.PrintText(fmt.Sprintf("Extracted %d files to %s", count, destDir))
 	return nil
+}
+
+func newWorkspaceUpdateCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "update",
+		Short: "Pull latest workspace config and bundles from git",
+		Long: `Sync workspace and bundle repositories from git.
+
+In server mode, git pull is not automatic — use this command to update.
+Requires the daemon to be stopped (or run before first start).`,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			resolver := bundle.NewResolver(config.DataDir())
+			// Force online mode for this command
+			resolver.SetOffline(false)
+			wsCfg := resolver.ResolveWorkspaceOnly()
+
+			// Also pull bundle repos defined in workspace config
+			updated := 0
+			for _, repo := range wsCfg.BundleRepos {
+				if repo.URL == "" {
+					continue // local bundles, no git repo to pull
+				}
+				output.PrintText("Updating bundle repo: %s", repo.ID)
+				subResolver := bundle.NewResolver(config.DataDir())
+				subResolver.SetOffline(false)
+				_, err := subResolver.Resolve(bundle.Ref{Repo: repo.ID, Key: "LATEST"})
+				if err != nil {
+					output.PrintText("  Warning: %v", err)
+				} else {
+					updated++
+				}
+			}
+			output.PrintText("Workspace updated. Bundle repos synced: %d", updated)
+			return nil
+		},
+	}
 }
 
 // extractZip extracts a zip archive into destDir.

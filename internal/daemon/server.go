@@ -50,6 +50,7 @@ type StartOptions struct {
 	Foreground     bool
 	Desktop        bool           // desktop mode: file-only logging, no signal handler
 	NoUI           bool           // disable web UI (TCP listener)
+	Offline        bool           // skip all git operations, fail if local data missing
 	Version        string         // build version injected via ldflags
 	MasterPassword string         // master password for secrets decryption (server mode)
 	Ctx            context.Context // external context (desktop provides; nil = CLI uses signals)
@@ -378,6 +379,11 @@ func Start(opts StartOptions) error {
 		bundlesDataDir = filepath.Join(config.HomeDir(), "ws", wsID)
 	}
 	resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(secretSvc))
+	// Server mode: never auto-pull git repos (use 'citeck workspace update' for manual sync).
+	// Desktop mode: auto-pull with throttling. --offline flag: skip git entirely.
+	if opts.Offline || !config.IsDesktopMode() {
+		resolver.SetOffline(true)
+	}
 	wsCfg = resolver.ResolveWorkspaceOnly()
 
 	if nsCfg != nil {
@@ -388,6 +394,9 @@ func Start(opts StartOptions) error {
 		// Resolve bundle (reuses resolver created above for workspace config).
 		resolveResult, resolveErr := resolver.Resolve(nsCfg.BundleRef)
 		if resolveErr != nil {
+			if opts.Offline {
+				return fmt.Errorf("offline mode: bundle %q not available locally — use 'citeck workspace import' to provide workspace data: %w", nsCfg.BundleRef, resolveErr)
+			}
 			// Fallback to cached bundle from persisted state (survives bundle file deletion/move)
 			cachedState := namespace.LoadNsState(volumesBase, nsID)
 			if cachedState != nil && cachedState.CachedBundle != nil && !cachedState.CachedBundle.IsEmpty() {

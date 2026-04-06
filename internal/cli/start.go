@@ -30,6 +30,7 @@ func newStartCmd(version string) *cobra.Command {
 	var foreground bool
 	var desktop bool
 	var noUI bool
+	var offline bool
 	var follow bool
 	var isDaemon bool
 
@@ -40,7 +41,7 @@ func newStartCmd(version string) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Hidden --_daemon mode: read password from stdin, run daemon blocking
 			if isDaemon {
-				return runDaemonMode(version, desktop, noUI)
+				return runDaemonMode(version, desktop, noUI, offline)
 			}
 
 			// If daemon is already running, send start command or stream status
@@ -84,6 +85,7 @@ func newStartCmd(version string) *cobra.Command {
 					Foreground:     true,
 					Desktop:        desktop,
 					NoUI:           noUI,
+					Offline:        offline,
 					Version:        version,
 					MasterPassword: password,
 				})
@@ -99,7 +101,7 @@ func newStartCmd(version string) *cobra.Command {
 				return err
 			}
 
-			if err := forkDaemon(password, desktop, noUI); err != nil {
+			if err := forkDaemon(password, desktop, noUI, offline); err != nil {
 				return err
 			}
 
@@ -117,6 +119,7 @@ func newStartCmd(version string) *cobra.Command {
 	cmd.Flags().BoolVarP(&foreground, "foreground", "f", false, "Run in foreground (don't fork)")
 	cmd.Flags().BoolVar(&desktop, "desktop", false, "Desktop mode")
 	cmd.Flags().BoolVar(&noUI, "no-ui", false, "Disable Web UI")
+	cmd.Flags().BoolVar(&offline, "offline", false, "Offline mode: skip git operations, use only local data")
 	cmd.Flags().BoolVar(&follow, "follow", false, "Don't exit after all apps are running")
 	cmd.Flags().BoolVar(&isDaemon, "_daemon", false, "Internal: run as daemon process")
 	_ = cmd.Flags().MarkHidden("_daemon")
@@ -225,7 +228,7 @@ func handlePasswordReset(svc *storage.SecretService) (string, error) {
 }
 
 // forkDaemon starts the daemon as a detached child process.
-func forkDaemon(password string, desktop, noUI bool) error {
+func forkDaemon(password string, desktop, noUI, offline bool) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("resolve executable: %w", err)
@@ -247,6 +250,9 @@ func forkDaemon(password string, desktop, noUI bool) error {
 	}
 	if noUI {
 		args = append(args, "--no-ui")
+	}
+	if offline {
+		args = append(args, "--offline")
 	}
 	cmd := exec.Command(exe, args...) //nolint:gosec // G204: exe is our own binary
 	cmd.Stdin = strings.NewReader(password + "\n")
@@ -286,7 +292,7 @@ func waitForDaemon(timeout time.Duration) (*client.DaemonClient, error) {
 }
 
 // runDaemonMode reads password from stdin and runs the daemon (blocking).
-func runDaemonMode(version string, desktop, noUI bool) error {
+func runDaemonMode(version string, desktop, noUI, offline bool) error {
 	reader := bufio.NewReader(os.Stdin)
 	line, _ := reader.ReadString('\n')
 	password := strings.TrimRight(line, "\n\r")
@@ -295,6 +301,7 @@ func runDaemonMode(version string, desktop, noUI bool) error {
 		Foreground:     true,
 		Desktop:        desktop,
 		NoUI:           noUI,
+		Offline:        offline,
 		Version:        version,
 		MasterPassword: password,
 	})
