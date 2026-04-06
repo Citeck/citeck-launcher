@@ -433,6 +433,48 @@ Bundle version upgrade + host/auth switching tested on remote server. 5 bugs fix
 - `pointercancel` handled in useResizeHandle — prevents stuck resize state on touch interruption
 - Server mode detection via single `getDaemonStatus()` call on app mount
 
+### Phase 17: Self-Healing Runtime — COMPLETE (2026-04-06)
+11 commits across backend + web UI + tests + review fixes.
+
+**Liveness probes:**
+- All services get `LivenessProbe`: webapps (HTTP `/management/health`), postgres/observer-postgres (`pg_isready`), zookeeper (HTTP `/commands/ruok` on admin port 8080), rabbitmq (`rabbitmq-diagnostics check_running`), mongo (`db.adminCommand('ping')`), keycloak (HTTP `/health/live`), observer (HTTP `/health`)
+- Skip: mailhog, pgadmin, onlyoffice, proxy
+- Failure counting: 3 consecutive failures (FailureThreshold=3) before restart (not single-failure)
+- `checkLiveness` runs in STALLED state too (previously stopped for all apps when one died)
+- HTTP probes use container IP via Docker API (not curl-in-container)
+
+**Startup timeouts reduced:**
+- Webapps/observer/proxy: 30 × 10s = 5 min (was 360 × 10s = 1 hour fallback)
+- Postgres/observer-postgres/keycloak: 60 × 10s = 10 min
+
+**Restart tracking:**
+- `RestartCount` per app (in `AppRuntime` and API `AppDto`)
+- `RestartEvent` ring buffer (100 events) with reason/detail/diagnostics path
+- Persisted in `state-{nsID}.json` — survives daemon restart, cleared on namespace stop
+- API: `GET /namespace/restart-events`, SSE: `restart_event` type
+
+**Pre-restart diagnostics:**
+- Thread dump (`jcmd 1 Thread.print`) for Java apps + last 500 container log lines
+- Saved to `volumes/{nsID}/diagnostics/{app}/{timestamp}.txt` (auto-cleanup >7 days)
+- Captured BEFORE container restart (while container is still alive)
+- API: `GET /diagnostics-file?path=...` with path traversal protection
+
+**Configuration:**
+- `daemon.yml` → `reconciler.livenessEnabled` (bool, default true)
+- `namespace.yml` → `webapps.{name}.livenessDisabled` (bool, default false)
+
+**Web UI:**
+- Restart count badge (recycle symbol + count) on app status in AppTable
+- Restart Events bottom panel tab (time, app, reason badge, detail)
+- Auto-refresh via SSE → totalRestarts derived from namespace store
+
+### Key Technical Decisions (Phase 17)
+- `ContainerLogs` added to `RuntimeClient` interface (not type-asserted to `*docker.Client`)
+- Restart state cleared in `doStop` (not `doStart`) — survives daemon restart recovery, cleared on explicit namespace stop
+- `handleDiagnosticsFile` path traversal protection: `HasPrefix(absPath, diagDir + os.PathSeparator)`
+- Liveness failures cleaned in `setAppStatus` when app leaves RUNNING (covers all transition paths)
+- `cleanupOldDiagnostics` runs every reconcile cycle (60s) — single `ReadDir` when no diagnostics dir exists
+
 ## CI/CD
 
 GitHub Actions:

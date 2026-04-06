@@ -94,6 +94,28 @@ Stop namespace (all apps).
 
 Reload config and regenerate. **Socket-only.**
 
+### GET /api/v1/namespace/restart-events
+
+Returns restart event log (last 100 events). Events are recorded when apps are restarted due to liveness probe failure, OOM kill, or crash.
+
+```json
+[
+  {
+    "ts": "2026-04-06T12:34:56Z",
+    "app": "emodel",
+    "reason": "liveness",
+    "detail": "liveness probe failed 3/3",
+    "diagnostics": "/opt/citeck/volumes/default/diagnostics/emodel/20260406T123456Z.txt"
+  }
+]
+```
+
+Reasons: `liveness`, `oom`, `crash`, `startup_timeout`.
+
+### GET /api/v1/diagnostics-file
+
+Download a pre-restart diagnostics file. Query: `?path=<absolute-path>` (from `diagnostics` field in restart event). Contains thread dump (Java apps) and last 500 log lines.
+
 ---
 
 ## Apps

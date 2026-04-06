@@ -15,6 +15,7 @@ server:
 reconciler:
   interval: 60                 # Reconciliation interval (seconds)
   livenessPeriod: 30000        # Container liveness check period (ms)
+  livenessEnabled: true        # Enable/disable liveness probes globally
 
 docker:
   pullConcurrency: 4           # Max concurrent image pulls
@@ -30,6 +31,7 @@ docker:
 | `server.webui.listen` | string | `127.0.0.1:7088` | TCP listen address. Set to `0.0.0.0:7088` for remote access (requires mTLS) |
 | `reconciler.interval` | int | `60` | Seconds between reconciliation loops |
 | `reconciler.livenessPeriod` | int | `30000` | Milliseconds between liveness checks |
+| `reconciler.livenessEnabled` | bool | `true` | Enable/disable liveness probes globally |
 | `docker.pullConcurrency` | int | `4` | Max concurrent image pulls |
 | `docker.stopTimeout` | int | `10` | Seconds to wait for container stop before kill |
 
@@ -81,6 +83,7 @@ webapps:                        # Per-webapp overrides
     serverPort: 0               # Auto-assigned
     springProfiles: ""
     javaOpts: ""
+    livenessDisabled: false     # Disable liveness probe for this app
     cloudConfig: {}             # Spring Cloud Config overrides
     dataSources: {}             # Custom data sources
 ```
@@ -144,6 +147,7 @@ The launcher resolves bundles from git repositories configured in the workspace 
 │   └── default/                # Namespace volumes
 │       ├── volumes/            # App bind-mount data
 │       ├── snapshots/          # Exported snapshots
+│       ├── diagnostics/        # Pre-restart diagnostics (auto-cleanup >7d)
 │       └── appfiles/           # Extracted embedded files
 ├── log/
 │   └── daemon.log              # Daemon log (rotated: .1, .2, .3)

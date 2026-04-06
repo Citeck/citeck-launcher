@@ -31,6 +31,9 @@ test-results/
 coverage.out
 coverage.html
 
+### Playwright MCP ###
+.playwright-mcp/
+
 ### Custom ###
 *.png
 !icons/**/*.png

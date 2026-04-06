@@ -138,6 +138,47 @@ citeck health
 curl --unix-socket /run/citeck/daemon.sock http://localhost/api/v1/health
 ```
 
+## Self-Healing & Restart Diagnostics
+
+The daemon monitors all running containers with liveness probes. When a service becomes unhealthy (3 consecutive probe failures at 30s intervals = 90s), the daemon:
+
+1. Captures a thread dump (Java apps: `jcmd 1 Thread.print`) and last 500 log lines
+2. Saves diagnostics to `$VOLUMES/diagnostics/<app>/<timestamp>.txt`
+3. Restarts the container
+4. Records a restart event (visible in Web UI → Restart Events panel)
+
+### View restart events
+
+```bash
+curl --unix-socket /run/citeck/daemon.sock http://localhost/api/v1/namespace/restart-events
+```
+
+### View diagnostics file
+
+```bash
+curl --unix-socket /run/citeck/daemon.sock \
+  'http://localhost/api/v1/diagnostics-file?path=<path-from-event>'
+```
+
+### Disable liveness for a specific app
+
+In `namespace.yml`:
+```yaml
+webapps:
+  emodel:
+    livenessDisabled: true
+```
+
+### Disable liveness globally
+
+In `daemon.yml`:
+```yaml
+reconciler:
+  livenessEnabled: false
+```
+
+Diagnostics files older than 7 days are automatically cleaned up.
+
 ## System Dump
 
 Collect full diagnostic bundle:
