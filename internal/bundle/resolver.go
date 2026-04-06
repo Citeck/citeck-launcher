@@ -194,53 +194,74 @@ type ResolveResult struct {
 }
 
 // Resolve fetches and parses a bundle definition along with workspace config.
+// resolveWorkspace loads workspace config from local repo/ dir or clones the default workspace repo.
+// Returns (config, repoDir) where repoDir is the directory the config was loaded from.
+func (r *Resolver) resolveWorkspace() (*WorkspaceConfig, string) {
+	// Priority: per-workspace repo/ dir (from Kotlin launcher, manual setup, or workspace import),
+	// then fall back to cloning the default GitHub workspace repo.
+	localRepoDir := filepath.Join(r.dataDir, "repo")
+	if wsCfg := loadWorkspaceConfig(localRepoDir); wsCfg != nil {
+		return wsCfg, localRepoDir
+	}
+
+	defaultRepoDir := filepath.Join(r.dataDir, "bundles", "_workspace")
+	gitCtx, gitCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	err := git.CloneOrPullWithAuth(gitCtx, git.RepoOpts{
+		URL: defaultBundlesRepo, Branch: defaultBundlesBranch,
+		DestDir: defaultRepoDir, PullPeriod: defaultPullPeriod,
+	})
+	gitCancel()
+	if err != nil {
+		slog.Warn("Failed to sync workspace repo", "err", err)
+	}
+	if wsCfg := loadWorkspaceConfig(defaultRepoDir); wsCfg != nil {
+		return wsCfg, defaultRepoDir
+	}
+	return &WorkspaceConfig{}, ""
+}
+
+// ResolveWorkspaceOnly loads workspace config without resolving a bundle.
+// Used by the daemon to provide workspace data (templates, quick starts, bundle repos)
+// even when no namespace is configured yet (e.g. fresh server before wizard).
+func (r *Resolver) ResolveWorkspaceOnly() *WorkspaceConfig {
+	wsCfg, _ := r.resolveWorkspace()
+	return wsCfg
+}
+
 func (r *Resolver) Resolve(ref Ref) (*ResolveResult, error) {
 	if ref.IsEmpty() {
 		return &ResolveResult{Bundle: &EmptyDef, Workspace: &WorkspaceConfig{}}, nil
 	}
 
-	// Step 1: Load workspace config (bundleRepos, aliases, imageRepos, etc.)
-	// Priority: per-workspace repo/ dir (from Kotlin launcher or manual setup),
-	// then fall back to cloning the default GitHub workspace repo.
-	var wsCfg *WorkspaceConfig
-	var wsRepoDir string // directory where workspace config was found (used as bundle source when URL is empty)
-	localRepoDir := filepath.Join(r.dataDir, "repo")
-	wsCfg = loadWorkspaceConfig(localRepoDir)
-	if wsCfg != nil {
-		wsRepoDir = localRepoDir
-	}
-
-	if wsCfg == nil {
-		defaultRepoDir := filepath.Join(r.dataDir, "bundles", "_workspace")
-		gitCtx, gitCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		err := git.CloneOrPullWithAuth(gitCtx, git.RepoOpts{
-			URL: defaultBundlesRepo, Branch: defaultBundlesBranch,
-			DestDir: defaultRepoDir, PullPeriod: defaultPullPeriod,
-		})
-		gitCancel()
-		if err != nil {
-			slog.Warn("Failed to sync workspace repo", "err", err)
-		}
-		wsCfg = loadWorkspaceConfig(defaultRepoDir)
-		if wsCfg != nil {
-			wsRepoDir = defaultRepoDir
-		}
-	}
-	if wsCfg == nil {
-		wsCfg = &WorkspaceConfig{}
-	}
+	wsCfg, wsRepoDir := r.resolveWorkspace()
 
 	// Step 2: Resolve the actual repo URL for ref.Repo from workspace config
 	bundleRepo := findBundleRepo(wsCfg, ref.Repo)
 
-	// When bundleRepo.URL is empty, bundles are in the same repo as workspace config —
-	// use wsRepoDir directly, skip git clone/pull.
-	localBundles := bundleRepo != nil && bundleRepo.URL == "" && wsRepoDir != ""
+	// Use local workspace dir for bundles when:
+	// - bundleRepo.URL is empty (explicit "use workspace repo"), OR
+	// - workspace was loaded from local data/repo/ and the bundle path exists there
+	//   (covers downloaded zip archives where bundleRepo.URL points to the source repo)
+	localBundles := false
+	if wsRepoDir != "" && bundleRepo != nil {
+		if bundleRepo.URL == "" {
+			localBundles = true
+		} else {
+			// Check if bundle files already exist in the workspace dir
+			bundlePath := wsRepoDir
+			if bundleRepo.Path != "" {
+				bundlePath = filepath.Join(wsRepoDir, bundleRepo.Path)
+			}
+			if info, err := os.Stat(bundlePath); err == nil && info.IsDir() {
+				localBundles = true
+			}
+		}
+	}
 
 	var repoDir string
 	if localBundles {
 		repoDir = wsRepoDir
-		slog.Info("Bundle repo URL is empty, using workspace repo for bundles", "repo", ref.Repo, "dir", wsRepoDir)
+		slog.Info("Using workspace repo for bundles (local)", "repo", ref.Repo, "dir", wsRepoDir)
 	} else {
 		repoDir = filepath.Join(r.dataDir, "bundles", ref.Repo)
 		repoURL := defaultBundlesRepo

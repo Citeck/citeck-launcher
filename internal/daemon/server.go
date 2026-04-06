@@ -372,18 +372,20 @@ func Start(opts StartOptions) error {
 	var systemSecrets namespace.SystemSecrets
 	volumesBase := config.ResolveVolumesBase(wsID, nsID)
 
+	// Resolve workspace config first — needed by wizard even without a namespace.
+	bundlesDataDir := config.DataDir()
+	if config.IsDesktopMode() {
+		bundlesDataDir = filepath.Join(config.HomeDir(), "ws", wsID)
+	}
+	resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(secretSvc))
+	wsCfg = resolver.ResolveWorkspaceOnly()
+
 	if nsCfg != nil {
 		if nsCfg.ID == "" {
 			nsCfg.ID = nsID
 		}
 
-		// Resolve bundle + workspace config (with auth from stored secrets).
-		// Desktop mode uses per-workspace bundles dir; server mode uses global data dir.
-		bundlesDataDir := config.DataDir()
-		if config.IsDesktopMode() {
-			bundlesDataDir = filepath.Join(config.HomeDir(), "ws", wsID)
-		}
-		resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(secretSvc))
+		// Resolve bundle (reuses resolver created above for workspace config).
 		resolveResult, resolveErr := resolver.Resolve(nsCfg.BundleRef)
 		if resolveErr != nil {
 			// Fallback to cached bundle from persisted state (survives bundle file deletion/move)
