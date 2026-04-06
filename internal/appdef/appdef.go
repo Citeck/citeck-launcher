@@ -33,16 +33,6 @@ type AppProbeDef struct {
 	TimeoutSeconds      int          `json:"timeoutSeconds,omitempty" yaml:"timeoutSeconds,omitempty"`
 }
 
-// DefaultProbe returns the default probe configuration.
-func DefaultProbe() AppProbeDef {
-	return AppProbeDef{
-		InitialDelaySeconds: 5,
-		PeriodSeconds:       10,
-		FailureThreshold:    10000,
-		TimeoutSeconds:      5,
-	}
-}
-
 // ExecProbeDef defines an exec-based probe.
 type ExecProbeDef struct {
 	Command []string `json:"command" yaml:"command"`
