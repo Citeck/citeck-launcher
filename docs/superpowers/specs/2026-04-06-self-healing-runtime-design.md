@@ -5,7 +5,7 @@ Bring the launcher daemon closer to Kubernetes-level autonomy: detect unhealthy 
 ## Current State
 
 The launcher already has:
-- **Startup probes** — block until app is ready (HTTP or exec). Default threshold 10000 attempts (~28 hours).
+- **Startup probes** — block until app is ready (HTTP or exec). Default threshold 360 attempts (~1 hour). `DefaultProbe()` in appdef is dead code (never called).
 - **LivenessProbe field** on `ApplicationDef` — checked by `checkLiveness()` in reconciler every 30s.
 - **Reconciler** — detects missing containers, restarts with exponential backoff (1m→30m).
 - **Docker `unless-stopped`** restart policy on all containers.
@@ -16,10 +16,12 @@ What's missing:
 - No service defines a `LivenessProbe` — the mechanism exists but is not wired.
 - `checkLiveness` restarts on **first** failed probe — no failure counting.
 - `runLivenessProbe` uses `curl` inside the container for HTTP probes — not all images have curl.
-- Startup probe threshold is essentially infinite (28 hours).
+- Startup probe threshold is 1 hour (360 × 10s) — too long for detecting a genuinely broken deploy.
+- `checkLiveness` only runs in RUNNING state — if one app dies (→ STALLED), liveness stops for ALL apps. Other apps can hang undetected.
 - No restart counter visible in API/UI.
 - No event log for restarts (only slog output).
 - No pre-restart diagnostics (logs, thread dumps).
+- `DefaultProbe()` in appdef is dead code (never called).
 
 ## Design
 
@@ -61,15 +63,17 @@ Default liveness probe parameters:
 - `FailureThreshold`: 3 (3 consecutive failures at 30s period = 90s of unhealthy before restart)
 - `TimeoutSeconds`: 5
 
-### 2. Failure Counting
+### 2. Failure Counting + STALLED Fix
 
-Add `livenessFailures map[string]int` to `Runtime`. In `checkLiveness`:
+Add `livenessFailures map[string]int` to `Runtime` (protected by `r.mu`). In `checkLiveness`:
 
 - Probe succeeds → reset counter to 0.
-- Probe fails → increment counter. If `counter >= FailureThreshold` → restart + reset counter.
+- Probe fails → increment counter. If `counter >= FailureThreshold` → capture diagnostics → restart + reset counter.
 - On app restart (status change away from RUNNING) → delete from map.
 
 This prevents restarting on a single transient failure (GC pause, network hiccup).
+
+**Fix: run `checkLiveness` in STALLED state too.** Current code returns early if `r.status != NsStatusRunning`. Change to also allow `NsStatusStalled` — same as `reconcile()` does. Otherwise, when one app fails (namespace → STALLED), liveness probes stop for ALL apps, and other hung apps go undetected.
 
 ### 3. Fix `runLivenessProbe` for HTTP
 
@@ -101,7 +105,7 @@ func (r *Runtime) runLivenessProbe(ctx context.Context, containerID string, prob
 
 ### 4. Startup Timeout
 
-Change default `FailureThreshold` for startup probes from 10000 to a reasonable value.
+Change default `FailureThreshold` for startup probes. Current: 0 in generator (→ 360 in `waitForProbe` fallback = 1 hour). Set explicitly to a reasonable value.
 
 In `generateWebapp`:
 ```go
@@ -133,7 +137,7 @@ Add `RestartCount int` to `AppRuntime`. Incremented every time an app transition
 - Startup timeout
 
 Exposed in status API (`GET /api/v1/namespace/{id}/status`) as `restartCount` per app.
-Reset to 0 on namespace stop/start or explicit `citeck reload`.
+Reset to 0 on namespace stop/start. NOT reset on `citeck reload` (reload is a config change, not a clean restart — restart history should survive it).
 
 #### 5b. Restart Event Log
 
@@ -156,7 +160,7 @@ SSE: emit `restart_event` type for real-time UI updates.
 
 ### 6. Pre-Restart Diagnostics
 
-Before killing a container for liveness failure or startup timeout, capture diagnostics:
+Before stopping a container for liveness failure or startup timeout, capture diagnostics while the container is still running. Diagnostics are captured in `checkLiveness` after `FailureThreshold` is reached but BEFORE `setAppStatus(app, AppStatusReadyToPull)`. For crash/OOM, container is already gone — diagnostics are skipped (only the restart event is recorded).
 
 **Step 1: Thread dump (Java services only)**
 
@@ -196,7 +200,7 @@ Time:      2026-04-06T12:34:56Z
 Container: abc123def456
 
 === THREAD DUMP ===
-<thread dump output from kill -3>
+<jcmd Thread.print output>
 
 === LAST 500 LOG LINES ===
 <container logs>
@@ -213,7 +217,7 @@ All settings use sensible defaults. No daemon.yml changes required to enable liv
 Override points:
 - `daemon.yml` → `reconciler.livenessPeriod` (ms, default 30000) — already exists in `config.ReconcilerConfig`
 - `daemon.yml` → `reconciler.livenessEnabled` (bool) — add to `config.ReconcilerConfig`, default true
-- Per-app in `namespace.yml` → `webapps.{name}.livenessProbe` — add `*appdef.AppProbeDef` to `WebappProps`, overrides the auto-generated probe (path, threshold, timeout). Set to `false` in YAML to disable for a specific app.
+- Per-app in `namespace.yml` → `webapps.{name}.livenessDisabled` (bool, default false) — add to `WebappProps`, disables the auto-generated liveness probe for a specific app.
 
 State persistence: add `RestartEvents []RestartEvent` and `RestartCounts map[string]int` to `NsPersistedState` (backward compatible — JSON `omitempty`, old state files without these fields load cleanly).
 
@@ -236,4 +240,5 @@ State persistence: add `RestartEvents []RestartEvent` and `RestartCounts map[str
 | `internal/daemon/routes.go` | `GET /restart-events` endpoint, `restartCount` in status DTO, diagnostics file download |
 | `internal/api/dto.go` | `RestartEventDto`, add `restartCount` to app status DTO |
 | `internal/config/daemon.go` | Add `LivenessEnabled` to `ReconcilerConfig` |
+| `internal/appdef/appdef.go` | Remove dead `DefaultProbe()` |
 | Web UI | Show restart count badge, restart events panel |
