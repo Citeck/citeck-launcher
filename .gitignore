@@ -34,6 +34,10 @@ coverage.html
 ### Playwright MCP ###
 .playwright-mcp/
 
+### Binaries (prevent accidental root-dir builds) ###
+/citeck
+/citeck-desktop
+
 ### Custom ###
 *.png
 !icons/**/*.png
