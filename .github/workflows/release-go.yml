@@ -22,8 +22,12 @@ jobs:
         with:
           node-version: "22"
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - name: Build web UI
-        run: cd web && npm ci && npm run build
+        run: cd web && pnpm install --frozen-lockfile && pnpm run build
 
       - name: Embed web UI
         run: rm -rf internal/daemon/webdist && cp -r web/dist internal/daemon/webdist
@@ -32,7 +36,7 @@ jobs:
         run: go test -race ./internal/...
 
       - name: Run web tests
-        run: cd web && npx vitest run
+        run: cd web && pnpm vitest run
 
       - uses: goreleaser/goreleaser-action@v6
         with:
@@ -77,12 +81,16 @@ jobs:
         with:
           node-version: "22"
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - name: Install Linux dependencies
         if: matrix.goos == 'linux'
         run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
 
       - name: Build web UI
-        run: cd web && npm ci && npm run build
+        run: cd web && pnpm install --frozen-lockfile && pnpm run build
 
       - name: Build desktop binary
         env:

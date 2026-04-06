@@ -44,7 +44,7 @@ build-fast:
 	go build $(GO_BUILD_FLAGS) -o $(BINARY) ./cmd/citeck
 
 build-web:
-	cd web && npm run build
+	cd web && pnpm run build
 	rm -rf $(WEBDIST)
 	cp -r web/dist $(WEBDIST)
 
@@ -54,7 +54,7 @@ build-desktop: build-web
 
 test:
 	go test -race ./...
-	cd web && npm test
+	cd web && pnpm test
 
 test-unit:
 	go test -race ./internal/...
@@ -72,7 +72,7 @@ test-integration:
 
 lint:
 	$(GOLANGCI_LINT) run ./...
-	cd web && npm run lint
+	cd web && pnpm lint
 
 fmt:
 	go fmt ./...
@@ -86,10 +86,10 @@ tools:
 
 dev-daemon:
 	go run ./cmd/citeck start --foreground &
-	cd web && npm run dev
+	cd web && pnpm dev
 
 dev-desktop:
-	cd web && npm run build
+	cd web && pnpm run build
 	@mkdir -p $(BUILDDIR)
 	CGO_ENABLED=1 go build -o $(DESKTOP) ./cmd/citeck-desktop
 	./$(DESKTOP)

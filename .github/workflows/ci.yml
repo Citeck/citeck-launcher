@@ -37,8 +37,12 @@ jobs:
         with:
           node-version: 22
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - name: Web UI tests
-        run: cd web && npm ci && npx vitest run
+        run: cd web && pnpm install --frozen-lockfile && pnpm vitest run
 
       - name: Build server binary
         run: |
