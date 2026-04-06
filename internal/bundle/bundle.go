@@ -43,6 +43,11 @@ func (r Ref) IsEmpty() bool {
 	return r.Repo == "" && r.Key == ""
 }
 
+// MarshalYAML serializes Ref as a string "repo:key" (or "repo" if key is empty).
+func (r Ref) MarshalYAML() (any, error) {
+	return r.String(), nil
+}
+
 // UnmarshalYAML allows Ref to be deserialized from a string "repo:key".
 func (r *Ref) UnmarshalYAML(unmarshal func(any) error) error {
 	var s string
