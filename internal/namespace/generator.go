@@ -136,6 +136,11 @@ func generateMongoDB(ctx *NsGenContext) {
 	app.AddPort(fmt.Sprintf("27017:%d", MongoPort))
 	app.AddVolume("mongo2:/data/db")
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "512m"}}
+	app.LivenessProbe = &appdef.AppProbeDef{
+		Exec:             &appdef.ExecProbeDef{Command: []string{"mongo", "--quiet", "--eval", "db.adminCommand('ping')"}},
+		FailureThreshold: 3,
+		TimeoutSeconds:   5,
+	}
 }
 
 func generatePgAdmin(ctx *NsGenContext) {
@@ -182,11 +187,21 @@ func generatePostgres(ctx *NsGenContext) {
 	app.Cmd = []string{"-c", "config_file=/etc/postgresql/postgresql.conf"}
 	app.StartupConditions = []appdef.StartupCondition{
 		{Log: &appdef.LogStartupCondition{Pattern: ".*database system is ready to accept connections.*"}},
-		{Probe: &appdef.AppProbeDef{Exec: &appdef.ExecProbeDef{
-			Command: []string{"/bin/sh", "-c", "psql -U postgres -d postgres -c 'SELECT 1' || exit 1"},
-		}}},
+		{Probe: &appdef.AppProbeDef{
+			Exec: &appdef.ExecProbeDef{
+				Command: []string{"/bin/sh", "-c", "psql -U postgres -d postgres -c 'SELECT 1' || exit 1"},
+			},
+			PeriodSeconds:    10,
+			FailureThreshold: 60,
+			TimeoutSeconds:   5,
+		}},
 	}
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "1g"}}
+	app.LivenessProbe = &appdef.AppProbeDef{
+		Exec:             &appdef.ExecProbeDef{Command: []string{"pg_isready", "-U", "postgres"}},
+		FailureThreshold: 3,
+		TimeoutSeconds:   5,
+	}
 }
 
 func generateZookeeper(ctx *NsGenContext) {
@@ -208,6 +223,11 @@ func generateZookeeper(ctx *NsGenContext) {
 	app.AddEnv("ZOO_DATA_LOG_DIR", "/citeck/zookeeper/datalog")
 	app.AddVolume("zookeeper2:/citeck/zookeeper")
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "512m"}}
+	app.LivenessProbe = &appdef.AppProbeDef{
+		HTTP:             &appdef.HTTPProbeDef{Path: "/commands/ruok", Port: 8080},
+		FailureThreshold: 3,
+		TimeoutSeconds:   5,
+	}
 	app.InitContainers = []appdef.InitContainerDef{{
 		Image: UtilsImage,
 		Cmd:   []string{"/bin/sh", "-c", "mkdir -p /zkdir/data /zkdir/datalog"},
@@ -228,6 +248,11 @@ func generateRabbitMQ(ctx *NsGenContext) {
 	app.AddEnv("RABBITMQ_MANAGEMENT_ALLOW_WEB_ACCESS", "true")
 	app.AddVolume("rabbitmq2:/var/lib/rabbitmq")
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "256m"}}
+	app.LivenessProbe = &appdef.AppProbeDef{
+		Exec:             &appdef.ExecProbeDef{Command: []string{"rabbitmq-diagnostics", "check_running", "-q"}},
+		FailureThreshold: 3,
+		TimeoutSeconds:   5,
+	}
 }
 
 func generateKeycloak(ctx *NsGenContext) {
@@ -277,11 +302,21 @@ func generateKeycloak(ctx *NsGenContext) {
 	}
 
 	app.StartupConditions = []appdef.StartupCondition{
-		{Probe: &appdef.AppProbeDef{Exec: &appdef.ExecProbeDef{
-			Command: []string{"bash", "/healthcheck.sh"},
-		}}},
+		{Probe: &appdef.AppProbeDef{
+			Exec: &appdef.ExecProbeDef{
+				Command: []string{"bash", "/healthcheck.sh"},
+			},
+			PeriodSeconds:    10,
+			FailureThreshold: 60,
+			TimeoutSeconds:   5,
+		}},
 	}
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "1g"}}
+	app.LivenessProbe = &appdef.AppProbeDef{
+		HTTP:             &appdef.HTTPProbeDef{Path: "/health/live", Port: 8080},
+		FailureThreshold: 3,
+		TimeoutSeconds:   5,
+	}
 
 	// Generate kcadm init script to update client config in existing Keycloak DBs.
 	// Updates redirect URIs (if custom host) and OIDC client secret (always).
@@ -420,9 +455,11 @@ func generateObserver(ctx *NsGenContext) {
 	}
 
 	const (
+		// Observer ports: 17014–17017 (before ZK admin 17018, Alfresco 17019, webapps 17020+)
+		obsLogUDP   = 17014 // UDP log receiver
+		obsOTLPHTTP = 17015 // OTLP HTTP/protobuf receiver
 		obsHTTP     = 17016 // HTTP API + embedded UI
 		obsGRPC     = 17017 // OTLP gRPC receiver
-		obsOTLPHTTP = 17015 // OTLP HTTP/protobuf receiver
 		obsPGPort   = 14524 // published port for observer-postgres (local debugging)
 		obsDBName   = "observer"
 		obsDBUser   = "observer"
@@ -453,11 +490,21 @@ func generateObserver(ctx *NsGenContext) {
 	}
 	obsPg.StartupConditions = []appdef.StartupCondition{
 		{Log: &appdef.LogStartupCondition{Pattern: ".*database system is ready to accept connections.*"}},
-		{Probe: &appdef.AppProbeDef{Exec: &appdef.ExecProbeDef{
-			Command: []string{"/bin/sh", "-c", fmt.Sprintf("pg_isready -U %s || exit 1", obsDBUser)},
-		}}},
+		{Probe: &appdef.AppProbeDef{
+			Exec: &appdef.ExecProbeDef{
+				Command: []string{"/bin/sh", "-c", fmt.Sprintf("pg_isready -U %s || exit 1", obsDBUser)},
+			},
+			PeriodSeconds:    10,
+			FailureThreshold: 60,
+			TimeoutSeconds:   5,
+		}},
 	}
 	obsPg.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "512m"}}
+	obsPg.LivenessProbe = &appdef.AppProbeDef{
+		Exec:             &appdef.ExecProbeDef{Command: []string{"pg_isready", "-U", obsDBUser}},
+		FailureThreshold: 3,
+		TimeoutSeconds:   5,
+	}
 
 	// 2. citeck-observer — env var names match the observer's Config struct
 	// (reflection-based: database.host → DATABASE_HOST, zookeeper.hosts → ZOOKEEPER_HOSTS, etc.)
@@ -502,15 +549,29 @@ func generateObserver(ctx *NsGenContext) {
 	obs.AddEnv("ZK_MONITOR_ENABLED", "true")
 	obs.AddEnv("ZK_MONITOR_HOSTS", fmt.Sprintf("%s:%d", ZKHost, ZKPort))
 
+	// UDP log receiver
+	obs.AddEnv("LOG_RECEIVER_UDP_PORT", fmt.Sprintf("%d", obsLogUDP))
+
 	obs.AddPort(fmt.Sprintf("%d:%d", obsHTTP, obsHTTP))
 	obs.AddPort(fmt.Sprintf("%d:%d", obsGRPC, obsGRPC))
 	obs.AddPort(fmt.Sprintf("%d:%d", obsOTLPHTTP, obsOTLPHTTP))
+	obs.AddPort(fmt.Sprintf("%d:%d/udp", obsLogUDP, obsLogUDP))
 	obs.AddDependsOn(appdef.AppObsPostgres)
 	obs.AddDependsOn(appdef.AppZookeeper)
 	obs.StartupConditions = []appdef.StartupCondition{
-		{Probe: &appdef.AppProbeDef{HTTP: &appdef.HTTPProbeDef{Path: "/health", Port: obsHTTP}}},
+		{Probe: &appdef.AppProbeDef{
+			HTTP: &appdef.HTTPProbeDef{Path: "/health", Port: obsHTTP},
+			PeriodSeconds:    10,
+			FailureThreshold: 30,
+			TimeoutSeconds:   5,
+		}},
 	}
 	obs.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "512m"}}
+	obs.LivenessProbe = &appdef.AppProbeDef{
+		HTTP:             &appdef.HTTPProbeDef{Path: "/health", Port: obsHTTP},
+		FailureThreshold: 3,
+		TimeoutSeconds:   5,
+	}
 
 	// 3. Cloud config for CloudConfigServer (local debugging: "stop in launcher, run locally")
 	extCloudConfig := map[string]any{
@@ -663,6 +724,9 @@ func generateProxy(ctx *NsGenContext) {
 	} else {
 		startupProbe = &appdef.AppProbeDef{HTTP: &appdef.HTTPProbeDef{Path: "/eis.json", Port: 80}}
 	}
+	startupProbe.PeriodSeconds = 10
+	startupProbe.FailureThreshold = 30
+	startupProbe.TimeoutSeconds = 5
 
 	app.AddEnv("DEFAULT_LOCATION_V2", "true")
 	app.AddEnv("GATEWAY_TARGET", fmt.Sprintf("%s:%s", appdef.AppGateway, gatewayPort))
@@ -803,10 +867,28 @@ func generateWebapp(name string, ctx *NsGenContext) {
 
 	// Startup probe: HTTP health check
 	app.StartupConditions = []appdef.StartupCondition{
-		{Probe: &appdef.AppProbeDef{HTTP: &appdef.HTTPProbeDef{
-			Path: "/management/health",
-			Port: port,
-		}}},
+		{Probe: &appdef.AppProbeDef{
+			HTTP: &appdef.HTTPProbeDef{
+				Path: "/management/health",
+				Port: port,
+			},
+			PeriodSeconds:    10,
+			FailureThreshold: 30,
+			TimeoutSeconds:   5,
+		}},
+	}
+
+	// Liveness probe (skip if disabled in namespace config)
+	livenessDisabled := false
+	if wp, ok := ctx.Config.Webapps[name]; ok {
+		livenessDisabled = wp.LivenessDisabled
+	}
+	if !livenessDisabled {
+		app.LivenessProbe = &appdef.AppProbeDef{
+			HTTP:             &appdef.HTTPProbeDef{Path: "/management/health", Port: port},
+			FailureThreshold: 3,
+			TimeoutSeconds:   5,
+		}
 	}
 
 	// EAPPS special handling: add init containers from bundle citeckApps

@@ -6,6 +6,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestFlatMapToYAML_NestedKeys(t *testing.T) {
@@ -511,5 +512,145 @@ func TestCloudConfigDeepMerge(t *testing.T) {
 	}
 	if !strings.Contains(content, "xa: true") {
 		t.Errorf("expected xa from namespace cloudConfig deep merge, got:\n%s", content)
+	}
+}
+
+func TestGeneratorLivenessProbes(t *testing.T) {
+	cfg := &Config{
+		Authentication: AuthenticationProps{Type: AuthKeycloak, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+		Observer:       ObserverProps{Enabled: true, Image: "citeck/observer:1.0"},
+	}
+	bun := &bundle.Def{
+		Applications: map[string]bundle.AppDef{
+			"emodel":  {Image: "nexus.citeck.ru/emodel:1.0"},
+			"gateway": {Image: "nexus.citeck.ru/gateway:1.0"},
+		},
+	}
+	wsCfg := &bundle.WorkspaceConfig{
+		Webapps: []bundle.WebappConfig{
+			{ID: "emodel"},
+			{ID: "gateway"},
+		},
+	}
+
+	resp := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+
+	findApp := func(name string) *appdef.ApplicationDef {
+		for i := range resp.Applications {
+			if resp.Applications[i].Name == name {
+				return &resp.Applications[i]
+			}
+		}
+		return nil
+	}
+
+	// Services that must have liveness probes
+	for _, name := range []string{
+		appdef.AppPostgres,
+		appdef.AppZookeeper,
+		appdef.AppRabbitmq,
+		appdef.AppMongodb,
+		appdef.AppKeycloak,
+		appdef.AppObserver,
+		appdef.AppObsPostgres,
+		"emodel",
+		"gateway",
+	} {
+		app := findApp(name)
+		if assert.NotNilf(t, app, "expected app %s to be generated", name) {
+			assert.NotNilf(t, app.LivenessProbe, "expected liveness probe on %s", name)
+		}
+	}
+
+	// Services that must NOT have liveness probes
+	for _, name := range []string{
+		appdef.AppMailhog,
+		appdef.AppPgadmin,   // disabled by default
+		appdef.AppOnlyoffice,
+		appdef.AppProxy,
+	} {
+		app := findApp(name)
+		if app != nil {
+			assert.Nilf(t, app.LivenessProbe, "expected no liveness probe on %s", name)
+		}
+	}
+}
+
+func TestGeneratorLivenessDisabled(t *testing.T) {
+	cfg := &Config{
+		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+		Webapps: map[string]WebappProps{
+			"emodel": {LivenessDisabled: true},
+		},
+	}
+	bun := &bundle.Def{
+		Applications: map[string]bundle.AppDef{
+			"emodel":  {Image: "nexus.citeck.ru/emodel:1.0"},
+			"gateway": {Image: "nexus.citeck.ru/gateway:1.0"},
+		},
+	}
+	wsCfg := &bundle.WorkspaceConfig{
+		Webapps: []bundle.WebappConfig{
+			{ID: "emodel"},
+			{ID: "gateway"},
+		},
+	}
+
+	resp := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+
+	findApp := func(name string) *appdef.ApplicationDef {
+		for i := range resp.Applications {
+			if resp.Applications[i].Name == name {
+				return &resp.Applications[i]
+			}
+		}
+		return nil
+	}
+
+	// emodel should have no liveness probe (disabled)
+	emodel := findApp("emodel")
+	if assert.NotNil(t, emodel, "expected emodel to be generated") {
+		assert.Nil(t, emodel.LivenessProbe, "expected no liveness probe on emodel (disabled)")
+	}
+
+	// gateway should still have liveness probe
+	gw := findApp("gateway")
+	if assert.NotNil(t, gw, "expected gateway to be generated") {
+		assert.NotNil(t, gw.LivenessProbe, "expected liveness probe on gateway (not disabled)")
+	}
+}
+
+func TestGeneratorStartupThresholds(t *testing.T) {
+	cfg := &Config{
+		Authentication: AuthenticationProps{Type: AuthKeycloak, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+		Observer:       ObserverProps{Enabled: true, Image: "citeck/observer:1.0"},
+	}
+	bun := &bundle.Def{
+		Applications: map[string]bundle.AppDef{
+			"emodel": {Image: "nexus.citeck.ru/emodel:1.0"},
+		},
+	}
+	wsCfg := &bundle.WorkspaceConfig{
+		Webapps: []bundle.WebappConfig{
+			{ID: "emodel"},
+		},
+	}
+
+	resp := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+
+	for _, app := range resp.Applications {
+		for _, sc := range app.StartupConditions {
+			if sc.Probe != nil {
+				assert.NotZerof(t, sc.Probe.FailureThreshold,
+					"startup probe on %s must have explicit FailureThreshold", app.Name)
+				assert.NotZerof(t, sc.Probe.TimeoutSeconds,
+					"startup probe on %s must have explicit TimeoutSeconds", app.Name)
+				assert.NotZerof(t, sc.Probe.PeriodSeconds,
+					"startup probe on %s must have explicit PeriodSeconds", app.Name)
+			}
+		}
 	}
 }
