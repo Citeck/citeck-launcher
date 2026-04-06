@@ -22,16 +22,48 @@ import (
 )
 
 func newInstallCmd() *cobra.Command {
-	return &cobra.Command{
+	var workspaceZip string
+
+	cmd := &cobra.Command{
 		Use:   "install",
 		Short: "Interactive server installer",
-		Long:  "Set up a Citeck ECOS deployment: namespace config, TLS, systemd service, firewall.",
-		RunE:  runInstall,
+		Long: `Set up a Citeck ECOS deployment: namespace config, TLS, systemd service, firewall.
+
+Use --workspace to import a workspace zip archive (e.g. downloaded from GitHub/GitLab).
+This extracts workspace config and bundle definitions for offline operation.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runInstall(cmd, args, workspaceZip)
+		},
 	}
+
+	cmd.Flags().StringVar(&workspaceZip, "workspace", "", "Path to workspace zip archive (offline bundle import)")
+
+	return cmd
 }
 
-func runInstall(cmd *cobra.Command, args []string) error { //nolint:gocyclo // interactive wizard with sequential steps
+func runInstall(_ *cobra.Command, _ []string, workspaceZip string) error { //nolint:gocyclo // interactive wizard with sequential steps
 	scanner := bufio.NewScanner(os.Stdin)
+
+	// Import workspace zip if provided
+	if workspaceZip != "" {
+		if _, statErr := os.Stat(workspaceZip); statErr != nil {
+			return fmt.Errorf("workspace archive not found: %s", workspaceZip)
+		}
+		destDir := filepath.Join(config.DataDir(), "repo")
+		if err := os.MkdirAll(filepath.Dir(destDir), 0o750); err != nil {
+			return fmt.Errorf("create data dir: %w", err)
+		}
+		// Remove existing repo dir if present
+		_ = os.RemoveAll(destDir)
+		if err := os.MkdirAll(destDir, 0o750); err != nil {
+			return fmt.Errorf("create repo dir: %w", err)
+		}
+		count, err := extractZip(workspaceZip, destDir)
+		if err != nil {
+			return fmt.Errorf("extract workspace: %w", err)
+		}
+		output.PrintText("Workspace imported: %d files extracted to %s", count, destDir)
+	}
 
 	// Check Docker is available
 	dockerConn, err := net.DialTimeout("unix", "/var/run/docker.sock", 2*time.Second)
