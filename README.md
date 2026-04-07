@@ -24,6 +24,15 @@ citeck install
 
 The install wizard guides you through language selection, namespace setup, TLS, port configuration, and optional systemd service.
 
+### Offline Install
+
+```bash
+# Download both the binary and the workspace ZIP, then:
+citeck install --workspace /path/to/workspace.zip
+```
+
+The `--workspace` flag extracts bundle repos locally so no internet is needed during startup.
+
 ### Start
 
 ```bash
@@ -51,22 +60,26 @@ The Web UI is available at `http://127.0.0.1:7088` by default.
 ## CLI Usage
 
 ```
+citeck install [--workspace <zip>]      Interactive setup wizard (offline with --workspace)
 citeck start [app] [--foreground]       Start daemon/namespace or a single app
-citeck stop [app]                       Stop namespace (or a single app)
+citeck stop [app]                       Stop namespace or a single app
 citeck status [--watch]                 Show namespace status
 citeck health                           Health check (exit code 0/1)
 citeck reload                           Reload config and regenerate containers
+citeck upgrade [ref] [--list]           Upgrade bundle version (or list available)
 citeck logs [app] [--follow]            Stream logs (daemon if no app)
 citeck exec <app> -- <command>          Execute command in container
 citeck restart <app>                    Restart an app
 citeck apply <file>                     Apply namespace config
 citeck diff                             Diff running config vs file
 citeck snapshot list|export|import      Manage volume snapshots
+citeck clean [--images] [--execute]     Clean orphaned resources / prune images
 citeck cert generate|list|revoke        Manage mTLS client certificates
+citeck workspace import|update          Import or update workspace repos
 citeck diagnose                         Run diagnostics
 citeck config show|edit                 View/edit namespace config
+citeck validate                         Validate namespace config
 citeck completion bash|zsh|fish         Generate shell completion
-citeck install                          Interactive setup wizard
 citeck uninstall                        Remove systemd service and config
 ```
 
@@ -113,19 +126,15 @@ React 19 + Vite + TypeScript + Tailwind CSS 4. Embedded into Go binary via `go:e
 # Full build (Go binary + React web UI)
 make build
 
-# Go only (skip web rebuild)
-make build-fast
-
 # Tests
-go test -race ./internal/...
-cd web && npx vitest run
+make test              # Go + web
+make test-race         # Go with race detector
 
 # Lint
-golangci-lint run
-cd web && npm run lint
+make lint              # Go (golangci-lint) + web (eslint)
 ```
 
-Requires: Go 1.22+, Node.js 20+.
+Requires: Go 1.22+, Node.js 20+, pnpm.
 
 ## Configuration
 
@@ -168,6 +177,12 @@ proxy:
 - **Unix socket**: full access (CLI only)
 - **mTLS TCP** (non-localhost): full access, authenticated by client certificate
 - **Localhost TCP**: restricted routes + CSRF header (`X-Citeck-CSRF`) required for mutations
+
+## Documentation
+
+- [API Reference](docs/api.md) — all REST endpoints
+- [Configuration Reference](docs/config.md) — daemon.yml, namespace.yml, CLI flags, file layout
+- [Operator Runbook](docs/operations.md) — logs, upgrade, backup, mTLS, debugging, monitoring
 
 ## License
 
