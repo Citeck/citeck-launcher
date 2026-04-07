@@ -41,7 +41,8 @@ func newSelfUpdateCmd(currentVersion string) *cobra.Command {
 		Use:   "self-update",
 		Short: "Update the launcher binary to the latest version",
 		Long: `Check for and install the latest version from GitHub Releases.
-Use --file to install from a local binary (offline environments).`,
+Use --file to install from a local binary (offline environments).
+Use "citeck self-update rollback" to revert to the previous version.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if file != "" {
 				return selfUpdateFromFile(file)
@@ -52,7 +53,65 @@ Use --file to install from a local binary (offline environments).`,
 
 	cmd.Flags().BoolVar(&check, "check", false, "Only check for updates, don't install")
 	cmd.Flags().StringVar(&file, "file", "", "Install from a local binary file (offline update)")
+	cmd.AddCommand(newRollbackCmd())
 	return cmd
+}
+
+func newRollbackCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "rollback",
+		Short: "Revert to the previous launcher version",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			executable, err := os.Executable()
+			if err != nil {
+				return fmt.Errorf("resolve executable path: %w", err)
+			}
+			backupPath := executable + ".prev"
+
+			if _, statErr := os.Stat(backupPath); statErr != nil {
+				return fmt.Errorf("no previous version found at %s", backupPath)
+			}
+
+			daemonRunning := isDaemonRunning()
+
+			if !flagYes {
+				if daemonRunning {
+					output.PrintText("\nThis will: stop daemon → restore previous binary → start daemon")
+				} else {
+					output.PrintText("\nThis will: restore %s from %s", executable, backupPath)
+				}
+				if !confirmPrompt("Proceed? [Y/n]: ") {
+					output.PrintText("Canceled")
+					return nil
+				}
+			}
+
+			if daemonRunning {
+				stopDaemonForUpdate()
+			}
+
+			// Swap: current → .rollback-tmp, prev → current, .rollback-tmp → prev
+			tmpPath := executable + ".rollback-tmp"
+			if renameErr := os.Rename(executable, tmpPath); renameErr != nil {
+				return fmt.Errorf("move current binary: %w", renameErr)
+			}
+			if renameErr := os.Rename(backupPath, executable); renameErr != nil {
+				// Try to restore
+				_ = os.Rename(tmpPath, executable)
+				return fmt.Errorf("restore previous binary: %w", renameErr)
+			}
+			// Current becomes the new backup
+			_ = os.Rename(tmpPath, backupPath)
+
+			output.PrintText("Rolled back to previous version")
+
+			if daemonRunning {
+				startDaemonAfterUpdate()
+			}
+
+			return nil
+		},
+	}
 }
 
 func selfUpdateFromGitHub(currentVersion string, checkOnly bool) error {
@@ -184,7 +243,7 @@ func confirmUpdate(executable string, daemonRunning bool) bool {
 	return confirmPrompt("Proceed? [Y/n]: ")
 }
 
-// replaceBinary sets permissions, stops daemon, atomically replaces the binary, and restarts.
+// replaceBinary sets permissions, backs up current binary, stops daemon, replaces, and restarts.
 func replaceBinary(tmpPath, executable string, daemonRunning bool, version string) error {
 	if chmodErr := os.Chmod(tmpPath, 0o755); chmodErr != nil { //nolint:gosec // binary needs 0o755
 		_ = os.Remove(tmpPath)
@@ -193,6 +252,14 @@ func replaceBinary(tmpPath, executable string, daemonRunning bool, version strin
 
 	if daemonRunning {
 		stopDaemonForUpdate()
+	}
+
+	// Back up current binary for rollback
+	backupPath := executable + ".prev"
+	if copyErr := copyBinary(executable, backupPath); copyErr != nil {
+		output.Errf("Warning: could not back up current binary: %v", copyErr)
+	} else {
+		output.PrintText("Previous version saved to %s", backupPath)
 	}
 
 	if renameErr := os.Rename(tmpPath, executable); renameErr != nil {
@@ -210,6 +277,29 @@ func replaceBinary(tmpPath, executable string, daemonRunning bool, version strin
 		startDaemonAfterUpdate()
 	}
 
+	return nil
+}
+
+func copyBinary(src, dst string) error {
+	in, err := os.Open(src) //nolint:gosec // our own binary
+	if err != nil {
+		return fmt.Errorf("open %s: %w", src, err)
+	}
+	defer in.Close()
+	out, err := os.Create(dst) //nolint:gosec // backup path
+	if err != nil {
+		return fmt.Errorf("create %s: %w", dst, err)
+	}
+	if _, cpErr := io.Copy(out, in); cpErr != nil {
+		_ = out.Close()
+		return fmt.Errorf("copy: %w", cpErr)
+	}
+	if closeErr := out.Close(); closeErr != nil {
+		return fmt.Errorf("flush %s: %w", dst, closeErr)
+	}
+	if chmodErr := os.Chmod(dst, 0o755); chmodErr != nil { //nolint:gosec // binary needs 0o755
+		return fmt.Errorf("chmod %s: %w", dst, chmodErr)
+	}
 	return nil
 }
 
