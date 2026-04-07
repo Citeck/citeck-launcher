@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router'
 import { useDashboardStore } from '../lib/store'
 import { useTabsStore } from '../lib/tabs'
 import { usePanelStore } from '../lib/panels'
-import { getSystemDump, getMigrationStatus, submitMasterPassword, unlockSecrets, setupSecretsPassword, openExternal } from '../lib/api'
+import { getSystemDump, getMigrationStatus, submitMasterPassword, unlockSecrets, setupSecretsPassword, openExternal, getBundles, upgradeNamespace } from '../lib/api'
 import { useTranslation } from '../lib/i18n'
 import { StatusBadge } from '../components/StatusBadge'
 import { AppTable } from '../components/AppTable'
@@ -16,9 +16,10 @@ import { ConfigEditor } from '../components/ConfigEditor'
 import { DaemonLogsViewer } from '../components/DaemonLogsViewer'
 import { AppConfigEditor } from '../components/AppConfigEditor'
 import { RestartEvents } from '../components/RestartEvents'
+import { FormDialog } from '../components/FormDialog'
 import type { BottomPanelTab } from '../lib/panels'
 import { toast } from '../lib/toast'
-import { ExternalLink, Globe, Download, AlertTriangle, HardDrive, Key, Stethoscope, FileText, Settings, Eye, EyeOff } from 'lucide-react'
+import { ExternalLink, Globe, Download, AlertTriangle, HardDrive, Key, Stethoscope, FileText, Settings, Eye, EyeOff, ArrowUpCircle } from 'lucide-react'
 
 export function Dashboard() {
   const { namespace, health, loading, error, fetchData, startEventStream, stopEventStream } =
@@ -39,6 +40,37 @@ export function Dashboard() {
   const [dialogLoading, setDialogLoading] = useState(false)
   const [dialogChecked, setDialogChecked] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+
+  // Upgrade dialog state
+  const [upgradeOpen, setUpgradeOpen] = useState(false)
+  const [upgradeVersions, setUpgradeVersions] = useState<{ label: string; value: string }[]>([])
+  const [upgradeLoading, setUpgradeLoading] = useState(false)
+  const [upgradeError, setUpgradeError] = useState<string | null>(null)
+
+  const handleUpgradeClick = useCallback(async () => {
+    try {
+      const bundles = await getBundles()
+      const currentRef = namespace?.bundleRef ?? ''
+      const options: { label: string; value: string }[] = []
+      for (const b of bundles) {
+        for (const v of b.versions) {
+          const ref = `${b.repo}:${v}`
+          if (ref !== currentRef) {
+            options.push({ label: ref, value: ref })
+          }
+        }
+      }
+      if (options.length === 0) {
+        toast(t('upgrade.alreadyLatest'), 'info')
+        return
+      }
+      setUpgradeVersions(options)
+      setUpgradeError(null)
+      setUpgradeOpen(true)
+    } catch (e) {
+      toast((e as Error).message, 'error')
+    }
+  }, [namespace?.bundleRef, t])
 
   // On mount: detect which dialog step is needed.
   // Server mode: daemon auto-encrypts + auto-unlocks with default password, so only
@@ -333,14 +365,24 @@ export function Dashboard() {
               <div className="text-sm font-semibold truncate">{namespace.name}</div>
               <div className="text-[11px] text-muted-foreground mt-0.5 truncate">{namespace.bundleRef}</div>
             </div>
-            <button
-              type="button"
-              className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted shrink-0"
-              title={t('dashboard.nsConfig')}
-              onClick={() => openBottomTab({ id: 'ns-config', type: 'ns-config', title: t('configEditor.title') })}
-            >
-              <Settings size={14} />
-            </button>
+            <div className="flex items-center gap-0.5 shrink-0">
+              <button
+                type="button"
+                className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted"
+                title={t('upgrade.title')}
+                onClick={handleUpgradeClick}
+              >
+                <ArrowUpCircle size={14} />
+              </button>
+              <button
+                type="button"
+                className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted"
+                title={t('dashboard.nsConfig')}
+                onClick={() => openBottomTab({ id: 'ns-config', type: 'ns-config', title: t('configEditor.title') })}
+              >
+                <Settings size={14} />
+              </button>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -446,6 +488,36 @@ export function Dashboard() {
 
       {/* Bottom panel */}
       {bottomTabs.length > 0 && <BottomPanel renderTab={renderBottomTab} />}
+
+      {/* Upgrade dialog */}
+      <FormDialog
+        title={t('upgrade.title')}
+        fields={[{
+          key: 'bundleRef',
+          label: t('upgrade.select'),
+          type: 'select',
+          required: true,
+          options: upgradeVersions,
+        }]}
+        onSubmit={async (data) => {
+          setUpgradeLoading(true)
+          setUpgradeError(null)
+          try {
+            await upgradeNamespace(data.bundleRef as string)
+            toast(t('upgrade.success'), 'success')
+            setUpgradeOpen(false)
+            fetchData()
+          } catch (e) {
+            setUpgradeError((e as Error).message)
+          } finally {
+            setUpgradeLoading(false)
+          }
+        }}
+        onCancel={() => setUpgradeOpen(false)}
+        open={upgradeOpen}
+        loading={upgradeLoading}
+        error={upgradeError}
+      />
     </div>
   )
 }

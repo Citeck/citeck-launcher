@@ -359,6 +359,14 @@ const en: Translations = {
   'secrets.setPassword': 'Set Password',
   'secrets.setPassword.description': 'Encrypt your secrets with a master password. You will need it each time you start the launcher.',
 
+  // -- Upgrade --
+  'upgrade.title': 'Upgrade Bundle',
+  'upgrade.select': 'Select version',
+  'upgrade.confirm': 'Upgrade',
+  'upgrade.success': 'Upgrade successful',
+  'upgrade.noVersions': 'No bundle versions available',
+  'upgrade.alreadyLatest': 'Already on latest version',
+
   'common.back': 'Back',
 }
 

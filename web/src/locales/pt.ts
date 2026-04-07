@@ -359,6 +359,14 @@ const pt: Translations = {
   'secrets.locked': 'Os secrets estão bloqueados — insira a senha mestra para acessar',
   'secrets.setPassword': 'Definir senha',
   'secrets.setPassword.description': 'Criptografe seus secrets com uma senha mestra. Você precisará dela toda vez que iniciar o launcher.',
+
+  // -- Upgrade --
+  'upgrade.title': 'Atualizar bundle',
+  'upgrade.select': 'Selecionar versão',
+  'upgrade.confirm': 'Atualizar',
+  'upgrade.success': 'Atualização bem-sucedida',
+  'upgrade.noVersions': 'Nenhuma versão de bundle disponível',
+  'upgrade.alreadyLatest': 'Já está na versão mais recente',
 }
 
 export default pt

@@ -359,6 +359,14 @@ const es: Translations = {
   'secrets.locked': 'Los secretos están bloqueados — introduzca la contraseña maestra para acceder',
   'secrets.setPassword': 'Establecer contraseña',
   'secrets.setPassword.description': 'Cifre sus secretos con una contraseña maestra. La necesitará cada vez que inicie el lanzador.',
+
+  // -- Upgrade --
+  'upgrade.title': 'Actualizar bundle',
+  'upgrade.select': 'Seleccionar versión',
+  'upgrade.confirm': 'Actualizar',
+  'upgrade.success': 'Actualización exitosa',
+  'upgrade.noVersions': 'No hay versiones de bundle disponibles',
+  'upgrade.alreadyLatest': 'Ya está en la última versión',
 }
 
 export default es

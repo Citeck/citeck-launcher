@@ -243,6 +243,16 @@ export async function getBundles(): Promise<BundleInfoDto[]> {
   return fetchJSON('/bundles')
 }
 
+export async function upgradeNamespace(bundleRef: string): Promise<ActionResultDto> {
+  const res = await fetchWithTimeout(`${API_BASE}/namespace/upgrade`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
+    body: JSON.stringify({ bundleRef }),
+  })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  return res.json()
+}
+
 // Phase F1: Secrets
 export async function getSecrets(): Promise<SecretMetaDto[]> {
   return fetchJSON('/secrets')

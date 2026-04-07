@@ -356,6 +356,14 @@ const ru: Translations = {
   'secrets.setPassword': 'Задать пароль',
   'secrets.setPassword.description': 'Зашифруйте секреты мастер-паролем. Он потребуется при каждом запуске лончера.',
 
+  // -- Upgrade --
+  'upgrade.title': 'Обновить бандл',
+  'upgrade.select': 'Выберите версию',
+  'upgrade.confirm': 'Обновить',
+  'upgrade.success': 'Обновление выполнено',
+  'upgrade.noVersions': 'Нет доступных версий бандла',
+  'upgrade.alreadyLatest': 'Уже установлена последняя версия',
+
   'common.back': 'Назад',
 }
 

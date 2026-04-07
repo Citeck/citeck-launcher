@@ -359,6 +359,14 @@ const fr: Translations = {
   'secrets.locked': 'Les secrets sont verrouill\u00e9s \u2014 saisissez le mot de passe principal pour y acc\u00e9der',
   'secrets.setPassword': 'D\u00e9finir le mot de passe',
   'secrets.setPassword.description': 'Chiffrez vos secrets avec un mot de passe principal. Vous en aurez besoin \u00e0 chaque d\u00e9marrage du lanceur.',
+
+  // -- Upgrade --
+  'upgrade.title': 'Mettre \u00e0 jour le bundle',
+  'upgrade.select': 'S\u00e9lectionner la version',
+  'upgrade.confirm': 'Mettre \u00e0 jour',
+  'upgrade.success': 'Mise \u00e0 jour r\u00e9ussie',
+  'upgrade.noVersions': 'Aucune version de bundle disponible',
+  'upgrade.alreadyLatest': 'D\u00e9j\u00e0 sur la derni\u00e8re version',
 }
 
 export default fr

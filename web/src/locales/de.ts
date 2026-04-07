@@ -359,6 +359,14 @@ const de: Translations = {
   'secrets.locked': 'Geheimnisse sind gesperrt — geben Sie das Master-Passwort ein, um darauf zuzugreifen',
   'secrets.setPassword': 'Passwort festlegen',
   'secrets.setPassword.description': 'Verschlüsseln Sie Ihre Geheimnisse mit einem Master-Passwort. Sie benötigen es bei jedem Start des Launchers.',
+
+  // -- Upgrade --
+  'upgrade.title': 'Bundle aktualisieren',
+  'upgrade.select': 'Version auswählen',
+  'upgrade.confirm': 'Aktualisieren',
+  'upgrade.success': 'Aktualisierung erfolgreich',
+  'upgrade.noVersions': 'Keine Bundle-Versionen verfügbar',
+  'upgrade.alreadyLatest': 'Bereits auf der neuesten Version',
 }
 
 export default de

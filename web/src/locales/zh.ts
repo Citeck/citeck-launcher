@@ -359,6 +359,14 @@ const zh: Translations = {
   'secrets.locked': '密钥已锁定 — 请输入主密码以访问',
   'secrets.setPassword': '设置密码',
   'secrets.setPassword.description': '使用主密码加密您的密钥。每次启动启动器时都需要输入该密码。',
+
+  // -- Upgrade --
+  'upgrade.title': '升级 Bundle',
+  'upgrade.select': '选择版本',
+  'upgrade.confirm': '升级',
+  'upgrade.success': '升级成功',
+  'upgrade.noVersions': '没有可用的 Bundle 版本',
+  'upgrade.alreadyLatest': '已是最新版本',
 }
 
 export default zh
