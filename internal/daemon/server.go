@@ -1240,8 +1240,8 @@ func resolveSystemSecrets(svc *storage.SecretService) (namespace.SystemSecrets, 
 	// OIDC
 	oidc, err := resolveOneSystemSecret(svc, "_oidc", func() string {
 		b := make([]byte, 32)
-		if _, err := rand.Read(b); err != nil {
-			slog.Error("Failed to generate OIDC secret", "err", err)
+		if _, randErr := rand.Read(b); randErr != nil {
+			slog.Error("Failed to generate OIDC secret", "err", randErr)
 			return ""
 		}
 		return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])

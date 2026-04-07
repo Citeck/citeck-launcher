@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
-	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 )
 
 // RuntimeClient defines the Docker operations required by the namespace runtime
@@ -22,8 +22,8 @@ type RuntimeClient interface {
 	StopContainer(ctx context.Context, id string, timeoutSec int) error
 	RemoveContainer(ctx context.Context, id string) error
 	StopAndRemoveContainer(ctx context.Context, name string, timeoutSec int) error
-	GetContainers(ctx context.Context) ([]types.Container, error)
-	InspectContainer(ctx context.Context, id string) (types.ContainerJSON, error)
+	GetContainers(ctx context.Context) ([]container.Summary, error)
+	InspectContainer(ctx context.Context, id string) (container.InspectResponse, error)
 	PullImage(ctx context.Context, img string, auth *RegistryAuth) error
 	PullImageWithProgress(ctx context.Context, img string, auth *RegistryAuth, progressFn PullProgressFn) error
 	ImageExists(ctx context.Context, img string) bool

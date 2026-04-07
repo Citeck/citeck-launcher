@@ -541,7 +541,7 @@ func generateObserver(ctx *NsGenContext) {
 
 	// Infrastructure monitoring — PostgreSQL via pg_stat views
 	obs.AddEnv("PG_MONITOR_ENABLED", "true")
-	pgTarget := fmt.Sprintf(`[{"name":"citeck","host":"%s","port":%d,"user":"postgres","password":"postgres"}]`, PGHost, PGPort)
+	pgTarget := fmt.Sprintf(`[{"name":"citeck","host":"%s","port":%d,"user":"postgres","password":"postgres"}]`, PGHost, PGPort) //nolint:gocritic // sprintfQuotedString: JSON template requires literal quotes, not %q
 	obs.AddEnv("PG_MONITOR_TARGETS", pgTarget)
 
 	// Infrastructure monitoring — ZooKeeper via "mntr" command

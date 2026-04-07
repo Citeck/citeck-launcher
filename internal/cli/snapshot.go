@@ -86,24 +86,9 @@ func newSnapshotExportCmd() *cobra.Command {
 			wasRunning := nsErr == nil && ns != nil && ns.Status != "STOPPED"
 
 			if wasRunning {
-				if !flagYes {
-					fmt.Print("Namespace is running. Stop it for export? [Y/n]: ") //nolint:forbidigo // CLI prompt
-					scanner := bufio.NewScanner(os.Stdin)
-					scanner.Scan()
-					answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
-					if answer == "n" || answer == "no" {
-						return fmt.Errorf("export cancelled — namespace must be stopped")
-					}
+				if stopErr := stopForExport(c); stopErr != nil {
+					return stopErr
 				}
-				output.PrintText("Stopping namespace...")
-				if _, stopErr := c.StopNamespace(); stopErr != nil {
-					return fmt.Errorf("stop namespace: %w", stopErr)
-				}
-				// Wait for namespace to fully stop
-				if err := waitForStopped(c, 120*time.Second); err != nil {
-					return fmt.Errorf("waiting for stop: %w", err)
-				}
-				output.PrintText("Namespace stopped")
 			}
 
 			// Export (always wait for completion)
@@ -137,14 +122,36 @@ func newSnapshotExportCmd() *cobra.Command {
 	return cmd
 }
 
+// stopForExport prompts the user (unless --yes) and stops the namespace for snapshot export.
+func stopForExport(c *client.DaemonClient) error {
+	if !flagYes {
+		fmt.Print("Namespace is running. Stop it for export? [Y/n]: ") //nolint:forbidigo // CLI prompt
+		scanner := bufio.NewScanner(os.Stdin)
+		scanner.Scan()
+		answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
+		if answer == "n" || answer == "no" {
+			return fmt.Errorf("export canceled — namespace must be stopped")
+		}
+	}
+	output.PrintText("Stopping namespace...")
+	if _, stopErr := c.StopNamespace(); stopErr != nil {
+		return fmt.Errorf("stop namespace: %w", stopErr)
+	}
+	if waitErr := waitForStopped(c, 120*time.Second); waitErr != nil {
+		return fmt.Errorf("waiting for stop: %w", waitErr)
+	}
+	output.PrintText("Namespace stopped")
+	return nil
+}
+
 // waitForStopped polls namespace status until it's STOPPED or timeout.
 func waitForStopped(c *client.DaemonClient, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	lastStatus := ""
 	for time.Now().Before(deadline) {
-		ns, err := c.GetNamespace()
-		if err != nil {
-			return err
+		ns, nsErr := c.GetNamespace()
+		if nsErr != nil {
+			return fmt.Errorf("get namespace status: %w", nsErr)
 		}
 		lastStatus = ns.Status
 		if lastStatus == "STOPPED" {

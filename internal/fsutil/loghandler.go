@@ -71,8 +71,10 @@ func (h *CleanLogHandler) Handle(_ context.Context, r slog.Record) error {
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	_, err := h.w.Write(buf)
-	return err
+	if _, err := h.w.Write(buf); err != nil {
+		return fmt.Errorf("write log: %w", err)
+	}
+	return nil
 }
 
 // WithAttrs returns a new handler with the given attributes pre-set.

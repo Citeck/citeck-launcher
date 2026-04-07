@@ -52,7 +52,7 @@ func ExtractTo(targetDir string) error {
 			perm = 0o755
 		}
 		if writeErr := os.WriteFile(destPath, data, perm); writeErr != nil {
-			return writeErr
+			return fmt.Errorf("write file %s: %w", destPath, writeErr)
 		}
 		// Explicit chmod — WriteFile respects umask which may strip execute bit
 		return os.Chmod(destPath, perm)

@@ -207,7 +207,7 @@ func (ss *SecretService) GetSecret(id string) (*Secret, error) {
 
 	sec, err := ss.store.GetSecret(id)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get secret %s: %w", id, err)
 	}
 
 	if ss.encrypted {
@@ -240,17 +240,27 @@ func (ss *SecretService) SaveSecret(secret Secret) error {
 		}
 		secret.Value = enc
 	}
-	return ss.store.SaveSecret(secret)
+	if err := ss.store.SaveSecret(secret); err != nil {
+		return fmt.Errorf("save secret: %w", err)
+	}
+	return nil
 }
 
 // ListSecrets passes through to the underlying store (metadata only, no decryption).
 func (ss *SecretService) ListSecrets() ([]SecretMeta, error) {
-	return ss.store.ListSecrets()
+	metas, err := ss.store.ListSecrets()
+	if err != nil {
+		return nil, fmt.Errorf("list secrets: %w", err)
+	}
+	return metas, nil
 }
 
 // DeleteSecret passes through to the underlying store.
 func (ss *SecretService) DeleteSecret(id string) error {
-	return ss.store.DeleteSecret(id)
+	if err := ss.store.DeleteSecret(id); err != nil {
+		return fmt.Errorf("delete secret %s: %w", id, err)
+	}
+	return nil
 }
 
 // IsDefaultPassword returns true if the default password flag is set.

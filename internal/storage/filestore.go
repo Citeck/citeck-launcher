@@ -254,7 +254,10 @@ func (s *FileStore) SetStateValue(key, value string) error {
 	if err != nil {
 		return fmt.Errorf("marshal kv-state: %w", err)
 	}
-	return fsutil.AtomicWriteFile(s.kvStatePath(), data, 0o600)
+	if err = fsutil.AtomicWriteFile(s.kvStatePath(), data, 0o600); err != nil {
+		return fmt.Errorf("write kv-state: %w", err)
+	}
+	return nil
 }
 
 // Close is a no-op for FileStore (no resources to release).

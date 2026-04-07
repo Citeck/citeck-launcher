@@ -202,7 +202,7 @@ type ResolveResult struct {
 
 // resolveWorkspace loads workspace config from local repo/ dir or clones the default workspace repo.
 // Returns (config, repoDir) where repoDir is the directory the config was loaded from.
-func (r *Resolver) resolveWorkspace() (*WorkspaceConfig, string) {
+func (r *Resolver) resolveWorkspace() (cfg *WorkspaceConfig, repoDir string) {
 	// Priority 1: local repo/ dir (manual setup or workspace import)
 	localRepoDir := filepath.Join(r.dataDir, "repo")
 	if wsCfg := loadWorkspaceConfig(localRepoDir); wsCfg != nil {
@@ -247,72 +247,14 @@ func (r *Resolver) Resolve(ref Ref) (*ResolveResult, error) {
 	// Step 2: Resolve the actual repo URL for ref.Repo from workspace config
 	bundleRepo := findBundleRepo(wsCfg, ref.Repo)
 
-	// Use local workspace dir for bundles when:
-	// - bundleRepo.URL is empty (explicit "use workspace repo"), OR
-	// - workspace was loaded from local data/repo/ and the bundle path exists there
-	//   (covers downloaded zip archives where bundleRepo.URL points to the source repo)
-	localBundles := false
-	if wsRepoDir != "" && bundleRepo != nil {
-		if bundleRepo.URL == "" {
-			localBundles = true
-		} else {
-			// Check if bundle files already exist in the workspace dir
-			bundlePath := wsRepoDir
-			if bundleRepo.Path != "" {
-				bundlePath = filepath.Join(wsRepoDir, bundleRepo.Path)
-			}
-			if info, err := os.Stat(bundlePath); err == nil && info.IsDir() {
-				localBundles = true
-			}
-		}
-	}
+	localBundles := shouldUseLocalBundles(wsRepoDir, bundleRepo)
 
 	var repoDir string
 	if localBundles {
 		repoDir = wsRepoDir
 		slog.Info("Using workspace repo for bundles (local)", "repo", ref.Repo, "dir", wsRepoDir)
 	} else {
-		repoDir = filepath.Join(r.dataDir, "bundles", ref.Repo)
-		repoURL := defaultBundlesRepo
-		repoBranch := defaultBundlesBranch
-		var repoToken string
-
-		if bundleRepo != nil {
-			if bundleRepo.URL != "" {
-				repoURL = bundleRepo.URL
-			}
-			if bundleRepo.Branch != "" {
-				repoBranch = bundleRepo.Branch
-			}
-			if r.tokenLookup != nil {
-				if bundleRepo.AuthType != "" {
-					repoToken = r.tokenLookup(bundleRepo.AuthType)
-				}
-				// Fallback: try GIT_TOKEN type (covers Kotlin-migrated secrets with scope ws:{wsId}:repo)
-				if repoToken == "" {
-					repoToken = r.tokenLookup("GIT_TOKEN")
-				}
-			}
-		}
-
-		if !r.offline {
-			// Step 3: Clone or pull the actual bundle repo
-			pullPeriod := defaultPullPeriod
-			if bundleRepo != nil && bundleRepo.PullPeriod != "" {
-				if d, err := time.ParseDuration(bundleRepo.PullPeriod); err == nil && d > 0 {
-					pullPeriod = d
-				}
-			}
-			gitCtx2, gitCancel2 := context.WithTimeout(context.Background(), 2*time.Minute)
-			err := git.CloneOrPullWithAuth(gitCtx2, git.RepoOpts{
-				URL: repoURL, Branch: repoBranch, DestDir: repoDir,
-				Token: repoToken, PullPeriod: pullPeriod,
-			})
-			gitCancel2()
-			if err != nil {
-				slog.Warn("Failed to sync bundle repo", "repo", ref.Repo, "err", err)
-			}
-		}
+		repoDir = r.syncBundleRepo(ref.Repo, bundleRepo)
 	}
 
 	// Build alias → canonical name map
@@ -343,6 +285,79 @@ func (r *Resolver) Resolve(ref Ref) (*ResolveResult, error) {
 		return nil, err
 	}
 	return &ResolveResult{Bundle: def, Workspace: wsCfg}, nil
+}
+
+// shouldUseLocalBundles checks if bundle files should be read from the workspace dir
+// instead of cloning a separate git repo. Returns true when:
+// - bundleRepo.URL is empty (explicit "use workspace repo"), OR
+// - workspace dir already contains the bundle path on disk
+//   (covers downloaded zip archives where bundleRepo.URL points to the source repo).
+func shouldUseLocalBundles(wsRepoDir string, bundleRepo *BundlesRepo) bool {
+	if wsRepoDir == "" || bundleRepo == nil {
+		return false
+	}
+	if bundleRepo.URL == "" {
+		return true
+	}
+	bundlePath := wsRepoDir
+	if bundleRepo.Path != "" {
+		bundlePath = filepath.Join(wsRepoDir, bundleRepo.Path)
+	}
+	info, err := os.Stat(bundlePath)
+	return err == nil && info.IsDir()
+}
+
+// syncBundleRepo clones or pulls the bundle git repository and returns its local directory.
+func (r *Resolver) syncBundleRepo(repoID string, bundleRepo *BundlesRepo) string {
+	repoDir := filepath.Join(r.dataDir, "bundles", repoID)
+	repoURL := defaultBundlesRepo
+	repoBranch := defaultBundlesBranch
+	var repoToken string
+
+	if bundleRepo != nil {
+		if bundleRepo.URL != "" {
+			repoURL = bundleRepo.URL
+		}
+		if bundleRepo.Branch != "" {
+			repoBranch = bundleRepo.Branch
+		}
+		repoToken = r.lookupRepoToken(bundleRepo)
+	}
+
+	if !r.offline {
+		pullPeriod := defaultPullPeriod
+		if bundleRepo != nil && bundleRepo.PullPeriod != "" {
+			if d, err := time.ParseDuration(bundleRepo.PullPeriod); err == nil && d > 0 {
+				pullPeriod = d
+			}
+		}
+		gitCtx, gitCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		err := git.CloneOrPullWithAuth(gitCtx, git.RepoOpts{
+			URL: repoURL, Branch: repoBranch, DestDir: repoDir,
+			Token: repoToken, PullPeriod: pullPeriod,
+		})
+		gitCancel()
+		if err != nil {
+			slog.Warn("Failed to sync bundle repo", "repo", repoID, "err", err)
+		}
+	}
+	return repoDir
+}
+
+// lookupRepoToken returns an auth token for the given bundle repo using the token lookup func.
+func (r *Resolver) lookupRepoToken(bundleRepo *BundlesRepo) string {
+	if r.tokenLookup == nil {
+		return ""
+	}
+	var token string
+	if bundleRepo.AuthType != "" {
+		token = r.tokenLookup(bundleRepo.AuthType)
+	}
+	// Fallback: try GIT_TOKEN type (covers Kotlin-migrated secrets with scope ws:{wsId}:repo)
+	if token == "" {
+		token = r.tokenLookup("GIT_TOKEN")
+	}
+	return token
 }
 
 func loadWorkspaceConfig(repoDir string) *WorkspaceConfig {

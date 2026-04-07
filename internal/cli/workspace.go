@@ -57,7 +57,7 @@ func runWorkspaceImport(_ *cobra.Command, args []string) error {
 			var answer string
 			fmt.Scanln(&answer) //nolint:errcheck // best-effort prompt
 			if !strings.EqualFold(answer, "y") && !strings.EqualFold(answer, "yes") {
-				return fmt.Errorf("cancelled")
+				return fmt.Errorf("canceled")
 			}
 		}
 		if err := os.RemoveAll(destDir); err != nil {
@@ -184,7 +184,7 @@ func extractFile(f *zip.File, target string) error {
 	}
 	defer rc.Close()
 
-	out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, f.Mode().Perm()|0o600)
+	out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, f.Mode().Perm()|0o600) //nolint:gosec // G304: target validated against destDir (zip slip protection above)
 	if err != nil {
 		return err //nolint:wrapcheck // thin wrapper
 	}

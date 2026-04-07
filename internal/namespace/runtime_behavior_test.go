@@ -11,7 +11,6 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/docker"
-	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 )
 
@@ -70,12 +69,12 @@ func (m *mockDocker) StopAndRemoveContainer(ctx context.Context, name string, ti
 	return nil
 }
 
-func (m *mockDocker) GetContainers(ctx context.Context) ([]dtypes.Container, error) {
+func (m *mockDocker) GetContainers(ctx context.Context) ([]container.Summary, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	result := make([]dtypes.Container, 0, len(m.containers))
+	result := make([]container.Summary, 0, len(m.containers))
 	for name, c := range m.containers {
-		result = append(result, dtypes.Container{
+		result = append(result, container.Summary{
 			ID:     c.id,
 			Names:  []string{"/" + m.ContainerName(name)},
 			Labels: c.labels,
@@ -85,10 +84,10 @@ func (m *mockDocker) GetContainers(ctx context.Context) ([]dtypes.Container, err
 	return result, nil
 }
 
-func (m *mockDocker) InspectContainer(ctx context.Context, id string) (dtypes.ContainerJSON, error) {
-	return dtypes.ContainerJSON{
-		ContainerJSONBase: &dtypes.ContainerJSONBase{
-			State: &dtypes.ContainerState{Status: "running", Running: true, StartedAt: time.Now().Format(time.RFC3339)},
+func (m *mockDocker) InspectContainer(ctx context.Context, id string) (container.InspectResponse, error) {
+	return container.InspectResponse{
+		ContainerJSONBase: &container.ContainerJSONBase{
+			State: &container.State{Status: "running", Running: true, StartedAt: time.Now().Format(time.RFC3339)},
 		},
 		Config: &container.Config{Labels: map[string]string{}},
 	}, nil

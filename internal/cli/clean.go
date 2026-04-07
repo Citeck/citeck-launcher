@@ -41,161 +41,7 @@ func newCleanCmd() *cobra.Command {
 		Short: "Clean up orphaned containers and volumes",
 		Long:  "Scan for Docker containers and volume directories that belong to namespaces that no longer exist.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			scanCtx, scanCancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer scanCancel()
-
-			// Build set of known namespace IDs
-			knownNS, err := knownNamespaceIDs()
-			if err != nil {
-				return fmt.Errorf("list namespaces: %w", err)
-			}
-
-			dc, err := docker.NewClient("", "")
-			if err != nil {
-				return fmt.Errorf("docker: %w", err)
-			}
-			defer dc.Close()
-
-			// Find orphan containers
-			orphans, err := findOrphanContainers(scanCtx, dc, knownNS)
-			if err != nil {
-				return fmt.Errorf("scan containers: %w", err)
-			}
-
-			// Find orphan volume dirs
-			var orphanVols []orphanVolumeDir
-			if volumes {
-				orphanVols = findOrphanVolumeDirs(knownNS)
-			}
-
-			// Find orphan networks
-			orphanNets, _ := findOrphanNetworks(scanCtx, dc, knownNS)
-
-			if len(orphans) == 0 && len(orphanVols) == 0 && len(orphanNets) == 0 && !images {
-				output.PrintResult(map[string]any{"orphans": 0}, func() {
-					output.PrintText("No orphaned resources found.")
-				})
-				return nil
-			}
-
-			// Print findings
-			output.PrintResult(map[string]any{
-				"containers": len(orphans),
-				"volumes":    len(orphanVols),
-				"networks":   len(orphanNets),
-				"dryRun":     !execute,
-			}, func() {
-				if len(orphans) > 0 {
-					output.PrintText(fmt.Sprintf("Orphaned containers: %d", len(orphans)))
-					for _, o := range orphans {
-						output.PrintText(fmt.Sprintf("  %-30s  ns=%-15s  %s  %s", o.Name, o.Namespace, o.State, o.Image))
-					}
-				}
-				if len(orphanVols) > 0 {
-					output.PrintText(fmt.Sprintf("Orphaned volume dirs: %d", len(orphanVols)))
-					for _, v := range orphanVols {
-						output.PrintText(fmt.Sprintf("  %-30s  ns=%s", v.Name, v.Namespace))
-					}
-				}
-				if len(orphanNets) > 0 {
-					output.PrintText(fmt.Sprintf("Orphaned networks: %d", len(orphanNets)))
-					for _, n := range orphanNets {
-						output.PrintText(fmt.Sprintf("  %s", n))
-					}
-				}
-				if !execute {
-					output.PrintText("\nRun with --execute to remove orphaned resources.")
-				}
-			})
-
-			if !execute {
-				if images {
-					output.PrintText("\nTo prune dangling Docker images, run with --execute.")
-				}
-				return nil
-			}
-
-			if !flagYes {
-				what := fmt.Sprintf("%d containers, %d volume dirs, %d networks", len(orphans), len(orphanVols), len(orphanNets))
-				if images {
-					what += " + dangling images"
-				}
-				fmt.Printf("Remove %s? [y/N]: ", what)
-				scanner := bufio.NewScanner(os.Stdin)
-				scanner.Scan()
-				answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
-				if answer != "y" && answer != "yes" {
-					output.PrintText("Aborted")
-					return nil
-				}
-			}
-
-			// Removal gets its own context — stopping containers can be slow
-			execCtx, execCancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			defer execCancel()
-
-			// Remove orphan containers
-			removed := 0
-			failed := 0
-			for _, o := range orphans {
-				if err := dc.StopAndRemoveContainer(execCtx, o.Name, 0); err != nil {
-					output.Errf("Failed to remove %s: %v", o.Name, err)
-					failed++
-				} else {
-					removed++
-				}
-			}
-
-			// Remove orphan networks
-			for _, netName := range orphanNets {
-				if err := dc.RemoveNetworkByName(execCtx, netName); err != nil {
-					output.Errf("Failed to remove network %s: %v", netName, err)
-					failed++
-				} else {
-					removed++
-				}
-			}
-
-			// Remove orphan volume dirs
-			volRemoved := 0
-			for _, v := range orphanVols {
-				if err := os.RemoveAll(v.Path); err != nil {
-					output.Errf("Failed to remove %s: %v", v.Path, err)
-					failed++
-				} else {
-					volRemoved++
-				}
-			}
-
-			// Prune dangling images
-			var reclaimedMB float64
-			if images {
-				pruneCtx, pruneCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-				reclaimed, pruneErr := dc.PruneUnusedImages(pruneCtx)
-				pruneCancel()
-				if pruneErr != nil {
-					output.Errf("Image prune failed: %v", pruneErr)
-					failed++
-				} else {
-					reclaimedMB = float64(reclaimed) / (1024 * 1024)
-				}
-			}
-
-			jsonResult := map[string]any{
-				"removed":    removed,
-				"volRemoved": volRemoved,
-				"failed":     failed,
-			}
-			if images {
-				jsonResult["reclaimedMB"] = reclaimedMB
-			}
-			output.PrintResult(jsonResult, func() {
-				output.PrintText(fmt.Sprintf("Removed %d containers, %d volume dirs (%d failed)", removed, volRemoved, failed))
-				if images && reclaimedMB > 0 {
-					output.PrintText(fmt.Sprintf("Reclaimed %.1f MB from dangling images", reclaimedMB))
-				}
-			})
-			return nil
+			return runClean(execute, volumes, images)
 		},
 	}
 
@@ -204,6 +50,187 @@ func newCleanCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&images, "images", false, "Prune unused Docker images (dangling)")
 
 	return cmd
+}
+
+// cleanScanResult holds the results of scanning for orphaned resources.
+type cleanScanResult struct {
+	orphans    []orphanContainer
+	orphanVols []orphanVolumeDir
+	orphanNets []string
+}
+
+func runClean(execute, volumes, images bool) error {
+	scanCtx, scanCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer scanCancel()
+
+	knownNS, err := knownNamespaceIDs()
+	if err != nil {
+		return fmt.Errorf("list namespaces: %w", err)
+	}
+
+	dc, err := docker.NewClient("", "")
+	if err != nil {
+		return fmt.Errorf("docker: %w", err)
+	}
+	defer dc.Close()
+
+	scan, err := scanOrphans(scanCtx, dc, knownNS, volumes)
+	if err != nil {
+		return err
+	}
+
+	if len(scan.orphans) == 0 && len(scan.orphanVols) == 0 && len(scan.orphanNets) == 0 && !images {
+		output.PrintResult(map[string]any{"orphans": 0}, func() {
+			output.PrintText("No orphaned resources found.")
+		})
+		return nil
+	}
+
+	printOrphanFindings(scan, execute, images)
+
+	if !execute {
+		return nil
+	}
+
+	if !confirmCleanRemoval(scan, images) {
+		return nil
+	}
+
+	return executeCleanRemoval(dc, scan, images)
+}
+
+func scanOrphans(ctx context.Context, dc *docker.Client, knownNS map[string]bool, volumes bool) (cleanScanResult, error) {
+	var scan cleanScanResult
+	var err error
+
+	scan.orphans, err = findOrphanContainers(ctx, dc, knownNS)
+	if err != nil {
+		return scan, fmt.Errorf("scan containers: %w", err)
+	}
+
+	if volumes {
+		scan.orphanVols = findOrphanVolumeDirs(knownNS)
+	}
+
+	scan.orphanNets, _ = findOrphanNetworks(ctx, dc, knownNS)
+	return scan, nil
+}
+
+func printOrphanFindings(scan cleanScanResult, execute, images bool) {
+	output.PrintResult(map[string]any{
+		"containers": len(scan.orphans),
+		"volumes":    len(scan.orphanVols),
+		"networks":   len(scan.orphanNets),
+		"dryRun":     !execute,
+	}, func() {
+		if len(scan.orphans) > 0 {
+			output.PrintText(fmt.Sprintf("Orphaned containers: %d", len(scan.orphans)))
+			for _, o := range scan.orphans {
+				output.PrintText(fmt.Sprintf("  %-30s  ns=%-15s  %s  %s", o.Name, o.Namespace, o.State, o.Image))
+			}
+		}
+		if len(scan.orphanVols) > 0 {
+			output.PrintText(fmt.Sprintf("Orphaned volume dirs: %d", len(scan.orphanVols)))
+			for _, v := range scan.orphanVols {
+				output.PrintText(fmt.Sprintf("  %-30s  ns=%s", v.Name, v.Namespace))
+			}
+		}
+		if len(scan.orphanNets) > 0 {
+			output.PrintText(fmt.Sprintf("Orphaned networks: %d", len(scan.orphanNets)))
+			for _, n := range scan.orphanNets {
+				output.PrintText(fmt.Sprintf("  %s", n))
+			}
+		}
+		if !execute {
+			output.PrintText("\nRun with --execute to remove orphaned resources.")
+			if images {
+				output.PrintText("\nTo prune dangling Docker images, run with --execute.")
+			}
+		}
+	})
+}
+
+func confirmCleanRemoval(scan cleanScanResult, images bool) bool {
+	if flagYes {
+		return true
+	}
+	what := fmt.Sprintf("%d containers, %d volume dirs, %d networks", len(scan.orphans), len(scan.orphanVols), len(scan.orphanNets))
+	if images {
+		what += " + dangling images"
+	}
+	fmt.Printf("Remove %s? [y/N]: ", what)
+	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Scan()
+	answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
+	if answer != "y" && answer != "yes" {
+		output.PrintText("Aborted")
+		return false
+	}
+	return true
+}
+
+func executeCleanRemoval(dc *docker.Client, scan cleanScanResult, images bool) error {
+	execCtx, execCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer execCancel()
+
+	removed := 0
+	failed := 0
+	for _, o := range scan.orphans {
+		if err := dc.StopAndRemoveContainer(execCtx, o.Name, 0); err != nil {
+			output.Errf("Failed to remove %s: %v", o.Name, err)
+			failed++
+		} else {
+			removed++
+		}
+	}
+
+	for _, netName := range scan.orphanNets {
+		if err := dc.RemoveNetworkByName(execCtx, netName); err != nil {
+			output.Errf("Failed to remove network %s: %v", netName, err)
+			failed++
+		} else {
+			removed++
+		}
+	}
+
+	volRemoved := 0
+	for _, v := range scan.orphanVols {
+		if err := os.RemoveAll(v.Path); err != nil {
+			output.Errf("Failed to remove %s: %v", v.Path, err)
+			failed++
+		} else {
+			volRemoved++
+		}
+	}
+
+	var reclaimedMB float64
+	if images {
+		pruneCtx, pruneCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		reclaimed, pruneErr := dc.PruneUnusedImages(pruneCtx)
+		pruneCancel()
+		if pruneErr != nil {
+			output.Errf("Image prune failed: %v", pruneErr)
+			failed++
+		} else {
+			reclaimedMB = float64(reclaimed) / (1024 * 1024)
+		}
+	}
+
+	jsonResult := map[string]any{
+		"removed":    removed,
+		"volRemoved": volRemoved,
+		"failed":     failed,
+	}
+	if images {
+		jsonResult["reclaimedMB"] = reclaimedMB
+	}
+	output.PrintResult(jsonResult, func() {
+		output.PrintText(fmt.Sprintf("Removed %d containers, %d volume dirs (%d failed)", removed, volRemoved, failed))
+		if images && reclaimedMB > 0 {
+			output.PrintText(fmt.Sprintf("Reclaimed %.1f MB from dangling images", reclaimedMB))
+		}
+	})
+	return nil
 }
 
 func knownNamespaceIDs() (map[string]bool, error) {

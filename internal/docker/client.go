@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/config"
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
@@ -346,7 +345,7 @@ func (c *Client) StopAndRemoveContainer(ctx context.Context, name string, timeou
 }
 
 // GetContainers returns containers for this namespace.
-func (c *Client) GetContainers(ctx context.Context) ([]types.Container, error) {
+func (c *Client) GetContainers(ctx context.Context) ([]container.Summary, error) {
 	result, err := c.cli.ContainerList(ctx, container.ListOptions{
 		All: true,
 		Filters: filters.NewArgs(
@@ -361,7 +360,7 @@ func (c *Client) GetContainers(ctx context.Context) ([]types.Container, error) {
 
 // ListAllLauncherContainers returns ALL containers with the citeck.launcher label,
 // regardless of workspace/namespace. Used by the clean command to find orphans.
-func (c *Client) ListAllLauncherContainers(ctx context.Context) ([]types.Container, error) {
+func (c *Client) ListAllLauncherContainers(ctx context.Context) ([]container.Summary, error) {
 	result, err := c.cli.ContainerList(ctx, container.ListOptions{
 		All: true,
 		Filters: filters.NewArgs(
@@ -392,7 +391,7 @@ func (c *Client) CleanupStaleContainers(ctx context.Context) {
 }
 
 // InspectContainer returns container details.
-func (c *Client) InspectContainer(ctx context.Context, id string) (types.ContainerJSON, error) {
+func (c *Client) InspectContainer(ctx context.Context, id string) (container.InspectResponse, error) {
 	return c.cli.ContainerInspect(ctx, id) //nolint:wrapcheck // thin Docker SDK wrapper
 }
 
@@ -453,14 +452,14 @@ func (c *Client) ContainerLogsFollow(ctx context.Context, containerID string, ta
 
 // ImageExists checks if an image exists locally.
 func (c *Client) ImageExists(ctx context.Context, img string) bool {
-	_, _, err := c.cli.ImageInspectWithRaw(ctx, img)
+	_, err := c.cli.ImageInspect(ctx, img)
 	return err == nil
 }
 
 // GetImageDigest returns the RepoDigest for a locally available image.
 // Returns empty string if the image is not found or has no digest.
 func (c *Client) GetImageDigest(ctx context.Context, img string) string {
-	inspect, _, err := c.cli.ImageInspectWithRaw(ctx, img)
+	inspect, err := c.cli.ImageInspect(ctx, img)
 	if err != nil {
 		return ""
 	}
@@ -625,12 +624,12 @@ func (c *Client) GetContainerIP(ctx context.Context, containerID string) string 
 		return ep.IPAddress
 	}
 	// Fallback: first non-empty IP from any network
-	for _, net := range inspect.NetworkSettings.Networks {
-		if net.IPAddress != "" {
-			return net.IPAddress
+	for _, ep := range inspect.NetworkSettings.Networks {
+		if ep.IPAddress != "" {
+			return ep.IPAddress
 		}
 	}
-	return inspect.NetworkSettings.IPAddress
+	return ""
 }
 
 // ContainerStats returns resource usage stats for a container.

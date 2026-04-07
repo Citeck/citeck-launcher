@@ -99,7 +99,10 @@ func newStartCmd(version string) *cobra.Command {
 				if errors.Is(err, daemon.ErrShutdownRequested) {
 					return nil
 				}
-				return err
+				if err != nil {
+					return fmt.Errorf("daemon start: %w", err)
+				}
+				return nil
 			}
 
 			// Normal mode: resolve password, fork daemon, stream status
@@ -108,8 +111,8 @@ func newStartCmd(version string) *cobra.Command {
 				return err
 			}
 
-			if err := forkDaemon(password, desktop, noUI, offline); err != nil {
-				return err
+			if forkErr := forkDaemon(password, desktop, noUI, offline); forkErr != nil {
+				return forkErr
 			}
 
 			// Wait for daemon to be ready
@@ -166,9 +169,9 @@ func resolvePassword(desktop bool) (string, error) {
 	}
 
 	// Prompt for password
-	for attempt := 0; attempt < 3; attempt++ {
+	for range 3 {
 		fmt.Print("Master password (empty to reset): ") //nolint:forbidigo // CLI prompt
-		pwdBytes, err := term.ReadPassword(int(syscall.Stdin))
+		pwdBytes, err := term.ReadPassword(syscall.Stdin)
 		fmt.Println() //nolint:forbidigo // newline after password
 		if err != nil {
 			return "", fmt.Errorf("read password: %w", err)
@@ -195,7 +198,7 @@ func handlePasswordReset(svc *storage.SecretService) (string, error) {
 	n, _ := os.Stdin.Read(buf)
 	line := strings.TrimSpace(strings.ToLower(string(buf[:n])))
 	if line != "y" && line != "yes" {
-		return "", fmt.Errorf("reset cancelled")
+		return "", fmt.Errorf("reset canceled")
 	}
 
 	if err := svc.ResetSecrets(); err != nil {
@@ -203,7 +206,7 @@ func handlePasswordReset(svc *storage.SecretService) (string, error) {
 	}
 
 	fmt.Print("New master password (empty for default): ") //nolint:forbidigo // CLI prompt
-	pwdBytes, err := term.ReadPassword(int(syscall.Stdin))
+	pwdBytes, err := term.ReadPassword(syscall.Stdin)
 	fmt.Println() //nolint:forbidigo // newline after password
 	if err != nil {
 		return "", fmt.Errorf("read password: %w", err)
@@ -217,7 +220,7 @@ func handlePasswordReset(svc *storage.SecretService) (string, error) {
 	} else {
 		// Confirm password
 		fmt.Print("Confirm password: ") //nolint:forbidigo // CLI prompt
-		confirmBytes, err := term.ReadPassword(int(syscall.Stdin))
+		confirmBytes, err := term.ReadPassword(syscall.Stdin)
 		fmt.Println() //nolint:forbidigo // newline after password
 		if err != nil {
 			return "", fmt.Errorf("read confirmation: %w", err)
@@ -245,8 +248,8 @@ func forkDaemon(password string, desktop, noUI, offline bool) error {
 	if mkErr := os.MkdirAll(logDir, 0o755); mkErr != nil { //nolint:gosec // log dir needs 0o755
 		return fmt.Errorf("create log dir: %w", mkErr)
 	}
-	logFile, err := os.OpenFile(filepath.Join(logDir, "daemon.log"),
-		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644) //nolint:gosec // log file
+	logFile, err := os.OpenFile(filepath.Join(logDir, "daemon.log"), //nolint:gosec // G302: log file needs 0o644; G304: path from trusted logDir
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return fmt.Errorf("open log file: %w", err)
 	}
@@ -315,7 +318,10 @@ func runDaemonMode(version string, desktop, noUI, offline bool) error {
 	if errors.Is(err, daemon.ErrShutdownRequested) {
 		return nil
 	}
-	return err
+	if err != nil {
+		return fmt.Errorf("daemon start: %w", err)
+	}
+	return nil
 }
 
 // streamLiveStatus polls the daemon and shows an in-place table of app statuses.
