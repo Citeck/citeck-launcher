@@ -48,30 +48,7 @@ func newStartCmd(version string) *cobra.Command {
 			// If daemon is already running, send start command or stream status
 			if c := client.TryNew(clientOpts()); c != nil {
 				defer c.Close()
-
-				// App specified → start single app
-				if len(args) == 1 {
-					appName := args[0]
-					result, err := c.StartApp(appName)
-					if err != nil {
-						return fmt.Errorf("start %q: %w", appName, err)
-					}
-					output.PrintResult(result, func() {
-						output.PrintText(result.Message)
-					})
-					return nil
-				}
-
-				// No app → start namespace
-				result, err := c.StartNamespace()
-				if err != nil {
-					return fmt.Errorf("start namespace: %w", err)
-				}
-				output.PrintText("%s", result.Message)
-				if detach {
-					return nil
-				}
-				return streamLiveStatus(c, follow)
+				return startOnRunningDaemon(c, args, detach, follow)
 			}
 
 			// Daemon not running
@@ -331,6 +308,33 @@ func runDaemonMode(version string, desktop, noUI, offline bool) error {
 		return fmt.Errorf("daemon start: %w", err)
 	}
 	return nil
+}
+
+// startOnRunningDaemon handles start commands when the daemon is already running.
+func startOnRunningDaemon(c *client.DaemonClient, args []string, detach, follow bool) error {
+	// App specified → start single app
+	if len(args) == 1 {
+		appName := args[0]
+		result, err := c.StartApp(appName)
+		if err != nil {
+			return fmt.Errorf("start %q: %w", appName, err)
+		}
+		output.PrintResult(result, func() {
+			output.PrintText(result.Message)
+		})
+		return nil
+	}
+
+	// No app → start namespace
+	result, err := c.StartNamespace()
+	if err != nil {
+		return fmt.Errorf("start namespace: %w", err)
+	}
+	output.PrintText("%s", result.Message)
+	if detach {
+		return nil
+	}
+	return streamLiveStatus(c, follow)
 }
 
 // streamLiveStatus polls the daemon and shows an in-place table of app statuses.
