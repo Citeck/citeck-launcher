@@ -13,9 +13,10 @@
 - [x] CLI: `citeck clean --images` — удалить неиспользуемые dangling-образы
 - [ ] Автоочистка после upgrade (удалить образы предыдущей версии бандла)
 
-### 3. Welcome/Wizard в серверном режиме
-- [ ] Серверный режим без namespace: Web UI показывает Welcome с кнопкой "Create Namespace"
-- [ ] Wizard должен показывать доступные бандл-версии (из local repo или cloned bundles)
+### ~~3. Welcome/Wizard в серверном режиме~~ ✅ DONE
+- [x] CLI: `citeck start` в серверном режиме требует namespace.yml (→ `citeck install`)
+- [x] Web UI: серверный режим без namespace показывает Wizard
+- [x] Wizard: шаг выбора бандл-версии (из getBundles API)
 
 ### 4. README.md
 - [ ] Quick start: скачать бинарь → `citeck install` → `citeck start` → открыть UI
