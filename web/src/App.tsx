@@ -38,17 +38,18 @@ function Layout() {
   }, [fetchData])
 
   const hasNamespace = namespace !== null
-  // Server mode (desktop=false): always show Dashboard, never Welcome at root
-  // Desktop mode (desktop=true or unknown): show Welcome when no namespace
-  const showWelcomeAtRoot = isDesktop !== false && !hasNamespace
+  // Desktop mode: show Welcome when no namespace selected
+  // Server mode: show Wizard when no namespace configured (first-time setup)
+  const showWelcomeAtRoot = isDesktop && !hasNamespace
+  const showWizardAtRoot = !isDesktop && !hasNamespace
 
   return (
     <div className="h-screen bg-background flex flex-col overflow-hidden">
       <TabBar />
       <main className="flex-1 min-h-0 flex flex-col">
         <Routes>
-          {/* Root: Dashboard or Welcome depending on mode and namespace */}
-          <Route index element={<Safe>{showWelcomeAtRoot ? <Welcome /> : <Dashboard />}</Safe>} />
+          {/* Root: Dashboard, Welcome (desktop), or Wizard (server) depending on mode and namespace */}
+          <Route index element={<Safe>{showWelcomeAtRoot ? <Welcome /> : showWizardAtRoot ? <Wizard /> : <Dashboard />}</Safe>} />
 
           {/* Workspace-level pages (scrollable) */}
           <Route path="/welcome" element={<Scroll><Safe><Welcome /></Safe></Scroll>} />

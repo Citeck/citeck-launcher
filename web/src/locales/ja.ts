@@ -37,6 +37,7 @@ const ja: Translations = {
   // -- Wizard --
   'wizard.title': 'namespace \u3092\u4f5c\u6210',
   'wizard.step.name': '\u540d\u524d',
+  'wizard.step.bundle': 'バンドル',
   'wizard.step.auth': '\u8a8d\u8a3c',
   'wizard.step.users': '\u30e6\u30fc\u30b6\u30fc',
   'wizard.step.host': '\u30db\u30b9\u30c8\u540d',
@@ -66,6 +67,8 @@ const ja: Translations = {
   'wizard.port.hint': 'namespace \u306e\u30dd\u30fc\u30c8\u756a\u53f7\u3002',
   'wizard.pgadmin.label': 'PgAdmin',
   'wizard.pgadmin.hint': '\u30c7\u30fc\u30bf\u30d9\u30fc\u30b9\u7ba1\u7406\u7528\u306b PgAdmin \u3092\u6709\u52b9\u306b\u3057\u307e\u3059\u3002',
+  'wizard.bundle.label': 'バンドルバージョン',
+  'wizard.bundle.hint': 'デプロイするプラットフォームバージョンを選択してください。',
   'wizard.pgadmin.enable': 'PgAdmin \u3092\u6709\u52b9\u306b\u3059\u308b',
   'wizard.step.password': '\u30d1\u30b9\u30ef\u30fc\u30c9',
   'wizard.password.title': '\u30de\u30b9\u30bf\u30fc\u30d1\u30b9\u30ef\u30fc\u30c9',

@@ -75,6 +75,13 @@ func newStartCmd(version string) *cobra.Command {
 				return fmt.Errorf("daemon is not running — start it first with 'citeck start'")
 			}
 
+			// Server mode: require namespace.yml before starting
+			if !desktop {
+				if _, err := os.Stat(config.NamespaceConfigPath()); os.IsNotExist(err) {
+					return fmt.Errorf("no namespace configured\n\nRun 'citeck install' to set up your namespace first")
+				}
+			}
+
 			// Foreground mode: run daemon directly (backward compat)
 			if foreground {
 				password, err := resolvePassword(desktop)

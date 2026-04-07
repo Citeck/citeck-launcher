@@ -37,6 +37,7 @@ const en: Translations = {
   // -- Wizard --
   'wizard.title': 'Create Namespace',
   'wizard.step.name': 'Name',
+  'wizard.step.bundle': 'Bundle',
   'wizard.step.auth': 'Authentication',
   'wizard.step.users': 'Users',
   'wizard.step.host': 'Hostname',
@@ -66,6 +67,8 @@ const en: Translations = {
   'wizard.port.hint': 'The port number for the namespace.',
   'wizard.pgadmin.label': 'PgAdmin',
   'wizard.pgadmin.hint': 'Enable PgAdmin for database management.',
+  'wizard.bundle.label': 'Bundle Version',
+  'wizard.bundle.hint': 'Select the platform version to deploy.',
   'wizard.pgadmin.enable': 'Enable PgAdmin',
   'wizard.step.password': 'Password',
   'wizard.password.title': 'Master Password',
