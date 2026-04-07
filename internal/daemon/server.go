@@ -695,7 +695,9 @@ func Start(opts StartOptions) error {
 					MaxHeaderBytes: 1 << 20,
 				}
 				go func() {
-					slog.Info("Web UI available", "url", scheme+"://"+tcpAddr)
+					_, port, _ := net.SplitHostPort(tcpAddr)
+					displayHost := resolveServerCertHost(tcpAddr, nsCfg)
+					slog.Info("Web UI available", "url", scheme+"://"+displayHost+":"+port, "listen", tcpAddr)
 					if err := d.tcpServer.Serve(tcpListener); err != nil && err != http.ErrServerClosed {
 						slog.Error("TCP server error", "err", err)
 					}
