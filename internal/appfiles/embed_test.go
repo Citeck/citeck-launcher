@@ -90,7 +90,7 @@ func TestExtractTo_NonShFilesAre0644(t *testing.T) {
 	assert.Positive(t, nonShFiles, "should find at least one non-.sh file")
 }
 
-func TestExtractTo_SkipsExistingRegularFiles(t *testing.T) {
+func TestExtractTo_OverwritesWhenSizeDiffers(t *testing.T) {
 	targetDir := t.TempDir()
 
 	// First extraction
@@ -111,18 +111,49 @@ func TestExtractTo_SkipsExistingRegularFiles(t *testing.T) {
 	}
 	require.NotEmpty(t, targetPath)
 
-	// Overwrite with custom content
-	customContent := []byte("custom-user-content")
+	// Overwrite with different-size content → should be replaced on next extract
+	customContent := []byte("short")
 	require.NoError(t, os.WriteFile(targetPath, customContent, 0o644))
 
-	// Second extraction should NOT overwrite the existing file
 	require.NoError(t, ExtractTo(targetDir))
 
 	data, err := os.ReadFile(targetPath)
 	require.NoError(t, err)
-	assert.Equal(t, customContent, data,
-		"ExtractTo should not overwrite existing regular files")
-	assert.NotEqual(t, originalContent, data)
+	assert.Equal(t, originalContent, data,
+		"ExtractTo should overwrite files when size differs (updated embedded content)")
+}
+
+func TestExtractTo_KeepsSameSizeFiles(t *testing.T) {
+	targetDir := t.TempDir()
+	require.NoError(t, ExtractTo(targetDir))
+
+	embedded, err := GetFiles()
+	require.NoError(t, err)
+
+	var targetPath string
+	for relPath, content := range embedded {
+		if filepath.Ext(relPath) != ".sh" && len(content) > 0 {
+			targetPath = filepath.Join(targetDir, relPath)
+			break
+		}
+	}
+	require.NotEmpty(t, targetPath)
+
+	// Overwrite with same-size but different content → should NOT be replaced
+	fi, err := os.Stat(targetPath)
+	require.NoError(t, err)
+	sameSize := make([]byte, fi.Size())
+	for i := range sameSize {
+		sameSize[i] = 'X'
+	}
+	require.NoError(t, os.WriteFile(targetPath, sameSize, 0o644))
+
+	require.NoError(t, ExtractTo(targetDir))
+
+	data, err := os.ReadFile(targetPath)
+	require.NoError(t, err)
+	assert.Equal(t, sameSize, data,
+		"ExtractTo should not overwrite files when size matches")
 }
 
 func TestExtractTo_RemovesStaleDirAtFilePath(t *testing.T) {

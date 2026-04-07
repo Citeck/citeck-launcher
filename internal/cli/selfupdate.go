@@ -35,126 +35,182 @@ type githubAsset struct {
 
 func newSelfUpdateCmd(currentVersion string) *cobra.Command {
 	var check bool
+	var file string
 
 	cmd := &cobra.Command{
 		Use:   "self-update",
 		Short: "Update the launcher binary to the latest version",
-		Long:  "Check for and install the latest version from GitHub Releases.",
+		Long: `Check for and install the latest version from GitHub Releases.
+Use --file to install from a local binary (offline environments).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			release, err := fetchLatestRelease()
-			if err != nil {
-				return fmt.Errorf("check for updates: %w", err)
+			if file != "" {
+				return selfUpdateFromFile(file)
 			}
-
-			latestVersion := strings.TrimPrefix(release.TagName, "v")
-			if currentVersion == latestVersion {
-				output.PrintText("Already up to date (v%s)", currentVersion)
-				return nil
-			}
-
-			output.PrintText("Current: v%s → Latest: v%s", currentVersion, latestVersion)
-
-			if check {
-				return nil
-			}
-
-			// Find matching asset
-			assetName := fmt.Sprintf("citeck_%s_%s_%s", latestVersion, runtime.GOOS, runtime.GOARCH)
-			var downloadURL string
-			for _, a := range release.Assets {
-				if a.Name == assetName {
-					downloadURL = a.BrowserDownloadURL
-					break
-				}
-			}
-			if downloadURL == "" {
-				return fmt.Errorf("no binary found for %s/%s in release %s", runtime.GOOS, runtime.GOARCH, release.TagName)
-			}
-
-			// Resolve executable path early — needed for confirmation message
-			executable, execErr := os.Executable()
-			if execErr != nil {
-				return fmt.Errorf("resolve executable path: %w", execErr)
-			}
-
-			// Detect running daemon
-			daemonRunning := false
-			if c := client.TryNew(clientOpts()); c != nil {
-				daemonRunning = true
-				c.Close()
-			}
-
-			// Confirm before proceeding — explain what will happen
-			if !flagYes {
-				if daemonRunning {
-					output.PrintText("\nThis will: stop daemon → replace binary → start daemon")
-				} else {
-					output.PrintText("\nThis will: replace binary %s", executable)
-				}
-				if !confirmPrompt("Proceed? [Y/n]: ") {
-					output.PrintText("Canceled")
-					return nil
-				}
-			}
-
-			// Find checksums
-			var checksumsURL string
-			for _, a := range release.Assets {
-				if a.Name == "checksums.txt" {
-					checksumsURL = a.BrowserDownloadURL
-					break
-				}
-			}
-
-			// Download binary to temp file next to executable (same FS for atomic rename)
-			tmpPath := executable + ".update-tmp"
-
-			output.PrintText("Downloading %s...", assetName)
-			hash, err := downloadFile(downloadURL, tmpPath)
-			if err != nil {
-				_ = os.Remove(tmpPath)
-				return fmt.Errorf("download: %w", err)
-			}
-
-			// Verify checksum if available
-			if checksumsURL != "" {
-				if verifyErr := verifyChecksum(checksumsURL, assetName, hash); verifyErr != nil {
-					_ = os.Remove(tmpPath)
-					return verifyErr
-				}
-				output.PrintText("Checksum verified")
-			}
-
-			// Make executable
-			if chmodErr := os.Chmod(tmpPath, 0o755); chmodErr != nil { //nolint:gosec // binary needs 0o755
-				_ = os.Remove(tmpPath)
-				return fmt.Errorf("chmod: %w", chmodErr)
-			}
-
-			// Stop daemon before replacing binary
-			if daemonRunning {
-				stopDaemonForUpdate()
-			}
-
-			// Atomic replace
-			if renameErr := os.Rename(tmpPath, executable); renameErr != nil {
-				_ = os.Remove(tmpPath)
-				return fmt.Errorf("replace binary: %w (try running with sudo)", renameErr)
-			}
-
-			output.PrintText("Updated to v%s", latestVersion)
-
-			// Start daemon back
-			if daemonRunning {
-				startDaemonAfterUpdate()
-			}
-
-			return nil
+			return selfUpdateFromGitHub(currentVersion, check)
 		},
 	}
 
 	cmd.Flags().BoolVar(&check, "check", false, "Only check for updates, don't install")
+	cmd.Flags().StringVar(&file, "file", "", "Install from a local binary file (offline update)")
 	return cmd
+}
+
+func selfUpdateFromGitHub(currentVersion string, checkOnly bool) error {
+	release, err := fetchLatestRelease()
+	if err != nil {
+		return fmt.Errorf("check for updates: %w", err)
+	}
+
+	latestVersion := strings.TrimPrefix(release.TagName, "v")
+	if currentVersion == latestVersion {
+		output.PrintText("Already up to date (v%s)", currentVersion)
+		return nil
+	}
+
+	output.PrintText("Current: v%s → Latest: v%s", currentVersion, latestVersion)
+
+	if checkOnly {
+		return nil
+	}
+
+	// Find matching asset
+	assetName := fmt.Sprintf("citeck_%s_%s_%s", latestVersion, runtime.GOOS, runtime.GOARCH)
+	asset, checksumsAsset := findReleaseAssets(release, assetName)
+	if asset == nil {
+		return fmt.Errorf("no binary found for %s/%s in release %s", runtime.GOOS, runtime.GOARCH, release.TagName)
+	}
+
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve executable path: %w", err)
+	}
+
+	daemonRunning := isDaemonRunning()
+
+	if !confirmUpdate(executable, daemonRunning) {
+		return nil
+	}
+
+	// Download
+	tmpPath := executable + ".update-tmp"
+	output.PrintText("Downloading %s...", assetName)
+	hash, dlErr := downloadFile(asset.BrowserDownloadURL, tmpPath)
+	if dlErr != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("download: %w", dlErr)
+	}
+
+	// Verify checksum
+	if checksumsAsset != nil {
+		if verifyErr := verifyChecksum(checksumsAsset.BrowserDownloadURL, assetName, hash); verifyErr != nil {
+			_ = os.Remove(tmpPath)
+			return verifyErr
+		}
+		output.PrintText("Checksum verified")
+	}
+
+	return replaceBinary(tmpPath, executable, daemonRunning, latestVersion)
+}
+
+func selfUpdateFromFile(filePath string) error {
+	if _, err := os.Stat(filePath); err != nil {
+		return fmt.Errorf("file not found: %s", filePath)
+	}
+
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve executable path: %w", err)
+	}
+
+	daemonRunning := isDaemonRunning()
+
+	if !confirmUpdate(executable, daemonRunning) {
+		return nil
+	}
+
+	// Copy file to temp location next to executable (same FS for atomic rename)
+	tmpPath := executable + ".update-tmp"
+	src, err := os.Open(filePath) //nolint:gosec // user-specified path
+	if err != nil {
+		return fmt.Errorf("open %s: %w", filePath, err)
+	}
+	defer src.Close()
+	dst, err := os.Create(tmpPath) //nolint:gosec // temp file
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	if _, copyErr := io.Copy(dst, src); copyErr != nil {
+		_ = dst.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("copy binary: %w", copyErr)
+	}
+	if closeErr := dst.Close(); closeErr != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("flush: %w", closeErr)
+	}
+
+	return replaceBinary(tmpPath, executable, daemonRunning, "")
+}
+
+func findReleaseAssets(release *githubRelease, assetName string) (binary, checksums *githubAsset) {
+	for i := range release.Assets {
+		switch release.Assets[i].Name {
+		case assetName:
+			binary = &release.Assets[i]
+		case "checksums.txt":
+			checksums = &release.Assets[i]
+		}
+	}
+	return
+}
+
+func isDaemonRunning() bool {
+	if c := client.TryNew(clientOpts()); c != nil {
+		c.Close()
+		return true
+	}
+	return false
+}
+
+func confirmUpdate(executable string, daemonRunning bool) bool {
+	if flagYes {
+		return true
+	}
+	if daemonRunning {
+		output.PrintText("\nThis will: stop daemon → replace binary → start daemon")
+	} else {
+		output.PrintText("\nThis will: replace binary %s", executable)
+	}
+	return confirmPrompt("Proceed? [Y/n]: ")
+}
+
+// replaceBinary sets permissions, stops daemon, atomically replaces the binary, and restarts.
+func replaceBinary(tmpPath, executable string, daemonRunning bool, version string) error {
+	if chmodErr := os.Chmod(tmpPath, 0o755); chmodErr != nil { //nolint:gosec // binary needs 0o755
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("chmod: %w", chmodErr)
+	}
+
+	if daemonRunning {
+		stopDaemonForUpdate()
+	}
+
+	if renameErr := os.Rename(tmpPath, executable); renameErr != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("replace binary: %w (try running with sudo)", renameErr)
+	}
+
+	if version != "" {
+		output.PrintText("Updated to v%s", version)
+	} else {
+		output.PrintText("Binary replaced from file")
+	}
+
+	if daemonRunning {
+		startDaemonAfterUpdate()
+	}
+
+	return nil
 }
 
 func stopDaemonForUpdate() {

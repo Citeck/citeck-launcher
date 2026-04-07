@@ -13,7 +13,7 @@ import (
 var files embed.FS
 
 // ExtractTo copies all embedded appfiles to the target directory.
-// Files are only written if they don't already exist.
+// Files are overwritten if their content has changed (detected by size comparison).
 func ExtractTo(targetDir string) error {
 	err := fs.WalkDir(files, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -23,34 +23,35 @@ func ExtractTo(targetDir string) error {
 			return os.MkdirAll(filepath.Join(targetDir, path), 0o755) //nolint:gosec // G301: directories need 0o755 for Docker bind-mount access
 		}
 
+		data, readErr := files.ReadFile(path)
+		if readErr != nil {
+			return fmt.Errorf("read embedded file %s: %w", path, readErr)
+		}
+
 		destPath := filepath.Join(targetDir, path)
+		perm := os.FileMode(0o644)
+		if strings.HasSuffix(path, ".sh") {
+			perm = 0o755
+		}
 
 		// If a directory exists at the file path (stale Docker bind mount artifact), remove it
 		if fi, statErr := os.Stat(destPath); statErr == nil {
 			if fi.IsDir() {
 				_ = os.RemoveAll(destPath)
-			} else {
-				// Fix permissions on existing .sh files (may have been written as 0644 by older version)
+			} else if fi.Size() == int64(len(data)) {
+				// Same size — likely unchanged, just fix permissions if needed
 				if strings.HasSuffix(path, ".sh") && fi.Mode().Perm() != 0o755 {
-					_ = os.Chmod(destPath, 0o755) //nolint:gosec // G302: shell scripts need 0o755 for execution
+					_ = os.Chmod(destPath, perm) //nolint:gosec // G302: shell scripts need 0o755
 				}
-				return nil // regular file already exists, skip
+				return nil
 			}
+			// Size differs → file was updated in new version, overwrite below
 		}
 
-		data, err := files.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("read embedded file %s: %w", path, err)
+		if mkdirErr := os.MkdirAll(filepath.Dir(destPath), 0o755); mkdirErr != nil { //nolint:gosec // G301: directories need 0o755 for Docker bind-mount access
+			return fmt.Errorf("create parent dir for %s: %w", destPath, mkdirErr)
 		}
 
-		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil { //nolint:gosec // G301: directories need 0o755 for Docker bind-mount access
-			return fmt.Errorf("create parent dir for %s: %w", destPath, err)
-		}
-
-		perm := os.FileMode(0o644)
-		if strings.HasSuffix(path, ".sh") {
-			perm = 0o755
-		}
 		if writeErr := os.WriteFile(destPath, data, perm); writeErr != nil {
 			return fmt.Errorf("write file %s: %w", destPath, writeErr)
 		}
