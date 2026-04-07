@@ -107,7 +107,7 @@ func newSnapshotExportCmd() *cobra.Command {
 			}
 
 			// Export (always wait for completion)
-			err = snapshotWithWait(c, true, "snapshot_complete", "snapshot_error", func() (*api.ActionResultDto, error) {
+			err = snapshotAndWait(c,"snapshot_complete", "snapshot_error", func() (*api.ActionResultDto, error) {
 				return c.ExportSnapshot(dir)
 			})
 			if err != nil {
@@ -138,17 +138,19 @@ func newSnapshotExportCmd() *cobra.Command {
 // waitForStopped polls namespace status until it's STOPPED or timeout.
 func waitForStopped(c *client.DaemonClient, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
+	lastStatus := ""
 	for time.Now().Before(deadline) {
 		ns, err := c.GetNamespace()
 		if err != nil {
 			return err
 		}
-		if ns.Status == "STOPPED" {
+		lastStatus = ns.Status
+		if lastStatus == "STOPPED" {
 			return nil
 		}
 		time.Sleep(2 * time.Second)
 	}
-	return fmt.Errorf("timeout waiting for namespace to stop")
+	return fmt.Errorf("timeout waiting for namespace to stop (stuck at %s)", lastStatus)
 }
 
 func newSnapshotImportCmd() *cobra.Command {
@@ -163,7 +165,7 @@ func newSnapshotImportCmd() *cobra.Command {
 			}
 			defer c.Close()
 
-			return snapshotWithWait(c, true, "snapshot_complete", "snapshot_error", func() (*api.ActionResultDto, error) {
+			return snapshotAndWait(c,"snapshot_complete", "snapshot_error", func() (*api.ActionResultDto, error) {
 				return c.ImportSnapshot(args[0])
 			})
 		},
@@ -171,31 +173,22 @@ func newSnapshotImportCmd() *cobra.Command {
 	return cmd
 }
 
-// snapshotWithWait subscribes to SSE events BEFORE sending the command to avoid
-// race conditions where the event fires before the subscription is ready.
-func snapshotWithWait(c *client.DaemonClient, wait bool, successType, errorType string, action func() (*api.ActionResultDto, error)) error {
-	var events <-chan api.EventDto
-	if wait {
-		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
-		defer cancel()
-		var err error
-		events, err = c.StreamEvents(ctx)
-		if err != nil {
-			return fmt.Errorf("connect to event stream: %w", err)
-		}
+// snapshotAndWait subscribes to SSE events BEFORE sending the command (to avoid
+// race where event fires before subscription), executes the action, then waits
+// for a completion or error event.
+func snapshotAndWait(c *client.DaemonClient, successType, errorType string, action func() (*api.ActionResultDto, error)) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	defer cancel()
+	events, err := c.StreamEvents(ctx)
+	if err != nil {
+		return fmt.Errorf("connect to event stream: %w", err)
 	}
 
 	result, err := action()
 	if err != nil {
 		return err
 	}
-	output.PrintResult(result, func() {
-		output.PrintText("%s", result.Message)
-	})
-
-	if !wait {
-		return nil
-	}
+	output.PrintText("%s", result.Message)
 
 	output.PrintText("Waiting for completion...")
 	for evt := range events {

@@ -181,12 +181,15 @@ func newCleanCmd() *cobra.Command {
 				}
 			}
 
-			output.PrintResult(map[string]any{
+			jsonResult := map[string]any{
 				"removed":    removed,
 				"volRemoved": volRemoved,
 				"failed":     failed,
-				"reclaimed":  reclaimedMB,
-			}, func() {
+			}
+			if images {
+				jsonResult["reclaimedMB"] = reclaimedMB
+			}
+			output.PrintResult(jsonResult, func() {
 				output.PrintText(fmt.Sprintf("Removed %d containers, %d volume dirs (%d failed)", removed, volRemoved, failed))
 				if images && reclaimedMB > 0 {
 					output.PrintText(fmt.Sprintf("Reclaimed %.1f MB from dangling images", reclaimedMB))
