@@ -45,11 +45,35 @@ jobs:
           VERSION="${VERSION_TAG#v}"
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.version=${VERSION}" -o "citeck_${VERSION}_linux_amd64" ./cmd/citeck
 
+      - name: Extract changelog
+        id: changelog
+        env:
+          VERSION_TAG: ${{ github.ref_name }}
+        run: |
+          TAG_VERSION="${VERSION_TAG#v}"
+          body=$(awk -v ver="$TAG_VERSION" '
+            $0 ~ "^# Release "ver {
+              print_line=1
+              next
+            }
+            print_line && $0 ~ "^# Release " {
+              exit
+            }
+            print_line { print }
+          ' CHANGELOG.md)
+          if [ -z "$body" ]; then
+            body="See CHANGELOG.md for details."
+          fi
+          echo "body<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$body" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
       - name: Create draft release
         uses: softprops/action-gh-release@v2
         with:
           draft: true
+          name: ${{ github.ref_name }}
+          body: ${{ steps.changelog.outputs.body }}
           files: citeck_*
-          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
