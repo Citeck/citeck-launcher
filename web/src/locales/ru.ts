@@ -37,7 +37,6 @@ const ru: Translations = {
   // -- Wizard --
   'wizard.title': 'Создание namespace',
   'wizard.step.name': 'Имя',
-  'wizard.step.bundle': 'Бандл',
   'wizard.step.auth': 'Аутентификация',
   'wizard.step.users': 'Пользователи',
   'wizard.step.host': 'Хост',
@@ -67,8 +66,6 @@ const ru: Translations = {
   'wizard.port.hint': 'Номер порта для namespace.',
   'wizard.pgadmin.label': 'PgAdmin',
   'wizard.pgadmin.hint': 'Включить PgAdmin для управления базой данных.',
-  'wizard.bundle.label': 'Версия бандла',
-  'wizard.bundle.hint': 'Выберите версию платформы для развёртывания.',
   'wizard.pgadmin.enable': 'Включить PgAdmin',
   'wizard.step.password': 'Пароль',
   'wizard.password.title': 'Мастер-пароль',

@@ -1,14 +1,12 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router'
-import { createNamespace, getBundles } from '../lib/api'
-import type { BundleInfoDto } from '../lib/types'
+import { createNamespace } from '../lib/api'
 import { toast } from '../lib/toast'
 import { useTranslation } from '../lib/i18n'
 import { Wand2, ChevronLeft, ChevronRight, Check } from 'lucide-react'
 
 interface WizardState {
   name: string
-  bundleRef: string
   authType: 'BASIC' | 'KEYCLOAK'
   users: string
   host: string
@@ -19,7 +17,6 @@ interface WizardState {
 
 const STEPS = [
   { labelKey: 'wizard.step.name', key: 'name' },
-  { labelKey: 'wizard.step.bundle', key: 'bundle' },
   { labelKey: 'wizard.step.auth', key: 'auth' },
   { labelKey: 'wizard.step.users', key: 'users' },
   { labelKey: 'wizard.step.host', key: 'host' },
@@ -39,10 +36,8 @@ export function Wizard() {
   const [step, setStep] = useState(0)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [bundles, setBundles] = useState<BundleInfoDto[]>([])
   const [state, setState] = useState<WizardState>({
     name: '',
-    bundleRef: '',
     authType: 'BASIC',
     users: '',
     host: 'localhost',
@@ -51,21 +46,9 @@ export function Wizard() {
     pgAdmin: false,
   })
 
-  // Fetch available bundles on mount
-  useEffect(() => {
-    getBundles().then((b) => {
-      setBundles(b)
-      // Pre-select first available version
-      if (b.length > 0 && b[0].versions.length > 0) {
-        setState((prev) => ({ ...prev, bundleRef: `${b[0].repo}:${b[0].versions[0]}` }))
-      }
-    }).catch(() => {})
-  }, [])
-
-  // Skip users step if auth is KEYCLOAK; skip bundle if none available
+  // Skip users step if auth is KEYCLOAK
   const visibleSteps = STEPS.filter((s) => {
     if (s.key === 'users' && state.authType !== 'BASIC') return false
-    if (s.key === 'bundle' && bundles.length === 0) return false
     return true
   })
 
@@ -90,11 +73,6 @@ export function Wizard() {
         .split(',')
         .map((u) => u.trim())
         .filter(Boolean)
-      // Parse bundleRef "repo:version" into repo + key
-      const parts = state.bundleRef.split(':')
-      const bundleRepo = parts[0] || ''
-      const bundleKey = parts.slice(1).join(':') || ''
-
       await createNamespace({
         name: state.name.trim(),
         authType: state.authType,
@@ -104,8 +82,8 @@ export function Wizard() {
         tlsEnabled: state.tls !== 'none',
         tlsMode: state.tls !== 'none' ? state.tls : undefined,
         pgAdminEnabled: state.pgAdmin,
-        bundleRepo,
-        bundleKey,
+        bundleRepo: '',
+        bundleKey: '',
         useDefaultPassword: true,
       })
       toast(t('wizard.success'), 'success')
@@ -130,7 +108,6 @@ export function Wizard() {
 
   const reviewItems: { label: string; value: string }[] = [
     { label: t('wizard.step.name'), value: state.name },
-    ...(state.bundleRef ? [{ label: t('wizard.step.bundle'), value: state.bundleRef }] : []),
     { label: t('wizard.step.auth'), value: state.authType },
     ...(state.authType === 'BASIC' && state.users ? [{ label: t('wizard.step.users'), value: state.users }] : []),
     { label: t('wizard.step.host'), value: state.host || 'localhost' },
@@ -183,25 +160,6 @@ export function Wizard() {
               placeholder={t('wizard.name.placeholder')}
               autoFocus
             />
-          </div>
-        )}
-
-        {currentStep.key === 'bundle' && (
-          <div>
-            <label className="block text-sm font-medium mb-1">{t('wizard.bundle.label')}</label>
-            <p className="text-xs text-muted-foreground mb-2">{t('wizard.bundle.hint')}</p>
-            <select
-              className="w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary"
-              value={state.bundleRef}
-              onChange={(e) => update('bundleRef', e.target.value)}
-            >
-              {bundles.flatMap((b) =>
-                b.versions.map((v) => {
-                  const ref = `${b.repo}:${v}`
-                  return <option key={ref} value={ref}>{ref}</option>
-                })
-              )}
-            </select>
           </div>
         )}
 

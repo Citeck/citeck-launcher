@@ -37,7 +37,6 @@ const zh: Translations = {
   // -- Wizard --
   'wizard.title': '创建 namespace',
   'wizard.step.name': '名称',
-  'wizard.step.bundle': 'Bundle',
   'wizard.step.auth': '认证',
   'wizard.step.users': '用户',
   'wizard.step.host': '主机名',
@@ -67,8 +66,6 @@ const zh: Translations = {
   'wizard.port.hint': 'namespace 的端口号。',
   'wizard.pgadmin.label': 'PgAdmin',
   'wizard.pgadmin.hint': '启用 PgAdmin 进行数据库管理。',
-  'wizard.bundle.label': 'Bundle 版本',
-  'wizard.bundle.hint': '选择要部署的平台版本。',
   'wizard.pgadmin.enable': '启用 PgAdmin',
   'wizard.step.password': '密码',
   'wizard.password.title': '主密码',

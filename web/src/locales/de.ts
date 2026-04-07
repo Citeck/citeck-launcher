@@ -37,7 +37,6 @@ const de: Translations = {
   // -- Wizard --
   'wizard.title': 'Namespace erstellen',
   'wizard.step.name': 'Name',
-  'wizard.step.bundle': 'Bundle',
   'wizard.step.auth': 'Authentifizierung',
   'wizard.step.users': 'Benutzer',
   'wizard.step.host': 'Hostname',
@@ -67,8 +66,6 @@ const de: Translations = {
   'wizard.port.hint': 'Die Portnummer für den Namespace.',
   'wizard.pgadmin.label': 'PgAdmin',
   'wizard.pgadmin.hint': 'PgAdmin für die Datenbankverwaltung aktivieren.',
-  'wizard.bundle.label': 'Bundle-Version',
-  'wizard.bundle.hint': 'Wählen Sie die zu installierende Plattformversion.',
   'wizard.pgadmin.enable': 'PgAdmin aktivieren',
   'wizard.step.password': 'Passwort',
   'wizard.password.title': 'Master-Passwort',
