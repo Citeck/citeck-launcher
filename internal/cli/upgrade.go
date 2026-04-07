@@ -10,6 +10,7 @@ import (
 
 func newUpgradeCmd() *cobra.Command {
 	var list bool
+	var dryRun bool
 
 	cmd := &cobra.Command{
 		Use:   "upgrade [bundle-ref]",
@@ -27,6 +28,22 @@ func newUpgradeCmd() *cobra.Command {
 				return showBundleVersions(c)
 			}
 
+			if dryRun {
+				ns, nsErr := c.GetNamespace()
+				currentRef := ""
+				if nsErr == nil && ns != nil {
+					currentRef = ns.BundleRef
+				}
+				output.PrintText("Current: %s", currentRef)
+				output.PrintText("Target:  %s", args[0])
+				if currentRef == args[0] {
+					output.PrintText("No change — already on this version")
+				} else {
+					output.PrintText("Would update bundleRef and reload (containers with changed images will be recreated)")
+				}
+				return nil
+			}
+
 			result, err := c.UpgradeNamespace(args[0])
 			if err != nil {
 				return fmt.Errorf("upgrade: %w", err)
@@ -39,6 +56,7 @@ func newUpgradeCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVarP(&list, "list", "l", false, "List available bundle versions")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would change without applying")
 	return cmd
 }
 

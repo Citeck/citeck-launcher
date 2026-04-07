@@ -11,7 +11,7 @@ import (
 func newHealthCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "health",
-		Short: "System health check",
+		Short: "System health check (exit 0=healthy, 1=unhealthy)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client.New(clientOpts())
 			if err != nil {

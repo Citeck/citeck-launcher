@@ -15,18 +15,23 @@ func newRestartCmd() *cobra.Command {
 	var timeout int
 
 	cmd := &cobra.Command{
-		Use:   "restart <app>",
-		Short: "Restart an app",
-		Args:  cobra.ExactArgs(1),
+		Use:   "restart [app]",
+		Short: "Restart an app or the entire namespace",
+		Long:  "Restart a single app, or the entire namespace if no app specified (stop → start).",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			appName := args[0]
-
 			c, err := client.New(clientOpts())
 			if err != nil {
 				return fmt.Errorf("connect to daemon: %w", err)
 			}
 			defer c.Close()
 
+			// No app → restart entire namespace (stop + start)
+			if len(args) == 0 {
+				return restartNamespace(c)
+			}
+
+			appName := args[0]
 			result, err := c.RestartApp(appName)
 			if err != nil {
 				return fmt.Errorf("restart %q: %w", appName, err)
@@ -67,4 +72,22 @@ func newRestartCmd() *cobra.Command {
 	cmd.Flags().IntVar(&timeout, "timeout", 300, "Timeout in seconds (with --wait)")
 
 	return cmd
+}
+
+func restartNamespace(c *client.DaemonClient) error {
+	output.PrintText("Stopping namespace...")
+	if _, stopErr := c.StopNamespace(); stopErr != nil {
+		return fmt.Errorf("stop namespace: %w", stopErr)
+	}
+	if waitErr := waitForStopped(c, 120*time.Second); waitErr != nil {
+		return fmt.Errorf("waiting for stop: %w", waitErr)
+	}
+	output.PrintText("Namespace stopped")
+
+	output.PrintText("Starting namespace...")
+	if _, startErr := c.StartNamespace(); startErr != nil {
+		return fmt.Errorf("start namespace: %w", startErr)
+	}
+	output.PrintText("Namespace start requested")
+	return streamLiveStatus(c, false)
 }
