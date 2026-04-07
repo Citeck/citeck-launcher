@@ -3,7 +3,7 @@
 ## Current State
 
 **Binary:** 14MB single Go binary with embedded React web UI
-**CLI commands:** 23 total (incl. completion + validate), all support `-o json`
+**CLI commands:** 24 total (incl. completion + validate + self-update), all support `--format json`
 **Web UI:** 10 pages, Darcula/Lens dark theme + light theme, toast notifications
 **Tests:** 169 Go unit tests + 13 Vitest component tests + Playwright E2E
 **Auth:** mTLS for non-localhost Web UI access, no token auth

@@ -14,6 +14,7 @@ require (
 	golang.org/x/term v0.41.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.48.1
+	software.sslmate.com/src/go-pkcs12 v0.7.0
 )
 
 require (
@@ -88,5 +89,4 @@ require (
 	modernc.org/libc v1.70.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	software.sslmate.com/src/go-pkcs12 v0.7.0 // indirect
 )

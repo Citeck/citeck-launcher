@@ -718,7 +718,11 @@ func Start(opts StartOptions) error {
 		if !isLocalhostAddr(tcpAddr) {
 			scheme = "https"
 		}
-		readyURL = scheme + "://" + tcpAddr
+		host, port, _ := net.SplitHostPort(tcpAddr)
+		if host == "" || host == "0.0.0.0" || host == "::" {
+			host = detectOutboundIP()
+		}
+		readyURL = scheme + "://" + host + ":" + port
 	}
 
 	slog.Info("Citeck Daemon started",

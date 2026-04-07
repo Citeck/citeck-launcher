@@ -83,7 +83,7 @@ citeck completion bash|zsh|fish         Generate shell completion
 citeck uninstall                        Remove systemd service and config
 ```
 
-Global flags: `--host`, `--tls-cert`, `--tls-key`, `--server-cert`, `--insecure`, `--output json`.
+Global flags: `--host`, `--tls-cert`, `--tls-key`, `--server-cert`, `--insecure`, `--format json`.
 
 ## Architecture
 

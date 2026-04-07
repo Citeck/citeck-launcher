@@ -122,7 +122,7 @@ func newSnapshotExportCmd() *cobra.Command {
 	return cmd
 }
 
-// stopForSnapshot prompts the user (unless --yes) and stops the namespace for snapshot export.
+// stopForSnapshot prompts the user (unless --yes) and stops the namespace for a snapshot operation.
 func stopForSnapshot(c *client.DaemonClient) error {
 	if !flagYes {
 		fmt.Print("Namespace is running. Stop it? [Y/n]: ") //nolint:forbidigo // CLI prompt
@@ -130,7 +130,7 @@ func stopForSnapshot(c *client.DaemonClient) error {
 		scanner.Scan()
 		answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
 		if answer == "n" || answer == "no" {
-			return fmt.Errorf("export canceled — namespace must be stopped")
+			return fmt.Errorf("canceled — namespace must be stopped")
 		}
 	}
 	output.PrintText("Stopping namespace...")

@@ -55,7 +55,7 @@
 ## Snapshot improvements
 
 * `citeck snapshot export` auto-stops namespace, exports, then auto-starts
-* `citeck snapshot export --output /mnt/backup/` — write directly to specified directory
+* `citeck snapshot export --dir /mnt/backup/` — write directly to specified directory
 * Interactive prompts for output directory and stop confirmation (`--yes` skips)
 
 ## Docker image cleanup

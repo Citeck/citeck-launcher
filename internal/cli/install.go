@@ -312,13 +312,17 @@ func generateInstallClientCert() {
 	}
 
 	// Generate .p12 for browser import
-	p12Data, p12Err := tlsutil.EncodePKCS12(certPEM, keyPEM, "")
-	if p12Err == nil {
-		_ = fsutil.AtomicWriteFile(p12Path, p12Data, 0o600)
+	p12OK := false
+	if p12Data, p12Err := tlsutil.EncodePKCS12(certPEM, keyPEM, ""); p12Err == nil {
+		if writeErr := fsutil.AtomicWriteFile(p12Path, p12Data, 0o600); writeErr == nil {
+			p12OK = true
+		} else {
+			output.Errf("Warning: could not write .p12 file: %v", writeErr)
+		}
 	}
 
 	output.PrintText("  Certificate: %s", certPath)
-	if p12Err == nil {
+	if p12OK {
 		output.PrintText("  Browser P12: %s", p12Path)
 		output.PrintText("")
 		output.PrintText("Import %s into your browser to access the Web UI remotely.", filepath.Base(p12Path))

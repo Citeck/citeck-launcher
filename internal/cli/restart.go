@@ -28,7 +28,7 @@ func newRestartCmd() *cobra.Command {
 
 			// No app → restart entire namespace (stop + start)
 			if len(args) == 0 {
-				return restartNamespace(c)
+				return restartNamespace(c, time.Duration(timeout)*time.Second)
 			}
 
 			appName := args[0]
@@ -74,12 +74,12 @@ func newRestartCmd() *cobra.Command {
 	return cmd
 }
 
-func restartNamespace(c *client.DaemonClient) error {
+func restartNamespace(c *client.DaemonClient, stopTimeout time.Duration) error {
 	output.PrintText("Stopping namespace...")
 	if _, stopErr := c.StopNamespace(); stopErr != nil {
 		return fmt.Errorf("stop namespace: %w", stopErr)
 	}
-	if waitErr := waitForStopped(c, 120*time.Second); waitErr != nil {
+	if waitErr := waitForStopped(c, stopTimeout); waitErr != nil {
 		return fmt.Errorf("waiting for stop: %w", waitErr)
 	}
 	output.PrintText("Namespace stopped")

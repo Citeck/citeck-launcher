@@ -176,7 +176,7 @@ The launcher resolves bundles from git repositories configured in the workspace 
 
 | Flag | Description |
 |---|---|
-| `--output`, `-o` | Output format: `text` (default) or `json` |
+| `--format` | Output format: `text` (default) or `json` |
 | `--host` | Remote daemon host:port |
 | `--tls-cert` | Client certificate for mTLS |
 | `--tls-key` | Client private key for mTLS |
@@ -232,7 +232,7 @@ citeck upgrade community:2026.1
 citeck snapshot export
 
 # Write to specific directory
-citeck snapshot export --output /mnt/backup/
+citeck snapshot export --dir /mnt/backup/
 
 # Non-interactive (auto-stop/start, default dir)
 citeck snapshot export --yes

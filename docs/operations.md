@@ -92,7 +92,7 @@ citeck clean --images --volumes --execute
 citeck snapshot export
 
 # Specify output directory
-citeck snapshot export --output /mnt/backup/
+citeck snapshot export --dir /mnt/backup/
 
 # Non-interactive (default dir, auto-stop/start, no prompts)
 citeck snapshot export --yes

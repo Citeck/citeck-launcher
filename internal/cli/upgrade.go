@@ -29,19 +29,7 @@ func newUpgradeCmd() *cobra.Command {
 			}
 
 			if dryRun {
-				ns, nsErr := c.GetNamespace()
-				currentRef := ""
-				if nsErr == nil && ns != nil {
-					currentRef = ns.BundleRef
-				}
-				output.PrintText("Current: %s", currentRef)
-				output.PrintText("Target:  %s", args[0])
-				if currentRef == args[0] {
-					output.PrintText("No change — already on this version")
-				} else {
-					output.PrintText("Would update bundleRef and reload (containers with changed images will be recreated)")
-				}
-				return nil
+				return showUpgradeDryRun(c, args[0])
 			}
 
 			result, err := c.UpgradeNamespace(args[0])
@@ -90,5 +78,39 @@ func showBundleVersions(c *client.DaemonClient) error {
 			}
 		}
 	})
+	return nil
+}
+
+func showUpgradeDryRun(c *client.DaemonClient, targetRef string) error {
+	ns, nsErr := c.GetNamespace()
+	currentRef := ""
+	if nsErr == nil && ns != nil {
+		currentRef = ns.BundleRef
+	}
+	output.PrintText("Current: %s", currentRef)
+	output.PrintText("Target:  %s", targetRef)
+	if currentRef == targetRef {
+		output.PrintText("No change — already on this version")
+		return nil
+	}
+
+	// Verify target bundle exists
+	bundles, blErr := c.ListBundles()
+	if blErr != nil {
+		return fmt.Errorf("list bundles: %w", blErr)
+	}
+	found := false
+	for _, b := range bundles {
+		for _, v := range b.Versions {
+			if b.Repo+":"+v == targetRef {
+				found = true
+			}
+		}
+	}
+	if found {
+		output.PrintText("Would update bundleRef and reload (containers with changed images will be recreated)")
+	} else {
+		output.PrintText("Warning: bundle %s not found in available versions", targetRef)
+	}
 	return nil
 }

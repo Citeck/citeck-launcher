@@ -490,7 +490,7 @@ Bundle version upgrade + host/auth switching tested on remote server. 5 bugs fix
 - `PruneUnusedImages` added to Docker client (ImagesPrune with dangling filter)
 
 **Snapshot export improvements:**
-- `citeck snapshot export --output /path/` — daemon writes directly to specified directory
+- `citeck snapshot export --dir /path/` — daemon writes directly to specified directory
 - Auto stop/start: if namespace is running, CLI stops it, exports, then starts back
 - Interactive prompts for output dir and stop confirmation (`--yes` skips all)
 - `snapshotAndWait` replaces `snapshotWithWait` — always synchronous, no dead `wait` param

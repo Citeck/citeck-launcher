@@ -451,7 +451,7 @@ func generateObserver(ctx *NsGenContext) {
 	}
 
 	const (
-		// Observer ports: 17014–17018 (before Alfresco 17019, webapps 17020+)
+		// Observer ports: 17014–17017 (before ZK admin 17018, Alfresco 17019, webapps 17020+)
 		obsLogUDP   = 17014 // UDP log receiver
 		obsOTLPHTTP = 17015 // OTLP HTTP/protobuf receiver
 		obsHTTP     = 17016 // HTTP API + embedded UI
