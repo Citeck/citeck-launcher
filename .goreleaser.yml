@@ -13,11 +13,11 @@ builds:
       - -s -w -X main.version={{.Version}}
     goos:
       - linux
-      - darwin
-      - windows
+      # - darwin   # TODO: enable for desktop release
+      # - windows  # TODO: enable for desktop release
     goarch:
       - amd64
-      - arm64
+      # - arm64  # TODO: enable when needed
     env:
       - CGO_ENABLED=0
 
@@ -45,3 +45,4 @@ release:
   github:
     owner: citeck
     name: citeck-launcher
+  draft: true

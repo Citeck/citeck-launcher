@@ -1,4 +1,4 @@
-name: Release Go Binary
+name: Release Server Binary
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  release-server:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,84 +32,24 @@ jobs:
       - name: Embed web UI
         run: rm -rf internal/daemon/webdist && cp -r web/dist internal/daemon/webdist
 
-      - name: Run tests
+      - name: Run Go tests
         run: go test -race ./internal/...
 
       - name: Run web tests
         run: cd web && pnpm vitest run
 
-      - uses: goreleaser/goreleaser-action@v6
-        with:
-          version: latest
-          args: release --clean
+      - name: Build server binary
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  release-desktop:
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            goos: linux
-            goarch: amd64
-            artifact: citeck-desktop-linux-amd64
-            ext: ""
-          - os: macos-latest
-            goos: darwin
-            goarch: arm64
-            artifact: citeck-desktop-darwin-arm64
-            ext: ""
-          - os: macos-13
-            goos: darwin
-            goarch: amd64
-            artifact: citeck-desktop-darwin-amd64
-            ext: ""
-          - os: windows-latest
-            goos: windows
-            goarch: amd64
-            artifact: citeck-desktop-windows-amd64
-            ext: ".exe"
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
-      - name: Install Linux dependencies
-        if: matrix.goos == 'linux'
-        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
-
-      - name: Build web UI
-        run: cd web && pnpm install --frozen-lockfile && pnpm run build
-
-      - name: Build desktop binary
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "1"
+          VERSION_TAG: ${{ github.ref_name }}
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
-          go build -ldflags "-s -w -X main.version=${VERSION}" -o "${{ matrix.artifact }}${{ matrix.ext }}" ./cmd/citeck-desktop
+          VERSION="${VERSION_TAG#v}"
+          CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION}" -o citeck ./cmd/citeck
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}${{ matrix.ext }}
-
-      - name: Upload to release
+      - name: Create draft release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.artifact }}${{ matrix.ext }}
+          draft: true
+          files: citeck
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
