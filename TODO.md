@@ -18,10 +18,10 @@
 - [x] Web UI: серверный режим без namespace показывает Wizard
 - [x] Wizard: шаг выбора бандл-версии (из getBundles API)
 
-### 4. README.md
-- [ ] Quick start: скачать бинарь → `citeck install` → `citeck start` → открыть UI
-- [ ] Offline quick start: скачать бинарь + workspace.zip → `citeck install --workspace` → `citeck start`
-- [ ] Архитектура, CLI reference, ссылки на docs/
+### ~~4. README.md~~ ✅ DONE
+- [x] Quick start: download → `citeck install` → `citeck start` → Web UI
+- [x] Offline quick start: `citeck install --workspace`
+- [x] CLI reference (все команды), архитектура, ссылки на docs/
 
 ### ~~5. Обновить документацию под текущее состояние~~ ✅ DONE
 - [x] CLAUDE.md: Phase 18 added (upgrade, image cleanup, bundle listing fix, docs)
