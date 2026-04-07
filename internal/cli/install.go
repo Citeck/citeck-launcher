@@ -297,7 +297,35 @@ func runInstall(_ *cobra.Command, _ []string, workspaceZip string) error { //nol
 	setupSystemd(scanner)
 	setupFirewall(scanner, port)
 
-	output.PrintText("\nInstallation complete. Start the daemon with: citeck start --foreground")
+	output.PrintText("\nInstallation complete.")
+
+	// Offer to start immediately
+	startNow := flagYes
+	if !startNow {
+		answer := prompt(scanner, "Start Citeck now? [Y/n]", "y")
+		startNow = answer == "y" || answer == "Y" || answer == "yes" || answer == ""
+	}
+	if startNow {
+		output.PrintText("Starting...")
+		password, pwdErr := resolvePassword(false)
+		if pwdErr != nil {
+			output.Errf("Could not resolve password: %v. Start manually: citeck start", pwdErr)
+			return nil
+		}
+		if forkErr := forkDaemon(password, false, false, false); forkErr != nil {
+			output.Errf("Failed to start: %v. Start manually: citeck start", forkErr)
+			return nil
+		}
+		c, waitErr := waitForDaemon(30 * time.Second)
+		if waitErr != nil {
+			output.Errf("Daemon did not become ready: %v", waitErr)
+			return nil
+		}
+		defer c.Close()
+		return streamLiveStatus(c, false)
+	}
+
+	output.PrintText("Start manually: citeck start")
 	return nil
 }
 
