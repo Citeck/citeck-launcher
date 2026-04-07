@@ -695,8 +695,11 @@ func Start(opts StartOptions) error {
 					MaxHeaderBytes: 1 << 20,
 				}
 				go func() {
-					_, port, _ := net.SplitHostPort(tcpAddr)
-					displayHost := resolveServerCertHost(tcpAddr, nsCfg)
+					host, port, _ := net.SplitHostPort(tcpAddr)
+					displayHost := host
+					if host == "" || host == "0.0.0.0" || host == "::" {
+						displayHost = detectOutboundIP()
+					}
 					slog.Info("Web UI available", "url", scheme+"://"+displayHost+":"+port, "listen", tcpAddr)
 					if err := d.tcpServer.Serve(tcpListener); err != nil && err != http.ErrServerClosed {
 						slog.Error("TCP server error", "err", err)
@@ -912,6 +915,17 @@ func (d *Daemon) setupMTLS(ln net.Listener, handler http.Handler, nsCfg *namespa
 
 	slog.Info("mTLS enabled on Web UI", "trustedCerts", certCount)
 	return tls.NewListener(ln, tlsCfg), handler, true, nil
+}
+
+// detectOutboundIP returns the preferred outbound IP of this machine.
+func detectOutboundIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return "localhost"
+	}
+	defer conn.Close()
+	addr := conn.LocalAddr().(*net.UDPAddr)
+	return addr.IP.String()
 }
 
 // resolveServerCertHost determines the hostname for the server certificate SAN.
