@@ -72,7 +72,7 @@ func newDiagnoseCmd() *cobra.Command {
 			}
 
 			// Check 3: Docker (uses Docker SDK auto-detection, respects DOCKER_HOST)
-			dockerClient, dockerErr := docker.NewClient("diagnose")
+			dockerClient, dockerErr := docker.NewClient("", "diagnose")
 			if dockerErr != nil {
 				checks = append(checks, diagnoseCheck{
 					Name: "docker", Status: "error", Message: "Docker client error: " + dockerErr.Error(),

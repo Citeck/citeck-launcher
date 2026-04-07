@@ -33,24 +33,34 @@ func TestDockerLabelsMatchKotlin(t *testing.T) {
 	}
 }
 
-// TestContainerNameFormat verifies the container naming scheme.
-func TestContainerNameFormat(t *testing.T) {
+// TestContainerNameFormat_Server verifies server mode naming (no workspace).
+func TestContainerNameFormat_Server(t *testing.T) {
 	c := &Client{namespace: "prod"}
-
-	name := c.ContainerName("proxy")
-	expected := "citeck_proxy_prod"
-	if name != expected {
-		t.Errorf("ContainerName() = %q, want %q", name, expected)
+	if got := c.ContainerName("proxy"); got != "citeck_proxy_prod" {
+		t.Errorf("ContainerName() = %q, want %q", got, "citeck_proxy_prod")
 	}
 }
 
-// TestNetworkNameFormat verifies the network naming scheme.
-func TestNetworkNameFormat(t *testing.T) {
-	c := &Client{namespace: "prod"}
+// TestContainerNameFormat_Desktop verifies desktop mode naming (with workspace, Kotlin compat).
+func TestContainerNameFormat_Desktop(t *testing.T) {
+	c := &Client{workspace: "default", namespace: "prod"}
+	if got := c.ContainerName("proxy"); got != "citeck_proxy_prod_default" {
+		t.Errorf("ContainerName() = %q, want %q", got, "citeck_proxy_prod_default")
+	}
+}
 
-	name := c.NetworkName()
-	expected := "citeck_network_prod"
-	if name != expected {
-		t.Errorf("NetworkName() = %q, want %q", name, expected)
+// TestNetworkNameFormat_Server verifies server mode network naming.
+func TestNetworkNameFormat_Server(t *testing.T) {
+	c := &Client{namespace: "prod"}
+	if got := c.NetworkName(); got != "citeck_network_prod" {
+		t.Errorf("NetworkName() = %q, want %q", got, "citeck_network_prod")
+	}
+}
+
+// TestNetworkNameFormat_Desktop verifies desktop mode network naming (Kotlin compat).
+func TestNetworkNameFormat_Desktop(t *testing.T) {
+	c := &Client{workspace: "default", namespace: "prod"}
+	if got := c.NetworkName(); got != "citeck_network_prod_default" {
+		t.Errorf("NetworkName() = %q, want %q", got, "citeck_network_prod_default")
 	}
 }

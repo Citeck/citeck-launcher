@@ -40,12 +40,14 @@ const (
 // Client wraps the Docker SDK client with Citeck-specific operations.
 type Client struct {
 	cli       *client.Client
+	workspace string // empty in server mode, set in desktop mode for Kotlin compat
 	namespace string
 }
 
 // NewClient creates a Docker client.
-// It auto-detects the Docker socket: DOCKER_HOST env, rootless, or standard.
-func NewClient(namespace string) (*Client, error) {
+// workspace is used in container/network names for desktop mode backward compatibility.
+// Pass "" for server mode (names become citeck_{app}_{ns}).
+func NewClient(workspace, namespace string) (*Client, error) {
 	opts := []client.Opt{client.FromEnv, client.WithAPIVersionNegotiation()}
 
 	// If DOCKER_HOST is not set, try common socket locations
@@ -60,7 +62,7 @@ func NewClient(namespace string) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create docker client: %w", err)
 	}
-	return &Client{cli: cli, namespace: namespace}, nil
+	return &Client{cli: cli, workspace: workspace, namespace: namespace}, nil
 }
 
 // detectDockerSocket finds the Docker socket in common locations.
@@ -92,13 +94,28 @@ func (c *Client) Ping(ctx context.Context) error {
 }
 
 // ContainerName generates the Docker container name.
+// Server mode (workspace=""): citeck_{app}_{ns}
+// Desktop mode (workspace set): citeck_{app}_{ns}_{ws} (Kotlin backward compat)
 func (c *Client) ContainerName(appName string) string {
-	return fmt.Sprintf("citeck_%s_%s", appName, c.namespace)
+	if c.workspace == "" {
+		return fmt.Sprintf("citeck_%s_%s", appName, c.namespace)
+	}
+	return fmt.Sprintf("citeck_%s_%s_%s", appName, c.namespace, c.workspace)
 }
 
 // NetworkName returns the Docker network name for this namespace.
 func (c *Client) NetworkName() string {
-	return fmt.Sprintf("citeck_network_%s", c.namespace)
+	if c.workspace == "" {
+		return fmt.Sprintf("citeck_network_%s", c.namespace)
+	}
+	return fmt.Sprintf("citeck_network_%s_%s", c.namespace, c.workspace)
+}
+
+func (c *Client) composeProject() string {
+	if c.workspace == "" {
+		return fmt.Sprintf("citeck_launcher_%s", c.namespace)
+	}
+	return fmt.Sprintf("citeck_launcher_%s_%s", c.namespace, c.workspace)
 }
 
 // CreateNetwork creates a bridge network for the namespace.
@@ -122,7 +139,7 @@ func (c *Client) CreateNetwork(ctx context.Context) (string, error) {
 		Driver: "bridge",
 		Labels: map[string]string{
 			LabelLauncher:  "true",
-			LabelWorkspace: c.namespace, // legacy label, uses namespace as value
+			LabelWorkspace: c.workspace,
 			LabelNamespace: c.namespace,
 		},
 	})
@@ -221,7 +238,7 @@ func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef,
 		LabelNamespace:   c.namespace,
 		LabelAppName:     app.Name,
 		LabelAppHash:     app.GetHash(),
-		LabelComposeProj: fmt.Sprintf("citeck_launcher_%s", c.namespace),
+		LabelComposeProj: c.composeProject(),
 	}
 
 	// Memory limit
@@ -724,7 +741,7 @@ func (c *Client) RunUtilsContainer(ctx context.Context, cmd, binds []string) (ou
 		Cmd:   cmd,
 		Labels: map[string]string{
 			LabelLauncher:  "true",
-			LabelWorkspace: c.namespace, // legacy label, uses namespace as value
+			LabelWorkspace: c.workspace,
 			LabelNamespace: c.namespace,
 			LabelAppName:   "launcher-utils",
 		},

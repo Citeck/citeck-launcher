@@ -298,7 +298,12 @@ func Start(opts StartOptions) error {
 	}
 
 	// Create Docker client
-	dockerClient, err := docker.NewClient(nsID)
+	// Server mode: no workspace in container names. Desktop: include workspace for Kotlin compat.
+	dockerWorkspace := ""
+	if config.IsDesktopMode() {
+		dockerWorkspace = wsID
+	}
+	dockerClient, err := docker.NewClient(dockerWorkspace, nsID)
 	if err != nil {
 		return fmt.Errorf("create docker client: %w", err)
 	}
