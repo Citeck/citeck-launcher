@@ -325,9 +325,6 @@ func generateInstallClientCert() {
 		output.PrintText("Delete it from the server after copying.")
 	}
 	output.PrintText("")
-	output.PrintText("=== PRIVATE KEY (save this — it will NOT be shown again) ===")
-	output.PrintText("%s", strings.TrimSpace(string(keyPEM)))
-	output.PrintText("")
 	output.PrintText("For CLI access from a remote machine, copy the server cert after first start:")
 	output.PrintText("  scp server:%s ./server.crt", filepath.Join(config.WebUITLSDir(), "server.crt"))
 	output.PrintText("  citeck --host <server>:7088 --tls-cert admin.crt --tls-key admin.key --server-cert server.crt status")

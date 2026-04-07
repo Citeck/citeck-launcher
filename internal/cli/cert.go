@@ -179,9 +179,6 @@ func generateClientCert(name string, days int) error {
 			output.PrintText("Import %s into your browser to access the Web UI.", filepath.Base(p12Path))
 			output.PrintText("Delete it from the server after copying.")
 		}
-		output.PrintText("")
-		output.PrintText("=== PRIVATE KEY (save this — it will NOT be shown again) ===")
-		output.PrintText("%s", strings.TrimSpace(string(keyPEM)))
 	})
 	return nil
 }
