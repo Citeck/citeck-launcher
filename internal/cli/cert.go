@@ -165,6 +165,12 @@ func generateClientCert(name string, days int) error {
 		output.Errf("Warning: could not write .p12 file: %v", writeErr)
 	}
 
+	// Resolve Web UI address for user hint
+	webUIAddr := "https://<host>:7088"
+	if daemonCfg, cfgErr := config.LoadDaemonConfig(); cfgErr == nil && daemonCfg.Server.WebUI.Listen != "" {
+		webUIAddr = "https://" + daemonCfg.Server.WebUI.Listen
+	}
+
 	output.PrintResult(map[string]any{
 		"name":     name,
 		"certPath": certPath,
@@ -175,9 +181,10 @@ func generateClientCert(name string, days int) error {
 		output.PrintText("  Certificate: %s", certPath)
 		if p12Err == nil {
 			output.PrintText("  Browser P12: %s", p12Path)
+			output.PrintText("  Web UI:      %s", webUIAddr)
 			output.PrintText("")
-			output.PrintText("Import %s into your browser to access the Web UI.", filepath.Base(p12Path))
-			output.PrintText("Delete it from the server after copying.")
+			output.PrintText("Import %s into your browser, then open %s", filepath.Base(p12Path), webUIAddr)
+			output.PrintText("Delete the .p12 file from the server after copying.")
 		}
 	})
 	return nil
