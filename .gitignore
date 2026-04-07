@@ -22,6 +22,7 @@ node_modules
 
 ### Build artifacts ###
 build/bin/
+tools/h2-export/build/
 
 ### H2 export tool (Gradle project — wrapper must be tracked) ###
 !tools/h2-export/gradle/
@@ -39,6 +40,9 @@ coverage.html
 ### Binaries (prevent accidental root-dir builds) ###
 /citeck
 /citeck-desktop
+
+### Prompt files ###
+PROMPT-*.md
 
 ### Custom ###
 *.png
