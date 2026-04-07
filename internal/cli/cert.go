@@ -27,10 +27,21 @@ func newCertCmd() *cobra.Command {
 	}
 	cmd.AddCommand(
 		newCertStatusCmd(),
-		newCertGenerateCmd(),
-		newCertListCmd(),
-		newCertRevokeCmd(),
+		newCertGenerateServerCmd(),
 		newCertLetsEncryptCmd(),
+	)
+	return cmd
+}
+
+func newWebUICmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "webui",
+		Short: "Manage Web UI access",
+	}
+	cmd.AddCommand(
+		newWebUICertCmd(),
+		newWebUIListCmd(),
+		newWebUIRevokeCmd(),
 	)
 	return cmd
 }
@@ -103,27 +114,49 @@ func newCertStatusCmd() *cobra.Command {
 	}
 }
 
-func newCertGenerateCmd() *cobra.Command {
-	var name string
+func newCertGenerateServerCmd() *cobra.Command {
 	var hosts []string
 	var days int
 
 	cmd := &cobra.Command{
 		Use:   "generate",
-		Short: "Generate TLS certificate (--name for mTLS client cert, --host for server cert)",
+		Short: "Generate self-signed server TLS certificate",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if name != "" {
-				return generateClientCert(name, days)
-			}
 			return generateServerCert(hosts, days)
 		},
 	}
 
-	cmd.Flags().StringVar(&name, "name", "", "Client cert name (generates mTLS client certificate)")
 	cmd.Flags().StringSliceVar(&hosts, "host", nil, "Hostnames and IPs for server certificate")
 	cmd.Flags().IntVar(&days, "days", 365, "Certificate validity in days")
 
 	return cmd
+}
+
+func newWebUICertCmd() *cobra.Command {
+	var name string
+	var days int
+
+	cmd := &cobra.Command{
+		Use:   "cert --name <user>",
+		Short: "Generate client certificate for Web UI browser access (mTLS)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return generateClientCert(name, days)
+		},
+	}
+
+	cmd.Flags().StringVar(&name, "name", "", "Certificate owner name (e.g. admin)")
+	_ = cmd.MarkFlagRequired("name")
+	cmd.Flags().IntVar(&days, "days", 365, "Certificate validity in days")
+
+	return cmd
+}
+
+func newWebUIListCmd() *cobra.Command {
+	return newCertListCmd()
+}
+
+func newWebUIRevokeCmd() *cobra.Command {
+	return newCertRevokeCmd()
 }
 
 // absInWorkDir returns an absolute path for a filename in the current working directory.
@@ -220,7 +253,7 @@ func generateServerCert(hosts []string, days int) error {
 func newCertListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "List trusted client certificates (mTLS)",
+		Short: "List Web UI client certificates",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			caDir := config.WebUICADir()
 			entries, err := os.ReadDir(caDir)
@@ -298,7 +331,7 @@ func newCertRevokeCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "revoke",
-		Short: "Revoke a client certificate (remove from trusted list)",
+		Short: "Revoke a Web UI client certificate",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateCertName(name); err != nil {
 				return err

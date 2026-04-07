@@ -126,20 +126,20 @@ Required when Web UI listens on non-localhost (`0.0.0.0`).
 ### Generate Client Certificate
 
 ```bash
-citeck cert generate --name admin
+citeck webui cert --name admin
 # Output: cert and key paths
 ```
 
 ### List Certificates
 
 ```bash
-citeck cert list
+citeck webui list
 ```
 
 ### Revoke Certificate
 
 ```bash
-citeck cert revoke --name admin
+citeck webui revoke --name admin
 ```
 
 Certificate changes take effect immediately (dynamic CA pool reload).

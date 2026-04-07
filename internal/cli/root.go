@@ -103,6 +103,7 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 		newUpgradeCmd(),
 		newSelfUpdateCmd(info.Version),
 		newValidateCmd(),
+		newWebUICmd(),
 		newWorkspaceCmd(),
 		newCompletionCmd(),
 	)

@@ -74,7 +74,8 @@ citeck apply <file> [--dry-run]         Apply namespace config
 citeck diff -f <file>                   Diff running config vs file
 citeck snapshot list|export|import      Manage volume snapshots (auto stop/start)
 citeck clean [--images] [--execute]     Clean orphaned resources / prune images
-citeck cert generate|list|revoke        Manage mTLS certs (auto-generates .p12)
+citeck webui cert|list|revoke            Manage Web UI access certs (.p12 for browser)
+citeck cert generate|status|letsencrypt Server TLS certificates
 citeck self-update [--check|--file]     Update launcher binary (with rollback)
 citeck workspace import|update          Import or update workspace repos
 citeck diagnose                         Run diagnostics

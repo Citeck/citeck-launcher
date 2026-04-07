@@ -860,7 +860,7 @@ func (d *Daemon) setupMTLS(ln net.Listener, handler http.Handler, nsCfg *namespa
 	}
 	if certCount == 0 {
 		_ = ln.Close()
-		return nil, handler, false, fmt.Errorf("no client certs in %s — run: citeck cert generate --name admin", config.WebUICADir())
+		return nil, handler, false, fmt.Errorf("no client certs in %s — run: citeck webui cert --name admin", config.WebUICADir())
 	}
 
 	// Ensure server cert exists

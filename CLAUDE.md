@@ -506,7 +506,7 @@ Bundle version upgrade + host/auth switching tested on remote server. 5 bugs fix
 - Dev build guard: refuses self-update from `version=dev`
 
 **P12 browser certificates:**
-- `citeck cert generate` and `citeck install` auto-generate `.p12` file for Web UI browser import (mTLS)
+- `citeck webui cert` and `citeck install` auto-generate `.p12` file for Web UI browser import (mTLS)
 - Written to current directory as `citeck-webui-{name}.p12`; private key no longer printed to console
 - `go-pkcs12` library (pure Go, no openssl dependency)
 

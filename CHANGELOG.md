@@ -81,7 +81,8 @@
 * `citeck stop` — synchronous by default, shows live progress per app
 * `citeck restart` — restart entire namespace (no arg) or single app
 * `citeck upgrade --dry-run` — preview bundle change without applying
-* `citeck cert generate` — auto-generates .p12 file for Web UI browser access (mTLS)
+* `citeck webui cert --name admin` — generate .p12 for Web UI browser access (mTLS)
+* `citeck webui list` / `citeck webui revoke` — manage Web UI client certificates
 * `--format json` global flag (renamed from `--output` to avoid ambiguity)
 
 ## Security
