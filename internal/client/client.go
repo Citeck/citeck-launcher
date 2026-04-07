@@ -265,9 +265,14 @@ func (c *DaemonClient) ListSnapshots() ([]api.SnapshotDto, error) {
 }
 
 // ExportSnapshot triggers a volume snapshot export.
-func (c *DaemonClient) ExportSnapshot() (*api.ActionResultDto, error) {
+// If outputDir is non-empty, the snapshot is written there instead of the default directory.
+func (c *DaemonClient) ExportSnapshot(outputDir string) (*api.ActionResultDto, error) {
+	path := api.SnapshotsExport
+	if outputDir != "" {
+		path += "?output=" + url.QueryEscape(outputDir)
+	}
 	var dto api.ActionResultDto
-	err := c.post(api.SnapshotsExport, nil, &dto)
+	err := c.post(path, nil, &dto)
 	return &dto, err
 }
 

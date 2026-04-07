@@ -892,11 +892,22 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dir, err := d.snapshotsDir()
-	if err != nil {
-		d.snapshotMu.Unlock()
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
+	// Determine output directory: query param or default snapshots dir
+	dir := r.URL.Query().Get("output")
+	if dir != "" {
+		if !filepath.IsAbs(dir) {
+			d.snapshotMu.Unlock()
+			writeError(w, http.StatusBadRequest, "output path must be absolute")
+			return
+		}
+	} else {
+		var dirErr error
+		dir, dirErr = d.snapshotsDir()
+		if dirErr != nil {
+			d.snapshotMu.Unlock()
+			writeError(w, http.StatusBadRequest, dirErr.Error())
+			return
+		}
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // snapshot dirs need 0o755 for container access
 		d.snapshotMu.Unlock()

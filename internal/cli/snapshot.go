@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/api"
@@ -58,6 +61,7 @@ func newSnapshotListCmd() *cobra.Command {
 
 func newSnapshotExportCmd() *cobra.Command {
 	var wait bool
+	var outputDir string
 	cmd := &cobra.Command{
 		Use:   "export",
 		Short: "Export namespace volumes to a snapshot (namespace must be stopped)",
@@ -68,12 +72,22 @@ func newSnapshotExportCmd() *cobra.Command {
 			}
 			defer c.Close()
 
+			// Resolve output directory: flag → interactive prompt → default
+			dir := outputDir
+			if dir == "" && !flagYes {
+				fmt.Print("Output directory (empty for default snapshots dir): ") //nolint:forbidigo // CLI prompt
+				scanner := bufio.NewScanner(os.Stdin)
+				scanner.Scan()
+				dir = strings.TrimSpace(scanner.Text())
+			}
+
 			return snapshotWithWait(c, wait, "snapshot_complete", "snapshot_error", func() (*api.ActionResultDto, error) {
-				return c.ExportSnapshot()
+				return c.ExportSnapshot(dir)
 			})
 		},
 	}
 	cmd.Flags().BoolVarP(&wait, "wait", "w", false, "Wait for export to complete")
+	cmd.Flags().StringVar(&outputDir, "output", "", "Write snapshot to this directory (absolute path)")
 	return cmd
 }
 
