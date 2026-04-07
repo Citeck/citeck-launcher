@@ -200,35 +200,27 @@ type ResolveResult struct {
 	Workspace *WorkspaceConfig
 }
 
-// Resolve fetches and parses a bundle definition along with workspace config.
 // resolveWorkspace loads workspace config from local repo/ dir or clones the default workspace repo.
 // Returns (config, repoDir) where repoDir is the directory the config was loaded from.
 func (r *Resolver) resolveWorkspace() (*WorkspaceConfig, string) {
-	// Priority: per-workspace repo/ dir (from Kotlin launcher, manual setup, or workspace import),
-	// then fall back to cloning the default GitHub workspace repo.
+	// Priority 1: local repo/ dir (manual setup or workspace import)
 	localRepoDir := filepath.Join(r.dataDir, "repo")
 	if wsCfg := loadWorkspaceConfig(localRepoDir); wsCfg != nil {
 		return wsCfg, localRepoDir
 	}
 
-	if r.offline {
-		// Offline mode: no git, check existing cloned dir only
-		defaultRepoDir := filepath.Join(r.dataDir, "bundles", "_workspace")
-		if wsCfg := loadWorkspaceConfig(defaultRepoDir); wsCfg != nil {
-			return wsCfg, defaultRepoDir
-		}
-		return &WorkspaceConfig{}, ""
-	}
-
+	// Priority 2: cloned workspace repo (git pull if online)
 	defaultRepoDir := filepath.Join(r.dataDir, "bundles", "_workspace")
-	gitCtx, gitCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	err := git.CloneOrPullWithAuth(gitCtx, git.RepoOpts{
-		URL: defaultBundlesRepo, Branch: defaultBundlesBranch,
-		DestDir: defaultRepoDir, PullPeriod: defaultPullPeriod,
-	})
-	gitCancel()
-	if err != nil {
-		slog.Warn("Failed to sync workspace repo", "err", err)
+	if !r.offline {
+		gitCtx, gitCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		err := git.CloneOrPullWithAuth(gitCtx, git.RepoOpts{
+			URL: defaultBundlesRepo, Branch: defaultBundlesBranch,
+			DestDir: defaultRepoDir, PullPeriod: defaultPullPeriod,
+		})
+		gitCancel()
+		if err != nil {
+			slog.Warn("Failed to sync workspace repo", "err", err)
+		}
 	}
 	if wsCfg := loadWorkspaceConfig(defaultRepoDir); wsCfg != nil {
 		return wsCfg, defaultRepoDir
@@ -244,6 +236,7 @@ func (r *Resolver) ResolveWorkspaceOnly() *WorkspaceConfig {
 	return wsCfg
 }
 
+// Resolve fetches and parses a bundle definition along with workspace config.
 func (r *Resolver) Resolve(ref Ref) (*ResolveResult, error) {
 	if ref.IsEmpty() {
 		return &ResolveResult{Bundle: &EmptyDef, Workspace: &WorkspaceConfig{}}, nil

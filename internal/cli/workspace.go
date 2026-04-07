@@ -88,20 +88,16 @@ In server mode, git pull is not automatic — use this command to update.
 Requires the daemon to be stopped (or run before first start).`,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			resolver := bundle.NewResolver(config.DataDir())
-			// Force online mode for this command
-			resolver.SetOffline(false)
 			wsCfg := resolver.ResolveWorkspaceOnly()
 
-			// Also pull bundle repos defined in workspace config
+			// Pull bundle repos defined in workspace config
 			updated := 0
 			for _, repo := range wsCfg.BundleRepos {
 				if repo.URL == "" {
 					continue // local bundles, no git repo to pull
 				}
 				output.PrintText("Updating bundle repo: %s", repo.ID)
-				subResolver := bundle.NewResolver(config.DataDir())
-				subResolver.SetOffline(false)
-				_, err := subResolver.Resolve(bundle.Ref{Repo: repo.ID, Key: "LATEST"})
+				_, err := resolver.Resolve(bundle.Ref{Repo: repo.ID, Key: "LATEST"})
 				if err != nil {
 					output.PrintText("  Warning: %v", err)
 				} else {
