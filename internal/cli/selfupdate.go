@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/citeck/citeck-launcher/internal/client"
 	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -70,6 +71,32 @@ func newSelfUpdateCmd(currentVersion string) *cobra.Command {
 				return fmt.Errorf("no binary found for %s/%s in release %s", runtime.GOOS, runtime.GOARCH, release.TagName)
 			}
 
+			// Resolve executable path early — needed for confirmation message
+			executable, execErr := os.Executable()
+			if execErr != nil {
+				return fmt.Errorf("resolve executable path: %w", execErr)
+			}
+
+			// Detect running daemon
+			daemonRunning := false
+			if c := client.TryNew(clientOpts()); c != nil {
+				daemonRunning = true
+				c.Close()
+			}
+
+			// Confirm before proceeding — explain what will happen
+			if !flagYes {
+				if daemonRunning {
+					output.PrintText("\nThis will: stop daemon → replace binary → start daemon")
+				} else {
+					output.PrintText("\nThis will: replace binary %s", executable)
+				}
+				if !confirmPrompt("Proceed? [Y/n]: ") {
+					output.PrintText("Canceled")
+					return nil
+				}
+			}
+
 			// Find checksums
 			var checksumsURL string
 			for _, a := range release.Assets {
@@ -80,10 +107,6 @@ func newSelfUpdateCmd(currentVersion string) *cobra.Command {
 			}
 
 			// Download binary to temp file next to executable (same FS for atomic rename)
-			executable, err := os.Executable()
-			if err != nil {
-				return fmt.Errorf("resolve executable path: %w", err)
-			}
 			tmpPath := executable + ".update-tmp"
 
 			output.PrintText("Downloading %s...", assetName)
@@ -108,6 +131,11 @@ func newSelfUpdateCmd(currentVersion string) *cobra.Command {
 				return fmt.Errorf("chmod: %w", chmodErr)
 			}
 
+			// Stop daemon before replacing binary
+			if daemonRunning {
+				stopDaemonForUpdate()
+			}
+
 			// Atomic replace
 			if renameErr := os.Rename(tmpPath, executable); renameErr != nil {
 				_ = os.Remove(tmpPath)
@@ -116,16 +144,9 @@ func newSelfUpdateCmd(currentVersion string) *cobra.Command {
 
 			output.PrintText("Updated to v%s", latestVersion)
 
-			// Offer systemd restart if service is active
-			if isSystemdActive("citeck") {
-				if flagYes || confirmPrompt("Restart citeck service? [Y/n]: ") {
-					output.PrintText("Restarting service...")
-					if restartErr := exec.Command("systemctl", "restart", "citeck").Run(); restartErr != nil { //nolint:gosec // trusted command
-						output.Errf("Failed to restart: %v. Run manually: sudo systemctl restart citeck", restartErr)
-					} else {
-						output.PrintText("Service restarted")
-					}
-				}
+			// Start daemon back
+			if daemonRunning {
+				startDaemonAfterUpdate()
 			}
 
 			return nil
@@ -136,9 +157,36 @@ func newSelfUpdateCmd(currentVersion string) *cobra.Command {
 	return cmd
 }
 
+func stopDaemonForUpdate() {
+	output.PrintText("Stopping daemon...")
+	c, err := client.New(clientOpts())
+	if err != nil {
+		return
+	}
+	defer c.Close()
+	_, _ = c.StopNamespace()
+	_ = waitForStopped(c, 120*time.Second)
+	_, _ = c.Shutdown()
+	time.Sleep(2 * time.Second)
+	output.PrintText("Daemon stopped")
+}
+
+func startDaemonAfterUpdate() {
+	if isSystemdActive("citeck") {
+		output.PrintText("Starting service...")
+		if err := exec.Command("systemctl", "start", "citeck").Run(); err != nil { //nolint:gosec // trusted command
+			output.Errf("Failed to start service: %v. Run: sudo systemctl start citeck", err)
+		} else {
+			output.PrintText("Service started")
+		}
+	} else {
+		output.PrintText("Daemon was running but not via systemd. Start manually: citeck start")
+	}
+}
+
 func fetchLatestRelease() (*githubRelease, error) {
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get(githubAPIBase + "/releases/latest") //nolint:gosec // trusted URL
+	httpClient := &http.Client{Timeout: 15 * time.Second}
+	resp, err := httpClient.Get(githubAPIBase + "/releases/latest") //nolint:gosec // trusted URL
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API request: %w", err)
 	}
