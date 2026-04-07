@@ -32,6 +32,7 @@ func newStartCmd(version string) *cobra.Command {
 	var noUI bool
 	var offline bool
 	var follow bool
+	var detach bool
 	var isDaemon bool
 
 	cmd := &cobra.Command{
@@ -61,12 +62,15 @@ func newStartCmd(version string) *cobra.Command {
 					return nil
 				}
 
-				// No app → start namespace + stream status
+				// No app → start namespace
 				result, err := c.StartNamespace()
 				if err != nil {
 					return fmt.Errorf("start namespace: %w", err)
 				}
 				output.PrintText("%s", result.Message)
+				if detach {
+					return nil
+				}
 				return streamLiveStatus(c, follow)
 			}
 
@@ -122,11 +126,16 @@ func newStartCmd(version string) *cobra.Command {
 			}
 			defer c.Close()
 
+			if detach {
+				output.PrintText("Daemon started in background")
+				return nil
+			}
 			return streamLiveStatus(c, follow)
 		},
 	}
 
 	cmd.Flags().BoolVarP(&foreground, "foreground", "f", false, "Run in foreground (don't fork)")
+	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "Start in background without waiting (like docker-compose up -d)")
 	cmd.Flags().BoolVar(&desktop, "desktop", false, "Desktop mode")
 	cmd.Flags().BoolVar(&noUI, "no-ui", false, "Disable Web UI")
 	cmd.Flags().BoolVar(&offline, "offline", false, "Offline mode: skip git operations, use only local data")

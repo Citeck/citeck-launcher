@@ -15,6 +15,7 @@ import (
 
 func newStopCmd() *cobra.Command {
 	var shutdown bool
+	var detach bool
 
 	cmd := &cobra.Command{
 		Use:   "stop [app]",
@@ -41,15 +42,17 @@ func newStopCmd() *cobra.Command {
 				return nil
 			}
 
-			// No app → stop namespace and show live status
+			// No app → stop namespace
 			result, err := c.StopNamespace()
 			if err != nil {
 				return fmt.Errorf("stop namespace: %w", err)
 			}
 			output.PrintText("%s", result.Message)
 
-			if err := streamStopStatus(c); err != nil {
-				return err
+			if !detach {
+				if stopErr := streamStopStatus(c); stopErr != nil {
+					return stopErr
+				}
 			}
 
 			if shutdown {
@@ -67,6 +70,7 @@ func newStopCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVarP(&shutdown, "shutdown", "s", false, "Also shutdown the daemon")
+	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "Send stop and return without waiting (like docker-compose stop -d)")
 
 	return cmd
 }
