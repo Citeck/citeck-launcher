@@ -60,11 +60,11 @@ func newSnapshotListCmd() *cobra.Command {
 }
 
 func newSnapshotExportCmd() *cobra.Command {
-	var wait bool
 	var outputDir string
 	cmd := &cobra.Command{
 		Use:   "export",
-		Short: "Export namespace volumes to a snapshot (namespace must be stopped)",
+		Short: "Export namespace volumes to a snapshot",
+		Long:  "Stop the namespace (if running), export volumes, then start it back. Use --output to specify the target directory.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client.New(clientOpts())
 			if err != nil {
@@ -81,18 +81,77 @@ func newSnapshotExportCmd() *cobra.Command {
 				dir = strings.TrimSpace(scanner.Text())
 			}
 
-			return snapshotWithWait(c, wait, "snapshot_complete", "snapshot_error", func() (*api.ActionResultDto, error) {
+			// Check if namespace is running — offer to stop
+			ns, nsErr := c.GetNamespace()
+			wasRunning := nsErr == nil && ns != nil && ns.Status != "STOPPED"
+
+			if wasRunning {
+				if !flagYes {
+					fmt.Print("Namespace is running. Stop it for export? [Y/n]: ") //nolint:forbidigo // CLI prompt
+					scanner := bufio.NewScanner(os.Stdin)
+					scanner.Scan()
+					answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
+					if answer == "n" || answer == "no" {
+						return fmt.Errorf("export cancelled — namespace must be stopped")
+					}
+				}
+				output.PrintText("Stopping namespace...")
+				if _, stopErr := c.StopNamespace(); stopErr != nil {
+					return fmt.Errorf("stop namespace: %w", stopErr)
+				}
+				// Wait for namespace to fully stop
+				if err := waitForStopped(c, 120*time.Second); err != nil {
+					return fmt.Errorf("waiting for stop: %w", err)
+				}
+				output.PrintText("Namespace stopped")
+			}
+
+			// Export (always wait for completion)
+			err = snapshotWithWait(c, true, "snapshot_complete", "snapshot_error", func() (*api.ActionResultDto, error) {
 				return c.ExportSnapshot(dir)
 			})
+			if err != nil {
+				// Try to restart even on export failure
+				if wasRunning {
+					output.PrintText("Starting namespace back...")
+					_, _ = c.StartNamespace()
+				}
+				return err
+			}
+
+			// Start namespace back if it was running
+			if wasRunning {
+				output.PrintText("Starting namespace...")
+				if _, startErr := c.StartNamespace(); startErr != nil {
+					return fmt.Errorf("restart namespace after export: %w", startErr)
+				}
+				output.PrintText("Namespace started")
+			}
+
+			return nil
 		},
 	}
-	cmd.Flags().BoolVarP(&wait, "wait", "w", false, "Wait for export to complete")
 	cmd.Flags().StringVar(&outputDir, "output", "", "Write snapshot to this directory (absolute path)")
 	return cmd
 }
 
+// waitForStopped polls namespace status until it's STOPPED or timeout.
+func waitForStopped(c *client.DaemonClient, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		ns, err := c.GetNamespace()
+		if err != nil {
+			return err
+		}
+		if ns.Status == "STOPPED" {
+			return nil
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("timeout waiting for namespace to stop")
+}
+
 func newSnapshotImportCmd() *cobra.Command {
-	var wait bool
 	cmd := &cobra.Command{
 		Use:   "import [snapshot-name]",
 		Short: "Import a snapshot into namespace volumes (namespace must be stopped)",
@@ -104,12 +163,11 @@ func newSnapshotImportCmd() *cobra.Command {
 			}
 			defer c.Close()
 
-			return snapshotWithWait(c, wait, "snapshot_complete", "snapshot_error", func() (*api.ActionResultDto, error) {
+			return snapshotWithWait(c, true, "snapshot_complete", "snapshot_error", func() (*api.ActionResultDto, error) {
 				return c.ImportSnapshot(args[0])
 			})
 		},
 	}
-	cmd.Flags().BoolVarP(&wait, "wait", "w", false, "Wait for import to complete")
 	return cmd
 }
 
