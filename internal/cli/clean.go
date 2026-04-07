@@ -34,6 +34,7 @@ type orphanVolumeDir struct {
 func newCleanCmd() *cobra.Command {
 	var execute bool
 	var volumes bool
+	var images bool
 
 	cmd := &cobra.Command{
 		Use:   "clean",
@@ -70,7 +71,7 @@ func newCleanCmd() *cobra.Command {
 			// Find orphan networks
 			orphanNets, _ := findOrphanNetworks(scanCtx, dc, knownNS)
 
-			if len(orphans) == 0 && len(orphanVols) == 0 && len(orphanNets) == 0 {
+			if len(orphans) == 0 && len(orphanVols) == 0 && len(orphanNets) == 0 && !images {
 				output.PrintResult(map[string]any{"orphans": 0}, func() {
 					output.PrintText("No orphaned resources found.")
 				})
@@ -106,6 +107,20 @@ func newCleanCmd() *cobra.Command {
 					output.PrintText("\nRun with --execute to remove orphaned resources.")
 				}
 			})
+
+			// Image prune (standalone, does not require --execute)
+			if images {
+				output.PrintText("Pruning unused Docker images...")
+				pruneCtx, pruneCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				reclaimed, pruneErr := dc.PruneUnusedImages(pruneCtx)
+				pruneCancel()
+				if pruneErr != nil {
+					output.Errf("Image prune failed: %v", pruneErr)
+				} else {
+					mb := float64(reclaimed) / (1024 * 1024)
+					output.PrintText(fmt.Sprintf("Reclaimed %.1f MB from unused images", mb))
+				}
+			}
 
 			if !execute {
 				return nil
@@ -172,6 +187,7 @@ func newCleanCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&execute, "execute", false, "Actually remove resources (dry run by default)")
 	cmd.Flags().BoolVar(&volumes, "volumes", false, "Also scan/remove orphaned volume directories")
+	cmd.Flags().BoolVar(&images, "images", false, "Prune unused Docker images (dangling)")
 
 	return cmd
 }

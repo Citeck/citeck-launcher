@@ -470,6 +470,15 @@ func (c *Client) GetImageDigest(ctx context.Context, img string) string {
 	return ""
 }
 
+// PruneUnusedImages removes dangling images and returns space reclaimed in bytes.
+func (c *Client) PruneUnusedImages(ctx context.Context) (uint64, error) {
+	report, err := c.cli.ImagesPrune(ctx, filters.NewArgs(filters.Arg("dangling", "true")))
+	if err != nil {
+		return 0, fmt.Errorf("prune images: %w", err)
+	}
+	return report.SpaceReclaimed, nil
+}
+
 // parsePullProgress reads Docker pull JSON stream and reports aggregated progress.
 func parsePullProgress(reader io.Reader, progressFn PullProgressFn) error {
 	type pullEvent struct {
