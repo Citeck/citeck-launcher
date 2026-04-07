@@ -13,6 +13,7 @@ import (
 
 	acmeLib "github.com/citeck/citeck-launcher/internal/acme"
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/citeck/citeck-launcher/internal/tlsutil"
@@ -141,28 +142,37 @@ func generateClientCert(name string, days int) error {
 	}
 
 	certPath := filepath.Join(config.WebUICADir(), name+".crt")
+	p12Path := filepath.Join(config.ConfDir(), name+".p12")
 
 	certPEM, keyPEM, err := tlsutil.GenerateClientCert(certPath, name, days)
 	if err != nil {
 		return fmt.Errorf("generate client cert: %w", err)
 	}
 
+	// Generate PKCS12 for browser import (empty password — browser will prompt on import)
+	p12Data, p12Err := tlsutil.EncodePKCS12(certPEM, keyPEM, "")
+	if p12Err != nil {
+		output.Errf("Warning: could not generate .p12 file: %v", p12Err)
+	} else if writeErr := fsutil.AtomicWriteFile(p12Path, p12Data, 0o600); writeErr != nil {
+		output.Errf("Warning: could not write .p12 file: %v", writeErr)
+	}
+
 	output.PrintResult(map[string]any{
 		"name":     name,
 		"certPath": certPath,
+		"p12Path":  p12Path,
 	}, func() {
 		output.PrintText("Client certificate generated for %q", name)
 		output.PrintText("")
-		output.PrintText("Certificate saved to: %s", certPath)
+		output.PrintText("  Certificate: %s", certPath)
+		if p12Err == nil {
+			output.PrintText("  Browser P12: %s", p12Path)
+			output.PrintText("")
+			output.PrintText("Import %s into your browser to access the Web UI.", p12Path)
+		}
 		output.PrintText("")
 		output.PrintText("=== PRIVATE KEY (save this — it will NOT be shown again) ===")
 		output.PrintText("%s", strings.TrimSpace(string(keyPEM)))
-		output.PrintText("")
-		output.PrintText("=== CERTIFICATE ===")
-		output.PrintText("%s", strings.TrimSpace(string(certPEM)))
-		output.PrintText("")
-		output.PrintText("To create PKCS12 for browser import, save the key above to a file, then:")
-		output.PrintText("  openssl pkcs12 -export -in %s -inkey <key-file> -out %s.p12", certPath, name)
 	})
 	return nil
 }

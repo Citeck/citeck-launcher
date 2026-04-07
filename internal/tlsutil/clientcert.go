@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/fsutil"
+	gopkcs12 "software.sslmate.com/src/go-pkcs12"
 )
 
 // GenerateClientCert creates a self-signed ECDSA P-256 client certificate.
@@ -63,6 +64,34 @@ func GenerateClientCert(certPath, cn string, days int) (certPEM, keyPEM []byte, 
 	}
 
 	return certPEM, keyPEM, nil
+}
+
+// EncodePKCS12 packages a certificate and private key into a PKCS#12 (.p12) file.
+// The password protects the .p12 file; use empty string for no password.
+func EncodePKCS12(certPEM, keyPEM []byte, password string) ([]byte, error) {
+	keyBlock, _ := pem.Decode(keyPEM)
+	if keyBlock == nil {
+		return nil, fmt.Errorf("decode private key PEM")
+	}
+	key, err := x509.ParseECPrivateKey(keyBlock.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse private key: %w", err)
+	}
+
+	certBlock, _ := pem.Decode(certPEM)
+	if certBlock == nil {
+		return nil, fmt.Errorf("decode certificate PEM")
+	}
+	cert, err := x509.ParseCertificate(certBlock.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse certificate: %w", err)
+	}
+
+	p12Data, err := gopkcs12.Modern.Encode(key, cert, nil, password)
+	if err != nil {
+		return nil, fmt.Errorf("encode PKCS12: %w", err)
+	}
+	return p12Data, nil
 }
 
 // LoadCACertPool loads all .crt/.pem files from a directory into an x509.CertPool.

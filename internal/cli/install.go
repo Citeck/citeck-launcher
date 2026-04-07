@@ -290,29 +290,7 @@ func runInstall(_ *cobra.Command, _ []string, workspaceZip string) error { //nol
 	}
 	output.PrintText("daemon.yml written (locale: %s, listen: %s)", localeCode, daemonCfg.Server.WebUI.Listen)
 	if remoteUI {
-
-		// Auto-generate first client cert for mTLS
-		output.PrintText("\nGenerating mTLS client certificate for remote access...")
-		certPath := filepath.Join(config.WebUICADir(), "admin.crt")
-		certPEM, keyPEM, err := tlsutil.GenerateClientCert(certPath, "admin", 365)
-		if err != nil {
-			output.PrintText("Warning: failed to generate client cert: %v", err)
-		} else {
-			output.PrintText("Certificate saved to: %s", certPath)
-			output.PrintText("")
-			output.PrintText("=== PRIVATE KEY (save this — it will NOT be shown again) ===")
-			output.PrintText("%s", strings.TrimSpace(string(keyPEM)))
-			output.PrintText("")
-			output.PrintText("=== CERTIFICATE ===")
-			output.PrintText("%s", strings.TrimSpace(string(certPEM)))
-			output.PrintText("")
-			output.PrintText("To create PKCS12 for browser import, save the key above to a file, then:")
-			output.PrintText("  openssl pkcs12 -export -in %s -inkey <key-file> -out admin.p12", certPath)
-			output.PrintText("")
-			output.PrintText("For CLI access from a remote machine, copy the server cert after first start:")
-			output.PrintText("  scp server:%s ./server.crt", filepath.Join(config.WebUITLSDir(), "server.crt"))
-			output.PrintText("  citeck --host <server>:7088 --tls-cert admin.crt --tls-key admin.key --server-cert server.crt status")
-		}
+		generateInstallClientCert()
 	}
 
 	// Systemd + Firewall
@@ -321,6 +299,37 @@ func runInstall(_ *cobra.Command, _ []string, workspaceZip string) error { //nol
 
 	output.PrintText("\nInstallation complete. Start the daemon with: citeck start --foreground")
 	return nil
+}
+
+func generateInstallClientCert() {
+	output.PrintText("\nGenerating mTLS client certificate for remote access...")
+	certPath := filepath.Join(config.WebUICADir(), "admin.crt")
+	p12Path := filepath.Join(config.ConfDir(), "admin.p12")
+	certPEM, keyPEM, err := tlsutil.GenerateClientCert(certPath, "admin", 365)
+	if err != nil {
+		output.PrintText("Warning: failed to generate client cert: %v", err)
+		return
+	}
+
+	// Generate .p12 for browser import
+	p12Data, p12Err := tlsutil.EncodePKCS12(certPEM, keyPEM, "")
+	if p12Err == nil {
+		_ = fsutil.AtomicWriteFile(p12Path, p12Data, 0o600)
+	}
+
+	output.PrintText("  Certificate: %s", certPath)
+	if p12Err == nil {
+		output.PrintText("  Browser P12: %s", p12Path)
+		output.PrintText("")
+		output.PrintText("Import %s into your browser to access the Web UI remotely.", p12Path)
+	}
+	output.PrintText("")
+	output.PrintText("=== PRIVATE KEY (save this — it will NOT be shown again) ===")
+	output.PrintText("%s", strings.TrimSpace(string(keyPEM)))
+	output.PrintText("")
+	output.PrintText("For CLI access from a remote machine, copy the server cert after first start:")
+	output.PrintText("  scp server:%s ./server.crt", filepath.Join(config.WebUITLSDir(), "server.crt"))
+	output.PrintText("  citeck --host <server>:7088 --tls-cert admin.crt --tls-key admin.key --server-cert server.crt status")
 }
 
 func prompt(scanner *bufio.Scanner, label, defaultVal string) string {
