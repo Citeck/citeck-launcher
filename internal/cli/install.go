@@ -27,7 +27,7 @@ func newInstallCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "install",
 		Short: "Interactive server installer",
-		Long: `Set up a Citeck ECOS deployment: namespace config, TLS, systemd service, firewall.
+		Long: `Set up a Citeck platform deployment: namespace config, TLS, systemd service, firewall.
 
 Use --workspace to import a workspace zip archive (e.g. downloaded from GitHub/GitLab).
 This extracts workspace config and bundle definitions for offline operation.`,
@@ -100,7 +100,7 @@ func runInstall(_ *cobra.Command, _ []string, workspaceZip string) error { //nol
 	nsCfg := namespace.DefaultNamespaceConfig()
 
 	// 1. Display name
-	nsCfg.Name = prompt(scanner, "Display name", "Citeck ECOS")
+	nsCfg.Name = prompt(scanner, "Display name", "Citeck")
 
 	// 2. Auth type
 	authType := promptChoice(scanner, "Authentication type", []string{"BASIC", "KEYCLOAK"}, "BASIC")
@@ -414,7 +414,7 @@ func setupSystemd(scanner *bufio.Scanner) {
 	}
 
 	unit := fmt.Sprintf(`[Unit]
-Description=Citeck ECOS Launcher
+Description=Citeck Launcher
 After=network.target docker.service
 Requires=docker.service
 

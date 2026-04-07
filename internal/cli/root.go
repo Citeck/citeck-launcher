@@ -60,7 +60,7 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "citeck",
 		Short: "Citeck Launcher CLI",
-		Long:  "Citeck Launcher — manage Citeck ECOS namespaces and Docker containers",
+		Long:  "Citeck Launcher — manage Citeck namespaces and Docker containers",
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			if flagOutput == "json" {
 				output.SetFormat(output.FormatJSON)

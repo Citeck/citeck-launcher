@@ -4,7 +4,7 @@
 
 [English version](README.md)
 
-Citeck Launcher управляет пространствами имён Citeck ECOS и Docker-контейнерами. Один Go-бинарник (~18 МБ) выступает и как CLI, и как демон со встроенным React Web UI.
+Citeck Launcher управляет пространствами имён Citeck и Docker-контейнерами. Один Go-бинарник (~18 МБ) выступает и как CLI, и как демон со встроенным React Web UI.
 
 ## Быстрый старт
 

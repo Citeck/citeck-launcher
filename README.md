@@ -4,7 +4,7 @@
 
 [Русская версия](README.ru.md)
 
-Citeck Launcher manages Citeck ECOS namespaces and Docker containers. It is a single Go binary (~14 MB) that serves as both CLI and daemon, with an embedded React Web UI.
+Citeck Launcher manages Citeck namespaces and Docker containers. It is a single Go binary (~14 MB) that serves as both CLI and daemon, with an embedded React Web UI.
 
 ## Quick Start
 
@@ -159,7 +159,7 @@ docker:
 
 ### namespace.yml
 
-Defines the ECOS namespace. Located at `$CITECK_HOME/conf/namespace.yml`.
+Defines the namespace. Located at `$CITECK_HOME/conf/namespace.yml`.
 
 ```yaml
 id: default

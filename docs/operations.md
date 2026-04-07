@@ -34,7 +34,7 @@ The daemon will detect changed images on restart and pull updates automatically.
 
 ## Upgrade Bundle Version
 
-Change the ECOS platform version (bundle) without reinstalling:
+Change the Citeck platform version (bundle) without reinstalling:
 
 ```bash
 # List available versions

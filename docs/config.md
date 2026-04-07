@@ -39,11 +39,11 @@ docker:
 
 ## namespace.yml
 
-Defines the ECOS namespace. Located at `$CITECK_HOME/conf/namespace.yml`.
+Defines the namespace. Located at `$CITECK_HOME/conf/namespace.yml`.
 
 ```yaml
 id: default
-name: My ECOS
+name: My Citeck
 snapshot: ""                    # Snapshot ID for auto-import on first start
 template: ""                    # Template ID for namespace creation
 
