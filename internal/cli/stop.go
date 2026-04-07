@@ -1,9 +1,12 @@
 package cli
 
 import (
-	"context"
 	"fmt"
+	"os"
+	"sort"
 	"time"
+
+	"golang.org/x/term"
 
 	"github.com/citeck/citeck-launcher/internal/client"
 	"github.com/citeck/citeck-launcher/internal/output"
@@ -12,8 +15,6 @@ import (
 
 func newStopCmd() *cobra.Command {
 	var shutdown bool
-	var wait bool
-	var timeout int
 
 	cmd := &cobra.Command{
 		Use:   "stop [app]",
@@ -40,25 +41,21 @@ func newStopCmd() *cobra.Command {
 				return nil
 			}
 
-			// No app → stop namespace
+			// No app → stop namespace and show live status
 			result, err := c.StopNamespace()
 			if err != nil {
 				return fmt.Errorf("stop namespace: %w", err)
 			}
-			output.PrintResult(result, func() {
-				output.PrintText(result.Message)
-			})
+			output.PrintText("%s", result.Message)
 
-			if wait {
-				if err := waitForStop(c, timeout); err != nil {
-					return err
-				}
+			if err := streamStopStatus(c); err != nil {
+				return err
 			}
 
 			if shutdown {
-				r, err := c.Shutdown()
-				if err != nil {
-					return fmt.Errorf("shutdown daemon: %w", err)
+				r, shutdownErr := c.Shutdown()
+				if shutdownErr != nil {
+					return fmt.Errorf("shutdown daemon: %w", shutdownErr)
 				}
 				output.PrintResult(r, func() {
 					output.PrintText(r.Message)
@@ -70,31 +67,61 @@ func newStopCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVarP(&shutdown, "shutdown", "s", false, "Also shutdown the daemon")
-	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for namespace to stop")
-	cmd.Flags().IntVar(&timeout, "timeout", 120, "Timeout in seconds (with --wait)")
 
 	return cmd
 }
 
-func waitForStop(c *client.DaemonClient, timeoutSec int) error {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
-	defer cancel()
-	events, err := c.StreamEvents(ctx)
-	if err != nil {
-		return fmt.Errorf("connect to event stream: %w", err)
-	}
-	for {
-		select {
-		case <-ctx.Done():
-			return exitWithCode(ExitTimeout, "timeout waiting for stop")
-		case evt, ok := <-events:
-			if !ok {
-				return nil
-			}
-			if evt.Type == "namespace_status" && evt.After == "STOPPED" {
-				output.PrintText("Namespace stopped")
-				return nil
+// streamStopStatus polls the daemon and shows live stop progress until all apps are STOPPED.
+func streamStopStatus(c *client.DaemonClient) error {
+	isTTY := term.IsTerminal(int(os.Stdout.Fd()))
+	firstPrint := true
+	linesPrinted := 0
+	deadline := time.Now().Add(5 * time.Minute)
+
+	for time.Now().Before(deadline) {
+		ns, err := c.GetNamespace()
+		if err != nil {
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		apps := ns.Apps
+		sort.Slice(apps, func(i, j int) bool { return apps[i].Name < apps[j].Name })
+
+		// Clear previous output (only in TTY mode)
+		if isTTY && !firstPrint && linesPrinted > 0 {
+			for i := 0; i < linesPrinted; i++ {
+				fmt.Print("\033[A\033[2K") //nolint:forbidigo // ANSI clear
 			}
 		}
+		firstPrint = false
+
+		lines := 0
+		allStopped := true
+		stopped := 0
+
+		for _, app := range apps {
+			status := app.Status
+			marker := "●"
+			if status == "STOPPED" {
+				marker = "○"
+				stopped++
+			} else {
+				allStopped = false
+			}
+			fmt.Printf("  %s %-30s %s\n", marker, app.Name, status) //nolint:forbidigo // CLI table
+			lines++
+		}
+		fmt.Printf("\n  %d/%d stopped\n", stopped, len(apps)) //nolint:forbidigo // CLI summary
+		lines += 2
+		linesPrinted = lines
+
+		if allStopped || ns.Status == "STOPPED" {
+			fmt.Printf("\nAll %d apps stopped.\n", len(apps)) //nolint:forbidigo // CLI success
+			return nil
+		}
+
+		time.Sleep(2 * time.Second)
 	}
+	return fmt.Errorf("timeout waiting for namespace to stop")
 }
