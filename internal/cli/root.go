@@ -70,7 +70,7 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 		SilenceErrors: true,
 	}
 
-	root.PersistentFlags().StringVarP(&flagOutput, "output", "o", "text", "Output format: text or json")
+	root.PersistentFlags().StringVar(&flagOutput, "format", "text", "Output format: text or json")
 	root.PersistentFlags().StringVar(&flagHost, "host", "", "Remote daemon host:port")
 	root.PersistentFlags().StringVar(&flagTLSCert, "tls-cert", "", "Client certificate for mTLS")
 	root.PersistentFlags().StringVar(&flagTLSKey, "tls-key", "", "Client private key for mTLS")
