@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -115,6 +116,10 @@ func newRollbackCmd() *cobra.Command {
 }
 
 func selfUpdateFromGitHub(currentVersion string, checkOnly bool) error {
+	if currentVersion == "dev" || currentVersion == "" {
+		return fmt.Errorf("cannot self-update a development build — install a release binary first")
+	}
+
 	release, err := fetchLatestRelease()
 	if err != nil {
 		return fmt.Errorf("check for updates: %w", err)
@@ -307,12 +312,19 @@ func stopDaemonForUpdate() {
 	output.PrintText("Stopping daemon...")
 	c, err := client.New(clientOpts())
 	if err != nil {
+		output.Errf("Warning: could not connect to daemon: %v", err)
 		return
 	}
 	defer c.Close()
-	_, _ = c.StopNamespace()
-	_ = waitForStopped(c, 120*time.Second)
-	_, _ = c.Shutdown()
+	if _, stopErr := c.StopNamespace(); stopErr != nil {
+		output.Errf("Warning: stop namespace: %v", stopErr)
+	}
+	if waitErr := waitForStopped(c, 120*time.Second); waitErr != nil {
+		output.Errf("Warning: %v — proceeding anyway", waitErr)
+	}
+	if _, shutErr := c.Shutdown(); shutErr != nil {
+		output.Errf("Warning: shutdown daemon: %v", shutErr)
+	}
 	time.Sleep(2 * time.Second)
 	output.PrintText("Daemon stopped")
 }
@@ -352,6 +364,9 @@ func fetchLatestRelease() (*githubRelease, error) {
 	return &release, nil
 }
 
+const maxBinarySize = 256 * 1024 * 1024  // 256 MB
+const maxChecksumsSize = 1024 * 1024     // 1 MB
+
 // downloadFile downloads url to dst and returns the SHA256 hex hash.
 func downloadFile(url, dst string) (string, error) {
 	resp, err := http.Get(url) //nolint:gosec // URL from GitHub API
@@ -370,7 +385,8 @@ func downloadFile(url, dst string) (string, error) {
 	defer out.Close()
 
 	hasher := sha256.New()
-	if _, copyErr := io.Copy(out, io.TeeReader(resp.Body, hasher)); copyErr != nil {
+	limited := io.LimitReader(resp.Body, maxBinarySize)
+	if _, copyErr := io.Copy(out, io.TeeReader(limited, hasher)); copyErr != nil {
 		return "", fmt.Errorf("write: %w", copyErr)
 	}
 	if closeErr := out.Close(); closeErr != nil {
@@ -385,7 +401,7 @@ func verifyChecksum(checksumsURL, assetName, actualHash string) error {
 		return fmt.Errorf("download checksums: %w", err)
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxChecksumsSize))
 	if err != nil {
 		return fmt.Errorf("read checksums: %w", err)
 	}
@@ -410,8 +426,10 @@ func isSystemdActive(service string) bool {
 
 func confirmPrompt(prompt string) bool {
 	fmt.Print(prompt) //nolint:forbidigo // CLI prompt
-	buf := make([]byte, 64)
-	n, _ := os.Stdin.Read(buf)
-	answer := strings.TrimSpace(strings.ToLower(string(buf[:n])))
+	scanner := bufio.NewScanner(os.Stdin)
+	if !scanner.Scan() {
+		return false // EOF
+	}
+	answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
 	return answer == "" || answer == "y" || answer == "yes"
 }

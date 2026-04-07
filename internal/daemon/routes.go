@@ -206,7 +206,7 @@ func (d *Daemon) handleUpgradeNamespace(w http.ResponseWriter, r *http.Request) 
 //nolint:nestif // reload orchestrates config read, git pull, bundle resolution, ACME cert obtainment, and runtime regeneration
 func (d *Daemon) doReload() error {
 	d.configMu.RLock()
-	if d.nsConfig == nil {
+	if d.nsConfig == nil || d.runtime == nil {
 		d.configMu.RUnlock()
 		return fmt.Errorf("no namespace configured")
 	}

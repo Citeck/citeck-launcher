@@ -78,8 +78,8 @@ func newStopCmd() *cobra.Command {
 // streamStopStatus polls the daemon and shows live stop progress until all apps are STOPPED.
 func streamStopStatus(c *client.DaemonClient) error {
 	isTTY := term.IsTerminal(int(os.Stdout.Fd()))
-	firstPrint := true
 	linesPrinted := 0
+	lastStopped := -1
 	deadline := time.Now().Add(5 * time.Minute)
 
 	for time.Now().Before(deadline) {
@@ -92,33 +92,39 @@ func streamStopStatus(c *client.DaemonClient) error {
 		apps := ns.Apps
 		sort.Slice(apps, func(i, j int) bool { return apps[i].Name < apps[j].Name })
 
-		// Clear previous output (only in TTY mode)
-		if isTTY && !firstPrint && linesPrinted > 0 {
-			for i := 0; i < linesPrinted; i++ {
-				fmt.Print("\033[A\033[2K") //nolint:forbidigo // ANSI clear
-			}
-		}
-		firstPrint = false
-
-		lines := 0
 		allStopped := true
 		stopped := 0
-
 		for _, app := range apps {
-			status := app.Status
-			marker := "●"
-			if status == "STOPPED" {
-				marker = "○"
+			if app.Status == "STOPPED" {
 				stopped++
 			} else {
 				allStopped = false
 			}
-			fmt.Printf("  %s %-30s %s\n", marker, app.Name, status) //nolint:forbidigo // CLI table
-			lines++
 		}
-		fmt.Printf("\n  %d/%d stopped\n", stopped, len(apps)) //nolint:forbidigo // CLI summary
-		lines += 2
-		linesPrinted = lines
+
+		if isTTY {
+			// TTY: clear and reprint full table each cycle
+			if linesPrinted > 0 {
+				for i := 0; i < linesPrinted; i++ {
+					fmt.Print("\033[A\033[2K") //nolint:forbidigo // ANSI clear
+				}
+			}
+			lines := 0
+			for _, app := range apps {
+				marker := "●"
+				if app.Status == "STOPPED" {
+					marker = "○"
+				}
+				fmt.Printf("  %s %-30s %s\n", marker, app.Name, app.Status) //nolint:forbidigo // CLI table
+				lines++
+			}
+			fmt.Printf("\n  %d/%d stopped\n", stopped, len(apps)) //nolint:forbidigo // CLI summary
+			linesPrinted = lines + 2
+		} else if stopped != lastStopped {
+			// Non-TTY: print summary only when count changes
+			fmt.Printf("  %d/%d stopped\n", stopped, len(apps)) //nolint:forbidigo // CLI progress
+		}
+		lastStopped = stopped
 
 		if allStopped || ns.Status == "STOPPED" {
 			fmt.Printf("\nAll %d apps stopped.\n", len(apps)) //nolint:forbidigo // CLI success
