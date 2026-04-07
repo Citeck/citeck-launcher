@@ -142,7 +142,7 @@ func generateClientCert(name string, days int) error {
 	}
 
 	certPath := filepath.Join(config.WebUICADir(), name+".crt")
-	p12Path := filepath.Join(config.ConfDir(), name+".p12")
+	p12Path := name + ".p12" // current working directory — easy to find and transfer
 
 	certPEM, keyPEM, err := tlsutil.GenerateClientCert(certPath, name, days)
 	if err != nil {
