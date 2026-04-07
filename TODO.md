@@ -29,35 +29,64 @@
 - [ ] CLI reference (таблица команд)
 - [ ] Ссылки на docs/ (api.md, config.md, operations.md)
 
+### 5. Обновить документацию под текущее состояние
+- [ ] CLAUDE.md: добавить workspace import/update, offline mode, secrets default password, docker naming без workspace
+- [ ] docs/config.md: добавить `--offline`, `--workspace` флаги, `citeck workspace` команды
+- [ ] docs/operations.md: добавить offline deployment flow, workspace import, workspace update
+- [ ] docs/api.md: проверить актуальность всех эндпоинтов
+
+### 6. Server deployment testing
+- [ ] Чистая установка: `citeck install --workspace` → `citeck start` → все сервисы RUNNING
+- [ ] Bundle upgrade: смена версии → контейнеры пересозданы
+- [ ] Daemon restart: контейнеры сохраняются, restart events переживают рестарт
+- [ ] Liveness probe: убить контейнер → автоперезапуск → diagnostics файл создан
+- [ ] Web UI: Dashboard, restart events panel, AppTable restart count badge
+
 ## P1: Важно, но не блокирует релиз
 
-### 5. Self-update лончера
+### 7. Self-update лончера
 - [ ] `citeck self-update` — скачать последний релиз с GitHub, заменить бинарь, перезапустить
 - [ ] Или: документация по ручному обновлению через systemd (`systemctl stop citeck && cp ... && systemctl start citeck`)
 - [ ] Проверка наличия новой версии при старте (info лог, не блокирует)
 
-### 6. Проверка совместимости при upgrade
+### 8. Проверка совместимости при upgrade
 - [ ] Bundle может декларировать `minLauncherVersion` — launcher проверяет перед upgrade
 - [ ] Bundle может декларировать `migrationNotes` — показывать пользователю перед upgrade
 - [ ] Без этого upgrade всё равно работает, просто без safety net
 
-### 7. Документация серверного ограничения
+### 9. Документация серверного ограничения
 - [ ] Задокументировать: серверный режим = один namespace на инстанс
 - [ ] Для multi-namespace: запускать несколько инстансов с разным CITECK_HOME
 
+### 10. Системные требования
+- [ ] Минимум: 4 CPU, 16GB RAM, 50GB disk (для community бандла ~20 сервисов)
+- [ ] Рекомендуемые: 8 CPU, 32GB RAM, 100GB disk
+- [ ] Docker 24+, Linux x64/arm64
+- [ ] Сетевые требования: порт для proxy (80/443), опционально 7088 для Web UI
+
+### 11. CI/CD pipeline
+- [ ] Проверить что release workflow (goreleaser) работает с pnpm
+- [ ] Проверить что CI workflow проходит на чистом runner
+- [ ] Добавить E2E smoke test в CI (опционально)
+
+### 12. Миграция с Kotlin launcher (v1.x)
+- [ ] Документация: путь миграции v1 → v2 (H2 → SQLite, namespace.yml формат)
+- [ ] H2 migration уже работает автоматически в desktop mode
+- [ ] Server mode: `citeck migrate` для ручного запуска миграции (если нужно)
+
 ## P2: Улучшения после релиза
 
-### 8. Scheduled backups
+### 13. Scheduled backups
 - [ ] `citeck snapshot schedule` — cron-like расписание для автоматического экспорта
 - [ ] Retention policy (хранить N последних)
 - [ ] Настройка через daemon.yml
 
-### 9. Metrics и alerting
+### 14. Metrics и alerting
 - [ ] Prometheus endpoint уже есть (`/api/v1/metrics`)
 - [ ] Добавить метрики: restart_count, liveness_failures, image_pull_duration
 - [ ] Grafana dashboard template
 
-### 10. Multi-node (future)
+### 15. Multi-node (future)
 - [ ] Docker Swarm mode support
 - [ ] Или: документация по ручному распределению сервисов
 
