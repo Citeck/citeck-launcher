@@ -24,13 +24,64 @@ citeck stop
 citeck reload
 ```
 
-## Upgrade
+## Upgrade Launcher Binary
 
 1. Download the new binary
 2. Replace `/usr/local/bin/citeck`
 3. Restart: `sudo systemctl restart citeck`
 
 The daemon will detect changed images on restart and pull updates automatically.
+
+## Upgrade Bundle Version
+
+Change the ECOS platform version (bundle) without reinstalling:
+
+```bash
+# List available versions
+citeck upgrade --list
+
+# Upgrade to a specific version
+citeck upgrade community:2026.1
+```
+
+This updates `bundleRef` in `namespace.yml` and triggers a reload. Only containers whose images changed will be recreated (smart regenerate via deployment hash comparison).
+
+The same operation is available in the Web UI via the upgrade button in the Dashboard sidebar.
+
+## Offline Deployment
+
+Deploy without internet access:
+
+1. **Prepare** (on a machine with internet):
+   - Clone the workspace repo and bundle repos
+   - Package them into a ZIP: `workspace.zip`
+   - Pre-pull Docker images and export them: `docker save -o images.tar <images...>`
+
+2. **Deploy** (on the target machine):
+   ```bash
+   # Import workspace + create namespace
+   citeck install --workspace /path/to/workspace.zip
+
+   # Load Docker images
+   docker load -i images.tar
+
+   # Start (offline — no git pull)
+   citeck start
+   ```
+
+In server mode, the resolver always operates offline (no auto-pull). The `--offline` flag is implicit.
+
+## Image Cleanup
+
+After upgrading, old Docker images may remain. Clean them up:
+
+```bash
+# Prune dangling (unused) images
+citeck clean --images
+
+# Also clean orphaned containers + volumes
+citeck clean --images --volumes --execute
+```
 
 ## Backup / Restore via Snapshots
 

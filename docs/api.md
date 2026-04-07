@@ -94,6 +94,21 @@ Stop namespace (all apps).
 
 Reload config and regenerate. **Socket-only.**
 
+### POST /api/v1/namespace/upgrade
+
+Change bundle version and reload. Writes new bundleRef to namespace.yml, then triggers full reload.
+
+```bash
+curl --unix-socket /run/citeck/daemon.sock -X POST -H 'Content-Type: application/json' \
+  -d '{"bundleRef":"community:2026.1"}' http://localhost/api/v1/namespace/upgrade
+```
+
+```json
+{"success": true, "message": "upgraded from community:2025.12 to community:2026.1"}
+```
+
+Returns `409 RELOAD_IN_PROGRESS` if a reload is already running.
+
 ### GET /api/v1/namespace/restart-events
 
 Returns restart event log (last 100 events). Events are recorded when apps are restarted due to liveness probe failure, OOM kill, or crash.

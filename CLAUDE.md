@@ -475,6 +475,29 @@ Bundle version upgrade + host/auth switching tested on remote server. 5 bugs fix
 - Liveness failures cleaned in `setAppStatus` when app leaves RUNNING (covers all transition paths)
 - `cleanupOldDiagnostics` runs every reconcile cycle (60s) — single `ReadDir` when no diagnostics dir exists
 
+### Phase 18: Bundle Upgrade + Image Cleanup + Docs — COMPLETE (2026-04-07)
+
+**Bundle upgrade:**
+- `POST /api/v1/namespace/upgrade` endpoint — update bundleRef in namespace.yml + reload
+- `doReload()` extracted from `handleReloadNamespace` for reuse by upgrade handler
+- `citeck upgrade [ref]` CLI command, `citeck upgrade --list` shows available versions
+- Client methods: `UpgradeNamespace`, `ListBundles`
+- Web UI: upgrade button (ArrowUpCircle) in Dashboard sidebar, FormDialog version picker
+- All 8 locales updated with `upgrade.*` i18n keys
+
+**Image cleanup:**
+- `citeck clean --images` prunes dangling Docker images
+- `PruneUnusedImages` added to Docker client (ImagesPrune with dangling filter)
+- Standalone flag — works with or without `--execute` for orphan cleanup
+
+**Bundle listing fix:**
+- `handleListBundles` now checks `data/repo/{path}` first (offline-imported bundles), then falls back to `data/bundles/{repo.ID}` (cloned repos)
+
+**Documentation:**
+- `docs/api.md`: upgrade endpoint documented
+- `docs/config.md`: CLI flags, workspace commands, offline mode, upgrade, image cleanup
+- `docs/operations.md`: bundle upgrade, offline deployment, image cleanup procedures
+
 ## CI/CD
 
 GitHub Actions:

@@ -167,3 +167,70 @@ The launcher resolves bundles from git repositories configured in the workspace 
 │               └── namespace.yml
 └── ... (same structure as server)
 ```
+
+---
+
+## CLI Flags
+
+### Global Flags
+
+| Flag | Description |
+|---|---|
+| `--output`, `-o` | Output format: `text` (default) or `json` |
+| `--host` | Remote daemon host:port |
+| `--tls-cert` | Client certificate for mTLS |
+| `--tls-key` | Client private key for mTLS |
+| `--server-cert` | Pin server certificate (adds to TLS roots) |
+| `--insecure` | Skip server certificate verification |
+| `--yes` | Skip confirmation prompts |
+
+### Workspace Commands
+
+```bash
+# Import workspace from ZIP (offline deployment)
+citeck workspace import /path/to/workspace.zip
+
+# Manual update (git pull workspace + bundle repos)
+citeck workspace update
+```
+
+### Install with Workspace
+
+```bash
+# Online: interactive install
+citeck install
+
+# Offline: import workspace ZIP + interactive install
+citeck install --workspace /path/to/workspace.zip
+```
+
+The `--workspace` flag extracts the ZIP to `$CITECK_HOME/data/repo/` before starting the install wizard.
+
+### Offline Mode
+
+```bash
+# Skip git operations entirely (use only local bundles)
+citeck start --offline
+```
+
+The `--offline` flag prevents any git clone/pull. Fatal if the required bundle is not found locally. In server mode, the resolver always operates offline (no auto-pull on startup/reload).
+
+### Upgrade
+
+```bash
+# List available bundle versions
+citeck upgrade --list
+
+# Upgrade to a specific version
+citeck upgrade community:2026.1
+```
+
+### Image Cleanup
+
+```bash
+# Prune dangling Docker images
+citeck clean --images
+
+# Prune images + remove orphaned containers
+citeck clean --images --execute
+```
