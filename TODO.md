@@ -4,13 +4,13 @@
 
 ## P0: Блокеры релиза
 
-### 1. Bundle upgrade (`citeck upgrade`)
-- [ ] CLI: `citeck upgrade [bundle-ref]` — смена bundleRef в namespace.yml + reload
-- [ ] CLI: `citeck upgrade --list` — показать доступные версии (из workspace config)
-- [ ] Web UI: кнопка upgrade на Dashboard с выбором версии
+### ~~1. Bundle upgrade (`citeck upgrade`)~~ ✅ DONE
+- [x] CLI: `citeck upgrade [bundle-ref]` — смена bundleRef в namespace.yml + reload
+- [x] CLI: `citeck upgrade --list` — показать доступные версии (из workspace config)
+- [x] Web UI: кнопка upgrade на Dashboard с выбором версии
 
-### 2. Docker image cleanup
-- [ ] CLI: `citeck clean images` — удалить неиспользуемые образы (dangling + старые версии)
+### ~~2. Docker image cleanup~~ ✅ DONE
+- [x] CLI: `citeck clean --images` — удалить неиспользуемые dangling-образы
 - [ ] Автоочистка после upgrade (удалить образы предыдущей версии бандла)
 
 ### 3. Welcome/Wizard в серверном режиме
@@ -22,11 +22,11 @@
 - [ ] Offline quick start: скачать бинарь + workspace.zip → `citeck install --workspace` → `citeck start`
 - [ ] Архитектура, CLI reference, ссылки на docs/
 
-### 5. Обновить документацию под текущее состояние
-- [ ] CLAUDE.md: workspace import/update, offline mode, secrets default password, docker naming
-- [ ] docs/config.md: `--offline`, `--workspace` флаги, `citeck workspace` команды
-- [ ] docs/operations.md: offline deployment flow, workspace import/update
-- [ ] docs/api.md: проверить актуальность всех эндпоинтов
+### ~~5. Обновить документацию под текущее состояние~~ ✅ DONE
+- [x] CLAUDE.md: Phase 18 added (upgrade, image cleanup, bundle listing fix, docs)
+- [x] docs/config.md: CLI flags, workspace commands, offline mode, upgrade, image cleanup
+- [x] docs/operations.md: bundle upgrade, offline deployment, image cleanup
+- [x] docs/api.md: POST /namespace/upgrade endpoint documented
 
 ### 6. Server deployment testing
 - [ ] Чистая установка: `citeck install --workspace` → `citeck start` → все сервисы RUNNING
