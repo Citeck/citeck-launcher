@@ -375,20 +375,7 @@ func (d *Daemon) handleListBundles(w http.ResponseWriter, _ *http.Request) {
 	var result []api.BundleInfoDto
 	if wsCfg != nil {
 		for _, repo := range wsCfg.BundleRepos {
-			// Check local workspace repo first (offline import), then cloned bundles dir
-			bundlesDir := ""
-			if repo.Path != "" {
-				localRepo := filepath.Join(config.DataDir(), "repo", repo.Path)
-				if _, err := os.Stat(localRepo); err == nil {
-					bundlesDir = localRepo
-				}
-			}
-			if bundlesDir == "" {
-				bundlesDir = config.ResolveBundlesDir(d.workspaceID, repo.ID)
-				if repo.Path != "" {
-					bundlesDir = filepath.Join(bundlesDir, repo.Path)
-				}
-			}
+			bundlesDir := d.resolveBundleDir(repo)
 			versions := bundle.ListBundleVersions(bundlesDir)
 			result = append(result, api.BundleInfoDto{Repo: repo.ID, Versions: versions})
 		}
@@ -397,6 +384,22 @@ func (d *Daemon) handleListBundles(w http.ResponseWriter, _ *http.Request) {
 		result = []api.BundleInfoDto{}
 	}
 	writeJSON(w, result)
+}
+
+// resolveBundleDir returns the on-disk directory for a bundle repo.
+// Checks local workspace repo first (offline import at data/repo/), then cloned bundles dir.
+func (d *Daemon) resolveBundleDir(repo bundle.BundlesRepo) string {
+	if repo.Path != "" {
+		localRepo := filepath.Join(config.DataDir(), "repo", repo.Path)
+		if _, err := os.Stat(localRepo); err == nil {
+			return localRepo
+		}
+	}
+	bundlesDir := config.ResolveBundlesDir(d.workspaceID, repo.ID)
+	if repo.Path != "" {
+		bundlesDir = filepath.Join(bundlesDir, repo.Path)
+	}
+	return bundlesDir
 }
 
 // --- Secrets ---
