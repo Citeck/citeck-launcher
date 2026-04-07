@@ -100,6 +100,7 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 		newInstallCmd(),
 		newUninstallCmd(),
 		newSnapshotCmd(),
+		newUpgradeCmd(),
 		newValidateCmd(),
 		newWorkspaceCmd(),
 		newCompletionCmd(),

@@ -278,6 +278,20 @@ func (c *DaemonClient) ImportSnapshot(name string) (*api.ActionResultDto, error)
 	return &dto, err
 }
 
+// UpgradeNamespace changes the bundle version and triggers a reload.
+func (c *DaemonClient) UpgradeNamespace(bundleRef string) (*api.ActionResultDto, error) {
+	var dto api.ActionResultDto
+	err := c.post(api.NamespaceUpgrade, api.UpgradeRequestDto{BundleRef: bundleRef}, &dto)
+	return &dto, err
+}
+
+// ListBundles returns available bundle repositories and their versions.
+func (c *DaemonClient) ListBundles() ([]api.BundleInfoDto, error) {
+	var dto []api.BundleInfoDto
+	err := c.get(api.Bundles, &dto)
+	return dto, err
+}
+
 // RestartApp restarts the named application container.
 func (c *DaemonClient) RestartApp(name string) (*api.ActionResultDto, error) {
 	var dto api.ActionResultDto
