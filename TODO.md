@@ -72,9 +72,9 @@
 ### 12. Прозрачная миграция с Kotlin launcher (v1.x) — только desktop
 Серверного Kotlin launcher не было в релизе. Миграция актуальна только для desktop.
 Пользователь не должен знать что рантайм сменился. Просто обновил бинарь — всё работает.
-- [ ] H2→SQLite миграция уже автоматическая. Проверить что namespace/secrets/workspace state переносятся полностью
-- [ ] Старые контейнеры (именование `citeck_{app}_{ns}_{ws}`) — при первом старте v2 удалить старые по labels, создать новые с именами `citeck_{app}_{ns}`. Volumes сохраняются (named volumes не зависят от имени контейнера)
-- [ ] Secrets: Kotlin шифровал blob → автоимпорт + диалог для мастер-пароля в desktop UI. Уже работает
+- [x] H2→SQLite миграция — автоматическая (desktop mode, при старте)
+- [x] Docker naming — desktop сохраняет формат `citeck_{app}_{ns}_{ws}` (Kotlin compat), контейнеры не пересоздаются
+- [x] Secrets: Kotlin шифровал blob → автоимпорт + диалог для мастер-пароля в desktop UI
 - [ ] E2E тест: Kotlin v1.3.x desktop → Go v2.0.0 desktop на реальных данных
 
 ## P2: Улучшения после релиза
@@ -102,7 +102,7 @@
 - [x] Local bundles (empty URL = use workspace repo dir)
 - [x] Server mode: auto-encrypt secrets with default password
 - [x] Server mode: resolver offline (no auto-pull, `citeck workspace update` for manual sync)
-- [x] Remove workspace ID from Docker resource names
+- [x] Remove workspace ID from Docker resource names (server mode only; desktop keeps it for Kotlin compat)
 - [x] Dependency upgrades (Go + Web)
 - [x] pnpm migration
 - [x] `--offline` flag for citeck start
