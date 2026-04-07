@@ -447,15 +447,12 @@ func generateObserver(ctx *NsGenContext) {
 
 	obsImage := ctx.Config.Observer.Image
 	if obsImage == "" {
-		obsImage = bundleImageOr(ctx, appdef.AppObserver, "")
-	}
-	if obsImage == "" {
-		slog.Warn("Observer enabled but no image configured, skipping")
-		return
+		obsImage = bundleImageOr(ctx, appdef.AppObserver, "citeck/observer:1.1.0")
 	}
 
 	const (
-		// Observer ports: 17014–17017 (before ZK admin 17018, Alfresco 17019, webapps 17020+)
+		// Observer ports: 17014–17018 (before Alfresco 17019, webapps 17020+)
+		obsLogUDP   = 17014 // UDP log receiver
 		obsOTLPHTTP = 17015 // OTLP HTTP/protobuf receiver
 		obsHTTP     = 17016 // HTTP API + embedded UI
 		obsGRPC     = 17017 // OTLP gRPC receiver
@@ -511,11 +508,12 @@ func generateObserver(ctx *NsGenContext) {
 	obs.Image = obsImage
 	obs.Kind = appdef.KindThirdParty
 
-	// Core server
+	// Core server — all ports explicit (don't rely on observer defaults)
 	obs.AddEnv("SERVER_MODE", "dev")
 	obs.AddEnv("SERVER_PORT", fmt.Sprintf("%d", obsHTTP))
 	obs.AddEnv("OTLP_GRPC_PORT", fmt.Sprintf("%d", obsGRPC))
 	obs.AddEnv("OTLP_HTTP_PORT", fmt.Sprintf("%d", obsOTLPHTTP))
+	obs.AddEnv("LOG_RECEIVER_UDP_PORT", fmt.Sprintf("%d", obsLogUDP))
 
 	// Observer's own database
 	obs.AddEnv("DATABASE_HOST", ObsPGHost)
@@ -528,6 +526,7 @@ func generateObserver(ctx *NsGenContext) {
 	// ZooKeeper discovery
 	obs.AddEnv("ZOOKEEPER_HOSTS", fmt.Sprintf("%s:%d", ZKHost, ZKPort))
 	obs.AddEnv("DISCOVERY_HOST", appdef.AppObserver)
+	obs.AddEnv("DISCOVERY_APP_NAME", appdef.AppObserver)
 
 	// Auth — same JWT secret as all webapps
 	obs.AddEnv("AUTH_JWT_SECRET", ctx.Secrets.JWT)
@@ -551,6 +550,7 @@ func generateObserver(ctx *NsGenContext) {
 	obs.AddPort(fmt.Sprintf("%d:%d", obsHTTP, obsHTTP))
 	obs.AddPort(fmt.Sprintf("%d:%d", obsGRPC, obsGRPC))
 	obs.AddPort(fmt.Sprintf("%d:%d", obsOTLPHTTP, obsOTLPHTTP))
+	obs.AddPort(fmt.Sprintf("%d:%d/udp", obsLogUDP, obsLogUDP))
 	obs.AddDependsOn(appdef.AppObsPostgres)
 	obs.AddDependsOn(appdef.AppZookeeper)
 	obs.StartupConditions = []appdef.StartupCondition{
@@ -570,6 +570,11 @@ func generateObserver(ctx *NsGenContext) {
 
 	// 3. Cloud config for CloudConfigServer (local debugging: "stop in launcher, run locally")
 	extCloudConfig := map[string]any{
+		// Server — explicit ports for local debugging
+		"server.port":          obsHTTP,
+		"otlp.grpc_port":      obsGRPC,
+		"otlp.http_port":      obsOTLPHTTP,
+		"log_receiver.udp_port": obsLogUDP,
 		// Observer's own database (localhost with published port)
 		"database.host":         "localhost",
 		"database.port":         obsPGPort,
