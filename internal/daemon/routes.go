@@ -154,7 +154,7 @@ func (d *Daemon) handleUpgradeNamespace(w http.ResponseWriter, r *http.Request) 
 	defer d.reloadMu.Unlock()
 
 	d.configMu.RLock()
-	if d.runtime == nil || d.nsConfig == nil {
+	if d.runtime == nil || d.nsConfig == nil || d.bundleDef == nil {
 		d.configMu.RUnlock()
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
 		return
@@ -206,6 +206,10 @@ func (d *Daemon) handleUpgradeNamespace(w http.ResponseWriter, r *http.Request) 
 //nolint:nestif // reload orchestrates config read, git pull, bundle resolution, ACME cert obtainment, and runtime regeneration
 func (d *Daemon) doReload() error {
 	d.configMu.RLock()
+	if d.nsConfig == nil {
+		d.configMu.RUnlock()
+		return fmt.Errorf("no namespace configured")
+	}
 	nsID := d.nsConfig.ID
 	d.configMu.RUnlock()
 

@@ -108,9 +108,17 @@ func newCleanCmd() *cobra.Command {
 				}
 			})
 
-			// Image prune (standalone, does not require --execute)
+			if images && !execute {
+				output.PrintText("\nTo prune dangling Docker images, run with --execute.")
+			}
+
+			if !execute {
+				return nil
+			}
+
+			// Image prune (requires --execute)
 			if images {
-				output.PrintText("Pruning unused Docker images...")
+				output.PrintText("\nPruning unused Docker images...")
 				pruneCtx, pruneCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 				reclaimed, pruneErr := dc.PruneUnusedImages(pruneCtx)
 				pruneCancel()
@@ -120,10 +128,6 @@ func newCleanCmd() *cobra.Command {
 					mb := float64(reclaimed) / (1024 * 1024)
 					output.PrintText(fmt.Sprintf("Reclaimed %.1f MB from unused images", mb))
 				}
-			}
-
-			if !execute {
-				return nil
 			}
 
 			if !flagYes {

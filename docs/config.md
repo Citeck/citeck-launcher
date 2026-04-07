@@ -228,9 +228,9 @@ citeck upgrade community:2026.1
 ### Image Cleanup
 
 ```bash
-# Prune dangling Docker images
+# Dry run: scan orphaned resources + show image prune intent
 citeck clean --images
 
-# Prune images + remove orphaned containers
+# Execute: remove orphaned resources + prune dangling images
 citeck clean --images --execute
 ```
