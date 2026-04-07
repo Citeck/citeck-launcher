@@ -2,6 +2,8 @@
 
 # Citeck Launcher
 
+[Русская версия](README.ru.md)
+
 Citeck Launcher manages Citeck ECOS namespaces and Docker containers. It is a single Go binary (~14 MB) that serves as both CLI and daemon, with an embedded React Web UI.
 
 ## Quick Start
