@@ -107,14 +107,16 @@ func newSnapshotExportCmd() *cobra.Command {
 			}
 
 			// Export (always wait for completion)
-			err = snapshotAndWait(c,"snapshot_complete", "snapshot_error", func() (*api.ActionResultDto, error) {
+			err = snapshotAndWait(c, "snapshot_complete", "snapshot_error", func() (*api.ActionResultDto, error) {
 				return c.ExportSnapshot(dir)
 			})
 			if err != nil {
 				// Try to restart even on export failure
 				if wasRunning {
 					output.PrintText("Starting namespace back...")
-					_, _ = c.StartNamespace()
+					if _, startErr := c.StartNamespace(); startErr != nil {
+						output.Errf("Warning: failed to restart namespace: %v", startErr)
+					}
 				}
 				return err
 			}
@@ -165,7 +167,7 @@ func newSnapshotImportCmd() *cobra.Command {
 			}
 			defer c.Close()
 
-			return snapshotAndWait(c,"snapshot_complete", "snapshot_error", func() (*api.ActionResultDto, error) {
+			return snapshotAndWait(c, "snapshot_complete", "snapshot_error", func() (*api.ActionResultDto, error) {
 				return c.ImportSnapshot(args[0])
 			})
 		},
