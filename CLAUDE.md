@@ -498,12 +498,40 @@ Bundle version upgrade + host/auth switching tested on remote server. 5 bugs fix
 **CLI namespace guard:**
 - `citeck start` in server mode requires `namespace.yml` — fails with "Run citeck install" message
 
+**Self-update:**
+- `citeck self-update` — download latest from GitHub Releases, verify SHA256, atomic replace
+- `citeck self-update --file <path>` — offline update from local binary
+- `citeck self-update rollback` — revert to previous version (backup auto-created)
+- Stops daemon before binary replace, starts after; `--check` for version check only
+- Dev build guard: refuses self-update from `version=dev`
+
+**P12 browser certificates:**
+- `citeck cert generate` and `citeck install` auto-generate `.p12` file for Web UI browser import (mTLS)
+- Written to current directory as `citeck-webui-{name}.p12`; private key no longer printed to console
+- `go-pkcs12` library (pure Go, no openssl dependency)
+
+**CLI improvements:**
+- `citeck start/stop -d` — detach mode (fire-and-forget, like docker-compose)
+- `citeck stop` — synchronous by default, shows live progress per app (TTY-aware)
+- `citeck restart` — restart entire namespace (no arg) or single app
+- `citeck upgrade --dry-run` — preview bundle change, verify target exists
+- `citeck snapshot import` — auto stop/start (same as export)
+- `--format json` global flag (renamed from `--output` to avoid ambiguity with file paths)
+
+**Observer:**
+- Default image `citeck/observer:1.1.0` (fallback when not in bundle)
+- All ports explicit: SERVER_PORT, OTLP_GRPC_PORT, OTLP_HTTP_PORT, LOG_RECEIVER_UDP_PORT
+- DISCOVERY_APP_NAME and UDP port mapping added
+
+**Web UI log:**
+- Shows machine IP (via `net.InterfaceAddrs`) instead of raw `0.0.0.0` in startup log
+
 **Bundle listing fix:**
 - `handleListBundles` now checks `data/repo/{path}` first (offline-imported bundles), then falls back to `data/bundles/{repo.ID}` (cloned repos)
 
 ## CI/CD
 
 GitHub Actions:
-- **Release workflow** (`.github/workflows/release-go.yml`): triggered by `v*.*.*` tags, builds on Linux/Windows/macOS (x64 + arm64), creates GitHub release. Uses `go-version-file: go.mod`.
-- **CI workflow** (`.github/workflows/ci.yml`): triggered on push/PR to master. Runs `go vet`, `golangci-lint v2.7.2`, `go test -race ./internal/...`, `npx vitest run`.
+- **Release workflow** (`.github/workflows/release-go.yml`): triggered by `v*.*.*` tags, builds Linux amd64 server binary, creates draft GitHub release. Uses `go-version-file: go.mod`.
+- **CI workflow** (`.github/workflows/ci.yml`): triggered on push/PR to master and `release/**` branches. Runs `go vet`, `golangci-lint v2.7.2`, `go test -race`, `pnpm vitest run`, full server build.
 - **Linting**: `.golangci.yml` v2 format, 21 linters, G104 excluded (cleanup errors), test files relaxed for dupl/gosec/unparam.

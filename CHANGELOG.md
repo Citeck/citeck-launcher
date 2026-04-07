@@ -55,12 +55,20 @@
 ## Snapshot improvements
 
 * `citeck snapshot export` auto-stops namespace, exports, then auto-starts
+* `citeck snapshot import` auto-stops namespace, imports, then auto-starts
 * `citeck snapshot export --dir /mnt/backup/` — write directly to specified directory
 * Interactive prompts for output directory and stop confirmation (`--yes` skips)
 
 ## Docker image cleanup
 
 * `citeck clean --images --execute` — prune dangling Docker images after confirmation
+
+## Self-update
+
+* `citeck self-update` — download latest from GitHub Releases, verify SHA256, atomic replace
+* `citeck self-update --file <path>` — offline update from local binary
+* `citeck self-update rollback` — revert to previous version (binary backed up automatically)
+* Stops daemon before replacing binary, starts it after
 
 ## CLI
 
@@ -69,6 +77,12 @@
 * `citeck validate` command for offline config validation
 * Server mode: `citeck start` requires namespace.yml (run `citeck install` first)
 * `citeck workspace import|update` for offline workspace management
+* `citeck start/stop -d` — detach mode (fire-and-forget, like docker-compose)
+* `citeck stop` — synchronous by default, shows live progress per app
+* `citeck restart` — restart entire namespace (no arg) or single app
+* `citeck upgrade --dry-run` — preview bundle change without applying
+* `citeck cert generate` — auto-generates .p12 file for Web UI browser access (mTLS)
+* `--format json` global flag (renamed from `--output` to avoid ambiguity)
 
 ## Security
 

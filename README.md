@@ -61,23 +61,23 @@ The Web UI is available at `http://127.0.0.1:7088` by default.
 
 ```
 citeck install [--workspace <zip>]      Interactive setup wizard (offline with --workspace)
-citeck start [app] [--foreground]       Start daemon/namespace or a single app
-citeck stop [app]                       Stop namespace or a single app
+citeck start [app] [-d]                 Start daemon/namespace (-d = detach, don't wait)
+citeck stop [app] [-d]                  Stop namespace (-d = detach, don't wait)
+citeck restart [app]                    Restart an app or the entire namespace
 citeck status [--watch]                 Show namespace status
-citeck health                           Health check (exit code 0/1)
+citeck health                           Health check (exit 0=healthy, 1=unhealthy)
 citeck reload                           Reload config and regenerate containers
-citeck upgrade [ref] [--list]           Upgrade bundle version (or list available)
+citeck upgrade [ref] [--list|--dry-run] Upgrade bundle version
 citeck logs [app] [--follow]            Stream logs (daemon if no app)
 citeck exec <app> -- <command>          Execute command in container
-citeck restart <app>                    Restart an app
-citeck apply <file>                     Apply namespace config
-citeck diff                             Diff running config vs file
-citeck snapshot list|export|import      Manage volume snapshots
+citeck apply <file> [--dry-run]         Apply namespace config
+citeck diff -f <file>                   Diff running config vs file
+citeck snapshot list|export|import      Manage volume snapshots (auto stop/start)
 citeck clean [--images] [--execute]     Clean orphaned resources / prune images
-citeck cert generate|list|revoke        Manage mTLS client certificates
+citeck cert generate|list|revoke        Manage mTLS certs (auto-generates .p12)
+citeck self-update [--check|--file]     Update launcher binary (with rollback)
 citeck workspace import|update          Import or update workspace repos
 citeck diagnose                         Run diagnostics
-citeck config show|edit                 View/edit namespace config
 citeck validate                         Validate namespace config
 citeck completion bash|zsh|fish         Generate shell completion
 citeck uninstall                        Remove systemd service and config

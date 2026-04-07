@@ -4,30 +4,12 @@
 
 ## P0: Блокеры релиза
 
-### ~~1. Bundle upgrade (`citeck upgrade`)~~ ✅ DONE
-- [x] CLI: `citeck upgrade [bundle-ref]` — смена bundleRef в namespace.yml + reload
-- [x] CLI: `citeck upgrade --list` — показать доступные версии (из workspace config)
-- [x] Web UI: кнопка upgrade на Dashboard с выбором версии
-
+### ~~1. Bundle upgrade~~ ✅ DONE
 ### ~~2. Docker image cleanup~~ ✅ DONE
-- [x] CLI: `citeck clean --images` — удалить неиспользуемые dangling-образы
-- [ ] Автоочистка после upgrade (удалить образы предыдущей версии бандла)
-
-### ~~3. Welcome/Wizard в серверном режиме~~ ✅ DONE
-- [x] CLI: `citeck start` в серверном режиме требует namespace.yml (→ `citeck install`)
-- [x] Web UI: серверный режим без namespace показывает Wizard
-- [x] Wizard: шаг выбора бандл-версии (из getBundles API)
-
+### ~~3. CLI namespace guard + Wizard~~ ✅ DONE
 ### ~~4. README.md~~ ✅ DONE
-- [x] Quick start: download → `citeck install` → `citeck start` → Web UI
-- [x] Offline quick start: `citeck install --workspace`
-- [x] CLI reference (все команды), архитектура, ссылки на docs/
-
-### ~~5. Обновить документацию под текущее состояние~~ ✅ DONE
-- [x] CLAUDE.md: Phase 18 added (upgrade, image cleanup, bundle listing fix, docs)
-- [x] docs/config.md: CLI flags, workspace commands, offline mode, upgrade, image cleanup
-- [x] docs/operations.md: bundle upgrade, offline deployment, image cleanup
-- [x] docs/api.md: POST /namespace/upgrade endpoint documented
+### ~~5. Документация~~ ✅ DONE
+### ~~7. Self-update~~ ✅ DONE
 
 ### 6. Server deployment testing
 - [ ] Чистая установка: `citeck install --workspace` → `citeck start` → все сервисы RUNNING
@@ -35,28 +17,34 @@
 - [ ] Daemon restart: restart events переживают рестарт
 - [ ] Liveness probe: убить контейнер → автоперезапуск → diagnostics файл создан
 - [ ] Web UI: Dashboard, restart events panel, restart count badge
+- [ ] Snapshot export/import cycle: auto-stop → export → start → stop → import → start
+- [ ] Self-update: `citeck self-update --file` → замена бинаря → rollback
+- [ ] mTLS: `citeck cert generate` → .p12 import в браузер → Web UI доступен
 
 ## P1: Важно, но не блокирует релиз
-
-### 7. Self-update лончера
-- [ ] `citeck self-update` или документация по ручному обновлению через systemd
 
 ### 8. Проверка совместимости при upgrade
 - [ ] Bundle может декларировать `minLauncherVersion` и `migrationNotes`
 
-### 9. Системные требования и ограничения
+### 9. Системные требования
 - [ ] Задокументировать: минимум 4 CPU / 16GB RAM / 50GB disk, Docker 24+
-- [ ] Серверный режим = один namespace на инстанс
 
 ### 10. CI/CD pipeline
-- [ ] Проверить release workflow (goreleaser) с pnpm
-- [ ] Проверить CI на чистом runner
+- [ ] Проверить release workflow на чистом runner
+- [ ] Проверить CI на release/2.0.0 ветке
 
 ### 11. Desktop: E2E миграция Kotlin → Go
 - [ ] Тест на реальных данных: Kotlin v1.3.x → Go v2.0.0
+
+### 12. Автоочистка образов после upgrade
+- [ ] Удалять образы предыдущей версии бандла после успешного upgrade
+
+### 13. Image dry-run в `citeck clean`
+- [ ] `citeck clean --images` без `--execute` показывает сколько места можно освободить
 
 ## P2: После релиза
 
 - [ ] Scheduled backups (snapshot schedule + retention)
 - [ ] Metrics (restart_count, liveness_failures, image_pull_duration) + Grafana template
 - [ ] Multi-node (Docker Swarm или документация)
+- [ ] Hot backup (pg_dump + ZK snapshot без остановки namespace)
