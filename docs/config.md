@@ -225,6 +225,19 @@ citeck upgrade --list
 citeck upgrade community:2026.1
 ```
 
+### Snapshot Export
+
+```bash
+# Interactive: prompts for output dir, auto-stops/starts namespace
+citeck snapshot export
+
+# Write to specific directory
+citeck snapshot export --output /mnt/backup/
+
+# Non-interactive (auto-stop/start, default dir)
+citeck snapshot export --yes
+```
+
 ### Image Cleanup
 
 ```bash

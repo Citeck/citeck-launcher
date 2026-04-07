@@ -486,17 +486,20 @@ Bundle version upgrade + host/auth switching tested on remote server. 5 bugs fix
 - All 8 locales updated with `upgrade.*` i18n keys
 
 **Image cleanup:**
-- `citeck clean --images` prunes dangling Docker images
+- `citeck clean --images --execute` prunes dangling Docker images after confirmation
 - `PruneUnusedImages` added to Docker client (ImagesPrune with dangling filter)
-- Standalone flag — works with or without `--execute` for orphan cleanup
+
+**Snapshot export improvements:**
+- `citeck snapshot export --output /path/` — daemon writes directly to specified directory
+- Auto stop/start: if namespace is running, CLI stops it, exports, then starts back
+- Interactive prompts for output dir and stop confirmation (`--yes` skips all)
+- `snapshotAndWait` replaces `snapshotWithWait` — always synchronous, no dead `wait` param
+
+**CLI namespace guard:**
+- `citeck start` in server mode requires `namespace.yml` — fails with "Run citeck install" message
 
 **Bundle listing fix:**
 - `handleListBundles` now checks `data/repo/{path}` first (offline-imported bundles), then falls back to `data/bundles/{repo.ID}` (cloned repos)
-
-**Documentation:**
-- `docs/api.md`: upgrade endpoint documented
-- `docs/config.md`: CLI flags, workspace commands, offline mode, upgrade, image cleanup
-- `docs/operations.md`: bundle upgrade, offline deployment, image cleanup procedures
 
 ## CI/CD
 

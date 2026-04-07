@@ -45,11 +45,30 @@
 * Refined Darcula palette with active tab accent lines, status dot indicators
 * Server mode: Dashboard shown directly at root (no Welcome screen)
 
+## Bundle upgrade
+
+* `citeck upgrade [ref]` — change bundle version and reload
+* `citeck upgrade --list` — show available versions with current marked
+* Web UI upgrade button in Dashboard sidebar with version picker
+* `POST /api/v1/namespace/upgrade` API endpoint
+
+## Snapshot improvements
+
+* `citeck snapshot export` auto-stops namespace, exports, then auto-starts
+* `citeck snapshot export --output /mnt/backup/` — write directly to specified directory
+* Interactive prompts for output directory and stop confirmation (`--yes` skips)
+
+## Docker image cleanup
+
+* `citeck clean --images --execute` — prune dangling Docker images after confirmation
+
 ## CLI
 
 * Interactive install wizard with language selection, port availability check
 * Shell completion (bash/zsh/fish/powershell)
 * `citeck validate` command for offline config validation
+* Server mode: `citeck start` requires namespace.yml (run `citeck install` first)
+* `citeck workspace import|update` for offline workspace management
 
 ## Security
 

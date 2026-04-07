@@ -276,7 +276,9 @@ List local snapshots.
 
 ### POST /api/v1/snapshots/export
 
-Export namespace volumes to ZIP.
+Export namespace volumes to ZIP. Namespace must be stopped.
+
+Query: `?output=/mnt/backup/` — write snapshot to this directory instead of default. Path must be absolute.
 
 ### POST /api/v1/snapshots/import
 

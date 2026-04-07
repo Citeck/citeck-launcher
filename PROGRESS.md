@@ -42,3 +42,5 @@
 | Phase 15 | Lens-inspired UI redesign — drawer, bottom panel, i18n (8 languages), UX hardening, design polish, apps visible when stopped | 2026-03-28 |
 | Phase 16 | Secrets encryption (AES-256-GCM), desktop fixes (Wails proxy, WAL cleanup, error pages), 21-linter config, locale test, per-page ErrorBoundary | 2026-03-31 |
 | Server test 4 | Bundle upgrade (2025.12→2026.1), host/auth switching, cached bundle fallback (Kotlin parity), CLI start/stop/logs per-app. 5 bugs fixed + code review fixes | 2026-04-01 |
+| Phase 17 | Self-healing runtime — liveness probes, restart tracking, pre-restart diagnostics, startup timeout reduction | 2026-04-06 |
+| Phase 18 | Bundle upgrade CLI+API+WebUI, image cleanup, snapshot --output, namespace guard, offline bundle listing fix, docs update | 2026-04-07 |

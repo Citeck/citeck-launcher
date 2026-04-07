@@ -88,9 +88,17 @@ citeck clean --images --volumes --execute
 ### Export
 
 ```bash
+# Interactive: prompts for output directory, auto-stops/starts namespace
 citeck snapshot export
-# Creates: $CITECK_HOME/volumes/default/snapshots/<timestamp>.zip
+
+# Specify output directory
+citeck snapshot export --output /mnt/backup/
+
+# Non-interactive (default dir, auto-stop/start, no prompts)
+citeck snapshot export --yes
 ```
+
+If the namespace is running, the CLI will ask to stop it, export volumes, then start it back. If already stopped, it exports directly without starting afterward.
 
 ### Import
 
@@ -99,7 +107,7 @@ citeck snapshot export
 citeck stop
 
 # Import snapshot
-citeck snapshot import /path/to/snapshot.zip
+citeck snapshot import my-namespace_2026-04-07_12-00-00.zip
 
 # Start
 citeck start
