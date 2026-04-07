@@ -895,10 +895,19 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 	// Determine output directory: query param or default snapshots dir
 	dir := r.URL.Query().Get("output")
 	if dir != "" {
-		if !filepath.IsAbs(dir) {
+		dir = filepath.Clean(dir)
+		if !filepath.IsAbs(dir) || strings.Contains(dir, "..") {
 			d.snapshotMu.Unlock()
-			writeError(w, http.StatusBadRequest, "output path must be absolute")
+			writeError(w, http.StatusBadRequest, "output path must be absolute and not contain '..'")
 			return
+		}
+		// Reject known sensitive prefixes
+		for _, prefix := range []string{"/proc", "/sys", "/dev", "/etc", "/boot"} {
+			if strings.HasPrefix(dir, prefix+"/") || dir == prefix {
+				d.snapshotMu.Unlock()
+				writeError(w, http.StatusBadRequest, "output path is not allowed: "+dir)
+				return
+			}
 		}
 	} else {
 		var dirErr error

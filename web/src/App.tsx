@@ -19,7 +19,7 @@ import { useEffect, useState } from 'react'
 
 function Layout() {
   const { namespace, fetchData } = useDashboardStore()
-  const [isDesktop, setIsDesktop] = useState(false)
+  const [isDesktop, setIsDesktop] = useState<boolean | null>(null)
 
   // Fetch daemon status once on mount to detect server/desktop mode and locale
   useEffect(() => {
@@ -38,9 +38,10 @@ function Layout() {
   }, [fetchData])
 
   const hasNamespace = namespace !== null
+  // null = loading (show nothing yet), true = desktop, false = server
   // Desktop mode: show Welcome when no namespace selected
   // Server mode: daemon won't start without namespace (CLI guard), so Dashboard always has data
-  const showWelcomeAtRoot = isDesktop && !hasNamespace
+  const showWelcomeAtRoot = isDesktop === true && !hasNamespace
 
   return (
     <div className="h-screen bg-background flex flex-col overflow-hidden">

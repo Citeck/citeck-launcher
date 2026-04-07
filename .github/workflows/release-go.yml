@@ -43,13 +43,13 @@ jobs:
           VERSION_TAG: ${{ github.ref_name }}
         run: |
           VERSION="${VERSION_TAG#v}"
-          CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION}" -o citeck ./cmd/citeck
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.version=${VERSION}" -o "citeck_${VERSION}_linux_amd64" ./cmd/citeck
 
       - name: Create draft release
         uses: softprops/action-gh-release@v2
         with:
           draft: true
-          files: citeck
+          files: citeck_*
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

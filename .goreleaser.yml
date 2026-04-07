@@ -1,3 +1,5 @@
+# NOTE: Not used by current release workflow (release-go.yml builds manually).
+# Kept for future multi-platform desktop release.
 version: 2
 
 before:
