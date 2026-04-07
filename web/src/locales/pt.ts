@@ -363,7 +363,6 @@ const pt: Translations = {
   // -- Upgrade --
   'upgrade.title': 'Atualizar bundle',
   'upgrade.select': 'Selecionar versão',
-  'upgrade.confirm': 'Atualizar',
   'upgrade.success': 'Atualização bem-sucedida',
   'upgrade.noVersions': 'Nenhuma versão de bundle disponível',
   'upgrade.alreadyLatest': 'Já está na versão mais recente',

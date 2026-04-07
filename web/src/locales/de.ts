@@ -363,7 +363,6 @@ const de: Translations = {
   // -- Upgrade --
   'upgrade.title': 'Bundle aktualisieren',
   'upgrade.select': 'Version auswählen',
-  'upgrade.confirm': 'Aktualisieren',
   'upgrade.success': 'Aktualisierung erfolgreich',
   'upgrade.noVersions': 'Keine Bundle-Versionen verfügbar',
   'upgrade.alreadyLatest': 'Bereits auf der neuesten Version',

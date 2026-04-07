@@ -363,7 +363,6 @@ const fr: Translations = {
   // -- Upgrade --
   'upgrade.title': 'Mettre \u00e0 jour le bundle',
   'upgrade.select': 'S\u00e9lectionner la version',
-  'upgrade.confirm': 'Mettre \u00e0 jour',
   'upgrade.success': 'Mise \u00e0 jour r\u00e9ussie',
   'upgrade.noVersions': 'Aucune version de bundle disponible',
   'upgrade.alreadyLatest': 'D\u00e9j\u00e0 sur la derni\u00e8re version',

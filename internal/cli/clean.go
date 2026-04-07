@@ -108,30 +108,19 @@ func newCleanCmd() *cobra.Command {
 				}
 			})
 
-			if images && !execute {
-				output.PrintText("\nTo prune dangling Docker images, run with --execute.")
-			}
-
 			if !execute {
+				if images {
+					output.PrintText("\nTo prune dangling Docker images, run with --execute.")
+				}
 				return nil
 			}
 
-			// Image prune (requires --execute)
-			if images {
-				output.PrintText("\nPruning unused Docker images...")
-				pruneCtx, pruneCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-				reclaimed, pruneErr := dc.PruneUnusedImages(pruneCtx)
-				pruneCancel()
-				if pruneErr != nil {
-					output.Errf("Image prune failed: %v", pruneErr)
-				} else {
-					mb := float64(reclaimed) / (1024 * 1024)
-					output.PrintText(fmt.Sprintf("Reclaimed %.1f MB from unused images", mb))
-				}
-			}
-
 			if !flagYes {
-				fmt.Printf("Remove %d containers, %d volume dirs, %d networks? [y/N]: ", len(orphans), len(orphanVols), len(orphanNets))
+				what := fmt.Sprintf("%d containers, %d volume dirs, %d networks", len(orphans), len(orphanVols), len(orphanNets))
+				if images {
+					what += " + dangling images"
+				}
+				fmt.Printf("Remove %s? [y/N]: ", what)
 				scanner := bufio.NewScanner(os.Stdin)
 				scanner.Scan()
 				answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
@@ -178,12 +167,30 @@ func newCleanCmd() *cobra.Command {
 				}
 			}
 
+			// Prune dangling images
+			var reclaimedMB float64
+			if images {
+				pruneCtx, pruneCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				reclaimed, pruneErr := dc.PruneUnusedImages(pruneCtx)
+				pruneCancel()
+				if pruneErr != nil {
+					output.Errf("Image prune failed: %v", pruneErr)
+					failed++
+				} else {
+					reclaimedMB = float64(reclaimed) / (1024 * 1024)
+				}
+			}
+
 			output.PrintResult(map[string]any{
 				"removed":    removed,
 				"volRemoved": volRemoved,
 				"failed":     failed,
+				"reclaimed":  reclaimedMB,
 			}, func() {
 				output.PrintText(fmt.Sprintf("Removed %d containers, %d volume dirs (%d failed)", removed, volRemoved, failed))
+				if images && reclaimedMB > 0 {
+					output.PrintText(fmt.Sprintf("Reclaimed %.1f MB from dangling images", reclaimedMB))
+				}
 			})
 			return nil
 		},

@@ -359,7 +359,6 @@ const ru: Translations = {
   // -- Upgrade --
   'upgrade.title': 'Обновить бандл',
   'upgrade.select': 'Выберите версию',
-  'upgrade.confirm': 'Обновить',
   'upgrade.success': 'Обновление выполнено',
   'upgrade.noVersions': 'Нет доступных версий бандла',
   'upgrade.alreadyLatest': 'Уже установлена последняя версия',

@@ -363,7 +363,6 @@ const zh: Translations = {
   // -- Upgrade --
   'upgrade.title': '升级 Bundle',
   'upgrade.select': '选择版本',
-  'upgrade.confirm': '升级',
   'upgrade.success': '升级成功',
   'upgrade.noVersions': '没有可用的 Bundle 版本',
   'upgrade.alreadyLatest': '已是最新版本',
