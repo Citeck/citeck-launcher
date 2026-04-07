@@ -375,10 +375,19 @@ func (d *Daemon) handleListBundles(w http.ResponseWriter, _ *http.Request) {
 	var result []api.BundleInfoDto
 	if wsCfg != nil {
 		for _, repo := range wsCfg.BundleRepos {
-			// Scan the on-disk bundle directory for this repo
-			bundlesDir := config.ResolveBundlesDir(d.workspaceID, repo.ID)
+			// Check local workspace repo first (offline import), then cloned bundles dir
+			bundlesDir := ""
 			if repo.Path != "" {
-				bundlesDir = filepath.Join(bundlesDir, repo.Path)
+				localRepo := filepath.Join(config.DataDir(), "repo", repo.Path)
+				if _, err := os.Stat(localRepo); err == nil {
+					bundlesDir = localRepo
+				}
+			}
+			if bundlesDir == "" {
+				bundlesDir = config.ResolveBundlesDir(d.workspaceID, repo.ID)
+				if repo.Path != "" {
+					bundlesDir = filepath.Join(bundlesDir, repo.Path)
+				}
 			}
 			versions := bundle.ListBundleVersions(bundlesDir)
 			result = append(result, api.BundleInfoDto{Repo: repo.ID, Versions: versions})
