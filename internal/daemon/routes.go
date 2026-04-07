@@ -113,7 +113,6 @@ func (d *Daemon) handleStopNamespace(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "Namespace stop requested"})
 }
 
-//nolint:nestif // reload orchestrates config read, git pull, bundle resolution, ACME cert obtainment, and runtime regeneration
 func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 	if !d.reloadMu.TryLock() {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeReloadInProgress, "reload already in progress")
@@ -127,14 +126,93 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
 		return
 	}
+	d.configMu.RUnlock()
+
+	if err := d.doReload(); err != nil {
+		writeInternalError(w, err)
+		return
+	}
+	writeJSON(w, api.ActionResultDto{Success: true, Message: "Reload requested"})
+}
+
+func (d *Daemon) handleUpgradeNamespace(w http.ResponseWriter, r *http.Request) {
+	var req api.UpgradeRequestDto
+	if err := readJSON(r, &req); err != nil || req.BundleRef == "" {
+		writeError(w, http.StatusBadRequest, "bundleRef required")
+		return
+	}
+	ref, err := bundle.ParseRef(req.BundleRef)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid bundleRef: %v", err))
+		return
+	}
+
+	if !d.reloadMu.TryLock() {
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeReloadInProgress, "reload already in progress")
+		return
+	}
+	defer d.reloadMu.Unlock()
+
+	d.configMu.RLock()
+	if d.runtime == nil || d.nsConfig == nil {
+		d.configMu.RUnlock()
+		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
+		return
+	}
+	nsID := d.nsConfig.ID
+	currentRef := d.nsConfig.BundleRef
+	d.configMu.RUnlock()
+
+	if ref == currentRef {
+		writeJSON(w, api.ActionResultDto{Success: true, Message: "already on " + req.BundleRef})
+		return
+	}
+
+	// Update namespace.yml with new bundleRef
+	nsCfgPath := config.ResolveNamespaceConfigPath(d.workspaceID, nsID)
+	nsCfg, err := namespace.LoadNamespaceConfig(nsCfgPath)
+	if err != nil {
+		writeInternalError(w, fmt.Errorf("load config: %w", err))
+		return
+	}
+	nsCfg.BundleRef = ref
+	data, err := namespace.MarshalNamespaceConfig(nsCfg)
+	if err != nil {
+		writeInternalError(w, fmt.Errorf("marshal config: %w", err))
+		return
+	}
+	if err := fsutil.AtomicWriteFile(nsCfgPath, data, 0o644); err != nil {
+		writeInternalError(w, fmt.Errorf("write config: %w", err))
+		return
+	}
+
+	slog.Info("Bundle upgrade requested", "from", currentRef, "to", ref)
+
+	// Trigger reload with the updated config
+	if err := d.doReload(); err != nil {
+		writeInternalError(w, fmt.Errorf("reload after upgrade: %w", err))
+		return
+	}
+
+	writeJSON(w, api.ActionResultDto{
+		Success: true,
+		Message: fmt.Sprintf("upgraded from %s to %s", currentRef, ref),
+	})
+}
+
+// doReload performs the core reload logic: load config, resolve bundle, generate, write files,
+// update shared state, and regenerate runtime. Caller must hold reloadMu.
+//
+//nolint:nestif // reload orchestrates config read, git pull, bundle resolution, ACME cert obtainment, and runtime regeneration
+func (d *Daemon) doReload() error {
+	d.configMu.RLock()
 	nsID := d.nsConfig.ID
 	d.configMu.RUnlock()
 
 	// Phase 1: slow I/O outside lock (config read, git pull, bundle resolution)
 	nsCfg, err := namespace.LoadNamespaceConfig(config.ResolveNamespaceConfigPath(d.workspaceID, nsID))
 	if err != nil {
-		writeInternalError(w, fmt.Errorf("reload config: %w", err))
-		return
+		return fmt.Errorf("reload config: %w", err)
 	}
 
 	bundlesDataDir := config.DataDir()
@@ -151,8 +229,7 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 				"cachedVersion", cachedState.CachedBundle.Key.Version)
 			resolveResult = &bundle.ResolveResult{Bundle: cachedState.CachedBundle, Workspace: d.workspaceConfig}
 		} else {
-			writeInternalError(w, fmt.Errorf("resolve bundle: %w", err))
-			return
+			return fmt.Errorf("resolve bundle: %w", err)
 		}
 	}
 
@@ -232,7 +309,7 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 
 	// Phase 3: regenerate runtime with updated config (async stop + start)
 	d.runtime.Regenerate(genResp.Applications, nsCfg, resolveResult.Bundle)
-	writeJSON(w, api.ActionResultDto{Success: true, Message: "Reload requested"})
+	return nil
 }
 
 func (d *Daemon) handleAppLogs(w http.ResponseWriter, r *http.Request) {

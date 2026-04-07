@@ -978,6 +978,7 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+api.NamespaceStart, d.handleStartNamespace)
 	mux.HandleFunc("POST "+api.NamespaceStop, d.handleStopNamespace)
 	mux.HandleFunc("POST "+api.NamespaceReload, d.handleReloadNamespace)
+	mux.HandleFunc("POST "+api.NamespaceUpgrade, d.handleUpgradeNamespace)
 	mux.HandleFunc("GET "+api.RestartEvents, d.handleRestartEvents)
 	mux.HandleFunc("GET /api/v1/diagnostics-file", d.handleDiagnosticsFile)
 

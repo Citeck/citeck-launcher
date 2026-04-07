@@ -139,6 +139,11 @@ const (
 	ErrCodeReloadInProgress   = "RELOAD_IN_PROGRESS"
 )
 
+// UpgradeRequestDto is the request body for the namespace upgrade endpoint.
+type UpgradeRequestDto struct {
+	BundleRef string `json:"bundleRef"`
+}
+
 // --- Welcome Screen ---
 
 // NamespaceSummaryDto is a lightweight namespace representation for the welcome screen.

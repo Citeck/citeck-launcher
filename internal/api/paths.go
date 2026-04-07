@@ -12,11 +12,12 @@ const (
 	DaemonLogs     = APIV1 + "/daemon/logs"
 	Config         = APIV1 + "/config"
 
-	Namespace       = APIV1 + "/namespace"
-	NamespaceStart  = APIV1 + "/namespace/start"
-	NamespaceStop   = APIV1 + "/namespace/stop"
-	NamespaceReload = APIV1 + "/namespace/reload"
-	RestartEvents   = APIV1 + "/namespace/restart-events"
+	Namespace        = APIV1 + "/namespace"
+	NamespaceStart   = APIV1 + "/namespace/start"
+	NamespaceStop    = APIV1 + "/namespace/stop"
+	NamespaceReload  = APIV1 + "/namespace/reload"
+	NamespaceUpgrade = APIV1 + "/namespace/upgrade"
+	RestartEvents    = APIV1 + "/namespace/restart-events"
 
 	Events = APIV1 + "/events"
 	Apps   = APIV1 + "/apps"
