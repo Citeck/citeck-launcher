@@ -8,24 +8,14 @@ Citeck Launcher manages Citeck namespaces and Docker containers. It is a single 
 
 ## Quick Start
 
-```bash
-curl -fsSL https://get.citeck.com | sh
-```
-
-This downloads the launcher, runs the install wizard, and starts the platform. Web UI opens at `http://127.0.0.1:7088`.
-
-### Manual Install
-
 Prerequisites: Docker (running).
 
 ```bash
-# Download from GitHub Releases
-curl -fsSL -o citeck https://github.com/Citeck/citeck-launcher/releases/latest/download/citeck_linux_amd64
-chmod +x citeck && sudo mv citeck /usr/local/bin/
-
-# Install and start
-citeck install && citeck start
+curl -fsSL -o citeck https://github.com/Citeck/citeck-launcher/releases/latest/download/citeck_linux_amd64 \
+  && chmod +x citeck && sudo mv citeck /usr/local/bin/ && citeck install
 ```
+
+The install wizard sets up the namespace and starts the platform.
 
 ### Offline Install
 
@@ -46,7 +36,6 @@ citeck start --foreground
 sudo systemctl start citeck
 ```
 
-The Web UI is available at `http://127.0.0.1:7088` by default.
 
 ## Features
 

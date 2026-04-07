@@ -23,7 +23,7 @@ jobs:
           go vet ./internal/... ./cmd/citeck/...
 
       - name: Go lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
           version: v2.7.2
 

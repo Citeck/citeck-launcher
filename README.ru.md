@@ -8,24 +8,14 @@ Citeck Launcher управляет пространствами имён Citeck 
 
 ## Быстрый старт
 
-```bash
-curl -fsSL https://get.citeck.com | sh
-```
-
-Скачивает лончер, запускает мастер установки и стартует платформу. Web UI откроется на `http://127.0.0.1:7088`.
-
-### Ручная установка
-
 Требования: Docker (запущен).
 
 ```bash
-# Скачать с GitHub Releases
-curl -fsSL -o citeck https://github.com/Citeck/citeck-launcher/releases/latest/download/citeck_linux_amd64
-chmod +x citeck && sudo mv citeck /usr/local/bin/
-
-# Установить и запустить
-citeck install && citeck start
+curl -fsSL -o citeck https://github.com/Citeck/citeck-launcher/releases/latest/download/citeck_linux_amd64 \
+  && chmod +x citeck && sudo mv citeck /usr/local/bin/ && citeck install
 ```
+
+Мастер установки настроит пространство имён и запустит платформу.
 
 ### Офлайн-установка
 
