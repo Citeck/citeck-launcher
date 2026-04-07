@@ -917,15 +917,18 @@ func (d *Daemon) setupMTLS(ln net.Listener, handler http.Handler, nsCfg *namespa
 	return tls.NewListener(ln, tlsCfg), handler, true, nil
 }
 
-// detectOutboundIP returns the preferred outbound IP of this machine.
+// detectOutboundIP returns the first non-loopback IPv4 address of this machine.
 func detectOutboundIP() string {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
+	addrs, err := net.InterfaceAddrs()
 	if err != nil {
 		return "localhost"
 	}
-	defer conn.Close()
-	addr := conn.LocalAddr().(*net.UDPAddr)
-	return addr.IP.String()
+	for _, addr := range addrs {
+		if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() && ipNet.IP.To4() != nil {
+			return ipNet.IP.String()
+		}
+	}
+	return "localhost"
 }
 
 // resolveServerCertHost determines the hostname for the server certificate SAN.
