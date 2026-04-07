@@ -89,7 +89,7 @@ func LoadDaemonConfig() (DaemonConfig, error) {
 				slog.Warn("Non-localhost listen address without mTLS client certs",
 					"listen", cfg.Server.WebUI.Listen,
 					"caDir", caDir,
-					"hint", "run: citeck cert generate --name admin")
+					"hint", "run: citeck webui cert --name admin")
 			}
 		}
 	}

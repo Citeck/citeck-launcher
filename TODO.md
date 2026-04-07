@@ -19,7 +19,7 @@
 - [ ] Web UI: Dashboard, restart events panel, restart count badge
 - [ ] Snapshot export/import cycle: auto-stop → export → start → stop → import → start
 - [ ] Self-update: `citeck self-update --file` → замена бинаря → rollback
-- [ ] mTLS: `citeck cert generate` → .p12 import в браузер → Web UI доступен
+- [ ] mTLS: `citeck webui cert --name admin` → .p12 import в браузер → Web UI доступен
 
 ## P1: Важно, но не блокирует релиз
 
