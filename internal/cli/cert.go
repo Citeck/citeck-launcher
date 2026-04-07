@@ -126,6 +126,14 @@ func newCertGenerateCmd() *cobra.Command {
 	return cmd
 }
 
+// absInWorkDir returns an absolute path for a filename in the current working directory.
+func absInWorkDir(name string) string {
+	if wd, err := os.Getwd(); err == nil {
+		return filepath.Join(wd, name)
+	}
+	return name
+}
+
 func validateCertName(name string) error {
 	if name == "" {
 		return fmt.Errorf("--name is required")
@@ -142,7 +150,7 @@ func generateClientCert(name string, days int) error {
 	}
 
 	certPath := filepath.Join(config.WebUICADir(), name+".crt")
-	p12Path := name + ".p12" // current working directory — easy to find and transfer
+	p12Path := absInWorkDir("citeck-webui-" + name + ".p12")
 
 	certPEM, keyPEM, err := tlsutil.GenerateClientCert(certPath, name, days)
 	if err != nil {

@@ -304,7 +304,7 @@ func runInstall(_ *cobra.Command, _ []string, workspaceZip string) error { //nol
 func generateInstallClientCert() {
 	output.PrintText("\nGenerating mTLS client certificate for remote access...")
 	certPath := filepath.Join(config.WebUICADir(), "admin.crt")
-	p12Path := "admin.p12" // current working directory
+	p12Path := absInWorkDir("citeck-webui-admin.p12")
 	certPEM, keyPEM, err := tlsutil.GenerateClientCert(certPath, "admin", 365)
 	if err != nil {
 		output.PrintText("Warning: failed to generate client cert: %v", err)
