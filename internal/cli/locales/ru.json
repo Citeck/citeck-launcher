@@ -1,4 +1,6 @@
 {
+  "install.alreadyInstalled": "Citeck уже установлен.",
+
   "install.welcome.title": "Установка Citeck",
   "install.welcome.subtitle": "Этот мастер настроит Citeck на данном сервере.",
   "install.welcome.whatWillHappen": "Что произойдёт:",

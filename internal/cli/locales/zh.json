@@ -83,5 +83,6 @@
   "uninstall.complete": "卸载完成",
   "cli.platformNotRunning": "平台未运行",
   "cli.daemonStarted": "守护进程已在后台启动",
-  "cli.allAppsStarted": "所有 {count} 个应用已启动。"
+  "cli.allAppsStarted": "所有 {count} 个应用已启动。",
+  "install.alreadyInstalled": "Citeck 已安装。"
 }

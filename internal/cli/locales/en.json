@@ -1,4 +1,6 @@
 {
+  "install.alreadyInstalled": "Citeck is already installed.",
+
   "install.welcome.title": "Citeck Platform Setup",
   "install.welcome.subtitle": "This wizard will configure Citeck on this server.",
   "install.welcome.whatWillHappen": "What will happen:",

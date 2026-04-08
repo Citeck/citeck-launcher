@@ -33,7 +33,7 @@ Run `citeck install` to configure a new deployment. The wizard is localized (8 l
 3. **Hostname** — server hostname or IP (default: auto-detected outbound IP)
 4. **TLS** — automatic: tries Let's Encrypt (staging check), falls back to self-signed. Works with both domains and IPs.
 5. **Port** — platform port (default: 443 for HTTPS, 80 for HTTP)
-6. **Authentication** — Keycloak SSO (recommended) or Basic Auth
+6. **Authentication** — Keycloak SSO
 7. **Release** — multi-level picker: latest per repo at top, "Other version..." for browsing
 8. **System service** — systemd unit + optional firewall rule
 9. **Start** — launch the platform, shows live progress, final URL + credentials

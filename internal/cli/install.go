@@ -80,12 +80,13 @@ func runInstall(workspaceZip string, offline bool) error { //nolint:gocyclo // i
 	}
 	dockerConn.Close()
 
-	// Check if namespace.yml already exists — skip config prompts
+	// Check if already installed (both config files must exist — partial install is re-runnable)
 	nsCfgPath := config.NamespaceConfigPath()
-	if _, statErr := os.Stat(nsCfgPath); statErr == nil {
-		output.PrintText("Namespace config already exists: %s", nsCfgPath)
-		output.PrintText("Skipping config prompts. Use 'citeck config edit' to modify.")
-		installSystemdAndFirewall(scanner, 0)
+	_, nsExists := os.Stat(nsCfgPath)
+	_, daemonExists := os.Stat(config.DaemonConfigPath())
+	if nsExists == nil && daemonExists == nil {
+		ensureI18n()
+		output.PrintText(t("install.alreadyInstalled"))
 		return nil
 	}
 

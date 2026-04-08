@@ -145,8 +145,8 @@ id: default
 name: My Namespace
 bundleRef: "community:2026.1"
 authentication:
-  type: BASIC                   # or KEYCLOAK
-  users: ["admin:admin"]
+  type: KEYCLOAK
+  users: ["admin"]
 proxy:
   host: localhost
   port: 443

@@ -36,7 +36,7 @@ make test-coverage            # Go coverage report → coverage.html
 make lint                     # Run Go (golangci-lint) + Web (eslint) linters
 make fmt                      # Format Go code
 make tidy                     # go mod tidy
-make tools                    # Install golangci-lint v2.7.2
+make tools                    # Install golangci-lint v2.11.4
 make clean                    # Remove build artifacts
 build/bin/citeck start --foreground   # Run daemon with web UI on 127.0.0.1:7088
 ./build/bin/citeck-desktop            # Run desktop app (Wails webview)
@@ -309,7 +309,7 @@ Tested on remote server with community 2025.12 (clean deployment). Found and fix
 
 **Quality & Reliability:**
 - `.golangci.yml` with 21 linters (from citeck-ci reference project), 0 warnings
-- Makefile: `-s -w` ldflags, fmt/tidy/coverage/tools targets, pinned golangci-lint v2.7.2
+- Makefile: `-s -w` ldflags, fmt/tidy/coverage/tools targets, pinned golangci-lint v2.11.4
 - Per-page ErrorBoundary — page crash shows inline error + retry, rest of app stays alive
 - Locale completeness test (`import.meta.glob`) — auto-discovers all locale files, verifies all keys present
 - All 8 locales (en/ru/de/es/fr/ja/pt/zh) fully translated for secrets/migration/encryption keys
@@ -605,9 +605,38 @@ Bundle version upgrade + host/auth switching tested on remote server. 5 bugs fix
 - Shared helpers in `routes_helpers.go` — cross-domain utilities (validation, parsing, guards)
 - `handleReloadNamespace`/`handleUpgradeNamespace` nil guards NOT replaced with `requireRuntime` — they use a compound check (`runtime == nil || nsConfig == nil || bundleDef == nil`) under `configMu.RLock()`
 
+### Phase 21: Wizard Rewrite + CLI Polish — COMPLETE (2026-04-08)
+Install wizard reduced to 3 interactive steps, CLI i18n, bundle version parity, uninstall command.
+
+**Wizard rewrite (3 steps):**
+- Hostname (auto-detected via ipify), TLS (5 options: LE auto, LE force, self-signed, custom cert, disabled — with LE staging probe), Release (sorted newest-first, Kotlin BundleKey parity)
+- Registry auth prompt for enterprise bundles
+- Auto-configured: port (443/80), Keycloak SSO, systemd service
+- `--offline` / `--workspace` for air-gapped installs
+
+**Bundle versions:**
+- Kotlin `BundleKey` parity: `repo:version` format, sorted newest-first
+- Multi-level picker: latest per repo at top, "Other version..." drill-down
+
+**IP detection:**
+- External IP via ipify API (wizard hostname default)
+- Local interfaces via `net.InterfaceAddrs` (daemon startup log)
+
+**CLI i18n:**
+- `ensureI18n()` reads `language` from `daemon.yml` — all CLI output localized
+- Localized: `uninstall`, `start`, `status`, wizard prompts
+
+**CLI commands:**
+- `status --watch` — live table redraw (TTY-aware)
+- `uninstall` — graceful namespace stop + "drop all data" confirmation
+- `_workspace` directory renamed to `workspace`
+
+**CI:**
+- GTK/WebKit system deps added for desktop build lint
+
 ## CI/CD
 
 GitHub Actions:
 - **Release workflow** (`.github/workflows/release-go.yml`): triggered by `v*.*.*` tags, builds Linux amd64 server binary, creates draft GitHub release. Uses `go-version-file: go.mod`.
-- **CI workflow** (`.github/workflows/ci.yml`): triggered on push/PR to master and `release/**` branches. Runs `go vet`, `golangci-lint v2.7.2`, `go test -race`, `pnpm vitest run`, full server build.
+- **CI workflow** (`.github/workflows/ci.yml`): triggered on push/PR to master and `release/**` branches. Runs `go vet`, `golangci-lint v2.11.4`, `go test -race`, `pnpm vitest run`, full server build.
 - **Linting**: `.golangci.yml` v2 format, 21 linters, G104 excluded (cleanup errors), test files relaxed for dupl/gosec/unparam.

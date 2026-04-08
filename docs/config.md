@@ -47,12 +47,12 @@ name: My Citeck
 snapshot: ""                    # Snapshot ID for auto-import on first start
 template: ""                    # Template ID for namespace creation
 
-bundleRef: "community/2025.12"  # Bundle reference (repo/version)
+bundleRef: "community:2026.1"   # Bundle reference (repo:version)
 
 authentication:
-  type: BASIC                   # BASIC or KEYCLOAK
-  users:                        # Users for BASIC auth (user:password)
-    - "admin:admin"
+  type: KEYCLOAK                # KEYCLOAK (recommended) or BASIC
+  users:                        # Usernames (Keycloak) or user:password pairs (BASIC)
+    - "admin"
 
 proxy:
   host: localhost               # External hostname

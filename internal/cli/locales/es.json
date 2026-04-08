@@ -83,5 +83,6 @@
   "uninstall.complete": "Desinstalación completa",
   "cli.platformNotRunning": "La plataforma no está ejecutándose",
   "cli.daemonStarted": "Daemon iniciado en segundo plano",
-  "cli.allAppsStarted": "Las {count} aplicaciones iniciadas."
+  "cli.allAppsStarted": "Las {count} aplicaciones iniciadas.",
+  "install.alreadyInstalled": "Citeck ya está instalado."
 }
