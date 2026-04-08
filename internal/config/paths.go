@@ -1,11 +1,15 @@
 package config
 
 import (
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
+	"time"
 )
 
 // Default paths and image references.
@@ -188,9 +192,18 @@ func WorkspaceNamespaceConfigPath(wsID, nsID string) string {
 	return filepath.Join(NamespaceDir(wsID, nsID), "namespace.yml")
 }
 
-// DetectOutboundIP returns a non-loopback IPv4 address of this machine.
-// Falls back to "localhost" if no suitable address is found.
-func DetectOutboundIP() string {
+// DetectOutboundIP returns the best IP for external access.
+// Online: queries public service for external IP (handles NAT). Offline: returns empty.
+func DetectOutboundIP(offline bool) string {
+	if offline {
+		return ""
+	}
+	return detectExternalIP()
+}
+
+// DetectDisplayIP returns a non-loopback IP suitable for display (e.g., "Web UI available at").
+// Uses local interface scanning — does NOT call external services.
+func DetectDisplayIP() string {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
 		return "localhost"
@@ -201,4 +214,23 @@ func DetectOutboundIP() string {
 		}
 	}
 	return "localhost"
+}
+
+// detectExternalIP queries a public service for the machine's external IP.
+func detectExternalIP() string {
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get("https://api.ipify.org")
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	ip := strings.TrimSpace(string(body))
+	if net.ParseIP(ip) == nil {
+		return ""
+	}
+	return ip
 }

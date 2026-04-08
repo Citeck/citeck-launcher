@@ -2,7 +2,9 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -11,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/citeck/citeck-launcher/internal/acme"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
@@ -91,6 +94,9 @@ func runInstall(workspaceZip string, offline bool) error { //nolint:gocyclo // i
 	locale := promptNumber(scanner, "Language / Язык / 语言", langOptions, 0)
 	localeCode := strings.SplitN(locale, " ", 2)[0]
 	initI18n(localeCode)
+	if isTTYOut() {
+		clearLines(1) // remove language summary — obvious from subsequent text
+	}
 
 	// --- Step 0: Welcome (in selected language) ---
 	fmt.Println()                                                                     //nolint:forbidigo // CLI output
@@ -112,12 +118,17 @@ func runInstall(workspaceZip string, offline bool) error { //nolint:gocyclo // i
 
 	nsCfg := namespace.DefaultNamespaceConfig()
 	nsCfg.PgAdmin.Enabled = false // default off (use pgAdmin separately if needed)
+	isOffline := offline || workspaceZip != ""
 
-	// --- Step 2: Hostname ---
-	defaultHost := config.DetectOutboundIP()
-	hostname := promptText(scanner, t("install.hostname.label"), t("install.hostname.hint"), defaultHost)
-	if hostname == "" {
-		hostname = defaultHost
+	// --- Step 1: Hostname ---
+	printStepHeader(1, t("install.hostname.label"))
+	defaultHost := config.DetectOutboundIP(isOffline)
+	var hostname string
+	for {
+		hostname = promptText(scanner, t("install.hostname.label"), t("install.hostname.hint"), defaultHost)
+		if hostname != "" {
+			break
+		}
 	}
 	if hostname == "localhost" || hostname == "127.0.0.1" {
 		output.PrintText("  %s", t("install.hostname.localOnly"))
@@ -129,8 +140,8 @@ func runInstall(workspaceZip string, offline bool) error { //nolint:gocyclo // i
 		nsCfg.Name = hostname
 	}
 
-	// --- Step 3: TLS ---
-	isOffline := offline || workspaceZip != ""
+	// --- Step 2: TLS ---
+	printStepHeader(2, t("install.tls.label"))
 	isLocalhost := hostname == "localhost" || hostname == "127.0.0.1"
 	var tlsOptions []string
 	if !isLocalhost && !isOffline {
@@ -141,12 +152,12 @@ func runInstall(workspaceZip string, offline bool) error { //nolint:gocyclo // i
 	for {
 		tlsChoice := promptNumber(scanner, t("install.tls.label"), tlsOptions, 0)
 		if !configureTLS(&nsCfg, tlsChoice, scanner) {
-			break // configured successfully
+			break
 		}
-		// true = back to TLS menu (user canceled custom cert flow)
 	}
 
-	// --- Step 4: Port ---
+	// --- Step 3: Port ---
+	printStepHeader(3, t("install.port.label"))
 	defaultPort := 443
 	portLabel := t("install.port.https")
 	if !nsCfg.Proxy.TLS.Enabled {
@@ -165,19 +176,11 @@ func runInstall(workspaceZip string, offline bool) error { //nolint:gocyclo // i
 	}
 	nsCfg.Proxy.Port = port
 
-	// --- Step 5: Authentication ---
-	keycloakLabel := t("install.auth.keycloak")
-	authOptions := []string{keycloakLabel, t("install.auth.basic")}
-	authChoice := promptNumber(scanner, t("install.auth.label"), authOptions, 0)
-	if authChoice == keycloakLabel {
-		nsCfg.Authentication.Type = namespace.AuthKeycloak
-	} else {
-		nsCfg.Authentication.Type = namespace.AuthBasic
-		usersStr := promptText(scanner, t("install.auth.users.label"), t("install.auth.users.hint"), "admin")
-		nsCfg.Authentication.Users = parseUsers(usersStr)
-	}
+	// Authentication: always Keycloak
+	nsCfg.Authentication.Type = namespace.AuthKeycloak
 
-	// --- Step 6: Release ---
+	// --- Step 4: Release ---
+	printStepHeader(4, t("install.release.label"))
 	if err := resolveRelease(scanner, &nsCfg, isOffline); err != nil {
 		return err
 	}
@@ -193,7 +196,8 @@ func runInstall(workspaceZip string, offline bool) error { //nolint:gocyclo // i
 	if writeErr := fsutil.AtomicWriteFile(nsCfgPath, data, 0o600); writeErr != nil {
 		return fmt.Errorf("write config: %w", writeErr)
 	}
-	output.PrintText("\n  %s", t("install.config.nsWritten", "path", nsCfgPath))
+	fmt.Println() //nolint:forbidigo // CLI separator
+	output.PrintText("  %s", t("install.config.nsWritten", "path", nsCfgPath))
 
 	// --- Write daemon.yml ---
 	daemonCfg := config.DefaultDaemonConfig()
@@ -289,10 +293,19 @@ func printAccessInfo(hostname string, port int, tls, le bool) {
 func configureTLS(nsCfg *namespace.Config, choice string, scanner *bufio.Scanner) bool {
 	switch choice {
 	case t("install.tls.auto"):
-		// LE + self-signed fallback: daemon tries LE first, uses self-signed if unavailable
 		nsCfg.Proxy.TLS.Enabled = true
 		nsCfg.Proxy.TLS.LetsEncrypt = true
 		generateSelfSignedCert(nsCfg)
+		// Try LE staging to verify reachability
+		output.PrintText("  %s", t("install.tls.leChecking", "host", nsCfg.Proxy.Host))
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		leErr := acme.TryStaging(ctx, nsCfg.Proxy.Host)
+		cancel()
+		if leErr != nil {
+			output.PrintText("  %s", t("install.tls.leNotAvailable", "error", leErr.Error()))
+		} else {
+			output.PrintText("  %s", t("install.tls.leAvailable"))
+		}
 	case t("install.tls.leTrusted"):
 		nsCfg.Proxy.TLS.Enabled = true
 		nsCfg.Proxy.TLS.LetsEncrypt = true
@@ -413,29 +426,6 @@ func generateSelfSignedCert(nsCfg *namespace.Config) {
 	output.PrintText("  %s", t("install.tls.selfSignedWarning"))
 }
 
-// parseUsers parses a comma-separated list of usernames.
-// If a user:password pair is provided, only the username part is kept
-// (the generator creates password = username pairs).
-func parseUsers(usersStr string) []string {
-	parts := strings.Split(usersStr, ",")
-	users := make([]string, 0, len(parts))
-	for _, u := range parts {
-		u = strings.TrimSpace(u)
-		if u == "" {
-			continue
-		}
-		// Strip password part if present — generator uses username as password
-		if idx := strings.IndexByte(u, ':'); idx > 0 {
-			u = u[:idx]
-		}
-		users = append(users, u)
-	}
-	if len(users) == 0 {
-		return []string{"admin"}
-	}
-	return users
-}
-
 // repoVersions holds a bundle repo and its discovered versions.
 type repoVersions struct {
 	repo     bundle.BundlesRepo
@@ -454,7 +444,12 @@ func (rv repoVersions) displayName() string {
 // Returns an error if no releases are available (offline without workspace data).
 func resolveRelease(scanner *bufio.Scanner, nsCfg *namespace.Config, offline bool) error {
 	output.PrintText("  %s", t("install.release.fetching"))
+	// Suppress slog during git clone — INFO messages break the wizard output.
+	// Safe: wizard is single-threaded at this point, no concurrent log producers.
+	prevLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.DiscardHandler))
 	repos := discoverRepos(offline)
+	slog.SetDefault(prevLogger)
 
 	// Filter to repos that have at least one version
 	var withVersions []repoVersions
@@ -650,10 +645,10 @@ func generateInstallClientCert() {
 // installSystemdAndFirewall handles the combined systemd + firewall step.
 func installSystemdAndFirewall(scanner *bufio.Scanner, platformPort int) {
 	fmt.Println() //nolint:forbidigo // CLI output
-	if !promptYesNo(scanner, t("install.systemd.label"), t("install.systemd.hint"), true) {
+	if _, lookErr := exec.LookPath("systemctl"); lookErr != nil {
+		output.PrintText("  %s", t("install.systemd.notAvailable"))
 		return
 	}
-
 	execPath, err := os.Executable()
 	if err != nil {
 		output.PrintText("  Could not determine executable path: %v", err)

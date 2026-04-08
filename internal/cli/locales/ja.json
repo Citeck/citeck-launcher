@@ -19,6 +19,7 @@
   "install.tls.selfSignedGenerated": "自己署名証明書を生成しました: {certPath}",
   "install.tls.selfSignedWarning": "ブラウザに信頼されていない証明書の警告が表示されます — これは正常です",
   "install.tls.custom": "HTTPS 独自の証明書を使用",
+  "install.port.label": "ポート",
   "install.port.https": "HTTPS ポート",
   "install.port.http": "HTTP ポート",
   "install.port.hint": "ブラウザでプラットフォームにアクセスするポート",
@@ -60,5 +61,9 @@
   "install.tls.customCert": "証明書",
   "install.tls.customKey": "鍵",
   "install.tls.customNoFiles": "ファイルが見つかりません",
-  "install.ready.leFallbackNote": "Let's Encrypt が利用できない場合、自己署名証明書が使用されます。"
+  "install.ready.leFallbackNote": "Let's Encrypt が利用できない場合、自己署名証明書が使用されます。",
+  "install.tls.leChecking": "{host} の Let's Encrypt 利用可能性を確認中...",
+  "install.tls.leAvailable": "Let's Encrypt 利用可能 — 起動時に信頼された証明書を取得します",
+  "install.tls.leNotAvailable": "Let's Encrypt 利用不可: {error}。自己署名証明書が使用されます",
+  "install.systemd.notAvailable": "systemd が見つかりません — 自動起動は設定されていません。手動で起動: citeck start"
 }

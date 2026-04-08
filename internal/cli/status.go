@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
-	"time"
 
 	"github.com/citeck/citeck-launcher/internal/client"
 	"github.com/citeck/citeck-launcher/internal/output"
@@ -88,7 +88,6 @@ func watchEvents(c *client.DaemonClient) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Cancel on interrupt
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -101,22 +100,37 @@ func watchEvents(c *client.DaemonClient) error {
 		return fmt.Errorf("connect to event stream: %w", err)
 	}
 
-	output.Errf("Watching events (Ctrl+C to stop)...")
+	tty := isTTYOut()
+	var lastLines int
 
-	for evt := range events {
-		ts := time.UnixMilli(evt.Timestamp).Format("15:04:05")
-		if output.IsJSON() {
-			output.PrintJSON(evt)
-		} else {
-			switch evt.Type {
-			case "app_status":
-				output.PrintText("[%s] %s  %s → %s", ts, evt.AppName, output.ColorizeStatus(evt.Before), output.ColorizeStatus(evt.After))
-			case "namespace_status":
-				output.PrintText("[%s] namespace  %s → %s", ts, output.ColorizeStatus(evt.Before), output.ColorizeStatus(evt.After))
-			default:
-				output.PrintText("[%s] %s  %s", ts, evt.Type, evt.After)
-			}
+	for range events {
+		// Re-fetch full status on every event and redraw
+		ns, fetchErr := c.GetNamespace()
+		if fetchErr != nil {
+			continue
 		}
+
+		if output.IsJSON() {
+			output.PrintJSON(ns)
+			continue
+		}
+
+		// Build output
+		header := fmt.Sprintf("%s  %s\n%s  %s\n%s  %s\n",
+			output.Colorize(output.Bold, "Name:"), ns.Name,
+			output.Colorize(output.Bold, "Status:"), output.ColorizeStatus(ns.Status),
+			output.Colorize(output.Bold, "Bundle:"), ns.BundleRef)
+
+		table, _, _, _ := renderAppTable(ns.Apps)
+
+		// TTY: clear previous output and redraw
+		if tty && lastLines > 0 {
+			clearLines(lastLines)
+		}
+
+		text := header + "\n" + table
+		fmt.Print(text) //nolint:forbidigo // CLI live output
+		lastLines = strings.Count(text, "\n") + 1
 	}
 
 	return nil

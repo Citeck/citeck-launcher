@@ -21,7 +21,10 @@ import (
 	"golang.org/x/crypto/acme"
 )
 
-const letsEncryptURL = "https://acme-v02.api.letsencrypt.org/directory"
+const (
+	letsEncryptURL        = "https://acme-v02.api.letsencrypt.org/directory"
+	letsEncryptStagingURL = "https://acme-staging-v02.api.letsencrypt.org/directory"
+)
 
 // Client handles ACME certificate provisioning via Let's Encrypt.
 type Client struct {
@@ -263,5 +266,103 @@ func (c *Client) loadOrCreateAccountKey() (*ecdsa.PrivateKey, error) {
 	_ = os.WriteFile(keyPath, pemData, 0o600)
 
 	return key, nil
+}
+
+// TryStaging performs a full ACME flow against the Let's Encrypt staging server
+// to verify that the hostname is reachable and HTTP-01 challenge can be completed.
+// Uses ephemeral keys and does not save any state.
+func TryStaging(ctx context.Context, hostname string) error {
+	accountKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return fmt.Errorf("generate key: %w", err)
+	}
+
+	client := &acme.Client{
+		Key:          accountKey,
+		DirectoryURL: letsEncryptStagingURL,
+	}
+
+	if _, regErr := client.Register(ctx, &acme.Account{}, acme.AcceptTOS); regErr != nil {
+		if !errors.Is(regErr, acme.ErrAccountAlreadyExists) {
+			return fmt.Errorf("register: %w", regErr)
+		}
+	}
+
+	// Use IPIDs + shortlived profile for IP addresses, DomainIDs for hostnames
+	var ids []acme.AuthzID
+	isIP := net.ParseIP(hostname) != nil
+	if isIP {
+		ids = acme.IPIDs(hostname)
+	} else {
+		ids = acme.DomainIDs(hostname)
+	}
+	var order *acme.Order
+	if isIP {
+		order, err = authorizeOrderWithProfile(ctx, client, ids, "shortlived")
+	} else {
+		order, err = client.AuthorizeOrder(ctx, ids)
+	}
+	if err != nil {
+		return fmt.Errorf("order: %w", err)
+	}
+
+	for _, authzURL := range order.AuthzURLs {
+		if err := tryStagingChallenge(ctx, client, authzURL); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func tryStagingChallenge(ctx context.Context, client *acme.Client, authzURL string) error {
+	authz, err := client.GetAuthorization(ctx, authzURL)
+	if err != nil {
+		return fmt.Errorf("authz: %w", err)
+	}
+
+	var challenge *acme.Challenge
+	for _, ch := range authz.Challenges {
+		if ch.Type == "http-01" {
+			challenge = ch
+			break
+		}
+	}
+	if challenge == nil {
+		return fmt.Errorf("no http-01 challenge in response")
+	}
+
+	response, err := client.HTTP01ChallengeResponse(challenge.Token)
+	if err != nil {
+		return fmt.Errorf("challenge response: %w", err)
+	}
+	challengePath := client.HTTP01ChallengePath(challenge.Token)
+
+	listener, err := net.Listen("tcp", ":80") //nolint:gosec // ACME HTTP-01 requires :80
+	if err != nil {
+		return fmt.Errorf("port 80 unavailable: %w", err)
+	}
+	srv := &http.Server{ //nolint:gosec // ACME challenge server
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  30 * time.Second,
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc(challengePath, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(response))
+	})
+	srv.Handler = mux
+	go func() { _ = srv.Serve(listener) }()
+	defer func() { _ = srv.Close() }()
+
+	if _, acceptErr := client.Accept(ctx, challenge); acceptErr != nil {
+		return fmt.Errorf("accept: %w", acceptErr)
+	}
+
+	if _, waitErr := client.WaitAuthorization(ctx, authzURL); waitErr != nil {
+		return fmt.Errorf("validation failed: %w", waitErr)
+	}
+
+	return nil
 }
 

@@ -20,6 +20,9 @@
   "install.tls.httpOnly": "HTTP без шифрования (небезопасно)",
   "install.tls.selfSignedGenerated": "Самоподписанный сертификат создан: {certPath}",
   "install.tls.selfSignedWarning": "Браузер покажет предупреждение о ненадёжном сертификате — это нормально",
+  "install.tls.leChecking": "Проверяю доступность Let's Encrypt для {host}...",
+  "install.tls.leAvailable": "Let's Encrypt доступен — при запуске будет получен доверенный сертификат",
+  "install.tls.leNotAvailable": "Let's Encrypt недоступен: {error}. Будет использован самоподписанный сертификат",
   "install.tls.custom": "HTTPS с указанием своего сертификата",
   "install.tls.customDir": "Папка с сертификатом и ключом",
   "install.tls.customDirNotFound": "Папка не найдена",
@@ -27,6 +30,7 @@
   "install.tls.customKey": "Ключ",
   "install.tls.customNoFiles": "Файлы не найдены",
 
+  "install.port.label": "Порт",
   "install.port.https": "HTTPS порт",
   "install.port.http": "HTTP порт",
   "install.port.hint": "Порт для доступа к платформе в браузере",
@@ -57,6 +61,7 @@
 
   "install.systemd.label": "Установить как системный сервис?",
   "install.systemd.hint": "Citeck будет запускаться автоматически при загрузке. Файл: /etc/systemd/system/citeck.service",
+  "install.systemd.notAvailable": "systemd не найден — автозапуск не настроен. Запускайте вручную: citeck start",
   "install.systemd.notRoot": "Нет прав root. Для установки системного сервиса выполните:",
   "install.systemd.installed": "Системный сервис установлен и включён: {path}",
   "install.firewall.open": "Открыть порт {port} в файрволе (ufw)?",

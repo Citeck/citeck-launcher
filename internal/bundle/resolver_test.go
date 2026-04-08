@@ -113,7 +113,7 @@ func TestListBundleVersions(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "subdir"), 0o755)
 
 	versions := ListBundleVersions(dir)
-	assert.ElementsMatch(t, []string{"1.0", "1.1", "2.0"}, versions)
+	assert.Equal(t, []string{"2.0", "1.1", "1.0"}, versions) // sorted newest first
 }
 
 func TestListBundleVersions_EmptyDir(t *testing.T) {
@@ -139,12 +139,61 @@ func TestFindLatestBundle_NumericVersions(t *testing.T) {
 }
 
 func TestCompareBundleVersions(t *testing.T) {
+	// Basic numeric
 	assert.Equal(t, 1, compareBundleVersions("2025.10", "2025.9"))
 	assert.Equal(t, -1, compareBundleVersions("2025.9", "2025.10"))
 	assert.Equal(t, 0, compareBundleVersions("1.0", "1.0"))
 	assert.Equal(t, 1, compareBundleVersions("2.0", "1.0"))
 	assert.Equal(t, 1, compareBundleVersions("1.0.1", "1.0"))
 	assert.Equal(t, -1, compareBundleVersions("1.0", "1.0.1"))
+
+	// Trailing zeros stripped: semantically equal
+	assert.Equal(t, 0, compareBundleVersions("1.0.0", "1.0"))
+	assert.Equal(t, 0, compareBundleVersions("1.0", "1.0.0"))
+	assert.Equal(t, 0, compareBundleVersions("2025.12.0", "2025.12"))
+
+	// Suffixes: no suffix > has suffix
+	assert.Equal(t, 1, compareBundleVersions("2025.12", "2025.12-beta1"))
+	assert.Equal(t, -1, compareBundleVersions("2025.12-beta1", "2025.12"))
+
+	// Suffix comparison: rc > beta (lexicographic)
+	assert.Equal(t, 1, compareBundleVersions("2025.12-rc1", "2025.12-beta1"))
+
+	// Suffix numeric comparison: beta2 > beta1
+	assert.Equal(t, 1, compareBundleVersions("2025.12-beta2", "2025.12-beta1"))
+	assert.Equal(t, -1, compareBundleVersions("2025.12-beta1", "2025.12-beta2"))
+}
+
+// TestCompareBundleVersions_KotlinParity verifies ordering matches Kotlin BundleKey.compareTo.
+// Ported from BundleKeyTest.testCompareTo — the list must be strictly ascending.
+func TestCompareBundleVersions_KotlinParity(t *testing.T) {
+	// Strictly ascending order (from Kotlin BundleKeyTest)
+	versions := []string{
+		"1",
+		"2.2.2.2.2.2-",
+		"3.2.2.2.2.2@",
+		"333.2.2.2.2.2",
+		"555",
+		"2025.5-RC1",
+		"2025.5-RC1.1",
+		"2025.5-RC2",
+		"2025.5-RC2.1",
+		"2025.5-RC2.1.1000",
+		"2025.5-RC12",
+	}
+	for i := 0; i < len(versions)-1; i++ {
+		for j := i + 1; j < len(versions); j++ {
+			prev, next := versions[i], versions[j]
+			cmp := compareBundleVersions(prev, next)
+			assert.Negative(t, cmp, "%q should be less than %q", prev, next)
+			cmp = compareBundleVersions(next, prev)
+			assert.Positive(t, cmp, "%q should be greater than %q", next, prev)
+		}
+	}
+	// Self-equality
+	for _, v := range versions {
+		assert.Equal(t, 0, compareBundleVersions(v, v), "%q should equal itself", v)
+	}
 }
 
 func TestLoadWorkspaceConfig_MissingFile(t *testing.T) {
@@ -178,14 +227,16 @@ func TestFindSnapshot(t *testing.T) {
 func TestCompareBundleVersions_EdgeCases(t *testing.T) {
 	// Same numeric value with different string representations
 	assert.Equal(t, 0, compareBundleVersions("01", "1"))
-	// Non-numeric parts sort as 0
-	assert.Equal(t, 0, compareBundleVersions("abc", "def"))
-	// Longer version is greater when prefix matches
-	assert.Equal(t, 1, compareBundleVersions("1.0.0", "1.0"))
-	assert.Equal(t, -1, compareBundleVersions("1.0", "1.0.0"))
+	// Pure non-numeric strings are suffixes with empty version → equal version, compare suffix
+	assert.Positive(t, compareBundleVersions("def", "abc")) // "def" > "abc" lexicographically
+	// Trailing zeros stripped: semantically equal
+	assert.Equal(t, 0, compareBundleVersions("1.0.0", "1.0"))
+	assert.Equal(t, 0, compareBundleVersions("1.0", "1.0.0"))
 	// Single-segment versions
 	assert.Equal(t, 1, compareBundleVersions("2", "1"))
 	assert.Equal(t, 0, compareBundleVersions("0", "0"))
+	// Dev suffix
+	assert.Equal(t, 1, compareBundleVersions("1.0.5", "1.0.5-dev"))
 }
 
 func TestFindBundleRepo(t *testing.T) {

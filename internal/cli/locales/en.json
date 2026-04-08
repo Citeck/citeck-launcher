@@ -20,6 +20,9 @@
   "install.tls.httpOnly": "HTTP only — no encryption (insecure)",
   "install.tls.selfSignedGenerated": "Self-signed certificate generated: {certPath}",
   "install.tls.selfSignedWarning": "Browser will show an untrusted certificate warning — this is expected",
+  "install.tls.leChecking": "Checking Let's Encrypt availability for {host}...",
+  "install.tls.leAvailable": "Let's Encrypt is available — trusted certificate will be obtained on startup",
+  "install.tls.leNotAvailable": "Let's Encrypt is not available: {error}. Self-signed certificate will be used",
   "install.tls.custom": "HTTPS with your own certificate",
   "install.tls.customDir": "Directory with certificate and key files",
   "install.tls.customDirNotFound": "Directory not found",
@@ -27,6 +30,7 @@
   "install.tls.customKey": "Key",
   "install.tls.customNoFiles": "No matching files found",
 
+  "install.port.label": "Port",
   "install.port.https": "HTTPS port",
   "install.port.http": "HTTP port",
   "install.port.hint": "Port for accessing the platform in a browser",
@@ -57,6 +61,7 @@
 
   "install.systemd.label": "Install as system service?",
   "install.systemd.hint": "Citeck will start automatically on boot. Config: /etc/systemd/system/citeck.service",
+  "install.systemd.notAvailable": "systemd not found — autostart not configured. Start manually: citeck start",
   "install.systemd.notRoot": "Not running as root. To install the systemd service, run:",
   "install.systemd.installed": "Systemd service installed and enabled: {path}",
   "install.firewall.open": "Open port {port} in firewall (ufw)?",

@@ -19,6 +19,7 @@
   "install.tls.selfSignedGenerated": "自签名证书已生成: {certPath}",
   "install.tls.selfSignedWarning": "浏览器会显示不受信任的证书警告 — 这是正常的",
   "install.tls.custom": "HTTPS 使用自定义证书",
+  "install.port.label": "端口",
   "install.port.https": "HTTPS 端口",
   "install.port.http": "HTTP 端口",
   "install.port.hint": "浏览器访问平台的端口",
@@ -60,5 +61,9 @@
   "install.tls.customCert": "证书",
   "install.tls.customKey": "密钥",
   "install.tls.customNoFiles": "未找到匹配的文件",
-  "install.ready.leFallbackNote": "如果 Let's Encrypt 不可用，将使用自签名证书。"
+  "install.ready.leFallbackNote": "如果 Let's Encrypt 不可用，将使用自签名证书。",
+  "install.tls.leChecking": "检查 {host} 的 Let's Encrypt 可用性...",
+  "install.tls.leAvailable": "Let's Encrypt 可用 — 启动时将获取受信任的证书",
+  "install.tls.leNotAvailable": "Let's Encrypt 不可用: {error}。将使用自签名证书",
+  "install.systemd.notAvailable": "未找到 systemd — 未配置自动启动。手动启动: citeck start"
 }

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -595,6 +596,10 @@ func ListBundleVersions(bundlesDir string) []string {
 			versions = append(versions, name)
 		}
 	}
+	// Sort newest first — callers expect versions[0] to be the latest
+	slices.SortFunc(versions, func(a, b string) int {
+		return compareBundleVersions(b, a) // descending
+	})
 	return versions
 }
 
@@ -625,21 +630,217 @@ func findLatestBundle(bundlesDir string) (string, error) {
 	return latest, nil
 }
 
-// compareBundleVersions compares two dot-separated version strings numerically.
-// "2025.10" > "2025.9", matching the Kotlin Key.compareTo behavior.
+// compareBundleVersions compares version strings matching Kotlin BundleKey.compareTo:
+// 1. Parse scope (path before last '/'), version parts, and suffix
+// 2. Compare scope (prefer no scope), then version parts, then suffix parts
+// 3. Trailing zeros stripped from version (2025.12.0 == 2025.12)
+// 4. No suffix > has suffix (2025.12 > 2025.12-beta1)
+// 5. Suffix groups: digits+dots as version numbers, strings lexicographically
 func compareBundleVersions(a, b string) int {
-	aParts := strings.Split(a, ".")
-	bParts := strings.Split(b, ".")
-	n := min(len(aParts), len(bParts))
-	for i := range n {
-		ai, _ := strconv.Atoi(aParts[i])
-		bi, _ := strconv.Atoi(bParts[i])
-		if ai != bi {
-			if ai > bi {
-				return 1
+	ak, bk := parseBundleKey(a), parseBundleKey(b)
+
+	// 1. Compare scope: prefer empty (no-scope ranks higher)
+	if c := compareStringSlices(ak.scope, bk.scope, true); c != 0 {
+		return c
+	}
+	// 2. Compare version parts numerically
+	if c := compareIntSlices(ak.versionParts, bk.versionParts, false); c != 0 {
+		return c
+	}
+	// 3. Compare suffix parts: prefer empty (release > pre-release)
+	return compareSuffixParts(ak.suffixParts, bk.suffixParts)
+}
+
+// bundleKey mirrors Kotlin BundleKey: scope + versionParts + suffixParts.
+type bundleKey struct {
+	scope        []string
+	versionParts []int
+	suffixParts  []any // string or bundleKey (recursive)
+}
+
+// parseBundleKey parses "archive/2025.5-RC1.1" into scope=["archive"], version=[2025,5], suffix=["RC", key("1.1")].
+func parseBundleKey(raw string) bundleKey {
+	key := raw
+
+	// Extract scope (everything before the last '/')
+	var scope []string
+	if idx := strings.LastIndex(key, "/"); idx != -1 {
+		scopeStr := key[:idx]
+		for s := range strings.SplitSeq(scopeStr, "/") {
+			if s != "" {
+				scope = append(scope, s)
 			}
+		}
+		key = key[idx+1:]
+	}
+
+	// Split version prefix from suffix: version = leading digits+dots
+	firstNonVersion := strings.IndexFunc(key, func(r rune) bool {
+		return r != '.' && (r < '0' || r > '9')
+	})
+	versionStr := key
+	suffixStr := ""
+	if firstNonVersion != -1 {
+		versionStr = key[:firstNonVersion]
+		suffixStr = key[firstNonVersion:]
+		// Strip leading separator
+		if suffixStr != "" && !isLetterOrDigit(rune(suffixStr[0])) {
+			suffixStr = suffixStr[1:]
+		}
+	}
+
+	// Parse version parts, strip trailing zeros
+	var versionParts []int
+	for p := range strings.SplitSeq(versionStr, ".") {
+		if n, err := strconv.Atoi(p); err == nil {
+			versionParts = append(versionParts, n)
+		}
+	}
+	for len(versionParts) > 0 && versionParts[len(versionParts)-1] == 0 {
+		versionParts = versionParts[:len(versionParts)-1]
+	}
+
+	// Parse suffix parts: split by digit-or-dot vs letter groups (Kotlin splitByGroups)
+	var suffixParts []any
+	if suffixStr != "" {
+		for _, group := range splitSuffixGroups(suffixStr) {
+			if group != "" && isDigitOrDot(rune(group[0])) {
+				suffixParts = append(suffixParts, parseBundleKey(group)) // recursive
+			} else {
+				suffixParts = append(suffixParts, group)
+			}
+		}
+	}
+
+	return bundleKey{scope: scope, versionParts: versionParts, suffixParts: suffixParts}
+}
+
+func isLetterOrDigit(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+}
+
+func isDigitOrDot(r rune) bool {
+	return r == '.' || (r >= '0' && r <= '9')
+}
+
+// splitSuffixGroups splits suffix by character type: digit-or-dot vs letter.
+// "RC1.1" → ["RC", "1.1"], "beta2" → ["beta", "2"].
+// Matches Kotlin StringUtils.splitByGroups with predicate: digit/dot → group 1, else → group 0.
+func splitSuffixGroups(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var groups []string
+	start := 0
+	for i := 1; i < len(s); i++ {
+		prevType := isDigitOrDot(rune(s[i-1]))
+		curType := isDigitOrDot(rune(s[i]))
+		if prevType != curType {
+			groups = append(groups, s[start:i])
+			start = i
+		}
+	}
+	groups = append(groups, s[start:])
+	return groups
+}
+
+// compareIntSlices compares int slices. preferEmpty: true means shorter/empty wins
+// (used for scope — no scope is better), false means longer wins (used for version parts).
+func compareIntSlices(a, b []int, preferEmpty bool) int {
+	n := min(len(a), len(b))
+	for i := range n {
+		if a[i] > b[i] {
+			return 1
+		} else if a[i] < b[i] {
 			return -1
 		}
 	}
-	return len(aParts) - len(bParts)
+	if len(a) == len(b) {
+		return 0
+	}
+	if preferEmpty {
+		if len(a) < len(b) {
+			return 1
+		}
+		return -1
+	}
+	if len(a) > len(b) {
+		return 1
+	}
+	return -1
+}
+
+// compareStringSlices compares string slices with preferEmpty semantics.
+func compareStringSlices(a, b []string, preferEmpty bool) int {
+	n := min(len(a), len(b))
+	for i := range n {
+		if c := strings.Compare(a[i], b[i]); c != 0 {
+			return c
+		}
+	}
+	if len(a) == len(b) {
+		return 0
+	}
+	if preferEmpty {
+		if len(a) < len(b) {
+			return 1
+		}
+		return -1
+	}
+	if len(a) > len(b) {
+		return 1
+	}
+	return -1
+}
+
+// compareSuffixParts compares parsed suffix part lists (any = string or bundleKey).
+// Empty suffix list is preferred (release > pre-release).
+func compareSuffixParts(a, b []any) int {
+	if len(a) == 0 && len(b) == 0 {
+		return 0
+	}
+	// Empty suffix > non-empty (release > pre-release)
+	if len(a) == 0 {
+		return 1
+	}
+	if len(b) == 0 {
+		return -1
+	}
+	n := min(len(a), len(b))
+	for i := range n {
+		c := compareSuffixPart(a[i], b[i])
+		if c != 0 {
+			return c
+		}
+	}
+	// Fewer parts = better (prefer shorter suffix)
+	if len(a) < len(b) {
+		return 1
+	} else if len(a) > len(b) {
+		return -1
+	}
+	return 0
+}
+
+func compareSuffixPart(a, b any) int {
+	aKey, aIsKey := a.(bundleKey)
+	bKey, bIsKey := b.(bundleKey)
+	aStr, aIsStr := a.(string)
+	bStr, bIsStr := b.(string)
+
+	switch {
+	case aIsKey && bIsKey:
+		if c := compareIntSlices(aKey.versionParts, bKey.versionParts, false); c != 0 {
+			return c
+		}
+		return compareSuffixParts(aKey.suffixParts, bKey.suffixParts)
+	case aIsStr && bIsStr:
+		return strings.Compare(aStr, bStr)
+	default:
+		// bundleKey > string
+		if aIsKey {
+			return 1
+		}
+		return -1
+	}
 }

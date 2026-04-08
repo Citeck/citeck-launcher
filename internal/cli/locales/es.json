@@ -19,6 +19,7 @@
   "install.tls.selfSignedGenerated": "Certificado autofirmado generado: {certPath}",
   "install.tls.selfSignedWarning": "El navegador mostrará una advertencia de certificado no confiable — esto es normal",
   "install.tls.custom": "HTTPS con certificado propio",
+  "install.port.label": "Puerto",
   "install.port.https": "Puerto HTTPS",
   "install.port.http": "Puerto HTTP",
   "install.port.hint": "Puerto para acceder a la plataforma en el navegador",
@@ -60,5 +61,9 @@
   "install.tls.customCert": "Certificado",
   "install.tls.customKey": "Clave",
   "install.tls.customNoFiles": "No se encontraron archivos",
-  "install.ready.leFallbackNote": "Si Let's Encrypt no está disponible, se usará un certificado autofirmado."
+  "install.ready.leFallbackNote": "Si Let's Encrypt no está disponible, se usará un certificado autofirmado.",
+  "install.tls.leChecking": "Verificando disponibilidad de Let's Encrypt para {host}...",
+  "install.tls.leAvailable": "Let's Encrypt disponible — se obtendrá un certificado de confianza al iniciar",
+  "install.tls.leNotAvailable": "Let's Encrypt no disponible: {error}. Se usará certificado autofirmado",
+  "install.systemd.notAvailable": "systemd no encontrado — inicio automático no configurado. Iniciar manualmente: citeck start"
 }

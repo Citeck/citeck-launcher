@@ -7,8 +7,16 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/citeck/citeck-launcher/internal/output"
 	"golang.org/x/term"
 )
+
+// printStepHeader prints a numbered, colored step header with separator.
+func printStepHeader(step int, title string) {
+	fmt.Println()                                                                     //nolint:forbidigo // CLI step header
+	fmt.Printf("  %s\n", output.Colorize(output.Cyan, fmt.Sprintf("── %d. %s ──", step, title))) //nolint:forbidigo // CLI step header
+	fmt.Println()                                                                     //nolint:forbidigo // CLI step header
+}
 
 // isTTYOut returns true if stdout is a terminal.
 func isTTYOut() bool {

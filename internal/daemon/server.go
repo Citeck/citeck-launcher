@@ -698,7 +698,7 @@ func Start(opts StartOptions) error {
 					host, port, _ := net.SplitHostPort(tcpAddr)
 					displayHost := host
 					if host == "" || host == "0.0.0.0" || host == "::" {
-						displayHost = config.DetectOutboundIP()
+						displayHost = config.DetectDisplayIP()
 					}
 					slog.Info("Web UI available", "url", scheme+"://"+displayHost+":"+port, "listen", tcpAddr)
 					if err := d.tcpServer.Serve(tcpListener); err != nil && err != http.ErrServerClosed {
@@ -720,7 +720,7 @@ func Start(opts StartOptions) error {
 		}
 		host, port, _ := net.SplitHostPort(tcpAddr)
 		if host == "" || host == "0.0.0.0" || host == "::" {
-			host = config.DetectOutboundIP()
+			host = config.DetectDisplayIP()
 		}
 		readyURL = scheme + "://" + host + ":" + port
 	}

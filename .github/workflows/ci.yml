@@ -12,6 +12,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -20,12 +23,13 @@ jobs:
         run: |
           mkdir -p internal/daemon/webdist
           echo '<html></html>' > internal/daemon/webdist/index.html
-          go vet ./internal/... ./cmd/citeck/...
+          go vet ./...
 
       - name: Go lint
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.11.4
+          args: ./...
 
       - name: Go tests (race detector)
         run: go test -race ./internal/...
