@@ -60,6 +60,7 @@ func RecoveryMiddleware(next http.Handler) http.Handler {
 		defer func() {
 			if err := recover(); err != nil {
 				stack := debug.Stack()
+				//nolint:gosec // G706: panic stack trace logged for debugging
 				slog.Error("Panic recovered in HTTP handler",
 					"error", fmt.Sprint(err),
 					"method", r.Method,
@@ -81,7 +82,7 @@ func MTLSIdentityMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
 			cn := r.TLS.PeerCertificates[0].Subject.CommonName
-			slog.Debug("mTLS client authenticated", "cn", cn, "remote", r.RemoteAddr)
+			slog.Debug("mTLS client authenticated", "cn", cn, "remote", r.RemoteAddr) //nolint:gosec // G706: mTLS client CN logged for access audit
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -269,7 +270,7 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 		if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
 			attrs = append(attrs, "cn", r.TLS.PeerCertificates[0].Subject.CommonName)
 		}
-		slog.Info("HTTP request", attrs...)
+		slog.Info("HTTP request", attrs...) //nolint:gosec // G706: HTTP request logging for observability
 
 		// Record metrics
 		httpMetrics.record(r.Method, r.URL.Path, rec.status, time.Since(start))

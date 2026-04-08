@@ -149,12 +149,12 @@ func validateTLSFiles(cfg *namespace.Config) []string {
 	}
 	var errs []string
 	if cfg.Proxy.TLS.CertPath != "" {
-		if _, err := os.Stat(cfg.Proxy.TLS.CertPath); err != nil {
+		if _, err := os.Stat(cfg.Proxy.TLS.CertPath); err != nil { //nolint:gosec // G703: path from namespace config file, not user input
 			errs = append(errs, fmt.Sprintf("TLS cert file not found: %s", cfg.Proxy.TLS.CertPath))
 		}
 	}
 	if cfg.Proxy.TLS.KeyPath != "" {
-		if _, err := os.Stat(cfg.Proxy.TLS.KeyPath); err != nil {
+		if _, err := os.Stat(cfg.Proxy.TLS.KeyPath); err != nil { //nolint:gosec // G703: path from namespace config file, not user input
 			errs = append(errs, fmt.Sprintf("TLS key file not found: %s", cfg.Proxy.TLS.KeyPath))
 		}
 	}

@@ -52,7 +52,7 @@ func isWideRune(r rune) bool {
 
 // isTTYOut returns true if stdout is a terminal.
 func isTTYOut() bool {
-	return term.IsTerminal(int(os.Stdout.Fd()))
+	return term.IsTerminal(int(os.Stdout.Fd())) //nolint:gosec // G115: file descriptor fits in int
 }
 
 // clearLines moves cursor up n lines and clears each line (TTY only).

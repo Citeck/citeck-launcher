@@ -571,7 +571,7 @@ func Start(opts StartOptions) error {
 		}
 	}
 
-	bgCtx, bgCancel := context.WithCancel(context.Background())
+	bgCtx, bgCancel := context.WithCancel(context.Background()) //nolint:gosec // G118: bgCancel stored in Daemon struct, called in shutdown
 
 	d := &Daemon{
 		dockerClient:    dockerClient,

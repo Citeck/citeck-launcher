@@ -53,11 +53,17 @@ func newStatusCmd() *cobra.Command {
 				if ns.BundleRef != "" {
 					output.PrintText("%s  %s", output.Colorize(output.Bold, "Bundle:"), ns.BundleRef)
 				}
+				for _, link := range ns.Links {
+					if link.Name == "ECOS UI" {
+						output.PrintText("%s  %s", output.Colorize(output.Bold, "URL:"), link.URL)
+						break
+					}
+				}
 
 				if (apps || len(ns.Apps) > 0) && len(ns.Apps) > 0 {
 					fmt.Println()
 					headers := []string{"APP", "STATUS", "IMAGE", "CPU", "MEMORY"}
-					var rows [][]string
+					rows := make([][]string, 0, len(ns.Apps))
 					for _, app := range ns.Apps {
 						rows = append(rows, []string{
 							app.Name,

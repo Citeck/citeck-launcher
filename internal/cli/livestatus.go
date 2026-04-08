@@ -8,8 +8,8 @@ import (
 )
 
 // renderAppTable formats apps into a table string using output.FormatTable + ColorizeStatus.
-// Returns the formatted string and counts (running, stopped, total).
-func renderAppTable(apps []api.AppDto) (table string, running, stopped, total int) {
+// Returns the formatted string and counts (running, failed, total).
+func renderAppTable(apps []api.AppDto) (table string, running, failed, total int) {
 	total = len(apps)
 
 	sort.Slice(apps, func(i, j int) bool { return apps[i].Name < apps[j].Name })
@@ -18,21 +18,20 @@ func renderAppTable(apps []api.AppDto) (table string, running, stopped, total in
 	rows := make([][]string, 0, len(apps))
 
 	for _, app := range apps {
-		status := app.Status
-		if status == "RUNNING" {
+		switch app.Status {
+		case "RUNNING":
 			running++
-		}
-		if status == "STOPPED" {
-			stopped++
+		case "START_FAILED", "PULL_FAILED", "FAILED":
+			failed++
 		}
 
 		rows = append(rows, []string{
 			app.Name,
-			output.ColorizeStatus(status),
+			output.ColorizeStatus(app.Status),
 			app.Image,
 		})
 	}
 
 	table = output.FormatTable(headers, rows)
-	return table, running, stopped, total
+	return table, running, failed, total
 }

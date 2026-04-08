@@ -357,7 +357,7 @@ func (d *Daemon) handleDiagnosticsFile(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", filepath.Base(absPath)))
-	_, _ = w.Write(data)
+	_, _ = w.Write(data) //nolint:gosec // G705: Prometheus metrics text, not HTML
 }
 
 // maskNamespaceConfigSecrets returns a shallow copy of the config with passwords in

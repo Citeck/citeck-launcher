@@ -82,7 +82,7 @@ func main() {
 		}
 
 		targetURL := "http://localhost" + r.URL.RequestURI()
-		proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, bodyReader)
+		proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, bodyReader) //nolint:gosec // G704: proxy to local Unix socket, not user-controlled URL
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
@@ -94,7 +94,7 @@ func main() {
 			}
 		}
 
-		resp, err := socketClient.Do(proxyReq)
+		resp, err := socketClient.Do(proxyReq) //nolint:gosec // G704: proxy to local Unix socket, not user-controlled URL
 		if err != nil {
 			if strings.HasPrefix(r.URL.Path, "/api/") {
 				msg := "daemon starting"

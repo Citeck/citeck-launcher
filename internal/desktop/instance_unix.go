@@ -29,7 +29,7 @@ func AcquireInstanceLock() (*InstanceLock, error) {
 		return nil, fmt.Errorf("open pid file: %w", err)
 	}
 
-	err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) //nolint:gosec // G115: file descriptor fits in int
 	if err != nil {
 		_ = f.Close()
 		return nil, fmt.Errorf("another Citeck Desktop instance is already running")
@@ -46,7 +46,7 @@ func AcquireInstanceLock() (*InstanceLock, error) {
 // Release releases the instance lock.
 func (l *InstanceLock) Release() {
 	if l.file != nil {
-		_ = syscall.Flock(int(l.file.Fd()), syscall.LOCK_UN)
+		_ = syscall.Flock(int(l.file.Fd()), syscall.LOCK_UN) //nolint:gosec // G115: file descriptor fits in int
 		name := l.file.Name()
 		_ = l.file.Close()
 		_ = os.Remove(name)

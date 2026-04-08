@@ -225,7 +225,7 @@ func extractZip(zipPath, destDir string) error {
 		if err != nil {
 			continue
 		}
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY, f.Mode())
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY, f.Mode()) //nolint:gosec // G703,G304: zip extraction with validated paths (prefix check above)
 		if err != nil {
 			_ = rc.Close()
 			continue
@@ -497,7 +497,7 @@ func findJava() string {
 		candidates = append([]string{filepath.Join(jh, "bin", "java")}, candidates...)
 	}
 	for _, p := range candidates {
-		if _, err := os.Stat(p); err == nil {
+		if _, err := os.Stat(p); err == nil { //nolint:gosec // G703: paths from hardcoded candidates and JAVA_HOME, not user input
 			return p
 		}
 	}

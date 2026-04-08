@@ -28,6 +28,8 @@ import (
 
 const defaultPassword = "citeck" //nolint:gosec // G101: well-known default, not a secret
 
+var errInterrupted = fmt.Errorf("interrupted")
+
 func newStartCmd(version string) *cobra.Command {
 	var foreground bool
 	var desktop bool
@@ -116,7 +118,10 @@ func newStartCmd(version string) *cobra.Command {
 				output.PrintText(t("cli.daemonStarted"))
 				return nil
 			}
-			return streamLiveStatus(c, follow)
+			if err := streamLiveStatus(c, follow); err != nil && !errors.Is(err, errInterrupted) {
+				return err
+			}
+			return nil
 		},
 	}
 
@@ -362,7 +367,7 @@ func streamLiveStatus(c *client.DaemonClient, follow bool) error {
 		select {
 		case <-sigCh:
 			fmt.Println() //nolint:forbidigo // clean newline on Ctrl+C
-			return nil
+			return errInterrupted
 		default:
 		}
 
@@ -372,28 +377,36 @@ func streamLiveStatus(c *client.DaemonClient, follow bool) error {
 			continue
 		}
 
-		table, running, _, total := renderAppTable(ns.Apps)
+		table, running, failed, total := renderAppTable(ns.Apps)
 
 		if isTTY {
-			// Clear previous output
 			if !firstPrint && linesPrinted > 0 {
 				clearLines(linesPrinted)
 			}
 			firstPrint = false
 
-			// Print table + summary
-			fmt.Println(table)            //nolint:forbidigo // CLI table
-			fmt.Println()                 //nolint:forbidigo // CLI spacing
-			fmt.Printf("  %d/%d running\n", running, total) //nolint:forbidigo // CLI summary
-			linesPrinted = strings.Count(table, "\n") + 3 // table lines + blank + summary
+			summary := fmt.Sprintf("  %d/%d running", running, total)
+			if failed > 0 {
+				summary += fmt.Sprintf(", %s", output.Colorize(output.Red, fmt.Sprintf("%d failed", failed)))
+			}
+			fmt.Println(table)    //nolint:forbidigo // CLI table
+			fmt.Println()         //nolint:forbidigo // CLI spacing
+			fmt.Println(summary)  //nolint:forbidigo // CLI summary
+			linesPrinted = strings.Count(table, "\n") + 3
 		} else if running != lastRunning {
-			// Non-TTY: print summary only when count changes
 			fmt.Printf("  %d/%d running\n", running, total) //nolint:forbidigo // CLI progress
 		}
 		lastRunning = running
 
-		if running == total && total > 0 && !follow {
-			fmt.Printf("\n%s\n", t("cli.allAppsStarted", "count", fmt.Sprintf("%d", total))) //nolint:forbidigo // CLI success
+		// Exit when all apps reached a terminal state (running or failed)
+		if total > 0 && running+failed == total && !follow {
+			ensureI18n()
+			if failed > 0 {
+				fmt.Printf("\n%s\n", output.Colorize(output.Yellow,
+					fmt.Sprintf("%d/%d apps started, %d failed", running, total, failed))) //nolint:forbidigo // CLI result
+			} else {
+				fmt.Printf("\n%s\n", t("cli.allAppsStarted", "count", fmt.Sprintf("%d", total))) //nolint:forbidigo // CLI success
+			}
 			return nil
 		}
 

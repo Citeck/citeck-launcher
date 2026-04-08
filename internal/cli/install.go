@@ -263,6 +263,9 @@ hostStep:
 	}
 	defer c.Close()
 	if streamErr := streamLiveStatus(c, false); streamErr != nil {
+		if errors.Is(streamErr, errInterrupted) {
+			return nil // Ctrl+C during status streaming — daemon keeps running
+		}
 		return streamErr
 	}
 	printAccessInfo(hostname, port, nsCfg.Proxy.TLS.Enabled, nsCfg.Proxy.TLS.LetsEncrypt)
