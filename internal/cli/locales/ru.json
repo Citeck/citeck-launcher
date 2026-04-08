@@ -1,0 +1,70 @@
+{
+  "install.welcome.title": "Установка Citeck",
+  "install.welcome.subtitle": "Этот мастер настроит Citeck на данном сервере.",
+  "install.welcome.whatWillHappen": "Что произойдёт:",
+  "install.welcome.stepConfig": "Создание конфигурации платформы",
+  "install.welcome.stepDaemon": "Создание конфигурации сервиса",
+  "install.welcome.stepService": "Настройка автозапуска (systemd)",
+  "install.welcome.stepStart": "Запуск платформы",
+  "install.welcome.canChange": "Настройки можно изменить позже, отредактировав файлы или запустив: citeck install",
+  "install.welcome.pressEnter": "Нажмите Enter для продолжения...",
+
+  "install.hostname.label": "Адрес или IP сервера",
+  "install.hostname.hint": "Адрес для доступа к платформе в браузере",
+  "install.hostname.localOnly": "Примечание: веб-интерфейс будет доступен только локально",
+
+  "install.tls.label": "Защита соединения",
+  "install.tls.httpsAutoGen": "HTTPS с автоматическим сертификатом (рекомендуется)",
+  "install.tls.httpOnly": "HTTP без шифрования",
+  "install.tls.leTrusted": "HTTPS с доверенным сертификатом — Let's Encrypt (рекомендуется)",
+  "install.tls.selfSignedGenerated": "Сертификат создан",
+  "install.tls.noInternet": "Нет доступа к интернету — используется автоматический сертификат",
+  "install.tls.leChecking": "Проверяю доступность Let's Encrypt для {host}...",
+  "install.tls.leNotAvailable": "Let's Encrypt недоступен: {error}",
+  "install.tls.leFallback": "Используется автоматический сертификат (HTTPS будет работать)",
+  "install.tls.leAvailable": "Let's Encrypt доступен! Будет использован доверенный сертификат.",
+
+  "install.port.https": "HTTPS порт",
+  "install.port.http": "HTTP порт",
+  "install.port.hint": "Порт для доступа к платформе в браузере",
+  "install.port.inUse": "Внимание: порт {port} уже занят",
+
+  "install.auth.label": "Аутентификация",
+  "install.auth.keycloak": "Полная система входа — Keycloak (рекомендуется)",
+  "install.auth.basic": "Простой логин/пароль",
+  "install.auth.users.label": "Пользователи",
+  "install.auth.users.hint": "Имена через запятую (пароль = имя пользователя)",
+
+  "install.release.label": "Релиз",
+  "install.release.fetching": "Загрузка доступных релизов...",
+  "install.release.notFound": "Релизы платформы не найдены",
+  "install.release.notFoundHelp": "Для онлайн-установки проверьте подключение к интернету.\nДля офлайн-установки используйте: citeck install --workspace <путь-к-архиву.zip>",
+  "install.release.latest": "последний",
+  "install.release.otherVersion": "Другая версия...",
+  "install.release.source": "Источник",
+  "install.release.version": "Версия",
+  "install.release.back": "Назад",
+  "install.release.noVersions": "В этом источнике нет доступных релизов",
+
+  "install.config.nsWritten": "Конфигурация платформы записана: {path}",
+  "install.config.daemonWritten": "Конфигурация сервиса записана: {path}",
+
+  "install.cert.mgmtUiCert": "Сертификат панели управления: {path}",
+  "install.cert.mgmtUiHint": "(импортируйте в браузер для удалённого доступа к панели управления на порту 7088)",
+
+  "install.systemd.label": "Установить как системный сервис?",
+  "install.systemd.hint": "Citeck будет запускаться автоматически при загрузке. Файл: /etc/systemd/system/citeck.service",
+  "install.systemd.notRoot": "Нет прав root. Для установки системного сервиса выполните:",
+  "install.systemd.installed": "Системный сервис установлен и включён: {path}",
+  "install.firewall.open": "Открыть порт {port} в файрволе (ufw)?",
+  "install.firewall.hint": "Необходимо для внешнего доступа",
+
+  "install.start.label": "Запустить Citeck сейчас?",
+  "install.start.starting": "Запуск...",
+  "install.start.manual": "Запустите вручную: citeck start",
+
+  "install.ready.title": "Citeck готов к работе!",
+  "install.ready.openBrowser": "Откройте в браузере:  {url}",
+  "install.ready.login": "Логин:              admin / admin",
+  "install.ready.certWarning": "Примечание: браузер покажет предупреждение безопасности,\nтак как сертификат создан автоматически.\nНажмите «Дополнительно» → «Перейти на сайт»."
+}

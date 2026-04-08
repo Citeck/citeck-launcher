@@ -24,6 +24,26 @@ citeck stop
 citeck reload
 ```
 
+## Initial Setup (Install Wizard)
+
+Run `citeck install` to configure a new deployment. The wizard is localized (8 languages) and walks through these steps:
+
+1. **Language** — select UI locale (en, ru, zh, es, de, fr, pt, ja)
+2. **Welcome** — overview of what will happen (in selected language)
+3. **Hostname** — server hostname or IP (default: auto-detected outbound IP)
+4. **TLS** — automatic: tries Let's Encrypt (staging check), falls back to self-signed. Works with both domains and IPs.
+5. **Port** — platform port (default: 443 for HTTPS, 80 for HTTP)
+6. **Authentication** — Keycloak SSO (recommended) or Basic Auth
+7. **Release** — multi-level picker: latest per repo at top, "Other version..." for browsing
+8. **System service** — systemd unit + optional firewall rule
+9. **Start** — launch the platform, shows live progress, final URL + credentials
+
+Every step has a sensible default — the entire wizard can be completed by pressing Enter repeatedly.
+
+Flags: `--offline` skips network checks (LE), `--workspace <zip>` imports bundle archive for air-gapped deployments.
+
+Re-running `citeck install` on an existing deployment skips config prompts and only offers systemd/firewall setup.
+
 ## Upgrade Launcher Binary
 
 1. Download the new binary

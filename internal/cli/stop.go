@@ -2,11 +2,8 @@ package cli
 
 import (
 	"fmt"
-	"os"
-	"sort"
+	"strings"
 	"time"
-
-	"golang.org/x/term"
 
 	"github.com/citeck/citeck-launcher/internal/client"
 	"github.com/citeck/citeck-launcher/internal/output"
@@ -77,7 +74,7 @@ func newStopCmd() *cobra.Command {
 
 // streamStopStatus polls the daemon and shows live stop progress until all apps are STOPPED.
 func streamStopStatus(c *client.DaemonClient) error {
-	isTTY := term.IsTerminal(int(os.Stdout.Fd()))
+	isTTY := isTTYOut()
 	linesPrinted := 0
 	lastStopped := -1
 	deadline := time.Now().Add(5 * time.Minute)
@@ -89,45 +86,23 @@ func streamStopStatus(c *client.DaemonClient) error {
 			continue
 		}
 
-		apps := ns.Apps
-		sort.Slice(apps, func(i, j int) bool { return apps[i].Name < apps[j].Name })
-
-		allStopped := true
-		stopped := 0
-		for _, app := range apps {
-			if app.Status == "STOPPED" {
-				stopped++
-			} else {
-				allStopped = false
-			}
-		}
+		table, _, stopped, total := renderAppTable(ns.Apps)
 
 		if isTTY {
-			// TTY: clear and reprint full table each cycle
 			if linesPrinted > 0 {
-				for i := 0; i < linesPrinted; i++ {
-					fmt.Print("\033[A\033[2K") //nolint:forbidigo // ANSI clear
-				}
+				clearLines(linesPrinted)
 			}
-			lines := 0
-			for _, app := range apps {
-				marker := "●"
-				if app.Status == "STOPPED" {
-					marker = "○"
-				}
-				fmt.Printf("  %s %-30s %s\n", marker, app.Name, app.Status) //nolint:forbidigo // CLI table
-				lines++
-			}
-			fmt.Printf("\n  %d/%d stopped\n", stopped, len(apps)) //nolint:forbidigo // CLI summary
-			linesPrinted = lines + 2
+			fmt.Println(table)            //nolint:forbidigo // CLI table
+			fmt.Println()                 //nolint:forbidigo // CLI spacing
+			fmt.Printf("  %d/%d stopped\n", stopped, total) //nolint:forbidigo // CLI summary
+			linesPrinted = strings.Count(table, "\n") + 3
 		} else if stopped != lastStopped {
-			// Non-TTY: print summary only when count changes
-			fmt.Printf("  %d/%d stopped\n", stopped, len(apps)) //nolint:forbidigo // CLI progress
+			fmt.Printf("  %d/%d stopped\n", stopped, total) //nolint:forbidigo // CLI progress
 		}
 		lastStopped = stopped
 
-		if allStopped || ns.Status == "STOPPED" {
-			fmt.Printf("\nAll %d apps stopped.\n", len(apps)) //nolint:forbidigo // CLI success
+		if stopped == total || ns.Status == "STOPPED" {
+			fmt.Printf("\nAll %d apps stopped.\n", total) //nolint:forbidigo // CLI success
 			return nil
 		}
 

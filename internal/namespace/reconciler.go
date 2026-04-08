@@ -399,9 +399,9 @@ func (r *Runtime) cleanupOldDiagnostics() {
 	}
 }
 
-// GracefulShutdownOrder returns apps in the correct shutdown order (flat list).
+// gracefulShutdownOrder returns apps in the correct shutdown order (flat list).
 // proxy -> webapps -> keycloak -> infrastructure (postgres, rabbitmq, zookeeper)
-func GracefulShutdownOrder(apps []*AppRuntime) []*AppRuntime {
+func gracefulShutdownOrder(apps []*AppRuntime) []*AppRuntime {
 	var result []*AppRuntime
 	for _, group := range GracefulShutdownGroups(apps) {
 		result = append(result, group...)

@@ -22,7 +22,8 @@ import (
 )
 
 const (
-	letsEncryptURL = "https://acme-v02.api.letsencrypt.org/directory"
+	letsEncryptURL        = "https://acme-v02.api.letsencrypt.org/directory"
+	letsEncryptStagingURL = "https://acme-staging-v02.api.letsencrypt.org/directory"
 )
 
 // Client handles ACME certificate provisioning via Let's Encrypt.
@@ -265,4 +266,91 @@ func (c *Client) loadOrCreateAccountKey() (*ecdsa.PrivateKey, error) {
 	_ = os.WriteFile(keyPath, pemData, 0o600)
 
 	return key, nil
+}
+
+// TryStaging performs a full ACME flow against the Let's Encrypt staging server
+// to verify that the hostname is reachable and HTTP-01 challenge can be completed.
+// Uses ephemeral keys and does not save any state.
+// Returns nil on success, error on failure.
+func TryStaging(ctx context.Context, hostname string) error {
+	accountKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return fmt.Errorf("generate key: %w", err)
+	}
+
+	client := &acme.Client{
+		Key:          accountKey,
+		DirectoryURL: letsEncryptStagingURL,
+	}
+
+	// Register ephemeral account
+	if _, regErr := client.Register(ctx, &acme.Account{}, acme.AcceptTOS); regErr != nil {
+		if !errors.Is(regErr, acme.ErrAccountAlreadyExists) {
+			return fmt.Errorf("staging register: %w", regErr)
+		}
+	}
+
+	// Create order
+	order, err := client.AuthorizeOrder(ctx, acme.DomainIDs(hostname))
+	if err != nil {
+		return fmt.Errorf("staging order: %w", err)
+	}
+
+	// Process HTTP-01 challenges
+	for _, authzURL := range order.AuthzURLs {
+		authz, authzErr := client.GetAuthorization(ctx, authzURL)
+		if authzErr != nil {
+			return fmt.Errorf("staging authz: %w", authzErr)
+		}
+
+		var challenge *acme.Challenge
+		for _, ch := range authz.Challenges {
+			if ch.Type == "http-01" {
+				challenge = ch
+				break
+			}
+		}
+		if challenge == nil {
+			return fmt.Errorf("no http-01 challenge in staging response")
+		}
+
+		response, respErr := client.HTTP01ChallengeResponse(challenge.Token)
+		if respErr != nil {
+			return fmt.Errorf("staging response: %w", respErr)
+		}
+		challengePath := client.HTTP01ChallengePath(challenge.Token)
+
+		// Serve challenge on :80
+		listener, listenErr := net.Listen("tcp", ":80") //nolint:gosec // G102: ACME HTTP-01 requires :80
+		if listenErr != nil {
+			return fmt.Errorf("port 80 unavailable: %w", listenErr)
+		}
+		srv := &http.Server{ //nolint:gosec // ACME challenge server
+			ReadTimeout:  10 * time.Second,
+			WriteTimeout: 10 * time.Second,
+			IdleTimeout:  30 * time.Second,
+		}
+		mux := http.NewServeMux()
+		mux.HandleFunc(challengePath, func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(response))
+		})
+		srv.Handler = mux
+		go func() { _ = srv.Serve(listener) }()
+
+		if _, acceptErr := client.Accept(ctx, challenge); acceptErr != nil {
+			_ = srv.Close()
+			return fmt.Errorf("staging accept: %w", acceptErr)
+		}
+
+		if _, waitErr := client.WaitAuthorization(ctx, authzURL); waitErr != nil {
+			_ = srv.Close()
+			return fmt.Errorf("staging validation failed: %w", waitErr)
+		}
+
+		_ = srv.Close()
+	}
+
+	// Staging validation passed — domain is reachable and HTTP-01 works.
+	// We don't need the cert itself (staging certs aren't trusted).
+	return nil
 }

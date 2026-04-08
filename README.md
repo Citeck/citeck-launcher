@@ -11,7 +11,7 @@ Citeck Launcher manages Citeck namespaces and Docker containers. It is a single 
 Prerequisites: Docker (running).
 
 ```bash
-curl -fsSL -o citeck https://github.com/Citeck/citeck-launcher/releases/latest/download/citeck_linux_amd64 \
+curl -fsSL -o citeck https://github.com/Citeck/citeck-launcher/releases/download/v2.0.0/citeck_2.0.0_linux_amd64 \
   && chmod +x citeck && sudo mv citeck /usr/local/bin/ && citeck install
 ```
 
@@ -25,17 +25,6 @@ citeck install --workspace /path/to/workspace.zip
 ```
 
 The `--workspace` flag extracts bundle repos locally so no internet is needed during startup.
-
-### Start
-
-```bash
-# Foreground (for development or debugging)
-citeck start --foreground
-
-# As a systemd service (if installed via wizard)
-sudo systemctl start citeck
-```
-
 
 ## Features
 

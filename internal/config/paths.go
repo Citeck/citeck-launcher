@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -185,4 +186,19 @@ func NamespaceRtfilesDir(wsID, nsID string) string {
 // {home}/ws/{wsID}/ns/{nsID}/namespace.yml
 func WorkspaceNamespaceConfigPath(wsID, nsID string) string {
 	return filepath.Join(NamespaceDir(wsID, nsID), "namespace.yml")
+}
+
+// DetectOutboundIP returns a non-loopback IPv4 address of this machine.
+// Falls back to "localhost" if no suitable address is found.
+func DetectOutboundIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return "localhost"
+	}
+	for _, addr := range addrs {
+		if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() && ipNet.IP.To4() != nil {
+			return ipNet.IP.String()
+		}
+	}
+	return "localhost"
 }

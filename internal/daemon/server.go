@@ -698,7 +698,7 @@ func Start(opts StartOptions) error {
 					host, port, _ := net.SplitHostPort(tcpAddr)
 					displayHost := host
 					if host == "" || host == "0.0.0.0" || host == "::" {
-						displayHost = detectOutboundIP()
+						displayHost = config.DetectOutboundIP()
 					}
 					slog.Info("Web UI available", "url", scheme+"://"+displayHost+":"+port, "listen", tcpAddr)
 					if err := d.tcpServer.Serve(tcpListener); err != nil && err != http.ErrServerClosed {
@@ -720,7 +720,7 @@ func Start(opts StartOptions) error {
 		}
 		host, port, _ := net.SplitHostPort(tcpAddr)
 		if host == "" || host == "0.0.0.0" || host == "::" {
-			host = detectOutboundIP()
+			host = config.DetectOutboundIP()
 		}
 		readyURL = scheme + "://" + host + ":" + port
 	}
@@ -833,6 +833,122 @@ func (d *Daemon) doShutdown() {
 	}
 }
 
+// doReload performs the core reload logic: load config, resolve bundle, generate, write files,
+// update shared state, and regenerate runtime. Caller must hold reloadMu.
+//
+//nolint:nestif // reload orchestrates config read, git pull, bundle resolution, ACME cert obtainment, and runtime regeneration
+func (d *Daemon) doReload() error {
+	d.configMu.RLock()
+	if d.nsConfig == nil || d.runtime == nil {
+		d.configMu.RUnlock()
+		return fmt.Errorf("no namespace configured")
+	}
+	nsID := d.nsConfig.ID
+	d.configMu.RUnlock()
+
+	// Phase 1: slow I/O outside lock (config read, git pull, bundle resolution)
+	nsCfg, err := namespace.LoadNamespaceConfig(config.ResolveNamespaceConfigPath(d.workspaceID, nsID))
+	if err != nil {
+		return fmt.Errorf("reload config: %w", err)
+	}
+
+	bundlesDataDir := config.DataDir()
+	if config.IsDesktopMode() {
+		bundlesDataDir = filepath.Join(config.HomeDir(), "ws", d.workspaceID)
+	}
+	resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(d.secretReaderFunc()))
+	resolveResult, err := resolver.Resolve(nsCfg.BundleRef)
+	if err != nil {
+		// Fallback to cached bundle from persisted state
+		cachedState := namespace.LoadNsState(d.volumesBase, nsID)
+		if cachedState != nil && cachedState.CachedBundle != nil && !cachedState.CachedBundle.IsEmpty() {
+			slog.Warn("Bundle resolution failed on reload, using cached bundle", "ref", nsCfg.BundleRef, "err", err,
+				"cachedVersion", cachedState.CachedBundle.Key.Version)
+			resolveResult = &bundle.ResolveResult{Bundle: cachedState.CachedBundle, Workspace: d.workspaceConfig}
+		} else {
+			return fmt.Errorf("resolve bundle: %w", err)
+		}
+	}
+
+	_ = appfiles.ExtractTo(d.volumesBase)
+
+	// Self-signed cert: generate if TLS enabled + no cert paths + no LE
+	ensureSelfSignedCert(nsCfg)
+
+	// Let's Encrypt: obtain certificate if needed; prepare renewal service for Phase 2
+	var newRenewal *acme.RenewalService
+	if nsCfg.Proxy.TLS.Enabled && nsCfg.Proxy.TLS.LetsEncrypt && nsCfg.Proxy.Host != "" && nsCfg.Proxy.Host != "localhost" {
+		acmeClient := acme.NewClient(config.DataDir(), config.ConfDir(), nsCfg.Proxy.Host)
+		if !acmeClient.CertMatchesHost() {
+			slog.Info("Obtaining Let's Encrypt certificate on reload", "host", nsCfg.Proxy.Host)
+			acmeCtx, acmeCancel := context.WithTimeout(context.Background(), 120*time.Second)
+			err := acmeClient.ObtainCertificate(acmeCtx)
+			acmeCancel()
+			if err != nil {
+				slog.Error("Let's Encrypt failed on reload", "err", err)
+			}
+		}
+		if acmeClient.CertMatchesHost() {
+			nsCfg.Proxy.TLS.CertPath = acmeClient.CertPath()
+			nsCfg.Proxy.TLS.KeyPath = acmeClient.KeyPath()
+		}
+		newRenewal = acme.NewRenewalService(acmeClient, func() {
+			if d.runtime != nil {
+				if err := d.runtime.RestartApp("proxy"); err != nil {
+					slog.Error("ACME: restart proxy after renewal failed", "err", err)
+				}
+			}
+		})
+	}
+
+	var genOpts namespace.GenerateOpts
+	if d.runtime != nil {
+		genOpts.DetachedApps = d.runtime.ManualStoppedApps()
+	}
+	genResp := namespace.Generate(nsCfg, resolveResult.Bundle, resolveResult.Workspace, d.systemSecrets, genOpts)
+
+	// Write generated files atomically (prevent partial writes on crash)
+	for filePath, content := range genResp.Files {
+		destPath := filepath.Join(d.volumesBase, filePath)
+		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil { //nolint:gosec // generated file dirs need 0o755 for container access
+			slog.Error("Failed to create dir for generated file", "path", destPath, "err", err)
+			continue
+		}
+		perm := os.FileMode(0o644)
+		if strings.HasSuffix(filePath, ".sh") {
+			perm = 0o755
+		}
+		if err := fsutil.AtomicWriteFile(destPath, content, perm); err != nil {
+			slog.Error("Failed to write generated file", "path", destPath, "err", err)
+		}
+	}
+
+	// Phase 2: update shared state briefly under write lock
+	d.configMu.Lock()
+	d.nsConfig = nsCfg
+	d.bundleDef = resolveResult.Bundle
+	d.workspaceConfig = resolveResult.Workspace
+	d.appDefs = genResp.Applications
+	// Update ACME renewal service under lock to prevent data race with shutdown
+	if d.acmeRenewal != nil {
+		d.acmeRenewal.Stop()
+	}
+	d.acmeRenewal = newRenewal
+	d.configMu.Unlock()
+	if newRenewal != nil {
+		newRenewal.Start()
+	}
+
+	if d.cloudCfgServer != nil {
+		d.cloudCfgServer.UpdateConfig(genResp.CloudConfig, d.systemSecrets.JWT)
+	}
+	d.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(resolveResult.Workspace, d.secretReaderFunc()))
+
+	// Phase 3: regenerate runtime with updated config (async stop + start)
+	d.runtime.Regenerate(genResp.Applications, nsCfg, resolveResult.Bundle)
+	return nil
+}
+
 // isLocalhostAddr returns true if the listen address is bound to localhost only.
 func isLocalhostAddr(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)
@@ -919,20 +1035,6 @@ func (d *Daemon) setupMTLS(ln net.Listener, handler http.Handler, nsCfg *namespa
 
 	slog.Info("mTLS enabled on Web UI", "trustedCerts", certCount)
 	return tls.NewListener(ln, tlsCfg), handler, true, nil
-}
-
-// detectOutboundIP returns the first non-loopback IPv4 address of this machine.
-func detectOutboundIP() string {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return "localhost"
-	}
-	for _, addr := range addrs {
-		if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() && ipNet.IP.To4() != nil {
-			return ipNet.IP.String()
-		}
-	}
-	return "localhost"
 }
 
 // resolveServerCertHost determines the hostname for the server certificate SAN.

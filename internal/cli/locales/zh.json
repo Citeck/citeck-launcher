@@ -1,0 +1,70 @@
+{
+  "install.welcome.title": "Citeck 平台安装",
+  "install.welcome.subtitle": "此向导将在此服务器上配置 Citeck。",
+  "install.welcome.whatWillHappen": "将执行以下操作：",
+  "install.welcome.stepConfig": "创建平台配置",
+  "install.welcome.stepDaemon": "创建服务配置",
+  "install.welcome.stepService": "设置系统服务（可选）",
+  "install.welcome.stepStart": "启动平台",
+  "install.welcome.canChange": "您可以稍后通过编辑配置文件或运行 citeck install 来更改设置。",
+  "install.welcome.pressEnter": "按 Enter 继续...",
+
+  "install.hostname.label": "服务器主机名或 IP",
+  "install.hostname.hint": "浏览器中访问平台的地址",
+  "install.hostname.localOnly": "提示：Web 界面仅可本地访问",
+
+  "install.tls.label": "连接安全",
+  "install.tls.httpsAutoGen": "HTTPS 自动生成证书（推荐）",
+  "install.tls.httpOnly": "仅 HTTP（无加密）",
+  "install.tls.leTrusted": "HTTPS 可信证书 — Let's Encrypt（推荐）",
+  "install.tls.selfSignedGenerated": "证书已生成",
+  "install.tls.noInternet": "无法访问互联网 — 使用自动生成的证书",
+  "install.tls.leChecking": "正在检查 Let's Encrypt 是否适用于 {host}...",
+  "install.tls.leNotAvailable": "Let's Encrypt 不可用：{error}",
+  "install.tls.leFallback": "已切换为自动生成的证书（HTTPS 仍然有效）",
+  "install.tls.leAvailable": "Let's Encrypt 可用！将使用可信证书。",
+
+  "install.port.https": "HTTPS 端口",
+  "install.port.http": "HTTP 端口",
+  "install.port.hint": "浏览器访问平台的端口",
+  "install.port.inUse": "警告：端口 {port} 已被占用",
+
+  "install.auth.label": "身份验证",
+  "install.auth.keycloak": "完整登录系统 — Keycloak（推荐）",
+  "install.auth.basic": "简单用户名/密码",
+  "install.auth.users.label": "用户",
+  "install.auth.users.hint": "用逗号分隔的用户名（密码 = 用户名）",
+
+  "install.release.label": "版本",
+  "install.release.fetching": "正在获取可用版本...",
+  "install.release.notFound": "未找到平台版本",
+  "install.release.notFoundHelp": "在线安装：请检查网络连接后重试。\n离线安装：请使用 citeck install --workspace <压缩包路径>",
+  "install.release.latest": "最新",
+  "install.release.otherVersion": "其他版本...",
+  "install.release.source": "来源",
+  "install.release.version": "版本",
+  "install.release.back": "返回",
+  "install.release.noVersions": "此来源中没有可用版本",
+
+  "install.config.nsWritten": "平台配置已写入：{path}",
+  "install.config.daemonWritten": "服务配置已写入：{path}",
+
+  "install.cert.mgmtUiCert": "管理界面证书：{path}",
+  "install.cert.mgmtUiHint": "（导入浏览器以远程访问 7088 端口的管理面板）",
+
+  "install.systemd.label": "安装为系统服务？",
+  "install.systemd.hint": "Citeck 将在启动时自动运行。配置：/etc/systemd/system/citeck.service",
+  "install.systemd.notRoot": "非 root 用户。要安装系统服务，请运行：",
+  "install.systemd.installed": "系统服务已安装并启用：{path}",
+  "install.firewall.open": "在防火墙中开放端口 {port}（ufw）？",
+  "install.firewall.hint": "外部访问所需",
+
+  "install.start.label": "现在启动 Citeck？",
+  "install.start.starting": "正在启动...",
+  "install.start.manual": "手动启动：citeck start",
+
+  "install.ready.title": "Citeck 已就绪！",
+  "install.ready.openBrowser": "在浏览器中打开：{url}",
+  "install.ready.login": "登录：            admin / admin",
+  "install.ready.certWarning": "提示：浏览器会显示安全警告，\n因为证书是自动生成的。\n点击「高级」→「继续访问」即可。"
+}

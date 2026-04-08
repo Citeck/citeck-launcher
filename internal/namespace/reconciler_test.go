@@ -18,7 +18,7 @@ func TestGracefulShutdownOrder(t *testing.T) {
 		{Name: appdef.AppEmodel, Def: appdef.ApplicationDef{Kind: appdef.KindCiteckCore}},
 	}
 
-	ordered := GracefulShutdownOrder(apps)
+	ordered := gracefulShutdownOrder(apps)
 
 	if len(ordered) != 6 {
 		t.Fatalf("expected 6 apps, got %d", len(ordered))

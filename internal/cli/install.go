@@ -2,9 +2,9 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/citeck/citeck-launcher/internal/acme"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
@@ -23,6 +24,7 @@ import (
 
 func newInstallCmd() *cobra.Command {
 	var workspaceZip string
+	var offline bool
 
 	cmd := &cobra.Command{
 		Use:   "install",
@@ -32,16 +34,17 @@ func newInstallCmd() *cobra.Command {
 Use --workspace to import a workspace zip archive (e.g. downloaded from GitHub/GitLab).
 This extracts workspace config and bundle definitions for offline operation.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runInstall(cmd, args, workspaceZip)
+			return runInstall(workspaceZip, offline)
 		},
 	}
 
 	cmd.Flags().StringVar(&workspaceZip, "workspace", "", "Path to workspace zip archive (offline bundle import)")
+	cmd.Flags().BoolVar(&offline, "offline", false, "Offline mode: skip network checks (Let's Encrypt), use only local data")
 
 	return cmd
 }
 
-func runInstall(_ *cobra.Command, _ []string, workspaceZip string) error { //nolint:gocyclo // interactive wizard with sequential steps
+func runInstall(workspaceZip string, offline bool) error { //nolint:gocyclo // interactive wizard with sequential steps
 	scanner := bufio.NewScanner(os.Stdin)
 
 	// Import workspace zip if provided
@@ -77,367 +80,494 @@ func runInstall(_ *cobra.Command, _ []string, workspaceZip string) error { //nol
 	if _, statErr := os.Stat(nsCfgPath); statErr == nil {
 		output.PrintText("Namespace config already exists: %s", nsCfgPath)
 		output.PrintText("Skipping config prompts. Use 'citeck config edit' to modify.")
-		setupSystemd(scanner)
-		setupFirewall(scanner, 0)
+		installSystemdAndFirewall(scanner, 0)
 		return nil
 	}
 
-	// 0. Language selection
-	output.PrintText("Select language / Выберите язык:")
-	locale := promptChoice(scanner, "Language", []string{
-		"en (English)",
-		"ru (Русский)",
-		"zh (简体中文)",
-		"es (Español)",
-		"de (Deutsch)",
-		"fr (Français)",
-		"pt (Português)",
-		"ja (日本語)",
-	}, "en (English)")
-	// Extract locale code from selection (e.g., "en (English)" -> "en")
+	// --- Step 1: Language (first, so welcome is localized) ---
+	langOptions := make([]string, len(SupportedLocales))
+	for i, loc := range SupportedLocales {
+		langOptions[i] = loc.Code + " (" + loc.Name + ")"
+	}
+	fmt.Println() //nolint:forbidigo // CLI output
+	locale := promptNumber(scanner, "Language / Язык / 语言", langOptions, 0)
 	localeCode := strings.SplitN(locale, " ", 2)[0]
+	initI18n(localeCode)
+
+	// --- Step 0: Welcome (in selected language) ---
+	fmt.Println()                                                                     //nolint:forbidigo // CLI output
+	fmt.Printf("  %s\n", t("install.welcome.title"))                                  //nolint:forbidigo // CLI output
+	fmt.Println()                                                                     //nolint:forbidigo // CLI output
+	fmt.Printf("  %s\n", t("install.welcome.subtitle"))                               //nolint:forbidigo // CLI output
+	fmt.Println()                                                                     //nolint:forbidigo // CLI output
+	fmt.Printf("  %s\n", t("install.welcome.whatWillHappen"))                          //nolint:forbidigo // CLI output
+	fmt.Printf("    1. %s  -> %s\n", t("install.welcome.stepConfig"), nsCfgPath)       //nolint:forbidigo // CLI output
+	fmt.Printf("    2. %s  -> %s\n", t("install.welcome.stepDaemon"), config.DaemonConfigPath()) //nolint:forbidigo // CLI output
+	fmt.Printf("    3. %s\n", t("install.welcome.stepService"))                        //nolint:forbidigo // CLI output
+	fmt.Printf("    4. %s\n", t("install.welcome.stepStart"))                          //nolint:forbidigo // CLI output
+	fmt.Println()                                                                     //nolint:forbidigo // CLI output
+	fmt.Printf("  %s\n", t("install.welcome.canChange"))                               //nolint:forbidigo // CLI output
+	fmt.Println()                                                                     //nolint:forbidigo // CLI output
+	fmt.Printf("  %s", t("install.welcome.pressEnter"))                                //nolint:forbidigo // CLI prompt
+	scanner.Scan()
+	fmt.Println() //nolint:forbidigo // CLI output
 
 	nsCfg := namespace.DefaultNamespaceConfig()
+	nsCfg.PgAdmin.Enabled = false // default off (use pgAdmin separately if needed)
 
-	// 1. Display name
-	nsCfg.Name = prompt(scanner, "Display name", "Citeck")
-
-	// 2. Auth type
-	authType := promptChoice(scanner, "Authentication type", []string{"BASIC", "KEYCLOAK"}, "BASIC")
-	nsCfg.Authentication.Type = namespace.AuthenticationType(authType)
-
-	// 3. Users (if BASIC)
-	if nsCfg.Authentication.Type == namespace.AuthBasic {
-		usersStr := prompt(scanner, "Users (comma-separated user:password)", "admin:admin")
-		var users []string
-		for u := range strings.SplitSeq(usersStr, ",") {
-			u = strings.TrimSpace(u)
-			if u != "" {
-				// If no colon, use user:user format
-				if !strings.Contains(u, ":") {
-					u = u + ":" + u
-				}
-				users = append(users, u) // store full user:password
-			}
-		}
-		if len(users) > 0 {
-			nsCfg.Authentication.Users = users
-		}
+	// --- Step 2: Hostname ---
+	defaultHost := config.DetectOutboundIP()
+	hostname := promptText(scanner, t("install.hostname.label"), t("install.hostname.hint"), defaultHost)
+	if hostname == "" {
+		hostname = defaultHost
+	}
+	if hostname == "localhost" || hostname == "127.0.0.1" {
+		output.PrintText("  %s", t("install.hostname.localOnly"))
+	}
+	nsCfg.Proxy.Host = hostname
+	if hostname == "localhost" || hostname == "127.0.0.1" {
+		nsCfg.Name = "Citeck"
+	} else {
+		nsCfg.Name = hostname
 	}
 
-	// 4. Hostname
-	hostnameChoice := promptChoice(scanner, "Hostname", []string{"localhost", "auto-detect", "manual"}, "localhost")
-	switch hostnameChoice {
-	case "auto-detect":
-		ip := detectPublicIP()
-		if ip != "" {
-			output.PrintText("Detected IP: %s", ip)
-			nsCfg.Proxy.Host = ip
-		} else {
-			output.PrintText("Could not detect public IP, using localhost")
-		}
-	case "manual":
-		nsCfg.Proxy.Host = prompt(scanner, "Enter hostname or IP", "localhost")
+	// --- Step 3: TLS ---
+	isOffline := offline || workspaceZip != ""
+	isLocalhost := hostname == "localhost" || hostname == "127.0.0.1"
+	if !isLocalhost && !isOffline {
+		configureTLSAuto(&nsCfg, hostname)
+	} else {
+		tlsOptions := []string{t("install.tls.httpsAutoGen"), t("install.tls.httpOnly")}
+		tlsChoice := promptNumber(scanner, t("install.tls.label"), tlsOptions, 0)
+		configureTLS(&nsCfg, tlsChoice)
 	}
 
-	// 5. TLS
-	tlsChoice := promptChoice(scanner, "TLS", []string{"none", "self-signed", "letsencrypt", "custom"}, "none")
-	switch tlsChoice {
-	case "self-signed":
+	// --- Step 4: Port ---
+	defaultPort := 443
+	portLabel := t("install.port.https")
+	if !nsCfg.Proxy.TLS.Enabled {
+		defaultPort = 80
+		portLabel = t("install.port.http")
+	}
+	portStr := promptText(scanner, portLabel, t("install.port.hint"), strconv.Itoa(defaultPort))
+	port, portErr := strconv.Atoi(portStr)
+	if portErr != nil || port < 1 || port > 65535 {
+		port = defaultPort
+	}
+	if ln, listenErr := net.Listen("tcp", fmt.Sprintf(":%d", port)); listenErr != nil {
+		output.PrintText("  %s", t("install.port.inUse", "port", strconv.Itoa(port)))
+	} else {
+		ln.Close()
+	}
+	nsCfg.Proxy.Port = port
+
+	// --- Step 5: Authentication ---
+	keycloakLabel := t("install.auth.keycloak")
+	authOptions := []string{keycloakLabel, t("install.auth.basic")}
+	authChoice := promptNumber(scanner, t("install.auth.label"), authOptions, 0)
+	if authChoice == keycloakLabel {
+		nsCfg.Authentication.Type = namespace.AuthKeycloak
+	} else {
+		nsCfg.Authentication.Type = namespace.AuthBasic
+		usersStr := promptText(scanner, t("install.auth.users.label"), t("install.auth.users.hint"), "admin")
+		nsCfg.Authentication.Users = parseUsers(usersStr)
+	}
+
+	// --- Step 6: Release ---
+	if err := resolveRelease(scanner, &nsCfg, isOffline); err != nil {
+		return err
+	}
+
+	// --- Write namespace.yml ---
+	if err := os.MkdirAll(filepath.Dir(nsCfgPath), 0o755); err != nil { //nolint:gosec // G301: namespace config dir needs 0o755
+		return fmt.Errorf("create config dir: %w", err)
+	}
+	data, marshalErr := namespace.MarshalNamespaceConfig(&nsCfg)
+	if marshalErr != nil {
+		return fmt.Errorf("marshal config: %w", marshalErr)
+	}
+	if writeErr := fsutil.AtomicWriteFile(nsCfgPath, data, 0o600); writeErr != nil {
+		return fmt.Errorf("write config: %w", writeErr)
+	}
+	output.PrintText("\n  %s", t("install.config.nsWritten", "path", nsCfgPath))
+
+	// --- Write daemon.yml ---
+	daemonCfg := config.DefaultDaemonConfig()
+	daemonCfg.Locale = localeCode
+
+	// Step 7: Remote Web UI — automatic based on hostname
+	webuiHost := "127.0.0.1"
+	isRemote := hostname != "localhost" && hostname != "127.0.0.1"
+	if isRemote {
+		webuiHost = "0.0.0.0"
+	}
+	webuiPort := findAvailablePort(webuiHost, 7088)
+	daemonCfg.Server.WebUI.Listen = fmt.Sprintf("%s:%d", webuiHost, webuiPort)
+
+	if saveErr := config.SaveDaemonConfig(daemonCfg); saveErr != nil {
+		return fmt.Errorf("save daemon config: %w", saveErr)
+	}
+	output.PrintText("  %s", t("install.config.daemonWritten", "path", config.DaemonConfigPath()))
+
+	if isRemote {
+		generateInstallClientCert()
+	}
+
+	// --- Step 8: System service ---
+	installSystemdAndFirewall(scanner, port)
+
+	// --- Step 9: Start ---
+	fmt.Println() //nolint:forbidigo // CLI output
+	startNow := flagYes || promptYesNo(scanner, t("install.start.label"), "", true)
+	if !startNow {
+		printAccessInfo(hostname, port, nsCfg.Proxy.TLS.Enabled)
+		output.PrintText("\n  %s", t("install.start.manual"))
+		return nil
+	}
+
+	output.PrintText("  %s", t("install.start.starting"))
+	password, pwdErr := resolvePassword(false)
+	if pwdErr != nil {
+		output.Errf("Could not resolve password: %v. Start manually: citeck start", pwdErr)
+		return nil
+	}
+	if forkErr := forkDaemon(password, false, false, isOffline); forkErr != nil {
+		output.Errf("Failed to start: %v. Start manually: citeck start", forkErr)
+		return nil
+	}
+	c, waitErr := waitForDaemon(30 * time.Second)
+	if waitErr != nil {
+		output.Errf("Daemon did not become ready: %v", waitErr)
+		return nil
+	}
+	defer c.Close()
+	if streamErr := streamLiveStatus(c, false); streamErr != nil {
+		return streamErr
+	}
+	printAccessInfo(hostname, port, nsCfg.Proxy.TLS.Enabled)
+	return nil
+}
+
+// printAccessInfo shows the platform URL and login instructions after install.
+func printAccessInfo(hostname string, port int, tls bool) {
+	scheme := "http"
+	if tls {
+		scheme = "https"
+	}
+	addr := hostname
+	if (tls && port != 443) || (!tls && port != 80) {
+		addr = fmt.Sprintf("%s:%d", hostname, port)
+	}
+	url := fmt.Sprintf("%s://%s", scheme, addr)
+
+	fmt.Println() //nolint:forbidigo // CLI output
+	output.PrintText("  ========================================")
+	output.PrintText("  %s", t("install.ready.title"))
+	output.PrintText("")
+	output.PrintText("  %s", t("install.ready.openBrowser", "url", url))
+	output.PrintText("  %s", t("install.ready.login"))
+	// Warn about browser certificate warning for self-signed certs
+	if tls && (net.ParseIP(hostname) != nil || hostname == "localhost") {
+		output.PrintText("")
+		for line := range strings.SplitSeq(t("install.ready.certWarning"), "\n") {
+			output.PrintText("  %s", line)
+		}
+	}
+	output.PrintText("  ========================================")
+}
+
+// configureTLS sets TLS config based on the user's choice.
+func configureTLS(nsCfg *namespace.Config, choice string) {
+	switch {
+	case choice == t("install.tls.leTrusted"):
+		nsCfg.Proxy.TLS.Enabled = true
+		nsCfg.Proxy.TLS.LetsEncrypt = true
+	case choice == t("install.tls.httpsAutoGen"):
 		nsCfg.Proxy.TLS.Enabled = true
 		host := nsCfg.Proxy.Host
 		if host == "" {
 			host = "localhost"
 		}
 		tlsDir := filepath.Join(config.ConfDir(), "tls")
-		os.MkdirAll(tlsDir, 0o755) //nolint:gosec // G301: TLS dir needs 0o755
+		_ = os.MkdirAll(tlsDir, 0o755) //nolint:gosec // G301: TLS dir needs 0o755
 		certPath := filepath.Join(tlsDir, "server.crt")
 		keyPath := filepath.Join(tlsDir, "server.key")
 		if certErr := tlsutil.GenerateSelfSignedCert(certPath, keyPath, []string{host}, 365); certErr != nil {
-			return fmt.Errorf("generate self-signed cert: %w", certErr)
+			output.Errf("Warning: failed to generate self-signed cert: %v", certErr)
+			return
 		}
 		nsCfg.Proxy.TLS.CertPath = certPath
 		nsCfg.Proxy.TLS.KeyPath = keyPath
-		output.PrintText("Self-signed certificate generated")
-	case "letsencrypt":
-		nsCfg.Proxy.TLS.Enabled = true
-		nsCfg.Proxy.TLS.LetsEncrypt = true
-		output.PrintText("Let's Encrypt will be configured after install")
-	case "custom":
-		nsCfg.Proxy.TLS.Enabled = true
-		nsCfg.Proxy.TLS.CertPath = prompt(scanner, "Certificate file path", "")
-		nsCfg.Proxy.TLS.KeyPath = prompt(scanner, "Private key file path", "")
-		if _, certStatErr := os.Stat(nsCfg.Proxy.TLS.CertPath); certStatErr != nil {
-			return fmt.Errorf("certificate file not found: %s", nsCfg.Proxy.TLS.CertPath)
+		output.PrintText("  %s", t("install.tls.selfSignedGenerated"))
+	default:
+		// None — HTTP only
+	}
+}
+
+// configureTLSAuto tries Let's Encrypt staging for domain hostnames.
+// If staging succeeds → Let's Encrypt (production). If fails → self-signed fallback.
+// Skips LE entirely if the server has no internet connectivity.
+func configureTLSAuto(nsCfg *namespace.Config, hostname string) {
+	// Quick connectivity check — if we can't reach LE at all, skip immediately.
+	conn, dialErr := net.DialTimeout("tcp", "acme-staging-v02.api.letsencrypt.org:443", 5*time.Second)
+	if dialErr != nil {
+		output.PrintText("  %s", t("install.tls.noInternet"))
+		configureTLS(nsCfg, t("install.tls.httpsAutoGen"))
+		return
+	}
+	conn.Close()
+
+	output.PrintText("  %s", t("install.tls.leChecking", "host", hostname))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	if err := acme.TryStaging(ctx, hostname); err != nil {
+		output.PrintText("  %s", t("install.tls.leNotAvailable", "error", err.Error()))
+		output.PrintText("  %s", t("install.tls.leFallback"))
+		configureTLS(nsCfg, t("install.tls.httpsAutoGen"))
+		return
+	}
+
+	output.PrintText("  %s", t("install.tls.leAvailable"))
+	nsCfg.Proxy.TLS.Enabled = true
+	nsCfg.Proxy.TLS.LetsEncrypt = true
+}
+
+// parseUsers parses a comma-separated list of usernames.
+// If a user:password pair is provided, only the username part is kept
+// (the generator creates password = username pairs).
+func parseUsers(usersStr string) []string {
+	parts := strings.Split(usersStr, ",")
+	users := make([]string, 0, len(parts))
+	for _, u := range parts {
+		u = strings.TrimSpace(u)
+		if u == "" {
+			continue
 		}
-		if _, keyStatErr := os.Stat(nsCfg.Proxy.TLS.KeyPath); keyStatErr != nil {
-			return fmt.Errorf("key file not found: %s", nsCfg.Proxy.TLS.KeyPath)
+		// Strip password part if present — generator uses username as password
+		if idx := strings.IndexByte(u, ':'); idx > 0 {
+			u = u[:idx]
 		}
+		users = append(users, u)
 	}
+	if len(users) == 0 {
+		return []string{"admin"}
+	}
+	return users
+}
 
-	// 6. Port
-	defaultPort := 80
-	if nsCfg.Proxy.TLS.Enabled {
-		defaultPort = 443
-	}
-	portStr := prompt(scanner, "Port", strconv.Itoa(defaultPort))
-	port, portErr := strconv.Atoi(portStr)
-	if portErr != nil || port < 1 || port > 65535 {
-		port = defaultPort
-	}
-	// Check port availability
-	if ln, listenErr := net.Listen("tcp", fmt.Sprintf(":%d", port)); listenErr != nil {
-		output.PrintText("Warning: port %d is already in use", port)
-	} else {
-		ln.Close()
-	}
-	nsCfg.Proxy.Port = port
+// repoVersions holds a bundle repo and its discovered versions.
+type repoVersions struct {
+	repo     bundle.BundlesRepo
+	versions []string // sorted newest-first by ListBundleVersions
+}
 
-	// 7. PgAdmin
-	pgAdmin := promptYesNo(scanner, "Enable PgAdmin?", true)
-	nsCfg.PgAdmin.Enabled = pgAdmin
-
-	// 8. Bundle
-	resolver := bundle.NewResolver(config.DataDir())
-	wsCfg := resolver.ResolveWorkspaceOnly()
-	var bundleVersions []string
-	if wsCfg != nil {
-		for _, repo := range wsCfg.BundleRepos {
-			// Check local workspace repo first, then cloned bundles dir
-			bundlesDir := filepath.Join(config.DataDir(), "repo")
-			if repo.Path != "" {
-				bundlesDir = filepath.Join(bundlesDir, repo.Path)
-			}
-			if _, statErr := os.Stat(bundlesDir); statErr != nil {
-				bundlesDir = filepath.Join(config.DataDir(), "bundles", repo.ID)
-				if repo.Path != "" {
-					bundlesDir = filepath.Join(bundlesDir, repo.Path)
-				}
-			}
-			versions := bundle.ListBundleVersions(bundlesDir)
-			for _, v := range versions {
-				bundleVersions = append(bundleVersions, repo.ID+":"+v)
-			}
-		}
+// displayName returns the human-readable name for this repo.
+func (rv repoVersions) displayName() string {
+	if rv.repo.Name != "" {
+		return rv.repo.Name
 	}
+	return rv.repo.ID
+}
 
-	if len(bundleVersions) > 0 {
-		output.PrintText("\nAvailable bundles:")
-		for i, v := range bundleVersions {
-			output.PrintText("  %d) %s", i+1, v)
-		}
-		bundleIdx := prompt(scanner, "Select bundle (number or repo:version)", "1")
-		idx, atoiErr := strconv.Atoi(bundleIdx)
-		if atoiErr == nil && idx >= 1 && idx <= len(bundleVersions) {
-			ref, _ := bundle.ParseRef(bundleVersions[idx-1])
-			nsCfg.BundleRef = ref
-		} else if ref, parseErr := bundle.ParseRef(bundleIdx); parseErr == nil {
-			nsCfg.BundleRef = ref
-		}
-	} else {
-		bundleStr := prompt(scanner, "Bundle ref (repo:version)", "community:LATEST")
-		if ref, parseErr := bundle.ParseRef(bundleStr); parseErr == nil {
-			nsCfg.BundleRef = ref
-		}
-	}
+// resolveRelease resolves available platform releases and lets the user pick one.
+// Returns an error if no releases are available (offline without workspace data).
+func resolveRelease(scanner *bufio.Scanner, nsCfg *namespace.Config, offline bool) error {
+	output.PrintText("  %s", t("install.release.fetching"))
+	repos := discoverRepos(offline)
 
-	// 9. Snapshot
-	output.PrintText("\nSnapshot: enter snapshot ID for initial data, or press Enter for clean install")
-	snapshotID := prompt(scanner, "Snapshot ID", "")
-	if snapshotID != "" {
-		nsCfg.Snapshot = snapshotID
-	}
-
-	// Write namespace.yml
-	os.MkdirAll(filepath.Dir(nsCfgPath), 0o755) //nolint:gosec // G301: namespace config dir needs 0o755
-	data, err := namespace.MarshalNamespaceConfig(&nsCfg)
-	if err != nil {
-		return fmt.Errorf("marshal config: %w", err)
-	}
-	if err := fsutil.AtomicWriteFile(nsCfgPath, data, 0o600); err != nil {
-		return fmt.Errorf("write config: %w", err)
-	}
-	output.PrintText("\nNamespace config written to: %s", nsCfgPath)
-
-	// 10. Remote Web UI access + daemon config
-	daemonCfg := config.DefaultDaemonConfig()
-	daemonCfg.Locale = localeCode
-	remoteUI := promptYesNo(scanner, "\nEnable remote Web UI access (listen on 0.0.0.0)?", false)
-
-	// Check if default Web UI port is available, offer to change if busy
-	webuiHost := "127.0.0.1"
-	if remoteUI {
-		webuiHost = "0.0.0.0"
-	}
-	webuiPort := 7088
-	for {
-		addr := fmt.Sprintf("%s:%d", webuiHost, webuiPort)
-		ln, listenErr := net.Listen("tcp", addr)
-		if listenErr == nil {
-			ln.Close()
-			break
-		}
-		output.PrintText("Warning: port %d is already in use", webuiPort)
-		portStr := prompt(scanner, "Web UI port", strconv.Itoa(webuiPort+1))
-		p, err := strconv.Atoi(portStr)
-		if err == nil && p > 0 && p <= 65535 {
-			webuiPort = p
+	// Filter to repos that have at least one version
+	var withVersions []repoVersions
+	for _, r := range repos {
+		if len(r.versions) > 0 {
+			withVersions = append(withVersions, r)
 		}
 	}
-	daemonCfg.Server.WebUI.Listen = fmt.Sprintf("%s:%d", webuiHost, webuiPort)
-	if err := config.SaveDaemonConfig(daemonCfg); err != nil {
-		return fmt.Errorf("save daemon config: %w", err)
-	}
-	output.PrintText("daemon.yml written (locale: %s, listen: %s)", localeCode, daemonCfg.Server.WebUI.Listen)
-	if remoteUI {
-		generateInstallClientCert()
+
+	if len(withVersions) == 0 {
+		return fmt.Errorf("%s\n\n%s", t("install.release.notFound"), t("install.release.notFoundHelp"))
 	}
 
-	// Systemd + Firewall
-	setupSystemd(scanner)
-	setupFirewall(scanner, port)
-
-	output.PrintText("\nInstallation complete.")
-
-	// Offer to start immediately
-	startNow := flagYes
-	if !startNow {
-		answer := prompt(scanner, "Start Citeck now? [Y/n]", "y")
-		startNow = answer == "y" || answer == "Y" || answer == "yes" || answer == ""
-	}
-	if startNow {
-		output.PrintText("Starting...")
-		password, pwdErr := resolvePassword(false)
-		if pwdErr != nil {
-			output.Errf("Could not resolve password: %v. Start manually: citeck start", pwdErr)
-			return nil
-		}
-		if forkErr := forkDaemon(password, false, false, false); forkErr != nil {
-			output.Errf("Failed to start: %v. Start manually: citeck start", forkErr)
-			return nil
-		}
-		c, waitErr := waitForDaemon(30 * time.Second)
-		if waitErr != nil {
-			output.Errf("Daemon did not become ready: %v", waitErr)
-			return nil
-		}
-		defer c.Close()
-		return streamLiveStatus(c, false)
-	}
-
-	output.PrintText("Start manually: citeck start")
+	ref := pickRelease(scanner, withVersions, repos)
+	nsCfg.BundleRef = ref
 	return nil
 }
 
+// pickRelease shows a top-level menu: latest from each repo + "other" for version browsing.
+func pickRelease(scanner *bufio.Scanner, withVersions, allRepos []repoVersions) bundle.Ref {
+	for {
+		// Build top-level options: latest from each repo with versions + "other"
+		options := make([]string, 0, len(withVersions)+1)
+		for _, rv := range withVersions {
+			options = append(options, fmt.Sprintf("%s — %s (%s)", rv.displayName(), rv.versions[0], t("install.release.latest")))
+		}
+		otherLabel := t("install.release.otherVersion")
+		if len(allRepos) > 1 || len(withVersions[0].versions) > 1 {
+			options = append(options, otherLabel)
+		}
+
+		selected := promptNumber(scanner, t("install.release.label"), options, 0)
+
+		// "Other version..." selected → drill-down menu
+		if selected == otherLabel {
+			if ref, ok := pickOtherRelease(scanner, allRepos); ok {
+				return ref
+			}
+			continue // back pressed → re-show top-level menu
+		}
+
+		// Parse "RepoName — version (latest)" → repo:version
+		for _, rv := range withVersions {
+			if strings.HasPrefix(selected, rv.displayName()+" — ") {
+				ref, _ := bundle.ParseRef(rv.repo.ID + ":" + rv.versions[0])
+				return ref
+			}
+		}
+
+		// Fallback (shouldn't happen)
+		ref, _ := bundle.ParseRef(withVersions[0].repo.ID + ":" + withVersions[0].versions[0])
+		return ref
+	}
+}
+
+// pickOtherRelease shows repo list → version list with back navigation.
+// Returns (ref, true) on selection, (_, false) on back.
+func pickOtherRelease(scanner *bufio.Scanner, repos []repoVersions) (bundle.Ref, bool) {
+	for {
+		// Step 1: pick repo
+		repoOptions := make([]string, 0, len(repos)+1)
+		for _, rv := range repos {
+			repoOptions = append(repoOptions, rv.displayName())
+		}
+		backLabel := t("install.release.back")
+		repoOptions = append(repoOptions, backLabel)
+
+		repoChoice := promptNumber(scanner, t("install.release.source"), repoOptions, 0)
+		if repoChoice == backLabel {
+			return bundle.Ref{}, false
+		}
+
+		// Find selected repo
+		var selected *repoVersions
+		for i := range repos {
+			if repoChoice == repos[i].displayName() {
+				selected = &repos[i]
+				break
+			}
+		}
+		if selected == nil {
+			continue
+		}
+
+		// Step 2: pick version from selected repo
+		if len(selected.versions) == 0 {
+			output.PrintText("  %s", t("install.release.noVersions"))
+			continue // back to repo selection
+		}
+
+		latestLabel := t("install.release.latest")
+		verBackLabel := t("install.release.back")
+		verOptions := make([]string, 0, len(selected.versions)+1)
+		for i, v := range selected.versions {
+			if i == 0 {
+				verOptions = append(verOptions, v+" ("+latestLabel+")")
+			} else {
+				verOptions = append(verOptions, v)
+			}
+		}
+		verOptions = append(verOptions, verBackLabel)
+
+		verChoice := promptNumber(scanner, t("install.release.version"), verOptions, 0)
+		if verChoice == verBackLabel {
+			continue // back to repo selection
+		}
+
+		verChoice = strings.TrimSuffix(verChoice, " ("+latestLabel+")")
+		ref, _ := bundle.ParseRef(selected.repo.ID + ":" + verChoice)
+		return ref, true
+	}
+}
+
+// discoverRepos loads workspace config and scans for available bundle versions per repo.
+// When online, fetches the workspace repo from GitHub to discover releases.
+func discoverRepos(offline bool) []repoVersions {
+	resolver := bundle.NewResolver(config.DataDir())
+	resolver.SetOffline(offline)
+	wsCfg := resolver.ResolveWorkspaceOnly()
+	if wsCfg == nil || len(wsCfg.BundleRepos) == 0 {
+		return nil
+	}
+	repos := make([]repoVersions, 0, len(wsCfg.BundleRepos))
+	for _, repo := range wsCfg.BundleRepos {
+		dir := resolveBundleDir(repo)
+		repos = append(repos, repoVersions{
+			repo:     repo,
+			versions: bundle.ListBundleVersions(dir),
+		})
+	}
+	return repos
+}
+
+// resolveBundleDir finds the bundle directory for a repo, checking local workspace first.
+func resolveBundleDir(repo bundle.BundlesRepo) string {
+	dir := filepath.Join(config.DataDir(), "repo")
+	if repo.Path != "" {
+		dir = filepath.Join(dir, repo.Path)
+	}
+	if _, err := os.Stat(dir); err == nil {
+		return dir
+	}
+	dir = filepath.Join(config.DataDir(), "bundles", repo.ID)
+	if repo.Path != "" {
+		dir = filepath.Join(dir, repo.Path)
+	}
+	return dir
+}
+
+// findAvailablePort finds an available port starting from startPort.
+func findAvailablePort(host string, startPort int) int {
+	port := startPort
+	for range 10 { // try up to 10 ports
+		addr := fmt.Sprintf("%s:%d", host, port)
+		ln, err := net.Listen("tcp", addr)
+		if err == nil {
+			ln.Close()
+			return port
+		}
+		port++
+	}
+	return startPort // fallback
+}
+
 func generateInstallClientCert() {
-	output.PrintText("\nGenerating mTLS client certificate for remote access...")
 	certPath := filepath.Join(config.WebUICADir(), "admin.crt")
 	p12Path := absInWorkDir("citeck-webui-admin.p12")
 	certPEM, keyPEM, err := tlsutil.GenerateClientCert(certPath, "admin", 365)
 	if err != nil {
-		output.PrintText("Warning: failed to generate client cert: %v", err)
+		output.PrintText("  Warning: failed to generate management UI certificate: %v", err)
 		return
 	}
 
 	// Generate .p12 for browser import
-	p12OK := false
 	if p12Data, p12Err := tlsutil.EncodePKCS12(certPEM, keyPEM, ""); p12Err == nil {
 		if writeErr := fsutil.AtomicWriteFile(p12Path, p12Data, 0o600); writeErr == nil {
-			p12OK = true
-		} else {
-			output.Errf("Warning: could not write .p12 file: %v", writeErr)
+			output.PrintText("  %s", t("install.cert.mgmtUiCert", "path", p12Path))
+			output.PrintText("  %s", t("install.cert.mgmtUiHint"))
 		}
-	}
-
-	output.PrintText("  Certificate: %s", certPath)
-	if p12OK {
-		output.PrintText("  Browser P12: %s", p12Path)
-		output.PrintText("")
-		output.PrintText("Import %s into your browser to access the Web UI remotely.", filepath.Base(p12Path))
-		output.PrintText("Delete it from the server after copying.")
-	}
-	output.PrintText("")
-	output.PrintText("For CLI access from a remote machine, copy the server cert after first start:")
-	output.PrintText("  scp server:%s ./server.crt", filepath.Join(config.WebUITLSDir(), "server.crt"))
-	output.PrintText("  citeck --host <server>:7088 --tls-cert admin.crt --tls-key admin.key --server-cert server.crt status")
-}
-
-func prompt(scanner *bufio.Scanner, label, defaultVal string) string {
-	if defaultVal != "" {
-		fmt.Printf("%s [%s]: ", label, defaultVal)
-	} else {
-		fmt.Printf("%s: ", label)
-	}
-	scanner.Scan()
-	val := strings.TrimSpace(scanner.Text())
-	if val == "" {
-		return defaultVal
-	}
-	return val
-}
-
-func promptChoice(scanner *bufio.Scanner, label string, choices []string, defaultVal string) string {
-	for {
-		fmt.Printf("%s (%s) [%s]: ", label, strings.Join(choices, "/"), defaultVal)
-		scanner.Scan()
-		val := strings.TrimSpace(scanner.Text())
-		if val == "" {
-			return defaultVal
-		}
-		for _, c := range choices {
-			if strings.EqualFold(val, c) {
-				return c
-			}
-		}
-		fmt.Printf("Invalid choice %q. Please enter one of: %s\n", val, strings.Join(choices, ", "))
 	}
 }
 
-func promptYesNo(scanner *bufio.Scanner, label string, defaultYes bool) bool {
-	def := "Y/n"
-	if !defaultYes {
-		def = "y/N"
-	}
-	fmt.Printf("%s [%s]: ", label, def)
-	scanner.Scan()
-	val := strings.TrimSpace(strings.ToLower(scanner.Text()))
-	if val == "" {
-		return defaultYes
-	}
-	return val == "y" || val == "yes"
-}
-
-func detectPublicIP() string {
-	services := []string{
-		"https://ifconfig.me/ip",
-		"https://api.ipify.org",
-		"https://checkip.amazonaws.com",
-	}
-	httpClient := &http.Client{Timeout: 5 * time.Second}
-	for _, svc := range services {
-		resp, err := httpClient.Get(svc)
-		if err != nil {
-			continue
-		}
-		buf := make([]byte, 64)
-		n, _ := resp.Body.Read(buf)
-		resp.Body.Close()
-		ip := strings.TrimSpace(string(buf[:n]))
-		if net.ParseIP(ip) != nil {
-			return ip
-		}
-	}
-	return ""
-}
-
-func setupSystemd(scanner *bufio.Scanner) {
-	if !promptYesNo(scanner, "\nSet up systemd service?", true) {
+// installSystemdAndFirewall handles the combined systemd + firewall step.
+func installSystemdAndFirewall(scanner *bufio.Scanner, platformPort int) {
+	fmt.Println() //nolint:forbidigo // CLI output
+	if !promptYesNo(scanner, t("install.systemd.label"), t("install.systemd.hint"), true) {
 		return
 	}
 
 	execPath, err := os.Executable()
 	if err != nil {
-		output.PrintText("Could not determine executable path: %v", err)
+		output.PrintText("  Could not determine executable path: %v", err)
 		return
 	}
 
@@ -459,55 +589,55 @@ WantedBy=multi-user.target
 
 	servicePath := "/etc/systemd/system/citeck.service"
 	if os.Getuid() != 0 {
-		output.PrintText("Not running as root. To install the systemd service, run:")
-		output.PrintText("  sudo tee %s << 'EOF'\n%sEOF", servicePath, unit)
-		output.PrintText("  sudo systemctl daemon-reload")
-		output.PrintText("  sudo systemctl enable --now citeck")
-		return
+		output.PrintText("  %s", t("install.systemd.notRoot"))
+		output.PrintText("    sudo tee %s << 'EOF'\n%sEOF", servicePath, unit)
+		output.PrintText("    sudo systemctl daemon-reload")
+		output.PrintText("    sudo systemctl enable --now citeck")
+	} else {
+		if writeErr := os.WriteFile(servicePath, []byte(unit), 0o644); writeErr != nil { //nolint:gosec // G306: systemd unit files require 0o644
+			output.PrintText("  Failed to write service file: %v", writeErr)
+			return
+		}
+		_ = exec.Command("systemctl", "daemon-reload").Run()
+		_ = exec.Command("systemctl", "enable", "citeck").Run()
+		output.PrintText("  %s", t("install.systemd.installed", "path", servicePath))
 	}
 
-	if err := os.WriteFile(servicePath, []byte(unit), 0o644); err != nil { //nolint:gosec // G306: systemd unit files require 0o644
-		output.PrintText("Failed to write service file: %v", err)
-		return
+	// Firewall sub-prompt: only if non-standard port and platform port is set
+	if platformPort > 0 && platformPort != 80 && platformPort != 443 {
+		if promptYesNo(scanner, t("install.firewall.open", "port", strconv.Itoa(platformPort)), t("install.firewall.hint"), true) {
+			openFirewallPort(platformPort)
+		}
 	}
-
-	exec.Command("systemctl", "daemon-reload").Run()
-	exec.Command("systemctl", "enable", "citeck").Run()
-	output.PrintText("Systemd service installed and enabled: %s", servicePath)
 }
 
-func setupFirewall(scanner *bufio.Scanner, port int) {
-	if port <= 0 {
-		return
-	}
-	if !promptYesNo(scanner, "Configure firewall?", false) {
-		return
-	}
-
+// openFirewallPort opens a TCP port in the system firewall.
+func openFirewallPort(port int) {
 	portStr := strconv.Itoa(port)
 
 	// Try ufw
 	if path, err := exec.LookPath("ufw"); err == nil && path != "" {
 		if os.Getuid() != 0 {
-			output.PrintText("Not running as root. Run: sudo ufw allow %s/tcp", portStr)
+			output.PrintText("  Not running as root. Run: sudo ufw allow %s/tcp", portStr)
 			return
 		}
 		_ = exec.Command("ufw", "allow", portStr+"/tcp").Run() //nolint:gosec // G204: portStr is validated numeric input
-		output.PrintText("ufw: opened port %s/tcp", portStr)
+		output.PrintText("  ufw: opened port %s/tcp", portStr)
 		return
 	}
 
 	// Try firewall-cmd
 	if path, err := exec.LookPath("firewall-cmd"); err == nil && path != "" {
 		if os.Getuid() != 0 {
-			output.PrintText("Not running as root. Run: sudo firewall-cmd --permanent --add-port=%s/tcp && sudo firewall-cmd --reload", portStr)
+			output.PrintText("  Not running as root. Run: sudo firewall-cmd --permanent --add-port=%s/tcp && sudo firewall-cmd --reload", portStr)
 			return
 		}
 		_ = exec.Command("firewall-cmd", "--permanent", "--add-port="+portStr+"/tcp").Run() //nolint:gosec // G204: portStr is validated numeric input
-		exec.Command("firewall-cmd", "--reload").Run()
-		output.PrintText("firewall-cmd: opened port %s/tcp", portStr)
+		_ = exec.Command("firewall-cmd", "--reload").Run()
+		output.PrintText("  firewall-cmd: opened port %s/tcp", portStr)
 		return
 	}
 
-	output.PrintText("No supported firewall detected (ufw/firewalld). Please open port %s manually.", portStr)
+	output.PrintText("  No supported firewall detected (ufw/firewalld). Please open port %s manually.", portStr)
 }
+

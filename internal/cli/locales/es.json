@@ -1,0 +1,70 @@
+{
+  "install.welcome.title": "Instalación de Citeck",
+  "install.welcome.subtitle": "Este asistente configurará Citeck en este servidor.",
+  "install.welcome.whatWillHappen": "Qué sucederá:",
+  "install.welcome.stepConfig": "Crear configuración de la plataforma",
+  "install.welcome.stepDaemon": "Crear configuración del servicio",
+  "install.welcome.stepService": "Configurar servicio del sistema (opcional)",
+  "install.welcome.stepStart": "Iniciar la plataforma",
+  "install.welcome.canChange": "Puede cambiar la configuración más tarde editando los archivos o ejecutando: citeck install",
+  "install.welcome.pressEnter": "Presione Enter para continuar...",
+
+  "install.hostname.label": "Nombre de host o IP del servidor",
+  "install.hostname.hint": "Dirección para acceder a la plataforma en el navegador",
+  "install.hostname.localOnly": "Nota: la interfaz web solo será accesible localmente",
+
+  "install.tls.label": "Seguridad de conexión",
+  "install.tls.httpsAutoGen": "HTTPS con certificado autogenerado (recomendado)",
+  "install.tls.httpOnly": "Solo HTTP (sin cifrado)",
+  "install.tls.leTrusted": "HTTPS con certificado de confianza — Let's Encrypt (recomendado)",
+  "install.tls.selfSignedGenerated": "Certificado generado",
+  "install.tls.noInternet": "Sin acceso a internet — usando certificado autogenerado",
+  "install.tls.leChecking": "Verificando si Let's Encrypt funcionará para {host}...",
+  "install.tls.leNotAvailable": "Let's Encrypt no está disponible: {error}",
+  "install.tls.leFallback": "Usando certificado autogenerado (HTTPS seguirá funcionando)",
+  "install.tls.leAvailable": "¡Let's Encrypt disponible! Se usará un certificado de confianza.",
+
+  "install.port.https": "Puerto HTTPS",
+  "install.port.http": "Puerto HTTP",
+  "install.port.hint": "Puerto para acceder a la plataforma en el navegador",
+  "install.port.inUse": "Advertencia: el puerto {port} ya está en uso",
+
+  "install.auth.label": "Autenticación",
+  "install.auth.keycloak": "Sistema completo de inicio de sesión — Keycloak (recomendado)",
+  "install.auth.basic": "Usuario/contraseña simple",
+  "install.auth.users.label": "Usuarios",
+  "install.auth.users.hint": "Nombres separados por comas (contraseña = nombre de usuario)",
+
+  "install.release.label": "Versión",
+  "install.release.fetching": "Obteniendo versiones disponibles...",
+  "install.release.notFound": "No se encontraron versiones de la plataforma",
+  "install.release.notFoundHelp": "Para instalación en línea, verifique su conexión a internet.\nPara instalación sin conexión, use: citeck install --workspace <ruta-al-archivo.zip>",
+  "install.release.latest": "última",
+  "install.release.otherVersion": "Otra versión...",
+  "install.release.source": "Fuente",
+  "install.release.version": "Versión",
+  "install.release.back": "Volver",
+  "install.release.noVersions": "No hay versiones disponibles en esta fuente",
+
+  "install.config.nsWritten": "Configuración de la plataforma escrita: {path}",
+  "install.config.daemonWritten": "Configuración del servicio escrita: {path}",
+
+  "install.cert.mgmtUiCert": "Certificado del panel de gestión: {path}",
+  "install.cert.mgmtUiHint": "(importe en el navegador para acceso remoto al panel de gestión en el puerto 7088)",
+
+  "install.systemd.label": "¿Instalar como servicio del sistema?",
+  "install.systemd.hint": "Citeck se iniciará automáticamente al arrancar. Config: /etc/systemd/system/citeck.service",
+  "install.systemd.notRoot": "No se ejecuta como root. Para instalar el servicio del sistema, ejecute:",
+  "install.systemd.installed": "Servicio del sistema instalado y habilitado: {path}",
+  "install.firewall.open": "¿Abrir puerto {port} en el firewall (ufw)?",
+  "install.firewall.hint": "Necesario para acceso externo",
+
+  "install.start.label": "¿Iniciar Citeck ahora?",
+  "install.start.starting": "Iniciando...",
+  "install.start.manual": "Iniciar manualmente: citeck start",
+
+  "install.ready.title": "¡Citeck está listo!",
+  "install.ready.openBrowser": "Abrir en el navegador:  {url}",
+  "install.ready.login": "Acceso:             admin / admin",
+  "install.ready.certWarning": "Nota: el navegador mostrará una advertencia de seguridad\nporque el certificado es autogenerado.\nHaga clic en \"Avanzado\" -> \"Continuar\" para acceder."
+}

@@ -1,0 +1,70 @@
+{
+  "install.welcome.title": "Citeck Platform Setup",
+  "install.welcome.subtitle": "This wizard will configure Citeck on this server.",
+  "install.welcome.whatWillHappen": "What will happen:",
+  "install.welcome.stepConfig": "Create platform config",
+  "install.welcome.stepDaemon": "Create service config",
+  "install.welcome.stepService": "Set up system service (optional)",
+  "install.welcome.stepStart": "Start the platform",
+  "install.welcome.canChange": "You can change settings later by editing the config files or running: citeck install",
+  "install.welcome.pressEnter": "Press Enter to continue...",
+
+  "install.hostname.label": "Server hostname or IP",
+  "install.hostname.hint": "How you will access the platform in a browser",
+  "install.hostname.localOnly": "Note: Web UI will be local only",
+
+  "install.tls.label": "Connection security",
+  "install.tls.httpsAutoGen": "HTTPS with auto-generated certificate (recommended)",
+  "install.tls.httpOnly": "HTTP only (no encryption)",
+  "install.tls.leTrusted": "HTTPS with trusted certificate — Let's Encrypt (recommended)",
+  "install.tls.selfSignedGenerated": "Self-signed certificate generated",
+  "install.tls.noInternet": "No internet access — using auto-generated certificate",
+  "install.tls.leChecking": "Checking if Let's Encrypt will work for {host}...",
+  "install.tls.leNotAvailable": "Let's Encrypt is not available: {error}",
+  "install.tls.leFallback": "Falling back to auto-generated certificate (HTTPS will still work)",
+  "install.tls.leAvailable": "Let's Encrypt is available! Using trusted certificate.",
+
+  "install.port.https": "HTTPS port",
+  "install.port.http": "HTTP port",
+  "install.port.hint": "Port for accessing the platform in a browser",
+  "install.port.inUse": "Warning: port {port} is already in use",
+
+  "install.auth.label": "Authentication",
+  "install.auth.keycloak": "Full login system — Keycloak (recommended)",
+  "install.auth.basic": "Simple login/password",
+  "install.auth.users.label": "Users",
+  "install.auth.users.hint": "Comma-separated usernames (password = username)",
+
+  "install.release.label": "Release",
+  "install.release.fetching": "Fetching available releases...",
+  "install.release.notFound": "No platform releases found",
+  "install.release.notFoundHelp": "For online install, check your internet connection and retry.\nFor offline install, use: citeck install --workspace <path-to-workspace.zip>",
+  "install.release.latest": "latest",
+  "install.release.otherVersion": "Other version...",
+  "install.release.source": "Source",
+  "install.release.version": "Version",
+  "install.release.back": "Back",
+  "install.release.noVersions": "No releases available in this source",
+
+  "install.config.nsWritten": "Namespace config written: {path}",
+  "install.config.daemonWritten": "Daemon config written: {path}",
+
+  "install.cert.mgmtUiCert": "Management UI certificate: {path}",
+  "install.cert.mgmtUiHint": "(import into browser for remote access to management panel on port 7088)",
+
+  "install.systemd.label": "Install as system service?",
+  "install.systemd.hint": "Citeck will start automatically on boot. Config: /etc/systemd/system/citeck.service",
+  "install.systemd.notRoot": "Not running as root. To install the systemd service, run:",
+  "install.systemd.installed": "Systemd service installed and enabled: {path}",
+  "install.firewall.open": "Open port {port} in firewall (ufw)?",
+  "install.firewall.hint": "Required for external access",
+
+  "install.start.label": "Start Citeck now?",
+  "install.start.starting": "Starting...",
+  "install.start.manual": "Start manually: citeck start",
+
+  "install.ready.title": "Citeck is ready!",
+  "install.ready.openBrowser": "Open in browser:  {url}",
+  "install.ready.login": "Login:            admin / admin",
+  "install.ready.certWarning": "Note: your browser will show a security warning\nbecause the certificate is auto-generated.\nClick \"Advanced\" -> \"Proceed\" to continue."
+}

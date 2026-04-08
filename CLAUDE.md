@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Citeck Launcher manages Citeck namespaces and Docker containers. It is a single Go binary (~14MB) that serves as both CLI and daemon, with an embedded React Web UI on `http://127.0.0.1:7088`.
+Citeck Launcher manages Citeck namespaces and Docker containers. It is a single Go binary (~18MB) that serves as both CLI and daemon, with an embedded React Web UI on `http://127.0.0.1:7088`.
 
 ### History
 
@@ -528,6 +528,82 @@ Bundle version upgrade + host/auth switching tested on remote server. 5 bugs fix
 
 **Bundle listing fix:**
 - `handleListBundles` now checks `data/repo/{path}` first (offline-imported bundles), then falls back to `data/bundles/{repo.ID}` (cloned repos)
+
+### Phase 19: Install Wizard UX Overhaul + Live Status Unification — COMPLETE (2026-04-07)
+22 commits across wizard rewrite, i18n, TLS auto-detection, live status, UX polish, Keycloak fix.
+
+**CLI i18n system (`i18n.go`, `locales/*.json`):**
+- `SupportedLocales` — single source of truth for all 8 languages (en/ru/zh/es/de/fr/pt/ja)
+- JSON locale files embedded via `go:embed`, `t(key, args...)` with `{param}` interpolation
+- Fallback chain: selected locale → en.json → raw key
+- `TestLocaleCompleteness` — verifies all locale files have exactly the same keys as en.json
+- Language selection first step in wizard — all subsequent prompts in selected language
+
+**Wizard rewrite (`install.go`):**
+- 7 prompts (was 12): Language, Welcome, Hostname, TLS (auto), Port, Auth, Release, Systemd, Start
+- Removed: Display name (auto from hostname), PgAdmin (default off), Snapshot ID, separate Remote/Firewall questions
+- TLS auto-detection: for non-localhost, tries LE staging → if OK uses LE, else self-signed fallback
+- Quick connectivity pre-check (5s TCP dial) skips LE when offline
+- `--offline` flag + `--workspace` implies offline: no network checks
+- Multi-level release selection: top-level (latest per repo) + "Other version..." drill-down with Back navigation
+- Release versions fetched from workspace repo (online) or local files (offline/workspace)
+- Error when no releases found (offline without `--workspace`)
+- `printAccessInfo()` — final block with platform URL, login credentials, self-signed cert warning
+- `config.DetectOutboundIP()` extracted to shared package (used by cli + daemon)
+- `parseUsers()` stores usernames only (generator creates password = username pairs)
+
+**TLS auto-detection (`configureTLSAuto`, `acme.TryStaging`):**
+- `acme.TryStaging(ctx, hostname)` — full ACME flow against LE staging server with ephemeral keys
+- Works for both domains and IP addresses (IP uses shortlived profile)
+- Online: staging OK → LE production, staging fail → self-signed with message
+- Offline/no internet: self-signed immediately (5s dial timeout, no 60s hang)
+- Only localhost skips to manual TLS menu
+
+**Live status unification (`livestatus.go`):**
+- `renderAppTable()` — shared table renderer using `output.FormatTable` + `ColorizeStatus`
+- `streamLiveStatus` (start.go) and `streamStopStatus` (stop.go) refactored to use it
+- TTY: clear + reprint table. Non-TTY: print summary only on change.
+
+**Prompt helpers (`install_prompt.go`):**
+- `promptNumber`, `promptText`, `promptYesNo` with TTY ANSI cleanup
+- `isTTYOut()` / `clearLines(n)` — shared TTY detection and ANSI line erasure
+
+**Bug fix: Keycloak liveness probe port 8080 → 9000**
+- Keycloak 26+ moved `/health/live` to management interface on port 9000
+- Port 8080 returns 404 → 3 consecutive failures → restart → infinite loop
+- Verified on test server: port 9000 returns 200 OK, Keycloak stable after fix
+
+### Key Technical Decisions (Phase 19)
+- CLI i18n via JSON files + `go:embed` — matches web UI pattern, no external dependencies
+- `SupportedLocales` as centralized list — wizard, tests, and future web UI sync use it
+- TLS auto-detection at install time (not runtime) — config written once, daemon uses it
+- LE staging validates domain/IP reachability without consuming production rate limits
+- LE works with IPs via ACME shortlived profile (~6 day certs, 6h renewal interval)
+- Release selection grouped by repo — top-level shows latest, "Other" drills into full version list
+- `repoVersions.displayName()` eliminates duplicated label logic across picker functions
+- Auth matching by exact `==` against translated label (not `strings.Contains` on brand name)
+- Keycloak health on port 9000 (management interface) — Keycloak 26+ change
+
+### Phase 20: Codebase Refactoring (File Splits + Dedup) — COMPLETE (2026-04-08)
+6 tasks: 4 file splits + 1 cleanup + final verification. Pure structural refactoring with zero behavior changes.
+
+**File splits:**
+- `runtime.go` (1,754→317 lines) → `runtime_commands.go` (301), `runtime_orchestration.go` (348), `runtime_state.go` (169), `runtime_dto.go` (100), `runtime_app.go` (415), `runtime_probes.go` (160)
+- `routes.go` (1,470 lines) → `routes_apps.go` (516), `routes_config.go` (404), `routes_system.go` (379), `routes_volumes.go` (66) — domain-specific route files, `doReload` moved to `server.go`
+- `routes_p2.go` (1,418 lines) → `routes_ns.go` (363), `routes_secrets.go` (322), `routes_snapshots.go` (601), `routes_diagnostics.go` (134)
+
+**Dedup/helpers:**
+- `routes_helpers.go` (76 lines): `parseTailParam`, `requireRuntime`, `volumesDir`, `validateID`, `sanitizeName`, `activeNsID`, `safeIDPattern`
+- Replaced 2 duplicated tail-parsing blocks and 5 duplicated nil-runtime guards in route handlers
+
+**Cleanup:**
+- `GracefulShutdownOrder` → `gracefulShutdownOrder` (no production callers, only test)
+
+### Key Technical Decisions (Phase 20)
+- Split boundaries follow domain ownership: types/constructors, commands, orchestration (runLoop/doStart/doStop), state/persistence, DTO, app lifecycle, probes/stats, config/control, system/observability, volumes, namespaces, secrets, snapshots, diagnostics
+- `doReload` moved from routes.go to server.go — business logic separated from HTTP handlers
+- Shared helpers in `routes_helpers.go` — cross-domain utilities (validation, parsing, guards)
+- `handleReloadNamespace`/`handleUpgradeNamespace` nil guards NOT replaced with `requireRuntime` — they use a compound check (`runtime == nil || nsConfig == nil || bundleDef == nil`) under `configMu.RLock()`
 
 ## CI/CD
 

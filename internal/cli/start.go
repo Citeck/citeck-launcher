@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -343,9 +342,10 @@ func streamLiveStatus(c *client.DaemonClient, follow bool) error {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
 
-	isTTY := term.IsTerminal(int(os.Stdout.Fd()))
+	isTTY := isTTYOut()
 	firstPrint := true
 	linesPrinted := 0
+	lastRunning := -1
 
 	for {
 		select {
@@ -361,40 +361,27 @@ func streamLiveStatus(c *client.DaemonClient, follow bool) error {
 			continue
 		}
 
-		apps := ns.Apps
-		sort.Slice(apps, func(i, j int) bool { return apps[i].Name < apps[j].Name })
+		table, running, _, total := renderAppTable(ns.Apps)
 
-		// Clear previous output (only in TTY mode — avoids raw escape codes in redirected output)
-		if isTTY && !firstPrint && linesPrinted > 0 {
-			for i := 0; i < linesPrinted; i++ {
-				fmt.Print("\033[A\033[2K") //nolint:forbidigo // ANSI clear
+		if isTTY {
+			// Clear previous output
+			if !firstPrint && linesPrinted > 0 {
+				clearLines(linesPrinted)
 			}
+			firstPrint = false
+
+			// Print table + summary
+			fmt.Println(table)            //nolint:forbidigo // CLI table
+			fmt.Println()                 //nolint:forbidigo // CLI spacing
+			fmt.Printf("  %d/%d running\n", running, total) //nolint:forbidigo // CLI summary
+			linesPrinted = strings.Count(table, "\n") + 3 // table lines + blank + summary
+		} else if running != lastRunning {
+			// Non-TTY: print summary only when count changes
+			fmt.Printf("  %d/%d running\n", running, total) //nolint:forbidigo // CLI progress
 		}
-		firstPrint = false
+		lastRunning = running
 
-		// Print status table
-		lines := 0
-		allRunning := true
-		total := len(apps)
-		running := 0
-
-		for _, app := range apps {
-			status := app.Status
-			marker := "○"
-			if status == "RUNNING" {
-				marker = "●"
-				running++
-			} else {
-				allRunning = false
-			}
-			fmt.Printf("  %s %-30s %s\n", marker, app.Name, status) //nolint:forbidigo // CLI table
-			lines++
-		}
-		fmt.Printf("\n  %d/%d running\n", running, total) //nolint:forbidigo // CLI summary
-		lines += 2
-		linesPrinted = lines
-
-		if allRunning && total > 0 && !follow {
+		if running == total && total > 0 && !follow {
 			fmt.Printf("\nAll %d apps started.\n", total) //nolint:forbidigo // CLI success
 			return nil
 		}

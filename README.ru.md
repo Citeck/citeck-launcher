@@ -11,7 +11,7 @@ Citeck Launcher управляет пространствами имён Citeck 
 Требования: Docker (запущен).
 
 ```bash
-curl -fsSL -o citeck https://github.com/Citeck/citeck-launcher/releases/latest/download/citeck_linux_amd64 \
+curl -fsSL -o citeck https://github.com/Citeck/citeck-launcher/releases/download/v2.0.0/citeck_2.0.0_linux_amd64 \
   && chmod +x citeck && sudo mv citeck /usr/local/bin/ && citeck install
 ```
 
@@ -25,18 +25,6 @@ citeck install --workspace /path/to/workspace.zip
 ```
 
 Флаг `--workspace` распаковывает репозитории бандлов локально — интернет при запуске не нужен.
-
-### Запуск
-
-```bash
-# На переднем плане (для отладки)
-citeck start --foreground
-
-# Как systemd-сервис (если настроено через мастер)
-sudo systemctl start citeck
-```
-
-Web UI доступен по адресу `http://127.0.0.1:7088` (по умолчанию).
 
 ## Возможности
 

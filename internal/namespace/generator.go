@@ -313,7 +313,7 @@ func generateKeycloak(ctx *NsGenContext) {
 	}
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "1g"}}
 	app.LivenessProbe = &appdef.AppProbeDef{
-		HTTP:             &appdef.HTTPProbeDef{Path: "/health/live", Port: 8080},
+		HTTP:             &appdef.HTTPProbeDef{Path: "/health/live", Port: 9000}, // Keycloak 26+ management interface
 		FailureThreshold: 3,
 		TimeoutSeconds:   5,
 	}
