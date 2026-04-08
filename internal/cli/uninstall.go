@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
+	"github.com/citeck/citeck-launcher/internal/client"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/spf13/cobra"
@@ -18,34 +20,37 @@ func newUninstallCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "uninstall",
 		Short: "Remove Citeck Launcher installation",
-		Long:  "Removes the systemd service and optionally deletes all data (configs, volumes, snapshots).",
+		Long:  "Stops the platform, removes the systemd service, and optionally deletes all data.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runUninstall(deleteData)
 		},
 	}
 
-	cmd.Flags().BoolVar(&deleteData, "delete-data", false, "Also delete all data (configs, volumes, snapshots)")
+	cmd.Flags().BoolVar(&deleteData, "delete-data", false, "Delete all data without prompting (for automation)")
 
 	return cmd
 }
 
+const dropConfirmPhrase = "drop all data"
+
 func runUninstall(deleteData bool) error {
 	scanner := bufio.NewScanner(os.Stdin)
 
-	// 1. Stop the daemon if running
-	output.PrintText("Stopping daemon...")
-	exec.Command("systemctl", "stop", "citeck").Run()
-
-	// Wait for socket to disappear (up to 30s)
-	socketPath := config.SocketPath()
-	for range 30 {
-		if _, err := os.Stat(socketPath); err != nil {
-			break // socket gone
+	// 1. Stop the daemon gracefully (stops containers + daemon)
+	c := client.TryNew(clientOpts())
+	if c != nil && c.IsRunning() {
+		output.PrintText("Stopping platform...")
+		_, _ = c.StopNamespace()
+		_, _ = c.Shutdown()
+		c.Close()
+		// Wait for socket to disappear (up to 30s)
+		socketPath := config.SocketPath()
+		for range 30 {
+			if _, err := os.Stat(socketPath); err != nil {
+				break
+			}
+			time.Sleep(time.Second)
 		}
-		time.Sleep(time.Second)
-	}
-	if _, err := os.Stat(socketPath); err == nil {
-		output.PrintText("Warning: daemon socket still active after 30s at %s", socketPath)
 	}
 
 	// 2. Remove systemd service
@@ -67,30 +72,41 @@ func runUninstall(deleteData bool) error {
 		output.PrintText("No systemd service found")
 	}
 
-	// 3. Optionally delete data
-	if !deleteData {
-		output.PrintText("Uninstall complete")
+	// 3. Delete platform data
+	homeDir := config.HomeDir()
+	if deleteData {
+		if err := os.RemoveAll(homeDir); err != nil {
+			output.PrintText("  Failed to remove %s: %v", homeDir, err)
+		} else {
+			output.PrintText("  Removed %s", homeDir)
+		}
+		output.PrintText("\nUninstall complete")
 		return nil
 	}
 
-	if !flagYes {
-		fmt.Printf("Delete ALL data in %s? [y/N]: ", config.HomeDir())
+	fmt.Println()                                                          //nolint:forbidigo // CLI output
+	output.PrintText("  Platform data: %s", homeDir)
+	output.PrintText("  To delete all data, type: %s", output.Colorize(output.Bold, dropConfirmPhrase))
+	output.PrintText("  Press Enter to keep data.")
+	for {
+		fmt.Printf("\n  > ") //nolint:forbidigo // CLI prompt
 		scanner.Scan()
-		if scanner.Text() != "y" && scanner.Text() != "yes" {
-			output.PrintText("Aborted — data preserved")
-			return nil
+		input := strings.TrimSpace(scanner.Text())
+		if input == "" {
+			output.PrintText("  Data preserved in %s", homeDir)
+			break
 		}
+		if strings.EqualFold(input, dropConfirmPhrase) {
+			if err := os.RemoveAll(homeDir); err != nil {
+				output.PrintText("  Failed to remove %s: %v", homeDir, err)
+			} else {
+				output.PrintText("  Removed %s", homeDir)
+			}
+			break
+		}
+		output.PrintText("  Invalid input. Type \"%s\" or press Enter to skip.", dropConfirmPhrase)
 	}
 
-	homeDir := config.HomeDir()
-	if _, err := os.Stat(homeDir); err == nil {
-		if err := os.RemoveAll(homeDir); err != nil {
-			output.PrintText("Failed to remove %s: %v", homeDir, err)
-		} else {
-			output.PrintText("Removed %s", homeDir)
-		}
-	}
-
-	output.PrintText("Uninstall complete")
+	output.PrintText("\nUninstall complete")
 	return nil
 }
