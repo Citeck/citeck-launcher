@@ -210,7 +210,7 @@ func (r *Resolver) resolveWorkspace() (cfg *WorkspaceConfig, repoDir string) {
 	}
 
 	// Priority 2: cloned workspace repo (git pull if online)
-	defaultRepoDir := filepath.Join(r.dataDir, "bundles", "_workspace")
+	defaultRepoDir := filepath.Join(r.dataDir, "bundles", "workspace")
 	if !r.offline {
 		gitCtx, gitCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		err := git.CloneOrPullWithAuth(gitCtx, git.RepoOpts{

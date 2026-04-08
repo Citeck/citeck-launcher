@@ -6,35 +6,28 @@
   "install.welcome.stepDaemon": "Créer la configuration du service",
   "install.welcome.stepService": "Configurer le service système (optionnel)",
   "install.welcome.stepStart": "Démarrer la plateforme",
-  "install.welcome.canChange": "Vous pourrez modifier les paramètres plus tard en éditant les fichiers ou en exécutant : citeck install",
+  "install.welcome.canChange": "Les paramètres peuvent être modifiés plus tard dans les fichiers de configuration",
   "install.welcome.pressEnter": "Appuyez sur Entrée pour continuer...",
-
-  "install.hostname.label": "Nom d'hôte ou IP du serveur",
+  "install.hostname.label": "Nom de domaine ou IP du serveur",
   "install.hostname.hint": "Adresse pour accéder à la plateforme dans le navigateur",
   "install.hostname.localOnly": "Note : l'interface web ne sera accessible que localement",
-
   "install.tls.label": "Sécurité de connexion",
-  "install.tls.httpsAutoGen": "HTTPS avec certificat auto-généré (recommandé)",
-  "install.tls.httpOnly": "HTTP uniquement (sans chiffrement)",
-  "install.tls.leTrusted": "HTTPS avec certificat de confiance — Let's Encrypt (recommandé)",
-  "install.tls.selfSignedGenerated": "Certificat généré",
-  "install.tls.noInternet": "Pas d'accès internet — utilisation d'un certificat auto-généré",
-  "install.tls.leChecking": "Vérification de Let's Encrypt pour {host}...",
-  "install.tls.leNotAvailable": "Let's Encrypt n'est pas disponible : {error}",
-  "install.tls.leFallback": "Utilisation d'un certificat auto-généré (HTTPS fonctionnera quand même)",
-  "install.tls.leAvailable": "Let's Encrypt est disponible ! Certificat de confiance utilisé.",
-
+  "install.tls.auto": "Auto — HTTPS avec sélection automatique du certificat (recommandé)",
+  "install.tls.httpsAutoGen": "HTTPS avec certificat auto-signé",
+  "install.tls.httpOnly": "HTTP uniquement — sans chiffrement (non sécurisé)",
+  "install.tls.leTrusted": "HTTPS avec certificat de confiance — Let's Encrypt",
+  "install.tls.selfSignedGenerated": "Certificat auto-signé généré : {certPath}",
+  "install.tls.selfSignedWarning": "Le navigateur affichera un avertissement de certificat non fiable — c'est normal",
+  "install.tls.custom": "HTTPS avec votre propre certificat",
   "install.port.https": "Port HTTPS",
   "install.port.http": "Port HTTP",
   "install.port.hint": "Port pour accéder à la plateforme dans le navigateur",
   "install.port.inUse": "Attention : le port {port} est déjà utilisé",
-
   "install.auth.label": "Authentification",
   "install.auth.keycloak": "Système de connexion complet — Keycloak (recommandé)",
   "install.auth.basic": "Identifiant/mot de passe simple",
   "install.auth.users.label": "Utilisateurs",
   "install.auth.users.hint": "Noms séparés par des virgules (mot de passe = nom d'utilisateur)",
-
   "install.release.label": "Version",
   "install.release.fetching": "Récupération des versions disponibles...",
   "install.release.notFound": "Aucune version de la plateforme trouvée",
@@ -45,26 +38,27 @@
   "install.release.version": "Version",
   "install.release.back": "Retour",
   "install.release.noVersions": "Aucune version disponible dans cette source",
-
   "install.config.nsWritten": "Configuration de la plateforme écrite : {path}",
   "install.config.daemonWritten": "Configuration du service écrite : {path}",
-
   "install.cert.mgmtUiCert": "Certificat du panneau de gestion : {path}",
   "install.cert.mgmtUiHint": "(importez dans le navigateur pour l'accès distant au panneau de gestion sur le port 7088)",
-
   "install.systemd.label": "Installer en tant que service système ?",
   "install.systemd.hint": "Citeck démarrera automatiquement au boot. Config : /etc/systemd/system/citeck.service",
   "install.systemd.notRoot": "Non exécuté en tant que root. Pour installer le service système, exécutez :",
   "install.systemd.installed": "Service système installé et activé : {path}",
   "install.firewall.open": "Ouvrir le port {port} dans le pare-feu (ufw) ?",
   "install.firewall.hint": "Nécessaire pour l'accès externe",
-
   "install.start.label": "Démarrer Citeck maintenant ?",
   "install.start.starting": "Démarrage...",
   "install.start.manual": "Démarrer manuellement : citeck start",
-
   "install.ready.title": "Citeck est prêt !",
   "install.ready.openBrowser": "Ouvrir dans le navigateur :  {url}",
   "install.ready.login": "Connexion :          admin / admin",
-  "install.ready.certWarning": "Note : votre navigateur affichera un avertissement de sécurité\ncar le certificat est auto-généré.\nCliquez sur « Avancé » → « Continuer » pour accéder."
+  "install.ready.certWarning": "Note : votre navigateur affichera un avertissement de sécurité\ncar le certificat est auto-signé.\nCliquez sur « Avancé » → « Continuer » pour accéder.",
+  "install.tls.customDir": "Dossier avec certificat et clé",
+  "install.tls.customDirNotFound": "Dossier introuvable",
+  "install.tls.customCert": "Certificat",
+  "install.tls.customKey": "Clé",
+  "install.tls.customNoFiles": "Aucun fichier trouvé",
+  "install.ready.leFallbackNote": "Si Let's Encrypt est indisponible, un certificat auto-signé sera utilisé."
 }

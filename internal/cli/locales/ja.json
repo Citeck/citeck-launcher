@@ -6,35 +6,28 @@
   "install.welcome.stepDaemon": "サービス設定の作成",
   "install.welcome.stepService": "システムサービスの設定（オプション）",
   "install.welcome.stepStart": "プラットフォームの起動",
-  "install.welcome.canChange": "設定はファイルを編集するか、citeck install を実行して後から変更できます。",
+  "install.welcome.canChange": "設定は後から設定ファイルで変更できます",
   "install.welcome.pressEnter": "Enter を押して続行...",
-
-  "install.hostname.label": "サーバーのホスト名または IP",
+  "install.hostname.label": "サーバーのドメイン名または IP",
   "install.hostname.hint": "ブラウザでプラットフォームにアクセスするためのアドレス",
   "install.hostname.localOnly": "注意：Web UI はローカルのみアクセス可能です",
-
   "install.tls.label": "接続セキュリティ",
-  "install.tls.httpsAutoGen": "HTTPS 自動生成証明書（推奨）",
-  "install.tls.httpOnly": "HTTP のみ（暗号化なし）",
-  "install.tls.leTrusted": "HTTPS 信頼された証明書 — Let's Encrypt（推奨）",
-  "install.tls.selfSignedGenerated": "証明書が生成されました",
-  "install.tls.noInternet": "インターネットにアクセスできません — 自動生成証明書を使用します",
-  "install.tls.leChecking": "{host} で Let's Encrypt が使えるか確認中...",
-  "install.tls.leNotAvailable": "Let's Encrypt は利用できません：{error}",
-  "install.tls.leFallback": "自動生成証明書を使用します（HTTPS は引き続き動作します）",
-  "install.tls.leAvailable": "Let's Encrypt が利用可能です！信頼された証明書を使用します。",
-
+  "install.tls.auto": "自動 — HTTPS 証明書自動選択（推奨）",
+  "install.tls.httpsAutoGen": "HTTPS 自己署名証明書",
+  "install.tls.httpOnly": "HTTP のみ — 暗号化なし（非推奨）",
+  "install.tls.leTrusted": "HTTPS 信頼された証明書 — Let's Encrypt",
+  "install.tls.selfSignedGenerated": "自己署名証明書を生成しました: {certPath}",
+  "install.tls.selfSignedWarning": "ブラウザに信頼されていない証明書の警告が表示されます — これは正常です",
+  "install.tls.custom": "HTTPS 独自の証明書を使用",
   "install.port.https": "HTTPS ポート",
   "install.port.http": "HTTP ポート",
   "install.port.hint": "ブラウザでプラットフォームにアクセスするポート",
   "install.port.inUse": "警告：ポート {port} はすでに使用されています",
-
   "install.auth.label": "認証",
   "install.auth.keycloak": "フルログインシステム — Keycloak（推奨）",
   "install.auth.basic": "シンプルなログイン/パスワード",
   "install.auth.users.label": "ユーザー",
   "install.auth.users.hint": "カンマ区切りのユーザー名（パスワード = ユーザー名）",
-
   "install.release.label": "リリース",
   "install.release.fetching": "利用可能なリリースを取得中...",
   "install.release.notFound": "プラットフォームのリリースが見つかりません",
@@ -45,26 +38,27 @@
   "install.release.version": "バージョン",
   "install.release.back": "戻る",
   "install.release.noVersions": "このソースにはリリースがありません",
-
   "install.config.nsWritten": "プラットフォーム設定を書き込みました：{path}",
   "install.config.daemonWritten": "サービス設定を書き込みました：{path}",
-
   "install.cert.mgmtUiCert": "管理 UI 証明書：{path}",
   "install.cert.mgmtUiHint": "（ポート 7088 の管理パネルへのリモートアクセス用にブラウザにインポート）",
-
   "install.systemd.label": "システムサービスとしてインストールしますか？",
   "install.systemd.hint": "Citeck は起動時に自動的に開始されます。設定：/etc/systemd/system/citeck.service",
   "install.systemd.notRoot": "root として実行されていません。システムサービスをインストールするには：",
   "install.systemd.installed": "システムサービスがインストールされ有効化されました：{path}",
   "install.firewall.open": "ファイアウォールでポート {port} を開きますか（ufw）？",
   "install.firewall.hint": "外部アクセスに必要です",
-
   "install.start.label": "Citeck を今すぐ起動しますか？",
   "install.start.starting": "起動中...",
   "install.start.manual": "手動で起動：citeck start",
-
   "install.ready.title": "Citeck の準備ができました！",
   "install.ready.openBrowser": "ブラウザで開く：{url}",
   "install.ready.login": "ログイン：          admin / admin",
-  "install.ready.certWarning": "注意：証明書は自動生成されているため、\nブラウザにセキュリティ警告が表示されます。\n「詳細」→「アクセスする」をクリックしてください。"
+  "install.ready.certWarning": "注意：証明書は自己署名のため、\nブラウザにセキュリティ警告が表示されます。\n「詳細」→「アクセスする」をクリックしてください。",
+  "install.tls.customDir": "証明書と鍵のあるフォルダ",
+  "install.tls.customDirNotFound": "フォルダが見つかりません",
+  "install.tls.customCert": "証明書",
+  "install.tls.customKey": "鍵",
+  "install.tls.customNoFiles": "ファイルが見つかりません",
+  "install.ready.leFallbackNote": "Let's Encrypt が利用できない場合、自己署名証明書が使用されます。"
 }

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"net"
 	"os"
@@ -12,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/citeck/citeck-launcher/internal/acme"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
@@ -134,12 +132,18 @@ func runInstall(workspaceZip string, offline bool) error { //nolint:gocyclo // i
 	// --- Step 3: TLS ---
 	isOffline := offline || workspaceZip != ""
 	isLocalhost := hostname == "localhost" || hostname == "127.0.0.1"
+	var tlsOptions []string
 	if !isLocalhost && !isOffline {
-		configureTLSAuto(&nsCfg, hostname)
+		tlsOptions = []string{t("install.tls.auto"), t("install.tls.leTrusted"), t("install.tls.httpsAutoGen"), t("install.tls.custom"), t("install.tls.httpOnly")}
 	} else {
-		tlsOptions := []string{t("install.tls.httpsAutoGen"), t("install.tls.httpOnly")}
+		tlsOptions = []string{t("install.tls.httpsAutoGen"), t("install.tls.custom"), t("install.tls.httpOnly")}
+	}
+	for {
 		tlsChoice := promptNumber(scanner, t("install.tls.label"), tlsOptions, 0)
-		configureTLS(&nsCfg, tlsChoice)
+		if !configureTLS(&nsCfg, tlsChoice, scanner) {
+			break // configured successfully
+		}
+		// true = back to TLS menu (user canceled custom cert flow)
 	}
 
 	// --- Step 4: Port ---
@@ -220,7 +224,7 @@ func runInstall(workspaceZip string, offline bool) error { //nolint:gocyclo // i
 	fmt.Println() //nolint:forbidigo // CLI output
 	startNow := flagYes || promptYesNo(scanner, t("install.start.label"), "", true)
 	if !startNow {
-		printAccessInfo(hostname, port, nsCfg.Proxy.TLS.Enabled)
+		printAccessInfo(hostname, port, nsCfg.Proxy.TLS.Enabled, nsCfg.Proxy.TLS.LetsEncrypt)
 		output.PrintText("\n  %s", t("install.start.manual"))
 		return nil
 	}
@@ -244,12 +248,12 @@ func runInstall(workspaceZip string, offline bool) error { //nolint:gocyclo // i
 	if streamErr := streamLiveStatus(c, false); streamErr != nil {
 		return streamErr
 	}
-	printAccessInfo(hostname, port, nsCfg.Proxy.TLS.Enabled)
+	printAccessInfo(hostname, port, nsCfg.Proxy.TLS.Enabled, nsCfg.Proxy.TLS.LetsEncrypt)
 	return nil
 }
 
 // printAccessInfo shows the platform URL and login instructions after install.
-func printAccessInfo(hostname string, port int, tls bool) {
+func printAccessInfo(hostname string, port int, tls, le bool) {
 	scheme := "http"
 	if tls {
 		scheme = "https"
@@ -266,72 +270,147 @@ func printAccessInfo(hostname string, port int, tls bool) {
 	output.PrintText("")
 	output.PrintText("  %s", t("install.ready.openBrowser", "url", url))
 	output.PrintText("  %s", t("install.ready.login"))
-	// Warn about browser certificate warning for self-signed certs
-	if tls && (net.ParseIP(hostname) != nil || hostname == "localhost") {
+	if tls && !le {
+		// Self-signed or custom cert — browser will show warning
 		output.PrintText("")
 		for line := range strings.SplitSeq(t("install.ready.certWarning"), "\n") {
 			output.PrintText("  %s", line)
 		}
+	} else if tls && le {
+		// Auto/LE mode — note about self-signed fallback
+		output.PrintText("")
+		output.PrintText("  %s", t("install.ready.leFallbackNote"))
 	}
 	output.PrintText("  ========================================")
 }
 
 // configureTLS sets TLS config based on the user's choice.
-func configureTLS(nsCfg *namespace.Config, choice string) {
-	switch {
-	case choice == t("install.tls.leTrusted"):
+// Returns true if the user wants to go back to the TLS menu.
+func configureTLS(nsCfg *namespace.Config, choice string, scanner *bufio.Scanner) bool {
+	switch choice {
+	case t("install.tls.auto"):
+		// LE + self-signed fallback: daemon tries LE first, uses self-signed if unavailable
 		nsCfg.Proxy.TLS.Enabled = true
 		nsCfg.Proxy.TLS.LetsEncrypt = true
-	case choice == t("install.tls.httpsAutoGen"):
+		generateSelfSignedCert(nsCfg)
+	case t("install.tls.leTrusted"):
 		nsCfg.Proxy.TLS.Enabled = true
-		host := nsCfg.Proxy.Host
-		if host == "" {
-			host = "localhost"
+		nsCfg.Proxy.TLS.LetsEncrypt = true
+	case t("install.tls.httpsAutoGen"):
+		nsCfg.Proxy.TLS.Enabled = true
+		generateSelfSignedCert(nsCfg)
+	case t("install.tls.custom"):
+		return configureCustomCert(nsCfg, scanner)
+	default:
+		// HTTP only
+	}
+	return false
+}
+
+// configureCustomCert asks for a directory with cert+key files.
+// Returns true if the user chose to go back to the TLS menu.
+func configureCustomCert(nsCfg *namespace.Config, scanner *bufio.Scanner) bool {
+	for {
+		dir := promptText(scanner, t("install.tls.customDir"), "", "")
+		if dir == "" {
+			return true // back
 		}
-		tlsDir := filepath.Join(config.ConfDir(), "tls")
-		_ = os.MkdirAll(tlsDir, 0o755) //nolint:gosec // G301: TLS dir needs 0o755
-		certPath := filepath.Join(tlsDir, "server.crt")
-		keyPath := filepath.Join(tlsDir, "server.key")
-		if certErr := tlsutil.GenerateSelfSignedCert(certPath, keyPath, []string{host}, 365); certErr != nil {
-			output.Errf("Warning: failed to generate self-signed cert: %v", certErr)
-			return
+		info, err := os.Stat(dir)
+		if err != nil || !info.IsDir() {
+			output.Errf("  %s: %s", t("install.tls.customDirNotFound"), dir)
+			continue
 		}
+
+		certPath, certBack := pickFileByExt(scanner, dir, []string{".crt", ".pem", ".cer"}, t("install.tls.customCert"), "")
+		if certBack {
+			continue // re-ask for directory
+		}
+		keyPath, keyBack := pickFileByExt(scanner, dir, []string{".key", ".pem"}, t("install.tls.customKey"), certPath)
+		if keyBack {
+			continue
+		}
+
+		nsCfg.Proxy.TLS.Enabled = true
 		nsCfg.Proxy.TLS.CertPath = certPath
 		nsCfg.Proxy.TLS.KeyPath = keyPath
-		output.PrintText("  %s", t("install.tls.selfSignedGenerated"))
-	default:
-		// None — HTTP only
+		output.PrintText("  %s: %s", t("install.tls.customCert"), certPath)
+		output.PrintText("  %s: %s", t("install.tls.customKey"), keyPath)
+		return false
 	}
 }
 
-// configureTLSAuto tries Let's Encrypt staging for domain hostnames.
-// If staging succeeds → Let's Encrypt (production). If fails → self-signed fallback.
-// Skips LE entirely if the server has no internet connectivity.
-func configureTLSAuto(nsCfg *namespace.Config, hostname string) {
-	// Quick connectivity check — if we can't reach LE at all, skip immediately.
-	conn, dialErr := net.DialTimeout("tcp", "acme-staging-v02.api.letsencrypt.org:443", 5*time.Second)
-	if dialErr != nil {
-		output.PrintText("  %s", t("install.tls.noInternet"))
-		configureTLS(nsCfg, t("install.tls.httpsAutoGen"))
+// pickFileByExt finds files with given extensions in dir, excluding excludePath.
+// 1 match → auto-select. 0 → error + return back. 2+ → prompt user to pick.
+// Returns (path, back). back=true means go back.
+func pickFileByExt(scanner *bufio.Scanner, dir string, exts []string, label, excludePath string) (string, bool) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		output.Errf("  %s: %v", t("install.tls.customDirNotFound"), err)
+		return "", true
+	}
+	extSet := make(map[string]bool, len(exts))
+	for _, e := range exts {
+		extSet[e] = true
+	}
+	var matches []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		fullPath := filepath.Join(dir, entry.Name())
+		if fullPath == excludePath {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(entry.Name()))
+		if extSet[ext] {
+			matches = append(matches, fullPath)
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		output.Errf("  %s (%s)", t("install.tls.customNoFiles"), strings.Join(exts, ", "))
+		return "", true
+	case 1:
+		return matches[0], false
+	default:
+		// Multiple matches — let user pick
+		options := make([]string, 0, len(matches)+1)
+		for _, m := range matches {
+			options = append(options, filepath.Base(m))
+		}
+		options = append(options, t("install.release.back"))
+		choice := promptNumber(scanner, label, options, 0)
+		if choice == t("install.release.back") {
+			return "", true
+		}
+		for _, m := range matches {
+			if filepath.Base(m) == choice {
+				return m, false
+			}
+		}
+		return matches[0], false // fallback
+	}
+}
+
+// generateSelfSignedCert creates a self-signed TLS certificate and updates the config.
+func generateSelfSignedCert(nsCfg *namespace.Config) {
+	host := nsCfg.Proxy.Host
+	if host == "" {
+		host = "localhost"
+	}
+	tlsDir := filepath.Join(config.ConfDir(), "tls")
+	_ = os.MkdirAll(tlsDir, 0o755) //nolint:gosec // G301: TLS dir needs 0o755
+	certPath := filepath.Join(tlsDir, "server.crt")
+	keyPath := filepath.Join(tlsDir, "server.key")
+	if certErr := tlsutil.GenerateSelfSignedCert(certPath, keyPath, []string{host}, 365); certErr != nil {
+		output.Errf("Warning: failed to generate self-signed cert: %v", certErr)
 		return
 	}
-	conn.Close()
-
-	output.PrintText("  %s", t("install.tls.leChecking", "host", hostname))
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	if err := acme.TryStaging(ctx, hostname); err != nil {
-		output.PrintText("  %s", t("install.tls.leNotAvailable", "error", err.Error()))
-		output.PrintText("  %s", t("install.tls.leFallback"))
-		configureTLS(nsCfg, t("install.tls.httpsAutoGen"))
-		return
-	}
-
-	output.PrintText("  %s", t("install.tls.leAvailable"))
-	nsCfg.Proxy.TLS.Enabled = true
-	nsCfg.Proxy.TLS.LetsEncrypt = true
+	nsCfg.Proxy.TLS.CertPath = certPath
+	nsCfg.Proxy.TLS.KeyPath = keyPath
+	output.PrintText("  %s", t("install.tls.selfSignedGenerated", "certPath", certPath))
+	output.PrintText("  %s", t("install.tls.selfSignedWarning"))
 }
 
 // parseUsers parses a comma-separated list of usernames.
@@ -511,6 +590,7 @@ func discoverRepos(offline bool) []repoVersions {
 
 // resolveBundleDir finds the bundle directory for a repo, checking local workspace first.
 func resolveBundleDir(repo bundle.BundlesRepo) string {
+	// 1. Local workspace import (--workspace zip)
 	dir := filepath.Join(config.DataDir(), "repo")
 	if repo.Path != "" {
 		dir = filepath.Join(dir, repo.Path)
@@ -518,6 +598,15 @@ func resolveBundleDir(repo bundle.BundlesRepo) string {
 	if _, err := os.Stat(dir); err == nil {
 		return dir
 	}
+	// 2. Workspace repo clone (data/bundles/workspace)
+	dir = filepath.Join(config.DataDir(), "bundles", "workspace")
+	if repo.Path != "" {
+		dir = filepath.Join(dir, repo.Path)
+	}
+	if _, err := os.Stat(dir); err == nil {
+		return dir
+	}
+	// 3. Separate repo clone (data/bundles/{repoID})
 	dir = filepath.Join(config.DataDir(), "bundles", repo.ID)
 	if repo.Path != "" {
 		dir = filepath.Join(dir, repo.Path)
