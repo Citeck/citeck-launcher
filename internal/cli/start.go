@@ -13,13 +13,15 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/citeck/citeck-launcher/internal/bundle"
+	"github.com/citeck/citeck-launcher/internal/storage"
+
 	"golang.org/x/term"
 
 	"github.com/citeck/citeck-launcher/internal/client"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/daemon"
 	"github.com/citeck/citeck-launcher/internal/output"
-	"github.com/citeck/citeck-launcher/internal/storage"
 	"github.com/spf13/cobra"
 )
 
@@ -59,6 +61,12 @@ func newStartCmd(version string) *cobra.Command {
 			if !desktop {
 				if _, err := os.Stat(config.NamespaceConfigPath()); os.IsNotExist(err) {
 					return fmt.Errorf("no namespace configured\n\nRun 'citeck install' to set up your namespace first")
+				}
+				// Check registry credentials for private image repos (interactive TTY only)
+				if isTTYOut() {
+					if err := checkRegistryAuth(); err != nil {
+						return err
+					}
 				}
 			}
 
@@ -388,4 +396,71 @@ func streamLiveStatus(c *client.DaemonClient, follow bool) error {
 
 		time.Sleep(2 * time.Second)
 	}
+}
+
+// checkRegistryAuth verifies that credentials exist for all private image registries.
+// If missing, prompts the user to enter them (with docker login validation).
+func checkRegistryAuth() error {
+	resolver := bundle.NewResolver(config.DataDir())
+	resolver.SetOffline(true) // don't trigger git pull on every start
+	wsCfg := resolver.ResolveWorkspaceOnly()
+
+	authRepos := findAuthRepos(wsCfg)
+	if len(authRepos) == 0 {
+		return nil
+	}
+
+	svc, svcErr := openSecretService()
+	if svcErr != nil {
+		return nil // can't check — daemon will handle it
+	}
+
+	// Find repos missing credentials
+	var missing []bundle.ImageRepo
+	for _, repo := range authRepos {
+		sec, _ := svc.GetSecret("registry-" + repo.ID)
+		if sec == nil || sec.Value == "" {
+			missing = append(missing, repo)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+
+	// Init i18n for prompts (load locale from daemon config)
+	daemonCfg, loadErr := config.LoadDaemonConfig()
+	locale := "en"
+	if loadErr == nil && daemonCfg.Locale != "" {
+		locale = daemonCfg.Locale
+	}
+	initI18n(locale)
+
+	scanner := bufio.NewScanner(os.Stdin)
+	for _, repo := range missing {
+		host := registryHost(repo.URL)
+		output.PrintText("%s: %s", t("install.registry.host"), host)
+		for {
+			username := promptText(scanner, t("install.registry.username"), "", "")
+			if username == "" {
+				return fmt.Errorf("registry credentials required for %s\n\nConfigure via 'citeck install' or provide credentials", host)
+			}
+			password := promptText(scanner, t("install.registry.password"), "", "")
+			if password == "" {
+				continue
+			}
+
+			output.PrintText("  %s", t("install.registry.checking"))
+			if loginErr := dockerRegistryLogin(host, username, password); loginErr != nil {
+				output.Errf("  %s: %v", t("install.registry.failed"), loginErr)
+				continue // retry
+			}
+			output.PrintText("  %s", t("install.registry.success"))
+
+			if saveErr := saveRegistrySecret(svc, repo, username, password); saveErr != nil {
+				output.Errf("  %s: %v", t("install.registry.saveFailed"), saveErr)
+			}
+			break
+		}
+	}
+	return nil
 }

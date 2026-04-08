@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -19,7 +20,10 @@ import (
 	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/output"
+	"github.com/citeck/citeck-launcher/internal/storage"
 	"github.com/citeck/citeck-launcher/internal/tlsutil"
+	dockerclient "github.com/docker/docker/client"
+	"github.com/docker/docker/api/types/registry"
 	"github.com/spf13/cobra"
 )
 
@@ -120,10 +124,12 @@ func runInstall(workspaceZip string, offline bool) error { //nolint:gocyclo // i
 	nsCfg.PgAdmin.Enabled = false // default off (use pgAdmin separately if needed)
 	isOffline := offline || workspaceZip != ""
 
-	// --- Step 1: Hostname ---
-	printStepHeader(1, t("install.hostname.label"))
 	defaultHost := config.DetectOutboundIP(isOffline)
 	var hostname string
+
+hostStep:
+	// --- Step 1: Hostname ---
+	printStepHeader(1, t("install.hostname.label"))
 	for {
 		hostname = promptText(scanner, t("install.hostname.label"), t("install.hostname.hint"), defaultHost)
 		if hostname != "" {
@@ -134,11 +140,7 @@ func runInstall(workspaceZip string, offline bool) error { //nolint:gocyclo // i
 		output.PrintText("  %s", t("install.hostname.localOnly"))
 	}
 	nsCfg.Proxy.Host = hostname
-	if hostname == "localhost" || hostname == "127.0.0.1" {
-		nsCfg.Name = "Citeck"
-	} else {
-		nsCfg.Name = hostname
-	}
+	nsCfg.Name = "Citeck"
 
 	// --- Step 2: TLS ---
 	printStepHeader(2, t("install.tls.label"))
@@ -150,39 +152,47 @@ func runInstall(workspaceZip string, offline bool) error { //nolint:gocyclo // i
 		tlsOptions = []string{t("install.tls.httpsAutoGen"), t("install.tls.custom"), t("install.tls.httpOnly")}
 	}
 	for {
-		tlsChoice := promptNumber(scanner, t("install.tls.label"), tlsOptions, 0)
-		if !configureTLS(&nsCfg, tlsChoice, scanner) {
+		result := configureTLS(&nsCfg, tlsChoice(scanner, tlsOptions), scanner)
+		if result == tlsOK {
 			break
 		}
+		if result == tlsChangeHost {
+			defaultHost = hostname // pre-fill with current value
+			goto hostStep
+		}
+		// tlsBack — re-show TLS menu
 	}
 
-	// --- Step 3: Port ---
-	printStepHeader(3, t("install.port.label"))
-	defaultPort := 443
-	portLabel := t("install.port.https")
+	// Port: 443 for HTTPS, 80 for HTTP
+	port := 443
 	if !nsCfg.Proxy.TLS.Enabled {
-		defaultPort = 80
-		portLabel = t("install.port.http")
-	}
-	portStr := promptText(scanner, portLabel, t("install.port.hint"), strconv.Itoa(defaultPort))
-	port, portErr := strconv.Atoi(portStr)
-	if portErr != nil || port < 1 || port > 65535 {
-		port = defaultPort
-	}
-	if ln, listenErr := net.Listen("tcp", fmt.Sprintf(":%d", port)); listenErr != nil {
-		output.PrintText("  %s", t("install.port.inUse", "port", strconv.Itoa(port)))
-	} else {
-		ln.Close()
+		port = 80
 	}
 	nsCfg.Proxy.Port = port
 
 	// Authentication: always Keycloak
 	nsCfg.Authentication.Type = namespace.AuthKeycloak
 
-	// --- Step 4: Release ---
-	printStepHeader(4, t("install.release.label"))
-	if err := resolveRelease(scanner, &nsCfg, isOffline); err != nil {
-		return err
+	// --- Step 3: Release + registry auth ---
+	for {
+		printStepHeader(3, t("install.release.label"))
+		if err := resolveRelease(scanner, &nsCfg, isOffline); err != nil {
+			return err
+		}
+
+		// Step 4: Registry credentials (if enterprise bundle requires auth)
+		wsResolver := bundle.NewResolver(config.DataDir())
+		wsResolver.SetOffline(true) // workspace already cloned by resolveRelease
+		wsCfg := wsResolver.ResolveWorkspaceOnly()
+		if wsCfg != nil {
+			if err := configureRegistryAuth(scanner, wsCfg); err != nil {
+				if errors.Is(err, errBackToRelease) {
+					continue // re-show release selection
+				}
+				return err
+			}
+		}
+		break
 	}
 
 	// --- Write namespace.yml ---
@@ -218,6 +228,7 @@ func runInstall(workspaceZip string, offline bool) error { //nolint:gocyclo // i
 	output.PrintText("  %s", t("install.config.daemonWritten", "path", config.DaemonConfigPath()))
 
 	if isRemote {
+		fmt.Println() //nolint:forbidigo // CLI separator
 		generateInstallClientCert()
 	}
 
@@ -269,55 +280,111 @@ func printAccessInfo(hostname string, port int, tls, le bool) {
 	url := fmt.Sprintf("%s://%s", scheme, addr)
 
 	fmt.Println() //nolint:forbidigo // CLI output
-	output.PrintText("  ========================================")
-	output.PrintText("  %s", t("install.ready.title"))
-	output.PrintText("")
-	output.PrintText("  %s", t("install.ready.openBrowser", "url", url))
-	output.PrintText("  %s", t("install.ready.login"))
+	title := t("install.ready.title")
+	urlLine := t("install.ready.openBrowser", "url", url)
+	loginLine := t("install.ready.login")
+
+	// Collect lines for the box
+	lines := []string{title, "", urlLine, loginLine}
 	if tls && !le {
-		// Self-signed or custom cert — browser will show warning
-		output.PrintText("")
+		lines = append(lines, "")
 		for line := range strings.SplitSeq(t("install.ready.certWarning"), "\n") {
-			output.PrintText("  %s", line)
+			lines = append(lines, line)
 		}
-	} else if tls && le {
-		// Auto/LE mode — note about self-signed fallback
-		output.PrintText("")
-		output.PrintText("  %s", t("install.ready.leFallbackNote"))
 	}
-	output.PrintText("  ========================================")
+
+	// Determine box width from longest line (terminal display width)
+	maxLen := 0
+	for _, l := range lines {
+		if n := displayWidth(l); n > maxLen {
+			maxLen = n
+		}
+	}
+	separator := strings.Repeat("═", maxLen+4)
+
+	output.PrintText("  %s", separator)
+	for _, l := range lines {
+		output.PrintText("  %s", l)
+	}
+	output.PrintText("  %s", separator)
+}
+
+type tlsResult int
+
+const (
+	tlsOK         tlsResult = iota // configured successfully
+	tlsBack                        // go back to TLS menu
+	tlsChangeHost                  // go back to hostname step
+)
+
+func tlsChoice(scanner *bufio.Scanner, options []string) string {
+	return promptNumber(scanner, t("install.tls.label"), options, 0)
 }
 
 // configureTLS sets TLS config based on the user's choice.
-// Returns true if the user wants to go back to the TLS menu.
-func configureTLS(nsCfg *namespace.Config, choice string, scanner *bufio.Scanner) bool {
+func configureTLS(nsCfg *namespace.Config, choice string, scanner *bufio.Scanner) tlsResult {
+	nsCfg.Proxy.TLS = namespace.TlsConfig{} // reset stale state from previous choice
 	switch choice {
 	case t("install.tls.auto"):
 		nsCfg.Proxy.TLS.Enabled = true
 		nsCfg.Proxy.TLS.LetsEncrypt = true
-		generateSelfSignedCert(nsCfg)
-		// Try LE staging to verify reachability
 		output.PrintText("  %s", t("install.tls.leChecking", "host", nsCfg.Proxy.Host))
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		leErr := acme.TryStaging(ctx, nsCfg.Proxy.Host)
 		cancel()
 		if leErr != nil {
-			output.PrintText("  %s", t("install.tls.leNotAvailable", "error", leErr.Error()))
+			for line := range strings.SplitSeq(t("install.tls.leAutoFallback"), "\n") {
+				output.PrintText("  %s", line)
+			}
+			generateSelfSignedCert(nsCfg)
 		} else {
 			output.PrintText("  %s", t("install.tls.leAvailable"))
 		}
 	case t("install.tls.leTrusted"):
 		nsCfg.Proxy.TLS.Enabled = true
 		nsCfg.Proxy.TLS.LetsEncrypt = true
+		return tryLEWithRecovery(nsCfg, scanner)
 	case t("install.tls.httpsAutoGen"):
 		nsCfg.Proxy.TLS.Enabled = true
 		generateSelfSignedCert(nsCfg)
 	case t("install.tls.custom"):
-		return configureCustomCert(nsCfg, scanner)
+		if configureCustomCert(nsCfg, scanner) {
+			return tlsBack
+		}
 	default:
 		// HTTP only
 	}
-	return false
+	return tlsOK
+}
+
+// tryLEWithRecovery validates LE, on failure offers retry / change host / back to TLS.
+func tryLEWithRecovery(nsCfg *namespace.Config, scanner *bufio.Scanner) tlsResult {
+	for {
+		output.PrintText("  %s", t("install.tls.leChecking", "host", nsCfg.Proxy.Host))
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		leErr := acme.TryStaging(ctx, nsCfg.Proxy.Host)
+		cancel()
+		if leErr == nil {
+			output.PrintText("  %s", t("install.tls.leAvailable"))
+			return tlsOK
+		}
+		output.PrintText("  %s", t("install.tls.leNotAvailable", "error", leErr.Error()))
+		fmt.Println() //nolint:forbidigo // CLI separator
+		options := []string{
+			t("install.tls.leRetry"),
+			t("install.tls.leChangeHost"),
+			t("install.tls.leBackToTLS"),
+		}
+		recovery := promptNumber(scanner, t("install.tls.leRecovery"), options, 0)
+		switch recovery {
+		case t("install.tls.leRetry"):
+			continue
+		case t("install.tls.leChangeHost"):
+			return tlsChangeHost
+		default:
+			return tlsBack
+		}
+	}
 }
 
 // configureCustomCert asks for a directory with cert+key files.
@@ -426,6 +493,144 @@ func generateSelfSignedCert(nsCfg *namespace.Config) {
 	output.PrintText("  %s", t("install.tls.selfSignedWarning"))
 }
 
+// configureRegistryAuth checks if any imageRepo requires auth (authType: BASIC)
+// and prompts for credentials, validates via Docker registry login, and saves to encrypted store.
+// errBackToRelease signals that the user wants to go back to release selection.
+var errBackToRelease = fmt.Errorf("back to release selection")
+
+func configureRegistryAuth(scanner *bufio.Scanner, wsCfg *bundle.WorkspaceConfig) error {
+	authRepos := findAuthRepos(wsCfg)
+	if len(authRepos) == 0 {
+		return nil
+	}
+
+	svc, svcErr := openSecretService()
+	if svcErr != nil {
+		output.Errf("  %s: %v", t("install.registry.saveFailed"), svcErr)
+		return nil // non-fatal — daemon will handle auth at runtime
+	}
+
+	printStepHeader(4, t("install.registry.label"))
+
+	for _, repo := range authRepos {
+		host := registryHost(repo.URL)
+		output.PrintText("  %s: %s", t("install.registry.host"), host)
+		for {
+			username := promptText(scanner, t("install.registry.username"), "", "")
+			if username == "" {
+				continue
+			}
+			password := promptText(scanner, t("install.registry.password"), "", "")
+			if password == "" {
+				continue
+			}
+
+			output.PrintText("  %s", t("install.registry.checking"))
+			if err := dockerRegistryLogin(host, username, password); err != nil {
+				output.Errf("  %s: %v", t("install.registry.failed"), err)
+				options := []string{t("install.registry.retry"), t("install.registry.backToRelease")}
+				choice := promptNumber(scanner, t("install.registry.recovery"), options, 0)
+				if choice == t("install.registry.backToRelease") {
+					return errBackToRelease
+				}
+				continue
+			}
+			output.PrintText("  %s", t("install.registry.success"))
+
+			if err := saveRegistrySecret(svc, repo, username, password); err != nil {
+				output.Errf("  %s: %v", t("install.registry.saveFailed"), err)
+			}
+			break
+		}
+	}
+	return nil
+}
+
+// dockerRegistryLogin validates credentials against a Docker registry.
+func dockerRegistryLogin(registryURL, username, password string) error {
+	cli, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
+	if err != nil {
+		return fmt.Errorf("docker client: %w", err)
+	}
+	defer cli.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	_, loginErr := cli.RegistryLogin(ctx, registry.AuthConfig{
+		Username:      username,
+		Password:      password,
+		ServerAddress: "https://" + registryURL,
+	})
+	if loginErr != nil {
+		return fmt.Errorf("registry login %s: %w", registryURL, loginErr)
+	}
+	return nil
+}
+
+// openSecretService creates a FileStore + SecretService and unlocks with default password.
+// Returns (service, error). Caller should not use if error is non-nil.
+func openSecretService() (*storage.SecretService, error) {
+	store, err := storage.NewFileStore(config.ConfDir())
+	if err != nil {
+		return nil, fmt.Errorf("open store: %w", err)
+	}
+	svc, err := storage.NewSecretService(store)
+	if err != nil {
+		return nil, fmt.Errorf("secret service: %w", err)
+	}
+	if !svc.IsEncrypted() {
+		if setupErr := svc.SetMasterPassword(defaultPassword, true); setupErr != nil {
+			return nil, fmt.Errorf("setup encryption: %w", setupErr)
+		}
+	} else if svc.IsDefaultPassword() {
+		if unlockErr := svc.Unlock(defaultPassword); unlockErr != nil {
+			return nil, fmt.Errorf("unlock: %w", unlockErr)
+		}
+	}
+	// Custom password: svc stays locked — SaveSecret will return ErrSecretsLocked
+	return svc, nil
+}
+
+// registryHost extracts the host from a registry URL (strips path if present).
+func registryHost(repoURL string) string {
+	if idx := strings.Index(repoURL, "/"); idx > 0 {
+		return repoURL[:idx]
+	}
+	return repoURL
+}
+
+// findAuthRepos returns image repos that require authentication.
+func findAuthRepos(wsCfg *bundle.WorkspaceConfig) []bundle.ImageRepo {
+	if wsCfg == nil {
+		return nil
+	}
+	var repos []bundle.ImageRepo
+	for _, repo := range wsCfg.ImageRepos {
+		if repo.AuthType != "" {
+			repos = append(repos, repo)
+		}
+	}
+	return repos
+}
+
+// saveRegistrySecret saves registry credentials to the encrypted file store.
+func saveRegistrySecret(svc *storage.SecretService, repo bundle.ImageRepo, username, password string) error {
+	host := registryHost(repo.URL)
+	if err := svc.SaveSecret(storage.Secret{
+		SecretMeta: storage.SecretMeta{
+			ID:    "registry-" + repo.ID,
+			Name:  host + " credentials",
+			Type:  storage.SecretRegistryAuth,
+			Scope: host,
+		},
+		Value: username + ":" + password,
+	}); err != nil {
+		return fmt.Errorf("save secret: %w", err)
+	}
+	return nil
+}
+
 // repoVersions holds a bundle repo and its discovered versions.
 type repoVersions struct {
 	repo     bundle.BundlesRepo
@@ -450,6 +655,9 @@ func resolveRelease(scanner *bufio.Scanner, nsCfg *namespace.Config, offline boo
 	slog.SetDefault(slog.New(slog.DiscardHandler))
 	repos := discoverRepos(offline)
 	slog.SetDefault(prevLogger)
+	if isTTYOut() {
+		clearLines(1) // remove "fetching..." line
+	}
 
 	// Filter to repos that have at least one version
 	var withVersions []repoVersions
@@ -636,7 +844,7 @@ func generateInstallClientCert() {
 	// Generate .p12 for browser import
 	if p12Data, p12Err := tlsutil.EncodePKCS12(certPEM, keyPEM, ""); p12Err == nil {
 		if writeErr := fsutil.AtomicWriteFile(p12Path, p12Data, 0o600); writeErr == nil {
-			output.PrintText("  %s", t("install.cert.mgmtUiCert", "path", p12Path))
+			output.PrintText("  %s", t("install.cert.mgmtUiKey", "path", p12Path))
 			output.PrintText("  %s", t("install.cert.mgmtUiHint"))
 		}
 	}

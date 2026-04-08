@@ -91,8 +91,8 @@ func TestTranslationFallback(t *testing.T) {
 
 func TestTranslationInterpolation(t *testing.T) {
 	initI18n("en")
-	result := tHelper("install.port.inUse", "port", "8080")
-	if result != "Warning: port 8080 is already in use" {
+	result := tHelper("install.firewall.open", "port", "8080")
+	if result != "Open port 8080 in firewall (ufw)?" {
 		t.Errorf("unexpected interpolation result: %q", result)
 	}
 }
