@@ -68,5 +68,20 @@
   "install.registry.recovery": "Was tun?",
   "install.registry.retry": "Erneut versuchen",
   "install.registry.saveFailed": "Zugangsdaten konnten nicht gespeichert werden",
-  "install.registry.backToRelease": "Anderen Release wählen"
+  "install.registry.backToRelease": "Anderen Release wählen",
+  "uninstall.stopping": "Plattform wird gestoppt...",
+  "uninstall.systemdRemoved": "Systemd-Dienst entfernt",
+  "uninstall.systemdNotFound": "Kein Systemd-Dienst gefunden",
+  "uninstall.systemdNotRoot": "Kein Root-Zugriff. Zum Entfernen des Dienstes:",
+  "uninstall.dataPath": "Plattformdaten: {path}",
+  "uninstall.dataDropHint": "Zum Löschen aller Daten eingeben: {phrase}",
+  "uninstall.dataKeepHint": "Enter drücken um Daten zu behalten.",
+  "uninstall.dataPreserved": "Daten beibehalten: {path}",
+  "uninstall.dataRemoved": "Entfernt: {path}",
+  "uninstall.dataRemoveFailed": "Entfernen von {path} fehlgeschlagen: {error}",
+  "uninstall.dataInvalidInput": "Ungültige Eingabe. \"{phrase}\" eingeben oder Enter drücken.",
+  "uninstall.complete": "Deinstallation abgeschlossen",
+  "cli.platformNotRunning": "Plattform läuft nicht",
+  "cli.daemonStarted": "Daemon im Hintergrund gestartet",
+  "cli.allAppsStarted": "Alle {count} Apps gestartet."
 }

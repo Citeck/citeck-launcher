@@ -68,5 +68,20 @@
   "install.registry.recovery": "O que fazer?",
   "install.registry.retry": "Tentar novamente",
   "install.registry.saveFailed": "Não foi possível salvar as credenciais",
-  "install.registry.backToRelease": "Escolher outro release"
+  "install.registry.backToRelease": "Escolher outro release",
+  "uninstall.stopping": "Parando plataforma...",
+  "uninstall.systemdRemoved": "Serviço systemd removido",
+  "uninstall.systemdNotFound": "Serviço systemd não encontrado",
+  "uninstall.systemdNotRoot": "Sem permissão root. Para remover o serviço:",
+  "uninstall.dataPath": "Dados da plataforma: {path}",
+  "uninstall.dataDropHint": "Para excluir todos os dados, digite: {phrase}",
+  "uninstall.dataKeepHint": "Pressione Enter para manter os dados.",
+  "uninstall.dataPreserved": "Dados mantidos: {path}",
+  "uninstall.dataRemoved": "Removido: {path}",
+  "uninstall.dataRemoveFailed": "Falha ao remover {path}: {error}",
+  "uninstall.dataInvalidInput": "Entrada inválida. Digite \"{phrase}\" ou pressione Enter.",
+  "uninstall.complete": "Desinstalação concluída",
+  "cli.platformNotRunning": "A plataforma não está em execução",
+  "cli.daemonStarted": "Daemon iniciado em segundo plano",
+  "cli.allAppsStarted": "Todos os {count} aplicativos iniciados."
 }

@@ -180,12 +180,13 @@ hostStep:
 			return err
 		}
 
-		// Step 4: Registry credentials (if enterprise bundle requires auth)
+		// Step 4: Registry credentials (only for registries used by the selected bundle)
 		wsResolver := bundle.NewResolver(config.DataDir())
-		wsResolver.SetOffline(true) // workspace already cloned by resolveRelease
+		wsResolver.SetOffline(true)
 		wsCfg := wsResolver.ResolveWorkspaceOnly()
 		if wsCfg != nil {
-			if err := configureRegistryAuth(scanner, wsCfg); err != nil {
+			usedPrefixes := bundleImageRepoIDs(nsCfg.BundleRef, wsCfg)
+			if err := configureRegistryAuth(scanner, wsCfg, usedPrefixes); err != nil {
 				if errors.Is(err, errBackToRelease) {
 					continue // re-show release selection
 				}
@@ -498,8 +499,8 @@ func generateSelfSignedCert(nsCfg *namespace.Config) {
 // errBackToRelease signals that the user wants to go back to release selection.
 var errBackToRelease = fmt.Errorf("back to release selection")
 
-func configureRegistryAuth(scanner *bufio.Scanner, wsCfg *bundle.WorkspaceConfig) error {
-	authRepos := findAuthRepos(wsCfg)
+func configureRegistryAuth(scanner *bufio.Scanner, wsCfg *bundle.WorkspaceConfig, usedPrefixes map[string]bool) error {
+	authRepos := findAuthRepos(wsCfg, usedPrefixes)
 	if len(authRepos) == 0 {
 		return nil
 	}
@@ -600,16 +601,21 @@ func registryHost(repoURL string) string {
 	return repoURL
 }
 
-// findAuthRepos returns image repos that require authentication.
-func findAuthRepos(wsCfg *bundle.WorkspaceConfig) []bundle.ImageRepo {
+// findAuthRepos returns image repos that require authentication and are used by the bundle.
+// If usedPrefixes is nil, all auth repos are returned (used by start.go which checks all).
+func findAuthRepos(wsCfg *bundle.WorkspaceConfig, usedPrefixes map[string]bool) []bundle.ImageRepo {
 	if wsCfg == nil {
 		return nil
 	}
-	var repos []bundle.ImageRepo
+	repos := make([]bundle.ImageRepo, 0, len(wsCfg.ImageRepos))
 	for _, repo := range wsCfg.ImageRepos {
-		if repo.AuthType != "" {
-			repos = append(repos, repo)
+		if repo.AuthType == "" {
+			continue
 		}
+		if usedPrefixes != nil && !usedPrefixes[repo.ID] {
+			continue // not used by selected bundle
+		}
+		repos = append(repos, repo)
 	}
 	return repos
 }
@@ -629,6 +635,44 @@ func saveRegistrySecret(svc *storage.SecretService, repo bundle.ImageRepo, usern
 		return fmt.Errorf("save secret: %w", err)
 	}
 	return nil
+}
+
+// bundleImageRepoIDs resolves the selected bundle and returns the set of imageRepo IDs it uses.
+// Images are resolved to full URLs (e.g. "nexus.citeck.ru/ecos-model:1.0"), so we build a
+// reverse map from registry host → repo ID using workspace config to map back.
+func bundleImageRepoIDs(ref bundle.Ref, wsCfg *bundle.WorkspaceConfig) map[string]bool {
+	if ref.IsEmpty() || wsCfg == nil {
+		return nil
+	}
+	resolver := bundle.NewResolver(config.DataDir())
+	resolver.SetOffline(true)
+	result, err := resolver.Resolve(ref)
+	if err != nil || result == nil || result.Bundle == nil {
+		return nil // fallback: nil means "check all" in findAuthRepos
+	}
+
+	// Build reverse map: registry host → imageRepo ID.
+	// Last-writer-wins if two repos share the same host (same pattern as ImageReposByHost).
+	hostToID := make(map[string]string, len(wsCfg.ImageRepos))
+	for _, repo := range wsCfg.ImageRepos {
+		hostToID[registryHost(repo.URL)] = repo.ID
+	}
+
+	// Extract hosts from resolved images and map back to repo IDs
+	ids := make(map[string]bool)
+	addImage := func(image string) {
+		host := registryHost(image)
+		if id, ok := hostToID[host]; ok {
+			ids[id] = true
+		}
+	}
+	for _, app := range result.Bundle.Applications {
+		addImage(app.Image)
+	}
+	for _, app := range result.Bundle.CiteckApps {
+		addImage(app.Image)
+	}
+	return ids
 }
 
 // repoVersions holds a bundle repo and its discovered versions.

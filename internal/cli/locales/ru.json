@@ -69,5 +69,22 @@
   "install.ready.title": "Citeck готов к работе!",
   "install.ready.openBrowser": "Откройте в браузере:  {url}",
   "install.ready.login": "Логин:              admin / admin",
-  "install.ready.certWarning": "Примечание: браузер покажет предупреждение безопасности,\nтак как сертификат самоподписанный.\nНажмите «Дополнительно» → «Перейти на сайт»."
+  "install.ready.certWarning": "Примечание: браузер покажет предупреждение безопасности,\nтак как сертификат самоподписанный.\nНажмите «Дополнительно» → «Перейти на сайт».",
+
+  "uninstall.stopping": "Останавливаю платформу...",
+  "uninstall.systemdRemoved": "Системный сервис удалён",
+  "uninstall.systemdNotFound": "Системный сервис не найден",
+  "uninstall.systemdNotRoot": "Нет прав root. Для удаления сервиса выполните:",
+  "uninstall.dataPath": "Данные платформы: {path}",
+  "uninstall.dataDropHint": "Для удаления всех данных введите: {phrase}",
+  "uninstall.dataKeepHint": "Нажмите Enter чтобы сохранить данные.",
+  "uninstall.dataPreserved": "Данные сохранены: {path}",
+  "uninstall.dataRemoved": "Удалено: {path}",
+  "uninstall.dataRemoveFailed": "Не удалось удалить {path}: {error}",
+  "uninstall.dataInvalidInput": "Неверный ввод. Введите \"{phrase}\" или нажмите Enter.",
+  "uninstall.complete": "Деинсталляция завершена",
+
+  "cli.platformNotRunning": "Платформа не запущена",
+  "cli.daemonStarted": "Демон запущен в фоне",
+  "cli.allAppsStarted": "Все {count} приложений запущены."
 }

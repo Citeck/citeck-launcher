@@ -31,19 +31,21 @@ func newUninstallCmd() *cobra.Command {
 	return cmd
 }
 
+// dropConfirmPhrase is intentionally English-only — a stable, language-independent
+// confirmation phrase prevents accidental data deletion in unfamiliar languages.
 const dropConfirmPhrase = "drop all data"
 
 func runUninstall(deleteData bool) error {
+	ensureI18n()
 	scanner := bufio.NewScanner(os.Stdin)
 
 	// 1. Stop the daemon gracefully (stops containers + daemon)
 	c := client.TryNew(clientOpts())
 	if c != nil && c.IsRunning() {
-		output.PrintText("Stopping platform...")
+		output.PrintText(t("uninstall.stopping"))
 		_, _ = c.StopNamespace()
 		_, _ = c.Shutdown()
 		c.Close()
-		// Wait for socket to disappear (up to 30s)
 		socketPath := config.SocketPath()
 		for range 30 {
 			if _, err := os.Stat(socketPath); err != nil {
@@ -57,56 +59,56 @@ func runUninstall(deleteData bool) error {
 	servicePath := "/etc/systemd/system/citeck.service"
 	if _, err := os.Stat(servicePath); err == nil {
 		if os.Getuid() != 0 {
-			output.PrintText("Not running as root. To remove the service, run:")
+			output.PrintText(t("uninstall.systemdNotRoot"))
 			output.PrintText("  sudo systemctl stop citeck")
 			output.PrintText("  sudo systemctl disable citeck")
 			output.PrintText("  sudo rm %s", servicePath)
 			output.PrintText("  sudo systemctl daemon-reload")
 		} else {
-			exec.Command("systemctl", "disable", "citeck").Run()
-			os.Remove(servicePath)
-			exec.Command("systemctl", "daemon-reload").Run()
-			output.PrintText("Systemd service removed")
+			_ = exec.Command("systemctl", "disable", "citeck").Run()
+			_ = os.Remove(servicePath)
+			_ = exec.Command("systemctl", "daemon-reload").Run()
+			output.PrintText(t("uninstall.systemdRemoved"))
 		}
 	} else {
-		output.PrintText("No systemd service found")
+		output.PrintText(t("uninstall.systemdNotFound"))
 	}
 
 	// 3. Delete platform data
 	homeDir := config.HomeDir()
 	if deleteData {
 		if err := os.RemoveAll(homeDir); err != nil {
-			output.PrintText("  Failed to remove %s: %v", homeDir, err)
+			output.PrintText(t("uninstall.dataRemoveFailed", "path", homeDir, "error", err.Error()))
 		} else {
-			output.PrintText("  Removed %s", homeDir)
+			output.PrintText(t("uninstall.dataRemoved", "path", homeDir))
 		}
-		output.PrintText("\nUninstall complete")
+		output.PrintText("\n" + t("uninstall.complete"))
 		return nil
 	}
 
-	fmt.Println()                                                          //nolint:forbidigo // CLI output
-	output.PrintText("  Platform data: %s", homeDir)
-	output.PrintText("  To delete all data, type: %s", output.Colorize(output.Bold, dropConfirmPhrase))
-	output.PrintText("  Press Enter to keep data.")
+	fmt.Println() //nolint:forbidigo // CLI output
+	output.PrintText(t("uninstall.dataPath", "path", homeDir))
+	output.PrintText(t("uninstall.dataDropHint", "phrase", output.Colorize(output.Bold, dropConfirmPhrase)))
+	output.PrintText(t("uninstall.dataKeepHint"))
 	for {
-		fmt.Printf("\n  > ") //nolint:forbidigo // CLI prompt
+		fmt.Printf("\n> ") //nolint:forbidigo // CLI prompt
 		scanner.Scan()
 		input := strings.TrimSpace(scanner.Text())
 		if input == "" {
-			output.PrintText("  Data preserved in %s", homeDir)
+			output.PrintText(t("uninstall.dataPreserved", "path", homeDir))
 			break
 		}
 		if strings.EqualFold(input, dropConfirmPhrase) {
 			if err := os.RemoveAll(homeDir); err != nil {
-				output.PrintText("  Failed to remove %s: %v", homeDir, err)
+				output.PrintText(t("uninstall.dataRemoveFailed", "path", homeDir, "error", err.Error()))
 			} else {
-				output.PrintText("  Removed %s", homeDir)
+				output.PrintText(t("uninstall.dataRemoved", "path", homeDir))
 			}
 			break
 		}
-		output.PrintText("  Invalid input. Type \"%s\" or press Enter to skip.", dropConfirmPhrase)
+		output.PrintText(t("uninstall.dataInvalidInput", "phrase", dropConfirmPhrase))
 	}
 
-	output.PrintText("\nUninstall complete")
+	output.PrintText("\n" + t("uninstall.complete"))
 	return nil
 }

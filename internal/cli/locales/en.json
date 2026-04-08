@@ -69,5 +69,22 @@
   "install.ready.title": "Citeck is ready!",
   "install.ready.openBrowser": "Open in browser:  {url}",
   "install.ready.login": "Login:            admin / admin",
-  "install.ready.certWarning": "Note: your browser will show a security warning\nbecause the certificate is self-signed.\nClick \"Advanced\" -> \"Proceed\" to continue."
+  "install.ready.certWarning": "Note: your browser will show a security warning\nbecause the certificate is self-signed.\nClick \"Advanced\" -> \"Proceed\" to continue.",
+
+  "uninstall.stopping": "Stopping platform...",
+  "uninstall.systemdRemoved": "Systemd service removed",
+  "uninstall.systemdNotFound": "No systemd service found",
+  "uninstall.systemdNotRoot": "Not running as root. To remove the service, run:",
+  "uninstall.dataPath": "Platform data: {path}",
+  "uninstall.dataDropHint": "To delete all data, type: {phrase}",
+  "uninstall.dataKeepHint": "Press Enter to keep data.",
+  "uninstall.dataPreserved": "Data preserved: {path}",
+  "uninstall.dataRemoved": "Removed: {path}",
+  "uninstall.dataRemoveFailed": "Failed to remove {path}: {error}",
+  "uninstall.dataInvalidInput": "Invalid input. Type \"{phrase}\" or press Enter to skip.",
+  "uninstall.complete": "Uninstall complete",
+
+  "cli.platformNotRunning": "Platform is not running",
+  "cli.daemonStarted": "Daemon started in background",
+  "cli.allAppsStarted": "All {count} apps started."
 }

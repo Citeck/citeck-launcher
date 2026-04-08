@@ -21,6 +21,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/client"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/daemon"
+	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -111,7 +112,8 @@ func newStartCmd(version string) *cobra.Command {
 			defer c.Close()
 
 			if detach {
-				output.PrintText("Daemon started in background")
+				ensureI18n()
+				output.PrintText(t("cli.daemonStarted"))
 				return nil
 			}
 			return streamLiveStatus(c, follow)
@@ -346,6 +348,7 @@ func startOnRunningDaemon(c *client.DaemonClient, args []string, detach, follow 
 
 // streamLiveStatus polls the daemon and shows an in-place table of app statuses.
 func streamLiveStatus(c *client.DaemonClient, follow bool) error {
+	ensureI18n()
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
@@ -390,7 +393,7 @@ func streamLiveStatus(c *client.DaemonClient, follow bool) error {
 		lastRunning = running
 
 		if running == total && total > 0 && !follow {
-			fmt.Printf("\nAll %d apps started.\n", total) //nolint:forbidigo // CLI success
+			fmt.Printf("\n%s\n", t("cli.allAppsStarted", "count", fmt.Sprintf("%d", total))) //nolint:forbidigo // CLI success
 			return nil
 		}
 
@@ -405,7 +408,13 @@ func checkRegistryAuth() error {
 	resolver.SetOffline(true) // don't trigger git pull on every start
 	wsCfg := resolver.ResolveWorkspaceOnly()
 
-	authRepos := findAuthRepos(wsCfg)
+	// Scope auth check to repos used by the configured bundle
+	nsCfg, nsErr := namespace.LoadNamespaceConfig(config.NamespaceConfigPath())
+	var usedIDs map[string]bool
+	if nsErr == nil {
+		usedIDs = bundleImageRepoIDs(nsCfg.BundleRef, wsCfg)
+	}
+	authRepos := findAuthRepos(wsCfg, usedIDs)
 	if len(authRepos) == 0 {
 		return nil
 	}
@@ -427,13 +436,7 @@ func checkRegistryAuth() error {
 		return nil
 	}
 
-	// Init i18n for prompts (load locale from daemon config)
-	daemonCfg, loadErr := config.LoadDaemonConfig()
-	locale := "en"
-	if loadErr == nil && daemonCfg.Locale != "" {
-		locale = daemonCfg.Locale
-	}
-	initI18n(locale)
+	ensureI18n()
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for _, repo := range missing {

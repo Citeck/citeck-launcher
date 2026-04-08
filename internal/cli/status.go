@@ -21,12 +21,13 @@ func newStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Show namespace and app status",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ensureI18n()
 			c := client.TryNew(clientOpts())
 			if c == nil {
 				if output.IsJSON() {
 					output.PrintJSON(map[string]any{"running": false})
 				} else {
-					output.PrintText("Platform is not running")
+					output.PrintText(t("cli.platformNotRunning"))
 				}
 				return nil
 			}
@@ -36,7 +37,7 @@ func newStatusCmd() *cobra.Command {
 				if output.IsJSON() {
 					output.PrintJSON(map[string]any{"running": false})
 				} else {
-					output.PrintText("Platform is not running")
+					output.PrintText(t("cli.platformNotRunning"))
 				}
 				return nil
 			}

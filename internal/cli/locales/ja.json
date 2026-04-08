@@ -68,5 +68,20 @@
   "install.registry.recovery": "どうしますか？",
   "install.registry.retry": "再試行",
   "install.registry.saveFailed": "認証情報の保存に失敗しました",
-  "install.registry.backToRelease": "別のリリースを選択"
+  "install.registry.backToRelease": "別のリリースを選択",
+  "uninstall.stopping": "プラットフォームを停止中...",
+  "uninstall.systemdRemoved": "systemd サービスを削除しました",
+  "uninstall.systemdNotFound": "systemd サービスが見つかりません",
+  "uninstall.systemdNotRoot": "root 権限がありません。サービスを削除するには:",
+  "uninstall.dataPath": "プラットフォームデータ: {path}",
+  "uninstall.dataDropHint": "すべてのデータを削除するには入力: {phrase}",
+  "uninstall.dataKeepHint": "Enter を押してデータを保持。",
+  "uninstall.dataPreserved": "データ保持: {path}",
+  "uninstall.dataRemoved": "削除: {path}",
+  "uninstall.dataRemoveFailed": "{path} の削除に失敗: {error}",
+  "uninstall.dataInvalidInput": "無効な入力。\"{phrase}\" と入力するか Enter を押してください。",
+  "uninstall.complete": "アンインストール完了",
+  "cli.platformNotRunning": "プラットフォームは実行されていません",
+  "cli.daemonStarted": "デーモンをバックグラウンドで起動しました",
+  "cli.allAppsStarted": "全 {count} アプリが起動しました。"
 }

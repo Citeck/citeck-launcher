@@ -4,6 +4,8 @@ import (
 	"embed"
 	"encoding/json"
 	"strings"
+
+	"github.com/citeck/citeck-launcher/internal/config"
 )
 
 //go:embed locales/*.json
@@ -50,6 +52,20 @@ func loadLocale(locale string) map[string]string {
 		return nil
 	}
 	return m
+}
+
+// ensureI18n initializes i18n from daemon.yml locale if not already loaded.
+// Safe to call multiple times from the main goroutine — not goroutine-safe.
+// CLI commands run sequentially on a single goroutine (cobra RunE).
+func ensureI18n() {
+	if cliTranslations != nil {
+		return
+	}
+	locale := "en"
+	if cfg, err := config.LoadDaemonConfig(); err == nil && cfg.Locale != "" {
+		locale = cfg.Locale
+	}
+	initI18n(locale)
 }
 
 // t returns the translated string for the given key.

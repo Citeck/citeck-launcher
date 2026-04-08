@@ -68,5 +68,20 @@
   "install.registry.recovery": "Que faire ?",
   "install.registry.retry": "Réessayer",
   "install.registry.saveFailed": "Impossible de sauvegarder les identifiants",
-  "install.registry.backToRelease": "Choisir un autre release"
+  "install.registry.backToRelease": "Choisir un autre release",
+  "uninstall.stopping": "Arrêt de la plateforme...",
+  "uninstall.systemdRemoved": "Service systemd supprimé",
+  "uninstall.systemdNotFound": "Aucun service systemd trouvé",
+  "uninstall.systemdNotRoot": "Pas root. Pour supprimer le service :",
+  "uninstall.dataPath": "Données de la plateforme : {path}",
+  "uninstall.dataDropHint": "Pour supprimer toutes les données, tapez : {phrase}",
+  "uninstall.dataKeepHint": "Appuyez sur Entrée pour conserver les données.",
+  "uninstall.dataPreserved": "Données conservées : {path}",
+  "uninstall.dataRemoved": "Supprimé : {path}",
+  "uninstall.dataRemoveFailed": "Échec de suppression de {path} : {error}",
+  "uninstall.dataInvalidInput": "Entrée invalide. Tapez \"{phrase}\" ou appuyez sur Entrée.",
+  "uninstall.complete": "Désinstallation terminée",
+  "cli.platformNotRunning": "La plateforme n'est pas en cours d'exécution",
+  "cli.daemonStarted": "Daemon démarré en arrière-plan",
+  "cli.allAppsStarted": "Les {count} applications sont démarrées."
 }

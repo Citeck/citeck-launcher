@@ -68,5 +68,20 @@
   "install.registry.recovery": "怎么办？",
   "install.registry.retry": "重试",
   "install.registry.saveFailed": "无法保存凭据",
-  "install.registry.backToRelease": "选择其他版本"
+  "install.registry.backToRelease": "选择其他版本",
+  "uninstall.stopping": "正在停止平台...",
+  "uninstall.systemdRemoved": "systemd 服务已删除",
+  "uninstall.systemdNotFound": "未找到 systemd 服务",
+  "uninstall.systemdNotRoot": "没有 root 权限。要删除服务，请执行:",
+  "uninstall.dataPath": "平台数据: {path}",
+  "uninstall.dataDropHint": "要删除所有数据，请输入: {phrase}",
+  "uninstall.dataKeepHint": "按 Enter 保留数据。",
+  "uninstall.dataPreserved": "数据已保留: {path}",
+  "uninstall.dataRemoved": "已删除: {path}",
+  "uninstall.dataRemoveFailed": "删除 {path} 失败: {error}",
+  "uninstall.dataInvalidInput": "输入无效。请输入 \"{phrase}\" 或按 Enter。",
+  "uninstall.complete": "卸载完成",
+  "cli.platformNotRunning": "平台未运行",
+  "cli.daemonStarted": "守护进程已在后台启动",
+  "cli.allAppsStarted": "所有 {count} 个应用已启动。"
 }
