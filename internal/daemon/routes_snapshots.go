@@ -515,16 +515,16 @@ func (d *Daemon) handleRenameSnapshot(w http.ResponseWriter, r *http.Request) {
 	oldPath := filepath.Join(dir, oldName)
 	newPath := filepath.Join(dir, newName)
 
-	if _, err := os.Stat(oldPath); os.IsNotExist(err) {
+	if _, err := os.Stat(oldPath); os.IsNotExist(err) { //nolint:gosec // G703: oldPath built from dir + oldName where oldBase is validated by safeIDPattern above
 		writeError(w, http.StatusNotFound, "snapshot not found")
 		return
 	}
-	if _, err := os.Stat(newPath); err == nil {
+	if _, err := os.Stat(newPath); err == nil { //nolint:gosec // G703: newPath built from dir + newName where newBase is validated by safeIDPattern above
 		writeError(w, http.StatusConflict, "target name already exists")
 		return
 	}
 
-	if err := os.Rename(oldPath, newPath); err != nil {
+	if err := os.Rename(oldPath, newPath); err != nil { //nolint:gosec // G703: both paths validated via safeIDPattern above
 		writeInternalError(w, err)
 		return
 	}

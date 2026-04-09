@@ -277,25 +277,27 @@ fetch_latest_version() {
 
     RESPONSE=$(curl -fsSL "$RELEASES_URL" 2>/dev/null) || err "Failed to fetch releases from GitHub"
 
-    # Find the newest stable (non-prerelease) tag matching VERSION_PREFIX.
-    # GitHub API returns releases sorted by creation date (newest first).
-    # We filter by tag prefix and skip prereleases (prerelease: true).
+    # Find the newest tag matching VERSION_PREFIX. GitHub's API returns releases
+    # ordered newest-first, so the first match wins. We skip semver pre-release
+    # identifiers (v2.1.0-rc1, v2.1.0-beta.1) via the '*-*' pattern — this is
+    # independent of GitHub's own "prerelease" flag, which the Citeck releases
+    # currently set for the entire v2.x series while the Go rewrite stabilizes.
     TAG=""
     for candidate in $(printf '%s' "$RESPONSE" | grep '"tag_name"' | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/'); do
         v="${candidate#v}"
         case "$v" in
+            *-*) continue ;; # skip semver pre-release identifiers
+        esac
+        case "$v" in
             ${VERSION_PREFIX}*)
-                # Check this release is not a prerelease by searching for the block.
-                if printf '%s' "$RESPONSE" | grep -A5 "\"tag_name\": \"${candidate}\"" | grep -q '"prerelease": false'; then
-                    TAG="$candidate"
-                    break
-                fi
+                TAG="$candidate"
+                break
                 ;;
         esac
     done
 
     if [ -z "$TAG" ]; then
-        err "No stable v${VERSION_PREFIX}x release found"
+        err "No v${VERSION_PREFIX}x release found"
     fi
 
     VERSION="${TAG#v}"

@@ -46,7 +46,7 @@ func (d *Daemon) handleDeleteVolume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	volPath := filepath.Join(d.volumesDir(), name)
-	if _, err := os.Stat(volPath); err != nil {
+	if _, err := os.Stat(volPath); err != nil { //nolint:gosec // G703: name is validated by validateAppName above
 		writeError(w, http.StatusNotFound, "volume not found")
 		return
 	}
@@ -58,7 +58,7 @@ func (d *Daemon) handleDeleteVolume(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := os.RemoveAll(volPath); err != nil {
+	if err := os.RemoveAll(volPath); err != nil { //nolint:gosec // G703: name is validated by validateAppName above
 		writeInternalError(w, err)
 		return
 	}
