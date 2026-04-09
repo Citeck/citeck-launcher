@@ -11,7 +11,7 @@ Citeck Launcher управляет пространствами имён Citeck 
 Требования: Docker (запущен).
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Citeck/citeck-launcher/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Citeck/citeck-launcher/release/2.1.0/install.sh | bash
 ```
 
 Скрипт скачивает последний релиз для вашей платформы и устанавливает в `/usr/local/bin/`. Мастер установки настроит пространство имён и запустит платформу.

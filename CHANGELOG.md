@@ -1,3 +1,44 @@
+# Release 2.1.0
+
+## Zero-downtime binary upgrade
+- New `--leave-running` mode on `citeck stop --shutdown` exits the daemon without touching platform containers
+- The replacement daemon adopts the live containers via the existing deployment-hash matching path (k8s-style control-plane restart)
+- ACME renewal and cloud-config server are now stopped before the runtime so a late renewal callback cannot tear down the proxy during a detach
+- Daemon shutdown HTTP endpoint accepts `?leave_running=true` (strict bool parse, 400 on invalid input)
+
+## install.sh installer (replaces `citeck self-update`)
+- One-liner installer with version check, upgrade prompt, and rollback (`bash install.sh --rollback`)
+- Pinned to v2.x stable releases (skips prereleases)
+- Detects v2.0.0 binaries via fallback parser when `citeck version --short` is unavailable
+- Probes `citeck stop --help` to use the detach upgrade path on v2.1.0+ — falls back gracefully on older binaries
+- Brings the new binary online via systemd (`systemctl start citeck`) when an install-wizard unit exists, otherwise via `citeck start --detach`
+- Distinguishes upgrade vs fresh install: upgrades restart the daemon, fresh installs hand off to the wizard
+- `--file <path>` flag for offline / local-binary installs
+- Same one-liner works for installs and upgrades (documented in README)
+
+## huh TUI migration (all CLI user interactions)
+- Replaced `bufio.Scanner`-based prompts with `charmbracelet/huh` Select / Input / Confirm wrappers
+- Arrow-key navigation, validation, and TTY-aware rendering across the install wizard, registry auth, password reset, snapshot/clean/uninstall/workspace prompts
+- New `promptPassword` (huh `EchoModePassword`) for registry credentials; master-password input still uses `term.ReadPassword`
+
+## `citeck setup` interactive config editor
+- TUI-based settings editor with arrow-key navigation, history, and rollback
+- Reload integrates with live status streaming and a 3-option confirm dialog
+- Per-setting `CurrentValue` strings localized across all 8 locales (en, ru, de, es, fr, ja, pt, zh)
+
+## Install wizard
+- New snapshot selection step for demo-data deployment
+- Already-installed message shows version + build date and points to `citeck setup`
+
+## Output / CLI polish
+- Single `FormatAppTable` in the `output` package with ANSI-aware column alignment
+- Shared TTY helpers (`output.IsTTY` / `output.ClearLines`)
+- Synchronous stop with live progress, `--detach` mode
+
+## Tests
+- Behavioral tests for the detach + adopt cycle: `TestDetachLeavesContainersRunning`, `TestDetachThenAdopt` (asserts the new daemon does not recreate containers), `TestDetachWhileStopping`
+- `mockDocker` now tracks stop/remove calls and actually mutates its container map
+
 # Release 2.0.0
 
 Complete rewrite from Kotlin/Compose to Go + React. Single binary — CLI, daemon, and embedded Web UI.

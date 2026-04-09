@@ -11,7 +11,7 @@ Citeck Launcher manages Citeck namespaces and Docker containers. It is a single 
 Prerequisites: Docker (running).
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Citeck/citeck-launcher/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Citeck/citeck-launcher/release/2.1.0/install.sh | bash
 ```
 
 The install script downloads the latest release for your platform and installs to `/usr/local/bin/`. The wizard sets up the namespace and starts the platform.

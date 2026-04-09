@@ -3,7 +3,7 @@ set -e
 
 # Citeck Launcher installer
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/Citeck/citeck-launcher/master/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Citeck/citeck-launcher/release/2.1.0/install.sh | bash
 #   bash install.sh --file ./citeck_2.1.0_linux_amd64
 #   bash install.sh --rollback
 
