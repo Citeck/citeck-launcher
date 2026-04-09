@@ -504,6 +504,7 @@ Bundle version upgrade + host/auth switching tested on remote server. 5 bugs fix
 - `citeck self-update rollback` — revert to previous version (backup auto-created)
 - Stops daemon before binary replace, starts after; `--check` for version check only
 - Dev build guard: refuses self-update from `version=dev`
+- **REMOVED in 2.1.0**, replaced by `install.sh` one-liner — same flow (download → swap → rollback) but preserves running platform containers across the swap via detach/SIGKILL path.
 
 **P12 browser certificates:**
 - `citeck webui cert` and `citeck install` auto-generate `.p12` file for Web UI browser import (mTLS)
@@ -633,6 +634,46 @@ Install wizard reduced to 3 interactive steps, CLI i18n, bundle version parity, 
 
 **CI:**
 - GTK/WebKit system deps added for desktop build lint
+
+### Release 2.1.0 — COMPLETE (2026-04-09)
+Zero-downtime binary upgrade, `install.sh` installer (replaces `citeck self-update`), huh TUI migration, `citeck setup` interactive config editor.
+
+**Zero-downtime binary upgrade (detach mode):**
+- New `Runtime.Detach()` / `Runtime.ShutdownDetached()` — exit runLoop without calling `doStop`. `doDetach` cancels `runCtx`, waits for reconciler/app goroutines, persists state with status preserved (next daemon auto-starts). **Never** calls `StopAndRemoveContainer` or `RemoveNetwork`.
+- `Daemon.doShutdown(leaveRunning bool)` — `cloudCfgServer.Stop()` and `acmeRenewal.Stop()` run **before** the runtime shutdown so a late renewal callback cannot `RestartApp("proxy")` during detach (ACME renewal uses `context.Background()` so it wouldn't respect `runCtx` cancellation).
+- `Detach()` returns `bool` — `false` when status is STOPPING (stop already in flight) so `shutdownAfter` degrades to the regular stop path instead of silently losing containers.
+- HTTP: `POST /api/v1/daemon/shutdown?leave_running=true` with strict `strconv.ParseBool` (400 on any unrecognized value).
+- `citeck stop --shutdown --leave-running` — validates combination (requires `--shutdown`, rejects app arg).
+- Hash compatibility: `ApplicationDef.GetHashInput` is byte-identical between v2.0.0 and v2.1.0 (verified), so v2.1.0's `buildExistingContainerMap` reuses v2.0.0 containers with matching labels.
+
+**install.sh installer (replaces `citeck self-update`):**
+- One-liner from `raw.githubusercontent.com/Citeck/citeck-launcher/release/2.1.0/install.sh`
+- Fallback chain: `--leave-running` (v2.1.0+) → SIGKILL preserve (v2.0.0) → full shutdown (last resort). SIGKILL is safe because Docker (not the launcher) owns the containers.
+- systemd coordination: `sigkill_daemon_preserve_platform` masks the unit before killing so `Restart=on-failure` doesn't respawn the old binary during the swap window. `start_daemon` unmasks via `CITECK_SYSTEMD_MASKED` flag.
+- `get_local_version` handles v2.0.0 (no `--short` flag) via fallback parse of "Citeck CLI X.Y.Z" line.
+- `fetch_latest_version` skips semver pre-release identifiers (`*-*` pattern) instead of relying on GitHub's own `prerelease: true` flag, which the Citeck project currently sets for the entire v2.x series.
+- `do_rollback` calls `start_daemon` after the binary swap (fixed mid-release — earlier it left systemd masked + daemon dead).
+- `--file <path>` flag for offline / local-binary installs.
+
+**huh TUI migration (all CLI user interactions):**
+- `charmbracelet/huh` Select / Input / Confirm wrappers in `install_prompt.go`; 25 interactive prompts migrated across install wizard, registry auth, password reset, snapshot/clean/uninstall/workspace.
+- `promptPassword` uses `huh.EchoModePassword`; master-password input stays on `golang.org/x/term` (huh doesn't support secure password reading without echo).
+- `--yes` flag bypasses confirmations via `promptConfirm` helper; all callsites verified for correct default direction.
+
+**`citeck setup` interactive config editor:**
+- TUI-based settings editor with arrow-key navigation, history, and rollback.
+- `reloadAndWait` shares live status streaming with `start`/`stop`; 3-option confirm dialog (apply+reload, apply only, cancel).
+- DaemonFile target (language) only offers apply/cancel — reload doesn't help `daemon.yml` changes.
+- `CurrentValue` display strings localized across all 8 locales.
+
+**Bug fixes:**
+- `citeck status --watch`: fixed two bugs — (1) pre-watch `PrintResult` leaked above the live table (untracked lines never cleared), (2) off-by-one in `ClearLines` because the rendered text didn't end with `\n`, so the cursor stayed at the end of the last row and the "up + clear" loop missed that line — each event added a fresh "zookeeper" row under the stale one. Fix: watch mode does all rendering itself (no pre-render), always terminates text with trailing `\n`, uses `strings.Count` without `+1`.
+- CI/Makefile `golangci-lint` version mismatch: Makefile pinned v2.7.2, CI used v2.11.4. Newer gosec taint analysis caught G703 false positives on already-validated paths. Fixed Makefile to install v2.11.4 and suppressed 3 remaining false positives in `routes_snapshots.go` / `routes_volumes.go` with explicit justification comments.
+
+**Key technical decisions:**
+- SIGKILL-based preservation works because Docker owns containers, not the launcher — the launcher is just an orchestrator. Same principle as kubelet restarts in Kubernetes.
+- systemd mask is the cleanest way to prevent `Restart=on-failure` respawn during an upgrade — `systemctl stop` would trigger SIGTERM → graceful shutdown → container stop, defeating the preserve-platform goal.
+- `GetHashInput` stability is now a hard compatibility contract across versions — any future change must ship with either a migration path or documented "full-stop upgrade required".
 
 ## CI/CD
 

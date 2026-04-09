@@ -59,6 +59,18 @@ Graceful shutdown. **Socket-only.**
 curl --unix-socket /run/citeck/daemon.sock -X POST http://localhost/api/v1/daemon/shutdown
 ```
 
+Query parameters:
+
+| Name | Type | Description |
+|---|---|---|
+| `leave_running` | bool | When `true`, the daemon exits without stopping platform containers. The next daemon adopts the live containers via `doStart`'s deployment-hash matching. Used by `install.sh` for zero-downtime binary upgrades. Strict parse via `strconv.ParseBool` — any unrecognized value returns 400 `INVALID_REQUEST`. |
+
+```bash
+# Zero-downtime detach (containers keep running)
+curl --unix-socket /run/citeck/daemon.sock -X POST \
+  'http://localhost/api/v1/daemon/shutdown?leave_running=true'
+```
+
 ### GET /api/v1/daemon/logs
 
 Returns daemon log tail. Query: `?tail=200` (default 200).

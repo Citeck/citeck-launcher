@@ -1,5 +1,7 @@
 # Migrate CLI User Interaction to huh TUI Library
 
+> **Status: COMPLETED (shipped in 2.1.0).** All 25 interactive prompts migrated to `charmbracelet/huh`; the 3 master-password prompts stayed on `golang.org/x/term` as planned. Historical reference only — kept for traceability.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace all `bufio.Scanner`/`promptNumber`/`promptText`/`promptYesNo`/`fmt.Scanln` user interactions with `charmbracelet/huh` TUI forms (arrow-key Select, Input with validation, Confirm).

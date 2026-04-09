@@ -42,6 +42,14 @@ func newStatusCmd() *cobra.Command {
 				return nil
 			}
 
+			// Watch mode takes over rendering so it can clear/redraw
+			// on each event. Skipping the pre-watch PrintResult here
+			// prevents the initial output from leaking above the live
+			// table (untracked lines → never cleared).
+			if watch {
+				return watchEvents(c)
+			}
+
 			ns, err := c.GetNamespace()
 			if err != nil {
 				return fmt.Errorf("get namespace: %w", err)
@@ -67,10 +75,6 @@ func newStatusCmd() *cobra.Command {
 				}
 			})
 
-			if watch {
-				return watchEvents(c)
-			}
-
 			return nil
 		},
 	}
@@ -87,47 +91,55 @@ func watchEvents(c *client.DaemonClient) error {
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
 	go func() {
 		<-sigCh
 		cancel()
 	}()
+
+	tty := output.IsTTY()
+	var lastLines int
+
+	// render fetches the current namespace and redraws the live table.
+	// Text is always terminated with a trailing newline so the cursor
+	// ends at the start of the line BELOW the last row — ClearLines(n)
+	// then clears exactly n lines of previously-printed content.
+	render := func() {
+		ns, fetchErr := c.GetNamespace()
+		if fetchErr != nil {
+			return
+		}
+		if output.IsJSON() {
+			output.PrintJSON(ns)
+			return
+		}
+
+		header := fmt.Sprintf("%s  %s\n%s  %s\n%s  %s\n",
+			output.Colorize(output.Bold, "Name:"), ns.Name,
+			output.Colorize(output.Bold, "Status:"), output.ColorizeStatus(ns.Status),
+			output.Colorize(output.Bold, "Bundle:"), ns.BundleRef)
+		table, _, _, _ := renderAppTable(ns.Apps)
+
+		if tty && lastLines > 0 {
+			output.ClearLines(lastLines)
+		}
+
+		text := header + "\n" + table + "\n"
+		fmt.Print(text) //nolint:forbidigo // CLI live output
+		lastLines = strings.Count(text, "\n")
+	}
+
+	// Initial render so the user sees output immediately; subsequent
+	// renders are driven by the event stream below.
+	render()
 
 	events, err := c.StreamEvents(ctx)
 	if err != nil {
 		return fmt.Errorf("connect to event stream: %w", err)
 	}
 
-	tty := output.IsTTY()
-	var lastLines int
-
 	for range events {
-		// Re-fetch full status on every event and redraw
-		ns, fetchErr := c.GetNamespace()
-		if fetchErr != nil {
-			continue
-		}
-
-		if output.IsJSON() {
-			output.PrintJSON(ns)
-			continue
-		}
-
-		// Build output
-		header := fmt.Sprintf("%s  %s\n%s  %s\n%s  %s\n",
-			output.Colorize(output.Bold, "Name:"), ns.Name,
-			output.Colorize(output.Bold, "Status:"), output.ColorizeStatus(ns.Status),
-			output.Colorize(output.Bold, "Bundle:"), ns.BundleRef)
-
-		table, _, _, _ := renderAppTable(ns.Apps)
-
-		// TTY: clear previous output and redraw
-		if tty && lastLines > 0 {
-			output.ClearLines(lastLines)
-		}
-
-		text := header + "\n" + table
-		fmt.Print(text) //nolint:forbidigo // CLI live output
-		lastLines = strings.Count(text, "\n") + 1
+		render()
 	}
 
 	return nil

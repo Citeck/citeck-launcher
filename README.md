@@ -30,6 +30,7 @@ The `--workspace` flag extracts bundle repos locally so no internet is needed du
 ## Features
 
 - **Interactive installer** with TLS auto-detection (Let's Encrypt / self-signed / custom cert)
+- **Zero-downtime binary upgrades** — `install.sh` swaps the daemon binary while the platform containers keep running; the new daemon adopts them via deployment-hash matching (k8s-style control-plane restart)
 - **i18n** with 8 languages: English, Russian, Chinese, Spanish, German, French, Portuguese, Japanese
 - **Real-time updates** via SSE events (app status, resource usage)
 - **Volume snapshots** with export/import (ZIP + tar.xz)

@@ -29,26 +29,61 @@ import (
 func newInstallCmd(info BuildInfo) *cobra.Command {
 	var workspaceZip string
 	var offline bool
+	var rollback bool
 
 	cmd := &cobra.Command{
 		Use:   "install",
 		Short: "Interactive server installer",
 		Long: `Set up a Citeck platform deployment: namespace config, TLS, systemd service, firewall.
 
+When invoked from a binary outside /usr/local/bin/citeck, this command also
+handles the binary lifecycle itself: fresh install, upgrade (with zero-downtime
+platform preservation), and rollback. The install.sh one-liner is a thin
+wrapper that just fetches the latest release and hands off to this command.
+
 Use --workspace to import a workspace zip archive (e.g. downloaded from GitHub/GitLab).
 This extracts workspace config and bundle definitions for offline operation.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if rollback {
+				ensureI18n()
+				return runRollback()
+			}
 			return runInstall(info, workspaceZip, offline)
 		},
 	}
 
 	cmd.Flags().StringVar(&workspaceZip, "workspace", "", "Path to workspace zip archive (offline bundle import)")
 	cmd.Flags().BoolVar(&offline, "offline", false, "Offline mode: skip network checks (Let's Encrypt), use only local data")
+	cmd.Flags().BoolVar(&rollback, "rollback", false, "Restore the previous binary from .bak and restart the daemon")
 
 	return cmd
 }
 
-func runInstall(info BuildInfo, workspaceZip string, offline bool) error { //nolint:gocyclo // interactive wizard with sequential steps
+func runInstall(info BuildInfo, workspaceZip string, offline bool) (retErr error) { //nolint:gocyclo // interactive wizard with sequential steps
+	// On a clean exit (no error returned anywhere below), remove the
+	// installer cache file that install.sh handed us. On error we leave
+	// it in place so the next install.sh run reuses the already-downloaded
+	// binary instead of re-fetching from GitHub.
+	//
+	// NOTE: deferred cleanup does NOT run on syscall.Exec (reExecAtTarget)
+	// because exec replaces the process image. For the fresh-install path,
+	// the re-execed process inherits CITECK_INSTALLER_CACHE via os.Environ()
+	// and its own defer here fires after the wizard completes.
+	defer func() {
+		if retErr == nil {
+			cleanupInstallerCacheOnSuccess()
+		}
+	}()
+
+	// Installer bootstrap: if self is outside /usr/local/bin/citeck, we're
+	// the installer running from a download/temp location. handleInstallerLifecycle
+	// takes over for fresh install, upgrade, or no-op depending on the
+	// installed version; handled=false means we fall through to the wizard
+	// below (the normal "already at target" case).
+	if handled, err := handleInstallerLifecycle(info); handled {
+		return err
+	}
+
 	// Import workspace zip if provided
 	if workspaceZip != "" {
 		if _, statErr := os.Stat(workspaceZip); statErr != nil {

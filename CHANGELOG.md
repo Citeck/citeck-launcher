@@ -5,15 +5,25 @@
 - The replacement daemon adopts the live containers via the existing deployment-hash matching path (k8s-style control-plane restart)
 - ACME renewal and cloud-config server are now stopped before the runtime so a late renewal callback cannot tear down the proxy during a detach
 - Daemon shutdown HTTP endpoint accepts `?leave_running=true` (strict bool parse, 400 on invalid input)
+- Upgrades from v2.0.0 also preserve the platform: the new binary SIGKILLs the old daemon (Docker owns the containers, so they stay alive) and then adopts them — `ApplicationDef.GetHashInput` is byte-identical between v2.0.0 and v2.1.0, so hash matching works across versions
+- When running under systemd, the unit is masked before the kill so `Restart=on-failure` doesn't respawn the old binary during the swap window; the start phase unmasks and starts the new binary
 
-## install.sh installer (replaces `citeck self-update`)
-- One-liner installer with version check, upgrade prompt, and rollback (`bash install.sh --rollback`)
-- Pinned to v2.x stable releases (skips prereleases)
+## `citeck install` binary lifecycle (replaces `citeck self-update`)
+- `citeck install` now handles its own binary bootstrap: when invoked from a binary outside `/usr/local/bin/citeck`, it auto-detects whether to do a fresh install, an in-place upgrade, or a no-op (same version), then hands off to the setup wizard for configuration
+- Fresh install: atomic copy self → `/usr/local/bin/citeck`, then `syscall.Exec` to re-exec from the installed path so `forkDaemon` uses the right location
+- Upgrade: confirm → backup current binary to `citeck.bak` → stop old daemon preserving platform (detach for v2.1.0+, SIGKILL for v2.0.0) → atomic swap via `fsutil.AtomicWriteFile` → start new daemon via systemd or detached fork
+- Rollback: `citeck install --rollback` restores from `citeck.bak`, stops the current daemon and starts the restored one — covers the case where an upgrade went wrong
+- `versionAtLeast` semver helper handles the v2.1.0 feature-detection for picking between clean detach and SIGKILL
+- `copyBinaryAtomic` uses `rename(2)` via `fsutil.AtomicWriteFile` — safe even when the destination is currently being executed (Linux preserves the running process's inode; only the directory entry changes)
+- All stop-and-swap coordination (systemd mask/unmask, PID polling, socket cleanup) lives in `internal/cli/installer_lifecycle.go` with unit tests, replacing ~370 lines of untestable shell
+
+## install.sh (minimal bootstrap)
+- Shrunk from ~420 to ~180 lines — only does what must happen before the binary exists on disk: detect platform, fetch latest stable v2.x tag from GitHub, download to temp, exec `<new-binary> install`
+- Pinned to v2.x releases, skips semver pre-release identifiers (`v2.1.0-rc1`) via a `*-*` pattern that's independent of GitHub's own "prerelease" flag
 - Detects v2.0.0 binaries via fallback parser when `citeck version --short` is unavailable
-- Probes `citeck stop --help` to use the detach upgrade path on v2.1.0+ — falls back gracefully on older binaries
-- Brings the new binary online via systemd (`systemctl start citeck`) when an install-wizard unit exists, otherwise via `citeck start --detach`
-- Distinguishes upgrade vs fresh install: upgrades restart the daemon, fresh installs hand off to the wizard
-- `--file <path>` flag for offline / local-binary installs
+- If installed version already matches the latest, skips the download entirely and execs `citeck install` on the already-installed binary
+- `--file <path>` for offline / local-binary installs
+- `--rollback` delegates straight to `citeck install --rollback` — no shell logic
 - Same one-liner works for installs and upgrades (documented in README)
 
 ## huh TUI migration (all CLI user interactions)
@@ -34,6 +44,11 @@
 - Single `FormatAppTable` in the `output` package with ANSI-aware column alignment
 - Shared TTY helpers (`output.IsTTY` / `output.ClearLines`)
 - Synchronous stop with live progress, `--detach` mode
+- `citeck status --watch` no longer leaks the pre-watch frame above the live table and no longer stacks duplicate rows each redraw (fixed off-by-one in `ClearLines` + moved the initial render into `watchEvents` itself)
+
+## Tooling
+- Makefile and CI now pin `golangci-lint` to v2.11.4 (was split between v2.7.2 and v2.11.4, which caused CI failures on taint-analysis warnings the older local version didn't catch)
+- Three remaining gosec G703 false positives on already-validated paths suppressed with `//nolint` comments and explicit justifications (`routes_snapshots.go` rename, `routes_volumes.go` delete)
 
 ## Tests
 - Behavioral tests for the detach + adopt cycle: `TestDetachLeavesContainersRunning`, `TestDetachThenAdopt` (asserts the new daemon does not recreate containers), `TestDetachWhileStopping`

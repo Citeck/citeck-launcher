@@ -1,19 +1,30 @@
 #!/bin/sh
 set -e
 
-# Citeck Launcher installer
+# Citeck Launcher installer — minimal bootstrap.
+#
+# Everything beyond "fetch the binary and run it" lives inside the binary
+# itself (`citeck install` handles fresh install, upgrade, and rollback
+# via lifecycle detection — see internal/cli/installer_lifecycle.go).
+#
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/Citeck/citeck-launcher/release/2.1.0/install.sh | bash
+#   bash install.sh --rollback        # -> delegates to `citeck install --rollback`
 #   bash install.sh --file ./citeck_2.1.0_linux_amd64
-#   bash install.sh --rollback
+#
+# Strategy:
+#   1. If `citeck` is already installed and its version matches the latest
+#      stable v2.x release on GitHub, just run `citeck install` directly —
+#      nothing to download, the binary itself detects "already installed"
+#      and hands off to the setup hint.
+#   2. Otherwise download the new binary to a temp location and exec
+#      `<new binary> install`. The binary's lifecycle code copies itself
+#      to /usr/local/bin/citeck, stops the old daemon preserving platform
+#      containers (v2.1.0+ clean detach or v2.0.0 SIGKILL fallback),
+#      swaps the binary atomically, and restarts the daemon.
 
 REPO="Citeck/citeck-launcher"
-INSTALL_DIR="/usr/local/bin"
-BINARY="citeck"
 VERSION_PREFIX="2."  # Only install v2.x releases
-BACKUP_SUFFIX=".bak"
-
-# --- Utility functions (defined first for use in arg parsing) ---
 
 log() {
     printf "  %s\n" "$1"
@@ -30,138 +41,84 @@ err() {
 
 # --- Argument parsing ---
 FILE_PATH=""
-ROLLBACK=false
+PASSTHROUGH=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --file)
             [ -z "${2:-}" ] && err "--file requires a path argument"
             FILE_PATH="$2"; shift 2 ;;
-        --rollback) ROLLBACK=true; shift ;;
-        *) err "Unknown argument: $1" ;;
+        --rollback)
+            PASSTHROUGH="--rollback"; shift ;;
+        *)
+            err "Unknown argument: $1" ;;
     esac
 done
 
 # --- Main ---
 
 main() {
-    TARGET="${INSTALL_DIR}/${BINARY}"
-
-    if [ "$ROLLBACK" = true ]; then
-        do_rollback
-        return
+    # --rollback doesn't need network or a new binary — the installed
+    # citeck does it. Error out if not installed.
+    if [ "$PASSTHROUGH" = "--rollback" ]; then
+        if ! command -v citeck >/dev/null 2>&1; then
+            err "citeck is not installed — nothing to rollback"
+        fi
+        log "Running citeck install --rollback..."
+        exec citeck install --rollback
     fi
 
+    # --file <path>: user supplied a specific binary, skip GitHub entirely.
+    # No cache var — user explicitly provided the file, don't remove it.
     if [ -n "$FILE_PATH" ]; then
-        install_from_file
-        return
+        [ -f "$FILE_PATH" ] || err "File not found: ${FILE_PATH}"
+        [ -x "$FILE_PATH" ] || chmod +x "$FILE_PATH" 2>/dev/null || true
+        log "Running ${FILE_PATH} install..."
+        exec_with_sudo "$FILE_PATH" install
     fi
 
-    install_from_github
-}
-
-# --- Install from GitHub (default) ---
-install_from_github() {
     check_deps
     detect_platform
 
     LOCAL_VERSION=$(get_local_version)
     fetch_latest_version
 
+    # Already on the latest version — hand off to the installed binary.
+    # Its lifecycle detection (self == target) will fall through to the
+    # normal wizard or print the "already installed" hint.
     if [ -n "$LOCAL_VERSION" ] && [ "$LOCAL_VERSION" = "$VERSION" ]; then
-        log "Citeck Launcher ${VERSION} is already installed, no update needed"
-        log "Starting install wizard..."
+        log "Citeck Launcher ${VERSION} is already installed, running citeck install..."
         exec citeck install
     fi
 
-    is_upgrade=false
-    if [ -n "$LOCAL_VERSION" ]; then
-        log "Installed version: ${LOCAL_VERSION}"
-        log "Available version: ${VERSION}"
-        printf "\n  Update Citeck Launcher to %s? [Y/n] " "$VERSION"
-        read -r answer </dev/tty
-        case "$answer" in
-            [nN]*) log "Update skipped. Starting install wizard with current version..."; exec citeck install ;;
-        esac
-        is_upgrade=true
-        stop_daemon
+    # Need to install or upgrade — download into the installer cache if
+    # not already there, then exec the new binary. The cache path is
+    # exported via CITECK_INSTALLER_CACHE so the binary can clean it up
+    # after a successful install (and leave it in place on failure so a
+    # re-run of install.sh reuses the already-downloaded binary).
+    # We `export` explicitly rather than relying on the "VAR=val func"
+    # prefix form — POSIX explicitly leaves it unspecified whether a
+    # function's command inherits such assignments (issue 7, 2.9.1), so
+    # strict shells like dash may not propagate it through exec sudo -E.
+    download_binary_cached
+    export CITECK_INSTALLER_CACHE="$CACHE_PATH"
+    log "Running ${CACHE_PATH} install..."
+    exec_with_sudo "$CACHE_PATH" install
+}
+
+# exec_with_sudo runs the given binary with sudo when the process isn't
+# already root (the binary needs root to write /usr/local/bin/citeck).
+# With sudo -E we preserve CITECK_INSTALLER_CACHE and any other env the
+# caller set before invoking us.
+exec_with_sudo() {
+    if [ "$(id -u)" = "0" ]; then
+        exec "$@"
     else
-        log "No existing installation found"
+        exec sudo -E "$@"
     fi
-
-    download_binary
-    backup_current
-    install_binary
-    log "Citeck Launcher ${VERSION} installed to ${TARGET}"
-
-    finalize_install "$is_upgrade"
 }
 
-# --- Install from local file (--file) ---
-install_from_file() {
-    if [ ! -f "$FILE_PATH" ]; then
-        err "File not found: ${FILE_PATH}"
-    fi
-
-    log "Installing from local file: ${FILE_PATH}"
-    LOCAL_VERSION=$(get_local_version)
-
-    is_upgrade=false
-    if [ -n "$LOCAL_VERSION" ]; then
-        is_upgrade=true
-        stop_daemon
-    fi
-
-    TMPBIN=$(mktemp)
-    cp "$FILE_PATH" "$TMPBIN"
-    chmod +x "$TMPBIN"
-
-    backup_current
-    install_binary_from "$TMPBIN"
-
-    NEW_VERSION=$(get_local_version)
-    log "Citeck Launcher ${NEW_VERSION:-unknown} installed to ${TARGET}"
-
-    finalize_install "$is_upgrade"
-}
-
-# finalize_install runs after a successful binary swap. For upgrades, it
-# brings the new daemon online so the platform stays managed (containers
-# kept running by detach mode are adopted by the new daemon via doStart's
-# hash-matching path). For fresh installs, it hands off to the install wizard.
-finalize_install() {
-    is_upgrade="$1"
-    if [ "$is_upgrade" = "true" ]; then
-        start_daemon
-        log "Upgrade complete."
-        return
-    fi
-    log "Starting install wizard..."
-    exec citeck install
-}
-
-# --- Rollback (--rollback) ---
-do_rollback() {
-    BACKUP="${TARGET}${BACKUP_SUFFIX}"
-    if [ ! -f "$BACKUP" ]; then
-        err "No backup found at ${BACKUP}. Nothing to rollback."
-    fi
-
-    log "Rolling back to previous version..."
-    LOCAL_VERSION=$(get_local_version)
-    stop_daemon
-
-    if [ -w "$INSTALL_DIR" ]; then
-        mv "$BACKUP" "$TARGET"
-    else
-        sudo mv "$BACKUP" "$TARGET"
-    fi
-
-    NEW_VERSION=$(get_local_version)
-    log "Rolled back: ${LOCAL_VERSION:-unknown} → ${NEW_VERSION:-unknown}"
-}
-
-# --- Shared helpers ---
+# --- Helpers ---
 
 get_local_version() {
     if ! command -v citeck >/dev/null 2>&1; then
@@ -178,96 +135,23 @@ get_local_version() {
     printf '%s' "${v#v}"
 }
 
-supports_leave_running() {
-    citeck stop --help 2>&1 | grep -q -- '--leave-running'
-}
-
-stop_daemon() {
-    if ! citeck status >/dev/null 2>&1; then
-        return
-    fi
-    # Detach path (v2.1.0+): the daemon process exits but platform containers
-    # stay alive. The new daemon adopts them via the runtime's hash-matching
-    # path. We probe support via --help instead of running the command and
-    # treating any failure as "unsupported" — that would also fall back on
-    # transient HTTP errors and stop the platform unnecessarily.
-    if supports_leave_running; then
-        log "Detaching daemon (platform containers stay running)..."
-        if citeck stop --shutdown --leave-running; then
-            return
-        fi
-        warn "Detach failed; falling back to full shutdown"
-    fi
-    # v2.0.0 fallback or detach attempt failed: full shutdown stops the
-    # platform too. Acceptable downtime — better than leaving the old daemon.
-    log "Stopping daemon (full shutdown)..."
-    citeck stop --shutdown 2>/dev/null || true
-}
-
-# start_daemon brings the new binary online after a binary swap. Uses systemd
-# if a citeck.service unit is installed (the install wizard creates one with
-# Restart=on-failure, so the clean detach exit does NOT auto-restart — we have
-# to start it back ourselves). Otherwise falls back to detached `citeck start`.
-start_daemon() {
-    SERVICE_PATH="/etc/systemd/system/citeck.service"
-    if [ -f "$SERVICE_PATH" ] && command -v systemctl >/dev/null 2>&1; then
-        log "Starting citeck via systemd..."
-        if [ "$(id -u)" = "0" ]; then
-            systemctl start citeck
-        else
-            sudo systemctl start citeck
-        fi
-        return
-    fi
-    log "Starting citeck daemon..."
-    citeck start --detach 2>/dev/null || true
-}
-
-backup_current() {
-    if [ -f "$TARGET" ]; then
-        log "Backing up current binary to ${TARGET}${BACKUP_SUFFIX}"
-        if [ -w "$INSTALL_DIR" ]; then
-            cp "$TARGET" "${TARGET}${BACKUP_SUFFIX}"
-        else
-            sudo cp "$TARGET" "${TARGET}${BACKUP_SUFFIX}"
-        fi
-    fi
-}
-
-install_binary_from() {
-    SRC="$1"
-    if [ -w "$INSTALL_DIR" ]; then
-        mv "$SRC" "$TARGET"
-    else
-        log "Installing to ${INSTALL_DIR} (requires sudo)..."
-        sudo mv "$SRC" "$TARGET"
-    fi
-}
-
 check_deps() {
-    if ! command -v curl >/dev/null 2>&1; then
-        err "curl is required but not installed"
-    fi
-    if ! command -v docker >/dev/null 2>&1; then
-        warn "Docker is not installed — Citeck requires Docker to run"
-    fi
+    command -v curl >/dev/null 2>&1 || err "curl is required but not installed"
+    command -v docker >/dev/null 2>&1 || warn "Docker is not installed — Citeck requires Docker to run"
 }
 
 detect_platform() {
     OS=$(uname -s | tr '[:upper:]' '[:lower:]')
     ARCH=$(uname -m)
-
     case "$ARCH" in
         x86_64|amd64) ARCH="amd64" ;;
         aarch64|arm64) ARCH="arm64" ;;
         *) err "Unsupported architecture: $ARCH" ;;
     esac
-
     case "$OS" in
         linux) ;;
         *) err "Unsupported OS: $OS (only Linux is supported)" ;;
     esac
-
     log "Platform: ${OS}/${ARCH}"
 }
 
@@ -278,7 +162,7 @@ fetch_latest_version() {
     RESPONSE=$(curl -fsSL "$RELEASES_URL" 2>/dev/null) || err "Failed to fetch releases from GitHub"
 
     # Find the newest tag matching VERSION_PREFIX. GitHub's API returns releases
-    # ordered newest-first, so the first match wins. We skip semver pre-release
+    # ordered newest-first, so the first match wins. Skip semver pre-release
     # identifiers (v2.1.0-rc1, v2.1.0-beta.1) via the '*-*' pattern — this is
     # independent of GitHub's own "prerelease" flag, which the Citeck releases
     # currently set for the entire v2.x series while the Go rewrite stabilizes.
@@ -296,31 +180,43 @@ fetch_latest_version() {
         esac
     done
 
-    if [ -z "$TAG" ]; then
-        err "No v${VERSION_PREFIX}x release found"
-    fi
-
+    [ -z "$TAG" ] && err "No v${VERSION_PREFIX}x release found"
     VERSION="${TAG#v}"
     log "Latest version: ${VERSION}"
 }
 
-download_binary() {
-    FILENAME="${BINARY}_${VERSION}_${OS}_${ARCH}"
-    DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/${FILENAME}"
+download_binary_cached() {
+    # Cache under XDG_CACHE_HOME (default $HOME/.cache). Persists across
+    # install.sh invocations, which means:
+    #   - repeated curl|bash runs don't re-download if the file is already there
+    #   - if the install fails partway through, re-running picks up the same
+    #     binary instead of re-fetching from GitHub
+    # The binary removes this file on successful install via the
+    # CITECK_INSTALLER_CACHE env var wired in main().
+    CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/citeck-installer"
+    FILENAME="citeck_${VERSION}_${OS}_${ARCH}"
+    CACHE_PATH="${CACHE_DIR}/${FILENAME}"
 
+    mkdir -p "$CACHE_DIR"
+
+    if [ -x "$CACHE_PATH" ]; then
+        log "Using cached binary: ${CACHE_PATH}"
+        return
+    fi
+
+    DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/${FILENAME}"
     log "Downloading ${DOWNLOAD_URL}..."
-    TMP=$(mktemp)
+
+    # Download to a .tmp sibling first and rename into place so a half-written
+    # file (network drop, Ctrl+C) can't look like a complete cached binary
+    # on the next run.
+    TMP="${CACHE_PATH}.tmp"
     if ! curl -fsSL -o "$TMP" "$DOWNLOAD_URL"; then
         rm -f "$TMP"
         err "Download failed. Check that release ${TAG} has a binary for ${OS}/${ARCH}"
     fi
-
     chmod +x "$TMP"
-    TMPBIN="$TMP"
-}
-
-install_binary() {
-    install_binary_from "$TMPBIN"
+    mv "$TMP" "$CACHE_PATH"
 }
 
 main

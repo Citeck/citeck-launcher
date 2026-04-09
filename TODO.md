@@ -8,7 +8,7 @@
 - [x] Liveness probe: kill container -> auto-restart -> diagnostics file created
 - [x] Web UI: Dashboard, restart events panel, restart count badge
 - [x] Snapshot export/import cycle: auto-stop -> export -> start -> stop -> import -> start
-- [x] Self-update: `citeck self-update --file` -> binary replace -> rollback
+- [x] Binary upgrade: `install.sh` one-liner -> zero-downtime swap -> rollback (`citeck self-update` removed in 2.1.0, replaced by `install.sh` which preserves running platform containers via detach/SIGKILL path)
 - [x] mTLS: `citeck webui cert --name admin` -> .p12 import in browser -> Web UI accessible
 - [x] Keycloak 26+ liveness probe on management port 9000
 - [x] Let's Encrypt with IP address (shortlived profile, verified on test server)

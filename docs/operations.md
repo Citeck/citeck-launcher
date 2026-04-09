@@ -46,11 +46,38 @@ Re-running `citeck install` on an existing deployment skips config prompts and o
 
 ## Upgrade Launcher Binary
 
-1. Download the new binary
-2. Replace `/usr/local/bin/citeck`
-3. Restart: `sudo systemctl restart citeck`
+Run the same one-liner as for a fresh install — `install.sh` is a thin bootstrap that fetches the latest binary, and the binary itself (`citeck install`) detects whether to do a fresh install or an upgrade and handles both transparently:
 
-The daemon will detect changed images on restart and pull updates automatically.
+```bash
+curl -fsSL https://raw.githubusercontent.com/Citeck/citeck-launcher/release/2.1.0/install.sh | bash
+```
+
+The flow:
+
+1. `install.sh` fetches the newest stable `v2.x` tag from GitHub and compares with the currently installed version. If already on the latest, it just execs `citeck install` on the installed binary (no download).
+2. If an upgrade is needed, `install.sh` downloads the new binary to a temp file and execs `<temp-binary> install`.
+3. The binary's install command detects it's running from outside `/usr/local/bin/citeck`, reads the currently installed version, and:
+   - **Fresh install**: atomically copies itself to `/usr/local/bin/citeck`, re-execs from there so the wizard uses the installed path.
+   - **Upgrade**: prompts for confirmation, backs up the current binary to `citeck.bak`, stops the old daemon **without touching platform containers** (v2.1.0+ uses the clean HTTP detach `POST /daemon/shutdown?leave_running=true`; v2.0.0 uses SIGKILL — Docker owns the containers, so they keep running), atomically swaps the binary via `rename(2)`, and starts the new daemon.
+4. When the install wizard's systemd unit (`/etc/systemd/system/citeck.service`) is present, the start phase uses `systemctl start citeck`; otherwise it forks a detached daemon directly. For SIGKILL upgrades the unit is also masked before the kill so `Restart=on-failure` doesn't respawn the old binary during the swap window.
+
+The upgrade is zero-downtime — the platform containers keep serving traffic throughout. If the stop path fails (e.g., SIGKILL couldn't kill the daemon within 30 seconds), the installer reports the error and leaves the old binary in place; re-running the installer retries the flow.
+
+### Rollback
+
+```bash
+bash install.sh --rollback
+```
+
+`install.sh --rollback` delegates straight to `citeck install --rollback` (no shell logic). That command restores `/usr/local/bin/citeck` from the `.bak` file created during the last upgrade, stops the current daemon via the same preserve-platform path, and starts the restored binary. Containers keep running across the swap. Only one backup is kept (the immediately preceding version).
+
+### Offline / local-binary upgrade
+
+```bash
+bash install.sh --file ./citeck_2.1.0_linux_amd64
+```
+
+Skips GitHub and execs `./citeck_2.1.0_linux_amd64 install` directly. All the lifecycle detection happens in the binary.
 
 ## Upgrade Bundle Version
 
