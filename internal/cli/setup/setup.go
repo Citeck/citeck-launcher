@@ -183,11 +183,11 @@ func runSingleSetting(id string, sctx *setupContext, nsCfg *namespace.Config, da
 	}
 
 	// Deep copy "before" state.
-	nsBefore, err := deepCopyConfig(nsCfg)
+	nsBefore, err := deepCopy(nsCfg)
 	if err != nil {
 		return fmt.Errorf("copy namespace config: %w", err)
 	}
-	daemonBefore, err := deepCopyDaemonConfig(daemonCfg)
+	daemonBefore, err := deepCopy(daemonCfg)
 	if err != nil {
 		return fmt.Errorf("copy daemon config: %w", err)
 	}
@@ -234,8 +234,8 @@ func runSingleSetting(id string, sctx *setupContext, nsCfg *namespace.Config, da
 		}
 	}
 
-	// Confirm.
-	confirmed, err := showAndConfirmChanges()
+	// Confirm action.
+	action, err := promptConfirmAction(target)
 	if err != nil {
 		if isUserAborted(err) {
 			restore()
@@ -243,7 +243,7 @@ func runSingleSetting(id string, sctx *setupContext, nsCfg *namespace.Config, da
 		}
 		return err
 	}
-	if !confirmed {
+	if action == actionCancel {
 		restore()
 		return nil
 	}
@@ -260,7 +260,13 @@ func runSingleSetting(id string, sctx *setupContext, nsCfg *namespace.Config, da
 	// Record patch and update snapshot.
 	recordSettingPatch(id, histDir, target, forward, reverse, nsCfg, daemonCfg, secretOps)
 
-	fmt.Println(i18n.T("setup.applied"))
+	fmt.Println(i18n.T("setup.applied")) //nolint:forbidigo // CLI output
+
+	// Reload + wait if user chose to apply with reload.
+	if action == actionApplyReload {
+		reloadAndWait()
+	}
+
 	return nil
 }
 
@@ -325,17 +331,55 @@ func showDiff(forward, reverse []PatchOp) {
 	fmt.Println()
 }
 
-// showAndConfirmChanges prompts the user to confirm applying the changes.
-func showAndConfirmChanges() (bool, error) {
-	var confirm bool
-	err := huh.NewConfirm().
+// confirmAction represents the user's choice after reviewing changes.
+type confirmAction int
+
+const (
+	actionCancel       confirmAction = iota
+	actionApplyReload                // Apply + reload services (default)
+	actionApplyOnly                  // Apply config only, no reload
+)
+
+// promptConfirmAction asks the user how to apply the changes.
+func promptConfirmAction(target TargetFile) (confirmAction, error) {
+	const (
+		valApplyReload = "apply_reload"
+		valApplyOnly   = "apply_only"
+		valCancel      = "cancel"
+	)
+
+	options := []huh.Option[string]{
+		huh.NewOption(i18n.T("setup.confirm.apply_reload"), valApplyReload),
+		huh.NewOption(i18n.T("setup.confirm.apply_only"), valApplyOnly),
+		huh.NewOption(i18n.T("setup.confirm.cancel"), valCancel),
+	}
+
+	// For daemon config (language), reload is not applicable — simplify to apply/cancel.
+	if target == DaemonFile {
+		options = []huh.Option[string]{
+			huh.NewOption(i18n.T("setup.confirm.apply"), valApplyOnly),
+			huh.NewOption(i18n.T("setup.confirm.cancel"), valCancel),
+		}
+	}
+
+	var choice string
+	err := huh.NewSelect[string]().
 		Title(i18n.T("setup.confirm")).
-		Value(&confirm).
+		Options(options...).
+		Value(&choice).
 		Run()
 	if err != nil {
-		return false, fmt.Errorf("confirm: %w", err)
+		return actionCancel, fmt.Errorf("confirm: %w", err)
 	}
-	return confirm, nil
+
+	switch choice {
+	case valApplyReload:
+		return actionApplyReload, nil
+	case valApplyOnly:
+		return actionApplyOnly, nil
+	default:
+		return actionCancel, nil
+	}
 }
 
 // writeSettingChanges writes the modified config to disk and pending secrets.

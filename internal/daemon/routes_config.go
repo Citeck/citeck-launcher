@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,10 +33,27 @@ func (d *Daemon) handleDaemonStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleDaemonShutdown(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, api.ActionResultDto{Success: true, Message: "Shutting down"})
+	// leave_running=true keeps the platform containers alive (used for binary
+	// upgrades). Strict parse — any unrecognized value is rejected so callers
+	// don't silently fall through to a full shutdown when they meant detach.
+	leaveRunning := false
+	if raw := r.URL.Query().Get("leave_running"); raw != "" {
+		v, err := strconv.ParseBool(raw)
+		if err != nil {
+			writeErrorCode(w, http.StatusBadRequest, api.ErrCodeInvalidRequest,
+				"invalid leave_running value (must be true or false)")
+			return
+		}
+		leaveRunning = v
+	}
+	msg := "Shutting down"
+	if leaveRunning {
+		msg = "Detaching daemon (containers will keep running)"
+	}
+	writeJSON(w, api.ActionResultDto{Success: true, Message: msg})
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		d.shutdown()
+		d.shutdown(leaveRunning)
 	}()
 }
 

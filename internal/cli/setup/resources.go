@@ -2,6 +2,7 @@ package setup
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/i18n"
@@ -29,12 +30,9 @@ func (s *resourcesSetting) CurrentValue(cfg *namespace.Config, _ *config.DaemonC
 		}
 	}
 	if count == 0 {
-		return "defaults"
+		return i18n.T("setup.value.defaults")
 	}
-	if count == 1 {
-		return "1 app customized"
-	}
-	return fmt.Sprintf("%d apps customized", count)
+	return i18n.T("setup.value.apps_customized", "count", strconv.Itoa(count))
 }
 
 func (s *resourcesSetting) Run(ctx *setupContext, cfg *namespace.Config, _ *config.DaemonConfig) error {

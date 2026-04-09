@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -27,7 +26,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newInstallCmd() *cobra.Command {
+func newInstallCmd(info BuildInfo) *cobra.Command {
 	var workspaceZip string
 	var offline bool
 
@@ -39,7 +38,7 @@ func newInstallCmd() *cobra.Command {
 Use --workspace to import a workspace zip archive (e.g. downloaded from GitHub/GitLab).
 This extracts workspace config and bundle definitions for offline operation.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runInstall(workspaceZip, offline)
+			return runInstall(info, workspaceZip, offline)
 		},
 	}
 
@@ -49,9 +48,7 @@ This extracts workspace config and bundle definitions for offline operation.`,
 	return cmd
 }
 
-func runInstall(workspaceZip string, offline bool) error { //nolint:gocyclo // interactive wizard with sequential steps
-	scanner := bufio.NewScanner(os.Stdin)
-
+func runInstall(info BuildInfo, workspaceZip string, offline bool) error { //nolint:gocyclo // interactive wizard with sequential steps
 	// Import workspace zip if provided
 	if workspaceZip != "" {
 		if _, statErr := os.Stat(workspaceZip); statErr != nil {
@@ -86,7 +83,20 @@ func runInstall(workspaceZip string, offline bool) error { //nolint:gocyclo // i
 	_, daemonExists := os.Stat(config.DaemonConfigPath())
 	if nsExists == nil && daemonExists == nil {
 		ensureI18n()
-		output.PrintText(t("install.alreadyInstalled"))
+		ver := info.Version
+		if ver == "" {
+			ver = "dev"
+		}
+		buildDate := info.BuildDate
+		if buildDate == "" {
+			buildDate = "unknown"
+		}
+		fmt.Println() //nolint:forbidigo // CLI output
+		output.PrintText("  %s %s", output.Colorize(output.Green, t("install.alreadyInstalled")),
+			output.Colorize(output.Dim, "v"+ver+" ("+buildDate+")"))
+		fmt.Println() //nolint:forbidigo // CLI output
+		output.PrintText("  %s %s", t("install.setupHint"), output.Colorize(output.Cyan, "citeck setup"))
+		fmt.Println() //nolint:forbidigo // CLI output
 		return nil
 	}
 
@@ -96,12 +106,9 @@ func runInstall(workspaceZip string, offline bool) error { //nolint:gocyclo // i
 		langOptions[i] = loc.Code + " (" + loc.Name + ")"
 	}
 	fmt.Println() //nolint:forbidigo // CLI output
-	locale := promptNumber(scanner, "Language / Язык / 语言", langOptions, 0)
+	locale := promptSelect("Language / Язык / 语言", langOptions, 0)
 	localeCode := strings.SplitN(locale, " ", 2)[0]
 	initI18n(localeCode)
-	if isTTYOut() {
-		clearLines(1) // remove language summary — obvious from subsequent text
-	}
 
 	// --- Step 0: Welcome (in selected language) ---
 	fmt.Println()                                                                     //nolint:forbidigo // CLI output
@@ -117,9 +124,7 @@ func runInstall(workspaceZip string, offline bool) error { //nolint:gocyclo // i
 	fmt.Println()                                                                     //nolint:forbidigo // CLI output
 	fmt.Printf("  %s\n", t("install.welcome.canChange"))                               //nolint:forbidigo // CLI output
 	fmt.Println()                                                                     //nolint:forbidigo // CLI output
-	fmt.Printf("  %s", t("install.welcome.pressEnter"))                                //nolint:forbidigo // CLI prompt
-	scanner.Scan()
-	fmt.Println() //nolint:forbidigo // CLI output
+	promptConfirm(t("install.welcome.pressEnter"), true)
 
 	nsCfg := namespace.DefaultNamespaceConfig()
 	nsCfg.PgAdmin.Enabled = false // default off (use pgAdmin separately if needed)
@@ -132,7 +137,7 @@ hostStep:
 	// --- Step 1: Hostname ---
 	printStepHeader(1, t("install.hostname.label"))
 	for {
-		hostname = promptText(scanner, t("install.hostname.label"), t("install.hostname.hint"), defaultHost)
+		hostname = promptInput(t("install.hostname.label"), t("install.hostname.hint"), defaultHost)
 		if hostname != "" {
 			break
 		}
@@ -153,7 +158,7 @@ hostStep:
 		tlsOptions = []string{t("install.tls.httpsAutoGen"), t("install.tls.custom"), t("install.tls.httpOnly")}
 	}
 	for {
-		result := configureTLS(&nsCfg, tlsChoice(scanner, tlsOptions), scanner)
+		result := configureTLS(&nsCfg, promptSelect(t("install.tls.label"), tlsOptions, 0))
 		if result == tlsOK {
 			break
 		}
@@ -177,7 +182,7 @@ hostStep:
 	// --- Step 3: Release + registry auth ---
 	for {
 		printStepHeader(3, t("install.release.label"))
-		if err := resolveRelease(scanner, &nsCfg, isOffline); err != nil {
+		if err := resolveRelease(&nsCfg, isOffline); err != nil {
 			return err
 		}
 
@@ -187,13 +192,19 @@ hostStep:
 		wsCfg := wsResolver.ResolveWorkspaceOnly()
 		if wsCfg != nil {
 			usedPrefixes := bundleImageRepoIDs(nsCfg.BundleRef, wsCfg)
-			if err := configureRegistryAuth(scanner, wsCfg, usedPrefixes); err != nil {
+			if err := configureRegistryAuth(wsCfg, usedPrefixes); err != nil {
 				if errors.Is(err, errBackToRelease) {
 					continue // re-show release selection
 				}
 				return err
 			}
 		}
+
+		// Step 4: Snapshot selection (optional demo data).
+		if wsCfg != nil && len(wsCfg.Snapshots) > 0 {
+			nsCfg.Snapshot = selectSnapshot(wsCfg.Snapshots)
+		}
+
 		break
 	}
 
@@ -235,11 +246,11 @@ hostStep:
 	}
 
 	// --- Step 8: System service ---
-	installSystemdAndFirewall(scanner, port)
+	installSystemdAndFirewall(port)
 
 	// --- Step 9: Start ---
 	fmt.Println() //nolint:forbidigo // CLI output
-	startNow := flagYes || promptYesNo(scanner, t("install.start.label"), "", true)
+	startNow := promptConfirm(t("install.start.label"), true)
 	if !startNow {
 		printAccessInfo(hostname, port, nsCfg.Proxy.TLS.Enabled, nsCfg.Proxy.TLS.LetsEncrypt)
 		output.PrintText("\n  %s", t("install.start.manual"))
@@ -322,12 +333,8 @@ const (
 	tlsChangeHost                  // go back to hostname step
 )
 
-func tlsChoice(scanner *bufio.Scanner, options []string) string {
-	return promptNumber(scanner, t("install.tls.label"), options, 0)
-}
-
 // configureTLS sets TLS config based on the user's choice.
-func configureTLS(nsCfg *namespace.Config, choice string, scanner *bufio.Scanner) tlsResult {
+func configureTLS(nsCfg *namespace.Config, choice string) tlsResult {
 	nsCfg.Proxy.TLS = namespace.TlsConfig{} // reset stale state from previous choice
 	switch choice {
 	case t("install.tls.auto"):
@@ -348,12 +355,12 @@ func configureTLS(nsCfg *namespace.Config, choice string, scanner *bufio.Scanner
 	case t("install.tls.leTrusted"):
 		nsCfg.Proxy.TLS.Enabled = true
 		nsCfg.Proxy.TLS.LetsEncrypt = true
-		return tryLEWithRecovery(nsCfg, scanner)
+		return tryLEWithRecovery(nsCfg)
 	case t("install.tls.httpsAutoGen"):
 		nsCfg.Proxy.TLS.Enabled = true
 		generateSelfSignedCert(nsCfg)
 	case t("install.tls.custom"):
-		if configureCustomCert(nsCfg, scanner) {
+		if configureCustomCert(nsCfg) {
 			return tlsBack
 		}
 	default:
@@ -363,7 +370,7 @@ func configureTLS(nsCfg *namespace.Config, choice string, scanner *bufio.Scanner
 }
 
 // tryLEWithRecovery validates LE, on failure offers retry / change host / back to TLS.
-func tryLEWithRecovery(nsCfg *namespace.Config, scanner *bufio.Scanner) tlsResult {
+func tryLEWithRecovery(nsCfg *namespace.Config) tlsResult {
 	for {
 		output.PrintText("  %s", t("install.tls.leChecking", "host", nsCfg.Proxy.Host))
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -380,7 +387,7 @@ func tryLEWithRecovery(nsCfg *namespace.Config, scanner *bufio.Scanner) tlsResul
 			t("install.tls.leChangeHost"),
 			t("install.tls.leBackToTLS"),
 		}
-		recovery := promptNumber(scanner, t("install.tls.leRecovery"), options, 0)
+		recovery := promptSelect(t("install.tls.leRecovery"), options, 0)
 		switch recovery {
 		case t("install.tls.leRetry"):
 			continue
@@ -394,9 +401,9 @@ func tryLEWithRecovery(nsCfg *namespace.Config, scanner *bufio.Scanner) tlsResul
 
 // configureCustomCert asks for a directory with cert+key files.
 // Returns true if the user chose to go back to the TLS menu.
-func configureCustomCert(nsCfg *namespace.Config, scanner *bufio.Scanner) bool {
+func configureCustomCert(nsCfg *namespace.Config) bool {
 	for {
-		dir := promptText(scanner, t("install.tls.customDir"), "", "")
+		dir := promptInput(t("install.tls.customDir"), "", "")
 		if dir == "" {
 			return true // back
 		}
@@ -406,11 +413,11 @@ func configureCustomCert(nsCfg *namespace.Config, scanner *bufio.Scanner) bool {
 			continue
 		}
 
-		certPath, certBack := pickFileByExt(scanner, dir, []string{".crt", ".pem", ".cer"}, t("install.tls.customCert"), "")
+		certPath, certBack := pickFileByExt(dir, []string{".crt", ".pem", ".cer"}, t("install.tls.customCert"), "")
 		if certBack {
 			continue // re-ask for directory
 		}
-		keyPath, keyBack := pickFileByExt(scanner, dir, []string{".key", ".pem"}, t("install.tls.customKey"), certPath)
+		keyPath, keyBack := pickFileByExt(dir, []string{".key", ".pem"}, t("install.tls.customKey"), certPath)
 		if keyBack {
 			continue
 		}
@@ -427,7 +434,7 @@ func configureCustomCert(nsCfg *namespace.Config, scanner *bufio.Scanner) bool {
 // pickFileByExt finds files with given extensions in dir, excluding excludePath.
 // 1 match → auto-select. 0 → error + return back. 2+ → prompt user to pick.
 // Returns (path, back). back=true means go back.
-func pickFileByExt(scanner *bufio.Scanner, dir string, exts []string, label, excludePath string) (string, bool) {
+func pickFileByExt(dir string, exts []string, label, excludePath string) (string, bool) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		output.Errf("  %s: %v", t("install.tls.customDirNotFound"), err)
@@ -465,7 +472,7 @@ func pickFileByExt(scanner *bufio.Scanner, dir string, exts []string, label, exc
 			options = append(options, filepath.Base(m))
 		}
 		options = append(options, t("install.release.back"))
-		choice := promptNumber(scanner, label, options, 0)
+		choice := promptSelect(label, options, 0)
 		if choice == t("install.release.back") {
 			return "", true
 		}
@@ -503,7 +510,7 @@ func generateSelfSignedCert(nsCfg *namespace.Config) {
 // errBackToRelease signals that the user wants to go back to release selection.
 var errBackToRelease = fmt.Errorf("back to release selection")
 
-func configureRegistryAuth(scanner *bufio.Scanner, wsCfg *bundle.WorkspaceConfig, usedPrefixes map[string]bool) error {
+func configureRegistryAuth(wsCfg *bundle.WorkspaceConfig, usedPrefixes map[string]bool) error {
 	authRepos := findAuthRepos(wsCfg, usedPrefixes)
 	if len(authRepos) == 0 {
 		return nil
@@ -521,11 +528,11 @@ func configureRegistryAuth(scanner *bufio.Scanner, wsCfg *bundle.WorkspaceConfig
 		host := registryHost(repo.URL)
 		output.PrintText("  %s: %s", t("install.registry.host"), host)
 		for {
-			username := promptText(scanner, t("install.registry.username"), "", "")
+			username := promptInput(t("install.registry.username"), "", "")
 			if username == "" {
 				continue
 			}
-			password := promptText(scanner, t("install.registry.password"), "", "")
+			password := promptPassword(t("install.registry.password"))
 			if password == "" {
 				continue
 			}
@@ -534,7 +541,7 @@ func configureRegistryAuth(scanner *bufio.Scanner, wsCfg *bundle.WorkspaceConfig
 			if err := dockerRegistryLogin(host, username, password); err != nil {
 				output.Errf("  %s: %v", t("install.registry.failed"), err)
 				options := []string{t("install.registry.retry"), t("install.registry.backToRelease")}
-				choice := promptNumber(scanner, t("install.registry.recovery"), options, 0)
+				choice := promptSelect(t("install.registry.recovery"), options, 0)
 				if choice == t("install.registry.backToRelease") {
 					return errBackToRelease
 				}
@@ -679,6 +686,33 @@ func bundleImageRepoIDs(ref bundle.Ref, wsCfg *bundle.WorkspaceConfig) map[strin
 	return ids
 }
 
+// selectSnapshot shows an optional snapshot picker. Returns selected snapshot ID or "".
+func selectSnapshot(snapshots []bundle.SnapshotDef) string {
+	fmt.Println() //nolint:forbidigo // CLI separator
+	printStepHeader(4, t("install.snapshot.label"))
+
+	options := make([]string, 0, len(snapshots)+1)
+	for _, snap := range snapshots {
+		label := snap.Name
+		if snap.Size != "" {
+			label += " (" + snap.Size + ")"
+		}
+		options = append(options, label)
+	}
+	options = append(options, t("install.snapshot.skip"))
+
+	selected := promptSelect(t("install.snapshot.prompt"), options, len(options)-1)
+
+	// Last option = skip.
+	for i, snap := range snapshots {
+		if selected == options[i] {
+			fmt.Printf("  %s: %s\n", t("install.snapshot.selected"), snap.Name) //nolint:forbidigo // CLI output
+			return snap.ID
+		}
+	}
+	return ""
+}
+
 // repoVersions holds a bundle repo and its discovered versions.
 type repoVersions struct {
 	repo     bundle.BundlesRepo
@@ -695,7 +729,7 @@ func (rv repoVersions) displayName() string {
 
 // resolveRelease resolves available platform releases and lets the user pick one.
 // Returns an error if no releases are available (offline without workspace data).
-func resolveRelease(scanner *bufio.Scanner, nsCfg *namespace.Config, offline bool) error {
+func resolveRelease(nsCfg *namespace.Config, offline bool) error {
 	output.PrintText("  %s", t("install.release.fetching"))
 	// Suppress slog during git clone — INFO messages break the wizard output.
 	// Safe: wizard is single-threaded at this point, no concurrent log producers.
@@ -703,9 +737,6 @@ func resolveRelease(scanner *bufio.Scanner, nsCfg *namespace.Config, offline boo
 	slog.SetDefault(slog.New(slog.DiscardHandler))
 	repos := discoverRepos(offline)
 	slog.SetDefault(prevLogger)
-	if isTTYOut() {
-		clearLines(1) // remove "fetching..." line
-	}
 
 	// Filter to repos that have at least one version
 	var withVersions []repoVersions
@@ -719,13 +750,13 @@ func resolveRelease(scanner *bufio.Scanner, nsCfg *namespace.Config, offline boo
 		return fmt.Errorf("%s\n\n%s", t("install.release.notFound"), t("install.release.notFoundHelp"))
 	}
 
-	ref := pickRelease(scanner, withVersions, repos)
+	ref := pickRelease(withVersions, repos)
 	nsCfg.BundleRef = ref
 	return nil
 }
 
 // pickRelease shows a top-level menu: latest from each repo + "other" for version browsing.
-func pickRelease(scanner *bufio.Scanner, withVersions, allRepos []repoVersions) bundle.Ref {
+func pickRelease(withVersions, allRepos []repoVersions) bundle.Ref {
 	for {
 		// Build top-level options: latest from each repo with versions + "other"
 		options := make([]string, 0, len(withVersions)+1)
@@ -737,11 +768,11 @@ func pickRelease(scanner *bufio.Scanner, withVersions, allRepos []repoVersions) 
 			options = append(options, otherLabel)
 		}
 
-		selected := promptNumber(scanner, t("install.release.label"), options, 0)
+		selected := promptSelect(t("install.release.label"), options, 0)
 
 		// "Other version..." selected → drill-down menu
 		if selected == otherLabel {
-			if ref, ok := pickOtherRelease(scanner, allRepos); ok {
+			if ref, ok := pickOtherRelease(allRepos); ok {
 				return ref
 			}
 			continue // back pressed → re-show top-level menu
@@ -763,7 +794,7 @@ func pickRelease(scanner *bufio.Scanner, withVersions, allRepos []repoVersions) 
 
 // pickOtherRelease shows repo list → version list with back navigation.
 // Returns (ref, true) on selection, (_, false) on back.
-func pickOtherRelease(scanner *bufio.Scanner, repos []repoVersions) (bundle.Ref, bool) {
+func pickOtherRelease(repos []repoVersions) (bundle.Ref, bool) {
 	for {
 		// Step 1: pick repo
 		repoOptions := make([]string, 0, len(repos)+1)
@@ -773,7 +804,7 @@ func pickOtherRelease(scanner *bufio.Scanner, repos []repoVersions) (bundle.Ref,
 		backLabel := t("install.release.back")
 		repoOptions = append(repoOptions, backLabel)
 
-		repoChoice := promptNumber(scanner, t("install.release.source"), repoOptions, 0)
+		repoChoice := promptSelect(t("install.release.source"), repoOptions, 0)
 		if repoChoice == backLabel {
 			return bundle.Ref{}, false
 		}
@@ -808,7 +839,7 @@ func pickOtherRelease(scanner *bufio.Scanner, repos []repoVersions) (bundle.Ref,
 		}
 		verOptions = append(verOptions, verBackLabel)
 
-		verChoice := promptNumber(scanner, t("install.release.version"), verOptions, 0)
+		verChoice := promptSelect(t("install.release.version"), verOptions, 0)
 		if verChoice == verBackLabel {
 			continue // back to repo selection
 		}
@@ -899,7 +930,7 @@ func generateInstallClientCert() {
 }
 
 // installSystemdAndFirewall handles the combined systemd + firewall step.
-func installSystemdAndFirewall(scanner *bufio.Scanner, platformPort int) {
+func installSystemdAndFirewall(platformPort int) {
 	fmt.Println() //nolint:forbidigo // CLI output
 	if _, lookErr := exec.LookPath("systemctl"); lookErr != nil {
 		output.PrintText("  %s", t("install.systemd.notAvailable"))
@@ -945,7 +976,7 @@ WantedBy=multi-user.target
 
 	// Firewall sub-prompt: only if non-standard port and platform port is set
 	if platformPort > 0 && platformPort != 80 && platformPort != 443 {
-		if promptYesNo(scanner, t("install.firewall.open", "port", strconv.Itoa(platformPort)), t("install.firewall.hint"), true) {
+		if promptConfirm(t("install.firewall.open", "port", strconv.Itoa(platformPort)), true) {
 			openFirewallPort(platformPort)
 		}
 	}

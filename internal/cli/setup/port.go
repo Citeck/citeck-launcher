@@ -23,7 +23,7 @@ func (s *portSetting) Available(_ *namespace.Config, _ []string) bool { return t
 
 func (s *portSetting) CurrentValue(cfg *namespace.Config, _ *config.DaemonConfig) string {
 	if cfg.Proxy.Port == 0 {
-		return "not configured"
+		return i18n.T("setup.value.not_configured")
 	}
 	return strconv.Itoa(cfg.Proxy.Port)
 }
@@ -39,7 +39,7 @@ func (s *portSetting) Run(_ *setupContext, cfg *namespace.Config, _ *config.Daem
 	if err != nil {
 		return fmt.Errorf("port input: %w", err)
 	}
-	port, _ := strconv.Atoi(strings.TrimSpace(portStr))
+	port, _ := strconv.Atoi(strings.TrimSpace(portStr)) // error safe: validatePort already checked format
 	cfg.Proxy.Port = port
 	return nil
 }

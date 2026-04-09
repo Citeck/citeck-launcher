@@ -93,6 +93,7 @@ type Runtime struct {
 	statusNotify           chan struct{}                     // closed+recreated on every app status change
 	cmdCh              chan command
 	stopCh             chan struct{}       // dedicated stop signal that can't be dropped
+	detachCh           chan struct{}       // exit runLoop without stopping containers (binary upgrade)
 	pullSem            chan struct{}       // limits concurrent image pulls
 	reconcilerCfg      *ReconcilerConfig  // optional override from daemon.yml
 	defaultStopTimeout int                // from daemon.yml docker.stopTimeout; 0 = use hardcoded default (10s)
@@ -254,6 +255,7 @@ func NewRuntimeWithActions(cfg *Config, dockerClient docker.RuntimeClient, volum
 		statusNotify:      make(chan struct{}),
 		cmdCh:             make(chan command, 16),
 		stopCh:            make(chan struct{}, 1),
+		detachCh:          make(chan struct{}, 1),
 		pullSem:           make(chan struct{}, 4),
 		eventCh:           make(chan api.EventDto, 256),
 	}

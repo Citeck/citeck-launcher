@@ -3,6 +3,7 @@ package setup
 import (
 	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/client"
@@ -58,7 +59,9 @@ func writePendingSecretsDaemon(sctx *setupContext, c *client.DaemonClient, times
 	}
 
 	ops := &SecretOps{}
-	for key, value := range sctx.PendingSecrets {
+	keys := sortedKeys(sctx.PendingSecrets)
+	for _, key := range keys {
+		value := sctx.PendingSecrets[key]
 		backupKey := key + "._backup." + timestamp
 		hasBackup := false
 
@@ -92,7 +95,9 @@ func writePendingSecretsDaemon(sctx *setupContext, c *client.DaemonClient, times
 // writePendingSecretsLocal writes secrets via local SecretService with backup support.
 func writePendingSecretsLocal(sctx *setupContext, svc *storage.SecretService, timestamp string) (*SecretOps, error) {
 	ops := &SecretOps{}
-	for key, value := range sctx.PendingSecrets {
+	keys := sortedKeys(sctx.PendingSecrets)
+	for _, key := range keys {
+		value := sctx.PendingSecrets[key]
 		backupKey := key + "._backup." + timestamp
 		hasBackup := false
 
@@ -238,4 +243,14 @@ func openLocalSecretService() (*storage.SecretService, error) {
 	}
 	// Custom password: svc stays locked — SaveSecret will return ErrSecretsLocked.
 	return svc, nil
+}
+
+// sortedKeys returns map keys in sorted order for deterministic iteration.
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

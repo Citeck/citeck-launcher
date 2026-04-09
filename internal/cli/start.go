@@ -66,7 +66,7 @@ func newStartCmd(version string) *cobra.Command {
 					return fmt.Errorf("no namespace configured\n\nRun 'citeck install' to set up your namespace first")
 				}
 				// Check registry credentials for private image repos (interactive TTY only)
-				if isTTYOut() {
+				if output.IsTTY() {
 					if err := checkRegistryAuth(); err != nil {
 						return err
 					}
@@ -192,12 +192,7 @@ func resolvePassword(desktop bool) (string, error) {
 
 // handlePasswordReset guides the user through resetting secrets.
 func handlePasswordReset(svc *storage.SecretService) (string, error) {
-	fmt.Print("All secrets will be regenerated. Continue? [y/N]: ") //nolint:forbidigo // CLI prompt
-	// Read confirmation directly from fd (not bufio) to avoid buffering conflict with term.ReadPassword
-	buf := make([]byte, 64)
-	n, _ := os.Stdin.Read(buf)
-	line := strings.TrimSpace(strings.ToLower(string(buf[:n])))
-	if line != "y" && line != "yes" {
+	if !promptConfirm("All secrets will be regenerated. Continue?", false) {
 		return "", fmt.Errorf("reset canceled")
 	}
 
@@ -358,7 +353,7 @@ func streamLiveStatus(c *client.DaemonClient, follow bool) error {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
 
-	isTTY := isTTYOut()
+	isTTY := output.IsTTY()
 	firstPrint := true
 	linesPrinted := 0
 	lastRunning := -1
@@ -381,7 +376,7 @@ func streamLiveStatus(c *client.DaemonClient, follow bool) error {
 
 		if isTTY {
 			if !firstPrint && linesPrinted > 0 {
-				clearLines(linesPrinted)
+				output.ClearLines(linesPrinted)
 			}
 			firstPrint = false
 
@@ -451,16 +446,15 @@ func checkRegistryAuth() error {
 
 	ensureI18n()
 
-	scanner := bufio.NewScanner(os.Stdin)
 	for _, repo := range missing {
 		host := registryHost(repo.URL)
 		output.PrintText("%s: %s", t("install.registry.host"), host)
 		for {
-			username := promptText(scanner, t("install.registry.username"), "", "")
+			username := promptInput(t("install.registry.username"), "", "")
 			if username == "" {
 				return fmt.Errorf("registry credentials required for %s\n\nConfigure via 'citeck install' or provide credentials", host)
 			}
-			password := promptText(scanner, t("install.registry.password"), "", "")
+			password := promptPassword(t("install.registry.password"))
 			if password == "" {
 				continue
 			}

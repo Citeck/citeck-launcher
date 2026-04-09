@@ -23,7 +23,7 @@ func (s *hostnameSetting) Available(_ *namespace.Config, _ []string) bool { retu
 
 func (s *hostnameSetting) CurrentValue(cfg *namespace.Config, _ *config.DaemonConfig) string {
 	if cfg.Proxy.Host == "" {
-		return "not configured"
+		return i18n.T("setup.value.not_configured")
 	}
 	return cfg.Proxy.Host
 }

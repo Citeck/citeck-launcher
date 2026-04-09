@@ -23,7 +23,7 @@ func (s *emailSetting) Available(_ *namespace.Config, _ []string) bool { return 
 
 func (s *emailSetting) CurrentValue(cfg *namespace.Config, _ *config.DaemonConfig) string {
 	if cfg.Email == nil {
-		return "not configured"
+		return i18n.T("setup.value.not_configured")
 	}
 	return fmt.Sprintf("%s:%d", cfg.Email.Host, cfg.Email.Port)
 }
@@ -98,7 +98,7 @@ func (s *emailSetting) Run(sctx *setupContext, cfg *namespace.Config, _ *config.
 		return fmt.Errorf("email form: %w", err)
 	}
 
-	port, _ := strconv.Atoi(strings.TrimSpace(portStr))
+	port, _ := strconv.Atoi(strings.TrimSpace(portStr)) // error safe: validatePort already checked format
 	cfg.Email = &namespace.EmailConfig{
 		Host:     strings.TrimSpace(host),
 		Port:     port,

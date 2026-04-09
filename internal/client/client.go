@@ -159,10 +159,19 @@ func (c *DaemonClient) IsRunning() bool {
 	return err == nil && status.Running
 }
 
-// Shutdown requests a graceful daemon shutdown.
+// Shutdown requests a graceful daemon shutdown (containers stopped).
 func (c *DaemonClient) Shutdown() (*api.ActionResultDto, error) {
 	var dto api.ActionResultDto
 	err := c.post(api.DaemonShutdown, nil, &dto)
+	return &dto, err
+}
+
+// ShutdownLeaveRunning asks the daemon to exit without stopping containers.
+// Used for binary upgrades — the next daemon adopts the running platform
+// via doStart's hash-matching path.
+func (c *DaemonClient) ShutdownLeaveRunning() (*api.ActionResultDto, error) {
+	var dto api.ActionResultDto
+	err := c.post(api.DaemonShutdown+"?leave_running=true", nil, &dto)
 	return &dto, err
 }
 

@@ -1,11 +1,8 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/api"
@@ -75,10 +72,7 @@ func newSnapshotExportCmd() *cobra.Command {
 			// Resolve output directory: flag → interactive prompt → default
 			dir := outputDir
 			if dir == "" && !flagYes {
-				fmt.Print("Output directory (empty for default snapshots dir): ") //nolint:forbidigo // CLI prompt
-				scanner := bufio.NewScanner(os.Stdin)
-				scanner.Scan()
-				dir = strings.TrimSpace(scanner.Text())
+				dir = promptInput("Output directory", "empty for default snapshots dir", "")
 			}
 
 			// Check if namespace is running — offer to stop
@@ -124,14 +118,8 @@ func newSnapshotExportCmd() *cobra.Command {
 
 // stopForSnapshot prompts the user (unless --yes) and stops the namespace for a snapshot operation.
 func stopForSnapshot(c *client.DaemonClient) error {
-	if !flagYes {
-		fmt.Print("Namespace is running. Stop it? [Y/n]: ") //nolint:forbidigo // CLI prompt
-		scanner := bufio.NewScanner(os.Stdin)
-		scanner.Scan()
-		answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
-		if answer == "n" || answer == "no" {
-			return fmt.Errorf("canceled — namespace must be stopped")
-		}
+	if !promptConfirm("Namespace is running. Stop it?", true) {
+		return fmt.Errorf("canceled — namespace must be stopped")
 	}
 	output.PrintText("Stopping namespace...")
 	if _, stopErr := c.StopNamespace(); stopErr != nil {

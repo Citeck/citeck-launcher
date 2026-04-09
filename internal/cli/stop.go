@@ -13,18 +13,40 @@ import (
 func newStopCmd() *cobra.Command {
 	var shutdown bool
 	var detach bool
+	var leaveRunning bool
 
 	cmd := &cobra.Command{
 		Use:   "stop [app]",
 		Short: "Stop the namespace (or a single app)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if leaveRunning && !shutdown {
+				return fmt.Errorf("--leave-running requires --shutdown")
+			}
+			if leaveRunning && len(args) == 1 {
+				return fmt.Errorf("--leave-running cannot be combined with an app argument")
+			}
+
 			c := client.TryNew(clientOpts())
 			if c == nil || !c.IsRunning() {
 				output.PrintText("Platform is not running")
 				return nil // idempotent by design
 			}
 			defer c.Close()
+
+			// --shutdown --leave-running: detach the daemon without touching
+			// containers. Used by install.sh for binary upgrades — the next
+			// daemon adopts the running platform via doStart hash matching.
+			if leaveRunning {
+				r, shutdownErr := c.ShutdownLeaveRunning()
+				if shutdownErr != nil {
+					return fmt.Errorf("detach daemon: %w", shutdownErr)
+				}
+				output.PrintResult(r, func() {
+					output.PrintText(r.Message)
+				})
+				return nil
+			}
 
 			// App specified → stop single app
 			if len(args) == 1 {
@@ -68,13 +90,14 @@ func newStopCmd() *cobra.Command {
 
 	cmd.Flags().BoolVarP(&shutdown, "shutdown", "s", false, "Also shutdown the daemon")
 	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "Send stop and return without waiting (like docker-compose stop -d)")
+	cmd.Flags().BoolVar(&leaveRunning, "leave-running", false, "With --shutdown: exit the daemon without stopping containers (for binary upgrades)")
 
 	return cmd
 }
 
 // streamStopStatus polls the daemon and shows live stop progress until all apps are STOPPED.
 func streamStopStatus(c *client.DaemonClient) error {
-	isTTY := isTTYOut()
+	isTTY := output.IsTTY()
 	linesPrinted := 0
 	lastStopped := -1
 	deadline := time.Now().Add(5 * time.Minute)
@@ -86,11 +109,18 @@ func streamStopStatus(c *client.DaemonClient) error {
 			continue
 		}
 
-		table, _, stopped, total := renderAppTable(ns.Apps)
+		r := output.FormatAppTable(ns.Apps)
+		table, total := r.Table, r.Total
+		stopped := 0
+		for _, app := range ns.Apps {
+			if app.Status == "STOPPED" {
+				stopped++
+			}
+		}
 
 		if isTTY {
 			if linesPrinted > 0 {
-				clearLines(linesPrinted)
+				output.ClearLines(linesPrinted)
 			}
 			fmt.Println(table)            //nolint:forbidigo // CLI table
 			fmt.Println()                 //nolint:forbidigo // CLI spacing

@@ -1,23 +1,52 @@
-package cli
+package setup
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/client"
+	"github.com/citeck/citeck-launcher/internal/i18n"
 	"github.com/citeck/citeck-launcher/internal/output"
 )
 
-// StreamReloadStatus waits for all services to reach terminal state after a reload/config change.
-// Shows live table in TTY mode. Returns nil on success, errInterrupted on Ctrl+C.
-// Exported so cli/setup can call it.
-func StreamReloadStatus(c *client.DaemonClient) error {
-	ensureI18n()
+// reloadAndWait triggers a namespace reload via daemon API and waits for all
+// services to reach a terminal state. No-op if daemon is not running.
+// Ctrl+C interrupts the wait — changes continue applying in the background.
+func reloadAndWait() {
+	c := client.TryNew(client.Options{})
+	if c == nil {
+		return // Daemon not running — changes will apply on next start.
+	}
+	defer c.Close()
+
+	if !c.IsRunning() {
+		return
+	}
+
+	fmt.Println() //nolint:forbidigo // CLI spacing
+	output.PrintText(i18n.T("setup.reloading"))
+
+	result, err := c.ReloadNamespace()
+	if err != nil {
+		slog.Warn("Reload failed after setup", "err", err)
+		output.PrintText("  %s: %v", i18n.T("setup.reload_failed"), err)
+		return
+	}
+	if !result.Success {
+		output.PrintText("  %s: %s", i18n.T("setup.reload_failed"), result.Message)
+		return
+	}
+
+	waitForServices(c)
+}
+
+// waitForServices polls namespace status until all apps reach a terminal state.
+func waitForServices(c *client.DaemonClient) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
@@ -33,19 +62,20 @@ func StreamReloadStatus(c *client.DaemonClient) error {
 	for {
 		select {
 		case <-sigCh:
-			fmt.Println() //nolint:forbidigo // clean newline on Ctrl+C
-			output.PrintText(t("reload.interrupted"))
-			return errInterrupted
+			fmt.Println() //nolint:forbidigo // clean newline
+			output.PrintText(i18n.T("setup.reload_interrupted"))
+			return
 		default:
 		}
 
-		ns, err := c.GetNamespace()
-		if err != nil {
+		ns, pollErr := c.GetNamespace()
+		if pollErr != nil {
 			time.Sleep(1 * time.Second)
 			continue
 		}
 
-		table, running, failed, total := renderAppTable(ns.Apps)
+		r := output.FormatAppTable(ns.Apps)
+		table, running, failed, total := r.Table, r.Running, r.Failed, r.Total
 
 		if isTTY {
 			if !firstPrint && linesPrinted > 0 {
@@ -72,18 +102,11 @@ func StreamReloadStatus(c *client.DaemonClient) error {
 				fmt.Printf("\n%s\n", output.Colorize(output.Yellow,
 					fmt.Sprintf("%d/%d running, %d failed", running, total, failed))) //nolint:forbidigo // CLI result
 			} else {
-				fmt.Printf("\n%s\n", output.Colorize(output.Green, t("reload.complete"))) //nolint:forbidigo // CLI success
+				fmt.Printf("\n%s\n", output.Colorize(output.Green, i18n.T("setup.reload_complete"))) //nolint:forbidigo // success
 			}
-			return nil
+			return
 		}
 
 		time.Sleep(2 * time.Second)
 	}
-}
-
-// renderAppTable is a convenience wrapper around output.FormatAppTable
-// that returns the same 4-tuple used by streamLiveStatus and StreamReloadStatus.
-func renderAppTable(apps []api.AppDto) (table string, running, failed, total int) {
-	r := output.FormatAppTable(apps)
-	return r.Table, r.Running, r.Failed, r.Total
 }

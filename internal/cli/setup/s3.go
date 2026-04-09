@@ -27,7 +27,7 @@ func (s *s3Setting) Available(_ *namespace.Config, apps []string) bool {
 
 func (s *s3Setting) CurrentValue(cfg *namespace.Config, _ *config.DaemonConfig) string {
 	if cfg.S3 == nil {
-		return "not configured"
+		return i18n.T("setup.value.not_configured")
 	}
 	host := cfg.S3.Endpoint
 	if u, err := url.Parse(host); err == nil && u.Host != "" {

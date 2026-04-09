@@ -22,9 +22,11 @@ type mockContainer struct {
 
 // mockDocker implements docker.RuntimeClient for behavioral tests.
 type mockDocker struct {
-	mu         sync.Mutex
-	containers map[string]mockContainer // app name → container
-	nextID     int
+	mu               sync.Mutex
+	containers       map[string]mockContainer // app name → container
+	nextID           int
+	stopRemoveCalls  int // number of StopAndRemoveContainer invocations
+	removeNetCalls   int // number of RemoveNetwork invocations
 }
 
 func newMockDocker() *mockDocker {
@@ -39,7 +41,12 @@ func (m *mockDocker) CreateNetwork(ctx context.Context) (string, error) {
 	return "mock-network", nil
 }
 
-func (m *mockDocker) RemoveNetwork(ctx context.Context) error { return nil }
+func (m *mockDocker) RemoveNetwork(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.removeNetCalls++
+	return nil
+}
 
 func (m *mockDocker) CreateContainer(ctx context.Context, app appdef.ApplicationDef, volumesBaseDir string) (string, error) {
 	m.mu.Lock()
@@ -66,6 +73,12 @@ func (m *mockDocker) StopContainer(ctx context.Context, id string, timeoutSec in
 func (m *mockDocker) RemoveContainer(ctx context.Context, id string) error { return nil }
 
 func (m *mockDocker) StopAndRemoveContainer(ctx context.Context, name string, timeoutSec int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.stopRemoveCalls++
+	// Strip the "test-" prefix added by ContainerName so we delete the right key.
+	appName := strings.TrimPrefix(name, "test-")
+	delete(m.containers, appName)
 	return nil
 }
 
@@ -373,5 +386,146 @@ func TestStopWhileStarting(t *testing.T) {
 
 	if !waitForStatus(r, NsStatusStopped, 10*time.Second) {
 		t.Fatalf("namespace did not reach STOPPED after stop-during-start, got %v", r.Status())
+	}
+}
+
+// TestDetachLeavesContainersRunning verifies that ShutdownDetached exits the
+// runtime without stopping or removing any containers — the binary-upgrade
+// path that lets the next daemon adopt the live platform.
+func TestDetachLeavesContainersRunning(t *testing.T) {
+	md := newMockDocker()
+	r := NewRuntime(testConfig(), md, t.TempDir())
+
+	apps := []appdef.ApplicationDef{
+		simpleApp("postgres", "postgres:17"),
+		simpleApp("mongo", "mongo:4"),
+	}
+
+	r.Start(apps)
+	if !waitForStatus(r, NsStatusRunning, 10*time.Second) {
+		t.Fatalf("namespace did not reach RUNNING, got %v", r.Status())
+	}
+
+	// Snapshot containers + stop counter so we can assert detach left them alone.
+	md.mu.Lock()
+	containersBefore := len(md.containers)
+	stopCallsBefore := md.stopRemoveCalls
+	netCallsBefore := md.removeNetCalls
+	md.mu.Unlock()
+
+	if containersBefore != len(apps) {
+		t.Fatalf("expected %d containers before detach, got %d", len(apps), containersBefore)
+	}
+
+	r.ShutdownDetached()
+
+	// runLoop must have exited (running flag clear).
+	if r.running.Load() {
+		t.Fatalf("runtime still marked as running after ShutdownDetached")
+	}
+
+	md.mu.Lock()
+	containersAfter := len(md.containers)
+	stopCallsAfter := md.stopRemoveCalls
+	netCallsAfter := md.removeNetCalls
+	md.mu.Unlock()
+
+	if containersAfter != containersBefore {
+		t.Fatalf("detach removed containers: before=%d after=%d", containersBefore, containersAfter)
+	}
+	if stopCallsAfter != stopCallsBefore {
+		t.Fatalf("detach called StopAndRemoveContainer: before=%d after=%d", stopCallsBefore, stopCallsAfter)
+	}
+	if netCallsAfter != netCallsBefore {
+		t.Fatalf("detach called RemoveNetwork: before=%d after=%d", netCallsBefore, netCallsAfter)
+	}
+}
+
+// TestDetachWhileStopping verifies that asking for detach after a stop is
+// already in flight degrades into a regular shutdown wait — the runtime
+// must NOT leave containers running when it's already committed to a stop.
+func TestDetachWhileStopping(t *testing.T) {
+	md := newMockDocker()
+	r := NewRuntime(testConfig(), md, t.TempDir())
+
+	apps := []appdef.ApplicationDef{
+		simpleApp("postgres", "postgres:17"),
+	}
+
+	r.Start(apps)
+	if !waitForStatus(r, NsStatusRunning, 10*time.Second) {
+		t.Fatalf("namespace did not reach RUNNING")
+	}
+
+	// Force the runtime into STOPPING under the lock so the detach probe
+	// observes it. Sending on stopCh would race the runLoop's consumption
+	// (it could pick stopCh before our probe runs and clear status fast),
+	// so we mutate status directly under the lock — same shape as doStop.
+	r.mu.Lock()
+	r.setStatus(NsStatusStopping)
+	r.mu.Unlock()
+
+	// Detach must refuse — stop is committed.
+	if r.Detach() {
+		t.Fatalf("Detach() returned true while status was STOPPING")
+	}
+
+	// Drive a real stop through to completion so the test cleans up.
+	r.mu.Lock()
+	// Reset to a runnable status so doStop's normal path proceeds.
+	r.setStatus(NsStatusRunning)
+	r.mu.Unlock()
+	r.Shutdown()
+}
+
+// TestDetachThenAdopt verifies the full upgrade flow: detach the runtime,
+// create a fresh runtime against the same mock docker, and confirm the
+// new runtime adopts the existing containers without recreating them.
+func TestDetachThenAdopt(t *testing.T) {
+	md := newMockDocker()
+	tmpDir := t.TempDir()
+	r1 := NewRuntime(testConfig(), md, tmpDir)
+
+	apps := []appdef.ApplicationDef{
+		simpleApp("postgres", "postgres:17"),
+		simpleApp("mongo", "mongo:4"),
+	}
+
+	r1.Start(apps)
+	if !waitForStatus(r1, NsStatusRunning, 10*time.Second) {
+		t.Fatalf("first runtime did not reach RUNNING")
+	}
+
+	md.mu.Lock()
+	createsBefore := md.nextID
+	md.mu.Unlock()
+
+	r1.ShutdownDetached()
+
+	// Containers must still exist after detach.
+	md.mu.Lock()
+	if len(md.containers) != len(apps) {
+		md.mu.Unlock()
+		t.Fatalf("expected %d containers to survive detach, got %d", len(apps), len(md.containers))
+	}
+	md.mu.Unlock()
+
+	// Spin up a fresh runtime against the same mock — simulates a new
+	// daemon process. doStart must reuse running containers (hash match)
+	// instead of creating new ones.
+	r2 := NewRuntime(testConfig(), md, tmpDir)
+	defer r2.Shutdown()
+
+	r2.Start(apps)
+	if !waitForStatus(r2, NsStatusRunning, 10*time.Second) {
+		t.Fatalf("second runtime did not reach RUNNING after adopt")
+	}
+
+	md.mu.Lock()
+	createsAfter := md.nextID
+	md.mu.Unlock()
+
+	if createsAfter != createsBefore {
+		t.Fatalf("new runtime created new containers instead of adopting: createsBefore=%d createsAfter=%d", createsBefore, createsAfter)
 	}
 }

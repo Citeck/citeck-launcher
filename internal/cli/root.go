@@ -98,11 +98,11 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 		newCertCmd(),
 		newCleanCmd(),
 		newMigrateCmd(),
-		newInstallCmd(),
+		newInstallCmd(info),
 		newUninstallCmd(),
 		newSnapshotCmd(),
 		newUpgradeCmd(),
-		newSelfUpdateCmd(info.Version),
+
 		newValidateCmd(),
 		newWebUICmd(),
 		newWorkspaceCmd(),

@@ -52,13 +52,8 @@ func runWorkspaceImport(_ *cobra.Command, args []string) error {
 
 	// Check if destination already exists
 	if entries, err := os.ReadDir(destDir); err == nil && len(entries) > 0 {
-		if !flagYes {
-			output.PrintText(fmt.Sprintf("Destination %s already exists with %d entries. Overwrite? [y/N]: ", destDir, len(entries)))
-			var answer string
-			fmt.Scanln(&answer) //nolint:errcheck // best-effort prompt
-			if !strings.EqualFold(answer, "y") && !strings.EqualFold(answer, "yes") {
-				return fmt.Errorf("canceled")
-			}
+		if !promptConfirm(fmt.Sprintf("Destination %s already exists with %d entries. Overwrite?", destDir, len(entries)), true) {
+			return fmt.Errorf("canceled")
 		}
 		if err := os.RemoveAll(destDir); err != nil {
 			return fmt.Errorf("remove existing: %w", err)

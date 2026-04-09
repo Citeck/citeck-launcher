@@ -52,28 +52,15 @@ func allSettings() []Setting {
 	}
 }
 
-// deepCopyConfig creates a deep copy of a namespace Config via JSON round-trip.
-func deepCopyConfig(cfg *namespace.Config) (*namespace.Config, error) {
-	data, err := json.Marshal(cfg)
+// deepCopy creates a deep copy of any struct via JSON round-trip.
+func deepCopy[T any](src *T) (*T, error) {
+	data, err := json.Marshal(src)
 	if err != nil {
-		return nil, fmt.Errorf("marshal config for copy: %w", err)
+		return nil, fmt.Errorf("marshal for deep copy: %w", err)
 	}
-	var cp namespace.Config
+	var cp T
 	if err := json.Unmarshal(data, &cp); err != nil {
-		return nil, fmt.Errorf("unmarshal config copy: %w", err)
-	}
-	return &cp, nil
-}
-
-// deepCopyDaemonConfig creates a deep copy of a DaemonConfig via JSON round-trip.
-func deepCopyDaemonConfig(cfg *config.DaemonConfig) (*config.DaemonConfig, error) {
-	data, err := json.Marshal(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("marshal daemon config for copy: %w", err)
-	}
-	var cp config.DaemonConfig
-	if err := json.Unmarshal(data, &cp); err != nil {
-		return nil, fmt.Errorf("unmarshal daemon config copy: %w", err)
+		return nil, fmt.Errorf("unmarshal deep copy: %w", err)
 	}
 	return &cp, nil
 }

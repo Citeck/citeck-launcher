@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/citeck/citeck-launcher/internal/client"
@@ -9,7 +10,9 @@ import (
 )
 
 func newReloadCmd() *cobra.Command {
-	return &cobra.Command{
+	var noWait bool
+
+	cmd := &cobra.Command{
 		Use:   "reload",
 		Short: "Hot-reload namespace configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -25,17 +28,27 @@ func newReloadCmd() *cobra.Command {
 				return fmt.Errorf("reload: %w", err)
 			}
 
-			output.PrintResult(result, func() {
-				if result.Success {
-					output.PrintText(result.Message)
-				} else {
-					output.PrintText("Reload failed: %s", result.Message)
-				}
-			})
 			if !result.Success {
 				return exitWithCode(ExitError, "reload failed: %s", result.Message)
+			}
+
+			output.PrintText(result.Message)
+
+			if noWait {
+				return nil
+			}
+
+			// Wait for all services to stabilize.
+			if waitErr := StreamReloadStatus(c); waitErr != nil {
+				if errors.Is(waitErr, errInterrupted) {
+					return nil // Changes apply in background.
+				}
+				return waitErr
 			}
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVarP(&noWait, "no-wait", "d", false, "Don't wait for services to stabilize (detach)")
+	return cmd
 }

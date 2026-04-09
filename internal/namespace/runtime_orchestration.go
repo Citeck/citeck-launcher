@@ -40,6 +40,9 @@ func (r *Runtime) runLoop() {
 		case <-r.stopCh:
 			r.doStop()
 			return
+		case <-r.detachCh:
+			r.doDetach()
+			return
 		case <-ticker.C:
 			if r.statsRunning.CompareAndSwap(false, true) {
 				go func() {
@@ -345,4 +348,38 @@ func (r *Runtime) doStop() {
 	if r.history != nil {
 		r.history.Record("stop", "", "success", 0, nil, len(toStop))
 	}
+}
+
+// doDetach exits the runLoop without touching containers. Used for binary
+// upgrades — the daemon process exits but the platform keeps running, and
+// the next daemon attaches to existing containers via doStart's hash-matching
+// path (buildExistingContainerMap → reuse).
+//
+// The current namespace status is preserved (typically RUNNING) so the next
+// daemon's status recovery (server.go) auto-starts the namespace, which then
+// reuses the live containers instead of recreating them.
+func (r *Runtime) doDetach() {
+	r.mu.Lock()
+	// Cancel reconciler + in-flight app pull/start goroutines via context.
+	// They observe ctx.Done() and exit cleanly without touching containers.
+	if r.cancel != nil {
+		r.cancel()
+		r.cancel = nil
+	}
+	// Persist current state (status, restart counts, etc.) under the same lock
+	// so the next daemon sees a consistent snapshot. Status is intentionally
+	// left unchanged (RUNNING → next daemon auto-starts → reuses containers).
+	r.persistState()
+	leftRunning := len(r.apps)
+	r.mu.Unlock()
+
+	// Wait for goroutines to exit cleanly. They were canceled via runCtx
+	// above and observe ctx.Done() at their own checkpoints.
+	r.reconcileWg.Wait()
+	r.appWg.Wait()
+
+	if r.history != nil {
+		r.history.Record("detach", "", "success", 0, nil, leftRunning)
+	}
+	slog.Info("Runtime detached, containers left running for next daemon to adopt", "count", leftRunning)
 }

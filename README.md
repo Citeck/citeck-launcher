@@ -11,11 +11,12 @@ Citeck Launcher manages Citeck namespaces and Docker containers. It is a single 
 Prerequisites: Docker (running).
 
 ```bash
-curl -fsSL -o citeck https://github.com/Citeck/citeck-launcher/releases/download/v2.0.0/citeck_2.0.0_linux_amd64 \
-  && chmod +x citeck && sudo mv citeck /usr/local/bin/ && citeck install
+curl -fsSL https://raw.githubusercontent.com/Citeck/citeck-launcher/master/install.sh | bash
 ```
 
-The install wizard sets up the namespace and starts the platform.
+The install script downloads the latest release for your platform and installs to `/usr/local/bin/`. The wizard sets up the namespace and starts the platform.
+
+To **upgrade** an existing installation, run the same one-liner — the script detects the installed version, prompts to update, stops the daemon, and replaces the binary (a backup is kept at `/usr/local/bin/citeck.bak`, restorable via `bash install.sh --rollback`).
 
 ### Offline Install
 
@@ -54,11 +55,14 @@ citeck diff -f <file>                   Diff running config vs file
 citeck snapshot list|export|import      Manage volume snapshots (auto stop/start)
 citeck clean [--images] [--execute]     Clean orphaned resources / prune images
 citeck cert generate|status|letsencrypt Server TLS certificates
-citeck self-update [--check|--file]     Update launcher binary (with rollback)
+
 citeck workspace import|update          Import or update workspace repos
 citeck diagnose                         Run diagnostics
 citeck validate                         Validate namespace config
 citeck completion bash|zsh|fish         Generate shell completion
+citeck setup [setting]                  Configure settings (TUI menu or by ID)
+citeck setup history                    Show config change history
+citeck setup rollback [id]              Rollback a config change
 citeck uninstall                        Remove systemd service and config
 ```
 

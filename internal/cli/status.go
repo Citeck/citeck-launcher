@@ -62,18 +62,8 @@ func newStatusCmd() *cobra.Command {
 
 				if (apps || len(ns.Apps) > 0) && len(ns.Apps) > 0 {
 					fmt.Println()
-					headers := []string{"APP", "STATUS", "IMAGE", "CPU", "MEMORY"}
-					rows := make([][]string, 0, len(ns.Apps))
-					for _, app := range ns.Apps {
-						rows = append(rows, []string{
-							app.Name,
-							output.ColorizeStatus(app.Status),
-							app.Image,
-							app.CPU,
-							app.Memory,
-						})
-					}
-					output.PrintText(output.FormatTable(headers, rows))
+					r := output.FormatAppTable(ns.Apps)
+					output.PrintText(r.Table)
 				}
 			})
 
@@ -107,7 +97,7 @@ func watchEvents(c *client.DaemonClient) error {
 		return fmt.Errorf("connect to event stream: %w", err)
 	}
 
-	tty := isTTYOut()
+	tty := output.IsTTY()
 	var lastLines int
 
 	for range events {
@@ -132,7 +122,7 @@ func watchEvents(c *client.DaemonClient) error {
 
 		// TTY: clear previous output and redraw
 		if tty && lastLines > 0 {
-			clearLines(lastLines)
+			output.ClearLines(lastLines)
 		}
 
 		text := header + "\n" + table

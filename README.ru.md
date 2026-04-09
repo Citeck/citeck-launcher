@@ -11,11 +11,12 @@ Citeck Launcher управляет пространствами имён Citeck 
 Требования: Docker (запущен).
 
 ```bash
-curl -fsSL -o citeck https://github.com/Citeck/citeck-launcher/releases/download/v2.0.0/citeck_2.0.0_linux_amd64 \
-  && chmod +x citeck && sudo mv citeck /usr/local/bin/ && citeck install
+curl -fsSL https://raw.githubusercontent.com/Citeck/citeck-launcher/master/install.sh | bash
 ```
 
-Мастер установки настроит пространство имён и запустит платформу.
+Скрипт скачивает последний релиз для вашей платформы и устанавливает в `/usr/local/bin/`. Мастер установки настроит пространство имён и запустит платформу.
+
+Для **обновления** уже установленной версии выполните тот же one-liner — скрипт определит установленную версию, спросит подтверждение, остановит демон и заменит бинарник (бэкап сохраняется в `/usr/local/bin/citeck.bak` и восстанавливается через `bash install.sh --rollback`).
 
 ### Офлайн-установка
 
@@ -54,11 +55,14 @@ citeck diff -f <файл>                   Показать отличия от
 citeck snapshot list|export|import      Снапшоты томов (авто-остановка/запуск)
 citeck clean [--images] [--execute]     Очистка сирот / удаление образов
 citeck cert generate|status|letsencrypt Серверные TLS-сертификаты
-citeck self-update [--check|--file]     Обновить бинарник лончера (с откатом)
+
 citeck workspace import|update          Импорт/обновление workspace
 citeck diagnose                         Диагностика
 citeck validate                         Проверка конфигурации
 citeck completion bash|zsh|fish         Автодополнение
+citeck setup [настройка]                Настройка (TUI-меню или по ID)
+citeck setup history                    История изменений конфигурации
+citeck setup rollback [id]              Откат изменения
 citeck uninstall                        Удаление
 ```
 

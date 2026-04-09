@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
@@ -37,7 +36,6 @@ const dropConfirmPhrase = "drop all data"
 
 func runUninstall(deleteData bool) error {
 	ensureI18n()
-	scanner := bufio.NewScanner(os.Stdin)
 
 	// 1. Stop the daemon gracefully (stops containers + daemon)
 	c := client.TryNew(clientOpts())
@@ -88,25 +86,18 @@ func runUninstall(deleteData bool) error {
 
 	fmt.Println() //nolint:forbidigo // CLI output
 	output.PrintText(t("uninstall.dataPath", "path", homeDir))
-	output.PrintText(t("uninstall.dataDropHint", "phrase", output.Colorize(output.Bold, dropConfirmPhrase)))
-	output.PrintText(t("uninstall.dataKeepHint"))
-	for {
-		fmt.Printf("\n> ") //nolint:forbidigo // CLI prompt
-		scanner.Scan()
-		input := strings.TrimSpace(scanner.Text())
-		if input == "" {
-			output.PrintText(t("uninstall.dataPreserved", "path", homeDir))
-			break
+
+	input := promptInput(
+		t("uninstall.dataDropHint", "phrase", dropConfirmPhrase),
+		t("uninstall.dataKeepHint"), "")
+	if !strings.EqualFold(input, dropConfirmPhrase) {
+		output.PrintText(t("uninstall.dataPreserved", "path", homeDir))
+	} else {
+		if rmErr := os.RemoveAll(homeDir); rmErr != nil {
+			output.PrintText(t("uninstall.dataRemoveFailed", "path", homeDir, "error", rmErr.Error()))
+		} else {
+			output.PrintText(t("uninstall.dataRemoved", "path", homeDir))
 		}
-		if strings.EqualFold(input, dropConfirmPhrase) {
-			if err := os.RemoveAll(homeDir); err != nil {
-				output.PrintText(t("uninstall.dataRemoveFailed", "path", homeDir, "error", err.Error()))
-			} else {
-				output.PrintText(t("uninstall.dataRemoved", "path", homeDir))
-			}
-			break
-		}
-		output.PrintText(t("uninstall.dataInvalidInput", "phrase", dropConfirmPhrase))
 	}
 
 	output.PrintText("\n" + t("uninstall.complete"))

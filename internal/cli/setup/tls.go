@@ -22,15 +22,15 @@ func (s *tlsSetting) Available(_ *namespace.Config, _ []string) bool { return tr
 func (s *tlsSetting) CurrentValue(cfg *namespace.Config, _ *config.DaemonConfig) string {
 	tls := cfg.Proxy.TLS
 	if !tls.Enabled {
-		return "disabled"
+		return i18n.T("setup.value.disabled")
 	}
 	if tls.LetsEncrypt {
 		return "Let's Encrypt"
 	}
 	if tls.CertPath != "" {
-		return "custom certificate"
+		return i18n.T("setup.value.custom_cert")
 	}
-	return "self-signed"
+	return i18n.T("setup.value.self_signed")
 }
 
 func (s *tlsSetting) Run(_ *setupContext, cfg *namespace.Config, _ *config.DaemonConfig) error {

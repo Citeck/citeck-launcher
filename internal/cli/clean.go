@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -151,18 +150,11 @@ func printOrphanFindings(scan cleanScanResult, execute, images bool) {
 }
 
 func confirmCleanRemoval(scan cleanScanResult, images bool) bool {
-	if flagYes {
-		return true
-	}
 	what := fmt.Sprintf("%d containers, %d volume dirs, %d networks", len(scan.orphans), len(scan.orphanVols), len(scan.orphanNets))
 	if images {
 		what += " + dangling images"
 	}
-	fmt.Printf("Remove %s? [y/N]: ", what)
-	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Scan()
-	answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
-	if answer != "y" && answer != "yes" {
+	if !promptConfirm(fmt.Sprintf("Remove %s?", what), true) {
 		output.PrintText("Aborted")
 		return false
 	}

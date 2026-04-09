@@ -751,13 +751,15 @@ func Start(opts StartOptions) error {
 		"pid", os.Getpid(),
 	)
 
-	// Handle shutdown: external context (desktop) or signal-based (CLI)
+	// Handle shutdown: external context (desktop) or signal-based (CLI).
+	// Both paths perform a full shutdown (containers stopped) — the detach
+	// (leave-running) path is only triggered explicitly via the HTTP endpoint.
 	if opts.Ctx != nil {
 		// Desktop mode: context provided externally (Wails owns lifecycle)
 		go func() {
 			<-opts.Ctx.Done()
 			slog.Info("External context canceled, shutting down")
-			d.shutdown()
+			d.shutdown(false)
 		}()
 	} else {
 		// CLI mode: first SIGINT/SIGTERM → graceful, second → force exit
@@ -771,7 +773,7 @@ func Start(opts StartOptions) error {
 				slog.Warn("Second signal received, forcing exit")
 				os.Exit(1)
 			}()
-			d.shutdown()
+			d.shutdown(false)
 		}()
 	}
 
@@ -802,11 +804,11 @@ func Start(opts StartOptions) error {
 	return ErrShutdownRequested
 }
 
-func (d *Daemon) shutdown() {
-	d.shutdownOnce.Do(d.doShutdown)
+func (d *Daemon) shutdown(leaveRunning bool) {
+	d.shutdownOnce.Do(func() { d.doShutdown(leaveRunning) })
 }
 
-func (d *Daemon) doShutdown() {
+func (d *Daemon) doShutdown(leaveRunning bool) {
 	// Phase 1: Cancel background goroutines with 10s timeout
 	d.bgCancel()
 	bgDone := make(chan struct{})
@@ -817,10 +819,12 @@ func (d *Daemon) doShutdown() {
 		slog.Warn("Background goroutines did not finish in 10s")
 	}
 
-	// Phase 2: Shutdown runtime (has its own internal timeouts for container stops)
-	if d.runtime != nil {
-		d.runtime.Shutdown()
-	}
+	// Phase 2: Stop services that can mutate runtime state BEFORE the runtime
+	// itself winds down. The ACME renewal service in particular schedules
+	// `runtime.RestartApp("proxy")` callbacks on its own context — if a renewal
+	// fires during runtime.ShutdownDetached() it would tear down the proxy
+	// container that detach mode is supposed to leave running. Stopping the
+	// renewal first guarantees no late callbacks racing the runtime teardown.
 	if d.cloudCfgServer != nil {
 		d.cloudCfgServer.Stop()
 	}
@@ -831,7 +835,18 @@ func (d *Daemon) doShutdown() {
 		renewal.Stop()
 	}
 
-	// Phase 3: Drain HTTP connections with 10s timeout
+	// Phase 3: Shutdown runtime. When leaveRunning is set, the runtime exits
+	// without stopping containers — the next daemon will adopt them via
+	// doStart's hash-matching path. Used for binary upgrades.
+	if d.runtime != nil {
+		if leaveRunning {
+			d.runtime.ShutdownDetached()
+		} else {
+			d.runtime.Shutdown()
+		}
+	}
+
+	// Phase 4: Drain HTTP connections with 10s timeout
 	httpCtx, httpCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer httpCancel()
 	_ = d.server.Shutdown(httpCtx)

@@ -34,16 +34,67 @@ func (r *Runtime) Stop() {
 	}
 }
 
+// Detach signals the runtime to exit without stopping containers.
+// Used for binary upgrades: the daemon process exits but the platform
+// keeps running, and the next daemon attaches to existing containers
+// via doStart's hash-matching path.
+//
+// Returns false if a stop is already in flight (status STOPPING) — in
+// that case the runtime will fall through doStop's container-stopping
+// path and detach is no longer possible. Callers should check the
+// return value and surface a clear error to the user.
+func (r *Runtime) Detach() bool {
+	r.mu.RLock()
+	stopInFlight := r.status == NsStatusStopping
+	r.mu.RUnlock()
+	if stopInFlight {
+		return false
+	}
+	select {
+	case r.detachCh <- struct{}{}:
+	default:
+		// Already signaled
+	}
+	return true
+}
+
 // Shutdown stops the runtime and waits for all goroutines to complete.
 func (r *Runtime) Shutdown() {
+	r.shutdownAfter(false)
+}
+
+// ShutdownDetached exits the runtime without stopping containers, then
+// waits for all goroutines to complete. Use for binary upgrades.
+//
+// Best-effort: if Stop()/Shutdown() is already in flight (runtime status
+// is STOPPING), containers will still be stopped and ShutdownDetached
+// degrades into a regular shutdown wait. The first caller into
+// shutdownOnce wins, so concurrent Shutdown/ShutdownDetached invocations
+// produce a single teardown — whichever path that turns out to be.
+func (r *Runtime) ShutdownDetached() {
+	r.shutdownAfter(true)
+}
+
+// shutdownAfter is the shared one-shot teardown path. When leaveRunning is
+// true, the runtime exits without touching containers; otherwise it stops
+// them gracefully (legacy Shutdown semantics). If leaveRunning is requested
+// but a stop is already in flight, the function silently degrades to
+// waiting on the existing stop (containers will be stopped).
+func (r *Runtime) shutdownAfter(leaveRunning bool) {
 	r.shutdownOnce.Do(func() {
 		if r.running.Load() {
-			r.Stop()
+			signaled := false
+			if leaveRunning {
+				signaled = r.Detach()
+			}
+			if !signaled {
+				r.Stop()
+			}
 			r.wg.Wait()
 		}
 		// Wait for all app/reconciler goroutines to finish before closing eventCh.
 		// doStop already waits, but this is a belt-and-suspenders guard in case
-		// Shutdown is called after running was already cleared.
+		// shutdown is called after running was already cleared.
 		r.appWg.Wait()
 		r.reconcileWg.Wait()
 		close(r.eventCh) // stops dispatchLoop

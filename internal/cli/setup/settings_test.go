@@ -1,14 +1,21 @@
 package setup
 
 import (
+	"os"
 	"testing"
 
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/i18n"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMain(m *testing.M) {
+	i18n.InitI18n("en")
+	os.Exit(m.Run())
+}
 
 // --- hostname ---
 
@@ -18,7 +25,7 @@ func TestHostnameSetting_CurrentValue(t *testing.T) {
 	assert.Equal(t, "app.example.com", s.CurrentValue(cfg, nil))
 
 	cfg.Proxy.Host = ""
-	assert.Equal(t, "not configured", s.CurrentValue(cfg, nil))
+	assert.Equal(t, i18n.T("setup.value.not_configured"), s.CurrentValue(cfg, nil))
 }
 
 func TestHostnameSetting_Metadata(t *testing.T) {
@@ -36,7 +43,7 @@ func TestPortSetting_CurrentValue(t *testing.T) {
 	assert.Equal(t, "443", s.CurrentValue(cfg, nil))
 
 	cfg.Proxy.Port = 0
-	assert.Equal(t, "not configured", s.CurrentValue(cfg, nil))
+	assert.Equal(t, i18n.T("setup.value.not_configured"), s.CurrentValue(cfg, nil))
 }
 
 func TestPortSetting_Metadata(t *testing.T) {
@@ -72,16 +79,16 @@ func TestLanguageSetting_Metadata(t *testing.T) {
 func TestTlsSetting_CurrentValue(t *testing.T) {
 	s := &tlsSetting{}
 	cfg := &namespace.Config{}
-	assert.Equal(t, "disabled", s.CurrentValue(cfg, nil))
+	assert.Equal(t, i18n.T("setup.value.disabled"), s.CurrentValue(cfg, nil))
 
 	cfg.Proxy.TLS = namespace.TlsConfig{Enabled: true, LetsEncrypt: true}
 	assert.Equal(t, "Let's Encrypt", s.CurrentValue(cfg, nil))
 
 	cfg.Proxy.TLS = namespace.TlsConfig{Enabled: true, CertPath: "/cert.pem"}
-	assert.Equal(t, "custom certificate", s.CurrentValue(cfg, nil))
+	assert.Equal(t, i18n.T("setup.value.custom_cert"), s.CurrentValue(cfg, nil))
 
 	cfg.Proxy.TLS = namespace.TlsConfig{Enabled: true}
-	assert.Equal(t, "self-signed", s.CurrentValue(cfg, nil))
+	assert.Equal(t, i18n.T("setup.value.self_signed"), s.CurrentValue(cfg, nil))
 }
 
 func TestTlsSetting_Metadata(t *testing.T) {
@@ -119,15 +126,15 @@ func TestAuthSetting_Metadata(t *testing.T) {
 func TestResourcesSetting_CurrentValue(t *testing.T) {
 	s := &resourcesSetting{}
 	cfg := &namespace.Config{}
-	assert.Equal(t, "defaults", s.CurrentValue(cfg, nil))
+	assert.Equal(t, i18n.T("setup.value.defaults"), s.CurrentValue(cfg, nil))
 
 	cfg.Webapps = map[string]namespace.WebappProps{
 		"emodel": {HeapSize: "2g", MemoryLimit: "4g"},
 	}
-	assert.Equal(t, "1 app customized", s.CurrentValue(cfg, nil))
+	assert.Equal(t, i18n.T("setup.value.apps_customized", "count", "1"), s.CurrentValue(cfg, nil))
 
 	cfg.Webapps["gateway"] = namespace.WebappProps{HeapSize: "1g"}
-	assert.Equal(t, "2 apps customized", s.CurrentValue(cfg, nil))
+	assert.Equal(t, i18n.T("setup.value.apps_customized", "count", "2"), s.CurrentValue(cfg, nil))
 }
 
 func TestResourcesSetting_Available(t *testing.T) {
@@ -148,7 +155,7 @@ func TestResourcesSetting_Metadata(t *testing.T) {
 func TestEmailSetting_CurrentValue(t *testing.T) {
 	s := &emailSetting{}
 	cfg := &namespace.Config{}
-	assert.Equal(t, "not configured", s.CurrentValue(cfg, nil))
+	assert.Equal(t, i18n.T("setup.value.not_configured"), s.CurrentValue(cfg, nil))
 
 	cfg.Email = &namespace.EmailConfig{Host: "smtp.example.com", Port: 587}
 	assert.Equal(t, "smtp.example.com:587", s.CurrentValue(cfg, nil))
@@ -171,7 +178,7 @@ func TestEmailSetting_Metadata(t *testing.T) {
 func TestS3Setting_CurrentValue(t *testing.T) {
 	s := &s3Setting{}
 	cfg := &namespace.Config{}
-	assert.Equal(t, "not configured", s.CurrentValue(cfg, nil))
+	assert.Equal(t, i18n.T("setup.value.not_configured"), s.CurrentValue(cfg, nil))
 
 	cfg.S3 = &namespace.S3Config{Endpoint: "https://s3.example.com", Bucket: "my-bucket"}
 	assert.Equal(t, "s3.example.com / my-bucket", s.CurrentValue(cfg, nil))
