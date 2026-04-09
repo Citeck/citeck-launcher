@@ -187,7 +187,7 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		zipPath = filepath.Join(snapDir, snapshotName)
-		if _, err := os.Stat(zipPath); err != nil {
+		if _, err := os.Stat(zipPath); err != nil { //nolint:gosec // G703: zipPath built from sanitized snapshotName via validateID
 			d.snapshotMu.Unlock()
 			writeError(w, http.StatusNotFound, "snapshot not found")
 			return
@@ -242,7 +242,7 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		slog.Info("Snapshot import completed", "volumes", len(meta.Volumes))
+		slog.Info("Snapshot import completed", "volumes", len(meta.Volumes)) //nolint:gosec // G706: meta.Volumes is internal count, not user-controlled
 		d.broadcastEvent(api.EventDto{
 			Type: "snapshot_import", After: "completed",
 		})

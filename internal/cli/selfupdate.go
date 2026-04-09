@@ -420,7 +420,7 @@ func verifyChecksum(checksumsURL, assetName, actualHash string) error {
 }
 
 func isSystemdActive(service string) bool {
-	err := exec.Command("systemctl", "is-active", "--quiet", service).Run()
+	err := exec.Command("systemctl", "is-active", "--quiet", service).Run() //nolint:gosec // G204: service is a hardcoded constant from caller
 	return err == nil
 }
 

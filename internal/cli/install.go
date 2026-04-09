@@ -400,7 +400,7 @@ func configureCustomCert(nsCfg *namespace.Config, scanner *bufio.Scanner) bool {
 		if dir == "" {
 			return true // back
 		}
-		info, err := os.Stat(dir)
+		info, err := os.Stat(dir) //nolint:gosec // G703: dir is from interactive user prompt, not HTTP input
 		if err != nil || !info.IsDir() {
 			output.Errf("  %s: %s", t("install.tls.customDirNotFound"), dir)
 			continue

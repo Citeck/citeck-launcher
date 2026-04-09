@@ -98,7 +98,7 @@ func (d *Daemon) handleDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 
 	if config.IsDesktopMode() {
 		configPath := config.WorkspaceNamespaceConfigPath(d.workspaceID, nsID)
-		if err := os.Remove(configPath); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove(configPath); err != nil && !os.IsNotExist(err) { //nolint:gosec // G703: path from config.WorkspaceNamespaceConfigPath, not user input
 			writeInternalError(w, err)
 			return
 		}
