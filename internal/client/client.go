@@ -297,6 +297,21 @@ func (c *DaemonClient) ListBundles() ([]api.BundleInfoDto, error) {
 	return dto, err
 }
 
+// SaveSecret creates or updates a secret via the daemon API.
+func (c *DaemonClient) SaveSecret(id, value string) error {
+	return c.post(api.Secrets, api.SecretCreateDto{ID: id, Value: value}, nil)
+}
+
+// DeleteSecret deletes a secret by ID via the daemon API.
+func (c *DaemonClient) DeleteSecret(id string) error {
+	resp, err := c.doRequest(http.MethodDelete, api.Secrets+"/"+id, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return decodeResponse(resp, nil)
+}
+
 // RestartApp restarts the named application container.
 func (c *DaemonClient) RestartApp(name string) (*api.ActionResultDto, error) {
 	var dto api.ActionResultDto

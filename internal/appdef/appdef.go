@@ -181,4 +181,5 @@ const (
 	AppAlfSolr         = "alf-solr"
 	AppObserver        = "observer"
 	AppObsPostgres     = "observer-postgres"
+	AppContent         = "content"
 )

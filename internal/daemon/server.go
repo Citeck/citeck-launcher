@@ -119,6 +119,24 @@ func (d *Daemon) secretWriterFunc() secretWriter {
 	return d.secretService
 }
 
+// nsSecretReader returns a namespace.SecretReader backed by the daemon's SecretService.
+func (d *Daemon) nsSecretReader() namespace.SecretReader {
+	return &secretReaderAdapter{svc: d.secretService}
+}
+
+// secretReaderAdapter adapts *storage.SecretService to namespace.SecretReader.
+type secretReaderAdapter struct {
+	svc *storage.SecretService
+}
+
+func (a *secretReaderAdapter) GetSecretValue(key string) (string, error) {
+	s, err := a.svc.GetSecret(key)
+	if err != nil {
+		return "", fmt.Errorf("get secret %q: %w", key, err)
+	}
+	return s.Value, nil
+}
+
 // rebuildAuthCaches rebuilds token lookup and registry auth caches from current secrets,
 // then retries any pull-failed apps.
 func (d *Daemon) rebuildAuthCaches() {
@@ -473,6 +491,7 @@ func Start(opts StartOptions) error {
 		// Load persisted state for detached apps and status recovery
 		persistedState := namespace.LoadNsState(volumesBase, nsID)
 		var genOpts namespace.GenerateOpts
+		genOpts.SecretReader = &secretReaderAdapter{svc: secretSvc}
 		if persistedState != nil {
 			genOpts.DetachedApps = make(map[string]bool)
 			for _, name := range persistedState.ManualStoppedApps {
@@ -902,6 +921,7 @@ func (d *Daemon) doReload() error {
 	}
 
 	var genOpts namespace.GenerateOpts
+	genOpts.SecretReader = d.nsSecretReader()
 	if d.runtime != nil {
 		genOpts.DetachedApps = d.runtime.ManualStoppedApps()
 	}

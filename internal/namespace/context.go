@@ -36,6 +36,7 @@ type NsGenContext struct {
 	Bundle          *bundle.Def
 	WorkspaceConfig *bundle.WorkspaceConfig
 	Secrets         SystemSecrets
+	SecretReader    SecretReader // resolves "secret:" references in config
 	DetachedApps    map[string]bool
 	Files           map[string][]byte
 	Applications    map[string]*AppBuilder

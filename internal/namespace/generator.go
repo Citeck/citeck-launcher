@@ -26,6 +26,7 @@ type GenResp struct {
 // GenerateOpts holds optional parameters for namespace generation.
 type GenerateOpts struct {
 	DetachedApps map[string]bool // manually stopped apps excluded from dependency graph
+	SecretReader SecretReader    // resolves "secret:" references in config (nil = no resolution)
 }
 
 // Generate creates container definitions from a namespace config, bundle, and workspace config.
@@ -33,8 +34,13 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 	ctx := NewNsGenContext(cfg, bun)
 	ctx.WorkspaceConfig = wsCfg
 	ctx.Secrets = secrets
-	if len(opts) > 0 && opts[0].DetachedApps != nil {
-		ctx.DetachedApps = opts[0].DetachedApps
+	if len(opts) > 0 {
+		if opts[0].DetachedApps != nil {
+			ctx.DetachedApps = opts[0].DetachedApps
+		}
+		if opts[0].SecretReader != nil {
+			ctx.SecretReader = opts[0].SecretReader
+		}
 	}
 
 	// Load embedded appfiles
@@ -117,6 +123,9 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 }
 
 func generateMailhog(ctx *NsGenContext) {
+	if ctx.Config.Email != nil {
+		return
+	}
 	app := ctx.GetOrCreateApp(appdef.AppMailhog)
 	app.Image = bundleImageOr(ctx, appdef.AppMailhog, "mailhog/mailhog:v1.0.1")
 	app.Kind = appdef.KindThirdParty
@@ -892,19 +901,78 @@ func generateWebapp(name string, ctx *NsGenContext) {
 	}
 
 	// EAPPS special handling: add init containers from bundle citeckApps
-	if name == appdef.AppEapps && ctx.Bundle != nil && len(ctx.Bundle.CiteckApps) > 0 {
-		for _, citeckApp := range ctx.Bundle.CiteckApps {
-			app.InitContainers = append(app.InitContainers, appdef.InitContainerDef{
-				Image: citeckApp.Image,
-				Environments: map[string]string{
-					"ECOS_APPS_TARGET_DIR": "/run/ecos-apps",
-				},
-				Volumes: []string{fmt.Sprintf("./app/%s/ecos-apps:/run/ecos-apps", name)},
-			})
-		}
-		app.AddEnv("ECOS_WEBAPP_EAPPS_ADDITIONAL_ARTIFACTS_LOCATIONS", "/run/ecos-artifacts")
-		app.AddVolume(fmt.Sprintf("./app/%s/ecos-apps:/run/ecos-artifacts/app/ecosapp", name))
+	applyEappsInitContainers(name, app, ctx)
+
+	// External SMTP for notifications app
+	if ctx.Config.Email != nil && name == appdef.AppNotifications {
+		applyEmailConfig(name, ctx)
 	}
+
+	// External S3 for content app
+	if ctx.Config.S3 != nil && name == appdef.AppContent {
+		applyS3Config(app, ctx)
+	}
+}
+
+// applyEmailConfig configures external SMTP settings for the notifications app via cloud config.
+func applyEmailConfig(name string, ctx *NsGenContext) {
+	email := ctx.Config.Email
+	protocol := "smtp"
+	if email.TLS {
+		protocol = "smtps"
+	}
+	if ctx.CloudConfig[name] == nil {
+		ctx.CloudConfig[name] = make(map[string]any)
+	}
+	cc := ctx.CloudConfig[name]
+	cc["spring.mail.host"] = email.Host
+	cc["spring.mail.port"] = email.Port
+	cc["spring.mail.protocol"] = protocol
+	cc["email.notification.from"] = email.From
+	if email.Username != "" {
+		cc["spring.mail.username"] = email.Username
+	}
+	if email.Password != "" {
+		if pwd, err := resolveSecret(ctx.SecretReader, email.Password); err == nil {
+			cc["spring.mail.password"] = pwd
+		} else {
+			slog.Warn("Failed to resolve email password secret", "error", err)
+		}
+	}
+}
+
+// applyS3Config configures external S3 storage settings for the content app.
+// Note: bucket and region are stored in namespace.yml S3Config for reference and
+// configured at the app level (content-storage endpoint), not passed as env vars here.
+func applyS3Config(app *AppBuilder, ctx *NsGenContext) {
+	s3 := ctx.Config.S3
+	app.AddEnv("ECOS_ENDPOINT_CONTENT_STORAGE_S3_ENDPOINT_URL", s3.Endpoint)
+	app.AddEnv("ECOS_ENDPOINT_CONTENT_STORAGE_S3_ENDPOINT_CREDENTIALS", "content-storage-s3-credentials")
+	app.AddEnv("ECOS_SECRET_CONTENT_STORAGE_S3_CREDENTIALS_TYPE", "BASIC")
+	app.AddEnv("ECOS_SECRET_CONTENT_STORAGE_S3_CREDENTIALS_USERNAME", s3.AccessKey)
+	if sk, err := resolveSecret(ctx.SecretReader, s3.SecretKey); err == nil {
+		app.AddEnv("ECOS_SECRET_CONTENT_STORAGE_S3_CREDENTIALS_PASSWORD", sk)
+	} else {
+		slog.Warn("Failed to resolve S3 secret key", "error", err)
+	}
+}
+
+// applyEappsInitContainers adds init containers from bundle citeckApps for the eapps service.
+func applyEappsInitContainers(name string, app *AppBuilder, ctx *NsGenContext) {
+	if name != appdef.AppEapps || ctx.Bundle == nil || len(ctx.Bundle.CiteckApps) == 0 {
+		return
+	}
+	for _, citeckApp := range ctx.Bundle.CiteckApps {
+		app.InitContainers = append(app.InitContainers, appdef.InitContainerDef{
+			Image: citeckApp.Image,
+			Environments: map[string]string{
+				"ECOS_APPS_TARGET_DIR": "/run/ecos-apps",
+			},
+			Volumes: []string{fmt.Sprintf("./app/%s/ecos-apps:/run/ecos-apps", name)},
+		})
+	}
+	app.AddEnv("ECOS_WEBAPP_EAPPS_ADDITIONAL_ARTIFACTS_LOCATIONS", "/run/ecos-artifacts")
+	app.AddVolume(fmt.Sprintf("./app/%s/ecos-apps:/run/ecos-artifacts/app/ecosapp", name))
 }
 
 // applyWebappDefaults applies a WebappDefaultProps layer to an app builder.
@@ -1171,7 +1239,7 @@ var coreApps = map[string]bool{
 }
 
 var coreExtApps = map[string]bool{
-	"integrations": true, "edi": true, "content": true,
+	"integrations": true, "edi": true, appdef.AppContent: true,
 }
 
 func webappKind(name string) appdef.ApplicationKind {

@@ -72,6 +72,27 @@ type WebappProps struct {
 	LivenessDisabled bool                                 `yaml:"livenessDisabled,omitempty" json:"livenessDisabled,omitempty"`
 }
 
+// EmailConfig configures external SMTP. When set, mailhog is not generated.
+// Password field uses "secret:<key>" reference to SecretService.
+type EmailConfig struct {
+	Host     string `yaml:"host" json:"host"`
+	Port     int    `yaml:"port" json:"port"`
+	Username string `yaml:"username,omitempty" json:"username,omitempty"`
+	Password string `yaml:"password,omitempty" json:"password,omitempty"`
+	From     string `yaml:"from" json:"from"`
+	TLS      bool   `yaml:"tls" json:"tls"`
+}
+
+// S3Config configures S3 storage for ecos-content.
+// SecretKey field uses "secret:<key>" reference to SecretService.
+type S3Config struct {
+	Endpoint  string `yaml:"endpoint" json:"endpoint"`
+	Bucket    string `yaml:"bucket" json:"bucket"`
+	AccessKey string `yaml:"accessKey" json:"accessKey"`
+	SecretKey string `yaml:"secretKey" json:"secretKey"`
+	Region    string `yaml:"region,omitempty" json:"region,omitempty"`
+}
+
 // Config is the top-level namespace configuration (namespace.yml).
 type Config struct {
 	APIVersion     string              `yaml:"apiVersion,omitempty" json:"apiVersion,omitempty"`
@@ -86,6 +107,8 @@ type Config struct {
 	Proxy          ProxyProps          `yaml:"proxy" json:"proxy"`
 	Observer       ObserverProps       `yaml:"observer" json:"observer"`
 	Webapps        map[string]WebappProps `yaml:"webapps,omitempty" json:"webapps,omitempty"`
+	Email          *EmailConfig           `yaml:"email,omitempty" json:"email,omitempty"`
+	S3             *S3Config              `yaml:"s3,omitempty" json:"s3,omitempty"`
 }
 
 // DefaultNamespaceConfig returns a namespace config with sensible defaults.
@@ -149,6 +172,31 @@ func ValidateNamespaceConfig(cfg *Config) error {
 	}
 	if cfg.Authentication.Type == AuthBasic && len(cfg.Authentication.Users) == 0 {
 		return fmt.Errorf("at least one user required for BASIC authentication")
+	}
+	if cfg.Email != nil {
+		if cfg.Email.Host == "" {
+			return fmt.Errorf("email host is required")
+		}
+		if cfg.Email.Port < 1 || cfg.Email.Port > 65535 {
+			return fmt.Errorf("email port must be 1-65535, got %d", cfg.Email.Port)
+		}
+		if cfg.Email.From == "" {
+			return fmt.Errorf("email from address is required")
+		}
+	}
+	if cfg.S3 != nil {
+		if cfg.S3.Endpoint == "" {
+			return fmt.Errorf("s3 endpoint is required")
+		}
+		if cfg.S3.Bucket == "" {
+			return fmt.Errorf("s3 bucket is required")
+		}
+		if cfg.S3.AccessKey == "" {
+			return fmt.Errorf("s3 access key is required")
+		}
+		if cfg.S3.SecretKey == "" {
+			return fmt.Errorf("s3 secret key is required")
+		}
 	}
 	return nil
 }

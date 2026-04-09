@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"sort"
 	"testing"
+
+	"github.com/citeck/citeck-launcher/internal/i18n"
 )
 
 func TestLocaleCompleteness(t *testing.T) {
 	// Load reference (en) keys
-	enData, err := localeFS.ReadFile("locales/en.json")
+	enData, err := i18n.LocaleFS.ReadFile("locales/en.json")
 	if err != nil {
 		t.Fatalf("failed to read en.json: %v", err)
 	}
@@ -27,7 +29,7 @@ func TestLocaleCompleteness(t *testing.T) {
 			continue
 		}
 		t.Run(loc.Code, func(t *testing.T) {
-			data, readErr := localeFS.ReadFile("locales/" + loc.Code + ".json")
+			data, readErr := i18n.LocaleFS.ReadFile("locales/" + loc.Code + ".json")
 			if readErr != nil {
 				t.Fatalf("failed to read %s.json: %v", loc.Code, readErr)
 			}
@@ -56,7 +58,7 @@ func TestLocaleCompleteness(t *testing.T) {
 func TestLocaleValidJSON(t *testing.T) {
 	for _, loc := range SupportedLocales {
 		t.Run(loc.Code, func(t *testing.T) {
-			data, err := localeFS.ReadFile("locales/" + loc.Code + ".json")
+			data, err := i18n.LocaleFS.ReadFile("locales/" + loc.Code + ".json")
 			if err != nil {
 				t.Fatalf("failed to read %s.json: %v", loc.Code, err)
 			}

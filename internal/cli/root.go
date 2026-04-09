@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 
+	"github.com/citeck/citeck-launcher/internal/cli/setup"
 	"github.com/citeck/citeck-launcher/internal/client"
 	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/spf13/cobra"
@@ -106,6 +107,7 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 		newWebUICmd(),
 		newWorkspaceCmd(),
 		newCompletionCmd(),
+		setup.NewSetupCmd(),
 	)
 
 	return root
