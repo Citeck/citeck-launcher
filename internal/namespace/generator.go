@@ -912,6 +912,9 @@ func generateWebapp(name string, ctx *NsGenContext) {
 	app.AddPort(fmt.Sprintf("%d:%d", port, port))
 	app.AddDependsOn(ZKHost)
 	app.AddDependsOn(RMQHost)
+	if ctx.Applications[appdef.AppKeycloak] != nil {
+		app.AddDependsOn(appdef.AppKeycloak)
+	}
 
 	if javaOpts != "" {
 		app.AddEnv("JAVA_OPTS", strings.TrimSpace(javaOpts))
@@ -920,7 +923,9 @@ func generateWebapp(name string, ctx *NsGenContext) {
 	// Process data sources from workspace config
 	processWebappDataSources(name, app, ctx)
 
-	// Startup probe: HTTP health check
+	// Startup probe: HTTP health check.
+	// 60 attempts × 10s = 10 min — Java webapps can be slow on first start
+	// (class loading, DB migrations, demo data import).
 	app.StartupConditions = []appdef.StartupCondition{
 		{Probe: &appdef.AppProbeDef{
 			HTTP: &appdef.HTTPProbeDef{
@@ -928,7 +933,7 @@ func generateWebapp(name string, ctx *NsGenContext) {
 				Port: port,
 			},
 			PeriodSeconds:    10,
-			FailureThreshold: 30,
+			FailureThreshold: 60,
 			TimeoutSeconds:   5,
 		}},
 	}
