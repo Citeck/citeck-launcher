@@ -355,10 +355,9 @@ elif $KCADM config credentials --server http://localhost:8080 \
 else
   echo "ERROR: cannot authenticate to keycloak as admin" >&2
   exit 1
-fi`, adminPass))
-
-		// Update OIDC client config
-		scriptParts = append(scriptParts, `CID=$($KCADM get clients -r ecos-app \
+fi`, adminPass),
+			// Update OIDC client config
+			`CID=$($KCADM get clients -r ecos-app \
     -q clientId=ecos-proxy-app --fields id \
     --format csv --noquotes | head -1)
 [ -z "$CID" ] && { echo "WARN: ecos-proxy-app client not found"; exit 0; }`)

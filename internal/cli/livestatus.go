@@ -13,7 +13,7 @@ import (
 // Exported so cli/setup can call it.
 func StreamReloadStatus(c *client.DaemonClient) error {
 	ensureI18n()
-	_, err := streamLiveStatus(c, liveStatusOpts{
+	err := streamLiveStatus(c, liveStatusOpts{
 		initialDelay: 1 * time.Second,
 		successMsg:   output.Colorize(output.Green, t("reload.complete")),
 	})

@@ -141,7 +141,7 @@ func runInstall(info BuildInfo, workspaceZip string, offline bool) (retErr error
 		langOptions[i] = loc.Code + " (" + loc.Name + ")"
 	}
 	fmt.Println() //nolint:forbidigo // CLI output
-	locale := promptSelect("Language / Язык / 语言", langOptions, 0)
+	locale := promptSelect("Language / Язык / 语言", langOptions)
 	localeCode := strings.SplitN(locale, " ", 2)[0]
 	initI18n(localeCode)
 
@@ -193,7 +193,7 @@ hostStep:
 		tlsOptions = []string{t("install.tls.httpsAutoGen"), t("install.tls.custom"), t("install.tls.httpOnly")}
 	}
 	for {
-		result := configureTLS(&nsCfg, promptSelect(t("install.tls.label"), tlsOptions, 0))
+		result := configureTLS(&nsCfg, promptSelect(t("install.tls.label"), tlsOptions))
 		if result == tlsOK {
 			break
 		}
@@ -308,7 +308,7 @@ hostStep:
 		return nil
 	}
 	defer c.Close()
-	_, streamErr := streamLiveStatus(c, liveStatusOpts{waitAll: true})
+	streamErr := streamLiveStatus(c, liveStatusOpts{waitAll: true})
 	if streamErr != nil {
 		if errors.Is(streamErr, errInterrupted) {
 			return nil // Ctrl+C during status streaming — daemon keeps running
@@ -433,7 +433,7 @@ func tryLEWithRecovery(nsCfg *namespace.Config) tlsResult {
 			t("install.tls.leChangeHost"),
 			t("install.tls.leBackToTLS"),
 		}
-		recovery := promptSelect(t("install.tls.leRecovery"), options, 0)
+		recovery := promptSelect(t("install.tls.leRecovery"), options)
 		switch recovery {
 		case t("install.tls.leRetry"):
 			continue
@@ -518,7 +518,7 @@ func pickFileByExt(dir string, exts []string, label, excludePath string) (string
 			options = append(options, filepath.Base(m))
 		}
 		options = append(options, t("install.release.back"))
-		choice := promptSelect(label, options, 0)
+		choice := promptSelect(label, options)
 		if choice == t("install.release.back") {
 			return "", true
 		}
@@ -587,7 +587,7 @@ func configureRegistryAuth(wsCfg *bundle.WorkspaceConfig, usedPrefixes map[strin
 			if err := dockerRegistryLogin(host, username, password); err != nil {
 				output.Errf("  %s: %v", t("install.registry.failed"), err)
 				options := []string{t("install.registry.retry"), t("install.registry.backToRelease")}
-				choice := promptSelect(t("install.registry.recovery"), options, 0)
+				choice := promptSelect(t("install.registry.recovery"), options)
 				if choice == t("install.registry.backToRelease") {
 					return errBackToRelease
 				}
@@ -767,7 +767,7 @@ func selectSnapshot(snapshots []bundle.SnapshotDef) string {
 	}
 	options = append(options, t("install.snapshot.skip"))
 
-	selected := promptSelect(t("install.snapshot.prompt"), options, 0)
+	selected := promptSelect(t("install.snapshot.prompt"), options)
 
 	// Last option = skip.
 	for i, snap := range snapshots {
@@ -834,7 +834,7 @@ func pickRelease(withVersions, allRepos []repoVersions) bundle.Ref {
 			options = append(options, otherLabel)
 		}
 
-		selected := promptSelect(t("install.release.label"), options, 0)
+		selected := promptSelect(t("install.release.label"), options)
 
 		// "Other version..." selected → drill-down menu
 		if selected == otherLabel {
@@ -870,7 +870,7 @@ func pickOtherRelease(repos []repoVersions) (bundle.Ref, bool) {
 		backLabel := t("install.release.back")
 		repoOptions = append(repoOptions, backLabel)
 
-		repoChoice := promptSelect(t("install.release.source"), repoOptions, 0)
+		repoChoice := promptSelect(t("install.release.source"), repoOptions)
 		if repoChoice == backLabel {
 			return bundle.Ref{}, false
 		}
@@ -905,7 +905,7 @@ func pickOtherRelease(repos []repoVersions) (bundle.Ref, bool) {
 		}
 		verOptions = append(verOptions, verBackLabel)
 
-		verChoice := promptSelect(t("install.release.version"), verOptions, 0)
+		verChoice := promptSelect(t("install.release.version"), verOptions)
 		if verChoice == verBackLabel {
 			continue // back to repo selection
 		}

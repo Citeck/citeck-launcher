@@ -118,7 +118,7 @@ func newStartCmd(version string) *cobra.Command {
 				output.PrintText(t("cli.daemonStarted"))
 				return nil
 			}
-			if _, err := streamLiveStatus(c, liveStatusOpts{follow: follow}); err != nil && !errors.Is(err, errInterrupted) {
+			if err := streamLiveStatus(c, liveStatusOpts{follow: follow}); err != nil && !errors.Is(err, errInterrupted) {
 				return err
 			}
 			return nil
@@ -343,8 +343,7 @@ func startOnRunningDaemon(c *client.DaemonClient, args []string, detach, follow 
 	if detach {
 		return nil
 	}
-	_, err = streamLiveStatus(c, liveStatusOpts{follow: follow})
-	return err
+	return streamLiveStatus(c, liveStatusOpts{follow: follow})
 }
 
 // liveStatusOpts configures streamLiveStatus behavior.
@@ -356,8 +355,7 @@ type liveStatusOpts struct {
 }
 
 // streamLiveStatus polls the daemon and shows an in-place table of app statuses.
-// Returns the number of apps still in a failed state when streaming ends.
-func streamLiveStatus(c *client.DaemonClient, opts liveStatusOpts) (int, error) {
+func streamLiveStatus(c *client.DaemonClient, opts liveStatusOpts) error {
 	ensureI18n()
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -376,7 +374,7 @@ func streamLiveStatus(c *client.DaemonClient, opts liveStatusOpts) (int, error) 
 		select {
 		case <-sigCh:
 			fmt.Println() //nolint:forbidigo // clean newline on Ctrl+C
-			return 0, errInterrupted
+			return errInterrupted
 		default:
 		}
 
@@ -393,14 +391,7 @@ func streamLiveStatus(c *client.DaemonClient, opts liveStatusOpts) (int, error) 
 				output.ClearLines(linesPrinted)
 			}
 			firstPrint = false
-
-			summary := fmt.Sprintf("  %d/%d running", running, total)
-			if failed > 0 {
-				summary += fmt.Sprintf(", %s", output.Colorize(output.Red, fmt.Sprintf("%d failed", failed)))
-				if opts.waitAll {
-					summary += fmt.Sprintf("  %s", output.Colorize(output.Yellow, t("cli.waitingRetry")))
-				}
-			}
+			summary := buildStatusSummary(running, failed, total, opts.waitAll)
 			fmt.Println(table)    //nolint:forbidigo // CLI table
 			fmt.Println()         //nolint:forbidigo // CLI spacing
 			fmt.Println(summary)  //nolint:forbidigo // CLI summary
@@ -420,14 +411,14 @@ func streamLiveStatus(c *client.DaemonClient, opts liveStatusOpts) (int, error) 
 					msg = t("cli.allAppsStarted", "count", fmt.Sprintf("%d", total))
 				}
 				fmt.Printf("\n%s\n", msg) //nolint:forbidigo // CLI success
-				return 0, nil
+				return nil
 			}
 			// Some apps failed and we've reached a terminal state.
 			if running+failed == total && !opts.waitAll {
 				ensureI18n()
 				fmt.Printf("\n%s\n", output.Colorize(output.Yellow,
 					fmt.Sprintf("%d/%d apps started, %d failed", running, total, failed))) //nolint:forbidigo // CLI result
-				return failed, nil
+				return nil
 			}
 			// waitAll mode: keep polling — reconciler will retry failed apps.
 		}
@@ -437,6 +428,17 @@ func streamLiveStatus(c *client.DaemonClient, opts liveStatusOpts) (int, error) 
 }
 
 // checkRegistryAuth verifies that credentials exist for all private image registries.
+func buildStatusSummary(running, failed, total int, waitAll bool) string {
+	summary := fmt.Sprintf("  %d/%d running", running, total)
+	if failed > 0 {
+		summary += ", " + output.Colorize(output.Red, fmt.Sprintf("%d failed", failed))
+		if waitAll {
+			summary += "  " + output.Colorize(output.Yellow, t("cli.waitingRetry"))
+		}
+	}
+	return summary
+}
+
 // If missing, prompts the user to enter them (with docker login validation).
 func checkRegistryAuth() error {
 	resolver := bundle.NewResolver(config.DataDir())

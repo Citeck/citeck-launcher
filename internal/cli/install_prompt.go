@@ -51,16 +51,16 @@ func isWideRune(r rune) bool {
 }
 
 // promptSelect shows a huh Select menu and returns the selected option string.
-// On cancel/error, returns the default option.
-func promptSelect(label string, options []string, defaultIdx int) string {
+// On cancel/error, returns the first option.
+func promptSelect(label string, options []string) string {
 	huhOpts := make([]huh.Option[string], len(options))
 	for i, opt := range options {
 		huhOpts[i] = huh.NewOption(opt, opt)
 	}
 
 	var selected string
-	if defaultIdx >= 0 && defaultIdx < len(options) {
-		selected = options[defaultIdx]
+	if len(options) > 0 {
+		selected = options[0]
 	}
 
 	_ = huh.NewSelect[string]().
