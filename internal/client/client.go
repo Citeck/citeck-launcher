@@ -203,6 +203,16 @@ func (c *DaemonClient) ReloadNamespace() (*api.ActionResultDto, error) {
 	return &dto, err
 }
 
+// SetAdminPassword resets the ecos-app realm admin password by driving
+// kcadm.sh inside the running keycloak container via the daemon.
+// The new password is also stored in the encrypted secret store so the
+// value the daemon knows about stays consistent with what keycloak holds.
+func (c *DaemonClient) SetAdminPassword(password string) (*api.ActionResultDto, error) {
+	var dto api.ActionResultDto
+	err := c.post(api.NamespaceAdminPassword, map[string]string{"password": password}, &dto)
+	return &dto, err
+}
+
 // GetAppLogs retrieves container logs for the named application.
 func (c *DaemonClient) GetAppLogs(name string, tail int, since, until string, timestamps bool) (string, error) {
 	params := url.Values{"tail": {strconv.Itoa(tail)}}

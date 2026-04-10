@@ -30,6 +30,15 @@ const (
 	daemonStopTimeout   = 30 * time.Second
 	versionProbeTimeout = 5 * time.Second
 
+	// systemdRuntimeDropInDir is a tmpfs-backed override directory (cleared
+	// on reboot) we use to install a temporary Restart=no drop-in during
+	// the SIGKILL upgrade window. We can't use `systemctl mask` because
+	// mask creates a symlink at /etc/systemd/system/citeck.service → /dev/null
+	// and refuses when the real unit file already exists there.
+	systemdRuntimeDropInDir  = "/run/systemd/system/citeck.service.d"
+	systemdRuntimeDropInFile = systemdRuntimeDropInDir + "/no-restart.conf"
+	systemdRuntimeDropInBody = "[Service]\nRestart=no\n"
+
 	// installerCacheEnv is the env var install.sh sets to tell the binary
 	// where it was downloaded to. On successful install the binary removes
 	// that file so subsequent runs re-download fresh; on failure the file
@@ -38,11 +47,12 @@ const (
 )
 
 // installerState is process-local transient state shared between the stop
-// and start phases of the lifecycle — in particular, whether we masked the
-// systemd unit so the stop-phase SIGKILL wouldn't trigger Restart=on-failure
-// respawn of the old binary. start phase unmasks before starting.
+// and start phases of the lifecycle — in particular, whether we installed
+// a runtime Restart=no drop-in so the stop-phase SIGKILL wouldn't trigger
+// Restart=on-failure respawn of the old binary. start phase removes the
+// drop-in before starting.
 var installerState struct {
-	systemdMasked bool
+	systemdDropInInstalled bool
 }
 
 // cleanupInstallerCacheOnSuccess removes the downloaded installer binary
@@ -298,10 +308,10 @@ func stopDaemonPreservePlatform(installedVer string) error {
 }
 
 // sigkillPreservePlatform fetches the daemon's PID and socket path via the
-// status API, masks the systemd unit (if present) so Restart=on-failure
-// doesn't respawn the old binary during the swap window, sends SIGKILL,
-// waits for the process to actually exit, and cleans up the orphaned
-// Unix socket file.
+// status API, installs a runtime Restart=no drop-in for the citeck.service
+// unit (if present) so Restart=on-failure doesn't respawn the old binary
+// during the swap window, sends SIGKILL, waits for the process to actually
+// exit, and cleans up the orphaned Unix socket file.
 func sigkillPreservePlatform(c *client.DaemonClient) error {
 	status, err := c.GetStatus()
 	if err != nil {
@@ -312,12 +322,13 @@ func sigkillPreservePlatform(c *client.DaemonClient) error {
 	}
 	pid := int(status.PID)
 
-	// Mask systemd unit BEFORE the kill so auto-restart doesn't fire.
+	// Install Restart=no drop-in BEFORE the kill so auto-restart doesn't
+	// fire during the swap window.
 	if _, statErr := os.Stat(systemdUnitPath); statErr == nil {
-		if runErr := runSystemctl("mask", "citeck"); runErr != nil {
-			output.PrintText("  warn: systemctl mask failed: %v", runErr)
+		if runErr := installSystemdNoRestartDropIn(); runErr != nil {
+			output.PrintText("  warn: failed to install Restart=no drop-in: %v", runErr)
 		} else {
-			installerState.systemdMasked = true
+			installerState.systemdDropInInstalled = true
 		}
 	}
 
@@ -374,11 +385,11 @@ func waitForDaemonStop() error {
 // Restart=on-failure); otherwise forks a detached daemon directly.
 func startDaemonAfterSwap() error {
 	if _, err := os.Stat(systemdUnitPath); err == nil {
-		if installerState.systemdMasked {
-			if unmaskErr := runSystemctl("unmask", "citeck"); unmaskErr != nil {
-				output.PrintText("  warn: systemctl unmask failed: %v", unmaskErr)
+		if installerState.systemdDropInInstalled {
+			if removeErr := removeSystemdNoRestartDropIn(); removeErr != nil {
+				output.PrintText("  warn: failed to remove Restart=no drop-in: %v", removeErr)
 			}
-			installerState.systemdMasked = false
+			installerState.systemdDropInInstalled = false
 		}
 		return runSystemctl("start", "citeck")
 	}
@@ -392,6 +403,49 @@ func startDaemonAfterSwap() error {
 		return fmt.Errorf("fork daemon: %w", err)
 	}
 	return nil
+}
+
+// installSystemdNoRestartDropIn writes a runtime drop-in that overrides
+// Restart=no for the citeck.service unit, preventing systemd from respawning
+// the old binary after SIGKILL during the swap window. The drop-in lives
+// under /run/systemd (tmpfs) so it's automatically cleared on reboot if
+// we crash before removing it ourselves.
+//
+// We can't use `systemctl mask` because mask creates a symlink at
+// /etc/systemd/system/<unit> → /dev/null and refuses when a real unit file
+// exists there (which is exactly our case — the install wizard writes one).
+//
+// install.sh elevates the installer via `sudo -E` before executing the
+// binary, so in the normal upgrade flow we're already root here and direct
+// Go file ops work. The non-root path (manual invocation via `citeck install`
+// on a user that can write /run/systemd) is rare; it falls through to the
+// same code since /run/systemd is typically world-writable for root only.
+func installSystemdNoRestartDropIn() error {
+	if os.Geteuid() != 0 {
+		return errors.New("need root to write " + systemdRuntimeDropInFile)
+	}
+	if err := os.MkdirAll(systemdRuntimeDropInDir, 0o755); err != nil { //nolint:gosec // G301: systemd drop-in dirs conventionally use 0o755 so systemd (running as root) can read them
+		return fmt.Errorf("mkdir %s: %w", systemdRuntimeDropInDir, err)
+	}
+	if err := os.WriteFile(systemdRuntimeDropInFile, []byte(systemdRuntimeDropInBody), 0o644); err != nil { //nolint:gosec // G306: systemd drop-ins conventionally use 0o644
+		return fmt.Errorf("write %s: %w", systemdRuntimeDropInFile, err)
+	}
+	return runSystemctl("daemon-reload")
+}
+
+// removeSystemdNoRestartDropIn reverses installSystemdNoRestartDropIn so the
+// unit reverts to its configured Restart=on-failure behavior.
+func removeSystemdNoRestartDropIn() error {
+	if os.Geteuid() != 0 {
+		return errors.New("need root to remove " + systemdRuntimeDropInFile)
+	}
+	if err := os.Remove(systemdRuntimeDropInFile); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove %s: %w", systemdRuntimeDropInFile, err)
+	}
+	// Best-effort rmdir of the drop-in directory (ignore errors — it may
+	// contain other drop-ins the user added).
+	_ = os.Remove(systemdRuntimeDropInDir)
+	return runSystemctl("daemon-reload")
 }
 
 // runSystemctl runs `systemctl <args...>` with sudo when the process isn't

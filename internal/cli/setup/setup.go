@@ -182,6 +182,18 @@ func runSingleSetting(id string, sctx *setupContext, nsCfg *namespace.Config, da
 		return fmt.Errorf("unknown setting: %q", id)
 	}
 
+	// Action settings (e.g. admin-password) perform the whole operation
+	// inside Run() and bypass the file-diff/confirm/reload pipeline.
+	if _, isAction := setting.(actionSetting); isAction {
+		if runErr := setting.Run(sctx, nsCfg, daemonCfg); runErr != nil {
+			if isUserAborted(runErr) {
+				return nil
+			}
+			return fmt.Errorf("run setting %s: %w", id, runErr)
+		}
+		return nil
+	}
+
 	// Deep copy "before" state.
 	nsBefore, err := deepCopy(nsCfg)
 	if err != nil {

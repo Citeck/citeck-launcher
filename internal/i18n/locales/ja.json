@@ -41,7 +41,8 @@
   "install.start.manual": "手動で起動：citeck start",
   "install.ready.title": "Citeck の準備ができました！",
   "install.ready.openBrowser": "ブラウザで開く：{url}",
-  "install.ready.login": "ログイン：          admin / admin",
+  "install.ready.login": "ログイン：          {user} / {password}",
+  "install.ready.passwordNote": "このパスワードを保存してください — 再度表示されません（`citeck setup admin-password` で変更できます）。",
   "install.ready.certWarning": "注意：証明書は自己署名のため、\nブラウザにセキュリティ警告が表示されます。\n「詳細」→「アクセスする」をクリックしてください。",
   "install.tls.customDir": "証明書と鍵のあるフォルダ",
   "install.tls.customDirNotFound": "フォルダが見つかりません",
@@ -179,5 +180,24 @@
 
   "setup.language.title": "言語",
   "setup.language.desc": "インターフェース言語",
-  "setup.language.prompt": "言語を選択"
+  "setup.language.prompt": "言語を選択",
+
+  "setup.admin_password.title": "管理者パスワード",
+  "setup.admin_password.desc": "プラットフォーム管理者パスワードをリセット",
+  "setup.admin_password.current": "(設定済み)",
+  "setup.admin_password.prompt": "新しい管理者パスワード",
+  "setup.admin_password.promptHint": "keycloak に直接適用されます、6 文字以上",
+  "setup.admin_password.confirm": "新しいパスワードを確認",
+  "setup.admin_password.mode": "パスワード方式",
+  "setup.admin_password.modeManual": "手動入力",
+  "setup.admin_password.modeGenerate": "ランダム生成",
+  "setup.admin_password.generated": "生成されたパスワード",
+  "setup.admin_password.warning": "  これにより、すべてのサービスの管理者パスワードが変更されます：\n  Keycloak、RabbitMQ、PgAdmin、およびプラットフォームログイン。\n  プラットフォームサービスは一時的に再起動されます。",
+  "setup.admin_password.confirmApply": "パスワード変更を続行しますか？",
+  "setup.admin_password.canceled": "  パスワード変更がキャンセルされました。",
+  "setup.admin_password.applying": "  適用中…",
+  "setup.admin_password.applied": "  管理者パスワードをリセットしました。",
+  "setup.admin_password.daemonNotRunning": "プラットフォームが実行されていません — 先に起動してください (citeck start)",
+  "setup.admin_password.tooShort": "パスワードは 6 文字以上である必要があります",
+  "setup.admin_password.mismatch": "パスワードが一致しません"
 }

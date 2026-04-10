@@ -319,6 +319,8 @@ hostStep:
 }
 
 // printAccessInfo shows the platform URL and login instructions after install.
+// The admin password is looked up from the encrypted secret store so the
+// user sees the same password the freshly generated realm.json references.
 func printAccessInfo(hostname string, port int, tls, le bool) {
 	scheme := "http"
 	if tls {
@@ -330,13 +332,21 @@ func printAccessInfo(hostname string, port int, tls, le bool) {
 	}
 	url := fmt.Sprintf("%s://%s", scheme, addr)
 
+	adminPassword := readAdminPasswordFromStore()
+	if adminPassword == "" {
+		// Fall back to the template default so the message is still
+		// sensible if the daemon hasn't generated the secret yet.
+		adminPassword = "admin"
+	}
+
 	fmt.Println() //nolint:forbidigo // CLI output
 	title := t("install.ready.title")
 	urlLine := t("install.ready.openBrowser", "url", url)
-	loginLine := t("install.ready.login")
+	loginLine := t("install.ready.login", "user", "admin", "password", adminPassword)
+	passwordNote := t("install.ready.passwordNote")
 
 	// Collect lines for the box
-	lines := []string{title, "", urlLine, loginLine}
+	lines := []string{title, "", urlLine, loginLine, "", passwordNote}
 	if tls && !le {
 		lines = append(lines, "")
 		for line := range strings.SplitSeq(t("install.ready.certWarning"), "\n") {
@@ -613,6 +623,26 @@ func dockerRegistryLogin(registryURL, username, password string) error {
 		return fmt.Errorf("registry login %s: %w", registryURL, loginErr)
 	}
 	return nil
+}
+
+// readAdminPasswordFromStore looks up the generated ecos-app realm admin
+// password from the encrypted secret store. Returns "" on any error so the
+// install wizard can fall back to the hardcoded default. Best-effort —
+// the wizard must not hard-fail if the daemon is still initializing the
+// store on its first startup.
+func readAdminPasswordFromStore() string {
+	svc, err := openSecretService()
+	if err != nil {
+		return ""
+	}
+	if svc.IsLocked() {
+		return ""
+	}
+	sec, err := svc.GetSecret("_admin_password")
+	if err != nil || sec == nil {
+		return ""
+	}
+	return sec.Value
 }
 
 // openSecretService creates a FileStore + SecretService and unlocks with default password.

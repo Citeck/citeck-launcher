@@ -38,6 +38,16 @@ type Setting interface {
 	Run(ctx *setupContext, cfg *namespace.Config, dcfg *config.DaemonConfig) error
 }
 
+// actionSetting is a marker interface for settings whose Run() performs the
+// whole action end-to-end (prompt, execute, report) and must bypass the
+// diff/apply/confirm/reload flow that file-backed settings use. The
+// canonical example is admin-password reset, which drives the keycloak
+// admin API directly instead of mutating namespace.yml. runSingleSetting
+// detects the marker via type assertion and returns immediately after Run().
+type actionSetting interface {
+	isActionSetting()
+}
+
 // allSettings returns the ordered list of all registered settings.
 func allSettings() []Setting {
 	return []Setting{
@@ -49,6 +59,7 @@ func allSettings() []Setting {
 		&authSetting{},
 		&resourcesSetting{},
 		&languageSetting{},
+		&adminPasswordSetting{},
 	}
 }
 

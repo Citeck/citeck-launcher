@@ -58,10 +58,18 @@ type BuildInfo struct {
 
 // NewRootCmd creates the top-level CLI command with all subcommands registered.
 func NewRootCmd(info BuildInfo) *cobra.Command {
+	// Setting Version on the root command makes cobra register a --version
+	// flag automatically; we pair it with a custom template that matches
+	// the richer output of `citeck version` (one-line summary).
+	version := info.Version
+	if version == "" {
+		version = "dev"
+	}
 	root := &cobra.Command{
-		Use:   "citeck",
-		Short: "Citeck Launcher CLI",
-		Long:  "Citeck Launcher — manage Citeck namespaces and Docker containers",
+		Use:     "citeck",
+		Short:   "Citeck Launcher CLI",
+		Long:    "Citeck Launcher — manage Citeck namespaces and Docker containers",
+		Version: version,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			if flagOutput == "json" {
 				output.SetFormat(output.FormatJSON)
@@ -70,6 +78,7 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	root.SetVersionTemplate("Citeck CLI {{.Version}}\n")
 
 	root.PersistentFlags().StringVar(&flagOutput, "format", "text", "Output format: text or json")
 	root.PersistentFlags().StringVar(&flagHost, "host", "", "Remote daemon host:port")

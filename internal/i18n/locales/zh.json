@@ -41,7 +41,8 @@
   "install.start.manual": "手动启动：citeck start",
   "install.ready.title": "Citeck 已就绪！",
   "install.ready.openBrowser": "在浏览器中打开：{url}",
-  "install.ready.login": "登录：            admin / admin",
+  "install.ready.login": "登录：            {user} / {password}",
+  "install.ready.passwordNote": "请保存此密码 — 不会再次显示(使用 `citeck setup admin-password` 修改)。",
   "install.ready.certWarning": "提示：浏览器会显示安全警告，\n因为证书是自签名的。\n点击「高级」→「继续访问」即可。",
   "install.tls.customDir": "证书和密钥所在的目录",
   "install.tls.customDirNotFound": "目录未找到",
@@ -179,5 +180,24 @@
 
   "setup.language.title": "语言",
   "setup.language.desc": "界面语言",
-  "setup.language.prompt": "选择语言"
+  "setup.language.prompt": "选择语言",
+
+  "setup.admin_password.title": "管理员密码",
+  "setup.admin_password.desc": "重置平台管理员密码",
+  "setup.admin_password.current": "(已设置)",
+  "setup.admin_password.prompt": "新管理员密码",
+  "setup.admin_password.promptHint": "将直接应用于 keycloak,至少 6 个字符",
+  "setup.admin_password.confirm": "确认新密码",
+  "setup.admin_password.mode": "密码方式",
+  "setup.admin_password.modeManual": "手动输入",
+  "setup.admin_password.modeGenerate": "随机生成",
+  "setup.admin_password.generated": "生成的密码",
+  "setup.admin_password.warning": "  这将更改所有服务的管理员密码：\n  Keycloak、RabbitMQ、PgAdmin 和平台登录。\n  平台服务将短暂重启。",
+  "setup.admin_password.confirmApply": "继续更改密码？",
+  "setup.admin_password.canceled": "  密码更改已取消。",
+  "setup.admin_password.applying": "  正在应用…",
+  "setup.admin_password.applied": "  管理员密码已重置。",
+  "setup.admin_password.daemonNotRunning": "平台未运行 — 请先启动 (citeck start)",
+  "setup.admin_password.tooShort": "密码至少需要 6 个字符",
+  "setup.admin_password.mismatch": "密码不匹配"
 }

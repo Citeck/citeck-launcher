@@ -169,7 +169,7 @@ func generatePgAdmin(ctx *NsGenContext) {
 	app.Kind = appdef.KindThirdParty
 	app.AddPort("5050:80")
 	app.AddEnv("PGADMIN_DEFAULT_EMAIL", "admin@admin.com")
-	app.AddEnv("PGADMIN_DEFAULT_PASSWORD", "admin")
+	app.AddEnv("PGADMIN_DEFAULT_PASSWORD", ctx.Secrets.AdminPasswordOrDefault())
 	app.AddVolume("pgadmin2:/var/lib/pgadmin")
 	app.AddVolume("./pgadmin/servers.json:/pgadmin4/servers.json")
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "256m"}}
@@ -252,7 +252,7 @@ func generateRabbitMQ(ctx *NsGenContext) {
 	app.AddPort(fmt.Sprintf("5672:%d", RMQPort))
 	app.AddPort("15672:15672")
 	app.AddEnv("RABBITMQ_DEFAULT_USER", "admin")
-	app.AddEnv("RABBITMQ_DEFAULT_PASS", "admin")
+	app.AddEnv("RABBITMQ_DEFAULT_PASS", ctx.Secrets.AdminPasswordOrDefault())
 	app.AddEnv("RABBITMQ_DEFAULT_VHOST", "/")
 	app.AddEnv("RABBITMQ_MANAGEMENT_ALLOW_WEB_ACCESS", "true")
 	app.AddVolume("rabbitmq2:/var/lib/rabbitmq")
@@ -286,8 +286,13 @@ func generateKeycloak(ctx *NsGenContext) {
 	app := ctx.GetOrCreateApp(appdef.AppKeycloak)
 	app.Image = img
 	app.Kind = appdef.KindThirdParty
+	// KC_BOOTSTRAP_ADMIN_* is consumed by keycloak on first container boot
+	// only (when the database is empty). We seed the master-realm admin
+	// with the same generated password used for the ecos-app realm admin
+	// so there's one credential for the user to remember across both
+	// realms. Falls back to "admin" in tests where ctx.Secrets is empty.
 	app.AddEnv("KC_BOOTSTRAP_ADMIN_USERNAME", "admin")
-	app.AddEnv("KC_BOOTSTRAP_ADMIN_PASSWORD", "admin")
+	app.AddEnv("KC_BOOTSTRAP_ADMIN_PASSWORD", ctx.Secrets.AdminPasswordOrDefault())
 	// Use strict HTTPS if TLS is enabled or if external host (behind reverse proxy)
 	strictHTTPS := ctx.TLSEnabled() || !ctx.IsLocalHost()
 	app.AddEnv("KC_HOSTNAME_STRICT_HTTPS", fmt.Sprintf("%v", strictHTTPS))
@@ -434,6 +439,17 @@ func generateAlfresco(ctx *NsGenContext) {
 	alfApp.AddEnv("FLOWABLE_DB_PASSWORD", "alf_flowable")
 	alfApp.AddEnv("JAVA_OPTS", "-Xms4G -Xmx4G -Duser.country=EN -Duser.language=en -Djava.security.egd=file:///dev/urandom -Djavamelody.authorized-users=admin:admin")
 
+	// Substitute RMQ credentials in alfresco properties (embedded appfile
+	// has hardcoded "admin" — replace with the generated admin password).
+	alfPropsKey := "alfresco/alfresco_additional.properties"
+	if alfProps, ok := ctx.Files[alfPropsKey]; ok && ctx.Secrets.AdminPassword != "" {
+		updated := strings.ReplaceAll(string(alfProps),
+			"rabbitmq.export.server.password=admin", "rabbitmq.export.server.password="+ctx.Secrets.AdminPassword)
+		updated = strings.ReplaceAll(updated,
+			"rabbitmq.server.password=admin", "rabbitmq.server.password="+ctx.Secrets.AdminPassword)
+		ctx.Files[alfPropsKey] = []byte(updated)
+	}
+
 	// 3. Alfresco Solr
 	alfSolr := ctx.GetOrCreateApp(appdef.AppAlfSolr)
 	alfSolr.Image = "nexus.citeck.ru/ess:1.1.0"
@@ -545,7 +561,7 @@ func generateObserver(ctx *NsGenContext) {
 	obs.AddEnv("RMQ_MONITOR_ENABLED", "true")
 	obs.AddEnv("RMQ_MONITOR_URL", fmt.Sprintf("http://%s:15672", RMQHost))
 	obs.AddEnv("RMQ_MONITOR_USER", "admin")
-	obs.AddEnv("RMQ_MONITOR_PASSWORD", "admin")
+	obs.AddEnv("RMQ_MONITOR_PASSWORD", ctx.Secrets.AdminPasswordOrDefault())
 
 	// Infrastructure monitoring — PostgreSQL via pg_stat views
 	obs.AddEnv("PG_MONITOR_ENABLED", "true")
@@ -599,7 +615,7 @@ func generateObserver(ctx *NsGenContext) {
 		"rmq_monitor.enabled":  true,
 		"rmq_monitor.url":      "http://localhost:15672",
 		"rmq_monitor.user":     "admin",
-		"rmq_monitor.password": "admin",
+		"rmq_monitor.password": ctx.Secrets.AdminPasswordOrDefault(),
 		// Infrastructure monitoring — ZooKeeper
 		"zk_monitor.enabled": true,
 		"zk_monitor.hosts":   "localhost:2181",
@@ -682,12 +698,19 @@ func generateProxy(ctx *NsGenContext) {
 			ctx.Files[luaKey] = []byte(lua)
 		}
 
-		// Substitute OIDC secret in realm JSON
+		// Substitute OIDC secret + admin password hash in realm JSON.
+		// Realm is imported by keycloak on first container start only; on
+		// existing installs the password can be changed via
+		// `citeck setup admin-password` which drives the keycloak admin API.
 		realmKey := "keycloak/ecos-app-realm.json"
 		if realmBytes, ok := ctx.Files[realmKey]; ok {
 			oldSecret := `"secret": "2996117d-9a33-4e06-b48a-867ce6a235db"` //nolint:gosec // template placeholder, not a real credential
 			newSecret := `"secret": "` + oidcSecret + `"`
 			realm := strings.Replace(string(realmBytes), oldSecret, newSecret, 1)
+
+			if ctx.Secrets.AdminPassword != "" {
+				realm = substituteAdminPasswordHash(realm, ctx.Secrets.AdminPassword)
+			}
 			ctx.Files[realmKey] = []byte(realm)
 		}
 
@@ -793,12 +816,12 @@ func generateWebapp(name string, ctx *NsGenContext) {
 	// Level 3: namespace config overrides (applied later below)
 	if ctx.WorkspaceConfig != nil {
 		// Level 1: global workspace defaults
-		applyWebappDefaults(app, &ctx.WorkspaceConfig.DefaultWebappProps, ctx.Config)
+		applyWebappDefaults(app, &ctx.WorkspaceConfig.DefaultWebappProps, ctx)
 
 		// Level 2: per-app workspace defaults
 		for _, wsCfg := range ctx.WorkspaceConfig.Webapps {
 			if wsCfg.ID == name {
-				applyWebappDefaults(app, &wsCfg.DefaultProps, ctx.Config)
+				applyWebappDefaults(app, &wsCfg.DefaultProps, ctx)
 				break
 			}
 		}
@@ -857,7 +880,7 @@ func generateWebapp(name string, ctx *NsGenContext) {
 		}
 	}
 	app.AddEnv("SPRING_PROFILES_ACTIVE", strings.Join(profiles, ","))
-	app.AddEnv("ECOS_WEBAPP_RABBITMQ_HOST", RMQHost)
+	addWebappInfraEnv(app, ctx)
 	app.AddEnv("ECOS_WEBAPP_ZOOKEEPER_HOST", ZKHost)
 	app.AddEnv("ECOS_INIT_DELAY", "0")
 	app.AddEnv("SPRING_CLOUD_CONFIG_ENABLED", "false") // CloudConfigServer on :8761 is for local debug only
@@ -975,8 +998,18 @@ func applyEappsInitContainers(name string, app *AppBuilder, ctx *NsGenContext) {
 	app.AddVolume(fmt.Sprintf("./app/%s/ecos-apps:/run/ecos-artifacts/app/ecosapp", name))
 }
 
+// addWebappInfraEnv sets shared infrastructure env vars (RabbitMQ host +
+// password) on a webapp builder. Extracted from generateWebapp to keep its
+// cyclomatic complexity under the linter threshold.
+func addWebappInfraEnv(app *AppBuilder, ctx *NsGenContext) {
+	app.AddEnv("ECOS_WEBAPP_RABBITMQ_HOST", RMQHost)
+	if ctx.Secrets.AdminPassword != "" {
+		app.AddEnv("ECOS_WEBAPP_RABBITMQ_PASSWORD", ctx.Secrets.AdminPassword)
+	}
+}
+
 // applyWebappDefaults applies a WebappDefaultProps layer to an app builder.
-func applyWebappDefaults(app *AppBuilder, props *bundle.WebappDefaultProps, cfg *Config) {
+func applyWebappDefaults(app *AppBuilder, props *bundle.WebappDefaultProps, ctx *NsGenContext) {
 	if props == nil {
 		return
 	}
@@ -984,7 +1017,7 @@ func applyWebappDefaults(app *AppBuilder, props *bundle.WebappDefaultProps, cfg 
 		app.Image = props.Image
 	}
 	for k, v := range props.Environments {
-		app.AddEnv(k, resolveTemplateVarsWithConfig(v, cfg))
+		app.AddEnv(k, resolveTemplateVarsWithContext(v, ctx))
 	}
 	if props.HeapSize != "" {
 		app.AddEnv("JAVA_OPTS", fmt.Sprintf("-Xmx%s -Xms%s", props.HeapSize, props.HeapSize))
@@ -1178,16 +1211,28 @@ func flatMapToYAML(m map[string]any) string {
 }
 
 // resolveTemplateVars replaces ${VAR} placeholders in datasource URLs.
-// resolveTemplateVarsWithConfig resolves template variables including config-dependent ones.
-func resolveTemplateVarsWithConfig(s string, cfg *Config) string {
+// resolveTemplateVarsWithContext resolves template variables including
+// config- and secrets-dependent ones. Used by applyWebappDefaults when
+// populating environment variables from workspace defaults.
+//
+// ${KK_ADMIN_PASSWORD} is sourced from ctx.Secrets.AdminPassword — the
+// same value the daemon uses to bootstrap the keycloak master admin and
+// the one shown to the user at the end of the install wizard. Falls back
+// to "admin" when secrets aren't populated (e.g. unit tests, or the
+// keycloak bundle defaults are referenced before the daemon has
+// generated the system secret).
+func resolveTemplateVarsWithContext(s string, ctx *NsGenContext) string {
 	kkEnabled := "false"
-	if cfg != nil && cfg.Authentication.Type == AuthKeycloak {
+	if ctx != nil && ctx.Config != nil && ctx.Config.Authentication.Type == AuthKeycloak {
 		kkEnabled = "true"
 	}
 	// KK_ADMIN_URL is always set (Kotlin NsGenContext.VARS)
 	kkAdminURL := fmt.Sprintf("http://%s:8080", KKHost)
 	kkAdminUser := "admin"
 	kkAdminPassword := "admin"
+	if ctx != nil && ctx.Secrets.AdminPassword != "" {
+		kkAdminPassword = ctx.Secrets.AdminPassword
+	}
 	s = strings.ReplaceAll(s, "${KK_ENABLED}", kkEnabled)
 	s = strings.ReplaceAll(s, "${KK_ADMIN_URL}", kkAdminURL)
 	s = strings.ReplaceAll(s, "${KK_ADMIN_USER}", kkAdminUser)

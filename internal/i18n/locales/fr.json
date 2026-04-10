@@ -41,7 +41,8 @@
   "install.start.manual": "Démarrer manuellement : citeck start",
   "install.ready.title": "Citeck est prêt !",
   "install.ready.openBrowser": "Ouvrir dans le navigateur :  {url}",
-  "install.ready.login": "Connexion :          admin / admin",
+  "install.ready.login": "Connexion :          {user} / {password}",
+  "install.ready.passwordNote": "Enregistrez ce mot de passe — vous ne le reverrez pas (modifiez-le avec `citeck setup admin-password`).",
   "install.ready.certWarning": "Note : votre navigateur affichera un avertissement de sécurité\ncar le certificat est auto-signé.\nCliquez sur « Avancé » → « Continuer » pour accéder.",
   "install.tls.customDir": "Dossier avec certificat et clé",
   "install.tls.customDirNotFound": "Dossier introuvable",
@@ -179,5 +180,24 @@
 
   "setup.language.title": "Langue",
   "setup.language.desc": "Langue de l'interface",
-  "setup.language.prompt": "Sélectionnez la langue"
+  "setup.language.prompt": "Sélectionnez la langue",
+
+  "setup.admin_password.title": "Mot de passe admin",
+  "setup.admin_password.desc": "Réinitialiser le mot de passe administrateur",
+  "setup.admin_password.current": "(défini)",
+  "setup.admin_password.prompt": "Nouveau mot de passe admin",
+  "setup.admin_password.promptHint": "Sera appliqué directement dans keycloak, minimum 6 caractères",
+  "setup.admin_password.confirm": "Confirmer le nouveau mot de passe",
+  "setup.admin_password.mode": "Méthode de mot de passe",
+  "setup.admin_password.modeManual": "Saisir manuellement",
+  "setup.admin_password.modeGenerate": "Générer aléatoirement",
+  "setup.admin_password.generated": "Mot de passe généré",
+  "setup.admin_password.warning": "  Cela changera le mot de passe admin pour TOUS les services :\n  Keycloak, RabbitMQ, PgAdmin et la connexion à la plateforme.\n  Les services de la plateforme seront brièvement redémarrés.",
+  "setup.admin_password.confirmApply": "Continuer le changement de mot de passe ?",
+  "setup.admin_password.canceled": "  Changement de mot de passe annulé.",
+  "setup.admin_password.applying": "  Application en cours…",
+  "setup.admin_password.applied": "  Mot de passe admin réinitialisé.",
+  "setup.admin_password.daemonNotRunning": "la plateforme n'est pas en cours d'exécution — démarrez-la d'abord (citeck start)",
+  "setup.admin_password.tooShort": "le mot de passe doit contenir au moins 6 caractères",
+  "setup.admin_password.mismatch": "les mots de passe ne correspondent pas"
 }

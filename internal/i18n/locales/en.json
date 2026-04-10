@@ -75,7 +75,8 @@
   "install.start.manual": "Start manually: citeck start",
   "install.ready.title": "Citeck is ready!",
   "install.ready.openBrowser": "Open in browser:  {url}",
-  "install.ready.login": "Login:            admin / admin",
+  "install.ready.login": "Login:            {user} / {password}",
+  "install.ready.passwordNote": "Save this password — you won't see it again (change with `citeck setup admin-password`).",
   "install.ready.certWarning": "Note: your browser will show a security warning\nbecause the certificate is self-signed.\nClick \"Advanced\" -> \"Proceed\" to continue.",
 
   "uninstall.stopping": "Stopping platform...",
@@ -184,5 +185,24 @@
 
   "setup.language.title": "Language",
   "setup.language.desc": "Interface language",
-  "setup.language.prompt": "Select language"
+  "setup.language.prompt": "Select language",
+
+  "setup.admin_password.title": "Admin password",
+  "setup.admin_password.desc": "Reset the platform admin password",
+  "setup.admin_password.current": "(set)",
+  "setup.admin_password.prompt": "New admin password",
+  "setup.admin_password.promptHint": "Will be applied directly in keycloak, at least 6 characters",
+  "setup.admin_password.confirm": "Confirm new password",
+  "setup.admin_password.mode": "Password method",
+  "setup.admin_password.modeManual": "Enter manually",
+  "setup.admin_password.modeGenerate": "Generate random",
+  "setup.admin_password.generated": "Generated password",
+  "setup.admin_password.warning": "  This will change the admin password for ALL services:\n  Keycloak, RabbitMQ, PgAdmin, and the platform login.\n  Platform services will be briefly restarted to apply the change.",
+  "setup.admin_password.confirmApply": "Proceed with password change?",
+  "setup.admin_password.canceled": "  Password change canceled.",
+  "setup.admin_password.applying": "  Applying…",
+  "setup.admin_password.applied": "  Admin password reset.",
+  "setup.admin_password.daemonNotRunning": "platform is not running — start it first (citeck start)",
+  "setup.admin_password.tooShort": "password must be at least 6 characters",
+  "setup.admin_password.mismatch": "passwords do not match"
 }

@@ -24,10 +24,24 @@ const (
 	ObsPGHost      = "observer-postgres"
 )
 
-// SystemSecrets holds system-managed secrets (JWT, OIDC) resolved at daemon startup.
+// SystemSecrets holds system-managed secrets resolved at daemon startup.
+// AdminPassword is the plaintext password for the ecos-app realm admin user;
+// the generator hashes it into the realm.json credential before the keycloak
+// container imports the realm on first start.
 type SystemSecrets struct {
-	JWT  string
-	OIDC string
+	JWT           string
+	OIDC          string
+	AdminPassword string
+}
+
+// AdminPasswordOrDefault returns the generated admin password, or "admin"
+// when secrets aren't populated (unit tests, first-ever generate before
+// the daemon has generated the system secret).
+func (s SystemSecrets) AdminPasswordOrDefault() string {
+	if s.AdminPassword != "" {
+		return s.AdminPassword
+	}
+	return "admin"
 }
 
 // NsGenContext holds state during namespace generation.

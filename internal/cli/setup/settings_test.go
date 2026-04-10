@@ -210,7 +210,7 @@ func TestAllSettings_RegistersAll(t *testing.T) {
 	for _, s := range settings {
 		ids[s.ID()] = true
 	}
-	expected := []string{"hostname", "tls", "port", "email", "s3", "auth", "resources", "language"}
+	expected := []string{"hostname", "tls", "port", "email", "s3", "auth", "resources", "language", "admin-password"}
 	for _, id := range expected {
 		assert.True(t, ids[id], "setting %q not registered in allSettings()", id)
 	}

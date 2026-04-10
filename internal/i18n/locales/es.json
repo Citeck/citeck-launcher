@@ -41,7 +41,8 @@
   "install.start.manual": "Iniciar manualmente: citeck start",
   "install.ready.title": "¡Citeck está listo!",
   "install.ready.openBrowser": "Abrir en el navegador:  {url}",
-  "install.ready.login": "Acceso:             admin / admin",
+  "install.ready.login": "Acceso:             {user} / {password}",
+  "install.ready.passwordNote": "Guarde esta contraseña — no la volverá a ver (cámbiela con `citeck setup admin-password`).",
   "install.ready.certWarning": "Nota: el navegador mostrará una advertencia de seguridad\nporque el certificado es autofirmado.\nHaga clic en \"Avanzado\" -> \"Continuar\" para acceder.",
   "install.tls.customDir": "Carpeta con certificado y clave",
   "install.tls.customDirNotFound": "Carpeta no encontrada",
@@ -179,5 +180,24 @@
 
   "setup.language.title": "Idioma",
   "setup.language.desc": "Idioma de la interfaz",
-  "setup.language.prompt": "Seleccione idioma"
+  "setup.language.prompt": "Seleccione idioma",
+
+  "setup.admin_password.title": "Contraseña admin",
+  "setup.admin_password.desc": "Restablecer la contraseña del administrador",
+  "setup.admin_password.current": "(establecida)",
+  "setup.admin_password.prompt": "Nueva contraseña admin",
+  "setup.admin_password.promptHint": "Se aplicará directamente en keycloak, mínimo 6 caracteres",
+  "setup.admin_password.confirm": "Confirmar nueva contraseña",
+  "setup.admin_password.mode": "Método de contraseña",
+  "setup.admin_password.modeManual": "Ingresar manualmente",
+  "setup.admin_password.modeGenerate": "Generar aleatoria",
+  "setup.admin_password.generated": "Contraseña generada",
+  "setup.admin_password.warning": "  Esto cambiará la contraseña admin para TODOS los servicios:\n  Keycloak, RabbitMQ, PgAdmin y el acceso a la plataforma.\n  Los servicios de la plataforma se reiniciarán brevemente.",
+  "setup.admin_password.confirmApply": "¿Continuar con el cambio de contraseña?",
+  "setup.admin_password.canceled": "  Cambio de contraseña cancelado.",
+  "setup.admin_password.applying": "  Aplicando…",
+  "setup.admin_password.applied": "  Contraseña admin restablecida.",
+  "setup.admin_password.daemonNotRunning": "la plataforma no está ejecutándose — iníciela primero (citeck start)",
+  "setup.admin_password.tooShort": "la contraseña debe tener al menos 6 caracteres",
+  "setup.admin_password.mismatch": "las contraseñas no coinciden"
 }

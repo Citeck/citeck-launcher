@@ -41,7 +41,8 @@
   "install.start.manual": "Manuell starten: citeck start",
   "install.ready.title": "Citeck ist bereit!",
   "install.ready.openBrowser": "Im Browser öffnen:  {url}",
-  "install.ready.login": "Anmeldung:          admin / admin",
+  "install.ready.login": "Anmeldung:          {user} / {password}",
+  "install.ready.passwordNote": "Speichern Sie dieses Passwort — Sie sehen es nicht wieder (ändern mit `citeck setup admin-password`).",
   "install.ready.certWarning": "Hinweis: Ihr Browser zeigt eine Sicherheitswarnung an,\nda das Zertifikat selbstsigniert ist.\nKlicken Sie auf \"Erweitert\" → \"Weiter\" um fortzufahren.",
   "install.tls.customDir": "Ordner mit Zertifikat und Schlüssel",
   "install.tls.customDirNotFound": "Ordner nicht gefunden",
@@ -179,5 +180,24 @@
 
   "setup.language.title": "Sprache",
   "setup.language.desc": "Oberflächensprache",
-  "setup.language.prompt": "Sprache auswählen"
+  "setup.language.prompt": "Sprache auswählen",
+
+  "setup.admin_password.title": "Admin-Passwort",
+  "setup.admin_password.desc": "Plattform-Admin-Passwort zurücksetzen",
+  "setup.admin_password.current": "(gesetzt)",
+  "setup.admin_password.prompt": "Neues Admin-Passwort",
+  "setup.admin_password.promptHint": "Wird direkt in Keycloak angewendet, mindestens 6 Zeichen",
+  "setup.admin_password.confirm": "Neues Passwort bestätigen",
+  "setup.admin_password.mode": "Passwortmethode",
+  "setup.admin_password.modeManual": "Manuell eingeben",
+  "setup.admin_password.modeGenerate": "Zufällig generieren",
+  "setup.admin_password.generated": "Generiertes Passwort",
+  "setup.admin_password.warning": "  Dies ändert das Admin-Passwort für ALLE Dienste:\n  Keycloak, RabbitMQ, PgAdmin und die Plattform-Anmeldung.\n  Plattformdienste werden kurz neu gestartet.",
+  "setup.admin_password.confirmApply": "Mit der Passwortänderung fortfahren?",
+  "setup.admin_password.canceled": "  Passwortänderung abgebrochen.",
+  "setup.admin_password.applying": "  Wird angewendet…",
+  "setup.admin_password.applied": "  Admin-Passwort zurückgesetzt.",
+  "setup.admin_password.daemonNotRunning": "Plattform läuft nicht — starten Sie sie zuerst (citeck start)",
+  "setup.admin_password.tooShort": "Passwort muss mindestens 6 Zeichen lang sein",
+  "setup.admin_password.mismatch": "Passwörter stimmen nicht überein"
 }

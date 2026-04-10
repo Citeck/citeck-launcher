@@ -75,7 +75,8 @@
   "install.start.manual": "Запустите вручную: citeck start",
   "install.ready.title": "Citeck готов к работе!",
   "install.ready.openBrowser": "Откройте в браузере:  {url}",
-  "install.ready.login": "Логин:              admin / admin",
+  "install.ready.login": "Логин:              {user} / {password}",
+  "install.ready.passwordNote": "Сохраните этот пароль — он больше не будет показан (сменить: `citeck setup admin-password`).",
   "install.ready.certWarning": "Примечание: браузер покажет предупреждение безопасности,\nтак как сертификат самоподписанный.\nНажмите «Дополнительно» → «Перейти на сайт».",
 
   "uninstall.stopping": "Останавливаю платформу...",
@@ -184,5 +185,24 @@
 
   "setup.language.title": "Язык",
   "setup.language.desc": "Язык интерфейса",
-  "setup.language.prompt": "Выберите язык"
+  "setup.language.prompt": "Выберите язык",
+
+  "setup.admin_password.title": "Пароль admin",
+  "setup.admin_password.desc": "Сброс пароля администратора платформы",
+  "setup.admin_password.current": "(установлен)",
+  "setup.admin_password.prompt": "Новый пароль администратора",
+  "setup.admin_password.promptHint": "Применится прямо в keycloak, минимум 6 символов",
+  "setup.admin_password.confirm": "Подтвердите новый пароль",
+  "setup.admin_password.mode": "Способ ввода пароля",
+  "setup.admin_password.modeManual": "Ввести вручную",
+  "setup.admin_password.modeGenerate": "Сгенерировать случайный",
+  "setup.admin_password.generated": "Сгенерированный пароль",
+  "setup.admin_password.warning": "  Это сменит пароль администратора для ВСЕХ сервисов:\n  Keycloak, RabbitMQ, PgAdmin и вход в платформу.\n  Сервисы платформы будут кратковременно перезапущены.",
+  "setup.admin_password.confirmApply": "Продолжить смену пароля?",
+  "setup.admin_password.canceled": "  Смена пароля отменена.",
+  "setup.admin_password.applying": "  Применяю…",
+  "setup.admin_password.applied": "  Пароль администратора сброшен.",
+  "setup.admin_password.daemonNotRunning": "платформа не запущена — запустите её (citeck start)",
+  "setup.admin_password.tooShort": "пароль должен быть не короче 6 символов",
+  "setup.admin_password.mismatch": "пароли не совпадают"
 }

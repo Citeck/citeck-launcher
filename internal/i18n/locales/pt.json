@@ -41,7 +41,8 @@
   "install.start.manual": "Iniciar manualmente: citeck start",
   "install.ready.title": "Citeck está pronto!",
   "install.ready.openBrowser": "Abrir no navegador:  {url}",
-  "install.ready.login": "Login:              admin / admin",
+  "install.ready.login": "Login:              {user} / {password}",
+  "install.ready.passwordNote": "Salve esta senha — você não a verá novamente (altere com `citeck setup admin-password`).",
   "install.ready.certWarning": "Nota: o navegador mostrará um aviso de segurança\nporque o certificado é autoassinado.\nClique em \"Avançado\" → \"Prosseguir\" para continuar.",
   "install.tls.customDir": "Pasta com certificado e chave",
   "install.tls.customDirNotFound": "Pasta não encontrada",
@@ -179,5 +180,24 @@
 
   "setup.language.title": "Idioma",
   "setup.language.desc": "Idioma da interface",
-  "setup.language.prompt": "Selecione o idioma"
+  "setup.language.prompt": "Selecione o idioma",
+
+  "setup.admin_password.title": "Senha do admin",
+  "setup.admin_password.desc": "Redefinir a senha do administrador",
+  "setup.admin_password.current": "(definida)",
+  "setup.admin_password.prompt": "Nova senha do admin",
+  "setup.admin_password.promptHint": "Será aplicada diretamente no keycloak, mínimo 6 caracteres",
+  "setup.admin_password.confirm": "Confirme a nova senha",
+  "setup.admin_password.mode": "Método de senha",
+  "setup.admin_password.modeManual": "Inserir manualmente",
+  "setup.admin_password.modeGenerate": "Gerar aleatória",
+  "setup.admin_password.generated": "Senha gerada",
+  "setup.admin_password.warning": "  Isso alterará a senha admin para TODOS os serviços:\n  Keycloak, RabbitMQ, PgAdmin e o login da plataforma.\n  Os serviços da plataforma serão reiniciados brevemente.",
+  "setup.admin_password.confirmApply": "Continuar com a alteração de senha?",
+  "setup.admin_password.canceled": "  Alteração de senha cancelada.",
+  "setup.admin_password.applying": "  Aplicando…",
+  "setup.admin_password.applied": "  Senha do admin redefinida.",
+  "setup.admin_password.daemonNotRunning": "a plataforma não está em execução — inicie-a primeiro (citeck start)",
+  "setup.admin_password.tooShort": "a senha deve ter pelo menos 6 caracteres",
+  "setup.admin_password.mismatch": "as senhas não coincidem"
 }

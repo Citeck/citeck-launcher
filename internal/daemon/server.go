@@ -90,7 +90,7 @@ type Daemon struct {
 	startTime       time.Time
 	eventSubs       []chan api.EventDto
 	eventMu         sync.Mutex
-	configMu        sync.RWMutex // protects nsConfig, bundleDef, appDefs, workspaceConfig
+	configMu        sync.RWMutex // protects nsConfig, bundleDef, appDefs, workspaceConfig, systemSecrets
 	version         string
 	bundleError     string // non-empty if bundle resolution failed
 	acmeRenewal     *acme.RenewalService
@@ -482,7 +482,7 @@ func Start(opts StartOptions) error {
 		// Skip when locked (desktop mode with encrypted secrets — resolved after Web UI unlock).
 		if !secretSvc.IsLocked() {
 			var sysErr error
-			systemSecrets, sysErr = resolveSystemSecrets(secretSvc)
+			systemSecrets, sysErr = resolveSystemSecrets(secretSvc, opts.Desktop)
 			if sysErr != nil {
 				return fmt.Errorf("resolve system secrets: %w", sysErr)
 			}
@@ -565,11 +565,15 @@ func Start(opts StartOptions) error {
 			runtime.RestoreRestartState(persistedState.RestartEvents, persistedState.RestartCounts)
 		}
 
-		// Start CloudConfigServer with generated ext cloud config
-		cloudCfgSrv = NewCloudConfigServer()
-		cloudCfgSrv.UpdateConfig(genResp.CloudConfig, systemSecrets.JWT)
-		if startErr := cloudCfgSrv.Start(); startErr != nil {
-			slog.Warn("CloudConfigServer failed to start", "err", startErr)
+		// Start CloudConfigServer only in desktop mode — server-mode webapps
+		// have SPRING_CLOUD_CONFIG_ENABLED=false and don't connect to it.
+		// Desktop mode uses the config server for local development workflows.
+		if config.IsDesktopMode() {
+			cloudCfgSrv = NewCloudConfigServer()
+			cloudCfgSrv.UpdateConfig(genResp.CloudConfig, systemSecrets.JWT)
+			if startErr := cloudCfgSrv.Start(); startErr != nil {
+				slog.Warn("CloudConfigServer failed to start", "err", startErr)
+			}
 		}
 
 		// Status recovery: if previous status was RUNNING/STARTING/STALLED → start namespace
@@ -1139,6 +1143,7 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+api.NamespaceStop, d.handleStopNamespace)
 	mux.HandleFunc("POST "+api.NamespaceReload, d.handleReloadNamespace)
 	mux.HandleFunc("POST "+api.NamespaceUpgrade, d.handleUpgradeNamespace)
+	mux.HandleFunc("POST "+api.NamespaceAdminPassword, d.handleSetAdminPassword)
 	mux.HandleFunc("GET "+api.RestartEvents, d.handleRestartEvents)
 	mux.HandleFunc("GET /api/v1/diagnostics-file", d.handleDiagnosticsFile)
 
@@ -1380,7 +1385,9 @@ func buildRegistryAuthCache(reposByHost map[string]bundle.ImageRepo, reader secr
 
 // resolveSystemSecrets reads or generates JWT and OIDC secrets.
 // Priority: Store → plain files (with migration) → generate new.
-func resolveSystemSecrets(svc *storage.SecretService) (namespace.SystemSecrets, error) {
+// In desktop mode the admin password is always "admin" (the desktop
+// launcher is a local dev tool, not a production deployment).
+func resolveSystemSecrets(svc *storage.SecretService, desktop bool) (namespace.SystemSecrets, error) {
 	var secrets namespace.SystemSecrets
 
 	// JWT
@@ -1410,6 +1417,26 @@ func resolveSystemSecrets(svc *storage.SecretService) (namespace.SystemSecrets, 
 		return secrets, fmt.Errorf("resolve OIDC secret: %w", err)
 	}
 	secrets.OIDC = oidc
+
+	// ecos-app realm admin password. In server mode a random password is
+	// generated on first start, persisted, and re-used on every reload.
+	// In desktop mode we always use "admin" — it's a local dev tool.
+	if desktop {
+		secrets.AdminPassword = "admin"
+	} else {
+		adminPass, adminErr := resolveOneSystemSecret(svc, "_admin_password", func() string {
+			p, genErr := namespace.GenerateSimpleAdminPassword()
+			if genErr != nil {
+				slog.Error("Failed to generate admin password", "err", genErr)
+				return ""
+			}
+			return p
+		})
+		if adminErr != nil {
+			return secrets, fmt.Errorf("resolve admin password: %w", adminErr)
+		}
+		secrets.AdminPassword = adminPass
+	}
 
 	return secrets, nil
 }
