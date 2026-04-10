@@ -1,11 +1,6 @@
 package cli
 
 import (
-	"fmt"
-	"os"
-	"os/signal"
-	"strings"
-	"syscall"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/api"
@@ -18,71 +13,15 @@ import (
 // Exported so cli/setup can call it.
 func StreamReloadStatus(c *client.DaemonClient) error {
 	ensureI18n()
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-
-	isTTY := output.IsTTY()
-	firstPrint := true
-	linesPrinted := 0
-	lastRunning := -1
-
-	// Brief pause to let the reconciler pick up changes.
-	time.Sleep(1 * time.Second)
-
-	for {
-		select {
-		case <-sigCh:
-			fmt.Println() //nolint:forbidigo // clean newline on Ctrl+C
-			output.PrintText(t("reload.interrupted"))
-			return errInterrupted
-		default:
-		}
-
-		ns, err := c.GetNamespace()
-		if err != nil {
-			time.Sleep(1 * time.Second)
-			continue
-		}
-
-		table, running, failed, total := renderAppTable(ns.Apps)
-
-		if isTTY {
-			if !firstPrint && linesPrinted > 0 {
-				output.ClearLines(linesPrinted)
-			}
-			firstPrint = false
-
-			summary := fmt.Sprintf("  %d/%d running", running, total)
-			if failed > 0 {
-				summary += fmt.Sprintf(", %s", output.Colorize(output.Red, fmt.Sprintf("%d failed", failed)))
-			}
-			fmt.Println(table)   //nolint:forbidigo // CLI table
-			fmt.Println()        //nolint:forbidigo // CLI spacing
-			fmt.Println(summary) //nolint:forbidigo // CLI summary
-			linesPrinted = strings.Count(table, "\n") + 3
-		} else if running != lastRunning {
-			fmt.Printf("  %d/%d running\n", running, total) //nolint:forbidigo // CLI progress
-		}
-		lastRunning = running
-
-		// Exit when all apps reached a terminal state.
-		if total > 0 && running+failed == total {
-			if failed > 0 {
-				fmt.Printf("\n%s\n", output.Colorize(output.Yellow,
-					fmt.Sprintf("%d/%d running, %d failed", running, total, failed))) //nolint:forbidigo // CLI result
-			} else {
-				fmt.Printf("\n%s\n", output.Colorize(output.Green, t("reload.complete"))) //nolint:forbidigo // CLI success
-			}
-			return nil
-		}
-
-		time.Sleep(2 * time.Second)
-	}
+	_, err := streamLiveStatus(c, liveStatusOpts{
+		initialDelay: 1 * time.Second,
+		successMsg:   output.Colorize(output.Green, t("reload.complete")),
+	})
+	return err
 }
 
 // renderAppTable is a convenience wrapper around output.FormatAppTable
-// that returns the same 4-tuple used by streamLiveStatus and StreamReloadStatus.
+// that returns the same 4-tuple used by streamLiveStatus.
 func renderAppTable(apps []api.AppDto) (table string, running, failed, total int) {
 	r := output.FormatAppTable(apps)
 	return r.Table, r.Running, r.Failed, r.Total

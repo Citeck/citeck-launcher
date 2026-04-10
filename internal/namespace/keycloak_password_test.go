@@ -5,8 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -97,49 +95,5 @@ func TestHashKeycloakPBKDF2_DistinctSalts(t *testing.T) {
 	}
 	if sd1 == sd2 {
 		t.Error("two hashes of the same password produced identical secretData — salt reuse")
-	}
-}
-
-// TestSubstituteAdminPasswordHash_RealTemplate loads the actual bundled
-// realm.json and verifies the substitution matches all three placeholders
-// (secretData, credentialData, requiredActions) and produces valid JSON.
-func TestSubstituteAdminPasswordHash_RealTemplate(t *testing.T) {
-	// Locate the repo-root realm file relative to the test file.
-	realmPath := filepath.Join("..", "appfiles", "keycloak", "ecos-app-realm.json")
-	original, err := os.ReadFile(realmPath)
-	if err != nil {
-		t.Fatalf("read realm template: %v", err)
-	}
-
-	substituted := substituteAdminPasswordHash(string(original), "new-password-xyz")
-
-	// All three placeholders must be gone from the output.
-	if strings.Contains(substituted, `31MudlHfx763mvpL`) {
-		t.Error("substituted realm still contains the template secretData placeholder")
-	}
-	if strings.Contains(substituted, `"requiredActions" : [ "UPDATE_PASSWORD" ]`) {
-		t.Error("substituted realm still contains the UPDATE_PASSWORD required action")
-	}
-
-	// The output must still be valid JSON — substitution broke nothing.
-	var parsed any
-	if err := json.Unmarshal([]byte(substituted), &parsed); err != nil {
-		t.Fatalf("substituted realm is not valid JSON: %v", err)
-	}
-
-	// Sanity: the user entry should still be present.
-	if !strings.Contains(substituted, `"username" : "admin"`) {
-		t.Error("substituted realm is missing the admin user entry")
-	}
-}
-
-// TestSubstituteAdminPasswordHash_NoopOnUnrelatedInput confirms that calling
-// substituteAdminPasswordHash on a string without the template placeholders
-// returns the input unchanged (defensive — future realm format changes).
-func TestSubstituteAdminPasswordHash_NoopOnUnrelatedInput(t *testing.T) {
-	input := `{"realm": "example", "users": []}`
-	out := substituteAdminPasswordHash(input, "password")
-	if out != input {
-		t.Errorf("expected unchanged output, got: %q", out)
 	}
 }

@@ -89,5 +89,6 @@ func restartNamespace(c *client.DaemonClient, stopTimeout time.Duration) error {
 		return fmt.Errorf("start namespace: %w", startErr)
 	}
 	output.PrintText("Namespace start requested")
-	return streamLiveStatus(c, false)
+	_, err := streamLiveStatus(c, liveStatusOpts{})
+	return err
 }

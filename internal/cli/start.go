@@ -118,7 +118,7 @@ func newStartCmd(version string) *cobra.Command {
 				output.PrintText(t("cli.daemonStarted"))
 				return nil
 			}
-			if err := streamLiveStatus(c, follow); err != nil && !errors.Is(err, errInterrupted) {
+			if _, err := streamLiveStatus(c, liveStatusOpts{follow: follow}); err != nil && !errors.Is(err, errInterrupted) {
 				return err
 			}
 			return nil
@@ -343,15 +343,29 @@ func startOnRunningDaemon(c *client.DaemonClient, args []string, detach, follow 
 	if detach {
 		return nil
 	}
-	return streamLiveStatus(c, follow)
+	_, err = streamLiveStatus(c, liveStatusOpts{follow: follow})
+	return err
+}
+
+// liveStatusOpts configures streamLiveStatus behavior.
+type liveStatusOpts struct {
+	follow       bool          // keep streaming after all apps reach terminal state
+	waitAll      bool          // wait until ALL apps are running (ignore intermediate failures, block until Ctrl+C or success)
+	initialDelay time.Duration // pause before first poll (e.g. let reconciler pick up changes)
+	successMsg   string        // custom message on all-running (default: cli.allAppsStarted)
 }
 
 // streamLiveStatus polls the daemon and shows an in-place table of app statuses.
-func streamLiveStatus(c *client.DaemonClient, follow bool) error {
+// Returns the number of apps still in a failed state when streaming ends.
+func streamLiveStatus(c *client.DaemonClient, opts liveStatusOpts) (int, error) {
 	ensureI18n()
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
+
+	if opts.initialDelay > 0 {
+		time.Sleep(opts.initialDelay)
+	}
 
 	isTTY := output.IsTTY()
 	firstPrint := true
@@ -362,7 +376,7 @@ func streamLiveStatus(c *client.DaemonClient, follow bool) error {
 		select {
 		case <-sigCh:
 			fmt.Println() //nolint:forbidigo // clean newline on Ctrl+C
-			return errInterrupted
+			return 0, errInterrupted
 		default:
 		}
 
@@ -383,6 +397,9 @@ func streamLiveStatus(c *client.DaemonClient, follow bool) error {
 			summary := fmt.Sprintf("  %d/%d running", running, total)
 			if failed > 0 {
 				summary += fmt.Sprintf(", %s", output.Colorize(output.Red, fmt.Sprintf("%d failed", failed)))
+				if opts.waitAll {
+					summary += fmt.Sprintf("  %s", output.Colorize(output.Yellow, t("cli.waitingRetry")))
+				}
 			}
 			fmt.Println(table)    //nolint:forbidigo // CLI table
 			fmt.Println()         //nolint:forbidigo // CLI spacing
@@ -393,16 +410,26 @@ func streamLiveStatus(c *client.DaemonClient, follow bool) error {
 		}
 		lastRunning = running
 
-		// Exit when all apps reached a terminal state (running or failed)
-		if total > 0 && running+failed == total && !follow {
-			ensureI18n()
-			if failed > 0 {
+		// Exit conditions (only when not in follow mode)
+		if total > 0 && !opts.follow {
+			if running == total {
+				// All apps running — success.
+				ensureI18n()
+				msg := opts.successMsg
+				if msg == "" {
+					msg = t("cli.allAppsStarted", "count", fmt.Sprintf("%d", total))
+				}
+				fmt.Printf("\n%s\n", msg) //nolint:forbidigo // CLI success
+				return 0, nil
+			}
+			// Some apps failed and we've reached a terminal state.
+			if running+failed == total && !opts.waitAll {
+				ensureI18n()
 				fmt.Printf("\n%s\n", output.Colorize(output.Yellow,
 					fmt.Sprintf("%d/%d apps started, %d failed", running, total, failed))) //nolint:forbidigo // CLI result
-			} else {
-				fmt.Printf("\n%s\n", t("cli.allAppsStarted", "count", fmt.Sprintf("%d", total))) //nolint:forbidigo // CLI success
+				return failed, nil
 			}
-			return nil
+			// waitAll mode: keep polling — reconciler will retry failed apps.
 		}
 
 		time.Sleep(2 * time.Second)

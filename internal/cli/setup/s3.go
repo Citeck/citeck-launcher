@@ -46,12 +46,16 @@ func (s *s3Setting) Run(ctx *setupContext, cfg *namespace.Config, _ *config.Daem
 			Options(
 				huh.NewOption(i18n.T("setup.s3.edit"), "edit"),
 				huh.NewOption(i18n.T("setup.s3.remove"), "remove"),
+				huh.NewOption(i18n.T("setup.back"), backValue),
 			).
 			Value(&action).
 			WithTheme(output.HuhTheme).
 		Run()
 		if err != nil {
 			return fmt.Errorf("s3 action selection: %w", err)
+		}
+		if action == backValue {
+			return huh.ErrUserAborted
 		}
 		if action == "remove" {
 			cfg.S3 = nil

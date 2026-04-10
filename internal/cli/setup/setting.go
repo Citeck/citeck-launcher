@@ -88,3 +88,6 @@ func configFilePath(target TargetFile) string {
 	}
 	return config.NamespaceConfigPath()
 }
+
+// backValue is the sentinel option value for "← Back" in all setup select menus.
+const backValue = "_back"

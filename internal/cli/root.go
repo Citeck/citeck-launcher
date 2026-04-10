@@ -80,6 +80,13 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 	}
 	root.SetVersionTemplate("Citeck CLI {{.Version}}\n")
 
+	// Localize command descriptions and flag help on first help invocation.
+	defaultHelp := root.HelpFunc()
+	root.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		localizeCommands(root)
+		defaultHelp(cmd, args)
+	})
+
 	root.PersistentFlags().StringVar(&flagOutput, "format", "text", "Output format: text or json")
 	root.PersistentFlags().StringVar(&flagHost, "host", "", "Remote daemon host:port")
 	root.PersistentFlags().StringVar(&flagTLSCert, "tls-cert", "", "Client certificate for mTLS")

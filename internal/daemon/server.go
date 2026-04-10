@@ -451,10 +451,11 @@ func Start(opts StartOptions) error {
 				keyPath := acmeClient.KeyPath()
 
 				// Obtain cert if not yet present or if host changed
+				var acmeErr error
 				if !acmeClient.CertMatchesHost() {
 					slog.Info("Obtaining Let's Encrypt certificate", "host", host)
 					acmeCtx, acmeCancel := context.WithTimeout(context.Background(), 120*time.Second)
-					acmeErr := acmeClient.ObtainCertificate(acmeCtx)
+					acmeErr = acmeClient.ObtainCertificate(acmeCtx)
 					acmeCancel()
 					if acmeErr != nil {
 						slog.Error("Let's Encrypt certificate obtainment failed", "err", acmeErr)
@@ -467,6 +468,14 @@ func Start(opts StartOptions) error {
 				if isRegularFile(certPath) {
 					nsCfg.Proxy.TLS.CertPath = certPath
 					nsCfg.Proxy.TLS.KeyPath = keyPath
+				}
+
+				// Fallback: if LE failed and no cert exists, generate self-signed so proxy still serves HTTPS
+				if nsCfg.Proxy.TLS.CertPath == "" {
+					slog.Warn("Let's Encrypt cert not available, falling back to self-signed", "reason", acmeErr)
+					nsCfg.Proxy.TLS.LetsEncrypt = false // let ensureSelfSignedCert run
+					ensureSelfSignedCert(nsCfg)
+					nsCfg.Proxy.TLS.LetsEncrypt = true // restore for renewal service
 				}
 			}
 		}
@@ -917,19 +926,29 @@ func (d *Daemon) doReload() error {
 	var newRenewal *acme.RenewalService
 	if nsCfg.Proxy.TLS.Enabled && nsCfg.Proxy.TLS.LetsEncrypt && nsCfg.Proxy.Host != "" && nsCfg.Proxy.Host != "localhost" {
 		acmeClient := acme.NewClient(config.DataDir(), config.ConfDir(), nsCfg.Proxy.Host)
+		var acmeErr error
 		if !acmeClient.CertMatchesHost() {
 			slog.Info("Obtaining Let's Encrypt certificate on reload", "host", nsCfg.Proxy.Host)
 			acmeCtx, acmeCancel := context.WithTimeout(context.Background(), 120*time.Second)
-			err := acmeClient.ObtainCertificate(acmeCtx)
+			acmeErr = acmeClient.ObtainCertificate(acmeCtx)
 			acmeCancel()
-			if err != nil {
-				slog.Error("Let's Encrypt failed on reload", "err", err)
+			if acmeErr != nil {
+				slog.Error("Let's Encrypt failed on reload", "err", acmeErr)
 			}
 		}
 		if acmeClient.CertMatchesHost() {
 			nsCfg.Proxy.TLS.CertPath = acmeClient.CertPath()
 			nsCfg.Proxy.TLS.KeyPath = acmeClient.KeyPath()
 		}
+
+		// Fallback: if LE cert not available, use self-signed so proxy still serves HTTPS
+		if nsCfg.Proxy.TLS.CertPath == "" {
+			slog.Warn("Let's Encrypt cert not available on reload, falling back to self-signed", "reason", acmeErr)
+			nsCfg.Proxy.TLS.LetsEncrypt = false
+			ensureSelfSignedCert(nsCfg)
+			nsCfg.Proxy.TLS.LetsEncrypt = true
+		}
+
 		newRenewal = acme.NewRenewalService(acmeClient, func() {
 			if d.runtime != nil {
 				if err := d.runtime.RestartApp("proxy"); err != nil {

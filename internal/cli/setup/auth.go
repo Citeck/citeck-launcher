@@ -39,12 +39,16 @@ func (s *authSetting) Run(_ *setupContext, cfg *namespace.Config, _ *config.Daem
 		Options(
 			huh.NewOption("Keycloak SSO", string(namespace.AuthKeycloak)),
 			huh.NewOption("Basic (username/password)", string(namespace.AuthBasic)),
+			huh.NewOption(i18n.T("setup.back"), backValue),
 		).
 		Value(&choice).
 		WithTheme(output.HuhTheme).
 		Run()
 	if err != nil {
 		return fmt.Errorf("auth type selection: %w", err)
+	}
+	if choice == backValue {
+		return huh.ErrUserAborted
 	}
 
 	cfg.Authentication.Type = namespace.AuthenticationType(choice)

@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"golang.org/x/crypto/pbkdf2"
 )
@@ -64,64 +63,6 @@ type keycloakSecretData struct {
 type keycloakCredentialData struct {
 	HashIterations int    `json:"hashIterations"`
 	Algorithm      string `json:"algorithm"`
-}
-
-// Template placeholders present in internal/appfiles/keycloak/ecos-app-realm.json.
-// substituteAdminPasswordHash replaces these with a freshly hashed password
-// so the generated realm.json bootstraps keycloak with our chosen credential
-// on the first container start. The template `requiredActions` entry is also
-// cleared so the user can log in directly with the generated password instead
-// of being forced to change it on first login (the generated password is
-// already strong enough; `citeck setup admin-password` is the change path).
-//
-//nolint:gosec // G101: template placeholders from the bundled realm.json, not real credentials
-const (
-	kcTemplateSecretData     = `"secretData" : "{\"value\":\"31MudlHfx763mvpL+ZJU/etLgu2qFt0NpX+xyK0f8MCxOagc5N5+LCLQ/lUx8PJA6+eflW/eRQcnqGR7L8qb7w==\",\"salt\":\"SWU35ecF1zm/VYEcvzdNJg==\"}"`
-	kcTemplateCredentialData = `"credentialData" : "{\"hashIterations\":27500,\"algorithm\":\"pbkdf2-sha256\"}"`
-	kcTemplateRequiredAction = `"requiredActions" : [ "UPDATE_PASSWORD" ]`
-)
-
-// substituteAdminPasswordHash replaces the placeholder hash in the bundled
-// realm.json template with a fresh PBKDF2 hash of the given password. The
-// UPDATE_PASSWORD required action is cleared so the user can log in directly
-// with the generated password. Returns the original realm unchanged if the
-// hash operation fails (defensive — daemon startup should never abort on a
-// realm substitution error; realm.json will just have its template default).
-func substituteAdminPasswordHash(realm, password string) string {
-	secretData, credentialData, err := HashKeycloakPBKDF2(password)
-	if err != nil {
-		return realm
-	}
-	// JSON-encode the inner blob values so they embed safely as string
-	// values (backslash-escape quotes) inside the outer realm JSON.
-	sdEscaped := jsonEscapeInner(secretData)
-	cdEscaped := jsonEscapeInner(credentialData)
-
-	realm = strings.Replace(realm,
-		kcTemplateSecretData,
-		`"secretData" : "`+sdEscaped+`"`, 1)
-	realm = strings.Replace(realm,
-		kcTemplateCredentialData,
-		`"credentialData" : "`+cdEscaped+`"`, 1)
-	realm = strings.Replace(realm,
-		kcTemplateRequiredAction,
-		`"requiredActions" : [ ]`, 1)
-	return realm
-}
-
-// jsonEscapeInner escapes a JSON document so it can be embedded as a string
-// value inside another JSON document. Equivalent to json.Marshal's string
-// encoding but without the surrounding double quotes.
-func jsonEscapeInner(s string) string {
-	b, err := json.Marshal(s)
-	if err != nil {
-		return s
-	}
-	// b is `"...escaped..."` — strip the surrounding quotes.
-	if len(b) >= 2 && b[0] == '"' && b[len(b)-1] == '"' {
-		return string(b[1 : len(b)-1])
-	}
-	return string(b)
 }
 
 // HashKeycloakPBKDF2 produces the (secretData, credentialData) JSON strings

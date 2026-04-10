@@ -94,7 +94,7 @@
       "credentialData" : "{\"hashIterations\":27500,\"algorithm\":\"pbkdf2-sha256\"}"
     } ],
     "disableableCredentialTypes" : [ ],
-    "requiredActions" : [ "UPDATE_PASSWORD" ],
+    "requiredActions" : [ ],
     "realmRoles" : [ "offline_access", "uma_authorization" ],
     "clientRoles" : {
       "account" : [ "manage-account", "view-profile" ]

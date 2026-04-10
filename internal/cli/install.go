@@ -308,7 +308,8 @@ hostStep:
 		return nil
 	}
 	defer c.Close()
-	if streamErr := streamLiveStatus(c, false); streamErr != nil {
+	_, streamErr := streamLiveStatus(c, liveStatusOpts{waitAll: true})
+	if streamErr != nil {
 		if errors.Is(streamErr, errInterrupted) {
 			return nil // Ctrl+C during status streaming — daemon keeps running
 		}
@@ -766,7 +767,7 @@ func selectSnapshot(snapshots []bundle.SnapshotDef) string {
 	}
 	options = append(options, t("install.snapshot.skip"))
 
-	selected := promptSelect(t("install.snapshot.prompt"), options, len(options)-1)
+	selected := promptSelect(t("install.snapshot.prompt"), options, 0)
 
 	// Last option = skip.
 	for i, snap := range snapshots {

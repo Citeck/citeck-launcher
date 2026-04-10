@@ -50,12 +50,16 @@ func (s *tlsSetting) Run(_ *setupContext, cfg *namespace.Config, _ *config.Daemo
 			huh.NewOption(i18n.T("setup.tls.selfsigned"), optSelfSigned),
 			huh.NewOption(i18n.T("setup.tls.custom"), optCustom),
 			huh.NewOption("HTTP only (no TLS)", optHTTP),
+			huh.NewOption(i18n.T("setup.back"), backValue),
 		).
 		Value(&choice).
 		WithTheme(output.HuhTheme).
 		Run()
 	if err != nil {
 		return fmt.Errorf("tls selection: %w", err)
+	}
+	if choice == backValue {
+		return huh.ErrUserAborted
 	}
 
 	// Reset TLS config to zero value before applying selection.

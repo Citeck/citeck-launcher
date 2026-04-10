@@ -98,7 +98,14 @@ func runSetup(_ *cobra.Command, args []string) error {
 }
 
 // resolveAppList resolves the list of app names from the bundle, falling back to namespace config keys.
+// Temporarily raises the log level to suppress bundle-resolver INFO noise that
+// breaks the huh TUI initial render (the logged lines are never cleared).
+// Safe: setup runs single-threaded at this point, no concurrent log producers.
 func resolveAppList(nsCfg *namespace.Config) []string {
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer slog.SetDefault(prev)
+
 	resolver := bundle.NewResolver(config.DataDir())
 	resolver.SetOffline(true)
 
@@ -154,6 +161,7 @@ func runMenuLoop(sctx *setupContext, nsCfg *namespace.Config, daemonCfg *config.
 		var choice string
 		err := huh.NewSelect[string]().
 			Title(i18n.T("setup.menu.title")).
+			Description(i18n.T("setup.hint.esc")).
 			Options(options...).
 			Value(&choice).
 			WithTheme(output.HuhTheme).

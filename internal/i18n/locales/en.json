@@ -80,6 +80,9 @@
   "install.ready.certWarning": "Note: your browser will show a security warning\nbecause the certificate is self-signed.\nClick \"Advanced\" -> \"Proceed\" to continue.",
 
   "uninstall.stopping": "Stopping platform...",
+  "uninstall.confirm": "This will stop the platform and remove Citeck Launcher. Continue? (yes/no)",
+  "uninstall.confirmYes": "yes",
+  "uninstall.canceled": "Uninstall canceled.",
   "uninstall.systemdRemoved": "Systemd service removed",
   "uninstall.systemdNotFound": "No systemd service found",
   "uninstall.systemdNotRoot": "Not running as root. To remove the service, run:",
@@ -96,8 +99,11 @@
   "cli.platformNotRunning": "Platform is not running",
   "cli.daemonStarted": "Daemon started in background",
   "cli.allAppsStarted": "All {count} apps started.",
+  "cli.waitingRetry": "(waiting for retry...)",
 
   "setup.exit": "Exit",
+  "setup.back": "← Back",
+  "setup.hint.esc": "Esc — back",
   "setup.menu.title": "Configure settings",
   "setup.no_changes": "Nothing changed",
   "setup.validation_error": "Validation error",
@@ -205,5 +211,130 @@
   "setup.admin_password.applied": "  Admin password reset.",
   "setup.admin_password.daemonNotRunning": "platform is not running — start it first (citeck start)",
   "setup.admin_password.tooShort": "password must be at least 6 characters",
-  "setup.admin_password.mismatch": "passwords do not match"
+  "setup.admin_password.mismatch": "passwords do not match",
+
+  "help.citeck.short": "Citeck Launcher CLI",
+  "help.citeck.long": "Citeck Launcher — manage Citeck namespaces and Docker containers",
+
+  "help.start.short": "Start the daemon and namespace (or a single app)",
+  "help.start.flag.foreground": "Run in foreground (don't fork)",
+  "help.start.flag.detach": "Start in background without waiting",
+  "help.start.flag.offline": "Offline mode: skip git operations, use only local data",
+  "help.start.flag.follow": "Don't exit after all apps are running",
+
+  "help.stop.short": "Stop the namespace (or a single app)",
+  "help.stop.flag.shutdown": "Also shutdown the daemon",
+  "help.stop.flag.detach": "Send stop and return without waiting",
+  "help.stop.flag.leave-running": "Exit the daemon without stopping containers (for binary upgrades)",
+
+  "help.status.short": "Show namespace and app status",
+  "help.status.flag.watch": "Watch for changes (event stream)",
+  "help.status.flag.apps": "Show app details",
+
+  "help.health.short": "System health check (exit 0=healthy, 1=unhealthy)",
+
+  "help.config.short": "Configuration management",
+  "help.config.view.short": "Display current namespace.yml",
+  "help.config.validate.short": "Validate namespace configuration",
+
+  "help.apply.short": "Apply namespace configuration (idempotent)",
+  "help.apply.flag.file": "Path to namespace.yml",
+  "help.apply.flag.wait": "Wait for all apps to be running",
+  "help.apply.flag.timeout": "Wait timeout in seconds",
+  "help.apply.flag.dry-run": "Preview changes without applying",
+
+  "help.diff.short": "Show pending configuration changes",
+  "help.diff.flag.file": "Path to new namespace.yml to compare",
+
+  "help.wait.short": "Wait for a condition",
+  "help.wait.flag.status": "Status to wait for",
+  "help.wait.flag.app": "Wait for specific app",
+  "help.wait.flag.healthy": "Wait for healthy status",
+  "help.wait.flag.timeout": "Timeout in seconds",
+
+  "help.reload.short": "Hot-reload namespace configuration",
+  "help.reload.flag.no-wait": "Don't wait for services to stabilize (detach)",
+
+  "help.diagnose.short": "Find and optionally fix problems",
+  "help.diagnose.flag.fix": "Auto-fix fixable problems",
+  "help.diagnose.flag.dry-run": "Preview fixes without applying",
+
+  "help.describe.short": "Show detailed information about an app",
+
+  "help.logs.short": "Show container logs (or daemon logs if no app specified)",
+  "help.logs.flag.tail": "Number of lines to show",
+  "help.logs.flag.follow": "Follow log output",
+  "help.logs.flag.since": "Show logs since timestamp (RFC3339) or relative (e.g. 1h)",
+  "help.logs.flag.until": "Show logs until timestamp (RFC3339) or relative",
+  "help.logs.flag.timestamps": "Show timestamps",
+
+  "help.exec.short": "Execute command in container",
+
+  "help.restart.short": "Restart an app or the entire namespace",
+  "help.restart.flag.wait": "Wait for app to reach RUNNING status",
+  "help.restart.flag.timeout": "Timeout in seconds",
+
+  "help.cert.short": "Manage TLS certificates",
+  "help.cert.status.short": "Show certificate expiration and details",
+  "help.cert.generate.short": "Generate self-signed server TLS certificate",
+  "help.cert.generate.flag.host": "Hostnames and IPs for server certificate",
+  "help.cert.generate.flag.days": "Certificate validity in days",
+  "help.cert.letsencrypt.short": "Obtain a Let's Encrypt certificate",
+  "help.cert.letsencrypt.flag.host": "Hostname for the certificate",
+
+  "help.webui.short": "Manage Web UI access",
+  "help.webui.cert.short": "Generate client certificate for browser access (mTLS)",
+  "help.webui.cert.flag.name": "Certificate owner name",
+  "help.webui.cert.flag.days": "Certificate validity in days",
+  "help.webui.list.short": "List Web UI client certificates",
+  "help.webui.revoke.short": "Revoke a Web UI client certificate",
+  "help.webui.revoke.flag.name": "Name of the client cert to revoke",
+
+  "help.clean.short": "Clean up orphaned containers and volumes",
+  "help.clean.flag.execute": "Actually remove resources (dry run by default)",
+  "help.clean.flag.volumes": "Also scan/remove orphaned volume directories",
+  "help.clean.flag.images": "Prune unused Docker images (dangling)",
+
+  "help.migrate.short": "Migrate data from Kotlin desktop app (H2 → SQLite)",
+
+  "help.install.short": "Interactive server installer",
+  "help.install.flag.workspace": "Path to workspace zip archive (offline bundle import)",
+  "help.install.flag.offline": "Offline mode: skip network checks, use only local data",
+
+  "help.uninstall.short": "Remove Citeck Launcher installation",
+  "help.uninstall.flag.delete-data": "Delete all data without prompting (for automation)",
+
+  "help.snapshot.short": "Manage namespace snapshots (backup/restore)",
+  "help.snapshot.list.short": "List available snapshots",
+  "help.snapshot.export.short": "Export namespace volumes to a snapshot",
+  "help.snapshot.export.flag.dir": "Write snapshot to this directory (absolute path)",
+  "help.snapshot.import.short": "Import a snapshot into namespace volumes",
+
+  "help.upgrade.short": "Upgrade to a different bundle version",
+  "help.upgrade.flag.list": "List available bundle versions",
+  "help.upgrade.flag.dry-run": "Show what would change without applying",
+
+  "help.validate.short": "Validate namespace or daemon configuration",
+  "help.validate.flag.daemon": "Also validate daemon.yml",
+
+  "help.version.short": "Show version information",
+  "help.version.flag.short": "Print version number only",
+
+  "help.workspace.short": "Manage workspace configuration",
+  "help.workspace.import.short": "Import workspace config and bundles from a zip archive",
+  "help.workspace.update.short": "Pull latest workspace config and bundles from git",
+
+  "help.setup.short": "Interactive configuration editor",
+  "help.setup.history.short": "Show configuration change history",
+  "help.setup.rollback.short": "Roll back a configuration change",
+
+  "help.completion.short": "Generate shell completion script",
+
+  "help.citeck.flag.format": "Output format: text or json",
+  "help.citeck.flag.host": "Remote daemon host:port",
+  "help.citeck.flag.tls-cert": "Client certificate for mTLS",
+  "help.citeck.flag.tls-key": "Client private key for mTLS",
+  "help.citeck.flag.server-cert": "Pin server certificate (adds to TLS roots)",
+  "help.citeck.flag.insecure": "Skip server certificate verification",
+  "help.citeck.flag.yes": "Skip confirmation prompts"
 }

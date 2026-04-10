@@ -35,10 +35,11 @@ func (s *languageSetting) CurrentValue(_ *namespace.Config, dcfg *config.DaemonC
 
 func (s *languageSetting) Run(_ *setupContext, _ *namespace.Config, dcfg *config.DaemonConfig) error {
 	var selected string
-	options := make([]huh.Option[string], 0, len(i18n.SupportedLocales))
+	options := make([]huh.Option[string], 0, len(i18n.SupportedLocales)+1)
 	for _, l := range i18n.SupportedLocales {
 		options = append(options, huh.NewOption(l.Name+" ("+l.Code+")", l.Code))
 	}
+	options = append(options, huh.NewOption(i18n.T("setup.back"), backValue))
 
 	err := huh.NewSelect[string]().
 		Title(i18n.T("setup.language.prompt")).
@@ -48,6 +49,9 @@ func (s *languageSetting) Run(_ *setupContext, _ *namespace.Config, dcfg *config
 		Run()
 	if err != nil {
 		return fmt.Errorf("language selection: %w", err)
+	}
+	if selected == backValue {
+		return huh.ErrUserAborted
 	}
 	dcfg.Locale = selected
 	return nil

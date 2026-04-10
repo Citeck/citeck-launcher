@@ -71,6 +71,9 @@
   "install.registry.saveFailed": "認証情報の保存に失敗しました",
   "install.registry.backToRelease": "別のリリースを選択",
   "uninstall.stopping": "プラットフォームを停止中...",
+  "uninstall.confirm": "プラットフォームを停止し、Citeck Launcher を削除します。続行しますか？(yes/no)",
+  "uninstall.confirmYes": "yes",
+  "uninstall.canceled": "アンインストールがキャンセルされました。",
   "uninstall.systemdRemoved": "systemd サービスを削除しました",
   "uninstall.systemdNotFound": "systemd サービスが見つかりません",
   "uninstall.systemdNotRoot": "root 権限がありません。サービスを削除するには:",
@@ -86,6 +89,7 @@
   "cli.platformNotRunning": "プラットフォームは実行されていません",
   "cli.daemonStarted": "デーモンをバックグラウンドで起動しました",
   "cli.allAppsStarted": "全 {count} アプリが起動しました。",
+  "cli.waitingRetry": "(再試行を待機中...)",
   "install.alreadyInstalled": "Citeck はすでにインストールされています。",
   "install.setupHint": "設定するには、次を実行してください:",
   "install.snapshot.label": "デモデータ",
@@ -94,6 +98,8 @@
   "install.snapshot.selected": "スナップショット",
 
   "setup.exit": "終了",
+  "setup.back": "← 戻る",
+  "setup.hint.esc": "Esc — 戻る",
   "setup.menu.title": "設定を構成する",
   "setup.no_changes": "変更なし",
   "setup.validation_error": "バリデーションエラー",
@@ -200,5 +206,130 @@
   "setup.admin_password.applied": "  管理者パスワードをリセットしました。",
   "setup.admin_password.daemonNotRunning": "プラットフォームが実行されていません — 先に起動してください (citeck start)",
   "setup.admin_password.tooShort": "パスワードは 6 文字以上である必要があります",
-  "setup.admin_password.mismatch": "パスワードが一致しません"
+  "setup.admin_password.mismatch": "パスワードが一致しません",
+
+  "help.citeck.short": "Citeck Launcher CLI",
+  "help.citeck.long": "Citeck Launcher — Citeck ネームスペースと Docker コンテナの管理",
+
+  "help.start.short": "デーモンとネームスペースを起動（または単一アプリ）",
+  "help.start.flag.foreground": "フォアグラウンドで実行（フォークなし）",
+  "help.start.flag.detach": "バックグラウンドで起動し、完了を待たない",
+  "help.start.flag.offline": "オフラインモード: git 操作をスキップ、ローカルデータのみ使用",
+  "help.start.flag.follow": "すべてのアプリが起動後も終了しない",
+
+  "help.stop.short": "ネームスペースを停止（または単一アプリ）",
+  "help.stop.flag.shutdown": "デーモンも停止する",
+  "help.stop.flag.detach": "停止を送信し、待たずに戻る",
+  "help.stop.flag.leave-running": "コンテナを停止せずにデーモンを終了（バイナリアップグレード用）",
+
+  "help.status.short": "ネームスペースとアプリのステータスを表示",
+  "help.status.flag.watch": "変更を監視（イベントストリーム）",
+  "help.status.flag.apps": "アプリの詳細を表示",
+
+  "help.health.short": "システムヘルスチェック（終了コード 0=正常, 1=異常）",
+
+  "help.config.short": "設定管理",
+  "help.config.view.short": "現在の namespace.yml を表示",
+  "help.config.validate.short": "ネームスペース設定を検証",
+
+  "help.apply.short": "ネームスペース設定を適用（べき等）",
+  "help.apply.flag.file": "namespace.yml のパス",
+  "help.apply.flag.wait": "すべてのアプリが起動するまで待機",
+  "help.apply.flag.timeout": "待機タイムアウト（秒）",
+  "help.apply.flag.dry-run": "適用せずに変更をプレビュー",
+
+  "help.diff.short": "保留中の設定変更を表示",
+  "help.diff.flag.file": "比較する新しい namespace.yml のパス",
+
+  "help.wait.short": "条件を待機",
+  "help.wait.flag.status": "待機するステータス",
+  "help.wait.flag.app": "特定のアプリを待機",
+  "help.wait.flag.healthy": "正常なステータスを待機",
+  "help.wait.flag.timeout": "タイムアウト（秒）",
+
+  "help.reload.short": "ネームスペース設定のホットリロード",
+  "help.reload.flag.no-wait": "サービスの安定化を待たない（バックグラウンド）",
+
+  "help.diagnose.short": "問題を検出し、オプションで修正",
+  "help.diagnose.flag.fix": "修正可能な問題を自動修正",
+  "help.diagnose.flag.dry-run": "適用せずに修正をプレビュー",
+
+  "help.describe.short": "アプリの詳細情報を表示",
+
+  "help.logs.short": "コンテナのログを表示（アプリ未指定時はデーモンログ）",
+  "help.logs.flag.tail": "表示する行数",
+  "help.logs.flag.follow": "ログ出力を追跡",
+  "help.logs.flag.since": "指定タイムスタンプ以降のログを表示（RFC3339 または相対値、例: 1h）",
+  "help.logs.flag.until": "指定タイムスタンプまでのログを表示（RFC3339 または相対値）",
+  "help.logs.flag.timestamps": "タイムスタンプを表示",
+
+  "help.exec.short": "コンテナ内でコマンドを実行",
+
+  "help.restart.short": "アプリまたはネームスペース全体を再起動",
+  "help.restart.flag.wait": "アプリが RUNNING ステータスになるまで待機",
+  "help.restart.flag.timeout": "タイムアウト（秒）",
+
+  "help.cert.short": "TLS 証明書の管理",
+  "help.cert.status.short": "証明書の有効期限と詳細を表示",
+  "help.cert.generate.short": "自己署名サーバー TLS 証明書を生成",
+  "help.cert.generate.flag.host": "サーバー証明書のホスト名と IP",
+  "help.cert.generate.flag.days": "証明書の有効日数",
+  "help.cert.letsencrypt.short": "Let's Encrypt 証明書を取得",
+  "help.cert.letsencrypt.flag.host": "証明書のホスト名",
+
+  "help.webui.short": "Web UI アクセスの管理",
+  "help.webui.cert.short": "ブラウザアクセス用のクライアント証明書を生成（mTLS）",
+  "help.webui.cert.flag.name": "証明書の所有者名",
+  "help.webui.cert.flag.days": "証明書の有効日数",
+  "help.webui.list.short": "Web UI クライアント証明書の一覧",
+  "help.webui.revoke.short": "Web UI クライアント証明書を失効",
+  "help.webui.revoke.flag.name": "失効するクライアント証明書の名前",
+
+  "help.clean.short": "孤立したコンテナとボリュームをクリーンアップ",
+  "help.clean.flag.execute": "実際にリソースを削除（デフォルトはドライラン）",
+  "help.clean.flag.volumes": "孤立したボリュームディレクトリもスキャン/削除",
+  "help.clean.flag.images": "未使用の Docker イメージを削除（ダングリング）",
+
+  "help.migrate.short": "Kotlin デスクトップアプリからデータを移行（H2 → SQLite）",
+
+  "help.install.short": "対話式サーバーインストーラー",
+  "help.install.flag.workspace": "ワークスペース zip アーカイブのパス（オフラインバンドルインポート）",
+  "help.install.flag.offline": "オフラインモード: ネットワークチェックをスキップ、ローカルデータのみ使用",
+
+  "help.uninstall.short": "Citeck Launcher のインストールを削除",
+  "help.uninstall.flag.delete-data": "確認なしで全データを削除（自動化用）",
+
+  "help.snapshot.short": "ネームスペースのスナップショットを管理（バックアップ/リストア）",
+  "help.snapshot.list.short": "利用可能なスナップショットの一覧",
+  "help.snapshot.export.short": "ネームスペースのボリュームをスナップショットにエクスポート",
+  "help.snapshot.export.flag.dir": "このディレクトリにスナップショットを書き込み（絶対パス）",
+  "help.snapshot.import.short": "スナップショットをネームスペースのボリュームにインポート",
+
+  "help.upgrade.short": "別のバンドルバージョンにアップグレード",
+  "help.upgrade.flag.list": "利用可能なバンドルバージョンの一覧",
+  "help.upgrade.flag.dry-run": "適用せずに変更内容を表示",
+
+  "help.validate.short": "ネームスペースまたはデーモンの設定を検証",
+  "help.validate.flag.daemon": "daemon.yml も検証",
+
+  "help.version.short": "バージョン情報を表示",
+  "help.version.flag.short": "バージョン番号のみ出力",
+
+  "help.workspace.short": "ワークスペース設定の管理",
+  "help.workspace.import.short": "zip アーカイブからワークスペース設定とバンドルをインポート",
+  "help.workspace.update.short": "git から最新のワークスペース設定とバンドルを取得",
+
+  "help.setup.short": "対話式設定エディター",
+  "help.setup.history.short": "設定変更の履歴を表示",
+  "help.setup.rollback.short": "設定変更をロールバック",
+
+  "help.completion.short": "シェル補完スクリプトを生成",
+
+  "help.citeck.flag.format": "出力形式: text または json",
+  "help.citeck.flag.host": "リモートデーモンのホスト:ポート",
+  "help.citeck.flag.tls-cert": "mTLS 用クライアント証明書",
+  "help.citeck.flag.tls-key": "mTLS 用クライアント秘密鍵",
+  "help.citeck.flag.server-cert": "サーバー証明書を固定（TLS ルートに追加）",
+  "help.citeck.flag.insecure": "サーバー証明書の検証をスキップ",
+  "help.citeck.flag.yes": "確認プロンプトをスキップ"
 }

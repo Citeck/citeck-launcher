@@ -37,6 +37,17 @@ const dropConfirmPhrase = "drop all data"
 func runUninstall(deleteData bool) error {
 	ensureI18n()
 
+	// Confirm before doing anything destructive (skip when --delete-data is set — automation mode).
+	if !deleteData && !flagYes {
+		input := promptInput(t("uninstall.confirm"), "", "")
+		if !strings.EqualFold(strings.TrimSpace(input), "yes") &&
+			!strings.EqualFold(strings.TrimSpace(input), "y") &&
+			!strings.EqualFold(strings.TrimSpace(input), t("uninstall.confirmYes")) {
+			output.PrintText(t("uninstall.canceled"))
+			return nil
+		}
+	}
+
 	// 1. Stop the daemon gracefully (stops containers + daemon)
 	c := client.TryNew(clientOpts())
 	if c != nil && c.IsRunning() {

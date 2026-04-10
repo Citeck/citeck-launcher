@@ -80,6 +80,9 @@
   "install.ready.certWarning": "Примечание: браузер покажет предупреждение безопасности,\nтак как сертификат самоподписанный.\nНажмите «Дополнительно» → «Перейти на сайт».",
 
   "uninstall.stopping": "Останавливаю платформу...",
+  "uninstall.confirm": "Платформа будет остановлена и Citeck Launcher удалён. Продолжить? (да/нет)",
+  "uninstall.confirmYes": "да",
+  "uninstall.canceled": "Удаление отменено.",
   "uninstall.systemdRemoved": "Системный сервис удалён",
   "uninstall.systemdNotFound": "Системный сервис не найден",
   "uninstall.systemdNotRoot": "Нет прав root. Для удаления сервиса выполните:",
@@ -96,8 +99,11 @@
   "cli.platformNotRunning": "Платформа не запущена",
   "cli.daemonStarted": "Демон запущен в фоне",
   "cli.allAppsStarted": "Все {count} приложений запущены.",
+  "cli.waitingRetry": "(ожидание перезапуска...)",
 
   "setup.exit": "Выход",
+  "setup.back": "← Назад",
+  "setup.hint.esc": "Esc — назад",
   "setup.menu.title": "Настройки",
   "setup.no_changes": "Изменений нет",
   "setup.validation_error": "Ошибка валидации",
@@ -205,5 +211,130 @@
   "setup.admin_password.applied": "  Пароль администратора сброшен.",
   "setup.admin_password.daemonNotRunning": "платформа не запущена — запустите её (citeck start)",
   "setup.admin_password.tooShort": "пароль должен быть не короче 6 символов",
-  "setup.admin_password.mismatch": "пароли не совпадают"
+  "setup.admin_password.mismatch": "пароли не совпадают",
+
+  "help.citeck.short": "Citeck Launcher CLI",
+  "help.citeck.long": "Citeck Launcher — управление пространствами имён и Docker-контейнерами",
+
+  "help.start.short": "Запустить демон и пространство имён (или отдельное приложение)",
+  "help.start.flag.foreground": "Запуск на переднем плане (без форка)",
+  "help.start.flag.detach": "Запустить в фоне, не дожидаясь готовности",
+  "help.start.flag.offline": "Офлайн-режим: без git-операций, только локальные данные",
+  "help.start.flag.follow": "Не завершать после запуска всех приложений",
+
+  "help.stop.short": "Остановить пространство имён (или отдельное приложение)",
+  "help.stop.flag.shutdown": "Также остановить демон",
+  "help.stop.flag.detach": "Отправить команду и не ждать завершения",
+  "help.stop.flag.leave-running": "Завершить демон, оставив контейнеры (для обновления бинарника)",
+
+  "help.status.short": "Показать статус пространства имён и приложений",
+  "help.status.flag.watch": "Следить за изменениями (поток событий)",
+  "help.status.flag.apps": "Показать детали приложений",
+
+  "help.health.short": "Проверка работоспособности (exit 0=ОК, 1=ошибка)",
+
+  "help.config.short": "Управление конфигурацией",
+  "help.config.view.short": "Показать текущий namespace.yml",
+  "help.config.validate.short": "Проверить конфигурацию пространства имён",
+
+  "help.apply.short": "Применить конфигурацию (идемпотентно)",
+  "help.apply.flag.file": "Путь к namespace.yml",
+  "help.apply.flag.wait": "Ждать запуска всех приложений",
+  "help.apply.flag.timeout": "Таймаут ожидания в секундах",
+  "help.apply.flag.dry-run": "Показать изменения без применения",
+
+  "help.diff.short": "Показать отложенные изменения конфигурации",
+  "help.diff.flag.file": "Путь к новому namespace.yml для сравнения",
+
+  "help.wait.short": "Ожидать выполнения условия",
+  "help.wait.flag.status": "Статус для ожидания",
+  "help.wait.flag.app": "Ожидать конкретное приложение",
+  "help.wait.flag.healthy": "Ожидать здоровый статус",
+  "help.wait.flag.timeout": "Таймаут в секундах",
+
+  "help.reload.short": "Горячая перезагрузка конфигурации",
+  "help.reload.flag.no-wait": "Не ждать стабилизации сервисов (фоновый режим)",
+
+  "help.diagnose.short": "Поиск и исправление проблем",
+  "help.diagnose.flag.fix": "Автоматически исправить проблемы",
+  "help.diagnose.flag.dry-run": "Показать исправления без применения",
+
+  "help.describe.short": "Показать подробную информацию о приложении",
+
+  "help.logs.short": "Показать логи контейнера (или демона, если приложение не указано)",
+  "help.logs.flag.tail": "Количество строк для отображения",
+  "help.logs.flag.follow": "Следить за выводом логов",
+  "help.logs.flag.since": "Показать логи с указанного момента (RFC3339 или относительно, напр. 1h)",
+  "help.logs.flag.until": "Показать логи до указанного момента (RFC3339 или относительно)",
+  "help.logs.flag.timestamps": "Показывать временные метки",
+
+  "help.exec.short": "Выполнить команду в контейнере",
+
+  "help.restart.short": "Перезапустить приложение или всё пространство имён",
+  "help.restart.flag.wait": "Ждать перехода приложения в статус RUNNING",
+  "help.restart.flag.timeout": "Таймаут в секундах",
+
+  "help.cert.short": "Управление TLS-сертификатами",
+  "help.cert.status.short": "Показать срок действия и детали сертификата",
+  "help.cert.generate.short": "Сгенерировать самоподписанный TLS-сертификат",
+  "help.cert.generate.flag.host": "Имена хостов и IP для сертификата",
+  "help.cert.generate.flag.days": "Срок действия сертификата в днях",
+  "help.cert.letsencrypt.short": "Получить сертификат Let's Encrypt",
+  "help.cert.letsencrypt.flag.host": "Имя хоста для сертификата",
+
+  "help.webui.short": "Управление доступом к Web UI",
+  "help.webui.cert.short": "Сгенерировать клиентский сертификат для браузера (mTLS)",
+  "help.webui.cert.flag.name": "Имя владельца сертификата",
+  "help.webui.cert.flag.days": "Срок действия сертификата в днях",
+  "help.webui.list.short": "Список клиентских сертификатов Web UI",
+  "help.webui.revoke.short": "Отозвать клиентский сертификат Web UI",
+  "help.webui.revoke.flag.name": "Имя сертификата для отзыва",
+
+  "help.clean.short": "Очистка осиротевших контейнеров и томов",
+  "help.clean.flag.execute": "Действительно удалить ресурсы (по умолчанию — пробный запуск)",
+  "help.clean.flag.volumes": "Также сканировать/удалять осиротевшие тома",
+  "help.clean.flag.images": "Удалить неиспользуемые Docker-образы",
+
+  "help.migrate.short": "Миграция данных из Kotlin-приложения (H2 → SQLite)",
+
+  "help.install.short": "Интерактивная установка сервера",
+  "help.install.flag.workspace": "Путь к zip-архиву рабочего пространства (офлайн-импорт)",
+  "help.install.flag.offline": "Офлайн-режим: без сетевых проверок, только локальные данные",
+
+  "help.uninstall.short": "Удалить установку Citeck Launcher",
+  "help.uninstall.flag.delete-data": "Удалить все данные без запроса (для автоматизации)",
+
+  "help.snapshot.short": "Управление снапшотами (резервное копирование/восстановление)",
+  "help.snapshot.list.short": "Список доступных снапшотов",
+  "help.snapshot.export.short": "Экспорт томов в снапшот",
+  "help.snapshot.export.flag.dir": "Каталог для записи снапшота (абсолютный путь)",
+  "help.snapshot.import.short": "Импорт снапшота в тома пространства имён",
+
+  "help.upgrade.short": "Обновить до другой версии бандла",
+  "help.upgrade.flag.list": "Показать доступные версии бандлов",
+  "help.upgrade.flag.dry-run": "Показать изменения без применения",
+
+  "help.validate.short": "Проверить конфигурацию пространства имён или демона",
+  "help.validate.flag.daemon": "Также проверить daemon.yml",
+
+  "help.version.short": "Показать информацию о версии",
+  "help.version.flag.short": "Вывести только номер версии",
+
+  "help.workspace.short": "Управление конфигурацией рабочего пространства",
+  "help.workspace.import.short": "Импорт конфигурации и бандлов из zip-архива",
+  "help.workspace.update.short": "Обновить конфигурацию и бандлы из git",
+
+  "help.setup.short": "Интерактивный редактор настроек",
+  "help.setup.history.short": "Показать историю изменений конфигурации",
+  "help.setup.rollback.short": "Откатить изменение конфигурации",
+
+  "help.completion.short": "Сгенерировать скрипт автодополнения",
+
+  "help.citeck.flag.format": "Формат вывода: text или json",
+  "help.citeck.flag.host": "Адрес удалённого демона (хост:порт)",
+  "help.citeck.flag.tls-cert": "Клиентский сертификат для mTLS",
+  "help.citeck.flag.tls-key": "Приватный ключ клиента для mTLS",
+  "help.citeck.flag.server-cert": "Закрепить сертификат сервера (добавить в корневые TLS)",
+  "help.citeck.flag.insecure": "Пропустить проверку сертификата сервера",
+  "help.citeck.flag.yes": "Пропустить запросы подтверждения"
 }

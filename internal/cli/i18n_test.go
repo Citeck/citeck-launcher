@@ -38,7 +38,7 @@ func TestLocaleCompleteness(t *testing.T) {
 				t.Fatalf("failed to parse %s.json: %v", loc.Code, jsonErr)
 			}
 
-			// Check all en keys exist in this locale
+			// Check all en keys exist in this locale.
 			for _, key := range refKeys {
 				if _, ok := localeKeys[key]; !ok {
 					t.Errorf("missing key %q in %s.json", key, loc.Code)

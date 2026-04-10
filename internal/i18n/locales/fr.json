@@ -71,6 +71,9 @@
   "install.registry.saveFailed": "Impossible de sauvegarder les identifiants",
   "install.registry.backToRelease": "Choisir un autre release",
   "uninstall.stopping": "Arrêt de la plateforme...",
+  "uninstall.confirm": "La plateforme sera arrêtée et Citeck Launcher supprimé. Continuer ? (oui/non)",
+  "uninstall.confirmYes": "oui",
+  "uninstall.canceled": "Désinstallation annulée.",
   "uninstall.systemdRemoved": "Service systemd supprimé",
   "uninstall.systemdNotFound": "Aucun service systemd trouvé",
   "uninstall.systemdNotRoot": "Pas root. Pour supprimer le service :",
@@ -86,6 +89,7 @@
   "cli.platformNotRunning": "La plateforme n'est pas en cours d'exécution",
   "cli.daemonStarted": "Daemon démarré en arrière-plan",
   "cli.allAppsStarted": "Les {count} applications sont démarrées.",
+  "cli.waitingRetry": "(en attente de nouvelle tentative...)",
   "install.alreadyInstalled": "Citeck est déjà installé.",
   "install.setupHint": "Pour configurer, exécutez :",
   "install.snapshot.label": "Données de démonstration",
@@ -94,6 +98,8 @@
   "install.snapshot.selected": "Snapshot",
 
   "setup.exit": "Quitter",
+  "setup.back": "← Retour",
+  "setup.hint.esc": "Esc — retour",
   "setup.menu.title": "Configurer les paramètres",
   "setup.no_changes": "Aucun changement",
   "setup.validation_error": "Erreur de validation",
@@ -200,5 +206,130 @@
   "setup.admin_password.applied": "  Mot de passe admin réinitialisé.",
   "setup.admin_password.daemonNotRunning": "la plateforme n'est pas en cours d'exécution — démarrez-la d'abord (citeck start)",
   "setup.admin_password.tooShort": "le mot de passe doit contenir au moins 6 caractères",
-  "setup.admin_password.mismatch": "les mots de passe ne correspondent pas"
+  "setup.admin_password.mismatch": "les mots de passe ne correspondent pas",
+
+  "help.citeck.short": "Citeck Launcher CLI",
+  "help.citeck.long": "Citeck Launcher — gestion des espaces de noms et conteneurs Docker",
+
+  "help.start.short": "Demarrer le daemon et l'espace de noms (ou une seule application)",
+  "help.start.flag.foreground": "Executer en premier plan (sans fork)",
+  "help.start.flag.detach": "Demarrer en arriere-plan sans attendre",
+  "help.start.flag.offline": "Mode hors ligne : ignorer les operations git, utiliser uniquement les donnees locales",
+  "help.start.flag.follow": "Ne pas quitter apres le demarrage de toutes les applications",
+
+  "help.stop.short": "Arreter l'espace de noms (ou une seule application)",
+  "help.stop.flag.shutdown": "Arreter egalement le daemon",
+  "help.stop.flag.detach": "Envoyer l'arret et revenir sans attendre",
+  "help.stop.flag.leave-running": "Quitter le daemon sans arreter les conteneurs (pour mise a jour du binaire)",
+
+  "help.status.short": "Afficher l'etat de l'espace de noms et des applications",
+  "help.status.flag.watch": "Surveiller les changements (flux d'evenements)",
+  "help.status.flag.apps": "Afficher les details des applications",
+
+  "help.health.short": "Verification de sante du systeme (exit 0=sain, 1=non sain)",
+
+  "help.config.short": "Gestion de la configuration",
+  "help.config.view.short": "Afficher le namespace.yml actuel",
+  "help.config.validate.short": "Valider la configuration de l'espace de noms",
+
+  "help.apply.short": "Appliquer la configuration de l'espace de noms (idempotent)",
+  "help.apply.flag.file": "Chemin vers namespace.yml",
+  "help.apply.flag.wait": "Attendre que toutes les applications soient en cours d'execution",
+  "help.apply.flag.timeout": "Delai d'attente en secondes",
+  "help.apply.flag.dry-run": "Apercu des changements sans les appliquer",
+
+  "help.diff.short": "Afficher les changements de configuration en attente",
+  "help.diff.flag.file": "Chemin vers le nouveau namespace.yml a comparer",
+
+  "help.wait.short": "Attendre une condition",
+  "help.wait.flag.status": "Statut a attendre",
+  "help.wait.flag.app": "Attendre une application specifique",
+  "help.wait.flag.healthy": "Attendre un etat sain",
+  "help.wait.flag.timeout": "Delai en secondes",
+
+  "help.reload.short": "Rechargement a chaud de la configuration de l'espace de noms",
+  "help.reload.flag.no-wait": "Ne pas attendre la stabilisation des services (arriere-plan)",
+
+  "help.diagnose.short": "Rechercher et optionnellement corriger les problemes",
+  "help.diagnose.flag.fix": "Corriger automatiquement les problemes reparables",
+  "help.diagnose.flag.dry-run": "Apercu des corrections sans les appliquer",
+
+  "help.describe.short": "Afficher les informations detaillees d'une application",
+
+  "help.logs.short": "Afficher les logs du conteneur (ou du daemon si aucune application specifiee)",
+  "help.logs.flag.tail": "Nombre de lignes a afficher",
+  "help.logs.flag.follow": "Suivre la sortie des logs",
+  "help.logs.flag.since": "Afficher les logs depuis un horodatage (RFC3339) ou relatif (ex. 1h)",
+  "help.logs.flag.until": "Afficher les logs jusqu'a un horodatage (RFC3339) ou relatif",
+  "help.logs.flag.timestamps": "Afficher les horodatages",
+
+  "help.exec.short": "Executer une commande dans le conteneur",
+
+  "help.restart.short": "Redemarrer une application ou l'ensemble de l'espace de noms",
+  "help.restart.flag.wait": "Attendre que l'application atteigne le statut RUNNING",
+  "help.restart.flag.timeout": "Delai en secondes",
+
+  "help.cert.short": "Gerer les certificats TLS",
+  "help.cert.status.short": "Afficher l'expiration et les details du certificat",
+  "help.cert.generate.short": "Generer un certificat TLS auto-signe",
+  "help.cert.generate.flag.host": "Noms d'hotes et IPs pour le certificat serveur",
+  "help.cert.generate.flag.days": "Validite du certificat en jours",
+  "help.cert.letsencrypt.short": "Obtenir un certificat Let's Encrypt",
+  "help.cert.letsencrypt.flag.host": "Nom d'hote pour le certificat",
+
+  "help.webui.short": "Gerer l'acces a Web UI",
+  "help.webui.cert.short": "Generer un certificat client pour l'acces navigateur (mTLS)",
+  "help.webui.cert.flag.name": "Nom du proprietaire du certificat",
+  "help.webui.cert.flag.days": "Validite du certificat en jours",
+  "help.webui.list.short": "Lister les certificats client Web UI",
+  "help.webui.revoke.short": "Revoquer un certificat client Web UI",
+  "help.webui.revoke.flag.name": "Nom du certificat client a revoquer",
+
+  "help.clean.short": "Nettoyer les conteneurs et volumes orphelins",
+  "help.clean.flag.execute": "Supprimer reellement les ressources (simulation par defaut)",
+  "help.clean.flag.volumes": "Scanner/supprimer egalement les repertoires de volumes orphelins",
+  "help.clean.flag.images": "Supprimer les images Docker inutilisees (pendantes)",
+
+  "help.migrate.short": "Migrer les donnees de l'application Kotlin de bureau (H2 → SQLite)",
+
+  "help.install.short": "Installateur interactif du serveur",
+  "help.install.flag.workspace": "Chemin vers l'archive zip du workspace (import de bundle hors ligne)",
+  "help.install.flag.offline": "Mode hors ligne : ignorer les verifications reseau, utiliser uniquement les donnees locales",
+
+  "help.uninstall.short": "Supprimer l'installation de Citeck Launcher",
+  "help.uninstall.flag.delete-data": "Supprimer toutes les donnees sans confirmation (pour l'automatisation)",
+
+  "help.snapshot.short": "Gerer les snapshots de l'espace de noms (sauvegarde/restauration)",
+  "help.snapshot.list.short": "Lister les snapshots disponibles",
+  "help.snapshot.export.short": "Exporter les volumes de l'espace de noms dans un snapshot",
+  "help.snapshot.export.flag.dir": "Ecrire le snapshot dans ce repertoire (chemin absolu)",
+  "help.snapshot.import.short": "Importer un snapshot dans les volumes de l'espace de noms",
+
+  "help.upgrade.short": "Mettre a jour vers une autre version du bundle",
+  "help.upgrade.flag.list": "Lister les versions de bundle disponibles",
+  "help.upgrade.flag.dry-run": "Afficher les changements sans les appliquer",
+
+  "help.validate.short": "Valider la configuration de l'espace de noms ou du daemon",
+  "help.validate.flag.daemon": "Valider egalement daemon.yml",
+
+  "help.version.short": "Afficher les informations de version",
+  "help.version.flag.short": "Afficher uniquement le numero de version",
+
+  "help.workspace.short": "Gerer la configuration du workspace",
+  "help.workspace.import.short": "Importer la configuration et les bundles depuis une archive zip",
+  "help.workspace.update.short": "Mettre a jour la configuration et les bundles depuis git",
+
+  "help.setup.short": "Editeur interactif de configuration",
+  "help.setup.history.short": "Afficher l'historique des modifications de configuration",
+  "help.setup.rollback.short": "Annuler une modification de configuration",
+
+  "help.completion.short": "Generer le script d'auto-completion du shell",
+
+  "help.citeck.flag.format": "Format de sortie : text ou json",
+  "help.citeck.flag.host": "Hote du daemon distant (hote:port)",
+  "help.citeck.flag.tls-cert": "Certificat client pour mTLS",
+  "help.citeck.flag.tls-key": "Cle privee du client pour mTLS",
+  "help.citeck.flag.server-cert": "Epingler le certificat serveur (ajouter aux racines TLS)",
+  "help.citeck.flag.insecure": "Ignorer la verification du certificat serveur",
+  "help.citeck.flag.yes": "Ignorer les demandes de confirmation"
 }

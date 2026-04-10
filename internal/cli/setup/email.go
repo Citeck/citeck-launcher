@@ -54,12 +54,16 @@ func (s *emailSetting) Run(sctx *setupContext, cfg *namespace.Config, _ *config.
 			Options(
 				huh.NewOption(i18n.T("setup.email.edit"), "edit"),
 				huh.NewOption(i18n.T("setup.email.remove"), "remove"),
+				huh.NewOption(i18n.T("setup.back"), backValue),
 			).
 			Value(&action).
 			WithTheme(output.HuhTheme).
 		Run()
 		if err != nil {
 			return fmt.Errorf("email action selection: %w", err)
+		}
+		if action == backValue {
+			return huh.ErrUserAborted
 		}
 		if action == "remove" {
 			cfg.Email = nil

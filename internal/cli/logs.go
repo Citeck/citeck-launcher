@@ -72,7 +72,7 @@ func newLogsCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().IntVar(&tail, "tail", 100, "Number of lines to show")
+	cmd.Flags().IntVar(&tail, "tail", 1000, "Number of lines to show")
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Follow log output")
 	cmd.Flags().StringVar(&since, "since", "", "Show logs since timestamp (RFC3339) or relative (e.g. 1h)")
 	cmd.Flags().StringVar(&until, "until", "", "Show logs until timestamp (RFC3339) or relative")

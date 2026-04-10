@@ -85,5 +85,20 @@ func T(key string, args ...string) string {
 	return text
 }
 
+// HasKey returns true if the key exists in the current locale or fallback.
+func HasKey(key string) bool {
+	if cliTranslations != nil {
+		if _, ok := cliTranslations[key]; ok {
+			return true
+		}
+	}
+	if cliFallback != nil {
+		if _, ok := cliFallback[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 // LocaleFS exposes the embedded locale filesystem for tests.
 var LocaleFS = localeFS

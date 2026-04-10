@@ -332,20 +332,36 @@ func generateKeycloak(ctx *NsGenContext) {
 		TimeoutSeconds:   5,
 	}
 
-	// Generate kcadm init script to update client config in existing Keycloak DBs.
-	// Updates redirect URIs (if custom host) and OIDC client secret (always).
+	// Generate kcadm init script to update client config and admin password
+	// in existing Keycloak DBs. Runs after keycloak startup probe passes.
 	{
 		baseURL := ctx.ProxyBaseURL()
 		oidcSecret := ctx.Secrets.OIDC
+		adminPass := ctx.Secrets.AdminPasswordOrDefault()
 		var scriptParts []string
-		scriptParts = append(scriptParts, `#!/bin/bash
+
+		// Try logging in with the target password first; fall back to "admin"
+		// (covers fresh installs and snapshot imports where KC still has default creds).
+		scriptParts = append(scriptParts, fmt.Sprintf(`#!/bin/bash
+set -e
 KCADM=/opt/keycloak/bin/kcadm.sh
-$KCADM config credentials --server http://localhost:8080 \
-    --realm master --user admin --password admin
-CID=$($KCADM get clients -r ecos-app \
+ADMIN_PASS=%q
+if $KCADM config credentials --server http://localhost:8080 \
+    --realm master --user admin --password "$ADMIN_PASS" 2>/dev/null; then
+  CURRENT_PASS="$ADMIN_PASS"
+elif $KCADM config credentials --server http://localhost:8080 \
+    --realm master --user admin --password admin 2>/dev/null; then
+  CURRENT_PASS=admin
+else
+  echo "ERROR: cannot authenticate to keycloak as admin" >&2
+  exit 1
+fi`, adminPass))
+
+		// Update OIDC client config
+		scriptParts = append(scriptParts, `CID=$($KCADM get clients -r ecos-app \
     -q clientId=ecos-proxy-app --fields id \
     --format csv --noquotes | head -1)
-[ -z "$CID" ] && exit 0`)
+[ -z "$CID" ] && { echo "WARN: ecos-proxy-app client not found"; exit 0; }`)
 
 		if ctx.ProxyHost() != "localhost" || ctx.TLSEnabled() {
 			scriptParts = append(scriptParts, fmt.Sprintf(
@@ -353,6 +369,18 @@ CID=$($KCADM get clients -r ecos-app \
 		}
 		scriptParts = append(scriptParts, fmt.Sprintf(
 			`$KCADM update "clients/$CID" -r ecos-app -s 'secret=%s'`, oidcSecret))
+
+		// Apply admin password if current is still "admin" (snapshot import / fresh DB).
+		if adminPass != "admin" {
+			scriptParts = append(scriptParts, fmt.Sprintf(`
+# Set admin password in both realms if it differs from the target
+if [ "$CURRENT_PASS" = "admin" ]; then
+  echo "Applying generated admin password..."
+  $KCADM set-password -r ecos-app --username admin --new-password %q
+  $KCADM set-password -r master  --username admin --new-password %q
+  echo "Admin password applied."
+fi`, adminPass, adminPass))
+		}
 
 		script := strings.Join(scriptParts, "\n") + "\n"
 		ctx.Files["keycloak/update-client-config.sh"] = []byte(script)
@@ -707,10 +735,6 @@ func generateProxy(ctx *NsGenContext) {
 			oldSecret := `"secret": "2996117d-9a33-4e06-b48a-867ce6a235db"` //nolint:gosec // template placeholder, not a real credential
 			newSecret := `"secret": "` + oidcSecret + `"`
 			realm := strings.Replace(string(realmBytes), oldSecret, newSecret, 1)
-
-			if ctx.Secrets.AdminPassword != "" {
-				realm = substituteAdminPasswordHash(realm, ctx.Secrets.AdminPassword)
-			}
 			ctx.Files[realmKey] = []byte(realm)
 		}
 

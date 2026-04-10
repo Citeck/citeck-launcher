@@ -118,6 +118,12 @@ func watchEvents(c *client.DaemonClient) error {
 			output.Colorize(output.Bold, "Name:"), ns.Name,
 			output.Colorize(output.Bold, "Status:"), output.ColorizeStatus(ns.Status),
 			output.Colorize(output.Bold, "Bundle:"), ns.BundleRef)
+		for _, link := range ns.Links {
+			if link.Name == "ECOS UI" {
+				header += fmt.Sprintf("%s  %s\n", output.Colorize(output.Bold, "URL:"), link.URL)
+				break
+			}
+		}
 		table, _, _, _ := renderAppTable(ns.Apps)
 
 		if tty && lastLines > 0 {
