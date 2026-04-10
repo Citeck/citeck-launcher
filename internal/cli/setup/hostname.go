@@ -10,6 +10,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/namespace"
 
 	"github.com/charmbracelet/huh"
+	"github.com/citeck/citeck-launcher/internal/output"
 )
 
 type hostnameSetting struct{}
@@ -49,6 +50,7 @@ func (s *hostnameSetting) Run(_ *setupContext, cfg *namespace.Config, _ *config.
 			}
 			return nil
 		}).
+		WithTheme(output.HuhTheme).
 		Run()
 	if err != nil {
 		return fmt.Errorf("hostname input: %w", err)

@@ -100,6 +100,30 @@ func runUninstall(deleteData bool) error {
 		}
 	}
 
+	// 4. Remove the binary itself and its backup.
+	removeBinary()
+
 	output.PrintText("\n" + t("uninstall.complete"))
 	return nil
+}
+
+// removeBinary removes /usr/local/bin/citeck and its .bak backup.
+// Best-effort: if the binary is in a different location (e.g. running
+// from a dev build), we skip silently.
+func removeBinary() {
+	const target = "/usr/local/bin/citeck"
+	for _, path := range []string{target, target + ".bak"} {
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		if os.Geteuid() == 0 {
+			if rmErr := os.Remove(path); rmErr != nil {
+				output.PrintText("  warn: failed to remove %s: %v", path, rmErr)
+			} else {
+				output.PrintText(t("uninstall.binaryRemoved", "path", path))
+			}
+		} else {
+			output.PrintText("  sudo rm %s", path)
+		}
+	}
 }

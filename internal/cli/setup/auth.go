@@ -9,6 +9,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/namespace"
 
 	"github.com/charmbracelet/huh"
+	"github.com/citeck/citeck-launcher/internal/output"
 )
 
 type authSetting struct{}
@@ -40,6 +41,7 @@ func (s *authSetting) Run(_ *setupContext, cfg *namespace.Config, _ *config.Daem
 			huh.NewOption("Basic (username/password)", string(namespace.AuthBasic)),
 		).
 		Value(&choice).
+		WithTheme(output.HuhTheme).
 		Run()
 	if err != nil {
 		return fmt.Errorf("auth type selection: %w", err)
@@ -59,7 +61,8 @@ func (s *authSetting) Run(_ *setupContext, cfg *namespace.Config, _ *config.Daem
 				}
 				return nil
 			}).
-			Run()
+			WithTheme(output.HuhTheme).
+		Run()
 		if err != nil {
 			return fmt.Errorf("users input: %w", err)
 		}

@@ -81,6 +81,7 @@
   "uninstall.dataRemoved": "Entfernt: {path}",
   "uninstall.dataRemoveFailed": "Entfernen von {path} fehlgeschlagen: {error}",
   "uninstall.dataInvalidInput": "Ungültige Eingabe. \"{phrase}\" eingeben oder Enter drücken.",
+  "uninstall.binaryRemoved": "Removed: {path}",
   "uninstall.complete": "Deinstallation abgeschlossen",
   "cli.platformNotRunning": "Plattform läuft nicht",
   "cli.daemonStarted": "Daemon im Hintergrund gestartet",

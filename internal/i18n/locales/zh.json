@@ -81,6 +81,7 @@
   "uninstall.dataRemoved": "已删除: {path}",
   "uninstall.dataRemoveFailed": "删除 {path} 失败: {error}",
   "uninstall.dataInvalidInput": "输入无效。请输入 \"{phrase}\" 或按 Enter。",
+  "uninstall.binaryRemoved": "Removed: {path}",
   "uninstall.complete": "卸载完成",
   "cli.platformNotRunning": "平台未运行",
   "cli.daemonStarted": "守护进程已在后台启动",

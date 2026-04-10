@@ -14,7 +14,9 @@ var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 // FormatTable formats headers and rows into an aligned text table.
 // Handles ANSI color codes in cell values — alignment is based on visible width.
-func FormatTable(headers []string, rows [][]string) string {
+// Optional minWidths sets a floor per column (e.g. to prevent the STATUS
+// column from jumping around as statuses change during live rendering).
+func FormatTable(headers []string, rows [][]string, minWidths ...int) string {
 	if len(headers) == 0 {
 		return ""
 	}
@@ -22,6 +24,12 @@ func FormatTable(headers []string, rows [][]string) string {
 	widths := make([]int, len(headers))
 	for i, h := range headers {
 		widths[i] = visibleLen(h)
+	}
+	// Apply minimum widths floor.
+	for i := 0; i < len(minWidths) && i < len(widths); i++ {
+		if minWidths[i] > widths[i] {
+			widths[i] = minWidths[i]
+		}
 	}
 	for _, row := range rows {
 		for i := 0; i < len(row) && i < len(widths); i++ {
@@ -82,16 +90,27 @@ type AppTableResult struct {
 	Total   int
 }
 
-// FormatAppTable formats a list of apps into a sorted, aligned table with status counts.
-// This is the single source of truth for app table rendering — used by status, reload, setup, start.
+// kindOrder defines the display order for app groups — matches the Kotlin
+// launcher's table layout (Core → Extensions → Additional → Third Party).
+var kindOrder = []struct {
+	key   string
+	label string
+}{
+	{"CITECK_CORE", "Citeck Core"},
+	{"CITECK_CORE_EXTENSION", "Citeck Core Extensions"},
+	{"CITECK_ADDITIONAL", "Citeck Additional"},
+	{"THIRD_PARTY", "Third Party"},
+}
+
+// FormatAppTable formats a list of apps into a grouped, aligned table with
+// status counts. Apps are grouped by Kind (Citeck Core / Extensions /
+// Additional / Third Party) with a bold group header between sections,
+// matching the Kotlin launcher's table layout.
+// This is the single source of truth for app table rendering — used by
+// status, reload, setup, start.
 func FormatAppTable(apps []api.AppDto) AppTableResult {
 	total := len(apps)
 	var running, failed int
-
-	sort.Slice(apps, func(i, j int) bool { return apps[i].Name < apps[j].Name })
-
-	headers := []string{"APP", "STATUS", "IMAGE", "CPU", "MEMORY"}
-	rows := make([][]string, 0, len(apps))
 
 	for _, app := range apps {
 		switch app.Status {
@@ -100,18 +119,81 @@ func FormatAppTable(apps []api.AppDto) AppTableResult {
 		case "START_FAILED", "PULL_FAILED", "FAILED":
 			failed++
 		}
-
-		rows = append(rows, []string{
-			app.Name,
-			ColorizeStatus(app.Status),
-			app.Image,
-			app.CPU,
-			app.Memory,
-		})
 	}
 
+	// Group apps by kind, sort alphabetically within each group.
+	groups := make(map[string][]api.AppDto, len(kindOrder))
+	for _, app := range apps {
+		k := app.Kind
+		if k == "" {
+			k = "THIRD_PARTY"
+		}
+		groups[k] = append(groups[k], app)
+	}
+	for k := range groups {
+		sort.Slice(groups[k], func(i, j int) bool { return groups[k][i].Name < groups[k][j].Name })
+	}
+
+	// Build a single table with group headers inserted as separator rows.
+	// The header row is printed once; group labels appear as bold full-width
+	// rows between sections (no column separators).
+	headers := []string{"APP", "STATUS", "IMAGE", "CPU", "MEMORY"}
+	var rows [][]string
+
+	for _, g := range kindOrder {
+		groupApps := groups[g.key]
+		if len(groupApps) == 0 {
+			continue
+		}
+		// Group header: bold label in the first column, rest empty.
+		rows = append(rows, []string{Colorize(Bold, g.label), "", "", "", ""})
+		for _, app := range groupApps {
+			rows = append(rows, []string{
+				"  " + app.Name,
+				ColorizeStatus(app.Status),
+				app.Image,
+				app.CPU,
+				app.Memory,
+			})
+		}
+	}
+
+	// Apps with unknown kinds (shouldn't happen, but defensive).
+	knownKinds := make(map[string]bool, len(kindOrder))
+	for _, g := range kindOrder {
+		knownKinds[g.key] = true
+	}
+	var unknownApps []api.AppDto
+	for _, app := range apps {
+		k := app.Kind
+		if k == "" {
+			k = "THIRD_PARTY"
+		}
+		if !knownKinds[k] {
+			unknownApps = append(unknownApps, app)
+		}
+	}
+	if len(unknownApps) > 0 {
+		sort.Slice(unknownApps, func(i, j int) bool { return unknownApps[i].Name < unknownApps[j].Name })
+		rows = append(rows, []string{Colorize(Bold, "Other"), "", "", "", ""})
+		for _, app := range unknownApps {
+			rows = append(rows, []string{
+				"  " + app.Name,
+				ColorizeStatus(app.Status),
+				app.Image,
+				app.CPU,
+				app.Memory,
+			})
+		}
+	}
+
+	// STATUS column (index 1) gets a fixed minimum width so the table
+	// doesn't jump horizontally during live rendering as statuses change
+	// (e.g. STARTING → RUNNING → STOPPING_FAILED). 15 = len("STOPPING_FAILED").
+	const statusMinWidth = 15
+
 	return AppTableResult{
-		Table:   FormatTable(headers, rows),
+		Table:   FormatTable(headers, rows, 0, statusMinWidth),
 		Running: running,
 		Failed:  failed,
 		Total:   total,

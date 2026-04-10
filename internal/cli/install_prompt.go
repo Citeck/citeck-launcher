@@ -8,6 +8,9 @@ import (
 	"github.com/citeck/citeck-launcher/internal/output"
 )
 
+// cliTheme is a shorthand for the shared Dracula huh theme.
+var cliTheme = output.HuhTheme
+
 // printStepHeader prints a numbered, colored step header with separator.
 func printStepHeader(step int, title string) {
 	fmt.Println()                                                                     //nolint:forbidigo // CLI step header
@@ -64,6 +67,7 @@ func promptSelect(label string, options []string, defaultIdx int) string {
 		Title(label).
 		Options(huhOpts...).
 		Value(&selected).
+		WithTheme(cliTheme).
 		Run()
 	return selected
 }
@@ -80,7 +84,7 @@ func promptInput(label, hint, defaultVal string) string {
 		input = input.Description(hint)
 	}
 
-	if err := input.Run(); err != nil {
+	if err := input.WithTheme(cliTheme).Run(); err != nil {
 		return defaultVal
 	}
 	if value == "" {
@@ -97,6 +101,7 @@ func promptPassword(label string) string {
 		Title(label).
 		Value(&value).
 		EchoMode(huh.EchoModePassword).
+		WithTheme(cliTheme).
 		Run()
 	if err != nil {
 		return ""
@@ -115,6 +120,7 @@ func promptConfirm(label string, defaultYes bool) bool {
 	err := huh.NewConfirm().
 		Title(label).
 		Value(&result).
+		WithTheme(cliTheme).
 		Run()
 	if err != nil {
 		return defaultYes

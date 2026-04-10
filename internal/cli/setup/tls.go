@@ -8,6 +8,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/namespace"
 
 	"github.com/charmbracelet/huh"
+	"github.com/citeck/citeck-launcher/internal/output"
 )
 
 type tlsSetting struct{}
@@ -51,6 +52,7 @@ func (s *tlsSetting) Run(_ *setupContext, cfg *namespace.Config, _ *config.Daemo
 			huh.NewOption("HTTP only (no TLS)", optHTTP),
 		).
 		Value(&choice).
+		WithTheme(output.HuhTheme).
 		Run()
 	if err != nil {
 		return fmt.Errorf("tls selection: %w", err)
@@ -72,7 +74,7 @@ func (s *tlsSetting) Run(_ *setupContext, cfg *namespace.Config, _ *config.Daemo
 				huh.NewInput().Title(i18n.T("setup.tls.cert_path")).Value(&certPath).Validate(notEmpty),
 				huh.NewInput().Title(i18n.T("setup.tls.key_path")).Value(&keyPath).Validate(notEmpty),
 			),
-		).Run()
+		).WithTheme(output.HuhTheme).Run()
 		if err != nil {
 			return fmt.Errorf("tls cert form: %w", err)
 		}

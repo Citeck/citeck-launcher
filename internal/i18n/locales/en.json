@@ -90,6 +90,7 @@
   "uninstall.dataRemoved": "Removed: {path}",
   "uninstall.dataRemoveFailed": "Failed to remove {path}: {error}",
   "uninstall.dataInvalidInput": "Invalid input. Type \"{phrase}\" or press Enter to skip.",
+  "uninstall.binaryRemoved": "Removed: {path}",
   "uninstall.complete": "Uninstall complete",
 
   "cli.platformNotRunning": "Platform is not running",

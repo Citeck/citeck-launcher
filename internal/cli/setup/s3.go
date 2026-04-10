@@ -12,6 +12,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/namespace"
 
 	"github.com/charmbracelet/huh"
+	"github.com/citeck/citeck-launcher/internal/output"
 )
 
 type s3Setting struct{}
@@ -47,7 +48,8 @@ func (s *s3Setting) Run(ctx *setupContext, cfg *namespace.Config, _ *config.Daem
 				huh.NewOption(i18n.T("setup.s3.remove"), "remove"),
 			).
 			Value(&action).
-			Run()
+			WithTheme(output.HuhTheme).
+		Run()
 		if err != nil {
 			return fmt.Errorf("s3 action selection: %w", err)
 		}
@@ -95,7 +97,7 @@ func (s *s3Setting) Run(ctx *setupContext, cfg *namespace.Config, _ *config.Daem
 			huh.NewInput().Title(i18n.T("setup.s3.region")).Value(&region).
 				Description(i18n.T("setup.s3.region_hint")),
 		),
-	).Run()
+	).WithTheme(output.HuhTheme).Run()
 	if err != nil {
 		return fmt.Errorf("s3 form: %w", err)
 	}

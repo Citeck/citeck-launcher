@@ -10,6 +10,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/namespace"
 
 	"github.com/charmbracelet/huh"
+	"github.com/citeck/citeck-launcher/internal/output"
 )
 
 type emailSetting struct{}
@@ -55,7 +56,8 @@ func (s *emailSetting) Run(sctx *setupContext, cfg *namespace.Config, _ *config.
 				huh.NewOption(i18n.T("setup.email.remove"), "remove"),
 			).
 			Value(&action).
-			Run()
+			WithTheme(output.HuhTheme).
+		Run()
 		if err != nil {
 			return fmt.Errorf("email action selection: %w", err)
 		}
@@ -93,7 +95,7 @@ func (s *emailSetting) Run(sctx *setupContext, cfg *namespace.Config, _ *config.
 			huh.NewInput().Title(i18n.T("setup.email.password")).Value(&password).EchoMode(huh.EchoModePassword),
 			huh.NewConfirm().Title(i18n.T("setup.email.tls")).Value(&useTLS),
 		),
-	).Run()
+	).WithTheme(output.HuhTheme).Run()
 	if err != nil {
 		return fmt.Errorf("email form: %w", err)
 	}
@@ -136,6 +138,7 @@ func selectEmailPreset(email *namespace.EmailConfig) *namespace.EmailConfig {
 		Title(i18n.T("setup.email.preset")).
 		Options(options...).
 		Value(&selected).
+		WithTheme(output.HuhTheme).
 		Run()
 	if err != nil || selected == customValue {
 		return email

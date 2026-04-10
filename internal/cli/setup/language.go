@@ -8,6 +8,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/namespace"
 
 	"github.com/charmbracelet/huh"
+	"github.com/citeck/citeck-launcher/internal/output"
 )
 
 type languageSetting struct{}
@@ -43,6 +44,7 @@ func (s *languageSetting) Run(_ *setupContext, _ *namespace.Config, dcfg *config
 		Title(i18n.T("setup.language.prompt")).
 		Options(options...).
 		Value(&selected).
+		WithTheme(output.HuhTheme).
 		Run()
 	if err != nil {
 		return fmt.Errorf("language selection: %w", err)

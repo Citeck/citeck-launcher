@@ -156,7 +156,8 @@ func runMenuLoop(sctx *setupContext, nsCfg *namespace.Config, daemonCfg *config.
 			Title(i18n.T("setup.menu.title")).
 			Options(options...).
 			Value(&choice).
-			Run()
+			WithTheme(output.HuhTheme).
+		Run()
 		if err != nil {
 			if isUserAborted(err) {
 				return nil
@@ -379,6 +380,7 @@ func promptConfirmAction(target TargetFile) (confirmAction, error) {
 		Title(i18n.T("setup.confirm")).
 		Options(options...).
 		Value(&choice).
+		WithTheme(output.HuhTheme).
 		Run()
 	if err != nil {
 		return actionCancel, fmt.Errorf("confirm: %w", err)
@@ -675,6 +677,7 @@ func runRollback(id string) error {
 	if cErr := huh.NewConfirm().
 		Title(i18n.T("setup.rollback.confirm")).
 		Value(&confirm).
+		WithTheme(output.HuhTheme).
 		Run(); cErr != nil {
 		if isUserAborted(cErr) {
 			return nil
@@ -888,6 +891,7 @@ func confirmForceRollback(conflict string) (bool, error) {
 	if err := huh.NewConfirm().
 		Title(i18n.T("setup.rollback.force")).
 		Value(&force).
+		WithTheme(output.HuhTheme).
 		Run(); err != nil {
 		if isUserAborted(err) {
 			return false, nil

@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/charmbracelet/huh"
+	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/client"
 	"github.com/citeck/citeck-launcher/internal/config"
@@ -67,6 +68,7 @@ func (s *adminPasswordSetting) Run(_ *setupContext, _ *namespace.Config, _ *conf
 	if confirmErr := huh.NewConfirm().
 		Title(i18n.T("setup.admin_password.confirmApply")).
 		Value(&proceed).
+		WithTheme(output.HuhTheme).
 		Run(); confirmErr != nil || !proceed {
 		fmt.Println(i18n.T("setup.admin_password.canceled")) //nolint:forbidigo // CLI output
 		return nil
@@ -95,6 +97,7 @@ func promptAdminPassword() (string, error) {
 			huh.NewOption(i18n.T("setup.admin_password.modeGenerate"), modeGenerate),
 		).
 		Value(&mode).
+		WithTheme(output.HuhTheme).
 		Run(); err != nil {
 		return "", fmt.Errorf("password mode selection: %w", err)
 	}
@@ -133,7 +136,7 @@ func promptAdminPassword() (string, error) {
 					return nil
 				}),
 		),
-	).Run()
+	).WithTheme(output.HuhTheme).Run()
 	if err != nil {
 		return "", fmt.Errorf("password input: %w", err)
 	}

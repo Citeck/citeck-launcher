@@ -41,10 +41,14 @@
 - Already-installed message shows version + build date and points to `citeck setup`
 
 ## Output / CLI polish
+- App table grouped by Kind: Citeck Core / Core Extensions / Additional / Third Party — matching the Kotlin launcher layout
+- STATUS column fixed to 15 chars (longest status: STOPPING_FAILED) so the table doesn't jump during live rendering
+- Dracula theme applied to all huh TUI prompts (install wizard, setup menu, admin-password)
 - Single `FormatAppTable` in the `output` package with ANSI-aware column alignment
 - Shared TTY helpers (`output.IsTTY` / `output.ClearLines`)
 - Synchronous stop with live progress, `--detach` mode
-- `citeck status --watch` no longer leaks the pre-watch frame above the live table and no longer stacks duplicate rows each redraw (fixed off-by-one in `ClearLines` + moved the initial render into `watchEvents` itself)
+- `citeck status --watch` no longer leaks the pre-watch frame above the live table and no longer stacks duplicate rows each redraw
+- `citeck uninstall` now removes `/usr/local/bin/citeck` and its `.bak` backup
 
 ## Tooling
 - Makefile and CI now pin `golangci-lint` to v2.11.4 (was split between v2.7.2 and v2.11.4, which caused CI failures on taint-analysis warnings the older local version didn't catch)

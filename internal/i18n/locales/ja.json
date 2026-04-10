@@ -81,6 +81,7 @@
   "uninstall.dataRemoved": "削除: {path}",
   "uninstall.dataRemoveFailed": "{path} の削除に失敗: {error}",
   "uninstall.dataInvalidInput": "無効な入力。\"{phrase}\" と入力するか Enter を押してください。",
+  "uninstall.binaryRemoved": "Removed: {path}",
   "uninstall.complete": "アンインストール完了",
   "cli.platformNotRunning": "プラットフォームは実行されていません",
   "cli.daemonStarted": "デーモンをバックグラウンドで起動しました",

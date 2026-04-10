@@ -90,6 +90,7 @@
   "uninstall.dataRemoved": "Удалено: {path}",
   "uninstall.dataRemoveFailed": "Не удалось удалить {path}: {error}",
   "uninstall.dataInvalidInput": "Неверный ввод. Введите \"{phrase}\" или нажмите Enter.",
+  "uninstall.binaryRemoved": "Removed: {path}",
   "uninstall.complete": "Деинсталляция завершена",
 
   "cli.platformNotRunning": "Платформа не запущена",

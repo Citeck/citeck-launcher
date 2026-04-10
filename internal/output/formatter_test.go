@@ -194,9 +194,9 @@ func TestFormatTable_ANSIAlignment(t *testing.T) {
 
 func TestFormatAppTable_Counts(t *testing.T) {
 	apps := []api.AppDto{
-		{Name: "b-app", Status: "RUNNING", Image: "img:1"},
-		{Name: "a-app", Status: "FAILED", Image: "img:2"},
-		{Name: "c-app", Status: "STARTING", Image: "img:3"},
+		{Name: "b-app", Status: "RUNNING", Image: "img:1", Kind: "CITECK_CORE"},
+		{Name: "a-app", Status: "FAILED", Image: "img:2", Kind: "CITECK_CORE"},
+		{Name: "c-app", Status: "STARTING", Image: "img:3", Kind: "THIRD_PARTY"},
 	}
 	r := FormatAppTable(apps)
 	if r.Total != 3 {
@@ -208,17 +208,60 @@ func TestFormatAppTable_Counts(t *testing.T) {
 	if r.Failed != 1 {
 		t.Errorf("failed = %d, want 1", r.Failed)
 	}
-	// Should be sorted: a-app before b-app
 	if !strings.Contains(r.Table, "APP") {
 		t.Error("table should contain header")
 	}
-	lines := strings.Split(r.Table, "\n")
-	if len(lines) < 4 {
-		t.Fatalf("expected 4 lines (header + 3 apps), got %d", len(lines))
+	// Table should contain group headers
+	stripped := ansiRE.ReplaceAllString(r.Table, "")
+	if !strings.Contains(stripped, "Citeck Core") {
+		t.Error("table should contain 'Citeck Core' group header")
 	}
-	stripped := ansiRE.ReplaceAllString(lines[1], "")
-	if !strings.HasPrefix(strings.TrimSpace(stripped), "a-app") {
-		t.Errorf("first data row should be a-app (sorted), got: %q", stripped)
+	if !strings.Contains(stripped, "Third Party") {
+		t.Error("table should contain 'Third Party' group header")
+	}
+	// Within a group, apps should be sorted alphabetically
+	aIdx := strings.Index(stripped, "a-app")
+	bIdx := strings.Index(stripped, "b-app")
+	if aIdx < 0 || bIdx < 0 || aIdx > bIdx {
+		t.Errorf("apps should be sorted within group: a-app before b-app")
+	}
+}
+
+func TestFormatAppTable_GroupOrder(t *testing.T) {
+	apps := []api.AppDto{
+		{Name: "postgres", Status: "RUNNING", Kind: "THIRD_PARTY"},
+		{Name: "emodel", Status: "RUNNING", Kind: "CITECK_CORE"},
+		{Name: "integrations", Status: "RUNNING", Kind: "CITECK_CORE_EXTENSION"},
+		{Name: "attorneys", Status: "RUNNING", Kind: "CITECK_ADDITIONAL"},
+	}
+	r := FormatAppTable(apps)
+	stripped := ansiRE.ReplaceAllString(r.Table, "")
+
+	// Groups must appear in order: Core → Extensions → Additional → Third Party.
+	// Search for each group label as the first non-whitespace content on its
+	// line. "Citeck Core" must NOT match the "Citeck Core Extensions" line,
+	// so we check that the trimmed line starts with the label and the next
+	// char (if any) is a space (padding from the table formatter).
+	lines := strings.Split(stripped, "\n")
+	findLine := func(label string) int {
+		for i, l := range lines {
+			trimmed := strings.TrimSpace(l)
+			if trimmed == label || strings.HasPrefix(trimmed, label+"  ") {
+				return i
+			}
+		}
+		return -1
+	}
+	coreIdx := findLine("Citeck Core")
+	extIdx := findLine("Citeck Core Extensions")
+	addIdx := findLine("Citeck Additional")
+	tpIdx := findLine("Third Party")
+
+	if coreIdx < 0 || extIdx < 0 || addIdx < 0 || tpIdx < 0 {
+		t.Fatalf("missing group headers in table:\n%s", stripped)
+	}
+	if coreIdx >= extIdx || extIdx >= addIdx || addIdx >= tpIdx {
+		t.Errorf("group order wrong: core=%d ext=%d add=%d tp=%d", coreIdx, extIdx, addIdx, tpIdx)
 	}
 }
 

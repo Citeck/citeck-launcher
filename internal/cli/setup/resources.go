@@ -9,6 +9,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/namespace"
 
 	"github.com/charmbracelet/huh"
+	"github.com/citeck/citeck-launcher/internal/output"
 )
 
 type resourcesSetting struct{}
@@ -57,7 +58,8 @@ func (s *resourcesSetting) Run(ctx *setupContext, cfg *namespace.Config, _ *conf
 			Title(i18n.T("setup.resources.select_app")).
 			Options(options...).
 			Value(&appName).
-			Run()
+			WithTheme(output.HuhTheme).
+		Run()
 		if err != nil {
 			return fmt.Errorf("app selection: %w", err)
 		}
@@ -78,7 +80,7 @@ func (s *resourcesSetting) Run(ctx *setupContext, cfg *namespace.Config, _ *conf
 					Placeholder(wp.MemoryLimit).
 					Value(&mem),
 			),
-		).Run()
+		).WithTheme(output.HuhTheme).Run()
 		if err != nil {
 			return fmt.Errorf("resources form for %s: %w", appName, err)
 		}

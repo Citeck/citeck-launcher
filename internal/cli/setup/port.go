@@ -10,6 +10,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/namespace"
 
 	"github.com/charmbracelet/huh"
+	"github.com/citeck/citeck-launcher/internal/output"
 )
 
 type portSetting struct{}
@@ -35,6 +36,7 @@ func (s *portSetting) Run(_ *setupContext, cfg *namespace.Config, _ *config.Daem
 		Value(&portStr).
 		Placeholder(strconv.Itoa(cfg.Proxy.Port)).
 		Validate(validatePort).
+		WithTheme(output.HuhTheme).
 		Run()
 	if err != nil {
 		return fmt.Errorf("port input: %w", err)
