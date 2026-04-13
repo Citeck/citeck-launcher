@@ -15,7 +15,7 @@ async function getPlatformInfo(): Promise<PlatformInfo | null> {
     const resp = await ctx.get(`${DAEMON}/api/v1/namespace`)
     if (!resp.ok()) return null
     const ns = await resp.json()
-    const ecosLink = ns.links?.find((l: { name: string; url?: string }) => l.name === 'ECOS UI')
+    const ecosLink = ns.links?.find((l: { name: string; url?: string }) => l.name === 'Citeck UI')
     if (!ecosLink?.url) return null
 
     // Get config for auth info
@@ -36,12 +36,12 @@ async function getPlatformInfo(): Promise<PlatformInfo | null> {
   }
 }
 
-test.describe('Citeck ECOS Platform E2E', () => {
+test.describe('Citeck Platform E2E', () => {
   let platform: PlatformInfo
 
   test.beforeAll(async () => {
     const info = await getPlatformInfo()
-    test.skip(!info, 'No running namespace with ECOS UI link')
+    test.skip(!info, 'No running namespace with Citeck UI link')
     platform = info!
   })
 
@@ -68,7 +68,7 @@ test.describe('Citeck ECOS Platform E2E', () => {
     expect(response.status()).toBeLessThan(500)
   })
 
-  test('ECOS UI loads with auth', async ({ browser }) => {
+  test('Citeck UI loads with auth', async ({ browser }) => {
     // Create context with HTTP credentials for BASIC auth
     const user = platform.users[0] || 'admin'
     const context = await browser.newContext({

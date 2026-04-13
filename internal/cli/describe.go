@@ -14,7 +14,15 @@ func newDescribeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "describe <app>",
 		Short: "Show detailed information about an app",
-		Args:  cobra.ExactArgs(1),
+		Args: func(_ *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return fmt.Errorf("app name is required. Usage: citeck describe <app>")
+			}
+			if len(args) > 1 {
+				return fmt.Errorf("accepts 1 arg, received %d", len(args))
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			appName := args[0]
 

@@ -294,6 +294,7 @@ export function LogViewer({ appName, compact = false, active = true }: LogViewer
 
   useEffect(() => { setMatchIndex(0) }, [searchMatches])
 
+  // eslint-disable-next-line react-hooks/incompatible-library -- useVirtualizer returns are consumed locally, no stale UI risk
   const virtualizer = useVirtualizer({
     count: filteredLines.length,
     getScrollElement: () => parentRef.current,

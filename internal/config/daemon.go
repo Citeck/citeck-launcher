@@ -39,7 +39,7 @@ type ReconcilerConfig struct {
 // DockerConfig holds Docker-level tuning.
 type DockerConfig struct {
 	PullConcurrency int `yaml:"pullConcurrency,omitempty" json:"pullConcurrency,omitempty"` // default 4
-	StopTimeout     int `yaml:"stopTimeout,omitempty" json:"stopTimeout,omitempty"`         // default 10
+	StopTimeout     int `yaml:"stopTimeout,omitempty" json:"stopTimeout,omitempty"`         // default 15
 }
 
 // DefaultDaemonConfig returns the default daemon configuration.

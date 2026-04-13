@@ -209,6 +209,25 @@ func (d *Daemon) handleUpgradeNamespace(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+func (d *Daemon) handleGetAppliedConfig(w http.ResponseWriter, _ *http.Request) {
+	if d.runtime == nil {
+		writeError(w, http.StatusServiceUnavailable, "runtime not started")
+		return
+	}
+	cfg := d.runtime.AppliedConfig()
+	if cfg == nil {
+		writeError(w, http.StatusServiceUnavailable, "no applied config")
+		return
+	}
+	data, err := namespace.MarshalNamespaceConfig(cfg)
+	if err != nil {
+		writeInternalError(w, fmt.Errorf("marshal applied config: %w", err))
+		return
+	}
+	w.Header().Set("Content-Type", "text/yaml")
+	_, _ = w.Write(data)
+}
+
 func (d *Daemon) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	cfgPath := d.activeConfigPath()
 	data, err := os.ReadFile(cfgPath) //nolint:gosec // path is constructed from daemon-internal config, not user input

@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,12 +38,67 @@ jobs:
       - name: Run web tests
         run: cd web && pnpm vitest run
 
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+          - os: linux
+            arch: arm64
+          - os: darwin
+            arch: amd64
+          - os: darwin
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Build web UI
+        run: cd web && pnpm install --frozen-lockfile && pnpm run build
+
+      - name: Embed web UI
+        run: rm -rf internal/daemon/webdist && cp -r web/dist internal/daemon/webdist
+
       - name: Build server binary
         env:
           VERSION_TAG: ${{ github.ref_name }}
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
         run: |
           VERSION="${VERSION_TAG#v}"
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.version=${VERSION}" -o "citeck_${VERSION}_linux_amd64" ./cmd/citeck
+          CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION}" -o "citeck-server_${VERSION}_${GOOS}_${GOARCH}" ./cmd/citeck
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: citeck-server-${{ matrix.os }}-${{ matrix.arch }}
+          path: citeck-server_*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: citeck-server-*
+          merge-multiple: true
 
       - name: Extract changelog
         id: changelog
@@ -74,6 +129,6 @@ jobs:
           draft: true
           name: ${{ github.ref_name }}
           body: ${{ steps.changelog.outputs.body }}
-          files: citeck_*
+          files: citeck-server_*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

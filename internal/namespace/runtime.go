@@ -96,7 +96,7 @@ type Runtime struct {
 	detachCh           chan struct{}       // exit runLoop without stopping containers (binary upgrade)
 	pullSem            chan struct{}       // limits concurrent image pulls
 	reconcilerCfg      *ReconcilerConfig  // optional override from daemon.yml
-	defaultStopTimeout int                // from daemon.yml docker.stopTimeout; 0 = use hardcoded default (10s)
+	defaultStopTimeout int                // from daemon.yml docker.stopTimeout; 0 = use hardcoded default (15s)
 	shutdownOnce       sync.Once
 	statsRunning       atomic.Bool        // guards against overlapping updateStats goroutines
 	runCtx          context.Context    // set by doStart, canceled by doStop
@@ -174,10 +174,14 @@ func (r *Runtime) SetCachedBundle(def *bundle.Def) {
 }
 
 // SetManualStoppedApps restores persisted manual stopped apps (called before Start).
+// Takes a defensive copy so the caller's map can't be mutated through runtime operations.
 func (r *Runtime) SetManualStoppedApps(apps map[string]bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.manualStoppedApps = apps
+	r.manualStoppedApps = maps.Clone(apps)
+	if r.manualStoppedApps == nil {
+		r.manualStoppedApps = make(map[string]bool)
+	}
 }
 
 // RestoreEditedApps restores persisted edited app definitions and lock flags.
@@ -205,10 +209,11 @@ func (r *Runtime) SetAppLocked(appName string, locked bool) {
 }
 
 // SetDependsOnDetachedApps stores which detached apps trigger regeneration when restarted.
+// Takes a defensive copy — the generator's map may be reused.
 func (r *Runtime) SetDependsOnDetachedApps(apps map[string]bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.dependsOnDetachedApps = apps
+	r.dependsOnDetachedApps = maps.Clone(apps)
 }
 
 type commandType int

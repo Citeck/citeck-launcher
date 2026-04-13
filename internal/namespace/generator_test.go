@@ -7,6 +7,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFlatMapToYAML_NestedKeys(t *testing.T) {
@@ -89,7 +90,8 @@ func TestGenerateWebapp_FiltersByWorkspaceConfig(t *testing.T) {
 		},
 	}
 
-	resp := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	require.NoError(t, err)
 
 	hasEmodel := false
 	hasUnknown := false
@@ -170,7 +172,8 @@ func TestProcessWebappDataSources_JDBC(t *testing.T) {
 		}},
 	}
 
-	resp := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	require.NoError(t, err)
 
 	// Verify cloud config file was generated
 	content, ok := resp.Files["app/emodel/props/application-launcher.yml"]
@@ -258,7 +261,8 @@ func TestProcessWebappDataSources_CloudConfigOnly(t *testing.T) {
 		Webapps: []bundle.WebappConfig{{ID: "emodel"}},
 	}
 
-	resp := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	require.NoError(t, err)
 
 	content, ok := resp.Files["app/emodel/props/application-launcher.yml"]
 	if !ok {
@@ -287,7 +291,8 @@ func TestPerAppMemoryLimitOverridesGlobal(t *testing.T) {
 		}},
 	}
 
-	resp := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	require.NoError(t, err)
 	for _, app := range resp.Applications {
 		if app.Name == "eproc" {
 			if app.Resources == nil || app.Resources.Limits.Memory != "2g" {
@@ -313,7 +318,8 @@ func TestAlfrescoContainerDefs(t *testing.T) {
 		Alfresco: bundle.AlfrescoProps{Enabled: true},
 	}
 
-	resp := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	require.NoError(t, err)
 
 	findApp := func(name string) *appdef.ApplicationDef {
 		for i := range resp.Applications {
@@ -383,7 +389,8 @@ func TestNamespaceLevelDataSources(t *testing.T) {
 		}},
 	}
 
-	resp := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	require.NoError(t, err)
 	content := string(resp.Files["app/emodel/props/application-launcher.yml"])
 
 	// Both workspace datasource and namespace datasource should be present
@@ -414,7 +421,8 @@ func TestWebappDefaultProps_ImageOverride(t *testing.T) {
 		}},
 	}
 
-	resp := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	require.NoError(t, err)
 	for _, app := range resp.Applications {
 		if app.Name == "emodel" {
 			if app.Image != "custom-registry/emodel:2.0" {
@@ -503,7 +511,8 @@ func TestCloudConfigDeepMerge(t *testing.T) {
 		}},
 	}
 
-	resp := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	require.NoError(t, err)
 	content := string(resp.Files["app/emodel/props/application-launcher.yml"])
 
 	// Both workspace datasource URL and namespace cloudConfig xa should be present
@@ -534,7 +543,8 @@ func TestGeneratorLivenessProbes(t *testing.T) {
 		},
 	}
 
-	resp := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	require.NoError(t, err)
 
 	findApp := func(name string) *appdef.ApplicationDef {
 		for i := range resp.Applications {
@@ -598,7 +608,8 @@ func TestGeneratorLivenessDisabled(t *testing.T) {
 		},
 	}
 
-	resp := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	require.NoError(t, err)
 
 	findApp := func(name string) *appdef.ApplicationDef {
 		for i := range resp.Applications {
@@ -639,7 +650,8 @@ func TestGeneratorStartupThresholds(t *testing.T) {
 		},
 	}
 
-	resp := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	require.NoError(t, err)
 
 	for _, app := range resp.Applications {
 		for _, sc := range app.StartupConditions {
@@ -653,4 +665,89 @@ func TestGeneratorStartupThresholds(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestCiteckSAWiring verifies the "citeck" SA wiring introduced to decouple
+// webapp→RabbitMQ auth from the user-facing admin password:
+//   - RabbitMQ gets InitActions that create/sync the "citeck" user (monitoring
+//     tag + vhost "/" full perms).
+//   - Webapps connect to RabbitMQ as "citeck" via ECOS_WEBAPP_RABBITMQ_USERNAME/
+//     _PASSWORD (stable across admin-password changes).
+//   - Observer's RMQ_MONITOR_* env uses "citeck" instead of "admin".
+func TestCiteckSAWiring(t *testing.T) {
+	cfg := &Config{
+		Authentication: AuthenticationProps{Type: AuthKeycloak, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+		Observer:       ObserverProps{Enabled: true, Image: "citeck/observer:1.0"},
+	}
+	bun := &bundle.Def{
+		Applications: map[string]bundle.AppDef{
+			"emodel": {Image: "nexus.citeck.ru/emodel:1.0"},
+		},
+	}
+	wsCfg := &bundle.WorkspaceConfig{
+		Webapps: []bundle.WebappConfig{{ID: "emodel"}},
+	}
+
+	const saPass = "citeck-sa-deadbeef-0123456789abc"
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{
+		JWT:           "test-jwt",
+		OIDC:          "test-oidc",
+		AdminPassword: "user-admin-pass",
+		CiteckSA:      saPass,
+	})
+	require.NoError(t, err)
+
+	findApp := func(name string) *appdef.ApplicationDef {
+		for i := range resp.Applications {
+			if resp.Applications[i].Name == name {
+				return &resp.Applications[i]
+			}
+		}
+		return nil
+	}
+
+	// 1. RabbitMQ InitActions must create the "citeck" user, set the
+	// monitoring tag, and grant vhost "/" full perms using the SA password.
+	rmq := findApp(appdef.AppRabbitmq)
+	require.NotNil(t, rmq)
+
+	var addUser, changePw, setTags, setPerms bool
+	for _, ia := range rmq.InitActions {
+		joined := strings.Join(ia.Exec, " ")
+		switch {
+		case strings.Contains(joined, "add_user citeck "+saPass):
+			addUser = true
+		case strings.Contains(joined, "change_password citeck "+saPass):
+			changePw = true
+		case strings.Contains(joined, "set_user_tags citeck monitoring"):
+			setTags = true
+		case strings.Contains(joined, "set_permissions -p / citeck .* .* .*"):
+			setPerms = true
+		}
+	}
+	assert.True(t, addUser, "RabbitMQ init must add_user citeck")
+	assert.True(t, changePw, "RabbitMQ init must change_password citeck")
+	assert.True(t, setTags, "RabbitMQ init must set_user_tags citeck monitoring")
+	assert.True(t, setPerms, "RabbitMQ init must set_permissions on citeck for vhost /")
+
+	// RabbitMQ needs a startup probe so InitActions run AFTER the broker is ready.
+	require.NotEmpty(t, rmq.StartupConditions, "RabbitMQ must have a startup probe")
+
+	// 2. Webapps must use ECOS_WEBAPP_RABBITMQ_USERNAME=citeck and the SA
+	// password (NOT the user-facing admin password).
+	emodel := findApp("emodel")
+	require.NotNil(t, emodel)
+	assert.Equal(t, "citeck", emodel.Environments["ECOS_WEBAPP_RABBITMQ_USERNAME"],
+		"webapp must authenticate to RabbitMQ as the citeck SA")
+	assert.Equal(t, saPass, emodel.Environments["ECOS_WEBAPP_RABBITMQ_PASSWORD"],
+		"webapp RMQ password must be the SA password, not the admin password")
+	assert.NotEqual(t, "user-admin-pass", emodel.Environments["ECOS_WEBAPP_RABBITMQ_PASSWORD"],
+		"webapp RMQ password must NOT leak the user-facing admin password")
+
+	// 3. Observer's management API monitor uses the citeck SA too.
+	obs := findApp(appdef.AppObserver)
+	require.NotNil(t, obs)
+	assert.Equal(t, "citeck", obs.Environments["RMQ_MONITOR_USER"])
+	assert.Equal(t, saPass, obs.Environments["RMQ_MONITOR_PASSWORD"])
 }

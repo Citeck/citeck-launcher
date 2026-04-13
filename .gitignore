@@ -37,6 +37,9 @@ coverage.html
 ### Playwright MCP ###
 .playwright-mcp/
 
+### Claude Code ###
+.claude/
+
 ### Binaries (prevent accidental root-dir builds) ###
 /citeck
 /citeck-desktop

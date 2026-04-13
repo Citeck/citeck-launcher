@@ -149,6 +149,30 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 	// Limit upload body to 2GB to prevent unbounded memory/disk usage
 	r.Body = http.MaxBytesReader(w, r.Body, 2<<30)
 
+	// Validate snapshot name/file BEFORE acquiring locks or checking namespace status.
+	// This avoids unnecessary namespace disruption when input is invalid.
+	snapshotName := r.URL.Query().Get("name")
+	var zipPath string
+	var tmpPath string // non-empty if we created a temp file that needs cleanup
+
+	if snapshotName != "" {
+		// Pre-validate name format and file existence (no lock needed)
+		if !strings.HasSuffix(snapshotName, ".zip") || !validateID(strings.TrimSuffix(snapshotName, ".zip")) {
+			writeError(w, http.StatusBadRequest, "invalid snapshot name")
+			return
+		}
+		snapDir, err := d.snapshotsDir()
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		zipPath = filepath.Join(snapDir, snapshotName)
+		if _, err := os.Stat(zipPath); err != nil { //nolint:gosec // G703: zipPath built from sanitized snapshotName via validateID
+			writeError(w, http.StatusNotFound, "snapshot not found")
+			return
+		}
+	}
+
 	if !d.snapshotMu.TryLock() {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeSnapshotInProgress, "another snapshot operation is in progress")
 		return
@@ -168,31 +192,7 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Accept multipart file upload or a snapshot name query parameter
-	snapshotName := r.URL.Query().Get("name")
-	var zipPath string
-	var tmpPath string // non-empty if we created a temp file that needs cleanup
-
-	if snapshotName != "" {
-		// Import from existing snapshot file
-		if !strings.HasSuffix(snapshotName, ".zip") || !validateID(strings.TrimSuffix(snapshotName, ".zip")) {
-			d.snapshotMu.Unlock()
-			writeError(w, http.StatusBadRequest, "invalid snapshot name")
-			return
-		}
-		snapDir, err := d.snapshotsDir()
-		if err != nil {
-			d.snapshotMu.Unlock()
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		zipPath = filepath.Join(snapDir, snapshotName)
-		if _, err := os.Stat(zipPath); err != nil { //nolint:gosec // G703: zipPath built from sanitized snapshotName via validateID
-			d.snapshotMu.Unlock()
-			writeError(w, http.StatusNotFound, "snapshot not found")
-			return
-		}
-	} else {
+	if snapshotName == "" {
 		// Accept file upload
 		if err := r.ParseMultipartForm(32 << 20); err != nil { // 32MB in memory, Go spills to disk
 			d.snapshotMu.Unlock()
@@ -234,17 +234,20 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 		if tmpPath != "" {
 			defer os.Remove(tmpPath)
 		}
+		nsID := d.activeNsID()
 		meta, err := snapshot.Import(d.bgCtx, d.dockerClient, importPath, d.volumesBase)
 		if err != nil {
 			slog.Error("Snapshot import failed", "err", err)
 			d.broadcastEvent(api.EventDto{
-				Type: "snapshot_import", After: "failed",
+				Type: "snapshot_error", Timestamp: time.Now().UnixMilli(),
+				NamespaceID: nsID, After: err.Error(),
 			})
 			return
 		}
 		slog.Info("Snapshot import completed", "volumes", len(meta.Volumes)) //nolint:gosec // G706: meta.Volumes is internal count, not user-controlled
 		d.broadcastEvent(api.EventDto{
-			Type: "snapshot_import", After: "completed",
+			Type: "snapshot_complete", Timestamp: time.Now().UnixMilli(),
+			NamespaceID: nsID, After: fmt.Sprintf("imported %d volumes", len(meta.Volumes)),
 		})
 	})
 

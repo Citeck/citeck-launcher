@@ -43,7 +43,9 @@ func (s *resourcesSetting) Run(ctx *setupContext, cfg *namespace.Config, _ *conf
 	}
 
 	for {
-		var appName string
+		// Default focus to the first app so the user sees the app list
+		// instead of "Done" — the zero value "" matches the Done option.
+		appName := apps[0]
 		options := make([]huh.Option[string], 0, len(apps)+1)
 		for _, a := range apps {
 			label := a
@@ -54,12 +56,13 @@ func (s *resourcesSetting) Run(ctx *setupContext, cfg *namespace.Config, _ *conf
 		}
 		options = append(options, huh.NewOption(i18n.T("setup.resources.done"), ""))
 
-		err := huh.NewSelect[string]().
+		sel := huh.NewSelect[string]().
 			Title(i18n.T("setup.resources.select_app")).
+			Description(i18n.T("hint.select.setting")).
 			Options(options...).
-			Value(&appName).
-			WithTheme(output.HuhTheme).
-		Run()
+			Value(&appName)
+		sel = output.ApplySelectHeight(sel, len(options))
+		err := output.RunField(sel)
 		if err != nil {
 			return fmt.Errorf("app selection: %w", err)
 		}
@@ -69,34 +72,82 @@ func (s *resourcesSetting) Run(ctx *setupContext, cfg *namespace.Config, _ *conf
 
 		wp := cfg.Webapps[appName]
 		var heap, mem string
-		err = huh.NewForm(
+		err = output.RunForm(huh.NewForm(
 			huh.NewGroup(
 				huh.NewInput().
 					Title(i18n.T("setup.resources.heap", "app", appName)).
 					Placeholder(wp.HeapSize).
-					Value(&heap),
+					Value(&heap).
+					Validate(validateHeapFormat),
 				huh.NewInput().
 					Title(i18n.T("setup.resources.memory", "app", appName)).
 					Placeholder(wp.MemoryLimit).
 					Value(&mem),
 			),
-		).WithTheme(output.HuhTheme).Run()
+		))
 		if err != nil {
 			return fmt.Errorf("resources form for %s: %w", appName, err)
 		}
 
-		if heap != "" || mem != "" {
-			if cfg.Webapps == nil {
-				cfg.Webapps = make(map[string]namespace.WebappProps)
-			}
-			existing := cfg.Webapps[appName]
-			if heap != "" {
-				existing.HeapSize = heap
-			}
-			if mem != "" {
-				existing.MemoryLimit = mem
-			}
-			cfg.Webapps[appName] = existing
+		if heap == "" && mem == "" {
+			continue
+		}
+		if aerr := applyResourceInput(cfg, appName, wp, heap, mem); aerr != nil {
+			return aerr
 		}
 	}
+}
+
+// applyResourceInput validates the entered heap/mem pair against the app's
+// effective config and either persists the change or silently skips (hard
+// guard failure prints an error to stdout; warning-declined skips without
+// persisting). Returns a non-nil error only on unexpected I/O from huh.
+func applyResourceInput(cfg *namespace.Config, appName string, wp namespace.WebappProps, heap, mem string) error {
+	effHeap := heap
+	if effHeap == "" {
+		effHeap = wp.HeapSize
+	}
+	effMem := mem
+	if effMem == "" {
+		effMem = wp.MemoryLimit
+	}
+	guard := checkHeapVsMem(effHeap, effMem)
+	if guard.Err != "" {
+		// Use huh.NewNote so the message survives the next alt-screen repaint
+		// from huh.NewSelect; output.PrintText would get wiped immediately.
+		nerr := output.RunField(huh.NewNote().
+			Title(i18n.T("setup.validation_error")).
+			Description(guard.Err).
+			Next(true))
+		if nerr != nil {
+			return fmt.Errorf("resources guard note for %s: %w", appName, nerr)
+		}
+		return nil
+	}
+	if guard.Warning != "" {
+		var proceed bool
+		cerr := output.RunField(huh.NewConfirm().
+			Title(guard.Warning).
+			Affirmative(output.ConfirmYes).
+			Negative(output.ConfirmNo).
+			Value(&proceed))
+		if cerr != nil {
+			return fmt.Errorf("resources guard confirm for %s: %w", appName, cerr)
+		}
+		if !proceed {
+			return nil
+		}
+	}
+	if cfg.Webapps == nil {
+		cfg.Webapps = make(map[string]namespace.WebappProps)
+	}
+	existing := cfg.Webapps[appName]
+	if heap != "" {
+		existing.HeapSize = heap
+	}
+	if mem != "" {
+		existing.MemoryLimit = mem
+	}
+	cfg.Webapps[appName] = existing
+	return nil
 }

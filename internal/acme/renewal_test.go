@@ -160,3 +160,82 @@ func TestCertMatchesHost_NoCert(t *testing.T) {
 		t.Error("expected CertMatchesHost=false when no cert exists")
 	}
 }
+
+func TestIsRateLimited_NoMarker(t *testing.T) {
+	dir := t.TempDir()
+	limited, retryAfter, err := IsRateLimited(dir, "example.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if limited {
+		t.Error("expected limited=false when marker absent")
+	}
+	if !retryAfter.IsZero() {
+		t.Errorf("expected zero retryAfter when not limited, got %v", retryAfter)
+	}
+}
+
+func TestIsRateLimited_ActiveMarker(t *testing.T) {
+	dir := t.TempDir()
+	acmeDir := filepath.Join(dir, "acme")
+	if err := os.MkdirAll(acmeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	until := time.Now().Add(30 * time.Minute).UTC().Truncate(time.Second)
+	marker := filepath.Join(acmeDir, "rate-limit-until")
+	if err := os.WriteFile(marker, []byte(until.Format(time.RFC3339)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	limited, retryAfter, err := IsRateLimited(dir, "example.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !limited {
+		t.Error("expected limited=true for active marker")
+	}
+	if !retryAfter.Equal(until) {
+		t.Errorf("expected retryAfter=%v, got %v", until, retryAfter)
+	}
+}
+
+func TestIsRateLimited_ExpiredMarker(t *testing.T) {
+	dir := t.TempDir()
+	acmeDir := filepath.Join(dir, "acme")
+	if err := os.MkdirAll(acmeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	until := time.Now().Add(-1 * time.Hour).UTC().Truncate(time.Second)
+	marker := filepath.Join(acmeDir, "rate-limit-until")
+	if err := os.WriteFile(marker, []byte(until.Format(time.RFC3339)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	limited, retryAfter, err := IsRateLimited(dir, "example.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if limited {
+		t.Error("expected limited=false for expired marker")
+	}
+	if !retryAfter.IsZero() {
+		t.Errorf("expected zero retryAfter when not limited, got %v", retryAfter)
+	}
+}
+
+func TestIsRateLimited_MalformedMarker(t *testing.T) {
+	dir := t.TempDir()
+	acmeDir := filepath.Join(dir, "acme")
+	if err := os.MkdirAll(acmeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(acmeDir, "rate-limit-until")
+	if err := os.WriteFile(marker, []byte("not-a-timestamp"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	limited, _, err := IsRateLimited(dir, "example.com")
+	if err != nil {
+		t.Fatalf("unexpected error for malformed marker: %v", err)
+	}
+	if limited {
+		t.Error("expected limited=false for malformed marker (treated as absent)")
+	}
+}

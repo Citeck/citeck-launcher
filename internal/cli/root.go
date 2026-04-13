@@ -10,41 +10,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// clientOpts returns Options from the global CLI flags.
+// clientOpts returns Options for connecting to the local daemon via Unix socket.
 func clientOpts() client.Options {
-	return client.Options{
-		Host:       flagHost,
-		TLSCert:    flagTLSCert,
-		TLSKey:     flagTLSKey,
-		ServerCert: flagServerCert,
-		Insecure:   flagInsecure,
-	}
+	return client.Options{}
 }
 
 var (
-	flagOutput     string
-	flagHost       string
-	flagYes        bool
-	flagTLSCert    string
-	flagTLSKey     string
-	flagServerCert string
-	flagInsecure   bool
+	flagOutput string
+	flagYes    bool
 )
-
-// Host returns the --host flag value.
-func Host() string { return flagHost }
-
-// TLSCert returns the --tls-cert flag value.
-func TLSCert() string { return flagTLSCert }
-
-// TLSKey returns the --tls-key flag value.
-func TLSKey() string { return flagTLSKey }
-
-// ServerCert returns the --server-cert flag value.
-func ServerCert() string { return flagServerCert }
-
-// Insecure returns the --insecure flag value.
-func Insecure() bool { return flagInsecure }
 
 // Yes returns the --yes flag value.
 func Yes() bool { return flagYes }
@@ -88,42 +62,32 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 	})
 
 	root.PersistentFlags().StringVar(&flagOutput, "format", "text", "Output format: text or json")
-	root.PersistentFlags().StringVar(&flagHost, "host", "", "Remote daemon host:port")
-	root.PersistentFlags().StringVar(&flagTLSCert, "tls-cert", "", "Client certificate for mTLS")
-	root.PersistentFlags().StringVar(&flagTLSKey, "tls-key", "", "Client private key for mTLS")
-	root.PersistentFlags().StringVar(&flagServerCert, "server-cert", "", "Pin server certificate (adds to TLS roots)")
-	root.PersistentFlags().BoolVar(&flagInsecure, "insecure", false, "Skip server certificate verification")
 	root.PersistentFlags().BoolVar(&flagYes, "yes", false, "Skip confirmation prompts")
 
 	root.AddCommand(
+		// Primary commands
 		newVersionCmd(info),
-		newStartCmd(info.Version),
-		newStopCmd(),
-		newStatusCmd(),
-		newHealthCmd(),
-		newConfigCmd(),
-		newApplyCmd(),
-		newDiffCmd(),
-		newWaitCmd(),
-		newReloadCmd(),
-		newDiagnoseCmd(),
-		newDescribeCmd(),
-		newLogsCmd(),
-		newExecCmd(),
-		newRestartCmd(),
-		newCertCmd(),
-		newCleanCmd(),
-		newMigrateCmd(),
 		newInstallCmd(info),
 		newUninstallCmd(),
-		newSnapshotCmd(),
+		newStartCmd(info.Version),
+		newStopCmd(),
+		newRestartCmd(),
+		newStatusCmd(),
+		newReloadCmd(),
+		newUpdateCmd(),
 		newUpgradeCmd(),
-
-		newValidateCmd(),
-		newWebUICmd(),
-		newWorkspaceCmd(),
-		newCompletionCmd(),
+		newLogsCmd(),
+		newExecCmd(),
+		newDescribeCmd(),
+		newDiagnoseCmd(),
+		newHealthCmd(),
+		newCleanCmd(),
+		newSnapshotCmd(),
+		newConfigCmd(),
 		setup.NewSetupCmd(),
+		newDumpSystemInfoCmd(info),
+		newCompletionCmd(),
+
 	)
 
 	return root

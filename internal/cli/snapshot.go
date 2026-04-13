@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/api"
@@ -41,7 +43,7 @@ func newSnapshotListCmd() *cobra.Command {
 			}
 
 			if len(snapshots) == 0 {
-				output.PrintText("No snapshots found")
+				output.PrintText(t("snapshot.list.empty"))
 				return nil
 			}
 
@@ -72,7 +74,7 @@ func newSnapshotExportCmd() *cobra.Command {
 			// Resolve output directory: flag → interactive prompt → default
 			dir := outputDir
 			if dir == "" && !flagYes {
-				dir = promptInput("Output directory", "empty for default snapshots dir", "")
+				dir = promptInput(t("snapshot.export.outputDir.label"), t("snapshot.export.outputDir.hint"), "")
 			}
 
 			// Check if namespace is running — offer to stop
@@ -92,9 +94,9 @@ func newSnapshotExportCmd() *cobra.Command {
 			if err != nil {
 				// Try to restart even on export failure
 				if wasRunning {
-					output.PrintText("Starting namespace back...")
+					output.PrintText(t("snapshot.startingBack"))
 					if _, startErr := c.StartNamespace(); startErr != nil {
-						output.Errf("Warning: failed to restart namespace: %v", startErr)
+						output.Errf("%s", t("snapshot.restartWarn", "error", startErr.Error()))
 					}
 				}
 				return err
@@ -102,11 +104,11 @@ func newSnapshotExportCmd() *cobra.Command {
 
 			// Start namespace back if it was running
 			if wasRunning {
-				output.PrintText("Starting namespace...")
+				output.PrintText(t("snapshot.starting"))
 				if _, startErr := c.StartNamespace(); startErr != nil {
 					return fmt.Errorf("restart namespace after export: %w", startErr)
 				}
-				output.PrintText("Namespace started")
+				output.PrintText(t("snapshot.started"))
 			}
 
 			return nil
@@ -118,17 +120,17 @@ func newSnapshotExportCmd() *cobra.Command {
 
 // stopForSnapshot prompts the user (unless --yes) and stops the namespace for a snapshot operation.
 func stopForSnapshot(c *client.DaemonClient) error {
-	if !promptConfirm("Namespace is running. Stop it?", true) {
-		return fmt.Errorf("canceled — namespace must be stopped")
+	if !promptConfirm(t("snapshot.stopConfirm"), true) {
+		return errors.New(t("snapshot.stopCanceled"))
 	}
-	output.PrintText("Stopping namespace...")
+	output.PrintText(t("snapshot.stopping"))
 	if _, stopErr := c.StopNamespace(); stopErr != nil {
 		return fmt.Errorf("stop namespace: %w", stopErr)
 	}
 	if waitErr := waitForStopped(c, 120*time.Second); waitErr != nil {
 		return fmt.Errorf("waiting for stop: %w", waitErr)
 	}
-	output.PrintText("Namespace stopped")
+	output.PrintText(t("snapshot.stopped"))
 	return nil
 }
 
@@ -147,10 +149,11 @@ func waitForStopped(c *client.DaemonClient, timeout time.Duration) error {
 		}
 		time.Sleep(2 * time.Second)
 	}
-	return fmt.Errorf("timeout waiting for namespace to stop (stuck at %s)", lastStatus)
+	return errors.New(t("snapshot.stopTimeout", "status", lastStatus))
 }
 
 func newSnapshotImportCmd() *cobra.Command {
+	var detach bool
 	cmd := &cobra.Command{
 		Use:   "import [snapshot-name]",
 		Short: "Import a snapshot into namespace volumes",
@@ -163,6 +166,28 @@ func newSnapshotImportCmd() *cobra.Command {
 			}
 			defer c.Close()
 
+			// Normalize snapshot name: append .zip if missing
+			name := args[0]
+			if !strings.HasSuffix(name, ".zip") {
+				name += ".zip"
+			}
+
+			// Pre-flight validation: check snapshot exists before stopping namespace
+			snapshots, listErr := c.ListSnapshots()
+			if listErr != nil {
+				return fmt.Errorf("list snapshots: %w", listErr)
+			}
+			found := false
+			for _, s := range snapshots {
+				if s.Name == name {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return errors.New(t("snapshot.notFound", "name", name))
+			}
+
 			// Check if namespace is running — offer to stop
 			ns, nsErr := c.GetNamespace()
 			wasRunning := nsErr == nil && ns != nil && ns.Status != "STOPPED"
@@ -174,29 +199,46 @@ func newSnapshotImportCmd() *cobra.Command {
 			}
 
 			err = snapshotAndWait(c, "snapshot_complete", "snapshot_error", func() (*api.ActionResultDto, error) {
-				return c.ImportSnapshot(args[0])
+				return c.ImportSnapshot(name)
 			})
 			if err != nil {
 				if wasRunning {
-					output.PrintText("Starting namespace back...")
+					output.PrintText(t("snapshot.startingBack"))
 					if _, startErr := c.StartNamespace(); startErr != nil {
-						output.Errf("Warning: failed to restart namespace: %v", startErr)
+						output.Errf("%s", t("snapshot.restartWarn", "error", startErr.Error()))
 					}
 				}
 				return err
 			}
 
-			if wasRunning {
-				output.PrintText("Starting namespace...")
-				if _, startErr := c.StartNamespace(); startErr != nil {
-					return fmt.Errorf("restart namespace after import: %w", startErr)
-				}
-				output.PrintText("Namespace started")
+			if !wasRunning {
+				return nil
 			}
 
+			output.PrintText(t("snapshot.starting"))
+			if _, startErr := c.StartNamespace(); startErr != nil {
+				return fmt.Errorf("restart namespace after import: %w", startErr)
+			}
+
+			if detach {
+				output.PrintText(t("snapshot.import.detach"))
+				return nil
+			}
+
+			// Wait for the namespace to reach RUNNING (or terminal) state.
+			// StreamReloadStatus handles SIGINT internally and returns errInterrupted
+			// on Ctrl+C — we treat that as "detach" (not an error).
+			if waitErr := StreamReloadStatus(c); waitErr != nil {
+				if errors.Is(waitErr, errInterrupted) {
+					output.PrintText(t("snapshot.import.background"))
+					return nil
+				}
+				return waitErr
+			}
 			return nil
 		},
 	}
+	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "Don't wait for namespace to reach RUNNING after import")
 	return cmd
 }
 
@@ -217,7 +259,7 @@ func snapshotAndWait(c *client.DaemonClient, successType, errorType string, acti
 	}
 	output.PrintText("%s", result.Message)
 
-	output.PrintText("Waiting for completion...")
+	output.PrintText(t("snapshot.waitingCompletion"))
 	for evt := range events {
 		if evt.Type == successType {
 			output.PrintText("%s", evt.After)

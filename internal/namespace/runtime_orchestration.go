@@ -81,8 +81,10 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) { //nolint:gocyclo // or
 	r.mu.RLock()
 	editedLocked := make(map[string]bool, len(r.editedLockedApps))
 	editedApps := make(map[string]appdef.ApplicationDef, len(r.editedApps))
+	detached := make(map[string]bool, len(r.manualStoppedApps))
 	maps.Copy(editedLocked, r.editedLockedApps)
 	maps.Copy(editedApps, r.editedApps)
+	maps.Copy(detached, r.manualStoppedApps)
 	r.mu.RUnlock()
 
 	type appPlan struct {
@@ -111,9 +113,11 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) { //nolint:gocyclo // or
 		containerName := r.docker.ContainerName(appDef.Name)
 
 		plan := appPlan{def: appDef, hash: hash, containerName: containerName}
-		if existing, ok := existingContainers[appDef.Name]; ok && existing.hash == hash && existing.running {
-			plan.reuse = true
-			plan.containerID = existing.containerID
+		if !detached[appDef.Name] {
+			if existing, ok := existingContainers[appDef.Name]; ok && existing.hash == hash && existing.running {
+				plan.reuse = true
+				plan.containerID = existing.containerID
+			}
 		}
 		plans = append(plans, plan)
 	}
@@ -139,9 +143,10 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) { //nolint:gocyclo // or
 	}
 
 	// Phase 2 (no lock): remove stale containers in parallel, wait for completion.
+	// Skip detached apps — their containers are already removed by StopApp.
 	var removeWg sync.WaitGroup
 	for _, p := range plans {
-		if !p.reuse {
+		if !p.reuse && !detached[p.def.Name] {
 			if _, ok := existingContainers[p.def.Name]; ok {
 				slog.Info("Removing stale container", "app", p.def.Name)
 				removeWg.Add(1)
@@ -171,7 +176,11 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) { //nolint:gocyclo // or
 	}
 	removeWg.Wait()
 
-	// Verify reused containers are actually running (fast Docker inspect + health probe)
+	// Verify reused containers are actually running (fast Docker inspect).
+	// Note: we intentionally do NOT run a synchronous liveness probe here —
+	// under reload stress the probe can flake, causing unnecessary recreates.
+	// Truly-hung containers (running but unresponsive) are caught by the
+	// reconciler's periodic liveness probe within ~FailureThreshold × periodSeconds.
 	for i, p := range plans {
 		if !p.reuse {
 			continue
@@ -185,24 +194,21 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) { //nolint:gocyclo // or
 			plans[i].containerID = ""
 			continue
 		}
-		// Run health probe on reused container to detect crashed apps
-		if p.def.LivenessProbe != nil {
-			probeCtx, probeCancel := context.WithTimeout(ctx, 10*time.Second)
-			alive := r.runLivenessProbe(probeCtx, p.containerID, p.def.LivenessProbe)
-			probeCancel()
-			if !alive {
-				slog.Warn("Reused container health probe failed, will recreate", "app", p.def.Name)
-				plans[i].reuse = false
-				plans[i].containerID = ""
-			}
-		}
 	}
 
 	// Phase 3 (lock): atomically replace in-memory state and launch apps.
+	// Use the same `detached` snapshot as Phase 1/2 for consistency — any
+	// concurrent Stop/StartApp during this doStart pass is applied on the
+	// next regeneration cycle (the caller marks intent in manualStoppedApps
+	// directly, next reload/regenerate will propagate).
 	r.mu.Lock()
 	newApps := make(map[string]*AppRuntime, len(plans))
 	for _, p := range plans {
-		if p.reuse {
+		if detached[p.def.Name] {
+			newApps[p.def.Name] = &AppRuntime{
+				Name: p.def.Name, Status: AppStatusStopped, Def: p.def,
+			}
+		} else if p.reuse {
 			slog.Info("Reusing existing container (hash match)", "app", p.def.Name)
 			newApps[p.def.Name] = &AppRuntime{
 				Name: p.def.Name, Status: AppStatusRunning, Def: p.def,
@@ -295,7 +301,7 @@ func (r *Runtime) doStop() {
 	// Stop in graceful order: proxy → webapps/other → keycloak → infra
 	stopGroup := func(apps []*AppRuntime) {
 		// Determine the max stop timeout across all apps in the group
-		maxTimeout := 10 // default minimum
+		maxTimeout := 15 // default minimum
 		for _, a := range apps {
 			t := a.Def.StopTimeout
 			if t == 0 {

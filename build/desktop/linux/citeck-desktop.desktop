@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Citeck Launcher
-Comment=Citeck ECOS Platform Launcher
+Comment=Citeck Platform Launcher
 Exec=citeck-desktop
 Icon=citeck-desktop
 Terminal=false

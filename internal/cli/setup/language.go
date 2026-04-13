@@ -41,12 +41,13 @@ func (s *languageSetting) Run(_ *setupContext, _ *namespace.Config, dcfg *config
 	}
 	options = append(options, huh.NewOption(i18n.T("setup.back"), backValue))
 
-	err := huh.NewSelect[string]().
+	sel := huh.NewSelect[string]().
 		Title(i18n.T("setup.language.prompt")).
+		Description(i18n.T("hint.select.setting")).
 		Options(options...).
-		Value(&selected).
-		WithTheme(output.HuhTheme).
-		Run()
+		Value(&selected)
+	sel = output.ApplySelectHeight(sel, len(options))
+	err := output.RunField(sel)
 	if err != nil {
 		return fmt.Errorf("language selection: %w", err)
 	}

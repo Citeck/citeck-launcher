@@ -5,11 +5,9 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/huh"
+	"github.com/citeck/citeck-launcher/internal/i18n"
 	"github.com/citeck/citeck-launcher/internal/output"
 )
-
-// cliTheme is a shorthand for the shared Dracula huh theme.
-var cliTheme = output.HuhTheme
 
 // printStepHeader prints a numbered, colored step header with separator.
 func printStepHeader(step int, title string) {
@@ -63,12 +61,18 @@ func promptSelect(label string, options []string) string {
 		selected = options[0]
 	}
 
-	_ = huh.NewSelect[string]().
+	hint := i18n.T("hint.select.setting")
+	if hint == "hint.select.setting" {
+		hint = "" // i18n not loaded yet (language selection step)
+	}
+
+	sel := huh.NewSelect[string]().
 		Title(label).
+		Description(hint).
 		Options(huhOpts...).
-		Value(&selected).
-		WithTheme(cliTheme).
-		Run()
+		Value(&selected)
+	sel = output.ApplySelectHeight(sel, len(huhOpts))
+	_ = output.RunField(sel)
 	return selected
 }
 
@@ -82,9 +86,11 @@ func promptInput(label, hint, defaultVal string) string {
 		Placeholder(defaultVal)
 	if hint != "" {
 		input = input.Description(hint)
+	} else {
+		input = input.Description(i18n.T("hint.input"))
 	}
 
-	if err := input.WithTheme(cliTheme).Run(); err != nil {
+	if err := output.RunField(input); err != nil {
 		return defaultVal
 	}
 	if value == "" {
@@ -97,12 +103,11 @@ func promptInput(label, hint, defaultVal string) string {
 // On cancel/error or empty input, returns empty string.
 func promptPassword(label string) string {
 	var value string
-	err := huh.NewInput().
+	err := output.RunField(huh.NewInput().
 		Title(label).
+		Description(i18n.T("hint.input")).
 		Value(&value).
-		EchoMode(huh.EchoModePassword).
-		WithTheme(cliTheme).
-		Run()
+		EchoMode(huh.EchoModePassword))
 	if err != nil {
 		return ""
 	}
@@ -117,11 +122,10 @@ func promptConfirm(label string, defaultYes bool) bool {
 		return defaultYes
 	}
 	result := defaultYes
-	err := huh.NewConfirm().
+	err := output.RunField(output.NewConfirm().
 		Title(label).
-		Value(&result).
-		WithTheme(cliTheme).
-		Run()
+		Description(i18n.T("hint.confirm")).
+		Value(&result))
 	if err != nil {
 		return defaultYes
 	}

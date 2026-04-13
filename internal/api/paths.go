@@ -10,7 +10,8 @@ const (
 	DaemonStatus   = APIV1 + "/daemon/status"
 	DaemonShutdown = APIV1 + "/daemon/shutdown"
 	DaemonLogs     = APIV1 + "/daemon/logs"
-	Config         = APIV1 + "/config"
+	Config        = APIV1 + "/config"
+	ConfigApplied = APIV1 + "/config/applied"
 
 	Namespace              = APIV1 + "/namespace"
 	NamespaceStart         = APIV1 + "/namespace/start"

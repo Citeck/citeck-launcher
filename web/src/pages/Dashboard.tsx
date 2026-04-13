@@ -212,8 +212,8 @@ export function Dashboard() {
   const runningCount = apps.filter((a) => a.status === 'RUNNING').length
   const isRunning = namespace.status === 'RUNNING'
   const links = namespace.links ? [...namespace.links].sort((a, b) => a.order - b.order) : []
-  const proxyUrl = links.find((l) => l.name === 'ECOS UI')?.url
-  const serviceLinks = links.filter((l) => l.name !== 'ECOS UI')
+  const proxyUrl = links.find((l) => l.name === 'Citeck UI')?.url
+  const serviceLinks = links.filter((l) => l.name !== 'Citeck UI')
 
   const runningApps = apps.filter((a) => a.status === 'RUNNING')
   const totalCpu = runningApps.reduce((sum, a) => sum + (parseFloat(a.cpu) || 0), 0)

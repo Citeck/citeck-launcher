@@ -1,3 +1,26 @@
+# Release 2.1.0-rc2
+
+## Keycloak + RabbitMQ service account & per-app detach
+- feat: `citeck` service account unified across Keycloak (master realm, admin role) and RabbitMQ (monitoring tag, vhost `/` full perms). Webapps connect to RabbitMQ as the stable SA instead of the user-facing `admin` user, so `citeck setup admin-password` no longer needs to reload webapps. Replaces the former `citeck-launcher` Keycloak-only SA; `_launcher_sa` secret auto-migrates to `_citeck_sa` and the legacy Keycloak user is cleaned up on next init.
+- feat: per-app detach/attach (`citeck stop <app>` / `citeck start <app>`) with persistence across restart/reload
+- feat: template `detachedApps` from workspace config — apps can be pre-detached by bundle definition
+- feat: TUI navigation hints in 8 locales (arrow keys, Enter, Esc, Ctrl+C)
+
+## Fixes
+- fix: Keycloak `ecos-app` admin password not applied on fresh install
+- fix: email SMTP config via env vars (was broken CloudConfig path)
+- fix: proxy crash when email configured (stale mailhog container reference)
+- fix: snapshot import name normalization, pre-flight validation, event mismatch
+- fix: detach not respected during reload/regenerate
+- fix: proxy DEPS_WAITING when onlyoffice detached
+
+## Breaking changes
+- breaking: `stop --detach` / `-d` renamed to `stop --no-wait`
+- breaking: `clean --execute` renamed to `clean --force`
+- breaking: `start --desktop` / `--no-ui` hidden from server binary
+
+---
+
 # Release 2.1.0
 
 ## Zero-downtime binary upgrade

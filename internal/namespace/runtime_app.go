@@ -176,10 +176,22 @@ func (r *Runtime) waitForDeps(ctx context.Context, appName string) bool {
 		allReady := true
 		for dep := range deps {
 			depApp, ok := r.apps[dep]
-			if !ok || depApp.Status != AppStatusRunning {
-				allReady = false
-				break
+			if !ok {
+				// Dep is not part of the current generation — treated as
+				// satisfied so dependents don't stall. This lets generators
+				// declare a stable dependency set across configuration modes
+				// (e.g., webapps always list keycloak even in BASIC auth
+				// mode where the keycloak container is intentionally absent),
+				// keeping deployment hashes stable.
+				continue
 			}
+			// Detached apps (manually stopped) are considered satisfied —
+			// the user intentionally disabled them, don't block dependents.
+			if depApp.Status == AppStatusRunning || r.manualStoppedApps[dep] {
+				continue
+			}
+			allReady = false
+			break
 		}
 		// Capture current notify channel under the same lock to avoid races
 		notify := r.statusNotify

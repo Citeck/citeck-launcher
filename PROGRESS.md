@@ -22,3 +22,4 @@
 | 2026-04-06 | Self-healing runtime: liveness probes, restart tracking, diagnostics |
 | 2026-04-07 | Phase 18: upgrade CLI/API/UI, self-update, P12, snapshot auto-stop, observer 1.1.0 |
 | 2026-04-09 | Release 2.1.0: zero-downtime binary upgrade (detach mode + SIGKILL preserve for v2.0.0→v2.1.0), `install.sh` installer (replaces `citeck self-update`), huh TUI migration for all CLI prompts, `citeck setup` interactive config editor |
+| 2026-04-11/12 | Phase 22: Server Testing Phase 2 + Enterprise — full enterprise deployment (registry auth, 24 apps), S3/SMTP end-to-end, per-app detach/attach, citeck-launcher SA in Keycloak, 14 bugs fixed, CLI flag cleanup |

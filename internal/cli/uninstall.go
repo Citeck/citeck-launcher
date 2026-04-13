@@ -91,6 +91,7 @@ func runUninstall(deleteData bool) error {
 		} else {
 			output.PrintText(t("uninstall.dataRemoved", "path", homeDir))
 		}
+		removeBinary()
 		output.PrintText("\n" + t("uninstall.complete"))
 		return nil
 	}

@@ -65,6 +65,18 @@ func DetectTransport(host, tlsCert, tlsKey, serverCert string, insecure bool) (*
 		}, nil
 	}
 
+	// Dial failed — distinguish three cases for a truthful message (B7-07):
+	//   1. socket path does not exist            → "no socket"
+	//   2. path exists but is NOT a unix socket  → "stale socket file"
+	//      (e.g. 0-byte regular file left behind after a crash)
+	//   3. path exists and IS a socket but nobody is listening
+	//                                            → "stale socket"
+	if fi, err := os.Stat(socketPath); err == nil {
+		if fi.Mode()&os.ModeSocket == 0 {
+			return nil, fmt.Errorf("daemon is not running (stale socket file at %s — not a unix socket; remove it and retry)", socketPath)
+		}
+		return nil, fmt.Errorf("daemon is not running (stale socket at %s — no listener)", socketPath)
+	}
 	return nil, fmt.Errorf("daemon is not running (no socket at %s)", socketPath)
 }
 
@@ -160,9 +172,11 @@ func (tc *TransportConfig) newHTTPClientWithTimeout(timeout time.Duration) *http
 	}
 }
 
-// NewHTTPClient creates an HTTP client with a 30-second timeout.
+// NewHTTPClient creates an HTTP client with a 120-second timeout.
+// Operations like admin password change involve kcadm.sh exec inside
+// Keycloak (Java cold-start) and can take 30-60 seconds on slow hardware.
 func NewHTTPClient(tc *TransportConfig) *http.Client {
-	return tc.newHTTPClientWithTimeout(30 * time.Second)
+	return tc.newHTTPClientWithTimeout(120 * time.Second)
 }
 
 // NewStreamingHTTPClient creates an HTTP client without an overall timeout,

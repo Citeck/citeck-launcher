@@ -3,9 +3,9 @@ package setup
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -32,7 +32,6 @@ func NewSetupCmd() *cobra.Command {
 	}
 
 	cmd.AddCommand(newHistoryCmd())
-	cmd.AddCommand(newRollbackCmd())
 
 	return cmd
 }
@@ -45,23 +44,6 @@ func newHistoryCmd() *cobra.Command {
 		RunE: func(_ *cobra.Command, _ []string) error {
 			i18n.EnsureI18n()
 			return runHistory()
-		},
-	}
-}
-
-func newRollbackCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "rollback [id]",
-		Short: "Roll back a configuration change",
-		Long:  "Rolls back the last change, or a specific change by patch filename. The rollback is recorded as a new patch.",
-		Args:  cobra.MaximumNArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
-			i18n.EnsureI18n()
-			var id string
-			if len(args) > 0 {
-				id = args[0]
-			}
-			return runRollback(id)
 		},
 	}
 }
@@ -98,15 +80,11 @@ func runSetup(_ *cobra.Command, args []string) error {
 }
 
 // resolveAppList resolves the list of app names from the bundle, falling back to namespace config keys.
-// Temporarily raises the log level to suppress bundle-resolver INFO noise that
-// breaks the huh TUI initial render (the logged lines are never cleared).
-// Safe: setup runs single-threaded at this point, no concurrent log producers.
+// Uses a WARN-level logger on the resolver so bundle-resolver bookkeeping does not
+// break the huh TUI initial render (the logged lines would never be cleared).
 func resolveAppList(nsCfg *namespace.Config) []string {
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
-	defer slog.SetDefault(prev)
-
-	resolver := bundle.NewResolver(config.DataDir())
+	quiet := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	resolver := bundle.NewResolver(config.DataDir()).WithLogger(quiet)
 	resolver.SetOffline(true)
 
 	result, err := resolver.Resolve(nsCfg.BundleRef)
@@ -156,16 +134,17 @@ func runMenuLoop(sctx *setupContext, nsCfg *namespace.Config, daemonCfg *config.
 			label := fmt.Sprintf("%-*s — %s", maxIDLen, s.ID(), s.CurrentValue(nsCfg, daemonCfg))
 			options = append(options, huh.NewOption(label, s.ID()))
 		}
-		options = append(options, huh.NewOption(i18n.T("setup.exit"), ""))
+		options = append(options, huh.NewOption(i18n.T("setup.exit"), "_exit"))
 
-		var choice string
-		err := huh.NewSelect[string]().
+		choice := options[0].Value
+		fmt.Println() //nolint:forbidigo // blank line before huh to fix initial viewport render
+		sel := huh.NewSelect[string]().
 			Title(i18n.T("setup.menu.title")).
-			Description(i18n.T("setup.hint.esc")).
+			Description(i18n.T("hint.select.menu")).
 			Options(options...).
-			Value(&choice).
-			WithTheme(output.HuhTheme).
-		Run()
+			Value(&choice)
+		sel = output.ApplySelectHeight(sel, len(options))
+		err := output.RunField(sel)
 		if err != nil {
 			if isUserAborted(err) {
 				return nil
@@ -173,7 +152,7 @@ func runMenuLoop(sctx *setupContext, nsCfg *namespace.Config, daemonCfg *config.
 			return fmt.Errorf("menu selection: %w", err)
 		}
 
-		if choice == "" {
+		if choice == "_exit" {
 			return nil
 		}
 
@@ -188,7 +167,11 @@ func runSingleSetting(id string, sctx *setupContext, nsCfg *namespace.Config, da
 	// Find setting by ID.
 	setting := findSettingByID(id)
 	if setting == nil {
-		return fmt.Errorf("unknown setting: %q", id)
+		ids := make([]string, 0, len(allSettings()))
+		for _, s := range allSettings() {
+			ids = append(ids, s.ID())
+		}
+		return fmt.Errorf("unknown setting %q. Available: %s", id, strings.Join(ids, ", "))
 	}
 
 	// Action settings (e.g. admin-password) perform the whole operation
@@ -384,12 +367,11 @@ func promptConfirmAction(target TargetFile) (confirmAction, error) {
 	}
 
 	var choice string
-	err := huh.NewSelect[string]().
+	err := output.RunField(huh.NewSelect[string]().
 		Title(i18n.T("setup.confirm")).
+		Description(i18n.T("hint.select.setting")).
 		Options(options...).
-		Value(&choice).
-		WithTheme(output.HuhTheme).
-		Run()
+		Value(&choice))
 	if err != nil {
 		return actionCancel, fmt.Errorf("confirm: %w", err)
 	}
@@ -604,6 +586,39 @@ func patchDescription(ops []PatchOp) string {
 	return desc
 }
 
+// HistoryText writes the same rendered text output as `citeck setup history`
+// to the given writer. Used by `citeck dump-system-info` to capture the
+// history without spawning a subprocess.
+func HistoryText(w io.Writer) error {
+	i18n.EnsureI18n()
+	patches, err := collectAllPatches()
+	if err != nil {
+		return err
+	}
+
+	if len(patches) == 0 {
+		fmt.Fprintln(w, i18n.T("setup.history.empty"))
+		return nil
+	}
+
+	headers := []string{"DATE", "SETTING", "FILE", "DESCRIPTION"}
+	rows := make([][]string, 0, len(patches))
+
+	for _, p := range patches {
+		date := p.Record.Date.Format("2006-01-02 15:04:05")
+		file := "namespace.yml"
+		if p.Target == DaemonFile {
+			file = "daemon.yml"
+		}
+
+		desc := patchDescription(p.Record.Forward)
+		rows = append(rows, []string{date, p.Record.Setting, file, desc})
+	}
+
+	fmt.Fprintln(w, output.FormatTable(headers, rows))
+	return nil
+}
+
 // collectAllPatches collects patches from both namespace and daemon history dirs, sorted by date.
 func collectAllPatches() ([]indexedPatch, error) {
 	var all []indexedPatch
@@ -631,280 +646,3 @@ func collectAllPatches() ([]indexedPatch, error) {
 	return all, nil
 }
 
-// runRollback rolls back a specific patch (by filename/id) or the most recent one.
-func runRollback(id string) error {
-	patches, err := collectAllPatches()
-	if err != nil {
-		return err
-	}
-
-	if len(patches) == 0 {
-		return fmt.Errorf("no patches to roll back")
-	}
-
-	// Find the target patch.
-	var target *indexedPatch
-	if id == "" {
-		// Last patch.
-		target = &patches[len(patches)-1]
-	} else {
-		// Search by filename prefix match.
-		for i := range patches {
-			if strings.Contains(patches[i].FileName, id) {
-				target = &patches[i]
-				break
-			}
-		}
-		if target == nil {
-			return fmt.Errorf("patch not found: %q", id)
-		}
-	}
-
-	if len(target.Record.Reverse) == 0 {
-		return fmt.Errorf("patch has no reverse operations — cannot roll back")
-	}
-
-	// Show what will be rolled back.
-	fmt.Printf("%s: %s (%s)\n", i18n.T("setup.rollback.target"), target.Record.Setting,
-		target.Record.Date.Format("2006-01-02 15:04:05"))
-	fmt.Println()
-	for _, op := range target.Record.Reverse {
-		switch op.Op {
-		case "add":
-			fmt.Printf("  + %s = %v\n", op.Path, op.Value)
-		case "remove":
-			fmt.Printf("  - %s\n", op.Path)
-		case "replace":
-			fmt.Printf("  ~ %s = %v\n", op.Path, op.Value)
-		}
-	}
-	fmt.Println()
-
-	// Confirm.
-	var confirm bool
-	if cErr := huh.NewConfirm().
-		Title(i18n.T("setup.rollback.confirm")).
-		Value(&confirm).
-		WithTheme(output.HuhTheme).
-		Run(); cErr != nil {
-		if isUserAborted(cErr) {
-			return nil
-		}
-		return fmt.Errorf("rollback confirm: %w", cErr)
-	}
-	if !confirm {
-		return nil
-	}
-
-	// Load current config as JSON map, apply reverse patch, write back.
-	cfgPath := configFilePath(target.Target)
-
-	if target.Target == DaemonFile {
-		if err := rollbackDaemonConfig(cfgPath, target); err != nil {
-			return err
-		}
-	} else {
-		if err := rollbackNamespaceConfig(cfgPath, target); err != nil {
-			return err
-		}
-	}
-
-	fmt.Println(i18n.T("setup.rollback.applied"))
-	return nil
-}
-
-// rollbackNamespaceConfig applies a reverse patch to the namespace config.
-func rollbackNamespaceConfig(cfgPath string, target *indexedPatch) error {
-	nsCfg, err := namespace.LoadNamespaceConfig(cfgPath)
-	if err != nil {
-		return fmt.Errorf("load namespace config: %w", err)
-	}
-
-	jsonMap, err := structToJSONMap(nsCfg)
-	if err != nil {
-		return fmt.Errorf("serialize namespace config: %w", err)
-	}
-
-	if conflict := detectRollbackConflict(jsonMap, target.Record.Forward); conflict != "" {
-		forced, fErr := confirmForceRollback(conflict)
-		if fErr != nil {
-			return fErr
-		}
-		if !forced {
-			return nil
-		}
-	}
-
-	if pErr := applyPatch(jsonMap, target.Record.Reverse); pErr != nil {
-		return fmt.Errorf("apply reverse patch: %w", pErr)
-	}
-
-	// Convert back: JSON map -> JSON bytes -> namespace.Config -> YAML.
-	jsonBytes, err := json.Marshal(jsonMap)
-	if err != nil {
-		return fmt.Errorf("marshal patched config: %w", err)
-	}
-	var restored namespace.Config
-	if uErr := json.Unmarshal(jsonBytes, &restored); uErr != nil {
-		return fmt.Errorf("unmarshal patched config: %w", uErr)
-	}
-
-	if vErr := namespace.ValidateNamespaceConfig(&restored); vErr != nil {
-		return fmt.Errorf("validation failed after rollback: %w", vErr)
-	}
-
-	data, err := namespace.MarshalNamespaceConfig(&restored)
-	if err != nil {
-		return fmt.Errorf("marshal namespace config: %w", err)
-	}
-
-	if wErr := fsutil.AtomicWriteFile(cfgPath, data, 0o644); wErr != nil {
-		return fmt.Errorf("write namespace config: %w", wErr)
-	}
-
-	// Restore secrets from backup if the patch recorded secret operations.
-	if target.Record.SecretOps != nil && len(target.Record.SecretOps.Reverse) > 0 {
-		rollbackSecrets(target.Record.SecretOps.Reverse)
-	}
-
-	// Record rollback as new patch and update snapshot.
-	return recordRollbackPatch(cfgPath, target, &restored)
-}
-
-// rollbackDaemonConfig applies a reverse patch to the daemon config.
-func rollbackDaemonConfig(cfgPath string, target *indexedPatch) error {
-	daemonCfg, err := config.LoadDaemonConfig()
-	if err != nil {
-		return fmt.Errorf("load daemon config: %w", err)
-	}
-
-	jsonMap, err := structToJSONMap(&daemonCfg)
-	if err != nil {
-		return fmt.Errorf("serialize daemon config: %w", err)
-	}
-
-	if conflict := detectRollbackConflict(jsonMap, target.Record.Forward); conflict != "" {
-		forced, fErr := confirmForceRollback(conflict)
-		if fErr != nil {
-			return fErr
-		}
-		if !forced {
-			return nil
-		}
-	}
-
-	if pErr := applyPatch(jsonMap, target.Record.Reverse); pErr != nil {
-		return fmt.Errorf("apply reverse patch: %w", pErr)
-	}
-
-	// Convert back: JSON map -> JSON bytes -> config.DaemonConfig -> save.
-	jsonBytes, err := json.Marshal(jsonMap)
-	if err != nil {
-		return fmt.Errorf("marshal patched config: %w", err)
-	}
-	var restored config.DaemonConfig
-	if uErr := json.Unmarshal(jsonBytes, &restored); uErr != nil {
-		return fmt.Errorf("unmarshal patched config: %w", uErr)
-	}
-
-	if sErr := config.SaveDaemonConfig(restored); sErr != nil {
-		return fmt.Errorf("save daemon config: %w", sErr)
-	}
-
-	// Restore secrets from backup if the patch recorded secret operations.
-	if target.Record.SecretOps != nil && len(target.Record.SecretOps.Reverse) > 0 {
-		rollbackSecrets(target.Record.SecretOps.Reverse)
-	}
-
-	// Record rollback as new patch and update snapshot.
-	return recordRollbackPatch(cfgPath, target, &restored)
-}
-
-// recordRollbackPatch writes a new patch that records the rollback and updates the snapshot.
-func recordRollbackPatch(cfgPath string, target *indexedPatch, cfg any) error {
-	hDir := historyDir(cfgPath)
-
-	// Rollback patch: forward = reverse of original, reverse = forward of original.
-	rollbackRec := &PatchRecord{
-		Date:    time.Now().UTC(),
-		Setting: "rollback:" + target.Record.Setting,
-		Command: fmt.Sprintf("setup rollback %s", filepath.Base(target.FileName)),
-		Input:   map[string]any{"rollback_of": target.Record.Date.Format(time.RFC3339)},
-		Forward: target.Record.Reverse,
-		Reverse: target.Record.Forward,
-	}
-
-	if _, err := writePatch(hDir, rollbackRec); err != nil {
-		slog.Warn("Failed to write rollback patch", "err", err)
-	}
-
-	snapJSON, err := json.MarshalIndent(structToJSONMapOrEmpty(cfg), "", "  ")
-	if err == nil {
-		if err := writeSnapshot(hDir, snapJSON); err != nil {
-			slog.Warn("Failed to update snapshot after rollback", "err", err)
-		}
-	}
-
-	return nil
-}
-
-// detectRollbackConflict checks if the current config values at forward patch paths
-// match the expected forward values. Returns a description of the first conflict found,
-// or empty string if no conflicts.
-func detectRollbackConflict(currentMap map[string]any, forwardOps []PatchOp) string {
-	for _, op := range forwardOps {
-		if op.Op != "replace" && op.Op != "add" {
-			continue
-		}
-		segments, err := splitJSONPointer(op.Path)
-		if err != nil || len(segments) == 0 {
-			continue
-		}
-		// Navigate to parent, then read the key.
-		cur := currentMap
-		depth := 0
-		for _, seg := range segments[:len(segments)-1] {
-			child, ok := cur[seg]
-			if !ok {
-				break
-			}
-			childMap, ok := child.(map[string]any)
-			if !ok {
-				break
-			}
-			cur = childMap
-			depth++
-		}
-		// If we couldn't navigate to the correct depth, the parent was removed.
-		if depth < len(segments)-1 {
-			return fmt.Sprintf("%s: parent path missing", op.Path)
-		}
-		key := segments[len(segments)-1]
-		actual, exists := cur[key]
-		if op.Op == "add" && !exists {
-			// Value was expected to have been added but is now gone — conflict.
-			return fmt.Sprintf("%s: expected %v but key does not exist", op.Path, op.Value)
-		}
-		if exists && !jsonEqual(actual, op.Value) {
-			return fmt.Sprintf("%s: expected %v but found %v", op.Path, op.Value, actual)
-		}
-	}
-	return ""
-}
-
-// confirmForceRollback warns the user about a conflict and asks whether to force the rollback.
-func confirmForceRollback(conflict string) (bool, error) {
-	fmt.Printf("\n%s: %s\n\n", i18n.T("setup.rollback.conflict"), conflict)
-	var force bool
-	if err := huh.NewConfirm().
-		Title(i18n.T("setup.rollback.force")).
-		Value(&force).
-		WithTheme(output.HuhTheme).
-		Run(); err != nil {
-		if isUserAborted(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("force rollback confirm: %w", err)
-	}
-	return force, nil
-}

@@ -72,6 +72,13 @@ func RunJarMigration(homeDir, javaPath string, store storage.Store) (*MigrateRes
 	jarPath := filepath.Join(homeDir, JarName)
 	exportPath := filepath.Join(homeDir, "h2-export.json")
 
+	// The JAR is only embedded in desktop builds (build tag `desktop`).
+	// On server builds the slice is empty; fail fast so the caller falls back
+	// to the filesystem-only migration path.
+	if len(embedded.H2ExportJar) == 0 {
+		return nil, fmt.Errorf("h2-export.jar not embedded in this build")
+	}
+
 	// Step 1: Write embedded JAR to disk
 	if err := os.WriteFile(jarPath, embedded.H2ExportJar, 0o644); err != nil { //nolint:gosec // JAR needs to be readable by JVM
 		return nil, fmt.Errorf("write h2-export.jar: %w", err)

@@ -41,16 +41,15 @@ func (s *s3Setting) Run(ctx *setupContext, cfg *namespace.Config, _ *config.Daem
 	// If already configured, offer edit/remove.
 	if cfg.S3 != nil {
 		var action string
-		err := huh.NewSelect[string]().
+		err := output.RunField(huh.NewSelect[string]().
 			Title(i18n.T("setup.s3.action")).
+			Description(i18n.T("hint.select.setting")).
 			Options(
 				huh.NewOption(i18n.T("setup.s3.edit"), "edit"),
 				huh.NewOption(i18n.T("setup.s3.remove"), "remove"),
 				huh.NewOption(i18n.T("setup.back"), backValue),
 			).
-			Value(&action).
-			WithTheme(output.HuhTheme).
-		Run()
+			Value(&action))
 		if err != nil {
 			return fmt.Errorf("s3 action selection: %w", err)
 		}
@@ -80,7 +79,7 @@ func (s *s3Setting) Run(ctx *setupContext, cfg *namespace.Config, _ *config.Daem
 		secretKeyValidate = func(string) error { return nil }
 	}
 
-	err := huh.NewForm(
+	err := output.RunForm(huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().Title(i18n.T("setup.s3.endpoint")).Value(&endpoint).
 				Validate(func(val string) error {
@@ -101,11 +100,22 @@ func (s *s3Setting) Run(ctx *setupContext, cfg *namespace.Config, _ *config.Daem
 			huh.NewInput().Title(i18n.T("setup.s3.region")).Value(&region).
 				Description(i18n.T("setup.s3.region_hint")),
 		),
-	).WithTheme(output.HuhTheme).Run()
+	))
 	if err != nil {
 		return fmt.Errorf("s3 form: %w", err)
 	}
 
+	applyS3Setting(ctx, cfg, s3, endpoint, bucket, accessKey, secretKey, region)
+	return nil
+}
+
+// applyS3Setting writes the parsed form values into cfg and ctx.PendingSecrets.
+// Plain secret values are never written to cfg — only "secret:s3.secretKey" refs,
+// which are resolved at container-start time by the generator (applyS3Config).
+// Extracted from Run() so the behavior can be unit tested without driving the TUI.
+func applyS3Setting(ctx *setupContext, cfg *namespace.Config, prev *namespace.S3Config,
+	endpoint, bucket, accessKey, secretKey, region string,
+) {
 	cfg.S3 = &namespace.S3Config{
 		Endpoint:  strings.TrimSpace(endpoint),
 		Bucket:    strings.TrimSpace(bucket),
@@ -116,9 +126,7 @@ func (s *s3Setting) Run(ctx *setupContext, cfg *namespace.Config, _ *config.Daem
 	if secretKey != "" {
 		cfg.S3.SecretKey = "secret:s3.secretKey"
 		ctx.PendingSecrets["s3.secretKey"] = secretKey
-	} else if s3.SecretKey != "" {
-		cfg.S3.SecretKey = s3.SecretKey
+	} else if prev != nil && prev.SecretKey != "" {
+		cfg.S3.SecretKey = prev.SecretKey
 	}
-
-	return nil
 }

@@ -167,13 +167,13 @@ func (r *Runtime) reconcile(ctx context.Context) {
 	if len(missing) > 0 {
 		r.persistState()
 	}
-	// Retry failed apps with exponential backoff (1m, 2m, 4m, ..., max 30m)
+	// Retry failed apps with exponential backoff (1m, 2m, 4m, 8m, max 10m)
 	for name, app := range r.apps {
 		if app.Status != AppStatusStartFailed && app.Status != AppStatusPullFailed {
 			continue
 		}
 		retryCount := r.retryCount(name)
-		backoff := min(time.Duration(1<<retryCount)*time.Minute, 30*time.Minute)
+		backoff := min(time.Duration(1<<retryCount)*time.Minute, 10*time.Minute)
 		lastAttempt := r.retryLastAttempt(name)
 		if now.Sub(lastAttempt) >= backoff {
 			slog.Info("Reconciler: retrying failed app", "app", name, "attempt", retryCount+1)

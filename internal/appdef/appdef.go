@@ -101,7 +101,7 @@ type ApplicationDef struct {
 	ShmSize           string            `json:"shmSize,omitempty"`
 	InitContainers    []InitContainerDef `json:"initContainers,omitempty"`
 	IsInit            bool              `json:"-"` // true for init containers (no restart policy)
-	StopTimeout       int               `json:"stopTimeout,omitempty" yaml:"stopTimeout,omitempty"` // seconds; 0 = default (10s webapps, 30s infra)
+	StopTimeout       int               `json:"stopTimeout,omitempty" yaml:"stopTimeout,omitempty"` // seconds; 0 = default (15s webapps, 30s infra)
 }
 
 // GetHashInput returns the string used to compute the application definition hash (for debugging).

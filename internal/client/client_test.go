@@ -77,6 +77,31 @@ func TestDetectTransport_StaleSocket(t *testing.T) {
 	}
 }
 
+// B7-07: a 0-byte regular file at the socket path (left behind after a
+// daemon crash) must be reported as a stale socket FILE, not "no socket".
+func TestDetectTransport_StaleSocketFile_Message(t *testing.T) {
+	dir := t.TempDir()
+	sockPath := filepath.Join(dir, "daemon.sock")
+	if err := os.WriteFile(sockPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("CITECK_RUN", dir)
+	t.Setenv("CITECK_HOST", "")
+
+	_, err := DetectTransport("", "", "", "", false)
+	if err == nil {
+		t.Fatal("expected error for stale regular file at socket path")
+	}
+	msg := err.Error()
+	if !contains(msg, "stale socket file") {
+		t.Errorf("expected message to mention 'stale socket file', got: %q", msg)
+	}
+	if contains(msg, "no socket at") {
+		t.Errorf("should not report 'no socket at' when file exists: %q", msg)
+	}
+}
+
 func TestDetectTransport_NoDaemon(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CITECK_RUN", dir)
@@ -86,6 +111,38 @@ func TestDetectTransport_NoDaemon(t *testing.T) {
 	if err == nil {
 		t.Error("expected error when no daemon is running")
 	}
+}
+
+// B7-07: when the socket path genuinely does not exist, the error must
+// still say "no socket at" (not the stale-file phrasing).
+func TestDetectTransport_NoDaemon_Message(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CITECK_RUN", dir)
+	t.Setenv("CITECK_HOST", "")
+
+	_, err := DetectTransport("", "", "", "", false)
+	if err == nil {
+		t.Fatal("expected error when no daemon is running")
+	}
+	msg := err.Error()
+	if !contains(msg, "no socket at") {
+		t.Errorf("expected message to mention 'no socket at' when path is absent, got: %q", msg)
+	}
+	if contains(msg, "stale") {
+		t.Errorf("missing file must not be reported as stale: %q", msg)
+	}
+}
+
+// contains is a tiny substring helper used by the message-shape tests
+// above so we avoid a strings import in a file that does not otherwise
+// need one.
+func contains(haystack, needle string) bool {
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		if haystack[i:i+len(needle)] == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func TestDetectTransport_HostFlagOverridesEnv(t *testing.T) {

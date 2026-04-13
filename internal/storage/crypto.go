@@ -25,6 +25,11 @@ var ErrAlreadyEncrypted = errors.New("encryption already configured")
 // ErrCorruptedKeystore is returned when encryption metadata is missing or unreadable.
 var ErrCorruptedKeystore = errors.New("keystore is corrupted or missing key params")
 
+// DefaultMasterPassword is the well-known default password used for secret
+// encryption when no custom password has been set. Exported so that both the
+// daemon (server.go) and the CLI (start.go) reference the same value.
+const DefaultMasterPassword = "citeck" //nolint:gosec // G101: well-known default, not a secret
+
 const (
 	verifyPlaintext      = "citeck-secrets-v1"
 	defaultIterations    = 1_000_000

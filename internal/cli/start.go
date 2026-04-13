@@ -13,7 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/storage"
 
 	"golang.org/x/term"
@@ -25,8 +24,6 @@ import (
 	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/spf13/cobra"
 )
-
-const defaultPassword = "citeck" //nolint:gosec // G101: well-known default, not a secret
 
 var errInterrupted = fmt.Errorf("interrupted")
 
@@ -102,6 +99,25 @@ func newStartCmd(version string) *cobra.Command {
 				return err
 			}
 
+			// When systemd unit is installed and available, delegate to
+			// `systemctl start citeck` instead of forking directly — the user
+			// expects systemd-managed lifecycle (auto-restart, journald
+			// logging, proper PID management). --detach forces manual fork.
+			if !desktop && !detach && systemctlCanStartCiteck() {
+				if sysErr := runSystemctl("start", "citeck"); sysErr != nil {
+					return fmt.Errorf("systemctl start citeck: %w", sysErr)
+				}
+				c, waitErr := waitForDaemon(30 * time.Second)
+				if waitErr != nil {
+					return fmt.Errorf("daemon failed to start: %w (check 'journalctl -u citeck')", waitErr)
+				}
+				defer c.Close()
+				if streamErr := streamLiveStatus(c, liveStatusOpts{follow: follow}); streamErr != nil && !errors.Is(streamErr, errInterrupted) {
+					return streamErr
+				}
+				return nil
+			}
+
 			if forkErr := forkDaemon(password, desktop, noUI, offline); forkErr != nil {
 				return forkErr
 			}
@@ -126,13 +142,15 @@ func newStartCmd(version string) *cobra.Command {
 	}
 
 	cmd.Flags().BoolVarP(&foreground, "foreground", "f", false, "Run in foreground (don't fork)")
-	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "Start in background without waiting (like docker-compose up -d)")
-	cmd.Flags().BoolVar(&desktop, "desktop", false, "Desktop mode")
+	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "Start in background without waiting; bypasses systemd and forks daemon directly (like docker-compose up -d)")
+	cmd.Flags().BoolVar(&desktop, "desktop", false, "Desktop mode (Wails)")
 	cmd.Flags().BoolVar(&noUI, "no-ui", false, "Disable Web UI")
 	cmd.Flags().BoolVar(&offline, "offline", false, "Offline mode: skip git operations, use only local data")
 	cmd.Flags().BoolVar(&follow, "follow", false, "Don't exit after all apps are running")
 	cmd.Flags().BoolVar(&isDaemon, "_daemon", false, "Internal: run as daemon process")
 	_ = cmd.Flags().MarkHidden("_daemon")
+	_ = cmd.Flags().MarkHidden("desktop")
+	_ = cmd.Flags().MarkHidden("no-ui")
 
 	return cmd
 }
@@ -162,8 +180,8 @@ func resolvePassword(desktop bool) (string, error) {
 
 	// Default password — try auto-unlock
 	if svc.IsDefaultPassword() {
-		if unlockErr := svc.Unlock(defaultPassword); unlockErr == nil {
-			return defaultPassword, nil
+		if unlockErr := svc.Unlock(storage.DefaultMasterPassword); unlockErr == nil {
+			return storage.DefaultMasterPassword, nil
 		}
 		// Default flag set but password doesn't match — fall through to prompt
 	}
@@ -210,7 +228,7 @@ func handlePasswordReset(svc *storage.SecretService) (string, error) {
 	isDefault := false
 
 	if newPassword == "" {
-		newPassword = defaultPassword
+		newPassword = storage.DefaultMasterPassword
 		isDefault = true
 	} else {
 		// Confirm password
@@ -230,6 +248,30 @@ func handlePasswordReset(svc *storage.SecretService) (string, error) {
 	}
 	fmt.Println("Password set. Secrets will be regenerated on start.") //nolint:forbidigo // CLI output
 	return newPassword, nil
+}
+
+// systemctlCanStartCiteck reports whether a citeck.service systemd unit is
+// installed AND `systemctl` is present on the system. When both conditions
+// hold, `citeck start` delegates to `systemctl start citeck` so the user
+// gets the systemd-managed lifecycle (journald logs, Restart=on-failure)
+// they expect from a service they installed with a unit file.
+//
+// Detection is best-effort: if any probe (stat, LookPath, `systemctl
+// --version`) fails we fall back to forkDaemon.
+func systemctlCanStartCiteck() bool {
+	if _, err := os.Stat(systemdUnitPath); err != nil {
+		return false
+	}
+	if _, err := exec.LookPath("systemctl"); err != nil {
+		return false
+	}
+	// `systemctl --version` is a cheap liveness probe — exits non-zero on
+	// systems where systemctl can't talk to PID 1 (e.g. non-systemd init).
+	cmd := exec.Command("systemctl", "--version") //nolint:gosec // G204: constant args
+	if err := cmd.Run(); err != nil {
+		return false
+	}
+	return true
 }
 
 // forkDaemon starts the daemon as a detached child process.
@@ -323,15 +365,7 @@ func runDaemonMode(version string, desktop, noUI, offline bool) error {
 func startOnRunningDaemon(c *client.DaemonClient, args []string, detach, follow bool) error {
 	// App specified → start single app
 	if len(args) == 1 {
-		appName := args[0]
-		result, err := c.StartApp(appName)
-		if err != nil {
-			return fmt.Errorf("start %q: %w", appName, err)
-		}
-		output.PrintResult(result, func() {
-			output.PrintText(result.Message)
-		})
-		return nil
+		return startSingleApp(c, args[0], detach)
 	}
 
 	// No app → start namespace
@@ -344,6 +378,29 @@ func startOnRunningDaemon(c *client.DaemonClient, args []string, detach, follow 
 		return nil
 	}
 	return streamLiveStatus(c, liveStatusOpts{follow: follow})
+}
+
+// startSingleApp sends StartApp to the daemon and optionally streams live
+// status for the named app until it reaches RUNNING or terminal failure.
+func startSingleApp(c *client.DaemonClient, appName string, detach bool) error {
+	result, err := c.StartApp(appName)
+	if err != nil {
+		return fmt.Errorf("start %q: %w", appName, err)
+	}
+	output.PrintResult(result, func() {
+		output.PrintText(result.Message)
+	})
+	// Fire-and-forget in --detach, JSON output, or non-TTY (scripts).
+	if detach || output.IsJSON() || !output.IsTTY() {
+		return nil
+	}
+	if waitErr := streamSingleAppStatus(c, appName); waitErr != nil {
+		if errors.Is(waitErr, errInterrupted) {
+			return nil
+		}
+		return waitErr
+	}
+	return nil
 }
 
 // liveStatusOpts configures streamLiveStatus behavior.
@@ -401,33 +458,40 @@ func streamLiveStatus(c *client.DaemonClient, opts liveStatusOpts) error {
 		}
 		lastRunning = running
 
-		// Exit conditions (only when not in follow mode)
-		if total > 0 && !opts.follow {
-			if running == total {
-				// All apps running — success.
-				ensureI18n()
-				msg := opts.successMsg
-				if msg == "" {
-					msg = t("cli.allAppsStarted", "count", fmt.Sprintf("%d", total))
-				}
-				fmt.Printf("\n%s\n", msg) //nolint:forbidigo // CLI success
-				return nil
-			}
-			// Some apps failed and we've reached a terminal state.
-			if running+failed == total && !opts.waitAll {
-				ensureI18n()
-				fmt.Printf("\n%s\n", output.Colorize(output.Yellow,
-					fmt.Sprintf("%d/%d apps started, %d failed", running, total, failed))) //nolint:forbidigo // CLI result
-				return nil
-			}
-			// waitAll mode: keep polling — reconciler will retry failed apps.
+		if total == 0 || opts.follow {
+			time.Sleep(2 * time.Second)
+			continue
 		}
 
+		// All apps running — redraw table without summary, then print success message.
+		if running == total {
+			if isTTY && linesPrinted > 0 {
+				output.ClearLines(linesPrinted)
+				fmt.Println(table) //nolint:forbidigo // CLI table
+			}
+			ensureI18n()
+			msg := opts.successMsg
+			if msg == "" {
+				msg = t("cli.allAppsStarted")
+			}
+			fmt.Printf("\n%s\n", msg) //nolint:forbidigo // CLI success
+			return nil
+		}
+
+		// Some apps failed and we've reached a terminal state.
+		if running+failed == total && !opts.waitAll {
+			ensureI18n()
+			fmt.Printf("\n%s\n", output.Colorize(output.Yellow,
+				fmt.Sprintf("%d/%d apps started, %d failed", running, total, failed))) //nolint:forbidigo // CLI result
+			return nil
+		}
+
+		// waitAll mode or not all terminal yet: keep polling.
 		time.Sleep(2 * time.Second)
 	}
 }
 
-// checkRegistryAuth verifies that credentials exist for all private image registries.
+// buildStatusSummary formats the live status summary line.
 func buildStatusSummary(running, failed, total int, waitAll bool) string {
 	summary := fmt.Sprintf("  %d/%d running", running, total)
 	if failed > 0 {
@@ -439,67 +503,13 @@ func buildStatusSummary(running, failed, total int, waitAll bool) string {
 	return summary
 }
 
-// If missing, prompts the user to enter them (with docker login validation).
+// checkRegistryAuth verifies that credentials exist (and still work) for all
+// private image registries used by the CURRENTLY configured bundle. Thin
+// wrapper around checkRegistryAuthForBundle — see that function for details.
 func checkRegistryAuth() error {
-	resolver := bundle.NewResolver(config.DataDir())
-	resolver.SetOffline(true) // don't trigger git pull on every start
-	wsCfg := resolver.ResolveWorkspaceOnly()
-
-	// Scope auth check to repos used by the configured bundle
-	nsCfg, nsErr := namespace.LoadNamespaceConfig(config.NamespaceConfigPath())
-	var usedIDs map[string]bool
-	if nsErr == nil {
-		usedIDs = bundleImageRepoIDs(nsCfg.BundleRef, wsCfg)
+	nsCfg, err := namespace.LoadNamespaceConfig(config.NamespaceConfigPath())
+	if err != nil {
+		return nil // no namespace config — nothing to check yet
 	}
-	authRepos := findAuthRepos(wsCfg, usedIDs)
-	if len(authRepos) == 0 {
-		return nil
-	}
-
-	svc, svcErr := openSecretService()
-	if svcErr != nil {
-		return nil // can't check — daemon will handle it
-	}
-
-	// Find repos missing credentials
-	var missing []bundle.ImageRepo
-	for _, repo := range authRepos {
-		sec, _ := svc.GetSecret("registry-" + repo.ID)
-		if sec == nil || sec.Value == "" {
-			missing = append(missing, repo)
-		}
-	}
-	if len(missing) == 0 {
-		return nil
-	}
-
-	ensureI18n()
-
-	for _, repo := range missing {
-		host := registryHost(repo.URL)
-		output.PrintText("%s: %s", t("install.registry.host"), host)
-		for {
-			username := promptInput(t("install.registry.username"), "", "")
-			if username == "" {
-				return fmt.Errorf("registry credentials required for %s\n\nConfigure via 'citeck install' or provide credentials", host)
-			}
-			password := promptPassword(t("install.registry.password"))
-			if password == "" {
-				continue
-			}
-
-			output.PrintText("  %s", t("install.registry.checking"))
-			if loginErr := dockerRegistryLogin(host, username, password); loginErr != nil {
-				output.Errf("  %s: %v", t("install.registry.failed"), loginErr)
-				continue // retry
-			}
-			output.PrintText("  %s", t("install.registry.success"))
-
-			if saveErr := saveRegistrySecret(svc, repo, username, password); saveErr != nil {
-				output.Errf("  %s: %v", t("install.registry.saveFailed"), saveErr)
-			}
-			break
-		}
-	}
-	return nil
+	return checkRegistryAuthForBundle(nsCfg.BundleRef)
 }

@@ -377,6 +377,18 @@ func Start(opts StartOptions) error {
 			}
 			slog.Info("Secrets unlocked successfully")
 		}
+	} else {
+		// First start: set up encryption with the default password so that
+		// secrets generated later in this session are encrypted immediately.
+		// Previously, encryption was set up by the install CLI in a separate
+		// process after the daemon had already saved secrets as plaintext,
+		// causing a split-brain where the daemon's in-memory SecretService
+		// had encrypted=false while files on disk were encrypted.
+		if setupErr := secretSvc.SetMasterPassword(storage.DefaultMasterPassword, true); setupErr != nil {
+			slog.Warn("Failed to set up default encryption", "err", setupErr)
+		} else {
+			slog.Info("Secrets encryption initialized with default password")
+		}
 	}
 
 	// Load namespace config (mode-aware path)
@@ -473,9 +485,7 @@ func Start(opts StartOptions) error {
 				// Fallback: if LE failed and no cert exists, generate self-signed so proxy still serves HTTPS
 				if nsCfg.Proxy.TLS.CertPath == "" {
 					slog.Warn("Let's Encrypt cert not available, falling back to self-signed", "reason", acmeErr)
-					nsCfg.Proxy.TLS.LetsEncrypt = false // let ensureSelfSignedCert run
-					ensureSelfSignedCert(nsCfg)
-					nsCfg.Proxy.TLS.LetsEncrypt = true // restore for renewal service
+					generateSelfSignedCertForConfig(nsCfg)
 				}
 			}
 		}
@@ -497,7 +507,9 @@ func Start(opts StartOptions) error {
 			}
 		}
 
-		// Load persisted state for detached apps and status recovery
+		// Load persisted state for detached apps and status recovery.
+		// Detached apps must be known BEFORE Generate() so the generator can
+		// exclude them from proxy upstreams and compute DependsOnDetachedApps.
 		persistedState := namespace.LoadNsState(volumesBase, nsID)
 		var genOpts namespace.GenerateOpts
 		genOpts.SecretReader = &secretReaderAdapter{svc: secretSvc}
@@ -506,10 +518,25 @@ func Start(opts StartOptions) error {
 			for _, name := range persistedState.ManualStoppedApps {
 				genOpts.DetachedApps[name] = true
 			}
+		} else if resolveResult.Workspace != nil && nsCfg.Template != "" {
+			// First start: seed detached apps from workspace template
+			for _, tmpl := range resolveResult.Workspace.NamespaceTemplates {
+				if tmpl.ID == nsCfg.Template && len(tmpl.DetachedApps) > 0 {
+					genOpts.DetachedApps = make(map[string]bool, len(tmpl.DetachedApps))
+					for _, name := range tmpl.DetachedApps {
+						genOpts.DetachedApps[name] = true
+					}
+					slog.Info("Seeded detached apps from template", "template", nsCfg.Template, "apps", tmpl.DetachedApps)
+					break
+				}
+			}
 		}
 
 		// Generate namespace
-		genResp := namespace.Generate(nsCfg, bundleDef, resolveResult.Workspace, systemSecrets, genOpts)
+		genResp, genErr := namespace.Generate(nsCfg, bundleDef, resolveResult.Workspace, systemSecrets, genOpts)
+		if genErr != nil {
+			return fmt.Errorf("generate namespace %q: %w", nsID, genErr)
+		}
 
 		// Write generated files (cloud config YAMLs, etc.) to volumes base
 		for filePath, content := range genResp.Files {
@@ -561,7 +588,8 @@ func Start(opts StartOptions) error {
 			runtime.SetDefaultStopTimeout(daemonCfg.Docker.StopTimeout)
 		}
 
-		// Restore persisted state: manual stopped apps, edited apps, locked apps
+		// Restore persisted state: manual stopped apps, edited apps, locked apps.
+		// genOpts.DetachedApps was already populated above (from persisted state or template).
 		if persistedState != nil {
 			if len(persistedState.ManualStoppedApps) > 0 {
 				stopped := make(map[string]bool)
@@ -572,7 +600,12 @@ func Start(opts StartOptions) error {
 			}
 			runtime.RestoreEditedApps(persistedState.EditedApps, persistedState.EditedLockedApps)
 			runtime.RestoreRestartState(persistedState.RestartEvents, persistedState.RestartCounts)
+		} else if len(genOpts.DetachedApps) > 0 {
+			// First start with template detached apps — apply to runtime
+			runtime.SetManualStoppedApps(genOpts.DetachedApps)
 		}
+		// Wire DependsOnDetachedApps so RestartApp can trigger regen for dependency apps
+		runtime.SetDependsOnDetachedApps(genResp.DependsOnDetachedApps)
 
 		// Start CloudConfigServer only in desktop mode — server-mode webapps
 		// have SPRING_CLOUD_CONFIG_ENABLED=false and don't connect to it.
@@ -658,8 +691,8 @@ func Start(opts StartOptions) error {
 	d.server = &http.Server{
 		Handler:        RecoveryMiddleware(LoggingMiddleware(socketMux)),
 		ReadTimeout:    30 * time.Second,
-		WriteTimeout:   30 * time.Second,
-		MaxHeaderBytes: 1 << 20, // 1MB
+		WriteTimeout:   120 * time.Second, // kcadm.sh exec can take 30-60s on slow hardware
+		MaxHeaderBytes: 1 << 20,           // 1MB
 	}
 
 	// Listen on Unix socket (for local CLI)
@@ -944,9 +977,7 @@ func (d *Daemon) doReload() error {
 		// Fallback: if LE cert not available, use self-signed so proxy still serves HTTPS
 		if nsCfg.Proxy.TLS.CertPath == "" {
 			slog.Warn("Let's Encrypt cert not available on reload, falling back to self-signed", "reason", acmeErr)
-			nsCfg.Proxy.TLS.LetsEncrypt = false
-			ensureSelfSignedCert(nsCfg)
-			nsCfg.Proxy.TLS.LetsEncrypt = true
+			generateSelfSignedCertForConfig(nsCfg)
 		}
 
 		newRenewal = acme.NewRenewalService(acmeClient, func() {
@@ -963,7 +994,10 @@ func (d *Daemon) doReload() error {
 	if d.runtime != nil {
 		genOpts.DetachedApps = d.runtime.ManualStoppedApps()
 	}
-	genResp := namespace.Generate(nsCfg, resolveResult.Bundle, resolveResult.Workspace, d.systemSecrets, genOpts)
+	genResp, genErr := namespace.Generate(nsCfg, resolveResult.Bundle, resolveResult.Workspace, d.systemSecrets, genOpts)
+	if genErr != nil {
+		return fmt.Errorf("generate namespace: %w", genErr)
+	}
 
 	// Write generated files atomically (prevent partial writes on crash)
 	for filePath, content := range genResp.Files {
@@ -1001,6 +1035,7 @@ func (d *Daemon) doReload() error {
 		d.cloudCfgServer.UpdateConfig(genResp.CloudConfig, d.systemSecrets.JWT)
 	}
 	d.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(resolveResult.Workspace, d.secretReaderFunc()))
+	d.runtime.SetDependsOnDetachedApps(genResp.DependsOnDetachedApps)
 
 	// Phase 3: regenerate runtime with updated config (async stop + start)
 	d.runtime.Regenerate(genResp.Applications, nsCfg, resolveResult.Bundle)
@@ -1168,6 +1203,7 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 
 	// Config
 	mux.HandleFunc("GET /api/v1/config", d.handleGetConfig)
+	mux.HandleFunc("GET /api/v1/config/applied", d.handleGetAppliedConfig)
 	mux.HandleFunc("PUT /api/v1/config", d.handlePutConfig)
 
 	// App routes
@@ -1457,6 +1493,44 @@ func resolveSystemSecrets(svc *storage.SecretService, desktop bool) (namespace.S
 		secrets.AdminPassword = adminPass
 	}
 
+	// "citeck" service account password — shared between Keycloak master
+	// realm (admin role) and RabbitMQ (monitoring tag). Always generated;
+	// same for desktop and server modes. Prefer the new _citeck_sa key but
+	// seamlessly migrate from the legacy _launcher_sa key written by older
+	// launcher versions so existing installs keep their stable SA password.
+	citeckSA, saErr := resolveOneSystemSecret(svc, "_citeck_sa", func() string {
+		if legacy, err := svc.GetSecret("_launcher_sa"); err == nil && legacy.Value != "" {
+			slog.Info("Migrating legacy _launcher_sa secret to _citeck_sa")
+			return legacy.Value
+		}
+		p, genErr := namespace.GenerateCiteckSAPassword()
+		if genErr != nil {
+			slog.Error("Failed to generate citeck SA password", "err", genErr)
+			return ""
+		}
+		return p
+	})
+	if saErr != nil {
+		return secrets, fmt.Errorf("resolve citeck SA: %w", saErr)
+	}
+	if citeckSA == "" {
+		return secrets, fmt.Errorf("citeck SA password is empty (generation failed)")
+	}
+	secrets.CiteckSA = citeckSA
+
+	// Cleanup: once _citeck_sa exists in the Store, the legacy _launcher_sa
+	// entry is obsolete. Delete it to avoid a stale encrypted file lingering
+	// in conf/secrets/. Mirrors the `os.Remove(plainFile)` cleanup in
+	// resolveOneSystemSecret for pre-encryption plain-file migrations. Errors
+	// here are non-fatal — migration has already succeeded.
+	if legacy, err := svc.GetSecret("_launcher_sa"); err == nil && legacy.Value != "" {
+		if delErr := svc.DeleteSecret("_launcher_sa"); delErr != nil {
+			slog.Warn("Failed to delete legacy _launcher_sa secret after migration", "err", delErr)
+		} else {
+			slog.Info("Deleted legacy _launcher_sa secret after migration to _citeck_sa")
+		}
+	}
+
 	return secrets, nil
 }
 
@@ -1597,6 +1671,12 @@ func ensureSelfSignedCert(nsCfg *namespace.Config) {
 	if !nsCfg.Proxy.TLS.Enabled || nsCfg.Proxy.TLS.LetsEncrypt || nsCfg.Proxy.TLS.CertPath != "" {
 		return
 	}
+	generateSelfSignedCertForConfig(nsCfg)
+}
+
+// generateSelfSignedCertForConfig generates a self-signed cert and updates the config paths.
+// Called directly as LE fallback (bypassing the LetsEncrypt guard in ensureSelfSignedCert).
+func generateSelfSignedCertForConfig(nsCfg *namespace.Config) {
 	host := nsCfg.Proxy.Host
 	if host == "" {
 		host = "localhost"

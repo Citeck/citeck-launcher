@@ -9,13 +9,22 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/storage"
 )
 
-// handleSetAdminPassword resets the admin password in both keycloak realms
-// (master + ecos-app) by driving kcadm.sh inside the running keycloak
-// container, then persists the new value to the `_admin_password` system
-// secret so in-memory state and future daemon restarts stay consistent.
+// handleSetAdminPassword rotates the human-administrator password across
+// every admin-facing UI on the platform: the Keycloak `master` realm admin
+// (Keycloak admin console), the Keycloak `ecos-app` realm admin (platform
+// login), the RabbitMQ management admin, and the PgAdmin admin. It drives
+// kcadm.sh / rabbitmqctl / setup.py inside the running containers and then
+// persists the new value to the `_admin_password` system secret so
+// in-memory state and future daemon restarts stay consistent.
+//
+// The `citeck` service account password is deliberately NOT rotated here —
+// it is generated once and kept stable so the launcher retains access to
+// Keycloak (master realm admin role) and RabbitMQ (monitoring) regardless
+// of what the user does with the human admin password.
 //
 // Socket-only is NOT required: the handler goes through the normal mux,
 // so CSRF (localhost TCP) and mTLS (remote) protections apply.
@@ -34,7 +43,6 @@ func (d *Daemon) handleSetAdminPassword(w http.ResponseWriter, r *http.Request) 
 
 	d.configMu.RLock()
 	runtime := d.runtime
-	currentPassword := d.systemSecrets.AdminPassword
 	d.configMu.RUnlock()
 	if runtime == nil {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
@@ -47,15 +55,26 @@ func (d *Daemon) handleSetAdminPassword(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// kcadm.sh with login + set-password needs a few seconds at most, but
-	// keycloak startup can be slow and the admin realm might not be ready
-	// on the first few seconds after container boot. 60s is generous.
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	if err := d.resetKeycloakAdminPassword(ctx, kcApp.ContainerID, currentPassword, req.Password); err != nil {
+	// Phase 1: ecos-app realm — the user-facing platform login. If this
+	// fails the command is aborted: without it the user would be locked
+	// out of the platform entirely, and subsequent service rotations are
+	// pointless. Master realm rotation below is best-effort because it is
+	// secondary (only used for the Keycloak admin console) and the SA
+	// can still manage Keycloak if the master admin password is wrong.
+	if err := d.resetKeycloakAdminPassword(ctx, kcApp.ContainerID, "", req.Password); err != nil {
 		writeInternalError(w, err)
 		return
+	}
+
+	// Phase 2: master realm admin — Keycloak admin console login. The
+	// launcher itself does not use this account (it uses the stable
+	// `citeck` SA for all master-realm operations), so a failure here
+	// does not break the launcher; we report and carry on.
+	if err := d.kcadmSetPassword(ctx, kcApp.ContainerID, "master", req.Password); err != nil {
+		slog.Warn("Keycloak master realm admin password change failed (ecos-app already rotated; launcher uses citeck SA)", "err", err)
 	}
 
 	// Change RabbitMQ password at runtime via rabbitmqctl. The env var
@@ -99,73 +118,61 @@ func (d *Daemon) handleSetAdminPassword(w http.ResponseWriter, r *http.Request) 
 	d.systemSecrets.AdminPassword = req.Password
 	d.configMu.Unlock()
 
-	// Keycloak, RabbitMQ, and PgAdmin were updated at runtime above —
-	// their containers don't need a restart. However the webapps connect
-	// to RabbitMQ using the ECOS_WEBAPP_RABBITMQ_PASSWORD env var which
-	// is baked into their container spec at creation time. A reload
-	// regenerates the containers with the new env value so the webapps
-	// can reconnect to RabbitMQ with the updated password.
-	if d.reloadMu.TryLock() {
-		if reloadErr := d.doReload(); reloadErr != nil {
-			slog.Warn("Reload after admin password change failed", "err", reloadErr)
-		}
-		d.reloadMu.Unlock()
-	} else {
-		slog.Warn("Reload already in progress, webapps will pick up new RabbitMQ password on next reload")
-	}
-
-	slog.Info("Admin password reset (keycloak master + ecos-app, rabbitmq, pgadmin, webapps reloaded)")
+	slog.Info("Admin password reset (keycloak master + ecos-app, rabbitmq, pgadmin)")
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "Admin password reset"})
+
+	// Keycloak, RabbitMQ, and PgAdmin were updated at runtime above — their
+	// containers don't need a restart. Webapps connect to RabbitMQ as the
+	// stable "citeck" SA (not "admin"), so the admin-password change does
+	// not touch ECOS_WEBAPP_RABBITMQ_PASSWORD and webapps do NOT need a
+	// reload here. See addWebappInfraEnv in internal/namespace/generator.go.
 }
 
-// resetKeycloakAdminPassword authenticates kcadm.sh as the keycloak master
-// admin (using currentPassword — the one still recorded in the system
-// secret store at the moment of the call) and resets the admin user's
-// password in BOTH the master realm and the ecos-app realm. Install-time
-// parity is maintained on every change — one password covers keycloak and
-// the platform.
+// resetKeycloakAdminPassword authenticates kcadm.sh using the "citeck"
+// service account in the master realm and resets the admin user's password
+// in the ecos-app realm (the user-facing platform login).
 //
-// The ecos-app password is changed first; the master password last. This
-// keeps kcadm authenticated for the whole operation (the current session
-// token is obtained against the master realm with the OLD password).
-func (d *Daemon) resetKeycloakAdminPassword(ctx context.Context, containerID, currentPassword, newPassword string) error {
-	if currentPassword == "" {
-		currentPassword = "admin"
+// The master realm admin password is rotated by the caller in a separate
+// best-effort phase — see handleSetAdminPassword. Splitting the two keeps
+// ecos-app failures fatal (platform-critical) while letting master realm
+// failures be reported without aborting the rotation.
+func (d *Daemon) resetKeycloakAdminPassword(ctx context.Context, containerID, _, newPassword string) error {
+	d.configMu.RLock()
+	saPassword := d.systemSecrets.CiteckSA
+	d.configMu.RUnlock()
+
+	if saPassword == "" {
+		return fmt.Errorf("citeck SA not configured — restart namespace to run keycloak init")
+	}
+	if err := d.kcadmLogin(ctx, containerID, namespace.CiteckSAUser, saPassword); err != nil {
+		return fmt.Errorf("kcadm login as %s: %w "+
+			"(SA may be out of sync after snapshot import — try `citeck reload` to re-run init)",
+			namespace.CiteckSAUser, err)
 	}
 
-	// Step 1: authenticate kcadm.sh using the current master realm admin
-	// credentials. Note: passing the password on the CLI is visible to
-	// other users of the container via /proc/<pid>/cmdline. For our
-	// server-mode, single-tenant deployment that's acceptable —
-	// kcadm.sh doesn't support reading the password from stdin in
-	// config credentials mode.
-	loginCmd := []string{
-		"/opt/keycloak/bin/kcadm.sh", "config", "credentials",
-		"--server", "http://localhost:8080",
-		"--realm", "master",
-		"--user", "admin",
-		"--password", currentPassword,
-	}
-	out, exitCode, err := d.dockerClient.ExecInContainer(ctx, containerID, loginCmd)
-	if err != nil {
-		return fmt.Errorf("kcadm login: %w (output: %s)", err, out)
-	}
-	if exitCode != 0 {
-		return fmt.Errorf("kcadm login exited %d: %s", exitCode, out)
-	}
-
-	// Step 2: reset the ecos-app realm admin user's password first.
+	// Reset the ecos-app realm admin password only (user-facing)
 	if err := d.kcadmSetPassword(ctx, containerID, "ecos-app", newPassword); err != nil {
 		return err
 	}
+	return nil
+}
 
-	// Step 3: reset the master realm admin user's password last. We
-	// intentionally do this after ecos-app because a failure here still
-	// leaves the platform-facing credential updated; keycloak's master
-	// admin is only used internally by kcadm and by clients substituting
-	// ${KK_ADMIN_PASSWORD}.
-	if err := d.kcadmSetPassword(ctx, containerID, "master", newPassword); err != nil {
-		return err
+// kcadmLogin authenticates kcadm.sh in the keycloak container as the given
+// master-realm user. Subsequent kcadm calls reuse the stored credentials.
+func (d *Daemon) kcadmLogin(ctx context.Context, containerID, user, password string) error {
+	cmd := []string{
+		"/opt/keycloak/bin/kcadm.sh", "config", "credentials",
+		"--server", "http://localhost:8080",
+		"--realm", "master",
+		"--user", user,
+		"--password", password,
+	}
+	out, exitCode, err := d.dockerClient.ExecInContainer(ctx, containerID, cmd)
+	if err != nil {
+		return fmt.Errorf("exec: %w (output: %s)", err, out)
+	}
+	if exitCode != 0 {
+		return fmt.Errorf("exit %d: %s", exitCode, out)
 	}
 	return nil
 }

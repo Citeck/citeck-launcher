@@ -289,6 +289,81 @@ func TestWaitForDeps(t *testing.T) {
 	}
 }
 
+func TestStopAppMarksDetachedAndPersists(t *testing.T) {
+	md := newMockDocker()
+	r := NewRuntime(testConfig(), md, t.TempDir())
+	defer r.Shutdown()
+
+	r.Start([]appdef.ApplicationDef{simpleApp("foo", "foo:1")})
+	if !waitForAppStatus(r, "foo", AppStatusRunning, 10*time.Second) {
+		t.Fatalf("app did not reach RUNNING")
+	}
+
+	if err := r.StopApp("foo"); err != nil {
+		t.Fatalf("StopApp: %v", err)
+	}
+
+	// Status should transition to STOPPED
+	if !waitForAppStatus(r, "foo", AppStatusStopped, 5*time.Second) {
+		t.Fatalf("app should be STOPPED after StopApp")
+	}
+
+	// Marked as manually stopped
+	r.mu.RLock()
+	_, detached := r.manualStoppedApps["foo"]
+	r.mu.RUnlock()
+	if !detached {
+		t.Fatalf("StopApp should mark app as manualStoppedApps")
+	}
+
+	// StartApp should clear the detach flag
+	if err := r.StartApp("foo"); err != nil {
+		t.Fatalf("StartApp: %v", err)
+	}
+	r.mu.RLock()
+	_, stillDetached := r.manualStoppedApps["foo"]
+	r.mu.RUnlock()
+	if stillDetached {
+		t.Fatalf("StartApp should remove app from manualStoppedApps")
+	}
+}
+
+func TestWaitForDepsSkipsDetached(t *testing.T) {
+	md := newMockDocker()
+	r := NewRuntime(testConfig(), md, t.TempDir())
+	defer r.Shutdown()
+
+	// Pre-mark app-a as detached before start — like a template default
+	r.SetManualStoppedApps(map[string]bool{"app-a": true})
+
+	// B depends on A (detached)
+	apps := []appdef.ApplicationDef{
+		simpleApp("app-a", "image-a:1"),
+		simpleApp("app-b", "image-b:1", "app-a"),
+	}
+	r.Start(apps)
+
+	// B should reach RUNNING because detached A is treated as satisfied
+	if !waitForAppStatus(r, "app-b", AppStatusRunning, 10*time.Second) {
+		app := r.FindApp("app-b")
+		status := "nil"
+		if app != nil {
+			status = string(app.Status)
+		}
+		t.Fatalf("app-b should reach RUNNING when dependency is detached, got %s", status)
+	}
+
+	// A should be STOPPED (detached)
+	a := r.FindApp("app-a")
+	if a == nil || a.Status != AppStatusStopped {
+		status := "nil"
+		if a != nil {
+			status = string(a.Status)
+		}
+		t.Fatalf("app-a should be STOPPED (detached), got %s", status)
+	}
+}
+
 func TestRegeneratePreservesRunning(t *testing.T) {
 	md := newMockDocker()
 	r := NewRuntime(testConfig(), md, t.TempDir())

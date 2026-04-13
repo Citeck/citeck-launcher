@@ -43,18 +43,20 @@ func (s *tlsSetting) Run(_ *setupContext, cfg *namespace.Config, _ *config.Daemo
 	)
 
 	var choice string
-	err := huh.NewSelect[string]().
+	tlsOptions := []huh.Option[string]{
+		huh.NewOption("Let's Encrypt (automatic HTTPS)", optLE),
+		huh.NewOption(i18n.T("setup.tls.selfsigned"), optSelfSigned),
+		huh.NewOption(i18n.T("setup.tls.custom"), optCustom),
+		huh.NewOption("HTTP only (no TLS)", optHTTP),
+		huh.NewOption(i18n.T("setup.back"), backValue),
+	}
+	sel := huh.NewSelect[string]().
 		Title(i18n.T("setup.tls.prompt")).
-		Options(
-			huh.NewOption("Let's Encrypt (automatic HTTPS)", optLE),
-			huh.NewOption(i18n.T("setup.tls.selfsigned"), optSelfSigned),
-			huh.NewOption(i18n.T("setup.tls.custom"), optCustom),
-			huh.NewOption("HTTP only (no TLS)", optHTTP),
-			huh.NewOption(i18n.T("setup.back"), backValue),
-		).
-		Value(&choice).
-		WithTheme(output.HuhTheme).
-		Run()
+		Description(i18n.T("hint.select.setting")).
+		Options(tlsOptions...).
+		Value(&choice)
+	sel = output.ApplySelectHeight(sel, len(tlsOptions))
+	err := output.RunField(sel)
 	if err != nil {
 		return fmt.Errorf("tls selection: %w", err)
 	}
@@ -73,12 +75,12 @@ func (s *tlsSetting) Run(_ *setupContext, cfg *namespace.Config, _ *config.Daemo
 		cfg.Proxy.TLS.Enabled = true
 	case optCustom:
 		var certPath, keyPath string
-		err = huh.NewForm(
+		err = output.RunForm(huh.NewForm(
 			huh.NewGroup(
 				huh.NewInput().Title(i18n.T("setup.tls.cert_path")).Value(&certPath).Validate(notEmpty),
 				huh.NewInput().Title(i18n.T("setup.tls.key_path")).Value(&keyPath).Validate(notEmpty),
 			),
-		).WithTheme(output.HuhTheme).Run()
+		))
 		if err != nil {
 			return fmt.Errorf("tls cert form: %w", err)
 		}

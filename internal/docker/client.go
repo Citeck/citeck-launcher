@@ -326,17 +326,17 @@ func (c *Client) StopContainer(ctx context.Context, id string, timeoutSec int) e
 
 // RemoveContainer removes a container.
 func (c *Client) RemoveContainer(ctx context.Context, id string) error {
-	if err := c.cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true}); err != nil {
+	if err := c.cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true, RemoveVolumes: true}); err != nil {
 		return fmt.Errorf("remove container %s: %w", id, err)
 	}
 	return nil
 }
 
 // StopAndRemoveContainer stops and removes a container by name.
-// timeoutSec is the stop timeout in seconds; 0 uses default (10s).
+// timeoutSec is the stop timeout in seconds; 0 uses default (15s).
 func (c *Client) StopAndRemoveContainer(ctx context.Context, name string, timeoutSec int) error {
 	if timeoutSec <= 0 {
-		timeoutSec = 10
+		timeoutSec = 15
 	}
 	if err := c.StopContainer(ctx, name, timeoutSec); err != nil {
 		slog.Debug("stop container", "name", name, "err", err)

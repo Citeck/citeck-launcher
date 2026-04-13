@@ -15,7 +15,6 @@ import (
 
 func newStatusCmd() *cobra.Command {
 	var watch bool
-	var apps bool
 
 	cmd := &cobra.Command{
 		Use:   "status",
@@ -62,13 +61,13 @@ func newStatusCmd() *cobra.Command {
 					output.PrintText("%s  %s", output.Colorize(output.Bold, "Bundle:"), ns.BundleRef)
 				}
 				for _, link := range ns.Links {
-					if link.Name == "ECOS UI" {
+					if link.Name == "Citeck UI" {
 						output.PrintText("%s  %s", output.Colorize(output.Bold, "URL:"), link.URL)
 						break
 					}
 				}
 
-				if (apps || len(ns.Apps) > 0) && len(ns.Apps) > 0 {
+				if len(ns.Apps) > 0 {
 					fmt.Println()
 					r := output.FormatAppTable(ns.Apps)
 					output.PrintText(r.Table)
@@ -80,7 +79,6 @@ func newStatusCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Watch for changes (event stream)")
-	cmd.Flags().BoolVarP(&apps, "apps", "a", false, "Show app details")
 
 	return cmd
 }
@@ -116,7 +114,7 @@ func watchEvents(c *client.DaemonClient) error {
 
 		urlLine := ""
 		for _, link := range ns.Links {
-			if link.Name == "ECOS UI" {
+			if link.Name == "Citeck UI" {
 				urlLine = fmt.Sprintf("%s  %s\n", output.Colorize(output.Bold, "URL:"), link.URL)
 				break
 			}

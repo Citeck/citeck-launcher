@@ -159,9 +159,11 @@ func (r *Runtime) setAppStatus(app *AppRuntime, s AppRuntimeStatus) {
 		Type: "app_status", Timestamp: time.Now().UnixMilli(),
 		NamespaceID: r.nsID, AppName: app.Name, Before: string(old), After: string(s),
 	})
-	// Clear liveness failure counter when app leaves RUNNING state
+	// Clear liveness failure counter and stale stats when app leaves RUNNING state
 	if old == AppStatusRunning && s != AppStatusRunning {
 		delete(r.livenessFailures, app.Name)
+		app.CPU = ""
+		app.Memory = ""
 	}
 	// Wake all goroutines waiting for dependency status changes
 	close(r.statusNotify)

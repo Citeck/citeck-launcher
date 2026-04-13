@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -11,14 +11,15 @@ import (
 )
 
 func newRestartCmd() *cobra.Command {
-	var wait bool
+	var detach bool
 	var timeout int
 
 	cmd := &cobra.Command{
 		Use:   "restart [app]",
 		Short: "Restart an app or the entire namespace",
-		Long:  "Restart a single app, or the entire namespace if no app specified (stop → start).",
-		Args:  cobra.MaximumNArgs(1),
+		Long: "Restart a single app, or the entire namespace if no app specified (stop → start).\n" +
+			"Waits for RUNNING by default. Use -d/--detach to skip waiting.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client.New(clientOpts())
 			if err != nil {
@@ -28,7 +29,7 @@ func newRestartCmd() *cobra.Command {
 
 			// No app → restart entire namespace (stop + start)
 			if len(args) == 0 {
-				return restartNamespace(c, time.Duration(timeout)*time.Second)
+				return restartNamespace(c, time.Duration(timeout)*time.Second, detach)
 			}
 
 			appName := args[0]
@@ -41,40 +42,28 @@ func newRestartCmd() *cobra.Command {
 				output.PrintText(result.Message)
 			})
 
-			if wait {
-				ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
-				defer cancel()
-				events, sseErr := c.StreamEvents(ctx)
-				if sseErr != nil {
-					return fmt.Errorf("connect to event stream: %w", sseErr)
-				}
-				for {
-					select {
-					case <-ctx.Done():
-						return exitWithCode(ExitTimeout, "timeout waiting for %s to restart", appName)
-					case evt, ok := <-events:
-						if !ok {
-							return nil
-						}
-						if evt.Type == "app_status" && evt.AppName == appName && evt.After == "RUNNING" {
-							output.PrintText("App %s: RUNNING", appName)
-							return nil
-						}
-					}
-				}
+			// Fire-and-forget in --detach, JSON output, or non-TTY (scripts).
+			if detach || output.IsJSON() || !output.IsTTY() {
+				return nil
 			}
 
+			if waitErr := streamSingleAppStatus(c, appName); waitErr != nil {
+				if errors.Is(waitErr, errInterrupted) {
+					return nil
+				}
+				return waitErr
+			}
 			return nil
 		},
 	}
 
-	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for app to reach RUNNING status")
-	cmd.Flags().IntVar(&timeout, "timeout", 300, "Timeout in seconds (with --wait)")
+	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "Return immediately without waiting for RUNNING")
+	cmd.Flags().IntVar(&timeout, "timeout", 300, "Timeout in seconds for the namespace-stop phase (full restart only)")
 
 	return cmd
 }
 
-func restartNamespace(c *client.DaemonClient, stopTimeout time.Duration) error {
+func restartNamespace(c *client.DaemonClient, stopTimeout time.Duration, detach bool) error {
 	output.PrintText("Stopping namespace...")
 	if _, stopErr := c.StopNamespace(); stopErr != nil {
 		return fmt.Errorf("stop namespace: %w", stopErr)
@@ -89,5 +78,14 @@ func restartNamespace(c *client.DaemonClient, stopTimeout time.Duration) error {
 		return fmt.Errorf("start namespace: %w", startErr)
 	}
 	output.PrintText("Namespace start requested")
-	return streamLiveStatus(c, liveStatusOpts{})
+	if detach {
+		return nil
+	}
+	if waitErr := streamLiveStatus(c, liveStatusOpts{}); waitErr != nil {
+		if errors.Is(waitErr, errInterrupted) {
+			return nil
+		}
+		return waitErr
+	}
+	return nil
 }

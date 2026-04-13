@@ -44,7 +44,10 @@ func newCleanCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolVar(&execute, "execute", false, "Actually remove resources (dry run by default)")
+	cmd.Flags().BoolVar(&execute, "force", false, "Actually remove resources (dry run by default)")
+	// Deprecated: --execute renamed to --force (standard convention).
+	cmd.Flags().BoolVar(&execute, "execute", false, "Deprecated: use --force")
+	_ = cmd.Flags().MarkDeprecated("execute", "use --force instead")
 	cmd.Flags().BoolVar(&volumes, "volumes", false, "Also scan/remove orphaned volume directories")
 	cmd.Flags().BoolVar(&images, "images", false, "Prune unused Docker images (dangling)")
 
@@ -141,9 +144,9 @@ func printOrphanFindings(scan cleanScanResult, execute, images bool) {
 			}
 		}
 		if !execute {
-			output.PrintText("\nRun with --execute to remove orphaned resources.")
+			output.PrintText("\nRun with --force to remove orphaned resources.")
 			if images {
-				output.PrintText("\nTo prune dangling Docker images, run with --execute.")
+				output.PrintText("\nTo prune dangling Docker images, run with --force.")
 			}
 		}
 	})

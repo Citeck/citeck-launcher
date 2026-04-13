@@ -49,16 +49,15 @@ func (s *emailSetting) Run(sctx *setupContext, cfg *namespace.Config, _ *config.
 	// If already configured, offer edit/remove.
 	if cfg.Email != nil {
 		var action string
-		err := huh.NewSelect[string]().
+		err := output.RunField(huh.NewSelect[string]().
 			Title(i18n.T("setup.email.action")).
+			Description(i18n.T("hint.select.setting")).
 			Options(
 				huh.NewOption(i18n.T("setup.email.edit"), "edit"),
 				huh.NewOption(i18n.T("setup.email.remove"), "remove"),
 				huh.NewOption(i18n.T("setup.back"), backValue),
 			).
-			Value(&action).
-			WithTheme(output.HuhTheme).
-		Run()
+			Value(&action))
 		if err != nil {
 			return fmt.Errorf("email action selection: %w", err)
 		}
@@ -85,26 +84,47 @@ func (s *emailSetting) Run(sctx *setupContext, cfg *namespace.Config, _ *config.
 	var useTLS bool
 
 	host = email.Host
-	portStr = strconv.Itoa(email.Port)
+	// Leave portStr empty so a typing the value replaces the prefill instead
+	// of requiring backspace; the preset port renders via Placeholder, and we
+	// fall back to it when the user leaves the field empty.
+	portPlaceholder := strconv.Itoa(email.Port)
 	username = email.Username
 	from = email.From
 	useTLS = email.TLS
 
-	err := huh.NewForm(
+	err := output.RunForm(huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().Title(i18n.T("setup.email.host")).Value(&host).Validate(notEmpty),
-			huh.NewInput().Title(i18n.T("setup.email.port")).Value(&portStr).Validate(validatePort),
+			huh.NewInput().Title(i18n.T("setup.email.port")).Value(&portStr).
+				Placeholder(portPlaceholder).
+				Validate(validatePortWithDefault(portPlaceholder)),
 			huh.NewInput().Title(i18n.T("setup.email.from")).Value(&from).Validate(notEmpty),
 			huh.NewInput().Title(i18n.T("setup.email.username")).Value(&username).Description(i18n.T("setup.email.username_hint")),
 			huh.NewInput().Title(i18n.T("setup.email.password")).Value(&password).EchoMode(huh.EchoModePassword),
-			huh.NewConfirm().Title(i18n.T("setup.email.tls")).Value(&useTLS),
+			huh.NewConfirm().Title(i18n.T("setup.email.tls")).Value(&useTLS).
+				Affirmative(output.ConfirmYes).Negative(output.ConfirmNo),
 		),
-	).WithTheme(output.HuhTheme).Run()
+	))
 	if err != nil {
 		return fmt.Errorf("email form: %w", err)
 	}
 
+	// If the user left the port empty, apply the placeholder default.
+	if strings.TrimSpace(portStr) == "" {
+		portStr = portPlaceholder
+	}
 	port, _ := strconv.Atoi(strings.TrimSpace(portStr)) // error safe: validatePort already checked format
+	applyEmailSetting(sctx, cfg, email, host, port, username, from, password, useTLS)
+	return nil
+}
+
+// applyEmailSetting writes the parsed form values into cfg and sctx.PendingSecrets.
+// Plain passwords are never written to cfg — only "secret:email.password" refs,
+// which are resolved at container-start time by the generator (applyEmailConfig).
+// Extracted from Run() so the behavior can be unit tested without driving the TUI.
+func applyEmailSetting(sctx *setupContext, cfg *namespace.Config, prev *namespace.EmailConfig,
+	host string, port int, username, from, password string, useTLS bool,
+) {
 	cfg.Email = &namespace.EmailConfig{
 		Host:     strings.TrimSpace(host),
 		Port:     port,
@@ -117,12 +137,10 @@ func (s *emailSetting) Run(sctx *setupContext, cfg *namespace.Config, _ *config.
 	if password != "" {
 		cfg.Email.Password = "secret:email.password"
 		sctx.PendingSecrets["email.password"] = password
-	} else if email.Password != "" {
+	} else if prev != nil && prev.Password != "" {
 		// Keep existing secret reference.
-		cfg.Email.Password = email.Password
+		cfg.Email.Password = prev.Password
 	}
-
-	return nil
 }
 
 // selectEmailPreset shows a preset picker and returns a pre-filled EmailConfig.
@@ -138,12 +156,13 @@ func selectEmailPreset(email *namespace.EmailConfig) *namespace.EmailConfig {
 	options = append(options, huh.NewOption(i18n.T("setup.email.custom"), customValue))
 
 	var selected string
-	err := huh.NewSelect[string]().
+	sel := huh.NewSelect[string]().
 		Title(i18n.T("setup.email.preset")).
+		Description(i18n.T("hint.select.setting")).
 		Options(options...).
-		Value(&selected).
-		WithTheme(output.HuhTheme).
-		Run()
+		Value(&selected)
+	sel = output.ApplySelectHeight(sel, len(options))
+	err := output.RunField(sel)
 	if err != nil || selected == customValue {
 		return email
 	}
@@ -184,4 +203,18 @@ func validatePort(val string) error {
 		return fmt.Errorf("port must be 1-65535")
 	}
 	return nil
+}
+
+// validatePortWithDefault is like validatePort but treats an empty value as
+// valid, letting the caller fall back to a placeholder-rendered default.
+func validatePortWithDefault(defaultPort string) func(string) error {
+	return func(val string) error {
+		if strings.TrimSpace(val) == "" {
+			if defaultPort == "" {
+				return fmt.Errorf("port is required")
+			}
+			return nil
+		}
+		return validatePort(val)
+	}
 }

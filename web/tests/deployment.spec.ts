@@ -36,7 +36,7 @@ test.describe('Deployment: Running Platform Verification', () => {
 
   test('quick links are visible', async ({ page }) => {
     // Sidebar should show quick links
-    const ecosLink = page.getByText('ECOS UI', { exact: false })
+    const ecosLink = page.getByText('Citeck UI', { exact: false })
     if (await ecosLink.isVisible().catch(() => false)) {
       await expect(ecosLink).toBeVisible()
     }

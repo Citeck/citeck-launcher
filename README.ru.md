@@ -4,7 +4,9 @@
 
 [English version](README.md)
 
-Citeck Launcher управляет пространствами имён Citeck и Docker-контейнерами. Один Go-бинарник (~14 МБ) выступает и как CLI, и как демон.
+Citeck Launcher управляет пространствами имён Citeck и Docker-контейнерами. Один Go-бинарник (~24 МБ) выступает и как CLI, и как демон.
+
+> **Полная документация:** https://citeck.ru/docs/ru/admin/launch_setup/launcher_server/
 
 ## Быстрый старт
 
@@ -16,21 +18,36 @@ curl -fsSL https://raw.githubusercontent.com/Citeck/citeck-launcher/release/2.1.
 
 Скрипт скачивает последний релиз для вашей платформы и устанавливает в `/usr/local/bin/`. Мастер установки настроит пространство имён и запустит платформу.
 
+> **Примечание:** Если `citeck` уже есть в `PATH` (например, предварительно доставлен CI/CD или системой управления конфигурацией), пропустите скачивание и сразу выполните `citeck install`.
+
+> **Важно:** Команда `citeck install` — это **интерактивный TUI-мастер**, требующий настоящего терминала. В конце мастер **один раз** выводит сгенерированный пароль администратора — обязательно скопируйте и сохраните его, после закрытия экрана его нельзя будет восстановить. Если потеряли, сбросьте через `citeck setup admin-password` (см. [справочник команд](https://citeck.ru/docs/admin/launch_setup/launcher_server/commands.html)). Нажатие `Ctrl+C` до шага «запись конфигурации» завершает мастер без внесения изменений; при прерывании позже проверьте `/opt/citeck/conf/` на частичные файлы.
+>
+> Автоматическая (неинтерактивная) установка — планируемая функция. Если она вам нужна, создайте issue.
+
 Для **обновления** уже установленной версии выполните тот же one-liner — скрипт определит установленную версию, спросит подтверждение, остановит демон и заменит бинарник (бэкап сохраняется в `/usr/local/bin/citeck.bak` и восстанавливается через `bash install.sh --rollback`).
 
 ### Офлайн-установка
 
+Для серверов без доступа в интернет заранее скачайте два файла:
+
+1. **Бинарник** — со [страницы релизов](https://github.com/Citeck/citeck-launcher/releases).
+2. **Архив workspace** — с [Citeck/launcher-workspace](https://github.com/Citeck/launcher-workspace)
+   (раздел Releases или кнопка «Download ZIP»). Архив содержит определения
+   бандлов, которые лончер обычно подтягивает из git.
+
+Затем на целевом сервере:
+
 ```bash
-# Скачайте и бинарник, и workspace ZIP, затем:
-citeck install --workspace /path/to/workspace.zip
+citeck install --workspace /path/to/launcher-workspace.zip --offline
 ```
 
 Флаг `--workspace` распаковывает репозитории бандлов локально — интернет при запуске не нужен.
+Чтобы позже обновить workspace из нового архива без переустановки: `citeck update -f <zip>`.
 
 ## Возможности
 
 - **Интерактивный установщик** с авто-определением TLS (Let's Encrypt / самоподписанный / свой сертификат)
-- **Обновление бинарника без простоя** — `install.sh` заменяет бинарь демона, не останавливая контейнеры платформы; новый демон подхватывает их по deployment-hash (k8s-style restart control plane)
+- **Обновление CLI и демона** — `install.sh` заменяет бинарь демона, не останавливая контейнеры платформы; новый демон подхватывает их по deployment-hash (k8s-style restart control plane). Приложения с неизменённым hash продолжают работать без простоя; приложения с изменённым hash пересоздаются (типичный простой 1–5 мин на приложение, Java-сервисы дольше). После замены бинарника выполните `citeck reload --dry-run`, чтобы увидеть список контейнеров, которые будут пересозданы.
 - **8 языков интерфейса**: английский, русский, китайский, испанский, немецкий, французский, португальский, японский
 - **Обновления в реальном времени** через SSE (статус приложений, потребление ресурсов)
 - **Снапшоты томов** с экспортом/импортом (ZIP + tar.xz), авто-остановка/запуск
@@ -41,68 +58,34 @@ citeck install --workspace /path/to/workspace.zip
 ## Команды CLI
 
 ```
-citeck install [--workspace <zip>]      Мастер установки (офлайн с --workspace)
-citeck start [app] [-d]                 Запуск демона/пространства (-d = в фоне)
-citeck stop [app] [-d]                  Остановка (-d = в фоне)
-citeck restart [app]                    Перезапуск приложения или всего пространства
-citeck status [--watch]                 Статус пространства имён
-citeck health                           Проверка здоровья (exit 0=ok, 1=проблема)
-citeck reload                           Перечитать конфиг и пересоздать контейнеры
-citeck upgrade [ref] [--list|--dry-run] Обновить версию бандла
-citeck logs [app] [--follow]            Логи (демона или контейнера)
-citeck exec <app> -- <команда>          Выполнить команду в контейнере
-citeck apply <файл> [--dry-run]         Применить конфигурацию
-citeck diff -f <файл>                   Показать отличия от текущего конфига
-citeck snapshot list|export|import      Снапшоты томов (авто-остановка/запуск)
-citeck clean [--images] [--execute]     Очистка сирот / удаление образов
-citeck cert generate|status|letsencrypt Серверные TLS-сертификаты
-
-citeck workspace import|update          Импорт/обновление workspace
-citeck diagnose                         Диагностика
-citeck validate                         Проверка конфигурации
-citeck completion bash|zsh|fish         Автодополнение
-citeck setup [настройка]                Настройка (TUI-меню или по ID)
-citeck setup history                    История изменений конфигурации
-citeck setup rollback [id]              Откат изменения
-citeck uninstall                        Удаление
+citeck install [--workspace <zip>]        Мастер установки (офлайн с --workspace)
+citeck start [app] [-d|--detach]          Запуск демона/пространства (--detach = в фоне)
+citeck stop [app] [-d|--detach]           Остановка (--detach = в фоне)
+citeck restart [app] [--wait]             Перезапуск приложения или всего пространства
+citeck reload [--dry-run] [-d|--detach]   Перечитать конфиг и пересоздать только изменённые контейнеры
+citeck status [-w|--watch]                Статус пространства имён
+citeck describe <app>                     Подробная информация о контейнере (образ, порты, env, тома)
+citeck health                             Проверка здоровья (exit 0=ok, 1=демон недоступен, 8=проблема)
+citeck diagnose [--fix] [--dry-run]       Диагностика (с авто-исправлением при --fix)
+citeck logs [app] [-f|--follow]           Логи (демона или контейнера)
+citeck exec <app> -- <команда>            Выполнить команду в контейнере
+citeck update [-f|--file <zip>]           Подтянуть workspace/бандлы (или импорт из ZIP)
+citeck upgrade [bundle:version] [--yes]   Переключиться на другую версию бандла
+citeck snapshot list|export|import|delete Снапшоты томов (авто-остановка/запуск)
+citeck config view|validate|edit          Показать, проверить или отредактировать namespace.yml
+citeck setup [настройка]                  Настройка (TUI-меню или по ID)
+citeck setup history                      История изменений конфигурации
+citeck clean [--force] [--volumes] [--images]  Очистка сирот / удаление образов
+citeck version [--short]                  Информация о версии
+citeck completion bash|zsh|fish           Автодополнение
+citeck uninstall [--delete-data]          Удалить systemd-сервис, бинарь и (по желанию) данные
 ```
 
-Глобальные флаги: `--host`, `--tls-cert`, `--tls-key`, `--server-cert`, `--insecure`, `--format json`.
+Глобальные флаги: `--format (text|json)`, `--yes/-y`.
 
 ## Конфигурация
 
-### daemon.yml
-
-Настройки демона. Расположен в `$CITECK_HOME/conf/daemon.yml`.
-
-```yaml
-locale: ru                      # Язык: en, ru, zh, es, de, fr, pt, ja
-server:
-  listen: ":7088"
-reconciler:
-  interval: 30
-docker:
-  pullConcurrency: 4
-```
-
-### namespace.yml
-
-Описание пространства имён. Расположен в `$CITECK_HOME/conf/namespace.yml`.
-
-```yaml
-id: default
-name: Citeck
-bundleRef: "community:2026.1"
-authentication:
-  type: KEYCLOAK
-  users: ["admin"]
-proxy:
-  host: example.com
-  port: 443
-  tls:
-    enabled: true
-    letsEncrypt: true
-```
+Описание `daemon.yml` и `namespace.yml` — в [справочнике конфигурации](https://citeck.ru/docs/ru/admin/launch_setup/launcher_server/).
 
 ## Лицензия
 

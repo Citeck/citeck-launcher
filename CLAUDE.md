@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Citeck Launcher manages Citeck namespaces and Docker containers. It is a single Go binary (~18MB) that serves as both CLI and daemon, with an embedded React Web UI on `http://127.0.0.1:7088`.
+Citeck Launcher manages Citeck namespaces and Docker containers. It is a single Go binary (~18MB) that serves as both CLI and daemon, with an embedded React Web UI (desktop mode only; disabled in server mode).
 
 ### History
 
@@ -26,8 +26,8 @@ This is a **Go rewrite** (v2.0) of the original Kotlin/JVM launcher (v1.x). The 
 ### Go + Web UI (primary)
 
 ```bash
-make build                    # Build Go binary + embed React web UI → build/bin/citeck
-make build-fast               # Build Go only (skip web rebuild) → build/bin/citeck
+make build                    # Build Go binary + embed React web UI → build/bin/citeck-server
+make build-fast               # Build Go only (skip web rebuild) → build/bin/citeck-server
 make build-desktop            # Build desktop (Wails) binary → build/bin/citeck-desktop
 make test                     # Run all tests (Go + Vitest)
 make test-unit                # Go unit tests only (./internal/...)
@@ -38,7 +38,7 @@ make fmt                      # Format Go code
 make tidy                     # go mod tidy
 make tools                    # Install golangci-lint v2.11.4
 make clean                    # Remove build artifacts
-build/bin/citeck start --foreground   # Run daemon with web UI on 127.0.0.1:7088
+build/bin/citeck-server start --foreground   # Run daemon in foreground
 ./build/bin/citeck-desktop            # Run desktop app (Wails webview)
 ```
 
@@ -48,7 +48,7 @@ build/bin/citeck start --foreground   # Run daemon with web UI on 127.0.0.1:7088
 
 | Package | Purpose |
 |---|---|
-| `internal/cli/` | Cobra CLI commands (start, stop, status, apply, migrate, etc.) |
+| `internal/cli/` | Cobra CLI commands (start, stop, status, setup, install, upgrade, etc.) |
 | `internal/daemon/` | HTTP server, API routes (SSE events, config, volumes), middleware |
 | `internal/namespace/` | Config parsing, container generator, runtime state machine, reconciler |
 | `internal/docker/` | Docker SDK wrapper (containers, images, exec, logs via stdcopy, probes) |
@@ -57,7 +57,7 @@ build/bin/citeck start --foreground   # Run daemon with web UI on 127.0.0.1:7088
 | `internal/config/` | Filesystem paths, daemon config (daemon.yml), workspace dir scanner |
 | `internal/storage/` | Store interface + FileStore (server) + SQLiteStore (desktop) + SecretService (AES-256-GCM encryption) |
 | `internal/h2migrate/` | H2 MVStore read-only parser, LZF decompressor, H2→SQLite migration |
-| `internal/client/` | DaemonClient (Unix socket + mTLS TCP transport) |
+| `internal/client/` | DaemonClient (Unix socket transport) |
 | `internal/output/` | Text/JSON output formatter, tables, colors |
 | `internal/api/` | Shared API types (DTOs), path constants |
 | `internal/appdef/` | Application definition models (ApplicationDef, ApplicationKind) |
@@ -162,25 +162,178 @@ React 19 + Vite + TypeScript + Tailwind CSS 4. Embedded into Go binary via `go:e
 ## Key Technical Decisions
 
 - **SSE** (not WebSocket) for real-time events
-- **Single-mux** architecture: all routes on `socketMux`, shared by Unix socket, localhost TCP, and mTLS TCP
-- **mTLS** for non-localhost Web UI (client certs in `conf/webui-ca/`, dynamic pool reload)
-- **CSRF** via custom header (`X-Citeck-CSRF`) on localhost TCP only
+- **Unix socket only** for daemon communication in server mode; mTLS TCP reserved for future Web UI
 - **Smart regenerate** via deployment hash comparison (like `docker-compose up`) — unchanged containers keep running
-- **3-phase doStart**: I/O outside lock → remove stale → update state under lock
+- **3-phase doStart**: I/O outside lock → remove stale → update state under lock. Detached apps get STOPPED status in Phase 3 (not pulled/started). Phase 1 snapshots `manualStoppedApps` under read lock; Phase 3 re-reads live map for concurrent StopApp/StartApp safety.
 - **Graceful shutdown**: phased stop groups (proxy → webapps → keycloak → infra)
-- **Detach mode**: `Runtime.Detach()` exits without stopping containers for zero-downtime binary upgrades; Docker owns containers, not the launcher (same principle as kubelet restarts)
+- **Detach mode** (binary upgrade): `Runtime.Detach()` exits without stopping containers for zero-downtime binary upgrades; Docker owns containers, not the launcher (same principle as kubelet restarts)
+- **Per-app detach**: `citeck stop <app>` marks app as `manualStoppedApps` (desired-state-first, like k8s) and stops container. Detached apps are excluded from start/reload/regenerate, skipped by reconciler and liveness probes, and treated as satisfied in `waitForDeps`. `citeck start <app>` re-attaches. State persisted in `state-{nsID}.json`.
+- **Template detachedApps**: workspace `namespaceTemplates[].detachedApps` applied on first start (no persisted state). Install wizard sets `template: "default"` in namespace.yml.
 - **`GetHashInput` stability** is a hard compatibility contract across versions — changes require migration
-- **Secrets**: AES-256-GCM per-secret encryption via `SecretService`; system secrets (JWT, OIDC, admin password) via `resolveOneSystemSecret` pattern
-- **Admin password**: generated once on first server-mode start; same password for Keycloak (master + ecos-app), RabbitMQ, PgAdmin; desktop mode always uses "admin"
-- **Admin password change** via `citeck setup admin-password`: kcadm.sh for Keycloak, rabbitmqctl for RabbitMQ, setup.py for PgAdmin (all runtime, no container restart); webapps reloaded for RABBITMQ_PASSWORD env update
-- **Two storage backends**: flat files (server) / SQLite (desktop); desktop mode via explicit `--desktop` flag
+- **Secrets**: AES-256-GCM per-secret encryption via `SecretService`; system secrets (JWT, OIDC, admin password, citeck SA) via `resolveOneSystemSecret` pattern
+- **citeck service account**: single shared SA named `citeck` (renamed from `citeck-launcher` in 2.1.0) used in two systems: (1) Keycloak master realm (admin role) for kcadm ops, (2) RabbitMQ (monitoring tag, vhost `/` full perms) for webapp AMQP auth and observer management-API monitoring. One 32-char random password stored as `_citeck_sa` system secret; `_launcher_sa` is auto-migrated on first read. Used by init script (kcadm.sh), admin password change handler, and webapp→Keycloak integration (`${KK_ADMIN_USER}/${KK_ADMIN_PASSWORD}` template vars + `ECOS_WEBAPP_RABBITMQ_USERNAME/_PASSWORD`). Survives snapshot import because Keycloak and RabbitMQ init actions create/sync the SA on every container start. The legacy `citeck-launcher` Keycloak user is deleted by the Keycloak init script after upgrade.
+- **Admin password**: generated on first server-mode start; seeded into both Keycloak realms (`master` via `KC_BOOTSTRAP_ADMIN_PASSWORD` on empty DB + `ecos-app` realm via init script) and shared with RabbitMQ / PgAdmin admin-UI users. Webapps do NOT use the admin user to connect to RabbitMQ — they use the stable `citeck` SA, so admin-password rotation never requires webapp recreation. Desktop mode always uses "admin". The Keycloak init script never touches the master realm `admin` password on re-run, so rotations done via `citeck setup admin-password` are preserved across container restarts.
+- **Admin password change** via `citeck setup admin-password`: rotates Keycloak `master` + `ecos-app` realms, RabbitMQ, and PgAdmin. The SA `citeck` password is stable (launcher uses it for internal Keycloak/RabbitMQ auth and must not lose access). Authenticates as the citeck SA → kcadm.sh set-password for `ecos-app` (fatal on failure), then `master` (best-effort — logged but non-fatal since the SA can still manage Keycloak), then rabbitmqctl change_password for the RabbitMQ admin user (UI only), then setup.py for PgAdmin. All runtime, no container restart; **no webapp reload** — webapps use the citeck SA for RabbitMQ and are unaffected by the admin-password change.
+- **Email config**: via env vars (`SPRING_MAIL_HOST/PORT/PROTOCOL`, `ECOS_NOTIFICATIONS_EMAIL_FROM_DEFAULT/FIXED`), NOT CloudConfig (disabled in server mode). When email configured, mailhog container is not generated and proxy skips `MAILHOG_TARGET` env.
+- **Two storage backends**: flat files (server) / SQLite (desktop); desktop mode via explicit `--desktop` flag (hidden from server binary help)
 - **go-git** (pure Go) for git operations — no external git binary required
 - **ACME** profiles via custom JWS; LE works with IPs via shortlived profile (~6 day certs)
-- **Reconciler**: exponential backoff retry for failed apps (1m → 30m max); liveness probes with 3-failure threshold
-- **install.sh** is a thin bootstrap (~200 lines): fetch + exec. All lifecycle logic (install/upgrade/rollback/SIGKILL preserve/systemd drop-in) lives in Go (`internal/cli/installer_lifecycle.go`)
+- **Reconciler**: exponential backoff retry for failed apps (1m → 30m max); liveness probes with 3-failure threshold. Does NOT touch detached (STOPPED + manualStoppedApps) apps.
+- **Snapshot import**: CLI normalizes .zip suffix, validates existence via list endpoint BEFORE stopping namespace. Server validates name/file before lock acquisition. Event types: `snapshot_complete`/`snapshot_error` for both export and import.
+- **install.sh** is a thin bootstrap (~200 lines): fetch + SHA256 verify + exec. All lifecycle logic (install/upgrade/rollback/SIGKILL preserve/systemd drop-in) lives in Go (`internal/cli/installer_lifecycle.go`)
+- **Install wizard**: prefers `systemctl start citeck` when systemd service is installed; falls back to `forkDaemon()` when systemd unavailable
 - **CloudConfigServer** skipped in server mode (webapps disable it via env)
+- **Memory**: Community needs 16GB RAM minimum; Enterprise (24 apps) needs 24–32GB. On 16GB, detach non-essential apps (`citeck stop onlyoffice attorneys ai edi`) to free 4–5GB.
+
+## CLI Conventions
+
+- `stop <app>` detaches (persists across restart); `stop` (no args) stops all but doesn't detach
+- `start <app>` re-attaches; `start` (no args) starts all non-detached
+- `--detach`/`-d` for async on all commands (start, stop, reload) — don't wait, return immediately
+- `--force` for destructive ops (clean); dry-run by default
+- `--format json` for scripting on any command
+- `--yes` to skip confirmations
+- Hidden flags: `--desktop`, `--no-ui`, `_daemon` (internal)
 
 For detailed phase-by-phase history, see `PROGRESS.md`.
+
+## Agent Testing Guide (server-side)
+
+Lessons from Phase 2 automated testing on a 16GB test server. Read before running server lifecycle tests.
+
+### Memory management (critical)
+
+Enterprise bundle needs ~15GB for 24 Java apps. On 16GB server any extra container (S3Mock, MailPit, Playwright browser) triggers OOM → SSH hangs 10-20 min → recovery.
+
+**Always detach non-essential apps BEFORE adding test infrastructure:**
+
+```bash
+# Frees ~4-5GB on enterprise
+for app in onlyoffice attorneys ecom service-desk ecos-project-tracker ai edi; do
+  citeck stop $app 2>/dev/null
+done
+# Verify: free -h → 5GB+ available
+```
+
+If SSH becomes unresponsive: wait 5 minutes (OOM killer finishes), don't retry aggressively. `systemctl stop citeck` + kill orphan containers to recover.
+
+### Startup timing
+
+- **Infrastructure** (postgres, mongo, rabbitmq, zookeeper): 30s–1m
+- **Keycloak**: 1–2 min (5–10 min on fresh DB — realm import)
+- **Webapps**: 5–15 min (Java startup + startup probes 90×10s)
+- **Enterprise full startup on 16GB**: 10–15 min
+- **`citeck reload`** on enterprise: 2–5 min
+
+Don't poll more frequently than 30s. Use `sleep 120 && check` in background tasks.
+
+### Docker network gotchas
+
+- **Server mode**: only proxy publishes ports. `docker port <container>` returns empty for webapps.
+- **Internal access**: use `docker inspect <name> -f "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}"` to get container IP, then curl on its `SERVER_PORT` env (17022, 17026, 17027, etc. — varies per app).
+- **Port numbers are not stable** — read from `docker inspect <name> --format "{{json .Config.Env}}" | grep SERVER_PORT` each time.
+
+### Keycloak and auth
+
+- **citeck SA** is the service account used for all launcher→Keycloak ops and webapp→RabbitMQ AMQP auth. Password in `/opt/citeck/conf/secrets/_citeck_sa.json` (encrypted; legacy `_launcher_sa.json` is auto-migrated on first read). Survives snapshot import. In Keycloak it has the master `admin` role; in RabbitMQ it has `monitoring` tag + vhost `/` full permissions.
+- **Admin bootstrap password**: `docker exec citeck_keycloak_default printenv KC_BOOTSTRAP_ADMIN_PASSWORD` — one-time bootstrap for master admin, not the current password after snapshot restore.
+- **OIDC client secret**: `docker exec citeck_keycloak_default /opt/keycloak/bin/kcadm.sh ...` to fetch (see `internal/namespace/generator.go` init script).
+- **Gateway access**: OIDC token via `/realms/ecos-app/protocol/openid-connect/token` + `Authorization: Bearer <token>`.
+- **Webapp direct access**: JWT HMAC-SHA256 with `ECOS_WEBAPP_WEB_AUTHENTICATORS_JWT_SECRET`. Not straightforward — prefer gateway API when possible.
+
+### S3 testing
+
+- **Fake-S3** (`lphoward/fake-s3`): NOT compatible with MinIO SDK used by ecos-content. Fails on `?location=` request. Avoid.
+- **S3Mock** (`adobe/s3mock`): works, but `initialBuckets` env var doesn't create buckets automatically. Create manually: `curl -X PUT http://s3mock:9090/ecos-content`.
+- **MinIO**: works but ~300MB RAM (too heavy for 16GB enterprise).
+- **Content upload via ECOS**: `POST /gateway/emodel/api/ecos/webapp/content` with `multipart/form-data` (file, name, dir). Returns `{"entityRef":"emodel/temp-file@..."}`.
+- **Set default S3 storage**: mutate `eapps/config@app/emodel$default-content-storage` with `_value?json:{"ref":"content/storage@content-storage-s3"}`.
+
+### Background task polling
+
+Don't poll background SSH commands with `cat output.file` every second — wastes context. Instead:
+- Start the command with `run_in_background: true` (notification on completion)
+- Include `sleep N && check` in the command itself
+- Use short timeouts (5–15s) for direct queries when checking state
+
+### Common test scripts (server-side)
+
+```bash
+# Quick status
+./scripts/ssh.sh 'citeck status 2>/dev/null | grep -c "RUNNING"'
+# Use grep -c "RUNNING" NOT -cw RUNNING — ANSI colors break word boundary
+
+# Memory check
+./scripts/ssh.sh 'free -h | grep Mem'
+
+# Emergency stop all containers (recover from OOM)
+./scripts/ssh.sh 'docker kill $(docker ps -q); citeck stop --shutdown'
+```
+
+## TUI Testing
+
+TUI commands (`install`, `setup`, `migrate`, etc.) are tested via tmux — it provides
+screen capture as plain text and accepts key injection without modifying the binary.
+
+```bash
+# Start a session with fixed dimensions
+tmux new-session -d -s tui-test -x 120 -y 40
+
+# Launch a TUI command
+tmux send-keys -t tui-test "./build/bin/citeck install" Enter
+sleep 1
+
+# Read current screen as plain text (no ANSI codes)
+tmux capture-pane -t tui-test -p
+
+# Send keys
+tmux send-keys -t tui-test Down        # arrow down
+tmux send-keys -t tui-test Up          # arrow up
+tmux send-keys -t tui-test "" Enter   # confirm (C-m, not literal Enter)
+tmux send-keys -t tui-test "sometext" # type text
+
+# Tear down
+tmux kill-session -t tui-test
+```
+
+**Autonomous test loop:** `make build-fast` → start tmux session → capture screen →
+analyze text → send keys → capture → analyze → fix code if broken → rebuild → repeat.
+
+Cover all interaction branches: happy path, validation errors, back navigation,
+cancellation, edge inputs (empty, too long, invalid chars). Fix any regressions before
+moving on.
+
+### Visual screenshots via Playwright
+
+To verify colors, layout, and styling — not just text content:
+
+```bash
+# 1. Capture screen with ANSI escape codes and convert to HTML
+tmux capture-pane -t tui-test -p -e | aha --no-header > /tmp/tui-screen.html
+
+# 2. Wrap in a styled page (dark terminal background, monospace font)
+cat > /tmp/tui-preview.html << 'EOF'
+<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+body { margin: 0; background: #1e1e2e; padding: 24px; }
+pre { font-family: 'JetBrains Mono', monospace; font-size: 14px;
+      line-height: 1.5; color: #cdd6f4; background: #1e1e2e;
+      margin: 0; white-space: pre-wrap; }
+</style></head><body><pre>CONTENT_HERE</pre></body></html>
+EOF
+# (replace CONTENT_HERE with the inner content of /tmp/tui-screen.html)
+
+# 3. Serve locally and screenshot with Playwright
+python3 -m http.server 18888 &
+# then: browser_navigate http://localhost:18888/tui-preview.html → browser_take_screenshot
+```
+
+**When to use visual screenshots:** checking active-item highlight color, border/glyph
+rendering, truncation, layout regressions. Plain text capture is sufficient for logic
+and navigation tests.
+
+**Why not vhs:** vhs requires `ttyd` + `ffmpeg` (~200 MB) and only records fixed
+scenarios — no mid-session inspection. The tmux approach allows reading screen state
+at each step and reacting programmatically.
 
 ## CI/CD
 

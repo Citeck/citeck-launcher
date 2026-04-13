@@ -24,14 +24,36 @@ const (
 	ObsPGHost      = "observer-postgres"
 )
 
+// CiteckSAUser is the canonical service-account username. The same name is
+// used for the Keycloak master-realm SA (admin role) and the RabbitMQ user
+// (monitoring tag, vhost "/" full perms). Webapps authenticate to both
+// systems using this identity so that admin-password rotations never
+// require webapp container recreation.
+const CiteckSAUser = "citeck"
+
+// LegacyCiteckSAUser is the pre-rename SA username. The Keycloak init
+// script deletes it on startup to keep the master realm clean after upgrade.
+const LegacyCiteckSAUser = "citeck-launcher"
+
 // SystemSecrets holds system-managed secrets resolved at daemon startup.
 // AdminPassword is the plaintext password for the ecos-app realm admin user;
 // the generator hashes it into the realm.json credential before the keycloak
 // container imports the realm on first start.
+// CiteckSA is a dedicated service account password for the "citeck" user.
+// The same password is used for two stable identities:
+//   - Keycloak master realm (admin role) — for all kcadm operations.
+//   - RabbitMQ (monitoring tag, vhost "/" full perms) — used by webapps
+//     instead of the user-facing admin user so that admin-password changes
+//     no longer require recreating webapp containers.
+//
+// Because this password is stable across admin-password changes and snapshot
+// imports, it can be baked into webapp container env vars without causing
+// restarts when the admin password rotates.
 type SystemSecrets struct {
 	JWT           string
 	OIDC          string
 	AdminPassword string
+	CiteckSA      string
 }
 
 // AdminPasswordOrDefault returns the generated admin password, or "admin"

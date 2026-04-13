@@ -1,6 +1,6 @@
 VERSION ?= dev
 BUILDDIR := build/bin
-BINARY   := $(BUILDDIR)/citeck
+BINARY   := $(BUILDDIR)/citeck-server
 DESKTOP  := $(BUILDDIR)/citeck-desktop
 GO_BUILD_FLAGS := -ldflags "-s -w -X main.version=$(VERSION)"
 WEBDIST  := internal/daemon/webdist
@@ -50,7 +50,7 @@ build-web:
 
 build-desktop: build-web
 	@mkdir -p $(BUILDDIR)
-	CGO_ENABLED=1 go build $(GO_BUILD_FLAGS) -o $(DESKTOP) ./cmd/citeck-desktop
+	CGO_ENABLED=1 go build -tags desktop $(GO_BUILD_FLAGS) -o $(DESKTOP) ./cmd/citeck-desktop
 
 test:
 	go test -race ./...

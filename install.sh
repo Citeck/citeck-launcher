@@ -10,11 +10,11 @@ set -e
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/Citeck/citeck-launcher/release/2.1.0/install.sh | bash
 #   bash install.sh --rollback        # -> delegates to `citeck install --rollback`
-#   bash install.sh --file ./citeck_2.1.0_linux_amd64
+#   bash install.sh --file ./citeck-server_2.1.0_linux_amd64
 #
 # Strategy:
-#   1. If `citeck` is already installed and its version matches the latest
-#      stable v2.x release on GitHub, just run `citeck install` directly —
+#   1. If `citeck` is already installed and its SHA256 matches the latest
+#      release binary on GitHub, just run `citeck install` directly —
 #      nothing to download, the binary itself detects "already installed"
 #      and hands off to the setup hint.
 #   2. Otherwise download the new binary to a temp location and exec
@@ -80,14 +80,13 @@ main() {
     check_deps
     detect_platform
 
-    LOCAL_VERSION=$(get_local_version)
     fetch_latest_version
 
-    # Already on the latest version — hand off to the installed binary.
-    # Its lifecycle detection (self == target) will fall through to the
-    # normal wizard or print the "already installed" hint.
-    if [ -n "$LOCAL_VERSION" ] && [ "$LOCAL_VERSION" = "$VERSION" ]; then
-        log "Citeck Launcher ${VERSION} is already installed, running citeck install..."
+    # Compare SHA256 of the installed binary against the release digest.
+    # This catches rebuilds of the same version (digest changes, version doesn't).
+    LOCAL_HASH=$(sha256_of "$(command -v citeck 2>/dev/null || true)")
+    if [ -n "$LOCAL_HASH" ] && [ "$LOCAL_HASH" = "$REMOTE_DIGEST" ]; then
+        log "Citeck Launcher ${VERSION} is already installed (hash match), running citeck install..."
         exec citeck install
     fi
 
@@ -120,24 +119,19 @@ exec_with_sudo() {
 
 # --- Helpers ---
 
-get_local_version() {
-    if ! command -v citeck >/dev/null 2>&1; then
-        return
-    fi
-    # v2.1.0+ supports --short. v2.0.0 doesn't — exits non-zero on unknown
-    # flag, so we suppress that with `|| true` to keep `set -e` happy and
-    # fall back to parsing the "Citeck CLI X.Y.Z" line from `citeck version`.
-    v=$(citeck version --short 2>/dev/null || true)
-    if [ -z "$v" ]; then
-        v=$(citeck version 2>/dev/null | awk '/^Citeck CLI/ {print $NF; exit}')
-    fi
-    # Strip optional leading 'v' so comparisons against ${TAG#v} work uniformly.
-    printf '%s' "${v#v}"
-}
-
 check_deps() {
     command -v curl >/dev/null 2>&1 || err "curl is required but not installed"
     command -v docker >/dev/null 2>&1 || warn "Docker is not installed — Citeck requires Docker to run"
+}
+
+# sha256_of prints the SHA256 hash of a file, or empty string if unavailable.
+sha256_of() {
+    [ -n "$1" ] && [ -f "$1" ] || return 0
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" 2>/dev/null | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" 2>/dev/null | awk '{print $1}'
+    fi
 }
 
 detect_platform() {
@@ -183,6 +177,14 @@ fetch_latest_version() {
     [ -z "$TAG" ] && err "No v${VERSION_PREFIX}x release found"
     VERSION="${TAG#v}"
     log "Latest version: ${VERSION}"
+
+    # Extract SHA256 digest for our platform's binary from the release assets.
+    # GitHub API format: "digest": "sha256:<hex>"
+    ASSET_NAME="citeck-server_${VERSION}_$(uname -s | tr '[:upper:]' '[:lower:]')_${ARCH}"
+    REMOTE_DIGEST=""
+    # Find the asset block, then its digest field. jq-free: grep the name, then
+    # scan forward for digest within the next 20 lines.
+    REMOTE_DIGEST=$(printf '%s' "$RESPONSE" | grep -A 20 "\"name\".*\"${ASSET_NAME}\"" | grep '"digest"' | head -1 | sed 's/.*"sha256:\([^"]*\)".*/\1/' || true)
 }
 
 download_binary_cached() {
@@ -194,7 +196,7 @@ download_binary_cached() {
     # The binary removes this file on successful install via the
     # CITECK_INSTALLER_CACHE env var wired in main().
     CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/citeck-installer"
-    FILENAME="citeck_${VERSION}_${OS}_${ARCH}"
+    FILENAME="citeck-server_${VERSION}_${OS}_${ARCH}"
     CACHE_PATH="${CACHE_DIR}/${FILENAME}"
 
     mkdir -p "$CACHE_DIR"
@@ -211,11 +213,21 @@ download_binary_cached() {
     # file (network drop, Ctrl+C) can't look like a complete cached binary
     # on the next run.
     TMP="${CACHE_PATH}.tmp"
-    if ! curl -fsSL -o "$TMP" "$DOWNLOAD_URL"; then
+    if ! curl -fL --progress-bar -o "$TMP" "$DOWNLOAD_URL"; then
         rm -f "$TMP"
         err "Download failed. Check that release ${TAG} has a binary for ${OS}/${ARCH}"
     fi
     chmod +x "$TMP"
+
+    # Verify download integrity against the GitHub release digest.
+    if [ -n "$REMOTE_DIGEST" ]; then
+        DL_HASH=$(sha256_of "$TMP")
+        if [ -n "$DL_HASH" ] && [ "$DL_HASH" != "$REMOTE_DIGEST" ]; then
+            rm -f "$TMP"
+            err "SHA256 mismatch: expected ${REMOTE_DIGEST}, got ${DL_HASH}"
+        fi
+    fi
+
     mv "$TMP" "$CACHE_PATH"
 }
 

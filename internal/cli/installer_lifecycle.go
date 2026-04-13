@@ -2,8 +2,10 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strconv"
@@ -94,20 +96,21 @@ func handleInstallerLifecycle(info BuildInfo) (handled bool, err error) {
 		return true, lifecycleFreshInstall(selfPath)
 	}
 
-	// Target exists: compare versions.
+	// Target exists: compare binary hashes to detect any change (including
+	// rebuilds of the same version). Fall back to version comparison if
+	// hashing fails.
 	installedVer := readBinaryVersion(installTarget)
 	if installedVer == "" {
 		return true, fmt.Errorf("could not determine installed version at %s — remove it and try again", installTarget)
 	}
 
-	// Same version — just hand off to the installed binary so the user sees
-	// the consistent "already installed, run citeck setup" hint.
-	if installedVer == info.Version {
+	// Same binary (hash match) — hand off to the installed binary.
+	if hashesMatch(selfPath, installTarget) {
 		output.PrintText("Citeck Launcher %s is already installed at %s", installedVer, installTarget)
 		return true, reExecAtTarget(installTarget)
 	}
 
-	// Different version: upgrade.
+	// Different binary: upgrade.
 	return true, lifecycleUpgrade(selfPath, installedVer, info.Version)
 }
 
@@ -215,6 +218,32 @@ func runRollback() error {
 
 	output.PrintText("Rolled back: %s -> %s", currentVer, backupVer)
 	return nil
+}
+
+// hashesMatch returns true if the two files have identical SHA256 hashes.
+// Returns false on any error (missing file, read error) so the caller
+// falls through to the upgrade path.
+func hashesMatch(a, b string) bool {
+	hashA, errA := fileSHA256(a)
+	hashB, errB := fileSHA256(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return hashA == hashB
+}
+
+// fileSHA256 returns the hex-encoded SHA256 hash of a file.
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path) //nolint:gosec // G304: path is from os.Executable() or constant install target
+	if err != nil {
+		return "", fmt.Errorf("open %s: %w", path, err)
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", fmt.Errorf("read %s: %w", path, err)
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
 // copyBinaryAtomic writes src to dst via fsutil.AtomicWriteFile which uses a

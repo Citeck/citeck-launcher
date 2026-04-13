@@ -13,7 +13,22 @@ const (
 	Dim    = "\033[2m"
 )
 
-var colorsEnabled = os.Getenv("NO_COLOR") == ""
+// colorsEnabled is computed at package init. Colors are ON only when:
+//   - NO_COLOR env var is NOT set (https://no-color.org/), AND
+//   - stdout is a real terminal (so pipes, redirects, `grep -cw RUNNING`,
+//     CI logs, and non-TTY stdout do not get ANSI escape sequences).
+//
+// B6-08: previously we only checked NO_COLOR, which meant
+// `citeck status | grep -cw RUNNING` returned 0 because the word was
+// wrapped in \x1b[32m...\x1b[0m and the color codes broke word boundaries.
+var colorsEnabled = computeColorsEnabled()
+
+func computeColorsEnabled() bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	return IsTTY()
+}
 
 // SetColorsEnabled controls whether terminal color codes are emitted.
 func SetColorsEnabled(enabled bool) {

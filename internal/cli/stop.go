@@ -16,15 +16,15 @@ func newStopCmd() *cobra.Command {
 	var leaveRunning bool
 
 	cmd := &cobra.Command{
-		Use:   "stop [app]",
-		Short: "Stop the namespace (or a single app)",
-		Args:  cobra.MaximumNArgs(1),
+		Use:   "stop [app...]",
+		Short: "Stop the namespace (or one or more apps)",
+		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if leaveRunning && !shutdown {
 				return fmt.Errorf("--leave-running requires --shutdown")
 			}
-			if leaveRunning && len(args) == 1 {
-				return fmt.Errorf("--leave-running cannot be combined with an app argument")
+			if leaveRunning && len(args) > 0 {
+				return fmt.Errorf("--leave-running cannot be combined with app arguments")
 			}
 
 			c := client.TryNew(clientOpts())
@@ -48,17 +48,23 @@ func newStopCmd() *cobra.Command {
 				return nil
 			}
 
-			// App specified → stop single app
-			if len(args) == 1 {
-				appName := args[0]
-				result, err := c.StopApp(appName)
-				if err != nil {
-					return fmt.Errorf("stop %q: %w", appName, err)
+			// Apps specified → stop each in order, reporting per-app result.
+			if len(args) > 0 {
+				var firstErr error
+				for _, appName := range args {
+					result, err := c.StopApp(appName)
+					if err != nil {
+						output.Errf("stop %q: %v", appName, err)
+						if firstErr == nil {
+							firstErr = fmt.Errorf("stop %q: %w", appName, err)
+						}
+						continue
+					}
+					output.PrintResult(result, func() {
+						output.PrintText(result.Message)
+					})
 				}
-				output.PrintResult(result, func() {
-					output.PrintText(result.Message)
-				})
-				return nil
+				return firstErr
 			}
 
 			// No app → stop namespace
@@ -89,7 +95,7 @@ func newStopCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVarP(&shutdown, "shutdown", "s", false, "Also shutdown the daemon")
-	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "Send stop and return without waiting (like docker-compose stop -d)")
+	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "Send stop and return without waiting")
 	cmd.Flags().BoolVar(&leaveRunning, "leave-running", false, "With --shutdown: exit the daemon without stopping containers (for binary upgrades)")
 
 	return cmd

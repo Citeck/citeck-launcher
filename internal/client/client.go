@@ -378,6 +378,12 @@ func (c *DaemonClient) GetConfig() (string, error) {
 	return c.getRaw(api.Config)
 }
 
+// GetAppliedConfig returns the config currently driving the running namespace
+// (the config snapshot from when containers were last generated).
+func (c *DaemonClient) GetAppliedConfig() (string, error) {
+	return c.getRaw(api.ConfigApplied)
+}
+
 // PutConfig uploads a YAML config to the daemon.
 func (c *DaemonClient) PutConfig(yamlData []byte) (*api.ActionResultDto, error) {
 	req, err := http.NewRequest(http.MethodPut, c.baseURL+api.Config, bytes.NewReader(yamlData))

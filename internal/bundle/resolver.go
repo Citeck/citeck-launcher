@@ -2,6 +2,7 @@ package bundle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -14,6 +15,13 @@ import (
 	"github.com/citeck/citeck-launcher/internal/git"
 	"gopkg.in/yaml.v3"
 )
+
+// ErrNoBundles signals that a bundle repo's pull succeeded but no bundle
+// definitions were found on disk (either the bundles directory does not
+// exist, or it exists but has no .yml/.yaml files matching a version
+// pattern). Callers that only use Resolve(LATEST) as a "did the pull work"
+// probe can treat this as a benign outcome via errors.Is(err, ErrNoBundles).
+var ErrNoBundles = errors.New("no bundles found")
 
 const (
 	defaultBundlesRepo   = "https://github.com/Citeck/launcher-workspace.git"
@@ -176,7 +184,8 @@ type TokenLookupFunc func(authType string) string
 type Resolver struct {
 	dataDir     string
 	tokenLookup TokenLookupFunc
-	offline     bool // skip all git operations, fail if local data missing
+	offline     bool         // skip all git operations, fail if local data missing
+	logger      *slog.Logger // nil → falls back to slog.Default()
 }
 
 // NewResolver creates a resolver without auth support.
@@ -189,10 +198,26 @@ func NewResolverWithAuth(dataDir string, tokenLookup TokenLookupFunc) *Resolver 
 	return &Resolver{dataDir: dataDir, tokenLookup: tokenLookup}
 }
 
+// WithLogger sets the logger used for progress/warning messages. Chainable.
+// Pass a quieter logger (e.g. WARN level) from CLI commands that want clean output,
+// instead of mutating slog.Default() globally.
+func (r *Resolver) WithLogger(logger *slog.Logger) *Resolver {
+	r.logger = logger
+	return r
+}
+
 // SetOffline enables offline mode: all git operations are skipped,
 // and the resolver returns an error if required data is not available locally.
 func (r *Resolver) SetOffline(offline bool) {
 	r.offline = offline
+}
+
+// log returns the configured logger, or slog.Default() when none is set.
+func (r *Resolver) log() *slog.Logger {
+	if r.logger != nil {
+		return r.logger
+	}
+	return slog.Default()
 }
 
 // ResolveResult contains the bundle definition and workspace config.
@@ -206,7 +231,7 @@ type ResolveResult struct {
 func (r *Resolver) resolveWorkspace() (cfg *WorkspaceConfig, repoDir string) {
 	// Priority 1: local repo/ dir (manual setup or workspace import)
 	localRepoDir := filepath.Join(r.dataDir, "repo")
-	if wsCfg := loadWorkspaceConfig(localRepoDir); wsCfg != nil {
+	if wsCfg := loadWorkspaceConfig(localRepoDir, r.log()); wsCfg != nil {
 		return wsCfg, localRepoDir
 	}
 
@@ -220,10 +245,10 @@ func (r *Resolver) resolveWorkspace() (cfg *WorkspaceConfig, repoDir string) {
 		})
 		gitCancel()
 		if err != nil {
-			slog.Warn("Failed to sync workspace repo", "err", err)
+			r.log().Warn("Failed to sync workspace repo", "err", err)
 		}
 	}
-	if wsCfg := loadWorkspaceConfig(defaultRepoDir); wsCfg != nil {
+	if wsCfg := loadWorkspaceConfig(defaultRepoDir, r.log()); wsCfg != nil {
 		return wsCfg, defaultRepoDir
 	}
 	return &WorkspaceConfig{}, ""
@@ -253,7 +278,7 @@ func (r *Resolver) Resolve(ref Ref) (*ResolveResult, error) {
 	var repoDir string
 	if localBundles {
 		repoDir = wsRepoDir
-		slog.Info("Using workspace repo for bundles (local)", "repo", ref.Repo, "dir", wsRepoDir)
+		r.log().Debug("Using workspace repo for bundles (local)", "repo", ref.Repo, "dir", wsRepoDir)
 	} else {
 		repoDir = r.syncBundleRepo(ref.Repo, bundleRepo)
 	}
@@ -281,7 +306,7 @@ func (r *Resolver) Resolve(ref Ref) (*ResolveResult, error) {
 		return nil, fmt.Errorf("bundle %s not found in %s", key, bundlesDir)
 	}
 
-	def, err := parseBundleFile(bundlePath, key, aliasMap, imageRepoMap)
+	def, err := parseBundleFile(bundlePath, key, aliasMap, imageRepoMap, r.log())
 	if err != nil {
 		return nil, err
 	}
@@ -339,7 +364,7 @@ func (r *Resolver) syncBundleRepo(repoID string, bundleRepo *BundlesRepo) string
 		})
 		gitCancel()
 		if err != nil {
-			slog.Warn("Failed to sync bundle repo", "repo", repoID, "err", err)
+			r.log().Warn("Failed to sync bundle repo", "repo", repoID, "err", err)
 		}
 	}
 	return repoDir
@@ -361,7 +386,10 @@ func (r *Resolver) lookupRepoToken(bundleRepo *BundlesRepo) string {
 	return token
 }
 
-func loadWorkspaceConfig(repoDir string) *WorkspaceConfig {
+func loadWorkspaceConfig(repoDir string, logger *slog.Logger) *WorkspaceConfig {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	candidates := []string{"workspace-v1.yml", "workspace-v1.yaml", "workspace.yml"}
 	for _, name := range candidates {
 		path := filepath.Join(repoDir, name)
@@ -371,7 +399,7 @@ func loadWorkspaceConfig(repoDir string) *WorkspaceConfig {
 		}
 		var cfg WorkspaceConfig
 		if err := yaml.Unmarshal(data, &cfg); err != nil {
-			slog.Warn("Failed to parse workspace config", "path", path, "err", err)
+			logger.Warn("Failed to parse workspace config", "path", path, "err", err)
 			continue
 		}
 		return &cfg
@@ -440,7 +468,10 @@ func resolveImageURL(repository, tag string, imageRepoMap map[string]string) str
 	return repository + ":" + tag
 }
 
-func parseBundleFile(path, version string, aliasMap, imageRepoMap map[string]string) (*Def, error) {
+func parseBundleFile(path, version string, aliasMap, imageRepoMap map[string]string, logger *slog.Logger) (*Def, error) {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	data, err := os.ReadFile(path) //nolint:gosec // G304: path is constructed from internal bundle dir
 	if err != nil {
 		return nil, fmt.Errorf("read bundle %s: %w", version, err)
@@ -501,7 +532,7 @@ func parseBundleFile(path, version string, aliasMap, imageRepoMap map[string]str
 		Content:      raw,
 	}
 
-	slog.Info("Resolved bundle", "version", version, "apps", len(applications), "citeckApps", len(citeckApps))
+	logger.Debug("Resolved bundle", "version", version, "apps", len(applications), "citeckApps", len(citeckApps))
 	return def, nil
 }
 
@@ -578,6 +609,62 @@ func isVersionString(name string) bool {
 	return name != "" && name[0] >= '0' && name[0] <= '9'
 }
 
+// VersionEntry represents a bundle version with its repo and key.
+type VersionEntry struct {
+	Repo    string
+	Key     string
+	Ref     string // "repo:key"
+	Current bool
+}
+
+// ResolveBundleRepoDir returns the on-disk directory for a bundle repo.
+// Priority: 1) offline import (data/repo/{path}), 2) local workspace repo,
+// 3) cloned repo (data/bundles/{repoID}/).
+// Exported so the daemon API can reuse the same resolution logic.
+func ResolveBundleRepoDir(dataDir, wsRepoDir string, repo BundlesRepo) string {
+	if repo.Path != "" {
+		// Priority 1: offline import
+		localRepo := filepath.Join(dataDir, "repo", repo.Path)
+		if info, err := os.Stat(localRepo); err == nil && info.IsDir() {
+			return localRepo
+		}
+	}
+	// Priority 2: local workspace repo
+	if shouldUseLocalBundles(wsRepoDir, &repo) {
+		if repo.Path != "" {
+			return filepath.Join(wsRepoDir, repo.Path)
+		}
+		return wsRepoDir
+	}
+	// Priority 3: cloned repo
+	dir := filepath.Join(dataDir, "bundles", repo.ID)
+	if repo.Path != "" {
+		dir = filepath.Join(dir, repo.Path)
+	}
+	return dir
+}
+
+// ListAllVersions lists all bundle versions across all configured repos,
+// correctly resolving local workspace paths vs cloned repo paths.
+func (r *Resolver) ListAllVersions(currentRef string) []VersionEntry {
+	wsCfg, wsRepoDir := r.resolveWorkspace()
+
+	var entries []VersionEntry
+	for _, repo := range wsCfg.BundleRepos {
+		bundlesDir := ResolveBundleRepoDir(r.dataDir, wsRepoDir, repo)
+		for _, v := range ListBundleVersions(bundlesDir) {
+			ref := repo.ID + ":" + v
+			entries = append(entries, VersionEntry{
+				Repo:    repo.ID,
+				Key:     v,
+				Ref:     ref,
+				Current: ref == currentRef,
+			})
+		}
+	}
+	return entries
+}
+
 // ListBundleVersions lists available bundle version keys in a given bundles sub-directory.
 func ListBundleVersions(bundlesDir string) []string {
 	entries, err := os.ReadDir(bundlesDir)
@@ -606,6 +693,13 @@ func ListBundleVersions(bundlesDir string) []string {
 func findLatestBundle(bundlesDir string) (string, error) {
 	entries, err := os.ReadDir(bundlesDir)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			// Directory doesn't exist — repo layout is likely different
+			// (e.g. bundles live elsewhere or are not yet published). This
+			// is benign for callers that only probe Resolve(LATEST); wrap
+			// with ErrNoBundles so they can detect and demote the warning.
+			return "", fmt.Errorf("list bundles in %s: %w", bundlesDir, ErrNoBundles)
+		}
 		return "", fmt.Errorf("list bundles in %s: %w", bundlesDir, err)
 	}
 
@@ -625,7 +719,7 @@ func findLatestBundle(bundlesDir string) (string, error) {
 		}
 	}
 	if latest == "" {
-		return "", fmt.Errorf("no bundles found in %s", bundlesDir)
+		return "", fmt.Errorf("%w in %s", ErrNoBundles, bundlesDir)
 	}
 	return latest, nil
 }

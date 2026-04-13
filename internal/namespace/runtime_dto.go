@@ -38,6 +38,14 @@ func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 	}
 }
 
+// AppliedConfig returns the config currently driving this runtime (the "applied" config).
+// Returns nil if the runtime was never started.
+func (r *Runtime) AppliedConfig() *Config {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.config
+}
+
 // KindToString converts an ApplicationKind to its API string representation.
 func KindToString(k appdef.ApplicationKind) string {
 	switch k {
@@ -66,7 +74,7 @@ func (r *Runtime) generateLinks() []api.LinkDto {
 	}
 
 	links := []api.LinkDto{
-		{Name: "ECOS UI", URL: proxyBase, Icon: "ecos", Order: -100},
+		{Name: "Citeck UI", URL: proxyBase, Icon: "ecos", Order: -100},
 		{Name: "Spring Boot Admin", URL: proxyBase + "/gateway/eapps/admin/wallboard", Icon: "spring", Order: -1},
 		{Name: "RabbitMQ", URL: fmt.Sprintf("http://%s:15672", proxyHost), Icon: "rabbitmq", Order: 2},
 		{Name: "MailHog", URL: fmt.Sprintf("http://%s:8025", proxyHost), Icon: "mailhog", Order: 1},

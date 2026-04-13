@@ -57,7 +57,7 @@ webapps:
 `
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "workspace-v1.yml"), []byte(yml), 0o644))
 
-	cfg := loadWorkspaceConfig(dir)
+	cfg := loadWorkspaceConfig(dir, nil)
 
 	// QuickStartVariants
 	assert.Len(t, cfg.QuickStartVariants, 2)
@@ -138,6 +138,27 @@ func TestFindLatestBundle_NumericVersions(t *testing.T) {
 	assert.Equal(t, "2025.10", got) // not "2025.9" — numeric comparison
 }
 
+// TestFindLatestBundle_ErrNoBundles_MissingDir verifies that a missing
+// bundles directory returns an error that callers can classify via
+// errors.Is(err, ErrNoBundles). This lets `citeck update` distinguish
+// benign "repo has no bundles layout" outcomes from genuine pull errors.
+func TestFindLatestBundle_ErrNoBundles_MissingDir(t *testing.T) {
+	_, err := findLatestBundle(filepath.Join(t.TempDir(), "does-not-exist"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrNoBundles)
+}
+
+// TestFindLatestBundle_ErrNoBundles_EmptyDir verifies that an existing
+// directory with no version YAMLs also surfaces ErrNoBundles.
+func TestFindLatestBundle_ErrNoBundles_EmptyDir(t *testing.T) {
+	dir := t.TempDir()
+	// A non-version file should NOT count as a bundle.
+	os.WriteFile(filepath.Join(dir, "README.md"), []byte("x"), 0o644)
+	_, err := findLatestBundle(dir)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrNoBundles)
+}
+
 func TestCompareBundleVersions(t *testing.T) {
 	// Basic numeric
 	assert.Equal(t, 1, compareBundleVersions("2025.10", "2025.9"))
@@ -198,7 +219,7 @@ func TestCompareBundleVersions_KotlinParity(t *testing.T) {
 
 func TestLoadWorkspaceConfig_MissingFile(t *testing.T) {
 	dir := t.TempDir()
-	cfg := loadWorkspaceConfig(dir)
+	cfg := loadWorkspaceConfig(dir, nil)
 	assert.Nil(t, cfg, "should return nil when no workspace config file found")
 }
 
@@ -284,7 +305,7 @@ EcosProxyApp:
 		"core": "nexus.citeck.ru",
 	}
 
-	def, err := parseBundleFile(path, "2025.1", aliasMap, imageRepoMap)
+	def, err := parseBundleFile(path, "2025.1", aliasMap, imageRepoMap, nil)
 	require.NoError(t, err)
 
 	// Apps under ecos: scope should be resolved
@@ -315,7 +336,7 @@ eapps:
 	require.NoError(t, os.WriteFile(path, []byte(yml), 0o644))
 
 	imageRepoMap := map[string]string{"core": "nexus.citeck.ru"}
-	def, err := parseBundleFile(path, "test", nil, imageRepoMap)
+	def, err := parseBundleFile(path, "test", nil, imageRepoMap, nil)
 	require.NoError(t, err)
 
 	assert.Contains(t, def.Applications, "eapps")

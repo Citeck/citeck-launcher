@@ -34,16 +34,15 @@ func (s *authSetting) CurrentValue(cfg *namespace.Config, _ *config.DaemonConfig
 
 func (s *authSetting) Run(_ *setupContext, cfg *namespace.Config, _ *config.DaemonConfig) error {
 	var choice string
-	err := huh.NewSelect[string]().
+	err := output.RunField(huh.NewSelect[string]().
 		Title(i18n.T("setup.auth.prompt")).
+		Description(i18n.T("hint.select.setting")).
 		Options(
 			huh.NewOption("Keycloak SSO", string(namespace.AuthKeycloak)),
 			huh.NewOption("Basic (username/password)", string(namespace.AuthBasic)),
 			huh.NewOption(i18n.T("setup.back"), backValue),
 		).
-		Value(&choice).
-		WithTheme(output.HuhTheme).
-		Run()
+		Value(&choice))
 	if err != nil {
 		return fmt.Errorf("auth type selection: %w", err)
 	}
@@ -55,8 +54,9 @@ func (s *authSetting) Run(_ *setupContext, cfg *namespace.Config, _ *config.Daem
 
 	if cfg.Authentication.Type == namespace.AuthBasic {
 		var usersStr string
-		err = huh.NewInput().
+		err = output.RunField(huh.NewInput().
 			Title(i18n.T("setup.auth.users_prompt")).
+			Description(i18n.T("hint.input")).
 			Placeholder("admin, user1").
 			Value(&usersStr).
 			Validate(func(val string) error {
@@ -64,9 +64,7 @@ func (s *authSetting) Run(_ *setupContext, cfg *namespace.Config, _ *config.Daem
 					return fmt.Errorf("at least one user is required")
 				}
 				return nil
-			}).
-			WithTheme(output.HuhTheme).
-		Run()
+			}))
 		if err != nil {
 			return fmt.Errorf("users input: %w", err)
 		}

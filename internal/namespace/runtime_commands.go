@@ -133,7 +133,9 @@ func (r *Runtime) UpdateAppDef(appName string, def appdef.ApplicationDef, lock b
 	return nil
 }
 
-// StopApp stops a single app by name. Returns error if not found or not running.
+// StopApp stops a single app by name and marks it as detached.
+// Detached apps are excluded from namespace start/reload/regenerate.
+// Use StartApp to re-attach.
 func (r *Runtime) StopApp(appName string) error {
 	r.mu.Lock()
 	app, ok := r.apps[appName]
@@ -141,18 +143,22 @@ func (r *Runtime) StopApp(appName string) error {
 		r.mu.Unlock()
 		return fmt.Errorf("app %q not found", appName)
 	}
-	if app.ContainerID == "" {
-		r.mu.Unlock()
-		return fmt.Errorf("app %q has no container", appName)
-	}
+
+	// Mark as detached immediately — the user's intent to detach must be
+	// recorded even if the Docker stop fails (container already gone, etc.).
+	r.manualStoppedApps[appName] = true
+
 	containerName := r.docker.ContainerName(appName)
+	containerID := app.ContainerID
 	r.mu.Unlock()
 
 	// Blocking Docker call outside the lock — 2 minute timeout to prevent indefinite hang
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	if err := r.docker.StopAndRemoveContainer(ctx, containerName, 0); err != nil {
-		return fmt.Errorf("stop app %q: %w", appName, err)
+	if containerID != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if err := r.docker.StopAndRemoveContainer(ctx, containerName, 0); err != nil {
+			slog.Warn("StopApp: container stop failed (may already be gone)", "app", appName, "err", err)
+		}
 	}
 
 	r.mu.Lock()
@@ -161,7 +167,6 @@ func (r *Runtime) StopApp(appName string) error {
 		app.ContainerID = ""
 		r.setAppStatus(app, AppStatusStopped)
 	}
-	r.manualStoppedApps[appName] = true
 	r.persistState()
 	r.mu.Unlock()
 	return nil
@@ -305,7 +310,7 @@ func (r *Runtime) restartApp(ctx context.Context, appName string) {
 		stopTimeout = r.defaultStopTimeout
 	}
 	if stopTimeout == 0 {
-		stopTimeout = 10
+		stopTimeout = 15
 	}
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), time.Duration(stopTimeout+5)*time.Second)
 	_ = r.docker.StopAndRemoveContainer(stopCtx, containerName, stopTimeout)

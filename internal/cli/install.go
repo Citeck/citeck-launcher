@@ -15,6 +15,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/acme"
 	"github.com/citeck/citeck-launcher/internal/bundle"
+	"github.com/citeck/citeck-launcher/internal/cli/bundlepicker"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/namespace"
@@ -48,7 +49,13 @@ This extracts workspace config and bundle definitions for offline operation.`,
 				ensureI18n()
 				return runRollback()
 			}
-			return runInstall(info, workspaceZip, offline)
+			err := runInstall(info, workspaceZip, offline)
+			if errors.Is(err, ErrInstallCancelled) {
+				ensureI18n()
+				output.PrintText("%s", t("install.canceled"))
+				return nil
+			}
+			return err
 		},
 	}
 
@@ -122,20 +129,23 @@ func runInstall(info BuildInfo, workspaceZip string, offline bool) (retErr error
 		if ver == "" {
 			ver = "dev"
 		}
-		buildDate := info.BuildDate
-		if buildDate == "" {
-			buildDate = "unknown"
+		label := ver
+		if ver != "dev" && !strings.HasPrefix(ver, "v") {
+			label = "v" + ver
+		}
+		if info.BuildDate != "" && info.BuildDate != "unknown" {
+			label += " (" + info.BuildDate + ")"
 		}
 		fmt.Println() //nolint:forbidigo // CLI output
 		output.PrintText("  %s %s", output.Colorize(output.Green, t("install.alreadyInstalled")),
-			output.Colorize(output.Dim, "v"+ver+" ("+buildDate+")"))
+			output.Colorize(output.Dim, label))
 		fmt.Println() //nolint:forbidigo // CLI output
 		output.PrintText("  %s %s", t("install.setupHint"), output.Colorize(output.Cyan, "citeck setup"))
 		fmt.Println() //nolint:forbidigo // CLI output
 		return nil
 	}
 
-	// --- Step 1: Language (first, so welcome is localized) ---
+	// --- Step 1: Language (first, so welcome is localized; numbering matches quick_start.rst) ---
 	langOptions := make([]string, len(SupportedLocales))
 	for i, loc := range SupportedLocales {
 		langOptions[i] = loc.Code + " (" + loc.Name + ")"
@@ -145,7 +155,7 @@ func runInstall(info BuildInfo, workspaceZip string, offline bool) (retErr error
 	localeCode := strings.SplitN(locale, " ", 2)[0]
 	initI18n(localeCode)
 
-	// --- Step 0: Welcome (in selected language) ---
+	// --- Step 2: Welcome (in selected language) ---
 	fmt.Println()                                                                     //nolint:forbidigo // CLI output
 	fmt.Printf("  %s\n", t("install.welcome.title"))                                  //nolint:forbidigo // CLI output
 	fmt.Println()                                                                     //nolint:forbidigo // CLI output
@@ -159,9 +169,11 @@ func runInstall(info BuildInfo, workspaceZip string, offline bool) (retErr error
 	fmt.Println()                                                                     //nolint:forbidigo // CLI output
 	fmt.Printf("  %s\n", t("install.welcome.canChange"))                               //nolint:forbidigo // CLI output
 	fmt.Println()                                                                     //nolint:forbidigo // CLI output
-	promptConfirm(t("install.welcome.pressEnter"), true)
+	fmt.Printf("  %s  (%s)\n", t("install.welcome.pressEnter"), t("install.welcome.escHint")) //nolint:forbidigo // CLI output
+	fmt.Scanln()                                                                      //nolint:forbidigo // CLI input
 
 	nsCfg := namespace.DefaultNamespaceConfig()
+	nsCfg.Template = "default" // links to workspace template for detachedApps on first start
 	nsCfg.PgAdmin.Enabled = false // default off (use pgAdmin separately if needed)
 	isOffline := offline || workspaceZip != ""
 
@@ -169,8 +181,8 @@ func runInstall(info BuildInfo, workspaceZip string, offline bool) (retErr error
 	var hostname string
 
 hostStep:
-	// --- Step 1: Hostname ---
-	printStepHeader(1, t("install.hostname.label"))
+	// --- Step 3: Hostname --- (1. Language + 2. Welcome precede this; numbering matches quick_start.rst)
+	printStepHeader(3, t("install.hostname.label"))
 	for {
 		hostname = promptInput(t("install.hostname.label"), t("install.hostname.hint"), defaultHost)
 		if hostname != "" {
@@ -183,8 +195,8 @@ hostStep:
 	nsCfg.Proxy.Host = hostname
 	nsCfg.Name = "Citeck"
 
-	// --- Step 2: TLS ---
-	printStepHeader(2, t("install.tls.label"))
+	// --- Step 4: TLS ---
+	printStepHeader(4, t("install.tls.label"))
 	isLocalhost := hostname == "localhost" || hostname == "127.0.0.1"
 	var tlsOptions []string
 	if !isLocalhost && !isOffline {
@@ -214,14 +226,14 @@ hostStep:
 	// Authentication: always Keycloak
 	nsCfg.Authentication.Type = namespace.AuthKeycloak
 
-	// --- Step 3: Release + registry auth ---
+	// --- Step 5: Release + registry auth (registry is a conditional sub-step) ---
 	for {
-		printStepHeader(3, t("install.release.label"))
+		printStepHeader(5, t("install.release.label"))
 		if err := resolveRelease(&nsCfg, isOffline); err != nil {
 			return err
 		}
 
-		// Step 4: Registry credentials (only for registries used by the selected bundle)
+		// Registry credentials sub-step (only for registries used by the selected bundle)
 		wsResolver := bundle.NewResolver(config.DataDir())
 		wsResolver.SetOffline(true)
 		wsCfg := wsResolver.ResolveWorkspaceOnly()
@@ -235,7 +247,7 @@ hostStep:
 			}
 		}
 
-		// Step 4: Snapshot selection (optional demo data).
+		// --- Step 6: Snapshot selection (optional demo data) ---
 		if wsCfg != nil && len(wsCfg.Snapshots) > 0 {
 			nsCfg.Snapshot = selectSnapshot(wsCfg.Snapshots)
 		}
@@ -243,7 +255,8 @@ hostStep:
 		break
 	}
 
-	// --- Write namespace.yml ---
+	// --- Step 7: Save configuration (automatic — no prompt) ---
+	printStepHeader(7, t("install.config.label"))
 	if err := os.MkdirAll(filepath.Dir(nsCfgPath), 0o755); err != nil { //nolint:gosec // G301: namespace config dir needs 0o755
 		return fmt.Errorf("create config dir: %w", err)
 	}
@@ -261,30 +274,20 @@ hostStep:
 	daemonCfg := config.DefaultDaemonConfig()
 	daemonCfg.Locale = localeCode
 
-	// Step 7: Remote Web UI — automatic based on hostname
-	webuiHost := "127.0.0.1"
-	isRemote := hostname != "localhost" && hostname != "127.0.0.1"
-	if isRemote {
-		webuiHost = "0.0.0.0"
-	}
-	webuiPort := findAvailablePort(webuiHost, 7088)
-	daemonCfg.Server.WebUI.Listen = fmt.Sprintf("%s:%d", webuiHost, webuiPort)
+	// Web UI is disabled in server mode for now.
+	daemonCfg.Server.WebUI.Enabled = false
 
 	if saveErr := config.SaveDaemonConfig(daemonCfg); saveErr != nil {
 		return fmt.Errorf("save daemon config: %w", saveErr)
 	}
 	output.PrintText("  %s", t("install.config.daemonWritten", "path", config.DaemonConfigPath()))
 
-	if isRemote {
-		fmt.Println() //nolint:forbidigo // CLI separator
-		generateInstallClientCert()
-	}
-
 	// --- Step 8: System service ---
+	printStepHeader(8, t("install.systemd.label"))
 	installSystemdAndFirewall(port)
 
 	// --- Step 9: Start ---
-	fmt.Println() //nolint:forbidigo // CLI output
+	printStepHeader(9, t("install.start.header"))
 	startNow := promptConfirm(t("install.start.label"), true)
 	if !startNow {
 		printAccessInfo(hostname, port, nsCfg.Proxy.TLS.Enabled, nsCfg.Proxy.TLS.LetsEncrypt)
@@ -293,14 +296,20 @@ hostStep:
 	}
 
 	output.PrintText("  %s", t("install.start.starting"))
-	password, pwdErr := resolvePassword(false)
-	if pwdErr != nil {
-		output.Errf("Could not resolve password: %v. Start manually: citeck start", pwdErr)
-		return nil
-	}
-	if forkErr := forkDaemon(password, false, false, isOffline); forkErr != nil {
-		output.Errf("Failed to start: %v. Start manually: citeck start", forkErr)
-		return nil
+
+	// Prefer systemctl if the service was just installed — this ensures
+	// the daemon is managed by systemd from the start (auto-restart on
+	// crash, correct status in systemctl, clean process lifecycle).
+	if startedViaSystemd := startViaSystemd(); !startedViaSystemd {
+		password, pwdErr := resolvePassword(false)
+		if pwdErr != nil {
+			output.Errf("Could not resolve password: %v. Start manually: citeck start", pwdErr)
+			return nil
+		}
+		if forkErr := forkDaemon(password, false, false, isOffline); forkErr != nil {
+			output.Errf("Failed to start: %v. Start manually: citeck start", forkErr)
+			return nil
+		}
 	}
 	c, waitErr := waitForDaemon(30 * time.Second)
 	if waitErr != nil {
@@ -384,19 +393,40 @@ func configureTLS(nsCfg *namespace.Config, choice string) tlsResult {
 	nsCfg.Proxy.TLS = namespace.TlsConfig{} // reset stale state from previous choice
 	switch choice {
 	case t("install.tls.auto"):
+		// "Auto" is a wizard-time decision only — we resolve it here into a
+		// concrete choice (LE trusted OR self-signed) and store that. No
+		// lingering "auto" marker in namespace.yml; `citeck setup` will
+		// display whichever concrete mode actually applies.
 		nsCfg.Proxy.TLS.Enabled = true
-		nsCfg.Proxy.TLS.LetsEncrypt = true
 		output.PrintText("  %s", t("install.tls.leChecking", "host", nsCfg.Proxy.Host))
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		leErr := acme.TryStaging(ctx, nsCfg.Proxy.Host)
 		cancel()
-		if leErr != nil {
-			for line := range strings.SplitSeq(t("install.tls.leAutoFallback"), "\n") {
-				output.PrintText("  %s", line)
+		leAvailable := leErr == nil
+		rateLimited := false
+		if leAvailable {
+			// Staging passed, but production LE may still be rate-limited from a
+			// previous run on this machine. Check the persisted marker — the
+			// daemon would otherwise silently fall back to self-signed and the
+			// user gets ERR_CERT_AUTHORITY_INVALID.
+			if limited, retryAfter, err := acme.IsRateLimited(config.DataDir(), nsCfg.Proxy.Host); err == nil && limited {
+				output.PrintText("  %s", t("install.tls.leRateLimited", "retryAfter", retryAfter.Format(time.RFC3339)))
+				rateLimited = true
+			}
+		}
+		if leAvailable && !rateLimited {
+			nsCfg.Proxy.TLS.LetsEncrypt = true
+			output.PrintText("  %s", t("install.tls.leStagingOK"))
+		} else {
+			// Fall through to self-signed. LetsEncrypt stays false (zero value)
+			// so the stored config is unambiguously "self-signed". User can
+			// re-run the wizard or `citeck setup tls` to switch to LE later.
+			if leErr != nil {
+				for line := range strings.SplitSeq(t("install.tls.leAutoFallback"), "\n") {
+					output.PrintText("  %s", line)
+				}
 			}
 			generateSelfSignedCert(nsCfg)
-		} else {
-			output.PrintText("  %s", t("install.tls.leAvailable"))
 		}
 	case t("install.tls.leTrusted"):
 		nsCfg.Proxy.TLS.Enabled = true
@@ -568,7 +598,12 @@ func configureRegistryAuth(wsCfg *bundle.WorkspaceConfig, usedPrefixes map[strin
 		return nil // non-fatal — daemon will handle auth at runtime
 	}
 
-	printStepHeader(4, t("install.registry.label"))
+	// Sub-step of step 5 (Release) — shown only when the selected bundle uses
+	// an auth-required registry. Rendered without a step number to avoid
+	// duplicating the "Step 5" header the user just saw.
+	fmt.Println() //nolint:forbidigo // CLI separator
+	fmt.Printf("  %s\n", output.Colorize(output.Cyan, fmt.Sprintf("── %s ──", t("install.registry.label")))) //nolint:forbidigo // CLI sub-step header
+	fmt.Println() //nolint:forbidigo // CLI separator
 
 	for _, repo := range authRepos {
 		host := registryHost(repo.URL)
@@ -647,6 +682,7 @@ func readAdminPasswordFromStore() string {
 }
 
 // openSecretService creates a FileStore + SecretService and unlocks with default password.
+// Encryption is set up by the daemon on first start — this function only unlocks.
 // Returns (service, error). Caller should not use if error is non-nil.
 func openSecretService() (*storage.SecretService, error) {
 	store, err := storage.NewFileStore(config.ConfDir())
@@ -657,16 +693,12 @@ func openSecretService() (*storage.SecretService, error) {
 	if err != nil {
 		return nil, fmt.Errorf("secret service: %w", err)
 	}
-	if !svc.IsEncrypted() {
-		if setupErr := svc.SetMasterPassword(defaultPassword, true); setupErr != nil {
-			return nil, fmt.Errorf("setup encryption: %w", setupErr)
-		}
-	} else if svc.IsDefaultPassword() {
-		if unlockErr := svc.Unlock(defaultPassword); unlockErr != nil {
+	if svc.IsEncrypted() && svc.IsDefaultPassword() {
+		if unlockErr := svc.Unlock(storage.DefaultMasterPassword); unlockErr != nil {
 			return nil, fmt.Errorf("unlock: %w", unlockErr)
 		}
 	}
-	// Custom password: svc stays locked — SaveSecret will return ErrSecretsLocked
+	// Not encrypted yet (daemon hasn't started) or custom password: svc stays locked
 	return svc, nil
 }
 
@@ -755,7 +787,7 @@ func bundleImageRepoIDs(ref bundle.Ref, wsCfg *bundle.WorkspaceConfig) map[strin
 // selectSnapshot shows an optional snapshot picker. Returns selected snapshot ID or "".
 func selectSnapshot(snapshots []bundle.SnapshotDef) string {
 	fmt.Println() //nolint:forbidigo // CLI separator
-	printStepHeader(4, t("install.snapshot.label"))
+	printStepHeader(6, t("install.snapshot.label"))
 
 	options := make([]string, 0, len(snapshots)+1)
 	for _, snap := range snapshots {
@@ -797,12 +829,7 @@ func (rv repoVersions) displayName() string {
 // Returns an error if no releases are available (offline without workspace data).
 func resolveRelease(nsCfg *namespace.Config, offline bool) error {
 	output.PrintText("  %s", t("install.release.fetching"))
-	// Suppress slog during git clone — INFO messages break the wizard output.
-	// Safe: wizard is single-threaded at this point, no concurrent log producers.
-	prevLogger := slog.Default()
-	slog.SetDefault(slog.New(slog.DiscardHandler))
 	repos := discoverRepos(offline)
-	slog.SetDefault(prevLogger)
 
 	// Filter to repos that have at least one version
 	var withVersions []repoVersions
@@ -816,110 +843,71 @@ func resolveRelease(nsCfg *namespace.Config, offline bool) error {
 		return fmt.Errorf("%s\n\n%s", t("install.release.notFound"), t("install.release.notFoundHelp"))
 	}
 
-	ref := pickRelease(withVersions, repos)
+	ref, err := pickRelease(withVersions)
+	if err != nil {
+		return err
+	}
 	nsCfg.BundleRef = ref
 	return nil
 }
 
-// pickRelease shows a top-level menu: latest from each repo + "other" for version browsing.
-func pickRelease(withVersions, allRepos []repoVersions) bundle.Ref {
-	for {
-		// Build top-level options: latest from each repo with versions + "other"
-		options := make([]string, 0, len(withVersions)+1)
-		for _, rv := range withVersions {
-			options = append(options, fmt.Sprintf("%s — %s (%s)", rv.displayName(), rv.versions[0], t("install.release.latest")))
-		}
-		otherLabel := t("install.release.otherVersion")
-		if len(allRepos) > 1 || len(withVersions[0].versions) > 1 {
-			options = append(options, otherLabel)
-		}
+// ErrInstallCancelled signals that the user aborted an install-time picker
+// (Esc / Ctrl+C). Callers may want to treat this as a normal exit rather
+// than an error.
+var ErrInstallCancelled = errors.New("install canceled by user")
 
-		selected := promptSelect(t("install.release.label"), options)
-
-		// "Other version..." selected → drill-down menu
-		if selected == otherLabel {
-			if ref, ok := pickOtherRelease(allRepos); ok {
-				return ref
-			}
-			continue // back pressed → re-show top-level menu
-		}
-
-		// Parse "RepoName — version (latest)" → repo:version
-		for _, rv := range withVersions {
-			if strings.HasPrefix(selected, rv.displayName()+" — ") {
-				ref, _ := bundle.ParseRef(rv.repo.ID + ":" + rv.versions[0])
-				return ref
-			}
-		}
-
-		// Fallback (shouldn't happen)
-		ref, _ := bundle.ParseRef(withVersions[0].repo.ID + ":" + withVersions[0].versions[0])
-		return ref
+// pickRelease shows the tabbed bundle picker (one tab per repo with
+// versions). Returns the selected ref or ErrInstallCancelled if the user
+// cancels the picker.
+func pickRelease(withVersions []repoVersions) (bundle.Ref, error) {
+	tabs := buildInstallTabs(withVersions)
+	title := t("install.release.label")
+	refStr, ok, err := bundlepicker.Pick(title, tabs, pickerHints())
+	if err != nil {
+		return bundle.Ref{}, fmt.Errorf("show picker: %w", err)
 	}
+	if !ok {
+		return bundle.Ref{}, ErrInstallCancelled
+	}
+	ref, parseErr := bundle.ParseRef(refStr)
+	if parseErr != nil {
+		return bundle.Ref{}, fmt.Errorf("parse bundle ref %q: %w", refStr, parseErr)
+	}
+	return ref, nil
 }
 
-// pickOtherRelease shows repo list → version list with back navigation.
-// Returns (ref, true) on selection, (_, false) on back.
-func pickOtherRelease(repos []repoVersions) (bundle.Ref, bool) {
-	for {
-		// Step 1: pick repo
-		repoOptions := make([]string, 0, len(repos)+1)
-		for _, rv := range repos {
-			repoOptions = append(repoOptions, rv.displayName())
-		}
-		backLabel := t("install.release.back")
-		repoOptions = append(repoOptions, backLabel)
-
-		repoChoice := promptSelect(t("install.release.source"), repoOptions)
-		if repoChoice == backLabel {
-			return bundle.Ref{}, false
-		}
-
-		// Find selected repo
-		var selected *repoVersions
-		for i := range repos {
-			if repoChoice == repos[i].displayName() {
-				selected = &repos[i]
-				break
-			}
-		}
-		if selected == nil {
+// buildInstallTabs converts discovered repoVersions into picker tabs,
+// preserving the order returned by discoverRepos. Repos without versions
+// are skipped (the picker filters them anyway).
+func buildInstallTabs(repos []repoVersions) []bundlepicker.Tab {
+	tabs := make([]bundlepicker.Tab, 0, len(repos))
+	for _, rv := range repos {
+		if len(rv.versions) == 0 {
 			continue
 		}
-
-		// Step 2: pick version from selected repo
-		if len(selected.versions) == 0 {
-			output.PrintText("  %s", t("install.release.noVersions"))
-			continue // back to repo selection
+		vs := make([]bundlepicker.Version, 0, len(rv.versions))
+		for i, v := range rv.versions {
+			vs = append(vs, bundlepicker.Version{
+				Ref:    rv.repo.ID + ":" + v,
+				Label:  v,
+				Latest: i == 0,
+			})
 		}
-
-		latestLabel := t("install.release.latest")
-		verBackLabel := t("install.release.back")
-		verOptions := make([]string, 0, len(selected.versions)+1)
-		for i, v := range selected.versions {
-			if i == 0 {
-				verOptions = append(verOptions, v+" ("+latestLabel+")")
-			} else {
-				verOptions = append(verOptions, v)
-			}
-		}
-		verOptions = append(verOptions, verBackLabel)
-
-		verChoice := promptSelect(t("install.release.version"), verOptions)
-		if verChoice == verBackLabel {
-			continue // back to repo selection
-		}
-
-		verChoice = strings.TrimSuffix(verChoice, " ("+latestLabel+")")
-		ref, _ := bundle.ParseRef(selected.repo.ID + ":" + verChoice)
-		return ref, true
+		tabs = append(tabs, bundlepicker.Tab{
+			ID:       rv.repo.ID,
+			Name:     rv.displayName(),
+			Versions: vs,
+		})
 	}
+	return tabs
 }
 
 // discoverRepos loads workspace config and scans for available bundle versions per repo.
 // When online, fetches the workspace repo from GitHub to discover releases.
+// Uses a discard logger so resolver bookkeeping does not break wizard output.
 func discoverRepos(offline bool) []repoVersions {
-	resolver := bundle.NewResolver(config.DataDir())
+	silent := slog.New(slog.DiscardHandler)
+	resolver := bundle.NewResolver(config.DataDir()).WithLogger(silent)
 	resolver.SetOffline(offline)
 	wsCfg := resolver.ResolveWorkspaceOnly()
 	if wsCfg == nil || len(wsCfg.BundleRepos) == 0 {
@@ -960,39 +948,6 @@ func resolveBundleDir(repo bundle.BundlesRepo) string {
 		dir = filepath.Join(dir, repo.Path)
 	}
 	return dir
-}
-
-// findAvailablePort finds an available port starting from startPort.
-func findAvailablePort(host string, startPort int) int {
-	port := startPort
-	for range 10 { // try up to 10 ports
-		addr := fmt.Sprintf("%s:%d", host, port)
-		ln, err := net.Listen("tcp", addr)
-		if err == nil {
-			ln.Close()
-			return port
-		}
-		port++
-	}
-	return startPort // fallback
-}
-
-func generateInstallClientCert() {
-	certPath := filepath.Join(config.WebUICADir(), "admin.crt")
-	p12Path := absInWorkDir("citeck-webui-admin.p12")
-	certPEM, keyPEM, err := tlsutil.GenerateClientCert(certPath, "admin", 365)
-	if err != nil {
-		output.PrintText("  Warning: failed to generate management UI certificate: %v", err)
-		return
-	}
-
-	// Generate .p12 for browser import
-	if p12Data, p12Err := tlsutil.EncodePKCS12(certPEM, keyPEM, ""); p12Err == nil {
-		if writeErr := fsutil.AtomicWriteFile(p12Path, p12Data, 0o600); writeErr == nil {
-			output.PrintText("  %s", t("install.cert.mgmtUiKey", "path", p12Path))
-			output.PrintText("  %s", t("install.cert.mgmtUiHint"))
-		}
-	}
 }
 
 // installSystemdAndFirewall handles the combined systemd + firewall step.
@@ -1046,6 +1001,18 @@ WantedBy=multi-user.target
 			openFirewallPort(platformPort)
 		}
 	}
+}
+
+// startViaSystemd attempts to start the daemon via systemctl.
+// Returns true if successful, false if systemd is not available or the service isn't installed.
+func startViaSystemd() bool {
+	if _, err := exec.LookPath("systemctl"); err != nil {
+		return false
+	}
+	if _, err := os.Stat("/etc/systemd/system/citeck.service"); err != nil {
+		return false
+	}
+	return exec.Command("systemctl", "start", "citeck").Run() == nil
 }
 
 // openFirewallPort opens a TCP port in the system firewall.

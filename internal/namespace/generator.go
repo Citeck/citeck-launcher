@@ -30,7 +30,10 @@ type GenerateOpts struct {
 }
 
 // Generate creates container definitions from a namespace config, bundle, and workspace config.
-func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secrets SystemSecrets, opts ...GenerateOpts) *GenResp {
+// Returns an error if a fatal generation step fails (e.g. rendering the Keycloak
+// init script); callers should abort the reload/start on error rather than
+// deploy a half-configured namespace.
+func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secrets SystemSecrets, opts ...GenerateOpts) (*GenResp, error) {
 	ctx := NewNsGenContext(cfg, bun)
 	ctx.WorkspaceConfig = wsCfg
 	ctx.Secrets = secrets
@@ -53,7 +56,9 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 	generatePostgres(ctx)
 	generateZookeeper(ctx)
 	generateRabbitMQ(ctx)
-	generateKeycloak(ctx)
+	if err := generateKeycloak(ctx); err != nil {
+		return nil, fmt.Errorf("generate keycloak: %w", err)
+	}
 	generateAlfresco(ctx)
 	generateObserver(ctx)
 
@@ -119,7 +124,7 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 		Files:                 ctx.Files,
 		CloudConfig:           ctx.CloudConfig,
 		DependsOnDetachedApps: dependsOnDetached,
-	}
+	}, nil
 }
 
 func generateMailhog(ctx *NsGenContext) {
@@ -257,14 +262,40 @@ func generateRabbitMQ(ctx *NsGenContext) {
 	app.AddEnv("RABBITMQ_MANAGEMENT_ALLOW_WEB_ACCESS", "true")
 	app.AddVolume("rabbitmq2:/var/lib/rabbitmq")
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "256m"}}
+	app.StartupConditions = []appdef.StartupCondition{
+		{Probe: &appdef.AppProbeDef{
+			Exec:             &appdef.ExecProbeDef{Command: []string{"rabbitmq-diagnostics", "check_running", "-q"}},
+			PeriodSeconds:    5,
+			FailureThreshold: 24,
+			TimeoutSeconds:   10,
+		}},
+	}
 	app.LivenessProbe = &appdef.AppProbeDef{
 		Exec:             &appdef.ExecProbeDef{Command: []string{"rabbitmq-diagnostics", "check_running", "-q"}},
 		FailureThreshold: 3,
 		TimeoutSeconds:   5,
 	}
+
+	// Ensure the stable "citeck" SA user exists in RabbitMQ. Webapps connect
+	// as this user so admin-password changes never require recreating webapp
+	// containers. InitActions run after the startup probe (see runtime_app.go).
+	//
+	// Idempotent: add_user fails when the user exists — swallow that, then
+	// always set the current password (keeps SA synced with _citeck_sa). The
+	// "monitoring" tag grants management-UI read access; AMQP publish/consume
+	// is covered by vhost "/" full permissions below.
+	if ctx.Secrets.CiteckSA != "" {
+		saPass := ctx.Secrets.CiteckSA
+		app.InitActions = append(app.InitActions,
+			appdef.AppInitAction{Exec: []string{"rabbitmqctl", "add_user", CiteckSAUser, saPass}},
+			appdef.AppInitAction{Exec: []string{"rabbitmqctl", "change_password", CiteckSAUser, saPass}},
+			appdef.AppInitAction{Exec: []string{"rabbitmqctl", "set_user_tags", CiteckSAUser, "monitoring"}},
+			appdef.AppInitAction{Exec: []string{"rabbitmqctl", "set_permissions", "-p", "/", CiteckSAUser, ".*", ".*", ".*"}},
+		)
+	}
 }
 
-func generateKeycloak(ctx *NsGenContext) {
+func generateKeycloak(ctx *NsGenContext) error {
 	dbName := "citeck_keycloak"
 
 	// Always create keycloak DB in postgres — avoids DB restart when keycloak is later enabled
@@ -275,7 +306,7 @@ func generateKeycloak(ctx *NsGenContext) {
 	}
 
 	if ctx.Config.Authentication.Type != AuthKeycloak {
-		return
+		return nil
 	}
 
 	kcFallback := "keycloak/keycloak:26.4.5"
@@ -332,62 +363,34 @@ func generateKeycloak(ctx *NsGenContext) {
 		TimeoutSeconds:   5,
 	}
 
-	// Generate kcadm init script to update client config and admin password
-	// in existing Keycloak DBs. Runs after keycloak startup probe passes.
+	// Generate kcadm init script. Uses a dedicated "citeck" service account
+	// in the master realm so that admin password changes and snapshot
+	// imports don't break launcher operations. The script body lives in
+	// internal/appfiles/embedded/keycloak/init.sh.tmpl; see RenderKeycloakInitScript.
 	{
-		baseURL := ctx.ProxyBaseURL()
-		oidcSecret := ctx.Secrets.OIDC
-		adminPass := ctx.Secrets.AdminPasswordOrDefault()
-		var scriptParts []string
-
-		// Try logging in with the target password first; fall back to "admin"
-		// (covers fresh installs and snapshot imports where KC still has default creds).
-		scriptParts = append(scriptParts, fmt.Sprintf(`#!/bin/bash
-set -e
-KCADM=/opt/keycloak/bin/kcadm.sh
-ADMIN_PASS=%q
-if $KCADM config credentials --server http://localhost:8080 \
-    --realm master --user admin --password "$ADMIN_PASS" 2>/dev/null; then
-  CURRENT_PASS="$ADMIN_PASS"
-elif $KCADM config credentials --server http://localhost:8080 \
-    --realm master --user admin --password admin 2>/dev/null; then
-  CURRENT_PASS=admin
-else
-  echo "ERROR: cannot authenticate to keycloak as admin" >&2
-  exit 1
-fi`, adminPass),
-			// Update OIDC client config
-			`CID=$($KCADM get clients -r ecos-app \
-    -q clientId=ecos-proxy-app --fields id \
-    --format csv --noquotes | head -1)
-[ -z "$CID" ] && { echo "WARN: ecos-proxy-app client not found"; exit 0; }`)
-
-		if ctx.ProxyHost() != "localhost" || ctx.TLSEnabled() {
-			scriptParts = append(scriptParts, fmt.Sprintf(
-				`$KCADM update "clients/$CID" -r ecos-app -s 'redirectUris=["%s*"]'`, baseURL))
+		script, err := appfiles.RenderKeycloakInitScript(appfiles.KeycloakInitParams{
+			SAUser:        CiteckSAUser,
+			SAPassword:    ctx.Secrets.CiteckSA,
+			LegacySAUser:  LegacyCiteckSAUser,
+			AdminPassword: ctx.Secrets.AdminPasswordOrDefault(),
+			BaseURL:       ctx.ProxyBaseURL(),
+			OIDCSecret:    ctx.Secrets.OIDC,
+			ProxyPublic:   ctx.ProxyHost() != "localhost" || ctx.TLSEnabled(),
+		})
+		if err != nil {
+			// Surface rendering failures: a missing init script breaks admin
+			// password application, SA bootstrap, and OIDC client setup.
+			// Aborting generation is preferable to silently producing a
+			// namespace that cannot authenticate itself.
+			return fmt.Errorf("render keycloak init script: %w", err)
 		}
-		scriptParts = append(scriptParts, fmt.Sprintf(
-			`$KCADM update "clients/$CID" -r ecos-app -s 'secret=%s'`, oidcSecret))
-
-		// Apply admin password if current is still "admin" (snapshot import / fresh DB).
-		if adminPass != "admin" {
-			scriptParts = append(scriptParts, fmt.Sprintf(`
-# Set admin password in both realms if it differs from the target
-if [ "$CURRENT_PASS" = "admin" ]; then
-  echo "Applying generated admin password..."
-  $KCADM set-password -r ecos-app --username admin --new-password %q
-  $KCADM set-password -r master  --username admin --new-password %q
-  echo "Admin password applied."
-fi`, adminPass, adminPass))
-		}
-
-		script := strings.Join(scriptParts, "\n") + "\n"
 		ctx.Files["keycloak/update-client-config.sh"] = []byte(script)
 		app.AddVolume("./keycloak/update-client-config.sh:/opt/keycloak/scripts/update-client-config.sh")
 		app.InitActions = append(app.InitActions, appdef.AppInitAction{
 			Exec: []string{"sh", "-c", "bash /opt/keycloak/scripts/update-client-config.sh"},
 		})
 	}
+	return nil
 }
 
 func generateAlfresco(ctx *NsGenContext) {
@@ -584,11 +587,19 @@ func generateObserver(ctx *NsGenContext) {
 	obs.AddEnv("AUTH_JWT_SECRET", ctx.Secrets.JWT)
 	obs.AddEnv("CORS_ALLOWED_ORIGINS", "*")
 
-	// Infrastructure monitoring — RabbitMQ via Management API
+	// Infrastructure monitoring — RabbitMQ via Management API. Uses the
+	// stable "citeck" SA (monitoring tag) so admin-password rotations don't
+	// invalidate observer's credentials.
 	obs.AddEnv("RMQ_MONITOR_ENABLED", "true")
 	obs.AddEnv("RMQ_MONITOR_URL", fmt.Sprintf("http://%s:15672", RMQHost))
-	obs.AddEnv("RMQ_MONITOR_USER", "admin")
-	obs.AddEnv("RMQ_MONITOR_PASSWORD", ctx.Secrets.AdminPasswordOrDefault())
+	obsRMQUser := "admin"
+	obsRMQPass := ctx.Secrets.AdminPasswordOrDefault()
+	if ctx.Secrets.CiteckSA != "" {
+		obsRMQUser = CiteckSAUser
+		obsRMQPass = ctx.Secrets.CiteckSA
+	}
+	obs.AddEnv("RMQ_MONITOR_USER", obsRMQUser)
+	obs.AddEnv("RMQ_MONITOR_PASSWORD", obsRMQPass)
 
 	// Infrastructure monitoring — PostgreSQL via pg_stat views
 	obs.AddEnv("PG_MONITOR_ENABLED", "true")
@@ -638,11 +649,11 @@ func generateObserver(ctx *NsGenContext) {
 		"zookeeper.hosts": "localhost:2181",
 		// Auth
 		"auth.jwt_secret": ctx.Secrets.JWT,
-		// Infrastructure monitoring — RabbitMQ
+		// Infrastructure monitoring — RabbitMQ (citeck SA; see above)
 		"rmq_monitor.enabled":  true,
 		"rmq_monitor.url":      "http://localhost:15672",
-		"rmq_monitor.user":     "admin",
-		"rmq_monitor.password": ctx.Secrets.AdminPasswordOrDefault(),
+		"rmq_monitor.user":     obsRMQUser,
+		"rmq_monitor.password": obsRMQPass,
 		// Infrastructure monitoring — ZooKeeper
 		"zk_monitor.enabled": true,
 		"zk_monitor.hosts":   "localhost:2181",
@@ -755,7 +766,10 @@ func generateProxy(ctx *NsGenContext) {
 	app.AddEnv("RABBITMQ_TARGET", fmt.Sprintf("%s:15672", RMQHost))
 	app.AddEnv("ENABLE_LOGGING", "warn")
 	app.AddEnv("ENABLE_SERVER_STATUS", "true")
-	app.AddEnv("MAILHOG_TARGET", MailhogHost+":8025")
+	// Mailhog target only when mailhog is present (no external email configured)
+	if ctx.Config.Email == nil {
+		app.AddEnv("MAILHOG_TARGET", MailhogHost+":8025")
+	}
 	app.AddEnv("ECOS_PAGE_TITLE", "Citeck Launcher")
 
 	proxyImg := ctx.Config.Proxy.Image
@@ -912,20 +926,37 @@ func generateWebapp(name string, ctx *NsGenContext) {
 	app.AddPort(fmt.Sprintf("%d:%d", port, port))
 	app.AddDependsOn(ZKHost)
 	app.AddDependsOn(RMQHost)
-	if ctx.Applications[appdef.AppKeycloak] != nil {
-		app.AddDependsOn(appdef.AppKeycloak)
-	}
+	// Always declare the keycloak dependency so the webapp's deployment hash
+	// stays stable across auth-mode switches (KEYCLOAK ↔ BASIC). In BASIC mode
+	// the keycloak container is not generated; waitForDeps treats missing deps
+	// as satisfied, so startup ordering still works correctly. Without this,
+	// flipping auth mode churns every webapp container unnecessarily.
+	app.AddDependsOn(appdef.AppKeycloak)
 
 	if javaOpts != "" {
 		app.AddEnv("JAVA_OPTS", strings.TrimSpace(javaOpts))
 	}
 
-	// Process data sources from workspace config
 	processWebappDataSources(name, app, ctx)
+	configureWebappProbes(name, app, ctx, port)
 
-	// Startup probe: HTTP health check.
-	// 60 attempts × 10s = 10 min — Java webapps can be slow on first start
-	// (class loading, DB migrations, demo data import).
+	// EAPPS special handling: add init containers from bundle citeckApps
+	applyEappsInitContainers(name, app, ctx)
+
+	// External SMTP for notifications app
+	if ctx.Config.Email != nil && name == appdef.AppNotifications {
+		applyEmailConfig(app, ctx)
+	}
+
+	// External S3 for content app
+	if ctx.Config.S3 != nil && name == appdef.AppContent {
+		applyS3Config(app, ctx)
+	}
+}
+
+// configureWebappProbes sets startup and liveness probes for a webapp.
+func configureWebappProbes(name string, app *AppBuilder, ctx *NsGenContext, port int) {
+	// Startup probe: 90 × 10s = 15 min — Java webapps can be slow on first start.
 	app.StartupConditions = []appdef.StartupCondition{
 		{Probe: &appdef.AppProbeDef{
 			HTTP: &appdef.HTTPProbeDef{
@@ -933,12 +964,11 @@ func generateWebapp(name string, ctx *NsGenContext) {
 				Port: port,
 			},
 			PeriodSeconds:    10,
-			FailureThreshold: 60,
+			FailureThreshold: 90,
 			TimeoutSeconds:   5,
 		}},
 	}
 
-	// Liveness probe (skip if disabled in namespace config)
 	livenessDisabled := false
 	if wp, ok := ctx.Config.Webapps[name]; ok {
 		livenessDisabled = wp.LivenessDisabled
@@ -950,42 +980,27 @@ func generateWebapp(name string, ctx *NsGenContext) {
 			TimeoutSeconds:   5,
 		}
 	}
-
-	// EAPPS special handling: add init containers from bundle citeckApps
-	applyEappsInitContainers(name, app, ctx)
-
-	// External SMTP for notifications app
-	if ctx.Config.Email != nil && name == appdef.AppNotifications {
-		applyEmailConfig(name, ctx)
-	}
-
-	// External S3 for content app
-	if ctx.Config.S3 != nil && name == appdef.AppContent {
-		applyS3Config(app, ctx)
-	}
 }
 
-// applyEmailConfig configures external SMTP settings for the notifications app via cloud config.
-func applyEmailConfig(name string, ctx *NsGenContext) {
+// applyEmailConfig configures external SMTP settings for the notifications app
+// via environment variables. Env vars override the bundle default (SPRING_MAIL_HOST=mailhog).
+func applyEmailConfig(app *AppBuilder, ctx *NsGenContext) {
 	email := ctx.Config.Email
 	protocol := "smtp"
 	if email.TLS {
 		protocol = "smtps"
 	}
-	if ctx.CloudConfig[name] == nil {
-		ctx.CloudConfig[name] = make(map[string]any)
-	}
-	cc := ctx.CloudConfig[name]
-	cc["spring.mail.host"] = email.Host
-	cc["spring.mail.port"] = email.Port
-	cc["spring.mail.protocol"] = protocol
-	cc["email.notification.from"] = email.From
+	app.AddEnv("SPRING_MAIL_HOST", email.Host)
+	app.AddEnv("SPRING_MAIL_PORT", fmt.Sprintf("%d", email.Port))
+	app.AddEnv("SPRING_MAIL_PROTOCOL", protocol)
+	app.AddEnv("ECOS_NOTIFICATIONS_EMAIL_FROM_DEFAULT", email.From)
+	app.AddEnv("ECOS_NOTIFICATIONS_EMAIL_FROM_FIXED", email.From)
 	if email.Username != "" {
-		cc["spring.mail.username"] = email.Username
+		app.AddEnv("SPRING_MAIL_USERNAME", email.Username)
 	}
 	if email.Password != "" {
 		if pwd, err := resolveSecret(ctx.SecretReader, email.Password); err == nil {
-			cc["spring.mail.password"] = pwd
+			app.AddEnv("SPRING_MAIL_PASSWORD", pwd)
 		} else {
 			slog.Warn("Failed to resolve email password secret", "error", err)
 		}
@@ -1027,12 +1042,17 @@ func applyEappsInitContainers(name string, app *AppBuilder, ctx *NsGenContext) {
 }
 
 // addWebappInfraEnv sets shared infrastructure env vars (RabbitMQ host +
-// password) on a webapp builder. Extracted from generateWebapp to keep its
+// credentials) on a webapp builder. Extracted from generateWebapp to keep its
 // cyclomatic complexity under the linter threshold.
+//
+// Webapps connect to RabbitMQ as the stable "citeck" SA (not "admin"), so
+// admin-password rotations don't churn the webapp container spec. The SA
+// is created/synced in RabbitMQ by generateRabbitMQ's InitActions.
 func addWebappInfraEnv(app *AppBuilder, ctx *NsGenContext) {
 	app.AddEnv("ECOS_WEBAPP_RABBITMQ_HOST", RMQHost)
-	if ctx.Secrets.AdminPassword != "" {
-		app.AddEnv("ECOS_WEBAPP_RABBITMQ_PASSWORD", ctx.Secrets.AdminPassword)
+	if ctx.Secrets.CiteckSA != "" {
+		app.AddEnv("ECOS_WEBAPP_RABBITMQ_USERNAME", CiteckSAUser)
+		app.AddEnv("ECOS_WEBAPP_RABBITMQ_PASSWORD", ctx.Secrets.CiteckSA)
 	}
 }
 
@@ -1243,12 +1263,10 @@ func flatMapToYAML(m map[string]any) string {
 // config- and secrets-dependent ones. Used by applyWebappDefaults when
 // populating environment variables from workspace defaults.
 //
-// ${KK_ADMIN_PASSWORD} is sourced from ctx.Secrets.AdminPassword — the
-// same value the daemon uses to bootstrap the keycloak master admin and
-// the one shown to the user at the end of the install wizard. Falls back
-// to "admin" when secrets aren't populated (e.g. unit tests, or the
-// keycloak bundle defaults are referenced before the daemon has
-// generated the system secret).
+// ${KK_ADMIN_USER} and ${KK_ADMIN_PASSWORD} resolve to the "citeck" service
+// account credentials. Webapps use these to authenticate to Keycloak for
+// admin operations (user management, role checks). Using the SA instead
+// of admin decouples webapp auth from the user-facing admin password.
 func resolveTemplateVarsWithContext(s string, ctx *NsGenContext) string {
 	kkEnabled := "false"
 	if ctx != nil && ctx.Config != nil && ctx.Config.Authentication.Type == AuthKeycloak {
@@ -1256,10 +1274,12 @@ func resolveTemplateVarsWithContext(s string, ctx *NsGenContext) string {
 	}
 	// KK_ADMIN_URL is always set (Kotlin NsGenContext.VARS)
 	kkAdminURL := fmt.Sprintf("http://%s:8080", KKHost)
-	kkAdminUser := "admin"
-	kkAdminPassword := "admin"
-	if ctx != nil && ctx.Secrets.AdminPassword != "" {
-		kkAdminPassword = ctx.Secrets.AdminPassword
+	// Use the dedicated "citeck" SA for webapp→Keycloak integration.
+	// This avoids coupling webapps to the user-facing admin password.
+	kkAdminUser := CiteckSAUser
+	kkAdminPassword := "admin" // fallback for tests
+	if ctx != nil && ctx.Secrets.CiteckSA != "" {
+		kkAdminPassword = ctx.Secrets.CiteckSA
 	}
 	s = strings.ReplaceAll(s, "${KK_ENABLED}", kkEnabled)
 	s = strings.ReplaceAll(s, "${KK_ADMIN_URL}", kkAdminURL)

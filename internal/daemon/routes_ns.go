@@ -14,6 +14,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/form"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/namespace"
+	"github.com/citeck/citeck-launcher/internal/storage"
 	"gopkg.in/yaml.v3"
 )
 
@@ -308,7 +309,7 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 
 	// Always encrypt secrets with the default password on namespace creation
 	if !d.secretService.IsEncrypted() {
-		if encErr := d.secretService.SetMasterPassword("citeck", true); encErr != nil {
+		if encErr := d.secretService.SetMasterPassword(storage.DefaultMasterPassword, true); encErr != nil {
 			slog.Error("Failed to set up secrets encryption during namespace creation", "err", encErr)
 		} else {
 			slog.Info("Secrets encrypted with default password during namespace creation")
@@ -349,17 +350,9 @@ func (d *Daemon) handleListBundles(w http.ResponseWriter, _ *http.Request) {
 }
 
 // resolveBundleDir returns the on-disk directory for a bundle repo.
-// Checks local workspace repo first (offline import at data/repo/), then cloned bundles dir.
+// Delegates to the shared ResolveBundleRepoDir which handles offline import,
+// workspace repo, and cloned repo priorities.
 func (d *Daemon) resolveBundleDir(repo bundle.BundlesRepo) string {
-	if repo.Path != "" {
-		localRepo := filepath.Join(config.DataDir(), "repo", repo.Path)
-		if _, err := os.Stat(localRepo); err == nil {
-			return localRepo
-		}
-	}
-	bundlesDir := config.ResolveBundlesDir(d.workspaceID, repo.ID)
-	if repo.Path != "" {
-		bundlesDir = filepath.Join(bundlesDir, repo.Path)
-	}
-	return bundlesDir
+	wsRepoDir := filepath.Join(config.DataDir(), "bundles", "workspace")
+	return bundle.ResolveBundleRepoDir(config.DataDir(), wsRepoDir, repo)
 }

@@ -278,3 +278,51 @@ func TestSetFormat_JSONDisablesColors(t *testing.T) {
 	SetFormat(FormatText)
 	SetColorsEnabled(true)
 }
+
+// B6-08: non-TTY stdout (pipes, redirects, CI) must drop ANSI escapes so
+// that `citeck status | grep -cw RUNNING` works correctly. NO_COLOR
+// (https://no-color.org/) must also disable colors.
+func TestComputeColorsEnabled_NoColorEnvDisables(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	if computeColorsEnabled() {
+		t.Error("NO_COLOR=1 must disable colors")
+	}
+}
+
+func TestComputeColorsEnabled_NonTTYDisables(t *testing.T) {
+	// In `go test` stdout is a pipe (not a TTY) unless running under a
+	// real terminal, so IsTTY() returns false here — verify that alone
+	// drops colors even when NO_COLOR is unset.
+	t.Setenv("NO_COLOR", "")
+	if IsTTY() {
+		t.Skip("stdout happens to be a TTY in this test environment; skipping non-TTY check")
+	}
+	if computeColorsEnabled() {
+		t.Error("non-TTY stdout must disable colors")
+	}
+}
+
+func TestColorize_NoANSIWhenColorsDisabled(t *testing.T) {
+	prev := colorsEnabled
+	SetColorsEnabled(false)
+	defer SetColorsEnabled(prev)
+
+	got := Colorize(Green, "RUNNING")
+	if got != "RUNNING" {
+		t.Errorf("expected bare text, got %q", got)
+	}
+	if strings.Contains(got, "\x1b[") {
+		t.Errorf("unexpected ANSI escape in %q", got)
+	}
+}
+
+func TestColorizeStatus_NoANSIWhenColorsDisabled(t *testing.T) {
+	prev := colorsEnabled
+	SetColorsEnabled(false)
+	defer SetColorsEnabled(prev)
+
+	got := ColorizeStatus("RUNNING")
+	if strings.Contains(got, "\x1b[") {
+		t.Errorf("ColorizeStatus must drop ANSI when colors are off, got %q", got)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -90,14 +91,60 @@ func (s *RenewalService) rateLimitPath() string {
 	return filepath.Join(s.client.dataDir, "rate-limit-until")
 }
 
-// isRateLimited checks if we're within a rate limit backoff window.
-func (s *RenewalService) isRateLimited() bool {
-	data, err := os.ReadFile(s.rateLimitPath())
+// rateLimitMarkerPath returns the marker path for a given ACME data directory.
+// The caller passes the same `dataDir` value as `acme.NewClient` — we append
+// the "acme" subdir and marker filename ourselves to match the layout used
+// by the renewal service at runtime.
+func rateLimitMarkerPath(dataDir string) string {
+	return filepath.Join(dataDir, "acme", "rate-limit-until")
+}
+
+// readRateLimitMarker parses the marker file and returns the "until" time.
+// Returns (zero, false, nil) when the marker is absent or malformed (non-fatal).
+// Returns (_, _, err) only on unexpected I/O errors other than "not exist".
+func readRateLimitMarker(path string) (time.Time, bool, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // G304: path is derived from internal dataDir
 	if err != nil {
-		return false
+		if os.IsNotExist(err) {
+			return time.Time{}, false, nil
+		}
+		return time.Time{}, false, fmt.Errorf("read rate-limit marker: %w", err)
 	}
 	until, err := time.Parse(time.RFC3339, strings.TrimSpace(string(data)))
 	if err != nil {
+		return time.Time{}, false, nil
+	}
+	return until, true, nil
+}
+
+// IsRateLimited reports whether a persisted rate-limit marker blocks Let's
+// Encrypt issuance for `host` as of now. `dataDir` is the ACME data directory
+// (the same value passed to NewClient — the "acme" subdir is appended here).
+//
+// The marker is currently host-agnostic (one file per daemon, not per-host),
+// so `host` is accepted for future-proofing and logging but is not consulted.
+//
+// Returns (rateLimited, retryAfter, err). retryAfter is zero when !rateLimited.
+// Errors are only returned for unexpected I/O failures; a missing or malformed
+// marker is reported as "not rate-limited" without error.
+func IsRateLimited(dataDir, _ string) (bool, time.Time, error) {
+	until, ok, err := readRateLimitMarker(rateLimitMarkerPath(dataDir))
+	if err != nil {
+		return false, time.Time{}, err
+	}
+	if !ok {
+		return false, time.Time{}, nil
+	}
+	if time.Now().Before(until) {
+		return true, until, nil
+	}
+	return false, time.Time{}, nil
+}
+
+// isRateLimited checks if we're within a rate limit backoff window.
+func (s *RenewalService) isRateLimited() bool {
+	until, ok, err := readRateLimitMarker(s.rateLimitPath())
+	if err != nil || !ok {
 		return false
 	}
 	return time.Now().Before(until)

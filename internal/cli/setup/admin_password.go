@@ -3,15 +3,13 @@ package setup
 import (
 	"errors"
 	"fmt"
-	"slices"
 
 	"github.com/charmbracelet/huh"
-	"github.com/citeck/citeck-launcher/internal/output"
-	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/client"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/i18n"
 	"github.com/citeck/citeck-launcher/internal/namespace"
+	"github.com/citeck/citeck-launcher/internal/output"
 )
 
 // adminPasswordSetting resets the ecos-app realm admin password via the
@@ -29,11 +27,7 @@ func (s *adminPasswordSetting) TargetFile() TargetFile { return NamespaceFile }
 // runSingleSetting (no diff, no confirm, no file writes, no reload).
 func (s *adminPasswordSetting) isActionSetting() {}
 
-// Available only when keycloak is part of the bundle. The reset goes through
-// kcadm.sh inside the keycloak container, so the container must exist.
-func (s *adminPasswordSetting) Available(_ *namespace.Config, apps []string) bool {
-	return slices.Contains(apps, appdef.AppKeycloak)
-}
+func (s *adminPasswordSetting) Available(_ *namespace.Config, _ []string) bool { return true }
 
 // CurrentValue is intentionally generic — we don't want to leak the
 // installed password anywhere, even in a masked form, from the menu.
@@ -64,12 +58,11 @@ func (s *adminPasswordSetting) Run(_ *setupContext, _ *namespace.Config, _ *conf
 	fmt.Println()                                       //nolint:forbidigo // CLI output
 	fmt.Println(i18n.T("setup.admin_password.warning")) //nolint:forbidigo // CLI output
 	fmt.Println()                                       //nolint:forbidigo // CLI output
-	var proceed bool
-	if confirmErr := huh.NewConfirm().
+	proceed := true
+	if confirmErr := output.RunField(output.NewConfirm().
 		Title(i18n.T("setup.admin_password.confirmApply")).
-		Value(&proceed).
-		WithTheme(output.HuhTheme).
-		Run(); confirmErr != nil || !proceed {
+		Description(i18n.T("hint.confirm")).
+		Value(&proceed)); confirmErr != nil || !proceed {
 		fmt.Println(i18n.T("setup.admin_password.canceled")) //nolint:forbidigo // CLI output
 		return nil
 	}
@@ -90,15 +83,14 @@ func promptAdminPassword() (string, error) {
 		modeGenerate = "generate"
 	)
 	var mode string
-	if err := huh.NewSelect[string]().
+	if err := output.RunField(huh.NewSelect[string]().
 		Title(i18n.T("setup.admin_password.mode")).
+		Description(i18n.T("hint.select.setting")).
 		Options(
 			huh.NewOption(i18n.T("setup.admin_password.modeManual"), modeManual),
 			huh.NewOption(i18n.T("setup.admin_password.modeGenerate"), modeGenerate),
 		).
-		Value(&mode).
-		WithTheme(output.HuhTheme).
-		Run(); err != nil {
+		Value(&mode)); err != nil {
 		return "", fmt.Errorf("password mode selection: %w", err)
 	}
 
@@ -112,7 +104,7 @@ func promptAdminPassword() (string, error) {
 	}
 
 	var newPass, confirmPass string
-	err := huh.NewForm(
+	err := output.RunForm(huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().
 				Title(i18n.T("setup.admin_password.prompt")).
@@ -136,7 +128,7 @@ func promptAdminPassword() (string, error) {
 					return nil
 				}),
 		),
-	).WithTheme(output.HuhTheme).Run()
+	))
 	if err != nil {
 		return "", fmt.Errorf("password input: %w", err)
 	}

@@ -166,7 +166,7 @@ func main() {
 
 	app := application.New(application.Options{
 		Name:        "Citeck Launcher",
-		Description: "Citeck ECOS Platform Launcher",
+		Description: "Citeck Platform Launcher",
 		Icon:        citeckLogo,
 		Assets: application.AssetOptions{
 			Handler: loadingHandler,
