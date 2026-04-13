@@ -98,11 +98,18 @@ func Pick(title string, tabs []Tab, hints KeyHints) (ref string, ok bool, err er
 		cursor: initialCursor(visible[0]),
 	}
 
+	// Don't pass tea.WithInput: the default behavior auto-falls back to
+	// /dev/tty when stdin isn't a terminal AND — crucially — puts the
+	// terminal into raw mode so arrow keys are intercepted as escape
+	// sequences instead of leaking to the parent shell.
+	//
+	// WithInput(os.Stdin) wrapped in an io.Reader return type switches
+	// bubbletea to customInput mode where the tty-detection path may
+	// silently skip term.MakeRaw, and arrow keystrokes (^[[A/B/C/D)
+	// queue into the shell's input buffer after the picker exits.
 	prog := tea.NewProgram(m,
 		tea.WithOutput(teaOutput()),
-		tea.WithInput(teaInput()),
-		tea.WithAltScreen(), // restores prior screen on exit so picker hints
-		// don't linger above the next prompt.
+		tea.WithAltScreen(),
 	)
 	final, runErr := prog.Run()
 	if runErr != nil {

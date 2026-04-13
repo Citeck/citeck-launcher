@@ -22,6 +22,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/citeck/citeck-launcher/internal/storage"
 	"github.com/citeck/citeck-launcher/internal/tlsutil"
+	"github.com/charmbracelet/huh"
 	dockerclient "github.com/docker/docker/client"
 	"github.com/docker/docker/api/types/registry"
 	"github.com/spf13/cobra"
@@ -156,21 +157,33 @@ func runInstall(info BuildInfo, workspaceZip string, offline bool) (retErr error
 	initI18n(localeCode)
 
 	// --- Step 2: Welcome (in selected language) ---
-	fmt.Println()                                                                     //nolint:forbidigo // CLI output
-	fmt.Printf("  %s\n", t("install.welcome.title"))                                  //nolint:forbidigo // CLI output
-	fmt.Println()                                                                     //nolint:forbidigo // CLI output
-	fmt.Printf("  %s\n", t("install.welcome.subtitle"))                               //nolint:forbidigo // CLI output
-	fmt.Println()                                                                     //nolint:forbidigo // CLI output
-	fmt.Printf("  %s\n", t("install.welcome.whatWillHappen"))                          //nolint:forbidigo // CLI output
-	fmt.Printf("    1. %s  -> %s\n", t("install.welcome.stepConfig"), nsCfgPath)       //nolint:forbidigo // CLI output
-	fmt.Printf("    2. %s  -> %s\n", t("install.welcome.stepDaemon"), config.DaemonConfigPath()) //nolint:forbidigo // CLI output
-	fmt.Printf("    3. %s\n", t("install.welcome.stepService"))                        //nolint:forbidigo // CLI output
-	fmt.Printf("    4. %s\n", t("install.welcome.stepStart"))                          //nolint:forbidigo // CLI output
-	fmt.Println()                                                                     //nolint:forbidigo // CLI output
-	fmt.Printf("  %s\n", t("install.welcome.canChange"))                               //nolint:forbidigo // CLI output
-	fmt.Println()                                                                     //nolint:forbidigo // CLI output
-	fmt.Printf("  %s  (%s)\n", t("install.welcome.pressEnter"), t("install.welcome.escHint")) //nolint:forbidigo // CLI output
-	fmt.Scanln()                                                                      //nolint:forbidigo // CLI input
+	//
+	// Use huh.NewNote for the "press Enter to continue" gate rather than
+	// fmt.Scanln — the latter sometimes reads a phantom newline left over
+	// from the Enter keypress that confirmed the preceding Language Select,
+	// and the welcome screen is skipped without user input. huh.NewNote
+	// shares the same raw-mode input discipline as the Select above and
+	// waits reliably for a fresh Enter.
+	welcomeBody := fmt.Sprintf(
+		"%s\n\n%s\n  1. %s  -> %s\n  2. %s  -> %s\n  3. %s\n  4. %s\n\n%s",
+		t("install.welcome.subtitle"),
+		t("install.welcome.whatWillHappen"),
+		t("install.welcome.stepConfig"), nsCfgPath,
+		t("install.welcome.stepDaemon"), config.DaemonConfigPath(),
+		t("install.welcome.stepService"),
+		t("install.welcome.stepStart"),
+		t("install.welcome.canChange"),
+	)
+	if err := output.RunField(huh.NewNote().
+		Title(t("install.welcome.title")).
+		Description(welcomeBody).
+		Next(true).
+		NextLabel(t("install.welcome.pressEnter"))); err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return ErrInstallCancelled
+		}
+		return fmt.Errorf("welcome: %w", err)
+	}
 
 	nsCfg := namespace.DefaultNamespaceConfig()
 	nsCfg.Template = "default" // links to workspace template for detachedApps on first start
