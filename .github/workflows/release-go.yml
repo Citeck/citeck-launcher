@@ -110,9 +110,6 @@ jobs:
           pattern: citeck-*
           merge-multiple: true
 
-      - name: Copy install script
-        run: cp scripts/install.sh install.sh
-
       - name: Extract changelog
         id: changelog
         env:

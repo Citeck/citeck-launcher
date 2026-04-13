@@ -8,23 +8,23 @@ set -e
 # via lifecycle detection — see internal/cli/installer_lifecycle.go).
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/Citeck/citeck-launcher/release/2.1.0/install.sh | bash
+#   curl -fsSL https://github.com/Citeck/citeck-launcher/releases/latest/download/install.sh | bash
 #   bash install.sh --rollback        # -> delegates to `citeck install --rollback`
-#   bash install.sh --file ./citeck-server_2.1.0_linux_amd64
+#   bash install.sh --file ./citeck-linux-amd64
 #
 # Strategy:
-#   1. If `citeck` is already installed and its SHA256 matches the latest
-#      release binary on GitHub, just run `citeck install` directly —
-#      nothing to download, the binary itself detects "already installed"
+#   1. If `citeck` is already installed and its SHA256 matches the binary
+#      inside the latest release tarball, just run `citeck install` —
+#      nothing to extract, the binary itself detects "already installed"
 #      and hands off to the setup hint.
-#   2. Otherwise download the new binary to a temp location and exec
-#      `<new binary> install`. The binary's lifecycle code copies itself
-#      to /usr/local/bin/citeck, stops the old daemon preserving platform
-#      containers (v2.1.0+ clean detach or v2.0.0 SIGKILL fallback),
-#      swaps the binary atomically, and restarts the daemon.
+#   2. Otherwise download the new release tarball into a cache, verify it
+#      against the published `.sha256` sidecar, extract the binary, and
+#      exec `<extracted binary> install`. The binary's lifecycle code
+#      copies itself to /usr/local/bin/citeck, stops the old daemon
+#      preserving platform containers (v2.1.0+ clean detach or v2.0.0
+#      SIGKILL fallback), swaps the binary atomically, and restarts.
 
 REPO="Citeck/citeck-launcher"
-VERSION_PREFIX="2."  # Only install v2.x releases
 
 log() {
     printf "  %s\n" "$1"
@@ -82,27 +82,34 @@ main() {
 
     fetch_latest_version
 
-    # Compare SHA256 of the installed binary against the release digest.
+    # Fetch the sidecar first so we can reuse a previously-cached tarball
+    # without re-downloading. The sidecar is tiny (~80 bytes).
+    fetch_expected_tarball_hash
+
+    download_tarball_cached
+    extract_binary
+
+    # Compare SHA256 of the installed binary against the one we just extracted.
     # This catches rebuilds of the same version (digest changes, version doesn't).
+    # We compare binary-to-binary, not tarball-to-binary — tarball hash is not
+    # the same as the contained binary's hash.
     LOCAL_HASH=$(sha256_of "$(command -v citeck 2>/dev/null || true)")
-    if [ -n "$LOCAL_HASH" ] && [ "$LOCAL_HASH" = "$REMOTE_DIGEST" ]; then
+    EXTRACTED_HASH=$(sha256_of "$EXTRACTED_BIN")
+    if [ -n "$LOCAL_HASH" ] && [ -n "$EXTRACTED_HASH" ] && [ "$LOCAL_HASH" = "$EXTRACTED_HASH" ]; then
         log "Citeck Launcher ${VERSION} is already installed (hash match), running citeck install..."
         exec citeck install
     fi
 
-    # Need to install or upgrade — download into the installer cache if
-    # not already there, then exec the new binary. The cache path is
-    # exported via CITECK_INSTALLER_CACHE so the binary can clean it up
-    # after a successful install (and leave it in place on failure so a
-    # re-run of install.sh reuses the already-downloaded binary).
-    # We `export` explicitly rather than relying on the "VAR=val func"
-    # prefix form — POSIX explicitly leaves it unspecified whether a
-    # function's command inherits such assignments (issue 7, 2.9.1), so
-    # strict shells like dash may not propagate it through exec sudo -E.
-    download_binary_cached
-    export CITECK_INSTALLER_CACHE="$CACHE_PATH"
-    log "Running ${CACHE_PATH} install..."
-    exec_with_sudo "$CACHE_PATH" install
+    # exec the extracted binary. The cache path is exported via
+    # CITECK_INSTALLER_CACHE so the binary can clean it up after a successful
+    # install (and leave it in place on failure so a re-run reuses it).
+    # We `export` explicitly rather than relying on the "VAR=val func" prefix
+    # form — POSIX explicitly leaves it unspecified whether a function's
+    # command inherits such assignments (issue 7, 2.9.1), so strict shells
+    # like dash may not propagate it through exec sudo -E.
+    export CITECK_INSTALLER_CACHE="$EXTRACTED_BIN"
+    log "Running ${EXTRACTED_BIN} install..."
+    exec_with_sudo "$EXTRACTED_BIN" install
 }
 
 # exec_with_sudo runs the given binary with sudo when the process isn't
@@ -121,6 +128,7 @@ exec_with_sudo() {
 
 check_deps() {
     command -v curl >/dev/null 2>&1 || err "curl is required but not installed"
+    command -v tar >/dev/null 2>&1 || err "tar is required but not installed"
     command -v docker >/dev/null 2>&1 || warn "Docker is not installed — Citeck requires Docker to run"
 }
 
@@ -149,86 +157,104 @@ detect_platform() {
     log "Platform: ${OS}/${ARCH}"
 }
 
+# fetch_latest_version resolves the newest release tag via the HTTP redirect
+# of /releases/latest -> /releases/tag/vX.Y.Z. No GitHub API call, no JSON
+# parsing, no anonymous rate-limit, no proxy/firewall issues. GitHub's
+# /releases/latest only resolves to releases marked "Latest" — pre-releases
+# (including those flagged via the API's `prerelease` bool) are excluded,
+# so we don't need a manual `-*` filter here.
 fetch_latest_version() {
-    log "Fetching latest v${VERSION_PREFIX}x release..."
-    RELEASES_URL="https://api.github.com/repos/${REPO}/releases?per_page=50"
-
-    RESPONSE=$(curl -fsSL "$RELEASES_URL" 2>/dev/null) || err "Failed to fetch releases from GitHub"
-
-    # Find the newest tag matching VERSION_PREFIX. GitHub's API returns releases
-    # ordered newest-first, so the first match wins. Skip semver pre-release
-    # identifiers (v2.1.0-rc1, v2.1.0-beta.1) via the '*-*' pattern — this is
-    # independent of GitHub's own "prerelease" flag, which the Citeck releases
-    # currently set for the entire v2.x series while the Go rewrite stabilizes.
-    TAG=""
-    for candidate in $(printf '%s' "$RESPONSE" | grep '"tag_name"' | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/'); do
-        v="${candidate#v}"
-        case "$v" in
-            *-*) continue ;; # skip semver pre-release identifiers
-        esac
-        case "$v" in
-            ${VERSION_PREFIX}*)
-                TAG="$candidate"
-                break
-                ;;
-        esac
-    done
-
-    [ -z "$TAG" ] && err "No v${VERSION_PREFIX}x release found"
+    log "Resolving latest release..."
+    LATEST_URL=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest") \
+        || err "Failed to resolve latest release (network error)"
+    TAG="${LATEST_URL##*/}"  # e.g. v2.1.0
     VERSION="${TAG#v}"
+    if [ -z "$VERSION" ] || [ "$VERSION" = "latest" ]; then
+        err "Could not resolve latest release tag from ${LATEST_URL}"
+    fi
     log "Latest version: ${VERSION}"
 
-    # Extract SHA256 digest for our platform's binary from the release assets.
-    # GitHub API format: "digest": "sha256:<hex>"
-    ASSET_NAME="citeck-server_${VERSION}_$(uname -s | tr '[:upper:]' '[:lower:]')_${ARCH}"
-    REMOTE_DIGEST=""
-    # Find the asset block, then its digest field. jq-free: grep the name, then
-    # scan forward for digest within the next 20 lines.
-    REMOTE_DIGEST=$(printf '%s' "$RESPONSE" | grep -A 20 "\"name\".*\"${ASSET_NAME}\"" | grep '"digest"' | head -1 | sed 's/.*"sha256:\([^"]*\)".*/\1/' || true)
+    TARBALL="citeck_${VERSION}_${OS}_${ARCH}.tar.gz"
+    BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
 }
 
-download_binary_cached() {
-    # Cache under XDG_CACHE_HOME (default $HOME/.cache). Persists across
-    # install.sh invocations, which means:
-    #   - repeated curl|bash runs don't re-download if the file is already there
-    #   - if the install fails partway through, re-running picks up the same
-    #     binary instead of re-fetching from GitHub
-    # The binary removes this file on successful install via the
-    # CITECK_INSTALLER_CACHE env var wired in main().
-    CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/citeck-installer"
-    FILENAME="citeck-server_${VERSION}_${OS}_${ARCH}"
-    CACHE_PATH="${CACHE_DIR}/${FILENAME}"
+fetch_expected_tarball_hash() {
+    log "Fetching ${TARBALL}.sha256..."
+    SIDECAR=$(curl -fsSL "${BASE_URL}/${TARBALL}.sha256") \
+        || err "Failed to fetch ${TARBALL}.sha256. Check that release ${TAG} has an asset for ${OS}/${ARCH}"
+    EXPECTED_HASH=$(printf '%s' "$SIDECAR" | awk '{print $1}')
+    [ -n "$EXPECTED_HASH" ] || err "Empty SHA256 in sidecar"
+}
 
+# download_tarball_cached puts the release tarball in the installer cache.
+# Cache under XDG_CACHE_HOME (default $HOME/.cache). Persists across
+# install.sh invocations so repeated curl|bash runs don't re-download if
+# the file is already there, and a failed install part-way through can be
+# resumed without re-fetching from GitHub. If a cached file exists but its
+# hash doesn't match the current sidecar, it's removed and re-downloaded.
+download_tarball_cached() {
+    CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/citeck-installer"
+    CACHE_TARBALL="${CACHE_DIR}/${TARBALL}"
     mkdir -p "$CACHE_DIR"
 
-    if [ -x "$CACHE_PATH" ]; then
-        log "Using cached binary: ${CACHE_PATH}"
-        return
+    if [ -f "$CACHE_TARBALL" ]; then
+        CACHED_HASH=$(sha256_of "$CACHE_TARBALL")
+        if [ -n "$CACHED_HASH" ] && [ "$CACHED_HASH" = "$EXPECTED_HASH" ]; then
+            log "Using cached tarball: ${CACHE_TARBALL}"
+            return
+        fi
+        log "Cached tarball hash mismatch — re-downloading"
+        rm -f "$CACHE_TARBALL"
     fi
 
-    DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/${FILENAME}"
+    DOWNLOAD_URL="${BASE_URL}/${TARBALL}"
     log "Downloading ${DOWNLOAD_URL}..."
 
-    # Download to a .tmp sibling first and rename into place so a half-written
-    # file (network drop, Ctrl+C) can't look like a complete cached binary
+    # Download to a .tmp sibling first and rename so a half-written file
+    # (network drop, Ctrl+C) can't look like a complete cached tarball
     # on the next run.
-    TMP="${CACHE_PATH}.tmp"
+    TMP="${CACHE_TARBALL}.tmp"
     if ! curl -fL --progress-bar -o "$TMP" "$DOWNLOAD_URL"; then
         rm -f "$TMP"
         err "Download failed. Check that release ${TAG} has a binary for ${OS}/${ARCH}"
     fi
-    chmod +x "$TMP"
 
-    # Verify download integrity against the GitHub release digest.
-    if [ -n "$REMOTE_DIGEST" ]; then
-        DL_HASH=$(sha256_of "$TMP")
-        if [ -n "$DL_HASH" ] && [ "$DL_HASH" != "$REMOTE_DIGEST" ]; then
-            rm -f "$TMP"
-            err "SHA256 mismatch: expected ${REMOTE_DIGEST}, got ${DL_HASH}"
-        fi
+    DL_HASH=$(sha256_of "$TMP")
+    if [ -z "$DL_HASH" ] || [ "$DL_HASH" != "$EXPECTED_HASH" ]; then
+        rm -f "$TMP"
+        err "SHA256 mismatch: expected ${EXPECTED_HASH}, got ${DL_HASH:-<unknown>}"
     fi
 
-    mv "$TMP" "$CACHE_PATH"
+    mv "$TMP" "$CACHE_TARBALL"
+}
+
+# extract_binary pulls `citeck` out of the cached tarball into a sibling
+# file whose name encodes the version+platform, so successive runs with
+# different versions don't collide and so the binary's lifecycle code
+# sees a stable path via CITECK_INSTALLER_CACHE.
+extract_binary() {
+    EXTRACTED_BIN="${CACHE_DIR}/citeck_${VERSION}_${OS}_${ARCH}"
+
+    # If already extracted and hash matches the tarball's inner binary, reuse.
+    # We skip rechecking the inner binary's own hash (we'd have to re-extract
+    # to compare) — presence + exec bit is good enough; the tarball hash
+    # already verified integrity above.
+    if [ -x "$EXTRACTED_BIN" ]; then
+        log "Using cached extracted binary: ${EXTRACTED_BIN}"
+        return
+    fi
+
+    log "Extracting citeck from tarball..."
+    TMP_EXTRACT="${EXTRACTED_BIN}.tmp"
+    rm -f "$TMP_EXTRACT"
+    # Extract the `citeck` entry directly to stdout so we can write it to
+    # our target path without touching CACHE_DIR with arbitrary tar entries.
+    if ! tar -xzOf "$CACHE_TARBALL" citeck > "$TMP_EXTRACT"; then
+        rm -f "$TMP_EXTRACT"
+        err "Failed to extract citeck binary from ${CACHE_TARBALL}"
+    fi
+    chmod +x "$TMP_EXTRACT"
+    mv "$TMP_EXTRACT" "$EXTRACTED_BIN"
 }
 
 main

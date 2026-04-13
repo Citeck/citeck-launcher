@@ -18,8 +18,6 @@ curl -fsSL https://github.com/Citeck/citeck-launcher/releases/latest/download/in
 
 The install script downloads the latest release for your platform and installs to `/usr/local/bin/`. The wizard sets up the namespace and starts the platform.
 
-> **Note:** If `citeck` is already on `PATH` (for example, pre-deployed by CI/CD or a configuration management tool), skip the download step and run `citeck install` directly.
-
 > **Important:** The `citeck install` command is an **interactive TUI wizard** and requires a real terminal. The wizard prints the generated admin password **once** at the end — make sure to copy and save it, as you won't be able to recover it after closing the screen. If you lose it, reset it via `citeck setup admin-password` (see the [commands reference](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html)). Pressing `Ctrl+C` before the final "write configuration" step exits without making changes; if interrupted later, check `/opt/citeck/conf/` for partial state.
 >
 > Automated / non-interactive install is a future feature — please file an issue if you need it.

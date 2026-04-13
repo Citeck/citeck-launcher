@@ -1,10 +1,17 @@
 #!/bin/sh
 set -e
 
-# Citeck Launcher install script
-# Usage: curl -fsSL https://get.citeck.ru | sh
+# Citeck Launcher — dev helper to pull the latest release onto a server.
+#
+# This is NOT the user-facing installer (see root install.sh for that).
+# It's a minimal dev convenience for manual testing on a remote host:
+# SSH in, run this, and the newest release binary lands in /usr/local/bin.
+# It skips the daemon lifecycle (stop old daemon, container adoption,
+# atomic swap, re-exec) that the real installer performs.
+#
+# Usage: bash scripts/pull-release.sh
 
-REPO="citeck/citeck-launcher"
+REPO="Citeck/citeck-launcher"
 INSTALL_DIR="/usr/local/bin"
 
 detect_os() {
@@ -37,9 +44,15 @@ ARCH=$(detect_arch)
 
 echo "Detecting platform: ${OS}/${ARCH}"
 
-# Get latest release
-LATEST=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
+# Resolve the latest tag via the HTTP redirect of /releases/latest → /releases/tag/vX.Y.Z.
+# No GitHub API call (no anonymous rate-limit, no JSON parsing, no proxy/firewall issues).
+LATEST_URL=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest")
+LATEST="${LATEST_URL##*/}"   # e.g. v2.1.0
 VERSION="${LATEST#v}"
+if [ -z "$VERSION" ] || [ "$VERSION" = "latest" ]; then
+  echo "Error: could not resolve latest release tag" >&2
+  exit 1
+fi
 
 ASSET="citeck_${VERSION}_${OS}_${ARCH}.tar.gz"
 BASE_URL="https://github.com/${REPO}/releases/download/${LATEST}"
@@ -47,7 +60,7 @@ BASE_URL="https://github.com/${REPO}/releases/download/${LATEST}"
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-echo "Downloading citeck ${VERSION}..."
+echo "Downloading citeck ${VERSION} (${OS}/${ARCH})..."
 curl -fsSL "${BASE_URL}/${ASSET}" -o "${TMP_DIR}/${ASSET}"
 curl -fsSL "${BASE_URL}/${ASSET}.sha256" -o "${TMP_DIR}/${ASSET}.sha256"
 
