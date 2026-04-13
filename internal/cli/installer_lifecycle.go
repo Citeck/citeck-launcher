@@ -91,6 +91,11 @@ func handleInstallerLifecycle(info BuildInfo) (handled bool, err error) {
 		return false, nil
 	}
 
+	// Initialize i18n before any user-facing output in the lifecycle paths
+	// below (without this, prompt Descriptions like `t("hint.confirm")` render
+	// as the raw key string in the confirm dialog).
+	ensureI18n()
+
 	// Target doesn't exist: fresh install.
 	if _, statErr := os.Stat(installTarget); os.IsNotExist(statErr) {
 		return true, lifecycleFreshInstall(selfPath)
@@ -106,7 +111,7 @@ func handleInstallerLifecycle(info BuildInfo) (handled bool, err error) {
 
 	// Same binary (hash match) — hand off to the installed binary.
 	if hashesMatch(selfPath, installTarget) {
-		output.PrintText("Citeck Launcher %s is already installed at %s", installedVer, installTarget)
+		output.PrintText(t("install.lifecycle.alreadyInstalled", "ver", installedVer, "path", installTarget))
 		return true, reExecAtTarget(installTarget)
 	}
 
@@ -131,11 +136,11 @@ func installedAtTarget(selfPath string) bool {
 // lifecycleFreshInstall copies self to /usr/local/bin/citeck and re-execs
 // from that path so the wizard's forkDaemon uses the installed location.
 func lifecycleFreshInstall(selfPath string) error {
-	output.PrintText("Installing Citeck Launcher to %s...", installTarget)
+	output.PrintText(t("install.lifecycle.freshInstall.installing", "path", installTarget))
 	if err := copyBinaryAtomic(selfPath, installTarget); err != nil {
 		return fmt.Errorf("install binary: %w", err)
 	}
-	output.PrintText("Installed. Starting setup wizard...")
+	output.PrintText(t("install.lifecycle.freshInstall.done"))
 	return reExecAtTarget(installTarget)
 }
 
@@ -146,11 +151,11 @@ func lifecycleFreshInstall(selfPath string) error {
 // doStart's hash-matching path.
 func lifecycleUpgrade(selfPath, installedVer, newVer string) error {
 	output.PrintText("")
-	output.PrintText("  Installed version: %s", installedVer)
-	output.PrintText("  Available version: %s", newVer)
+	output.PrintText("  " + t("install.lifecycle.upgrade.installedVersion", "ver", installedVer))
+	output.PrintText("  " + t("install.lifecycle.upgrade.availableVersion", "ver", newVer))
 	output.PrintText("")
-	if !promptConfirm(fmt.Sprintf("Update Citeck Launcher to %s?", newVer), true) {
-		output.PrintText("Update canceled.")
+	if !promptConfirm(t("install.lifecycle.upgrade.prompt", "ver", newVer), true) {
+		output.PrintText(t("install.lifecycle.upgrade.canceled"))
 		return nil
 	}
 
@@ -192,31 +197,31 @@ func runRollback() error {
 	currentVer := readBinaryVersion(installTarget)
 	backupVer := readBinaryVersion(bakPath)
 	output.PrintText("")
-	output.PrintText("  Current version: %s", currentVer)
-	output.PrintText("  Backup version:  %s", backupVer)
+	output.PrintText("  " + t("install.lifecycle.rollback.currentVersion", "ver", currentVer))
+	output.PrintText("  " + t("install.lifecycle.rollback.backupVersion", "ver", backupVer))
 	output.PrintText("")
-	if !promptConfirm("Rollback to the previous version?", true) {
-		output.PrintText("Rollback canceled.")
+	if !promptConfirm(t("install.lifecycle.rollback.prompt"), true) {
+		output.PrintText(t("install.lifecycle.rollback.canceled"))
 		return nil
 	}
 
-	output.PrintText("Stopping current daemon (platform containers stay running)...")
+	output.PrintText(t("install.lifecycle.rollback.stopping"))
 	if err := stopDaemonPreservePlatform(currentVer); err != nil {
 		return fmt.Errorf("stop daemon: %w", err)
 	}
 
-	output.PrintText("Restoring backup...")
+	output.PrintText(t("install.lifecycle.rollback.restoring"))
 	if err := copyBinaryAtomic(bakPath, installTarget); err != nil {
 		return fmt.Errorf("restore backup: %w", err)
 	}
 	_ = os.Remove(bakPath)
 
-	output.PrintText("Starting daemon...")
+	output.PrintText(t("install.lifecycle.rollback.starting"))
 	if err := startDaemonAfterSwap(); err != nil {
 		return fmt.Errorf("start daemon: %w", err)
 	}
 
-	output.PrintText("Rolled back: %s -> %s", currentVer, backupVer)
+	output.PrintText(t("install.lifecycle.rollback.done", "from", currentVer, "to", backupVer))
 	return nil
 }
 

@@ -153,17 +153,21 @@ func TestRenderKeycloakInitScript_ExactMatch(t *testing.T) {
 	require.NotContains(t, got, `grep -q "$SA_USER"`,
 		"user existence check must not use substring grep — it false-matches citeck-launcher when SA_USER=citeck")
 
-	// The new exact-match user check (field 2 == username) must be present.
-	require.Contains(t, got, `awk -F, -v u="$SA_USER"`,
-		"user existence check must filter the id,username CSV with an exact awk match on column 2")
+	// awk isn't present in the Keycloak 26 image — we use grep+cut instead.
+	require.NotContains(t, got, `awk -F, -v u="$SA_USER"`,
+		"user existence check must not depend on awk (unavailable in Keycloak image)")
 
-	// Legacy SA id lookup must use exact-match on column 2.
-	require.Contains(t, got, `awk -F, -v u="$LEGACY_SA_USER"`,
-		"legacy SA id lookup must filter id,username CSV with exact awk match")
+	// The new exact-match user check: cut to column 2, then grep -Fxq (full-line fixed match).
+	require.Contains(t, got, `cut -d',' -f2 | grep -Fxq "$SA_USER"`,
+		"user existence check must filter the id,username CSV with cut+grep exact match on column 2")
 
-	// OIDC client id lookup must use exact-match on clientId column.
-	require.Contains(t, got, `awk -F, '$2=="ecos-proxy-app"`,
-		"OIDC client id lookup must filter id,clientId CSV with exact awk match")
+	// Legacy SA id lookup must use exact-match on column 2 via grep+cut.
+	require.Contains(t, got, `grep -F ",$LEGACY_SA_USER" | cut -d',' -f1`,
+		"legacy SA id lookup must filter id,username CSV with grep+cut exact match")
+
+	// OIDC client id lookup must use exact-match on clientId column via grep+cut.
+	require.Contains(t, got, `grep -F ",ecos-proxy-app" | cut -d',' -f1`,
+		"OIDC client id lookup must filter id,clientId CSV with grep+cut exact match")
 }
 
 // TestKeycloakInitScript_UserCheckBash executes the rendered user-existence
@@ -171,14 +175,11 @@ func TestRenderKeycloakInitScript_ExactMatch(t *testing.T) {
 // "citeck-launcher" as NOT being "citeck". This is the end-to-end regression
 // test for the upgrade-path bug fixed alongside the SA rename.
 //
-// Skipped if bash/awk are unavailable (shouldn't happen on Linux CI, but be
-// defensive for other platforms).
+// Uses grep+cut (Keycloak 26 image doesn't ship awk). Skipped if bash isn't
+// available (shouldn't happen on Linux CI, but be defensive for other platforms).
 func TestKeycloakInitScript_UserCheckBash(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
-	}
-	if _, err := exec.LookPath("awk"); err != nil {
-		t.Skip("awk not available")
 	}
 
 	// Simulate kcadm returning the legacy "citeck-launcher" user (with a
@@ -187,8 +188,6 @@ func TestKeycloakInitScript_UserCheckBash(t *testing.T) {
 	// scenario that must NOT be treated as "citeck already exists".
 	mockKcadmOutput := "abc-123-def,citeck-launcher\n"
 
-	// The awk filter as rendered in the template, extracted verbatim so the
-	// test breaks if the template drifts.
 	got, err := appfiles.RenderKeycloakInitScript(appfiles.KeycloakInitParams{
 		SAUser: "citeck", LegacySAUser: "citeck-launcher",
 		SAPassword: "x", AdminPassword: "y",
@@ -196,27 +195,27 @@ func TestKeycloakInitScript_UserCheckBash(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Find the awk pipeline line from the rendered script.
-	var awkLine string
+	// Find the grep+cut pipeline line from the rendered script.
+	var checkLine string
 	for l := range strings.SplitSeq(got, "\n") {
-		if strings.Contains(l, `awk -F, -v u="$SA_USER"`) && strings.Contains(l, `$2==u`) {
-			awkLine = l
+		if strings.Contains(l, `cut -d',' -f2 | grep -Fxq "$SA_USER"`) {
+			checkLine = l
 			break
 		}
 	}
-	require.NotEmpty(t, awkLine, "could not find rendered awk user-check line")
+	require.NotEmpty(t, checkLine, "could not find rendered grep+cut user-check line")
 
-	// Extract just the awk invocation (everything after the final `|` up to
-	// the trailing `; then` that closes the surrounding `if` construct).
-	idx := strings.LastIndex(awkLine, "| awk")
-	require.GreaterOrEqual(t, idx, 0, "awk invocation not found on user-check line")
-	awkCmd := strings.TrimSpace(awkLine[idx+1:])
-	awkCmd = strings.TrimSuffix(awkCmd, "; then")
-	awkCmd = strings.TrimSpace(awkCmd)
+	// Extract the pipeline: everything after the last `2>/dev/null` (the kcadm
+	// error-redirect) up to the trailing `; then`.
+	idx := strings.Index(checkLine, "2>/dev/null | ")
+	require.GreaterOrEqual(t, idx, 0, "pipeline not found on user-check line")
+	pipeline := strings.TrimSpace(checkLine[idx+len("2>/dev/null"):])
+	pipeline = strings.TrimSuffix(pipeline, "; then")
+	pipeline = strings.TrimSpace(pipeline)
 
-	// Run: echo "<mockOutput>" | <awkCmd> with SA_USER=citeck. Exit code 0
+	// Run: printf "<mockOutput>" | <pipeline> with SA_USER=citeck. Exit code 0
 	// means "found", 1 means "not found".
-	script := "SA_USER=citeck\nprintf %s " + shellEscape(mockKcadmOutput) + " | " + awkCmd + "\n"
+	script := "SA_USER=citeck\nprintf %s " + shellEscape(mockKcadmOutput) + " " + pipeline + "\n"
 	cmd := exec.Command("bash", "-c", script)
 	err = cmd.Run()
 
@@ -224,12 +223,12 @@ func TestKeycloakInitScript_UserCheckBash(t *testing.T) {
 	require.Error(t, err, "exact-match check must return non-zero (not found) for citeck-launcher when SA_USER=citeck")
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		require.Equal(t, 1, exitErr.ExitCode(), "expected awk to exit 1 (not found)")
+		require.Equal(t, 1, exitErr.ExitCode(), "expected grep to exit 1 (not found)")
 	}
 
-	// Sanity: the exact same awk on a matching input returns 0 (found).
+	// Sanity: same pipeline on a matching input returns 0 (found).
 	matchingOutput := "abc-123-def,citeck\n"
-	script2 := "SA_USER=citeck\nprintf %s " + shellEscape(matchingOutput) + " | " + awkCmd + "\n"
+	script2 := "SA_USER=citeck\nprintf %s " + shellEscape(matchingOutput) + " " + pipeline + "\n"
 	cmd2 := exec.Command("bash", "-c", script2)
 	require.NoError(t, cmd2.Run(), "exact-match check must return 0 (found) when SA_USER row is present")
 }

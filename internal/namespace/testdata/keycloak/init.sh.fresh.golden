@@ -64,7 +64,10 @@ else
   # this block to skip creation. Filter by the username column (field 2 in the
   # id,username CSV) and require an exact equality — a plain substring grep
   # on the piped output would silently false-match and skip SA creation.
-  if ! $KCADM get users -r master -q username="$SA_USER" --fields id,username --format csv --noquotes 2>/dev/null | awk -F, -v u="$SA_USER" 'BEGIN{found=0} $2==u {found=1} END{exit !found}'; then
+  # Keycloak 26 image doesn't ship awk — use grep+cut (POSIX-portable, present
+  # in any minimal image). `grep -Fxq` matches the username exactly in column 2
+  # of the id,username CSV after cutting to that column.
+  if ! $KCADM get users -r master -q username="$SA_USER" --fields id,username --format csv --noquotes 2>/dev/null | cut -d',' -f2 | grep -Fxq "$SA_USER"; then
     echo "Creating service account $SA_USER..."
     $KCADM create users -r master -s username="$SA_USER" -s enabled=true
     $KCADM add-roles -r master --uusername "$SA_USER" --rolename admin
@@ -80,7 +83,9 @@ else
     # Exact-match on username column: `-q username=` is a substring query, so
     # filter the id,username CSV to rows where column 2 equals the legacy
     # username exactly before picking the id (column 1).
-    LEGACY_UID=$($KCADM get users -r master -q username="$LEGACY_SA_USER" --fields id,username --format csv --noquotes 2>/dev/null | awk -F, -v u="$LEGACY_SA_USER" '$2==u {print $1; exit}')
+    # Exact match on username column without awk: grep for lines ending in
+    # `,<user>` (column 2) then take column 1 (id).
+    LEGACY_UID=$($KCADM get users -r master -q username="$LEGACY_SA_USER" --fields id,username --format csv --noquotes 2>/dev/null | grep -F ",$LEGACY_SA_USER" | cut -d',' -f1 | head -1)
     if [ -n "$LEGACY_UID" ]; then
       echo "Deleting legacy SA $LEGACY_SA_USER (id=$LEGACY_UID)..."
       $KCADM delete "users/$LEGACY_UID" -r master 2>/dev/null || echo "WARN: legacy SA delete failed, continuing" >&2
@@ -94,6 +99,6 @@ fi
 # id (column 1).
 CID=$($KCADM get clients -r ecos-app \
     -q clientId=ecos-proxy-app --fields id,clientId \
-    --format csv --noquotes | awk -F, '$2=="ecos-proxy-app" {print $1; exit}')
+    --format csv --noquotes | grep -F ",ecos-proxy-app" | cut -d',' -f1 | head -1)
 [ -z "$CID" ] && { echo "WARN: ecos-proxy-app client not found"; exit 0; }
 $KCADM update "clients/$CID" -r ecos-app -s "secret=${OIDC_SECRET}"
