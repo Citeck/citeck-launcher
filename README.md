@@ -6,21 +6,21 @@
 
 Citeck Launcher manages Citeck namespaces and Docker containers. It is a single Go binary (~24 MB) that serves as both CLI and daemon.
 
-> **Full documentation:** https://citeck.ru/docs/admin/launch_setup/launcher_server/ (Russian: https://citeck.ru/docs/ru/admin/launch_setup/launcher_server/)
+> **Full documentation:** https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server.html (Russian: https://citeck-ecos.readthedocs.io/ru/latest/admin/launch_setup/launcher_server.html)
 
 ## Quick Start
 
 Prerequisites: Docker (running).
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Citeck/citeck-launcher/release/2.1.0/install.sh | bash
+curl -fsSL https://github.com/Citeck/citeck-launcher/releases/latest/download/install.sh | bash
 ```
 
 The install script downloads the latest release for your platform and installs to `/usr/local/bin/`. The wizard sets up the namespace and starts the platform.
 
 > **Note:** If `citeck` is already on `PATH` (for example, pre-deployed by CI/CD or a configuration management tool), skip the download step and run `citeck install` directly.
 
-> **Important:** The `citeck install` command is an **interactive TUI wizard** and requires a real terminal. The wizard prints the generated admin password **once** at the end — make sure to copy and save it, as you won't be able to recover it after closing the screen. If you lose it, reset it via `citeck setup admin-password` (see the [commands reference](https://citeck.ru/docs/admin/launch_setup/launcher_server/commands.html)). Pressing `Ctrl+C` before the final "write configuration" step exits without making changes; if interrupted later, check `/opt/citeck/conf/` for partial state.
+> **Important:** The `citeck install` command is an **interactive TUI wizard** and requires a real terminal. The wizard prints the generated admin password **once** at the end — make sure to copy and save it, as you won't be able to recover it after closing the screen. If you lose it, reset it via `citeck setup admin-password` (see the [commands reference](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html)). Pressing `Ctrl+C` before the final "write configuration" step exits without making changes; if interrupted later, check `/opt/citeck/conf/` for partial state.
 >
 > Automated / non-interactive install is a future feature — please file an issue if you need it.
 
@@ -86,7 +86,7 @@ Global flags: `--format (text|json)`, `--yes/-y`.
 
 ## Configuration
 
-See the [configuration reference](https://citeck.ru/docs/admin/launch_setup/launcher_server/) for `daemon.yml` and `namespace.yml` details.
+See the [configuration reference](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/configuration.html) for `daemon.yml` and `namespace.yml` details.
 
 ## License
 

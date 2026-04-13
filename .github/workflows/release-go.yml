@@ -81,12 +81,22 @@ jobs:
           GOARCH: ${{ matrix.arch }}
         run: |
           VERSION="${VERSION_TAG#v}"
-          CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION}" -o "citeck-server_${VERSION}_${GOOS}_${GOARCH}" ./cmd/citeck
+          COMMIT="$(git rev-parse --short HEAD)"
+          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          CGO_ENABLED=0 go build \
+            -ldflags "-s -w -X main.version=${VERSION} -X main.gitCommit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
+            -o citeck ./cmd/citeck
+          TARBALL="citeck_${VERSION}_${GOOS}_${GOARCH}.tar.gz"
+          tar -czf "$TARBALL" citeck
+          sha256sum "$TARBALL" > "${TARBALL}.sha256"
+          rm citeck
 
       - uses: actions/upload-artifact@v4
         with:
-          name: citeck-server-${{ matrix.os }}-${{ matrix.arch }}
-          path: citeck-server_*
+          name: citeck-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            citeck_*.tar.gz
+            citeck_*.tar.gz.sha256
           if-no-files-found: error
 
   release:
@@ -97,8 +107,11 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: citeck-server-*
+          pattern: citeck-*
           merge-multiple: true
+
+      - name: Copy install script
+        run: cp scripts/install.sh install.sh
 
       - name: Extract changelog
         id: changelog
@@ -123,12 +136,15 @@ jobs:
           echo "$body" >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
 
-      - name: Create draft release
+      - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          draft: true
+          draft: false
           name: ${{ github.ref_name }}
           body: ${{ steps.changelog.outputs.body }}
-          files: citeck-server_*
+          files: |
+            citeck_*.tar.gz
+            citeck_*.tar.gz.sha256
+            install.sh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -50,3 +50,14 @@ jobs:
           cd web && pnpm run build && cd ..
           rm -rf internal/daemon/webdist && cp -r web/dist internal/daemon/webdist
           CGO_ENABLED=0 go build -o citeck ./cmd/citeck
+
+      - name: Cross-compile check (linux/arm64, darwin/amd64+arm64)
+        run: |
+          for target in linux/arm64 darwin/amd64 darwin/arm64; do
+            GOOS="${target%%/*}"
+            GOARCH="${target##*/}"
+            export GOOS GOARCH
+            echo "Building for $GOOS/$GOARCH..."
+            CGO_ENABLED=0 go build -o /tmp/citeck-ci-$GOOS-$GOARCH ./cmd/citeck
+            rm /tmp/citeck-ci-$GOOS-$GOARCH
+          done

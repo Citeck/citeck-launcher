@@ -1,8 +1,10 @@
 VERSION ?= dev
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 BUILDDIR := build/bin
 BINARY   := $(BUILDDIR)/citeck-server
 DESKTOP  := $(BUILDDIR)/citeck-desktop
-GO_BUILD_FLAGS := -ldflags "-s -w -X main.version=$(VERSION)"
+GO_BUILD_FLAGS := -ldflags "-s -w -X main.version=$(VERSION) -X main.gitCommit=$(COMMIT) -X main.buildDate=$(BUILD_DATE)"
 WEBDIST  := internal/daemon/webdist
 
 # Go tools path
