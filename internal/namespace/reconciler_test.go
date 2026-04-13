@@ -108,10 +108,17 @@ func TestCheckLivenessFailureCounting(t *testing.T) {
 	assert.Equal(t, 2, r.livenessFailures["emodel"])
 	r.mu.RUnlock()
 
-	// Third failure — should trigger restart (ReadyToPull)
+	// Third failure — should trigger restart. After the restart is recorded,
+	// pullAndStartApp runs in a goroutine and may advance the status past
+	// ReadyToPull (Pulling/Starting/Running) before the test reads it — so
+	// assert on race-free invariants (counter reset + restart event + count)
+	// rather than on the transient status.
 	r.checkLiveness(ctx)
 	r.mu.RLock()
-	assert.Equal(t, AppStatusReadyToPull, r.apps["emodel"].Status)
+	assert.Contains(t,
+		[]AppRuntimeStatus{AppStatusReadyToPull, AppStatusPulling, AppStatusStarting, AppStatusRunning},
+		r.apps["emodel"].Status,
+		"app should have been marked for restart (any post-trigger status is acceptable)")
 	assert.Equal(t, 0, r.livenessFailures["emodel"])
 	assert.Equal(t, 1, r.apps["emodel"].RestartCount)
 	assert.Len(t, r.restartEvents, 1)
@@ -146,7 +153,14 @@ func TestCheckLivenessRunsInStalledState(t *testing.T) {
 	r.checkLiveness(context.Background())
 
 	r.mu.RLock()
-	assert.Equal(t, AppStatusReadyToPull, r.apps["emodel"].Status, "liveness should run in STALLED state")
+	// After trigger, pullAndStartApp runs in a goroutine and may advance the
+	// status past ReadyToPull before we read it. Assert on the race-free
+	// invariant that a restart was recorded.
+	assert.Contains(t,
+		[]AppRuntimeStatus{AppStatusReadyToPull, AppStatusPulling, AppStatusStarting, AppStatusRunning},
+		r.apps["emodel"].Status,
+		"liveness should run in STALLED state and trigger a restart")
+	assert.Equal(t, 1, r.apps["emodel"].RestartCount, "restart should have been recorded")
 	r.mu.RUnlock()
 }
 
