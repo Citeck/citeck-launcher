@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [master, "release/**"]
+  pull_request:
+    branches: [master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Go vet
+        run: |
+          mkdir -p internal/daemon/webdist
+          echo '<html></html>' > internal/daemon/webdist/index.html
+          go vet ./...
+
+      - name: Go lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.11.4
+          args: ./...
+
+      - name: Go tests (race detector)
+        run: go test -race ./internal/...
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Web UI tests
+        run: cd web && pnpm install --frozen-lockfile && pnpm vitest run
+
+      - name: Build server binary
+        run: |
+          cd web && pnpm run build && cd ..
+          rm -rf internal/daemon/webdist && cp -r web/dist internal/daemon/webdist
+          CGO_ENABLED=0 go build -o citeck ./cmd/citeck
+
+      - name: Cross-compile check (linux/arm64, darwin/amd64+arm64)
+        run: |
+          for target in linux/arm64 darwin/amd64 darwin/arm64; do
+            GOOS="${target%%/*}"
+            GOARCH="${target##*/}"
+            export GOOS GOARCH
+            echo "Building for $GOOS/$GOARCH..."
+            CGO_ENABLED=0 go build -o /tmp/citeck-ci-$GOOS-$GOARCH ./cmd/citeck
+            rm /tmp/citeck-ci-$GOOS-$GOARCH
+          done

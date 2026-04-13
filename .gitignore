@@ -1,46 +1,53 @@
-.gradle
-build/
-!gradle/wrapper/gradle-wrapper.jar
-!**/src/main/**/build/
-!**/src/test/**/build/
-*.log
+### Go ###
+internal/daemon/webdist/
+
+### Web ###
+web/dist/
 node_modules
 
-### IntelliJ IDEA ###
+### IDE ###
 .idea
+.vscode/
 *.iws
 *.iml
 *.ipr
-out/
-!**/src/main/**/out/
-!**/src/test/**/out/
 
-### Eclipse ###
-.apt_generated
-.classpath
-.factorypath
-.project
-.settings
-.springBeans
-.sts4-cache
-bin/
-!**/src/main/**/bin/
-!**/src/test/**/bin/
-
-### NetBeans ###
-/nbproject/private/
-/nbbuild/
-/dist/
-/nbdist/
-/.nb-gradle/
-
-### VS Code ###
-.vscode/
-
-### Mac OS ###
+### OS ###
 .DS_Store
+*.log
 
-### Kotlin ###
+### Legacy (Kotlin era) ###
+.gradle
 .kotlin
 
+### Build artifacts ###
+build/bin/
+tools/h2-export/build/
+
+### H2 export tool (Gradle project — wrapper must be tracked) ###
+!tools/h2-export/gradle/
+!tools/h2-export/gradlew
+!tools/h2-export/gradlew.bat
+
+### Test ###
+test-results/
+coverage.out
+coverage.html
+
+### Playwright MCP ###
+.playwright-mcp/
+
+### Claude Code ###
+.claude/
+
+### Binaries (prevent accidental root-dir builds) ###
+/citeck
+/citeck-desktop
+
+### Prompt files ###
+PROMPT-*.md
+
 ### Custom ###
+*.png
+!icons/**/*.png
+!cmd/citeck-desktop/logo.png

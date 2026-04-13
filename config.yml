@@ -1,0 +1,37 @@
+version: '3'
+
+info:
+  companyName: "Citeck"
+  productName: "Citeck Launcher"
+  productIdentifier: "ru.citeck.launcher"
+  description: "Citeck Platform Launcher"
+  copyright: "(c) 2025, Citeck"
+  comments: "Manages Citeck namespaces and Docker containers"
+  version: "2.0.0"
+
+dev_mode:
+  root_path: .
+  log_level: warn
+  debounce: 1000
+  ignore:
+    dir:
+      - .git
+      - node_modules
+      - web/dist
+      - bin
+      - build/libs
+    file:
+      - .DS_Store
+      - .gitignore
+    watched_extension:
+      - "*.go"
+    git_ignore: true
+  executes:
+    - cmd: wails3 build DEV=true
+      type: blocking
+    - cmd: cd web && npm run dev
+      type: background
+    - cmd: wails3 task run
+      type: primary
+
+fileAssociations: []

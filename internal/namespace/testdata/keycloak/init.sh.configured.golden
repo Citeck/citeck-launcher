@@ -1,0 +1,105 @@
+#!/bin/bash
+#
+# Keycloak init script — runs after container startup to ensure the
+# "citeck" service account exists, update the ecos-proxy-app OIDC client
+# config, and optionally apply the ecos-app admin password.
+#
+# Generated from internal/appfiles/embedded/keycloak/init.sh.tmpl.
+#
+# All user-derived values below are rendered via the bash-safe `shquote`
+# template function (single-quoted, with internal quotes escaped as
+# '\''), so they are safe against shell injection even for pathological
+# inputs such as $(...), backticks, or embedded newlines.
+set -e
+KCADM=/opt/keycloak/bin/kcadm.sh
+SA_USER='citeck'
+SA_PASS='sa-secret-32chars-abcdefghijklmno'
+LEGACY_SA_USER='citeck-launcher'
+ADMIN_PASS='strong-admin-pass'
+BASE_URL='https://citeck.example.com'
+OIDC_SECRET='prod-oidc-secret'
+AUTHENTICATED=false
+
+# Try service account first (normal steady-state)
+if [ -n "$SA_PASS" ] && $KCADM config credentials --server http://localhost:8080 \
+    --realm master --user "$SA_USER" --password "$SA_PASS" 2>/dev/null; then
+  AUTHENTICATED=true
+  echo "Authenticated as $SA_USER"
+fi
+
+# Try legacy SA (pre-rename upgrades — same password, old username).
+# Once re-authenticated below as the new SA, the legacy user is deleted.
+if [ "$AUTHENTICATED" = "false" ] && [ -n "$SA_PASS" ] && [ -n "$LEGACY_SA_USER" ]; then
+  if $KCADM config credentials --server http://localhost:8080 \
+      --realm master --user "$LEGACY_SA_USER" --password "$SA_PASS" 2>/dev/null; then
+    AUTHENTICATED=true
+    echo "Authenticated as legacy SA $LEGACY_SA_USER"
+  fi
+fi
+
+# Fall back to admin (fresh install or snapshot import)
+if [ "$AUTHENTICATED" = "false" ]; then
+  if $KCADM config credentials --server http://localhost:8080 \
+      --realm master --user admin --password "$ADMIN_PASS" 2>/dev/null; then
+    AUTHENTICATED=true
+    echo "Authenticated as admin (target password)"
+  elif $KCADM config credentials --server http://localhost:8080 \
+      --realm master --user admin --password admin 2>/dev/null; then
+    AUTHENTICATED=true
+    echo "Authenticated as admin (default password)"
+  fi
+fi
+
+if [ "$AUTHENTICATED" = "false" ]; then
+  echo "ERROR: cannot authenticate to keycloak" >&2
+  exit 1
+fi
+
+# Ensure "$SA_USER" service account exists (skip if SA_PASS empty — safety)
+if [ -z "$SA_PASS" ]; then
+  echo "WARN: SA_PASS empty, skipping SA management" >&2
+else
+  # Exact-match check: Keycloak's `-q username=` is a substring query, so a
+  # legacy "citeck-launcher" user would match a query for "citeck" and cause
+  # this block to skip creation. Filter by the username column (field 2 in the
+  # id,username CSV) and require an exact equality — a plain substring grep
+  # on the piped output would silently false-match and skip SA creation.
+  if ! $KCADM get users -r master -q username="$SA_USER" --fields id,username --format csv --noquotes 2>/dev/null | awk -F, -v u="$SA_USER" 'BEGIN{found=0} $2==u {found=1} END{exit !found}'; then
+    echo "Creating service account $SA_USER..."
+    $KCADM create users -r master -s username="$SA_USER" -s enabled=true
+    $KCADM add-roles -r master --uusername "$SA_USER" --rolename admin
+  fi
+  # Always update SA password to match the launcher secret
+  $KCADM set-password -r master --username "$SA_USER" --new-password "$SA_PASS"
+  echo "Service account $SA_USER ready"
+  # Re-authenticate as SA for remaining operations
+  $KCADM config credentials --server http://localhost:8080 \
+      --realm master --user "$SA_USER" --password "$SA_PASS" 2>/dev/null || true
+  # Delete legacy SA (pre-rename) — idempotent cleanup after upgrade.
+  if [ -n "$LEGACY_SA_USER" ] && [ "$LEGACY_SA_USER" != "$SA_USER" ]; then
+    # Exact-match on username column: `-q username=` is a substring query, so
+    # filter the id,username CSV to rows where column 2 equals the legacy
+    # username exactly before picking the id (column 1).
+    LEGACY_UID=$($KCADM get users -r master -q username="$LEGACY_SA_USER" --fields id,username --format csv --noquotes 2>/dev/null | awk -F, -v u="$LEGACY_SA_USER" '$2==u {print $1; exit}')
+    if [ -n "$LEGACY_UID" ]; then
+      echo "Deleting legacy SA $LEGACY_SA_USER (id=$LEGACY_UID)..."
+      $KCADM delete "users/$LEGACY_UID" -r master 2>/dev/null || echo "WARN: legacy SA delete failed, continuing" >&2
+    fi
+  fi
+fi
+
+# Update ecos-proxy-app OIDC client (redirect URIs + secret).
+# Exact-match on clientId column: `-q clientId=` is a substring query, so
+# filter by column 2 (clientId) equalling "ecos-proxy-app" before picking the
+# id (column 1).
+CID=$($KCADM get clients -r ecos-app \
+    -q clientId=ecos-proxy-app --fields id,clientId \
+    --format csv --noquotes | awk -F, '$2=="ecos-proxy-app" {print $1; exit}')
+[ -z "$CID" ] && { echo "WARN: ecos-proxy-app client not found"; exit 0; }
+$KCADM update "clients/$CID" -r ecos-app -s "redirectUris=[\"${BASE_URL}*\"]"
+$KCADM update "clients/$CID" -r ecos-app -s "secret=${OIDC_SECRET}"
+
+# Apply admin password to ecos-app realm
+echo "Applying admin password..."
+$KCADM set-password -r ecos-app --username admin --new-password "$ADMIN_PASS"
+echo "Admin password applied."

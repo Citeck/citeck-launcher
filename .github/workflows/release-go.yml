@@ -1,0 +1,150 @@
+name: Release Server Binary
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Build web UI
+        run: cd web && pnpm install --frozen-lockfile && pnpm run build
+
+      - name: Embed web UI
+        run: rm -rf internal/daemon/webdist && cp -r web/dist internal/daemon/webdist
+
+      - name: Run Go tests
+        run: go test -race ./internal/...
+
+      - name: Run web tests
+        run: cd web && pnpm vitest run
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+          - os: linux
+            arch: arm64
+          - os: darwin
+            arch: amd64
+          - os: darwin
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Build web UI
+        run: cd web && pnpm install --frozen-lockfile && pnpm run build
+
+      - name: Embed web UI
+        run: rm -rf internal/daemon/webdist && cp -r web/dist internal/daemon/webdist
+
+      - name: Build server binary
+        env:
+          VERSION_TAG: ${{ github.ref_name }}
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          VERSION="${VERSION_TAG#v}"
+          COMMIT="$(git rev-parse --short HEAD)"
+          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          CGO_ENABLED=0 go build \
+            -ldflags "-s -w -X main.version=${VERSION} -X main.gitCommit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
+            -o citeck ./cmd/citeck
+          TARBALL="citeck_${VERSION}_${GOOS}_${GOARCH}.tar.gz"
+          tar -czf "$TARBALL" citeck
+          sha256sum "$TARBALL" > "${TARBALL}.sha256"
+          rm citeck
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: citeck-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            citeck_*.tar.gz
+            citeck_*.tar.gz.sha256
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: citeck-*
+          merge-multiple: true
+
+      - name: Copy install script
+        run: cp scripts/install.sh install.sh
+
+      - name: Extract changelog
+        id: changelog
+        env:
+          VERSION_TAG: ${{ github.ref_name }}
+        run: |
+          TAG_VERSION="${VERSION_TAG#v}"
+          body=$(awk -v ver="$TAG_VERSION" '
+            $0 ~ "^# Release "ver {
+              print_line=1
+              next
+            }
+            print_line && $0 ~ "^# Release " {
+              exit
+            }
+            print_line { print }
+          ' CHANGELOG.md)
+          if [ -z "$body" ]; then
+            body="See CHANGELOG.md for details."
+          fi
+          echo "body<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$body" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          name: ${{ github.ref_name }}
+          body: ${{ steps.changelog.outputs.body }}
+          files: |
+            citeck_*.tar.gz
+            citeck_*.tar.gz.sha256
+            install.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
