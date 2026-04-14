@@ -17,7 +17,6 @@ INSTALL_DIR="/usr/local/bin"
 detect_os() {
   case "$(uname -s)" in
     Linux*) echo "linux" ;;
-    Darwin*) echo "darwin" ;;
     *) echo "unsupported"; exit 1 ;;
   esac
 }

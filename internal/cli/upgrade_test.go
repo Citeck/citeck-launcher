@@ -386,4 +386,3 @@ func TestRunUpgrade_NoTTYNoArg_FailFast(t *testing.T) {
 		t.Errorf("guard did not fire first; got later error: %v", err)
 	}
 }
-

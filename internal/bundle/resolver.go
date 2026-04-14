@@ -44,11 +44,11 @@ type DataSourceConfig struct {
 
 // WebappDefaultProps holds default properties for a webapp from workspace config.
 type WebappDefaultProps struct {
-	Image        string                       `yaml:"image"`
-	HeapSize     string                       `yaml:"heapSize"`
-	MemoryLimit  string                       `yaml:"memoryLimit"`
-	Environments map[string]string            `yaml:"environments"`
-	DataSources  map[string]DataSourceConfig  `yaml:"dataSources"`
+	Image        string                      `yaml:"image"`
+	HeapSize     string                      `yaml:"heapSize"`
+	MemoryLimit  string                      `yaml:"memoryLimit"`
+	Environments map[string]string           `yaml:"environments"`
+	DataSources  map[string]DataSourceConfig `yaml:"dataSources"`
 }
 
 // WebappConfig describes a webapp with its aliases and default props.
@@ -65,10 +65,10 @@ type ProxyConfig struct {
 
 // QuickStartVariant describes a quick start option from workspace config.
 type QuickStartVariant struct {
-	Name     string    `yaml:"name"`
-	Snapshot string    `yaml:"snapshot,omitempty"`
-	Bundle   Ref `yaml:"bundleRef,omitempty"`
-	Template string    `yaml:"template,omitempty"`
+	Name     string `yaml:"name"`
+	Snapshot string `yaml:"snapshot,omitempty"`
+	Bundle   Ref    `yaml:"bundleRef,omitempty"`
+	Template string `yaml:"template,omitempty"`
 }
 
 // NamespaceTemplate describes a pre-configured namespace template.
@@ -315,9 +315,9 @@ func (r *Resolver) Resolve(ref Ref) (*ResolveResult, error) {
 
 // shouldUseLocalBundles checks if bundle files should be read from the workspace dir
 // instead of cloning a separate git repo. Returns true when:
-// - bundleRepo.URL is empty (explicit "use workspace repo"), OR
-// - workspace dir already contains the bundle path on disk
-//   (covers downloaded zip archives where bundleRepo.URL points to the source repo).
+//   - bundleRepo.URL is empty (explicit "use workspace repo"), OR
+//   - workspace dir already contains the bundle path on disk
+//     (covers downloaded zip archives where bundleRepo.URL points to the source repo).
 func shouldUseLocalBundles(wsRepoDir string, bundleRepo *BundlesRepo) bool {
 	if wsRepoDir == "" || bundleRepo == nil {
 		return false

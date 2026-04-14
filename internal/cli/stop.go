@@ -128,8 +128,8 @@ func streamStopStatus(c *client.DaemonClient) error {
 			if linesPrinted > 0 {
 				output.ClearLines(linesPrinted)
 			}
-			fmt.Println(table)            //nolint:forbidigo // CLI table
-			fmt.Println()                 //nolint:forbidigo // CLI spacing
+			fmt.Println(table)                              //nolint:forbidigo // CLI table
+			fmt.Println()                                   //nolint:forbidigo // CLI spacing
 			fmt.Printf("  %d/%d stopped\n", stopped, total) //nolint:forbidigo // CLI summary
 			linesPrinted = strings.Count(table, "\n") + 3
 		} else if stopped != lastStopped {

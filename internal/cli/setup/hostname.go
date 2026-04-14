@@ -1,16 +1,15 @@
 package setup
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strings"
 
+	"github.com/citeck/citeck-launcher/internal/cli/prompt"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/i18n"
 	"github.com/citeck/citeck-launcher/internal/namespace"
-
-	"github.com/charmbracelet/huh"
-	"github.com/citeck/citeck-launcher/internal/output"
 )
 
 // hostnameUnsafeChars enumerates bytes that must never appear in a
@@ -30,17 +29,19 @@ const hostnameUnsafeChars = "\"'\\$`;&| \t\r\n"
 func validateHostname(val string) error {
 	val = strings.TrimSpace(val)
 	if val == "" {
-		return fmt.Errorf("hostname is required")
+		return errors.New(i18n.T("validate.required"))
 	}
 	if idx := strings.IndexAny(val, hostnameUnsafeChars); idx >= 0 {
-		return fmt.Errorf("hostname contains forbidden character %q at position %d (no quotes, backslash, $, backtick, ;, &, |, or whitespace)", val[idx], idx)
+		return errors.New(i18n.T("setup.hostname.forbiddenChar",
+			"char", fmt.Sprintf("%q", val[idx]),
+			"pos", fmt.Sprintf("%d", idx)))
 	}
 	// Accept IPs verbatim once we've ruled out metacharacters.
 	if ip := net.ParseIP(val); ip != nil {
 		return nil
 	}
 	if len(val) > 253 {
-		return fmt.Errorf("hostname too long")
+		return errors.New(i18n.T("setup.hostname.tooLong"))
 	}
 	return nil
 }
@@ -48,9 +49,9 @@ func validateHostname(val string) error {
 type hostnameSetting struct{}
 
 func (s *hostnameSetting) ID() string             { return "hostname" }
-func (s *hostnameSetting) Title() string           { return i18n.T("setup.hostname.title") }
-func (s *hostnameSetting) Description() string     { return i18n.T("setup.hostname.desc") }
-func (s *hostnameSetting) TargetFile() TargetFile  { return NamespaceFile }
+func (s *hostnameSetting) Title() string          { return i18n.T("setup.hostname.title") }
+func (s *hostnameSetting) Description() string    { return i18n.T("setup.hostname.desc") }
+func (s *hostnameSetting) TargetFile() TargetFile { return NamespaceFile }
 
 func (s *hostnameSetting) Available(_ *namespace.Config, _ []string) bool { return true }
 
@@ -62,12 +63,12 @@ func (s *hostnameSetting) CurrentValue(cfg *namespace.Config, _ *config.DaemonCo
 }
 
 func (s *hostnameSetting) Run(_ *setupContext, cfg *namespace.Config, _ *config.DaemonConfig) error {
-	host := cfg.Proxy.Host
-	err := output.RunField(huh.NewInput().
-		Title(i18n.T("setup.hostname.prompt")).
-		Description(i18n.T("hint.input")).
-		Value(&host).
-		Validate(validateHostname))
+	host, err := (&prompt.Input{
+		Title:    i18n.T("setup.hostname.prompt"),
+		Value:    cfg.Proxy.Host,
+		Validate: validateHostname,
+		Hints:    hints(),
+	}).Run()
 	if err != nil {
 		return fmt.Errorf("hostname input: %w", err)
 	}

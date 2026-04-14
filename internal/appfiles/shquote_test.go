@@ -14,7 +14,7 @@ import (
 // <literal>", prints the original input verbatim. We cover edge cases
 // that Go's %q formatting would mishandle when re-interpreted by bash:
 // $, backticks, backslashes, embedded newlines, and single quotes
-// themselves (which must be escaped as '\'').
+// themselves (which must be escaped as '\”).
 func TestShquote(t *testing.T) {
 	cases := []struct {
 		name string
@@ -34,7 +34,7 @@ func TestShquote(t *testing.T) {
 		{"newline", "a\nb", "'a\nb'"},
 		{"crlf", "a\r\nb", "'a\r\nb'"},
 		{"null_byte", "a\x00b", "'a\x00b'"},
-		{"all_metacharacters", `$'"`+"`"+`\;&|*?[]{}()<>!#~`, `'$'\''"`+"`"+`\;&|*?[]{}()<>!#~'`},
+		{"all_metacharacters", `$'"` + "`" + `\;&|*?[]{}()<>!#~`, `'$'\''"` + "`" + `\;&|*?[]{}()<>!#~'`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -14,9 +14,9 @@ func TestExtractZip_StripsSingleRootDir(t *testing.T) {
 	// Create a zip with a single root dir (GitHub pattern: repo-main/...)
 	zipPath := filepath.Join(t.TempDir(), "test.zip")
 	createTestZip(t, zipPath, map[string]string{
-		"launcher-workspace-main/workspace-v1.yml":         "imageRepos: []\n",
-		"launcher-workspace-main/community/2025.12.yml":    "key: 2025.12\n",
-		"launcher-workspace-main/community/2026.1.yml":     "key: 2026.1\n",
+		"launcher-workspace-main/workspace-v1.yml":      "imageRepos: []\n",
+		"launcher-workspace-main/community/2025.12.yml": "key: 2025.12\n",
+		"launcher-workspace-main/community/2026.1.yml":  "key: 2026.1\n",
 	})
 
 	destDir := filepath.Join(t.TempDir(), "repo")

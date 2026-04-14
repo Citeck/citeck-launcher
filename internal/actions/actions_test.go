@@ -15,8 +15,8 @@ import (
 type successExecutor struct{}
 
 func (e *successExecutor) Execute(_ context.Context, _ *ActionContext) error { return nil }
-func (e *successExecutor) Name(_ *ActionContext) string                     { return "success" }
-func (e *successExecutor) RetryDelay(_ *ActionContext) time.Duration        { return -1 }
+func (e *successExecutor) Name(_ *ActionContext) string                      { return "success" }
+func (e *successExecutor) RetryDelay(_ *ActionContext) time.Duration         { return -1 }
 
 // failExecutor always fails and does not retry.
 type failExecutor struct{}

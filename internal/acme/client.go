@@ -365,4 +365,3 @@ func tryStagingChallenge(ctx context.Context, client *acme.Client, authzURL stri
 
 	return nil
 }
-

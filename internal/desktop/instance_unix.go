@@ -52,4 +52,3 @@ func (l *InstanceLock) Release() {
 		_ = os.Remove(name)
 	}
 }
-

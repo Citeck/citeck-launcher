@@ -5,20 +5,18 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/citeck/citeck-launcher/internal/cli/prompt"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/i18n"
 	"github.com/citeck/citeck-launcher/internal/namespace"
-
-	"github.com/charmbracelet/huh"
-	"github.com/citeck/citeck-launcher/internal/output"
 )
 
 type portSetting struct{}
 
 func (s *portSetting) ID() string             { return "port" }
-func (s *portSetting) Title() string           { return i18n.T("setup.port.title") }
-func (s *portSetting) Description() string     { return i18n.T("setup.port.desc") }
-func (s *portSetting) TargetFile() TargetFile  { return NamespaceFile }
+func (s *portSetting) Title() string          { return i18n.T("setup.port.title") }
+func (s *portSetting) Description() string    { return i18n.T("setup.port.desc") }
+func (s *portSetting) TargetFile() TargetFile { return NamespaceFile }
 
 func (s *portSetting) Available(_ *namespace.Config, _ []string) bool { return true }
 
@@ -42,13 +40,12 @@ func (s *portSetting) Run(_ *setupContext, cfg *namespace.Config, _ *config.Daem
 	if cfg.Proxy.Port != 0 {
 		placeholder = strconv.Itoa(cfg.Proxy.Port)
 	}
-	var portStr string
-	err := output.RunField(huh.NewInput().
-		Title(i18n.T("setup.port.prompt")).
-		Description(i18n.T("hint.input")).
-		Value(&portStr).
-		Placeholder(placeholder).
-		Validate(validatePortWithDefault(placeholder)))
+	portStr, err := (&prompt.Input{
+		Title:       i18n.T("setup.port.prompt"),
+		Placeholder: placeholder,
+		Validate:    validatePortWithDefault(placeholder),
+		Hints:       hints(),
+	}).Run()
 	if err != nil {
 		return fmt.Errorf("port input: %w", err)
 	}

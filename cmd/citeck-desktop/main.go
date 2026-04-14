@@ -182,11 +182,11 @@ func main() {
 
 	// Main window — loads from Wails AssetServer (which proxies to daemon)
 	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Name:       "main",
-		Title:      "Citeck Launcher",
+		Name:            "main",
+		Title:           "Citeck Launcher",
 		DevToolsEnabled: true,
-		Width:  1280,
-		Height: 800,
+		Width:           1280,
+		Height:          800,
 		Windows: application.WindowsWindow{
 			HiddenOnTaskbar: false,
 		},

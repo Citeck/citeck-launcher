@@ -153,7 +153,7 @@ func (s *RenewalService) isRateLimited() bool {
 // setRateLimited writes a rate limit marker with a 1-hour backoff.
 func (s *RenewalService) setRateLimited() {
 	until := time.Now().Add(1 * time.Hour)
-	_ = os.MkdirAll(filepath.Dir(s.rateLimitPath()), 0o755) //nolint:gosec // G301: ACME rate limit dir
+	_ = os.MkdirAll(filepath.Dir(s.rateLimitPath()), 0o755)                        //nolint:gosec // G301: ACME rate limit dir
 	_ = os.WriteFile(s.rateLimitPath(), []byte(until.Format(time.RFC3339)), 0o644) //nolint:gosec // G306: rate limit file is non-sensitive
 }
 

@@ -132,7 +132,6 @@ func writePendingSecretsLocal(sctx *setupContext, svc *storage.SecretService, ti
 	return ops, nil
 }
 
-
 // openLocalSecretService creates a FileStore + SecretService and auto-unlocks
 // with the default password if applicable.
 func openLocalSecretService() (*storage.SecretService, error) {

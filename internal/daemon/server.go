@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/tls"
@@ -48,14 +49,14 @@ var (
 // StartOptions controls daemon startup behavior.
 type StartOptions struct {
 	Foreground     bool
-	Desktop        bool           // desktop mode: file-only logging, no signal handler
-	NoUI           bool           // disable web UI (TCP listener)
-	Offline        bool           // skip all git operations, fail if local data missing
-	Version        string         // build version injected via ldflags
-	MasterPassword string         // master password for secrets decryption (server mode)
+	Desktop        bool            // desktop mode: file-only logging, no signal handler
+	NoUI           bool            // disable web UI (TCP listener)
+	Offline        bool            // skip all git operations, fail if local data missing
+	Version        string          // build version injected via ldflags
+	MasterPassword string          // master password for secrets decryption (server mode)
 	Ctx            context.Context // external context (desktop provides; nil = CLI uses signals)
 	ReadyCh        chan<- string   // receives Web UI URL when ready (empty string if no UI); nil = ignored
-	LogWriter      io.Writer      // additional log destination (desktop captures startup logs); nil = ignored
+	LogWriter      io.Writer       // additional log destination (desktop captures startup logs); nil = ignored
 }
 
 // secretReader is the minimal interface for reading secrets.
@@ -95,18 +96,18 @@ type Daemon struct {
 	bundleError     string // non-empty if bundle resolution failed
 	acmeRenewal     *acme.RenewalService
 	shutdownOnce    sync.Once
-	bgCtx           context.Context    // canceled on daemon shutdown
+	bgCtx           context.Context // canceled on daemon shutdown
 	bgCancel        context.CancelFunc
-	bgWg            sync.WaitGroup     // tracks background goroutines (snapshot, downloads)
-	snapshotMu      sync.Mutex         // guards concurrent snapshot import/export
+	bgWg            sync.WaitGroup // tracks background goroutines (snapshot, downloads)
+	snapshotMu      sync.Mutex     // guards concurrent snapshot import/export
 	daemonCfg       config.DaemonConfig
-	eventSeq        atomic.Int64       // monotonic event sequence counter
-	sseDropped      atomic.Int64       // SSE events dropped due to slow consumers
+	eventSeq        atomic.Int64 // monotonic event sequence counter
+	sseDropped      atomic.Int64 // SSE events dropped due to slow consumers
 	logWriter       *fsutil.RotatingWriter
 	logLevel        *slog.LevelVar
 	systemSecrets   namespace.SystemSecrets // resolved JWT/OIDC secrets
-	desktop         bool                   // desktop mode: log writer shared across restarts
-	reloadMu        sync.Mutex             // guards concurrent reload requests
+	desktop         bool                    // desktop mode: log writer shared across restarts
+	reloadMu        sync.Mutex              // guards concurrent reload requests
 }
 
 // secretReaderFunc returns the SecretService as a secretReader (transparent decryption).
@@ -490,12 +491,14 @@ func Start(opts StartOptions) error {
 			}
 		}
 
-		// Extract appfiles to volumes base
-		if extractErr := appfiles.ExtractTo(volumesBase); extractErr != nil {
-			slog.Error("Failed to extract appfiles", "err", extractErr)
-		} else {
-			slog.Info("Extracted appfiles", "dir", volumesBase)
-		}
+		// Appfiles are not extracted here. The namespace generator owns the
+		// full file set: it seeds ctx.Files from the embedded resources,
+		// mutates some (proxy lua scheme/secret, realm JSON, etc.), appends
+		// others, and returns the final map in genResp.Files. That map is
+		// written to disk below via writeRuntimeFiles, which is the ONLY
+		// path that touches bind-mount source files. This avoids the
+		// double-write bug where an embed re-extract would revert a
+		// generator-customised file back to its default content.
 
 		// Resolve system secrets (JWT, OIDC) — migrate from plain files or generate new.
 		// Skip when locked (desktop mode with encrypted secrets — resolved after Web UI unlock).
@@ -538,21 +541,10 @@ func Start(opts StartOptions) error {
 			return fmt.Errorf("generate namespace %q: %w", nsID, genErr)
 		}
 
-		// Write generated files (cloud config YAMLs, etc.) to volumes base
-		for filePath, content := range genResp.Files {
-			destPath := filepath.Join(volumesBase, filePath)
-			if mkdirErr := os.MkdirAll(filepath.Dir(destPath), 0o755); mkdirErr != nil { //nolint:gosec // G301: volume dirs need 0o755 for Docker access
-				slog.Error("Failed to create dir for generated file", "path", destPath, "err", mkdirErr)
-				continue
-			}
-			perm := os.FileMode(0o644)
-			if strings.HasSuffix(filePath, ".sh") {
-				perm = 0o755
-			}
-			if writeErr := fsutil.AtomicWriteFile(destPath, content, perm); writeErr != nil {
-				slog.Error("Failed to write generated file", "path", destPath, "err", writeErr)
-			}
-		}
+		// Write the full runtime file set (embedded defaults + generator
+		// modifications) to disk. Single source of truth; never overwritten
+		// by a separate embed re-extract.
+		writeRuntimeFiles(volumesBase, genResp.Files)
 		slog.Info("Generated namespace", "apps", len(genResp.Applications), "files", len(genResp.Files))
 
 		appDefs = genResp.Applications
@@ -999,21 +991,11 @@ func (d *Daemon) doReload() error {
 		return fmt.Errorf("generate namespace: %w", genErr)
 	}
 
-	// Write generated files atomically (prevent partial writes on crash)
-	for filePath, content := range genResp.Files {
-		destPath := filepath.Join(d.volumesBase, filePath)
-		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil { //nolint:gosec // generated file dirs need 0o755 for container access
-			slog.Error("Failed to create dir for generated file", "path", destPath, "err", err)
-			continue
-		}
-		perm := os.FileMode(0o644)
-		if strings.HasSuffix(filePath, ".sh") {
-			perm = 0o755
-		}
-		if err := fsutil.AtomicWriteFile(destPath, content, perm); err != nil {
-			slog.Error("Failed to write generated file", "path", destPath, "err", err)
-		}
-	}
+	// Apply the full runtime file set. The generator owns everything —
+	// embedded defaults it copied and mutated, plus files it built from
+	// scratch. writeRuntimeFiles handles dir-in-place-of-file recovery
+	// (a Docker quirk when a bind-mount source was wiped out-of-band).
+	writeRuntimeFiles(d.volumesBase, genResp.Files)
 
 	// Phase 2: update shared state briefly under write lock
 	d.configMu.Lock()
@@ -1593,6 +1575,7 @@ func migrateJWTSecretToStdBase64(stored string) string {
 
 // importSnapshotIfNeeded checks for the snapshot field in namespace config and imports
 // the snapshot if it hasn't been imported yet (tracked by a marker file).
+//
 //nolint:nestif // snapshot import requires nested SHA256 verification and download fallback logic
 func importSnapshotIfNeeded(nsCfg *namespace.Config, wsCfg *bundle.WorkspaceConfig, dc *docker.Client, volumesBase string) {
 	if nsCfg.Snapshot == "" || wsCfg == nil {
@@ -1664,6 +1647,61 @@ func importSnapshotIfNeeded(nsCfg *namespace.Config, wsCfg *bundle.WorkspaceConf
 func isRegularFile(path string) bool {
 	fi, err := os.Stat(path)
 	return err == nil && fi.Mode().IsRegular()
+}
+
+// writeRuntimeFiles applies the generator's file map (the full set of
+// files any app can bind-mount) to disk under baseDir. Single source of
+// truth — nothing else writes into this directory tree. Handles three
+// edge cases that the naïve loop-and-WriteFile version did not:
+//
+//  1. A host path exists as an EMPTY DIRECTORY where the container
+//     expects a file. Docker auto-creates a directory whenever it needs
+//     to bind-mount a path that doesn't exist on the host; if postgres
+//     was recreated while its config was missing, we end up with
+//     /opt/citeck/data/runtime/.../postgres/postgresql.conf as a dir
+//     and postgres chokes with "configuration file contains errors".
+//  2. Content is identical — skip the atomic-rename dance entirely, so
+//     unchanged files don't get a new mtime each regenerate (preserves
+//     the container deployment hash so Docker doesn't pointlessly
+//     recreate containers whose files didn't really change).
+//  3. Parent directory doesn't exist yet — MkdirAll first.
+//
+// Shell scripts (.sh) are written 0755, everything else 0644.
+func writeRuntimeFiles(baseDir string, files map[string][]byte) {
+	for filePath, content := range files {
+		destPath := filepath.Join(baseDir, filePath)
+		if fi, statErr := os.Stat(destPath); statErr == nil {
+			if fi.IsDir() {
+				// Case 1: Docker auto-created dir instead of a file; remove and write as file.
+				if rmErr := os.RemoveAll(destPath); rmErr != nil {
+					slog.Error("Failed to remove stale dir at file path", "path", destPath, "err", rmErr)
+					continue
+				}
+			} else if fi.Mode().IsRegular() && int64(len(content)) == fi.Size() {
+				// Case 2: same size — compare bytes, skip if unchanged.
+				if existing, readErr := os.ReadFile(destPath); readErr == nil && bytes.Equal(existing, content) {
+					continue
+				}
+			}
+		}
+		if mkdirErr := os.MkdirAll(filepath.Dir(destPath), 0o755); mkdirErr != nil { //nolint:gosec // G301: dirs need 0o755 for Docker bind-mount access
+			slog.Error("Failed to create dir for generated file", "path", destPath, "err", mkdirErr)
+			continue
+		}
+		perm := os.FileMode(0o644)
+		if strings.HasSuffix(filePath, ".sh") {
+			perm = 0o755
+		}
+		if writeErr := fsutil.AtomicWriteFile(destPath, content, perm); writeErr != nil {
+			slog.Error("Failed to write generated file", "path", destPath, "err", writeErr)
+			continue
+		}
+		// fsutil.AtomicWriteFile respects umask for the temp file; re-chmod
+		// to the exact perm we want (matters for .sh which need 0755).
+		if chmodErr := os.Chmod(destPath, perm); chmodErr != nil {
+			slog.Warn("Failed to chmod generated file", "path", destPath, "err", chmodErr)
+		}
+	}
 }
 
 // ensureSelfSignedCert generates a self-signed cert if TLS is enabled without LE and no cert is configured.

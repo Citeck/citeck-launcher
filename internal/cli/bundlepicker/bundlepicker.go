@@ -11,6 +11,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/citeck/citeck-launcher/internal/cli/prompt"
 )
 
 // Tab groups versions from one bundle repo.
@@ -107,9 +109,11 @@ func Pick(title string, tabs []Tab, hints KeyHints) (ref string, ok bool, err er
 	// bubbletea to customInput mode where the tty-detection path may
 	// silently skip term.MakeRaw, and arrow keystrokes (^[[A/B/C/D)
 	// queue into the shell's input buffer after the picker exits.
+	// No tea.WithAltScreen — the picker renders inline like every other
+	// wizard primitive so the completed-step history stays in scrollback
+	// and there's no visual "jump" between steps.
 	prog := tea.NewProgram(m,
 		tea.WithOutput(teaOutput()),
-		tea.WithAltScreen(),
 	)
 	final, runErr := prog.Run()
 	if runErr != nil {
@@ -188,36 +192,59 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // ───────────────────────── view ─────────────────────────
 
+// Styles reuse the shared Dracula palette from internal/cli/prompt so
+// bundlepicker and every other wizard step stay visually consistent.
+// Tab bar styles and the "current version" marker are specific to this
+// picker and stay local.
 var (
-	styleTitle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#50fa7b"))
+	styleTitle = prompt.StyleTitle
 	// Active tab: dark fg on cyan bg with horizontal padding for breathing
 	// room. Using a filled background (instead of underline) makes the
 	// selection pop on both dark and light terminals.
 	styleTabActive = lipgloss.NewStyle().Bold(true).
-			Foreground(lipgloss.Color("#282a36")).
-			Background(lipgloss.Color("#8be9fd")).
+			Foreground(prompt.ColorButtonFg).
+			Background(prompt.ColorAccent).
 			Padding(0, 1)
 	styleTabInactive = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#6272a4")).
+				Foreground(prompt.ColorMuted).
 				Padding(0, 1)
-	styleCursor     = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff79c6")).Bold(true)
-	styleSelected   = lipgloss.NewStyle().Foreground(lipgloss.Color("#f8f8f2")).Bold(true)
-	styleNormal     = lipgloss.NewStyle().Foreground(lipgloss.Color("#bfbfbf"))
-	styleMarker     = lipgloss.NewStyle().Foreground(lipgloss.Color("#bd93f9"))
-	styleCurrent    = lipgloss.NewStyle().Foreground(lipgloss.Color("#50fa7b"))
-	styleSeparator  = lipgloss.NewStyle().Foreground(lipgloss.Color("#44475a"))
-	styleHint       = lipgloss.NewStyle().Foreground(lipgloss.Color("#6272a4"))
+	styleCursor    = prompt.StyleCursor
+	styleSelected  = prompt.StyleSelected
+	styleNormal    = prompt.StyleNormal
+	styleMarker    = prompt.StyleMarker
+	styleCurrent   = lipgloss.NewStyle().Foreground(prompt.ColorTitle) // reuse title green
+	styleSeparator = lipgloss.NewStyle().Foreground(prompt.ColorSeparator)
+	styleHint      = prompt.StyleHint
 )
 
 // View implements tea.Model.
 func (m model) View() string {
 	var b []byte
+
+	// Compact final view after submit — matches the prompt primitives'
+	// ✓ Title  Value style so the picker sits visually alongside other
+	// completed steps in the wizard history.
+	if m.chosen {
+		tab := m.tabs[m.active]
+		v := tab.Versions[m.cursor]
+		label := tab.Name + "  " + v.Label
+		b = append(b, prompt.StyleDone.Render(prompt.DonePrefix)...)
+		b = append(b, styleTitle.Render(m.title)...)
+		b = append(b, "  "...)
+		b = append(b, styleSelected.Render(label)...)
+		b = append(b, '\n', '\n')
+		return string(b)
+	}
+
+	// Active title — same ○ prefix style as the other primitives.
 	if m.title != "" {
+		b = append(b, prompt.StyleActive.Render(prompt.ActivePrefix)...)
 		b = append(b, styleTitle.Render(m.title)...)
 		b = append(b, '\n', '\n')
 	}
 
-	// Tab bar
+	// Tab bar — indented to line up under the ○ prefix.
+	b = append(b, prompt.StepIndent...)
 	for i, tab := range m.tabs {
 		name := tab.Name
 		if name == "" {
@@ -229,21 +256,19 @@ func (m model) View() string {
 			b = append(b, styleTabInactive.Render(name)...)
 		}
 		if i < len(m.tabs)-1 {
-			b = append(b, styleSeparator.Render("│")...)
+			b = append(b, styleSeparator.Render(" │ ")...)
 		}
 	}
-	b = append(b, '\n')
-	b = append(b, styleSeparator.Render("──────────────────────────────────────────────────────")...)
 	b = append(b, '\n', '\n')
 
-	// Version list for active tab
+	// Version list for active tab, indented under the tab bar.
 	tab := m.tabs[m.active]
 	for i, v := range tab.Versions {
 		var line string
 		if i == m.cursor {
-			line = styleCursor.Render("  > ") + styleSelected.Render(v.Label)
+			line = styleCursor.Render(prompt.StepIndent+"> ") + styleSelected.Render(v.Label)
 		} else {
-			line = "    " + styleNormal.Render(v.Label)
+			line = prompt.StepIndent + "  " + styleNormal.Render(v.Label)
 		}
 		if v.Latest {
 			line += "  " + styleMarker.Render("("+m.hints.Latest+")")
@@ -257,7 +282,8 @@ func (m model) View() string {
 
 	// Footer
 	b = append(b, '\n')
-	footer := fmt.Sprintf("%s   %s   %s   %s",
+	footer := fmt.Sprintf("%s%s   %s   %s   %s",
+		prompt.StepIndent,
 		m.hints.SwitchTab, m.hints.Move, m.hints.Select, m.hints.Cancel)
 	b = append(b, styleHint.Render(footer)...)
 	b = append(b, '\n')

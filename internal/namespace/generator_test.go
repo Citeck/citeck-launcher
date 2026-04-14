@@ -576,7 +576,7 @@ func TestGeneratorLivenessProbes(t *testing.T) {
 	// Services that must NOT have liveness probes
 	for _, name := range []string{
 		appdef.AppMailhog,
-		appdef.AppPgadmin,   // disabled by default
+		appdef.AppPgadmin, // disabled by default
 		appdef.AppOnlyoffice,
 		appdef.AppProxy,
 	} {

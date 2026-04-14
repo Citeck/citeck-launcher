@@ -47,8 +47,8 @@ func (s *CloudConfigServer) Start() error {
 	mux.HandleFunc("GET /config/{appName}/{profiles}/{rest...}", s.handleConfig)
 
 	s.server = &http.Server{
-		Handler:     mux,
-		ReadTimeout: 10 * time.Second,
+		Handler:      mux,
+		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
@@ -119,11 +119,11 @@ func (s *CloudConfigServer) handleConfig(w http.ResponseWriter, r *http.Request)
 	}
 
 	resp := configResponse{
-		Name:             appName,
-		Profiles:         profiles,
-		Label:            "main",
-		Version:          fmt.Sprintf("%d", version),
-		PropertySources:  propertySources,
+		Name:            appName,
+		Profiles:        profiles,
+		Label:           "main",
+		Version:         fmt.Sprintf("%d", version),
+		PropertySources: propertySources,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

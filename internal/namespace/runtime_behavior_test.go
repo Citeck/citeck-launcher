@@ -22,11 +22,11 @@ type mockContainer struct {
 
 // mockDocker implements docker.RuntimeClient for behavioral tests.
 type mockDocker struct {
-	mu               sync.Mutex
-	containers       map[string]mockContainer // app name → container
-	nextID           int
-	stopRemoveCalls  int // number of StopAndRemoveContainer invocations
-	removeNetCalls   int // number of RemoveNetwork invocations
+	mu              sync.Mutex
+	containers      map[string]mockContainer // app name → container
+	nextID          int
+	stopRemoveCalls int // number of StopAndRemoveContainer invocations
+	removeNetCalls  int // number of RemoveNetwork invocations
 }
 
 func newMockDocker() *mockDocker {

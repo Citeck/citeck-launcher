@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/citeck/citeck-launcher/internal/cli/prompt"
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/i18n"
 	"github.com/citeck/citeck-launcher/internal/namespace"
-
-	"github.com/charmbracelet/huh"
 )
 
 // TargetFile identifies which config file a setting modifies.
@@ -76,10 +76,16 @@ func deepCopy[T any](src *T) (*T, error) {
 	return &cp, nil
 }
 
-// isUserAborted checks if a huh error is a user cancellation (Esc/Ctrl+C).
+// isUserAborted checks if an error is a user cancellation (Esc/Ctrl+C).
 func isUserAborted(err error) bool {
-	return errors.Is(err, huh.ErrUserAborted)
+	return errors.Is(err, prompt.ErrCanceled)
 }
+
+// hints returns localized key hints for prompt primitives. Falls back to
+// empty Hints (which Run() fills with English defaults) when i18n is not
+// yet loaded. Thin shim over prompt.HintsFromT to keep the local call
+// sites terse.
+func hints() prompt.Hints { return prompt.HintsFromT(i18n.T) }
 
 // configFilePath returns the config file path for a target file.
 func configFilePath(target TargetFile) string {

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/charmbracelet/huh"
+	"github.com/citeck/citeck-launcher/internal/cli/prompt"
 	"github.com/citeck/citeck-launcher/internal/client"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/i18n"
@@ -18,9 +18,9 @@ import (
 // file-diff/confirm/reload flow used for file-backed settings.
 type adminPasswordSetting struct{}
 
-func (s *adminPasswordSetting) ID() string            { return "admin-password" }
-func (s *adminPasswordSetting) Title() string         { return i18n.T("setup.admin_password.title") }
-func (s *adminPasswordSetting) Description() string   { return i18n.T("setup.admin_password.desc") }
+func (s *adminPasswordSetting) ID() string             { return "admin-password" }
+func (s *adminPasswordSetting) Title() string          { return i18n.T("setup.admin_password.title") }
+func (s *adminPasswordSetting) Description() string    { return i18n.T("setup.admin_password.desc") }
 func (s *adminPasswordSetting) TargetFile() TargetFile { return NamespaceFile }
 
 // isActionSetting marks this as an actionSetting — handled specially in
@@ -53,16 +53,20 @@ func (s *adminPasswordSetting) Run(_ *setupContext, _ *namespace.Config, _ *conf
 		return fmt.Errorf("admin password form: %w", err)
 	}
 
-	// Warn that this changes ALL admin panels at once and will restart
-	// some services, then ask for explicit confirmation.
+	// Warn that this changes ALL admin panels at once, then ask for explicit
+	// confirmation. No container restart: Keycloak/RabbitMQ/PgAdmin are
+	// updated at runtime and webapps connect via the stable citeck SA.
 	fmt.Println()                                       //nolint:forbidigo // CLI output
 	fmt.Println(i18n.T("setup.admin_password.warning")) //nolint:forbidigo // CLI output
 	fmt.Println()                                       //nolint:forbidigo // CLI output
-	proceed := true
-	if confirmErr := output.RunField(output.NewConfirm().
-		Title(i18n.T("setup.admin_password.confirmApply")).
-		Description(i18n.T("hint.confirm")).
-		Value(&proceed)); confirmErr != nil || !proceed {
+	proceed, confirmErr := (&prompt.Confirm{
+		Title:       i18n.T("setup.admin_password.confirmApply"),
+		Affirmative: output.ConfirmYes,
+		Negative:    output.ConfirmNo,
+		Default:     true,
+		Hints:       hints(),
+	}).Run()
+	if confirmErr != nil || !proceed {
 		fmt.Println(i18n.T("setup.admin_password.canceled")) //nolint:forbidigo // CLI output
 		return nil
 	}
@@ -82,15 +86,15 @@ func promptAdminPassword() (string, error) {
 		modeManual   = "manual"
 		modeGenerate = "generate"
 	)
-	var mode string
-	if err := output.RunField(huh.NewSelect[string]().
-		Title(i18n.T("setup.admin_password.mode")).
-		Description(i18n.T("hint.select.setting")).
-		Options(
-			huh.NewOption(i18n.T("setup.admin_password.modeManual"), modeManual),
-			huh.NewOption(i18n.T("setup.admin_password.modeGenerate"), modeGenerate),
-		).
-		Value(&mode)); err != nil {
+	mode, err := (&prompt.Select[string]{
+		Title: i18n.T("setup.admin_password.mode"),
+		Options: []prompt.Option[string]{
+			{Label: i18n.T("setup.admin_password.modeManual"), Value: modeManual},
+			{Label: i18n.T("setup.admin_password.modeGenerate"), Value: modeGenerate},
+		},
+		Hints: hints(),
+	}).Run()
+	if err != nil {
 		return "", fmt.Errorf("password mode selection: %w", err)
 	}
 
@@ -103,33 +107,32 @@ func promptAdminPassword() (string, error) {
 		return pass, nil
 	}
 
-	var newPass, confirmPass string
-	err := output.RunForm(huh.NewForm(
-		huh.NewGroup(
-			huh.NewInput().
-				Title(i18n.T("setup.admin_password.prompt")).
-				Description(i18n.T("setup.admin_password.promptHint")).
-				EchoMode(huh.EchoModePassword).
-				Value(&newPass).
-				Validate(func(v string) error {
-					if len(v) < 6 {
-						return errors.New(i18n.T("setup.admin_password.tooShort"))
-					}
-					return nil
-				}),
-			huh.NewInput().
-				Title(i18n.T("setup.admin_password.confirm")).
-				EchoMode(huh.EchoModePassword).
-				Value(&confirmPass).
-				Validate(func(v string) error {
-					if v != newPass {
-						return errors.New(i18n.T("setup.admin_password.mismatch"))
-					}
-					return nil
-				}),
-		),
-	))
+	newPass, err := (&prompt.Input{
+		Title:       i18n.T("setup.admin_password.prompt"),
+		Description: i18n.T("setup.admin_password.promptHint"),
+		Password:    true,
+		Validate: func(v string) error {
+			if len(v) < 6 {
+				return errors.New(i18n.T("setup.admin_password.tooShort"))
+			}
+			return nil
+		},
+		Hints: hints(),
+	}).Run()
 	if err != nil {
+		return "", fmt.Errorf("password input: %w", err)
+	}
+	if _, err := (&prompt.Input{
+		Title:    i18n.T("setup.admin_password.confirm"),
+		Password: true,
+		Validate: func(v string) error {
+			if v != newPass {
+				return errors.New(i18n.T("setup.admin_password.mismatch"))
+			}
+			return nil
+		},
+		Hints: hints(),
+	}).Run(); err != nil {
 		return "", fmt.Errorf("password input: %w", err)
 	}
 	return newPass, nil

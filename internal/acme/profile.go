@@ -167,4 +167,3 @@ func signJWSWithKID(key *ecdsa.PrivateKey, kid, nonce, url string, payload []byt
 	}
 	return result, nil
 }
-

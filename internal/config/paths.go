@@ -14,10 +14,10 @@ import (
 
 // Default paths and image references.
 const (
-	defaultServerHome  = "/opt/citeck"
-	defaultRun         = "/run/citeck"
-	socketFile         = "daemon.sock"
-	DefaultUtilsImage  = "registry.citeck.ru/community/launcher-utils:1.0"
+	defaultServerHome = "/opt/citeck"
+	defaultRun        = "/run/citeck"
+	socketFile        = "daemon.sock"
+	DefaultUtilsImage = "registry.citeck.ru/community/launcher-utils:1.0"
 )
 
 // UtilsImage returns the launcher-utils image, overridable via CITECK_UTILS_IMAGE env var.

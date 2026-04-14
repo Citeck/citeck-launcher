@@ -107,8 +107,21 @@ $KCADM update "clients/$CID" -r ecos-app -s "redirectUris=[\"${BASE_URL}*\"]"
 $KCADM update "clients/$CID" -r ecos-app -s "secret=${OIDC_SECRET}"
 {{- if ne .AdminPassword "admin" }}
 
-# Apply admin password to ecos-app realm
-echo "Applying admin password..."
+# Apply admin password to BOTH realms. Both failures are fatal:
+#   - ecos-app: without this, the user-facing platform login is still
+#     whatever the realm-import JSON carried (historically "admin").
+#   - master: without this, the Keycloak admin console stays on the
+#     snapshot's password (historically "admin") — a live security
+#     hole once the platform is on a public network. KC_BOOTSTRAP_ADMIN_PASSWORD
+#     only creates the INITIAL master user on an empty DB; it's ignored
+#     whenever a snapshot is imported and brings its own master admin.
+# set -e (top of script) makes a non-zero exit here fail the init
+# container, which marks postgres-dependent startup as failed and
+# surfaces the problem to the operator instead of silently shipping
+# admin/admin on master.
+echo "Applying admin password to ecos-app realm..."
 $KCADM set-password -r ecos-app --username admin --new-password "$ADMIN_PASS"
+echo "Applying admin password to master realm..."
+$KCADM set-password -r master --username admin --new-password "$ADMIN_PASS"
 echo "Admin password applied."
 {{- end }}

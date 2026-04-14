@@ -25,7 +25,7 @@ func TestVersionAtLeast(t *testing.T) {
 		{"2.0.9", "2.1.0", false},
 		{"1.9.9", "2.0.0", false},
 		// the actual case we use in the installer
-		{"2.1.0", "2.1.0", true}, // v2.1.0 supports --leave-running
+		{"2.1.0", "2.1.0", true},  // v2.1.0 supports --leave-running
 		{"2.0.0", "2.1.0", false}, // v2.0.0 needs SIGKILL fallback
 	}
 

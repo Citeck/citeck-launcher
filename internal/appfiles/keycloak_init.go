@@ -19,8 +19,8 @@ var keycloakInitFS embed.FS
 // TLS-enabled proxy). The ecos-app admin password reset block is emitted
 // whenever AdminPassword differs from the default "admin".
 type KeycloakInitParams struct {
-	SAUser        string
-	SAPassword    string
+	SAUser     string
+	SAPassword string
 	// LegacySAUser is the pre-rename service-account username. When set and
 	// different from SAUser, the init script attempts authentication with
 	// this name (using SAPassword) for upgrade scenarios, and deletes the
@@ -36,7 +36,7 @@ type KeycloakInitParams struct {
 // shquote returns a bash single-quoted literal that safely represents s,
 // suitable for interpolation into a POSIX-sh / bash script. The returned
 // string is always wrapped in single quotes; any embedded single quote is
-// rendered using the classic `'\''` idiom (close, escape, reopen). Because
+// rendered using the classic `'\”` idiom (close, escape, reopen). Because
 // bash performs no expansion inside single quotes, the result is safe for
 // all bytes — including $, backtick, backslash, newline, carriage return,
 // and null — without the Go-specific escaping that fmt.Sprintf("%q", ...)

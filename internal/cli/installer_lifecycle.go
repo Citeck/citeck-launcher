@@ -92,8 +92,8 @@ func handleInstallerLifecycle(info BuildInfo) (handled bool, err error) {
 	}
 
 	// Initialize i18n before any user-facing output in the lifecycle paths
-	// below (without this, prompt Descriptions like `t("hint.confirm")` render
-	// as the raw key string in the confirm dialog).
+	// below (without this, footer hints like `t("hint.key.cancel")` render
+	// as the raw key string).
 	ensureI18n()
 
 	// Target doesn't exist: fresh install.

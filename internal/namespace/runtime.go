@@ -66,44 +66,44 @@ type RegistryAuthFunc func(image string) *docker.RegistryAuth
 // All mutable state is protected by mu. setStatus/setAppStatus must only be called
 // while mu is held by the caller.
 type Runtime struct {
-	mu              sync.RWMutex
-	status          NsRuntimeStatus
-	config          *Config
-	apps            map[string]*AppRuntime
-	docker          docker.RuntimeClient
-	actionSvc       *actions.Service
-	ownsActions     bool // true if this runtime created its own action service
-	running         atomic.Bool
-	nsID            string
-	volumesBase     string
-	eventCb            atomic.Pointer[EventCallback]
-	eventCh            chan api.EventDto
-	registryAuthFn     RegistryAuthFunc
-	history            *OperationHistory
-	manualStoppedApps  map[string]bool
-	editedApps         map[string]appdef.ApplicationDef // user-edited app defs
-	editedLockedApps       map[string]bool                  // locked edits survive regeneration
-	dependsOnDetachedApps  map[string]bool                  // detached apps that trigger regen on restart
-	lastApps               []appdef.ApplicationDef          // last app defs passed to doStart
-	cachedBundle           *bundle.Def                      // last successfully resolved bundle (persisted)
-	retryState             map[string]retryInfo             // retry tracking for failed apps
-	livenessFailures       map[string]int                   // consecutive liveness probe failure counts
-	restartCounts          map[string]int                   // total restart counts per app
-	restartEvents          []RestartEvent                   // ring buffer of restart events
-	statusNotify           chan struct{}                     // closed+recreated on every app status change
-	cmdCh              chan command
-	stopCh             chan struct{}       // dedicated stop signal that can't be dropped
-	detachCh           chan struct{}       // exit runLoop without stopping containers (binary upgrade)
-	pullSem            chan struct{}       // limits concurrent image pulls
-	reconcilerCfg      *ReconcilerConfig  // optional override from daemon.yml
-	defaultStopTimeout int                // from daemon.yml docker.stopTimeout; 0 = use hardcoded default (15s)
-	shutdownOnce       sync.Once
-	statsRunning       atomic.Bool        // guards against overlapping updateStats goroutines
-	runCtx          context.Context    // set by doStart, canceled by doStop
-	cancel          context.CancelFunc
-	wg              sync.WaitGroup
-	appWg           sync.WaitGroup     // tracks only app start/restart goroutines (not runLoop)
-	reconcileWg     sync.WaitGroup     // tracks reconciler goroutines
+	mu                    sync.RWMutex
+	status                NsRuntimeStatus
+	config                *Config
+	apps                  map[string]*AppRuntime
+	docker                docker.RuntimeClient
+	actionSvc             *actions.Service
+	ownsActions           bool // true if this runtime created its own action service
+	running               atomic.Bool
+	nsID                  string
+	volumesBase           string
+	eventCb               atomic.Pointer[EventCallback]
+	eventCh               chan api.EventDto
+	registryAuthFn        RegistryAuthFunc
+	history               *OperationHistory
+	manualStoppedApps     map[string]bool
+	editedApps            map[string]appdef.ApplicationDef // user-edited app defs
+	editedLockedApps      map[string]bool                  // locked edits survive regeneration
+	dependsOnDetachedApps map[string]bool                  // detached apps that trigger regen on restart
+	lastApps              []appdef.ApplicationDef          // last app defs passed to doStart
+	cachedBundle          *bundle.Def                      // last successfully resolved bundle (persisted)
+	retryState            map[string]retryInfo             // retry tracking for failed apps
+	livenessFailures      map[string]int                   // consecutive liveness probe failure counts
+	restartCounts         map[string]int                   // total restart counts per app
+	restartEvents         []RestartEvent                   // ring buffer of restart events
+	statusNotify          chan struct{}                    // closed+recreated on every app status change
+	cmdCh                 chan command
+	stopCh                chan struct{}     // dedicated stop signal that can't be dropped
+	detachCh              chan struct{}     // exit runLoop without stopping containers (binary upgrade)
+	pullSem               chan struct{}     // limits concurrent image pulls
+	reconcilerCfg         *ReconcilerConfig // optional override from daemon.yml
+	defaultStopTimeout    int               // from daemon.yml docker.stopTimeout; 0 = use hardcoded default (15s)
+	shutdownOnce          sync.Once
+	statsRunning          atomic.Bool     // guards against overlapping updateStats goroutines
+	runCtx                context.Context // set by doStart, canceled by doStop
+	cancel                context.CancelFunc
+	wg                    sync.WaitGroup
+	appWg                 sync.WaitGroup // tracks only app start/restart goroutines (not runLoop)
+	reconcileWg           sync.WaitGroup // tracks reconciler goroutines
 }
 
 // SetRegistryAuthFunc sets the function used to look up registry credentials for image pulls.

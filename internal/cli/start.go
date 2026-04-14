@@ -449,9 +449,9 @@ func streamLiveStatus(c *client.DaemonClient, opts liveStatusOpts) error {
 			}
 			firstPrint = false
 			summary := buildStatusSummary(running, failed, total, opts.waitAll)
-			fmt.Println(table)    //nolint:forbidigo // CLI table
-			fmt.Println()         //nolint:forbidigo // CLI spacing
-			fmt.Println(summary)  //nolint:forbidigo // CLI summary
+			fmt.Println(table)   //nolint:forbidigo // CLI table
+			fmt.Println()        //nolint:forbidigo // CLI spacing
+			fmt.Println(summary) //nolint:forbidigo // CLI summary
 			linesPrinted = strings.Count(table, "\n") + 3
 		} else if running != lastRunning {
 			fmt.Printf("  %d/%d running\n", running, total) //nolint:forbidigo // CLI progress

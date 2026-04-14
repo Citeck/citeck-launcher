@@ -1,26 +1,25 @@
 package setup
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"slices"
 	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/cli/prompt"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/i18n"
 	"github.com/citeck/citeck-launcher/internal/namespace"
-
-	"github.com/charmbracelet/huh"
-	"github.com/citeck/citeck-launcher/internal/output"
 )
 
 type s3Setting struct{}
 
 func (s *s3Setting) ID() string             { return "s3" }
-func (s *s3Setting) Title() string           { return i18n.T("setup.s3.title") }
-func (s *s3Setting) Description() string     { return i18n.T("setup.s3.desc") }
-func (s *s3Setting) TargetFile() TargetFile  { return NamespaceFile }
+func (s *s3Setting) Title() string          { return i18n.T("setup.s3.title") }
+func (s *s3Setting) Description() string    { return i18n.T("setup.s3.desc") }
+func (s *s3Setting) TargetFile() TargetFile { return NamespaceFile }
 
 func (s *s3Setting) Available(_ *namespace.Config, apps []string) bool {
 	return slices.Contains(apps, appdef.AppContent)
@@ -40,21 +39,20 @@ func (s *s3Setting) CurrentValue(cfg *namespace.Config, _ *config.DaemonConfig) 
 func (s *s3Setting) Run(ctx *setupContext, cfg *namespace.Config, _ *config.DaemonConfig) error {
 	// If already configured, offer edit/remove.
 	if cfg.S3 != nil {
-		var action string
-		err := output.RunField(huh.NewSelect[string]().
-			Title(i18n.T("setup.s3.action")).
-			Description(i18n.T("hint.select.setting")).
-			Options(
-				huh.NewOption(i18n.T("setup.s3.edit"), "edit"),
-				huh.NewOption(i18n.T("setup.s3.remove"), "remove"),
-				huh.NewOption(i18n.T("setup.back"), backValue),
-			).
-			Value(&action))
+		action, err := (&prompt.Select[string]{
+			Title: i18n.T("setup.s3.action"),
+			Options: []prompt.Option[string]{
+				{Label: i18n.T("setup.s3.edit"), Value: "edit"},
+				{Label: i18n.T("setup.s3.remove"), Value: "remove"},
+				{Label: i18n.T("setup.back"), Value: backValue},
+			},
+			Hints: hints(),
+		}).Run()
 		if err != nil {
 			return fmt.Errorf("s3 action selection: %w", err)
 		}
 		if action == backValue {
-			return huh.ErrUserAborted
+			return prompt.ErrCanceled
 		}
 		if action == "remove" {
 			cfg.S3 = nil
@@ -67,40 +65,64 @@ func (s *s3Setting) Run(ctx *setupContext, cfg *namespace.Config, _ *config.Daem
 		s3 = cfg.S3
 	}
 
-	var endpoint, bucket, accessKey, secretKey, region string
-	endpoint = s3.Endpoint
-	bucket = s3.Bucket
-	accessKey = s3.AccessKey
-	region = s3.Region
-
 	// On edit, secret key is optional — keep existing secret reference if left empty.
 	secretKeyValidate := notEmpty
 	if cfg.S3 != nil && cfg.S3.SecretKey != "" {
 		secretKeyValidate = func(string) error { return nil }
 	}
 
-	err := output.RunForm(huh.NewForm(
-		huh.NewGroup(
-			huh.NewInput().Title(i18n.T("setup.s3.endpoint")).Value(&endpoint).
-				Validate(func(val string) error {
-					val = strings.TrimSpace(val)
-					if val == "" {
-						return fmt.Errorf("endpoint is required")
-					}
-					u, err := url.Parse(val)
-					if err != nil || u.Scheme == "" || u.Host == "" {
-						return fmt.Errorf("invalid URL — must include scheme (e.g. https://s3.example.com)")
-					}
-					return nil
-				}),
-			huh.NewInput().Title(i18n.T("setup.s3.bucket")).Value(&bucket).Validate(notEmpty),
-			huh.NewInput().Title(i18n.T("setup.s3.access_key")).Value(&accessKey).Validate(notEmpty),
-			huh.NewInput().Title(i18n.T("setup.s3.secret_key")).Value(&secretKey).
-				EchoMode(huh.EchoModePassword).Validate(secretKeyValidate),
-			huh.NewInput().Title(i18n.T("setup.s3.region")).Value(&region).
-				Description(i18n.T("setup.s3.region_hint")),
-		),
-	))
+	endpoint, err := (&prompt.Input{
+		Title: i18n.T("setup.s3.endpoint"),
+		Value: s3.Endpoint,
+		Validate: func(val string) error {
+			val = strings.TrimSpace(val)
+			if val == "" {
+				return errors.New(i18n.T("validate.required"))
+			}
+			u, err := url.Parse(val)
+			if err != nil || u.Scheme == "" || u.Host == "" {
+				return errors.New(i18n.T("setup.s3.invalidUrl"))
+			}
+			return nil
+		},
+		Hints: hints(),
+	}).Run()
+	if err != nil {
+		return fmt.Errorf("s3 form: %w", err)
+	}
+	bucket, err := (&prompt.Input{
+		Title:    i18n.T("setup.s3.bucket"),
+		Value:    s3.Bucket,
+		Validate: notEmpty,
+		Hints:    hints(),
+	}).Run()
+	if err != nil {
+		return fmt.Errorf("s3 form: %w", err)
+	}
+	accessKey, err := (&prompt.Input{
+		Title:    i18n.T("setup.s3.access_key"),
+		Value:    s3.AccessKey,
+		Validate: notEmpty,
+		Hints:    hints(),
+	}).Run()
+	if err != nil {
+		return fmt.Errorf("s3 form: %w", err)
+	}
+	secretKey, err := (&prompt.Input{
+		Title:    i18n.T("setup.s3.secret_key"),
+		Password: true,
+		Validate: secretKeyValidate,
+		Hints:    hints(),
+	}).Run()
+	if err != nil {
+		return fmt.Errorf("s3 form: %w", err)
+	}
+	region, err := (&prompt.Input{
+		Title:       i18n.T("setup.s3.region"),
+		Description: i18n.T("setup.s3.region_hint"),
+		Value:       s3.Region,
+		Hints:       hints(),
+	}).Run()
 	if err != nil {
 		return fmt.Errorf("s3 form: %w", err)
 	}

@@ -15,14 +15,14 @@ func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 	for _, app := range r.apps {
 		_, edited := r.editedApps[app.Name]
 		apps = append(apps, api.AppDto{
-			Name:       app.Name,
-			Status:     string(app.Status),
-			StatusText: app.StatusText,
-			Image:      app.Def.Image,
-			CPU:        app.CPU,
-			Memory:     app.Memory,
-			Kind:       KindToString(app.Def.Kind),
-			Ports:      app.Def.Ports,
+			Name:         app.Name,
+			Status:       string(app.Status),
+			StatusText:   app.StatusText,
+			Image:        app.Def.Image,
+			CPU:          app.CPU,
+			Memory:       app.Memory,
+			Kind:         KindToString(app.Def.Kind),
+			Ports:        app.Def.Ports,
 			Edited:       edited,
 			Locked:       r.editedLockedApps[app.Name],
 			RestartCount: app.RestartCount,

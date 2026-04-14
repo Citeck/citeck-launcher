@@ -29,9 +29,9 @@ type OperationRecord struct {
 
 // OperationHistory records operations to a JSONL file with automatic rotation.
 type OperationHistory struct {
-	path      string
-	counter   atomic.Int64 // in-memory write counter, avoids reading file on every Record
-	rotateMu  sync.Mutex   // protects rotateIfNeeded against concurrent execution
+	path     string
+	counter  atomic.Int64 // in-memory write counter, avoids reading file on every Record
+	rotateMu sync.Mutex   // protects rotateIfNeeded against concurrent execution
 }
 
 const maxHistoryEntries = 1000

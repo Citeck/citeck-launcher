@@ -162,7 +162,7 @@ func newMockStore() *mockStore {
 	return &mockStore{secrets: make(map[string]storage.Secret)}
 }
 
-func (m *mockStore) SaveSecret(s storage.Secret) error      { m.secrets[s.ID] = s; return nil }
+func (m *mockStore) SaveSecret(s storage.Secret) error          { m.secrets[s.ID] = s; return nil }
 func (m *mockStore) ListSecrets() ([]storage.SecretMeta, error) { return nil, nil }
 func (m *mockStore) GetSecret(id string) (*storage.Secret, error) {
 	s, ok := m.secrets[id]
@@ -171,18 +171,18 @@ func (m *mockStore) GetSecret(id string) (*storage.Secret, error) {
 	}
 	return &s, nil
 }
-func (m *mockStore) DeleteSecret(string) error                   { return nil }
-func (m *mockStore) ListWorkspaces() ([]storage.WorkspaceDto, error) { return nil, nil }
+func (m *mockStore) DeleteSecret(string) error                          { return nil }
+func (m *mockStore) ListWorkspaces() ([]storage.WorkspaceDto, error)    { return nil, nil }
 func (m *mockStore) GetWorkspace(string) (*storage.WorkspaceDto, error) { return nil, nil }
-func (m *mockStore) SaveWorkspace(storage.WorkspaceDto) error    { return nil }
-func (m *mockStore) DeleteWorkspace(string) error                { return nil }
-func (m *mockStore) PutSecretBlob(string) error                  { return nil }
-func (m *mockStore) GetSecretBlob() (string, error)              { return "", nil }
-func (m *mockStore) GetState() (*storage.LauncherState, error)   { return &storage.LauncherState{}, nil }
-func (m *mockStore) SetState(storage.LauncherState) error        { return nil }
-func (m *mockStore) GetStateValue(string) (string, error)        { return "", nil }
-func (m *mockStore) SetStateValue(string, string) error          { return nil }
-func (m *mockStore) Close() error                                { return nil }
+func (m *mockStore) SaveWorkspace(storage.WorkspaceDto) error           { return nil }
+func (m *mockStore) DeleteWorkspace(string) error                       { return nil }
+func (m *mockStore) PutSecretBlob(string) error                         { return nil }
+func (m *mockStore) GetSecretBlob() (string, error)                     { return "", nil }
+func (m *mockStore) GetState() (*storage.LauncherState, error)          { return &storage.LauncherState{}, nil }
+func (m *mockStore) SetState(storage.LauncherState) error               { return nil }
+func (m *mockStore) GetStateValue(string) (string, error)               { return "", nil }
+func (m *mockStore) SetStateValue(string, string) error                 { return nil }
+func (m *mockStore) Close() error                                       { return nil }
 
 func TestImportDecryptedSecrets_TokenAndBasic(t *testing.T) {
 	secretsMap := map[string]AuthSecret{

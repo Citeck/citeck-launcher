@@ -58,23 +58,26 @@ func (d *Daemon) handleSetAdminPassword(w http.ResponseWriter, r *http.Request) 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	// Phase 1: ecos-app realm — the user-facing platform login. If this
-	// fails the command is aborted: without it the user would be locked
-	// out of the platform entirely, and subsequent service rotations are
-	// pointless. Master realm rotation below is best-effort because it is
-	// secondary (only used for the Keycloak admin console) and the SA
-	// can still manage Keycloak if the master admin password is wrong.
+	// Phase 1: ecos-app realm — the user-facing platform login. Fatal on
+	// failure: without it the user would be locked out of the platform.
 	if err := d.resetKeycloakAdminPassword(ctx, kcApp.ContainerID, "", req.Password); err != nil {
 		writeInternalError(w, err)
 		return
 	}
 
-	// Phase 2: master realm admin — Keycloak admin console login. The
-	// launcher itself does not use this account (it uses the stable
-	// `citeck` SA for all master-realm operations), so a failure here
-	// does not break the launcher; we report and carry on.
+	// Phase 2: master realm admin — Keycloak admin console login. Also
+	// fatal: leaving the old password (especially the snapshot default
+	// "admin") accessible is a live security hole on any publicly-reachable
+	// install, and we already succeeded on ecos-app so there's no partial
+	// rollback to worry about — user just needs to retry after addressing
+	// whatever tripped kcadm here. The launcher's own master-realm ops go
+	// through the `citeck` SA, so launcher functionality is NOT what we're
+	// protecting with this fatal-ness; it's the admin-console endpoint.
 	if err := d.kcadmSetPassword(ctx, kcApp.ContainerID, "master", req.Password); err != nil {
-		slog.Warn("Keycloak master realm admin password change failed (ecos-app already rotated; launcher uses citeck SA)", "err", err)
+		writeInternalError(w, fmt.Errorf("master realm admin password rotation failed "+
+			"(ecos-app already rotated — master console may still accept the old password; "+
+			"retry `citeck setup admin-password`): %w", err))
+		return
 	}
 
 	// Change RabbitMQ password at runtime via rabbitmqctl. The env var
@@ -195,4 +198,3 @@ func (d *Daemon) kcadmSetPassword(ctx context.Context, containerID, realm, newPa
 	}
 	return nil
 }
-

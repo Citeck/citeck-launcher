@@ -87,7 +87,6 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 		setup.NewSetupCmd(),
 		newDumpSystemInfoCmd(info),
 		newCompletionCmd(),
-
 	)
 
 	return root

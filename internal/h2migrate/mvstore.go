@@ -29,14 +29,14 @@ type MVStore struct {
 
 // chunkMeta holds parsed chunk header fields.
 type chunkMeta struct {
-	id             int
-	blockStart     int64 // file offset in bytes
-	blockCount     int   // number of 4096-byte blocks
-	pageCount      int
-	compressType   int // 0=none, 1=LZF, 2=deflate
-	lenOnDisk      int // length on disk (after header)
+	id              int
+	blockStart      int64 // file offset in bytes
+	blockCount      int   // number of 4096-byte blocks
+	pageCount       int
+	compressType    int // 0=none, 1=LZF, 2=deflate
+	lenOnDisk       int // length on disk (after header)
 	lenDecompressed int
-	rootMapPos     int64 // encoded page position: (chunkId << 38) | (offset << 6) | type
+	rootMapPos      int64 // encoded page position: (chunkId << 38) | (offset << 6) | type
 }
 
 // Page type constants for MVStore B-tree format.

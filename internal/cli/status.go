@@ -55,14 +55,18 @@ func newStatusCmd() *cobra.Command {
 			}
 
 			output.PrintResult(ns, func() {
-				output.PrintText("%s  %s", output.Colorize(output.Bold, "Name:"), ns.Name)
-				output.PrintText("%s  %s", output.Colorize(output.Bold, "Status:"), output.ColorizeStatus(ns.Status))
+				// Pad labels to the width of the longest ("Status:"/"Bundle:" = 7)
+				// so the values line up visually. padRight (shared with the
+				// install wizard) is CJK-aware — though labels are ASCII here,
+				// using the same helper keeps alignment logic consistent.
+				output.PrintText("%s  %s", output.Colorize(output.Bold, padRight("Name:", 7)), ns.Name)
+				output.PrintText("%s  %s", output.Colorize(output.Bold, padRight("Status:", 7)), output.ColorizeStatus(ns.Status))
 				if ns.BundleRef != "" {
-					output.PrintText("%s  %s", output.Colorize(output.Bold, "Bundle:"), ns.BundleRef)
+					output.PrintText("%s  %s", output.Colorize(output.Bold, padRight("Bundle:", 7)), ns.BundleRef)
 				}
 				for _, link := range ns.Links {
 					if link.Name == "Citeck UI" {
-						output.PrintText("%s  %s", output.Colorize(output.Bold, "URL:"), link.URL)
+						output.PrintText("%s  %s", output.Colorize(output.Bold, padRight("URL:", 7)), link.URL)
 						break
 					}
 				}
@@ -115,14 +119,14 @@ func watchEvents(c *client.DaemonClient) error {
 		urlLine := ""
 		for _, link := range ns.Links {
 			if link.Name == "Citeck UI" {
-				urlLine = fmt.Sprintf("%s  %s\n", output.Colorize(output.Bold, "URL:"), link.URL)
+				urlLine = fmt.Sprintf("%s  %s\n", output.Colorize(output.Bold, padRight("URL:", 7)), link.URL)
 				break
 			}
 		}
 		header := fmt.Sprintf("%s  %s\n%s  %s\n%s  %s\n%s",
-			output.Colorize(output.Bold, "Name:"), ns.Name,
-			output.Colorize(output.Bold, "Status:"), output.ColorizeStatus(ns.Status),
-			output.Colorize(output.Bold, "Bundle:"), ns.BundleRef,
+			output.Colorize(output.Bold, padRight("Name:", 7)), ns.Name,
+			output.Colorize(output.Bold, padRight("Status:", 7)), output.ColorizeStatus(ns.Status),
+			output.Colorize(output.Bold, padRight("Bundle:", 7)), ns.BundleRef,
 			urlLine)
 		table, _, _, _ := renderAppTable(ns.Apps)
 

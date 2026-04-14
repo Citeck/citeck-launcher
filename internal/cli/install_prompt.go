@@ -1,19 +1,50 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"strings"
 
-	"github.com/charmbracelet/huh"
+	"github.com/citeck/citeck-launcher/internal/cli/prompt"
 	"github.com/citeck/citeck-launcher/internal/i18n"
 	"github.com/citeck/citeck-launcher/internal/output"
 )
 
-// printStepHeader prints a numbered, colored step header with separator.
-func printStepHeader(step int, title string) {
-	fmt.Println()                                                                     //nolint:forbidigo // CLI step header
-	fmt.Printf("  %s\n", output.Colorize(output.Cyan, fmt.Sprintf("── %d. %s ──", step, title))) //nolint:forbidigo // CLI step header
-	fmt.Println()                                                                     //nolint:forbidigo // CLI step header
+// abortOnCancel bails out of the install wizard cleanly when the user
+// presses Esc or Ctrl+C in any prompt. We exit with the conventional
+// SIGINT code (130) so the shell's $? matches a real ^C, and CI / parent
+// processes can distinguish "user cancelled" from other failures.
+//
+// os.Exit is safe here because install.go hasn't acquired any resources
+// at prompt time that need cleanup — no daemon running, no open file
+// handles, no locks. Later stages (TLS cert generation, systemd install,
+// daemon start) happen after all prompts are answered.
+func abortOnCancel(err error) {
+	if err == nil || !errors.Is(err, prompt.ErrCanceled) {
+		return
+	}
+	ensureI18n()
+	msg := i18n.T("install.canceled")
+	if strings.HasPrefix(msg, "install.") {
+		msg = "Install cancelled."
+	}
+	fmt.Fprintln(os.Stderr, msg) //nolint:forbidigo // terminal exit message
+	os.Exit(130)
+}
+
+// printDoneTitle renders a completed-step title line matching the
+// compact-final view used by every prompt primitive — green check mark,
+// same left indent. For wizard steps that execute synchronously with no
+// user prompt (config save, systemd install), this is how they align
+// visually with the preceding prompt-based steps.
+func printDoneTitle(title string) {
+	fmt.Println() //nolint:forbidigo // CLI separator
+	fmt.Printf("%s%s\n",
+		prompt.StyleDone.Render(prompt.DonePrefix),
+		prompt.StyleTitle.Render(title),
+	) //nolint:forbidigo // CLI title line
+	fmt.Println() //nolint:forbidigo // CLI separator
 }
 
 // displayWidth returns the terminal display width of a string,
@@ -28,6 +59,16 @@ func displayWidth(s string) int {
 		}
 	}
 	return w
+}
+
+// padRight pads s with trailing spaces so its display width equals targetWidth.
+// If s is already wider than targetWidth the string is returned unchanged.
+func padRight(s string, targetWidth int) string {
+	gap := targetWidth - displayWidth(s)
+	if gap <= 0 {
+		return s
+	}
+	return s + strings.Repeat(" ", gap)
 }
 
 // isWideRune returns true for East Asian Wide characters (CJK ideographs, fullwidth forms).
@@ -48,86 +89,89 @@ func isWideRune(r rune) bool {
 		(r >= 0x30000 && r <= 0x3FFFD) // CJK Ext G+
 }
 
-// promptSelect shows a huh Select menu and returns the selected option string.
+// i18nHints returns localized key hints for prompt primitives. Falls back
+// to English defaults when i18n is not yet loaded (e.g. the language
+// selection step). Thin shim over prompt.HintsFromT to keep the local
+// helper name used throughout this file.
+func i18nHints() prompt.Hints { return prompt.HintsFromT(i18n.T) }
+
+// promptSelect shows a select menu and returns the chosen option string.
 // On cancel/error, returns the first option.
 func promptSelect(label string, options []string) string {
-	huhOpts := make([]huh.Option[string], len(options))
-	for i, opt := range options {
-		huhOpts[i] = huh.NewOption(opt, opt)
+	if len(options) == 0 {
+		return ""
+	}
+	opts := make([]prompt.Option[string], len(options))
+	for i, o := range options {
+		opts[i] = prompt.Option[string]{Label: o, Value: o}
 	}
 
-	var selected string
-	if len(options) > 0 {
-		selected = options[0]
+	res, err := (&prompt.Select[string]{
+		Title:   label,
+		Options: opts,
+		Height:  prompt.DefaultSelectHeight,
+		Hints:   i18nHints(),
+	}).Run()
+	abortOnCancel(err)
+	if err != nil {
+		return options[0]
 	}
-
-	hint := i18n.T("hint.select.setting")
-	if hint == "hint.select.setting" {
-		hint = "" // i18n not loaded yet (language selection step)
-	}
-
-	sel := huh.NewSelect[string]().
-		Title(label).
-		Description(hint).
-		Options(huhOpts...).
-		Value(&selected)
-	sel = output.ApplySelectHeight(sel, len(huhOpts))
-	_ = output.RunField(sel)
-	return selected
+	return res
 }
 
-// promptInput shows a huh Input prompt and returns the entered value.
+// promptInput shows a text input and returns the entered value.
 // On cancel/error or empty input, returns defaultVal.
 func promptInput(label, hint, defaultVal string) string {
-	var value string
-	input := huh.NewInput().
-		Title(label).
-		Value(&value).
-		Placeholder(defaultVal)
-	if hint != "" {
-		input = input.Description(hint)
-	} else {
-		input = input.Description(i18n.T("hint.input"))
-	}
-
-	if err := output.RunField(input); err != nil {
+	// Only pass `hint` through as Description — keyboard hints live in the
+	// footer now, so we don't default to "hint.input" like huh did.
+	v, err := (&prompt.Input{
+		Title:       label,
+		Description: hint,
+		Placeholder: defaultVal,
+		Hints:       i18nHints(),
+	}).Run()
+	abortOnCancel(err)
+	if err != nil {
 		return defaultVal
 	}
-	if value == "" {
+	if v == "" {
 		return defaultVal
 	}
-	return strings.TrimSpace(value)
+	return strings.TrimSpace(v)
 }
 
-// promptPassword shows a huh Input with masked echo for password entry.
+// promptPassword shows a masked text input for password entry.
 // On cancel/error or empty input, returns empty string.
 func promptPassword(label string) string {
-	var value string
-	err := output.RunField(huh.NewInput().
-		Title(label).
-		Description(i18n.T("hint.input")).
-		Value(&value).
-		EchoMode(huh.EchoModePassword))
+	v, err := (&prompt.Input{
+		Title:    label,
+		Password: true,
+		Hints:    i18nHints(),
+	}).Run()
+	abortOnCancel(err)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(value)
+	return strings.TrimSpace(v)
 }
 
-// promptConfirm shows a huh Confirm prompt and returns the result.
+// promptConfirm shows a Yes/No prompt and returns the result.
 // Respects flagYes — returns defaultYes when --yes is set.
 // On cancel/error, returns defaultYes.
 func promptConfirm(label string, defaultYes bool) bool {
 	if flagYes {
 		return defaultYes
 	}
-	result := defaultYes
-	err := output.RunField(output.NewConfirm().
-		Title(label).
-		Description(i18n.T("hint.confirm")).
-		Value(&result))
+	res, err := (&prompt.Confirm{
+		Title:       label,
+		Affirmative: output.ConfirmYes,
+		Negative:    output.ConfirmNo,
+		Default:     defaultYes,
+		Hints:       i18nHints(),
+	}).Run()
+	abortOnCancel(err)
 	if err != nil {
 		return defaultYes
 	}
-	return result
+	return res
 }

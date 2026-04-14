@@ -9,10 +9,10 @@ import (
 )
 
 var (
-	kernel32      = syscall.NewLazyDLL("kernel32.dll")
-	createMutexW  = kernel32.NewProc("CreateMutexW")
-	releaseMutex  = kernel32.NewProc("ReleaseMutex")
-	closeHandle   = kernel32.NewProc("CloseHandle")
+	kernel32     = syscall.NewLazyDLL("kernel32.dll")
+	createMutexW = kernel32.NewProc("CreateMutexW")
+	releaseMutex = kernel32.NewProc("ReleaseMutex")
+	closeHandle  = kernel32.NewProc("CloseHandle")
 )
 
 const errorAlreadyExists = 183
@@ -43,4 +43,3 @@ func (l *InstanceLock) Release() {
 		l.handle = 0
 	}
 }
-

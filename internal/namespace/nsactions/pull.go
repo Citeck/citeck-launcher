@@ -27,8 +27,8 @@ const PullRetriesForExistingImage = 3
 type PullData struct {
 	AppName    string
 	Image      string
-	Auth       *docker.RegistryAuth   // optional registry credentials
-	ProgressFn docker.PullProgressFn  // optional progress callback
+	Auth       *docker.RegistryAuth  // optional registry credentials
+	ProgressFn docker.PullProgressFn // optional progress callback
 }
 
 // PullExecutor pulls a Docker image with configurable retry delays and fallback to local.

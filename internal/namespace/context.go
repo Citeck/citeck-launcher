@@ -184,22 +184,22 @@ func BuildProxyBaseURL(p ProxyProps) string {
 
 // AppBuilder accumulates ApplicationDef properties during generation.
 type AppBuilder struct {
-	Name              string
-	NetworkAliases    []string
-	Image             string
-	Environments      map[string]string
-	Cmd               []string
-	Ports             []string
-	Volumes           []string
+	Name               string
+	NetworkAliases     []string
+	Image              string
+	Environments       map[string]string
+	Cmd                []string
+	Ports              []string
+	Volumes            []string
 	VolumesContentHash string
-	InitActions       []appdef.AppInitAction
-	DependsOn         map[string]bool
-	StartupConditions []appdef.StartupCondition
-	LivenessProbe     *appdef.AppProbeDef
-	Resources         *appdef.AppResourcesDef
-	Kind              appdef.ApplicationKind
-	ShmSize           string
-	InitContainers    []appdef.InitContainerDef
+	InitActions        []appdef.AppInitAction
+	DependsOn          map[string]bool
+	StartupConditions  []appdef.StartupCondition
+	LivenessProbe      *appdef.AppProbeDef
+	Resources          *appdef.AppResourcesDef
+	Kind               appdef.ApplicationKind
+	ShmSize            string
+	InitContainers     []appdef.InitContainerDef
 }
 
 // AddEnv sets an environment variable for the app.
@@ -229,21 +229,21 @@ func (b *AppBuilder) AddDependsOn(name string) *AppBuilder {
 // Build converts the builder into an immutable ApplicationDef.
 func (b *AppBuilder) Build() appdef.ApplicationDef {
 	return appdef.ApplicationDef{
-		Name:              b.Name,
-		NetworkAliases:    b.NetworkAliases,
-		Image:             b.Image,
-		Environments:      b.Environments,
-		Cmd:               b.Cmd,
-		Ports:             b.Ports,
-		Volumes:           b.Volumes,
+		Name:               b.Name,
+		NetworkAliases:     b.NetworkAliases,
+		Image:              b.Image,
+		Environments:       b.Environments,
+		Cmd:                b.Cmd,
+		Ports:              b.Ports,
+		Volumes:            b.Volumes,
 		VolumesContentHash: b.VolumesContentHash,
-		InitActions:       b.InitActions,
-		DependsOn:         b.DependsOn,
-		StartupConditions: b.StartupConditions,
-		LivenessProbe:     b.LivenessProbe,
-		Resources:         b.Resources,
-		Kind:              b.Kind,
-		ShmSize:           b.ShmSize,
-		InitContainers:    b.InitContainers,
+		InitActions:        b.InitActions,
+		DependsOn:          b.DependsOn,
+		StartupConditions:  b.StartupConditions,
+		LivenessProbe:      b.LivenessProbe,
+		Resources:          b.Resources,
+		Kind:               b.Kind,
+		ShmSize:            b.ShmSize,
+		InitContainers:     b.InitContainers,
 	}
 }

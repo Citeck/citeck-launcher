@@ -68,13 +68,13 @@ func TestValidateVolumeSnapshotMeta(t *testing.T) {
 	}
 
 	invalid := []VolumeSnapshotMeta{
-		{Name: "", DataFile: "ok.tar.zst"},                             // empty name
-		{Name: "ok", DataFile: ""},                                     // empty dataFile
-		{Name: "../escape", DataFile: "ok.tar.zst"},                    // path traversal in name
-		{Name: "ok", DataFile: "../escape.tar.zst"},                    // path traversal in dataFile
-		{Name: "ok", DataFile: `"; echo PWNED; ".tar.zst`},            // shell injection in dataFile
-		{Name: "sub/dir", DataFile: "ok.tar.zst"},                     // path separator in name
-		{Name: "ok", DataFile: "has spaces.tar.zst"},                  // unsafe chars in dataFile
+		{Name: "", DataFile: "ok.tar.zst"},                 // empty name
+		{Name: "ok", DataFile: ""},                         // empty dataFile
+		{Name: "../escape", DataFile: "ok.tar.zst"},        // path traversal in name
+		{Name: "ok", DataFile: "../escape.tar.zst"},        // path traversal in dataFile
+		{Name: "ok", DataFile: `"; echo PWNED; ".tar.zst`}, // shell injection in dataFile
+		{Name: "sub/dir", DataFile: "ok.tar.zst"},          // path separator in name
+		{Name: "ok", DataFile: "has spaces.tar.zst"},       // unsafe chars in dataFile
 	}
 	for _, v := range invalid {
 		if err := validateVolumeSnapshotMeta(v); err == nil {

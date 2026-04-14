@@ -46,7 +46,7 @@ type ActionStatus int32
 
 // Action lifecycle states.
 const (
-	StatusPending  ActionStatus = iota
+	StatusPending ActionStatus = iota
 	StatusRunning
 	StatusDone
 	StatusFailed

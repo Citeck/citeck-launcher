@@ -273,4 +273,3 @@ func isAuthError(err error) bool {
 	errStr := strings.ToLower(err.Error())
 	return strings.Contains(errStr, "unauthorized")
 }
-

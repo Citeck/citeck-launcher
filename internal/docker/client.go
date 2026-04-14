@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
@@ -21,17 +22,16 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
-	"github.com/citeck/citeck-launcher/internal/appdef"
 )
 
 // Labels used to track Citeck containers.
 // These must match the Kotlin desktop app labels (DockerLabels.kt) for backward compatibility.
 const (
-	LabelLauncher    = "citeck.launcher"           // marker label, always "true"
+	LabelLauncher    = "citeck.launcher" // marker label, always "true"
 	LabelWorkspace   = "citeck.launcher.workspace"
 	LabelNamespace   = "citeck.launcher.namespace"
-	LabelAppName     = "citeck.launcher.app.name"  // Kotlin: DockerLabels.APP_NAME
-	LabelAppHash     = "citeck.launcher.app.hash"  // Kotlin: DockerLabels.APP_HASH
+	LabelAppName     = "citeck.launcher.app.name" // Kotlin: DockerLabels.APP_NAME
+	LabelAppHash     = "citeck.launcher.app.hash" // Kotlin: DockerLabels.APP_HASH
 	LabelOrigName    = "citeck.launcher.original-name"
 	LabelComposeProj = "com.docker.compose.project" // Docker Desktop grouping
 )
@@ -778,4 +778,3 @@ func (c *Client) RunUtilsContainer(ctx context.Context, cmd, binds []string) (ou
 	}
 	return output, inspect.State.ExitCode, nil
 }
-

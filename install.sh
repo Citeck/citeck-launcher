@@ -152,7 +152,7 @@ detect_platform() {
     esac
     case "$OS" in
         linux) ;;
-        *) err "Unsupported OS: $OS (only Linux is supported)" ;;
+        *) err "Unsupported OS: $OS (server mode supports linux only; macOS desktop build will ship separately)" ;;
     esac
     log "Platform: ${OS}/${ARCH}"
 }

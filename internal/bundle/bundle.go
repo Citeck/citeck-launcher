@@ -74,10 +74,10 @@ type AppDef struct {
 
 // Def is a resolved bundle definition containing apps and metadata.
 type Def struct {
-	Key          Key              `json:"key" yaml:"key"`
+	Key          Key               `json:"key" yaml:"key"`
 	Applications map[string]AppDef `json:"applications" yaml:"applications"`
-	CiteckApps   []AppDef         `json:"citeckApps,omitempty" yaml:"citeckApps,omitempty"`
-	Content      map[string]any   `json:"content,omitempty" yaml:"content,omitempty"` // raw bundle YAML as map
+	CiteckApps   []AppDef          `json:"citeckApps,omitempty" yaml:"citeckApps,omitempty"`
+	Content      map[string]any    `json:"content,omitempty" yaml:"content,omitempty"` // raw bundle YAML as map
 }
 
 // EmptyDef is a Def with no applications.

@@ -31,8 +31,8 @@ type WebUIConfig struct {
 
 // ReconcilerConfig holds reconciler tuning.
 type ReconcilerConfig struct {
-	IntervalSeconds  int   `yaml:"interval,omitempty" json:"interval,omitempty"`           // default 60
-	LivenessPeriodMs int   `yaml:"livenessPeriod,omitempty" json:"livenessPeriod,omitempty"` // default 30000
+	IntervalSeconds  int   `yaml:"interval,omitempty" json:"interval,omitempty"`               // default 60
+	LivenessPeriodMs int   `yaml:"livenessPeriod,omitempty" json:"livenessPeriod,omitempty"`   // default 30000
 	LivenessEnabled  *bool `yaml:"livenessEnabled,omitempty" json:"livenessEnabled,omitempty"` // default true
 }
 

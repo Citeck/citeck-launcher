@@ -1,24 +1,24 @@
 package setup
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
+	"github.com/citeck/citeck-launcher/internal/cli/prompt"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/i18n"
 	"github.com/citeck/citeck-launcher/internal/namespace"
-
-	"github.com/charmbracelet/huh"
 	"github.com/citeck/citeck-launcher/internal/output"
 )
 
 type emailSetting struct{}
 
 func (s *emailSetting) ID() string             { return "email" }
-func (s *emailSetting) Title() string           { return i18n.T("setup.email.title") }
-func (s *emailSetting) Description() string     { return i18n.T("setup.email.desc") }
-func (s *emailSetting) TargetFile() TargetFile  { return NamespaceFile }
+func (s *emailSetting) Title() string          { return i18n.T("setup.email.title") }
+func (s *emailSetting) Description() string    { return i18n.T("setup.email.desc") }
+func (s *emailSetting) TargetFile() TargetFile { return NamespaceFile }
 
 func (s *emailSetting) Available(_ *namespace.Config, _ []string) bool { return true }
 
@@ -48,21 +48,20 @@ var emailPresets = []emailPreset{
 func (s *emailSetting) Run(sctx *setupContext, cfg *namespace.Config, _ *config.DaemonConfig) error {
 	// If already configured, offer edit/remove.
 	if cfg.Email != nil {
-		var action string
-		err := output.RunField(huh.NewSelect[string]().
-			Title(i18n.T("setup.email.action")).
-			Description(i18n.T("hint.select.setting")).
-			Options(
-				huh.NewOption(i18n.T("setup.email.edit"), "edit"),
-				huh.NewOption(i18n.T("setup.email.remove"), "remove"),
-				huh.NewOption(i18n.T("setup.back"), backValue),
-			).
-			Value(&action))
+		action, err := (&prompt.Select[string]{
+			Title: i18n.T("setup.email.action"),
+			Options: []prompt.Option[string]{
+				{Label: i18n.T("setup.email.edit"), Value: "edit"},
+				{Label: i18n.T("setup.email.remove"), Value: "remove"},
+				{Label: i18n.T("setup.back"), Value: backValue},
+			},
+			Hints: hints(),
+		}).Run()
 		if err != nil {
 			return fmt.Errorf("email action selection: %w", err)
 		}
 		if action == backValue {
-			return huh.ErrUserAborted
+			return prompt.ErrCanceled
 		}
 		if action == "remove" {
 			cfg.Email = nil
@@ -80,31 +79,62 @@ func (s *emailSetting) Run(sctx *setupContext, cfg *namespace.Config, _ *config.
 		email = selectEmailPreset(email)
 	}
 
-	var host, portStr, username, password, from string
-	var useTLS bool
-
-	host = email.Host
-	// Leave portStr empty so a typing the value replaces the prefill instead
+	// Leave portStr empty so typing the value replaces the prefill instead
 	// of requiring backspace; the preset port renders via Placeholder, and we
 	// fall back to it when the user leaves the field empty.
 	portPlaceholder := strconv.Itoa(email.Port)
-	username = email.Username
-	from = email.From
-	useTLS = email.TLS
 
-	err := output.RunForm(huh.NewForm(
-		huh.NewGroup(
-			huh.NewInput().Title(i18n.T("setup.email.host")).Value(&host).Validate(notEmpty),
-			huh.NewInput().Title(i18n.T("setup.email.port")).Value(&portStr).
-				Placeholder(portPlaceholder).
-				Validate(validatePortWithDefault(portPlaceholder)),
-			huh.NewInput().Title(i18n.T("setup.email.from")).Value(&from).Validate(notEmpty),
-			huh.NewInput().Title(i18n.T("setup.email.username")).Value(&username).Description(i18n.T("setup.email.username_hint")),
-			huh.NewInput().Title(i18n.T("setup.email.password")).Value(&password).EchoMode(huh.EchoModePassword),
-			huh.NewConfirm().Title(i18n.T("setup.email.tls")).Value(&useTLS).
-				Affirmative(output.ConfirmYes).Negative(output.ConfirmNo),
-		),
-	))
+	host, err := (&prompt.Input{
+		Title:    i18n.T("setup.email.host"),
+		Value:    email.Host,
+		Validate: notEmpty,
+		Hints:    hints(),
+	}).Run()
+	if err != nil {
+		return fmt.Errorf("email form: %w", err)
+	}
+	portStr, err := (&prompt.Input{
+		Title:       i18n.T("setup.email.port"),
+		Placeholder: portPlaceholder,
+		Validate:    validatePortWithDefault(portPlaceholder),
+		Hints:       hints(),
+	}).Run()
+	if err != nil {
+		return fmt.Errorf("email form: %w", err)
+	}
+	from, err := (&prompt.Input{
+		Title:    i18n.T("setup.email.from"),
+		Value:    email.From,
+		Validate: notEmpty,
+		Hints:    hints(),
+	}).Run()
+	if err != nil {
+		return fmt.Errorf("email form: %w", err)
+	}
+	username, err := (&prompt.Input{
+		Title:       i18n.T("setup.email.username"),
+		Description: i18n.T("setup.email.username_hint"),
+		Value:       email.Username,
+		Hints:       hints(),
+	}).Run()
+	if err != nil {
+		return fmt.Errorf("email form: %w", err)
+	}
+	password, err := (&prompt.Input{
+		Title:    i18n.T("setup.email.password"),
+		Password: true,
+		Hints:    hints(),
+	}).Run()
+	if err != nil {
+		return fmt.Errorf("email form: %w", err)
+	}
+	useTLS, err := (&prompt.Confirm{
+		Title:       i18n.T("setup.email.tls"),
+		Affirmative: output.ConfirmYes,
+		Negative:    output.ConfirmNo,
+		Default:     email.TLS,
+		Hints:       hints(),
+	}).Run()
 	if err != nil {
 		return fmt.Errorf("email form: %w", err)
 	}
@@ -148,21 +178,19 @@ func applyEmailSetting(sctx *setupContext, cfg *namespace.Config, prev *namespac
 func selectEmailPreset(email *namespace.EmailConfig) *namespace.EmailConfig {
 	const customValue = "_custom"
 
-	options := make([]huh.Option[string], 0, len(emailPresets)+1)
+	options := make([]prompt.Option[string], 0, len(emailPresets)+1)
 	for _, p := range emailPresets {
 		label := fmt.Sprintf("%s (%s:%d)", p.Name, p.Host, p.Port)
-		options = append(options, huh.NewOption(label, p.Host))
+		options = append(options, prompt.Option[string]{Label: label, Value: p.Host})
 	}
-	options = append(options, huh.NewOption(i18n.T("setup.email.custom"), customValue))
+	options = append(options, prompt.Option[string]{Label: i18n.T("setup.email.custom"), Value: customValue})
 
-	var selected string
-	sel := huh.NewSelect[string]().
-		Title(i18n.T("setup.email.preset")).
-		Description(i18n.T("hint.select.setting")).
-		Options(options...).
-		Value(&selected)
-	sel = output.ApplySelectHeight(sel, len(options))
-	err := output.RunField(sel)
+	selected, err := (&prompt.Select[string]{
+		Title:   i18n.T("setup.email.preset"),
+		Options: options,
+		Height:  prompt.DefaultSelectHeight,
+		Hints:   hints(),
+	}).Run()
 	if err != nil || selected == customValue {
 		return email
 	}
@@ -183,7 +211,7 @@ func selectEmailPreset(email *namespace.EmailConfig) *namespace.EmailConfig {
 // Shared by email, tls, and s3 settings.
 func notEmpty(val string) error {
 	if strings.TrimSpace(val) == "" {
-		return fmt.Errorf("this field is required")
+		return errors.New(i18n.T("validate.required"))
 	}
 	return nil
 }
@@ -193,14 +221,14 @@ func notEmpty(val string) error {
 func validatePort(val string) error {
 	val = strings.TrimSpace(val)
 	if val == "" {
-		return fmt.Errorf("port is required")
+		return errors.New(i18n.T("validate.required"))
 	}
 	n, err := strconv.Atoi(val)
 	if err != nil {
-		return fmt.Errorf("invalid number")
+		return errors.New(i18n.T("setup.port.invalidNumber"))
 	}
 	if n < 1 || n > 65535 {
-		return fmt.Errorf("port must be 1-65535")
+		return errors.New(i18n.T("setup.port.outOfRange"))
 	}
 	return nil
 }
@@ -211,7 +239,7 @@ func validatePortWithDefault(defaultPort string) func(string) error {
 	return func(val string) error {
 		if strings.TrimSpace(val) == "" {
 			if defaultPort == "" {
-				return fmt.Errorf("port is required")
+				return errors.New(i18n.T("validate.required"))
 			}
 			return nil
 		}

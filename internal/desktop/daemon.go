@@ -15,7 +15,7 @@ import (
 // DaemonOpts configures the daemon restart loop.
 type DaemonOpts struct {
 	Version string
-	ReadyCh chan<- string  // notified once when daemon HTTP server is ready; nil = ignored
+	ReadyCh chan<- string // notified once when daemon HTTP server is ready; nil = ignored
 	Status  *DaemonStatus // observable status for UI error display; nil = ignored
 }
 

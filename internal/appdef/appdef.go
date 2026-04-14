@@ -12,7 +12,7 @@ type ApplicationKind int
 
 // ApplicationKind constants categorize apps by their platform role.
 const (
-	KindCiteckCore          ApplicationKind = iota
+	KindCiteckCore ApplicationKind = iota
 	KindCiteckCoreExtension
 	KindCiteckAdditional
 	KindThirdParty
@@ -25,12 +25,12 @@ func (k ApplicationKind) IsCiteckApp() bool {
 
 // AppProbeDef defines a startup/liveness probe.
 type AppProbeDef struct {
-	Exec               *ExecProbeDef `json:"exec,omitempty" yaml:"exec,omitempty"`
-	HTTP               *HTTPProbeDef `json:"http,omitempty" yaml:"http,omitempty"`
-	InitialDelaySeconds int          `json:"initialDelaySeconds,omitempty" yaml:"initialDelaySeconds,omitempty"`
-	PeriodSeconds       int          `json:"periodSeconds,omitempty" yaml:"periodSeconds,omitempty"`
-	FailureThreshold    int          `json:"failureThreshold,omitempty" yaml:"failureThreshold,omitempty"`
-	TimeoutSeconds      int          `json:"timeoutSeconds,omitempty" yaml:"timeoutSeconds,omitempty"`
+	Exec                *ExecProbeDef `json:"exec,omitempty" yaml:"exec,omitempty"`
+	HTTP                *HTTPProbeDef `json:"http,omitempty" yaml:"http,omitempty"`
+	InitialDelaySeconds int           `json:"initialDelaySeconds,omitempty" yaml:"initialDelaySeconds,omitempty"`
+	PeriodSeconds       int           `json:"periodSeconds,omitempty" yaml:"periodSeconds,omitempty"`
+	FailureThreshold    int           `json:"failureThreshold,omitempty" yaml:"failureThreshold,omitempty"`
+	TimeoutSeconds      int           `json:"timeoutSeconds,omitempty" yaml:"timeoutSeconds,omitempty"`
 }
 
 // ExecProbeDef defines an exec-based probe.
@@ -46,7 +46,7 @@ type HTTPProbeDef struct {
 
 // StartupCondition defines how to detect app readiness.
 type StartupCondition struct {
-	Probe *AppProbeDef       `json:"probe,omitempty" yaml:"probe,omitempty"`
+	Probe *AppProbeDef         `json:"probe,omitempty" yaml:"probe,omitempty"`
 	Log   *LogStartupCondition `json:"log,omitempty" yaml:"log,omitempty"`
 }
 
@@ -83,25 +83,25 @@ type InitContainerDef struct {
 
 // ApplicationDef is a fully resolved container definition.
 type ApplicationDef struct {
-	Name              string            `json:"name"`
-	NetworkAliases    []string          `json:"networkAliases,omitempty"`
-	Image             string            `json:"image"`
-	ImageDigest       string            `json:"imageDigest,omitempty"` // Docker image digest for change detection
-	Environments      map[string]string `json:"environments,omitempty"`
-	Cmd               []string          `json:"cmd,omitempty"`
-	Ports             []string          `json:"ports,omitempty"`
-	Volumes           []string          `json:"volumes,omitempty"`
-	VolumesContentHash string           `json:"volumesContentHash,omitempty"`
-	InitActions       []AppInitAction   `json:"initActions,omitempty"`
-	DependsOn         map[string]bool   `json:"dependsOn,omitempty"`
-	StartupConditions []StartupCondition `json:"startupConditions,omitempty"`
-	LivenessProbe     *AppProbeDef      `json:"livenessProbe,omitempty"`
-	Resources         *AppResourcesDef  `json:"resources,omitempty"`
-	Kind              ApplicationKind   `json:"kind"`
-	ShmSize           string            `json:"shmSize,omitempty"`
-	InitContainers    []InitContainerDef `json:"initContainers,omitempty"`
-	IsInit            bool              `json:"-"` // true for init containers (no restart policy)
-	StopTimeout       int               `json:"stopTimeout,omitempty" yaml:"stopTimeout,omitempty"` // seconds; 0 = default (15s webapps, 30s infra)
+	Name               string             `json:"name"`
+	NetworkAliases     []string           `json:"networkAliases,omitempty"`
+	Image              string             `json:"image"`
+	ImageDigest        string             `json:"imageDigest,omitempty"` // Docker image digest for change detection
+	Environments       map[string]string  `json:"environments,omitempty"`
+	Cmd                []string           `json:"cmd,omitempty"`
+	Ports              []string           `json:"ports,omitempty"`
+	Volumes            []string           `json:"volumes,omitempty"`
+	VolumesContentHash string             `json:"volumesContentHash,omitempty"`
+	InitActions        []AppInitAction    `json:"initActions,omitempty"`
+	DependsOn          map[string]bool    `json:"dependsOn,omitempty"`
+	StartupConditions  []StartupCondition `json:"startupConditions,omitempty"`
+	LivenessProbe      *AppProbeDef       `json:"livenessProbe,omitempty"`
+	Resources          *AppResourcesDef   `json:"resources,omitempty"`
+	Kind               ApplicationKind    `json:"kind"`
+	ShmSize            string             `json:"shmSize,omitempty"`
+	InitContainers     []InitContainerDef `json:"initContainers,omitempty"`
+	IsInit             bool               `json:"-"`                                                  // true for init containers (no restart policy)
+	StopTimeout        int                `json:"stopTimeout,omitempty" yaml:"stopTimeout,omitempty"` // seconds; 0 = default (15s webapps, 30s infra)
 }
 
 // GetHashInput returns the string used to compute the application definition hash (for debugging).

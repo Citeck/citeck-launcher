@@ -11,13 +11,13 @@ import (
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/bundle"
+	"github.com/citeck/citeck-launcher/internal/cli/prompt"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/i18n"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/output"
 
-	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
 
@@ -81,7 +81,7 @@ func runSetup(_ *cobra.Command, args []string) error {
 
 // resolveAppList resolves the list of app names from the bundle, falling back to namespace config keys.
 // Uses a WARN-level logger on the resolver so bundle-resolver bookkeeping does not
-// break the huh TUI initial render (the logged lines would never be cleared).
+// break the TUI initial render (the logged lines would never be cleared).
 func resolveAppList(nsCfg *namespace.Config) []string {
 	quiet := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	resolver := bundle.NewResolver(config.DataDir()).WithLogger(quiet)
@@ -116,7 +116,7 @@ func runMenuLoop(sctx *setupContext, nsCfg *namespace.Config, daemonCfg *config.
 		settings := allSettings()
 
 		// Build menu options: "id    — current value".
-		var options []huh.Option[string]
+		var options []prompt.Option[string]
 		maxIDLen := 0
 		for _, s := range settings {
 			if !s.Available(nsCfg, sctx.CurrentApps) {
@@ -132,19 +132,17 @@ func runMenuLoop(sctx *setupContext, nsCfg *namespace.Config, daemonCfg *config.
 				continue
 			}
 			label := fmt.Sprintf("%-*s — %s", maxIDLen, s.ID(), s.CurrentValue(nsCfg, daemonCfg))
-			options = append(options, huh.NewOption(label, s.ID()))
+			options = append(options, prompt.Option[string]{Label: label, Value: s.ID()})
 		}
-		options = append(options, huh.NewOption(i18n.T("setup.exit"), "_exit"))
+		options = append(options, prompt.Option[string]{Label: i18n.T("setup.exit"), Value: "_exit"})
 
-		choice := options[0].Value
-		fmt.Println() //nolint:forbidigo // blank line before huh to fix initial viewport render
-		sel := huh.NewSelect[string]().
-			Title(i18n.T("setup.menu.title")).
-			Description(i18n.T("hint.select.menu")).
-			Options(options...).
-			Value(&choice)
-		sel = output.ApplySelectHeight(sel, len(options))
-		err := output.RunField(sel)
+		fmt.Println() //nolint:forbidigo // blank line before prompt to fix initial viewport render
+		choice, err := (&prompt.Select[string]{
+			Title:   i18n.T("setup.menu.title"),
+			Options: options,
+			Height:  prompt.DefaultSelectHeight,
+			Hints:   hints(),
+		}).Run()
 		if err != nil {
 			if isUserAborted(err) {
 				return nil
@@ -339,9 +337,9 @@ func showDiff(forward, reverse []PatchOp) {
 type confirmAction int
 
 const (
-	actionCancel       confirmAction = iota
-	actionApplyReload                // Apply + reload services (default)
-	actionApplyOnly                  // Apply config only, no reload
+	actionCancel      confirmAction = iota
+	actionApplyReload               // Apply + reload services (default)
+	actionApplyOnly                 // Apply config only, no reload
 )
 
 // promptConfirmAction asks the user how to apply the changes.
@@ -352,26 +350,25 @@ func promptConfirmAction(target TargetFile) (confirmAction, error) {
 		valCancel      = "cancel"
 	)
 
-	options := []huh.Option[string]{
-		huh.NewOption(i18n.T("setup.confirm.apply_reload"), valApplyReload),
-		huh.NewOption(i18n.T("setup.confirm.apply_only"), valApplyOnly),
-		huh.NewOption(i18n.T("setup.confirm.cancel"), valCancel),
+	options := []prompt.Option[string]{
+		{Label: i18n.T("setup.confirm.apply_reload"), Value: valApplyReload},
+		{Label: i18n.T("setup.confirm.apply_only"), Value: valApplyOnly},
+		{Label: i18n.T("setup.confirm.cancel"), Value: valCancel},
 	}
 
 	// For daemon config (language), reload is not applicable — simplify to apply/cancel.
 	if target == DaemonFile {
-		options = []huh.Option[string]{
-			huh.NewOption(i18n.T("setup.confirm.apply"), valApplyOnly),
-			huh.NewOption(i18n.T("setup.confirm.cancel"), valCancel),
+		options = []prompt.Option[string]{
+			{Label: i18n.T("setup.confirm.apply"), Value: valApplyOnly},
+			{Label: i18n.T("setup.confirm.cancel"), Value: valCancel},
 		}
 	}
 
-	var choice string
-	err := output.RunField(huh.NewSelect[string]().
-		Title(i18n.T("setup.confirm")).
-		Description(i18n.T("hint.select.setting")).
-		Options(options...).
-		Value(&choice))
+	choice, err := (&prompt.Select[string]{
+		Title:   i18n.T("setup.confirm"),
+		Options: options,
+		Hints:   hints(),
+	}).Run()
 	if err != nil {
 		return actionCancel, fmt.Errorf("confirm: %w", err)
 	}
@@ -645,4 +642,3 @@ func collectAllPatches() ([]indexedPatch, error) {
 	})
 	return all, nil
 }
-

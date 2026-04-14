@@ -3,20 +3,18 @@ package setup
 import (
 	"fmt"
 
+	"github.com/citeck/citeck-launcher/internal/cli/prompt"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/i18n"
 	"github.com/citeck/citeck-launcher/internal/namespace"
-
-	"github.com/charmbracelet/huh"
-	"github.com/citeck/citeck-launcher/internal/output"
 )
 
 type tlsSetting struct{}
 
 func (s *tlsSetting) ID() string             { return "tls" }
-func (s *tlsSetting) Title() string           { return i18n.T("setup.tls.title") }
-func (s *tlsSetting) Description() string     { return i18n.T("setup.tls.desc") }
-func (s *tlsSetting) TargetFile() TargetFile  { return NamespaceFile }
+func (s *tlsSetting) Title() string          { return i18n.T("setup.tls.title") }
+func (s *tlsSetting) Description() string    { return i18n.T("setup.tls.desc") }
+func (s *tlsSetting) TargetFile() TargetFile { return NamespaceFile }
 
 func (s *tlsSetting) Available(_ *namespace.Config, _ []string) bool { return true }
 
@@ -42,26 +40,24 @@ func (s *tlsSetting) Run(_ *setupContext, cfg *namespace.Config, _ *config.Daemo
 		optHTTP       = "http"
 	)
 
-	var choice string
-	tlsOptions := []huh.Option[string]{
-		huh.NewOption("Let's Encrypt (automatic HTTPS)", optLE),
-		huh.NewOption(i18n.T("setup.tls.selfsigned"), optSelfSigned),
-		huh.NewOption(i18n.T("setup.tls.custom"), optCustom),
-		huh.NewOption("HTTP only (no TLS)", optHTTP),
-		huh.NewOption(i18n.T("setup.back"), backValue),
+	tlsOptions := []prompt.Option[string]{
+		{Label: "Let's Encrypt (automatic HTTPS)", Value: optLE},
+		{Label: i18n.T("setup.tls.selfsigned"), Value: optSelfSigned},
+		{Label: i18n.T("setup.tls.custom"), Value: optCustom},
+		{Label: "HTTP only (no TLS)", Value: optHTTP},
+		{Label: i18n.T("setup.back"), Value: backValue},
 	}
-	sel := huh.NewSelect[string]().
-		Title(i18n.T("setup.tls.prompt")).
-		Description(i18n.T("hint.select.setting")).
-		Options(tlsOptions...).
-		Value(&choice)
-	sel = output.ApplySelectHeight(sel, len(tlsOptions))
-	err := output.RunField(sel)
+	choice, err := (&prompt.Select[string]{
+		Title:   i18n.T("setup.tls.prompt"),
+		Options: tlsOptions,
+		Height:  prompt.DefaultSelectHeight,
+		Hints:   hints(),
+	}).Run()
 	if err != nil {
 		return fmt.Errorf("tls selection: %w", err)
 	}
 	if choice == backValue {
-		return huh.ErrUserAborted
+		return prompt.ErrCanceled
 	}
 
 	// Reset TLS config to zero value before applying selection.
@@ -74,15 +70,21 @@ func (s *tlsSetting) Run(_ *setupContext, cfg *namespace.Config, _ *config.Daemo
 	case optSelfSigned:
 		cfg.Proxy.TLS.Enabled = true
 	case optCustom:
-		var certPath, keyPath string
-		err = output.RunForm(huh.NewForm(
-			huh.NewGroup(
-				huh.NewInput().Title(i18n.T("setup.tls.cert_path")).Value(&certPath).Validate(notEmpty),
-				huh.NewInput().Title(i18n.T("setup.tls.key_path")).Value(&keyPath).Validate(notEmpty),
-			),
-		))
-		if err != nil {
-			return fmt.Errorf("tls cert form: %w", err)
+		certPath, cerr := (&prompt.Input{
+			Title:    i18n.T("setup.tls.cert_path"),
+			Validate: notEmpty,
+			Hints:    hints(),
+		}).Run()
+		if cerr != nil {
+			return fmt.Errorf("tls cert form: %w", cerr)
+		}
+		keyPath, kerr := (&prompt.Input{
+			Title:    i18n.T("setup.tls.key_path"),
+			Validate: notEmpty,
+			Hints:    hints(),
+		}).Run()
+		if kerr != nil {
+			return fmt.Errorf("tls cert form: %w", kerr)
 		}
 		cfg.Proxy.TLS.Enabled = true
 		cfg.Proxy.TLS.CertPath = certPath

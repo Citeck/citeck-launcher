@@ -31,10 +31,10 @@ const (
 
 // MigrateStatus describes the current migration state.
 type MigrateStatus struct {
-	Needed           bool
-	HasJava          bool   // true if Java found in PATH
-	JavaPath         string // path to java binary (empty if not found)
-	JREDownloadSizeMB int   // size of JRE download in MB (0 if Java found)
+	Needed            bool
+	HasJava           bool   // true if Java found in PATH
+	JavaPath          string // path to java binary (empty if not found)
+	JREDownloadSizeMB int    // size of JRE download in MB (0 if Java found)
 }
 
 // CheckMigration checks if migration is needed and whether Java is available.
@@ -277,7 +277,7 @@ func extractTarGz(archivePath, destDir string) error {
 		case tar.TypeDir:
 			_ = os.MkdirAll(target, 0o755) //nolint:gosec // G301: extraction dirs need 0o755
 		case tar.TypeReg:
-			_ = os.MkdirAll(filepath.Dir(target), 0o755) //nolint:gosec // G301: extraction dirs need 0o755
+			_ = os.MkdirAll(filepath.Dir(target), 0o755)                                       //nolint:gosec // G301: extraction dirs need 0o755
 			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY, os.FileMode(header.Mode)) //nolint:gosec // mode is from trusted JRE tar archive
 			if err != nil {
 				continue
@@ -344,8 +344,8 @@ func importWorkspaces(maps map[string]map[string]string, store storage.Store, re
 				continue
 			}
 			var ws struct {
-				Name      string `json:"name"`
-				RepoURL   string `json:"repoUrl"`
+				Name       string `json:"name"`
+				RepoURL    string `json:"repoUrl"`
 				RepoBranch string `json:"repoBranch"`
 			}
 			if err := json.Unmarshal(raw, &ws); err != nil {

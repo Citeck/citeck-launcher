@@ -58,18 +58,18 @@ type ObserverProps struct {
 
 // WebappProps holds per-webapp overrides in namespace config.
 type WebappProps struct {
-	Enabled        *bool                                `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Image          string                               `yaml:"image" json:"image"`
-	Environments   map[string]string                    `yaml:"environments,omitempty" json:"environments,omitempty"`
-	CloudConfig    map[string]any                       `yaml:"cloudConfig,omitempty" json:"cloudConfig,omitempty"`
-	DataSources    map[string]bundle.DataSourceConfig   `yaml:"dataSources,omitempty" json:"dataSources,omitempty"`
-	DebugPort      int                                  `yaml:"debugPort" json:"debugPort"`
-	HeapSize       string                               `yaml:"heapSize" json:"heapSize"`
-	MemoryLimit    string                               `yaml:"memoryLimit" json:"memoryLimit"`
-	ServerPort     int                                  `yaml:"serverPort" json:"serverPort"`
-	JavaOpts       string                               `yaml:"javaOpts" json:"javaOpts"`
-	SpringProfiles   string                               `yaml:"springProfiles" json:"springProfiles"`
-	LivenessDisabled bool                                 `yaml:"livenessDisabled,omitempty" json:"livenessDisabled,omitempty"`
+	Enabled          *bool                              `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Image            string                             `yaml:"image" json:"image"`
+	Environments     map[string]string                  `yaml:"environments,omitempty" json:"environments,omitempty"`
+	CloudConfig      map[string]any                     `yaml:"cloudConfig,omitempty" json:"cloudConfig,omitempty"`
+	DataSources      map[string]bundle.DataSourceConfig `yaml:"dataSources,omitempty" json:"dataSources,omitempty"`
+	DebugPort        int                                `yaml:"debugPort" json:"debugPort"`
+	HeapSize         string                             `yaml:"heapSize" json:"heapSize"`
+	MemoryLimit      string                             `yaml:"memoryLimit" json:"memoryLimit"`
+	ServerPort       int                                `yaml:"serverPort" json:"serverPort"`
+	JavaOpts         string                             `yaml:"javaOpts" json:"javaOpts"`
+	SpringProfiles   string                             `yaml:"springProfiles" json:"springProfiles"`
+	LivenessDisabled bool                               `yaml:"livenessDisabled,omitempty" json:"livenessDisabled,omitempty"`
 }
 
 // EmailConfig configures external SMTP. When set, mailhog is not generated.
@@ -95,17 +95,17 @@ type S3Config struct {
 
 // Config is the top-level namespace configuration (namespace.yml).
 type Config struct {
-	APIVersion     string              `yaml:"apiVersion,omitempty" json:"apiVersion,omitempty"`
-	ID             string              `yaml:"id" json:"id"`
-	Name           string              `yaml:"name" json:"name"`
-	Snapshot       string              `yaml:"snapshot" json:"snapshot"`
-	Template       string              `yaml:"template" json:"template"`
-	Authentication AuthenticationProps `yaml:"authentication" json:"authentication"`
-	BundleRef      bundle.Ref    `yaml:"bundleRef" json:"bundleRef"`
-	PgAdmin        PgAdminProps        `yaml:"pgAdmin" json:"pgAdmin"`
-	MongoDB        MongoDbProps        `yaml:"mongodb" json:"mongodb"`
-	Proxy          ProxyProps          `yaml:"proxy" json:"proxy"`
-	Observer       ObserverProps       `yaml:"observer" json:"observer"`
+	APIVersion     string                 `yaml:"apiVersion,omitempty" json:"apiVersion,omitempty"`
+	ID             string                 `yaml:"id" json:"id"`
+	Name           string                 `yaml:"name" json:"name"`
+	Snapshot       string                 `yaml:"snapshot" json:"snapshot"`
+	Template       string                 `yaml:"template" json:"template"`
+	Authentication AuthenticationProps    `yaml:"authentication" json:"authentication"`
+	BundleRef      bundle.Ref             `yaml:"bundleRef" json:"bundleRef"`
+	PgAdmin        PgAdminProps           `yaml:"pgAdmin" json:"pgAdmin"`
+	MongoDB        MongoDbProps           `yaml:"mongodb" json:"mongodb"`
+	Proxy          ProxyProps             `yaml:"proxy" json:"proxy"`
+	Observer       ObserverProps          `yaml:"observer" json:"observer"`
 	Webapps        map[string]WebappProps `yaml:"webapps,omitempty" json:"webapps,omitempty"`
 	Email          *EmailConfig           `yaml:"email,omitempty" json:"email,omitempty"`
 	S3             *S3Config              `yaml:"s3,omitempty" json:"s3,omitempty"`

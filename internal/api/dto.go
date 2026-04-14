@@ -234,10 +234,10 @@ type NamespaceCreateDto struct {
 	BundleRepo         string   `json:"bundleRepo"`
 	BundleKey          string   `json:"bundleKey"`
 	WorkspaceID        string   `json:"workspaceId,omitempty"`
-	Snapshot           string   `json:"snapshot,omitempty"`         // snapshot ID from workspace config
-	Template           string   `json:"template,omitempty"`         // namespace template ID
-	MasterPassword     string   `json:"masterPassword,omitempty"`   // encryption master password
-	UseDefaultPassword bool     `json:"useDefaultPassword"`         // use default "citeck" password
+	Snapshot           string   `json:"snapshot,omitempty"`       // snapshot ID from workspace config
+	Template           string   `json:"template,omitempty"`       // namespace template ID
+	MasterPassword     string   `json:"masterPassword,omitempty"` // encryption master password
+	UseDefaultPassword bool     `json:"useDefaultPassword"`       // use default "citeck" password
 }
 
 // SnapshotDownloadDto is the request body for downloading a snapshot from a URL.

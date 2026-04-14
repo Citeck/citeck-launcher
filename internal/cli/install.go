@@ -16,15 +16,15 @@ import (
 	"github.com/citeck/citeck-launcher/internal/acme"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/cli/bundlepicker"
+	"github.com/citeck/citeck-launcher/internal/cli/prompt"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/citeck/citeck-launcher/internal/storage"
 	"github.com/citeck/citeck-launcher/internal/tlsutil"
-	"github.com/charmbracelet/huh"
-	dockerclient "github.com/docker/docker/client"
 	"github.com/docker/docker/api/types/registry"
+	dockerclient "github.com/docker/docker/client"
 	"github.com/spf13/cobra"
 )
 
@@ -138,10 +138,10 @@ func runInstall(info BuildInfo, workspaceZip string, offline bool) (retErr error
 			label += " (" + info.BuildDate + ")"
 		}
 		fmt.Println() //nolint:forbidigo // CLI output
-		output.PrintText("  %s %s", output.Colorize(output.Green, t("install.alreadyInstalled")),
+		output.PrintText("   %s %s", output.Colorize(output.Green, t("install.alreadyInstalled")),
 			output.Colorize(output.Dim, label))
 		fmt.Println() //nolint:forbidigo // CLI output
-		output.PrintText("  %s %s", t("install.setupHint"), output.Colorize(output.Cyan, "citeck setup"))
+		output.PrintText("   %s %s", t("install.setupHint"), output.Colorize(output.Cyan, "citeck setup"))
 		fmt.Println() //nolint:forbidigo // CLI output
 		return nil
 	}
@@ -158,10 +158,10 @@ func runInstall(info BuildInfo, workspaceZip string, offline bool) (retErr error
 
 	// --- Step 2: Welcome (in selected language) ---
 	//
-	// Use huh.NewNote for the "press Enter to continue" gate rather than
+	// Use prompt.Note for the "press Enter to continue" gate rather than
 	// fmt.Scanln — the latter sometimes reads a phantom newline left over
 	// from the Enter keypress that confirmed the preceding Language Select,
-	// and the welcome screen is skipped without user input. huh.NewNote
+	// and the welcome screen is skipped without user input. prompt.Note
 	// shares the same raw-mode input discipline as the Select above and
 	// waits reliably for a fresh Enter.
 	welcomeBody := fmt.Sprintf(
@@ -174,19 +174,20 @@ func runInstall(info BuildInfo, workspaceZip string, offline bool) (retErr error
 		t("install.welcome.stepStart"),
 		t("install.welcome.canChange"),
 	)
-	if err := output.RunField(huh.NewNote().
-		Title(t("install.welcome.title")).
-		Description(welcomeBody).
-		Next(true).
-		NextLabel(t("install.welcome.pressEnter"))); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
+	if err := (&prompt.Note{
+		Title:       t("install.welcome.title"),
+		Description: welcomeBody,
+		NextLabel:   t("install.welcome.pressEnter"),
+		Hints:       i18nHints(),
+	}).Run(); err != nil {
+		if errors.Is(err, prompt.ErrCanceled) {
 			return ErrInstallCancelled
 		}
 		return fmt.Errorf("welcome: %w", err)
 	}
 
 	nsCfg := namespace.DefaultNamespaceConfig()
-	nsCfg.Template = "default" // links to workspace template for detachedApps on first start
+	nsCfg.Template = "default"    // links to workspace template for detachedApps on first start
 	nsCfg.PgAdmin.Enabled = false // default off (use pgAdmin separately if needed)
 	isOffline := offline || workspaceZip != ""
 
@@ -195,7 +196,6 @@ func runInstall(info BuildInfo, workspaceZip string, offline bool) (retErr error
 
 hostStep:
 	// --- Step 3: Hostname --- (1. Language + 2. Welcome precede this; numbering matches quick_start.rst)
-	printStepHeader(3, t("install.hostname.label"))
 	for {
 		hostname = promptInput(t("install.hostname.label"), t("install.hostname.hint"), defaultHost)
 		if hostname != "" {
@@ -203,13 +203,12 @@ hostStep:
 		}
 	}
 	if hostname == "localhost" || hostname == "127.0.0.1" {
-		output.PrintText("  %s", t("install.hostname.localOnly"))
+		output.PrintText("   %s", t("install.hostname.localOnly"))
 	}
 	nsCfg.Proxy.Host = hostname
 	nsCfg.Name = "Citeck"
 
 	// --- Step 4: TLS ---
-	printStepHeader(4, t("install.tls.label"))
 	isLocalhost := hostname == "localhost" || hostname == "127.0.0.1"
 	var tlsOptions []string
 	if !isLocalhost && !isOffline {
@@ -241,7 +240,6 @@ hostStep:
 
 	// --- Step 5: Release + registry auth (registry is a conditional sub-step) ---
 	for {
-		printStepHeader(5, t("install.release.label"))
 		if err := resolveRelease(&nsCfg, isOffline); err != nil {
 			return err
 		}
@@ -269,7 +267,7 @@ hostStep:
 	}
 
 	// --- Step 7: Save configuration (automatic — no prompt) ---
-	printStepHeader(7, t("install.config.label"))
+	printDoneTitle(t("install.config.label"))
 	if err := os.MkdirAll(filepath.Dir(nsCfgPath), 0o755); err != nil { //nolint:gosec // G301: namespace config dir needs 0o755
 		return fmt.Errorf("create config dir: %w", err)
 	}
@@ -281,7 +279,7 @@ hostStep:
 		return fmt.Errorf("write config: %w", writeErr)
 	}
 	fmt.Println() //nolint:forbidigo // CLI separator
-	output.PrintText("  %s", t("install.config.nsWritten", "path", nsCfgPath))
+	output.PrintText("   %s", t("install.config.nsWritten", "path", nsCfgPath))
 
 	// --- Write daemon.yml ---
 	daemonCfg := config.DefaultDaemonConfig()
@@ -293,22 +291,21 @@ hostStep:
 	if saveErr := config.SaveDaemonConfig(daemonCfg); saveErr != nil {
 		return fmt.Errorf("save daemon config: %w", saveErr)
 	}
-	output.PrintText("  %s", t("install.config.daemonWritten", "path", config.DaemonConfigPath()))
+	output.PrintText("   %s", t("install.config.daemonWritten", "path", config.DaemonConfigPath()))
 
 	// --- Step 8: System service ---
-	printStepHeader(8, t("install.systemd.label"))
+	printDoneTitle(t("install.systemd.label"))
 	installSystemdAndFirewall(port)
 
 	// --- Step 9: Start ---
-	printStepHeader(9, t("install.start.header"))
 	startNow := promptConfirm(t("install.start.label"), true)
 	if !startNow {
 		printAccessInfo(hostname, port, nsCfg.Proxy.TLS.Enabled, nsCfg.Proxy.TLS.LetsEncrypt)
-		output.PrintText("\n  %s", t("install.start.manual"))
+		output.PrintText("\n   %s", t("install.start.manual"))
 		return nil
 	}
 
-	output.PrintText("  %s", t("install.start.starting"))
+	output.PrintText("   %s", t("install.start.starting"))
 
 	// Prefer systemctl if the service was just installed — this ensures
 	// the daemon is managed by systemd from the start (auto-restart on
@@ -364,12 +361,29 @@ func printAccessInfo(hostname string, port int, tls, le bool) {
 
 	fmt.Println() //nolint:forbidigo // CLI output
 	title := t("install.ready.title")
-	urlLine := t("install.ready.openBrowser", "url", url)
-	loginLine := t("install.ready.login", "user", "admin", "password", adminPassword)
+
+	// Access info: pad the two labels to equal display width so the URL and
+	// login values line up regardless of locale (CJK-aware).
+	openLabel := t("install.ready.openBrowserLabel")
+	loginLabel := t("install.ready.loginLabel")
+	accessWidth := max(displayWidth(openLabel), displayWidth(loginLabel))
+	urlLine := padRight(openLabel, accessWidth) + "  " + url
+	loginLine := padRight(loginLabel, accessWidth) + "  " +
+		t("install.ready.loginFormat", "user", "admin", "password", adminPassword)
 	passwordNote := t("install.ready.passwordNote")
+
+	// Useful commands: pad command names to the widest so the "— description"
+	// markers line up across languages.
+	cmdStatus := "citeck status -w"
+	cmdSetup := "citeck setup"
+	cmdWidth := max(displayWidth(cmdStatus), displayWidth(cmdSetup))
+	cmdStatusLine := "  " + padRight(cmdStatus, cmdWidth) + "   — " + t("install.ready.commandStatusDesc")
+	cmdSetupLine := "  " + padRight(cmdSetup, cmdWidth) + "   — " + t("install.ready.commandSetupDesc")
 
 	// Collect lines for the box
 	lines := []string{title, "", urlLine, loginLine, "", passwordNote}
+	lines = append(lines, "", t("install.ready.commandsTitle"),
+		cmdStatusLine, cmdSetupLine)
 	if tls && !le {
 		lines = append(lines, "")
 		for line := range strings.SplitSeq(t("install.ready.certWarning"), "\n") {
@@ -386,11 +400,11 @@ func printAccessInfo(hostname string, port int, tls, le bool) {
 	}
 	separator := strings.Repeat("═", maxLen+4)
 
-	output.PrintText("  %s", separator)
+	output.PrintText("   %s", separator)
 	for _, l := range lines {
-		output.PrintText("  %s", l)
+		output.PrintText("   %s", l)
 	}
-	output.PrintText("  %s", separator)
+	output.PrintText("   %s", separator)
 }
 
 type tlsResult int
@@ -411,7 +425,7 @@ func configureTLS(nsCfg *namespace.Config, choice string) tlsResult {
 		// lingering "auto" marker in namespace.yml; `citeck setup` will
 		// display whichever concrete mode actually applies.
 		nsCfg.Proxy.TLS.Enabled = true
-		output.PrintText("  %s", t("install.tls.leChecking", "host", nsCfg.Proxy.Host))
+		output.PrintText("   %s", t("install.tls.leChecking", "host", nsCfg.Proxy.Host))
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		leErr := acme.TryStaging(ctx, nsCfg.Proxy.Host)
 		cancel()
@@ -423,20 +437,20 @@ func configureTLS(nsCfg *namespace.Config, choice string) tlsResult {
 			// daemon would otherwise silently fall back to self-signed and the
 			// user gets ERR_CERT_AUTHORITY_INVALID.
 			if limited, retryAfter, err := acme.IsRateLimited(config.DataDir(), nsCfg.Proxy.Host); err == nil && limited {
-				output.PrintText("  %s", t("install.tls.leRateLimited", "retryAfter", retryAfter.Format(time.RFC3339)))
+				output.PrintText("   %s", t("install.tls.leRateLimited", "retryAfter", retryAfter.Format(time.RFC3339)))
 				rateLimited = true
 			}
 		}
 		if leAvailable && !rateLimited {
 			nsCfg.Proxy.TLS.LetsEncrypt = true
-			output.PrintText("  %s", t("install.tls.leStagingOK"))
+			output.PrintText("   %s", t("install.tls.leStagingOK"))
 		} else {
 			// Fall through to self-signed. LetsEncrypt stays false (zero value)
 			// so the stored config is unambiguously "self-signed". User can
 			// re-run the wizard or `citeck setup tls` to switch to LE later.
 			if leErr != nil {
 				for line := range strings.SplitSeq(t("install.tls.leAutoFallback"), "\n") {
-					output.PrintText("  %s", line)
+					output.PrintText("   %s", line)
 				}
 			}
 			generateSelfSignedCert(nsCfg)
@@ -461,15 +475,15 @@ func configureTLS(nsCfg *namespace.Config, choice string) tlsResult {
 // tryLEWithRecovery validates LE, on failure offers retry / change host / back to TLS.
 func tryLEWithRecovery(nsCfg *namespace.Config) tlsResult {
 	for {
-		output.PrintText("  %s", t("install.tls.leChecking", "host", nsCfg.Proxy.Host))
+		output.PrintText("   %s", t("install.tls.leChecking", "host", nsCfg.Proxy.Host))
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		leErr := acme.TryStaging(ctx, nsCfg.Proxy.Host)
 		cancel()
 		if leErr == nil {
-			output.PrintText("  %s", t("install.tls.leAvailable"))
+			output.PrintText("   %s", t("install.tls.leAvailable"))
 			return tlsOK
 		}
-		output.PrintText("  %s", t("install.tls.leNotAvailable", "error", leErr.Error()))
+		output.PrintText("   %s", t("install.tls.leNotAvailable", "error", leErr.Error()))
 		fmt.Println() //nolint:forbidigo // CLI separator
 		options := []string{
 			t("install.tls.leRetry"),
@@ -498,7 +512,7 @@ func configureCustomCert(nsCfg *namespace.Config) bool {
 		}
 		info, err := os.Stat(dir) //nolint:gosec // G703: dir is from interactive user prompt, not HTTP input
 		if err != nil || !info.IsDir() {
-			output.Errf("  %s: %s", t("install.tls.customDirNotFound"), dir)
+			output.Errf("   %s: %s", t("install.tls.customDirNotFound"), dir)
 			continue
 		}
 
@@ -514,8 +528,8 @@ func configureCustomCert(nsCfg *namespace.Config) bool {
 		nsCfg.Proxy.TLS.Enabled = true
 		nsCfg.Proxy.TLS.CertPath = certPath
 		nsCfg.Proxy.TLS.KeyPath = keyPath
-		output.PrintText("  %s: %s", t("install.tls.customCert"), certPath)
-		output.PrintText("  %s: %s", t("install.tls.customKey"), keyPath)
+		output.PrintText("   %s: %s", t("install.tls.customCert"), certPath)
+		output.PrintText("   %s: %s", t("install.tls.customKey"), keyPath)
 		return false
 	}
 }
@@ -526,7 +540,7 @@ func configureCustomCert(nsCfg *namespace.Config) bool {
 func pickFileByExt(dir string, exts []string, label, excludePath string) (string, bool) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		output.Errf("  %s: %v", t("install.tls.customDirNotFound"), err)
+		output.Errf("   %s: %v", t("install.tls.customDirNotFound"), err)
 		return "", true
 	}
 	extSet := make(map[string]bool, len(exts))
@@ -550,7 +564,7 @@ func pickFileByExt(dir string, exts []string, label, excludePath string) (string
 
 	switch len(matches) {
 	case 0:
-		output.Errf("  %s (%s)", t("install.tls.customNoFiles"), strings.Join(exts, ", "))
+		output.Errf("   %s (%s)", t("install.tls.customNoFiles"), strings.Join(exts, ", "))
 		return "", true
 	case 1:
 		return matches[0], false
@@ -590,8 +604,8 @@ func generateSelfSignedCert(nsCfg *namespace.Config) {
 	}
 	nsCfg.Proxy.TLS.CertPath = certPath
 	nsCfg.Proxy.TLS.KeyPath = keyPath
-	output.PrintText("  %s", t("install.tls.selfSignedGenerated", "certPath", certPath))
-	output.PrintText("  %s", t("install.tls.selfSignedWarning"))
+	output.PrintText("   %s", t("install.tls.selfSignedGenerated", "certPath", certPath))
+	output.PrintText("   %s", t("install.tls.selfSignedWarning"))
 }
 
 // configureRegistryAuth checks if any imageRepo requires auth (authType: BASIC)
@@ -607,20 +621,19 @@ func configureRegistryAuth(wsCfg *bundle.WorkspaceConfig, usedPrefixes map[strin
 
 	svc, svcErr := openSecretService()
 	if svcErr != nil {
-		output.Errf("  %s: %v", t("install.registry.saveFailed"), svcErr)
+		output.Errf("   %s: %v", t("install.registry.saveFailed"), svcErr)
 		return nil // non-fatal — daemon will handle auth at runtime
 	}
 
 	// Sub-step of step 5 (Release) — shown only when the selected bundle uses
-	// an auth-required registry. Rendered without a step number to avoid
-	// duplicating the "Step 5" header the user just saw.
-	fmt.Println() //nolint:forbidigo // CLI separator
-	fmt.Printf("  %s\n", output.Colorize(output.Cyan, fmt.Sprintf("── %s ──", t("install.registry.label")))) //nolint:forbidigo // CLI sub-step header
-	fmt.Println() //nolint:forbidigo // CLI separator
+	// an auth-required registry. Rendered in the same ✓/○ style as other
+	// wizard steps; the registry sub-flow is essentially a mini-form and
+	// the printDoneTitle-style header keeps the visual rhythm.
+	printDoneTitle(t("install.registry.label"))
 
 	for _, repo := range authRepos {
 		host := registryHost(repo.URL)
-		output.PrintText("  %s: %s", t("install.registry.host"), host)
+		output.PrintText("   %s: %s", t("install.registry.host"), host)
 		for {
 			username := promptInput(t("install.registry.username"), "", "")
 			if username == "" {
@@ -631,9 +644,9 @@ func configureRegistryAuth(wsCfg *bundle.WorkspaceConfig, usedPrefixes map[strin
 				continue
 			}
 
-			output.PrintText("  %s", t("install.registry.checking"))
+			output.PrintText("   %s", t("install.registry.checking"))
 			if err := dockerRegistryLogin(host, username, password); err != nil {
-				output.Errf("  %s: %v", t("install.registry.failed"), err)
+				output.Errf("   %s: %v", t("install.registry.failed"), err)
 				options := []string{t("install.registry.retry"), t("install.registry.backToRelease")}
 				choice := promptSelect(t("install.registry.recovery"), options)
 				if choice == t("install.registry.backToRelease") {
@@ -641,10 +654,10 @@ func configureRegistryAuth(wsCfg *bundle.WorkspaceConfig, usedPrefixes map[strin
 				}
 				continue
 			}
-			output.PrintText("  %s", t("install.registry.success"))
+			output.PrintText("   %s", t("install.registry.success"))
 
 			if err := saveRegistrySecret(svc, repo, username, password); err != nil {
-				output.Errf("  %s: %v", t("install.registry.saveFailed"), err)
+				output.Errf("   %s: %v", t("install.registry.saveFailed"), err)
 			}
 			break
 		}
@@ -799,9 +812,6 @@ func bundleImageRepoIDs(ref bundle.Ref, wsCfg *bundle.WorkspaceConfig) map[strin
 
 // selectSnapshot shows an optional snapshot picker. Returns selected snapshot ID or "".
 func selectSnapshot(snapshots []bundle.SnapshotDef) string {
-	fmt.Println() //nolint:forbidigo // CLI separator
-	printStepHeader(6, t("install.snapshot.label"))
-
 	options := make([]string, 0, len(snapshots)+1)
 	for _, snap := range snapshots {
 		label := snap.Name
@@ -817,7 +827,7 @@ func selectSnapshot(snapshots []bundle.SnapshotDef) string {
 	// Last option = skip.
 	for i, snap := range snapshots {
 		if selected == options[i] {
-			fmt.Printf("  %s: %s\n", t("install.snapshot.selected"), snap.Name) //nolint:forbidigo // CLI output
+			fmt.Printf("   %s: %s\n", t("install.snapshot.selected"), snap.Name) //nolint:forbidigo // CLI output
 			return snap.ID
 		}
 	}
@@ -841,7 +851,7 @@ func (rv repoVersions) displayName() string {
 // resolveRelease resolves available platform releases and lets the user pick one.
 // Returns an error if no releases are available (offline without workspace data).
 func resolveRelease(nsCfg *namespace.Config, offline bool) error {
-	output.PrintText("  %s", t("install.release.fetching"))
+	output.PrintText("   %s", t("install.release.fetching"))
 	repos := discoverRepos(offline)
 
 	// Filter to repos that have at least one version
@@ -967,12 +977,12 @@ func resolveBundleDir(repo bundle.BundlesRepo) string {
 func installSystemdAndFirewall(platformPort int) {
 	fmt.Println() //nolint:forbidigo // CLI output
 	if _, lookErr := exec.LookPath("systemctl"); lookErr != nil {
-		output.PrintText("  %s", t("install.systemd.notAvailable"))
+		output.PrintText("   %s", t("install.systemd.notAvailable"))
 		return
 	}
 	execPath, err := os.Executable()
 	if err != nil {
-		output.PrintText("  Could not determine executable path: %v", err)
+		output.PrintText("   Could not determine executable path: %v", err)
 		return
 	}
 
@@ -994,18 +1004,18 @@ WantedBy=multi-user.target
 
 	servicePath := "/etc/systemd/system/citeck.service"
 	if os.Getuid() != 0 {
-		output.PrintText("  %s", t("install.systemd.notRoot"))
-		output.PrintText("    sudo tee %s << 'EOF'\n%sEOF", servicePath, unit)
-		output.PrintText("    sudo systemctl daemon-reload")
-		output.PrintText("    sudo systemctl enable --now citeck")
+		output.PrintText("   %s", t("install.systemd.notRoot"))
+		output.PrintText("      sudo tee %s << 'EOF'\n%sEOF", servicePath, unit)
+		output.PrintText("      sudo systemctl daemon-reload")
+		output.PrintText("      sudo systemctl enable --now citeck")
 	} else {
 		if writeErr := os.WriteFile(servicePath, []byte(unit), 0o644); writeErr != nil { //nolint:gosec // G306: systemd unit files require 0o644
-			output.PrintText("  Failed to write service file: %v", writeErr)
+			output.PrintText("   Failed to write service file: %v", writeErr)
 			return
 		}
 		_ = exec.Command("systemctl", "daemon-reload").Run()
 		_ = exec.Command("systemctl", "enable", "citeck").Run()
-		output.PrintText("  %s", t("install.systemd.installed", "path", servicePath))
+		output.PrintText("   %s", t("install.systemd.installed", "path", servicePath))
 	}
 
 	// Firewall sub-prompt: only if non-standard port and platform port is set
@@ -1035,26 +1045,25 @@ func openFirewallPort(port int) {
 	// Try ufw
 	if path, err := exec.LookPath("ufw"); err == nil && path != "" {
 		if os.Getuid() != 0 {
-			output.PrintText("  Not running as root. Run: sudo ufw allow %s/tcp", portStr)
+			output.PrintText("   Not running as root. Run: sudo ufw allow %s/tcp", portStr)
 			return
 		}
 		_ = exec.Command("ufw", "allow", portStr+"/tcp").Run() //nolint:gosec // G204: portStr is validated numeric input
-		output.PrintText("  ufw: opened port %s/tcp", portStr)
+		output.PrintText("   ufw: opened port %s/tcp", portStr)
 		return
 	}
 
 	// Try firewall-cmd
 	if path, err := exec.LookPath("firewall-cmd"); err == nil && path != "" {
 		if os.Getuid() != 0 {
-			output.PrintText("  Not running as root. Run: sudo firewall-cmd --permanent --add-port=%s/tcp && sudo firewall-cmd --reload", portStr)
+			output.PrintText("   Not running as root. Run: sudo firewall-cmd --permanent --add-port=%s/tcp && sudo firewall-cmd --reload", portStr)
 			return
 		}
 		_ = exec.Command("firewall-cmd", "--permanent", "--add-port="+portStr+"/tcp").Run() //nolint:gosec // G204: portStr is validated numeric input
 		_ = exec.Command("firewall-cmd", "--reload").Run()
-		output.PrintText("  firewall-cmd: opened port %s/tcp", portStr)
+		output.PrintText("   firewall-cmd: opened port %s/tcp", portStr)
 		return
 	}
 
-	output.PrintText("  No supported firewall detected (ufw/firewalld). Please open port %s manually.", portStr)
+	output.PrintText("   No supported firewall detected (ufw/firewalld). Please open port %s manually.", portStr)
 }
-

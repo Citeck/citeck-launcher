@@ -1,10 +1,13 @@
 package namespace
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"maps"
+	"slices"
 	"sort"
 	"strings"
 
@@ -101,6 +104,14 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 	apps := make([]appdef.ApplicationDef, 0, len(ctx.Applications))
 	for _, b := range ctx.Applications {
 		apps = append(apps, b.Build())
+	}
+
+	// Fill VolumesContentHash for each app so the deployment hash changes
+	// when any bind-mount source file's content changes — triggering a
+	// container recreate. Mirrors Kotlin's NsRuntimeFiles.getPathsContentHash
+	// hooked into ApplicationDef.hashField.
+	for i := range apps {
+		apps[i].VolumesContentHash = computeVolumesContentHash(&apps[i], ctx.Files)
 	}
 
 	// Compute DependsOnDetachedApps: detached apps that are referenced as dependencies
@@ -243,8 +254,8 @@ func generateZookeeper(ctx *NsGenContext) {
 		TimeoutSeconds:   5,
 	}
 	app.InitContainers = []appdef.InitContainerDef{{
-		Image: UtilsImage,
-		Cmd:   []string{"/bin/sh", "-c", "mkdir -p /zkdir/data /zkdir/datalog"},
+		Image:   UtilsImage,
+		Cmd:     []string{"/bin/sh", "-c", "mkdir -p /zkdir/data /zkdir/datalog"},
 		Volumes: []string{"zookeeper2:/zkdir"},
 	}}
 }
@@ -618,7 +629,7 @@ func generateObserver(ctx *NsGenContext) {
 	obs.AddDependsOn(appdef.AppZookeeper)
 	obs.StartupConditions = []appdef.StartupCondition{
 		{Probe: &appdef.AppProbeDef{
-			HTTP: &appdef.HTTPProbeDef{Path: "/health", Port: obsHTTP},
+			HTTP:             &appdef.HTTPProbeDef{Path: "/health", Port: obsHTTP},
 			PeriodSeconds:    10,
 			FailureThreshold: 30,
 			TimeoutSeconds:   5,
@@ -634,9 +645,9 @@ func generateObserver(ctx *NsGenContext) {
 	// 3. Cloud config for CloudConfigServer (local debugging: "stop in launcher, run locally")
 	extCloudConfig := map[string]any{
 		// Server — explicit ports for local debugging
-		"server.port":          obsHTTP,
-		"otlp.grpc_port":      obsGRPC,
-		"otlp.http_port":      obsOTLPHTTP,
+		"server.port":           obsHTTP,
+		"otlp.grpc_port":        obsGRPC,
+		"otlp.http_port":        obsOTLPHTTP,
 		"log_receiver.udp_port": obsLogUDP,
 		// Observer's own database (localhost with published port)
 		"database.host":         "localhost",
@@ -1290,16 +1301,16 @@ func resolveTemplateVarsWithContext(s string, ctx *NsGenContext) string {
 
 func resolveTemplateVars(s string) string {
 	replacements := map[string]string{
-		"${PG_HOST}":          PGHost,
-		"${PG_PORT}":          fmt.Sprintf("%d", PGPort),
-		"${MONGO_HOST}":       MongoHost,
-		"${MONGO_PORT}":       fmt.Sprintf("%d", MongoPort),
-		"${ZK_HOST}":          ZKHost,
-		"${ZK_PORT}":          fmt.Sprintf("%d", ZKPort),
-		"${RMQ_HOST}":         RMQHost,
-		"${RMQ_PORT}":         fmt.Sprintf("%d", RMQPort),
-		"${MAILHOG_HOST}":     MailhogHost,
-		"${ONLYOFFICE_HOST}":  OnlyofficeHost,
+		"${PG_HOST}":         PGHost,
+		"${PG_PORT}":         fmt.Sprintf("%d", PGPort),
+		"${MONGO_HOST}":      MongoHost,
+		"${MONGO_PORT}":      fmt.Sprintf("%d", MongoPort),
+		"${ZK_HOST}":         ZKHost,
+		"${ZK_PORT}":         fmt.Sprintf("%d", ZKPort),
+		"${RMQ_HOST}":        RMQHost,
+		"${RMQ_PORT}":        fmt.Sprintf("%d", RMQPort),
+		"${MAILHOG_HOST}":    MailhogHost,
+		"${ONLYOFFICE_HOST}": OnlyofficeHost,
 	}
 	for k, v := range replacements {
 		s = strings.ReplaceAll(s, k, v)
@@ -1358,4 +1369,65 @@ func loadAppFiles(ctx *NsGenContext) {
 		return
 	}
 	maps.Copy(ctx.Files, files)
+}
+
+// computeVolumesContentHash returns a deterministic SHA-256 of the content
+// of every bind-mount source file referenced by `app` (own volumes + init
+// container volumes). Feeds into ApplicationDef.GetHashInput so the
+// deployment hash changes when any bind-mounted file content changes —
+// prompting the runtime to recreate the container with the fresh content.
+//
+// Only `./...` host paths are hashed. Named volumes (`pgdata:/var/lib/...`)
+// and absolute host paths (`/etc/foo:/inside`) aren't touched — those are
+// either Docker-managed state or out-of-scope of the embedded file set.
+func computeVolumesContentHash(app *appdef.ApplicationDef, files map[string][]byte) string {
+	keys := collectFileKeysFromVolumes(app.Volumes)
+	for _, ic := range app.InitContainers {
+		for _, k := range collectFileKeysFromVolumes(ic.Volumes) {
+			if !slices.Contains(keys, k) {
+				keys = append(keys, k)
+			}
+		}
+	}
+	if len(keys) == 0 {
+		return ""
+	}
+	sort.Strings(keys) // stable order — map iteration isn't
+	h := sha256.New()
+	for _, k := range keys {
+		content, ok := files[k]
+		if !ok {
+			continue
+		}
+		// Include the key itself so renaming a file produces a different hash
+		// even if the content happens to match another file.
+		h.Write([]byte(k))
+		h.Write([]byte{0})
+		h.Write(content)
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// collectFileKeysFromVolumes extracts the ctx.Files keys (e.g.
+// "postgres/postgresql.conf") from a list of Docker volume specs. Strips
+// the leading "./" and everything from the first colon onwards. Skips
+// specs that don't reference a bind-mounted file (named volumes, abs
+// host paths).
+func collectFileKeysFromVolumes(vols []string) []string {
+	var keys []string
+	for _, v := range vols {
+		// "./postgres/postgresql.conf:/etc/postgresql/postgresql.conf[:ro]"
+		if !strings.HasPrefix(v, "./") {
+			continue
+		}
+		host := strings.TrimPrefix(v, "./")
+		if idx := strings.Index(host, ":"); idx >= 0 {
+			host = host[:idx]
+		}
+		if host != "" {
+			keys = append(keys, host)
+		}
+	}
+	return keys
 }
