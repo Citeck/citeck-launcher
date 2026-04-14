@@ -498,7 +498,7 @@ func Start(opts StartOptions) error {
 		// written to disk below via writeRuntimeFiles, which is the ONLY
 		// path that touches bind-mount source files. This avoids the
 		// double-write bug where an embed re-extract would revert a
-		// generator-customised file back to its default content.
+		// generator-customized file back to its default content.
 
 		// Resolve system secrets (JWT, OIDC) — migrate from plain files or generate new.
 		// Skip when locked (desktop mode with encrypted secrets — resolved after Web UI unlock).
@@ -1649,6 +1649,49 @@ func isRegularFile(path string) bool {
 	return err == nil && fi.Mode().IsRegular()
 }
 
+// prepareDestPath handles the pre-write checks for a single runtime file:
+//   - If the path is a directory (Docker auto-created it), remove it so we can
+//     write a regular file in its place.
+//   - If the path is an existing regular file with the same size and identical
+//     contents, return skip=true so the caller can skip the write (avoids
+//     touching the mtime and keeps the container deployment hash stable).
+//
+// destPath is always filepath.Join(baseDir, relPath) where baseDir is the
+// trusted namespace runtime directory — the path is not user-supplied.
+func prepareDestPath(destPath string, content []byte) (skip bool, err error) {
+	fi, statErr := os.Stat(destPath)
+	if statErr != nil {
+		return false, nil // path does not exist yet — proceed with write
+	}
+	if fi.IsDir() {
+		// Case 1: Docker auto-created a dir instead of a file; remove it.
+		if err := os.RemoveAll(destPath); err != nil {
+			return false, fmt.Errorf("remove dir at runtime file path: %w", err)
+		}
+		return false, nil
+	}
+	// Case 2: same size — compare bytes, skip if unchanged.
+	if !fi.Mode().IsRegular() || int64(len(content)) != fi.Size() {
+		return false, nil
+	}
+	existing, readErr := os.ReadFile(destPath) //nolint:gosec // G304: destPath is filepath.Join(trusted baseDir, relPath)
+	if readErr != nil || !bytes.Equal(existing, content) {
+		return false, nil
+	}
+	// Before skipping, make sure the mode still matches what we'd write —
+	// a .sh that somehow lost its executable bit (umask change, prior
+	// launcher version bug, manual edit) would otherwise never recover,
+	// since we'd never rewrite the file.
+	wantPerm := os.FileMode(0o644)
+	if strings.HasSuffix(destPath, ".sh") {
+		wantPerm = 0o755
+	}
+	if fi.Mode().Perm() != wantPerm {
+		_ = os.Chmod(destPath, wantPerm)
+	}
+	return true, nil
+}
+
 // writeRuntimeFiles applies the generator's file map (the full set of
 // files any app can bind-mount) to disk under baseDir. Single source of
 // truth — nothing else writes into this directory tree. Handles three
@@ -1670,19 +1713,13 @@ func isRegularFile(path string) bool {
 func writeRuntimeFiles(baseDir string, files map[string][]byte) {
 	for filePath, content := range files {
 		destPath := filepath.Join(baseDir, filePath)
-		if fi, statErr := os.Stat(destPath); statErr == nil {
-			if fi.IsDir() {
-				// Case 1: Docker auto-created dir instead of a file; remove and write as file.
-				if rmErr := os.RemoveAll(destPath); rmErr != nil {
-					slog.Error("Failed to remove stale dir at file path", "path", destPath, "err", rmErr)
-					continue
-				}
-			} else if fi.Mode().IsRegular() && int64(len(content)) == fi.Size() {
-				// Case 2: same size — compare bytes, skip if unchanged.
-				if existing, readErr := os.ReadFile(destPath); readErr == nil && bytes.Equal(existing, content) {
-					continue
-				}
-			}
+		skip, prepErr := prepareDestPath(destPath, content)
+		if prepErr != nil {
+			slog.Error("Failed to remove stale dir at file path", "path", destPath, "err", prepErr)
+			continue
+		}
+		if skip {
+			continue
 		}
 		if mkdirErr := os.MkdirAll(filepath.Dir(destPath), 0o755); mkdirErr != nil { //nolint:gosec // G301: dirs need 0o755 for Docker bind-mount access
 			slog.Error("Failed to create dir for generated file", "path", destPath, "err", mkdirErr)

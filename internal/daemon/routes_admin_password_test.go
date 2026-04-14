@@ -109,11 +109,12 @@ func TestHandleSetAdminPassword_RotatesAllFourAdminUIs(t *testing.T) {
 // TestResetKeycloakAdminPassword_TargetsEcosApp verifies that the helper
 // the handler delegates to still calls set-password for the ecos-app
 // realm. The master realm set-password is driven by the caller in a
-// separate best-effort phase (see handleSetAdminPassword) so ecos-app
-// failures abort the command while master realm failures are logged and
-// swallowed. This test ensures the two stay separate — if master realm
-// rotation ever migrates into this helper, the best-effort/fatal split
-// in the caller must be revisited too.
+// separate phase (see handleSetAdminPassword) — both phases are fatal on
+// failure, but keeping them separate lets the caller emit a master-
+// specific error message that tells the user to retry via
+// `citeck setup admin-password` since ecos-app is already rotated.
+// This test ensures the split stays — if master realm rotation ever
+// migrates into this helper, the error-message split must be revisited.
 func TestResetKeycloakAdminPassword_TargetsEcosApp(t *testing.T) {
 	src, err := os.ReadFile("routes_admin_password.go")
 	require.NoError(t, err)
@@ -162,5 +163,5 @@ func TestResetKeycloakAdminPassword_TargetsEcosApp(t *testing.T) {
 	require.Contains(t, setPasswordRealms, "ecos-app",
 		"resetKeycloakAdminPassword must still call kcadmSetPassword for the ecos-app realm")
 	require.NotContains(t, setPasswordRealms, "master",
-		"resetKeycloakAdminPassword must NOT call kcadmSetPassword for master — the handler drives that in a separate best-effort phase")
+		"resetKeycloakAdminPassword must NOT call kcadmSetPassword for master — the handler drives that in a separate (also-fatal) phase so it can emit a master-specific retry message")
 }

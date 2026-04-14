@@ -12,9 +12,16 @@ import (
 )
 
 // abortOnCancel bails out of the install wizard cleanly when the user
-// presses Esc or Ctrl+C in any prompt. We exit with the conventional
-// SIGINT code (130) so the shell's $? matches a real ^C, and CI / parent
-// processes can distinguish "user cancelled" from other failures.
+// presses Esc or Ctrl+C in any prompt helper that doesn't propagate
+// errors (promptSelect/promptInput/promptPassword/promptConfirm return
+// bare values, not (value, error)). We exit with the conventional
+// SIGINT code (130) so the shell's $? matches a real ^C.
+//
+// The ErrInstallCancelled-returning paths (welcome Note, bundlepicker,
+// anything using errors.Is(err, prompt.ErrCanceled) → return) end up
+// going through the RunE handler in newInstallCmd which also maps to
+// os.Exit(130) — both paths exit the same way so shell scripts wrapping
+// `citeck install` see a consistent "user canceled" signal.
 //
 // os.Exit is safe here because install.go hasn't acquired any resources
 // at prompt time that need cleanup — no daemon running, no open file
@@ -27,7 +34,7 @@ func abortOnCancel(err error) {
 	ensureI18n()
 	msg := i18n.T("install.canceled")
 	if strings.HasPrefix(msg, "install.") {
-		msg = "Install cancelled."
+		msg = "Install canceled."
 	}
 	fmt.Fprintln(os.Stderr, msg) //nolint:forbidigo // terminal exit message
 	os.Exit(130)

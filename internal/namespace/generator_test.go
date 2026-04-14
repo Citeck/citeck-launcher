@@ -111,6 +111,36 @@ func TestGenerateWebapp_FiltersByWorkspaceConfig(t *testing.T) {
 	}
 }
 
+// TestGenerate_PopulatesVolumesContentHash pins the behavior that
+// Generate() calls computeVolumesContentHash for every built app — if a
+// future refactor deletes the loop in generator.go that sets
+// apps[i].VolumesContentHash, none of the isolated unit tests in
+// volumes_hash_test.go would go red. This one would.
+func TestGenerate_PopulatesVolumesContentHash(t *testing.T) {
+	cfg := &Config{
+		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+	}
+	bun := &bundle.Def{
+		Applications: map[string]bundle.AppDef{"emodel": {Image: "nexus.citeck.ru/emodel:1.0"}},
+	}
+	wsCfg := &bundle.WorkspaceConfig{Webapps: []bundle.WebappConfig{{ID: "emodel"}}}
+
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "j", OIDC: "o"})
+	require.NoError(t, err)
+
+	var postgres *appdef.ApplicationDef
+	for i := range resp.Applications {
+		if resp.Applications[i].Name == "postgres" {
+			postgres = &resp.Applications[i]
+			break
+		}
+	}
+	require.NotNil(t, postgres, "postgres must be in generated apps (has ./postgres/*.conf bind mounts)")
+	require.NotEmpty(t, postgres.VolumesContentHash,
+		"Generate() did not populate VolumesContentHash on postgres — bind-mount content changes will no longer trigger recreate")
+}
+
 func TestProxyBaseURL_Port0(t *testing.T) {
 	ctx := makeCtx(0, "localhost", false)
 	url := ctx.ProxyBaseURL()

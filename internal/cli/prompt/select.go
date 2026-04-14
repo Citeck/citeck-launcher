@@ -81,6 +81,10 @@ func (s *Select[T]) Run() (T, error) {
 		cursor:  cursor,
 		height:  s.Height,
 	}
+	// Seed offset so a Default past the viewport is visible on the FIRST
+	// render — otherwise the cursor scrolls into view only after the user
+	// presses a navigation key.
+	m.recomputeOffset()
 
 	final, err := runModel(m)
 	if err != nil {

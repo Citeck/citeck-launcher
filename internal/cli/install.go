@@ -52,9 +52,14 @@ This extracts workspace config and bundle definitions for offline operation.`,
 			}
 			err := runInstall(info, workspaceZip, offline)
 			if errors.Is(err, ErrInstallCancelled) {
+				// Unified cancel path — whether the user pressed Esc on the
+				// welcome Note, the hostname Input, the bundle picker, or
+				// any other prompt, we exit with SIGINT's conventional 130
+				// so wrapping shell scripts can reliably distinguish
+				// "user aborted" from "install completed".
 				ensureI18n()
-				output.PrintText("%s", t("install.canceled"))
-				return nil
+				fmt.Fprintln(os.Stderr, t("install.canceled")) //nolint:forbidigo // terminal exit message
+				os.Exit(130)
 			}
 			return err
 		},

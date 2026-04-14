@@ -57,9 +57,10 @@ var (
 )
 
 // Indent prefixes used by every primitive so active and completed steps
-// share the same left column. ActivePrefix is 4 cells wide; StepIndent
-// matches that width so sub-content (descriptions, input line, footer)
-// lines up beneath the title.
+// share the same left column. ActivePrefix/DonePrefix are 3 cells wide
+// (leading space + glyph + trailing space); StepIndent matches that
+// width so sub-content (descriptions, input line, footer) lines up
+// beneath the title glyph.
 const (
 	ActivePrefix = " ○ "
 	DonePrefix   = " ✓ "

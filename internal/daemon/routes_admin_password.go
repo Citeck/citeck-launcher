@@ -73,10 +73,17 @@ func (d *Daemon) handleSetAdminPassword(w http.ResponseWriter, r *http.Request) 
 	// whatever tripped kcadm here. The launcher's own master-realm ops go
 	// through the `citeck` SA, so launcher functionality is NOT what we're
 	// protecting with this fatal-ness; it's the admin-console endpoint.
+	//
+	// Use writeError (not writeInternalError) so the CLI user actually sees
+	// the retry guidance — writeInternalError would flatten everything to
+	// "internal error" and hide both the partial-rotation state and the
+	// `citeck setup admin-password` retry hint.
 	if err := d.kcadmSetPassword(ctx, kcApp.ContainerID, "master", req.Password); err != nil {
-		writeInternalError(w, fmt.Errorf("master realm admin password rotation failed "+
-			"(ecos-app already rotated — master console may still accept the old password; "+
-			"retry `citeck setup admin-password`): %w", err))
+		slog.Error("master realm admin password rotation failed", "err", err)
+		writeError(w, http.StatusInternalServerError,
+			"master realm admin password rotation failed (ecos-app already rotated — "+
+				"master console may still accept the old password; "+
+				"retry `citeck setup admin-password`): "+err.Error())
 		return
 	}
 
@@ -136,9 +143,11 @@ func (d *Daemon) handleSetAdminPassword(w http.ResponseWriter, r *http.Request) 
 // in the ecos-app realm (the user-facing platform login).
 //
 // The master realm admin password is rotated by the caller in a separate
-// best-effort phase — see handleSetAdminPassword. Splitting the two keeps
-// ecos-app failures fatal (platform-critical) while letting master realm
-// failures be reported without aborting the rotation.
+// phase — see handleSetAdminPassword. Both phases are now fatal on
+// failure: partial rotation (ecos-app changed but master still on old /
+// default "admin") is a live security hole, not a non-event. Splitting
+// the two lets the caller craft a specific error message pointing the
+// user at `citeck setup admin-password` for retry.
 func (d *Daemon) resetKeycloakAdminPassword(ctx context.Context, containerID, _, newPassword string) error {
 	d.configMu.RLock()
 	saPassword := d.systemSecrets.CiteckSA
