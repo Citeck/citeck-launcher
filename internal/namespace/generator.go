@@ -997,6 +997,11 @@ func configureWebappProbes(name string, app *AppBuilder, ctx *NsGenContext, port
 // via environment variables. Env vars override the bundle default (SPRING_MAIL_HOST=mailhog).
 func applyEmailConfig(app *AppBuilder, ctx *NsGenContext) {
 	email := ctx.Config.Email
+	// TLS=true → "smtps" is correct for implicit-TLS ports (465, Yandex / Rambler).
+	// For STARTTLS ports (587, Gmail / Outlook / Mail.ru) the canonical protocol
+	// is "smtp" with starttls.enable=true. In practice Spring's JavaMailSender
+	// honors starttls.enable regardless of the protocol string, so mixing the
+	// two doesn't break auth — this mapping is a long-standing simplification.
 	protocol := "smtp"
 	if email.TLS {
 		protocol = "smtps"
@@ -1004,6 +1009,15 @@ func applyEmailConfig(app *AppBuilder, ctx *NsGenContext) {
 	app.AddEnv("SPRING_MAIL_HOST", email.Host)
 	app.AddEnv("SPRING_MAIL_PORT", fmt.Sprintf("%d", email.Port))
 	app.AddEnv("SPRING_MAIL_PROTOCOL", protocol)
+	// Relaxed-binding equivalents of:
+	//   spring.mail.properties.mail.smtp.auth: true
+	//   spring.mail.properties.mail.smtp.starttls.enable: true
+	// Required by most providers (mail.ru, gmail, yandex) for authenticated submission.
+	// AUTH=true assumes credentials are configured; the setup wizard enforces
+	// this for external SMTP. An open-relay scenario (no credentials) would
+	// need these turned off — not supported here.
+	app.AddEnv("SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH", "true")
+	app.AddEnv("SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE", "true")
 	app.AddEnv("ECOS_NOTIFICATIONS_EMAIL_FROM_DEFAULT", email.From)
 	app.AddEnv("ECOS_NOTIFICATIONS_EMAIL_FROM_FIXED", email.From)
 	if email.Username != "" {

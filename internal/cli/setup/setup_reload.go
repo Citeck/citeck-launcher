@@ -75,7 +75,7 @@ func waitForServices(c *client.DaemonClient) {
 		}
 
 		r := output.FormatAppTable(ns.Apps)
-		table, running, failed, total := r.Table, r.Running, r.Failed, r.Total
+		table, running, failed, stopped, total := r.Table, r.Running, r.Failed, r.Stopped, r.Total
 
 		if isTTY {
 			if !firstPrint && linesPrinted > 0 {
@@ -96,8 +96,11 @@ func waitForServices(c *client.DaemonClient) {
 		}
 		lastRunning = running
 
-		// Exit when all apps reached a terminal state.
-		if total > 0 && running+failed == total {
+		// Exit when all apps reached a terminal state. STOPPED is terminal for
+		// detached apps — the user intentionally took them offline, the
+		// reconciler won't bring them back, so without counting them here the
+		// loop would hang forever on any namespace with a detached service.
+		if total > 0 && running+failed+stopped == total {
 			if failed > 0 {
 				fmt.Printf("\n%s\n", output.Colorize(output.Yellow,
 					fmt.Sprintf("%d/%d running, %d failed", running, total, failed))) //nolint:forbidigo // CLI result

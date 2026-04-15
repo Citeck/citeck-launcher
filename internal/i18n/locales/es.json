@@ -136,6 +136,7 @@
   "uninstall.binaryRemoved": "Eliminado: {path}",
   "uninstall.complete": "Desinstalación completa",
   "cli.platformNotRunning": "La plataforma no está en ejecución",
+  "cli.daemonNotRunningStart": "el daemon no está en ejecución — inícielo primero con 'citeck start'",
   "cli.daemonStarted": "Daemon iniciado en segundo plano",
   "cli.continueBackground": "Continuando en segundo plano",
   "cli.allAppsStarted": "Todas las apps iniciadas.",

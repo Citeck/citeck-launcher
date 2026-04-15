@@ -197,16 +197,26 @@ func TestFormatAppTable_Counts(t *testing.T) {
 		{Name: "b-app", Status: "RUNNING", Image: "img:1", Kind: "CITECK_CORE"},
 		{Name: "a-app", Status: "FAILED", Image: "img:2", Kind: "CITECK_CORE"},
 		{Name: "c-app", Status: "STARTING", Image: "img:3", Kind: "THIRD_PARTY"},
+		{Name: "d-app", Status: "STOPPED", Image: "img:4", Kind: "THIRD_PARTY"},
+		// STOPPING_FAILED must land in Failed, not Stopped — it's an error
+		// path (docker stop errored), not a user-initiated detach. Mixing
+		// it into Stopped would hide the failure behind a green
+		// "reload complete" summary.
+		{Name: "e-app", Status: "STOPPING_FAILED", Image: "img:5", Kind: "THIRD_PARTY"},
 	}
 	r := FormatAppTable(apps)
-	if r.Total != 3 {
-		t.Errorf("total = %d, want 3", r.Total)
+	if r.Total != 5 {
+		t.Errorf("total = %d, want 5", r.Total)
 	}
 	if r.Running != 1 {
 		t.Errorf("running = %d, want 1", r.Running)
 	}
-	if r.Failed != 1 {
-		t.Errorf("failed = %d, want 1", r.Failed)
+	if r.Failed != 2 {
+		t.Errorf("failed = %d, want 2 (FAILED + STOPPING_FAILED)", r.Failed)
+	}
+	if r.Stopped != 1 {
+		t.Errorf("stopped = %d, want 1 (only STOPPED — detached apps must be counted "+
+			"as terminal or setup/reload wait loops hang forever)", r.Stopped)
 	}
 	if !strings.Contains(r.Table, "APP") {
 		t.Error("table should contain header")

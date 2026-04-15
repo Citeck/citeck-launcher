@@ -781,3 +781,50 @@ func TestCiteckSAWiring(t *testing.T) {
 	assert.Equal(t, "citeck", obs.Environments["RMQ_MONITOR_USER"])
 	assert.Equal(t, saPass, obs.Environments["RMQ_MONITOR_PASSWORD"])
 }
+
+// TestApplyEmailConfig_SetsSpringRelaxedBindingEnvVars pins the env-var keys
+// that `applyEmailConfig` writes onto the notifications app. Spring Boot's
+// relaxed-binding rules require these exact uppercased, underscore-joined
+// forms — a typo would silently degrade to "unauthenticated SMTP submission"
+// because Spring would fall back to the default `spring.mail.properties` map
+// (empty). The test also asserts SMTPS-protocol and STARTTLS path separately,
+// since the two are commonly confused for ports 465 vs 587.
+func TestApplyEmailConfig_SetsSpringRelaxedBindingEnvVars(t *testing.T) {
+	cases := []struct {
+		name     string
+		tls      bool
+		protocol string
+	}{
+		{name: "STARTTLS port 587", tls: true, protocol: "smtps"},
+		{name: "plain SMTP", tls: false, protocol: "smtp"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := NewNsGenContext(&Config{
+				Email: &EmailConfig{
+					Host:     "smtp.mail.ru",
+					Port:     587,
+					Username: "user@mail.ru",
+					Password: "plain-password",
+					From:     "noreply@example.com",
+					TLS:      c.tls,
+				},
+			}, nil)
+			app := ctx.GetOrCreateApp("notifications")
+
+			applyEmailConfig(app, ctx)
+
+			assert.Equal(t, "smtp.mail.ru", app.Environments["SPRING_MAIL_HOST"])
+			assert.Equal(t, "587", app.Environments["SPRING_MAIL_PORT"])
+			assert.Equal(t, c.protocol, app.Environments["SPRING_MAIL_PROTOCOL"])
+			assert.Equal(t, "user@mail.ru", app.Environments["SPRING_MAIL_USERNAME"])
+			assert.Equal(t, "plain-password", app.Environments["SPRING_MAIL_PASSWORD"])
+			assert.Equal(t, "noreply@example.com", app.Environments["ECOS_NOTIFICATIONS_EMAIL_FROM_DEFAULT"])
+			assert.Equal(t, "noreply@example.com", app.Environments["ECOS_NOTIFICATIONS_EMAIL_FROM_FIXED"])
+			// Relaxed-binding keys for spring.mail.properties.mail.smtp.{auth,starttls.enable}.
+			// Renaming either key breaks SMTP authentication silently.
+			assert.Equal(t, "true", app.Environments["SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH"])
+			assert.Equal(t, "true", app.Environments["SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE"])
+		})
+	}
+}

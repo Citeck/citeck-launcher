@@ -60,7 +60,7 @@ func (d *Daemon) handleSetAdminPassword(w http.ResponseWriter, r *http.Request) 
 
 	// Phase 1: ecos-app realm — the user-facing platform login. Fatal on
 	// failure: without it the user would be locked out of the platform.
-	if err := d.resetKeycloakAdminPassword(ctx, kcApp.ContainerID, "", req.Password); err != nil {
+	if err := d.resetKeycloakAdminPassword(ctx, kcApp.ContainerID, req.Password); err != nil {
 		writeInternalError(w, err)
 		return
 	}
@@ -148,7 +148,7 @@ func (d *Daemon) handleSetAdminPassword(w http.ResponseWriter, r *http.Request) 
 // default "admin") is a live security hole, not a non-event. Splitting
 // the two lets the caller craft a specific error message pointing the
 // user at `citeck setup admin-password` for retry.
-func (d *Daemon) resetKeycloakAdminPassword(ctx context.Context, containerID, _, newPassword string) error {
+func (d *Daemon) resetKeycloakAdminPassword(ctx context.Context, containerID, newPassword string) error {
 	d.configMu.RLock()
 	saPassword := d.systemSecrets.CiteckSA
 	d.configMu.RUnlock()

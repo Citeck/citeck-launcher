@@ -53,6 +53,33 @@ func TestPrepareDestPath_SameContent_Skips(t *testing.T) {
 	}
 }
 
+// Pre-existing .sh with correct content but missing +x bit must be chmod'd
+// back to 0o755 via the skip path — the naïve early-return would leave the
+// script non-executable forever, since differing content is the only other
+// trigger that rewrites the file.
+func TestPrepareDestPath_SameContentWrongPerm_RestoresExecutableBit(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "init.sh")
+	content := []byte("#!/bin/sh\necho hi")
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skip, err := prepareDestPath(path, content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !skip {
+		t.Error("skip=false for identical content; want true")
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o755 {
+		t.Errorf(".sh perm=%o want 0755 (identical-content path must re-chmod)", fi.Mode().Perm())
+	}
+}
+
 func TestPrepareDestPath_DifferentContent_DoesNotSkip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "a.txt")

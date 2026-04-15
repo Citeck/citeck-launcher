@@ -136,6 +136,7 @@
   "uninstall.binaryRemoved": "已删除：{path}",
   "uninstall.complete": "卸载完成",
   "cli.platformNotRunning": "平台未运行",
+  "cli.daemonNotRunningStart": "daemon 未运行 — 请先使用 'citeck start' 启动",
   "cli.daemonStarted": "daemon 已在后台启动",
   "cli.continueBackground": "在后台继续运行",
   "cli.allAppsStarted": "所有 app 已启动。",

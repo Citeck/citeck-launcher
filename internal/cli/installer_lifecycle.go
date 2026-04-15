@@ -177,6 +177,10 @@ func lifecycleUpgrade(selfPath, installedVer, newVer string) error {
 		return fmt.Errorf("copy new binary: %w", err)
 	}
 
+	// Bring pre-2.1.x unit files up to date so the next `systemctl restart`
+	// uses zero-downtime semantics. Best-effort: logs warnings on failure.
+	migrateSystemdUnitIfStale()
+
 	output.PrintText("Starting new daemon...")
 	if err := startDaemonAfterSwap(); err != nil {
 		return fmt.Errorf("start new daemon: %w", err)
@@ -480,6 +484,84 @@ func removeSystemdNoRestartDropIn() error {
 	// contain other drop-ins the user added).
 	_ = os.Remove(systemdRuntimeDropInDir)
 	return runSystemctl("daemon-reload")
+}
+
+// buildSystemdUnit returns the full citeck.service unit content.
+//
+// ExecStop runs `citeck stop --shutdown --leave-running` so `systemctl restart`
+// and `systemctl stop` swap the daemon without disturbing platform containers
+// (Docker owns them — kubelet-style semantics). Full platform shutdown is done
+// via the CLI (`citeck stop --shutdown`), not via systemctl.
+//
+// KillMode=none is load-bearing. Without it, systemd's default (control-group)
+// sends SIGTERM to the main PID right after ExecStop returns. Our HTTP
+// shutdown handler defers the actual detach by 100 ms to flush the response,
+// and in that window the SIGTERM handler wins the shutdownOnce race and runs
+// a full (containers-down) shutdown — exactly what ExecStop is there to
+// prevent. With KillMode=none, the only way the main process stops is
+// ExecStop causing self-exit; if that fails or hangs, TimeoutStopSec=30
+// triggers a SIGKILL of the main process (Docker still owns the containers,
+// so they survive the kill).
+func buildSystemdUnit(execPath string) string {
+	return fmt.Sprintf(`[Unit]
+Description=Citeck Launcher
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=%s start --foreground
+ExecStop=%s stop --shutdown --leave-running
+KillMode=none
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+`, execPath, execPath)
+}
+
+// migrateSystemdUnitIfStale rewrites the on-disk systemd unit whenever its
+// content differs from what buildSystemdUnit produces for this binary path.
+// Runs daemon-reload so the new definition takes effect before the next
+// `systemctl start`. Silent on absence of systemd or unit file.
+//
+// Comparing against the full canonical content (not just "does ExecStop=
+// exist") means any future semantics change to the unit — new KillMode, a
+// different TimeoutStopSec, a revised ExecStop command — propagates on the
+// next upgrade without requiring another bespoke migration function. The
+// trade-off: a user who hand-edits the unit will see their edits overwritten
+// on next `install.sh` upgrade. That's acceptable; the recommended
+// customization path is a drop-in under /etc/systemd/system/citeck.service.d/,
+// which systemd merges on top of whatever is in the main unit file.
+func migrateSystemdUnitIfStale() {
+	if _, err := os.Stat(systemdUnitPath); err != nil {
+		return
+	}
+	existing, err := os.ReadFile(systemdUnitPath) //nolint:gosec // G304: systemdUnitPath is a compile-time constant
+	if err != nil {
+		output.PrintText("  warn: read %s: %v", systemdUnitPath, err)
+		return
+	}
+	fresh := buildSystemdUnit(installTarget)
+	if string(existing) == fresh {
+		return
+	}
+	if os.Geteuid() != 0 {
+		output.PrintText("  warn: systemd unit %s differs from current template; rerun as root to migrate", systemdUnitPath)
+		return
+	}
+	if err := os.WriteFile(systemdUnitPath, []byte(fresh), 0o644); err != nil { //nolint:gosec // G306: systemd unit files require 0o644
+		output.PrintText("  warn: rewrite %s: %v", systemdUnitPath, err)
+		return
+	}
+	if err := runSystemctl("daemon-reload"); err != nil {
+		output.PrintText("  warn: daemon-reload after unit migration: %v", err)
+		return
+	}
+	output.PrintText("Updated %s to match current unit template", systemdUnitPath)
 }
 
 // runSystemctl runs `systemctl <args...>` with sudo when the process isn't

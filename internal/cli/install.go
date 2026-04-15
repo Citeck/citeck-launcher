@@ -991,21 +991,7 @@ func installSystemdAndFirewall(platformPort int) {
 		return
 	}
 
-	unit := fmt.Sprintf(`[Unit]
-Description=Citeck Launcher
-After=network.target docker.service
-Requires=docker.service
-
-[Service]
-Type=simple
-ExecStart=%s start --foreground
-Restart=on-failure
-RestartSec=10
-LimitNOFILE=65535
-
-[Install]
-WantedBy=multi-user.target
-`, execPath)
+	unit := buildSystemdUnit(execPath)
 
 	servicePath := "/etc/systemd/system/citeck.service"
 	if os.Getuid() != 0 {

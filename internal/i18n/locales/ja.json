@@ -136,6 +136,7 @@
   "uninstall.binaryRemoved": "削除しました: {path}",
   "uninstall.complete": "アンインストールが完了しました",
   "cli.platformNotRunning": "プラットフォームは実行されていません",
+  "cli.daemonNotRunningStart": "daemon が実行されていません — まず 'citeck start' で起動してください",
   "cli.daemonStarted": "daemon をバックグラウンドで起動しました",
   "cli.continueBackground": "バックグラウンドで続行します",
   "cli.allAppsStarted": "すべての app を起動しました。",

@@ -136,6 +136,7 @@
   "uninstall.binaryRemoved": "Supprimé : {path}",
   "uninstall.complete": "Désinstallation terminée",
   "cli.platformNotRunning": "La plateforme n'est pas en cours d'exécution",
+  "cli.daemonNotRunningStart": "le daemon n'est pas en cours d'exécution — démarrez-le d'abord avec 'citeck start'",
   "cli.daemonStarted": "Daemon démarré en arrière-plan",
   "cli.continueBackground": "Poursuite en arrière-plan",
   "cli.allAppsStarted": "Toutes les applications sont démarrées.",

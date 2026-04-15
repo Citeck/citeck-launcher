@@ -25,10 +25,14 @@ func StreamReloadStatus(c *client.DaemonClient) error {
 }
 
 // renderAppTable is a convenience wrapper around output.FormatAppTable
-// that returns the same 4-tuple used by streamLiveStatus.
-func renderAppTable(apps []api.AppDto) (table string, running, failed, total int) {
+// that returns the counts used by streamLiveStatus. Stopped covers
+// intentionally-detached apps (STOPPED only); STOPPING_FAILED is counted
+// in Failed, matching isAppTerminalFailed below and the red colorization
+// in output.ColorizeStatus. The wait-for-terminal check must include
+// Stopped or the loop hangs on any namespace with a detached service.
+func renderAppTable(apps []api.AppDto) (table string, running, failed, stopped, total int) {
 	r := output.FormatAppTable(apps)
-	return r.Table, r.Running, r.Failed, r.Total
+	return r.Table, r.Running, r.Failed, r.Stopped, r.Total
 }
 
 // isAppTerminalFailed reports whether the given app status is a terminal

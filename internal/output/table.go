@@ -83,10 +83,20 @@ func padVisible(s string, width int) string {
 }
 
 // AppTableResult holds the formatted table and app counts.
+//
+// Stopped counts apps that the user intentionally detached (STOPPED status).
+// Live-status waiters need this as a separate bucket from Failed so the
+// terminal-state check `running + failed + stopped == total` succeeds on
+// namespaces with detached services — otherwise the loop hangs forever.
+// STOPPING_FAILED is a failure (the stop action itself errored, not a
+// user-requested detach) and goes into Failed alongside START_FAILED /
+// PULL_FAILED / FAILED — consistent with isAppTerminalFailed and the
+// red colorization in ColorizeStatus.
 type AppTableResult struct {
 	Table   string
 	Running int
 	Failed  int
+	Stopped int
 	Total   int
 }
 
@@ -110,14 +120,16 @@ var kindOrder = []struct {
 // status, reload, setup, start.
 func FormatAppTable(apps []api.AppDto) AppTableResult {
 	total := len(apps)
-	var running, failed int
+	var running, failed, stopped int
 
 	for _, app := range apps {
 		switch app.Status {
 		case "RUNNING":
 			running++
-		case "START_FAILED", "PULL_FAILED", "FAILED":
+		case "START_FAILED", "PULL_FAILED", "FAILED", "STOPPING_FAILED":
 			failed++
+		case "STOPPED":
+			stopped++
 		}
 	}
 
@@ -196,6 +208,7 @@ func FormatAppTable(apps []api.AppDto) AppTableResult {
 		Table:   FormatTable(headers, rows, 0, statusMinWidth),
 		Running: running,
 		Failed:  failed,
+		Stopped: stopped,
 		Total:   total,
 	}
 }

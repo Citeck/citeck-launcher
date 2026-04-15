@@ -136,6 +136,7 @@
   "uninstall.binaryRemoved": "Удалено: {path}",
   "uninstall.complete": "Деинсталляция завершена",
   "cli.platformNotRunning": "Платформа не запущена",
+  "cli.daemonNotRunningStart": "демон не запущен — сначала запустите его командой 'citeck start'",
   "cli.daemonStarted": "Демон запущен в фоне",
   "cli.continueBackground": "Продолжение в фоне",
   "cli.allAppsStarted": "Все приложения запущены.",

@@ -36,7 +36,7 @@ type KeycloakInitParams struct {
 // shquote returns a bash single-quoted literal that safely represents s,
 // suitable for interpolation into a POSIX-sh / bash script. The returned
 // string is always wrapped in single quotes; any embedded single quote is
-// rendered using the classic '\'' idiom (close, escape, reopen). Because
+// rendered using the classic '\” idiom (close, escape, reopen). Because
 // bash performs no expansion inside single quotes, the result is safe for
 // all bytes — including $, backtick, backslash, newline, carriage return,
 // and null — without the Go-specific escaping that fmt.Sprintf("%q", ...)

@@ -54,7 +54,8 @@ func newStartCmd(version string) *cobra.Command {
 
 			// Daemon not running
 			if len(args) == 1 {
-				return fmt.Errorf("daemon is not running — start it first with 'citeck start'")
+				ensureI18n()
+				return errors.New(t("cli.daemonNotRunningStart"))
 			}
 
 			// Server mode: require namespace.yml before starting
@@ -441,7 +442,7 @@ func streamLiveStatus(c *client.DaemonClient, opts liveStatusOpts) error {
 			continue
 		}
 
-		table, running, failed, total := renderAppTable(ns.Apps)
+		table, running, failed, stopped, total := renderAppTable(ns.Apps)
 
 		if isTTY {
 			if !firstPrint && linesPrinted > 0 {
@@ -463,8 +464,10 @@ func streamLiveStatus(c *client.DaemonClient, opts liveStatusOpts) error {
 			continue
 		}
 
-		// All apps running — redraw table without summary, then print success message.
-		if running == total {
+		// All non-detached apps reached RUNNING (detached apps count toward
+		// stopped, which is terminal for our wait purposes) — draw the final
+		// table without the summary and print the success message.
+		if running+stopped == total {
 			if isTTY && linesPrinted > 0 {
 				output.ClearLines(linesPrinted)
 				fmt.Println(table) //nolint:forbidigo // CLI table
@@ -478,8 +481,10 @@ func streamLiveStatus(c *client.DaemonClient, opts liveStatusOpts) error {
 			return nil
 		}
 
-		// Some apps failed and we've reached a terminal state.
-		if running+failed == total && !opts.waitAll {
+		// Some apps failed and we've reached a terminal state. Detached apps
+		// (stopped) are terminal too — otherwise a failed + detached mix would
+		// loop forever waiting for the STOPPED apps to "recover".
+		if running+failed+stopped == total && !opts.waitAll {
 			ensureI18n()
 			fmt.Printf("\n%s\n", output.Colorize(output.Yellow,
 				fmt.Sprintf("%d/%d apps started, %d failed", running, total, failed))) //nolint:forbidigo // CLI result

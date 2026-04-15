@@ -128,7 +128,7 @@ func watchEvents(c *client.DaemonClient) error {
 			output.Colorize(output.Bold, padRight("Status:", 7)), output.ColorizeStatus(ns.Status),
 			output.Colorize(output.Bold, padRight("Bundle:", 7)), ns.BundleRef,
 			urlLine)
-		table, _, _, _ := renderAppTable(ns.Apps)
+		table, _, _, _, _ := renderAppTable(ns.Apps)
 
 		if tty && lastLines > 0 {
 			output.ClearLines(lastLines)
