@@ -153,6 +153,9 @@ func (r *Runtime) setStatus(s NsRuntimeStatus) {
 // setAppStatus must be called with r.mu held.
 func (r *Runtime) setAppStatus(app *AppRuntime, s AppRuntimeStatus) {
 	old := app.Status
+	if old == s {
+		return
+	}
 	app.Status = s
 	slog.Info("App status changed", "app", app.Name, "from", old, "to", s)
 	r.emitEvent(api.EventDto{
@@ -168,4 +171,8 @@ func (r *Runtime) setAppStatus(app *AppRuntime, s AppRuntimeStatus) {
 	// Wake all goroutines waiting for dependency status changes
 	close(r.statusNotify)
 	r.statusNotify = make(chan struct{})
+	// Re-evaluate the namespace-level status so CLI/UI reflect the change
+	// immediately instead of waiting up to 5s for the orchestration ticker.
+	// checkStatus is idempotent and cheap — iterates r.apps with mu already held.
+	r.checkStatus()
 }
