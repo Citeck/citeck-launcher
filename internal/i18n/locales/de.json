@@ -200,6 +200,8 @@
   "setup.email.username_hint": "Für SMTP ohne Authentifizierung leer lassen",
   "setup.email.password": "Passwort",
   "setup.email.tls": "TLS verwenden?",
+  "setup.email.startup.prompt": "Testnachricht beim Start des Notifications-Microservices senden?",
+  "setup.email.startup.recipient": "Empfängeradresse der Testnachricht",
   "setup.email.preset": "Mail-Anbieter auswählen oder manuell konfigurieren",
   "setup.email.custom": "Eigener SMTP-Server",
   "setup.s3.title": "S3-Speicher",

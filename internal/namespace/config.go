@@ -81,6 +81,18 @@ type EmailConfig struct {
 	Password string `yaml:"password,omitempty" json:"password,omitempty"`
 	From     string `yaml:"from" json:"from"`
 	TLS      bool   `yaml:"tls" json:"tls"`
+	// StartupNotification asks the notifications microservice to send a test
+	// email when it starts up. Maps to ecos-notifications.startup-notification.*
+	// env vars. Nil when disabled so upgrades from older configs don't grow
+	// a noisy empty block.
+	StartupNotification *StartupNotificationConfig `yaml:"startupNotification,omitempty" json:"startupNotification,omitempty"`
+}
+
+// StartupNotificationConfig controls the notifications-service startup
+// probe email. Created only when the user opts in through the setup wizard.
+type StartupNotificationConfig struct {
+	Enabled   bool   `yaml:"enabled" json:"enabled"`
+	Recipient string `yaml:"recipient,omitempty" json:"recipient,omitempty"`
 }
 
 // S3Config configures S3 storage for ecos-content.

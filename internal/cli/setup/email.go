@@ -139,12 +139,48 @@ func (s *emailSetting) Run(sctx *setupContext, cfg *namespace.Config, _ *config.
 		return fmt.Errorf("email form: %w", err)
 	}
 
+	// Startup-notification probe: asks the notifications service to send a
+	// test email on every boot. Pre-fill the recipient from `from` so the
+	// common "send to myself" case is a single Enter press.
+	prevStartup := email.StartupNotification
+	startupDefault := false
+	startupRecipientDefault := from
+	if prevStartup != nil {
+		startupDefault = prevStartup.Enabled
+		if prevStartup.Recipient != "" {
+			startupRecipientDefault = prevStartup.Recipient
+		}
+	}
+	startupEnabled, err := (&prompt.Confirm{
+		Title:       i18n.T("setup.email.startup.prompt"),
+		Affirmative: output.ConfirmYes,
+		Negative:    output.ConfirmNo,
+		Default:     startupDefault,
+		Hints:       hints(),
+	}).Run()
+	if err != nil {
+		return fmt.Errorf("email form: %w", err)
+	}
+	var startupRecipient string
+	if startupEnabled {
+		startupRecipient, err = (&prompt.Input{
+			Title:    i18n.T("setup.email.startup.recipient"),
+			Value:    startupRecipientDefault,
+			Validate: notEmpty,
+			Hints:    hints(),
+		}).Run()
+		if err != nil {
+			return fmt.Errorf("email form: %w", err)
+		}
+	}
+
 	// If the user left the port empty, apply the placeholder default.
 	if strings.TrimSpace(portStr) == "" {
 		portStr = portPlaceholder
 	}
 	port, _ := strconv.Atoi(strings.TrimSpace(portStr)) // error safe: validatePort already checked format
-	applyEmailSetting(sctx, cfg, email, host, port, username, from, password, useTLS)
+	applyEmailSetting(sctx, cfg, email, host, port, username, from, password, useTLS,
+		startupEnabled, startupRecipient)
 	return nil
 }
 
@@ -154,6 +190,7 @@ func (s *emailSetting) Run(sctx *setupContext, cfg *namespace.Config, _ *config.
 // Extracted from Run() so the behavior can be unit tested without driving the TUI.
 func applyEmailSetting(sctx *setupContext, cfg *namespace.Config, prev *namespace.EmailConfig,
 	host string, port int, username, from, password string, useTLS bool,
+	startupEnabled bool, startupRecipient string,
 ) {
 	cfg.Email = &namespace.EmailConfig{
 		Host:     strings.TrimSpace(host),
@@ -161,6 +198,12 @@ func applyEmailSetting(sctx *setupContext, cfg *namespace.Config, prev *namespac
 		Username: strings.TrimSpace(username),
 		From:     strings.TrimSpace(from),
 		TLS:      useTLS,
+	}
+	if startupEnabled {
+		cfg.Email.StartupNotification = &namespace.StartupNotificationConfig{
+			Enabled:   true,
+			Recipient: strings.TrimSpace(startupRecipient),
+		}
 	}
 
 	// Secret handling: store password via sctx.PendingSecrets for later write by setup.go.

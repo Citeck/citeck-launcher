@@ -200,6 +200,8 @@
   "setup.email.username_hint": "如无需认证，留空即可",
   "setup.email.password": "密码",
   "setup.email.tls": "使用 TLS？",
+  "setup.email.startup.prompt": "notifications 微服务启动时发送测试邮件？",
+  "setup.email.startup.recipient": "测试邮件收件人地址",
   "setup.email.preset": "选择邮件服务商或手动配置",
   "setup.email.custom": "自定义 SMTP 服务器",
   "setup.s3.title": "S3 存储",

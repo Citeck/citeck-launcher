@@ -200,6 +200,8 @@
   "setup.email.username_hint": "Dejar vacío para SMTP sin autenticación",
   "setup.email.password": "Contraseña",
   "setup.email.tls": "¿Usar TLS?",
+  "setup.email.startup.prompt": "¿Enviar un correo de prueba al iniciar el microservicio notifications?",
+  "setup.email.startup.recipient": "Dirección del destinatario del correo de prueba",
   "setup.email.preset": "Seleccione un proveedor de correo o configure manualmente",
   "setup.email.custom": "Servidor SMTP personalizado",
   "setup.s3.title": "Almacenamiento S3",

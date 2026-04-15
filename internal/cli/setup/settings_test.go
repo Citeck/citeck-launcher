@@ -302,7 +302,8 @@ func TestApplyEmailSetting_SecretRef(t *testing.T) {
 	sctx := &setupContext{PendingSecrets: map[string]string{}}
 	cfg := &namespace.Config{}
 	applyEmailSetting(sctx, cfg, nil,
-		"smtp.example.com", 587, "user@example.com", "from@example.com", "plain-password", true)
+		"smtp.example.com", 587, "user@example.com", "from@example.com", "plain-password", true,
+		false, "")
 
 	require.NotNil(t, cfg.Email)
 	assert.Equal(t, "secret:email.password", cfg.Email.Password,
@@ -333,7 +334,8 @@ func TestApplyEmailSetting_PreservesExistingRef(t *testing.T) {
 	cfg := &namespace.Config{}
 	prev := &namespace.EmailConfig{Password: "secret:email.password"}
 	applyEmailSetting(sctx, cfg, prev,
-		"smtp.example.com", 587, "user@example.com", "from@example.com", "", true)
+		"smtp.example.com", 587, "user@example.com", "from@example.com", "", true,
+		false, "")
 
 	assert.Equal(t, "secret:email.password", cfg.Email.Password)
 	assert.Empty(t, sctx.PendingSecrets, "no new secret should be written when field is empty")
@@ -345,7 +347,8 @@ func TestApplyEmailSetting_OptionalPassword(t *testing.T) {
 	sctx := &setupContext{PendingSecrets: map[string]string{}}
 	cfg := &namespace.Config{}
 	applyEmailSetting(sctx, cfg, nil,
-		"relay.internal", 25, "", "noreply@company.com", "", false)
+		"relay.internal", 25, "", "noreply@company.com", "", false,
+		false, "")
 
 	assert.Empty(t, cfg.Email.Password)
 	assert.Empty(t, sctx.PendingSecrets)

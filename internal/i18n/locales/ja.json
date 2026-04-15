@@ -200,6 +200,8 @@
   "setup.email.username_hint": "認証なし SMTP の場合は空欄のまま",
   "setup.email.password": "パスワード",
   "setup.email.tls": "TLS を使用しますか？",
+  "setup.email.startup.prompt": "notifications マイクロサービスの起動時にテストメールを送信しますか？",
+  "setup.email.startup.recipient": "テストメールの宛先アドレス",
   "setup.email.preset": "メールプロバイダーを選択するか、手動で設定",
   "setup.email.custom": "カスタム SMTP サーバー",
   "setup.s3.title": "S3 ストレージ",

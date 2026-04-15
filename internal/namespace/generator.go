@@ -1012,14 +1012,32 @@ func applyEmailConfig(app *AppBuilder, ctx *NsGenContext) {
 	// Relaxed-binding equivalents of:
 	//   spring.mail.properties.mail.smtp.auth: true
 	//   spring.mail.properties.mail.smtp.starttls.enable: true
-	// Required by most providers (mail.ru, gmail, yandex) for authenticated submission.
 	// AUTH=true assumes credentials are configured; the setup wizard enforces
 	// this for external SMTP. An open-relay scenario (no credentials) would
-	// need these turned off — not supported here.
+	// need this turned off — not supported here.
 	app.AddEnv("SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH", "true")
-	app.AddEnv("SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE", "true")
+	// STARTTLS is only meaningful on an encrypted connection. Forcing it on a
+	// plain-text session would break delivery on ports/providers that don't
+	// negotiate TLS. With TLS=true we enable it unconditionally — harmless on
+	// implicit-TLS (port 465, smtps) where the handshake already happened,
+	// required on STARTTLS ports (587, gmail/outlook/mail.ru).
+	if email.TLS {
+		app.AddEnv("SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE", "true")
+	}
 	app.AddEnv("ECOS_NOTIFICATIONS_EMAIL_FROM_DEFAULT", email.From)
 	app.AddEnv("ECOS_NOTIFICATIONS_EMAIL_FROM_FIXED", email.From)
+	// Startup-notification probe: opt-in via setup wizard. When disabled (nil
+	// or Enabled=false), explicitly turn it off — the notifications service's
+	// bundled application.yml has enabled=true as the built-in default, so
+	// silence means "test email on every restart" which is noisy.
+	if sn := email.StartupNotification; sn != nil && sn.Enabled {
+		app.AddEnv("ECOS_NOTIFICATIONS_STARTUP_NOTIFICATION_ENABLED", "true")
+		if sn.Recipient != "" {
+			app.AddEnv("ECOS_NOTIFICATIONS_STARTUP_NOTIFICATION_RECIPIENT", sn.Recipient)
+		}
+	} else {
+		app.AddEnv("ECOS_NOTIFICATIONS_STARTUP_NOTIFICATION_ENABLED", "false")
+	}
 	if email.Username != "" {
 		app.AddEnv("SPRING_MAIL_USERNAME", email.Username)
 	}

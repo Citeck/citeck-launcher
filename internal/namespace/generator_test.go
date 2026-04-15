@@ -794,9 +794,13 @@ func TestApplyEmailConfig_SetsSpringRelaxedBindingEnvVars(t *testing.T) {
 		name     string
 		tls      bool
 		protocol string
+		// starttlsPresent guards against the regression where STARTTLS=true
+		// is blindly set on a plain-text SMTP session, breaking providers
+		// that don't negotiate TLS at all.
+		starttlsPresent bool
 	}{
-		{name: "STARTTLS port 587", tls: true, protocol: "smtps"},
-		{name: "plain SMTP", tls: false, protocol: "smtp"},
+		{name: "STARTTLS port 587", tls: true, protocol: "smtps", starttlsPresent: true},
+		{name: "plain SMTP", tls: false, protocol: "smtp", starttlsPresent: false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -824,7 +828,42 @@ func TestApplyEmailConfig_SetsSpringRelaxedBindingEnvVars(t *testing.T) {
 			// Relaxed-binding keys for spring.mail.properties.mail.smtp.{auth,starttls.enable}.
 			// Renaming either key breaks SMTP authentication silently.
 			assert.Equal(t, "true", app.Environments["SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH"])
-			assert.Equal(t, "true", app.Environments["SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE"])
+			if c.starttlsPresent {
+				assert.Equal(t, "true", app.Environments["SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE"])
+			} else {
+				assert.NotContains(t, app.Environments, "SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE",
+					"STARTTLS must not be forced on a plain-text SMTP session")
+			}
+			// Startup-notification defaults to disabled when the wizard didn't
+			// opt in — matches the applyEmailConfig "else" branch that pins
+			// ENABLED=false rather than leaving it unset (the microservice's
+			// bundled application.yml has ENABLED=true as its built-in default).
+			assert.Equal(t, "false", app.Environments["ECOS_NOTIFICATIONS_STARTUP_NOTIFICATION_ENABLED"])
+			assert.NotContains(t, app.Environments, "ECOS_NOTIFICATIONS_STARTUP_NOTIFICATION_RECIPIENT")
 		})
 	}
+}
+
+// TestApplyEmailConfig_StartupNotificationEnabled pins the env-vars the
+// wizard produces when the user opts in to the "send test email on
+// notifications startup" probe.
+func TestApplyEmailConfig_StartupNotificationEnabled(t *testing.T) {
+	ctx := NewNsGenContext(&Config{
+		Email: &EmailConfig{
+			Host: "smtp.example.com",
+			Port: 587,
+			From: "noreply@example.com",
+			TLS:  true,
+			StartupNotification: &StartupNotificationConfig{
+				Enabled:   true,
+				Recipient: "qa@example.com",
+			},
+		},
+	}, nil)
+	app := ctx.GetOrCreateApp("notifications")
+
+	applyEmailConfig(app, ctx)
+
+	assert.Equal(t, "true", app.Environments["ECOS_NOTIFICATIONS_STARTUP_NOTIFICATION_ENABLED"])
+	assert.Equal(t, "qa@example.com", app.Environments["ECOS_NOTIFICATIONS_STARTUP_NOTIFICATION_RECIPIENT"])
 }

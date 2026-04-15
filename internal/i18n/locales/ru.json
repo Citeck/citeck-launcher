@@ -200,6 +200,8 @@
   "setup.email.username_hint": "Оставьте пустым для SMTP без аутентификации",
   "setup.email.password": "Пароль",
   "setup.email.tls": "Использовать TLS?",
+  "setup.email.startup.prompt": "Отправлять тестовое сообщение при старте микросервиса notifications?",
+  "setup.email.startup.recipient": "Адрес получателя тестового сообщения",
   "setup.email.preset": "Выберите почтовый сервис или настройте вручную",
   "setup.email.custom": "Свой SMTP-сервер",
   "setup.s3.title": "S3-хранилище",
