@@ -1,7 +1,7 @@
 # Dev builds carry a compact UTC timestamp so `citeck version --short` is
 # unique per build — lets you verify you're talking to the freshly-scp'd
 # binary on a test server without re-checking git commits. Releases override
-# this via `make VERSION=v2.2.0 ...` (CI builds with `go build -ldflags`
+# this via `make VERSION=v2.2.1 ...` (CI builds with `go build -ldflags`
 # directly so they bypass the Makefile default entirely).
 VERSION ?= dev-$(shell date -u +%Y%m%d-%H%M%S)
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
