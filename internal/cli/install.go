@@ -326,9 +326,9 @@ hostStep:
 			return nil
 		}
 	}
-	c, waitErr := waitForDaemon(30 * time.Second)
+	c, waitErr := waitForDaemon(daemonStartupTimeout, output.IsTTY())
 	if waitErr != nil {
-		output.Errf("Daemon did not become ready: %v", waitErr)
+		output.Errf("Daemon did not become ready: %v (check %s)", waitErr, filepath.Join(config.LogDir(), "daemon.log"))
 		return nil
 	}
 	defer c.Close()

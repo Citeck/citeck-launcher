@@ -108,7 +108,7 @@ func newStartCmd(version string) *cobra.Command {
 				if sysErr := runSystemctl("start", "citeck"); sysErr != nil {
 					return fmt.Errorf("systemctl start citeck: %w", sysErr)
 				}
-				c, waitErr := waitForDaemon(30 * time.Second)
+				c, waitErr := waitForDaemon(daemonStartupTimeout, output.IsTTY())
 				if waitErr != nil {
 					return fmt.Errorf("daemon failed to start: %w (check 'journalctl -u citeck')", waitErr)
 				}
@@ -124,7 +124,7 @@ func newStartCmd(version string) *cobra.Command {
 			}
 
 			// Wait for daemon to be ready
-			c, err := waitForDaemon(30 * time.Second)
+			c, err := waitForDaemon(daemonStartupTimeout, output.IsTTY())
 			if err != nil {
 				return fmt.Errorf("daemon failed to start: %w (check %s)", err, filepath.Join(config.LogDir(), "daemon.log"))
 			}
@@ -318,10 +318,24 @@ func forkDaemon(password string, desktop, noUI, offline bool) error {
 	return nil
 }
 
-// waitForDaemon polls the Unix socket until the daemon is ready.
-func waitForDaemon(timeout time.Duration) (*client.DaemonClient, error) {
+// daemonStartupTimeout bounds how long the CLI waits for the daemon socket
+// after `citeck install` / `citeck start`. The daemon can't open the socket
+// until it finishes boot-time work: reading config, cloning the bundle repo
+// (first time only — can be tens of seconds over a slow network), parsing
+// workspace.yml, importing an auto-snapshot (if configured), and launching
+// the runtime. 3 minutes comfortably covers first-install on a modest VPS
+// without the user seeing a false-negative "daemon did not become ready"
+// while the daemon is in fact booting.
+const daemonStartupTimeout = 3 * time.Minute
+
+// waitForDaemon polls the Unix socket until the daemon is ready. If
+// showProgress is true, prints a dot roughly every 5 seconds so the user
+// knows the wait is alive — meant for the install path where first-time
+// bundle clone can take minutes on slow networks.
+func waitForDaemon(timeout time.Duration, showProgress bool) (*client.DaemonClient, error) {
 	deadline := time.Now().Add(timeout)
 	socketPath := config.SocketPath()
+	lastTick := time.Now()
 
 	for time.Now().Before(deadline) {
 		// Try connecting to socket
@@ -331,10 +345,20 @@ func waitForDaemon(timeout time.Duration) (*client.DaemonClient, error) {
 			// Socket is up — try creating a client
 			c := client.TryNew(clientOpts())
 			if c != nil {
+				if showProgress && !lastTick.IsZero() {
+					fmt.Println() //nolint:forbidigo // end progress line
+				}
 				return c, nil
 			}
 		}
+		if showProgress && time.Since(lastTick) >= 5*time.Second {
+			fmt.Print(".") //nolint:forbidigo // CLI progress dot
+			lastTick = time.Now()
+		}
 		time.Sleep(500 * time.Millisecond)
+	}
+	if showProgress {
+		fmt.Println() //nolint:forbidigo // end progress line
 	}
 	return nil, fmt.Errorf("timeout waiting for daemon socket at %s", socketPath)
 }

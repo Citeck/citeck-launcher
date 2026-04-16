@@ -167,7 +167,7 @@ type Runtime struct {
 	reconcilerCfg         *ReconcilerConfig                // optional override from daemon.yml
 	reconcilerEnabled     bool                             // gate for reconcile-diff dispatch from tickUnderLock; default true, flipped by SetReconcilerConfig when daemon.yml sets reconciler.enabled: false.
 	livenessEnabled       bool                             // gate for per-app liveness probe dispatch from tickUnderLock; default true, flipped by SetReconcilerConfig when daemon.yml sets reconciler.livenessEnabled: false.
-	defaultStopTimeout    int                              // from daemon.yml docker.stopTimeout; 0 = use hardcoded default (15s)
+	defaultStopTimeout    int                              // from daemon.yml docker.stopTimeout; 0 = Docker's own 10s SIGTERM→SIGKILL default applies (see tickUnderLock T23)
 	teardownOnce          sync.Once                        // guards shutdownAfter (full teardown path)
 	signalOnce            sync.Once                        // guards signalShutdown (close shutdownComplete)
 	// detaching is set by doDetach BEFORE CancelAll(CancelDetach). It fences
