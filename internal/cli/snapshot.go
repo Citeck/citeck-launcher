@@ -79,7 +79,7 @@ func newSnapshotExportCmd() *cobra.Command {
 
 			// Check if namespace is running — offer to stop
 			ns, nsErr := c.GetNamespace()
-			wasRunning := nsErr == nil && ns != nil && ns.Status != "STOPPED"
+			wasRunning := nsErr == nil && ns != nil && ns.Status != api.NsStatusStopped
 
 			if wasRunning {
 				if stopErr := stopForSnapshot(c); stopErr != nil {
@@ -144,7 +144,7 @@ func waitForStopped(c *client.DaemonClient, timeout time.Duration) error {
 			return fmt.Errorf("get namespace status: %w", nsErr)
 		}
 		lastStatus = ns.Status
-		if lastStatus == "STOPPED" {
+		if lastStatus == api.NsStatusStopped {
 			return nil
 		}
 		time.Sleep(2 * time.Second)
@@ -190,7 +190,7 @@ func newSnapshotImportCmd() *cobra.Command {
 
 			// Check if namespace is running — offer to stop
 			ns, nsErr := c.GetNamespace()
-			wasRunning := nsErr == nil && ns != nil && ns.Status != "STOPPED"
+			wasRunning := nsErr == nil && ns != nil && ns.Status != api.NsStatusStopped
 
 			if wasRunning {
 				if stopErr := stopForSnapshot(c); stopErr != nil {

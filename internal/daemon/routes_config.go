@@ -89,7 +89,7 @@ func appDefsToStoppedApps(defs []appdef.ApplicationDef) []api.AppDto {
 		}
 		apps = append(apps, api.AppDto{
 			Name:   def.Name,
-			Status: "STOPPED",
+			Status: api.AppStatusStopped,
 			Image:  def.Image,
 			Kind:   namespace.KindToString(def.Kind),
 			Ports:  def.Ports,

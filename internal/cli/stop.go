@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/client"
 	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/spf13/cobra"
@@ -119,7 +120,7 @@ func streamStopStatus(c *client.DaemonClient) error {
 		table, total := r.Table, r.Total
 		stopped := 0
 		for _, app := range ns.Apps {
-			if app.Status == "STOPPED" {
+			if app.Status == api.AppStatusStopped {
 				stopped++
 			}
 		}
@@ -137,7 +138,7 @@ func streamStopStatus(c *client.DaemonClient) error {
 		}
 		lastStopped = stopped
 
-		if stopped == total || ns.Status == "STOPPED" {
+		if stopped == total || ns.Status == api.NsStatusStopped {
 			fmt.Printf("\nAll %d apps stopped.\n", total) //nolint:forbidigo // CLI success
 			return nil
 		}

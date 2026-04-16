@@ -464,6 +464,12 @@ func streamLiveStatus(c *client.DaemonClient, opts liveStatusOpts) error {
 			continue
 		}
 
+		// Guard against a stale pre-command snapshot: see isNsPrecommandSnapshot.
+		if isNsPrecommandSnapshot(ns.Status) {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
 		// All non-detached apps reached RUNNING (detached apps count toward
 		// stopped, which is terminal for our wait purposes) — draw the final
 		// table without the summary and print the success message.

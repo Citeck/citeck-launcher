@@ -122,6 +122,36 @@ type ErrorDto struct {
 	Details string `json:"details,omitempty"`
 }
 
+// Namespace lifecycle status values carried by NamespaceDto.Status.
+// These mirror namespace.NsRuntimeStatus and are the single source of
+// truth for the wire format — untyped so the namespace package can
+// adopt them as its typed NsRuntimeStatus values (see namespace/runtime.go).
+const (
+	NsStatusStopped  = "STOPPED"
+	NsStatusStarting = "STARTING"
+	NsStatusRunning  = "RUNNING"
+	NsStatusStopping = "STOPPING"
+	NsStatusStalled  = "STALLED"
+)
+
+// Per-app lifecycle status values carried by AppDto.Status. Mirror of
+// namespace.AppRuntimeStatus — same single-source-of-truth pattern as the
+// NsStatus* constants above.
+const (
+	AppStatusReadyToPull    = "READY_TO_PULL"
+	AppStatusPulling        = "PULLING"
+	AppStatusPullFailed     = "PULL_FAILED"
+	AppStatusReadyToStart   = "READY_TO_START"
+	AppStatusDepsWaiting    = "DEPS_WAITING"
+	AppStatusStarting       = "STARTING"
+	AppStatusRunning        = "RUNNING"
+	AppStatusFailed         = "FAILED"
+	AppStatusStartFailed    = "START_FAILED"
+	AppStatusStopping       = "STOPPING"
+	AppStatusStoppingFailed = "STOPPING_FAILED"
+	AppStatusStopped        = "STOPPED"
+)
+
 // ErrCodeAppNotFound and related constants are machine-readable error codes for API consumers.
 const (
 	ErrCodeAppNotFound        = "APP_NOT_FOUND"

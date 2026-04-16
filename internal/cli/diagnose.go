@@ -36,10 +36,10 @@ const troubleshootingRef = "see docs: troubleshooting.rst \"Конфликт п�
 // operator needs to act on. Kept in one place so diagnose and tests stay
 // in sync with the runtime status machine.
 var failedAppStatuses = map[string]struct{}{
-	"FAILED":          {},
-	"START_FAILED":    {},
-	"PULL_FAILED":     {},
-	"STOPPING_FAILED": {},
+	api.AppStatusFailed:         {},
+	api.AppStatusStartFailed:    {},
+	api.AppStatusPullFailed:     {},
+	api.AppStatusStoppingFailed: {},
 }
 
 func newDiagnoseCmd() *cobra.Command {

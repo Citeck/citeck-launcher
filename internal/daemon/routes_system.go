@@ -260,7 +260,7 @@ func (d *Daemon) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		nsStatus := string(d.runtime.Status())
 		fmt.Fprintf(&b, "# HELP citeck_namespace_status Current namespace status (1=active).\n")
 		fmt.Fprintf(&b, "# TYPE citeck_namespace_status gauge\n")
-		for _, s := range []string{"STOPPED", "STARTING", "RUNNING", "STOPPING", "STALLED"} {
+		for _, s := range []string{api.NsStatusStopped, api.NsStatusStarting, api.NsStatusRunning, api.NsStatusStopping, api.NsStatusStalled} {
 			val := 0
 			if s == nsStatus {
 				val = 1

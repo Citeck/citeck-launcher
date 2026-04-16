@@ -78,32 +78,34 @@ import (
 // NsRuntimeStatus represents namespace lifecycle states.
 type NsRuntimeStatus string
 
-// Namespace lifecycle states.
+// Namespace lifecycle states. Values are sourced from the api package so the
+// DTO wire format (api.NsStatus*) and the internal typed enum never drift.
 const (
-	NsStatusStopped  NsRuntimeStatus = "STOPPED"
-	NsStatusStarting NsRuntimeStatus = "STARTING"
-	NsStatusRunning  NsRuntimeStatus = "RUNNING"
-	NsStatusStopping NsRuntimeStatus = "STOPPING"
-	NsStatusStalled  NsRuntimeStatus = "STALLED"
+	NsStatusStopped  NsRuntimeStatus = api.NsStatusStopped
+	NsStatusStarting NsRuntimeStatus = api.NsStatusStarting
+	NsStatusRunning  NsRuntimeStatus = api.NsStatusRunning
+	NsStatusStopping NsRuntimeStatus = api.NsStatusStopping
+	NsStatusStalled  NsRuntimeStatus = api.NsStatusStalled
 )
 
 // AppRuntimeStatus represents per-app lifecycle states.
 type AppRuntimeStatus string
 
-// Per-app lifecycle states.
+// Per-app lifecycle states. Values sourced from api.AppStatus* (single
+// source of truth for the wire format — see api/dto.go).
 const (
-	AppStatusReadyToPull    AppRuntimeStatus = "READY_TO_PULL"
-	AppStatusPulling        AppRuntimeStatus = "PULLING"
-	AppStatusPullFailed     AppRuntimeStatus = "PULL_FAILED"
-	AppStatusReadyToStart   AppRuntimeStatus = "READY_TO_START"
-	AppStatusDepsWaiting    AppRuntimeStatus = "DEPS_WAITING"
-	AppStatusStarting       AppRuntimeStatus = "STARTING"
-	AppStatusRunning        AppRuntimeStatus = "RUNNING"
-	AppStatusFailed         AppRuntimeStatus = "FAILED"
-	AppStatusStartFailed    AppRuntimeStatus = "START_FAILED"
-	AppStatusStopping       AppRuntimeStatus = "STOPPING"
-	AppStatusStoppingFailed AppRuntimeStatus = "STOPPING_FAILED"
-	AppStatusStopped        AppRuntimeStatus = "STOPPED"
+	AppStatusReadyToPull    AppRuntimeStatus = api.AppStatusReadyToPull
+	AppStatusPulling        AppRuntimeStatus = api.AppStatusPulling
+	AppStatusPullFailed     AppRuntimeStatus = api.AppStatusPullFailed
+	AppStatusReadyToStart   AppRuntimeStatus = api.AppStatusReadyToStart
+	AppStatusDepsWaiting    AppRuntimeStatus = api.AppStatusDepsWaiting
+	AppStatusStarting       AppRuntimeStatus = api.AppStatusStarting
+	AppStatusRunning        AppRuntimeStatus = api.AppStatusRunning
+	AppStatusFailed         AppRuntimeStatus = api.AppStatusFailed
+	AppStatusStartFailed    AppRuntimeStatus = api.AppStatusStartFailed
+	AppStatusStopping       AppRuntimeStatus = api.AppStatusStopping
+	AppStatusStoppingFailed AppRuntimeStatus = api.AppStatusStoppingFailed
+	AppStatusStopped        AppRuntimeStatus = api.AppStatusStopped
 )
 
 // AppRuntime holds the state for a single app.

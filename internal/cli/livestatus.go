@@ -39,10 +39,21 @@ func renderAppTable(apps []api.AppDto) (table string, running, failed, stopped, 
 // failure state (i.e. the app won't reach RUNNING without external action).
 func isAppTerminalFailed(status string) bool {
 	switch status {
-	case "START_FAILED", "PULL_FAILED", "FAILED", "STOPPING_FAILED":
+	case api.AppStatusStartFailed, api.AppStatusPullFailed, api.AppStatusFailed, api.AppStatusStoppingFailed:
 		return true
 	}
 	return false
+}
+
+// isNsPrecommandSnapshot reports whether the namespace status indicates the
+// daemon has not yet processed a just-issued lifecycle command. While NS sits
+// in the stop domain (STOPPED/STOPPING), app statuses reflect the prior
+// lifecycle — treating `stopped == total` as terminal would print "all apps
+// started" immediately after `citeck start` on a freshly stopped namespace,
+// before the daemon even pulls the first image. Callers poll again until the
+// namespace transitions out of this domain.
+func isNsPrecommandSnapshot(status string) bool {
+	return status == api.NsStatusStopped || status == api.NsStatusStopping
 }
 
 // streamSingleAppStatus polls the daemon until the named app reaches RUNNING
@@ -100,13 +111,13 @@ func streamSingleAppStatus(c *client.DaemonClient, appName string) error {
 		lastStatus = app.Status
 
 		switch {
-		case app.Status == "RUNNING":
+		case app.Status == api.AppStatusRunning:
 			fmt.Printf("%s\n", output.Colorize(output.Green, //nolint:forbidigo // CLI success
 				fmt.Sprintf("App %s: RUNNING", appName)))
 			return nil
 		case isAppTerminalFailed(app.Status):
 			return exitWithCode(ExitError, "app %s: %s", appName, app.Status)
-		case app.Status == "STOPPED":
+		case app.Status == api.AppStatusStopped:
 			// STOPPED is terminal only if the app was detached; for an active
 			// start/restart, STOPPED briefly is normal (between stop → start).
 			// Keep polling — the daemon will transition through STARTING again.
