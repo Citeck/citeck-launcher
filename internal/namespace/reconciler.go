@@ -9,14 +9,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
-	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
-	"github.com/docker/docker/client"
+	"github.com/citeck/citeck-launcher/internal/namespace/workers"
 )
 
-// ReconcilerConfig holds reconciliation settings.
+// ReconcilerConfig holds reconciliation settings from daemon.yml.
+// SetReconcilerConfig wires IntervalSeconds / LivenessPeriod into the
+// runtime's reconcilerInterval / liveness defaults.
 type ReconcilerConfig struct {
 	Enabled         bool
 	IntervalSeconds int
@@ -34,262 +34,70 @@ func DefaultReconcilerConfig() ReconcilerConfig {
 	}
 }
 
-// RunReconciler starts the reconciliation loop in a goroutine.
-// It checks desired vs actual state and fixes discrepancies.
-func (r *Runtime) RunReconciler(ctx context.Context, cfg ReconcilerConfig) {
-	if !cfg.Enabled {
-		return
-	}
-
-	r.reconcileWg.Go(func() {
-		ticker := time.NewTicker(time.Duration(cfg.IntervalSeconds) * time.Second)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				r.reconcile(ctx)
-			}
-		}
-	})
-
-	if cfg.LivenessEnabled {
-		r.reconcileWg.Go(func() {
-			ticker := time.NewTicker(cfg.LivenessPeriod)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-					r.checkLiveness(ctx)
-				}
-			}
-		})
-	}
-}
-
-// reconcile compares desired state (app definitions) with actual state (Docker containers).
-func (r *Runtime) reconcile(ctx context.Context) {
+// reconcileOnce runs one reconcile-diff cycle synchronously on the caller's
+// goroutine. Used by tests; production code schedules ReconcileDiffTask from
+// tickUnderLock.
+//
+// Mirrors what makeReconcileDiffPlan + handleReconcileDiffResult do together:
+// snapshot RUNNING apps under RLock, run the diff/inspect outside any lock,
+// then apply T18 under Lock.
+func (r *Runtime) reconcileOnce(ctx context.Context) {
 	r.mu.RLock()
 	if r.status != NsStatusRunning && r.status != NsStatusStalled {
 		r.mu.RUnlock()
 		return
 	}
-	r.mu.RUnlock()
-
-	// Get actual containers — detect Docker daemon restart
-	containers, err := r.docker.GetContainers(ctx)
-	if err != nil {
-		if client.IsErrConnectionFailed(err) {
-			slog.Warn("Reconciler: Docker daemon unreachable, will retry next cycle")
-		} else {
-			slog.Warn("Reconciler: failed to list containers", "err", err)
-		}
-		return
-	}
-
-	// Build map of running containers by app name
-	containersByApp := make(map[string]bool)
-	for _, c := range containers {
-		if appName, ok := c.Labels[docker.LabelAppName]; ok {
-			if c.State == "running" {
-				containersByApp[appName] = true
-			}
-		}
-	}
-
-	// Phase 1: collect candidate apps and container IDs under read lock
-	type missingApp struct {
-		name        string
-		containerID string
-	}
-	var missing []missingApp
-
-	r.mu.RLock()
+	snapshot := make([]reconcileSnapshotEntry, 0, len(r.apps))
 	for name, app := range r.apps {
-		if app.Status == AppStatusRunning && !containersByApp[name] {
-			missing = append(missing, missingApp{name: name, containerID: app.ContainerID})
-		}
-	}
-	r.mu.RUnlock()
-
-	// Phase 2: inspect containers outside any lock (Docker API calls may take seconds)
-	oomKilled := make(map[string]bool)
-	for _, m := range missing {
-		if m.containerID != "" {
-			inspCtx, inspCancel := context.WithTimeout(ctx, 5*time.Second)
-			info, inspErr := r.docker.InspectContainer(inspCtx, m.containerID)
-			inspCancel()
-			if inspErr == nil && info.State != nil && info.State.OOMKilled {
-				oomKilled[m.name] = true
-			}
-		}
-	}
-
-	// Phase 3: re-acquire write lock, update state
-	toRestart := make([]string, 0, len(missing))
-	now := time.Now()
-
-	r.mu.Lock()
-	for _, m := range missing {
-		app, ok := r.apps[m.name]
-		if !ok || app.Status != AppStatusRunning || containersByApp[m.name] {
-			continue // state changed while we were inspecting
-		}
-		var reason, detail string
-		if oomKilled[m.name] {
-			reason = "oom"
-			detail = "container OOM killed"
-			slog.Warn("Reconciler: container OOM killed, will restart", "app", m.name)
-			r.emitEvent(api.EventDto{
-				Type: "app_oom", Timestamp: time.Now().UnixMilli(),
-				NamespaceID: r.nsID, AppName: m.name, After: "OOMKilled",
-			})
-		} else {
-			reason = "crash"
-			detail = "container disappeared"
-			slog.Warn("Reconciler: container missing, will restart", "app", m.name)
-		}
-		r.incrementRestartCount(m.name)
-		r.recordRestartEvent(RestartEvent{
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
-			App:       m.name,
-			Reason:    reason,
-			Detail:    detail,
-		})
-		r.setAppStatus(app, AppStatusReadyToPull)
-		toRestart = append(toRestart, m.name)
-	}
-	if len(missing) > 0 {
-		r.persistState()
-	}
-	// Retry failed apps with exponential backoff (1m, 2m, 4m, 8m, max 10m)
-	for name, app := range r.apps {
-		if app.Status != AppStatusStartFailed && app.Status != AppStatusPullFailed {
+		if app.Status != AppStatusRunning {
 			continue
 		}
-		retryCount := r.retryCount(name)
-		backoff := min(time.Duration(1<<retryCount)*time.Minute, 10*time.Minute)
-		lastAttempt := r.retryLastAttempt(name)
-		if now.Sub(lastAttempt) >= backoff {
-			slog.Info("Reconciler: retrying failed app", "app", name, "attempt", retryCount+1)
-			r.setAppStatus(app, AppStatusPulling)
-			r.recordRetryAttempt(name)
-			toRestart = append(toRestart, name)
-		}
+		snapshot = append(snapshot, reconcileSnapshotEntry{Name: name, ContainerID: app.ContainerID})
 	}
-	r.mu.Unlock()
+	r.mu.RUnlock()
 
-	for _, name := range toRestart {
-		r.appWg.Add(1)
-		go r.pullAndStartApp(ctx, name)
-	}
-
-	r.cleanupOldDiagnostics()
+	// Run the worker body inline (no dispatcher roundtrip) and apply the
+	// Result via the same handler runtimeLoop uses. Stamp the TaskID/AttemptID
+	// so applyWorkerResult's staleness guard does not drop it.
+	res := r.runReconcileDiffTask(ctx, snapshot)
+	res.TaskID = workers.TaskID{App: "", Op: workers.OpReconcileDiff}
+	r.handleReconcileDiffResult(res)
 }
 
-// checkLiveness runs liveness probes on running apps.
-// Runs in both RUNNING and STALLED states so healthy apps continue to be monitored
-// even when one app has failed (STALLED means at least one app died).
-func (r *Runtime) checkLiveness(ctx context.Context) {
-	r.mu.RLock()
-	if r.status != NsStatusRunning && r.status != NsStatusStalled {
-		r.mu.RUnlock()
-		return
-	}
-
-	type livenessCheck struct {
+// livenessCheckOnce runs one round of liveness probes synchronously on the
+// caller's goroutine. Used by tests. Mirrors what the tick()-scheduled
+// LivenessProbeTask + handleLivenessProbeResult do together, but runs probes
+// serially rather than dispatching via the worker pool.
+func (r *Runtime) livenessCheckOnce(ctx context.Context) {
+	type check struct {
 		name        string
 		containerID string
 		probe       *appdef.AppProbeDef
-		isCiteck    bool
 	}
-	var appsToCheck []livenessCheck
-
+	r.mu.RLock()
+	if r.status != NsStatusRunning && r.status != NsStatusStalled {
+		r.mu.RUnlock()
+		return
+	}
+	var checks []check
 	for _, app := range r.apps {
 		if app.Status == AppStatusRunning && app.ContainerID != "" && app.Def.LivenessProbe != nil {
-			appsToCheck = append(appsToCheck, livenessCheck{
+			checks = append(checks, check{
 				name:        app.Name,
 				containerID: app.ContainerID,
 				probe:       app.Def.LivenessProbe,
-				isCiteck:    app.Def.Kind.IsCiteckApp(),
 			})
 		}
 	}
 	r.mu.RUnlock()
 
-	toRestart := make([]string, 0, len(appsToCheck))
-	for _, check := range appsToCheck {
-		alive := r.runLivenessProbe(ctx, check.containerID, check.probe)
-		if alive {
-			r.mu.Lock()
-			delete(r.livenessFailures, check.name)
-			r.mu.Unlock()
-			continue
+	for _, c := range checks {
+		healthy := r.runLivenessProbe(ctx, c.containerID, c.probe)
+		res := workers.Result{
+			TaskID:  workers.TaskID{App: c.name, Op: workers.OpLivenessProbe},
+			Payload: workers.LivenessProbePayload{Healthy: healthy},
 		}
-
-		// Probe failed — increment failure counter
-		threshold := check.probe.FailureThreshold
-		if threshold <= 0 {
-			threshold = 3
-		}
-
-		r.mu.Lock()
-		r.livenessFailures[check.name]++
-		failures := r.livenessFailures[check.name]
-
-		if failures < threshold {
-			slog.Warn("Liveness probe failed (below threshold)",
-				"app", check.name, "failures", failures, "threshold", threshold)
-			r.mu.Unlock()
-			continue
-		}
-
-		// Threshold reached — verify app is still RUNNING before restarting
-		app, ok := r.apps[check.name]
-		if !ok || app.Status != AppStatusRunning {
-			r.mu.Unlock()
-			continue
-		}
-		containerID := app.ContainerID
-		slog.Error("Liveness probe failed, restarting app",
-			"app", check.name, "failures", failures, "threshold", threshold)
-		r.mu.Unlock()
-
-		// Capture diagnostics outside lock (may run Docker commands)
-		reason := fmt.Sprintf("liveness probe failed %d/%d", failures, threshold)
-		diag := r.captureDiagnostics(ctx, check.name, containerID, check.isCiteck, reason)
-
-		r.mu.Lock()
-		// Re-verify app still RUNNING after diagnostics (state may have changed)
-		app, ok = r.apps[check.name]
-		if !ok || app.Status != AppStatusRunning {
-			r.mu.Unlock()
-			continue
-		}
-		r.incrementRestartCount(check.name)
-		r.recordRestartEvent(RestartEvent{
-			Timestamp:   time.Now().UTC().Format(time.RFC3339),
-			App:         check.name,
-			Reason:      "liveness",
-			Detail:      reason,
-			Diagnostics: diag,
-		})
-		r.setAppStatus(app, AppStatusReadyToPull)
-		delete(r.livenessFailures, check.name)
-		r.persistState()
-		r.mu.Unlock()
-
-		toRestart = append(toRestart, check.name)
-	}
-
-	for _, name := range toRestart {
-		r.appWg.Add(1)
-		go r.pullAndStartApp(ctx, name)
+		r.handleLivenessProbeResult(res)
 	}
 }
 

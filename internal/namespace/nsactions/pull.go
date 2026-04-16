@@ -75,12 +75,26 @@ func (e *PullExecutor) Execute(ctx context.Context, actx *actions.ActionContext)
 	}
 
 	// Detect 401/403 and provide actionable message with registry host
-	errStr := err.Error()
-	if strings.Contains(errStr, "401") || strings.Contains(errStr, "403") || strings.Contains(errStr, "unauthorized") || strings.Contains(errStr, "denied") {
-		host := registryHost(d.Image)
+	if IsAuthError(err) {
+		host := RegistryHost(d.Image)
 		return fmt.Errorf("pull %s: authentication failed — run: docker login %s", d.Image, host)
 	}
 	return fmt.Errorf("pull %s: %w", d.Image, err)
+}
+
+// IsAuthError reports whether err looks like a Docker registry auth failure
+// (401/403, "unauthorized", "denied"). Exported so worker factories in
+// internal/namespace can share the same classification without duplicating
+// the heuristic.
+func IsAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "401") ||
+		strings.Contains(s, "403") ||
+		strings.Contains(s, "unauthorized") ||
+		strings.Contains(s, "denied")
 }
 
 // Name returns a human-readable description of the pull action.
@@ -101,8 +115,9 @@ func (e *PullExecutor) RetryDelay(actx *actions.ActionContext) time.Duration {
 	return delays[actx.Attempt]
 }
 
-// registryHost extracts the registry host from a Docker image reference.
-func registryHost(img string) string {
+// RegistryHost extracts the registry host from a Docker image reference.
+// Exported so worker factories can reuse the same logic.
+func RegistryHost(img string) string {
 	// "nexus.citeck.ru/ecos-model:1.0" → "nexus.citeck.ru"
 	// "docker.io/library/postgres:17" → "docker.io"
 	if idx := strings.IndexByte(img, '/'); idx > 0 && strings.ContainsAny(img[:idx], ".:") {

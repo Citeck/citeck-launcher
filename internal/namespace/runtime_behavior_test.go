@@ -27,6 +27,25 @@ type mockDocker struct {
 	nextID          int
 	stopRemoveCalls int // number of StopAndRemoveContainer invocations
 	removeNetCalls  int // number of RemoveNetwork invocations
+
+	// Test knobs (nil-safe defaults preserve normal behavior).
+	pullCalls      int               // incremented on each PullImageWithProgress call
+	pullBlock      chan struct{}     // if non-nil, PullImageWithProgress blocks until close or ctx.Done
+	stopBlock      chan struct{}     // if non-nil, StopAndRemoveContainer blocks until close or ctx.Done
+	stopDelay      time.Duration     // if >0, StopAndRemoveContainer sleeps (honoring ctx) before returning
+	removeNetBlock chan struct{}     // if non-nil, RemoveNetwork blocks until close or ctx.Done
+	imageExists    map[string]bool   // optional override; nil keeps "always true" default
+	imageDigests   map[string]string // optional override; nil keeps "sha256:mock-digest-{img}" default
+
+	// Test knobs for ExecInContainer.
+	execCalls int           // incremented on each ExecInContainer call
+	execBlock chan struct{} // if non-nil, ExecInContainer blocks until close or ctx.Done
+
+	// Test knob for init-container worker (T19c / T20c coverage).
+	// If non-nil, WaitForContainerExit blocks until close or ctx.Done — lets
+	// tests pin an app in STARTING(init-phase) while dispatching cmdStopApp /
+	// cmdStop to exercise the init-phase stop routing.
+	initContainerWaitBlock chan struct{}
 }
 
 func newMockDocker() *mockDocker {
@@ -43,8 +62,16 @@ func (m *mockDocker) CreateNetwork(ctx context.Context) (string, error) {
 
 func (m *mockDocker) RemoveNetwork(ctx context.Context) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.removeNetCalls++
+	block := m.removeNetBlock
+	m.mu.Unlock()
+	if block != nil {
+		select {
+		case <-block:
+		case <-ctx.Done():
+			return fmt.Errorf("mock remove-network: %w", ctx.Err())
+		}
+	}
 	return nil
 }
 
@@ -74,11 +101,27 @@ func (m *mockDocker) RemoveContainer(ctx context.Context, id string) error { ret
 
 func (m *mockDocker) StopAndRemoveContainer(ctx context.Context, name string, timeoutSec int) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.stopRemoveCalls++
+	block := m.stopBlock
+	delay := m.stopDelay
 	// Strip the "test-" prefix added by ContainerName so we delete the right key.
 	appName := strings.TrimPrefix(name, "test-")
 	delete(m.containers, appName)
+	m.mu.Unlock()
+	if block != nil {
+		select {
+		case <-block:
+		case <-ctx.Done():
+			return fmt.Errorf("mock stop: %w", ctx.Err())
+		}
+	}
+	if delay > 0 {
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return fmt.Errorf("mock stop: %w", ctx.Err())
+		}
+	}
 	return nil
 }
 
@@ -111,12 +154,37 @@ func (m *mockDocker) PullImage(ctx context.Context, img string, auth *docker.Reg
 }
 
 func (m *mockDocker) PullImageWithProgress(ctx context.Context, img string, auth *docker.RegistryAuth, progressFn docker.PullProgressFn) error {
+	m.mu.Lock()
+	m.pullCalls++
+	block := m.pullBlock
+	m.mu.Unlock()
+	if block != nil {
+		select {
+		case <-block:
+		case <-ctx.Done():
+			return fmt.Errorf("mock pull: %w", ctx.Err())
+		}
+	}
 	return nil
 }
 
-func (m *mockDocker) ImageExists(ctx context.Context, img string) bool { return true }
+func (m *mockDocker) ImageExists(ctx context.Context, img string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.imageExists != nil {
+		return m.imageExists[img]
+	}
+	return true
+}
 
 func (m *mockDocker) GetImageDigest(ctx context.Context, img string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.imageDigests != nil {
+		if d, ok := m.imageDigests[img]; ok {
+			return d
+		}
+	}
 	return "sha256:mock-digest-" + img
 }
 
@@ -128,7 +196,18 @@ func (m *mockDocker) ContainerLogsFollow(ctx context.Context, containerID string
 	return io.NopCloser(strings.NewReader("")), nil
 }
 
-func (m *mockDocker) ExecInContainer(_ context.Context, _ string, _ []string) (output string, exitCode int, err error) {
+func (m *mockDocker) ExecInContainer(ctx context.Context, _ string, _ []string) (output string, exitCode int, err error) {
+	m.mu.Lock()
+	m.execCalls++
+	block := m.execBlock
+	m.mu.Unlock()
+	if block != nil {
+		select {
+		case <-block:
+		case <-ctx.Done():
+			return "", 1, fmt.Errorf("mock exec: %w", ctx.Err())
+		}
+	}
 	return "", 0, nil
 }
 
@@ -149,6 +228,16 @@ func (m *mockDocker) WaitForContainer(ctx context.Context, containerID string, t
 }
 
 func (m *mockDocker) WaitForContainerExit(ctx context.Context, containerID string, timeout time.Duration) error {
+	m.mu.Lock()
+	block := m.initContainerWaitBlock
+	m.mu.Unlock()
+	if block != nil {
+		select {
+		case <-block:
+		case <-ctx.Done():
+			return fmt.Errorf("mock wait-for-exit: %w", ctx.Err())
+		}
+	}
 	return nil
 }
 
@@ -175,49 +264,46 @@ func simpleApp(name, image string, deps ...string) appdef.ApplicationDef {
 	}
 }
 
-// waitForStatus blocks until the runtime reaches the target namespace status,
-// using the statusNotify channel for event-driven wakeup instead of polling.
+// waitForStatus blocks until the runtime reaches the target namespace status.
+// 10ms cadence is well under the 1s runtimeLoop tickerPeriod and below the
+// signalCh debounce — tests observe transitions within a single tick without
+// meaningfully loading the scheduler.
 func waitForStatus(r *Runtime, target NsRuntimeStatus, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
 	for {
 		if r.Status() == target {
 			return true
 		}
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
+		if time.Now().After(deadline) {
 			return false
 		}
-		// Wait for next status change or timeout
-		r.mu.RLock()
-		ch := r.statusNotify
-		r.mu.RUnlock()
 		select {
-		case <-ch:
-		case <-time.After(remaining):
+		case <-ticker.C:
+		case <-time.After(time.Until(deadline)):
 			return r.Status() == target
 		}
 	}
 }
 
 // waitForAppStatus blocks until the named app reaches the target status.
+// See waitForStatus for the rationale behind the poll-based implementation.
 func waitForAppStatus(r *Runtime, appName string, target AppRuntimeStatus, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
 	for {
-		app := r.FindApp(appName)
-		if app != nil && app.Status == target {
+		if app := r.FindApp(appName); app != nil && app.Status == target {
 			return true
 		}
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
+		if time.Now().After(deadline) {
 			return false
 		}
-		r.mu.RLock()
-		ch := r.statusNotify
-		r.mu.RUnlock()
 		select {
-		case <-ch:
-		case <-time.After(remaining):
-			app = r.FindApp(appName)
+		case <-ticker.C:
+		case <-time.After(time.Until(deadline)):
+			app := r.FindApp(appName)
 			return app != nil && app.Status == target
 		}
 	}
@@ -308,11 +394,8 @@ func TestStopAppMarksDetachedAndPersists(t *testing.T) {
 		t.Fatalf("app should be STOPPED after StopApp")
 	}
 
-	// Marked as manually stopped
-	r.mu.RLock()
-	_, detached := r.manualStoppedApps["foo"]
-	r.mu.RUnlock()
-	if !detached {
+	// Marked as manually stopped (public snapshot API, not direct field access).
+	if _, detached := r.ManualStoppedApps()["foo"]; !detached {
 		t.Fatalf("StopApp should mark app as manualStoppedApps")
 	}
 
@@ -320,10 +403,7 @@ func TestStopAppMarksDetachedAndPersists(t *testing.T) {
 	if err := r.StartApp("foo"); err != nil {
 		t.Fatalf("StartApp: %v", err)
 	}
-	r.mu.RLock()
-	_, stillDetached := r.manualStoppedApps["foo"]
-	r.mu.RUnlock()
-	if stillDetached {
+	if _, stillDetached := r.ManualStoppedApps()["foo"]; stillDetached {
 		t.Fatalf("StartApp should remove app from manualStoppedApps")
 	}
 }
@@ -519,9 +599,25 @@ func TestDetachLeavesContainersRunning(t *testing.T) {
 // TestDetachWhileStopping verifies that asking for detach after a stop is
 // already in flight degrades into a regular shutdown wait — the runtime
 // must NOT leave containers running when it's already committed to a stop.
+//
+// Drive the STOPPING state via the public Stop() API. A stopBlock on
+// mockDocker holds the graceful-shutdown chain in STOPPING long enough for
+// the Detach() probe to observe it.
 func TestDetachWhileStopping(t *testing.T) {
 	md := newMockDocker()
+
 	r := NewRuntime(testConfig(), md, t.TempDir())
+	defer func() {
+		// Release any leftover stopBlock so the deferred Shutdown() can
+		// complete.
+		md.mu.Lock()
+		if md.stopBlock != nil {
+			close(md.stopBlock)
+			md.stopBlock = nil
+		}
+		md.mu.Unlock()
+		r.Shutdown()
+	}()
 
 	apps := []appdef.ApplicationDef{
 		simpleApp("postgres", "postgres:17"),
@@ -532,25 +628,30 @@ func TestDetachWhileStopping(t *testing.T) {
 		t.Fatalf("namespace did not reach RUNNING")
 	}
 
-	// Force the runtime into STOPPING under the lock so the detach probe
-	// observes it. Sending on stopCh would race the runLoop's consumption
-	// (it could pick stopCh before our probe runs and clear status fast),
-	// so we mutate status directly under the lock — same shape as doStop.
-	r.mu.Lock()
-	r.setStatus(NsStatusStopping)
-	r.mu.Unlock()
+	// Install stopBlock AFTER RUNNING but BEFORE Stop() — doStop dispatches
+	// stopContainer workers that read md.stopBlock under md.mu and block on
+	// the channel, holding the runtime in STOPPING long enough for the
+	// Detach() probe. Installing it after RUNNING avoids interfering with
+	// the best-effort pre-create cleanup during start.
+	md.mu.Lock()
+	md.stopBlock = make(chan struct{})
+	md.mu.Unlock()
+
+	// Initiate stop via public API. doStop transitions NS → STOPPING and
+	// dispatches stopContainer workers, which block on md.stopBlock.
+	r.Stop()
+
+	// Wait for the NS to enter STOPPING (usually <100ms).
+	if !waitForStatus(r, NsStatusStopping, 5*time.Second) {
+		t.Fatalf("namespace did not reach STOPPING after Stop()")
+	}
 
 	// Detach must refuse — stop is committed.
 	if r.Detach() {
 		t.Fatalf("Detach() returned true while status was STOPPING")
 	}
 
-	// Drive a real stop through to completion so the test cleans up.
-	r.mu.Lock()
-	// Reset to a runnable status so doStop's normal path proceeds.
-	r.setStatus(NsStatusRunning)
-	r.mu.Unlock()
-	r.Shutdown()
+	// The deferred cleanup releases stopBlock and drives Shutdown() through.
 }
 
 // TestDetachThenAdopt verifies the full upgrade flow: detach the runtime,

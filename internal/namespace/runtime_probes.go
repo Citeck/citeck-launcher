@@ -4,70 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"sync"
 	"time"
 )
-
-func (r *Runtime) updateStats() {
-	// Snapshot running apps under read lock
-	r.mu.RLock()
-	type appRef struct {
-		name        string
-		containerID string
-	}
-	var targets []appRef
-	for _, app := range r.apps {
-		if app.ContainerID != "" && app.Status == AppStatusRunning {
-			targets = append(targets, appRef{name: app.Name, containerID: app.ContainerID})
-		}
-	}
-	r.mu.RUnlock()
-
-	if len(targets) == 0 {
-		return
-	}
-
-	// Fetch stats in parallel
-	type statResult struct {
-		name   string
-		cpu    string
-		memory string
-	}
-	results := make([]statResult, len(targets))
-	var wg sync.WaitGroup
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	for i, t := range targets {
-		wg.Add(1)
-		go func(idx int, ref appRef) {
-			defer wg.Done()
-			stats, err := r.docker.ContainerStats(ctx, ref.containerID)
-			if err != nil {
-				return
-			}
-			results[idx] = statResult{
-				name:   ref.name,
-				cpu:    fmt.Sprintf("%.1f%%", stats.CPUPercent),
-				memory: formatMemory(stats.MemUsage, stats.MemLimit),
-			}
-		}(i, t)
-	}
-	wg.Wait()
-
-	// Apply under write lock (brief)
-	r.mu.Lock()
-	for _, res := range results {
-		if res.name == "" {
-			continue
-		}
-		if app, ok := r.apps[res.name]; ok {
-			app.CPU = res.cpu
-			app.Memory = res.memory
-		}
-	}
-	r.mu.Unlock()
-}
 
 func (r *Runtime) checkStatus() {
 	if r.status != NsStatusStarting && r.status != NsStatusRunning && r.status != NsStatusStalled {

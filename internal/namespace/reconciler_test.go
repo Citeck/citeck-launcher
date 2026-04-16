@@ -95,30 +95,33 @@ func TestCheckLivenessFailureCounting(t *testing.T) {
 	ctx := context.Background()
 
 	// First failure — should NOT restart
-	r.checkLiveness(ctx)
+	r.livenessCheckOnce(ctx)
 	r.mu.RLock()
 	assert.Equal(t, AppStatusRunning, r.apps["emodel"].Status)
 	assert.Equal(t, 1, r.livenessFailures["emodel"])
 	r.mu.RUnlock()
 
 	// Second failure — should NOT restart
-	r.checkLiveness(ctx)
+	r.livenessCheckOnce(ctx)
 	r.mu.RLock()
 	assert.Equal(t, AppStatusRunning, r.apps["emodel"].Status)
 	assert.Equal(t, 2, r.livenessFailures["emodel"])
 	r.mu.RUnlock()
 
-	// Third failure — should trigger restart. After the restart is recorded,
-	// pullAndStartApp runs in a goroutine and may advance the status past
-	// ReadyToPull (Pulling/Starting/Running) before the test reads it — so
-	// assert on race-free invariants (counter reset + restart event + count)
-	// rather than on the transient status.
-	r.checkLiveness(ctx)
+	// Third failure — T17a fires: STOPPING transition + restart_event +
+	// stopContainer dispatch. After the dispatch, the worker may complete
+	// and route through T21 (desiredNext=READY_TO_PULL) → T2 → T5 → T7 →
+	// T15 → RUNNING by the time the test reads — so accept any post-T17a
+	// status, prioritizing the race-free invariants (counter reset + event).
+	r.livenessCheckOnce(ctx)
 	r.mu.RLock()
 	assert.Contains(t,
-		[]AppRuntimeStatus{AppStatusReadyToPull, AppStatusPulling, AppStatusStarting, AppStatusRunning},
+		[]AppRuntimeStatus{
+			AppStatusStopping, AppStatusReadyToPull, AppStatusPulling,
+			AppStatusReadyToStart, AppStatusStarting, AppStatusRunning,
+		},
 		r.apps["emodel"].Status,
-		"app should have been marked for restart (any post-trigger status is acceptable)")
+		"T17a should have driven the app through STOPPING (post-T17a status acceptable)")
 	assert.Equal(t, 0, r.livenessFailures["emodel"])
 	assert.Equal(t, 1, r.apps["emodel"].RestartCount)
 	assert.Len(t, r.restartEvents, 1)
@@ -150,16 +153,19 @@ func TestCheckLivenessRunsInStalledState(t *testing.T) {
 	}
 	r.mu.Unlock()
 
-	r.checkLiveness(context.Background())
+	r.livenessCheckOnce(context.Background())
 
 	r.mu.RLock()
-	// After trigger, pullAndStartApp runs in a goroutine and may advance the
-	// status past ReadyToPull before we read it. Assert on the race-free
-	// invariant that a restart was recorded.
+	// After T17a fires, the state machine may advance the app through
+	// STOPPING → READY_TO_PULL → … by the time the test reads. Accept any
+	// post-T17a status; the race-free invariant is the RestartCount bump.
 	assert.Contains(t,
-		[]AppRuntimeStatus{AppStatusReadyToPull, AppStatusPulling, AppStatusStarting, AppStatusRunning},
+		[]AppRuntimeStatus{
+			AppStatusStopping, AppStatusReadyToPull, AppStatusPulling,
+			AppStatusReadyToStart, AppStatusStarting, AppStatusRunning,
+		},
 		r.apps["emodel"].Status,
-		"liveness should run in STALLED state and trigger a restart")
+		"liveness should run in STALLED state and trigger a restart via T17a")
 	assert.Equal(t, 1, r.apps["emodel"].RestartCount, "restart should have been recorded")
 	r.mu.RUnlock()
 }
@@ -190,7 +196,7 @@ func TestCheckLivenessResetsOnSuccess(t *testing.T) {
 	r.mu.Unlock()
 
 	// Exec probe succeeds (mockDocker returns exit 0) — should reset counter
-	r.checkLiveness(context.Background())
+	r.livenessCheckOnce(context.Background())
 
 	r.mu.RLock()
 	assert.Equal(t, AppStatusRunning, r.apps["postgres"].Status)

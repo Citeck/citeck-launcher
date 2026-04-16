@@ -10,8 +10,7 @@ import (
 
 // failingExecMockDocker wraps mockDocker and forces ExecInContainer to return
 // a non-zero exit code. This simulates a flaky liveness probe on a reused
-// container — under the buggy Phase 2 probe, this would mark the plan
-// non-reusable and recreate the container.
+// container — the probe must NOT cause recreation (see regression test below).
 type failingExecMockDocker struct {
 	*mockDocker
 }
@@ -20,20 +19,18 @@ func (m *failingExecMockDocker) ExecInContainer(_ context.Context, _ string, _ [
 	return "", 1, nil
 }
 
-// TestDoStart_ReusedContainerNotLivenessProbed is a regression test for B6-06.
+// TestDoStart_ReusedContainerNotLivenessProbed is a regression test for B6-06:
+// doStart must NOT run a synchronous single-shot liveness probe on reused
+// containers. Under reload stress that probe flaked transiently, wrongly
+// marking the container non-reusable and triggering recreation — cycling the
+// app through START_FAILED for ~90s until the reconciler healed it.
 //
-// Before the fix, doStart ran a synchronous single-shot liveness probe on
-// reused containers. Under reload stress this probe flaked transiently,
-// wrongly marking the container non-reusable and triggering recreation —
-// cycling the app through START_FAILED for ~90s until the reconciler healed
-// it.
+// Reused containers are validated only via Docker inspect
+// (State.Status == "running"). Truly-hung containers are caught by the
+// reconciler's threshold-based liveness loop.
 //
-// The fix removes that probe entirely. Reused containers are only validated
-// via Docker inspect (State.Status == "running"). Truly-hung containers are
-// still caught by the reconciler's threshold-based liveness loop.
-//
-// This test asserts that when a reused container would fail a liveness
-// probe, doStart no longer recreates it.
+// This test asserts that when a reused container would fail a liveness probe,
+// doStart no longer recreates it.
 func TestDoStart_ReusedContainerNotLivenessProbed(t *testing.T) {
 	md := &failingExecMockDocker{mockDocker: newMockDocker()}
 	tmpDir := t.TempDir()
@@ -84,7 +81,7 @@ func TestDoStart_ReusedContainerNotLivenessProbed(t *testing.T) {
 	md.mu.Unlock()
 
 	if createsAfter != createsBefore {
-		t.Fatalf("container was recreated despite hash match — Phase 2 liveness probe leaked back in: createsBefore=%d createsAfter=%d", createsBefore, createsAfter)
+		t.Fatalf("container was recreated despite hash match — liveness probe must not cause recreation: createsBefore=%d createsAfter=%d", createsBefore, createsAfter)
 	}
 	if containersAfter != 1 {
 		t.Fatalf("expected 1 container after adopt, got %d", containersAfter)

@@ -164,6 +164,7 @@ React 19 + Vite + TypeScript + Tailwind CSS 4. Embedded into Go binary via `go:e
 - **SSE** (not WebSocket) for real-time events
 - **Unix socket only** for daemon communication in server mode; mTLS TCP reserved for future Web UI
 - **Smart regenerate** via deployment hash comparison (like `docker-compose up`) — unchanged containers keep running
+- **Namespace runtime is a single-threaded state machine with signal-queue wake-ups.** One `runtimeLoop` goroutine owns every mutation to `r.apps`, per-app status, namespace status, and persistence. External commands enqueue via `cmdQueue` (typed, coalescing, 500ms back-pressure); workers (pull / start / stop / probe / stats / reconcile / liveness) run off-loop on the dispatcher, post typed Results back on `resultCh`; `applyWorkerResult` applies state-machine transitions under lock. Per-iteration `stepAllApps` walks all non-detached apps for transitions (§4.2 T1–T33). See `internal/namespace/runtime.go` header comment + `docs/refactors/runtime-state-machine.md`.
 - **3-phase doStart**: I/O outside lock → remove stale → update state under lock. Detached apps get STOPPED status in Phase 3 (not pulled/started). Phase 1 snapshots `manualStoppedApps` under read lock; Phase 3 re-reads live map for concurrent StopApp/StartApp safety.
 - **Graceful shutdown**: phased stop groups (proxy → webapps → keycloak → infra)
 - **Detach mode** (binary upgrade): `Runtime.Detach()` exits without stopping containers for zero-downtime binary upgrades; Docker owns containers, not the launcher (same principle as kubelet restarts)
@@ -194,8 +195,6 @@ React 19 + Vite + TypeScript + Tailwind CSS 4. Embedded into Go binary via `go:e
 - `--format json` for scripting on any command
 - `--yes` to skip confirmations
 - Hidden flags: `--desktop`, `--no-ui`, `_daemon` (internal)
-
-For detailed phase-by-phase history, see `PROGRESS.md`.
 
 ## Agent Testing Guide (server-side)
 
