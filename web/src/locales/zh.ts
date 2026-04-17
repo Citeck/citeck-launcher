@@ -67,15 +67,6 @@ const zh: Translations = {
   'wizard.pgadmin.label': 'PgAdmin',
   'wizard.pgadmin.hint': '启用 PgAdmin 进行数据库管理。',
   'wizard.pgadmin.enable': '启用 PgAdmin',
-  'wizard.step.password': '密码',
-  'wizard.password.title': '主密码',
-  'wizard.password.hint': '所有密钥都在磁盘上加密存储。请设置主密码以保护它们。',
-  'wizard.password.useDefault': '使用默认密码（不安全）',
-  'wizard.password.warning': '默认密码仅提供最低限度的保护。任何拥有文件系统访问权限的人都可以解密。请在生产环境中使用自定义密码。',
-  'wizard.password.password': '主密码',
-  'wizard.password.confirm': '确认密码',
-  'wizard.password.mismatch': '密码不匹配',
-  'wizard.password.default': '默认',
   'wizard.review.label': '检查配置',
   'wizard.back': '上一步',
   'wizard.cancel': '取消',
@@ -316,8 +307,18 @@ const zh: Translations = {
   'common.close': '关闭',
   'common.confirm': '确认',
   'common.working': '处理中...',
+  'common.submit': '提交',
+  'common.select': '选择',
   'common.settings': '设置',
   'common.error': '错误：{error}',
+
+  // -- Journal dialog --
+  'journal.filter': '筛选...',
+  'journal.noMatchingRows': '没有匹配的行',
+  'journal.noData': '无数据',
+  'journal.rowCount': '{count} 行',
+  'journal.rowCountOne': '1 行',
+  'journal.selected': '已选 {count} 项',
 
   // -- Error Boundary --
   'error.title': '出现问题',
@@ -329,7 +330,6 @@ const zh: Translations = {
   'theme.toLight': '切换到浅色主题',
 
   // -- Common (additional) --
-  'common.back': '返回',
 
   // -- Error (additional) --
   'error.retry': '重试',
@@ -344,9 +344,6 @@ const zh: Translations = {
   'migration.secretsImported': '密钥已解密并导入',
   'migration.setupPassword.title': '保护您的密钥',
   'migration.setupPassword.description': '是否要使用主密码加密导入的密钥？每次启动启动器时都需要输入该密码。',
-  'migration.setupPassword.samePassword': '使用相同密码',
-  'migration.setupPassword.differentPassword': '设置其他密码',
-  'migration.setupPassword.skip': '暂时跳过',
   'migration.setupPassword.success': '密钥加密成功',
   'migration.unlock.title': '解锁密钥',
   'migration.unlock.description': '您的密钥已加密。请输入主密码进行解锁。',
@@ -364,8 +361,9 @@ const zh: Translations = {
   'upgrade.title': '升级 Bundle',
   'upgrade.select': '选择版本',
   'upgrade.success': '升级成功',
-  'upgrade.noVersions': '没有可用的 Bundle 版本',
   'upgrade.alreadyLatest': '已是最新版本',
+  'form.fieldRequired': '{label} 是必填项',
+  'store.connectionRestored': '连接已恢复，状态已刷新',
 }
 
 export default zh

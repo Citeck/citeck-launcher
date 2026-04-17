@@ -309,26 +309,9 @@ func (c *DaemonClient) UpgradeNamespace(bundleRef string) (*api.ActionResultDto,
 	return &dto, err
 }
 
-// ListBundles returns available bundle repositories and their versions.
-func (c *DaemonClient) ListBundles() ([]api.BundleInfoDto, error) {
-	var dto []api.BundleInfoDto
-	err := c.get(api.Bundles, &dto)
-	return dto, err
-}
-
 // SaveSecret creates or updates a secret via the daemon API.
 func (c *DaemonClient) SaveSecret(id, value string) error {
 	return c.post(api.Secrets, api.SecretCreateDto{ID: id, Value: value}, nil)
-}
-
-// DeleteSecret deletes a secret by ID via the daemon API.
-func (c *DaemonClient) DeleteSecret(id string) error {
-	resp, err := c.doRequest(http.MethodDelete, api.Secrets+"/"+id, nil)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	return decodeResponse(resp, nil)
 }
 
 // RestartApp restarts the named application container.
@@ -373,35 +356,10 @@ func (c *DaemonClient) GetHealth() (*api.HealthDto, error) {
 	return &dto, err
 }
 
-// GetConfig returns the raw YAML config from the daemon.
-func (c *DaemonClient) GetConfig() (string, error) {
-	return c.getRaw(api.Config)
-}
-
 // GetAppliedConfig returns the config currently driving the running namespace
 // (the config snapshot from when containers were last generated).
 func (c *DaemonClient) GetAppliedConfig() (string, error) {
 	return c.getRaw(api.ConfigApplied)
-}
-
-// PutConfig uploads a YAML config to the daemon.
-func (c *DaemonClient) PutConfig(yamlData []byte) (*api.ActionResultDto, error) {
-	req, err := http.NewRequest(http.MethodPut, c.baseURL+api.Config, bytes.NewReader(yamlData))
-	if err != nil {
-		return nil, fmt.Errorf("create config PUT request: %w", err)
-	}
-	req.Header.Set("Content-Type", "text/yaml")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("upload config: %w", err)
-	}
-	defer resp.Body.Close()
-	var dto api.ActionResultDto
-	if err := decodeResponse(resp, &dto); err != nil {
-		return nil, err
-	}
-	return &dto, nil
 }
 
 // StreamEvents opens an SSE connection to the daemon and sends events to the channel.

@@ -126,9 +126,8 @@ func TestAppStatusIsPullingDuringPull(t *testing.T) {
 // TestAdoptDoesNotLeakLegacyPullAndStartApp verifies that an adopted
 // container (T1: hash match → RUNNING) does not leak goroutines.
 //
-// Primary signal: r.appWg must drain within a deadline after the app reaches
-// RUNNING. Secondary check: runtime.NumGoroutine (noisy proxy; appWg is the
-// direct invariant).
+// Invariant: the runtime.NumGoroutine delta after shutdown must converge to
+// the pre-Start baseline within a bounded window.
 func TestAdoptDoesNotLeakLegacyPullAndStartApp(t *testing.T) {
 	md := newMockDocker()
 	def := simpleApp("postgres", "postgres:17")
@@ -158,24 +157,10 @@ func TestAdoptDoesNotLeakLegacyPullAndStartApp(t *testing.T) {
 		t.Fatalf("app %q did not reach RUNNING via adoption", def.Name)
 	}
 
-	// Primary invariant: appWg must drain after adoption. Any leaked worker
-	// waiting for a status transition would keep appWg non-zero.
-	done := make(chan struct{})
-	go func() {
-		r.appWg.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-		// ok — no goroutine leak.
-	case <-time.After(2 * time.Second):
-		t.Fatal("appWg did not drain — goroutine leaked waiting for READY_TO_START")
-	}
-
-	// Secondary sanity check — goroutine counts should converge after
-	// shutdown. Tolerance is generous because NumGoroutine is noisy and the
-	// runtime model has multiple long-lived goroutines (runtimeLoop,
-	// dispatcher, eventDispatchLoop, reconciler, wg watchers).
+	// Goroutine counts should converge after shutdown. Tolerance is generous
+	// because NumGoroutine is noisy and the runtime model has multiple
+	// long-lived goroutines (runtimeLoop, dispatcher, eventDispatchLoop,
+	// reconciler).
 	r.Shutdown()
 
 	deadline := time.Now().Add(500 * time.Millisecond)

@@ -85,7 +85,7 @@ func TestReconcilerRestartPinnedImageDoesNotPull(t *testing.T) {
 	md.mu.Unlock()
 
 	// Run the reconciler manually — same pattern as TestCheckLivenessFailureCounting.
-	r.reconcileOnce(context.Background())
+	r.testReconcileOnce(context.Background())
 
 	// Wait for the app to recover via T18 → T3 → ... → RUNNING.
 	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
@@ -218,12 +218,12 @@ func TestStoppingFailedDiscardsDesiredNext(t *testing.T) {
 		"T22 must clear desiredNext (got %q)", gotDesiredNext)
 
 	// And the app must NOT auto-promote out of STOPPING_FAILED — T31 is
-	// no-auto-retry by design. Wait one ticker cycle + slack.
-	time.Sleep(1500 * time.Millisecond)
-	app2 := r.FindApp(def.Name)
-	require.NotNil(t, app2)
-	assert.Equal(t, AppStatusStoppingFailed, app2.Status,
-		"STOPPING_FAILED must be sticky (no auto-retry per T31), got %s", app2.Status)
+	// no-auto-retry by design. Poll for 1500ms; any deviation fails fast.
+	assert.Never(t, func() bool {
+		a := r.FindApp(def.Name)
+		return a != nil && a.Status != AppStatusStoppingFailed
+	}, 1500*time.Millisecond, 50*time.Millisecond,
+		"STOPPING_FAILED must be sticky (no auto-retry per T31)")
 }
 
 // TestCmdStartAppOnStoppingFailedRetriesStop exercises T30: an app stuck in
@@ -410,13 +410,14 @@ func TestT33FiresExactlyOnceNotRepeatedly(t *testing.T) {
 		t.Fatalf("namespace did not reach RUNNING")
 	}
 
-	// Give the loop a chance to dispatch the (non-)event.
-	time.Sleep(300 * time.Millisecond)
-
-	mu.Lock()
-	gotSeen := seen
-	mu.Unlock()
-	assert.Zero(t, gotSeen, "T33 must self-mute when lastRestartReason is readopted_failing (saw %d events)", gotSeen)
+	// The loop must NOT dispatch the T33 event — poll for 300ms; any
+	// increment fails fast.
+	assert.Never(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return seen > 0
+	}, 300*time.Millisecond, 25*time.Millisecond,
+		"T33 must self-mute when lastRestartReason is readopted_failing")
 }
 
 // TestCmdStopWhilePulling is the namespace-wide cmdStop variant of T20b: an

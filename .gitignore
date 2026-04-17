@@ -47,6 +47,9 @@ coverage.html
 ### Prompt files ###
 PROMPT-*.md
 
+### Audit artifacts (audit-project skill) ###
+.audit-backlog.md
+
 ### Custom ###
 *.png
 !icons/**/*.png

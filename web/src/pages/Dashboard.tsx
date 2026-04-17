@@ -22,10 +22,21 @@ import { toast } from '../lib/toast'
 import { ExternalLink, Globe, Download, AlertTriangle, HardDrive, Key, Stethoscope, FileText, Settings, Eye, EyeOff, ArrowUpCircle } from 'lucide-react'
 
 export function Dashboard() {
-  const { namespace, health, loading, error, fetchData, startEventStream, stopEventStream } =
-    useDashboardStore()
+  // Selector-based subscriptions — Dashboard re-renders only when the fields
+  // it consumes change, not on every SSE-triggered store mutation (e.g.
+  // reconnectDelay / lastSeq / stream internal transitions).
+  const namespace = useDashboardStore((s) => s.namespace)
+  const health = useDashboardStore((s) => s.health)
+  const loading = useDashboardStore((s) => s.loading)
+  const error = useDashboardStore((s) => s.error)
+  const fetchData = useDashboardStore((s) => s.fetchData)
+  const startEventStream = useDashboardStore((s) => s.startEventStream)
+  const stopEventStream = useDashboardStore((s) => s.stopEventStream)
   const setHomeTab = useTabsStore((s) => s.setHomeTab)
-  const { drawerAppName, closeDrawer, bottomTabs, openBottomTab } = usePanelStore()
+  const drawerAppName = usePanelStore((s) => s.drawerAppName)
+  const closeDrawer = usePanelStore((s) => s.closeDrawer)
+  const bottomTabs = usePanelStore((s) => s.bottomTabs)
+  const openBottomTab = usePanelStore((s) => s.openBottomTab)
   const { t } = useTranslation()
 
   // Secret management dialog (Kotlin migration, setup, unlock)
@@ -76,8 +87,13 @@ export function Dashboard() {
   // Server mode: daemon auto-encrypts + auto-unlocks with default password, so only
   // kotlin-decrypt (Kotlin migration) ever triggers. Desktop mode: all three possible.
   useEffect(() => {
+    if (!namespace) {
+      // Daemon/namespace dropped (e.g. restart). Reset the guard so the check
+      // re-fires when a namespace comes back.
+      if (dialogChecked) setDialogChecked(false)
+      return
+    }
     if (dialogChecked || dialogStep) return
-    if (!namespace) return
     setDialogChecked(true)
     getMigrationStatus().then((s) => {
       if (s.hasPendingSecrets) setDialogStep('kotlin-decrypt')

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useMemo } from 'react'
 import { Search, X } from 'lucide-react'
+import { useTranslation } from '../lib/i18n'
 
 export interface JournalColumn {
   label: string
@@ -30,6 +31,7 @@ export function JournalDialog({
   onClose,
   open,
 }: JournalDialogProps) {
+  const { t } = useTranslation()
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -115,6 +117,8 @@ export function JournalDialog({
             type="button"
             className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted"
             onClick={onClose}
+            aria-label={t('common.close')}
+            title={t('common.close')}
           >
             <X size={16} />
           </button>
@@ -129,7 +133,7 @@ export function JournalDialog({
               className="w-full rounded border border-border bg-background pl-7 pr-2 py-1 text-xs focus:outline-none focus:border-primary"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Filter..."
+              placeholder={t('journal.filter')}
             />
           </div>
         </div>
@@ -191,7 +195,7 @@ export function JournalDialog({
                     colSpan={columns.length + (selectable ? 1 : 0)}
                     className="py-4 text-center text-muted-foreground"
                   >
-                    {search ? 'No matching rows' : 'No data'}
+                    {search ? t('journal.noMatchingRows') : t('journal.noData')}
                   </td>
                 </tr>
               )}
@@ -202,8 +206,10 @@ export function JournalDialog({
         {/* Footer */}
         <div className="flex items-center justify-between px-4 py-3 border-t border-border shrink-0">
           <span className="text-[11px] text-muted-foreground">
-            {filteredData.length} row{filteredData.length !== 1 ? 's' : ''}
-            {selectable && selected.size > 0 && ` (${selected.size} selected)`}
+            {filteredData.length === 1
+              ? t('journal.rowCountOne')
+              : t('journal.rowCount', { count: filteredData.length })}
+            {selectable && selected.size > 0 && ` (${t('journal.selected', { count: selected.size })})`}
           </span>
           <div className="flex items-center gap-2">
             {customButtons?.map((btn) => (
@@ -223,7 +229,7 @@ export function JournalDialog({
                 onClick={handleSelect}
                 disabled={selected.size === 0}
               >
-                Select
+                {t('common.select')}
               </button>
             )}
             <button
@@ -231,7 +237,7 @@ export function JournalDialog({
               className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted"
               onClick={onClose}
             >
-              Close
+              {t('common.close')}
             </button>
           </div>
         </div>

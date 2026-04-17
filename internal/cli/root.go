@@ -20,9 +20,6 @@ var (
 	flagYes    bool
 )
 
-// Yes returns the --yes flag value.
-func Yes() bool { return flagYes }
-
 // BuildInfo holds version metadata injected via ldflags.
 type BuildInfo struct {
 	Version   string

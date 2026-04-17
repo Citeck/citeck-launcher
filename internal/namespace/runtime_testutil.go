@@ -1,15 +1,14 @@
 // Package namespace — test utilities for the runtime state machine.
 //
 // This file does NOT import "testing". It provides:
-//   - newRuntimeForTest: package-private constructor that flips r.testMode=true
-//     and wires test-injectable knobs (clock, ticker period, intervals).
+//   - newRuntimeForTest: package-private constructor that flips r.testMode=true.
 //   - StepOnce / RunUntilQuiescent: the sole drivers when testMode is true.
-//   - InjectCmd / InjectResult: bypass back-pressure for deterministic feeding.
+//   - InjectCmd: bypass back-pressure for deterministic feeding.
 //   - AdvanceClock: mutate the FakeClock attached via WithTestClock.
 //
 // Production code MUST NEVER set testMode=true. The flag's only writer lives
-// here. Production NewRuntime / NewRuntimeWithActions ignore it; production
-// Start() panics if it sees testMode==true (defensive — see runtime_commands.go).
+// here. Production NewRuntime ignores it; production Start() panics if it sees
+// testMode==true (defensive — see runtime_commands.go).
 package namespace
 
 import (
@@ -54,37 +53,10 @@ func WithTestClock(c Clock) TestOption {
 	}
 }
 
-// WithTickerPeriod overrides the housekeeping ticker cadence (default 1s).
-func WithTickerPeriod(d time.Duration) TestOption {
-	return func(r *Runtime) { r.tickerPeriod = d }
-}
-
-// WithStatsInterval overrides the stats dispatch cadence (default 5s).
-func WithStatsInterval(d time.Duration) TestOption {
-	return func(r *Runtime) { r.statsInterval = d }
-}
-
-// WithReconcilerInterval overrides the reconciler cadence (default 60s).
-func WithReconcilerInterval(d time.Duration) TestOption {
-	return func(r *Runtime) { r.reconcilerInterval = d }
-}
-
-// WithGroupTimeout overrides the operator-initiated STOPPING budget (T23,
-// default 10s — see runtime_loop.go defaultGroupTimeout).
-func WithGroupTimeout(d time.Duration) TestOption {
-	return func(r *Runtime) { r.groupTimeout = d }
-}
-
-// WithLongStopTimeout overrides the runtime-initiated recreate STOPPING
-// budget (T23, default 60s — see runtime_loop.go defaultLongStopTimeout).
-func WithLongStopTimeout(d time.Duration) TestOption {
-	return func(r *Runtime) { r.longStopTimeout = d }
-}
-
 // newRuntimeForTest builds a Runtime in test mode. runLoop is NOT started;
 // callers drive transitions exclusively via StepOnce / RunUntilQuiescent.
 func newRuntimeForTest(cfg *Config, dockerClient docker.RuntimeClient, volumesBase string, opts ...TestOption) *Runtime {
-	r := NewRuntimeWithActions(cfg, dockerClient, volumesBase, nil)
+	r := NewRuntime(cfg, dockerClient, volumesBase)
 	r.testMode = true
 	for _, opt := range opts {
 		opt(r)
@@ -147,12 +119,6 @@ func (r *Runtime) RunUntilQuiescent(maxSteps int) ([]StepResult, error) {
 // Enqueue's back-pressure. For test wiring only.
 func (r *Runtime) InjectCmd(cmd runtimeCmd) {
 	r.cmdQueue.ch <- cmd
-}
-
-// InjectResult pushes a worker Result directly onto resultCh. For test wiring
-// only.
-func (r *Runtime) InjectResult(res workers.Result) {
-	r.resultCh <- res
 }
 
 // AdvanceClock moves the runtime's FakeClock forward by d. Panics if the

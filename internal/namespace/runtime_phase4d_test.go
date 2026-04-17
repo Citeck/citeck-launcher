@@ -303,10 +303,3 @@ func TestEventOrderWithinTick(t *testing.T) {
 		nsRunningIdx, lastAppRunningIdx)
 }
 
-// TestHashMatchAfterPullAvoidsRecreate is deferred until cmdRegenerate's
-// hash-match shim lands (T34). doRegenerate already reuses containers on hash
-// match (via buildExistingContainerMap), but the state-machine-level assertion
-// requires T34 wiring to be meaningful.
-func TestHashMatchAfterPullAvoidsRecreate(t *testing.T) {
-	t.Skip("cmdRegenerate hash-match shim (T34) not yet implemented — re-enable after T34 lands")
-}

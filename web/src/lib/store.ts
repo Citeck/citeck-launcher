@@ -3,6 +3,7 @@ import type { NamespaceDto, HealthDto } from './types'
 import { getNamespace, getHealth } from './api'
 import { connectEvents } from './websocket'
 import { toast } from './toast'
+import { t } from './i18n'
 
 interface EventStream {
   close: () => void
@@ -58,19 +59,22 @@ return ({
   },
 
   startEventStream: () => {
-    // Close existing stream if any
-    const prev = get().stream
-    if (prev) prev.close()
-
+    // Bump generation BEFORE closing the old stream so any in-flight onClose
+    // callback from the previous stream (captured the old gen) sees the
+    // updated counter and skips its reconnect branch. Otherwise a rapid
+    // restart could double-schedule reconnects.
     const gen = get().reconnectGen + 1
     set({ reconnectGen: gen })
+
+    const prev = get().stream
+    if (prev) prev.close()
 
     const stream = connectEvents(
       (event) => {
         // Detect sequence gap — fetch fresh state to catch up
         const { lastSeq } = get()
         if (lastSeq > 0 && event.seq > lastSeq + 1) {
-          toast('Connection restored, state refreshed', 'info')
+          toast(t('store.connectionRestored'), 'info')
           get().fetchData()
         }
         set({ lastSeq: event.seq })
@@ -94,6 +98,11 @@ return ({
         }, delay)
       },
       () => {
+        // onOpen — reconnect succeeded. Reset the backoff. Also clear lastSeq
+        // so the "sequence gap" path inside onEvent doesn't fire the
+        // "connection restored" toast on the very first event of a brand-new
+        // stream (gap detection is meaningful only once we've seen at least
+        // one seq from the current stream).
         set({ reconnectDelay: 1000, lastSeq: 0 })
       },
     )

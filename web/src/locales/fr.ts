@@ -67,15 +67,6 @@ const fr: Translations = {
   'wizard.pgadmin.label': 'PgAdmin',
   'wizard.pgadmin.hint': 'Activer PgAdmin pour la gestion de la base de donn\u00e9es.',
   'wizard.pgadmin.enable': 'Activer PgAdmin',
-  'wizard.step.password': 'Mot de passe',
-  'wizard.password.title': 'Mot de passe principal',
-  'wizard.password.hint': 'Tous les secrets sont chiffr\u00e9s sur le disque. D\u00e9finissez un mot de passe principal pour les prot\u00e9ger.',
-  'wizard.password.useDefault': 'Utiliser le mot de passe par d\u00e9faut (non s\u00e9curis\u00e9)',
-  'wizard.password.warning': 'Le mot de passe par d\u00e9faut offre une protection minimale. Utilisez un mot de passe personnalis\u00e9 pour la production.',
-  'wizard.password.password': 'Mot de passe principal',
-  'wizard.password.confirm': 'Confirmer le mot de passe',
-  'wizard.password.mismatch': 'Les mots de passe ne correspondent pas',
-  'wizard.password.default': 'Par d\u00e9faut',
   'wizard.review.label': 'V\u00e9rifier la configuration',
   'wizard.back': 'Pr\u00e9c\u00e9dent',
   'wizard.cancel': 'Annuler',
@@ -316,8 +307,18 @@ const fr: Translations = {
   'common.close': 'Fermer',
   'common.confirm': 'Confirmer',
   'common.working': 'En cours...',
+  'common.submit': 'Envoyer',
+  'common.select': 'S\u00e9lectionner',
   'common.settings': 'Param\u00e8tres',
   'common.error': 'Erreur : {error}',
+
+  // -- Journal dialog --
+  'journal.filter': 'Filtrer...',
+  'journal.noMatchingRows': 'Aucune ligne correspondante',
+  'journal.noData': 'Aucune donn\u00e9e',
+  'journal.rowCount': '{count} lignes',
+  'journal.rowCountOne': '1 ligne',
+  'journal.selected': '{count} s\u00e9lectionn\u00e9es',
 
   // -- Error Boundary --
   'error.title': 'Une erreur est survenue',
@@ -329,7 +330,6 @@ const fr: Translations = {
   'theme.toLight': 'Passer au th\u00e8me clair',
 
   // -- Common (additional) --
-  'common.back': 'Retour',
 
   // -- Error (additional) --
   'error.retry': 'R\u00e9essayer',
@@ -344,9 +344,6 @@ const fr: Translations = {
   'migration.secretsImported': 'Secrets d\u00e9chiffr\u00e9s et import\u00e9s',
   'migration.setupPassword.title': 'Prot\u00e9gez vos secrets',
   'migration.setupPassword.description': 'Souhaitez-vous chiffrer vos secrets import\u00e9s avec un mot de passe principal ? Vous en aurez besoin \u00e0 chaque d\u00e9marrage du lanceur.',
-  'migration.setupPassword.samePassword': 'Utiliser le m\u00eame mot de passe',
-  'migration.setupPassword.differentPassword': 'D\u00e9finir un autre mot de passe',
-  'migration.setupPassword.skip': 'Ignorer pour le moment',
   'migration.setupPassword.success': 'Secrets chiffr\u00e9s avec succ\u00e8s',
   'migration.unlock.title': 'D\u00e9verrouiller les secrets',
   'migration.unlock.description': 'Vos secrets sont chiffr\u00e9s. Saisissez le mot de passe principal pour les d\u00e9verrouiller.',
@@ -364,8 +361,9 @@ const fr: Translations = {
   'upgrade.title': 'Mettre \u00e0 jour le bundle',
   'upgrade.select': 'S\u00e9lectionner la version',
   'upgrade.success': 'Mise \u00e0 jour r\u00e9ussie',
-  'upgrade.noVersions': 'Aucune version de bundle disponible',
   'upgrade.alreadyLatest': 'D\u00e9j\u00e0 sur la derni\u00e8re version',
+  'form.fieldRequired': '{label} est requis',
+  'store.connectionRestored': 'Connexion rétablie, état actualisé',
 }
 
 export default fr

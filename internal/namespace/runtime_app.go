@@ -94,10 +94,12 @@ func (r *Runtime) waitForProbe(ctx context.Context, containerID string, probe *a
 	}
 
 	// Context-aware initial delay
+	initialTimer := time.NewTimer(time.Duration(delay) * time.Second)
 	select {
 	case <-ctx.Done():
+		initialTimer.Stop()
 		return fmt.Errorf("probe initial delay: %w", ctx.Err())
-	case <-time.After(time.Duration(delay) * time.Second):
+	case <-initialTimer.C:
 	}
 
 	shortID := truncateID(containerID)
@@ -135,10 +137,12 @@ func (r *Runtime) waitForProbe(ctx context.Context, containerID string, probe *a
 			}
 		}
 		// Context-aware period sleep
+		periodTimer := time.NewTimer(time.Duration(period) * time.Second)
 		select {
 		case <-ctx.Done():
+			periodTimer.Stop()
 			return fmt.Errorf("probe period sleep: %w", ctx.Err())
-		case <-time.After(time.Duration(period) * time.Second):
+		case <-periodTimer.C:
 		}
 	}
 

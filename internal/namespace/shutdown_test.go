@@ -37,7 +37,7 @@ func TestSignalShutdownIdempotent(t *testing.T) {
 // shared-sync.Once bug where signalShutdown and shutdownAfter shared one Once.
 // A cmdStop continuation that fired signalShutdown first would consume the
 // guard and skip the entire teardown body on a later Shutdown() — leaking
-// dispatchLoop, leaking actionSvc, and hanging wg.Wait in the daemon.
+// dispatchLoop and hanging wg.Wait in the daemon.
 //
 // teardownOnce + signalOnce are separate guards: signalShutdown only closes
 // shutdownComplete; the full teardown body still runs on Shutdown().

@@ -59,8 +59,8 @@ To update workspace later from a new archive without reinstalling: `citeck updat
 ```
 citeck install [--workspace <zip>]        Interactive setup wizard (offline with --workspace)
 citeck start [app] [-d|--detach]          Start daemon/namespace (--detach = don't wait)
-citeck stop [app] [-d|--detach]           Stop namespace (--detach = don't wait)
-citeck restart [app] [--wait]             Restart an app or the entire namespace
+citeck stop [app...] [-d|--detach]        Stop namespace or app(s) (--detach = don't wait)
+citeck restart [app] [-d|--detach]        Restart an app or the entire namespace (waits by default)
 citeck reload [--dry-run] [-d|--detach]   Reload config and regenerate changed containers
 citeck status [-w|--watch]                Show namespace status
 citeck describe <app>                     Show container details (image, ports, env, volumes)
@@ -75,6 +75,7 @@ citeck config view|validate|edit          Show, check, or edit namespace.yml
 citeck setup [setting]                    Configure settings (TUI menu or by ID)
 citeck setup history                      Show config change history
 citeck clean [--force] [--volumes] [--images]  Clean orphaned resources / prune images
+citeck dump-system-info [--full]          Collect diagnostics ZIP (status, logs, docker inspect, journalctl)
 citeck version [--short]                  Show version info
 citeck completion bash|zsh|fish           Generate shell completion
 citeck uninstall [--delete-data]          Remove systemd service, binary, and (optionally) data

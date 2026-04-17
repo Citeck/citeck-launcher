@@ -67,15 +67,6 @@ const es: Translations = {
   'wizard.pgadmin.label': 'PgAdmin',
   'wizard.pgadmin.hint': 'Habilitar PgAdmin para la gestión de bases de datos.',
   'wizard.pgadmin.enable': 'Habilitar PgAdmin',
-  'wizard.step.password': 'Contraseña',
-  'wizard.password.title': 'Contraseña maestra',
-  'wizard.password.hint': 'Todos los secretos se cifran en disco. Establezca una contraseña maestra para protegerlos.',
-  'wizard.password.useDefault': 'Usar contraseña predeterminada (inseguro)',
-  'wizard.password.warning': 'La contraseña predeterminada ofrece protección mínima. Use una contraseña personalizada para producción.',
-  'wizard.password.password': 'Contraseña maestra',
-  'wizard.password.confirm': 'Confirmar contraseña',
-  'wizard.password.mismatch': 'Las contraseñas no coinciden',
-  'wizard.password.default': 'Predeterminada',
   'wizard.review.label': 'Revisar configuración',
   'wizard.back': 'Atrás',
   'wizard.cancel': 'Cancelar',
@@ -316,8 +307,18 @@ const es: Translations = {
   'common.close': 'Cerrar',
   'common.confirm': 'Confirmar',
   'common.working': 'Trabajando...',
+  'common.submit': 'Enviar',
+  'common.select': 'Seleccionar',
   'common.settings': 'Ajustes',
   'common.error': 'Error: {error}',
+
+  // -- Journal dialog --
+  'journal.filter': 'Filtrar...',
+  'journal.noMatchingRows': 'No hay filas coincidentes',
+  'journal.noData': 'Sin datos',
+  'journal.rowCount': '{count} filas',
+  'journal.rowCountOne': '1 fila',
+  'journal.selected': '{count} seleccionadas',
 
   // -- Error Boundary --
   'error.title': 'Algo salió mal',
@@ -329,7 +330,6 @@ const es: Translations = {
   'theme.toLight': 'Cambiar a tema claro',
 
   // -- Common (additional) --
-  'common.back': 'Atrás',
 
   // -- Error (additional) --
   'error.retry': 'Reintentar',
@@ -344,9 +344,6 @@ const es: Translations = {
   'migration.secretsImported': 'Secretos descifrados e importados',
   'migration.setupPassword.title': 'Proteja sus secretos',
   'migration.setupPassword.description': '¿Desea cifrar los secretos importados con una contraseña maestra? La necesitará cada vez que inicie el lanzador.',
-  'migration.setupPassword.samePassword': 'Usar la misma contraseña',
-  'migration.setupPassword.differentPassword': 'Establecer otra contraseña',
-  'migration.setupPassword.skip': 'Omitir por ahora',
   'migration.setupPassword.success': 'Secretos cifrados correctamente',
   'migration.unlock.title': 'Desbloquear secretos',
   'migration.unlock.description': 'Sus secretos están cifrados. Introduzca la contraseña maestra para desbloquearlos.',
@@ -364,8 +361,9 @@ const es: Translations = {
   'upgrade.title': 'Actualizar bundle',
   'upgrade.select': 'Seleccionar versión',
   'upgrade.success': 'Actualización exitosa',
-  'upgrade.noVersions': 'No hay versiones de bundle disponibles',
   'upgrade.alreadyLatest': 'Ya está en la última versión',
+  'form.fieldRequired': '{label} es obligatorio',
+  'store.connectionRestored': 'Conexión restablecida, estado actualizado',
 }
 
 export default es

@@ -73,12 +73,12 @@ func TestCmdRegenerateChangedHashUsesLongTimeout(t *testing.T) {
 	require.True(t, sawInitialSweep,
 		"changed-hash app did not enter STOPPING with initialSweep=true")
 
-	// Sample at ~1.5s: past 1s groupTimeout, well before 3s stopDelay.
-	// App must still be STOPPING — T23 must NOT have fired.
-	time.Sleep(1500 * time.Millisecond)
-	app := r.FindApp("postgres")
-	require.NotNil(t, app)
-	assert.Equal(t, AppStatusStopping, app.Status,
+	// Poll ~1.5s: past 1s groupTimeout, well before 3s stopDelay. App must
+	// stay STOPPING — T23 must NOT fire at any moment in this window.
+	assert.Never(t, func() bool {
+		a := r.FindApp("postgres")
+		return a != nil && a.Status != AppStatusStopping
+	}, 1500*time.Millisecond, 50*time.Millisecond,
 		"long-stop budget not honored on reload-triggered recreate: app transitioned out of STOPPING before 3s stopDelay elapsed")
 
 	// Allow the stop to complete + state machine to walk RUNNING.

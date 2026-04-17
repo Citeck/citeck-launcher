@@ -1,6 +1,6 @@
 module github.com/citeck/citeck-launcher
 
-go 1.26.1
+go 1.26.2
 
 require (
 	github.com/charmbracelet/bubbles v0.21.1-0.20250623103423-23b8fd6302d7
@@ -17,7 +17,7 @@ require (
 	golang.org/x/sync v0.20.0
 	golang.org/x/term v0.41.0
 	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.48.1
+	modernc.org/sqlite v1.48.2
 	software.sslmate.com/src/go-pkcs12 v0.7.0
 )
 

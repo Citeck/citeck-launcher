@@ -34,14 +34,14 @@ func DefaultReconcilerConfig() ReconcilerConfig {
 	}
 }
 
-// reconcileOnce runs one reconcile-diff cycle synchronously on the caller's
+// testReconcileOnce runs one reconcile-diff cycle synchronously on the caller's
 // goroutine. Used by tests; production code schedules ReconcileDiffTask from
 // tickUnderLock.
 //
 // Mirrors what makeReconcileDiffPlan + handleReconcileDiffResult do together:
 // snapshot RUNNING apps under RLock, run the diff/inspect outside any lock,
 // then apply T18 under Lock.
-func (r *Runtime) reconcileOnce(ctx context.Context) {
+func (r *Runtime) testReconcileOnce(ctx context.Context) {
 	r.mu.RLock()
 	if r.status != NsStatusRunning && r.status != NsStatusStalled {
 		r.mu.RUnlock()
@@ -64,11 +64,11 @@ func (r *Runtime) reconcileOnce(ctx context.Context) {
 	r.handleReconcileDiffResult(res)
 }
 
-// livenessCheckOnce runs one round of liveness probes synchronously on the
+// testLivenessCheckOnce runs one round of liveness probes synchronously on the
 // caller's goroutine. Used by tests. Mirrors what the tick()-scheduled
 // LivenessProbeTask + handleLivenessProbeResult do together, but runs probes
 // serially rather than dispatching via the worker pool.
-func (r *Runtime) livenessCheckOnce(ctx context.Context) {
+func (r *Runtime) testLivenessCheckOnce(ctx context.Context) {
 	type check struct {
 		name        string
 		containerID string

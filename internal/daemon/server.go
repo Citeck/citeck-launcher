@@ -25,7 +25,6 @@ import (
 	"github.com/citeck/citeck-launcher/internal/acme"
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
-	"github.com/citeck/citeck-launcher/internal/appfiles"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/docker"
@@ -454,42 +453,7 @@ func Start(opts StartOptions) error {
 		ensureSelfSignedCert(nsCfg)
 
 		// Let's Encrypt: obtain certificate if configured and not yet present
-		if nsCfg.Proxy.TLS.Enabled && nsCfg.Proxy.TLS.LetsEncrypt {
-			host := nsCfg.Proxy.Host
-			if host == "" || host == "localhost" {
-				slog.Warn("Let's Encrypt requires a public hostname, skipping")
-			} else {
-				acmeClient := acme.NewClient(config.DataDir(), config.ConfDir(), host)
-				certPath := acmeClient.CertPath()
-				keyPath := acmeClient.KeyPath()
-
-				// Obtain cert if not yet present or if host changed
-				var acmeErr error
-				if !acmeClient.CertMatchesHost() {
-					slog.Info("Obtaining Let's Encrypt certificate", "host", host)
-					acmeCtx, acmeCancel := context.WithTimeout(context.Background(), 120*time.Second)
-					acmeErr = acmeClient.ObtainCertificate(acmeCtx)
-					acmeCancel()
-					if acmeErr != nil {
-						slog.Error("Let's Encrypt certificate obtainment failed", "err", acmeErr)
-					} else {
-						slog.Info("Let's Encrypt certificate obtained", "cert", certPath)
-					}
-				}
-
-				// Update config to use ACME cert paths (only if cert is a regular file)
-				if isRegularFile(certPath) {
-					nsCfg.Proxy.TLS.CertPath = certPath
-					nsCfg.Proxy.TLS.KeyPath = keyPath
-				}
-
-				// Fallback: if LE failed and no cert exists, generate self-signed so proxy still serves HTTPS
-				if nsCfg.Proxy.TLS.CertPath == "" {
-					slog.Warn("Let's Encrypt cert not available, falling back to self-signed", "reason", acmeErr)
-					generateSelfSignedCertForConfig(nsCfg)
-				}
-			}
-		}
+		_ = ensureACMECert(nsCfg, "")
 
 		// Appfiles are not extracted here. The namespace generator owns the
 		// full file set: it seeds ctx.Files from the embedded resources,
@@ -942,36 +906,18 @@ func (d *Daemon) doReload() error {
 		}
 	}
 
-	_ = appfiles.ExtractTo(d.volumesBase)
+	// Appfiles are intentionally NOT extracted here — same rule as Start().
+	// writeRuntimeFiles(genResp.Files) below is the single source of truth
+	// for bind-mount contents, avoiding a double-write that would revert a
+	// generator-customized file (proxy lua with rendered secrets, realm JSON,
+	// keycloak init script) back to its embedded template default.
 
 	// Self-signed cert: generate if TLS enabled + no cert paths + no LE
 	ensureSelfSignedCert(nsCfg)
 
 	// Let's Encrypt: obtain certificate if needed; prepare renewal service for Phase 2
 	var newRenewal *acme.RenewalService
-	if nsCfg.Proxy.TLS.Enabled && nsCfg.Proxy.TLS.LetsEncrypt && nsCfg.Proxy.Host != "" && nsCfg.Proxy.Host != "localhost" {
-		acmeClient := acme.NewClient(config.DataDir(), config.ConfDir(), nsCfg.Proxy.Host)
-		var acmeErr error
-		if !acmeClient.CertMatchesHost() {
-			slog.Info("Obtaining Let's Encrypt certificate on reload", "host", nsCfg.Proxy.Host)
-			acmeCtx, acmeCancel := context.WithTimeout(context.Background(), 120*time.Second)
-			acmeErr = acmeClient.ObtainCertificate(acmeCtx)
-			acmeCancel()
-			if acmeErr != nil {
-				slog.Error("Let's Encrypt failed on reload", "err", acmeErr)
-			}
-		}
-		if acmeClient.CertMatchesHost() {
-			nsCfg.Proxy.TLS.CertPath = acmeClient.CertPath()
-			nsCfg.Proxy.TLS.KeyPath = acmeClient.KeyPath()
-		}
-
-		// Fallback: if LE cert not available, use self-signed so proxy still serves HTTPS
-		if nsCfg.Proxy.TLS.CertPath == "" {
-			slog.Warn("Let's Encrypt cert not available on reload, falling back to self-signed", "reason", acmeErr)
-			generateSelfSignedCertForConfig(nsCfg)
-		}
-
+	if acmeClient := ensureACMECert(nsCfg, "on reload"); acmeClient != nil {
 		newRenewal = acme.NewRenewalService(acmeClient, func() {
 			if d.runtime != nil {
 				if err := d.runtime.RestartApp("proxy"); err != nil {
@@ -1309,8 +1255,13 @@ func (d *Daemon) activeConfigPath() string {
 	return config.ResolveNamespaceConfigPath(d.workspaceID, nsID)
 }
 
+// readJSON decodes a JSON request body with a 1 MiB hard ceiling. MaxBytesReader
+// is preferred over io.LimitReader because it also caps r.ContentLength-
+// honoring handlers, signals the client cleanly with a 413-shaped error, and
+// short-circuits streaming decode paths.
 func readJSON(r *http.Request, v any) error {
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(v); err != nil { // 1MB max
+	r.Body = http.MaxBytesReader(nil, r.Body, 1<<20)
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
 		return fmt.Errorf("decode JSON body: %w", err)
 	}
 	return nil
@@ -1739,6 +1690,64 @@ func writeRuntimeFiles(baseDir string, files map[string][]byte) {
 			slog.Warn("Failed to chmod generated file", "path", destPath, "err", chmodErr)
 		}
 	}
+}
+
+// ensureACMECert obtains or refreshes the Let's Encrypt certificate for the
+// proxy when TLS + LE are enabled, then wires nsCfg.Proxy.TLS.{CertPath,KeyPath}
+// to the resulting cert. Falls back to generating a self-signed cert if LE
+// fails and no usable cert is present. Returns the acme.Client when LE was
+// attempted (so the caller can build a renewal service), or nil otherwise.
+//
+// contextLabel is appended to log messages to distinguish Start vs reload flows
+// (e.g. "on reload"); pass "" to suppress.
+func ensureACMECert(nsCfg *namespace.Config, contextLabel string) *acme.Client {
+	if !nsCfg.Proxy.TLS.Enabled || !nsCfg.Proxy.TLS.LetsEncrypt {
+		return nil
+	}
+	host := nsCfg.Proxy.Host
+	if host == "" || host == "localhost" {
+		slog.Warn("Let's Encrypt requires a public hostname, skipping", "host", host, "context", contextLabel)
+		return nil
+	}
+	acmeClient := acme.NewClient(config.DataDir(), config.ConfDir(), host)
+	acmeErr := obtainACMECertIfNeeded(acmeClient, host, contextLabel)
+	if acmeClient.CertMatchesHost() {
+		nsCfg.Proxy.TLS.CertPath = acmeClient.CertPath()
+		nsCfg.Proxy.TLS.KeyPath = acmeClient.KeyPath()
+	}
+	if nsCfg.Proxy.TLS.CertPath == "" {
+		slog.Warn("Let's Encrypt cert not available, falling back to self-signed", "reason", acmeErr, "context", contextLabel)
+		generateSelfSignedCertForConfig(nsCfg)
+	}
+	return acmeClient
+}
+
+// obtainACMECertIfNeeded drives a single LE obtain attempt for `acmeClient`
+// when the on-disk cert doesn't match the host. Honors the persisted rate-limit
+// marker (written by RenewalService on LE 429 / "too many" errors). Returns
+// any obtain error (or nil if the cert is already good or rate-limit was the
+// reason to skip).
+func obtainACMECertIfNeeded(acmeClient *acme.Client, host, contextLabel string) error {
+	if acmeClient.CertMatchesHost() {
+		return nil
+	}
+	if limited, retryAfter, rlErr := acme.IsRateLimited(config.DataDir(), host); rlErr == nil && limited {
+		slog.Warn("Let's Encrypt rate-limit marker active, skipping obtain", "host", host, "retryAfter", retryAfter, "context", contextLabel)
+		return fmt.Errorf("rate-limited until %s", retryAfter.Format(time.RFC3339))
+	}
+	label := "Obtaining Let's Encrypt certificate"
+	if contextLabel != "" {
+		label += " " + contextLabel
+	}
+	slog.Info(label, "host", host)
+	acmeCtx, acmeCancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer acmeCancel()
+	if err := acmeClient.ObtainCertificate(acmeCtx); err != nil {
+		slog.Error("Let's Encrypt certificate obtainment failed", "err", err, "context", contextLabel)
+		return fmt.Errorf("obtain LE certificate: %w", err)
+	}
+	slog.Info("Let's Encrypt certificate obtained", "cert", acmeClient.CertPath())
+	return nil
 }
 
 // ensureSelfSignedCert generates a self-signed cert if TLS is enabled without LE and no cert is configured.

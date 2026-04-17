@@ -23,7 +23,6 @@ type DaemonOpts struct {
 type DaemonStatus struct {
 	lastError atomic.Value // stores string
 	failures  atomic.Int32
-	ready     atomic.Bool
 	logBuf    LogBuffer
 }
 
@@ -45,11 +44,6 @@ func (s *DaemonStatus) LastError() string {
 // Failures returns the current consecutive failure count.
 func (s *DaemonStatus) Failures() int {
 	return int(s.failures.Load())
-}
-
-// IsReady returns true if the daemon has started successfully at least once.
-func (s *DaemonStatus) IsReady() bool {
-	return s.ready.Load()
 }
 
 // LogLines returns the last N startup log lines (captured before daemon was ready).
@@ -134,7 +128,6 @@ func RunDaemonLoop(ctx context.Context, opts DaemonOpts) error {
 				if ok {
 					readyOnce.Do(func() { opts.ReadyCh <- url })
 					if opts.Status != nil {
-						opts.Status.ready.Store(true)
 						opts.Status.SetError(nil)
 						opts.Status.failures.Store(0)
 						opts.Status.logBuf.Clear() // success — clear startup logs

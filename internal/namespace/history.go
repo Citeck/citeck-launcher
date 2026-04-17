@@ -23,8 +23,6 @@ type OperationRecord struct {
 	Duration  int64  `json:"duration,omitempty"`
 	Error     string `json:"error,omitempty"`
 	Apps      int    `json:"apps,omitempty"`
-	RequestID string `json:"reqId,omitempty"`
-	ClientCN  string `json:"clientCN,omitempty"`
 }
 
 // OperationHistory records operations to a JSONL file with automatic rotation.
@@ -45,14 +43,8 @@ func NewOperationHistory(logDir string) *OperationHistory {
 	}
 }
 
-// RecordOpts holds optional fields for an operation record.
-type RecordOpts struct {
-	RequestID string
-	ClientCN  string
-}
-
 // Record appends an operation entry to the history log file.
-func (h *OperationHistory) Record(op, app, result string, duration time.Duration, err error, appCount int, opts ...RecordOpts) {
+func (h *OperationHistory) Record(op, app, result string, duration time.Duration, err error, appCount int) {
 	rec := OperationRecord{
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Operation: op,
@@ -60,10 +52,6 @@ func (h *OperationHistory) Record(op, app, result string, duration time.Duration
 		Result:    result,
 		Duration:  duration.Milliseconds(),
 		Apps:      appCount,
-	}
-	if len(opts) > 0 {
-		rec.RequestID = opts[0].RequestID
-		rec.ClientCN = opts[0].ClientCN
 	}
 	if err != nil {
 		rec.Error = err.Error()

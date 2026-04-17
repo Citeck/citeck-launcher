@@ -87,18 +87,13 @@ func TestInitialSweepUsesLongerTimeout(t *testing.T) {
 		"app did not enter STOPPING with initialSweep=true after Start")
 
 	// Confirm the 1s groupTimeout would have fired here if the tick
-	// predicate used groupBudget. We sample the state at ~1.5s (past 1s
-	// groupTimeout, well before 3s stopDelay). The app MUST still be
-	// STOPPING — not STOPPING_FAILED.
-	time.Sleep(1500 * time.Millisecond)
-	r.mu.RLock()
-	mid := r.apps[def.Name]
-	midStatus := AppRuntimeStatus("<missing>")
-	if mid != nil {
-		midStatus = mid.Status
-	}
-	r.mu.RUnlock()
-	assert.Equal(t, AppStatusStopping, midStatus,
+	// predicate used groupBudget. Poll for up to ~1.5s (past 1s
+	// groupTimeout, well before 3s stopDelay) — the app MUST stay STOPPING
+	// the entire window; any transition to STOPPING_FAILED fails fast.
+	assert.Never(t, func() bool {
+		a := r.FindApp(def.Name)
+		return a != nil && a.Status != AppStatusStopping
+	}, 1500*time.Millisecond, 50*time.Millisecond,
 		"long-stop budget not honored: app transitioned out of STOPPING before 3s stopDelay elapsed")
 
 	// The stop should complete at ~3s; T21 routes to READY_TO_PULL →

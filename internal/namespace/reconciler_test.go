@@ -95,14 +95,14 @@ func TestCheckLivenessFailureCounting(t *testing.T) {
 	ctx := context.Background()
 
 	// First failure — should NOT restart
-	r.livenessCheckOnce(ctx)
+	r.testLivenessCheckOnce(ctx)
 	r.mu.RLock()
 	assert.Equal(t, AppStatusRunning, r.apps["emodel"].Status)
 	assert.Equal(t, 1, r.livenessFailures["emodel"])
 	r.mu.RUnlock()
 
 	// Second failure — should NOT restart
-	r.livenessCheckOnce(ctx)
+	r.testLivenessCheckOnce(ctx)
 	r.mu.RLock()
 	assert.Equal(t, AppStatusRunning, r.apps["emodel"].Status)
 	assert.Equal(t, 2, r.livenessFailures["emodel"])
@@ -113,7 +113,7 @@ func TestCheckLivenessFailureCounting(t *testing.T) {
 	// and route through T21 (desiredNext=READY_TO_PULL) → T2 → T5 → T7 →
 	// T15 → RUNNING by the time the test reads — so accept any post-T17a
 	// status, prioritizing the race-free invariants (counter reset + event).
-	r.livenessCheckOnce(ctx)
+	r.testLivenessCheckOnce(ctx)
 	r.mu.RLock()
 	assert.Contains(t,
 		[]AppRuntimeStatus{
@@ -153,7 +153,7 @@ func TestCheckLivenessRunsInStalledState(t *testing.T) {
 	}
 	r.mu.Unlock()
 
-	r.livenessCheckOnce(context.Background())
+	r.testLivenessCheckOnce(context.Background())
 
 	r.mu.RLock()
 	// After T17a fires, the state machine may advance the app through
@@ -196,7 +196,7 @@ func TestCheckLivenessResetsOnSuccess(t *testing.T) {
 	r.mu.Unlock()
 
 	// Exec probe succeeds (mockDocker returns exit 0) — should reset counter
-	r.livenessCheckOnce(context.Background())
+	r.testLivenessCheckOnce(context.Background())
 
 	r.mu.RLock()
 	assert.Equal(t, AppStatusRunning, r.apps["postgres"].Status)

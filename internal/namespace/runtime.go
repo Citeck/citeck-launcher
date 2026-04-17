@@ -67,7 +67,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/citeck/citeck-launcher/internal/actions"
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
@@ -145,8 +144,6 @@ type Runtime struct {
 	config                *Config
 	apps                  map[string]*AppRuntime
 	docker                docker.RuntimeClient
-	actionSvc             *actions.Service
-	ownsActions           bool // true if this runtime created its own action service
 	running               atomic.Bool
 	nsID                  string
 	volumesBase           string
@@ -184,7 +181,6 @@ type Runtime struct {
 	runCtx    context.Context // set by doStart, canceled by doStop
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
-	appWg     sync.WaitGroup // tracks only app start/restart goroutines (not runLoop)
 
 	signalCh             *SignalQueue
 	cmdQueue             *CmdQueue
@@ -434,26 +430,13 @@ func (r *Runtime) SetDependsOnDetachedApps(apps map[string]bool) {
 	r.dependsOnDetachedApps = maps.Clone(apps)
 }
 
-// NewRuntime creates a new namespace runtime with a dedicated action service.
+// NewRuntime creates a new namespace runtime.
 func NewRuntime(cfg *Config, dockerClient docker.RuntimeClient, volumesBase string) *Runtime {
-	return NewRuntimeWithActions(cfg, dockerClient, volumesBase, nil)
-}
-
-// NewRuntimeWithActions creates a runtime with an externally provided action service.
-// If actionSvc is nil, a new dedicated service is created.
-func NewRuntimeWithActions(cfg *Config, dockerClient docker.RuntimeClient, volumesBase string, actionSvc *actions.Service) *Runtime {
-	ownsActions := false
-	if actionSvc == nil {
-		actionSvc = actions.NewService(actions.ServiceConfig{})
-		ownsActions = true
-	}
 	r := &Runtime{
 		status:            NsStatusStopped,
 		config:            cfg,
 		apps:              make(map[string]*AppRuntime),
 		docker:            dockerClient,
-		actionSvc:         actionSvc,
-		ownsActions:       ownsActions,
 		nsID:              cfg.ID,
 		volumesBase:       volumesBase,
 		manualStoppedApps: make(map[string]bool),
@@ -489,7 +472,7 @@ func NewRuntimeWithActions(cfg *Config, dockerClient docker.RuntimeClient, volum
 // Uses a dedicated signalOnce — distinct from teardownOnce in shutdownAfter —
 // so that the cmdStop post-network continuation calling signalShutdown does
 // NOT consume the teardown guard. A subsequent Shutdown() must still run the
-// full teardown body (drain wg, close eventCh, shut down actionSvc).
+// full teardown body (drain wg, close eventCh).
 func (r *Runtime) signalShutdown() {
 	r.signalOnce.Do(func() { close(r.shutdownComplete) })
 }

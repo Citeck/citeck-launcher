@@ -48,7 +48,7 @@ func (d *Daemon) handleAppLogs(w http.ResponseWriter, r *http.Request) {
 
 	logs := stripAnsi(rawLogs)
 	w.Header().Set("Content-Type", "text/plain")
-	_, _ = w.Write([]byte(logs)) //nolint:gosec // G705: plain text log output, not HTML
+	_, _ = w.Write([]byte(logs)) //nolint:gosec // G705 XSS taint: Content-Type is text/plain, not HTML
 }
 
 // handleAppLogsFollow streams container logs using Docker follow with proper stdcopy demux.
@@ -407,7 +407,7 @@ func (d *Daemon) handleGetAppFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	_, _ = w.Write(data) //nolint:gosec // G705: raw file content response, not HTML
+	_, _ = w.Write(data) //nolint:gosec // G705 XSS taint: Content-Type is text/plain, not HTML
 }
 
 func (d *Daemon) handlePutAppFile(w http.ResponseWriter, r *http.Request) {

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from '../lib/i18n'
 
 export interface FormFieldSpec {
   key: string
@@ -22,6 +23,7 @@ interface FormDialogProps {
 }
 
 export function FormDialog({ title, fields, onSubmit, onCancel, open, loading = false, error }: FormDialogProps) {
+  const { t } = useTranslation()
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [values, setValues] = useState<Record<string, unknown>>({})
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({})
@@ -70,6 +72,8 @@ export function FormDialog({ title, fields, onSubmit, onCancel, open, loading = 
     })
   }
 
+  const visibleFields = fields.filter((f) => f.visible !== false)
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const errors: Record<string, string> = {}
@@ -77,7 +81,7 @@ export function FormDialog({ title, fields, onSubmit, onCancel, open, loading = 
       if (field.required && field.type !== 'display') {
         const val = values[field.key]
         if (val === undefined || val === null || val === '') {
-          errors[field.key] = `${field.label} is required`
+          errors[field.key] = t('form.fieldRequired', { label: field.label })
         }
       }
     }
@@ -87,8 +91,6 @@ export function FormDialog({ title, fields, onSubmit, onCancel, open, loading = 
     }
     onSubmit(values)
   }
-
-  const visibleFields = fields.filter((f) => f.visible !== false)
 
   return (
     <dialog
@@ -187,14 +189,14 @@ export function FormDialog({ title, fields, onSubmit, onCancel, open, loading = 
             onClick={onCancel}
             disabled={loading}
           >
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             type="submit"
             className="rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
             disabled={loading}
           >
-            {loading ? 'Working...' : 'Submit'}
+            {loading ? t('common.working') : t('common.submit')}
           </button>
         </div>
       </form>

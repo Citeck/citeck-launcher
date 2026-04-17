@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
@@ -73,12 +74,16 @@ func (r *Runtime) Detach() bool {
 	// cmdDetach is terminal; tolerate a slower enqueue than the default 500ms.
 	// A backpressured queue at shutdown is rare (cap=256, no realistic burst)
 	// but forcing fallback to Stop() via shutdownAfter would defeat the
-	// zero-downtime detach intent. Retry up to 3× (~1.5s total) before giving
-	// up.
+	// zero-downtime detach intent. Retry up to 3× with a short backoff between
+	// attempts — each Enqueue already has its own 500ms timeout on the queue
+	// channel, so total worst case is ~1.9s before we give up.
 	var lastErr error
-	for range 3 {
+	for i := range 3 {
 		if err := r.cmdQueue.Enqueue(cmdDetach{}); err != nil {
 			lastErr = err
+			if i < 2 {
+				time.Sleep(200 * time.Millisecond)
+			}
 			continue
 		}
 		return true
@@ -111,6 +116,12 @@ func (r *Runtime) ShutdownDetached() {
 // waiting on the existing stop (containers will be stopped).
 func (r *Runtime) shutdownAfter(leaveRunning bool) {
 	r.teardownOnce.Do(func() {
+		// r.running is flipped false by a defer in runtimeLoop that fires
+		// AFTER runtimeLoop's own r.wg.Done() (defers run LIFO). So by the
+		// time r.running.Load() returns false here, the loop's wg contribution
+		// is already decremented — but dispatcher workers (which share the
+		// same WaitGroup) may still be live. The r.wg.Wait() below still
+		// drains them. teardownOnce prevents a double-entry from racing.
 		if r.running.Load() {
 			signaled := false
 			if leaveRunning {
@@ -121,14 +132,7 @@ func (r *Runtime) shutdownAfter(leaveRunning bool) {
 			}
 			r.wg.Wait()
 		}
-		// Wait for all app/reconciler goroutines to finish before closing eventCh.
-		// doStop already waits, but this is a belt-and-suspenders guard in case
-		// shutdown is called after running was already cleared.
-		r.appWg.Wait()
 		close(r.eventCh) // stops dispatchLoop
-		if r.ownsActions {
-			r.actionSvc.Shutdown()
-		}
 		fakeClockBindings.delete(r) // no-op for production runtimes (not in map)
 	})
 }
@@ -387,10 +391,6 @@ func (r *Runtime) RetryPullFailedApps() int {
 // Emits exactly one restart_event{reason:"user_restart"} via emitRestartEvent,
 // the sole write path for restart_event.
 func (r *Runtime) RestartApp(appName string) error { //nolint:gocyclo // single-pass dispatch over the per-status restart branches
-	// Capture r.runCtx once under the initial Lock. Never re-read r.runCtx —
-	// doStop may concurrently swap it to nil, and a double-read could see
-	// "running" then dispatch against a nil context. The captured variable is
-	// stable for the lifetime of this call.
 	r.mu.Lock()
 	if _, ok := r.apps[appName]; !ok {
 		r.mu.Unlock()
@@ -411,10 +411,10 @@ func (r *Runtime) RestartApp(appName string) error { //nolint:gocyclo // single-
 	}
 	needsRegen := r.dependsOnDetachedApps[appName]
 	lastApps := r.lastApps
-	runCtx := r.runCtx
+	started := r.runCtx != nil
 	r.mu.Unlock()
 
-	if runCtx == nil {
+	if !started {
 		return fmt.Errorf("runtime not started, cannot restart app %q", appName)
 	}
 
@@ -430,6 +430,15 @@ func (r *Runtime) RestartApp(appName string) error { //nolint:gocyclo // single-
 	}
 
 	r.mu.Lock()
+	// Re-check the NS STOPPING guard: between the initial check + Unlock above
+	// and this second Lock, the state machine may have applied cmdStop and
+	// flipped r.status to STOPPING. Without this recheck, the switch below
+	// could set desiredNext=READY_TO_PULL on a stopping app and deadlock
+	// cmdStopNextGroup exactly like the first guard was meant to prevent.
+	if r.status == NsStatusStopping {
+		r.mu.Unlock()
+		return fmt.Errorf("runtime is stopping, cannot restart app %q", appName)
+	}
 	// Re-lookup under Lock in case StopApp / RegenerateApp raced between the
 	// snapshot read above and this point.
 	app, ok := r.apps[appName]

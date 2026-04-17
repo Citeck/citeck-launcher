@@ -642,39 +642,6 @@ func (c *Client) ContainerStats(ctx context.Context, containerID string) (*Conta
 	return parseContainerStats(resp.Body)
 }
 
-// WaitForContainer waits for a container to start running.
-func (c *Client) WaitForContainer(ctx context.Context, containerID string, timeout time.Duration) error {
-	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	// Quick check if already running
-	inspect, err := c.cli.ContainerInspect(timeoutCtx, containerID)
-	if err == nil && inspect.State.Running {
-		return nil
-	}
-
-	// Poll with short interval — ContainerWait only supports "not-running" condition
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-timeoutCtx.Done():
-			return fmt.Errorf("timeout waiting for container %s", containerID)
-		case <-ticker.C:
-			inspect, err := c.cli.ContainerInspect(timeoutCtx, containerID)
-			if err != nil {
-				continue
-			}
-			if inspect.State.Running {
-				return nil
-			}
-			if inspect.State.ExitCode != 0 {
-				return fmt.Errorf("container exited with code %d", inspect.State.ExitCode)
-			}
-		}
-	}
-}
-
 // WaitForContainerExit waits for a container to finish and exit (for init containers).
 // Uses Docker's ContainerWait API for instant notification instead of polling.
 func (c *Client) WaitForContainerExit(ctx context.Context, containerID string, timeout time.Duration) error {

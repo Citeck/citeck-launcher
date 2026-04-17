@@ -450,7 +450,7 @@ func (r *Runtime) doRegenerate(apps []appdef.ApplicationDef) { //nolint:gocyclo 
 
 // doStop initiates a graceful namespace shutdown via the state machine:
 //
-//  1. Mark NS as STOPPING, cancel runCtx (stops reconciler + appWg goroutines).
+//  1. Mark NS as STOPPING, cancel runCtx (stops reconciler + worker goroutines).
 //  2. Partition live apps into graceful-shutdown groups.
 //  3. Transition group[0] apps to STOPPING via beginGroupStopUnderLock;
 //     dispatch their stopContainer workers.
@@ -477,8 +477,8 @@ func (r *Runtime) doStop() {
 	}
 	r.setStatus(NsStatusStopping)
 	if r.cancel != nil {
-		// Cancels runCtx — reconciler + any appWg goroutines observe
-		// ctx.Done and exit. Their Wait() happens in shutdownAfter.
+		// Cancels runCtx — reconciler + any worker goroutines observe
+		// ctx.Done and exit. r.wg.Wait() happens in shutdownAfter.
 		r.cancel()
 		r.cancel = nil
 	}
@@ -659,10 +659,6 @@ func (r *Runtime) doDetach() {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-
-	// Drain legacy wait group (appWg). Belt-and-suspenders for any goroutines
-	// that appWg.Add'd without going through the dispatcher.
-	r.appWg.Wait()
 
 	r.mu.Lock()
 	// Final persist on detach: runtimeLoop is about to exit, so the dirty-flag

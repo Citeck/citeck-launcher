@@ -22,12 +22,6 @@ type Option[T any] struct {
 	Hint string
 }
 
-// NewOption is a convenience constructor that sets Label from the given
-// string value and uses the same string as Value.
-func NewOption[T any](label string, value T) Option[T] {
-	return Option[T]{Label: label, Value: value}
-}
-
 // Select shows a list of options and returns the chosen one's Value.
 // The prompt renders inline (no altscreen).
 //

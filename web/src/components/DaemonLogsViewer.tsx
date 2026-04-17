@@ -15,6 +15,7 @@ export function DaemonLogsViewer({ compact = false, active = true }: DaemonLogsV
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const activeRef = useRef(active)
   useEffect(() => { activeRef.current = active }, [active])
   const preRef = useRef<HTMLPreElement>(null)
@@ -25,24 +26,21 @@ export function DaemonLogsViewer({ compact = false, active = true }: DaemonLogsV
       .catch((e) => setError(e.message))
   }, [])
 
-  // Abort streaming when deactivated
-  useEffect(() => {
-    if (!active) {
-      abortRef.current?.abort()
-    }
-  }, [active])
-
   // Initial fetch + streaming follow
-  // Streaming follow — the endpoint replays last `tail` lines then streams new data.
-  // No separate REST fetch needed (would duplicate the same lines).
-  // Note: isFirst chunk detection assumes the tail replay arrives as one read() call.
-  // This holds on localhost; over TLS/network the tail could split across reads.
+  // Streaming follow — the endpoint replays last `tail` lines then streams new
+  // data. The tail may arrive across multiple read() calls (TLS/network splits),
+  // so the client can't treat the first read as "the tail". Instead we
+  // accumulate into initialBuf during a settle window; once the window fires
+  // (or another chunk arrives past the window), we commit the buffer as the
+  // initial state. All subsequent chunks are deltas appended to state.
   useEffect(() => {
     if (!active) return
 
     abortRef.current?.abort()
     const controller = new AbortController()
     abortRef.current = controller
+
+    const initialSettleMs = 400
 
     const startStream = async () => {
       try {
@@ -57,22 +55,35 @@ export function DaemonLogsViewer({ compact = false, active = true }: DaemonLogsV
 
         const reader = res.body.getReader()
         const decoder = new TextDecoder()
-        let isFirst = true
+        let initialBuf = ''
+        let initialCommitted = false
+
+        const commitInitial = () => {
+          if (initialCommitted) return
+          initialCommitted = true
+          if (settleTimerRef.current) {
+            clearTimeout(settleTimerRef.current)
+            settleTimerRef.current = null
+          }
+          setLogs(initialBuf.length > MAX_LOG_SIZE ? initialBuf.slice(-MAX_LOG_SIZE) : initialBuf)
+          initialBuf = ''
+        }
 
         while (true) {
           const { done, value } = await reader.read()
-          if (done) break
+          if (done) {
+            commitInitial()
+            break
+          }
           const chunk = decoder.decode(value, { stream: true })
-          if (isFirst) {
-            // First chunk is the tail replay — replace state entirely
-            setLogs(chunk)
-            isFirst = false
+          if (!initialCommitted) {
+            initialBuf += chunk
+            if (settleTimerRef.current) clearTimeout(settleTimerRef.current)
+            settleTimerRef.current = setTimeout(commitInitial, initialSettleMs)
           } else {
             setLogs(prev => {
               const merged = prev + chunk
-              return merged.length > MAX_LOG_SIZE
-                ? merged.slice(-MAX_LOG_SIZE)
-                : merged
+              return merged.length > MAX_LOG_SIZE ? merged.slice(-MAX_LOG_SIZE) : merged
             })
           }
         }
@@ -92,6 +103,10 @@ export function DaemonLogsViewer({ compact = false, active = true }: DaemonLogsV
       if (retryTimerRef.current) {
         clearTimeout(retryTimerRef.current)
         retryTimerRef.current = null
+      }
+      if (settleTimerRef.current) {
+        clearTimeout(settleTimerRef.current)
+        settleTimerRef.current = null
       }
     }
   }, [active, fetchInitial])

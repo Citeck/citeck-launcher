@@ -274,14 +274,20 @@ func TestShutdownDoesNotLeakStatsGoroutine(t *testing.T) {
 	}
 
 	// Force at least one stats dispatch so the labeled goroutine has a chance
-	// to appear in the profile if it's leaking. With statsInterval = 5s and
-	// tickerPeriod = 1s, we wait long enough for one tick that crosses the
-	// stats threshold. Reset the lastStatsDispatch under lock to make this
-	// fire on the next tick.
+	// to appear in the profile if it's leaking. Reset lastStatsDispatch so the
+	// next tick (1s cadence) dispatches stats; then poll for the labeled
+	// goroutine to actually appear — polling is robust to slow CI hosts where
+	// a fixed Sleep might not cover the dispatch delay.
 	r.mu.Lock()
 	r.lastStatsDispatch = time.Time{}
 	r.mu.Unlock()
-	time.Sleep(1500 * time.Millisecond)
+	statsDeadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(statsDeadline) {
+		if hasGoroutineWithLabel("citeck-runtime-stats") {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 
 	r.Shutdown()
 

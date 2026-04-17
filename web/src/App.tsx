@@ -18,7 +18,11 @@ import { ToastContainer } from './components/Toast'
 import { useEffect, useState } from 'react'
 
 function Layout() {
-  const { namespace, fetchData } = useDashboardStore()
+  // Select only the two fields Layout actually consumes. Subscribing to the
+  // whole store would force a re-render on every SSE tick (reconnectDelay,
+  // lastSeq, etc.), even though Layout's output only depends on `namespace`.
+  const namespace = useDashboardStore((s) => s.namespace)
+  const fetchData = useDashboardStore((s) => s.fetchData)
   const [isDesktop, setIsDesktop] = useState<boolean | null>(null)
 
   // Fetch daemon status once on mount to detect server/desktop mode and locale

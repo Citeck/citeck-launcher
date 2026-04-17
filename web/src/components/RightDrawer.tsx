@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { X } from 'lucide-react'
+import { useTranslation } from '../lib/i18n'
 
 interface RightDrawerProps {
   title: string
@@ -9,6 +10,7 @@ interface RightDrawerProps {
 }
 
 export function RightDrawer({ title, subtitle, onClose, children }: RightDrawerProps) {
+  const { t } = useTranslation()
   const panelRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
 
@@ -37,7 +39,8 @@ export function RightDrawer({ title, subtitle, onClose, children }: RightDrawerP
             type="button"
             className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted shrink-0"
             onClick={onClose}
-            title="Close"
+            aria-label={t('common.close')}
+            title={t('common.close')}
           >
             <X size={16} />
           </button>

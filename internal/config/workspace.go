@@ -113,12 +113,3 @@ func ResolveVolumesBase(wsID, nsID string) string {
 	return NamespaceRtfilesDir(wsID, nsID)
 }
 
-// ResolveBundlesDir resolves the bundles cache dir based on mode.
-// In server mode: {home}/data/bundles/{repo}
-// In desktop mode: {home}/ws/{wsID}/bundles/{repo}
-func ResolveBundlesDir(wsID, repo string) string {
-	if !IsDesktopMode() {
-		return filepath.Join(DataDir(), "bundles", repo)
-	}
-	return filepath.Join(WorkspaceBundlesDir(wsID), repo)
-}

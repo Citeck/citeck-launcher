@@ -67,15 +67,6 @@ const pt: Translations = {
   'wizard.pgadmin.label': 'PgAdmin',
   'wizard.pgadmin.hint': 'Ativar PgAdmin para gerenciamento do banco de dados.',
   'wizard.pgadmin.enable': 'Ativar PgAdmin',
-  'wizard.step.password': 'Senha',
-  'wizard.password.title': 'Senha mestra',
-  'wizard.password.hint': 'Todos os segredos s\u00e3o criptografados no disco. Defina uma senha mestra para proteg\u00ea-los.',
-  'wizard.password.useDefault': 'Usar senha padr\u00e3o (inseguro)',
-  'wizard.password.warning': 'A senha padr\u00e3o oferece prote\u00e7\u00e3o m\u00ednima. Use uma senha personalizada para produ\u00e7\u00e3o.',
-  'wizard.password.password': 'Senha mestra',
-  'wizard.password.confirm': 'Confirmar senha',
-  'wizard.password.mismatch': 'As senhas n\u00e3o coincidem',
-  'wizard.password.default': 'Padr\u00e3o',
   'wizard.review.label': 'Revisar configura\u00e7\u00e3o',
   'wizard.back': 'Voltar',
   'wizard.cancel': 'Cancelar',
@@ -316,8 +307,18 @@ const pt: Translations = {
   'common.close': 'Fechar',
   'common.confirm': 'Confirmar',
   'common.working': 'Processando...',
+  'common.submit': 'Enviar',
+  'common.select': 'Selecionar',
   'common.settings': 'Configura\u00e7\u00f5es',
   'common.error': 'Erro: {error}',
+
+  // -- Journal dialog --
+  'journal.filter': 'Filtrar...',
+  'journal.noMatchingRows': 'Nenhuma linha correspondente',
+  'journal.noData': 'Sem dados',
+  'journal.rowCount': '{count} linhas',
+  'journal.rowCountOne': '1 linha',
+  'journal.selected': '{count} selecionadas',
 
   // -- Error Boundary --
   'error.title': 'Algo deu errado',
@@ -329,7 +330,6 @@ const pt: Translations = {
   'theme.toLight': 'Mudar para tema claro',
 
   // -- Common (additional) --
-  'common.back': 'Voltar',
 
   // -- Error (additional) --
   'error.retry': 'Tentar novamente',
@@ -344,9 +344,6 @@ const pt: Translations = {
   'migration.secretsImported': 'Secrets descriptografados e importados',
   'migration.setupPassword.title': 'Proteja seus secrets',
   'migration.setupPassword.description': 'Deseja criptografar os secrets importados com uma senha mestra? Você precisará dela toda vez que iniciar o launcher.',
-  'migration.setupPassword.samePassword': 'Usar a mesma senha',
-  'migration.setupPassword.differentPassword': 'Definir outra senha',
-  'migration.setupPassword.skip': 'Pular por enquanto',
   'migration.setupPassword.success': 'Secrets criptografados com sucesso',
   'migration.unlock.title': 'Desbloquear secrets',
   'migration.unlock.description': 'Seus secrets estão criptografados. Insira a senha mestra para desbloqueá-los.',
@@ -364,8 +361,9 @@ const pt: Translations = {
   'upgrade.title': 'Atualizar bundle',
   'upgrade.select': 'Selecionar versão',
   'upgrade.success': 'Atualização bem-sucedida',
-  'upgrade.noVersions': 'Nenhuma versão de bundle disponível',
   'upgrade.alreadyLatest': 'Já está na versão mais recente',
+  'form.fieldRequired': '{label} é obrigatório',
+  'store.connectionRestored': 'Conexão restaurada, estado atualizado',
 }
 
 export default pt

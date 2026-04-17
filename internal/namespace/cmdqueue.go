@@ -110,10 +110,12 @@ func NewCmdQueue() *CmdQueue {
 // Enqueue pushes a command, blocking up to cmdQueueEnqueueTimeout. Returns
 // ErrCmdQueueFull on timeout.
 func (q *CmdQueue) Enqueue(cmd runtimeCmd) error {
+	timeoutTimer := time.NewTimer(cmdQueueEnqueueTimeout)
+	defer timeoutTimer.Stop()
 	select {
 	case q.ch <- cmd:
 		return nil
-	case <-time.After(cmdQueueEnqueueTimeout):
+	case <-timeoutTimer.C:
 		return ErrCmdQueueFull
 	}
 }

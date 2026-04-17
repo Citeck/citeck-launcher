@@ -117,6 +117,11 @@ func TestDetachSkipsPostDetachStepDispatches(t *testing.T) {
 	md.mu.Unlock()
 
 	r := NewRuntime(testConfig(), md, t.TempDir())
+	// The test never calls Start(), so Shutdown's terminal close(r.eventCh)
+	// would never run. Explicitly close eventCh on teardown so the spawned
+	// dispatchLoop goroutine exits — otherwise it leaks for the rest of the
+	// test process.
+	t.Cleanup(func() { close(r.eventCh) })
 
 	// Seed an app directly in READY_TO_PULL (pre-RUNNING state). This mirrors
 	// what stepAllApps would see if cmdDetach arrived before the state machine

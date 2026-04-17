@@ -12,6 +12,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
+	"github.com/stretchr/testify/assert"
 )
 
 // TestPersistenceFormatStable verifies that SaveNsState + LoadNsState must
@@ -150,14 +151,13 @@ func TestPersistCoalescesTransientStatusTransitions(t *testing.T) {
 	if !info1.ModTime().After(info0.ModTime()) {
 		t.Fatalf("state file not persisted after burst (mtime unchanged)")
 	}
-	// Probe a few more times to ensure we're truly idle — no runaway
-	// persist loop re-firing for each tick.
-	for range 3 {
-		time.Sleep(1200 * time.Millisecond) // > tickerPeriod
-		if r.dirty.Load() {
-			t.Fatalf("r.dirty re-raised without mutation — coalescing broken")
-		}
-	}
+	// Probe over ~3.6s (>3× tickerPeriod) to ensure we're truly idle — no
+	// runaway persist loop re-firing on each tick. assert.Never fails fast
+	// the moment r.dirty is re-raised.
+	assert.Never(t, func() bool {
+		return r.dirty.Load()
+	}, 3600*time.Millisecond, 100*time.Millisecond,
+		"r.dirty re-raised without mutation — coalescing broken")
 	info2, err := os.Stat(statePath)
 	if err != nil {
 		t.Fatalf("stat state after idle: %v", err)

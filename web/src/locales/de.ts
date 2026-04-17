@@ -67,15 +67,6 @@ const de: Translations = {
   'wizard.pgadmin.label': 'PgAdmin',
   'wizard.pgadmin.hint': 'PgAdmin für die Datenbankverwaltung aktivieren.',
   'wizard.pgadmin.enable': 'PgAdmin aktivieren',
-  'wizard.step.password': 'Passwort',
-  'wizard.password.title': 'Master-Passwort',
-  'wizard.password.hint': 'Alle Geheimnisse werden verschlüsselt gespeichert. Legen Sie ein Master-Passwort fest.',
-  'wizard.password.useDefault': 'Standard-Passwort verwenden (unsicher)',
-  'wizard.password.warning': 'Das Standard-Passwort bietet minimalen Schutz. Verwenden Sie ein eigenes Passwort für Produktionsumgebungen.',
-  'wizard.password.password': 'Master-Passwort',
-  'wizard.password.confirm': 'Passwort bestätigen',
-  'wizard.password.mismatch': 'Passwörter stimmen nicht überein',
-  'wizard.password.default': 'Standard',
   'wizard.review.label': 'Konfiguration überprüfen',
   'wizard.back': 'Zurück',
   'wizard.cancel': 'Abbrechen',
@@ -316,8 +307,18 @@ const de: Translations = {
   'common.close': 'Schließen',
   'common.confirm': 'Bestätigen',
   'common.working': 'Arbeitet...',
+  'common.submit': 'Absenden',
+  'common.select': 'Auswählen',
   'common.settings': 'Einstellungen',
   'common.error': 'Fehler: {error}',
+
+  // -- Journal dialog --
+  'journal.filter': 'Filter...',
+  'journal.noMatchingRows': 'Keine passenden Zeilen',
+  'journal.noData': 'Keine Daten',
+  'journal.rowCount': '{count} Zeilen',
+  'journal.rowCountOne': '1 Zeile',
+  'journal.selected': '{count} ausgewählt',
 
   // -- Error Boundary --
   'error.title': 'Etwas ist schiefgelaufen',
@@ -329,7 +330,6 @@ const de: Translations = {
   'theme.toLight': 'Zum hellen Thema wechseln',
 
   // -- Common (additional) --
-  'common.back': 'Zurück',
 
   // -- Error (additional) --
   'error.retry': 'Erneut versuchen',
@@ -344,9 +344,6 @@ const de: Translations = {
   'migration.secretsImported': 'Geheimnisse entschlüsselt und importiert',
   'migration.setupPassword.title': 'Ihre Geheimnisse schützen',
   'migration.setupPassword.description': 'Möchten Sie Ihre importierten Geheimnisse mit einem Master-Passwort verschlüsseln? Sie benötigen es bei jedem Start des Launchers.',
-  'migration.setupPassword.samePassword': 'Gleiches Passwort verwenden',
-  'migration.setupPassword.differentPassword': 'Anderes Passwort festlegen',
-  'migration.setupPassword.skip': 'Vorerst überspringen',
   'migration.setupPassword.success': 'Geheimnisse erfolgreich verschlüsselt',
   'migration.unlock.title': 'Geheimnisse entsperren',
   'migration.unlock.description': 'Ihre Geheimnisse sind verschlüsselt. Geben Sie das Master-Passwort ein, um sie zu entsperren.',
@@ -364,8 +361,9 @@ const de: Translations = {
   'upgrade.title': 'Bundle aktualisieren',
   'upgrade.select': 'Version auswählen',
   'upgrade.success': 'Aktualisierung erfolgreich',
-  'upgrade.noVersions': 'Keine Bundle-Versionen verfügbar',
   'upgrade.alreadyLatest': 'Bereits auf der neuesten Version',
+  'form.fieldRequired': '{label} ist erforderlich',
+  'store.connectionRestored': 'Verbindung wiederhergestellt, Status aktualisiert',
 }
 
 export default de

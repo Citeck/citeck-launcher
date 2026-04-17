@@ -34,7 +34,6 @@ type RuntimeClient interface {
 	GetPublishedPort(ctx context.Context, containerID string, containerPort int) int
 	GetContainerIP(ctx context.Context, containerID string) string
 	ContainerStats(ctx context.Context, containerID string) (*ContainerStat, error)
-	WaitForContainer(ctx context.Context, containerID string, timeout time.Duration) error
 	WaitForContainerExit(ctx context.Context, containerID string, timeout time.Duration) error
 }
 

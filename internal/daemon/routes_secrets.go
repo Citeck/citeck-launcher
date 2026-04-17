@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -196,7 +195,7 @@ func (d *Daemon) handleSubmitMasterPassword(w http.ResponseWriter, r *http.Reque
 	var req struct {
 		Password string `json:"password"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Password == "" {
+	if err := readJSON(r, &req); err != nil || req.Password == "" {
 		slog.Warn("Master password request failed to parse", //nolint:gosec // G706: logged values are HTTP metadata, not secrets
 			"err", err, "contentType", r.Header.Get("Content-Type"),
 			"contentLength", r.ContentLength, "hasBody", r.Body != nil)

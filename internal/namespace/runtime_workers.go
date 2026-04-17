@@ -28,11 +28,10 @@ import (
 )
 
 // pullStallTimeout bounds the no-progress window for a single
-// PullImageWithProgress invocation. Legacy parity: nsactions.PullExecutor used
-// actions.Service.stallWatcher with the same 5-minute budget. If no progress
-// callback fires for this long, the pull's per-attempt context is canceled and
-// the retry loop either advances to the next delay slot, surfaces an
-// auth-error, or falls back to the local image (see runPullTask).
+// PullImageWithProgress invocation. If no progress callback fires for this
+// long, the pull's per-attempt context is canceled and the retry loop either
+// advances to the next delay slot, surfaces an auth-error, or falls back to
+// the local image (see runPullTask).
 //
 // Declared as a var (not const) so tests can override it without build flags.
 var pullStallTimeout = 5 * time.Minute
@@ -50,7 +49,7 @@ var pullStallPollInterval = 30 * time.Second
 const (
 	pullWorkLabel             = "citeck-runtime-pull"
 	startWorkLabel            = "citeck-runtime-start"
-	stopWorkLabel             = "citeck-runtime-stop" //nolint:gosec // label, not credential
+	stopWorkLabel             = "citeck-runtime-stop"
 	initContainerLabel        = "citeck-runtime-init"
 	startupProbeWorkLabel     = "citeck-runtime-startup-probe"
 	removeNetworkWorkLabel    = "citeck-runtime-remove-network"
@@ -88,7 +87,6 @@ const initContainerExitTimeout = 60 * time.Second
 //
 // Retry budget: up to (nsactions.PullRetriesForExistingImage + 1) pull
 // invocations (currently 4) before the local-image fallback path activates.
-// Mirrors nsactions.PullExecutor.Execute behavior.
 func (r *Runtime) makePullPlan(appName, image string, pullAlways bool, progressFn docker.PullProgressFn) dispatchPlan {
 	return dispatchPlan{
 		taskID: workers.TaskID{App: appName, Op: workers.OpPull},
@@ -130,8 +128,7 @@ func (r *Runtime) runPullTask(
 
 		// Per-attempt stall watchdog: wrap progressFn so each callback bumps
 		// lastProgress. If no progress arrives within pullStallTimeout, the
-		// watchdog cancels stallCtx to unstick the pull. Legacy parity with
-		// nsactions.PullExecutor + actions.Service.stallWatcher.
+		// watchdog cancels stallCtx to unstick the pull.
 		stallCtx, stallCancel := context.WithCancel(ctx)
 		var lastProgress atomic.Int64
 		lastProgress.Store(time.Now().UnixNano())
@@ -199,8 +196,7 @@ func (r *Runtime) runPullTask(
 
 		// Per-attempt fallback: when this attempt is at or beyond the
 		// PullRetriesForExistingImage threshold AND the image exists locally,
-		// accept that as success. Matches nsactions.PullExecutor.Execute
-		// behavior: 4 pull invocations before local-image fallback.
+		// accept that as success — 4 pull invocations before local-image fallback.
 		if attempt >= nsactions.PullRetriesForExistingImage && r.docker.ImageExists(ctx, image) {
 			digest := r.docker.GetImageDigest(ctx, image)
 			return workers.Result{Payload: workers.PullPayload{Digest: digest}}
@@ -226,10 +222,12 @@ func (r *Runtime) runPullTask(
 		// by flipping the knobs to const (clean) vs var (G602 fires) on
 		// identical code. The `attempt >= len(retryDelays)` guard directly
 		// above this select proves bounds safety.
+		retryTimer := time.NewTimer(retryDelays[attempt]) //nolint:gosec // see comment above — bounds checked by the len guard directly above
 		select {
 		case <-ctx.Done():
+			retryTimer.Stop()
 			return workers.Result{Err: fmt.Errorf("pull %s: %w", image, ctx.Err())}
-		case <-time.After(retryDelays[attempt]): //nolint:gosec // see comment above — bounds checked by the len guard directly above
+		case <-retryTimer.C:
 		}
 	}
 }
@@ -286,10 +284,12 @@ func (r *Runtime) runStartTask(
 		lastErr = err
 
 		// Wait before next attempt; a cancel during the wait aborts promptly.
+		retryTimer := time.NewTimer(nsactions.ContainerCreateRetryDelay)
 		select {
 		case <-ctx.Done():
+			retryTimer.Stop()
 			return workers.Result{Err: fmt.Errorf("create container %s: %w", appName, ctx.Err())}
-		case <-time.After(nsactions.ContainerCreateRetryDelay):
+		case <-retryTimer.C:
 		}
 	}
 	if lastErr != nil {
@@ -333,10 +333,12 @@ func (r *Runtime) runStopTask(ctx context.Context, appName, containerName string
 			return workers.Result{Payload: workers.StopPayload{}}
 		}
 		lastErr = err
+		retryTimer := time.NewTimer(time.Second)
 		select {
 		case <-ctx.Done():
+			retryTimer.Stop()
 			return workers.Result{Err: fmt.Errorf("stop %s: %w", appName, ctx.Err())}
-		case <-time.After(time.Second):
+		case <-retryTimer.C:
 		}
 	}
 	return workers.Result{Err: fmt.Errorf("stop %s: %w", appName, lastErr)}

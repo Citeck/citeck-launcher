@@ -20,6 +20,12 @@ import (
 	"github.com/citeck/citeck-launcher/internal/namespace/workers"
 )
 
+// alwaysFailPulls is the sentinel value for workerMockDocker.pullErrTimes
+// when a test wants every pull attempt to fail indefinitely (e.g. to exercise
+// retry budgets / fallback-to-local paths). Larger than any realistic retry
+// count; the tests never approach it.
+const alwaysFailPulls = 1 << 30
+
 // workerMockDocker is a programmable docker.RuntimeClient stub used by the
 // worker-factory tests. It tracks call counts, lets each method's behavior be
 // overridden via a function field, and synthesizes a minimal set of "happy
@@ -226,10 +232,6 @@ func (m *workerMockDocker) ContainerStats(_ context.Context, _ string) (*docker.
 	return &docker.ContainerStat{}, nil
 }
 
-func (m *workerMockDocker) WaitForContainer(_ context.Context, _ string, _ time.Duration) error {
-	return nil
-}
-
 func (m *workerMockDocker) WaitForContainerExit(_ context.Context, _ string, _ time.Duration) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -242,16 +244,18 @@ func (m *workerMockDocker) WaitForContainerExit(_ context.Context, _ string, _ t
 // r.status / the runtimeLoop, so a bare-minimum runtime is enough.
 //
 // The returned Runtime still owns a Dispatcher + dispatchLoop goroutine
-// (created by NewRuntimeWithActions). Tests that don't need Dispatcher +
-// the dispatch-loop should close r.eventCh themselves to let dispatchLoop
+// (created by NewRuntime). Tests that don't need Dispatcher + the
+// dispatch-loop should close r.eventCh themselves to let dispatchLoop
 // exit; see t.Cleanup below.
 func newWorkerTestRuntime(t *testing.T, md *workerMockDocker) *Runtime {
 	t.Helper()
 	r := NewRuntime(&Config{ID: "tt"}, md, t.TempDir())
 	t.Cleanup(func() {
 		// Ensure dispatchLoop exits: close eventCh (it iterates until the
-		// channel closes). Avoid double-close by guarding with a nil check
-		// is not needed — Shutdown has not been called so eventCh is still open.
+		// channel closes). If the test happened to call r.Shutdown() anyway,
+		// Shutdown will have closed eventCh too and a second close would panic.
+		// Guard with recover so tests are free to call either (or neither).
+		defer func() { _ = recover() }()
 		close(r.eventCh)
 	})
 	return r
@@ -317,7 +321,7 @@ func TestPullTaskAuthErrorWraps(t *testing.T) {
 	md := newWorkerMockDocker()
 	md.imageExists = false
 	md.pullErr = errors.New("error response from daemon: pull access denied")
-	md.pullErrTimes = 10 // always fail
+	md.pullErrTimes = alwaysFailPulls
 
 	r := newWorkerTestRuntime(t, md)
 	plan := r.makePullPlan("app1", "nexus.citeck.ru/ecos-model:1.0", false, nil)
@@ -331,13 +335,12 @@ func TestPullTaskAuthErrorWraps(t *testing.T) {
 func TestPullTaskFallsBackToLocalAfterNRetries(t *testing.T) {
 	md := newWorkerMockDocker()
 	// All pulls fail (non-auth). Image exists locally → fall back after the
-	// 4th attempt, matching legacy nsactions.PullExecutor + actions.Service
-	// (Execute called for actx.Attempt = 0, 1, 2, 3; the `attempt >= 3` check
-	// in PullExecutor.Execute becomes true on attempt 3, AFTER its pull has
-	// already run and failed).
+	// 4th attempt (attempts numbered 0, 1, 2, 3; the `attempt >=
+	// PullRetriesForExistingImage` check becomes true on attempt 3, AFTER that
+	// attempt's pull has already run and failed).
 	md.imageExists = true
 	md.pullErr = errors.New("network timeout")
-	md.pullErrTimes = 10 // would always fail, but we expect early fallback
+	md.pullErrTimes = alwaysFailPulls // fallback to local expected before retries exhaust
 
 	r := newWorkerTestRuntime(t, md)
 	// pullAlways=true so the short-circuit at top doesn't skip the pull.
@@ -349,16 +352,16 @@ func TestPullTaskFallsBackToLocalAfterNRetries(t *testing.T) {
 	md.mu.Lock()
 	defer md.mu.Unlock()
 	// PullRetriesForExistingImage = 3 → 4 actual pull attempts (0, 1, 2, 3)
-	// before fallback. Matches nsactions.PullExecutor under actions.Service.
+	// before fallback.
 	assert.Equal(t, nsactions.PullRetriesForExistingImage+1, md.pullCalls,
-		"PullRetriesForExistingImage+1 (=4) attempts before local fallback, matching legacy")
+		"PullRetriesForExistingImage+1 (=4) attempts before local fallback")
 }
 
 func TestPullTaskExhaustsRetriesWithoutLocalFallback(t *testing.T) {
 	md := newWorkerMockDocker()
 	md.imageExists = false // no local image → no fallback path
 	md.pullErr = errors.New("network timeout")
-	md.pullErrTimes = 100
+	md.pullErrTimes = alwaysFailPulls
 
 	r := newWorkerTestRuntime(t, md)
 	plan := r.makePullPlan("app1", "nexus.citeck.ru/img:1", true, nil)
@@ -379,7 +382,7 @@ func TestPullTaskCancelMidRetry(t *testing.T) {
 	md := newWorkerMockDocker()
 	md.imageExists = false
 	md.pullErr = errors.New("network timeout")
-	md.pullErrTimes = 100
+	md.pullErrTimes = alwaysFailPulls
 
 	r := newWorkerTestRuntime(t, md)
 	plan := r.makePullPlan("app1", "nexus.citeck.ru/img:1", true, nil)
@@ -585,7 +588,7 @@ func TestInitContainerTaskPullFailure(t *testing.T) {
 	md := newWorkerMockDocker()
 	md.imageExists = false
 	md.pullErr = errors.New("network down")
-	md.pullErrTimes = 100
+	md.pullErrTimes = alwaysFailPulls
 
 	r := newWorkerTestRuntime(t, md)
 	initDef := appdef.ApplicationDef{Name: "web-init", Image: "init:1", IsInit: true}

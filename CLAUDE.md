@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Citeck Launcher manages Citeck namespaces and Docker containers. It is a single Go binary (~18MB) that serves as both CLI and daemon, with an embedded React Web UI (desktop mode only; disabled in server mode).
+Citeck Launcher manages Citeck namespaces and Docker containers. It is a single Go binary (~24 MB) that serves as both CLI and daemon. The embedded React Web UI is served over TCP by the server-mode daemon (port configurable via `daemon.yml`; disabled with `--no-ui`); desktop mode renders the same Web UI through a Wails webview that talks to the daemon over the Unix socket.
 
 ### History
 
@@ -57,18 +57,19 @@ build/bin/citeck-server start --foreground   # Run daemon in foreground
 | `internal/config/` | Filesystem paths, daemon config (daemon.yml), workspace dir scanner |
 | `internal/storage/` | Store interface + FileStore (server) + SQLiteStore (desktop) + SecretService (AES-256-GCM encryption) |
 | `internal/h2migrate/` | H2 MVStore read-only parser, LZF decompressor, H2→SQLite migration |
-| `internal/client/` | DaemonClient (Unix socket transport) |
+| `internal/client/` | DaemonClient over Unix socket + mTLS TCP transport |
 | `internal/output/` | Text/JSON output formatter, tables, colors |
 | `internal/api/` | Shared API types (DTOs), path constants |
 | `internal/appdef/` | Application definition models (ApplicationDef, ApplicationKind) |
 | `internal/appfiles/` | Embedded resource files (go:embed) |
-| `internal/actions/` | Namespace lifecycle actions (pull, start, stop executors) |
 | `internal/form/` | Form field specs, built-in field definitions, validation |
 | `internal/snapshot/` | Volume snapshot export/import (ZIP + tar.xz) |
 | `internal/tlsutil/` | TLS cert utilities (self-signed, client cert, CA pool loader) |
 | `internal/fsutil/` | Atomic file write (temp+fsync+rename), RotatingWriter (log rotation), CleanLogHandler (human-readable slog) |
 | `internal/acme/` | ACME/Let's Encrypt client + auto-renewal service |
-| `internal/namespace/nsactions/` | Action executors wired to Docker + runtime |
+| `internal/i18n/` | Embedded JSON locale files (shared source-of-truth between CLI and web UI) |
+| `internal/desktop/` | Wails desktop runner (browser launcher, single-instance guard) |
+| `internal/namespace/nsactions/` | Pull/start retry constants and auth-error helpers for `runtime_workers.go` |
 
 ### Web UI (`web/`)
 
@@ -105,12 +106,13 @@ React 19 + Vite + TypeScript + Tailwind CSS 4. Embedded into Go binary via `go:e
 - `ContextMenu.tsx` — right-click context menu with items/dividers
 - `FormDialog.tsx` — spec-driven form dialog (text/number/password/select/checkbox)
 - `JournalDialog.tsx` — data table dialog with search, selection, custom buttons
+- `RestartEvents.tsx` — restart-event log rendered in a bottom-panel tab
 
 **Lib:**
 - `api.ts` — REST API client (fetchWithTimeout, CSRF, exported API_BASE)
 - `store.ts` — Zustand dashboard store (SSE events, exponential backoff reconnect)
 - `panels.ts` — Zustand panel store (drawer, bottom tabs, height persistence)
-- `i18n.ts` — i18n store (8 locales, lazy loading, t() + useTranslation())
+- `i18n.ts` — i18n store (8 locales bundled synchronously, t() + useTranslation())
 - `websocket.ts` — SSE EventSource wrapper (not WebSocket despite filename)
 - `tabs.ts` — Tab state management (zustand)
 - `toast.ts` — Toast notification store (zustand, auto-dismiss)
@@ -180,9 +182,9 @@ React 19 + Vite + TypeScript + Tailwind CSS 4. Embedded into Go binary via `go:e
 - **Two storage backends**: flat files (server) / SQLite (desktop); desktop mode via explicit `--desktop` flag (hidden from server binary help)
 - **go-git** (pure Go) for git operations — no external git binary required
 - **ACME** profiles via custom JWS; LE works with IPs via shortlived profile (~6 day certs)
-- **Reconciler**: exponential backoff retry for failed apps (1m → 30m max); liveness probes with 3-failure threshold. Does NOT touch detached (STOPPED + manualStoppedApps) apps.
+- **Reconciler**: exponential backoff retry for failed apps (1m → 10m max); liveness probes with 3-failure threshold. Does NOT touch detached (STOPPED + manualStoppedApps) apps.
 - **Snapshot import**: CLI normalizes .zip suffix, validates existence via list endpoint BEFORE stopping namespace. Server validates name/file before lock acquisition. Event types: `snapshot_complete`/`snapshot_error` for both export and import.
-- **install.sh** is a thin bootstrap (~200 lines): fetch + SHA256 verify + exec. All lifecycle logic (install/upgrade/rollback/SIGKILL preserve/systemd drop-in) lives in Go (`internal/cli/installer_lifecycle.go`)
+- **install.sh** is a thin bootstrap (~260 lines): fetch + SHA256 verify + exec. All lifecycle logic (install/upgrade/rollback/SIGKILL preserve/systemd drop-in) lives in Go (`internal/cli/installer_lifecycle.go`)
 - **Install wizard**: prefers `systemctl start citeck` when systemd service is installed; falls back to `forkDaemon()` when systemd unavailable
 - **CloudConfigServer** skipped in server mode (webapps disable it via env)
 - **Memory**: Community needs 16GB RAM minimum; Enterprise (24 apps) needs 24–32GB. On 16GB, detach non-essential apps (`citeck stop onlyoffice attorneys ai edi`) to free 4–5GB.
@@ -338,6 +340,6 @@ at each step and reacting programmatically.
 ## CI/CD
 
 GitHub Actions:
-- **Release workflow** (`.github/workflows/release-go.yml`): triggered by `v*.*.*` tags, builds Linux amd64 server binary, creates draft GitHub release. Uses `go-version-file: go.mod`.
+- **Release workflow** (`.github/workflows/release-go.yml`): triggered by `v*.*.*` tags, builds `linux/{amd64,arm64}` server binaries (matrix build), publishes the GitHub release directly (`draft: false`). Uses `go-version-file: go.mod`.
 - **CI workflow** (`.github/workflows/ci.yml`): triggered on push/PR to master and `release/**` branches. Runs `go vet`, `golangci-lint v2.11.4`, `go test -race`, `pnpm vitest run`, full server build.
 - **Linting**: `.golangci.yml` v2 format, 21 linters, G104 excluded (cleanup errors), test files relaxed for dupl/gosec/unparam.

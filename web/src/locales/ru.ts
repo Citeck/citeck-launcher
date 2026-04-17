@@ -67,15 +67,6 @@ const ru: Translations = {
   'wizard.pgadmin.label': 'PgAdmin',
   'wizard.pgadmin.hint': 'Включить PgAdmin для управления базой данных.',
   'wizard.pgadmin.enable': 'Включить PgAdmin',
-  'wizard.step.password': 'Пароль',
-  'wizard.password.title': 'Мастер-пароль',
-  'wizard.password.hint': 'Все секреты шифруются на диске. Задайте мастер-пароль для их защиты.',
-  'wizard.password.useDefault': 'Использовать пароль по умолчанию (небезопасно)',
-  'wizard.password.warning': 'Пароль по умолчанию обеспечивает минимальную защиту. Любой с доступом к файловой системе сможет расшифровать секреты. Используйте свой пароль для production.',
-  'wizard.password.password': 'Мастер-пароль',
-  'wizard.password.confirm': 'Подтвердите пароль',
-  'wizard.password.mismatch': 'Пароли не совпадают',
-  'wizard.password.default': 'По умолчанию',
   'wizard.review.label': 'Проверка конфигурации',
   'wizard.back': 'Назад',
   'wizard.cancel': 'Отмена',
@@ -316,8 +307,18 @@ const ru: Translations = {
   'common.close': 'Закрыть',
   'common.confirm': 'Подтвердить',
   'common.working': 'Выполнение...',
+  'common.submit': 'Отправить',
+  'common.select': 'Выбрать',
   'common.settings': 'Настройки',
   'common.error': 'Ошибка: {error}',
+
+  // -- Journal dialog --
+  'journal.filter': 'Фильтр...',
+  'journal.noMatchingRows': 'Нет подходящих строк',
+  'journal.noData': 'Нет данных',
+  'journal.rowCount': 'Строк: {count}',
+  'journal.rowCountOne': '1 строка',
+  'journal.selected': 'выбрано: {count}',
 
   // -- Error Boundary --
   'error.title': 'Что-то пошло не так',
@@ -340,9 +341,6 @@ const ru: Translations = {
 
   'migration.setupPassword.title': 'Защитите ваши секреты',
   'migration.setupPassword.description': 'Зашифровать импортированные секреты мастер-паролем? Он потребуется при каждом запуске лончера.',
-  'migration.setupPassword.samePassword': 'Использовать тот же пароль',
-  'migration.setupPassword.differentPassword': 'Задать другой пароль',
-  'migration.setupPassword.skip': 'Пропустить',
   'migration.setupPassword.success': 'Секреты зашифрованы',
 
   'migration.unlock.title': 'Разблокировка секретов',
@@ -360,10 +358,9 @@ const ru: Translations = {
   'upgrade.title': 'Обновить бандл',
   'upgrade.select': 'Выберите версию',
   'upgrade.success': 'Обновление выполнено',
-  'upgrade.noVersions': 'Нет доступных версий бандла',
   'upgrade.alreadyLatest': 'Уже установлена последняя версия',
-
-  'common.back': 'Назад',
+  'form.fieldRequired': '{label} обязательно',
+  'store.connectionRestored': 'Соединение восстановлено, состояние обновлено',
 }
 
 export default ru

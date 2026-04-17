@@ -67,12 +67,12 @@ func TestPullFailedBackoff(t *testing.T) {
 	r.mu.Unlock()
 	r.signalCh.Flush()
 
-	// Wait one ticker period plus slack — T24 must NOT fire because the
-	// backoff window is 1 minute from now.
-	time.Sleep(1500 * time.Millisecond)
-	if status := r.FindApp(def.Name).Status; status != AppStatusPullFailed {
-		t.Fatalf("expected PULL_FAILED while backoff in flight, got %s", status)
-	}
+	// T24 must NOT fire because the backoff window is 1 minute from now.
+	// Never() polls for 1500ms and fails only if the status ever changes.
+	assert.Never(t, func() bool {
+		return r.FindApp(def.Name).Status != AppStatusPullFailed
+	}, 1500*time.Millisecond, 50*time.Millisecond,
+		"T24 fired prematurely: status left PULL_FAILED during backoff window")
 
 	// Move lastAttempt 20 minutes into the past — backoff (1 min) is now
 	// well exceeded. Next stepAllApps iteration must fire T24.
@@ -120,10 +120,10 @@ func TestStartFailedBackoff(t *testing.T) {
 	r.signalCh.Flush()
 
 	// Within the backoff window — T25 must not fire.
-	time.Sleep(1500 * time.Millisecond)
-	if status := r.FindApp(def.Name).Status; status != AppStatusStartFailed {
-		t.Fatalf("expected START_FAILED while backoff in flight, got %s", status)
-	}
+	assert.Never(t, func() bool {
+		return r.FindApp(def.Name).Status != AppStatusStartFailed
+	}, 1500*time.Millisecond, 50*time.Millisecond,
+		"T25 fired prematurely: status left START_FAILED during backoff window")
 
 	// Move lastAttempt past the window — T25 fires.
 	r.mu.Lock()

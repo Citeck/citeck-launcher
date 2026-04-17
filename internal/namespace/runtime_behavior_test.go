@@ -223,10 +223,6 @@ func (m *mockDocker) ContainerStats(ctx context.Context, containerID string) (*d
 	return &docker.ContainerStat{CPUPercent: 1.0, MemUsage: 100 * 1024 * 1024, MemLimit: 512 * 1024 * 1024}, nil
 }
 
-func (m *mockDocker) WaitForContainer(ctx context.Context, containerID string, timeout time.Duration) error {
-	return nil
-}
-
 func (m *mockDocker) WaitForContainerExit(ctx context.Context, containerID string, timeout time.Duration) error {
 	m.mu.Lock()
 	block := m.initContainerWaitBlock

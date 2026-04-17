@@ -67,15 +67,6 @@ const en: Translations = {
   'wizard.pgadmin.label': 'PgAdmin',
   'wizard.pgadmin.hint': 'Enable PgAdmin for database management.',
   'wizard.pgadmin.enable': 'Enable PgAdmin',
-  'wizard.step.password': 'Password',
-  'wizard.password.title': 'Master Password',
-  'wizard.password.hint': 'All secrets are encrypted on disk. Set a master password to protect them.',
-  'wizard.password.useDefault': 'Use default password (insecure)',
-  'wizard.password.warning': 'The default password provides minimal protection. Anyone with filesystem access can decrypt secrets. Use a custom password for production deployments.',
-  'wizard.password.password': 'Master password',
-  'wizard.password.confirm': 'Confirm password',
-  'wizard.password.mismatch': 'Passwords do not match',
-  'wizard.password.default': 'Default',
   'wizard.review.label': 'Review Configuration',
   'wizard.back': 'Back',
   'wizard.cancel': 'Cancel',
@@ -316,8 +307,18 @@ const en: Translations = {
   'common.close': 'Close',
   'common.confirm': 'Confirm',
   'common.working': 'Working...',
+  'common.submit': 'Submit',
+  'common.select': 'Select',
   'common.settings': 'Settings',
   'common.error': 'Error: {error}',
+
+  // -- Journal dialog --
+  'journal.filter': 'Filter...',
+  'journal.noMatchingRows': 'No matching rows',
+  'journal.noData': 'No data',
+  'journal.rowCount': '{count} rows',
+  'journal.rowCountOne': '1 row',
+  'journal.selected': '{count} selected',
 
   // -- Error Boundary --
   'error.title': 'Something went wrong',
@@ -341,9 +342,6 @@ const en: Translations = {
   // -- Migration: setup password --
   'migration.setupPassword.title': 'Protect Your Secrets',
   'migration.setupPassword.description': 'Would you like to encrypt your imported secrets with a master password? You will need it each time you start the launcher.',
-  'migration.setupPassword.samePassword': 'Use same password',
-  'migration.setupPassword.differentPassword': 'Set different password',
-  'migration.setupPassword.skip': 'Skip for now',
   'migration.setupPassword.success': 'Secrets encrypted successfully',
 
   // -- Migration: unlock --
@@ -363,10 +361,9 @@ const en: Translations = {
   'upgrade.title': 'Upgrade Bundle',
   'upgrade.select': 'Select version',
   'upgrade.success': 'Upgrade successful',
-  'upgrade.noVersions': 'No bundle versions available',
   'upgrade.alreadyLatest': 'Already on latest version',
-
-  'common.back': 'Back',
+  'form.fieldRequired': '{label} is required',
+  'store.connectionRestored': 'Connection restored, state refreshed',
 }
 
 export default en

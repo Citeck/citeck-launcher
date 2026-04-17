@@ -35,7 +35,8 @@ import (
 //     60s is roomy for normal Java shutdown but surfaces a wedged container
 //     within a minute.
 //
-// Both are test-injectable via WithGroupTimeout / WithLongStopTimeout.
+// Tests that need tighter budgets assign to r.groupTimeout / r.longStopTimeout
+// directly on a testMode runtime.
 const (
 	defaultGroupTimeout    = 10 * time.Second
 	defaultLongStopTimeout = 60 * time.Second
@@ -104,7 +105,9 @@ func (r *Runtime) runtimeLoop() {
 // doStart (lock phase). stepAllApps never upgrades READY_TO_PULL → RUNNING via
 // adoption; subsequent READY_TO_PULL entries always flow through T2 or T3.
 // T4 ("adopt after pull") is not implemented: all successful pulls route
-// through T5. TODO: revisit once cmdRegenerate captures a reusable snapshot.
+// through T5. doRegenerate reuses containers whose hash matches via
+// buildExistingContainerMap before they enter the state machine, so the
+// state-machine-level adoption path is unnecessary in practice.
 //
 // This MUST run after every select case in runtimeLoop — a transition
 // committed in this iteration is visible to dependents in the same iteration.
@@ -312,12 +315,19 @@ func (r *Runtime) evaluateContinuations() {
 	}
 	// Snapshot length at entry so continuations appended during this pass
 	// defer to the next iteration (bounded recursion; one group per tick).
+	//
+	// survivors aliases r.pendingContinuations' backing array — we filter in
+	// place. The loop index i advances strictly from 0..n-1, so the rewrite
+	// is safe: writes at survivors[0..k] can never overtake reads at [i>=k].
+	// Any applyCommand below can append past n via handleStopNextGroup; those
+	// entries are carried forward by the len(..) > n branch below.
 	n := len(r.pendingContinuations)
 	survivors := r.pendingContinuations[:0]
 	for i := range n {
 		p := r.pendingContinuations[i]
-		// Predicate reads r.apps under runtimeLoop (the sole writer). Acquire
-		// RLock to fence concurrent external readers (HTTP, SSE).
+		// Predicate reads r.apps. Safe because runtimeLoop is the sole writer of
+		// r.apps at this point (no dispatched worker holds r.mu.Lock here); the
+		// RLock fences concurrent external readers (HTTP, SSE).
 		r.mu.RLock()
 		fired := p.predicate(r)
 		r.mu.RUnlock()
@@ -393,6 +403,9 @@ func (r *Runtime) flushEvents() {
 	}
 	events := r.eventBuffer
 	r.eventBuffer = nil
+	// Lock released intentionally before the channel sends below — the
+	// sends MUST NOT hold r.mu or a slow subscriber would pin the state
+	// machine's exclusion lock.
 	r.mu.Unlock()
 	for _, evt := range events {
 		r.eventCh <- evt
