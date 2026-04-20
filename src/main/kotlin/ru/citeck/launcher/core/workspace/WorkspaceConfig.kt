@@ -15,6 +15,7 @@ data class WorkspaceConfig(
     val keycloak: KeycloakProps = KeycloakProps.DEFAULT,
     val alfresco: AlfrescoProps = AlfrescoProps.DEFAULT,
     val onlyoffice: OnlyOfficeProps = OnlyOfficeProps.DEFAULT,
+    val sttSidecar: SttSidecarProps = SttSidecarProps.DEFAULT,
     val pgadmin: PgAdminProps = PgAdminProps.DEFAULT,
     val zookeeper: ZookeeperProps = ZookeeperProps.DEFAULT,
     val citeckProxy: CiteckProxy = CiteckProxy(),
@@ -85,6 +86,16 @@ data class WorkspaceConfig(
     ) {
         companion object {
             val DEFAULT = OnlyOfficeProps()
+        }
+    }
+
+    class SttSidecarProps(
+        val image: String = "",
+        val memoryLimit: String = "2g",
+        val port: Int = 8090
+    ) {
+        companion object {
+            val DEFAULT = SttSidecarProps()
         }
     }
 

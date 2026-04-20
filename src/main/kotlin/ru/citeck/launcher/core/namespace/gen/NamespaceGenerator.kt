@@ -84,6 +84,7 @@ class NamespaceGenerator {
             }
             generateWebapp(app.key, context)
         }
+        generateSttSidecar(context)
         generateProxyApp(context)
         generateOnlyOffice(context)
 
@@ -255,6 +256,41 @@ class NamespaceGenerator {
             )
     }
 
+    private fun generateSttSidecar(context: NsGenContext) {
+        if (context.detachedApps.contains(AppName.STT_SIDECAR)) {
+            return
+        }
+        val aiApp = context.applications[AppName.AI]
+        if (aiApp == null || context.detachedApps.contains(AppName.AI)) {
+            return
+        }
+
+        val props = context.workspaceConfig.sttSidecar
+        val port = props.port
+        val image = props.image.ifBlank {
+            context.bundle.applications[AppName.STT_SIDECAR]?.image ?: return
+        }
+
+        context.getOrCreateApp(AppName.STT_SIDECAR)
+            .withImage(image)
+            .addEnv("PORT", port.toString())
+            .addPort("$port:$port")
+            .withKind(ApplicationKind.CITECK_ADDITIONAL)
+            .withStartupCondition(
+                StartupCondition(
+                    probe = AppProbeDef(http = HttpProbeDef("/health", port))
+                )
+            )
+            .withResources(
+                AppResourcesDef(
+                    AppResourcesDef.LimitsDef(props.memoryLimit)
+                )
+            )
+
+        aiApp.addEnv("CITECK_AI_CALLRECORDING_STT_SIDECARURL", "http://${AppName.STT_SIDECAR}:$port")
+            .addDependsOn(AppName.STT_SIDECAR)
+    }
+
     private fun generateProxyApp(context: NsGenContext) {
 
         val gatewayPort = context.applications[AppName.GATEWAY]!!.getEnv("SERVER_PORT")!!.toInt()
@@ -291,6 +327,13 @@ class NamespaceGenerator {
                 app.addInitAction(ExecShell("nginx -s reload"))
             }
         }
+        val aiApp = context.applications[AppName.AI]
+        if (aiApp != null && !context.detachedApps.contains(AppName.AI)) {
+            val aiPort = aiApp.getEnv("SERVER_PORT") ?: "8613"
+            app.addEnv("AI_TARGET", "${AppName.AI}:$aiPort")
+                .addDependsOn(AppName.AI)
+        }
+
         app.addEnv("RABBITMQ_TARGET", "${NsGenContext.RMQ_HOST}:15672")
         app.addEnv("ENABLE_LOGGING", "warn")
         app.addEnv("ENABLE_SERVER_STATUS", "true")
