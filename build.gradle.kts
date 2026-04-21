@@ -21,7 +21,7 @@ val distPackageName = "citeck-launcher"
 repositories {
     mavenCentral()
     mavenLocal()
-    maven("https://maven.pkg.jetbrains.space/public/p/compose/dev")
+    maven("https://redirector.kotlinlang.org/maven/compose-dev")
     google()
 }
 val targetOs = findProperty("targetOs") as String? ?: "current"
