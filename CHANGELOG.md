@@ -1,3 +1,18 @@
+# Release 1.4.1
+
+## Fixes
+
+* Mount persistent named volume `stt_models` for STT sidecar at `/root/.cache/gigaam` so the GigaAM model is downloaded once and survives container recreation
+* Trigger namespace regeneration when `ai` or `stt-sidecar` is attached/detached at runtime, so toggling them in the UI takes effect without recreating the namespace
+
+# Release 1.4.0
+
+## New features
+
+* Added AI WebSocket proxy support (proxies WebSocket traffic bypassing the gateway)
+* Added STT sidecar generator with configurable port and memory limit
+* Auto-injection of STT sidecar URL into AI application
+
 # Release 1.3.9
 
 ## Fixes

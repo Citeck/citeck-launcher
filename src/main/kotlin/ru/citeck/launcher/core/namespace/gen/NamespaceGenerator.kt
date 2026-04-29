@@ -107,7 +107,7 @@ class NamespaceGenerator {
             context.files,
             context.cloudConfig,
             context.links,
-            setOf(AppName.ONLYOFFICE)
+            setOf(AppName.ONLYOFFICE, AppName.AI, AppName.STT_SIDECAR)
         )
     }
 
@@ -275,6 +275,7 @@ class NamespaceGenerator {
             .withImage(image)
             .addEnv("PORT", port.toString())
             .addPort("$port:$port")
+            .addVolume("stt_models:/root/.cache/gigaam")
             .withKind(ApplicationKind.CITECK_ADDITIONAL)
             .withStartupCondition(
                 StartupCondition(
