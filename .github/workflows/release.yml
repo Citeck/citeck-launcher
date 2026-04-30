@@ -125,7 +125,7 @@ jobs:
           files: dist/**/*
           draft: false
           prerelease: false
-          make_latest: 'true'
+          make_latest: 'false'
 
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
