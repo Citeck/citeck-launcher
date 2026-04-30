@@ -5,14 +5,12 @@ import ru.citeck.launcher.core.bundle.BundleDef
 import ru.citeck.launcher.core.bundle.BundleKey
 import ru.citeck.launcher.core.namespace.AppName
 import ru.citeck.launcher.core.namespace.NamespaceConfig
+import ru.citeck.launcher.core.namespace.gen.NamespaceGeneratorTestFixture.GATEWAY_PORT
+import ru.citeck.launcher.core.namespace.gen.NamespaceGeneratorTestFixture.shellCommands
 import ru.citeck.launcher.core.workspace.WorkspaceConfig
 import kotlin.test.Test
 
 class NamespaceGeneratorProxyTest {
-
-    companion object {
-        private const val GATEWAY_PORT = "8090"
-    }
 
     private fun createContext(
         authType: NamespaceConfig.AuthenticationType = NamespaceConfig.AuthenticationType.BASIC,
@@ -57,18 +55,12 @@ class NamespaceGeneratorProxyTest {
         return context
     }
 
-    private fun callGenerateProxyApp(context: NsGenContext) {
-        val method = NamespaceGenerator::class.java.getDeclaredMethod("generateProxyApp", NsGenContext::class.java)
-        method.isAccessible = true
-        method.invoke(NamespaceGenerator(), context)
-    }
-
     // --- BASIC auth ---
 
     @Test
     fun `basic auth - users formatted as user colon user pairs`() {
         val context = createContext()
-        callGenerateProxyApp(context)
+        NamespaceGenerator().generateProxyApp(context)
 
         val proxy = context.applications[AppName.PROXY]!!.build(false)
         val authAccess = proxy.environments["BASIC_AUTH_ACCESS"]!!
@@ -79,7 +71,7 @@ class NamespaceGeneratorProxyTest {
     @Test
     fun `basic auth - single user formatted correctly`() {
         val context = createContext(users = setOf("superadmin"))
-        callGenerateProxyApp(context)
+        NamespaceGenerator().generateProxyApp(context)
 
         val proxy = context.applications[AppName.PROXY]!!.build(false)
         assertThat(proxy.environments["BASIC_AUTH_ACCESS"]).isEqualTo("superadmin:superadmin")
@@ -88,7 +80,7 @@ class NamespaceGeneratorProxyTest {
     @Test
     fun `basic auth - no oidc env vars present`() {
         val context = createContext()
-        callGenerateProxyApp(context)
+        NamespaceGenerator().generateProxyApp(context)
 
         val proxy = context.applications[AppName.PROXY]!!.build(false)
         assertThat(proxy.environments).doesNotContainKey("ENABLE_OIDC_FULL_ACCESS")
@@ -102,7 +94,7 @@ class NamespaceGeneratorProxyTest {
     @Test
     fun `keycloak auth - oidc env vars set`() {
         val context = createContext(authType = NamespaceConfig.AuthenticationType.KEYCLOAK)
-        callGenerateProxyApp(context)
+        NamespaceGenerator().generateProxyApp(context)
 
         val proxy = context.applications[AppName.PROXY]!!.build(false)
         assertThat(proxy.environments["ENABLE_OIDC_FULL_ACCESS"]).isEqualTo("true")
@@ -116,7 +108,7 @@ class NamespaceGeneratorProxyTest {
     @Test
     fun `keycloak auth - no basic auth env`() {
         val context = createContext(authType = NamespaceConfig.AuthenticationType.KEYCLOAK)
-        callGenerateProxyApp(context)
+        NamespaceGenerator().generateProxyApp(context)
 
         val proxy = context.applications[AppName.PROXY]!!.build(false)
         assertThat(proxy.environments).doesNotContainKey("BASIC_AUTH_ACCESS")
@@ -125,7 +117,7 @@ class NamespaceGeneratorProxyTest {
     @Test
     fun `keycloak auth - lua oidc volume mounted`() {
         val context = createContext(authType = NamespaceConfig.AuthenticationType.KEYCLOAK)
-        callGenerateProxyApp(context)
+        NamespaceGenerator().generateProxyApp(context)
 
         val proxy = context.applications[AppName.PROXY]!!.build(false)
         assertThat(proxy.volumes).anyMatch { it.contains("lua_oidc_full_access.lua") }
@@ -134,10 +126,18 @@ class NamespaceGeneratorProxyTest {
     @Test
     fun `keycloak auth - init actions for sed and nginx reload`() {
         val context = createContext(authType = NamespaceConfig.AuthenticationType.KEYCLOAK)
-        callGenerateProxyApp(context)
+        NamespaceGenerator().generateProxyApp(context)
 
         val proxy = context.applications[AppName.PROXY]!!.build(false)
-        assertThat(proxy.initActions).hasSize(2)
+        val commands = shellCommands(proxy.initActions)
+        assertThat(commands).hasSize(2)
+        assertThat(commands).anyMatch {
+            it.startsWith("sed -i") &&
+                it.contains("/ecos-idp/auth/") &&
+                it.contains("rewrite") &&
+                it.contains("http://keycloak:8080/auth/")
+        }
+        assertThat(commands).anyMatch { it == "nginx -s reload" }
     }
 
     // --- Alfresco conditional ---
@@ -145,7 +145,7 @@ class NamespaceGeneratorProxyTest {
     @Test
     fun `alfresco active - proxy target is alfresco`() {
         val context = createContext(addAlfresco = true)
-        callGenerateProxyApp(context)
+        NamespaceGenerator().generateProxyApp(context)
 
         val proxy = context.applications[AppName.PROXY]!!.build(false)
         assertThat(proxy.environments["PROXY_TARGET"]).isEqualTo("${AppName.ALFRESCO}:8080")
@@ -156,7 +156,7 @@ class NamespaceGeneratorProxyTest {
     @Test
     fun `alfresco not present - proxy target is gateway`() {
         val context = createContext()
-        callGenerateProxyApp(context)
+        NamespaceGenerator().generateProxyApp(context)
 
         val proxy = context.applications[AppName.PROXY]!!.build(false)
         assertThat(proxy.environments["PROXY_TARGET"]).isEqualTo("${AppName.GATEWAY}:$GATEWAY_PORT")
@@ -167,7 +167,7 @@ class NamespaceGeneratorProxyTest {
     @Test
     fun `alfresco detached - proxy target is gateway`() {
         val context = createContext(addAlfresco = true, detachedApps = setOf(AppName.ALFRESCO))
-        callGenerateProxyApp(context)
+        NamespaceGenerator().generateProxyApp(context)
 
         val proxy = context.applications[AppName.PROXY]!!.build(false)
         assertThat(proxy.environments["PROXY_TARGET"]).isEqualTo("${AppName.GATEWAY}:$GATEWAY_PORT")
@@ -179,7 +179,7 @@ class NamespaceGeneratorProxyTest {
     @Test
     fun `onlyoffice active - proxy depends on onlyoffice`() {
         val context = createContext()
-        callGenerateProxyApp(context)
+        NamespaceGenerator().generateProxyApp(context)
 
         val proxy = context.applications[AppName.PROXY]!!.build(false)
         assertThat(proxy.environments["ONLYOFFICE_TARGET"]).isEqualTo(AppName.ONLYOFFICE)
@@ -189,7 +189,7 @@ class NamespaceGeneratorProxyTest {
     @Test
     fun `onlyoffice detached - proxy does not depend on onlyoffice`() {
         val context = createContext(detachedApps = setOf(AppName.ONLYOFFICE))
-        callGenerateProxyApp(context)
+        NamespaceGenerator().generateProxyApp(context)
 
         val proxy = context.applications[AppName.PROXY]!!.build(false)
         assertThat(proxy.environments).doesNotContainKey("ONLYOFFICE_TARGET")
@@ -201,7 +201,7 @@ class NamespaceGeneratorProxyTest {
     @Test
     fun `proxy always has gateway dependency and core env vars`() {
         val context = createContext()
-        callGenerateProxyApp(context)
+        NamespaceGenerator().generateProxyApp(context)
 
         val proxy = context.applications[AppName.PROXY]!!.build(false)
         assertThat(proxy.dependsOn).contains(AppName.GATEWAY)
@@ -215,7 +215,7 @@ class NamespaceGeneratorProxyTest {
     @Test
     fun `proxy has health check and resource limits`() {
         val context = createContext()
-        callGenerateProxyApp(context)
+        NamespaceGenerator().generateProxyApp(context)
 
         val proxy = context.applications[AppName.PROXY]!!.build(false)
         assertThat(proxy.startupConditions).isNotEmpty

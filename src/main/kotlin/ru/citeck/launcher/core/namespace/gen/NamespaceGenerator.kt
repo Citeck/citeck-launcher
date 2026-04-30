@@ -111,7 +111,7 @@ class NamespaceGenerator {
         )
     }
 
-    private fun generateKeycloak(context: NsGenContext) {
+    internal fun generateKeycloak(context: NsGenContext) {
 
         val dbName = "citeck_keycloak"
 
@@ -256,20 +256,17 @@ class NamespaceGenerator {
             )
     }
 
-    private fun generateSttSidecar(context: NsGenContext) {
-        if (context.detachedApps.contains(AppName.STT_SIDECAR)) {
-            return
-        }
-        val aiApp = context.applications[AppName.AI]
-        if (aiApp == null || context.detachedApps.contains(AppName.AI)) {
+    internal fun generateSttSidecar(context: NsGenContext) {
+        val aiApp = context.applications[AppName.AI] ?: return
+        if (context.detachedApps.contains(AppName.AI)) {
             return
         }
 
         val props = context.workspaceConfig.sttSidecar
         val port = props.port
-        val image = props.image.ifBlank {
-            context.bundle.applications[AppName.STT_SIDECAR]?.image ?: return
-        }
+        val image = props.image.takeIf { it.isNotBlank() }
+            ?: context.bundle.applications[AppName.STT_SIDECAR]?.image?.takeIf { it.isNotBlank() }
+            ?: return
 
         context.getOrCreateApp(AppName.STT_SIDECAR)
             .withImage(image)
@@ -288,11 +285,13 @@ class NamespaceGenerator {
                 )
             )
 
-        aiApp.addEnv("CITECK_AI_CALLRECORDING_STT_SIDECARURL", "http://${AppName.STT_SIDECAR}:$port")
-            .addDependsOn(AppName.STT_SIDECAR)
+        if (!context.detachedApps.contains(AppName.STT_SIDECAR)) {
+            aiApp.addEnv("CITECK_AI_CALLRECORDING_STT_SIDECARURL", "http://${AppName.STT_SIDECAR}:$port")
+                .addDependsOn(AppName.STT_SIDECAR)
+        }
     }
 
-    private fun generateProxyApp(context: NsGenContext) {
+    internal fun generateProxyApp(context: NsGenContext) {
 
         val gatewayPort = context.applications[AppName.GATEWAY]!!.getEnv("SERVER_PORT")!!.toInt()
 
@@ -330,9 +329,15 @@ class NamespaceGenerator {
         }
         val aiApp = context.applications[AppName.AI]
         if (aiApp != null && !context.detachedApps.contains(AppName.AI)) {
-            val aiPort = aiApp.getEnv("SERVER_PORT") ?: "8613"
-            app.addEnv("AI_TARGET", "${AppName.AI}:$aiPort")
-                .addDependsOn(AppName.AI)
+            val aiPort = aiApp.getEnv("SERVER_PORT")?.toIntOrNull() ?: 0
+            if (aiPort > 0) {
+                app.addEnv("AI_TARGET", "${AppName.AI}:$aiPort")
+                    .addDependsOn(AppName.AI)
+            } else {
+                log.error {
+                    "Port of '${AppName.AI}' is undefined. AI location won't be registered in proxy"
+                }
+            }
         }
 
         app.addEnv("RABBITMQ_TARGET", "${NsGenContext.RMQ_HOST}:15672")

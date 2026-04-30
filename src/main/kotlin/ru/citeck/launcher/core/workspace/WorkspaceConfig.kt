@@ -92,7 +92,7 @@ data class WorkspaceConfig(
     class SttSidecarProps(
         val image: String = "",
         val memoryLimit: String = "2g",
-        val port: Int = 8090
+        val port: Int = 14080
     ) {
         companion object {
             val DEFAULT = SttSidecarProps()

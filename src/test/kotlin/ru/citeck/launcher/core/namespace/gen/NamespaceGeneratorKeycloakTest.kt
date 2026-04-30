@@ -5,6 +5,7 @@ import ru.citeck.launcher.core.bundle.BundleDef
 import ru.citeck.launcher.core.bundle.BundleKey
 import ru.citeck.launcher.core.namespace.AppName
 import ru.citeck.launcher.core.namespace.NamespaceConfig
+import ru.citeck.launcher.core.namespace.gen.NamespaceGeneratorTestFixture.shellCommands
 import ru.citeck.launcher.core.workspace.WorkspaceConfig
 import kotlin.test.Test
 
@@ -38,27 +39,27 @@ class NamespaceGeneratorKeycloakTest {
         return context
     }
 
-    private fun callGenerateKeycloak(context: NsGenContext) {
-        val method = NamespaceGenerator::class.java.getDeclaredMethod("generateKeycloak", NsGenContext::class.java)
-        method.isAccessible = true
-        method.invoke(NamespaceGenerator(), context)
-    }
-
     // --- BASIC auth (Keycloak disabled) ---
 
     @Test
-    fun `basic auth - postgres gets keycloak db init script`() {
-        val context = createContext(authType = NamespaceConfig.AuthenticationType.BASIC)
-        callGenerateKeycloak(context)
+    fun `postgres gets keycloak db init script regardless of auth type`() {
+        val basicCtx = createContext(authType = NamespaceConfig.AuthenticationType.BASIC)
+        NamespaceGenerator().generateKeycloak(basicCtx)
+        val basicPg = basicCtx.applications[AppName.POSTGRES]!!.build(false)
+        assertThat(shellCommands(basicPg.initActions))
+            .containsExactly("/init_db_and_user.sh citeck_keycloak")
 
-        val pg = context.applications[AppName.POSTGRES]!!.build(false)
-        assertThat(pg.initActions).hasSize(1)
+        val kcCtx = createContext(authType = NamespaceConfig.AuthenticationType.KEYCLOAK)
+        NamespaceGenerator().generateKeycloak(kcCtx)
+        val kcPg = kcCtx.applications[AppName.POSTGRES]!!.build(false)
+        assertThat(shellCommands(kcPg.initActions))
+            .containsExactly("/init_db_and_user.sh citeck_keycloak")
     }
 
     @Test
     fun `basic auth - keycloak app not created`() {
         val context = createContext(authType = NamespaceConfig.AuthenticationType.BASIC)
-        callGenerateKeycloak(context)
+        NamespaceGenerator().generateKeycloak(context)
 
         assertThat(context.applications).doesNotContainKey(AppName.KEYCLOAK)
     }
@@ -66,7 +67,7 @@ class NamespaceGeneratorKeycloakTest {
     @Test
     fun `basic auth - no keycloak link added`() {
         val context = createContext(authType = NamespaceConfig.AuthenticationType.BASIC)
-        callGenerateKeycloak(context)
+        NamespaceGenerator().generateKeycloak(context)
 
         assertThat(context.links).noneMatch { it.name == "Keycloak Admin" }
     }
@@ -76,7 +77,7 @@ class NamespaceGeneratorKeycloakTest {
     @Test
     fun `keycloak auth - app created with admin credentials`() {
         val context = createContext(authType = NamespaceConfig.AuthenticationType.KEYCLOAK)
-        callGenerateKeycloak(context)
+        NamespaceGenerator().generateKeycloak(context)
 
         assertThat(context.applications).containsKey(AppName.KEYCLOAK)
         val kk = context.applications[AppName.KEYCLOAK]!!.build(false)
@@ -87,7 +88,7 @@ class NamespaceGeneratorKeycloakTest {
     @Test
     fun `keycloak auth - depends on postgres`() {
         val context = createContext(authType = NamespaceConfig.AuthenticationType.KEYCLOAK)
-        callGenerateKeycloak(context)
+        NamespaceGenerator().generateKeycloak(context)
 
         val kk = context.applications[AppName.KEYCLOAK]!!.build(false)
         assertThat(kk.dependsOn).contains(AppName.POSTGRES)
@@ -96,7 +97,7 @@ class NamespaceGeneratorKeycloakTest {
     @Test
     fun `keycloak auth - has startup condition and memory limit`() {
         val context = createContext(authType = NamespaceConfig.AuthenticationType.KEYCLOAK)
-        callGenerateKeycloak(context)
+        NamespaceGenerator().generateKeycloak(context)
 
         val kk = context.applications[AppName.KEYCLOAK]!!.build(false)
         assertThat(kk.startupConditions).isNotEmpty
@@ -106,7 +107,7 @@ class NamespaceGeneratorKeycloakTest {
     @Test
     fun `keycloak auth - realm import volume mounted`() {
         val context = createContext(authType = NamespaceConfig.AuthenticationType.KEYCLOAK)
-        callGenerateKeycloak(context)
+        NamespaceGenerator().generateKeycloak(context)
 
         val kk = context.applications[AppName.KEYCLOAK]!!.build(false)
         assertThat(kk.volumes).anyMatch { it.contains("ecos-app-realm.json") }
@@ -116,7 +117,7 @@ class NamespaceGeneratorKeycloakTest {
     @Test
     fun `keycloak auth - cmd contains db connection and import realm`() {
         val context = createContext(authType = NamespaceConfig.AuthenticationType.KEYCLOAK)
-        callGenerateKeycloak(context)
+        NamespaceGenerator().generateKeycloak(context)
 
         val kk = context.applications[AppName.KEYCLOAK]!!.build(false)
         assertThat(kk.cmd).isNotNull
@@ -126,18 +127,9 @@ class NamespaceGeneratorKeycloakTest {
     }
 
     @Test
-    fun `keycloak auth - postgres also gets init script`() {
-        val context = createContext(authType = NamespaceConfig.AuthenticationType.KEYCLOAK)
-        callGenerateKeycloak(context)
-
-        val pg = context.applications[AppName.POSTGRES]!!.build(false)
-        assertThat(pg.initActions).hasSize(1)
-    }
-
-    @Test
     fun `keycloak auth - admin link added`() {
         val context = createContext(authType = NamespaceConfig.AuthenticationType.KEYCLOAK)
-        callGenerateKeycloak(context)
+        NamespaceGenerator().generateKeycloak(context)
 
         assertThat(context.links).anyMatch { it.name == "Keycloak Admin" }
         val link = context.links.first { it.name == "Keycloak Admin" }
