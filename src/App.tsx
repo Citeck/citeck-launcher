@@ -112,9 +112,11 @@ export default function App() {
 
     async function loadLatestRelease() {
       try {
-        const res = await fetch('https://api.github.com/repos/Citeck/citeck-launcher/releases/latest');
+        const res = await fetch('https://api.github.com/repos/Citeck/citeck-launcher/releases?per_page=100');
         if (!res.ok) return;
-        const data = await res.json();
+        const releases: any[] = await res.json();
+        const data = releases.find(r => /^v?1\./.test(r.tag_name || ''));
+        if (!data) return;
         setLatestReleaseInfo({
             name: data.name || '',
             createdAt: data.created_at || ''

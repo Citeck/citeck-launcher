@@ -46,7 +46,7 @@ export default function Downloads({ downloads }: DownloadsProps) {
             Download Citeck Launcher
           </h2>
           <div className="flex w-full justify-center my-8">
-            <img alt="GitHub Release" src="https://img.shields.io/github/v/release/citeck/citeck-launcher" />
+            <img alt="GitHub Release" src="https://img.shields.io/github/v/release/citeck/citeck-launcher?filter=v1.*" />
           </div>
 
           <div className="flex flex-col items-center justify-center gap-4 sm:flex-row sm:gap-6">
