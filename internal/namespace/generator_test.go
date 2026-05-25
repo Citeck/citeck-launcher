@@ -867,3 +867,59 @@ func TestApplyEmailConfig_StartupNotificationEnabled(t *testing.T) {
 	assert.Equal(t, "true", app.Environments["ECOS_NOTIFICATIONS_STARTUP_NOTIFICATION_ENABLED"])
 	assert.Equal(t, "qa@example.com", app.Environments["ECOS_NOTIFICATIONS_STARTUP_NOTIFICATION_RECIPIENT"])
 }
+
+// TestGenerateWebapp_SetsWebUrl pins that every generated Citeck webapp
+// receives ECOS_WEBAPP_PROPERTIES_WEB_URL matching the configured proxy
+// base URL. Without this, Spring services fall back to http://localhost
+// when building absolute links (email notifications, etc.).
+func TestGenerateWebapp_SetsWebUrl(t *testing.T) {
+	bun := &bundle.Def{
+		Applications: map[string]bundle.AppDef{
+			"emodel":        {Image: "nexus.citeck.ru/emodel:1.0"},
+			"notifications": {Image: "nexus.citeck.ru/notifications:1.0"},
+		},
+	}
+	wsCfg := &bundle.WorkspaceConfig{
+		Webapps: []bundle.WebappConfig{
+			{ID: "emodel"},
+			{ID: "notifications"},
+		},
+	}
+
+	cases := []struct {
+		name    string
+		host    string
+		tls     bool
+		port    int
+		wantURL string
+	}{
+		{"localhost default", "", false, 80, "http://localhost"},
+		{"external host promotes to https", "foo.example.com", false, 80, "https://foo.example.com"},
+		{"localhost custom port", "localhost", false, 8080, "http://localhost:8080"},
+		{"external host with tls custom port", "foo.example.com", true, 8443, "https://foo.example.com:8443"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{
+				Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
+				Proxy:          ProxyProps{Host: tc.host, Port: tc.port, TLS: TlsConfig{Enabled: tc.tls}},
+			}
+			resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "j", OIDC: "o"})
+			require.NoError(t, err)
+
+			checked := map[string]bool{"emodel": false, "notifications": false}
+			for _, app := range resp.Applications {
+				if _, want := checked[app.Name]; !want {
+					continue
+				}
+				assert.Equal(t, tc.wantURL, app.Environments["ECOS_WEBAPP_PROPERTIES_WEB_URL"],
+					"webapp %q must have ECOS_WEBAPP_PROPERTIES_WEB_URL=%s", app.Name, tc.wantURL)
+				checked[app.Name] = true
+			}
+			for name, seen := range checked {
+				assert.True(t, seen, "expected generated webapp %q in output", name)
+			}
+		})
+	}
+}
