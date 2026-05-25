@@ -31,6 +31,13 @@ type KeycloakInitParams struct {
 	BaseURL       string
 	OIDCSecret    string
 	ProxyPublic   bool
+	// Keycloak DB connection params — needed only by the bootstrap-admin
+	// recovery fallback inside the init script. The running keycloak server
+	// already has these via its Cmd args, but `kc.sh bootstrap-admin user`
+	// is a separate JVM that needs them on its own command line.
+	DBUrl  string
+	DBUser string
+	DBPass string
 }
 
 // shquote returns a bash single-quoted literal that safely represents s,

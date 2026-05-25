@@ -12,12 +12,16 @@
 # inputs such as $(...), backticks, or embedded newlines.
 set -e
 KCADM=/opt/keycloak/bin/kcadm.sh
+KC=/opt/keycloak/bin/kc.sh
 SA_USER='citeck'
 SA_PASS=''
 LEGACY_SA_USER='citeck-launcher'
 ADMIN_PASS='admin'
 BASE_URL='http://localhost'
 OIDC_SECRET='fresh-oidc-secret'
+KC_DB_URL='jdbc:postgresql://postgres:5432/citeck_keycloak'
+KC_DB_USER='citeck_keycloak'
+KC_DB_PASS='citeck_keycloak'
 AUTHENTICATED=false
 
 # Try service account first (normal steady-state)
@@ -48,6 +52,40 @@ if [ "$AUTHENTICATED" = "false" ]; then
     AUTHENTICATED=true
     echo "Authenticated as admin (default password)"
   fi
+fi
+
+# Last-resort recovery: create a temporary master-realm admin via
+# `kc.sh bootstrap-admin user` (writes directly to the DB, requires no
+# existing credentials). Used when the master realm was modified out-of-band
+# (snapshot import with mismatched SA, manual DB edit, lost passwords).
+# Created user auto-expires after ~120 min; we also delete it explicitly at
+# the end of this block.
+if [ "$AUTHENTICATED" = "false" ] && [ -n "$KC_DB_URL" ]; then
+  RECOVERY_USER="_citeck_recover_$(date +%s%N)"
+  RECOVERY_PASS="$(head -c 24 /dev/urandom | base64 | tr -d '=+/' | head -c 32)"
+  echo "All standard auth paths failed — attempting bootstrap-admin recovery..."
+  # Capture exit code of kc.sh itself (not `tail`); the pipe-suffix would
+  # otherwise mask a kc.sh crash and let the misleading "succeeded" branch
+  # log even though no recovery user was created.
+  RECOVERY_PASS_ENV="$RECOVERY_PASS" $KC bootstrap-admin user \
+      --optimized \
+      --db-url="$KC_DB_URL" --db-username="$KC_DB_USER" --db-password="$KC_DB_PASS" \
+      --http-management-port=0 \
+      --username "$RECOVERY_USER" --password:env RECOVERY_PASS_ENV \
+      --no-prompt > /tmp/kc_bootstrap.log 2>&1
+  KC_BOOTSTRAP_RC=$?
+  tail -5 /tmp/kc_bootstrap.log
+  if [ "$KC_BOOTSTRAP_RC" -eq 0 ]; then
+    if $KCADM config credentials --server http://localhost:8080 \
+        --realm master --user "$RECOVERY_USER" --password "$RECOVERY_PASS" 2>/dev/null; then
+      AUTHENTICATED=true
+      echo "Authenticated as bootstrap recovery user $RECOVERY_USER"
+    fi
+  else
+    echo "bootstrap-admin command exited $KC_BOOTSTRAP_RC — recovery unavailable" >&2
+  fi
+  unset RECOVERY_PASS RECOVERY_PASS_ENV KC_BOOTSTRAP_RC
+  rm -f /tmp/kc_bootstrap.log
 fi
 
 if [ "$AUTHENTICATED" = "false" ]; then
@@ -91,6 +129,22 @@ else
       $KCADM delete "users/$LEGACY_UID" -r master 2>/dev/null || echo "WARN: legacy SA delete failed, continuing" >&2
     fi
   fi
+fi
+
+# If we entered via bootstrap-admin recovery, the temporary recovery user
+# is no longer needed once the script reaches this point (either SA was
+# restored above, or SA management was skipped — in both cases the
+# recovery user has done its job). Delete it explicitly rather than
+# waiting for the ~120 min TTL — leaves a clean master realm.
+# Lives OUTSIDE the SA_PASS guard so the cleanup runs even when SA_PASS
+# is empty and the SA management block was skipped entirely.
+if [ -n "${RECOVERY_USER:-}" ]; then
+  RECOVERY_UID=$($KCADM get users -r master -q username="$RECOVERY_USER" --fields id,username --format csv --noquotes 2>/dev/null | grep -F ",$RECOVERY_USER" | cut -d',' -f1 | head -1)
+  if [ -n "$RECOVERY_UID" ]; then
+    echo "Deleting bootstrap recovery user $RECOVERY_USER (id=$RECOVERY_UID)..."
+    $KCADM delete "users/$RECOVERY_UID" -r master 2>/dev/null || echo "WARN: recovery user delete failed, continuing" >&2
+  fi
+  unset RECOVERY_USER
 fi
 
 # Update ecos-proxy-app OIDC client (redirect URIs + secret).

@@ -307,7 +307,7 @@ func generateRabbitMQ(ctx *NsGenContext) {
 }
 
 func generateKeycloak(ctx *NsGenContext) error {
-	dbName := "citeck_keycloak"
+	dbName := KeycloakDBName
 
 	// Always create keycloak DB in postgres — avoids DB restart when keycloak is later enabled
 	if pgApp := ctx.Applications[appdef.AppPostgres]; pgApp != nil {
@@ -350,7 +350,7 @@ func generateKeycloak(ctx *NsGenContext) error {
 		"--health-enabled=true",
 		"--db=postgres",
 		"--hostname-backchannel-dynamic=true",
-		fmt.Sprintf("--db-url=jdbc:postgresql://%s:%d/%s", PGHost, PGPort, dbName),
+		"--db-url=" + KeycloakDBJDBCURL(),
 		"--db-username=" + dbName,
 		"--db-password=" + dbName,
 		"--proxy-headers=xforwarded",
@@ -387,6 +387,9 @@ func generateKeycloak(ctx *NsGenContext) error {
 			BaseURL:       ctx.ProxyBaseURL(),
 			OIDCSecret:    ctx.Secrets.OIDC,
 			ProxyPublic:   ctx.ProxyHost() != "localhost" || ctx.TLSEnabled(),
+			DBUrl:         KeycloakDBJDBCURL(),
+			DBUser:        dbName,
+			DBPass:        dbName,
 		})
 		if err != nil {
 			// Surface rendering failures: a missing init script breaks admin

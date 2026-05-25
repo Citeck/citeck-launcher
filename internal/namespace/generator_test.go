@@ -239,9 +239,7 @@ func TestProcessWebappDataSources_JDBC(t *testing.T) {
 			break
 		}
 	}
-	if pgApp == nil {
-		t.Fatal("expected postgres app in generated applications")
-	}
+	require.NotNil(t, pgApp, "expected postgres app in generated applications")
 	foundInitAction := false
 	for _, ia := range pgApp.InitActions {
 		if len(ia.Exec) > 0 && strings.Contains(strings.Join(ia.Exec, " "), "init_db_and_user.sh emodel") {
@@ -261,9 +259,7 @@ func TestProcessWebappDataSources_JDBC(t *testing.T) {
 			break
 		}
 	}
-	if emodelApp == nil {
-		t.Fatal("expected emodel app")
-	}
+	require.NotNil(t, emodelApp, "expected emodel app")
 	if !emodelApp.DependsOn["postgres"] {
 		t.Error("expected emodel to depend on postgres")
 	}
@@ -362,27 +358,21 @@ func TestAlfrescoContainerDefs(t *testing.T) {
 
 	// Alfresco app
 	alfApp := findApp("alfresco")
-	if alfApp == nil {
-		t.Fatal("expected alfresco app")
-	}
+	require.NotNil(t, alfApp, "expected alfresco app")
 	if alfApp.Kind != appdef.KindCiteckAdditional {
 		t.Errorf("expected alfresco kind=KindCiteckAdditional, got %d", alfApp.Kind)
 	}
 
 	// Alfresco postgres — should have PGDATA
 	alfPg := findApp("alf-postgres")
-	if alfPg == nil {
-		t.Fatal("expected alf-postgres app")
-	}
+	require.NotNil(t, alfPg, "expected alf-postgres app")
 	if alfPg.Environments["PGDATA"] != "/var/lib/postgresql/data" {
 		t.Errorf("expected PGDATA on alf-postgres, got %q", alfPg.Environments["PGDATA"])
 	}
 
 	// Alfresco solr
 	alfSolr := findApp("alf-solr")
-	if alfSolr == nil {
-		t.Fatal("expected alf-solr app")
-	}
+	require.NotNil(t, alfSolr, "expected alf-solr app")
 	if alfSolr.Kind != appdef.KindCiteckAdditional {
 		t.Errorf("expected alf-solr kind=KindCiteckAdditional, got %d", alfSolr.Kind)
 	}

@@ -165,3 +165,84 @@ func TestResetKeycloakAdminPassword_TargetsEcosApp(t *testing.T) {
 	require.NotContains(t, setPasswordRealms, "master",
 		"resetKeycloakAdminPassword must NOT call kcadmSetPassword for master — the handler drives that in a separate (also-fatal) phase so it can emit a master-specific retry message")
 }
+
+// TestEnsureCiteckSaUsable_HasBootstrapRecovery is a source-level guard that
+// resetKeycloakAdminPassword no longer falls back to a hard error when the
+// SA password is out of sync — instead it delegates to ensureCiteckSaUsable,
+// which has a `kc.sh bootstrap-admin user` fallback for the lost-password
+// recovery case. The fallback is what lets `citeck setup admin-password`
+// work after a snapshot import / external DB edit / forgotten password.
+//
+// AST-walking (not plain string search) so the test fails if the wiring is
+// broken even when the function names still appear in comments / declarations.
+func TestEnsureCiteckSaUsable_HasBootstrapRecovery(t *testing.T) {
+	src, err := os.ReadFile("routes_admin_password.go")
+	require.NoError(t, err)
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "routes_admin_password.go", src, parser.ParseComments)
+	require.NoError(t, err)
+
+	var resetFn, ensureFn *ast.FuncDecl
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		switch fn.Name.Name {
+		case "resetKeycloakAdminPassword":
+			resetFn = fn
+		case "ensureCiteckSaUsable":
+			ensureFn = fn
+		}
+	}
+	require.NotNil(t, resetFn, "resetKeycloakAdminPassword not found")
+	require.NotNilf(t, ensureFn, "ensureCiteckSaUsable not found — recovery wrapper must exist")
+
+	// resetKeycloakAdminPassword must call ensureCiteckSaUsable (not bypass it).
+	require.Truef(t, hasMethodCall(resetFn, "ensureCiteckSaUsable"),
+		"resetKeycloakAdminPassword must delegate to ensureCiteckSaUsable for SA recovery (no in-band recovery if this call is removed)")
+
+	// ensureCiteckSaUsable's body must invoke bootstrapKeycloakRecovery —
+	// without that call there is no recovery path at all.
+	require.Truef(t, hasMethodCall(ensureFn, "bootstrapKeycloakRecovery"),
+		"ensureCiteckSaUsable must call bootstrapKeycloakRecovery as fallback")
+
+	// Argv-level guard: the bootstrap command itself must carry the two
+	// non-obvious flags that make it work alongside a running keycloak
+	// server. These checks remain string-based since the args are
+	// constructed in a string literal anyway.
+	got := string(src)
+	require.Contains(t, got, "kc.sh bootstrap-admin user",
+		"bootstrapKeycloakRecovery must invoke `kc.sh bootstrap-admin user` (the only Keycloak command that works without existing credentials)")
+	require.Contains(t, got, "--http-management-port=0",
+		"bootstrap-admin must disable the management HTTP port — the running Keycloak server already binds it, otherwise the recovery JVM dies with `Address already in use`")
+	require.Contains(t, got, "--password:env",
+		"the recovery password must be passed via env var, not argv — otherwise it leaks into `ps`/`docker top`")
+}
+
+// hasMethodCall reports whether the function body contains a SelectorExpr
+// call with the given selector name (e.g. d.foo() → "foo"). Walks the AST
+// rather than scanning text — comments and declarations don't count.
+func hasMethodCall(fn *ast.FuncDecl, methodName string) bool {
+	var found bool
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		if sel.Sel.Name == methodName {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}

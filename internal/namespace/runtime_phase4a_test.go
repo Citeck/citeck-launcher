@@ -55,9 +55,7 @@ func TestAdoptDoesNotPullOnHashMatch(t *testing.T) {
 	}
 
 	app := r.FindApp(def.Name)
-	if app == nil {
-		t.Fatalf("app %q missing from runtime", def.Name)
-	}
+	require.NotNilf(t, app, "app %q missing from runtime", def.Name)
 	if app.Status != AppStatusRunning {
 		t.Fatalf("app %q expected RUNNING, got %s", def.Name, app.Status)
 	}

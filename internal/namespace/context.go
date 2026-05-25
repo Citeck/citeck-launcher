@@ -10,7 +10,15 @@ import (
 
 // Infrastructure host/port constants.
 const (
-	KKHost         = "keycloak"
+	KKHost = "keycloak"
+	// KeycloakDBName is the postgres database name used by keycloak. Also
+	// re-used as both the DB username and DB password (low-stakes — only
+	// reachable from inside the docker network; never exposed externally).
+	// Referenced by both the keycloak container spec (Cmd args) and the
+	// admin-password recovery path that needs to invoke `kc.sh
+	// bootstrap-admin user` with explicit DB connection parameters.
+	// Use KeycloakDBJDBCURL() to get the full JDBC URL.
+	KeycloakDBName = "citeck_keycloak"
 	PGHost         = "postgres"
 	PGPort         = 5432
 	ZKHost         = "zookeeper"
@@ -34,6 +42,14 @@ const CiteckSAUser = "citeck"
 // LegacyCiteckSAUser is the pre-rename SA username. The Keycloak init
 // script deletes it on startup to keep the master realm clean after upgrade.
 const LegacyCiteckSAUser = "citeck-launcher"
+
+// KeycloakDBJDBCURL returns the JDBC URL the keycloak container (and the
+// bootstrap-admin recovery path in the daemon) use to talk to postgres.
+// Centralized so the formula lives in one place — generator's Cmd args
+// and the recovery helper otherwise drift independently.
+func KeycloakDBJDBCURL() string {
+	return fmt.Sprintf("jdbc:postgresql://%s:%d/%s", PGHost, PGPort, KeycloakDBName)
+}
 
 // SystemSecrets holds system-managed secrets resolved at daemon startup.
 // AdminPassword is the plaintext password for the ecos-app realm admin user;
