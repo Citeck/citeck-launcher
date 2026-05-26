@@ -1,0 +1,306 @@
+# 10 — Состояние 2.x порта + порт-чеклист
+
+## 1. Где сейчас 2.x
+
+Ветка `release/2.1.0` (не текущая ветка `release/1.4.1`). Согласно memory + `.audit-backlog.md`:
+
+- **Phase 22 complete** — Phase 2 server testing + enterprise.
+- Кодовая база Go-демона лежит в `internal/`.
+- Web UI — React 19 + Vite + Tailwind v4.2.2 + Zustand, лежит в `web/`.
+- На текущей `release/1.4.1` ветке `internal/` и `web/` присутствуют только в виде build-артефактов (embedded webdist, без исходников). Source на `release/2.1.0`.
+
+## 2. Что уже сделано — Go server (`internal/`)
+
+### 2.1 Структура (из audit + memory)
+
+| Package | Файлы | Состояние |
+|---|---|---|
+| `internal/daemon/` | `server.go` (1771 LOC), `routes_apps.go` (516 LOC), `routes_snapshots.go` (601 LOC), `routes_ns.go` (363), `routes_config.go` (404), `routes_system.go` (379), `routes_secrets.go` (322), `routes_volumes.go` (66), `routes_diagnostics.go` (134), `routes_helpers.go` (76), `routes_admin_password.go`, `webdist/` (embed) | **Complete**, zero handler-level tests |
+| `internal/namespace/` | `runtime_loop.go` (1171 LOC, T1–T33 transitions), `runtime_commands.go` (301), `runtime_orchestration.go` (348), `runtime_app.go` (415), `runtime_state.go` (169), `runtime_probes.go` (160), `runtime_workers.go`, `dispatcher.go`, `generator.go` (1465 LOC), `reconciler.go`, `config.go`, `context.go` | **Complete**, full lifecycle |
+| `internal/bundle/` | `resolver.go` (с Kotlin-parity test) | **Complete** |
+| `internal/acme/` | `client.go` (367), `profile.go` (169) | **Implemented, undertested** |
+| `internal/cli/` | `install.go`, `prompt/`, `bundlepicker/`, `setup/`, `start.go`, `status.go`, `uninstall.go` | **Complete CLI** |
+| `internal/appdef/` | `appdef.go` (canonical constants) | **Complete** |
+| `internal/config/` | `paths.go` (`DetectOutboundIP`, `DetectDisplayIP`) | **Complete** |
+| `internal/secrets/` | `FileStore` + `SecretService` + AES-256-GCM | **Complete** |
+| `internal/appfiles/` | `embedded/keycloak/init.sh.tmpl`, etc. | **Complete** |
+
+### 2.2 HTTP API surface
+
+Подтверждён скан compiled JS bundle + memory:
+
+| Group | Route patterns |
+|---|---|
+| Namespace | `/namespace/{id}/start`, `/stop`, `/status`, `/reload`, `/upgrade` |
+| Apps | `/apps/{name}/start`, `/stop`, `/recreate`, `/restart`, `/logs?follow=true&tail=N` |
+| List | `/namespaces`, `/bundles` |
+| Secrets | `/secrets` (list/get/set/delete) |
+| Snapshots | `/snapshots` (full CRUD: 10 handlers) |
+| Workspace | `/workspace` (config) |
+| Live | SSE stream — 1 `EventSource` per active namespace |
+
+### 2.3 Persistence
+
+- **Flat JSON/YAML files** (`state-{nsID}.json`, `daemon.yml`, `namespace.yml`) — **не embedded DB**. H2 был Kotlin-only.
+- **Secrets**: encrypted `FileStore` (AES-256-GCM).
+
+### 2.4 Tray / desktop
+
+- `--desktop` flag (Phase 21: hidden). Server-only deployment — нет system tray.
+- Web UI served directly daemon'ом через embedded `webdist/`.
+- Нет отдельного Electron / tray process в Go rewrite.
+
+## 3. Что уже сделано — Web (`web/`)
+
+### 3.1 Stack
+
+- **React 19** (`react`, `React` в bundle; `@types/react` в node_modules)
+- **Build**: Vite (hashed asset filenames; `index-{hash}.js`/`{hash}.css`)
+- **State**: **Zustand** (бандл line 16; `useDashboardStore`, `usePanelStore`)
+- **Design**: Tailwind v4.2.2 (`/*! tailwindcss v4.2.2 */` в CSS); ссылки на MUI (Material Icons only, не full MUI)
+- **Routing**: React Router v6+ (`useNavigate`, `useLocation`, `RouterProvider`)
+- **Forms**: `react-hook-form` + `yup`
+- **API client**: plain `fetch` с configurable base URL. **Нет** OpenAPI generated client, tRPC, GraphQL
+- **Live updates**: `EventSource` (SSE) — 1 per active namespace. **Нет** WebSocket.
+
+### 3.2 Confirmed screens / components
+
+- **Wizard** — multi-step: hostname → TLS (5 options) → release (community/enterprise tabs).
+- **Loading screen** — transition wizard → dashboard.
+- **Dashboard** (= NamespaceScreen) — main app table с health, upgrade. `useDashboardStore`. `RightDrawer` для detail panel.
+- **App actions** — start/stop/recreate/restart, per-app log streaming.
+- **Logs viewer** — `DaemonLogsViewer.tsx`. Streaming через `response.body.getReader()`.
+- **Snapshots** — full CRUD dialog.
+- **Secrets** — CRUD dialog для registry auth + system secrets.
+- **Settings wizard** — in-browser equivalent `citeck setup`: hostname, TLS, email, language, resources.
+- **App config dialog** — per-app (memory, JVM heap; пример валидации "Heap (1200m) is at or above the container memory limit").
+- **Diagnostics**.
+- **i18n** — `ru.`, `en.` (8 locales в CLI).
+
+### 3.3 Schema / API contract
+
+- **Нет** `openapi.yaml`, `.proto`, generated types. Hand-written fetch calls с inline URL construction.
+
+## 4. Coverage matrix
+
+| Kotlin 1.x feature | 2.x status | Comment |
+|---|---|---|
+| App entry / single-instance lock | **Done** | Socket-based replaced via Go HTTP bind / IPC lock |
+| System tray (macOS/Win/Linux GTK) | **Not planned (server)** | Go daemon = headless; `--desktop` exists но tray absent |
+| Desktop Compose UI | **Not applicable** | Replaced by browser UI |
+| Welcome screen / setup wizard | **Done** | Multi-step wizard в browser UI |
+| Namespace screen / dashboard | **Done** | React + Zustand + SSE |
+| App table (status, health) | **Done** | Full dashboard |
+| App start/stop/restart/recreate | **Done** | `routes_apps.go` 13 handlers |
+| Per-app detach/attach | **Done** | `manualStoppedApps`; CLI + UI |
+| Per-app log streaming | **Done** | `GET /apps/{name}/logs?follow=true` + reader |
+| Namespace start/stop/reload/upgrade | **Done** | `routes_ns.go`; bundle upgrade в wizard |
+| Snapshots (CRUD/import/export) | **Done** | 10 handlers + UI |
+| Secrets / registry auth | **Done** | `routes_secrets.go` + encrypted FileStore + UI |
+| Workspace management | **Done (single-workspace)** | `daemon.yml` + `namespace.yml` flat. **Нет** multi-workspace |
+| Bundle versioning (BundleKey) | **Done** | `compareBundleVersions` + parity test |
+| Bundle picker UI | **Done** | Community/enterprise tabs |
+| Docker runtime | **Done** | `runtime_orchestration.go` + docker client |
+| NamespaceGenerator (~24 apps) | **Done** | `generator.go` 1465 LOC |
+| Init actions (post-start scripts) | **Done** | `AppInitAction` / `init.sh.tmpl` |
+| HTTP startup probes | **Done** | `runtime_probes.go`; hits `127.0.0.1:hostPort` |
+| Liveness probes / auto-restart | **Done** | `reconciler.go` |
+| **License validation** | **NOT FOUND** | `LicenseService` в Kotlin есть, нет equivalent в Go. Нет `/license` route |
+| Git pull (bundle repo) | **Done** | "Pulling repository..." в wizard output |
+| TLS / ACME / Let's Encrypt | **Done** | `internal/acme/client.go` + 5 TLS modes |
+| Systemd service install | **Done** | Auto в `install.go` wizard |
+| H2 database | **Not applicable** | Replaced by flat files + encrypted FileStore |
+| Entity framework | **Not applicable** | No equivalent; entities → direct config structs |
+| CloudConfigServer (8761) | **Not applicable??** | Replaced by Go HTTP server. **CRITICAL: проверить что Spring Cloud Config endpoint всё ещё работает!** Если нет — все ECOS контейнеры не загрузятся |
+| CPU/memory stats per container | **Partial** | `ContainerStats` есть в Kotlin; stats route в Go не confirmed |
+| Spring properties / file editor (`AppCfgEditWindow`) | **Not found** | Нет equivalent route в Go |
+| Keycloak SA / admin password mgmt | **Done** | `routes_admin_password.go`, `_launcher_sa`, `init.sh.tmpl` |
+| Observer integration | **Done (partial)** | ZK works; gateway 403 unresolved |
+| STT sidecar (AI WS proxy) | **Done** | Generator + `stt_models` volume |
+| i18n / multi-locale | **Done** | 8 locales в CLI; ru/en в web |
+| Docker availability check | **Done** | Pre-launch в `start.go` |
+
+## 5. Gap analysis — top 10 для спецификации
+
+### 5.1 Handler-level test coverage (highest priority)
+
+`routes_apps.go` (13 handlers), `routes_snapshots.go` (10), все шесть `routes_{ns,volumes,config,diagnostics,system,helpers}.go` — **zero** unit/integration tests (`.audit-backlog.md:28-31`). Behavior проверен только live e2e. Спецификация должна определить:
+- Expected request/response contracts (с примерами)
+- Error cases + status codes
+- Edge conditions
+
+Это **самая большая** untested surface в server'е.
+
+### 5.2 ACME/TLS testing strategy
+
+`internal/acme/client.go` (367 LOC) + `profile.go` (169) — zero tests. Спецификация:
+- RFC8555 golden JSON fixtures с fixed nonces
+- Staging vs production mode separation
+- Rate-limit gate invariant: `ObtainCertificate` gated на `IsRateLimited` каждый Start + reload (не только во время active renewal)
+
+### 5.3 `server.go` god-object split
+
+1771 LOC + 650 LOC `Start()` method. Backlog defers как "design choice". Спецификация:
+- Partition: storage+migration / bundle-resolve / TLS+ACME / HTTP-listener phases
+- Сохранить nested `defer` cleanup chain + `ReadyCh` signalling integrity при extraction
+
+### 5.4 `dispatcher.go` parentCtx gap
+
+`parentCtx = context.Background()` → `doDetach`'s 5s poll может оставить workers permanently stuck на full 128-cap `resultCh`. Спецификация определит fix (cancelable `parentCtx` → dispatcher → Shutdown cancel) + goroutine-lifetime contract.
+
+### 5.5 `generator.go` partitioning
+
+1465 LOC god-object. Спецификация:
+- Per-app-generator interface (shared `NsGenContext` vs per-app isolated state)
+- Какие apps можно extract'нуть без breaking dependency graph computations spanning whole context
+
+### 5.6 `flushEvents` blocking contract
+
+SSE event delivery intentionally blocking (send в `eventCh` cap 256). Любой новый SSE subscriber / event callback **обязан** быть non-blocking — иначе wedge'ит `runtimeLoop`. Спецификация — это hard constraint.
+
+### 5.7 License subsystem
+
+`LicenseService` / `LicenseInstance` / `LicenseSignature` есть в Kotlin, **нет confirmed** equivalent в Go. Спецификация:
+- В scope или нет для 2.x?
+- Если в scope: validation algorithm, signature format, где в startup sequence check.
+
+### 5.8 Container stats + config file editor
+
+`ContainerStats` (CPU/memory per container) + Spring properties / external config file editor (`AppCfgEditWindow.kt`) — confirmed в Kotlin 1.3.0+, **не найдено** в Go routes / UI bundles. Спецификация:
+- В scope?
+- Polling vs streaming для stats
+- API surface для file editor
+
+### 5.9 Observer gateway 403
+
+Observer integration работает на ZK registration + gateway health level, но dashboard `/gateway/observer/` returns 403 от gateway's permission filter. Спецификация:
+- Gateway-side config change? Или
+- Dedicated observer UI в launcher'е?
+
+### 5.10 Multi-workspace divergence
+
+Kotlin: `WorkspacesService`, `WorkspaceEntityDef`, full workspace selection screen. Go: single `daemon.yml` + `namespace.yml`. Спецификация должна либо:
+- Explicitly scope out multi-workspace для 2.x, либо
+- Define mapping `WorkspacesService` → Go config model (особенно `GET /namespaces` endpoint и его namespace-to-workspace relationship)
+
+---
+
+## 6. Чек-лист критичных вещей которые НЕЛЬЗЯ сломать
+
+### Контракты что должны быть byte-exact compatible
+
+| Контракт | Где | Тест |
+|---|---|---|
+| **DockerLabels** (все 7 keys) | `core/namespace/runtime/docker/DockerLabels.kt` | Parity test: existing v1.x containers/volumes discoverable Go runtime'ом |
+| **DockerConstants** naming pattern | `core/namespace/runtime/docker/DockerConstants.kt` | Same: existing names discoverable |
+| **`ApplicationDef.getHash()`** SHA-256 input | `core/appdef/ApplicationDef.kt` | Kotlin and Go produce SAME hash for same input |
+| **`BundleKey.compareTo`** ordering | `core/bundle/BundleKey.kt` | `TestCompareBundleVersions_KotlinParity` (Go has it) |
+| **CloudConfig response format** | `core/config/cloud/CloudConfigImpl.kt` flatten + `CloudConfigServer.kt` JSON | Spring Cloud Config client compatibility test |
+| **CloudConfig port** = `8761` | `CloudConfigServer.kt` PORT constant | Если изменим — все ECOS контейнеры в running deployments сломаются |
+| **AppDir layout**: `~/.citeck/launcher/storage.db`, `~/.citeck/launcher/ws/...`, `~/.citeck/launcher/app.lock` | `core/config/AppDir.kt` | Backward compat при upgrade |
+| **License canonical signing form** (lexicographic key ordering) | `core/license/LicenseInstance.kt#getContentForSign` | Existing licenses still verify |
+| **Init action contract**: `docker exec /bin/sh -c {cmd}` post-start | `core/namespace/runtime/actions/AppStartAction.kt` | Existing init scripts still work |
+| **Volume scoping**: `citeck_volume_{name}_{ns}_{ws}` | `DockerConstants.getVolumeName` | Existing volumes discoverable |
+| **`citeck.launcher.original-name` label** на volumes | `DockerLabels.kt` | Volume lookup по plain name работает |
+
+### UX contracts что должны быть preserved (для consistency)
+
+| UI Aspect | Где | Tradeoff |
+|---|---|---|
+| Status colors (green/yellow/orange/gray/red) | `NamespaceScreen.kt`, `ContainerStatViews.kt` | Иначе пользователи 1.x пугаются |
+| Icon set (20+ SVG) | `resources/icons/` + `ActionIcon` enum | Reuse в Web port |
+| Status names (RUNNING/STOPPED/STARTING/STALLED/...) | `AppRuntimeStatus.kt`, `NsRuntimeStatus.kt` | Должны match runtime status поскольку часть SSE payload |
+| Default credentials в UI (`admin`/`admin`) | Open in Browser tooltip | Сохранить hint в UI |
+| GlobalLinks (Documentation, AI Bot) | `GlobalLinks.kt` | Должны появляться в sidebar |
+| Snapshot name validation regex `[\w-.]+` | `CreateOrEditSnapshotDialog.kt` | Reject invalid uploaded names |
+| Master password input semantics | `AskMasterPasswordDialog.kt` | Web equivalent через server session |
+
+---
+
+## 7. Что НЕ нужно портировать дословно
+
+| Aspect | Reason |
+|---|---|
+| **System tray** | Server-only model; web tab IS application |
+| **Single-instance lock через app.lock** | Go server binds HTTP port = single-instance |
+| **AWT + GTK tray** | Browser-only UI |
+| **`Desktop.getDesktop().open()/.browse()`** | Browser security model; replace через `<a href>` и/или server-side action |
+| **Swing-based RSyntaxTextArea** | Replace на Monaco / CodeMirror 6 |
+| **OS-native file chooser (JFileChooser)** | Browser `<input type="file">` / download API |
+| **Compose `weight()` layout DSL** | CSS Grid / Flexbox |
+| **`SubcomposeLayout` без virtualization** | React virtual list обязательно для namespace tables |
+| **`MutProp` reactive bridge** | SSE / WebSocket → Zustand store updates |
+| **Coroutine scopes** | `useEffect` cleanup / `AbortController` |
+| **H2 MVStore** | SQLite (или bbolt) + JSON values |
+| **JGit** | go-git |
+| **Compose's `Window` per dialog** | Modal / drawer / new tab |
+| **`MasterPassword` через CharArray** | Server-side credentials store |
+
+---
+
+## 8. Read-list для каждой роли
+
+### Developer пишет Go server
+
+1. [09 — Docker + appfiles](09-docker-and-appfiles.md) — для DockerLabels + Pull/Start/Stop
+2. [08 — Namespace runtime + generator](08-namespace-runtime-and-generator.md) — state machine + generation
+3. [05 — Workspaces + bundles + cloud](05-workspaces-bundles-cloud.md) — CloudConfig contract
+4. [07 — Git + DB + snapshots](07-git-database-snapshots.md) — go-git + SQLite mapping
+5. [06 — Entities + secrets + license](06-entities-secrets-license.md) — generic entity framework decision
+6. [01 — Architecture + lifecycle](01-architecture-and-lifecycle.md) — AppDir, init order
+
+### Developer пишет React UI
+
+1. [02 — UI shell + screens](02-ui-shell-and-screens.md) — все экраны
+2. [03 — Dialogs + forms + editor](03-dialogs-forms-editor.md) — modals
+3. [04 — Tables + logs + actions](04-tables-logs-actions.md) — data display + icon catalog
+4. [01 §11 — MutProp](01-architecture-and-lifecycle.md#11-реактивность-mutprop) — для SSE mapping
+
+### End-to-end reviewer
+
+Этот документ (10) сначала, потом весь список в TOC.
+
+---
+
+## 9. Open вопросы (для product/tech-lead)
+
+1. **Apgrade path с 1.x на 2.x**: migrate существующий AppDir (storage.db, ws/, app.lock) или wipe + fresh setup?
+2. **Multi-workspace** — fully out of scope в 2.x?
+3. **License subsystem** — port or drop?
+4. **CloudConfig 8761** — на 100% порт сохранил? Если backbone'ные тесты ECOS не падают — да; если нужно protocol fixture — добавить.
+5. **`AppCfgEditWindow`** — в Web UI это реализовано или нет? Если нет — нужен endpoint + Monaco editor.
+6. **Manual override locking** (`editedAndLockedApps`) — порт preserves?
+7. **Observer dashboard 403** — fix в gateway или separate UI?
+8. **Container stats stream** — порт via SSE или omitted?
+9. **`UTILS_IMAGE` `registry.citeck.ru/community/launcher-utils:1.0`** — pinned dependency, нужно ensure availability в Go-порте.
+
+---
+
+## 10. Ключевые файлы для верификации (1.x source-of-truth)
+
+| Тема | Files |
+|---|---|
+| Entry/Lifecycle | `src/main/kotlin/ru/citeck/launcher/Main.kt`, `core/LauncherServices.kt`, `core/LauncherStateService.kt`, `core/utils/AppLock.kt`, `core/socket/AppLocalSocket.kt`, `core/config/AppDir.kt` |
+| Tray | `view/tray/CiteckSystemTray.kt`, `view/tray/gtk/GtkTrayIndicator.kt` |
+| Theme | `view/theme/LauncherTheme.kt`, `view/drawable/CpDrawable.kt` |
+| Reactive | `core/utils/prop/MutProp.kt`, `view/utils/ViewExtensions.kt` |
+| Screens | `view/screen/WelcomeScreen.kt`, `LoadingScreen.kt`, `NamespaceScreen.kt`, `DockerNotAvailableScreen.kt`, `AppTableColumns.kt`, `ContainerStatViews.kt` |
+| Dialogs | `view/dialog/AppCfgEditWindow.kt`, `SnapshotsDialog.kt`, `CreateOrEditSnapshotDialog.kt`, `view/commons/dialog/*.kt` |
+| Forms | `view/form/FormDialog.kt`, `FormContext.kt`, `spec/FormSpec.kt`, `spec/ComponentSpec.kt`, `components/select/SelectComponent.kt`, `components/journal/*.kt` |
+| Editor | `view/editor/EditorWindow.kt` |
+| Tables/Logs/Select | `view/table/table/DataTable.kt`, `TableDslBuilder.kt`, `view/logs/*.kt`, `view/select/CiteckSelect.kt` |
+| Actions/Icons | `view/action/*.kt`, `core/actions/*.kt`, `resources/icons/*.svg` |
+| Workspaces | `core/workspace/*.kt`, `core/WorkspaceServices.kt` |
+| Bundles | `core/bundle/*.kt` |
+| CloudConfig | `core/config/cloud/*.kt` |
+| Entities | `core/entity/*.kt` |
+| Secrets/License | `core/secrets/*.kt`, `core/license/*.kt` |
+| Git | `core/git/*.kt` |
+| Database | `core/database/*.kt` |
+| Logs (core) | `core/logs/*.kt` |
+| Snapshots | `core/snapshot/*.kt` |
+| Namespace concepts | `core/namespace/*.kt`, `core/namespace/gen/*.kt`, `core/namespace/init/*.kt` |
+| Runtime | `core/namespace/runtime/*.kt`, `core/namespace/runtime/actions/*.kt`, `core/namespace/volume/*.kt` |
+| Docker | `core/namespace/runtime/docker/*.kt`, exceptions |
+| AppDef | `core/appdef/*.kt` |
+| Appfiles | `src/main/resources/appfiles/{alfresco,keycloak,pgadmin,postgres,proxy}/*` |
