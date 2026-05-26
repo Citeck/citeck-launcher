@@ -2,11 +2,12 @@ import { useEffect, useState, useCallback } from 'react'
 import { getAppInspect, postAppRestart } from '../lib/api'
 import type { AppInspectDto } from '../lib/types'
 import { useDashboardStore } from '../lib/store'
-import { usePanelStore } from '../lib/panels'
+import { openSecondaryView } from '../lib/desktop'
+import { RegistryCredentialsDialog } from './RegistryCredentialsDialog'
 import { useTranslation } from '../lib/i18n'
 import { StatusBadge } from './StatusBadge'
 import { toast } from '../lib/toast'
-import { RotateCw, FileText, Settings } from 'lucide-react'
+import { RotateCw, FileText, Settings, KeyRound } from 'lucide-react'
 
 interface AppDrawerContentProps {
   appName: string
@@ -25,9 +26,9 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
   const [inspect, setInspect] = useState<AppInspectDto | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [restarting, setRestarting] = useState(false)
+  const [credsDialogOpen, setCredsDialogOpen] = useState(false)
   const nsApps = useDashboardStore((s) => s.namespace?.apps)
   const appMeta = nsApps?.find((a) => a.name === appName)
-  const openBottomTab = usePanelStore((s) => s.openBottomTab)
   const { t } = useTranslation()
 
   const load = useCallback(() => {
@@ -127,18 +128,18 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
       )}
 
       {/* Action buttons */}
-      <div className="flex gap-2 pt-2 border-t border-border">
+      <div className="flex gap-2 pt-2 border-t border-border flex-wrap">
         <button
           type="button"
           className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted"
-          onClick={() => openBottomTab({ id: `logs:${appName}`, type: 'logs', title: t('logs.title', { name: appName }), appName })}
+          onClick={() => openSecondaryView({ id: `logs:${appName}`, type: 'logs', title: t('logs.title', { name: appName }), appName })}
         >
           <FileText size={12} /> {t('drawer.viewLogs')}
         </button>
         <button
           type="button"
           className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted"
-          onClick={() => openBottomTab({ id: `app-config:${appName}`, type: 'app-config', title: t('appConfig.tabTitle', { name: appName }), appName })}
+          onClick={() => openSecondaryView({ id: `app-config:${appName}`, type: 'app-config', title: t('appConfig.tabTitle', { name: appName }), appName })}
         >
           <Settings size={12} /> {t('drawer.editConfig')}
         </button>
@@ -150,9 +151,45 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
         >
           <RotateCw size={12} /> {restarting ? t('drawer.restarting') : t('drawer.restart')}
         </button>
+        {/* Surface "Configure registry credentials" when pull fails with an auth error. */}
+        {appMeta?.status === 'PULL_FAILED' && isAuthErrorText(appMeta?.statusText) && registryHostOf(appMeta?.image) && (
+          <button
+            type="button"
+            className="flex items-center gap-1 rounded border border-warning/40 bg-warning/10 px-2 py-1 text-xs text-warning hover:bg-warning/20"
+            onClick={() => setCredsDialogOpen(true)}
+            title={t('registryCreds.bannerTooltip')}
+          >
+            <KeyRound size={12} /> {t('registryCreds.banner')}
+          </button>
+        )}
       </div>
+
+      <RegistryCredentialsDialog
+        open={credsDialogOpen}
+        host={registryHostOf(appMeta?.image) || ''}
+        retryApp={appName}
+        onClose={() => setCredsDialogOpen(false)}
+      />
     </div>
   )
+}
+
+/** Extracts the registry host from a Docker image reference. */
+function registryHostOf(image: string | undefined): string {
+  if (!image) return ''
+  const slash = image.indexOf('/')
+  if (slash < 0) return ''
+  const head = image.slice(0, slash)
+  // Docker convention: if first segment contains a dot or colon, it's a registry host.
+  if (!head.includes('.') && !head.includes(':')) return ''
+  return head
+}
+
+/** Heuristic: does the daemon's statusText look like a pull-auth failure? */
+function isAuthErrorText(text: string | undefined): boolean {
+  if (!text) return false
+  const t = text.toLowerCase()
+  return t.includes('authentication') || t.includes('unauthorized') || t.includes('401') || t.includes('denied')
 }
 
 function D({ l, v, dim }: { l: string; v: string; dim?: boolean }) {

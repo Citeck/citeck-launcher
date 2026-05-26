@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { getNamespaces, getQuickStarts, deleteNamespace, postNamespaceStart } from '../lib/api'
+import { getNamespaces, getQuickStarts, deleteNamespace, postNamespaceStart, createNamespace, getDaemonStatus, postWorkspaceUpdate } from '../lib/api'
 import type { NamespaceSummaryDto, QuickStartDto } from '../lib/types'
 import { ConfirmModal } from '../components/ConfirmModal'
+import { NamespaceDialog } from '../components/NamespaceDialog'
+import { LoadingHint } from '../components/LoadingHint'
+import { GitPullErrorDialog, type GitPullDecision } from '../components/GitPullErrorDialog'
 import { ContextMenu } from '../components/ContextMenu'
 import type { ContextMenuItem } from '../components/ContextMenu'
 import { useContextMenu } from '../hooks/useContextMenu'
@@ -10,7 +13,8 @@ import { useTabsStore } from '../lib/tabs'
 import { useDashboardStore } from '../lib/store'
 import { usePanelStore } from '../lib/panels'
 import { useTranslation } from '../lib/i18n'
-import { MoreHorizontal, Plus } from 'lucide-react'
+import { toast } from '../lib/toast'
+import { MoreHorizontal, MoreVertical, Plus } from 'lucide-react'
 
 export function Welcome() {
   const { t } = useTranslation()
@@ -23,6 +27,13 @@ export function Welcome() {
   const [deleteError, setDeleteError] = useState('')
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const [gitErrorOpen, setGitErrorOpen] = useState(false)
+  // Workspace label + force-update menu (Kotlin parity: WelcomeScreen.kt:43-396).
+  // We fetch via daemon/status because there is no dedicated workspace info DTO
+  // yet — server mode only ever exposes a single workspace ID via that field.
+  const [workspaceLabel, setWorkspaceLabel] = useState<string>('')
+  const [workspaceUpdating, setWorkspaceUpdating] = useState(false)
   const navigate = useNavigate()
   const openTab = useTabsStore((s) => s.openTab)
   const fetchData = useDashboardStore((s) => s.fetchData)
@@ -53,6 +64,39 @@ export function Welcome() {
   useEffect(() => {
     loadData()
   }, [loadData])
+
+  // Workspace label — fetched once on mount. Fails silently because the
+  // welcome screen still renders without it (the header just shows the
+  // generic "Workspace" label).
+  useEffect(() => {
+    getDaemonStatus()
+      .then((s) => setWorkspaceLabel(s.workspace || ''))
+      .catch(() => { /* daemon may still be starting */ })
+  }, [])
+
+  const handleWorkspaceForceUpdate = useCallback(async () => {
+    setWorkspaceUpdating(true)
+    try {
+      await postWorkspaceUpdate()
+      toast(t('welcome.workspace.updateSuccess'), 'success')
+      // Refresh the namespace + quick-start lists so any new templates or
+      // snapshots in the pulled workspace YAML appear immediately.
+      loadData()
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      toast(t('welcome.workspace.updateFailed', { error: msg }), 'error')
+    } finally {
+      setWorkspaceUpdating(false)
+    }
+  }, [loadData, t])
+
+  const workspaceMenuItems: ContextMenuItem[] = [
+    {
+      label: t('welcome.workspace.forceUpdate'),
+      disabled: workspaceUpdating,
+      onClick: handleWorkspaceForceUpdate,
+    },
+  ]
 
   async function handleOpenNamespace(ns: NamespaceSummaryDto) {
     if (ns.status === 'STOPPED' || ns.status === 'STALLED') {
@@ -98,6 +142,40 @@ export function Welcome() {
     navigate('/wizard')
   }
 
+  // Kotlin parity (WelcomeScreen.kt prepareNsDataToCreate): each quickstart
+  // variant maps to a NamespaceConfig pre-filled from the template; the daemon
+  // already overlays template fields on top of NamespaceCreateDto, so we only
+  // need to pass {name, template, snapshot} and the form defaults handle the rest.
+  async function handleQuickStart(qs: QuickStartDto) {
+    setStarting(true)
+    setStartError(null)
+    try {
+      await createNamespace({
+        name: 'Citeck Default',
+        authType: 'KEYCLOAK',
+        host: 'localhost',
+        port: 80,
+        tlsEnabled: false,
+        pgAdminEnabled: false,
+        bundleRepo: '',
+        bundleKey: '',
+        template: qs.template || '',
+        snapshot: qs.snapshot || '',
+        useDefaultPassword: true,
+      })
+      await postNamespaceStart()
+      await fetchData()
+      startEventStream()
+      resetPanels()
+      openTab({ id: 'home', title: t('dashboard.title'), path: '/' })
+      navigate('/')
+    } catch (e) {
+      setStartError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setStarting(false)
+    }
+  }
+
   function nsContextItems(ns: NamespaceSummaryDto): ContextMenuItem[] {
     return [
       { label: t('welcome.context.open'), onClick: () => handleOpenNamespace(ns) },
@@ -106,14 +184,39 @@ export function Welcome() {
   }
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-full p-8">
+    <div className="relative flex flex-col items-center justify-center min-h-full p-8">
+      {/* Workspace label + Force Update menu (Kotlin parity: WelcomeScreen.kt
+          TopStart row). Always rendered so the menu is reachable even before
+          the workspace label resolves. */}
+      <div className="absolute top-3 left-3 flex items-center gap-1">
+        <span className="text-xs text-muted-foreground">
+          {workspaceLabel ? `${t('welcome.workspace.label')}: ${workspaceLabel}` : t('welcome.workspace.label')}
+        </span>
+        <button
+          type="button"
+          aria-label={t('welcome.workspace.forceUpdate')}
+          title={t('welcome.workspace.forceUpdate')}
+          disabled={workspaceUpdating}
+          className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted/40 disabled:opacity-50"
+          onClick={(e) => showContextMenu(e, workspaceMenuItems)}
+        >
+          <MoreVertical size={14} />
+        </button>
+        {workspaceUpdating && (
+          <span className="text-xs text-muted-foreground">{t('welcome.workspace.updating')}</span>
+        )}
+      </div>
+
       {/* Title */}
       <h1 className="text-3xl font-bold text-foreground mb-12">{t('welcome.title')}</h1>
 
       {/* Namespace buttons */}
       <div className="w-full max-w-md flex flex-col gap-3">
         {loading ? (
-          <div className="text-center text-muted-foreground text-sm py-4">{t('welcome.loading')}</div>
+          <>
+            <div className="text-center text-muted-foreground text-sm py-4">{t('welcome.loading')}</div>
+            <div className="flex justify-center"><LoadingHint active={loading} /></div>
+          </>
         ) : loadError ? (
           <div className="text-center text-destructive text-sm py-4">{t('welcome.error', { error: loadError })}</div>
         ) : (
@@ -121,7 +224,7 @@ export function Welcome() {
             {startError && (
               <div className="text-center text-destructive text-sm py-2 mb-2">{t('welcome.startFailed', { error: startError })}</div>
             )}
-            {namespaces.map((ns) => (
+            {namespaces.slice(0, 3).map((ns) => (
               <div key={`${ns.workspaceId}:${ns.id}`} className="relative">
                 <button
                   type="button"
@@ -145,23 +248,48 @@ export function Welcome() {
               </div>
             ))}
 
-            {/* Quick starts as additional namespace options */}
+            {/* Quick starts — Kotlin parity (WelcomeScreen.kt 4.3 case B):
+                first variant is the big primary button; secondary variants
+                render as a row of small buttons. Each variant creates a
+                namespace directly (no wizard detour) using its template +
+                snapshot. */}
             {quickStarts.length > 0 && namespaces.length === 0 && (
-              <button
-                type="button"
-                onClick={handleCreateNew}
-                className="w-full rounded-lg bg-muted hover:bg-muted/70 px-6 py-3.5 text-center transition-colors"
-              >
-                <div className="text-sm font-semibold text-foreground">{t('welcome.quickStart')}</div>
-                <div className="text-xs text-muted-foreground mt-0.5">{quickStarts[0]?.name}</div>
-              </button>
+              <>
+                <button
+                  type="button"
+                  disabled={starting}
+                  onClick={() => handleQuickStart(quickStarts[0])}
+                  className="w-full rounded-lg bg-muted hover:bg-muted/70 px-6 py-3.5 text-center transition-colors disabled:opacity-50"
+                >
+                  <div className="text-sm font-semibold text-foreground">{quickStarts[0].name || t('welcome.quickStart')}</div>
+                  {quickStarts[0].template && (
+                    <div className="text-xs text-muted-foreground mt-0.5">{quickStarts[0].template}</div>
+                  )}
+                </button>
+                {quickStarts.length > 1 && (
+                  <div className="flex gap-2 flex-wrap">
+                    {quickStarts.slice(1).map((qs, i) => (
+                      <button
+                        key={qs.name || `qs-${i}`}
+                        type="button"
+                        disabled={starting}
+                        onClick={() => handleQuickStart(qs)}
+                        className="flex-1 min-w-0 rounded-lg bg-muted hover:bg-muted/70 px-4 py-2 text-center text-xs font-medium text-foreground transition-colors disabled:opacity-50"
+                        title={qs.template}
+                      >
+                        {qs.name || `${t('welcome.quickStart')} ${i + 2}`}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
 
-            {/* More button (if multiple quick starts) */}
-            {quickStarts.length > 1 && (
+            {/* "More" — opens NamespaceDialog (Kotlin parity: WelcomeScreen.kt:154). */}
+            {(namespaces.length > 3 || (quickStarts.length > 1 && namespaces.length === 0)) && (
               <button
                 type="button"
-                onClick={handleCreateNew}
+                onClick={() => setMoreOpen(true)}
                 className="w-full rounded-lg bg-muted hover:bg-muted/70 px-6 py-3 text-center text-sm font-medium text-foreground transition-colors"
               >
                 {t('welcome.more')}
@@ -201,6 +329,53 @@ export function Welcome() {
         onConfirm={handleDelete}
         onCancel={() => { setDeleteTarget(null); setDeleteError('') }}
       />
+
+      <NamespaceDialog open={moreOpen} onClose={() => setMoreOpen(false)} />
+
+      {/* Footer logos (Kotlin parity: WelcomeScreen.kt BottomStart / BottomEnd).
+          Kept muted via opacity-60 so they don't compete with the namespace
+          buttons for attention. */}
+      <footer className="absolute bottom-3 left-4 right-4 flex items-end justify-between pointer-events-none">
+        <img src="/logo/slsoft_full_logo.svg" alt="slsoft" className="h-12 opacity-60" />
+        <img src="/logo/citeck_full_logo.svg" alt="Citeck" className="h-8 opacity-60" />
+      </footer>
+
+      {/* Surface git pull failures with the dedicated dialog (Kotlin parity) */}
+      <GitPullErrorDialog
+        open={gitErrorOpen || isGitPullError(loadError || startError)}
+        repoUrl={extractRepoUrl(loadError || startError)}
+        errorMessage={loadError || startError || ''}
+        skipAvailable={false}
+        cancelAvailable={true}
+        onDecide={(d: GitPullDecision) => {
+          setGitErrorOpen(false)
+          if (d === 'retry') {
+            setStartError(null); loadData()
+          }
+          // 'skip' fires postGitSkipPull inside the dialog itself; 'cancel'
+          // and 'skip' both clear the local dialog state here.
+        }}
+      />
     </div>
   )
+}
+
+/** Heuristic: does the error string look like a git pull / clone failure? */
+function isGitPullError(msg: string | null): boolean {
+  if (!msg) return false
+  const m = msg.toLowerCase()
+  return (
+    m.includes('git pull') ||
+    m.includes('clone repo') ||
+    m.includes('pull repo') ||
+    m.includes('authentication required') ||
+    m.includes('repository not found')
+  )
+}
+
+/** Best-effort extraction of the repo URL from an error message; returns '' if none. */
+function extractRepoUrl(msg: string | null): string {
+  if (!msg) return ''
+  const match = msg.match(/(https?:\/\/[^\s]+\.git)/i) || msg.match(/(git@[^\s]+)/i)
+  return match ? match[1] : ''
 }

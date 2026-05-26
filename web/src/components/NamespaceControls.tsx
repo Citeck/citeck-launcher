@@ -4,24 +4,28 @@ import { useDashboardStore } from '../lib/store'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
 import { ConfirmModal } from './ConfirmModal'
+import { ContextMenu, type ContextMenuItem } from './ContextMenu'
+import { useContextMenu } from '../hooks/useContextMenu'
 import { Play, Square, RefreshCw } from 'lucide-react'
 
 interface NamespaceControlsProps {
   status: string
 }
 
-type Action = 'start' | 'stop' | 'reload' | null
+type Action = 'start' | 'stop' | 'reload' | 'forceStart' | null
 
-const actionFns = {
-  start: postNamespaceStart,
+const actionFns: Record<Exclude<Action, null>, () => Promise<unknown>> = {
+  start: () => postNamespaceStart(false),
+  forceStart: () => postNamespaceStart(true),
   stop: postNamespaceStop,
   reload: postNamespaceReload,
 }
 
-const actionVariants = {
-  start: 'primary' as const,
-  stop: 'danger' as const,
-  reload: 'primary' as const,
+const actionVariants: Record<Exclude<Action, null>, 'primary' | 'danger'> = {
+  start: 'primary',
+  forceStart: 'primary',
+  stop: 'danger',
+  reload: 'primary',
 }
 
 export function NamespaceControls({ status }: NamespaceControlsProps) {
@@ -30,6 +34,7 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
   const [actionError, setActionError] = useState<string | null>(null)
   const fetchData = useDashboardStore((s) => s.fetchData)
   const { t } = useTranslation()
+  const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu()
 
   const isStopped = status === 'STOPPED'
   const isRunning = status === 'RUNNING' || status === 'STALLED'
@@ -40,7 +45,10 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
     setActionError(null)
     try {
       await actionFns[pendingAction]()
-      toast(t('ns.toast.success', { action: pendingAction }), 'success')
+      // Kotlin parity: surface a single user-facing label per action even
+      // though forceStart maps to "start" semantically for the toast text.
+      const toastAction = pendingAction === 'forceStart' ? 'start' : pendingAction
+      toast(t('ns.toast.success', { action: toastAction }), 'success')
       setPendingAction(null)
       setTimeout(fetchData, 500)
     } catch (err) {
@@ -51,11 +59,18 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
     }
   }
 
-  const configForAction = pendingAction ? {
-    title: t(`ns.confirm.${pendingAction}.title`),
-    message: t(`ns.confirm.${pendingAction}.message`),
-    confirmLabel: t(`ns.${pendingAction}`),
-    confirmVariant: actionVariants[pendingAction],
+  function startContextItems(): ContextMenuItem[] {
+    return [
+      { label: t('ns.forceStart'), onClick: () => setPendingAction('forceStart') },
+    ]
+  }
+
+  const dialogKey: Exclude<Action, null> | null = pendingAction
+  const configForAction = dialogKey ? {
+    title: t(`ns.confirm.${dialogKey}.title`),
+    message: t(`ns.confirm.${dialogKey}.message`),
+    confirmLabel: t(`ns.${dialogKey}`),
+    confirmVariant: actionVariants[dialogKey],
   } : null
 
   return (
@@ -63,7 +78,9 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
       <div className="flex items-center gap-1.5">
         {isStopped && (
           <button type="button" className="flex items-center gap-1 rounded border border-success/40 px-2 py-1 text-xs text-success hover:bg-success/10"
-            onClick={() => setPendingAction('start')}><Play size={12} /> {t('ns.start')}</button>
+            onClick={() => setPendingAction('start')}
+            onContextMenu={(e) => { e.preventDefault(); showContextMenu(e, startContextItems()) }}
+          ><Play size={12} /> {t('ns.start')}</button>
         )}
         {(isRunning || status === 'STARTING') && (
           <button type="button" className="flex items-center gap-1 rounded border border-destructive/40 px-2 py-1 text-xs text-destructive hover:bg-destructive/10"
@@ -74,6 +91,10 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
             onClick={() => setPendingAction('reload')}><RefreshCw size={12} /> {t('ns.reload')}</button>
         )}
       </div>
+
+      {contextMenu && (
+        <ContextMenu items={contextMenu.items} position={contextMenu.position} onClose={hideContextMenu} />
+      )}
 
       {configForAction && (
         <ConfirmModal

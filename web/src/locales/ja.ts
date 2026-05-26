@@ -8,10 +8,34 @@ const ja: Translations = {
   'dashboard.cpu': 'CPU',
   'dashboard.mem': 'MEM',
   'dashboard.openInBrowser': '\u30d6\u30e9\u30a6\u30b6\u3067\u958b\u304f',
-  'dashboard.openInBrowser.tooltip': 'Citeck \u3092\u30d6\u30e9\u30a6\u30b6\u3067\u958b\u304f\n\u30c7\u30d5\u30a9\u30eb\u30c8: admin / admin',
-  'dashboard.openInBrowser.disabled': '\u5148\u306b namespace \u3092\u958b\u59cb\u3057\u3066\u304f\u3060\u3055\u3044',
+  'dashboard.openInBrowser.tooltip': '\u30d6\u30e9\u30a6\u30b6\u3067 Citeck \u3092\u958b\u304d\u307e\u3059\u3002\n \u30c7\u30d5\u30a9\u30eb\u30c8\u30e6\u30fc\u30b6\u30fc\u540d: admin\n \u30c7\u30d5\u30a9\u30eb\u30c8\u30d1\u30b9\u30ef\u30fc\u30c9: admin',
+  'dashboard.openInBrowser.disabled': '\u30a2\u30d7\u30ea\u30b1\u30fc\u30b7\u30e7\u30f3\u306f\u5b9f\u884c\u3055\u308c\u3066\u3044\u307e\u305b\u3093\u3002\u8d77\u52d5\u3057\u3066\u30d6\u30e9\u30a6\u30b6\u3067\u958b\u3044\u3066\u304f\u3060\u3055\u3044\u3002',
+  'dashboard.openInBrowser.starting': '\u30a2\u30d7\u30ea\u30b1\u30fc\u30b7\u30e7\u30f3\u3092\u8d77\u52d5\u4e2d\u3067\u3059\u3002\u3057\u3070\u3089\u304f\u304a\u5f85\u3061\u304f\u3060\u3055\u3044...',
+  'dashboard.openInBrowser.stalled': '\u30a2\u30d7\u30ea\u30b1\u30fc\u30b7\u30e7\u30f3\u304c\u505c\u6b62\u3057\u3066\u3044\u307e\u3059\u3002\u518d\u5ea6\u8d77\u52d5\u3092\u8a66\u307f\u3066\u304f\u3060\u3055\u3044\u3002',
   'dashboard.docker.error': 'Docker: {error}',
   'dashboard.docker.retry': '\u518d\u8a66\u884c',
+
+  // -- Docker not available screen --
+  'dockerUnavailable.title': 'Docker is not available',
+  'dockerUnavailable.installedButStopped': 'Docker is installed but not running.\nPlease start Docker and click Retry.',
+  'dockerUnavailable.missing': 'Docker does not appear to be installed or is not running.\nIf Docker is already installed, please start it and click Retry.',
+  'dockerUnavailable.installPrefix': 'Install Docker:',
+  'dockerUnavailable.retry': 'Retry',
+
+  // -- GitPullError / RegistryCredentials dialogs --
+  'gitPullError.title': 'Git Repo Pull Failed',
+  'gitPullError.canSkip': 'You can skip this pull or try again.',
+  'gitPullError.cannotSkip': 'You can\'t skip this step because the repo hasn\'t been cloned before.',
+  'gitPullError.skip': 'Skip Pulling',
+  'gitPullError.retry': 'Try Again',
+  'registryCreds.title': 'Sign in to {host}',
+  'registryCreds.host': 'Registry',
+  'registryCreds.username': 'Username',
+  'registryCreds.password': 'Password',
+  'registryCreds.save': 'Save & Retry',
+  'registryCreds.saved': 'Credentials saved',
+  'registryCreds.banner': 'Configure credentials',
+  'registryCreds.bannerTooltip': 'Provide registry credentials so the launcher can pull this image',
   'dashboard.links': '\u30ea\u30f3\u30af',
   'dashboard.volumes': '\u30dc\u30ea\u30e5\u30fc\u30e0',
   'dashboard.secrets': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8',
@@ -20,6 +44,11 @@ const ja: Translations = {
   'dashboard.restartEvents': '\u518d\u8d77\u52d5\u30a4\u30d9\u30f3\u30c8',
   'dashboard.systemDump': '\u30b7\u30b9\u30c6\u30e0\u30c0\u30f3\u30d7',
   'dashboard.systemDump.success': '\u30b7\u30b9\u30c6\u30e0\u30c0\u30f3\u30d7\u3092\u30c0\u30a6\u30f3\u30ed\u30fc\u30c9\u3057\u307e\u3057\u305f',
+
+  // -- Loading 30s hint --
+  'loadingHint.stillLoading': 'Still loading... This is taking longer than expected.\nTo help us diagnose the issue, please click the \'Dump System Info\' button and send the data to the maintainers.',
+  'loadingHint.showLogs': 'Show Logs',
+  'loadingHint.dumpSystemInfo': 'Dump System Info',
 
   // -- Welcome --
   'welcome.title': 'Citeck Launcher \u3078\u3088\u3046\u3053\u305d\uff01',
@@ -33,6 +62,18 @@ const ja: Translations = {
   'welcome.delete.message': 'namespace \u300c{name}\u300d\u3092\u524a\u9664\u3057\u307e\u3059\u304b\uff1f\u8a2d\u5b9a\u30d5\u30a1\u30a4\u30eb\u304c\u524a\u9664\u3055\u308c\u307e\u3059\u3002',
   'welcome.context.open': '\u958b\u304f',
   'welcome.context.delete': '\u524a\u9664',
+  'welcome.workspace.label': '\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9',
+  'welcome.workspace.forceUpdate': '\u5f37\u5236\u66f4\u65b0',
+  'welcome.workspace.updating': '\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u3092\u66f4\u65b0\u4e2d...',
+  'welcome.workspace.updateSuccess': '\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u3092\u66f4\u65b0\u3057\u307e\u3057\u305f',
+  'welcome.workspace.updateFailed': '\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u306e\u66f4\u65b0\u306b\u5931\u6557\u3057\u307e\u3057\u305f: {error}',
+
+  // -- \u30c0\u30c3\u30b7\u30e5\u30dc\u30fc\u30c9\u30b5\u30a4\u30c9\u30d0\u30fc / \u30cd\u30fc\u30e0\u30b9\u30da\u30fc\u30b9\u30c7\u30a3\u30ec\u30af\u30c8\u30ea --
+  'dashboard.openNsDir': 'NS \u30c7\u30a3\u30ec\u30af\u30c8\u30ea\u3092\u958b\u304f',
+  'dashboard.openNsDir.tooltip': '\u30cd\u30fc\u30e0\u30b9\u30da\u30fc\u30b9\u306e\u30dc\u30ea\u30e5\u30fc\u30e0\u30c7\u30a3\u30ec\u30af\u30c8\u30ea\u3092\u30d5\u30a1\u30a4\u30eb\u30de\u30cd\u30fc\u30b8\u30e3\u30fc\u3067\u958b\u304d\u307e\u3059',
+  'dashboard.openNsDir.success': '{path} \u3092\u958b\u304d\u307e\u3057\u305f',
+  'dashboard.openNsDir.serverInfo': '\u30c7\u30fc\u30e2\u30f3\u30d1\u30b9: {path}',
+  'dashboard.openNsDir.failed': '\u958b\u304f\u306e\u306b\u5931\u6557\u3057\u307e\u3057\u305f: {error}',
 
   // -- Wizard --
   'wizard.title': 'namespace \u3092\u4f5c\u6210',
@@ -159,6 +200,29 @@ const ja: Translations = {
   'logs.back': '\u2190 {name} \u306b\u623b\u308b',
   'logs.title': '\u30ed\u30b0: {name}',
 
+  // -- Standalone window mode (desktop multi-window) --
+  'window.logs.heading': '\u30ed\u30b0:',
+  'window.editor.heading': '\u8a2d\u5b9a:',
+  'window.editor.noApp': '\u30a2\u30d7\u30ea\u30b1\u30fc\u30b7\u30e7\u30f3\u304c\u9078\u629e\u3055\u308c\u3066\u3044\u307e\u305b\u3093\u3002',
+
+  // -- Licenses page --
+  'licenses.title': '\u30a8\u30f3\u30bf\u30fc\u30d7\u30e9\u30a4\u30ba \u30e9\u30a4\u30bb\u30f3\u30b9',
+  'licenses.add': '\u30e9\u30a4\u30bb\u30f3\u30b9\u3092\u8ffd\u52a0',
+  'licenses.adding': '\u8ffd\u52a0\u4e2d\u2026',
+  'licenses.empty': '\u30e9\u30a4\u30bb\u30f3\u30b9\u304c\u30a4\u30f3\u30b9\u30c8\u30fc\u30eb\u3055\u308c\u3066\u3044\u307e\u305b\u3093\u3002\u7f72\u540d\u4ed8\u304d\u30e9\u30a4\u30bb\u30f3\u30b9JSON\u3092\u8cbc\u308a\u4ed8\u3051\u3066\u304f\u3060\u3055\u3044\u3002',
+  'licenses.hint': 'Citeck\u304b\u3089\u53d7\u9818\u3057\u305f\u7f72\u540d\u4ed8\u304d\u30e9\u30a4\u30bb\u30f3\u30b9JSON\u3092\u8cbc\u308a\u4ed8\u3051\u3066\u304f\u3060\u3055\u3044\u3002\u7f72\u540d\u306f\u30e9\u30f3\u30c1\u30e3\u30fc\u3067\u691c\u8a3c\u3055\u308c\u307e\u3059\u3002',
+  'licenses.added': '\u30e9\u30a4\u30bb\u30f3\u30b9\u3092\u8ffd\u52a0\u3057\u307e\u3057\u305f',
+  'licenses.deleted': '\u30e9\u30a4\u30bb\u30f3\u30b9\u3092\u524a\u9664\u3057\u307e\u3057\u305f',
+  'licenses.delete': '\u30e9\u30a4\u30bb\u30f3\u30b9\u3092\u524a\u9664',
+  'licenses.deleteConfirm': '\u30e9\u30a4\u30bb\u30f3\u30b9\u300c{id}\u300d\u3092\u524a\u9664\u3057\u307e\u3059\u304b?',
+  'licenses.col.tenant': '\u30c6\u30ca\u30f3\u30c8',
+  'licenses.col.issuedTo': '\u767a\u884c\u5148',
+  'licenses.col.validity': '\u6709\u52b9\u671f\u9593',
+  'licenses.col.status': '\u30b9\u30c6\u30fc\u30bf\u30b9',
+  'licenses.col.actions': '\u64cd\u4f5c',
+  'licenses.status.valid': '\u6709\u52b9',
+  'licenses.status.invalid': '\u7121\u52b9',
+
   // -- AppDetail page --
   'appDetail.back': '\u2190 \u30c0\u30c3\u30b7\u30e5\u30dc\u30fc\u30c9',
 
@@ -171,6 +235,8 @@ const ja: Translations = {
   'table.tag': '\u30bf\u30b0',
   'table.actions': '\u64cd\u4f5c',
   'table.restartCount': '\u518d\u8d77\u52d5\u56de\u6570',
+  'table.cog.tooltip': 'Left click: edit app config\nRight click: edit a mounted file',
+  'table.noEditableFiles': 'No editable files',
   'table.group.core': 'Citeck Core',
   'table.group.coreExt': 'Citeck Core \u62e1\u5f35',
   'table.group.additional': 'Citeck \u8ffd\u52a0',
@@ -186,6 +252,12 @@ const ja: Translations = {
   'table.confirm.restart.title': '{name} \u3092\u518d\u8d77\u52d5\u3057\u307e\u3059\u304b\uff1f',
   'table.confirm.restart.message': '{name} \u3092\u518d\u8d77\u52d5\u3057\u307e\u3059\u304b\uff1f',
   'table.toast.success': '{name} \u306e{action}\u3092\u30ea\u30af\u30a8\u30b9\u30c8\u3057\u307e\u3057\u305f',
+  'table.cpu.throttled': 'CPU \u30b9\u30ed\u30c3\u30c8\u30eb\u4e2d',
+  'table.memory.warning': '\u30e1\u30e2\u30ea\u4f7f\u7528\u7387\u304c\u9ad8\u3044',
+  'table.memory.critical': 'OOM \u4e0a\u9650\u306b\u8fd1\u3044',
+  'table.pullAuthRequired.label': '\u8a8d\u8a3c\u60c5\u5831\u3092\u8a2d\u5b9a',
+  'table.pullAuthRequired.tooltip': '\u30ec\u30b8\u30b9\u30c8\u30ea\u306e\u8a8d\u8a3c\u304c\u5fc5\u8981\u3067\u3059 \u2014 \u30af\u30ea\u30c3\u30af\u3057\u3066\u8a2d\u5b9a\u3057\u3066\u304f\u3060\u3055\u3044',
+  'table.pullAuthRetry.success': '\u8a8d\u8a3c\u60c5\u5831\u3092\u4fdd\u5b58\u3057\u307e\u3057\u305f\u3002\u30d7\u30eb\u3092\u518d\u8a66\u884c\u3057\u307e\u3059',
 
   // -- App Drawer --
   'drawer.container': '\u30b3\u30f3\u30c6\u30ca',
@@ -218,6 +290,14 @@ const ja: Translations = {
   'appConfig.confirm.message': '\u8a2d\u5b9a\u3092\u4fdd\u5b58\u3057\u3066\u30a2\u30d7\u30ea\u3092\u518d\u8d77\u52d5\u3057\u307e\u3059\u304b\uff1f',
   'appConfig.saved': '\u30a2\u30d7\u30ea\u8a2d\u5b9a\u3092\u4fdd\u5b58\u3057\u307e\u3057\u305f',
   'appConfig.fileSaved': '\u30d5\u30a1\u30a4\u30eb\u3092\u4fdd\u5b58\u3057\u307e\u3057\u305f',
+  'appConfig.reset': 'Reset',
+  'appConfig.reset.tooltip': 'Discard edits and restore the generated default',
+  'appConfig.reset.confirmTitle': 'Reset app config?',
+  'appConfig.reset.confirmMessage': 'This will discard your edits and restore the launcher-generated default.',
+  'appConfig.reset.success': 'App config reset to default',
+  'appConfig.fileReset.tooltip': '\u5909\u66f4\u3092\u7834\u68c4\u3057\u3001\u751f\u6210\u3055\u308c\u305f\u30c7\u30d5\u30a9\u30eb\u30c8\u3092\u5fa9\u5143\u3057\u307e\u3059',
+  'appConfig.fileReset.success': '\u30d5\u30a1\u30a4\u30eb\u3092\u30c7\u30d5\u30a9\u30eb\u30c8\u306b\u30ea\u30bb\u30c3\u30c8\u3057\u307e\u3057\u305f',
+  'appConfig.fileEdited.badge': '\u7de8\u96c6\u6e08\u307f',
   'appConfig.tabTitle': '\u8a2d\u5b9a: {name}',
 
   // -- Config Editor --
@@ -263,10 +343,13 @@ const ja: Translations = {
 
   // -- Namespace Controls --
   'ns.start': '\u958b\u59cb',
+  'ns.forceStart': '\u5f37\u5236\u66f4\u65b0\u3057\u3066\u958b\u59cb',
   'ns.stop': '\u505c\u6b62',
   'ns.reload': '\u30ea\u30ed\u30fc\u30c9',
   'ns.confirm.start.title': 'namespace \u3092\u958b\u59cb',
   'ns.confirm.start.message': '\u3053\u306e namespace \u306e\u3059\u3079\u3066\u306e\u30a2\u30d7\u30ea\u3092\u958b\u59cb\u3057\u307e\u3059\u304b\uff1f',
+  'ns.confirm.forceStart.title': '\u5f37\u5236\u66f4\u65b0\u3057\u3066\u958b\u59cb',
+  'ns.confirm.forceStart.message': '\u30ec\u30b8\u30b9\u30c8\u30ea\u304b\u3089\u3059\u3079\u3066\u306e\u30a4\u30e1\u30fc\u30b8\u3092\u518d\u53d6\u5f97\u3057\u3066 namespace \u3092\u958b\u59cb\u3057\u307e\u3059\u304b\uff1f \u5b9f\u884c\u4e2d\u306e\u30b3\u30f3\u30c6\u30ca\u306f\u518d\u4f5c\u6210\u3055\u308c\u307e\u3059\u3002',
   'ns.confirm.stop.title': 'namespace \u3092\u505c\u6b62',
   'ns.confirm.stop.message': '\u3059\u3079\u3066\u306e\u5b9f\u884c\u4e2d\u30a2\u30d7\u30ea\u3092\u505c\u6b62\u3057\u307e\u3059\u304b\uff1f',
   'ns.confirm.reload.title': '\u8a2d\u5b9a\u3092\u30ea\u30ed\u30fc\u30c9',
@@ -309,6 +392,7 @@ const ja: Translations = {
   'common.working': '\u51e6\u7406\u4e2d...',
   'common.submit': '\u9001\u4fe1',
   'common.select': '\u9078\u629e',
+  'common.create': '作成',
   'common.settings': '\u8a2d\u5b9a',
   'common.error': '\u30a8\u30e9\u30fc: {error}',
 
@@ -319,6 +403,7 @@ const ja: Translations = {
   'journal.rowCount': '{count} \u884c',
   'journal.rowCountOne': '1 \u884c',
   'journal.selected': '{count} \u4ef6\u9078\u629e',
+  'journal.actions': '操作',
 
   // -- Error Boundary --
   'error.title': '\u554f\u984c\u304c\u767a\u751f\u3057\u307e\u3057\u305f',
@@ -349,6 +434,14 @@ const ja: Translations = {
   'migration.unlock.description': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u306f\u6697\u53f7\u5316\u3055\u308c\u3066\u3044\u307e\u3059\u3002\u30de\u30b9\u30bf\u30fc\u30d1\u30b9\u30ef\u30fc\u30c9\u3092\u5165\u529b\u3057\u3066\u30ed\u30c3\u30af\u3092\u89e3\u9664\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
   'migration.unlock.confirm': '\u30ed\u30c3\u30af\u89e3\u9664',
   'migration.unlock.success': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u306e\u30ed\u30c3\u30af\u304c\u89e3\u9664\u3055\u308c\u307e\u3057\u305f',
+  'migration.password.empty': 'Password is empty',
+  'migration.password.mismatch': 'Passwords do not match',
+  'migration.password.confirmPlaceholder': 'Confirm password',
+  'migration.unlock.reset': 'Reset Master Password and Drop All Secrets',
+  'migration.unlock.reset.confirmTitle': 'Reset master password?',
+  'migration.unlock.reset.confirmMessage': 'All your secrets will be permanently deleted from local storage.',
+  'migration.unlock.reset.confirmLabel': 'Reset and delete',
+  'migration.unlock.reset.success': 'Master password reset; all secrets deleted',
 
   // -- Secrets (additional) --
   'secrets.encrypted.badge': '\u6697\u53f7\u5316\u6e08\u307f',
@@ -363,7 +456,67 @@ const ja: Translations = {
   'upgrade.success': '\u30a2\u30c3\u30d7\u30b0\u30ec\u30fc\u30c9\u306b\u6210\u529f\u3057\u307e\u3057\u305f',
   'upgrade.alreadyLatest': '\u65e2\u306b\u6700\u65b0\u30d0\u30fc\u30b8\u30e7\u30f3\u3067\u3059',
   'form.fieldRequired': '{label} は必須です',
+  'form.showPassword': 'パスワードを表示',
+  'form.hidePassword': 'パスワードを非表示',
+  'form.refreshOptions': '選択肢を更新',
+
+  // -- Volumes/Snapshots/Secrets modals (Kotlin parity) --
+  'volumes.dialog.title': 'Volumes',
+  'volumes.deleteAll': 'Delete All',
+  'volumes.deleteAll.title': 'Delete all volumes?',
+  'volumes.deleteAll.message': 'All your data in this namespace will be lost.',
+  'volumes.deleteAll.success': 'All volumes deleted',
+  'snapshots.dialog.title': 'Snapshots',
+  'snapshots.scope.workspace': 'Workspace',
+  'snapshots.scope.namespace': 'Namespace',
+  'snapshots.col.name': 'Name',
+  'snapshots.col.size': 'Size',
+  'snapshots.col.created': 'Created',
+  'snapshots.action.import': 'Import / Download',
+  'snapshots.action.rename': 'Rename',
+  'snapshots.action.delete': 'Delete',
+  'snapshots.create': 'Create Snapshot',
+  'snapshots.create.title': 'Create snapshot',
+  'snapshots.importFile': 'Import .zip…',
+  'snapshots.import.local.hint': 'Use the .zip stored in the namespace dir to import locally.',
+  'snapshots.rename.title': 'Rename snapshot',
+  'snapshots.delete.title': 'Delete snapshot "{name}"?',
+  'snapshots.delete.message': 'This action permanently deletes the snapshot file.',
+  'snapshots.delete.notSupported': 'Snapshot deletion is not exposed via API; remove the .zip from the namespace dir.',
+  'snapshots.deleted': 'Snapshot deleted',
+  'snapshots.field.name': 'Snapshot name',
+  'snapshots.field.name.invalid': 'Name can only contain letters, digits, dots, dashes and underscores.',
+  'secrets.dialog.title': 'Auth Secrets',
+  'secrets.test.ok': 'Secret test passed',
+
+  // -- Namespace picker dialog --
+  'namespaces.dialog.title': 'Namespaces',
+  'namespaces.col.name': 'Name',
+  'namespaces.col.bundle': 'Bundle',
+  'namespaces.col.status': 'Status',
+  'namespaces.action.edit': 'Edit',
+  'namespaces.switch': 'Switch namespace',
+  'namespaces.deleted': 'Namespace deleted',
   'store.connectionRestored': '接続が復旧し、状態が更新されました',
+
+  // -- Namespace edit dialog --
+  'nsEdit.title': '名前空間を編集',
+  'nsEdit.field.name': '名前',
+  'nsEdit.field.bundleRepo': 'バンドルリポジトリ',
+  'nsEdit.field.bundleKey': 'バンドルバージョン',
+  'nsEdit.field.authType': '認証',
+  'nsEdit.field.users': 'ユーザー（カンマ区切り）',
+  'nsEdit.field.host': 'ホスト名',
+  'nsEdit.field.port': 'ポート',
+  'nsEdit.field.tlsEnabled': 'TLSを有効化',
+  'nsEdit.field.pgAdminEnabled': 'PgAdminを有効化',
+  'nsEdit.save': '保存',
+  'nsEdit.saveSuccess': '名前空間が更新されました',
+  'nsEdit.editRawYaml': 'YAMLを直接編集…',
+
+  // -- Snapshot import warning --
+  'snapshots.import.confirm.title': 'スナップショットをインポートしますか？',
+  'snapshots.import.confirm.message': 'インポートすると、この名前空間の既存ボリュームが削除されます。続行しますか？',
 }
 
 export default ja

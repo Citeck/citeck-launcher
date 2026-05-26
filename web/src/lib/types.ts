@@ -10,11 +10,25 @@ export interface AppDto {
   image: string
   cpu: string
   memory: string
+  /** 0..100; 0 when no memory limit is configured. */
+  memoryPercent?: number
+  /** True when memory usage >= 80% of the configured limit. */
+  memoryWarning?: boolean
+  /** True when memory usage >= 95% of the configured limit. */
+  memoryCritical?: boolean
+  /** True when the container hit its CPU quota in the latest stats sample. */
+  cpuThrottled?: boolean
   kind: string
   ports?: string[]
   edited?: boolean
   locked?: boolean
   restartCount?: number
+  editedFilesCount?: number
+}
+
+export interface AppFileDto {
+  path: string
+  edited?: boolean
 }
 
 export interface RestartEventDto {
@@ -30,6 +44,8 @@ export interface LinkDto {
   url: string
   icon?: string
   order: number
+  category?: string
+  description?: string
 }
 
 export interface NamespaceDto {
@@ -73,6 +89,10 @@ export interface EventDto {
   appName: string
   before: string
   after: string
+  /** Pull progress 0..100. Only present on `pull_progress` events. */
+  percent?: number
+  /** Human-readable progress phase ("Pulling: 234mb 50%"). Only present on `pull_progress`. */
+  phase?: string
 }
 
 export interface AppInspectDto {

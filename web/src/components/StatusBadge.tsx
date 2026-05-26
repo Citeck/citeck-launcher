@@ -4,31 +4,45 @@ interface StatusBadgeProps {
   status: string
 }
 
-const statusStyles: Record<string, { bg: string; text: string; dot: string }> = {
-  RUNNING: { bg: 'bg-success/10', text: 'text-success', dot: 'bg-success' },
-  HEALTHY: { bg: 'bg-success/10', text: 'text-success', dot: 'bg-success' },
-  FAILED: { bg: 'bg-destructive/10', text: 'text-destructive', dot: 'bg-destructive' },
-  PULL_FAILED: { bg: 'bg-destructive/10', text: 'text-destructive', dot: 'bg-destructive' },
-  START_FAILED: { bg: 'bg-destructive/10', text: 'text-destructive', dot: 'bg-destructive' },
-  STOPPING_FAILED: { bg: 'bg-destructive/10', text: 'text-destructive', dot: 'bg-destructive' },
-  STARTING: { bg: 'bg-warning/10', text: 'text-warning', dot: 'bg-warning animate-pulse' },
-  PULLING: { bg: 'bg-warning/10', text: 'text-warning', dot: 'bg-warning animate-pulse' },
-  DEPS_WAITING: { bg: 'bg-warning/10', text: 'text-warning', dot: 'bg-warning animate-pulse' },
-  READY_TO_PULL: { bg: 'bg-warning/10', text: 'text-warning', dot: 'bg-warning' },
-  READY_TO_START: { bg: 'bg-warning/10', text: 'text-warning', dot: 'bg-warning' },
-  STOPPING: { bg: 'bg-warning/10', text: 'text-warning', dot: 'bg-warning animate-pulse' },
-  STOPPED: { bg: 'bg-muted', text: 'text-muted-foreground', dot: 'bg-muted-foreground' },
-  STALLED: { bg: 'bg-destructive/10', text: 'text-destructive', dot: 'bg-destructive' },
+// Kotlin parity (AppRuntimeStatus.kt) — category → hex. See docs/porting/02 §7.2.
+const C_RUNNING = '#33AB50'
+const C_TRANSIENT = '#F4E909' // STARTING / PULLING / STOPPING / READY_*
+const C_STALLED = '#DB831D' // PULL_FAILED / START_FAILED / STOPPING_FAILED / STALLED / FAILED
+const C_STOPPED = '#424242'
+
+const statusColor: Record<string, string> = {
+  RUNNING: C_RUNNING,
+  HEALTHY: C_RUNNING,
+  STARTING: C_TRANSIENT,
+  PULLING: C_TRANSIENT,
+  DEPS_WAITING: C_TRANSIENT,
+  READY_TO_PULL: C_TRANSIENT,
+  READY_TO_START: C_TRANSIENT,
+  STOPPING: C_TRANSIENT,
+  FAILED: C_STALLED,
+  PULL_FAILED: C_STALLED,
+  START_FAILED: C_STALLED,
+  STOPPING_FAILED: C_STALLED,
+  STALLED: C_STALLED,
+  STOPPED: C_STOPPED,
 }
 
-const defaultStyle = { bg: 'bg-muted', text: 'text-muted-foreground', dot: 'bg-muted-foreground' }
+// Statuses where the dot pulses (in-flight transitions, parity with Kotlin).
+const PULSE_DOT = new Set(['STARTING', 'PULLING', 'DEPS_WAITING', 'STOPPING'])
 
 export function StatusBadge({ status }: StatusBadgeProps) {
-  const s = statusStyles[status] ?? defaultStyle
+  const color = statusColor[status] ?? C_STOPPED
   const label = t('status.' + status)
+  const pulse = PULSE_DOT.has(status) ? 'animate-pulse' : ''
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded px-1.5 py-0 text-[11px] font-medium leading-5 ${s.bg} ${s.text}`}>
-      <span className={`inline-block h-1.5 w-1.5 rounded-full ${s.dot}`} />
+    <span
+      className="inline-flex items-center gap-1.5 rounded px-1.5 py-0 text-[11px] font-medium leading-5"
+      style={{ backgroundColor: `${color}1A`, color }}
+    >
+      <span
+        className={`inline-block h-1.5 w-1.5 rounded-full ${pulse}`}
+        style={{ backgroundColor: color }}
+      />
       {label}
     </span>
   )

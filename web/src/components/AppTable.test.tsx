@@ -74,7 +74,7 @@ describe('AppTable', () => {
 
   it('clicking config icon opens app-config tab in bottom panel', () => {
     renderWithRouter(<AppTable apps={mockApps} />)
-    const configBtns = screen.getAllByTitle(/Configuration|Edit/)
+    const configBtns = screen.getAllByTitle(/Left click/)
     fireEvent.click(configBtns[0])
     const { bottomTabs } = usePanelStore.getState()
     expect(bottomTabs).toHaveLength(1)

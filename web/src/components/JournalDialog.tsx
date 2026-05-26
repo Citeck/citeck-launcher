@@ -1,60 +1,124 @@
 import { useEffect, useRef, useState, useMemo } from 'react'
-import { Search, X } from 'lucide-react'
+import { Search, X, Plus } from 'lucide-react'
 import { useTranslation } from '../lib/i18n'
 
-export interface JournalColumn {
+/**
+ * Cell renderer: receives the raw row + the resolved string from `row[col.key]`.
+ * Returning a ReactNode lets callers render badges, icons, or custom layout.
+ */
+export interface JournalColumn<T = Record<string, unknown>> {
   label: string
   key: string
   width?: string
+  render?: (row: T) => React.ReactNode
 }
 
-interface JournalDialogProps {
+/**
+ * Per-row action — typically rendered as an icon button in the trailing
+ * "Actions" column. Mirrors Kotlin's `EntityInfo.actions: List<ActionDesc>`.
+ *
+ * - `enabledIf` returning false greys out the button (still visible, mirrors
+ *   Kotlin behaviour where edit/delete don't disappear for default entities;
+ *   they just no-op).
+ * - `decoration` adds a small visual marker — e.g. "edited" blue dot, or a
+ *   count badge — without forcing the caller to render the whole cell.
+ */
+export interface JournalAction<T = Record<string, unknown>> {
+  icon: React.ComponentType<{ size?: number; className?: string }>
   title: string
-  columns: JournalColumn[]
-  data: Record<string, unknown>[]
-  selectable?: boolean
-  multiple?: boolean
-  onSelect?: (selected: Record<string, unknown>[]) => void
-  customButtons?: { label: string; onClick: (selected: Record<string, unknown>[]) => void }[]
-  onClose: () => void
-  open: boolean
+  onClick: (row: T) => void | Promise<void>
+  enabledIf?: (row: T) => boolean
+  /** Optional decoration: "blue dot" or count badge over the icon. */
+  decoration?: (row: T) => { dot?: boolean; badge?: string | number } | null
+  /** Variant for hover color: 'default' (muted-foreground), 'danger' (destructive). */
+  variant?: 'default' | 'danger'
 }
 
-export function JournalDialog({
+/**
+ * Bottom-bar custom button. Mirrors Kotlin `JournalButton`:
+ *  - `enabledIf`: enable predicate. When the selectable list is non-empty
+ *    you can receive the selected rows to decide.
+ *  - `loading`: when true, the caller's onClick is wrapped in a "loading"
+ *    state — useful for actions that take seconds (delete all, snapshot).
+ */
+export interface JournalCustomButton<T = Record<string, unknown>> {
+  label: string
+  onClick: (selected: T[]) => void | Promise<void>
+  enabledIf?: (selected: T[]) => boolean
+  loading?: boolean
+  variant?: 'default' | 'primary' | 'danger'
+}
+
+interface JournalDialogProps<T extends Record<string, unknown>> {
+  title: string
+  columns: JournalColumn<T>[]
+  data: T[]
+  open: boolean
+  onClose: () => void
+  /** If true, rows are selectable via checkbox/radio. */
+  selectable?: boolean
+  /** If true (and selectable), multi-select via checkboxes; else single-select via radio. */
+  multiple?: boolean
+  onSelect?: (selected: T[]) => void
+  rowActions?: JournalAction<T>[]
+  customButtons?: JournalCustomButton<T>[]
+  /** When provided, shows a "+ Create" button in the footer. */
+  onCreate?: () => void
+  /** When true, auto-closes when the table becomes empty (Kotlin `closeWhenAllRecordsDeleted`). */
+  closeWhenEmpty?: boolean
+}
+
+/**
+ * JournalDialog is the Web port of Kotlin's JournalSelectDialog
+ * (view/form/components/journal/JournalSelectDialog.kt).
+ *
+ * It is generic over the row type so callers don't have to cast cell values.
+ * Per-row actions mirror Kotlin's `EntityInfo.actions` model; the column
+ * `render` callback handles custom cell content (size badges etc.).
+ */
+export function JournalDialog<T extends Record<string, unknown>>({
   title,
   columns,
   data,
+  open,
+  onClose,
   selectable = false,
   multiple = false,
   onSelect,
+  rowActions,
   customButtons,
-  onClose,
-  open,
-}: JournalDialogProps) {
+  onCreate,
+  closeWhenEmpty = false,
+}: JournalDialogProps<T>) {
   const { t } = useTranslation()
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [buttonLoading, setButtonLoading] = useState<string | null>(null)
 
   useEffect(() => {
     const dialog = dialogRef.current
     if (!dialog) return
-    if (open && !dialog.open) {
-      dialog.showModal()
-    } else if (!open && dialog.open) {
-      dialog.close()
-    }
+    if (open && !dialog.open) dialog.showModal()
+    else if (!open && dialog.open) dialog.close()
   }, [open])
 
-  // Reset selection when data changes — "adjust state during render" pattern
+  // Reset selection + search when data identity changes (e.g. caller refreshes).
   const [prevData, setPrevData] = useState(data)
   if (data !== prevData) {
     setPrevData(data)
     setSelected(new Set())
   }
 
-  // Stable row identity using the first column value
-  function rowKey(row: Record<string, unknown>): string {
+  // Kotlin parity: auto-close when the table is emptied. Used by namespace
+  // picker after the last namespace is deleted (`closeWhenAllRecordsDeleted=true`).
+  useEffect(() => {
+    if (closeWhenEmpty && open && data.length === 0) {
+      onClose()
+    }
+  }, [closeWhenEmpty, open, data.length, onClose])
+
+  function rowKey(row: T): string {
     const firstCol = columns[0]
     return firstCol ? String(row[firstCol.key] ?? '') : JSON.stringify(row)
   }
@@ -70,7 +134,7 @@ export function JournalDialog({
     )
   }, [data, search, columns])
 
-  function toggleRow(row: Record<string, unknown>) {
+  function toggleRow(row: T) {
     const key = rowKey(row)
     setSelected((prev) => {
       const next = new Set(prev)
@@ -92,15 +156,31 @@ export function JournalDialog({
     }
   }
 
-  function getSelectedRows(): Record<string, unknown>[] {
+  function getSelectedRows(): T[] {
     return filteredData.filter((row) => selected.has(rowKey(row)))
   }
 
   function handleSelect() {
-    if (onSelect) {
-      onSelect(getSelectedRows())
-    }
+    if (onSelect) onSelect(getSelectedRows())
     onClose()
+  }
+
+  function handleRowDoubleClick(row: T) {
+    if (!selectable) return
+    if (!multiple) {
+      // Kotlin parity: double-click on the name cell submits in single-select.
+      if (onSelect) onSelect([row])
+      onClose()
+    }
+  }
+
+  async function runCustomButton(btn: JournalCustomButton<T>) {
+    if (btn.loading) setButtonLoading(btn.label)
+    try {
+      await btn.onClick(getSelectedRows())
+    } finally {
+      setButtonLoading(null)
+    }
   }
 
   return (
@@ -160,6 +240,9 @@ export function JournalDialog({
                     {col.label}
                   </th>
                 ))}
+                {rowActions && rowActions.length > 0 && (
+                  <th className="py-1.5 pr-0 text-right font-medium">{t('journal.actions')}</th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -167,32 +250,63 @@ export function JournalDialog({
                 const key = rowKey(row)
                 const isSelected = selected.has(key)
                 return (
-                <tr
-                  key={key || i}
-                  className={`border-b border-border/20 hover:bg-muted/30 ${isSelected ? 'bg-primary/5' : ''} ${selectable ? 'cursor-pointer' : ''}`}
-                  onClick={selectable ? () => toggleRow(row) : undefined}
-                >
-                  {selectable && (
-                    <td className="py-[3px] pr-2">
-                      <input
-                        type={multiple ? 'checkbox' : 'radio'}
-                        className="rounded border-border"
-                        checked={isSelected}
-                        onChange={() => toggleRow(row)}
-                      />
-                    </td>
-                  )}
-                  {columns.map((col) => (
-                    <td key={col.key} className="py-[3px] pr-4 text-muted-foreground">
-                      {row[col.key] != null ? String(row[col.key]) : ''}
-                    </td>
-                  ))}
-                </tr>
-              )})}
+                  <tr
+                    key={key || i}
+                    className={`border-b border-border/20 hover:bg-muted/30 ${isSelected ? 'bg-primary/5' : ''} ${selectable ? 'cursor-pointer' : ''}`}
+                    onClick={selectable ? () => toggleRow(row) : undefined}
+                    onDoubleClick={() => handleRowDoubleClick(row)}
+                  >
+                    {selectable && (
+                      <td className="py-[3px] pr-2">
+                        <input
+                          type={multiple ? 'checkbox' : 'radio'}
+                          className="rounded border-border"
+                          checked={isSelected}
+                          onChange={() => toggleRow(row)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </td>
+                    )}
+                    {columns.map((col) => (
+                      <td key={col.key} className="py-[3px] pr-4 text-muted-foreground">
+                        {col.render ? col.render(row) : (row[col.key] != null ? String(row[col.key]) : '')}
+                      </td>
+                    ))}
+                    {rowActions && rowActions.length > 0 && (
+                      <td className="py-[3px] pr-0 text-right whitespace-nowrap">
+                        {rowActions.map((act, idx) => {
+                          const enabled = act.enabledIf ? act.enabledIf(row) : true
+                          const deco = act.decoration ? act.decoration(row) : null
+                          const Icon = act.icon
+                          const hover = act.variant === 'danger' ? 'hover:text-destructive' : 'hover:text-foreground'
+                          return (
+                            <button
+                              key={idx}
+                              type="button"
+                              className={`relative inline-flex items-center justify-center p-1 rounded text-muted-foreground ${hover} hover:bg-muted disabled:opacity-40 disabled:hover:bg-transparent`}
+                              title={act.title}
+                              disabled={!enabled}
+                              onClick={(e) => { e.stopPropagation(); void act.onClick(row) }}
+                            >
+                              <Icon size={14} />
+                              {deco?.dot && <span className="absolute top-0.5 right-0.5 h-1.5 w-1.5 rounded-full bg-primary" />}
+                              {deco?.badge != null && (
+                                <span className="absolute -bottom-0.5 -right-0.5 text-[9px] font-medium bg-primary text-primary-foreground rounded px-0.5">
+                                  {deco.badge}
+                                </span>
+                              )}
+                            </button>
+                          )
+                        })}
+                      </td>
+                    )}
+                  </tr>
+                )
+              })}
               {filteredData.length === 0 && (
                 <tr>
                   <td
-                    colSpan={columns.length + (selectable ? 1 : 0)}
+                    colSpan={columns.length + (selectable ? 1 : 0) + (rowActions && rowActions.length > 0 ? 1 : 0)}
                     className="py-4 text-center text-muted-foreground"
                   >
                     {search ? t('journal.noMatchingRows') : t('journal.noData')}
@@ -204,24 +318,41 @@ export function JournalDialog({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between px-4 py-3 border-t border-border shrink-0">
+        <div className="flex items-center justify-between px-4 py-3 border-t border-border shrink-0 gap-2 flex-wrap">
           <span className="text-[11px] text-muted-foreground">
             {filteredData.length === 1
               ? t('journal.rowCountOne')
               : t('journal.rowCount', { count: filteredData.length })}
             {selectable && selected.size > 0 && ` (${t('journal.selected', { count: selected.size })})`}
           </span>
-          <div className="flex items-center gap-2">
-            {customButtons?.map((btn) => (
+          <div className="flex items-center gap-2 flex-wrap">
+            {onCreate && (
               <button
-                key={btn.label}
                 type="button"
-                className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted"
-                onClick={() => btn.onClick(getSelectedRows())}
+                className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted"
+                onClick={onCreate}
               >
-                {btn.label}
+                <Plus size={12} /> {t('common.create')}
               </button>
-            ))}
+            )}
+            {customButtons?.map((btn) => {
+              const enabled = btn.enabledIf ? btn.enabledIf(getSelectedRows()) : true
+              const variant =
+                btn.variant === 'primary' ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                : btn.variant === 'danger' ? 'border border-destructive/40 text-destructive hover:bg-destructive/10'
+                : 'border border-border hover:bg-muted'
+              return (
+                <button
+                  key={btn.label}
+                  type="button"
+                  className={`rounded-md px-3 py-1.5 text-xs disabled:opacity-50 ${variant}`}
+                  disabled={!enabled || buttonLoading === btn.label}
+                  onClick={() => runCustomButton(btn)}
+                >
+                  {buttonLoading === btn.label ? `${btn.label}…` : btn.label}
+                </button>
+              )
+            })}
             {selectable && onSelect && (
               <button
                 type="button"

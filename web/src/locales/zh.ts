@@ -8,10 +8,34 @@ const zh: Translations = {
   'dashboard.cpu': 'CPU',
   'dashboard.mem': '内存',
   'dashboard.openInBrowser': '在浏览器中打开',
-  'dashboard.openInBrowser.tooltip': '在浏览器中打开 Citeck\n默认账号：admin / admin',
-  'dashboard.openInBrowser.disabled': '请先启动 namespace',
+  'dashboard.openInBrowser.tooltip': '在浏览器中打开 Citeck。\n 默认用户名：admin\n 默认密码：admin',
+  'dashboard.openInBrowser.disabled': '应用程序未运行。请启动它以便在浏览器中打开。',
+  'dashboard.openInBrowser.starting': '应用程序正在启动。请稍候...',
+  'dashboard.openInBrowser.stalled': '应用程序已停止响应。请尝试重新启动。',
   'dashboard.docker.error': 'Docker：{error}',
   'dashboard.docker.retry': '重试',
+
+  // -- Docker not available screen --
+  'dockerUnavailable.title': 'Docker is not available',
+  'dockerUnavailable.installedButStopped': 'Docker is installed but not running.\nPlease start Docker and click Retry.',
+  'dockerUnavailable.missing': 'Docker does not appear to be installed or is not running.\nIf Docker is already installed, please start it and click Retry.',
+  'dockerUnavailable.installPrefix': 'Install Docker:',
+  'dockerUnavailable.retry': 'Retry',
+
+  // -- GitPullError / RegistryCredentials dialogs --
+  'gitPullError.title': 'Git Repo Pull Failed',
+  'gitPullError.canSkip': 'You can skip this pull or try again.',
+  'gitPullError.cannotSkip': 'You can\'t skip this step because the repo hasn\'t been cloned before.',
+  'gitPullError.skip': 'Skip Pulling',
+  'gitPullError.retry': 'Try Again',
+  'registryCreds.title': 'Sign in to {host}',
+  'registryCreds.host': 'Registry',
+  'registryCreds.username': 'Username',
+  'registryCreds.password': 'Password',
+  'registryCreds.save': 'Save & Retry',
+  'registryCreds.saved': 'Credentials saved',
+  'registryCreds.banner': 'Configure credentials',
+  'registryCreds.bannerTooltip': 'Provide registry credentials so the launcher can pull this image',
   'dashboard.links': '链接',
   'dashboard.volumes': '存储卷',
   'dashboard.secrets': '密钥',
@@ -20,6 +44,11 @@ const zh: Translations = {
   'dashboard.restartEvents': '重启事件',
   'dashboard.systemDump': '系统转储',
   'dashboard.systemDump.success': '系统转储已下载',
+
+  // -- Loading 30s hint --
+  'loadingHint.stillLoading': 'Still loading... This is taking longer than expected.\nTo help us diagnose the issue, please click the \'Dump System Info\' button and send the data to the maintainers.',
+  'loadingHint.showLogs': 'Show Logs',
+  'loadingHint.dumpSystemInfo': 'Dump System Info',
 
   // -- Welcome --
   'welcome.title': '欢迎使用 Citeck Launcher！',
@@ -33,6 +62,18 @@ const zh: Translations = {
   'welcome.delete.message': '确认删除 namespace "{name}"？配置文件将被移除。',
   'welcome.context.open': '打开',
   'welcome.context.delete': '删除',
+  'welcome.workspace.label': '工作区',
+  'welcome.workspace.forceUpdate': '强制更新',
+  'welcome.workspace.updating': '正在更新工作区...',
+  'welcome.workspace.updateSuccess': '工作区已更新',
+  'welcome.workspace.updateFailed': '工作区更新失败：{error}',
+
+  // -- 仪表盘侧边栏 / namespace 目录 --
+  'dashboard.openNsDir': '打开 NS 目录',
+  'dashboard.openNsDir.tooltip': '在文件管理器中打开 namespace 的卷目录',
+  'dashboard.openNsDir.success': '已打开 {path}',
+  'dashboard.openNsDir.serverInfo': '守护进程路径：{path}',
+  'dashboard.openNsDir.failed': '打开失败：{error}',
 
   // -- Wizard --
   'wizard.title': '创建 namespace',
@@ -159,6 +200,29 @@ const zh: Translations = {
   'logs.back': '\u2190 返回 {name}',
   'logs.title': '日志：{name}',
 
+  // -- Standalone window mode (desktop multi-window) --
+  'window.logs.heading': '日志：',
+  'window.editor.heading': '配置：',
+  'window.editor.noApp': '未选择应用。',
+
+  // -- Licenses page --
+  'licenses.title': '企业许可证',
+  'licenses.add': '添加许可证',
+  'licenses.adding': '添加中…',
+  'licenses.empty': '未安装许可证。粘贴签名的许可证 JSON 以启用企业功能。',
+  'licenses.hint': '粘贴从 Citeck 收到的签名许可证 JSON。启动器将验证签名。',
+  'licenses.added': '许可证已添加',
+  'licenses.deleted': '许可证已删除',
+  'licenses.delete': '删除许可证',
+  'licenses.deleteConfirm': '删除许可证 "{id}"？',
+  'licenses.col.tenant': '租户',
+  'licenses.col.issuedTo': '颁发给',
+  'licenses.col.validity': '有效期',
+  'licenses.col.status': '状态',
+  'licenses.col.actions': '操作',
+  'licenses.status.valid': '有效',
+  'licenses.status.invalid': '无效',
+
   // -- AppDetail page --
   'appDetail.back': '\u2190 仪表盘',
 
@@ -171,6 +235,8 @@ const zh: Translations = {
   'table.tag': '标签',
   'table.actions': '操作',
   'table.restartCount': '重启次数',
+  'table.cog.tooltip': 'Left click: edit app config\nRight click: edit a mounted file',
+  'table.noEditableFiles': 'No editable files',
   'table.group.core': 'Citeck Core',
   'table.group.coreExt': 'Citeck Core Extensions',
   'table.group.additional': 'Citeck Additional',
@@ -186,6 +252,12 @@ const zh: Translations = {
   'table.confirm.restart.title': '重启 {name}？',
   'table.confirm.restart.message': '重启 {name}？',
   'table.toast.success': '已请求对 {name} 执行 {action}',
+  'table.cpu.throttled': 'CPU 受限',
+  'table.memory.warning': '内存使用率高',
+  'table.memory.critical': '接近 OOM 上限',
+  'table.pullAuthRequired.label': '配置凭据',
+  'table.pullAuthRequired.tooltip': '镜像仓库需要身份验证 — 点击进行配置',
+  'table.pullAuthRetry.success': '凭据已保存；正在重试拉取',
 
   // -- App Drawer --
   'drawer.container': '容器',
@@ -218,6 +290,14 @@ const zh: Translations = {
   'appConfig.confirm.message': '保存配置并重启应用？',
   'appConfig.saved': '应用配置已保存',
   'appConfig.fileSaved': '文件已保存',
+  'appConfig.reset': 'Reset',
+  'appConfig.reset.tooltip': 'Discard edits and restore the generated default',
+  'appConfig.reset.confirmTitle': 'Reset app config?',
+  'appConfig.reset.confirmMessage': 'This will discard your edits and restore the launcher-generated default.',
+  'appConfig.reset.success': 'App config reset to default',
+  'appConfig.fileReset.tooltip': '放弃修改并恢复生成的默认值',
+  'appConfig.fileReset.success': '文件已重置为默认值',
+  'appConfig.fileEdited.badge': '已修改',
   'appConfig.tabTitle': '配置：{name}',
 
   // -- Config Editor --
@@ -263,10 +343,13 @@ const zh: Translations = {
 
   // -- Namespace Controls --
   'ns.start': '启动',
+  'ns.forceStart': '强制更新并启动',
   'ns.stop': '停止',
   'ns.reload': '重新加载',
   'ns.confirm.start.title': '启动 namespace',
   'ns.confirm.start.message': '启动此 namespace 中的所有应用？',
+  'ns.confirm.forceStart.title': '强制更新并启动',
+  'ns.confirm.forceStart.message': '从注册表重新拉取所有镜像并启动 namespace？正在运行的容器将被重新创建。',
   'ns.confirm.stop.title': '停止 namespace',
   'ns.confirm.stop.message': '停止所有运行中的应用？',
   'ns.confirm.reload.title': '重新加载配置',
@@ -309,6 +392,7 @@ const zh: Translations = {
   'common.working': '处理中...',
   'common.submit': '提交',
   'common.select': '选择',
+  'common.create': '创建',
   'common.settings': '设置',
   'common.error': '错误：{error}',
 
@@ -319,6 +403,7 @@ const zh: Translations = {
   'journal.rowCount': '{count} 行',
   'journal.rowCountOne': '1 行',
   'journal.selected': '已选 {count} 项',
+  'journal.actions': '操作',
 
   // -- Error Boundary --
   'error.title': '出现问题',
@@ -349,6 +434,14 @@ const zh: Translations = {
   'migration.unlock.description': '您的密钥已加密。请输入主密码进行解锁。',
   'migration.unlock.confirm': '解锁',
   'migration.unlock.success': '密钥已解锁',
+  'migration.password.empty': 'Password is empty',
+  'migration.password.mismatch': 'Passwords do not match',
+  'migration.password.confirmPlaceholder': 'Confirm password',
+  'migration.unlock.reset': 'Reset Master Password and Drop All Secrets',
+  'migration.unlock.reset.confirmTitle': 'Reset master password?',
+  'migration.unlock.reset.confirmMessage': 'All your secrets will be permanently deleted from local storage.',
+  'migration.unlock.reset.confirmLabel': 'Reset and delete',
+  'migration.unlock.reset.success': 'Master password reset; all secrets deleted',
 
   // -- Secrets (additional) --
   'secrets.encrypted.badge': '已加密',
@@ -363,7 +456,67 @@ const zh: Translations = {
   'upgrade.success': '升级成功',
   'upgrade.alreadyLatest': '已是最新版本',
   'form.fieldRequired': '{label} 是必填项',
+  'form.showPassword': '显示密码',
+  'form.hidePassword': '隐藏密码',
+  'form.refreshOptions': '刷新选项',
+
+  // -- Volumes/Snapshots/Secrets modals (Kotlin parity) --
+  'volumes.dialog.title': 'Volumes',
+  'volumes.deleteAll': 'Delete All',
+  'volumes.deleteAll.title': 'Delete all volumes?',
+  'volumes.deleteAll.message': 'All your data in this namespace will be lost.',
+  'volumes.deleteAll.success': 'All volumes deleted',
+  'snapshots.dialog.title': 'Snapshots',
+  'snapshots.scope.workspace': 'Workspace',
+  'snapshots.scope.namespace': 'Namespace',
+  'snapshots.col.name': 'Name',
+  'snapshots.col.size': 'Size',
+  'snapshots.col.created': 'Created',
+  'snapshots.action.import': 'Import / Download',
+  'snapshots.action.rename': 'Rename',
+  'snapshots.action.delete': 'Delete',
+  'snapshots.create': 'Create Snapshot',
+  'snapshots.create.title': 'Create snapshot',
+  'snapshots.importFile': 'Import .zip…',
+  'snapshots.import.local.hint': 'Use the .zip stored in the namespace dir to import locally.',
+  'snapshots.rename.title': 'Rename snapshot',
+  'snapshots.delete.title': 'Delete snapshot "{name}"?',
+  'snapshots.delete.message': 'This action permanently deletes the snapshot file.',
+  'snapshots.delete.notSupported': 'Snapshot deletion is not exposed via API; remove the .zip from the namespace dir.',
+  'snapshots.deleted': 'Snapshot deleted',
+  'snapshots.field.name': 'Snapshot name',
+  'snapshots.field.name.invalid': 'Name can only contain letters, digits, dots, dashes and underscores.',
+  'secrets.dialog.title': 'Auth Secrets',
+  'secrets.test.ok': 'Secret test passed',
+
+  // -- Namespace picker dialog --
+  'namespaces.dialog.title': 'Namespaces',
+  'namespaces.col.name': 'Name',
+  'namespaces.col.bundle': 'Bundle',
+  'namespaces.col.status': 'Status',
+  'namespaces.action.edit': 'Edit',
+  'namespaces.switch': 'Switch namespace',
+  'namespaces.deleted': 'Namespace deleted',
   'store.connectionRestored': '连接已恢复，状态已刷新',
+
+  // -- Namespace edit dialog --
+  'nsEdit.title': '编辑命名空间',
+  'nsEdit.field.name': '名称',
+  'nsEdit.field.bundleRepo': '包仓库',
+  'nsEdit.field.bundleKey': '包版本',
+  'nsEdit.field.authType': '认证',
+  'nsEdit.field.users': '用户（逗号分隔）',
+  'nsEdit.field.host': '主机名',
+  'nsEdit.field.port': '端口',
+  'nsEdit.field.tlsEnabled': '启用 TLS',
+  'nsEdit.field.pgAdminEnabled': '启用 PgAdmin',
+  'nsEdit.save': '保存',
+  'nsEdit.saveSuccess': '命名空间已更新',
+  'nsEdit.editRawYaml': '编辑原始 YAML…',
+
+  // -- Snapshot import warning --
+  'snapshots.import.confirm.title': '导入快照？',
+  'snapshots.import.confirm.message': '导入将删除此命名空间现有的卷。是否继续？',
 }
 
 export default zh

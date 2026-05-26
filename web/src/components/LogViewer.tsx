@@ -93,6 +93,10 @@ export function LogViewer({ appName, compact = false, active = true }: LogViewer
   followRef.current = follow
   const activeRef = useRef(active)
   activeRef.current = active
+  // Refs to copy/download functions so keyboard shortcuts can fire without
+  // adding them to the keydown effect's deps (they capture filteredLines).
+  const copyToClipboardRef = useRef<() => void>(undefined)
+  const downloadRef = useRef<() => void>(undefined)
 
   const setLinesWithLevels = useCallback((newLines: string[]) => {
     lastLevelRef.current = null
@@ -219,21 +223,44 @@ export function LogViewer({ appName, compact = false, active = true }: LogViewer
     }
   }, [follow, appName, tail, appendChunk, setLinesWithLevels, active])
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts — match Kotlin LogsWindow (docs/porting/04 §2.3)
   useEffect(() => {
     if (!active) return
     function handleKeyDown(e: KeyboardEvent) {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+      const ctrl = e.ctrlKey || e.metaKey
+      // Ctrl+F: focus search and SELECT all (Kotlin parity — next keypress replaces query)
+      if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'f') {
         e.preventDefault()
-        searchRef.current?.focus()
+        const el = searchRef.current
+        if (el) {
+          el.focus()
+          el.select()
+        }
+        return
       }
-      if (e.key === 'F3' || ((e.ctrlKey || e.metaKey) && e.key === 'g')) {
+      // F3 / Ctrl+G — next match; Shift+F3 / Ctrl+Shift+G — prev
+      if (e.key === 'F3' || (ctrl && e.key.toLowerCase() === 'g')) {
         e.preventDefault()
         setMatchIndex((prev) => prev + (e.shiftKey ? -1 : 1))
+        return
       }
-      if ((e.ctrlKey || e.metaKey) && e.key === 'l') {
+      // Ctrl+L — clear (Kotlin parity)
+      if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'l') {
         e.preventDefault()
         setLinesWithLevels([])
+        return
+      }
+      // Ctrl+Shift+C — copy all visible (Kotlin LogsToolbar shortcut)
+      if (ctrl && e.shiftKey && e.key.toLowerCase() === 'c') {
+        e.preventDefault()
+        copyToClipboardRef.current?.()
+        return
+      }
+      // Ctrl+S — export to file (Kotlin LogsToolbar shortcut)
+      if (ctrl && !e.shiftKey && e.key.toLowerCase() === 's') {
+        e.preventDefault()
+        downloadRef.current?.()
+        return
       }
       if (e.key === 'Escape') {
         setSearch('')
@@ -329,16 +356,22 @@ export function LogViewer({ appName, compact = false, active = true }: LogViewer
   function copyToClipboard() {
     navigator.clipboard.writeText(filteredLines.join('\n'))
   }
+  copyToClipboardRef.current = copyToClipboard
 
   function downloadLogs() {
     const blob = new Blob([filteredLines.join('\n')], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `${appName}-logs.txt`
+    // Kotlin's default filename pattern: "<windowTitle>_<yyyyMMdd_HHmmss>.log"
+    const d = new Date()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const ts = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
+    a.download = `${appName}_${ts}.log`
     a.click()
     setTimeout(() => URL.revokeObjectURL(url), 5000)
   }
+  downloadRef.current = downloadLogs
 
   return (
     <div className={compact ? 'flex flex-col h-full' : 'flex flex-col h-[calc(100vh-100px)]'}>

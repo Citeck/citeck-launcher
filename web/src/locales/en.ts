@@ -8,10 +8,34 @@ const en: Translations = {
   'dashboard.cpu': 'CPU',
   'dashboard.mem': 'MEM',
   'dashboard.openInBrowser': 'Open In Browser',
-  'dashboard.openInBrowser.tooltip': 'Open Citeck in browser\nDefault: admin / admin',
-  'dashboard.openInBrowser.disabled': 'Start namespace first',
+  'dashboard.openInBrowser.tooltip': 'Open Citeck in your browser.\n Default username: admin\n Default password: admin',
+  'dashboard.openInBrowser.disabled': 'The application is not running. Start it to open in the browser.',
+  'dashboard.openInBrowser.starting': 'The application is starting. Please wait...',
+  'dashboard.openInBrowser.stalled': 'The application is stalled. Please try to start it again.',
   'dashboard.docker.error': 'Docker: {error}',
   'dashboard.docker.retry': 'Retry',
+
+  // -- Docker not available screen --
+  'dockerUnavailable.title': 'Docker is not available',
+  'dockerUnavailable.installedButStopped': 'Docker is installed but not running.\nPlease start Docker and click Retry.',
+  'dockerUnavailable.missing': 'Docker does not appear to be installed or is not running.\nIf Docker is already installed, please start it and click Retry.',
+  'dockerUnavailable.installPrefix': 'Install Docker:',
+  'dockerUnavailable.retry': 'Retry',
+
+  // -- GitPullError / RegistryCredentials dialogs --
+  'gitPullError.title': 'Git Repo Pull Failed',
+  'gitPullError.canSkip': 'You can skip this pull or try again.',
+  'gitPullError.cannotSkip': 'You can\'t skip this step because the repo hasn\'t been cloned before.',
+  'gitPullError.skip': 'Skip Pulling',
+  'gitPullError.retry': 'Try Again',
+  'registryCreds.title': 'Sign in to {host}',
+  'registryCreds.host': 'Registry',
+  'registryCreds.username': 'Username',
+  'registryCreds.password': 'Password',
+  'registryCreds.save': 'Save & Retry',
+  'registryCreds.saved': 'Credentials saved',
+  'registryCreds.banner': 'Configure credentials',
+  'registryCreds.bannerTooltip': 'Provide registry credentials so the launcher can pull this image',
   'dashboard.links': 'Links',
   'dashboard.volumes': 'Volumes',
   'dashboard.secrets': 'Secrets',
@@ -20,6 +44,11 @@ const en: Translations = {
   'dashboard.restartEvents': 'Restart Events',
   'dashboard.systemDump': 'System Dump',
   'dashboard.systemDump.success': 'System dump downloaded',
+
+  // -- Loading 30s hint --
+  'loadingHint.stillLoading': 'Still loading... This is taking longer than expected.\nTo help us diagnose the issue, please click the \'Dump System Info\' button and send the data to the maintainers.',
+  'loadingHint.showLogs': 'Show Logs',
+  'loadingHint.dumpSystemInfo': 'Dump System Info',
 
   // -- Welcome --
   'welcome.title': 'Welcome To Citeck Launcher!',
@@ -33,6 +62,18 @@ const en: Translations = {
   'welcome.delete.message': 'Delete namespace "{name}"? This will remove the configuration file.',
   'welcome.context.open': 'Open',
   'welcome.context.delete': 'Delete',
+  'welcome.workspace.label': 'Workspace',
+  'welcome.workspace.forceUpdate': 'Force Update',
+  'welcome.workspace.updating': 'Updating workspace...',
+  'welcome.workspace.updateSuccess': 'Workspace updated',
+  'welcome.workspace.updateFailed': 'Workspace update failed: {error}',
+
+  // -- Dashboard sidebar / namespace dir --
+  'dashboard.openNsDir': 'Open NS Dir',
+  'dashboard.openNsDir.tooltip': 'Open namespace volumes directory in file manager',
+  'dashboard.openNsDir.success': 'Opened {path}',
+  'dashboard.openNsDir.serverInfo': 'Daemon path: {path}',
+  'dashboard.openNsDir.failed': 'Open failed: {error}',
 
   // -- Wizard --
   'wizard.title': 'Create Namespace',
@@ -159,6 +200,29 @@ const en: Translations = {
   'logs.back': '\u2190 Back to {name}',
   'logs.title': 'Logs: {name}',
 
+  // -- Standalone window mode (desktop multi-window) --
+  'window.logs.heading': 'Logs:',
+  'window.editor.heading': 'Config:',
+  'window.editor.noApp': 'No application selected.',
+
+  // -- Licenses page --
+  'licenses.title': 'Enterprise Licenses',
+  'licenses.add': 'Add license',
+  'licenses.adding': 'Adding…',
+  'licenses.empty': 'No licenses installed. Paste a signed license JSON to enable enterprise features.',
+  'licenses.hint': 'Paste the signed license JSON you received from Citeck. The launcher verifies the signature against the embedded CA.',
+  'licenses.added': 'License added',
+  'licenses.deleted': 'License removed',
+  'licenses.delete': 'Delete license',
+  'licenses.deleteConfirm': 'Delete license "{id}"?',
+  'licenses.col.tenant': 'Tenant',
+  'licenses.col.issuedTo': 'Issued to',
+  'licenses.col.validity': 'Validity',
+  'licenses.col.status': 'Status',
+  'licenses.col.actions': 'Actions',
+  'licenses.status.valid': 'Valid',
+  'licenses.status.invalid': 'Invalid',
+
   // -- AppDetail page --
   'appDetail.back': '\u2190 Dashboard',
 
@@ -171,6 +235,8 @@ const en: Translations = {
   'table.tag': 'Tag',
   'table.actions': 'Actions',
   'table.restartCount': 'Restart count',
+  'table.cog.tooltip': 'Left click: edit app config\nRight click: edit a mounted file',
+  'table.noEditableFiles': 'No editable files',
   'table.group.core': 'Citeck Core',
   'table.group.coreExt': 'Citeck Core Extensions',
   'table.group.additional': 'Citeck Additional',
@@ -186,6 +252,12 @@ const en: Translations = {
   'table.confirm.restart.title': 'Restart {name}?',
   'table.confirm.restart.message': 'Restart {name}?',
   'table.toast.success': '{action} requested for {name}',
+  'table.cpu.throttled': 'CPU throttled',
+  'table.memory.warning': 'High memory usage',
+  'table.memory.critical': 'Near OOM limit',
+  'table.pullAuthRequired.label': 'Configure credentials',
+  'table.pullAuthRequired.tooltip': 'Authentication required for registry — click to configure',
+  'table.pullAuthRetry.success': 'Credentials saved; retrying pull',
 
   // -- App Drawer --
   'drawer.container': 'Container',
@@ -218,6 +290,14 @@ const en: Translations = {
   'appConfig.confirm.message': 'Save config and restart the app?',
   'appConfig.saved': 'App config saved',
   'appConfig.fileSaved': 'File saved',
+  'appConfig.reset': 'Reset',
+  'appConfig.reset.tooltip': 'Discard edits and restore the generated default',
+  'appConfig.reset.confirmTitle': 'Reset app config?',
+  'appConfig.reset.confirmMessage': 'This will discard your edits and restore the launcher-generated default.',
+  'appConfig.reset.success': 'App config reset to default',
+  'appConfig.fileReset.tooltip': 'Discard edits and restore the generated default',
+  'appConfig.fileReset.success': 'File reset to default',
+  'appConfig.fileEdited.badge': 'edited',
   'appConfig.tabTitle': 'Config: {name}',
 
   // -- Config Editor --
@@ -263,10 +343,13 @@ const en: Translations = {
 
   // -- Namespace Controls --
   'ns.start': 'Start',
+  'ns.forceStart': 'Force Update And Start',
   'ns.stop': 'Stop',
   'ns.reload': 'Reload',
   'ns.confirm.start.title': 'Start Namespace',
   'ns.confirm.start.message': 'Start all applications in this namespace?',
+  'ns.confirm.forceStart.title': 'Force Update And Start',
+  'ns.confirm.forceStart.message': 'Re-pull all images from the registry and start the namespace? Running containers will be recreated.',
   'ns.confirm.stop.title': 'Stop Namespace',
   'ns.confirm.stop.message': 'Stop all running applications?',
   'ns.confirm.reload.title': 'Reload Configuration',
@@ -309,6 +392,7 @@ const en: Translations = {
   'common.working': 'Working...',
   'common.submit': 'Submit',
   'common.select': 'Select',
+  'common.create': 'Create',
   'common.settings': 'Settings',
   'common.error': 'Error: {error}',
 
@@ -319,6 +403,7 @@ const en: Translations = {
   'journal.rowCount': '{count} rows',
   'journal.rowCountOne': '1 row',
   'journal.selected': '{count} selected',
+  'journal.actions': 'Actions',
 
   // -- Error Boundary --
   'error.title': 'Something went wrong',
@@ -349,6 +434,14 @@ const en: Translations = {
   'migration.unlock.description': 'Your secrets are encrypted. Enter the master password to unlock them.',
   'migration.unlock.confirm': 'Unlock',
   'migration.unlock.success': 'Secrets unlocked',
+  'migration.password.empty': 'Password is empty',
+  'migration.password.mismatch': 'Passwords do not match',
+  'migration.password.confirmPlaceholder': 'Confirm password',
+  'migration.unlock.reset': 'Reset Master Password and Drop All Secrets',
+  'migration.unlock.reset.confirmTitle': 'Reset master password?',
+  'migration.unlock.reset.confirmMessage': 'All your secrets will be permanently deleted from local storage.',
+  'migration.unlock.reset.confirmLabel': 'Reset and delete',
+  'migration.unlock.reset.success': 'Master password reset; all secrets deleted',
 
   // -- Secrets encryption --
   'secrets.encrypted.badge': 'Encrypted',
@@ -363,7 +456,71 @@ const en: Translations = {
   'upgrade.success': 'Upgrade successful',
   'upgrade.alreadyLatest': 'Already on latest version',
   'form.fieldRequired': '{label} is required',
+
+  // -- Volumes dialog (modal port) --
+  'volumes.dialog.title': 'Volumes',
+  'volumes.deleteAll': 'Delete All',
+  'volumes.deleteAll.title': 'Delete all volumes?',
+  'volumes.deleteAll.message': 'All your data in this namespace will be lost.',
+  'volumes.deleteAll.success': 'All volumes deleted',
+
+  // -- Snapshots dialog (modal port) --
+  'snapshots.dialog.title': 'Snapshots',
+  'snapshots.scope.workspace': 'Workspace',
+  'snapshots.scope.namespace': 'Namespace',
+  'snapshots.col.name': 'Name',
+  'snapshots.col.size': 'Size',
+  'snapshots.col.created': 'Created',
+  'snapshots.action.import': 'Import / Download',
+  'snapshots.action.rename': 'Rename',
+  'snapshots.action.delete': 'Delete',
+  'snapshots.create': 'Create Snapshot',
+  'snapshots.create.title': 'Create snapshot',
+  'snapshots.importFile': 'Import .zip…',
+  'snapshots.import.local.hint': 'Use the .zip stored in the namespace dir to import locally.',
+  'snapshots.rename.title': 'Rename snapshot',
+  'snapshots.delete.title': 'Delete snapshot "{name}"?',
+  'snapshots.delete.message': 'This action permanently deletes the snapshot file.',
+  'snapshots.delete.notSupported': 'Snapshot deletion is not exposed via API; remove the .zip from the namespace dir.',
+  'snapshots.deleted': 'Snapshot deleted',
+  'snapshots.field.name': 'Snapshot name',
+  'snapshots.field.name.invalid': 'Name can only contain letters, digits, dots, dashes and underscores.',
+
+  // -- Secrets dialog (modal port) --
+  'secrets.dialog.title': 'Auth Secrets',
+  'secrets.test.ok': 'Secret test passed',
+
+  // -- Namespace picker dialog --
+  'namespaces.dialog.title': 'Namespaces',
+  'namespaces.col.name': 'Name',
+  'namespaces.col.bundle': 'Bundle',
+  'namespaces.col.status': 'Status',
+  'namespaces.action.edit': 'Edit',
+  'namespaces.switch': 'Switch namespace',
+  'namespaces.deleted': 'Namespace deleted',
+  'form.showPassword': 'Show password',
+  'form.hidePassword': 'Hide password',
+  'form.refreshOptions': 'Refresh options',
   'store.connectionRestored': 'Connection restored, state refreshed',
+
+  // -- Namespace edit dialog --
+  'nsEdit.title': 'Edit Namespace',
+  'nsEdit.field.name': 'Name',
+  'nsEdit.field.bundleRepo': 'Bundle Repository',
+  'nsEdit.field.bundleKey': 'Bundle Version',
+  'nsEdit.field.authType': 'Authentication',
+  'nsEdit.field.users': 'Users (comma-separated)',
+  'nsEdit.field.host': 'Hostname',
+  'nsEdit.field.port': 'Port',
+  'nsEdit.field.tlsEnabled': 'Enable TLS',
+  'nsEdit.field.pgAdminEnabled': 'Enable PgAdmin',
+  'nsEdit.save': 'Save',
+  'nsEdit.saveSuccess': 'Namespace updated',
+  'nsEdit.editRawYaml': 'Edit raw YAML…',
+
+  // -- Snapshot import warning --
+  'snapshots.import.confirm.title': 'Import snapshot?',
+  'snapshots.import.confirm.message': 'Importing will delete existing volumes for this namespace. Continue?',
 }
 
 export default en

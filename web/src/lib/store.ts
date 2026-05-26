@@ -9,6 +9,12 @@ interface EventStream {
   close: () => void
 }
 
+/** Transient per-app pull progress snapshot derived from `pull_progress` SSE events. */
+export interface PullProgress {
+  percent: number
+  phase: string
+}
+
 interface DashboardState {
   namespace: NamespaceDto | null
   health: HealthDto | null
@@ -18,10 +24,18 @@ interface DashboardState {
   reconnectDelay: number
   lastSeq: number
   reconnectGen: number  // prevents race: two reconnects creating two EventSource streams
+  /** Per-app pull progress (live, transient — not from AppDto). Cleared when the
+   * app leaves PULLING via `app_status`. Key = app name. */
+  pullProgress: Record<string, PullProgress>
+  /** Per-app registry host that needs credentials. Populated by `pull_auth_required`
+   * SSE events; cleared on app_status transitions out of PULL_FAILED and after
+   * the user dismisses/saves the RegistryCredentialsDialog. */
+  pullAuthRequired: Record<string, string>
 
   fetchData: () => Promise<void>
   startEventStream: () => void
   stopEventStream: () => void
+  clearPullAuthRequired: (appName: string) => void
 }
 
 export const useDashboardStore = create<DashboardState>((set, get) => {
@@ -37,6 +51,16 @@ return ({
   reconnectDelay: 1000,
   lastSeq: 0,
   reconnectGen: 0,
+  pullProgress: {},
+  pullAuthRequired: {},
+
+  clearPullAuthRequired: (appName: string) => {
+    const cur = get().pullAuthRequired
+    if (!(appName in cur)) return
+    const next = { ...cur }
+    delete next[appName]
+    set({ pullAuthRequired: next })
+  },
 
   fetchData: async () => {
     const isInitial = get().namespace === null
@@ -78,6 +102,70 @@ return ({
           get().fetchData()
         }
         set({ lastSeq: event.seq })
+
+        // Fast path for `app_stats` — patch only the matching app's cpu/memory
+        // in place to avoid the full namespace refetch (these fire every 5s
+        // per running app). Other event types still trigger debounced fetch.
+        if (event.type === 'app_stats' && event.appName) {
+          const ns = get().namespace
+          if (ns?.apps) {
+            const apps = ns.apps.map((a) =>
+              a.name === event.appName ? { ...a, cpu: event.before ?? a.cpu, memory: event.after ?? a.memory } : a,
+            )
+            set({ namespace: { ...ns, apps } })
+          }
+          return
+        }
+
+        // Pull progress — store-side transient annotation, no AppDto change.
+        // Backend throttles to ≤1/sec per app so we can update synchronously
+        // without coalescing here.
+        if (event.type === 'pull_progress' && event.appName) {
+          const cur = get().pullProgress
+          set({
+            pullProgress: {
+              ...cur,
+              [event.appName]: { percent: event.percent ?? 0, phase: event.phase ?? '' },
+            },
+          })
+          return
+        }
+
+        // Pull-auth-required — remember the host so the table can offer a
+        // "Configure credentials" affordance. Backend emits once per
+        // PULL_FAILED transition that classified as auth-error.
+        if (event.type === 'pull_auth_required' && event.appName) {
+          const host = event.after ?? ''
+          if (host) {
+            const cur = get().pullAuthRequired
+            set({ pullAuthRequired: { ...cur, [event.appName]: host } })
+          }
+          return
+        }
+
+        // App status — clear transient annotations when the app leaves the
+        // states they belong to (PULLING for progress, PULL_FAILED for
+        // auth-required). The debounced fetch below still refreshes the
+        // full namespace so the rest of the UI catches up.
+        if (event.type === 'app_status' && event.appName) {
+          const before = event.before
+          const after = event.after
+          // Leaving PULLING — drop progress so the bar disappears.
+          if (before === 'PULLING' && after !== 'PULLING') {
+            const cur = get().pullProgress
+            if (event.appName in cur) {
+              const next = { ...cur }
+              delete next[event.appName]
+              set({ pullProgress: next })
+            }
+          }
+          // Leaving PULL_FAILED — drop the auth-required marker; if the new
+          // pull also fails the backend will re-emit the event.
+          if (before === 'PULL_FAILED' && after !== 'PULL_FAILED') {
+            get().clearPullAuthRequired(event.appName)
+          }
+        }
+
         // Debounce: coalesce rapid event bursts into a single fetchData
         if (fetchDebounceTimer) clearTimeout(fetchDebounceTimer)
         fetchDebounceTimer = setTimeout(() => {
@@ -115,7 +203,10 @@ return ({
       clearTimeout(fetchDebounceTimer)
       fetchDebounceTimer = null
     }
-    set({ stream: null, reconnectDelay: 1000, lastSeq: 0, reconnectGen: reconnectGen + 1 })
+    set({
+      stream: null, reconnectDelay: 1000, lastSeq: 0, reconnectGen: reconnectGen + 1,
+      pullProgress: {}, pullAuthRequired: {},
+    })
     stream?.close()
   },
 })})

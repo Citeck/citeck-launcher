@@ -8,10 +8,34 @@ const ru: Translations = {
   'dashboard.cpu': 'CPU',
   'dashboard.mem': 'MEM',
   'dashboard.openInBrowser': 'Открыть в браузере',
-  'dashboard.openInBrowser.tooltip': 'Открыть Citeck в браузере\nПо умолчанию: admin / admin',
-  'dashboard.openInBrowser.disabled': 'Сначала запустите namespace',
+  'dashboard.openInBrowser.tooltip': 'Открыть Citeck в браузере.\n Имя пользователя по умолчанию: admin\n Пароль по умолчанию: admin',
+  'dashboard.openInBrowser.disabled': 'Приложение не запущено. Запустите его, чтобы открыть в браузере.',
+  'dashboard.openInBrowser.starting': 'Приложение запускается. Пожалуйста, подождите...',
+  'dashboard.openInBrowser.stalled': 'Приложение зависло. Пожалуйста, попробуйте запустить его снова.',
   'dashboard.docker.error': 'Docker: {error}',
   'dashboard.docker.retry': 'Повторить',
+
+  // -- Docker not available screen --
+  'dockerUnavailable.title': 'Docker недоступен',
+  'dockerUnavailable.installedButStopped': 'Docker установлен, но не запущен.\nЗапустите Docker и нажмите «Повторить».',
+  'dockerUnavailable.missing': 'Docker не установлен или не запущен.\nЕсли Docker уже установлен — запустите его и нажмите «Повторить».',
+  'dockerUnavailable.installPrefix': 'Установить Docker:',
+  'dockerUnavailable.retry': 'Повторить',
+
+  // -- GitPullError / RegistryCredentials dialogs --
+  'gitPullError.title': 'Не удалось спулить Git репозиторий',
+  'gitPullError.canSkip': 'Можно пропустить и попробовать позже.',
+  'gitPullError.cannotSkip': 'Пропустить нельзя — репозиторий ещё не клонировался.',
+  'gitPullError.skip': 'Пропустить',
+  'gitPullError.retry': 'Повторить',
+  'registryCreds.title': 'Вход в {host}',
+  'registryCreds.host': 'Registry',
+  'registryCreds.username': 'Имя пользователя',
+  'registryCreds.password': 'Пароль',
+  'registryCreds.save': 'Сохранить и повторить',
+  'registryCreds.saved': 'Учётные данные сохранены',
+  'registryCreds.banner': 'Указать учётные данные',
+  'registryCreds.bannerTooltip': 'Указать креды реестра — лаунчер сможет докачать образ',
   'dashboard.links': 'Ссылки',
   'dashboard.volumes': 'Тома',
   'dashboard.secrets': 'Секреты',
@@ -20,6 +44,11 @@ const ru: Translations = {
   'dashboard.restartEvents': 'Перезапуски',
   'dashboard.systemDump': 'Дамп системы',
   'dashboard.systemDump.success': 'Дамп системы скачан',
+
+  // -- Loading 30s hint --
+  'loadingHint.stillLoading': 'Загрузка занимает больше времени, чем обычно.\nЧтобы мы помогли разобраться, нажмите «Dump System Info» и отправьте дамп нам.',
+  'loadingHint.showLogs': 'Показать логи',
+  'loadingHint.dumpSystemInfo': 'Дамп системы',
 
   // -- Welcome --
   'welcome.title': 'Добро пожаловать в Citeck Launcher!',
@@ -33,6 +62,18 @@ const ru: Translations = {
   'welcome.delete.message': 'Удалить namespace "{name}"? Файл конфигурации будет удалён.',
   'welcome.context.open': 'Открыть',
   'welcome.context.delete': 'Удалить',
+  'welcome.workspace.label': 'Рабочее пространство',
+  'welcome.workspace.forceUpdate': 'Принудительное обновление',
+  'welcome.workspace.updating': 'Обновление рабочего пространства...',
+  'welcome.workspace.updateSuccess': 'Рабочее пространство обновлено',
+  'welcome.workspace.updateFailed': 'Не удалось обновить рабочее пространство: {error}',
+
+  // -- Боковая панель дашборда / каталог namespace --
+  'dashboard.openNsDir': 'Открыть каталог NS',
+  'dashboard.openNsDir.tooltip': 'Открыть каталог томов namespace в файловом менеджере',
+  'dashboard.openNsDir.success': 'Открыто: {path}',
+  'dashboard.openNsDir.serverInfo': 'Путь на демоне: {path}',
+  'dashboard.openNsDir.failed': 'Не удалось открыть: {error}',
 
   // -- Wizard --
   'wizard.title': 'Создание namespace',
@@ -159,6 +200,29 @@ const ru: Translations = {
   'logs.back': '\u2190 Назад к {name}',
   'logs.title': 'Логи: {name}',
 
+  // -- Standalone window mode (desktop multi-window) --
+  'window.logs.heading': 'Логи:',
+  'window.editor.heading': 'Конфигурация:',
+  'window.editor.noApp': 'Приложение не выбрано.',
+
+  // -- Licenses page --
+  'licenses.title': 'Enterprise-лицензии',
+  'licenses.add': 'Добавить лицензию',
+  'licenses.adding': 'Добавление…',
+  'licenses.empty': 'Лицензии не установлены. Вставьте подписанный JSON лицензии, чтобы включить enterprise-функции.',
+  'licenses.hint': 'Вставьте подписанный JSON лицензии, полученный от Citeck. Лаунчер проверит подпись по встроенному CA.',
+  'licenses.added': 'Лицензия добавлена',
+  'licenses.deleted': 'Лицензия удалена',
+  'licenses.delete': 'Удалить лицензию',
+  'licenses.deleteConfirm': 'Удалить лицензию «{id}»?',
+  'licenses.col.tenant': 'Тенант',
+  'licenses.col.issuedTo': 'Выдана',
+  'licenses.col.validity': 'Срок',
+  'licenses.col.status': 'Статус',
+  'licenses.col.actions': 'Действия',
+  'licenses.status.valid': 'Действующая',
+  'licenses.status.invalid': 'Недействительна',
+
   // -- AppDetail page --
   'appDetail.back': '\u2190 Панель управления',
 
@@ -171,6 +235,8 @@ const ru: Translations = {
   'table.tag': 'Тег',
   'table.actions': 'Действия',
   'table.restartCount': 'Количество перезапусков',
+  'table.cog.tooltip': 'ЛКМ: редактировать конфигурацию приложения\nПКМ: выбрать монтированный файл',
+  'table.noEditableFiles': 'Нет редактируемых файлов',
   'table.group.core': 'Citeck Core',
   'table.group.coreExt': 'Citeck Core Extensions',
   'table.group.additional': 'Citeck Additional',
@@ -186,6 +252,12 @@ const ru: Translations = {
   'table.confirm.restart.title': 'Перезапустить {name}?',
   'table.confirm.restart.message': 'Перезапустить {name}?',
   'table.toast.success': 'Запрошено {action} для {name}',
+  'table.cpu.throttled': 'CPU throttling',
+  'table.memory.warning': 'Высокий расход памяти',
+  'table.memory.critical': 'Близко к лимиту OOM',
+  'table.pullAuthRequired.label': 'Указать креды',
+  'table.pullAuthRequired.tooltip': 'Для реестра требуется аутентификация — нажмите, чтобы настроить',
+  'table.pullAuthRetry.success': 'Креды сохранены; повторяем pull',
 
   // -- App Drawer --
   'drawer.container': 'Контейнер',
@@ -218,6 +290,14 @@ const ru: Translations = {
   'appConfig.confirm.message': 'Сохранить конфигурацию и перезапустить приложение?',
   'appConfig.saved': 'Конфигурация приложения сохранена',
   'appConfig.fileSaved': 'Файл сохранён',
+  'appConfig.reset': 'Сбросить',
+  'appConfig.reset.tooltip': 'Отменить изменения и восстановить значение по умолчанию',
+  'appConfig.reset.confirmTitle': 'Сбросить конфигурацию приложения?',
+  'appConfig.reset.confirmMessage': 'Ваши изменения будут отменены, восстановится значение, сгенерированное лаунчером.',
+  'appConfig.reset.success': 'Конфигурация приложения сброшена',
+  'appConfig.fileReset.tooltip': 'Отменить изменения и восстановить значение по умолчанию',
+  'appConfig.fileReset.success': 'Файл сброшен к значению по умолчанию',
+  'appConfig.fileEdited.badge': 'изменён',
   'appConfig.tabTitle': 'Конфигурация: {name}',
 
   // -- Config Editor --
@@ -263,10 +343,13 @@ const ru: Translations = {
 
   // -- Namespace Controls --
   'ns.start': 'Запустить',
+  'ns.forceStart': 'Принудительно обновить и запустить',
   'ns.stop': 'Остановить',
   'ns.reload': 'Перезагрузить',
   'ns.confirm.start.title': 'Запустить namespace',
   'ns.confirm.start.message': 'Запустить все приложения в этом namespace?',
+  'ns.confirm.forceStart.title': 'Принудительно обновить и запустить',
+  'ns.confirm.forceStart.message': 'Заново загрузить все образы из реестра и запустить namespace? Работающие контейнеры будут пересозданы.',
   'ns.confirm.stop.title': 'Остановить namespace',
   'ns.confirm.stop.message': 'Остановить все запущенные приложения?',
   'ns.confirm.reload.title': 'Перезагрузить конфигурацию',
@@ -309,6 +392,7 @@ const ru: Translations = {
   'common.working': 'Выполнение...',
   'common.submit': 'Отправить',
   'common.select': 'Выбрать',
+  'common.create': 'Создать',
   'common.settings': 'Настройки',
   'common.error': 'Ошибка: {error}',
 
@@ -319,6 +403,7 @@ const ru: Translations = {
   'journal.rowCount': 'Строк: {count}',
   'journal.rowCountOne': '1 строка',
   'journal.selected': 'выбрано: {count}',
+  'journal.actions': 'Действия',
 
   // -- Error Boundary --
   'error.title': 'Что-то пошло не так',
@@ -347,6 +432,14 @@ const ru: Translations = {
   'migration.unlock.description': 'Ваши секреты зашифрованы. Введите мастер-пароль для разблокировки.',
   'migration.unlock.confirm': 'Разблокировать',
   'migration.unlock.success': 'Секреты разблокированы',
+  'migration.password.empty': 'Пароль не введён',
+  'migration.password.mismatch': 'Пароли не совпадают',
+  'migration.password.confirmPlaceholder': 'Подтвердите пароль',
+  'migration.unlock.reset': 'Сбросить мастер-пароль и удалить все секреты',
+  'migration.unlock.reset.confirmTitle': 'Сбросить мастер-пароль?',
+  'migration.unlock.reset.confirmMessage': 'Все ваши секреты будут безвозвратно удалены из локального хранилища.',
+  'migration.unlock.reset.confirmLabel': 'Сбросить и удалить',
+  'migration.unlock.reset.success': 'Мастер-пароль сброшен, все секреты удалены',
 
   'secrets.encrypted.badge': 'Зашифровано',
   'secrets.encrypted.success': 'Секреты зашифрованы',
@@ -360,7 +453,67 @@ const ru: Translations = {
   'upgrade.success': 'Обновление выполнено',
   'upgrade.alreadyLatest': 'Уже установлена последняя версия',
   'form.fieldRequired': '{label} обязательно',
+  'form.showPassword': 'Показать пароль',
+  'form.hidePassword': 'Скрыть пароль',
+  'form.refreshOptions': 'Обновить варианты',
+
+  // -- Volumes/Snapshots/Secrets modals (Kotlin parity) --
+  'volumes.dialog.title': 'Тома',
+  'volumes.deleteAll': 'Удалить все',
+  'volumes.deleteAll.title': 'Удалить все тома?',
+  'volumes.deleteAll.message': 'Все данные этого namespace будут потеряны.',
+  'volumes.deleteAll.success': 'Все тома удалены',
+  'snapshots.dialog.title': 'Снапшоты',
+  'snapshots.scope.workspace': 'Workspace',
+  'snapshots.scope.namespace': 'Namespace',
+  'snapshots.col.name': 'Имя',
+  'snapshots.col.size': 'Размер',
+  'snapshots.col.created': 'Создан',
+  'snapshots.action.import': 'Импорт / Загрузка',
+  'snapshots.action.rename': 'Переименовать',
+  'snapshots.action.delete': 'Удалить',
+  'snapshots.create': 'Создать снапшот',
+  'snapshots.create.title': 'Создать снапшот',
+  'snapshots.importFile': 'Импорт .zip…',
+  'snapshots.import.local.hint': 'Для локального импорта используйте .zip из директории namespace.',
+  'snapshots.rename.title': 'Переименовать снапшот',
+  'snapshots.delete.title': 'Удалить снапшот «{name}»?',
+  'snapshots.delete.message': 'Это действие безвозвратно удалит файл снапшота.',
+  'snapshots.delete.notSupported': 'Удаление снапшота не реализовано в API; удалите .zip из директории namespace.',
+  'snapshots.deleted': 'Снапшот удалён',
+  'snapshots.field.name': 'Имя снапшота',
+  'snapshots.field.name.invalid': 'Имя может содержать только буквы, цифры, точки, дефисы и подчёркивания.',
+  'secrets.dialog.title': 'Auth Secrets',
+  'secrets.test.ok': 'Проверка секрета пройдена',
+
+  // -- Namespace picker dialog --
+  'namespaces.dialog.title': 'Namespaces',
+  'namespaces.col.name': 'Имя',
+  'namespaces.col.bundle': 'Bundle',
+  'namespaces.col.status': 'Статус',
+  'namespaces.action.edit': 'Изменить',
+  'namespaces.switch': 'Переключить namespace',
+  'namespaces.deleted': 'Namespace удалён',
   'store.connectionRestored': 'Соединение восстановлено, состояние обновлено',
+
+  // -- Namespace edit dialog --
+  'nsEdit.title': 'Изменить namespace',
+  'nsEdit.field.name': 'Имя',
+  'nsEdit.field.bundleRepo': 'Репозиторий сборок',
+  'nsEdit.field.bundleKey': 'Версия сборки',
+  'nsEdit.field.authType': 'Аутентификация',
+  'nsEdit.field.users': 'Пользователи (через запятую)',
+  'nsEdit.field.host': 'Хост',
+  'nsEdit.field.port': 'Порт',
+  'nsEdit.field.tlsEnabled': 'Включить TLS',
+  'nsEdit.field.pgAdminEnabled': 'Включить PgAdmin',
+  'nsEdit.save': 'Сохранить',
+  'nsEdit.saveSuccess': 'Namespace обновлён',
+  'nsEdit.editRawYaml': 'Редактировать YAML…',
+
+  // -- Snapshot import warning --
+  'snapshots.import.confirm.title': 'Импортировать снимок?',
+  'snapshots.import.confirm.message': 'Импорт удалит существующие тома этого namespace. Продолжить?',
 }
 
 export default ru

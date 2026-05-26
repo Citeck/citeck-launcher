@@ -8,10 +8,34 @@ const de: Translations = {
   'dashboard.cpu': 'CPU',
   'dashboard.mem': 'MEM',
   'dashboard.openInBrowser': 'Im Browser öffnen',
-  'dashboard.openInBrowser.tooltip': 'Citeck im Browser öffnen\nStandard: admin / admin',
-  'dashboard.openInBrowser.disabled': 'Starten Sie zuerst den Namespace',
+  'dashboard.openInBrowser.tooltip': 'Citeck in Ihrem Browser öffnen.\n Standardbenutzername: admin\n Standardpasswort: admin',
+  'dashboard.openInBrowser.disabled': 'Die Anwendung läuft nicht. Starten Sie sie, um im Browser zu öffnen.',
+  'dashboard.openInBrowser.starting': 'Die Anwendung startet. Bitte warten...',
+  'dashboard.openInBrowser.stalled': 'Die Anwendung hängt. Bitte versuchen Sie, sie erneut zu starten.',
   'dashboard.docker.error': 'Docker: {error}',
   'dashboard.docker.retry': 'Erneut versuchen',
+
+  // -- Docker not available screen --
+  'dockerUnavailable.title': 'Docker is not available',
+  'dockerUnavailable.installedButStopped': 'Docker is installed but not running.\nPlease start Docker and click Retry.',
+  'dockerUnavailable.missing': 'Docker does not appear to be installed or is not running.\nIf Docker is already installed, please start it and click Retry.',
+  'dockerUnavailable.installPrefix': 'Install Docker:',
+  'dockerUnavailable.retry': 'Retry',
+
+  // -- GitPullError / RegistryCredentials dialogs --
+  'gitPullError.title': 'Git Repo Pull Failed',
+  'gitPullError.canSkip': 'You can skip this pull or try again.',
+  'gitPullError.cannotSkip': 'You can\'t skip this step because the repo hasn\'t been cloned before.',
+  'gitPullError.skip': 'Skip Pulling',
+  'gitPullError.retry': 'Try Again',
+  'registryCreds.title': 'Sign in to {host}',
+  'registryCreds.host': 'Registry',
+  'registryCreds.username': 'Username',
+  'registryCreds.password': 'Password',
+  'registryCreds.save': 'Save & Retry',
+  'registryCreds.saved': 'Credentials saved',
+  'registryCreds.banner': 'Configure credentials',
+  'registryCreds.bannerTooltip': 'Provide registry credentials so the launcher can pull this image',
   'dashboard.links': 'Links',
   'dashboard.volumes': 'Volumes',
   'dashboard.secrets': 'Geheimnisse',
@@ -20,6 +44,11 @@ const de: Translations = {
   'dashboard.restartEvents': 'Neustarts',
   'dashboard.systemDump': 'Systemabbild',
   'dashboard.systemDump.success': 'Systemabbild heruntergeladen',
+
+  // -- Loading 30s hint --
+  'loadingHint.stillLoading': 'Still loading... This is taking longer than expected.\nTo help us diagnose the issue, please click the \'Dump System Info\' button and send the data to the maintainers.',
+  'loadingHint.showLogs': 'Show Logs',
+  'loadingHint.dumpSystemInfo': 'Dump System Info',
 
   // -- Welcome --
   'welcome.title': 'Willkommen bei Citeck Launcher!',
@@ -33,6 +62,18 @@ const de: Translations = {
   'welcome.delete.message': 'Namespace "{name}" löschen? Die Konfigurationsdatei wird entfernt.',
   'welcome.context.open': 'Öffnen',
   'welcome.context.delete': 'Löschen',
+  'welcome.workspace.label': 'Arbeitsbereich',
+  'welcome.workspace.forceUpdate': 'Aktualisierung erzwingen',
+  'welcome.workspace.updating': 'Arbeitsbereich wird aktualisiert...',
+  'welcome.workspace.updateSuccess': 'Arbeitsbereich aktualisiert',
+  'welcome.workspace.updateFailed': 'Arbeitsbereich-Aktualisierung fehlgeschlagen: {error}',
+
+  // -- Dashboard-Seitenleiste / Namespace-Verzeichnis --
+  'dashboard.openNsDir': 'NS-Verzeichnis öffnen',
+  'dashboard.openNsDir.tooltip': 'Namespace-Volumes-Verzeichnis im Dateimanager öffnen',
+  'dashboard.openNsDir.success': '{path} geöffnet',
+  'dashboard.openNsDir.serverInfo': 'Daemon-Pfad: {path}',
+  'dashboard.openNsDir.failed': 'Öffnen fehlgeschlagen: {error}',
 
   // -- Wizard --
   'wizard.title': 'Namespace erstellen',
@@ -159,6 +200,29 @@ const de: Translations = {
   'logs.back': '\u2190 Zurück zu {name}',
   'logs.title': 'Protokolle: {name}',
 
+  // -- Standalone window mode (desktop multi-window) --
+  'window.logs.heading': 'Protokolle:',
+  'window.editor.heading': 'Konfiguration:',
+  'window.editor.noApp': 'Keine Anwendung ausgewählt.',
+
+  // -- Licenses page --
+  'licenses.title': 'Enterprise-Lizenzen',
+  'licenses.add': 'Lizenz hinzufügen',
+  'licenses.adding': 'Wird hinzugefügt…',
+  'licenses.empty': 'Keine Lizenzen installiert. Fügen Sie ein signiertes Lizenz-JSON ein, um Enterprise-Funktionen zu aktivieren.',
+  'licenses.hint': 'Fügen Sie das signierte Lizenz-JSON ein, das Sie von Citeck erhalten haben. Der Launcher überprüft die Signatur.',
+  'licenses.added': 'Lizenz hinzugefügt',
+  'licenses.deleted': 'Lizenz entfernt',
+  'licenses.delete': 'Lizenz löschen',
+  'licenses.deleteConfirm': 'Lizenz „{id}“ löschen?',
+  'licenses.col.tenant': 'Mandant',
+  'licenses.col.issuedTo': 'Ausgestellt an',
+  'licenses.col.validity': 'Gültigkeit',
+  'licenses.col.status': 'Status',
+  'licenses.col.actions': 'Aktionen',
+  'licenses.status.valid': 'Gültig',
+  'licenses.status.invalid': 'Ungültig',
+
   // -- AppDetail page --
   'appDetail.back': '\u2190 Dashboard',
 
@@ -171,6 +235,8 @@ const de: Translations = {
   'table.tag': 'Tag',
   'table.actions': 'Aktionen',
   'table.restartCount': 'Neustarts',
+  'table.cog.tooltip': 'Left click: edit app config\nRight click: edit a mounted file',
+  'table.noEditableFiles': 'No editable files',
   'table.group.core': 'Citeck Core',
   'table.group.coreExt': 'Citeck Core Extensions',
   'table.group.additional': 'Citeck Additional',
@@ -186,6 +252,12 @@ const de: Translations = {
   'table.confirm.restart.title': '{name} neustarten?',
   'table.confirm.restart.message': '{name} neustarten?',
   'table.toast.success': '{action} für {name} angefordert',
+  'table.cpu.throttled': 'CPU gedrosselt',
+  'table.memory.warning': 'Hohe Speicherauslastung',
+  'table.memory.critical': 'Nahe am OOM-Limit',
+  'table.pullAuthRequired.label': 'Anmeldedaten konfigurieren',
+  'table.pullAuthRequired.tooltip': 'Authentifizierung für die Registry erforderlich — zum Konfigurieren klicken',
+  'table.pullAuthRetry.success': 'Anmeldedaten gespeichert; Pull wird wiederholt',
 
   // -- App Drawer --
   'drawer.container': 'Container',
@@ -218,6 +290,14 @@ const de: Translations = {
   'appConfig.confirm.message': 'Konfiguration speichern und App neustarten?',
   'appConfig.saved': 'App-Konfiguration gespeichert',
   'appConfig.fileSaved': 'Datei gespeichert',
+  'appConfig.reset': 'Reset',
+  'appConfig.reset.tooltip': 'Discard edits and restore the generated default',
+  'appConfig.reset.confirmTitle': 'Reset app config?',
+  'appConfig.reset.confirmMessage': 'This will discard your edits and restore the launcher-generated default.',
+  'appConfig.reset.success': 'App config reset to default',
+  'appConfig.fileReset.tooltip': 'Änderungen verwerfen und generierten Standard wiederherstellen',
+  'appConfig.fileReset.success': 'Datei auf Standard zurückgesetzt',
+  'appConfig.fileEdited.badge': 'geändert',
   'appConfig.tabTitle': 'Konfiguration: {name}',
 
   // -- Config Editor --
@@ -263,10 +343,13 @@ const de: Translations = {
 
   // -- Namespace Controls --
   'ns.start': 'Starten',
+  'ns.forceStart': 'Aktualisieren erzwingen und starten',
   'ns.stop': 'Stoppen',
   'ns.reload': 'Neu laden',
   'ns.confirm.start.title': 'Namespace starten',
   'ns.confirm.start.message': 'Alle Anwendungen in diesem Namespace starten?',
+  'ns.confirm.forceStart.title': 'Aktualisieren erzwingen und starten',
+  'ns.confirm.forceStart.message': 'Alle Images aus der Registry erneut herunterladen und Namespace starten? Laufende Container werden neu erstellt.',
   'ns.confirm.stop.title': 'Namespace stoppen',
   'ns.confirm.stop.message': 'Alle laufenden Anwendungen stoppen?',
   'ns.confirm.reload.title': 'Konfiguration neu laden',
@@ -309,6 +392,7 @@ const de: Translations = {
   'common.working': 'Arbeitet...',
   'common.submit': 'Absenden',
   'common.select': 'Auswählen',
+  'common.create': 'Erstellen',
   'common.settings': 'Einstellungen',
   'common.error': 'Fehler: {error}',
 
@@ -319,6 +403,7 @@ const de: Translations = {
   'journal.rowCount': '{count} Zeilen',
   'journal.rowCountOne': '1 Zeile',
   'journal.selected': '{count} ausgewählt',
+  'journal.actions': 'Aktionen',
 
   // -- Error Boundary --
   'error.title': 'Etwas ist schiefgelaufen',
@@ -349,6 +434,14 @@ const de: Translations = {
   'migration.unlock.description': 'Ihre Geheimnisse sind verschlüsselt. Geben Sie das Master-Passwort ein, um sie zu entsperren.',
   'migration.unlock.confirm': 'Entsperren',
   'migration.unlock.success': 'Geheimnisse entsperrt',
+  'migration.password.empty': 'Password is empty',
+  'migration.password.mismatch': 'Passwords do not match',
+  'migration.password.confirmPlaceholder': 'Confirm password',
+  'migration.unlock.reset': 'Reset Master Password and Drop All Secrets',
+  'migration.unlock.reset.confirmTitle': 'Reset master password?',
+  'migration.unlock.reset.confirmMessage': 'All your secrets will be permanently deleted from local storage.',
+  'migration.unlock.reset.confirmLabel': 'Reset and delete',
+  'migration.unlock.reset.success': 'Master password reset; all secrets deleted',
 
   // -- Secrets (additional) --
   'secrets.encrypted.badge': 'Verschlüsselt',
@@ -363,7 +456,67 @@ const de: Translations = {
   'upgrade.success': 'Aktualisierung erfolgreich',
   'upgrade.alreadyLatest': 'Bereits auf der neuesten Version',
   'form.fieldRequired': '{label} ist erforderlich',
+  'form.showPassword': 'Passwort anzeigen',
+  'form.hidePassword': 'Passwort verbergen',
+  'form.refreshOptions': 'Optionen aktualisieren',
+
+  // -- Volumes/Snapshots/Secrets modals (Kotlin parity) --
+  'volumes.dialog.title': 'Volumes',
+  'volumes.deleteAll': 'Delete All',
+  'volumes.deleteAll.title': 'Delete all volumes?',
+  'volumes.deleteAll.message': 'All your data in this namespace will be lost.',
+  'volumes.deleteAll.success': 'All volumes deleted',
+  'snapshots.dialog.title': 'Snapshots',
+  'snapshots.scope.workspace': 'Workspace',
+  'snapshots.scope.namespace': 'Namespace',
+  'snapshots.col.name': 'Name',
+  'snapshots.col.size': 'Size',
+  'snapshots.col.created': 'Created',
+  'snapshots.action.import': 'Import / Download',
+  'snapshots.action.rename': 'Rename',
+  'snapshots.action.delete': 'Delete',
+  'snapshots.create': 'Create Snapshot',
+  'snapshots.create.title': 'Create snapshot',
+  'snapshots.importFile': 'Import .zip…',
+  'snapshots.import.local.hint': 'Use the .zip stored in the namespace dir to import locally.',
+  'snapshots.rename.title': 'Rename snapshot',
+  'snapshots.delete.title': 'Delete snapshot "{name}"?',
+  'snapshots.delete.message': 'This action permanently deletes the snapshot file.',
+  'snapshots.delete.notSupported': 'Snapshot deletion is not exposed via API; remove the .zip from the namespace dir.',
+  'snapshots.deleted': 'Snapshot deleted',
+  'snapshots.field.name': 'Snapshot name',
+  'snapshots.field.name.invalid': 'Name can only contain letters, digits, dots, dashes and underscores.',
+  'secrets.dialog.title': 'Auth Secrets',
+  'secrets.test.ok': 'Secret test passed',
+
+  // -- Namespace picker dialog --
+  'namespaces.dialog.title': 'Namespaces',
+  'namespaces.col.name': 'Name',
+  'namespaces.col.bundle': 'Bundle',
+  'namespaces.col.status': 'Status',
+  'namespaces.action.edit': 'Edit',
+  'namespaces.switch': 'Switch namespace',
+  'namespaces.deleted': 'Namespace deleted',
   'store.connectionRestored': 'Verbindung wiederhergestellt, Status aktualisiert',
+
+  // -- Namespace edit dialog --
+  'nsEdit.title': 'Namespace bearbeiten',
+  'nsEdit.field.name': 'Name',
+  'nsEdit.field.bundleRepo': 'Bundle-Repository',
+  'nsEdit.field.bundleKey': 'Bundle-Version',
+  'nsEdit.field.authType': 'Authentifizierung',
+  'nsEdit.field.users': 'Benutzer (kommagetrennt)',
+  'nsEdit.field.host': 'Hostname',
+  'nsEdit.field.port': 'Port',
+  'nsEdit.field.tlsEnabled': 'TLS aktivieren',
+  'nsEdit.field.pgAdminEnabled': 'PgAdmin aktivieren',
+  'nsEdit.save': 'Speichern',
+  'nsEdit.saveSuccess': 'Namespace aktualisiert',
+  'nsEdit.editRawYaml': 'Rohes YAML bearbeiten…',
+
+  // -- Snapshot import warning --
+  'snapshots.import.confirm.title': 'Snapshot importieren?',
+  'snapshots.import.confirm.message': 'Beim Importieren werden vorhandene Volumes dieses Namespaces gelöscht. Fortfahren?',
 }
 
 export default de

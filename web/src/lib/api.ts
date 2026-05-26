@@ -4,6 +4,7 @@ import type {
   DaemonStatusDto,
   AppInspectDto,
   ActionResultDto,
+  AppFileDto,
   NamespaceSummaryDto,
   QuickStartDto,
   TemplateDto,
@@ -77,6 +78,17 @@ export async function postAppRestart(name: string): Promise<ActionResultDto> {
   return res.json()
 }
 
+/**
+ * Re-queues all PULL_FAILED apps for a fresh pull attempt. The Web UI calls
+ * this after the user saves new registry credentials so the affected apps
+ * pick up the secret without waiting for the auto-retry backoff window.
+ */
+export async function postAppsRetryPullFailed(): Promise<ActionResultDto> {
+  const res = await fetchWithTimeout(`${API_BASE}/apps/retry-pull-failed`, { method: 'POST', headers: CSRF_HEADER })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  return res.json()
+}
+
 export async function postAppStop(name: string): Promise<ActionResultDto> {
   const res = await fetchWithTimeout(`${API_BASE}/apps/${name}/stop`, { method: 'POST', headers: CSRF_HEADER })
   if (!res.ok) throw new Error(await extractErrorMessage(res))
@@ -89,8 +101,9 @@ export async function postAppStart(name: string): Promise<ActionResultDto> {
   return res.json()
 }
 
-export async function postNamespaceStart(): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/namespace/start`, { method: 'POST', headers: CSRF_HEADER })
+export async function postNamespaceStart(force = false): Promise<ActionResultDto> {
+  const qs = force ? '?force=true' : ''
+  const res = await fetchWithTimeout(`${API_BASE}/namespace/start${qs}`, { method: 'POST', headers: CSRF_HEADER })
   if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
@@ -103,6 +116,69 @@ export async function postNamespaceStop(): Promise<ActionResultDto> {
 
 export async function postNamespaceReload(): Promise<ActionResultDto> {
   const res = await fetchWithTimeout(`${API_BASE}/namespace/reload`, { method: 'POST', headers: CSRF_HEADER })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  return res.json()
+}
+
+/**
+ * Suppress git pull operations against `host` for `durationSeconds` (default
+ * 3600s = 1 hour, Kotlin parity). Wired into GitPullErrorDialog Skip: clicking
+ * Skip records the failing host so subsequent pulls against siblings hosted
+ * there (e.g. workspace repo + bundle repos on the same GitLab) don't
+ * re-prompt within the suppression window.
+ *
+ * durationSeconds <= 0 clears the existing skip for that host.
+ */
+export async function postGitSkipPull(host: string, durationSeconds = 3600): Promise<ActionResultDto> {
+  const res = await fetchWithTimeout(
+    `${API_BASE}/git/skip-pull`,
+    {
+      method: 'POST',
+      headers: { ...CSRF_HEADER, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ host, durationSeconds }),
+    },
+  )
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  return res.json()
+}
+
+/**
+ * Force-pull the default workspace repo (bypasses pull-period throttle) and
+ * trigger a reload so the runtime picks up any new bundles / workspace
+ * config. Kotlin parity: WelcomeScreen.kt "Force Update" RMB menu.
+ *
+ * Uses a longer timeout because the git pull can be slow on cold network.
+ */
+export async function postWorkspaceUpdate(): Promise<ActionResultDto> {
+  const res = await fetchWithTimeout(
+    `${API_BASE}/workspace/update`,
+    { method: 'POST', headers: CSRF_HEADER },
+    180_000,
+  )
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  return res.json()
+}
+
+/**
+ * Open a server-allowlisted directory in the OS file manager. The Kind is
+ * resolved server-side ("volumes" → namespace volumes/runtime base).
+ *
+ * In server mode the daemon returns the path without opening it — the UI
+ * is responsible for displaying / copying it for the user to open manually.
+ */
+export interface OpenDirResponse {
+  opened: boolean
+  path: string
+  mode: 'desktop' | 'server'
+  message?: string
+}
+
+export async function postOpenDir(kind: 'volumes'): Promise<OpenDirResponse> {
+  const res = await fetchWithTimeout(`${API_BASE}/system/open-dir`, {
+    method: 'POST',
+    headers: { ...CSRF_HEADER, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind }),
+  })
   if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
@@ -161,8 +237,39 @@ export async function putAppConfig(name: string, content: string): Promise<Actio
   return res.json()
 }
 
-export async function getAppFiles(name: string): Promise<string[]> {
-  return fetchJSON<string[]>(`/apps/${name}/files`)
+/**
+ * Resets the app's configuration to the generated default — discards any
+ * user-edited ApplicationDef override. Mirrors Kotlin's AppCfgEditWindow
+ * Reset button.
+ */
+export async function resetAppConfig(name: string): Promise<ActionResultDto> {
+  const res = await fetchWithTimeout(`${API_BASE}/apps/${name}/config/reset`, {
+    method: 'POST',
+    headers: CSRF_HEADER,
+  })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  return res.json()
+}
+
+export async function getAppFiles(name: string): Promise<AppFileDto[]> {
+  return fetchJSON<AppFileDto[]>(`/apps/${name}/files`)
+}
+
+/**
+ * Discards user edits for a single mounted bind-mount file and triggers a
+ * namespace reload so the original generator-supplied content is restored
+ * on disk. Mirrors `resetAppConfig` but at file granularity (Kotlin parity:
+ * `nsRuntime.resetEditedFile`).
+ */
+export async function resetAppFile(name: string, path: string): Promise<ActionResultDto> {
+  const cleanPath = path.startsWith('./') ? path.slice(2) : path
+  const url = `${API_BASE}/apps/${name}/files/reset?path=${encodeURIComponent(cleanPath)}`
+  const res = await fetchWithTimeout(url, {
+    method: 'POST',
+    headers: CSRF_HEADER,
+  })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  return res.json()
 }
 
 export async function getAppFile(name: string, path: string): Promise<string> {
@@ -253,6 +360,36 @@ export async function upgradeNamespace(bundleRef: string): Promise<ActionResultD
   return res.json()
 }
 
+/**
+ * Typed namespace edit form payload. Mirrors `api.NamespaceEditDto` on the
+ * daemon — see internal/api/dto.go.
+ */
+export interface NamespaceEditDto {
+  name: string
+  bundleRepo: string
+  bundleKey: string
+  authType: string
+  users?: string[]
+  host: string
+  port: number
+  tlsEnabled: boolean
+  pgAdminEnabled: boolean
+}
+
+export async function getNamespaceEdit(): Promise<NamespaceEditDto> {
+  return fetchJSON('/namespace/edit')
+}
+
+export async function putNamespaceEdit(data: NamespaceEditDto): Promise<ActionResultDto> {
+  const res = await fetchWithTimeout(`${API_BASE}/namespace/edit`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  return res.json()
+}
+
 // Phase F1: Secrets
 export async function getSecrets(): Promise<SecretMetaDto[]> {
   return fetchJSON('/secrets')
@@ -266,6 +403,42 @@ export async function createSecret(data: SecretCreateDto): Promise<ActionResultD
   })
   if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
+}
+
+export interface LicenseDto {
+  id: string
+  tenant: string
+  priority: number
+  issuedTo: string
+  issuedAt?: string
+  validFrom?: string
+  validUntil?: string
+  content?: unknown
+  valid: boolean
+}
+
+export async function getLicenses(): Promise<LicenseDto[]> {
+  return fetchJSON('/licenses')
+}
+
+export async function createLicense(licenseJSON: string): Promise<LicenseDto> {
+  // The body is raw license JSON (signed payload). We POST it through as
+  // application/json so the daemon's json.Decoder consumes it directly.
+  const res = await fetchWithTimeout(`${API_BASE}/licenses`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
+    body: licenseJSON,
+  })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  return res.json()
+}
+
+export async function deleteLicense(id: string): Promise<void> {
+  const res = await fetchWithTimeout(`${API_BASE}/licenses/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: CSRF_HEADER,
+  })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
 }
 
 export async function deleteSecret(id: string): Promise<ActionResultDto> {
@@ -294,8 +467,9 @@ export async function getSnapshots(): Promise<SnapshotDto[]> {
   return fetchJSON('/snapshots')
 }
 
-export async function postExportSnapshot(): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/snapshots/export`, { method: 'POST', headers: CSRF_HEADER }, 300_000)
+export async function postExportSnapshot(name?: string): Promise<ActionResultDto> {
+  const qs = name ? `?name=${encodeURIComponent(name)}` : ''
+  const res = await fetchWithTimeout(`${API_BASE}/snapshots/export${qs}`, { method: 'POST', headers: CSRF_HEADER }, 300_000)
   if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
@@ -308,6 +482,23 @@ export async function postImportSnapshot(file: File): Promise<ActionResultDto> {
     headers: CSRF_HEADER,
     body: formData,
   }, 300_000)
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  return res.json()
+}
+
+/**
+ * Import a snapshot already present on disk in the namespace snapshots
+ * directory (Kotlin parity: `nsRuntime.importSnapshot(name)`). The daemon
+ * resolves the .zip from the namespace's local snapshots/ dir and follows
+ * the same restore path as the upload-based import.
+ */
+export async function postImportSnapshotByName(name: string): Promise<ActionResultDto> {
+  const filename = name.endsWith('.zip') ? name : `${name}.zip`
+  const res = await fetchWithTimeout(
+    `${API_BASE}/snapshots/import?name=${encodeURIComponent(filename)}`,
+    { method: 'POST', headers: CSRF_HEADER },
+    300_000,
+  )
   if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
@@ -331,6 +522,17 @@ export async function renameSnapshot(oldName: string, newName: string): Promise<
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
     body: JSON.stringify({ name: newName }),
+  })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  return res.json()
+}
+
+export async function deleteSnapshot(name: string): Promise<ActionResultDto> {
+  // Daemon expects the .zip suffix; ensure it's present (caller may pass either).
+  const filename = name.endsWith('.zip') ? name : `${name}.zip`
+  const res = await fetchWithTimeout(`${API_BASE}/snapshots/${encodeURIComponent(filename)}`, {
+    method: 'DELETE',
+    headers: CSRF_HEADER,
   })
   if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
@@ -378,6 +580,19 @@ export async function setupSecretsPassword(password: string): Promise<ActionResu
   return res.json()
 }
 
+/**
+ * Wipe all stored secrets and reset the encryption envelope. Used by the
+ * AskMasterPassword "Reset Master Password and Drop All Secrets" flow.
+ */
+export async function resetSecrets(): Promise<ActionResultDto> {
+  const res = await fetchWithTimeout(`${API_BASE}/secrets/reset`, {
+    method: 'POST',
+    headers: CSRF_HEADER,
+  })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  return res.json()
+}
+
 export async function openExternal(url: string): Promise<void> {
   // Wails desktop: webview is served through Wails AssetServer (reverse proxy),
   // so /wails/runtime is available natively. Use Browser.OpenURL API.
@@ -391,4 +606,53 @@ export async function openExternal(url: string): Promise<void> {
   } catch { /* not in Wails webview */ }
   // Browser fallback
   window.open(url, '_blank')
+}
+
+// -- Desktop multi-window controls --
+// These endpoints are served by the Wails-only WindowManager mounted on the
+// internal Wails AssetServer (see internal/desktop/windows.go). In server mode
+// the path is unreachable; openDesktopWindow gracefully falls back to opening
+// the route as a browser tab so the same UI code works in both deployments.
+
+export interface DesktopWindowSpec {
+  kind: 'logs' | 'editor' | 'daemon-logs'
+  id?: string
+  route?: string
+  title?: string
+  width?: number
+  height?: number
+}
+
+/**
+ * Opens a separate OS window for the given route. Resolves to true if the
+ * Wails window manager handled it; false if we fell back to a browser tab.
+ *
+ * The caller does not need to know whether the launcher is running in
+ * desktop mode — this helper detects /desktop/windows availability at call
+ * time and routes accordingly.
+ */
+export async function openDesktopWindow(spec: DesktopWindowSpec): Promise<boolean> {
+  try {
+    const res = await fetch('/desktop/windows/open', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(spec),
+    })
+    if (res.ok) return true
+  } catch { /* not in Wails desktop */ }
+  // Browser fallback: navigate to the route in a new tab so server-mode
+  // users still get a "secondary window" UX even if it is a browser tab.
+  const route = spec.route ?? (spec.id ? `/window/${spec.kind}/${spec.id}` : `/window/${spec.kind}`)
+  window.open(route, '_blank')
+  return false
+}
+
+/** True if /desktop/windows/* is reachable (i.e. running inside Wails desktop). */
+export async function hasDesktopWindowManager(): Promise<boolean> {
+  try {
+    const res = await fetch('/desktop/windows/list', { method: 'GET' })
+    return res.ok
+  } catch {
+    return false
+  }
 }

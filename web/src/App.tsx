@@ -1,8 +1,9 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { useDashboardStore } from './lib/store'
 import { getDaemonStatus } from './lib/api'
 import { useI18nStore, type Locale } from './lib/i18n'
+import { primeDesktopModeCache } from './lib/desktop'
 import { Dashboard } from './pages/Dashboard'
 import { AppDetail } from './pages/AppDetail'
 import { Logs } from './pages/Logs'
@@ -13,20 +14,28 @@ import { Welcome } from './pages/Welcome'
 import { Wizard } from './pages/Wizard'
 import { Secrets } from './pages/Secrets'
 import { Diagnostics } from './pages/Diagnostics'
+import { Licenses } from './pages/Licenses'
+import { DockerNotAvailable, detectInstalledButStopped } from './pages/DockerNotAvailable'
+import { WindowLogs } from './pages/WindowLogs'
+import { WindowEditor } from './pages/WindowEditor'
 import { TabBar } from './components/TabBar'
 import { ToastContainer } from './components/Toast'
 import { useEffect, useState } from 'react'
 
-function Layout() {
+function MainLayout() {
   // Select only the two fields Layout actually consumes. Subscribing to the
   // whole store would force a re-render on every SSE tick (reconnectDelay,
   // lastSeq, etc.), even though Layout's output only depends on `namespace`.
   const namespace = useDashboardStore((s) => s.namespace)
+  const health = useDashboardStore((s) => s.health)
   const fetchData = useDashboardStore((s) => s.fetchData)
   const [isDesktop, setIsDesktop] = useState<boolean | null>(null)
 
-  // Fetch daemon status once on mount to detect server/desktop mode and locale
+  // Fetch daemon status once on mount to detect server/desktop mode and locale.
+  // Also prime the multi-window cache so the first click that wants to open
+  // logs / editor in a native window can route correctly.
   useEffect(() => {
+    primeDesktopModeCache()
     getDaemonStatus().then((s) => {
       setIsDesktop(s.desktop)
       // Apply server-configured locale if set and user hasn't manually chosen one
@@ -47,6 +56,19 @@ function Layout() {
   // Server mode: daemon won't start without namespace (CLI guard), so Dashboard always has data
   const showWelcomeAtRoot = isDesktop === true && !hasNamespace
 
+  // Kotlin parity: full-screen DockerNotAvailable takes over the layout when
+  // the daemon's health check reports docker as unreachable.
+  const dockerCheck = health?.checks.find((c) => c.name === 'docker')
+  if (dockerCheck?.status === 'error') {
+    return (
+      <DockerNotAvailable
+        error={dockerCheck.message}
+        installedButStopped={detectInstalledButStopped(dockerCheck.message)}
+        onRetry={fetchData}
+      />
+    )
+  }
+
   return (
     <div className="h-screen bg-background flex flex-col overflow-hidden">
       <TabBar />
@@ -60,6 +82,7 @@ function Layout() {
           <Route path="/wizard" element={<Scroll><Safe><Wizard /></Safe></Scroll>} />
           <Route path="/secrets" element={<Scroll><Safe><Secrets /></Safe></Scroll>} />
           <Route path="/diagnostics" element={<Scroll><Safe><Diagnostics /></Safe></Scroll>} />
+          <Route path="/licenses" element={<Scroll><Safe><Licenses /></Safe></Scroll>} />
           <Route path="/daemon-logs" element={<Scroll><Safe><DaemonLogs /></Safe></Scroll>} />
 
           {/* Namespace-level pages (scrollable, redirect to Welcome if no namespace) */}
@@ -71,6 +94,27 @@ function Layout() {
       </main>
     </div>
   )
+}
+
+/**
+ * Top-level router: paths under `/window/*` get a chromeless layout (used by
+ * the desktop multi-window mode); everything else uses the main app shell.
+ * The window path uses the same routing tree because Wails loads it into a
+ * new WebviewWindow with full SPA bundle — splitting bundles would just bloat
+ * startup time.
+ */
+function Layout() {
+  const location = useLocation()
+  if (location.pathname.startsWith('/window/')) {
+    return (
+      <Routes>
+        <Route path="/window/logs/:name" element={<Safe><WindowLogs /></Safe>} />
+        <Route path="/window/daemon-logs" element={<Safe><WindowLogs /></Safe>} />
+        <Route path="/window/editor/:name" element={<Safe><WindowEditor /></Safe>} />
+      </Routes>
+    )
+  }
+  return <MainLayout />
 }
 
 function Scroll({ children }: { children: React.ReactNode }) {

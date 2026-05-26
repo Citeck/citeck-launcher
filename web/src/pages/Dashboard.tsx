@@ -3,10 +3,20 @@ import { useNavigate } from 'react-router'
 import { useDashboardStore } from '../lib/store'
 import { useTabsStore } from '../lib/tabs'
 import { usePanelStore } from '../lib/panels'
-import { getSystemDump, getMigrationStatus, submitMasterPassword, unlockSecrets, setupSecretsPassword, openExternal, getBundles, upgradeNamespace } from '../lib/api'
+import { openSecondaryView } from '../lib/desktop'
+import { VolumesDialog } from '../components/VolumesDialog'
+import { SecretsDialog } from '../components/SecretsDialog'
+import { SnapshotsDialog } from '../components/SnapshotsDialog'
+import { NamespaceDialog } from '../components/NamespaceDialog'
+import { NamespaceEditDialog } from '../components/NamespaceEditDialog'
+import { MasterPasswordDialog } from '../components/MasterPasswordDialog'
+import { ContextMenu } from '../components/ContextMenu'
+import { useContextMenu } from '../hooks/useContextMenu'
+import { getSystemDump, getMigrationStatus, submitMasterPassword, unlockSecrets, setupSecretsPassword, resetSecrets, openExternal, getBundles, upgradeNamespace } from '../lib/api'
 import { useTranslation } from '../lib/i18n'
 import { StatusBadge } from '../components/StatusBadge'
 import { AppTable } from '../components/AppTable'
+import { CompactResourceRow } from '../components/CompactResourceRow'
 import { NamespaceControls } from '../components/NamespaceControls'
 import { BottomPanel } from '../components/BottomPanel'
 import { RightDrawer } from '../components/RightDrawer'
@@ -19,7 +29,9 @@ import { RestartEvents } from '../components/RestartEvents'
 import { FormDialog } from '../components/FormDialog'
 import type { BottomPanelTab } from '../lib/panels'
 import { toast } from '../lib/toast'
-import { ExternalLink, Globe, Download, AlertTriangle, HardDrive, Key, Stethoscope, FileText, Settings, Eye, EyeOff, ArrowUpCircle } from 'lucide-react'
+import { ExternalLink, FolderOpen, Globe, Download, AlertTriangle, HardDrive, Key, Stethoscope, FileText, Settings, ArrowUpCircle } from 'lucide-react'
+import { LoadingHint } from '../components/LoadingHint'
+import { postOpenDir } from '../lib/api'
 
 export function Dashboard() {
   // Selector-based subscriptions — Dashboard re-renders only when the fields
@@ -45,18 +57,41 @@ export function Dashboard() {
   // needs user input (original Kotlin master password).
   // Desktop mode: all three dialogs can appear.
   const [dialogStep, setDialogStep] = useState<'kotlin-decrypt' | 'setup-password' | 'unlock' | null>(null)
-  const [password, setPassword] = useState('')
-  const [newPassword, setNewPassword] = useState('')
   const [dialogError, setDialogError] = useState('')
   const [dialogLoading, setDialogLoading] = useState(false)
   const [dialogChecked, setDialogChecked] = useState(false)
-  const [showPassword, setShowPassword] = useState(false)
 
   // Upgrade dialog state
   const [upgradeOpen, setUpgradeOpen] = useState(false)
   const [upgradeVersions, setUpgradeVersions] = useState<{ label: string; value: string }[]>([])
   const [upgradeLoading, setUpgradeLoading] = useState(false)
   const [upgradeError, setUpgradeError] = useState<string | null>(null)
+
+  // Modal dialog state — sidebar buttons open these as overlays (Kotlin parity)
+  const [volumesDialogOpen, setVolumesDialogOpen] = useState(false)
+  const [secretsDialogOpen, setSecretsDialogOpen] = useState(false)
+  const [snapshotsDialogOpen, setSnapshotsDialogOpen] = useState(false)
+  const [namespaceDialogOpen, setNamespaceDialogOpen] = useState(false)
+  const [nsEditOpen, setNsEditOpen] = useState(false)
+
+  // Context menu for the gear button (LMB → typed form, RMB → raw YAML).
+  const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu()
+
+  const handleOpenNsDir = useCallback(async () => {
+    try {
+      const resp = await postOpenDir('volumes')
+      if (resp.opened) {
+        toast(t('dashboard.openNsDir.success', { path: resp.path }), 'success')
+      } else {
+        // Server mode (or desktop fallback): show the path so the user can
+        // open it manually. Use 'info' so it's visually distinct from an
+        // error — this is the documented server-mode behavior.
+        toast(t('dashboard.openNsDir.serverInfo', { path: resp.path }), 'info')
+      }
+    } catch (e) {
+      toast(t('dashboard.openNsDir.failed', { error: (e as Error).message }), 'error')
+    }
+  }, [t])
 
   const handleUpgradeClick = useCallback(async () => {
     try {
@@ -103,22 +138,21 @@ export function Dashboard() {
   }, [namespace, dialogChecked, dialogStep])
 
   // Kotlin decrypt → import + encrypt secrets in one step
-  const handleKotlinDecrypt = useCallback(async () => {
-    if (!password) return
+  const handleKotlinDecrypt = useCallback(async (pwd: string) => {
+    if (!pwd) return
     setDialogLoading(true)
     setDialogError('')
     try {
-      await submitMasterPassword(password)
+      await submitMasterPassword(pwd)
       toast(t('migration.secretsImported'), 'success')
       setDialogStep(null)
-      setPassword('')
       fetchData()
     } catch {
       setDialogError(t('migration.wrongPassword'))
     } finally {
       setDialogLoading(false)
     }
-  }, [password, fetchData, t])
+  }, [fetchData, t])
 
   // Setup password — encrypt all secrets (desktop mode only)
   const handleSetupPassword = useCallback(async (pwd: string) => {
@@ -128,8 +162,6 @@ export function Dashboard() {
       await setupSecretsPassword(pwd)
       toast(t('migration.setupPassword.success'), 'success')
       setDialogStep(null)
-      setPassword('')
-      setNewPassword('')
       fetchData()
     } catch (e) {
       setDialogError((e as Error).message)
@@ -139,27 +171,24 @@ export function Dashboard() {
   }, [fetchData, t])
 
   // Unlock encrypted secrets (desktop mode only)
-  const handleUnlock = useCallback(async () => {
-    if (!password) return
+  const handleUnlock = useCallback(async (pwd: string) => {
+    if (!pwd) return
     setDialogLoading(true)
     setDialogError('')
     try {
-      await unlockSecrets(password)
+      await unlockSecrets(pwd)
       toast(t('migration.unlock.success'), 'success')
       setDialogStep(null)
-      setPassword('')
       fetchData()
     } catch {
       setDialogError(t('migration.wrongPassword'))
     } finally {
       setDialogLoading(false)
     }
-  }, [password, fetchData, t])
+  }, [fetchData, t])
 
   const handleSkipDialog = useCallback(() => {
     setDialogStep(null)
-    setPassword('')
-    setNewPassword('')
     setDialogError('')
   }, [])
 
@@ -211,6 +240,12 @@ export function Dashboard() {
           {Array.from({ length: 8 }).map((_, i) => (
             <div key={i} className="h-8 w-full bg-muted rounded animate-pulse" />
           ))}
+          {/* Kotlin LoadingScreen parity (docs/porting/02 §5.2): after 30s of
+              continuous loading, surface the "still loading" hint with
+              recovery actions (open daemon logs / dump system info). */}
+          <div className="flex justify-center pt-2">
+            <LoadingHint active={loading} />
+          </div>
         </div>
       </div>
     )
@@ -240,6 +275,20 @@ export function Dashboard() {
     if (m.endsWith('M')) return sum + parseFloat(m)
     return sum
   }, 0)
+  // Aggregate caps for the sidebar progress bars (Kotlin CompactResourceRow):
+  // CPU max = runningApps × 100 (each container can use a whole core).
+  // MEM max = sum of per-app memory limits parsed from "used / limit".
+  const maxCpu = runningApps.length * 100
+  const maxMem = runningApps.reduce((sum, a) => {
+    const m = a.memory?.split(' / ')[1]
+    if (!m) return sum
+    if (m.endsWith('G')) return sum + parseFloat(m) * 1024
+    if (m.endsWith('M')) return sum + parseFloat(m)
+    return sum
+  }, 0)
+  const cpuPercent = maxCpu > 0 ? (totalCpu / maxCpu) * 100 : 0
+  const memPercent = maxMem > 0 ? (totalMem / maxMem) * 100 : 0
+  const fmtMB = (mb: number) => mb >= 1024 ? `${(mb / 1024).toFixed(1)}G` : `${Math.round(mb)}M`
 
   // Drawer title info
   const drawerApp = drawerAppName ? apps.find((a) => a.name === drawerAppName) : null
@@ -263,112 +312,28 @@ export function Dashboard() {
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-      {/* Multi-step dialog: kotlin-decrypt / setup-password / unlock */}
-      {dialogStep && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="bg-card border border-border rounded-lg p-6 w-96 shadow-xl">
-            {dialogStep === 'kotlin-decrypt' && (<>
-              <h2 className="text-lg font-semibold mb-2">{t('migration.title')}</h2>
-              <p className="text-sm text-muted-foreground mb-4">{t('migration.description')}</p>
-              <div className="relative mb-2">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  className="w-full px-3 py-2 pr-10 bg-background border border-border rounded text-foreground"
-                  placeholder={t('migration.passwordPlaceholder')}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleKotlinDecrypt()}
-                  autoFocus
-                />
-                <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  onClick={() => setShowPassword(!showPassword)} tabIndex={-1}>
-                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
-              </div>
-              {dialogError && <p className="text-destructive text-sm mb-2">{dialogError}</p>}
-              <div className="flex justify-between mt-4">
-                <button type="button" className="text-sm text-muted-foreground hover:text-foreground" onClick={handleSkipDialog}>
-                  {t('migration.skip')}
-                </button>
-                <button
-                  type="button"
-                  className="px-4 py-1.5 bg-primary text-primary-foreground rounded text-sm font-medium disabled:opacity-50"
-                  onClick={handleKotlinDecrypt}
-                  disabled={dialogLoading || !password}
-                >
-                  {dialogLoading ? '...' : t('migration.confirm')}
-                </button>
-              </div>
-            </>)}
-
-            {dialogStep === 'setup-password' && (<>
-              <h2 className="text-lg font-semibold mb-2">{t('migration.setupPassword.title')}</h2>
-              <p className="text-sm text-muted-foreground mb-4">{t('migration.setupPassword.description')}</p>
-              <div className="relative mb-2">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  className="w-full px-3 py-2 pr-10 bg-background border border-border rounded text-foreground"
-                  placeholder={t('migration.passwordPlaceholder')}
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && newPassword && handleSetupPassword(newPassword)}
-                  autoFocus
-                />
-                <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  onClick={() => setShowPassword(!showPassword)} tabIndex={-1}>
-                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
-              </div>
-              {dialogError && <p className="text-destructive text-sm mb-2">{dialogError}</p>}
-              <div className="flex justify-end mt-4">
-                <button
-                  type="button"
-                  className="px-4 py-1.5 bg-primary text-primary-foreground rounded text-sm font-medium disabled:opacity-50"
-                  onClick={() => handleSetupPassword(newPassword)}
-                  disabled={dialogLoading || !newPassword}
-                >
-                  {dialogLoading ? '...' : t('migration.confirm')}
-                </button>
-              </div>
-            </>)}
-
-            {dialogStep === 'unlock' && (<>
-              <h2 className="text-lg font-semibold mb-2">{t('migration.unlock.title')}</h2>
-              <p className="text-sm text-muted-foreground mb-4">{t('migration.unlock.description')}</p>
-              <div className="relative mb-2">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  className="w-full px-3 py-2 pr-10 bg-background border border-border rounded text-foreground"
-                  placeholder={t('migration.passwordPlaceholder')}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleUnlock()}
-                  autoFocus
-                />
-                <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  onClick={() => setShowPassword(!showPassword)} tabIndex={-1}>
-                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
-              </div>
-              {dialogError && <p className="text-destructive text-sm mb-2">{dialogError}</p>}
-              <div className="flex justify-between mt-4">
-                <button type="button" className="text-sm text-muted-foreground hover:text-foreground" onClick={handleSkipDialog}>
-                  {t('migration.skip')}
-                </button>
-                <button
-                  type="button"
-                  className="px-4 py-1.5 bg-primary text-primary-foreground rounded text-sm font-medium disabled:opacity-50"
-                  onClick={handleUnlock}
-                  disabled={dialogLoading || !password}
-                >
-                  {dialogLoading ? '...' : t('migration.unlock.confirm')}
-                </button>
-              </div>
-            </>)}
-
-          </div>
-        </div>
-      )}
+      {/* Master password modal — kotlin-decrypt / create / ask (Kotlin parity) */}
+      <MasterPasswordDialog
+        mode={dialogStep === 'setup-password' ? 'create' : dialogStep === 'unlock' ? 'ask' : 'kotlin-decrypt'}
+        open={!!dialogStep}
+        loading={dialogLoading}
+        error={dialogError}
+        onSubmit={async (pwd) => {
+          if (dialogStep === 'kotlin-decrypt') await handleKotlinDecrypt(pwd)
+          else if (dialogStep === 'setup-password') await handleSetupPassword(pwd)
+          else if (dialogStep === 'unlock') await handleUnlock(pwd)
+        }}
+        onSkip={(dialogStep === 'kotlin-decrypt' || dialogStep === 'unlock') ? handleSkipDialog : undefined}
+        onReset={dialogStep === 'unlock' ? async () => {
+          setDialogLoading(true)
+          try {
+            await resetSecrets()
+            toast(t('migration.unlock.reset.success'), 'success')
+            setDialogStep(null)
+          } catch (e) { setDialogError((e as Error).message) }
+          finally { setDialogLoading(false) }
+        } : undefined}
+      />
 
       {/* Top: sidebar + table + drawer overlay */}
       <div className="flex flex-1 min-h-0 relative">
@@ -377,10 +342,15 @@ export function Dashboard() {
           {/* Scrollable content */}
           <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-2">
           <div className="flex items-center justify-between">
-            <div className="min-w-0">
+            <button
+              type="button"
+              className="min-w-0 text-left hover:bg-muted/30 -mx-1 px-1 py-0.5 rounded"
+              title={t('namespaces.switch')}
+              onClick={() => setNamespaceDialogOpen(true)}
+            >
               <div className="text-sm font-semibold truncate">{namespace.name}</div>
               <div className="text-[11px] text-muted-foreground mt-0.5 truncate">{namespace.bundleRef}</div>
-            </div>
+            </button>
             <div className="flex items-center gap-0.5 shrink-0">
               <button
                 type="button"
@@ -394,7 +364,17 @@ export function Dashboard() {
                 type="button"
                 className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted"
                 title={t('dashboard.nsConfig')}
-                onClick={() => openBottomTab({ id: 'ns-config', type: 'ns-config', title: t('configEditor.title') })}
+                onClick={() => setNsEditOpen(true)}
+                onContextMenu={(e) => showContextMenu(e, [
+                  {
+                    label: t('nsEdit.title'),
+                    onClick: () => setNsEditOpen(true),
+                  },
+                  {
+                    label: t('nsEdit.editRawYaml'),
+                    onClick: () => openBottomTab({ id: 'ns-config', type: 'ns-config', title: t('configEditor.title') }),
+                  },
+                ])}
               >
                 <Settings size={14} />
               </button>
@@ -407,15 +387,20 @@ export function Dashboard() {
           </div>
 
           {runningApps.length > 0 && (
-            <div className="text-[11px] space-y-0.5">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">{t('dashboard.cpu')}</span>
-                <span className="font-mono">{totalCpu.toFixed(1)}%</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">{t('dashboard.mem')}</span>
-                <span className="font-mono">{totalMem >= 1024 ? `${(totalMem / 1024).toFixed(1)}G` : `${Math.round(totalMem)}M`}</span>
-              </div>
+            <div className="space-y-0.5">
+              <CompactResourceRow
+                label={t('dashboard.cpu')}
+                used={`${totalCpu.toFixed(1)}%`}
+                total={maxCpu > 0 ? `${maxCpu}%` : undefined}
+                percent={cpuPercent}
+                throttled={runningApps.some((a) => a.cpuThrottled)}
+              />
+              <CompactResourceRow
+                label={t('dashboard.mem')}
+                used={fmtMB(totalMem)}
+                total={maxMem > 0 ? fmtMB(maxMem) : undefined}
+                percent={memPercent}
+              />
             </div>
           )}
 
@@ -430,7 +415,7 @@ export function Dashboard() {
                   : 'border-border text-muted-foreground cursor-not-allowed opacity-50'
               }`}
               onClick={() => { if (isRunning) openExternal(proxyUrl) }}
-              title={isRunning ? t('dashboard.openInBrowser.tooltip') : t('dashboard.openInBrowser.disabled')}
+              title={openInBrowserTooltip(namespace.status, t)}
             >
               <Globe size={14} />
               {t('dashboard.openInBrowser')}
@@ -448,21 +433,37 @@ export function Dashboard() {
           {serviceLinks.length > 0 && (
             <div>
               <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider mb-1">{t('dashboard.links')}</div>
+              {/* Kotlin parity: group by `category`. The first link in a new
+                  category gets a small header. Links without a category render
+                  before the first header (matching the alwaysEnabled=true /
+                  category=undefined case). */}
               <div className="flex flex-col gap-0.5">
-                {serviceLinks.map((l) => (
-                  <a key={l.name} href={l.url} target="_blank" rel="noopener noreferrer"
-                    className={`flex items-center gap-1 text-xs py-0.5 ${
-                      (isRunning || l.order >= 100) ? 'text-primary hover:underline' : 'text-muted-foreground cursor-not-allowed'
-                    }`}
-                    onClick={(e) => {
-                      e.preventDefault()
-                      if (!isRunning && l.order < 100) return
-                      openExternal(l.url)
-                    }}>
-                    <ExternalLink size={11} />
-                    {l.name}
-                  </a>
-                ))}
+                {serviceLinks.map((l, i) => {
+                  const prevCategory = i > 0 ? (serviceLinks[i - 1].category ?? '') : '__INIT__'
+                  const showHeader = (l.category ?? '') !== prevCategory && l.category
+                  return (
+                    <div key={l.name}>
+                      {showHeader && (
+                        <div className="text-[10px] text-muted-foreground/80 mt-1.5 mb-0.5">{l.category}</div>
+                      )}
+                      <a href={l.url} target="_blank" rel="noopener noreferrer"
+                        title={l.description ?? l.name}
+                        className={`flex items-center gap-1.5 text-xs py-0.5 ${
+                          (isRunning || l.order >= 100) ? 'text-primary hover:underline' : 'text-muted-foreground cursor-not-allowed'
+                        }`}
+                        onClick={(e) => {
+                          e.preventDefault()
+                          if (!isRunning && l.order < 100) return
+                          openExternal(l.url)
+                        }}>
+                        {l.icon
+                          ? <img src={`/icons/${l.icon}.svg`} alt="" width={12} height={12} className="opacity-80" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+                          : <ExternalLink size={11} />}
+                        {l.name}
+                      </a>
+                    </div>
+                  )
+                })}
               </div>
             </div>
           )}
@@ -471,15 +472,22 @@ export function Dashboard() {
           {/* Fixed footer — always visible at bottom */}
           <div className="shrink-0 p-3 pt-2 border-t border-border flex flex-col gap-1">
             <SidebarBtn icon={HardDrive} label={t('dashboard.volumes')}
-              onClick={() => { openTab({ id: 'volumes', title: t('dashboard.volumes'), path: '/volumes' }); navigate('/volumes') }} />
+              onClick={() => setVolumesDialogOpen(true)} />
+            {/* Open NS Dir — Kotlin parity (NamespaceScreen.kt sidebar
+                "Open Namespace Dir"). Desktop mode shells out to the OS file
+                manager; server mode returns the path so the user can open it
+                manually on the daemon host. */}
+            <SidebarBtn icon={FolderOpen} label={t('dashboard.openNsDir')}
+              tooltip={t('dashboard.openNsDir.tooltip')}
+              onClick={handleOpenNsDir} />
             <SidebarBtn icon={Key} label={t('dashboard.secrets')}
-              onClick={() => { openTab({ id: 'secrets', title: t('dashboard.secrets'), path: '/secrets' }); navigate('/secrets') }} />
+              onClick={() => setSecretsDialogOpen(true)} />
             <SidebarBtn icon={Stethoscope} label={t('dashboard.diagnostics')}
               onClick={() => { openTab({ id: 'diagnostics', title: t('dashboard.diagnostics'), path: '/diagnostics' }); navigate('/diagnostics') }} />
             <SidebarBtn icon={AlertTriangle} label={t('dashboard.restartEvents')}
               onClick={() => openBottomTab({ id: 'restart-events', type: 'restart-events', title: t('dashboard.restartEvents') })} />
             <SidebarBtn icon={FileText} label={t('dashboard.launcherLogs')}
-              onClick={() => openBottomTab({ id: 'daemon-logs', type: 'daemon-logs', title: t('daemonLogs.title') })} />
+              onClick={() => openSecondaryView({ id: 'daemon-logs', type: 'daemon-logs', title: t('daemonLogs.title') })} />
             <SidebarBtn icon={Download} label={t('dashboard.systemDump')}
               onClick={() => getSystemDump('zip').then(() => toast(t('dashboard.systemDump.success'), 'success')).catch((e) => toast((e as Error).message, 'error'))} />
           </div>
@@ -534,17 +542,63 @@ export function Dashboard() {
         loading={upgradeLoading}
         error={upgradeError}
       />
+
+      {/* Sidebar-opened modal dialogs (Kotlin parity) */}
+      <VolumesDialog
+        open={volumesDialogOpen}
+        onClose={() => setVolumesDialogOpen(false)}
+        onOpenSnapshots={() => { setVolumesDialogOpen(false); setSnapshotsDialogOpen(true) }}
+        namespaceStopped={namespace?.status === 'STOPPED'}
+      />
+      <SnapshotsDialog
+        open={snapshotsDialogOpen}
+        onClose={() => setSnapshotsDialogOpen(false)}
+        namespaceStopped={namespace?.status === 'STOPPED'}
+      />
+      <SecretsDialog
+        open={secretsDialogOpen}
+        onClose={() => setSecretsDialogOpen(false)}
+      />
+      <NamespaceDialog
+        open={namespaceDialogOpen}
+        onClose={() => setNamespaceDialogOpen(false)}
+      />
+      <NamespaceEditDialog
+        open={nsEditOpen}
+        onClose={() => setNsEditOpen(false)}
+      />
+      {contextMenu && (
+        <ContextMenu
+          items={contextMenu.items}
+          position={contextMenu.position}
+          onClose={hideContextMenu}
+        />
+      )}
     </div>
   )
 }
 
-function SidebarBtn({ icon: Icon, label, onClick }: { icon: React.ElementType; label: string; onClick?: () => void }) {
+function SidebarBtn({ icon: Icon, label, tooltip, onClick }: { icon: React.ElementType; label: string; tooltip?: string; onClick?: () => void }) {
   return (
     <button type="button"
       className="flex items-center gap-1.5 text-xs py-1 px-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted"
-      onClick={onClick} title={label}>
+      onClick={onClick} title={tooltip ?? label}>
       <Icon size={13} />
       {label}
     </button>
   )
+}
+
+// Kotlin parity (NamespaceScreen.kt) — per-status tooltip on Open In Browser.
+function openInBrowserTooltip(status: string, t: (key: string) => string): string {
+  switch (status) {
+    case 'STARTING':
+      return t('dashboard.openInBrowser.starting')
+    case 'STALLED':
+      return t('dashboard.openInBrowser.stalled')
+    case 'RUNNING':
+      return t('dashboard.openInBrowser.tooltip')
+    default:
+      return t('dashboard.openInBrowser.disabled')
+  }
 }

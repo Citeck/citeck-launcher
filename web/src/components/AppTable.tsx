@@ -1,12 +1,30 @@
 import { useState } from 'react'
 import type { AppDto } from '../lib/types'
-import { postAppStop, postAppStart, postAppRestart } from '../lib/api'
+import { postAppStop, postAppStart, postAppRestart, getAppFiles, postAppsRetryPullFailed } from '../lib/api'
 import { usePanelStore } from '../lib/panels'
+import { openSecondaryView } from '../lib/desktop'
+import { ContextMenu, type ContextMenuItem } from './ContextMenu'
+import { useContextMenu } from '../hooks/useContextMenu'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
+import { useDashboardStore } from '../lib/store'
+import { RegistryCredentialsDialog } from './RegistryCredentialsDialog'
+import { KeyRound } from 'lucide-react'
+
+// Files with these extensions show up in the COG right-click menu (Kotlin
+// EDITABLE_FILE_EXTENSIONS — docs/porting/02 §7.4).
+const EDITABLE_EXTENSIONS = ['yaml', 'yml', 'json', 'kt', 'java', 'js', 'lua', 'Dockerfile', 'sh', 'txt', 'conf']
+
+function isEditableFile(path: string): boolean {
+  const base = path.split('/').pop() ?? path
+  if (base === 'Dockerfile') return true
+  const dot = base.lastIndexOf('.')
+  if (dot < 0) return false
+  return EDITABLE_EXTENSIONS.includes(base.slice(dot + 1))
+}
 import { StatusBadge } from './StatusBadge'
 import { ConfirmModal } from './ConfirmModal'
-import { Square, Play, RotateCw, FileText, Settings, Circle } from 'lucide-react'
+import { Square, Play, RotateCw, FileText, Settings, Circle, Lock } from 'lucide-react'
 
 interface AppTableProps {
   apps: AppDto[]
@@ -109,8 +127,53 @@ export function AppTable({ apps, highlightedApp }: AppTableProps) {
 }
 
 function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: string; apps: AppDto[]; onAction: (a: AppAction) => void; highlightedApp?: string | null }) {
-  const { openDrawer, openBottomTab } = usePanelStore()
+  const { openDrawer } = usePanelStore()
   const { t } = useTranslation()
+  const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu()
+  const pullProgress = useDashboardStore((s) => s.pullProgress)
+  const pullAuthRequired = useDashboardStore((s) => s.pullAuthRequired)
+  const clearPullAuthRequired = useDashboardStore((s) => s.clearPullAuthRequired)
+  // Single dialog instance per group; opened with the active app's host so the
+  // creds form is pre-filled. Closing also clears the per-app auth marker.
+  const [credsFor, setCredsFor] = useState<{ app: string; host: string } | null>(null)
+
+  function handleCredsClose() {
+    setCredsFor(null)
+  }
+
+  async function handleCredsSaved() {
+    const target = credsFor
+    if (target) clearPullAuthRequired(target.app)
+    try {
+      await postAppsRetryPullFailed()
+      toast(t('table.pullAuthRetry.success'), 'success')
+    } catch (e) {
+      toast((e as Error).message, 'error')
+    }
+  }
+
+  async function buildCogMenu(appName: string): Promise<ContextMenuItem[]> {
+    try {
+      const files = await getAppFiles(appName)
+      const items: ContextMenuItem[] = files
+        .filter((f) => isEditableFile(f.path))
+        .map((f) => ({
+          label: f.path,
+          onClick: () => openSecondaryView({
+            id: `editor:${appName}:${f.path}`,
+            type: 'app-config',
+            title: t('appConfig.tabTitle', { name: `${appName} — ${f.path}` }),
+            appName,
+          }),
+        }))
+      if (items.length === 0) {
+        items.push({ label: t('table.noEditableFiles'), onClick: () => {}, variant: 'danger' })
+      }
+      return items
+    } catch (e) {
+      return [{ label: (e as Error).message, onClick: () => {}, variant: 'danger' }]
+    }
+  }
 
   return (
     <>
@@ -141,11 +204,42 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
                     {'\u21bb'}{app.restartCount}
                   </span>
                 )}
-                {app.statusText && <span className="text-muted-foreground text-[10px]">{app.statusText}</span>}
+                {app.status === 'PULLING' && pullProgress[app.name] ? (
+                  <PullProgressBar
+                    percent={pullProgress[app.name].percent}
+                    phase={pullProgress[app.name].phase}
+                  />
+                ) : (
+                  app.statusText && <span className="text-muted-foreground text-[10px]">{app.statusText}</span>
+                )}
+                {app.status === 'PULL_FAILED' && pullAuthRequired[app.name] && (
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 rounded border border-warning/40 bg-warning/10 px-1.5 py-0 text-[10px] font-medium text-warning hover:bg-warning/20 leading-4"
+                    title={t('table.pullAuthRequired.tooltip')}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setCredsFor({ app: app.name, host: pullAuthRequired[app.name] })
+                    }}
+                  >
+                    <KeyRound size={10} />
+                    {t('table.pullAuthRequired.label')}
+                  </button>
+                )}
               </span>
             </td>
-            <td className="py-[3px] pr-2 text-right font-mono text-muted-foreground">{app.cpu || ''}</td>
-            <td className="py-[3px] pr-4 text-right font-mono text-muted-foreground">{app.memory ? app.memory.split(' / ')[0] : ''}</td>
+            <td
+              className={`py-[3px] pr-2 text-right font-mono ${app.cpuThrottled ? 'text-amber-500' : 'text-muted-foreground'}`}
+              title={app.cpuThrottled ? t('table.cpu.throttled') : undefined}
+            >
+              {app.cpu || ''}
+            </td>
+            <td
+              className={`py-[3px] pr-4 text-right font-mono ${app.memoryCritical ? 'text-red-500' : app.memoryWarning ? 'text-amber-500' : 'text-muted-foreground'}`}
+              title={app.memoryCritical ? t('table.memory.critical') : app.memoryWarning ? t('table.memory.warning') : undefined}
+            >
+              {app.memory ? app.memory.split(' / ')[0] : ''}
+            </td>
             <td className="py-[3px] pr-4 font-mono text-muted-foreground whitespace-nowrap" title={app.ports?.join(', ')}>
               {portsShort(app.ports)}
             </td>
@@ -169,21 +263,65 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
                   <IconBtn icon={Square} title={t('table.action.stop')} color="hover:text-destructive" onClick={() => onAction({ type: 'stop', appName: app.name })} />
                 )}
                 <button type="button" className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted" title={t('logs.title', { name: app.name })}
-                  onClick={() => openBottomTab({ id: `logs:${app.name}`, type: 'logs', title: t('logs.title', { name: app.name }), appName: app.name })}>
+                  onClick={() => openSecondaryView({ id: `logs:${app.name}`, type: 'logs', title: t('logs.title', { name: app.name }), appName: app.name })}>
                   <FileText size={14} />
                 </button>
                 <button type="button" className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted relative"
-                  title={app.edited ? (app.locked ? `${t('common.edit')} (${t('appConfig.lock.locked').toLowerCase()})` : t('common.edit')) : t('config.title')}
-                  onClick={() => openBottomTab({ id: `app-config:${app.name}`, type: 'app-config', title: t('appConfig.tabTitle', { name: app.name }), appName: app.name })}>
+                  title={t('table.cog.tooltip')}
+                  onClick={() => openSecondaryView({ id: `app-config:${app.name}`, type: 'app-config', title: t('appConfig.tabTitle', { name: app.name }), appName: app.name })}
+                  onContextMenu={async (e) => {
+                    e.preventDefault()
+                    const items = await buildCogMenu(app.name)
+                    showContextMenu(e, items)
+                  }}>
                   <Settings size={14} />
                   {app.edited && <Circle size={6} className="absolute top-0.5 right-0.5 fill-blue-500 text-blue-500" />}
+                  {app.edited && app.locked && <Lock size={7} className="absolute bottom-0.5 right-0.5 text-blue-500" />}
+                  {(app.editedFilesCount ?? 0) > 0 && (
+                    <span className="absolute -bottom-0.5 -left-0.5 text-[8px] leading-none font-mono text-blue-500"
+                      title={t('appConfig.fileEdited.badge')}>
+                      {app.editedFilesCount}
+                    </span>
+                  )}
                 </button>
               </div>
             </td>
           </tr>
         )
       })}
+      {contextMenu && (
+        <tr>
+          <td colSpan={7}>
+            <ContextMenu items={contextMenu.items} position={contextMenu.position} onClose={hideContextMenu} />
+          </td>
+        </tr>
+      )}
+      <RegistryCredentialsDialog
+        open={credsFor !== null}
+        host={credsFor?.host ?? ''}
+        onClose={handleCredsClose}
+        onSaved={handleCredsSaved}
+      />
     </>
+  )
+}
+
+/**
+ * Compact inline progress bar for image pull. Width ~64px so it slots next to
+ * StatusBadge without bloating the row. Tooltip carries the full phase text.
+ */
+function PullProgressBar({ percent, phase }: { percent: number; phase: string }) {
+  const pct = Math.max(0, Math.min(100, Math.round(percent)))
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground" title={phase}>
+      <span className="inline-block h-1.5 w-16 rounded-full bg-muted overflow-hidden align-middle">
+        <span
+          className="block h-full bg-primary transition-[width] duration-200"
+          style={{ width: `${pct}%` }}
+        />
+      </span>
+      <span className="font-mono">{pct}%</span>
+    </span>
   )
 }
 

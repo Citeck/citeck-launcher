@@ -8,10 +8,34 @@ const fr: Translations = {
   'dashboard.cpu': 'CPU',
   'dashboard.mem': 'MEM',
   'dashboard.openInBrowser': 'Ouvrir dans le navigateur',
-  'dashboard.openInBrowser.tooltip': 'Ouvrir Citeck dans le navigateur\nPar d\u00e9faut : admin / admin',
-  'dashboard.openInBrowser.disabled': 'D\u00e9marrez d\u2019abord le namespace',
+  'dashboard.openInBrowser.tooltip': 'Ouvrir Citeck dans votre navigateur.\n Nom d\u2019utilisateur par d\u00e9faut : admin\n Mot de passe par d\u00e9faut : admin',
+  'dashboard.openInBrowser.disabled': 'L\u2019application n\u2019est pas en cours d\u2019ex\u00e9cution. D\u00e9marrez-la pour l\u2019ouvrir dans le navigateur.',
+  'dashboard.openInBrowser.starting': 'L\u2019application d\u00e9marre. Veuillez patienter...',
+  'dashboard.openInBrowser.stalled': 'L\u2019application est bloqu\u00e9e. Veuillez essayer de la red\u00e9marrer.',
   'dashboard.docker.error': 'Docker : {error}',
   'dashboard.docker.retry': 'R\u00e9essayer',
+
+  // -- Docker not available screen --
+  'dockerUnavailable.title': 'Docker is not available',
+  'dockerUnavailable.installedButStopped': 'Docker is installed but not running.\nPlease start Docker and click Retry.',
+  'dockerUnavailable.missing': 'Docker does not appear to be installed or is not running.\nIf Docker is already installed, please start it and click Retry.',
+  'dockerUnavailable.installPrefix': 'Install Docker:',
+  'dockerUnavailable.retry': 'Retry',
+
+  // -- GitPullError / RegistryCredentials dialogs --
+  'gitPullError.title': 'Git Repo Pull Failed',
+  'gitPullError.canSkip': 'You can skip this pull or try again.',
+  'gitPullError.cannotSkip': 'You can\'t skip this step because the repo hasn\'t been cloned before.',
+  'gitPullError.skip': 'Skip Pulling',
+  'gitPullError.retry': 'Try Again',
+  'registryCreds.title': 'Sign in to {host}',
+  'registryCreds.host': 'Registry',
+  'registryCreds.username': 'Username',
+  'registryCreds.password': 'Password',
+  'registryCreds.save': 'Save & Retry',
+  'registryCreds.saved': 'Credentials saved',
+  'registryCreds.banner': 'Configure credentials',
+  'registryCreds.bannerTooltip': 'Provide registry credentials so the launcher can pull this image',
   'dashboard.links': 'Liens',
   'dashboard.volumes': 'Volumes',
   'dashboard.secrets': 'Secrets',
@@ -20,6 +44,11 @@ const fr: Translations = {
   'dashboard.restartEvents': 'Redemarrages',
   'dashboard.systemDump': 'Vidage syst\u00e8me',
   'dashboard.systemDump.success': 'Vidage syst\u00e8me t\u00e9l\u00e9charg\u00e9',
+
+  // -- Loading 30s hint --
+  'loadingHint.stillLoading': 'Still loading... This is taking longer than expected.\nTo help us diagnose the issue, please click the \'Dump System Info\' button and send the data to the maintainers.',
+  'loadingHint.showLogs': 'Show Logs',
+  'loadingHint.dumpSystemInfo': 'Dump System Info',
 
   // -- Welcome --
   'welcome.title': 'Bienvenue dans Citeck Launcher !',
@@ -33,6 +62,18 @@ const fr: Translations = {
   'welcome.delete.message': 'Supprimer le namespace \u00ab {name} \u00bb ? Le fichier de configuration sera supprim\u00e9.',
   'welcome.context.open': 'Ouvrir',
   'welcome.context.delete': 'Supprimer',
+  'welcome.workspace.label': 'Espace de travail',
+  'welcome.workspace.forceUpdate': 'Forcer la mise à jour',
+  'welcome.workspace.updating': 'Mise à jour de l’espace de travail...',
+  'welcome.workspace.updateSuccess': 'Espace de travail mis à jour',
+  'welcome.workspace.updateFailed': 'Échec de la mise à jour de l’espace de travail : {error}',
+
+  // -- Barre latérale du tableau de bord / répertoire du namespace --
+  'dashboard.openNsDir': 'Ouvrir le dossier NS',
+  'dashboard.openNsDir.tooltip': 'Ouvrir le répertoire des volumes du namespace dans le gestionnaire de fichiers',
+  'dashboard.openNsDir.success': '{path} ouvert',
+  'dashboard.openNsDir.serverInfo': 'Chemin du daemon : {path}',
+  'dashboard.openNsDir.failed': 'Échec de l’ouverture : {error}',
 
   // -- Wizard --
   'wizard.title': 'Cr\u00e9er un namespace',
@@ -159,6 +200,29 @@ const fr: Translations = {
   'logs.back': '\u2190 Retour \u00e0 {name}',
   'logs.title': 'Journaux : {name}',
 
+  // -- Standalone window mode (desktop multi-window) --
+  'window.logs.heading': 'Journaux :',
+  'window.editor.heading': 'Configuration :',
+  'window.editor.noApp': 'Aucune application sélectionnée.',
+
+  // -- Licenses page --
+  'licenses.title': 'Licences Enterprise',
+  'licenses.add': 'Ajouter une licence',
+  'licenses.adding': 'Ajout en cours…',
+  'licenses.empty': 'Aucune licence installée. Collez un JSON de licence signé pour activer les fonctions enterprise.',
+  'licenses.hint': 'Collez le JSON de licence signé reçu de Citeck. Le launcher vérifiera la signature.',
+  'licenses.added': 'Licence ajoutée',
+  'licenses.deleted': 'Licence supprimée',
+  'licenses.delete': 'Supprimer la licence',
+  'licenses.deleteConfirm': 'Supprimer la licence « {id} » ?',
+  'licenses.col.tenant': 'Tenant',
+  'licenses.col.issuedTo': 'Émise à',
+  'licenses.col.validity': 'Validité',
+  'licenses.col.status': 'Statut',
+  'licenses.col.actions': 'Actions',
+  'licenses.status.valid': 'Valide',
+  'licenses.status.invalid': 'Invalide',
+
   // -- AppDetail page --
   'appDetail.back': '\u2190 Tableau de bord',
 
@@ -171,6 +235,8 @@ const fr: Translations = {
   'table.tag': 'Tag',
   'table.actions': 'Actions',
   'table.restartCount': 'Redemarrages',
+  'table.cog.tooltip': 'Left click: edit app config\nRight click: edit a mounted file',
+  'table.noEditableFiles': 'No editable files',
   'table.group.core': 'Citeck Core',
   'table.group.coreExt': 'Extensions Citeck Core',
   'table.group.additional': 'Citeck Suppl\u00e9mentaire',
@@ -186,6 +252,12 @@ const fr: Translations = {
   'table.confirm.restart.title': 'Red\u00e9marrer {name} ?',
   'table.confirm.restart.message': 'Red\u00e9marrer {name} ?',
   'table.toast.success': '{action} demand\u00e9 pour {name}',
+  'table.cpu.throttled': 'CPU brid\u00e9',
+  'table.memory.warning': 'Utilisation m\u00e9moire \u00e9lev\u00e9e',
+  'table.memory.critical': 'Proche de la limite OOM',
+  'table.pullAuthRequired.label': 'Configurer les identifiants',
+  'table.pullAuthRequired.tooltip': 'Authentification requise pour le registry — cliquez pour configurer',
+  'table.pullAuthRetry.success': 'Identifiants enregistrés ; nouvelle tentative de pull',
 
   // -- App Drawer --
   'drawer.container': 'Conteneur',
@@ -218,6 +290,14 @@ const fr: Translations = {
   'appConfig.confirm.message': 'Enregistrer la configuration et red\u00e9marrer l\u2019application ?',
   'appConfig.saved': 'Configuration de l\u2019application enregistr\u00e9e',
   'appConfig.fileSaved': 'Fichier enregistr\u00e9',
+  'appConfig.reset': 'Reset',
+  'appConfig.reset.tooltip': 'Discard edits and restore the generated default',
+  'appConfig.reset.confirmTitle': 'Reset app config?',
+  'appConfig.reset.confirmMessage': 'This will discard your edits and restore the launcher-generated default.',
+  'appConfig.reset.success': 'App config reset to default',
+  'appConfig.fileReset.tooltip': 'Annuler les modifications et restaurer la valeur par défaut générée',
+  'appConfig.fileReset.success': 'Fichier réinitialisé à la valeur par défaut',
+  'appConfig.fileEdited.badge': 'modifié',
   'appConfig.tabTitle': 'Configuration : {name}',
 
   // -- Config Editor --
@@ -263,10 +343,13 @@ const fr: Translations = {
 
   // -- Namespace Controls --
   'ns.start': 'D\u00e9marrer',
+  'ns.forceStart': 'Forcer la mise \u00e0 jour et d\u00e9marrer',
   'ns.stop': 'Arr\u00eater',
   'ns.reload': 'Recharger',
   'ns.confirm.start.title': 'D\u00e9marrer le namespace',
   'ns.confirm.start.message': 'D\u00e9marrer toutes les applications de ce namespace ?',
+  'ns.confirm.forceStart.title': 'Forcer la mise \u00e0 jour et d\u00e9marrer',
+  'ns.confirm.forceStart.message': 'Ret\u00e9l\u00e9charger toutes les images depuis le registre et d\u00e9marrer le namespace ? Les conteneurs en cours d\u2019ex\u00e9cution seront recr\u00e9\u00e9s.',
   'ns.confirm.stop.title': 'Arr\u00eater le namespace',
   'ns.confirm.stop.message': 'Arr\u00eater toutes les applications en cours d\u2019ex\u00e9cution ?',
   'ns.confirm.reload.title': 'Recharger la configuration',
@@ -309,6 +392,7 @@ const fr: Translations = {
   'common.working': 'En cours...',
   'common.submit': 'Envoyer',
   'common.select': 'S\u00e9lectionner',
+  'common.create': 'Créer',
   'common.settings': 'Param\u00e8tres',
   'common.error': 'Erreur : {error}',
 
@@ -319,6 +403,7 @@ const fr: Translations = {
   'journal.rowCount': '{count} lignes',
   'journal.rowCountOne': '1 ligne',
   'journal.selected': '{count} s\u00e9lectionn\u00e9es',
+  'journal.actions': 'Actions',
 
   // -- Error Boundary --
   'error.title': 'Une erreur est survenue',
@@ -349,6 +434,14 @@ const fr: Translations = {
   'migration.unlock.description': 'Vos secrets sont chiffr\u00e9s. Saisissez le mot de passe principal pour les d\u00e9verrouiller.',
   'migration.unlock.confirm': 'D\u00e9verrouiller',
   'migration.unlock.success': 'Secrets d\u00e9verrouill\u00e9s',
+  'migration.password.empty': 'Password is empty',
+  'migration.password.mismatch': 'Passwords do not match',
+  'migration.password.confirmPlaceholder': 'Confirm password',
+  'migration.unlock.reset': 'Reset Master Password and Drop All Secrets',
+  'migration.unlock.reset.confirmTitle': 'Reset master password?',
+  'migration.unlock.reset.confirmMessage': 'All your secrets will be permanently deleted from local storage.',
+  'migration.unlock.reset.confirmLabel': 'Reset and delete',
+  'migration.unlock.reset.success': 'Master password reset; all secrets deleted',
 
   // -- Secrets (additional) --
   'secrets.encrypted.badge': 'Chiffr\u00e9',
@@ -363,7 +456,67 @@ const fr: Translations = {
   'upgrade.success': 'Mise \u00e0 jour r\u00e9ussie',
   'upgrade.alreadyLatest': 'D\u00e9j\u00e0 sur la derni\u00e8re version',
   'form.fieldRequired': '{label} est requis',
+  'form.showPassword': 'Afficher le mot de passe',
+  'form.hidePassword': 'Masquer le mot de passe',
+  'form.refreshOptions': 'Actualiser les options',
+
+  // -- Volumes/Snapshots/Secrets modals (Kotlin parity) --
+  'volumes.dialog.title': 'Volumes',
+  'volumes.deleteAll': 'Delete All',
+  'volumes.deleteAll.title': 'Delete all volumes?',
+  'volumes.deleteAll.message': 'All your data in this namespace will be lost.',
+  'volumes.deleteAll.success': 'All volumes deleted',
+  'snapshots.dialog.title': 'Snapshots',
+  'snapshots.scope.workspace': 'Workspace',
+  'snapshots.scope.namespace': 'Namespace',
+  'snapshots.col.name': 'Name',
+  'snapshots.col.size': 'Size',
+  'snapshots.col.created': 'Created',
+  'snapshots.action.import': 'Import / Download',
+  'snapshots.action.rename': 'Rename',
+  'snapshots.action.delete': 'Delete',
+  'snapshots.create': 'Create Snapshot',
+  'snapshots.create.title': 'Create snapshot',
+  'snapshots.importFile': 'Import .zip…',
+  'snapshots.import.local.hint': 'Use the .zip stored in the namespace dir to import locally.',
+  'snapshots.rename.title': 'Rename snapshot',
+  'snapshots.delete.title': 'Delete snapshot "{name}"?',
+  'snapshots.delete.message': 'This action permanently deletes the snapshot file.',
+  'snapshots.delete.notSupported': 'Snapshot deletion is not exposed via API; remove the .zip from the namespace dir.',
+  'snapshots.deleted': 'Snapshot deleted',
+  'snapshots.field.name': 'Snapshot name',
+  'snapshots.field.name.invalid': 'Name can only contain letters, digits, dots, dashes and underscores.',
+  'secrets.dialog.title': 'Auth Secrets',
+  'secrets.test.ok': 'Secret test passed',
+
+  // -- Namespace picker dialog --
+  'namespaces.dialog.title': 'Namespaces',
+  'namespaces.col.name': 'Name',
+  'namespaces.col.bundle': 'Bundle',
+  'namespaces.col.status': 'Status',
+  'namespaces.action.edit': 'Edit',
+  'namespaces.switch': 'Switch namespace',
+  'namespaces.deleted': 'Namespace deleted',
   'store.connectionRestored': 'Connexion rétablie, état actualisé',
+
+  // -- Namespace edit dialog --
+  'nsEdit.title': "Modifier l'espace de noms",
+  'nsEdit.field.name': 'Nom',
+  'nsEdit.field.bundleRepo': 'Dépôt de bundle',
+  'nsEdit.field.bundleKey': 'Version du bundle',
+  'nsEdit.field.authType': 'Authentification',
+  'nsEdit.field.users': 'Utilisateurs (séparés par des virgules)',
+  'nsEdit.field.host': 'Nom d\'hôte',
+  'nsEdit.field.port': 'Port',
+  'nsEdit.field.tlsEnabled': 'Activer TLS',
+  'nsEdit.field.pgAdminEnabled': 'Activer PgAdmin',
+  'nsEdit.save': 'Enregistrer',
+  'nsEdit.saveSuccess': 'Espace de noms mis à jour',
+  'nsEdit.editRawYaml': 'Modifier le YAML brut…',
+
+  // -- Snapshot import warning --
+  'snapshots.import.confirm.title': "Importer l'instantané ?",
+  'snapshots.import.confirm.message': "L'importation supprimera les volumes existants de cet espace de noms. Continuer ?",
 }
 
 export default fr
