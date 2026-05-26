@@ -109,13 +109,19 @@ const (
 
 // AppRuntime holds the state for a single app.
 type AppRuntime struct {
-	Name         string
+	Name string
 	Status       AppRuntimeStatus
 	StatusText   string
 	Def          appdef.ApplicationDef
 	ContainerID  string
 	CPU          string
 	Memory       string
+	// MemoryPercent is 0..100 (zero when no memory limit set). Surfaced as
+	// AppDto.MemoryPercent so the UI can colour-band the per-app cell.
+	MemoryPercent float64
+	// CPUThrottled flags whether the container is currently being CPU-throttled
+	// (set from docker-stats throttling_data deltas). Mirrors AppDto.CPUThrottled.
+	CPUThrottled bool
 	RestartCount int
 
 	// Non-persisted state-machine fields; zero-value by default.
@@ -154,6 +160,7 @@ type Runtime struct {
 	manualStoppedApps     map[string]bool
 	editedApps            map[string]appdef.ApplicationDef // user-edited app defs
 	editedLockedApps      map[string]bool                  // locked edits survive regeneration
+	editedFiles           map[string]bool                  // user-edited mounted files (key: "<app>/<rel-path>", no leading "./"); writeRuntimeFiles skips these so user edits survive reload/regenerate
 	dependsOnDetachedApps map[string]bool                  // detached apps that trigger regen on restart
 	lastApps              []appdef.ApplicationDef          // last app defs passed to doStart
 	cachedBundle          *bundle.Def                      // last successfully resolved bundle (persisted)
@@ -407,6 +414,33 @@ func (r *Runtime) RestoreEditedApps(edited map[string]appdef.ApplicationDef, loc
 	}
 }
 
+// RestoreEditedFiles restores the per-file user-edit flags loaded from persisted
+// state. Keys MUST be in canonical form ("<app>/<rel-path>", no leading "./").
+// Called BEFORE the first writeRuntimeFiles call so user-edited files survive
+// the initial materialization.
+func (r *Runtime) RestoreEditedFiles(files []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, path := range files {
+		r.editedFiles[path] = true
+	}
+}
+
+// EditedFilesSnapshot returns a shallow copy of the user-edited file flag map.
+// Used by writeRuntimeFiles to skip files that the user has edited via the
+// Web UI so user edits survive reload/regenerate. Safe to call when the
+// runtime is nil — callers handle the nil-map case naturally.
+func (r *Runtime) EditedFilesSnapshot() map[string]bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.editedFiles) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(r.editedFiles))
+	maps.Copy(out, r.editedFiles)
+	return out
+}
+
 // SetAppLocked sets or clears the lock flag for an edited app.
 func (r *Runtime) SetAppLocked(appName string, locked bool) {
 	r.mu.Lock()
@@ -442,6 +476,7 @@ func NewRuntime(cfg *Config, dockerClient docker.RuntimeClient, volumesBase stri
 		manualStoppedApps: make(map[string]bool),
 		editedApps:        make(map[string]appdef.ApplicationDef),
 		editedLockedApps:  make(map[string]bool),
+		editedFiles:       make(map[string]bool),
 		livenessFailures:  make(map[string]int),
 		restartCounts:     make(map[string]int),
 		eventCh:           make(chan api.EventDto, 256),

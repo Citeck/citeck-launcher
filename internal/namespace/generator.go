@@ -30,6 +30,12 @@ type GenResp struct {
 type GenerateOpts struct {
 	DetachedApps map[string]bool // manually stopped apps excluded from dependency graph
 	SecretReader SecretReader    // resolves "secret:" references in config (nil = no resolution)
+	// ExtraLicenses are user-added enterprise licenses (stored encrypted via the
+	// license Service). They are merged with workspace.licenses and emitted into
+	// the eapps `ecos.webapp.license.instances` cloud-config key. Entries here
+	// take precedence over workspace entries with the same ID; after dedupe the
+	// merged list is sorted by descending Priority (mirrors Service.List()).
+	ExtraLicenses []bundle.LicenseInstance
 }
 
 // Generate creates container definitions from a namespace config, bundle, and workspace config.
@@ -47,6 +53,7 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 		if opts[0].SecretReader != nil {
 			ctx.SecretReader = opts[0].SecretReader
 		}
+		ctx.ExtraLicenses = opts[0].ExtraLicenses
 	}
 
 	// Load embedded appfiles
@@ -85,6 +92,12 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 	for _, name := range webappNames {
 		generateWebapp(name, ctx)
 	}
+
+	// STT sidecar (speech-to-text proxy for AI websocket traffic) — must run
+	// AFTER the AI webapp is generated because it injects an env var + dep
+	// onto the AI app, and before generateProxy so a future AI_TARGET wiring
+	// in the proxy can read the resolved STT port from the apps map.
+	generateSttSidecar(ctx)
 
 	// Generate proxy (depends on gateway, onlyoffice)
 	generateProxy(ctx)
@@ -216,8 +229,13 @@ func generatePostgres(ctx *NsGenContext) {
 			Exec: &appdef.ExecProbeDef{
 				Command: []string{"/bin/sh", "-c", "psql -U postgres -d postgres -c 'SELECT 1' || exit 1"},
 			},
-			PeriodSeconds:    10,
-			FailureThreshold: 60,
+			PeriodSeconds: 10,
+			// Kotlin-parity: AppProbeDef.failureThreshold default is 10_000
+			// (effectively unbounded). The hard ceiling lives in the outer
+			// 240s container-running wait in waitStartup, not here. Capping
+			// at 60 retries (10 min) silently failed slow-importing realms
+			// after a Keycloak DB reset.
+			FailureThreshold: 10000,
 			TimeoutSeconds:   5,
 		}},
 	}
@@ -362,8 +380,12 @@ func generateKeycloak(ctx *NsGenContext) error {
 			Exec: &appdef.ExecProbeDef{
 				Command: []string{"bash", "/healthcheck.sh"},
 			},
-			PeriodSeconds:    10,
-			FailureThreshold: 60,
+			PeriodSeconds: 10,
+			// Kotlin-parity: AppProbeDef.failureThreshold default is 10_000.
+			// Large realm imports on fresh DB easily exceed 10 min — keep the
+			// startup window effectively unbounded (outer 240s wait still
+			// gates container-up). Liveness threshold stays at 3 below.
+			FailureThreshold: 10000,
 			TimeoutSeconds:   5,
 		}},
 	}
@@ -677,6 +699,91 @@ func generateObserver(ctx *NsGenContext) {
 	ctx.CloudConfig[appdef.AppObserver] = extCloudConfig
 }
 
+// STT sidecar defaults — match the Kotlin SttSidecarProps.DEFAULT:
+//   - port 14080 lives in the infrastructure cluster (below the 17020+
+//     dynamic webapp range), so it never collides with a counter-allocated
+//     port even when AI is the first or last webapp generated.
+//   - 2g memory limit matches the gigaam STT model footprint; smaller
+//     limits trigger OOM on first transcript.
+const (
+	sttSidecarDefaultPort   = 14080
+	sttSidecarDefaultMemory = "2g"
+)
+
+// generateSttSidecar adds the STT (speech-to-text) websocket-proxy sidecar
+// for the AI app. Kotlin parity, see SttSidecarProps + NamespaceGenerator
+// .generateSttSidecar in v1.4+. Behavior:
+//   - No AI app in the generated set → no STT (it only serves AI).
+//   - AI detached → no STT at all; the AI runtime stays put.
+//   - STT detached → the STT spec is still generated (so the user can re-attach
+//     it from the UI without losing the AppRuntime), but the AI app does NOT
+//     get the env var or dependency so AI keeps starting without the sidecar.
+//   - Image: workspaceConfig.sttSidecar.image wins; else bundle's stt-sidecar
+//     image; else skip (no image = nothing to deploy).
+//   - HTTP startup probe at /health on the container port — same probe Kotlin
+//     uses, gated by the standard outer 240s running-state wait.
+func generateSttSidecar(ctx *NsGenContext) {
+	aiApp, ok := ctx.Applications[appdef.AppAi]
+	if !ok {
+		return
+	}
+	if ctx.DetachedApps[appdef.AppAi] {
+		// AI off the table → STT serves nothing.
+		return
+	}
+
+	props := bundle.SttSidecarProps{}
+	if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.SttSidecar != nil {
+		props = *ctx.WorkspaceConfig.SttSidecar
+	}
+
+	port := props.Port
+	if port <= 0 {
+		port = sttSidecarDefaultPort
+	}
+	memoryLimit := props.MemoryLimit
+	if memoryLimit == "" {
+		memoryLimit = sttSidecarDefaultMemory
+	}
+
+	image := props.Image
+	if image == "" && ctx.Bundle != nil {
+		if bundleApp, exists := ctx.Bundle.Applications[appdef.AppSttSidecar]; exists {
+			image = bundleApp.Image
+		}
+	}
+	if image == "" {
+		// Nothing to deploy. AI keeps running; the env var simply isn't set
+		// (the AI app falls back to its built-in defaults, same as Kotlin).
+		return
+	}
+
+	stt := ctx.GetOrCreateApp(appdef.AppSttSidecar)
+	stt.Image = image
+	stt.Kind = appdef.KindCiteckAdditional
+	stt.AddEnv("PORT", fmt.Sprintf("%d", port))
+	stt.AddPort(fmt.Sprintf("%d:%d", port, port))
+	stt.AddVolume("stt_models:/root/.cache/gigaam")
+	stt.StartupConditions = []appdef.StartupCondition{
+		{Probe: &appdef.AppProbeDef{
+			HTTP:             &appdef.HTTPProbeDef{Path: "/health", Port: port},
+			PeriodSeconds:    10,
+			FailureThreshold: 10000, // Kotlin-parity: effectively unbounded; outer 240s wait is the real ceiling
+			TimeoutSeconds:   5,
+		}},
+	}
+	stt.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: memoryLimit}}
+
+	if !ctx.DetachedApps[appdef.AppSttSidecar] {
+		// Wire AI → STT only when both are active. Detached STT keeps its spec
+		// so a future re-attach is one click away, but AI must not block on a
+		// disabled sidecar.
+		aiApp.AddEnv("CITECK_AI_CALLRECORDING_STT_SIDECARURL",
+			fmt.Sprintf("http://%s:%d", appdef.AppSttSidecar, port))
+		aiApp.AddDependsOn(appdef.AppSttSidecar)
+	}
+}
+
 func generateOnlyOffice(ctx *NsGenContext) {
 	fallback := "onlyoffice/documentserver:9.1.0.1"
 	memLimit := "3g"
@@ -974,7 +1081,12 @@ func generateWebapp(name string, ctx *NsGenContext) {
 
 // configureWebappProbes sets startup and liveness probes for a webapp.
 func configureWebappProbes(name string, app *AppBuilder, ctx *NsGenContext, port int) {
-	// Startup probe: 90 × 10s = 15 min — Java webapps can be slow on first start.
+	// Startup probe: Kotlin-parity, AppProbeDef.failureThreshold default is
+	// 10_000 — effectively unbounded retries. The real ceiling is the outer
+	// 240s container-running wait in waitStartup; a probe-side 90×10s = 15min
+	// cap silently killed long-startup webapps (Alfresco, big realm imports,
+	// first-boot eapps) and left them stuck in a restart loop. Liveness keeps
+	// its conservative 3-failure threshold below.
 	app.StartupConditions = []appdef.StartupCondition{
 		{Probe: &appdef.AppProbeDef{
 			HTTP: &appdef.HTTPProbeDef{
@@ -982,7 +1094,7 @@ func configureWebappProbes(name string, app *AppBuilder, ctx *NsGenContext, port
 				Port: port,
 			},
 			PeriodSeconds:    10,
-			FailureThreshold: 90,
+			FailureThreshold: 10000,
 			TimeoutSeconds:   5,
 		}},
 	}
@@ -1208,28 +1320,57 @@ func processWebappDataSources(appName string, app *AppBuilder, ctx *NsGenContext
 		}
 	}
 
-	// Merge webappProps.cloudConfig from namespace config (arbitrary per-webapp Spring properties)
-	// Uses deep merge so nested keys from workspace defaults are preserved.
+	// Three-level cloudConfig merge in priority order (each layer's values
+	// override / deep-merge into earlier ones). Mirrors the Kotlin merge from
+	// generateWebapp:
+	//   1. workspace.defaultWebappProps.cloudConfig — global webapp defaults.
+	//   2. workspace.webapps[appName].defaultProps.cloudConfig — per-app
+	//      workspace defaults.
+	//   3. namespace.webapps[appName].cloudConfig — per-app namespace override.
+	// Object values are deep-merged; scalars are last-write-wins. Without this
+	// loop, per-workspace overrides (e.g. UI-managed licenses pinned at the
+	// workspace level, ai.callRecording config defaults) silently dropped to
+	// the namespace level and never reached the running webapps.
+	if ctx.WorkspaceConfig != nil {
+		if ctx.WorkspaceConfig.DefaultWebappProps.CloudConfig != nil {
+			deepMergeMaps(webappCloudConfig, ctx.WorkspaceConfig.DefaultWebappProps.CloudConfig)
+		}
+		for _, wsWp := range ctx.WorkspaceConfig.Webapps {
+			if wsWp.ID == appName {
+				if wsWp.DefaultProps.CloudConfig != nil {
+					deepMergeMaps(webappCloudConfig, wsWp.DefaultProps.CloudConfig)
+				}
+				break
+			}
+		}
+	}
 	if wp, ok := ctx.Config.Webapps[appName]; ok {
 		deepMergeMaps(webappCloudConfig, wp.CloudConfig)
 	}
 
 	// License and bundle-key injection for eapps
-	if appName == appdef.AppEapps && ctx.WorkspaceConfig != nil && len(ctx.WorkspaceConfig.Licenses) > 0 {
-		var licenseStrings []string
-		for _, lic := range ctx.WorkspaceConfig.Licenses {
-			if data, err := json.Marshal(lic); err == nil {
-				licenseStrings = append(licenseStrings, string(data))
+	if appName == appdef.AppEapps && ctx.WorkspaceConfig != nil {
+		// Merge user-added licenses (from license.Service / encrypted store) with
+		// workspace-declared ones. UI licenses take precedence by ID; the merged
+		// list is sorted by descending Priority so the highest-priority license
+		// is first — matches license.Service.List() semantics consumed by the UI.
+		mergedLicenses := mergeLicenses(ctx.WorkspaceConfig.Licenses, ctx.ExtraLicenses)
+		if len(mergedLicenses) > 0 {
+			var licenseStrings []string
+			for _, lic := range mergedLicenses {
+				if data, err := json.Marshal(lic); err == nil {
+					licenseStrings = append(licenseStrings, string(data))
+				}
 			}
-		}
-		webappCloudConfig["ecos.webapp.license.instances"] = licenseStrings
-		bundleKey := ctx.Bundle.Key.Version
-		webappCloudConfig["citeck.bundle.key"] = bundleKey
-		extCloudConfig["citeck.bundle.key"] = bundleKey
-		if ctx.Bundle.Content != nil {
-			bundleContent, _ := json.Marshal(ctx.Bundle.Content)
-			webappCloudConfig["citeck.bundle.content"] = string(bundleContent)
-			extCloudConfig["citeck.bundle.content"] = string(bundleContent)
+			webappCloudConfig["ecos.webapp.license.instances"] = licenseStrings
+			bundleKey := ctx.Bundle.Key.Version
+			webappCloudConfig["citeck.bundle.key"] = bundleKey
+			extCloudConfig["citeck.bundle.key"] = bundleKey
+			if ctx.Bundle.Content != nil {
+				bundleContent, _ := json.Marshal(ctx.Bundle.Content)
+				webappCloudConfig["citeck.bundle.content"] = string(bundleContent)
+				extCloudConfig["citeck.bundle.content"] = string(bundleContent)
+			}
 		}
 	}
 
@@ -1248,6 +1389,40 @@ func processWebappDataSources(appName string, app *AppBuilder, ctx *NsGenContext
 	if len(extCloudConfig) > 0 {
 		ctx.CloudConfig[appName] = extCloudConfig
 	}
+}
+
+// mergeLicenses returns the workspace-declared licenses merged with user-added
+// (extra) licenses. Extras take precedence by ID. The returned slice is sorted
+// by descending Priority — same order license.Service.List() exposes to the UI,
+// so the highest-priority license is always the head of the list passed to
+// webapps via `ecos.webapp.license.instances`.
+func mergeLicenses(workspace, extras []bundle.LicenseInstance) []bundle.LicenseInstance {
+	if len(workspace) == 0 && len(extras) == 0 {
+		return nil
+	}
+	byID := make(map[string]bundle.LicenseInstance, len(workspace)+len(extras))
+	order := make([]string, 0, len(workspace)+len(extras))
+	for _, lic := range workspace {
+		if _, dup := byID[lic.ID]; !dup {
+			order = append(order, lic.ID)
+		}
+		byID[lic.ID] = lic
+	}
+	for _, lic := range extras {
+		if _, dup := byID[lic.ID]; !dup {
+			order = append(order, lic.ID)
+		}
+		// Extras win on collision.
+		byID[lic.ID] = lic
+	}
+	out := make([]bundle.LicenseInstance, 0, len(order))
+	for _, id := range order {
+		out = append(out, byID[id])
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].Priority > out[j].Priority
+	})
+	return out
 }
 
 // deepMergeMaps recursively merges src into dst. For keys present in both maps,

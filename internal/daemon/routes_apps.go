@@ -95,6 +95,22 @@ func (fw flushWriter) Write(p []byte) (int, error) {
 	return n, nil
 }
 
+// handleAppsRetryPullFailed re-queues all PULL_FAILED apps for a fresh pull
+// attempt. Triggered by the Web UI after the user saves registry credentials
+// via RegistryCredentialsDialog so the new secret is picked up without waiting
+// for the auto-retry backoff window. The underlying RetryPullFailedApps call
+// is a no-op when no apps are in PULL_FAILED — safe to invoke unconditionally.
+func (d *Daemon) handleAppsRetryPullFailed(w http.ResponseWriter, _ *http.Request) {
+	if !d.requireRuntime(w) {
+		return
+	}
+	count := d.runtime.RetryPullFailedApps()
+	writeJSON(w, api.ActionResultDto{
+		Success: true,
+		Message: fmt.Sprintf("Retry requested for %d pull-failed app(s)", count),
+	})
+}
+
 func (d *Daemon) handleAppRestart(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !validateAppName(w, name) {
@@ -346,6 +362,25 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("App %s config updated and restart requested", name)})
 }
 
+// handleResetAppConfig clears any user-edited ApplicationDef override for the
+// app so the original generated definition is restored. Mirrors Kotlin's
+// `AppCfgEditWindow` Reset button (resume with `null`).
+func (d *Daemon) handleResetAppConfig(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !validateAppName(w, name) {
+		return
+	}
+	if d.findApp(name) == nil {
+		writeAppNotFound(w, name)
+		return
+	}
+	if err := d.runtime.ResetAppDef(name); err != nil {
+		writeInternalError(w, err)
+		return
+	}
+	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("App %s config reset to default", name)})
+}
+
 func (d *Daemon) handleListAppFiles(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !validateAppName(w, name) {
@@ -357,8 +392,11 @@ func (d *Daemon) handleListAppFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Collect bind-mounted files from relative bind mounts (./app/... etc.)
-	var files []string
+	// Collect bind-mounted files from relative bind mounts (./app/... etc.).
+	// `path` keeps the human-readable "./app/..." form for backwards-compat
+	// with existing UI code; `edited` reflects whether the user has edited
+	// the file via the Web UI (key stored without the leading "./").
+	files := make([]api.AppFileDto, 0)
 	for _, v := range app.Def.Volumes {
 		parts := strings.SplitN(v, ":", 2)
 		if len(parts) != 2 {
@@ -371,7 +409,8 @@ func (d *Daemon) handleListAppFiles(w http.ResponseWriter, r *http.Request) {
 		// Resolve and check if the path is a regular file (not a directory)
 		absPath := filepath.Join(d.volumesBase, hostPath[2:])
 		if info, err := os.Stat(absPath); err == nil && !info.IsDir() {
-			files = append(files, hostPath)
+			edited := d.runtime != nil && d.runtime.IsFileEdited(hostPath[2:])
+			files = append(files, api.AppFileDto{Path: hostPath, Edited: edited})
 		}
 	}
 	writeJSON(w, files)
@@ -443,7 +482,70 @@ func (d *Daemon) handlePutAppFile(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w, err)
 		return
 	}
+	// Record the user edit so writeRuntimeFiles skips this path on the next
+	// reload/regenerate. Key is the canonical "<app>/<rel-path>" form (no
+	// leading "./") — same form the generator's Files map uses.
+	if d.runtime != nil {
+		d.runtime.SetFileEdited(name, filePath, true)
+	}
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "File updated"})
+}
+
+// handleResetAppFile clears the user-edited flag for a single mounted
+// bind-mount file and triggers a namespace reload so the original generator
+// content is re-materialized on disk. Mirrors handleResetAppConfig.
+//
+// Path is taken from the `?path=` query string and MUST be an existing
+// bind-mount of the named app. The canonical key (no leading "./") is what
+// the runtime stores in editedFiles and what writeRuntimeFiles iterates over.
+func (d *Daemon) handleResetAppFile(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !validateAppName(w, name) {
+		return
+	}
+	if !d.requireRuntime(w) {
+		return
+	}
+	app := d.findApp(name)
+	if app == nil {
+		writeAppNotFound(w, name)
+		return
+	}
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		writeError(w, http.StatusBadRequest, "path query parameter is required")
+		return
+	}
+	// Normalize to the human-readable form for bind-mount validation, and
+	// derive the canonical runtime key (no leading "./") for ResetEditedFile.
+	cleanPath := strings.TrimPrefix(path, "./")
+	relPath := "./" + cleanPath
+	if !isAppBindMount(app, relPath) {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("file %q is not a bind mount of app %q", cleanPath, name))
+		return
+	}
+	// Acquire reloadMu BEFORE clearing the in-memory edit flag so a concurrent
+	// reload cannot read a stale editedFiles snapshot that still skips this
+	// file. Without this, the user would see a 409 conflict yet the flag
+	// would already be cleared — leaving the on-disk content stale until
+	// the next manual reload.
+	if !d.reloadMu.TryLock() {
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeReloadInProgress, "reload already in progress")
+		return
+	}
+	defer d.reloadMu.Unlock()
+	if err := d.runtime.ResetEditedFile(name, cleanPath); err != nil {
+		writeInternalError(w, err)
+		return
+	}
+	// Trigger a reload so writeRuntimeFiles re-materializes the original
+	// generator-supplied content; the on-disk file still has the user's
+	// edit until this runs.
+	if err := d.doReload(); err != nil {
+		writeInternalError(w, err)
+		return
+	}
+	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("File %s reset to default", cleanPath)})
 }
 
 func (d *Daemon) handleAppLockToggle(w http.ResponseWriter, r *http.Request) {

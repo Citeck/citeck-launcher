@@ -319,3 +319,20 @@ func (d *Daemon) handleSetupPassword(w http.ResponseWriter, r *http.Request) {
 	slog.Info("Secrets encryption configured", "isDefault", isDefault)
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "encryption configured"})
 }
+
+// handleResetSecrets clears the encrypted-secrets envelope and removes every
+// stored secret. Mirrors Kotlin's `AskMasterPasswordDialog` reset flow:
+// when the user forgets the master password they can wipe and start over.
+//
+// The reset is irreversible. Server mode never reaches this endpoint via UI
+// (default password handles all secrets transparently), but desktop UIs and
+// power users can hit it explicitly.
+func (d *Daemon) handleResetSecrets(w http.ResponseWriter, _ *http.Request) {
+	if err := d.secretService.ResetSecrets(); err != nil {
+		writeInternalError(w, err)
+		return
+	}
+	d.rebuildAuthCaches()
+	slog.Warn("Secrets reset by user — all stored secrets wiped")
+	writeJSON(w, api.ActionResultDto{Success: true, Message: "secrets reset"})
+}

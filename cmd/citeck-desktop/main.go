@@ -16,6 +16,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/desktop"
+	"github.com/citeck/citeck-launcher/internal/desktop/wailswin"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 )
@@ -149,8 +150,23 @@ func main() {
 		close(daemonReady)
 	}()
 
-	// Loading/error page handler — served until daemon is ready, then proxies
+	// windowManager is wired below once Wails is constructed. Declared here so
+	// the asset handler closure (which Wails calls before app.Run) can route
+	// /desktop/windows/* into it.
+	var windowManager *wailswin.WindowManager
+
+	// Loading/error page handler — served until daemon is ready, then proxies.
+	// /desktop/windows/* is intercepted before the daemon proxy because it is
+	// a Wails-only API (server mode has no native windows to manage).
 	loadingHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/desktop/windows/") {
+			if windowManager == nil {
+				http.Error(w, "window manager not ready", http.StatusServiceUnavailable)
+				return
+			}
+			http.StripPrefix("/desktop/windows", windowManager.HTTPHandler()).ServeHTTP(w, r)
+			return
+		}
 		select {
 		case <-daemonReady:
 			proxyViaSocket(w, r)
@@ -176,9 +192,14 @@ func main() {
 		},
 		OnShutdown: func() {
 			slog.Info("Wails shutting down, stopping daemon")
+			if windowManager != nil {
+				windowManager.Quit()
+			}
 			cancel()
 		},
 	})
+
+	windowManager = wailswin.NewWindowManager(app)
 
 	// Main window — loads from Wails AssetServer (which proxies to daemon)
 	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
@@ -213,7 +234,7 @@ func main() {
 		window.Show()
 		window.Focus()
 	})
-	menu.Add("System Dump").OnClick(func(_ *application.Context) {
+	menu.Add("Dump System Info").OnClick(func(_ *application.Context) {
 		dumpSystemInfo(socketPath)
 	})
 	menu.Add("Open Launcher Dir").OnClick(func(_ *application.Context) {

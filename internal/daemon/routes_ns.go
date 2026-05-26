@@ -330,6 +330,118 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("namespace %q created", nsCfg.Name)})
 }
 
+// handleGetNamespaceEdit returns the typed subset of namespace.yml consumed
+// by the Web UI's "edit namespace" form. The form drives a focused field set
+// (name, bundle, auth, host, port, TLS, pgAdmin); fields outside the DTO are
+// preserved on PUT so power users editing the raw YAML are not surprised by
+// silent rewrites.
+func (d *Daemon) handleGetNamespaceEdit(w http.ResponseWriter, _ *http.Request) {
+	d.configMu.RLock()
+	nsCfg := d.nsConfig
+	d.configMu.RUnlock()
+	if nsCfg == nil {
+		writeErrorCode(w, http.StatusNotFound, api.ErrCodeNotConfigured, "no namespace configured")
+		return
+	}
+	users := nsCfg.Authentication.Users
+	if users == nil {
+		users = []string{}
+	}
+	dto := api.NamespaceEditDto{
+		Name:           nsCfg.Name,
+		BundleRepo:     nsCfg.BundleRef.Repo,
+		BundleKey:      nsCfg.BundleRef.Key,
+		AuthType:       string(nsCfg.Authentication.Type),
+		Users:          users,
+		Host:           nsCfg.Proxy.Host,
+		Port:           nsCfg.Proxy.Port,
+		TLSEnabled:     nsCfg.Proxy.TLS.Enabled,
+		PgAdminEnabled: nsCfg.PgAdmin.Enabled,
+	}
+	writeJSON(w, dto)
+}
+
+// handlePutNamespaceEdit applies the typed edit form back onto namespace.yml.
+// Loads the on-disk config (so non-form fields like webapps, snapshot, email,
+// S3 etc. survive), patches the form fields, validates, atomically writes,
+// then triggers a doReload() so the change takes effect immediately.
+func (d *Daemon) handlePutNamespaceEdit(w http.ResponseWriter, r *http.Request) {
+	var req api.NamespaceEditDto
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if !d.reloadMu.TryLock() {
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeReloadInProgress, "reload already in progress")
+		return
+	}
+	defer d.reloadMu.Unlock()
+
+	d.configMu.RLock()
+	nsCfg := d.nsConfig
+	d.configMu.RUnlock()
+	if nsCfg == nil {
+		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
+		return
+	}
+	nsID := nsCfg.ID
+
+	cfgPath := config.ResolveNamespaceConfigPath(d.workspaceID, nsID)
+	current, err := namespace.LoadNamespaceConfig(cfgPath)
+	if err != nil {
+		writeInternalError(w, fmt.Errorf("load namespace config: %w", err))
+		return
+	}
+
+	// Apply form patch. Name is preserved if blank (kotlin-style merge — the
+	// form treats empty strings as "no change" for purely cosmetic fields).
+	if req.Name != "" {
+		current.Name = req.Name
+	}
+	if req.BundleRepo != "" && req.BundleKey != "" {
+		current.BundleRef = bundle.Ref{Repo: req.BundleRepo, Key: req.BundleKey}
+	}
+	if req.AuthType != "" {
+		current.Authentication.Type = namespace.AuthenticationType(req.AuthType)
+	}
+	if req.Users != nil {
+		current.Authentication.Users = req.Users
+	}
+	if req.Host != "" {
+		current.Proxy.Host = req.Host
+	}
+	if req.Port > 0 {
+		current.Proxy.Port = req.Port
+	}
+	current.Proxy.TLS.Enabled = req.TLSEnabled
+	current.PgAdmin.Enabled = req.PgAdminEnabled
+
+	if err := namespace.ValidateNamespaceConfig(current); err != nil {
+		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeInvalidConfig, err.Error())
+		return
+	}
+
+	data, err := namespace.MarshalNamespaceConfig(current)
+	if err != nil {
+		writeInternalError(w, fmt.Errorf("marshal namespace config: %w", err))
+		return
+	}
+	if err := fsutil.AtomicWriteFile(cfgPath, data, 0o644); err != nil {
+		writeInternalError(w, fmt.Errorf("write namespace config: %w", err))
+		return
+	}
+
+	// Reload so the change is picked up live. Failure to reload is reported
+	// but the YAML is already on disk — the user can retry via UI.
+	if err := d.doReload(); err != nil {
+		writeInternalError(w, fmt.Errorf("reload after edit: %w", err))
+		return
+	}
+
+	writeJSON(w, api.ActionResultDto{Success: true, Message: "namespace updated"})
+}
+
 func (d *Daemon) handleListBundles(w http.ResponseWriter, _ *http.Request) {
 	d.configMu.RLock()
 	wsCfg := d.workspaceConfig

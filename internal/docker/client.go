@@ -156,6 +156,26 @@ func (c *Client) RemoveNetwork(ctx context.Context) error {
 	return nil
 }
 
+// IsStaleNetworkError reports whether err is the Docker "network still has
+// active endpoints" error — the daemon returns this when a network removal
+// races a still-running container. Callers treat this as a soft / informational
+// outcome rather than a real failure, since the network will be reclaimed
+// either by a subsequent reconcile pass or by Docker once the last endpoint
+// disconnects.
+func IsStaleNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "has active endpoints") {
+		return true
+	}
+	if strings.Contains(msg, "endpoint") && strings.Contains(msg, "is in use") {
+		return true
+	}
+	return false
+}
+
 // RemoveNetworkByName removes a Docker network by its exact name.
 func (c *Client) RemoveNetworkByName(ctx context.Context, name string) error {
 	if err := c.cli.NetworkRemove(ctx, name); err != nil {
@@ -230,10 +250,15 @@ func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef,
 		binds = append(binds, v)
 	}
 
-	// Labels (must match Kotlin DockerLabels for backward compatibility)
+	// Labels (must match Kotlin DockerLabels for backward compatibility).
+	// LabelWorkspace holds the workspace ID (Kotlin contract — see
+	// docs/porting/10 §6). In server mode the workspace ID is empty; we set
+	// the label to "" rather than mis-attribute it to the namespace value,
+	// which would falsely identify containers as belonging to a workspace
+	// named after their namespace.
 	labels := map[string]string{
 		LabelLauncher:    "true",
-		LabelWorkspace:   c.namespace, // legacy label, uses namespace as value
+		LabelWorkspace:   c.workspace,
 		LabelNamespace:   c.namespace,
 		LabelAppName:     app.Name,
 		LabelAppHash:     app.GetHash(),
@@ -698,9 +723,11 @@ func parseMemory(s string) int64 {
 
 // ContainerStat holds resource usage for a container.
 type ContainerStat struct {
-	CPUPercent float64
-	MemUsage   int64
-	MemLimit   int64
+	CPUPercent    float64
+	CPUThrottled  bool
+	MemUsage      int64
+	MemLimit      int64
+	MemoryPercent float64
 }
 
 // RunUtilsContainer runs a command in a temporary launcher-utils container with the given bind mounts.

@@ -8,17 +8,38 @@ type ActionResultDto struct {
 
 // AppDto represents an application in the namespace.
 type AppDto struct {
-	Name         string   `json:"name"`
-	Status       string   `json:"status"`
-	StatusText   string   `json:"statusText,omitempty"`
-	Image        string   `json:"image"`
-	CPU          string   `json:"cpu"`
-	Memory       string   `json:"memory"`
-	Kind         string   `json:"kind"`
-	Ports        []string `json:"ports,omitempty"`
-	Edited       bool     `json:"edited,omitempty"`
-	Locked       bool     `json:"locked,omitempty"`
-	RestartCount int      `json:"restartCount,omitempty"`
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	StatusText string `json:"statusText,omitempty"`
+	Image      string `json:"image"`
+	CPU        string `json:"cpu"`
+	Memory     string `json:"memory"`
+	// MemoryPercent is the container's memory usage as a percentage of its
+	// configured limit (0..100). Zero when no memory limit is set.
+	MemoryPercent float64 `json:"memoryPercent,omitempty"`
+	// MemoryWarning is true when memory usage is at or above 80% of the
+	// configured limit. Surfaces a "high memory usage" tooltip in the UI.
+	MemoryWarning bool `json:"memoryWarning,omitempty"`
+	// MemoryCritical is true when memory usage is at or above 95% of the
+	// configured limit. Surfaces a "near OOM limit" warning in the UI.
+	MemoryCritical bool `json:"memoryCritical,omitempty"`
+	// CPUThrottled is true when the container hit its CPU quota in the
+	// most recent stats sample (Kotlin parity — see docs/porting/10 #4).
+	CPUThrottled     bool     `json:"cpuThrottled,omitempty"`
+	Kind             string   `json:"kind"`
+	Ports            []string `json:"ports,omitempty"`
+	Edited           bool     `json:"edited,omitempty"`
+	Locked           bool     `json:"locked,omitempty"`
+	RestartCount     int      `json:"restartCount,omitempty"`
+	EditedFilesCount int      `json:"editedFilesCount,omitempty"`
+}
+
+// AppFileDto describes a single bind-mounted file exposed via the per-app
+// file API. Edited=true means the user has modified the file via the Web UI
+// — the launcher preserves those edits across reload/regenerate.
+type AppFileDto struct {
+	Path   string `json:"path"`
+	Edited bool   `json:"edited,omitempty"`
 }
 
 // RestartEventDto represents a restart event for the API.
@@ -55,21 +76,30 @@ type NamespaceDto struct {
 
 // LinkDto represents a named URL link associated with a namespace.
 type LinkDto struct {
-	Name  string  `json:"name"`
-	URL   string  `json:"url"`
-	Icon  string  `json:"icon,omitempty"`
-	Order float64 `json:"order"`
+	Name        string  `json:"name"`
+	URL         string  `json:"url"`
+	Icon        string  `json:"icon,omitempty"`
+	Order       float64 `json:"order"`
+	Category    string  `json:"category,omitempty"`    // grouping header in the sidebar
+	Description string  `json:"description,omitempty"` // tooltip
 }
 
 // EventDto represents a server-sent event for state changes.
+//
+// Type-specific fields (omitempty so legacy events stay unchanged on the wire):
+//   - "pull_progress": Percent (0..100), Phase (active layer id / status string).
+//   - "pull_auth_required": After holds the registry host extracted from the image
+//     reference so the UI can pre-fill the credentials dialog.
 type EventDto struct {
-	Type        string `json:"type"`
-	Seq         int64  `json:"seq"`
-	Timestamp   int64  `json:"timestamp"`
-	NamespaceID string `json:"namespaceId"`
-	AppName     string `json:"appName"`
-	Before      string `json:"before"`
-	After       string `json:"after"`
+	Type        string  `json:"type"`
+	Seq         int64   `json:"seq"`
+	Timestamp   int64   `json:"timestamp"`
+	NamespaceID string  `json:"namespaceId"`
+	AppName     string  `json:"appName"`
+	Before      string  `json:"before"`
+	After       string  `json:"after"`
+	Percent     float64 `json:"percent,omitempty"`
+	Phase       string  `json:"phase,omitempty"`
 }
 
 // HealthDto reports the overall daemon health status.
@@ -277,6 +307,24 @@ type SnapshotDownloadDto struct {
 	Name   string `json:"name,omitempty"` // output file name (auto-generated if empty)
 }
 
+// NamespaceEditDto exposes the typed subset of namespace.yml that the Web
+// UI's "edit namespace" form drives. Mirrors the field set the Kotlin
+// EditNamespaceDialog exposed (name, bundleRef, authType, users, proxy host
+// + port, TLS toggle, pgAdmin toggle). Round-trip safe: GET returns the
+// current values; PUT applies them on top of the existing on-disk YAML so
+// fields outside this DTO are preserved.
+type NamespaceEditDto struct {
+	Name           string   `json:"name"`
+	BundleRepo     string   `json:"bundleRepo"`
+	BundleKey      string   `json:"bundleKey"`
+	AuthType       string   `json:"authType"`
+	Users          []string `json:"users,omitempty"`
+	Host           string   `json:"host"`
+	Port           int      `json:"port"`
+	TLSEnabled     bool     `json:"tlsEnabled"`
+	PgAdminEnabled bool     `json:"pgAdminEnabled"`
+}
+
 // BundleInfoDto describes a bundle repository and its available versions.
 type BundleInfoDto struct {
 	Repo     string   `json:"repo"`
@@ -293,4 +341,27 @@ type ValidationErrorDto struct {
 type FieldErrorDto struct {
 	Key     string `json:"key"`
 	Message string `json:"message"`
+}
+
+// --- System / file-manager helpers ---
+
+// OpenDirRequestDto is the request body for the "open directory in OS file
+// manager" endpoint. The kind identifies a server-side allowlisted path so
+// the request itself never carries a raw filesystem path: this avoids any
+// path-traversal foothold and keeps the API stable when desktop and server
+// modes resolve the directory differently.
+type OpenDirRequestDto struct {
+	// Kind selects which allowlisted directory to open.
+	// Supported values: "volumes" (current namespace's volumes/runtime base).
+	Kind string `json:"kind"`
+}
+
+// OpenDirResponseDto reports what happened. Path is always populated (even
+// when Opened is false in server-mode) so the UI can show / copy it.
+type OpenDirResponseDto struct {
+	Opened bool   `json:"opened"`
+	Path   string `json:"path"`
+	// Mode is "desktop" (Wails / xdg-open used) or "server" (path returned only).
+	Mode    string `json:"mode"`
+	Message string `json:"message,omitempty"`
 }

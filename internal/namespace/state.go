@@ -17,6 +17,7 @@ type NsPersistedState struct {
 	ManualStoppedApps []string                         `json:"manualStoppedApps,omitempty"`
 	EditedApps        map[string]appdef.ApplicationDef `json:"editedApps,omitempty"`
 	EditedLockedApps  []string                         `json:"editedLockedApps,omitempty"`
+	EditedFiles       []string                         `json:"editedFiles,omitempty"`
 	CachedBundle      *bundle.Def                      `json:"cachedBundle,omitempty"`
 	RestartEvents     []RestartEvent                   `json:"restartEvents,omitempty"`
 	RestartCounts     map[string]int                   `json:"restartCounts,omitempty"`

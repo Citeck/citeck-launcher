@@ -3,6 +3,7 @@ package namespace
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -164,6 +165,114 @@ func (r *Runtime) UpdateAppDef(appName string, def appdef.ApplicationDef, lock b
 	// clear r.dirty.
 	r.persistState()
 	r.dirty.Store(false)
+	return nil
+}
+
+// ResetAppDef removes the user-edited ApplicationDef override for `appName`
+// so the next regeneration restores the generated default. Mirrors Kotlin's
+// `NamespaceRuntime.resetAppDef` (used by AppCfgEditWindow's Reset button).
+//
+// Returns nil even if the app was not edited — idempotent, matches Kotlin.
+func (r *Runtime) ResetAppDef(appName string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.apps[appName]; !ok {
+		return fmt.Errorf("app %q not found", appName)
+	}
+	delete(r.editedApps, appName)
+	delete(r.editedLockedApps, appName)
+	r.persistState()
+	r.dirty.Store(false)
+	// Trigger a regeneration so the original ApplicationDef is re-installed
+	// on the running runtime; without this the user would have to manually
+	// reload the namespace to see the reset take effect.
+	if err := r.cmdQueue.Enqueue(cmdRegenerate{}); err != nil {
+		slog.Warn("Failed to enqueue regenerate after ResetAppDef", "app", appName, "err", err)
+	}
+	return nil
+}
+
+// SetFileEdited records (or clears) the user-edited flag for a mounted
+// bind-mount file. relPath MUST be the canonical "<app>/<rel-path>" key with
+// NO leading "./" — the same form that writeRuntimeFiles iterates over.
+//
+// When edited=true, writeRuntimeFiles will skip overwriting this file during
+// reload / regenerate so user edits made via the Web UI persist. When
+// edited=false, the flag is cleared (used by ResetEditedFile).
+//
+// State is persisted inline (durable user intent) and r.dirty is cleared so
+// the loop tail does not redundantly re-persist.
+func (r *Runtime) SetFileEdited(appName, relPath string, edited bool) {
+	_ = appName // included for symmetry with ResetEditedFile; relPath already encodes the app prefix
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if edited {
+		r.editedFiles[relPath] = true
+	} else {
+		delete(r.editedFiles, relPath)
+	}
+	r.persistState()
+	r.dirty.Store(false)
+}
+
+// IsFileEdited reports whether relPath ("<app>/<rel-path>", no leading "./")
+// has been marked as user-edited.
+func (r *Runtime) IsFileEdited(relPath string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.editedFiles[relPath]
+}
+
+// EditedFilesForApp returns the user-edited mounted-file paths whose first
+// segment is appName. Result is a fresh slice; safe to mutate by the caller.
+func (r *Runtime) EditedFilesForApp(appName string) []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.editedFilesForAppLocked(appName)
+}
+
+// editedFilesForAppLocked is the lock-free implementation of EditedFilesForApp.
+// Callers MUST hold r.mu (read or write). Used by ToNamespaceDto under RLock
+// where re-entering RLock via the public method would be safe but the helper
+// avoids the lock-acquire churn for every app DTO.
+func (r *Runtime) editedFilesForAppLocked(appName string) []string {
+	if len(r.editedFiles) == 0 {
+		return nil
+	}
+	prefix := appName + "/"
+	var out []string
+	for path := range r.editedFiles {
+		if strings.HasPrefix(path, prefix) {
+			out = append(out, path)
+		}
+	}
+	return out
+}
+
+// ResetEditedFile clears the user-edit flag for a single mounted bind-mount
+// file. Mirrors ResetAppDef: validates that appName refers to a known app,
+// removes the in-memory flag, persists state, and enqueues a regenerate so
+// the original generator-supplied content is materialized back on disk by
+// the next writeRuntimeFiles call.
+//
+// relPath MUST be the canonical "<app>/<rel-path>" key with NO leading "./".
+// Returns nil even if the file was not previously edited — idempotent,
+// matches the ResetAppDef contract.
+func (r *Runtime) ResetEditedFile(appName, relPath string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.apps[appName]; !ok {
+		return fmt.Errorf("app %q not found", appName)
+	}
+	delete(r.editedFiles, relPath)
+	r.persistState()
+	r.dirty.Store(false)
+	// Trigger a regeneration so the original file content is written back to
+	// disk on the next writeRuntimeFiles. Without this, the on-disk file would
+	// still contain the user's edit until the next reload / start.
+	if err := r.cmdQueue.Enqueue(cmdRegenerate{}); err != nil {
+		slog.Warn("Failed to enqueue regenerate after ResetEditedFile", "app", appName, "path", relPath, "err", err)
+	}
 	return nil
 }
 

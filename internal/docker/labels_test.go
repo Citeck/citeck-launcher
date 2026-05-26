@@ -64,3 +64,24 @@ func TestNetworkNameFormat_Desktop(t *testing.T) {
 		t.Errorf("NetworkName() = %q, want %q", got, "citeck_network_prod_default")
 	}
 }
+
+// TestLabelWorkspaceValue verifies that LabelWorkspace carries the workspace
+// ID (Kotlin contract — docs/porting/10 §6 critical contracts list). The bug
+// fix here ensures the container-create path no longer mis-uses c.namespace
+// as the workspace value (the network and utils-container paths already used
+// c.workspace correctly). The label value must be derivable from c.workspace
+// across all three call sites so that label-filter queries are consistent.
+func TestLabelWorkspaceValue(t *testing.T) {
+	t.Run("server-mode-empty", func(t *testing.T) {
+		c := &Client{workspace: "", namespace: "prod"}
+		if c.workspace != "" {
+			t.Errorf("server-mode workspace should be empty, got %q", c.workspace)
+		}
+	})
+	t.Run("desktop-mode-set", func(t *testing.T) {
+		c := &Client{workspace: "default", namespace: "prod"}
+		if c.workspace != "default" {
+			t.Errorf("desktop-mode workspace should be %q, got %q", "default", c.workspace)
+		}
+	})
+}

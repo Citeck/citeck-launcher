@@ -23,9 +23,11 @@ var InitPullRetryDelays = []time.Duration{
 const PullRetriesForExistingImage = 3
 
 // IsAuthError reports whether err looks like a Docker registry auth failure
-// (401/403, "unauthorized", "denied"). Exported so worker factories in
+// (401/403, "unauthorized", "denied", or the wrapped "authentication failed"
+// form produced by runPullTask). Exported so worker factories in
 // internal/namespace can share the same classification without duplicating
-// the heuristic.
+// the heuristic — and so handlePullResult can recognize the wrapped pull
+// error to emit `pull_auth_required` SSE events for the Web UI.
 func IsAuthError(err error) bool {
 	if err == nil {
 		return false
@@ -34,7 +36,8 @@ func IsAuthError(err error) bool {
 	return strings.Contains(s, "401") ||
 		strings.Contains(s, "403") ||
 		strings.Contains(s, "unauthorized") ||
-		strings.Contains(s, "denied")
+		strings.Contains(s, "denied") ||
+		strings.Contains(s, "authentication failed")
 }
 
 // RegistryHost extracts the registry host from a Docker image reference.

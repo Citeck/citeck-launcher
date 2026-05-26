@@ -182,4 +182,6 @@ const (
 	AppObserver        = "observer"
 	AppObsPostgres     = "observer-postgres"
 	AppContent         = "content"
+	AppAi              = "ai"
+	AppSttSidecar      = "stt-sidecar"
 )

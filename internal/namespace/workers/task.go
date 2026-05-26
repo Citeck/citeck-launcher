@@ -113,9 +113,15 @@ type RemoveNetworkPayload struct{}
 
 // StatsPayload carries CPU and memory usage strings (display-formatted) for
 // the target container. CPU is e.g. "1.5%"; Memory is e.g. "120M / 512M".
+// MemoryPercent is 0..100 (zero when no memory limit is configured) and
+// CPUThrottled flags whether the container hit its CPU quota in the most
+// recent docker-stats sample window — both surface as AppDto fields for the
+// per-app table tooltips (Kotlin parity — docs/porting/10 #4).
 type StatsPayload struct {
-	CPU    string
-	Memory string
+	CPU           string
+	Memory        string
+	MemoryPercent float64
+	CPUThrottled  bool
 }
 
 // MissingApp describes a running app whose container has disappeared from

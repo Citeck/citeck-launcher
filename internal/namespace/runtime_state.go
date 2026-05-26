@@ -35,6 +35,9 @@ func (r *Runtime) persistState() {
 	for name := range r.editedLockedApps {
 		state.EditedLockedApps = append(state.EditedLockedApps, name)
 	}
+	for path := range r.editedFiles {
+		state.EditedFiles = append(state.EditedFiles, path)
+	}
 	if r.cachedBundle != nil && !r.cachedBundle.IsEmpty() {
 		state.CachedBundle = r.cachedBundle
 	}

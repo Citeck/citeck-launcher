@@ -18,12 +18,19 @@ const (
 	NamespaceStop          = APIV1 + "/namespace/stop"
 	NamespaceReload        = APIV1 + "/namespace/reload"
 	NamespaceUpgrade       = APIV1 + "/namespace/upgrade"
+	NamespaceEdit          = APIV1 + "/namespace/edit"
 	NamespaceAdminPassword = APIV1 + "/namespace/admin-password"
 	RestartEvents          = APIV1 + "/namespace/restart-events"
 
 	Events = APIV1 + "/events"
 	Apps   = APIV1 + "/apps"
 	Health = APIV1 + "/health"
+
+	// AppsRetryPullFailed re-queues every PULL_FAILED app for a fresh pull
+	// attempt without waiting for the auto-retry backoff. The Web UI calls
+	// this after the user saves registry credentials so the affected apps
+	// pick up the new secret immediately.
+	AppsRetryPullFailed = APIV1 + "/apps/retry-pull-failed"
 
 	Namespaces  = APIV1 + "/namespaces"
 	Templates   = APIV1 + "/templates"
@@ -35,6 +42,7 @@ const (
 	SecretsStatus        = Secrets + "/status"
 	SecretsUnlock        = Secrets + "/unlock"
 	SecretsSetupPassword = Secrets + "/setup-password"
+	SecretsReset         = Secrets + "/reset"
 
 	MigrationStatus         = APIV1 + "/migration/status"
 	MigrationMasterPassword = APIV1 + "/migration/master-password"
@@ -49,6 +57,14 @@ const (
 	SnapshotsImport    = APIV1 + "/snapshots/import"
 	SnapshotsDownload  = APIV1 + "/snapshots/download"
 	WorkspaceSnapshots = APIV1 + "/workspace/snapshots"
+	WorkspaceUpdate    = APIV1 + "/workspace/update"
+
+	SystemOpenDir = APIV1 + "/system/open-dir"
+
+	// GitSkipPull records a user "Skip" decision from GitPullErrorDialog so
+	// subsequent pulls against the same host no-op for the suppression window
+	// (Kotlin parity, docs/porting/07 §1.9 — 1 hour default).
+	GitSkipPull = APIV1 + "/git/skip-pull"
 )
 
 // AppLogs returns the API path for streaming an app's container logs.

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -103,7 +104,7 @@ func TestWriteRuntimeFiles_WritesFilesWithCorrectPerm(t *testing.T) {
 		"postgres/init.sh":         []byte("#!/bin/sh\necho hi"),
 		"nested/a/b/c.txt":         []byte("deep"),
 	}
-	writeRuntimeFiles(dir, files)
+	writeRuntimeFiles(dir, files, nil)
 
 	confPath := filepath.Join(dir, "postgres", "postgresql.conf")
 	fi, err := os.Stat(confPath)
@@ -137,13 +138,39 @@ func TestWriteRuntimeFiles_RecoversFromDirInsteadOfFile(t *testing.T) {
 	}
 	writeRuntimeFiles(dir, map[string][]byte{
 		"postgres/postgresql.conf": []byte("listen_addresses = '*'"),
-	})
+	}, nil)
 	fi, err := os.Stat(stale)
 	if err != nil {
 		t.Fatalf("file not written after dir recovery: %v", err)
 	}
 	if !fi.Mode().IsRegular() {
 		t.Errorf("expected regular file, got mode=%v", fi.Mode())
+	}
+}
+
+// writeRuntimeFiles must skip files flagged as user-edited so Web-UI edits
+// persist across reload/regenerate. The on-disk content remains whatever the
+// user wrote — even if the generator now produces something different.
+func TestWriteRuntimeFiles_SkipsUserEditedFiles(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "postgres", "postgresql.conf")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	userContent := []byte("listen_addresses = 'user-edit'")
+	if err := os.WriteFile(path, userContent, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Generator wants different content for the same file.
+	writeRuntimeFiles(dir, map[string][]byte{
+		"postgres/postgresql.conf": []byte("listen_addresses = 'generator'"),
+	}, map[string]bool{"postgres/postgresql.conf": true})
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, userContent) {
+		t.Errorf("user-edited file was overwritten: got %q want %q", got, userContent)
 	}
 }
 
@@ -161,7 +188,7 @@ func TestWriteRuntimeFiles_SkipsUnchangedPreservesMtime(t *testing.T) {
 	}
 	origFi, _ := os.Stat(path)
 
-	writeRuntimeFiles(dir, map[string][]byte{"a.txt": content})
+	writeRuntimeFiles(dir, map[string][]byte{"a.txt": content}, nil)
 
 	fi, err := os.Stat(path)
 	if err != nil {

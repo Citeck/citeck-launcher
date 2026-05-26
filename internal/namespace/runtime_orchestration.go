@@ -698,10 +698,33 @@ func (r *Runtime) doDetach() {
 // (snapshot images are typically small; an initial community deploy would
 // be ~60s per app, so 2m is safely inside the budget).
 func (r *Runtime) refreshSnapshotDigests(ctx context.Context, apps []appdef.ApplicationDef) {
+	r.prePullImages(ctx, apps, false)
+}
+
+// ForcePrePull pulls every app's image from the registry regardless of tag.
+// Backs the "Force Update And Start" menu item (Kotlin parity): refreshed
+// digests cause doStart's hash computation to differ from running containers,
+// triggering recreate-on-start even for pinned release tags.
+//
+// Same failure policy as refreshSnapshotDigests — pull errors are logged at
+// WARN and the flow falls back to cached digests so a registry outage cannot
+// block start.
+func (r *Runtime) ForcePrePull(ctx context.Context, apps []appdef.ApplicationDef) {
+	r.prePullImages(ctx, apps, true)
+}
+
+// prePullImages is the shared worker that fans out parallel pulls (capped at
+// 4) with a per-pull 2-minute timeout. When forceAll is false it preserves
+// refreshSnapshotDigests semantics (only :snapshot images, ThirdParty
+// excluded); when true it pulls every app's image.
+func (r *Runtime) prePullImages(ctx context.Context, apps []appdef.ApplicationDef, forceAll bool) {
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 4)
 	for _, def := range apps {
-		if def.Image == "" || !shouldPullImage(def.Kind, def.Image) {
+		if def.Image == "" {
+			continue
+		}
+		if !forceAll && !shouldPullImage(def.Kind, def.Image) {
 			continue
 		}
 		wg.Add(1)
@@ -713,7 +736,7 @@ func (r *Runtime) refreshSnapshotDigests(ctx context.Context, apps []appdef.Appl
 			defer cancel()
 			auth := r.registryAuth(image)
 			if err := r.docker.PullImageWithProgress(pullCtx, image, auth, nil); err != nil {
-				slog.Warn("pre-flight snapshot pull failed; falling back to cached local digest",
+				slog.Warn("pre-flight pull failed; falling back to cached local digest",
 					"app", appName, "image", image, "err", err)
 			}
 		}(def.Name, def.Image)

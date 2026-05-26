@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -104,6 +105,25 @@ func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
 	d.configMu.RUnlock()
 	if runtime == nil || appDefs == nil {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
+		return
+	}
+	// "Force Update And Start" (Kotlin RMB menu): clear cached image digests
+	// so doStart re-resolves from the freshly-pulled image, then pre-pull all
+	// images so the next start computes a hash that differs from running
+	// containers — guaranteeing recreate even for pinned release tags.
+	if r.URL.Query().Get("force") == "true" {
+		forced := make([]appdef.ApplicationDef, len(appDefs))
+		copy(forced, appDefs)
+		for i := range forced {
+			forced[i].ImageDigest = ""
+		}
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			defer cancel()
+			runtime.ForcePrePull(ctx, forced)
+			runtime.Start(forced)
+		}()
+		writeJSON(w, api.ActionResultDto{Success: true, Message: "Force update and start requested"})
 		return
 	}
 	runtime.Start(appDefs)

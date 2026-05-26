@@ -30,6 +30,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/h2migrate"
+	"github.com/citeck/citeck-launcher/internal/license"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/snapshot"
 	"github.com/citeck/citeck-launcher/internal/storage"
@@ -107,6 +108,7 @@ type Daemon struct {
 	systemSecrets   namespace.SystemSecrets // resolved JWT/OIDC secrets
 	desktop         bool                    // desktop mode: log writer shared across restarts
 	reloadMu        sync.Mutex              // guards concurrent reload requests
+	licenses        *license.Service        // user-added enterprise licenses
 }
 
 // secretReaderFunc returns the SecretService as a secretReader (transparent decryption).
@@ -135,6 +137,51 @@ func (a *secretReaderAdapter) GetSecretValue(key string) (string, error) {
 		return "", fmt.Errorf("get secret %q: %w", key, err)
 	}
 	return s.Value, nil
+}
+
+// collectExtraLicensesFrom queries a license.Service for user-added licenses
+// and converts them to the bundle.LicenseInstance shape the generator merges
+// with workspace-declared ones. Returns nil if svc is nil, the store is
+// locked, or the listing errors out — the generator falls back to workspace-
+// only licenses in that case, so a locked SecretService never aborts
+// namespace generation. Split off into a free function so both the daemon
+// startup path (where *Daemon doesn't exist yet) and the reload path (where
+// it does) share one implementation.
+func collectExtraLicensesFrom(svc *license.Service) []bundle.LicenseInstance {
+	if svc == nil {
+		return nil
+	}
+	list, err := svc.List()
+	if err != nil {
+		// Locked SecretService is the common case (desktop mode before unlock).
+		// Don't fail generation; emit only workspace-declared licenses.
+		slog.Debug("Skipping user-added licenses for namespace generation", "err", err)
+		return nil
+	}
+	if len(list) == 0 {
+		return nil
+	}
+	out := make([]bundle.LicenseInstance, 0, len(list))
+	for _, lic := range list {
+		// Round-trip through JSON so the per-field shape converges on the
+		// bundle.LicenseInstance schema (string dates, any-typed content +
+		// signatures). license.Instance's MarshalJSON already emits the same
+		// JSON keys; bundle.LicenseInstance.UnmarshalJSON re-parses them into
+		// the YAML-source-of-truth shape. This avoids a hand-written field
+		// copy that would drift when either side adds a field.
+		raw, err := json.Marshal(lic)
+		if err != nil {
+			slog.Warn("Marshal license for generator merge failed", "id", lic.ID, "err", err)
+			continue
+		}
+		var bl bundle.LicenseInstance
+		if err := json.Unmarshal(raw, &bl); err != nil {
+			slog.Warn("Convert license to bundle shape failed", "id", lic.ID, "err", err)
+			continue
+		}
+		out = append(out, bl)
+	}
+	return out
 }
 
 // rebuildAuthCaches rebuilds token lookup and registry auth caches from current secrets,
@@ -480,6 +527,12 @@ func Start(opts StartOptions) error {
 		persistedState := namespace.LoadNsState(volumesBase, nsID)
 		var genOpts namespace.GenerateOpts
 		genOpts.SecretReader = &secretReaderAdapter{svc: secretSvc}
+		// Inject user-added licenses (encrypted store). The license.Service
+		// instance used here is the same one wired into *Daemon below
+		// (license.NewService is cheap + safe to call twice). When secrets
+		// are locked, the helper returns nil and the generator falls back to
+		// workspace-only licenses — never aborts startup.
+		genOpts.ExtraLicenses = collectExtraLicensesFrom(license.NewService(secretSvc))
 		if persistedState != nil {
 			genOpts.DetachedApps = make(map[string]bool)
 			for _, name := range persistedState.ManualStoppedApps {
@@ -505,10 +558,23 @@ func Start(opts StartOptions) error {
 			return fmt.Errorf("generate namespace %q: %w", nsID, genErr)
 		}
 
+		// Build the edited-file skip set from persisted state BEFORE the
+		// initial writeRuntimeFiles so user edits made in a previous session
+		// are not overwritten by the freshly generated defaults. The runtime
+		// is created below; we mirror this set into r.editedFiles via
+		// RestoreEditedFiles so subsequent reload/regenerate paths reuse it.
+		var editedFilesSkip map[string]bool
+		if persistedState != nil && len(persistedState.EditedFiles) > 0 {
+			editedFilesSkip = make(map[string]bool, len(persistedState.EditedFiles))
+			for _, p := range persistedState.EditedFiles {
+				editedFilesSkip[p] = true
+			}
+		}
+
 		// Write the full runtime file set (embedded defaults + generator
 		// modifications) to disk. Single source of truth; never overwritten
 		// by a separate embed re-extract.
-		writeRuntimeFiles(volumesBase, genResp.Files)
+		writeRuntimeFiles(volumesBase, genResp.Files, editedFilesSkip)
 		slog.Info("Generated namespace", "apps", len(genResp.Applications), "files", len(genResp.Files))
 
 		appDefs = genResp.Applications
@@ -555,6 +621,7 @@ func Start(opts StartOptions) error {
 				runtime.SetManualStoppedApps(stopped)
 			}
 			runtime.RestoreEditedApps(persistedState.EditedApps, persistedState.EditedLockedApps)
+			runtime.RestoreEditedFiles(persistedState.EditedFiles)
 			runtime.RestoreRestartState(persistedState.RestartEvents, persistedState.RestartCounts)
 		} else if len(genOpts.DetachedApps) > 0 {
 			// First start with template detached apps — apply to runtime
@@ -584,7 +651,7 @@ func Start(opts StartOptions) error {
 		// Snapshot auto-import: run synchronously BEFORE start so volumes are populated
 		if nsCfg.Snapshot != "" {
 			slog.Info("Running snapshot auto-import before namespace start", "snapshot", nsCfg.Snapshot)
-			importSnapshotIfNeeded(nsCfg, wsCfg, dockerClient, volumesBase)
+			importSnapshotIfNeeded(nsCfg, wsCfg, dockerClient, wsID, volumesBase)
 		}
 
 		if shouldStart {
@@ -617,6 +684,7 @@ func Start(opts StartOptions) error {
 		logWriter:       globalLogWriter,
 		logLevel:        &globalLogLevel,
 		desktop:         opts.Desktop,
+		licenses:        license.NewService(secretSvc),
 	}
 
 	// Wire up event broadcasting
@@ -932,6 +1000,10 @@ func (d *Daemon) doReload() error {
 	if d.runtime != nil {
 		genOpts.DetachedApps = d.runtime.ManualStoppedApps()
 	}
+	// User-added licenses (encrypted store) merge with workspace-declared ones
+	// in the eapps cloud-config. Locked SecretService yields nil and we fall
+	// back to workspace-only licenses — reload never aborts on a locked store.
+	genOpts.ExtraLicenses = collectExtraLicensesFrom(d.licenses)
 	genResp, genErr := namespace.Generate(nsCfg, resolveResult.Bundle, resolveResult.Workspace, d.systemSecrets, genOpts)
 	if genErr != nil {
 		return fmt.Errorf("generate namespace: %w", genErr)
@@ -941,7 +1013,13 @@ func (d *Daemon) doReload() error {
 	// embedded defaults it copied and mutated, plus files it built from
 	// scratch. writeRuntimeFiles handles dir-in-place-of-file recovery
 	// (a Docker quirk when a bind-mount source was wiped out-of-band).
-	writeRuntimeFiles(d.volumesBase, genResp.Files)
+	// EditedFilesSnapshot tells writeRuntimeFiles to skip user-edited
+	// bind-mount files so Web-UI edits survive reload/regenerate.
+	var editedFiles map[string]bool
+	if d.runtime != nil {
+		editedFiles = d.runtime.EditedFilesSnapshot()
+	}
+	writeRuntimeFiles(d.volumesBase, genResp.Files, editedFiles)
 
 	// Phase 2: update shared state briefly under write lock
 	d.configMu.Lock()
@@ -1125,6 +1203,8 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+api.NamespaceStop, d.handleStopNamespace)
 	mux.HandleFunc("POST "+api.NamespaceReload, d.handleReloadNamespace)
 	mux.HandleFunc("POST "+api.NamespaceUpgrade, d.handleUpgradeNamespace)
+	mux.HandleFunc("GET "+api.NamespaceEdit, d.handleGetNamespaceEdit)
+	mux.HandleFunc("PUT "+api.NamespaceEdit, d.handlePutNamespaceEdit)
 	mux.HandleFunc("POST "+api.NamespaceAdminPassword, d.handleSetAdminPassword)
 	mux.HandleFunc("GET "+api.RestartEvents, d.handleRestartEvents)
 	mux.HandleFunc("GET /api/v1/diagnostics-file", d.handleDiagnosticsFile)
@@ -1135,6 +1215,11 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/config", d.handlePutConfig)
 
 	// App routes
+	// Collection-level retry endpoint is registered BEFORE the {name}-templated
+	// routes — Go's net/http mux matches more-specific paths first, but
+	// registering the static path up top documents that "retry-pull-failed"
+	// is not a per-app action.
+	mux.HandleFunc("POST "+api.AppsRetryPullFailed, d.handleAppsRetryPullFailed)
 	mux.HandleFunc("GET /api/v1/apps/{name}/logs", d.handleAppLogs)
 	mux.HandleFunc("GET /api/v1/apps/{name}/inspect", d.handleAppInspect)
 	mux.HandleFunc("POST /api/v1/apps/{name}/restart", d.handleAppRestart)
@@ -1143,8 +1228,10 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/apps/{name}/exec", d.handleAppExec)
 	mux.HandleFunc("GET /api/v1/apps/{name}/config", d.handleGetAppConfig)
 	mux.HandleFunc("PUT /api/v1/apps/{name}/config", d.handlePutAppConfig)
+	mux.HandleFunc("POST /api/v1/apps/{name}/config/reset", d.handleResetAppConfig)
 	mux.HandleFunc("PUT /api/v1/apps/{name}/lock", d.handleAppLockToggle)
 	mux.HandleFunc("GET /api/v1/apps/{name}/files", d.handleListAppFiles)
+	mux.HandleFunc("POST /api/v1/apps/{name}/files/reset", d.handleResetAppFile)
 	mux.HandleFunc("GET /api/v1/apps/{name}/files/{path...}", d.handleGetAppFile)
 	mux.HandleFunc("PUT /api/v1/apps/{name}/files/{path...}", d.handlePutAppFile)
 
@@ -1161,6 +1248,13 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 
 	// System dump
 	mux.HandleFunc("GET /api/v1/system/dump", d.handleSystemDump)
+	mux.HandleFunc("POST "+api.SystemOpenDir, d.handleSystemOpenDir)
+
+	// Workspace operations
+	mux.HandleFunc("POST "+api.WorkspaceUpdate, d.handleWorkspaceUpdate)
+
+	// Git operations
+	mux.HandleFunc("POST "+api.GitSkipPull, d.handleGitSkipPull)
 
 	// Namespaces
 	mux.HandleFunc("GET "+api.Namespaces, d.handleListNamespaces)
@@ -1182,6 +1276,12 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+api.SecretsStatus, d.handleGetSecretsStatus)
 	mux.HandleFunc("POST "+api.SecretsUnlock, d.handleUnlockSecrets)
 	mux.HandleFunc("POST "+api.SecretsSetupPassword, d.handleSetupPassword)
+	mux.HandleFunc("POST "+api.SecretsReset, d.handleResetSecrets)
+
+	// Licenses (enterprise license management)
+	mux.HandleFunc("GET /api/v1/licenses", d.handleListLicenses)
+	mux.HandleFunc("POST /api/v1/licenses", d.handleCreateLicense)
+	mux.HandleFunc("DELETE /api/v1/licenses/{id}", d.handleDeleteLicense)
 
 	// Migration (master password for Kotlin encrypted secrets)
 	mux.HandleFunc("GET "+api.MigrationStatus, d.handleGetMigrationStatus)
@@ -1201,6 +1301,7 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+api.SnapshotsDownload, d.handleDownloadSnapshot)
 	mux.HandleFunc("GET "+api.WorkspaceSnapshots, d.handleWorkspaceSnapshots)
 	mux.HandleFunc("PUT /api/v1/snapshots/{name}", d.handleRenameSnapshot)
+	mux.HandleFunc("DELETE /api/v1/snapshots/{name}", d.handleDeleteSnapshot)
 
 	// Web UI (fallback)
 	mux.Handle("/", WebUIHandler())
@@ -1527,8 +1628,14 @@ func migrateJWTSecretToStdBase64(stored string) string {
 // importSnapshotIfNeeded checks for the snapshot field in namespace config and imports
 // the snapshot if it hasn't been imported yet (tracked by a marker file).
 //
+// The marker (`imported-<nsID>`) stays in the per-namespace `volumesBase/snapshots/`
+// dir because it is namespace-scoped state. The archive itself lives in the
+// workspace-shared cache `<AppDir>/ws/<wsID>/snapshots/<snapshotID>.zip`, matching
+// Kotlin's WorkspaceSnapshots layout (docs/porting/07 §3.2) so multiple namespaces
+// in the same workspace share a single download.
+//
 //nolint:nestif // snapshot import requires nested SHA256 verification and download fallback logic
-func importSnapshotIfNeeded(nsCfg *namespace.Config, wsCfg *bundle.WorkspaceConfig, dc *docker.Client, volumesBase string) {
+func importSnapshotIfNeeded(nsCfg *namespace.Config, wsCfg *bundle.WorkspaceConfig, dc *docker.Client, wsID, volumesBase string) {
 	if nsCfg.Snapshot == "" || wsCfg == nil {
 		return
 	}
@@ -1553,21 +1660,28 @@ func importSnapshotIfNeeded(nsCfg *namespace.Config, wsCfg *bundle.WorkspaceConf
 
 	slog.Info("Auto-importing snapshot on startup", "snapshot", snapDef.Name, "ns", nsCfg.ID)
 
-	// Download to snapshots dir — strip query params for safe filename
-	fileName := safeSnapshotFileName(snapDef.URL)
-	if !strings.HasSuffix(fileName, ".zip") {
-		fileName += ".zip"
+	// Workspace-shared cache path: <AppDir>/ws/<wsID>/snapshots/<snapshotID>.zip
+	cacheDir := config.WorkspaceSnapshotsDir(wsID)
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil { //nolint:gosec // G301: snapshot cache needs 0o755
+		slog.Error("Create workspace snapshots cache dir", "err", err)
+		return
 	}
-	destPath := filepath.Join(markerDir, fileName)
+	destPath := filepath.Join(cacheDir, nsCfg.Snapshot+".zip")
 
-	// Download if needed; verify SHA256 of existing file
+	// Fast-path: cached file with matching SHA — skip download.
 	needsDownload := true
-	if _, err := os.Stat(destPath); err == nil {
+	if _, err := os.Stat(destPath); err == nil { //nolint:gosec // G304: destPath built from validated wsID + snapshot id
 		if snapDef.SHA256 != "" {
-			if actual, err := snapshot.FileSHA256(destPath); err == nil && strings.EqualFold(actual, snapDef.SHA256) {
+			if actual, hashErr := snapshot.FileSHA256(destPath); hashErr == nil && strings.EqualFold(actual, snapDef.SHA256) {
 				needsDownload = false
 			} else {
-				os.Remove(destPath) // corrupted — re-download
+				// Preserve stale file as `_outdated_<ts>` (Kotlin parity);
+				// fall back to delete on rename failure so the next attempt
+				// has a clean destination.
+				if renameErr := snapshot.StashOutdatedFile(destPath); renameErr != nil {
+					slog.Debug("Stash outdated cached snapshot failed; removing", "path", destPath, "err", renameErr)
+					_ = os.Remove(destPath)
+				}
 			}
 		} else {
 			needsDownload = false
@@ -1577,7 +1691,8 @@ func importSnapshotIfNeeded(nsCfg *namespace.Config, wsCfg *bundle.WorkspaceConf
 	defer importCancel()
 
 	if needsDownload {
-		if dlErr := snapshot.Download(importCtx, snapDef.URL, destPath, snapDef.SHA256, nil); dlErr != nil {
+		// Kotlin-parity retry: 100 total / 3 without progress / 3s delay.
+		if dlErr := snapshot.DownloadWithRetry(importCtx, nil, snapDef.URL, destPath, snapDef.SHA256, nil); dlErr != nil {
 			slog.Error("Snapshot download failed", "url", snapDef.URL, "err", dlErr)
 			return
 		}
@@ -1660,9 +1775,18 @@ func prepareDestPath(destPath string, content []byte) (skip bool, err error) {
 //     recreate containers whose files didn't really change).
 //  3. Parent directory doesn't exist yet — MkdirAll first.
 //
-// Shell scripts (.sh) are written 0755, everything else 0644.
-func writeRuntimeFiles(baseDir string, files map[string][]byte) {
+// Shell scripts (.sh) are written 0755, everything else 0644. The optional
+// `edited` map (keys: "<app>/<rel-path>", no leading "./") flags files whose
+// on-disk content was modified by the user through the Web UI; those entries
+// are skipped so user edits survive reload/regenerate. Passing nil disables
+// the skip behavior (initial materialization paths where the user-edit
+// set has not yet been restored use nil).
+func writeRuntimeFiles(baseDir string, files map[string][]byte, edited map[string]bool) {
 	for filePath, content := range files {
+		if edited[filePath] {
+			slog.Debug("Skipping user-edited file", "path", filePath)
+			continue
+		}
 		destPath := filepath.Join(baseDir, filePath)
 		skip, prepErr := prepareDestPath(destPath, content)
 		if prepErr != nil {

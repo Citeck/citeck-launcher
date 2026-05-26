@@ -176,6 +176,18 @@ func WorkspaceBundlesDir(wsID string) string {
 	return filepath.Join(WorkspaceDir(wsID), "bundles")
 }
 
+// WorkspaceSnapshotsDir returns the per-workspace snapshot cache dir matching
+// Kotlin's `<AppDir>/ws/<workspaceId>/snapshots/` layout (docs/porting/07 §3.2).
+//
+// Snapshots referenced from workspace-v1.yml are immutable artifacts identified
+// by ID + SHA-256; caching them at workspace scope (instead of per-namespace)
+// lets multiple namespaces in the same workspace share a single download.
+// Per-namespace snapshot files (user-created exports) continue to live under
+// ResolveVolumesBase(wsID, nsID)/snapshots/.
+func WorkspaceSnapshotsDir(wsID string) string {
+	return filepath.Join(WorkspaceDir(wsID), "snapshots")
+}
+
 // NamespaceDir returns the namespace dir: {home}/ws/{wsID}/ns/{nsID}/
 func NamespaceDir(wsID, nsID string) string {
 	return filepath.Join(WorkspaceDir(wsID), "ns", nsID)

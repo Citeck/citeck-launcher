@@ -49,6 +49,16 @@ type WebappDefaultProps struct {
 	MemoryLimit  string                      `yaml:"memoryLimit"`
 	Environments map[string]string           `yaml:"environments"`
 	DataSources  map[string]DataSourceConfig `yaml:"dataSources"`
+	// CloudConfig holds Spring-style arbitrary per-webapp config keys merged
+	// into the eapps/<app>/props/application-launcher.yml. The generator
+	// deep-merges three layers in priority order: workspace.defaultWebappProps
+	// (global) → workspace.webapps[id].defaultProps (per-app default) →
+	// namespace.webapps[id] (per-app override). Object values are merged
+	// recursively; scalars are last-write-wins. Mirrors Kotlin's
+	// WebappProps.cloudConfig (DataValue) field — without this layer, UI
+	// licenses and other per-app workspace overrides would never reach
+	// webapps.
+	CloudConfig map[string]any `yaml:"cloudConfig,omitempty"`
 }
 
 // WebappConfig describes a webapp with its aliases and default props.
@@ -144,6 +154,18 @@ type LicenseInstance struct {
 	Signatures []any  `json:"signatures" yaml:"signatures"`
 }
 
+// SttSidecarProps configures the STT (speech-to-text) sidecar that proxies
+// AI websocket traffic. When absent or empty, the generator falls back to the
+// bundle's stt-sidecar app definition (image only). Port default 14080 keeps
+// the sidecar inside the launcher's infrastructure cluster (away from
+// 17020+ dynamic webapp ports). MemoryLimit default 2g matches the Kotlin
+// reference (the gigaam model footprint).
+type SttSidecarProps struct {
+	Image       string `yaml:"image,omitempty"`
+	MemoryLimit string `yaml:"memoryLimit,omitempty"`
+	Port        int    `yaml:"port,omitempty"`
+}
+
 // WorkspaceConfig is the top-level workspace-v1.yml structure.
 type WorkspaceConfig struct {
 	QuickStartVariants []QuickStartVariant `yaml:"quickStartVariants,omitempty"`
@@ -161,6 +183,7 @@ type WorkspaceConfig struct {
 	PgAdmin            PgAdminWsProps      `yaml:"pgadmin,omitempty"`
 	Alfresco           AlfrescoProps       `yaml:"alfresco,omitempty"`
 	Licenses           []LicenseInstance   `yaml:"licenses,omitempty"`
+	SttSidecar         *SttSidecarProps    `yaml:"sttSidecar,omitempty"`
 }
 
 // ImageReposByHost builds a map from registry host to ImageRepo for auth lookup.
@@ -585,22 +608,129 @@ func strVal(m map[string]any, key string) string {
 	return s
 }
 
+// findBundleFile resolves a bundle key (e.g. "2025.10" or "archive/2025.5")
+// to a YAML file path on disk. Two layout flavors are supported:
+//
+//  1. Flat layout — `<key>.yml` / `<key>.yaml` or `<key>/values.{yml,yaml}`
+//     at the top level. Cheap O(1) stat lookup.
+//  2. Nested Helm-chart layout — bundles live arbitrarily deep under the
+//     bundles dir, with values.yml at sub-dir leaves. Walks the tree and
+//     consults the same key→path map that ListBundleVersions builds.
+//
+// Falls back to the flat lookup first for backwards compatibility and to
+// preserve the old preference order (.yaml > .yml > .../values.yaml > etc.).
+// The nested walk only runs when the flat lookup misses — bundle dirs with
+// thousands of files don't pay the walk cost on every lookup.
 func findBundleFile(dir, key string) string {
-	candidates := []string{
+	// Flat layout: keep the existing candidate order for backwards
+	// compatibility (matters for the .yaml > .yml preference test).
+	flatCandidates := []string{
 		filepath.Join(dir, key+".yaml"),
 		filepath.Join(dir, key+".yml"),
 		filepath.Join(dir, key, "values.yaml"),
 		filepath.Join(dir, key, "values.yml"),
 		filepath.Join(dir, key),
 	}
-	for _, path := range candidates {
+	for _, path := range flatCandidates {
 		info, err := os.Stat(path)
 		if err == nil && !info.IsDir() {
 			return path
 		}
 	}
+
+	// Nested layout: walk the tree and look up by the full Kotlin-style key.
+	// Slash-normalized so the same key works on Windows path separators.
+	normalized := filepath.ToSlash(key)
+	for entry := range walkBundles(dir) {
+		if entry.Key == normalized {
+			return entry.Path
+		}
+	}
 	return ""
 }
+
+// bundleEntry is one bundle definition discovered by walkBundles. Key uses
+// forward slashes regardless of OS so it can be compared verbatim with the
+// keys carried in bundle.Ref / quick-start variants.
+type bundleEntry struct {
+	Key  string // e.g. "2025.10" or "archive/2025.5"
+	Path string // absolute path to the YAML file
+}
+
+// walkBundles yields every bundle YAML file under root, computing the
+// Kotlin-equivalent key per file. Matches BundleUtils.loadKitsFiles semantics
+// (docs/porting/07 §4 reference points to it):
+//
+//   - Recurses into all subdirectories.
+//   - For `.yml`/`.yaml` files, the key is the file's path relative to root,
+//     with the extension stripped and OS separators normalized to `/`.
+//   - When the filename is exactly `values.yml` or `values.yaml`, the key
+//     drops the filename — the parent dir's relative path becomes the key.
+//     This lets a Helm-chart `archive/2025.5/values.yml` resolve as key
+//     `archive/2025.5` exactly like Kotlin.
+//   - Returns the entries as an iter.Seq so callers can short-circuit (e.g.
+//     `findBundleFile` stops at the first match). For repos with thousands
+//     of bundles the lazy traversal avoids a full materialized list.
+//
+// Errors during walk are intentionally swallowed — bundle resolution is
+// best-effort and a single unreadable file should not poison the whole
+// lookup. The caller already handles the "no matching key" outcome.
+func walkBundles(root string) func(yield func(bundleEntry) bool) {
+	return func(yield func(bundleEntry) bool) {
+		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				// Skip unreadable subtree but keep walking siblings.
+				if d != nil && d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if d.IsDir() {
+				return nil
+			}
+			name := d.Name()
+			if !strings.HasSuffix(name, ".yml") && !strings.HasSuffix(name, ".yaml") {
+				return nil
+			}
+
+			// Key derivation mirrors Kotlin BundleUtils.loadKitsFiles:
+			//   - `values.{yml,yaml}` → drop filename, use parent dir's rel path
+			//   - any other file       → strip extension from the file's rel path
+			stem := strings.TrimSuffix(strings.TrimSuffix(name, ".yaml"), ".yml")
+			var keyPath string
+			if stem == "values" {
+				// values.yml at the root would yield key="" which is invalid;
+				// skip such files (Kotlin doesn't reach this branch either —
+				// loadBundles starts at the bundle root).
+				dir := filepath.Dir(path)
+				rel, err := filepath.Rel(root, dir)
+				if err != nil || rel == "." || rel == "" {
+					return nil
+				}
+				keyPath = rel
+			} else {
+				rel, err := filepath.Rel(root, path)
+				if err != nil {
+					return nil
+				}
+				// Strip the .yml/.yaml from the relative path's tail.
+				ext := filepath.Ext(rel)
+				keyPath = strings.TrimSuffix(rel, ext)
+			}
+
+			key := filepath.ToSlash(keyPath)
+			if !yield(bundleEntry{Key: key, Path: path}) {
+				return errSeqStop
+			}
+			return nil
+		})
+	}
+}
+
+// errSeqStop is a sentinel returned from inside filepath.WalkDir when the
+// iterator's yield callback has signaled stop. Carries no semantic meaning
+// other than "halt the walk"; the caller in walkBundles ignores all errors.
+var errSeqStop = errors.New("walk stopped by iterator")
 
 // isVersionString checks if a name looks like a version (starts with a digit).
 // Citeck bundle versions follow the format "YYYY.N" (e.g. "2025.10"), so all valid
@@ -665,25 +795,36 @@ func (r *Resolver) ListAllVersions(currentRef string) []VersionEntry {
 	return entries
 }
 
-// ListBundleVersions lists available bundle version keys in a given bundles sub-directory.
+// ListBundleVersions lists available bundle version keys in a given bundles
+// sub-directory, recursing into nested layouts (Helm charts that group
+// bundles under sub-dirs with values.yml). Returns keys like "2025.10" for
+// flat files and "archive/2025.5" for nested ones, sorted descending so the
+// first element is the highest-priority candidate (matches Kotlin
+// `BundleUtils.loadBundles` which returns a TreeMap sorted by BundleKey).
+//
+// Only keys that look like a bundle version are returned — paths whose final
+// segment doesn't start with a digit (README.yml etc.) are filtered, since
+// the existing `isVersionString` check is the cheapest way to weed out
+// non-bundle YAMLs the walker picks up.
 func ListBundleVersions(bundlesDir string) []string {
-	entries, err := os.ReadDir(bundlesDir)
-	if err != nil {
+	if _, err := os.Stat(bundlesDir); err != nil {
 		return nil
 	}
 	var versions []string
-	for _, e := range entries {
-		if e.IsDir() {
+	for entry := range walkBundles(bundlesDir) {
+		// The "version-ness" check is applied to the final path segment so
+		// keys like "archive/2025.5" are accepted (final = "2025.5") while
+		// "archive/README" is filtered out (final = "README").
+		final := entry.Key
+		if idx := strings.LastIndex(final, "/"); idx >= 0 {
+			final = final[idx+1:]
+		}
+		if !isVersionString(final) {
 			continue
 		}
-		name := e.Name()
-		name = strings.TrimSuffix(name, ".yaml")
-		name = strings.TrimSuffix(name, ".yml")
-		if isVersionString(name) {
-			versions = append(versions, name)
-		}
+		versions = append(versions, entry.Key)
 	}
-	// Sort newest first — callers expect versions[0] to be the latest
+	// Sort newest first — callers expect versions[0] to be the latest.
 	slices.SortFunc(versions, func(a, b string) int {
 		return compareBundleVersions(b, a) // descending
 	})
@@ -691,8 +832,7 @@ func ListBundleVersions(bundlesDir string) []string {
 }
 
 func findLatestBundle(bundlesDir string) (string, error) {
-	entries, err := os.ReadDir(bundlesDir)
-	if err != nil {
+	if _, err := os.Stat(bundlesDir); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			// Directory doesn't exist — repo layout is likely different
 			// (e.g. bundles live elsewhere or are not yet published). This
@@ -704,18 +844,16 @@ func findLatestBundle(bundlesDir string) (string, error) {
 	}
 
 	var latest string
-	for _, e := range entries {
-		if e.IsDir() {
+	for entry := range walkBundles(bundlesDir) {
+		final := entry.Key
+		if idx := strings.LastIndex(final, "/"); idx >= 0 {
+			final = final[idx+1:]
+		}
+		if !isVersionString(final) {
 			continue
 		}
-		name := e.Name()
-		name = strings.TrimSuffix(name, ".yaml")
-		name = strings.TrimSuffix(name, ".yml")
-		if !isVersionString(name) {
-			continue
-		}
-		if latest == "" || compareBundleVersions(name, latest) > 0 {
-			latest = name
+		if latest == "" || compareBundleVersions(entry.Key, latest) > 0 {
+			latest = entry.Key
 		}
 	}
 	if latest == "" {

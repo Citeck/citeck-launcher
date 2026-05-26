@@ -23,6 +23,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/docker"
+	"github.com/citeck/citeck-launcher/internal/namespace/nsactions"
 	"github.com/citeck/citeck-launcher/internal/namespace/workers"
 )
 
@@ -277,9 +278,18 @@ func (r *Runtime) appsDepsSatisfied(app *AppRuntime) bool {
 }
 
 // makePullProgressFn returns a docker.PullProgressFn that updates app.StatusText
-// under Lock. The closure captures app.Name (a string) rather than the
-// *AppRuntime pointer so the progress callback does a fresh map lookup each
-// time and doesn't touch a possibly-deleted app entry (e.g., post-regenerate).
+// AND emits a throttled `pull_progress` SSE event so the Web UI can render a
+// live progress bar without polling. The closure captures app.Name (a string)
+// rather than the *AppRuntime pointer so the progress callback does a fresh
+// map lookup each time and doesn't touch a possibly-deleted app entry
+// (e.g., post-regenerate).
+//
+// Throttle: ≤1 event/sec per app. This bounds SSE traffic on a 24-app
+// enterprise reload (where every webapp pulls in parallel) so eventCh (cap 256)
+// cannot be flooded by progress callbacks and starve real state transitions.
+// The flushEvents drain runs once per runtimeLoop iteration and uses an
+// unconditional blocking send — see runtime_loop.go header. A flood here would
+// stall the entire loop.
 func (r *Runtime) makePullProgressFn(appName string) docker.PullProgressFn {
 	var lastReport time.Time
 	return func(_, totalMB float64, pct int) {
@@ -288,10 +298,22 @@ func (r *Runtime) makePullProgressFn(appName string) docker.PullProgressFn {
 			return
 		}
 		lastReport = now
+		phase := fmt.Sprintf("Pulling: %.0fmb %d%%", totalMB, pct)
 		r.mu.Lock()
-		if app, ok := r.apps[appName]; ok && app.Status == AppStatusPulling {
-			app.StatusText = fmt.Sprintf("Pulling: %.0fmb %d%%", totalMB, pct)
+		app, ok := r.apps[appName]
+		if !ok || app.Status != AppStatusPulling {
+			r.mu.Unlock()
+			return
 		}
+		app.StatusText = phase
+		r.emitEvent(api.EventDto{
+			Type:        "pull_progress",
+			Timestamp:   now.UnixMilli(),
+			NamespaceID: r.nsID,
+			AppName:     appName,
+			Percent:     float64(pct),
+			Phase:       phase,
+		})
 		r.mu.Unlock()
 	}
 }
@@ -478,8 +500,14 @@ func (r *Runtime) handleRemoveNetworkResult(res workers.Result) {
 	if res.Err != nil {
 		// Best-effort: proceed with STOPPED regardless. Network may already
 		// be gone, or Docker may surface a transient API error; neither
-		// blocks shutdown.
-		slog.Warn("RemoveNetwork failed (best-effort)", "err", res.Err)
+		// blocks shutdown. Classify the common "still has active endpoints"
+		// race as an info-level event so operators don't see a noisy WARN
+		// every time a reconcile pass races a slow stop.
+		if docker.IsStaleNetworkError(res.Err) {
+			slog.Info("RemoveNetwork skipped: network still has active endpoints (will be reclaimed when the last container disconnects)")
+		} else {
+			slog.Warn("RemoveNetwork failed (best-effort)", "err", res.Err)
+		}
 	}
 	r.mu.Lock()
 	// Wipe apps + restart tracking (matches legacy doStop final-phase).
@@ -769,6 +797,21 @@ func (r *Runtime) handlePullResult(res workers.Result) {
 		r.recordRetryAttempt(app.Name)
 		app.StatusText = res.Err.Error()
 		r.setAppStatus(app, AppStatusPullFailed)
+		// Surface a dedicated `pull_auth_required` SSE event so the Web UI can
+		// offer the "Configure credentials" affordance without parsing the
+		// human-readable statusText. The After field carries the registry host
+		// extracted from the image reference — same heuristic used by the
+		// "docker login <host>" hint inside the wrapped error.
+		if nsactions.IsAuthError(res.Err) {
+			host := nsactions.RegistryHost(app.Def.Image)
+			r.emitEvent(api.EventDto{
+				Type:        "pull_auth_required",
+				Timestamp:   r.nowFunc().UnixMilli(),
+				NamespaceID: r.nsID,
+				AppName:     app.Name,
+				After:       host,
+			})
+		}
 		return
 	}
 	// T5: PULLING → READY_TO_START. Update ImageDigest from payload so the
@@ -782,7 +825,9 @@ func (r *Runtime) handlePullResult(res workers.Result) {
 	r.setAppStatus(app, AppStatusReadyToStart)
 }
 
-// handleStatsResult applies a successful StatsTask Result to the matching app.
+// handleStatsResult applies a successful StatsTask Result to the matching app
+// and emits an `app_stats` SSE event so the UI updates the per-app CPU /
+// memory cells in near-real-time without re-fetching the whole namespace.
 // Errors are silently ignored to match legacy updateStats behavior (a missing
 // container or transient docker-stats failure should not surface as a state
 // transition).
@@ -796,10 +841,36 @@ func (r *Runtime) handleStatsResult(res workers.Result) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if app, exists := r.apps[res.TaskID.App]; exists {
-		app.CPU = payload.CPU
-		app.Memory = payload.Memory
+	app, exists := r.apps[res.TaskID.App]
+	if !exists {
+		return
 	}
+	// Suppress SSE only when every observed dimension is unchanged. Throttle
+	// transitions and memory-percent thresholds matter for UI tinting even
+	// when the formatted CPU / memory strings happen to match.
+	if app.CPU == payload.CPU && app.Memory == payload.Memory &&
+		app.MemoryPercent == payload.MemoryPercent && app.CPUThrottled == payload.CPUThrottled {
+		return // no change — skip the SSE event to keep traffic low
+	}
+	app.CPU = payload.CPU
+	app.Memory = payload.Memory
+	app.MemoryPercent = payload.MemoryPercent
+	app.CPUThrottled = payload.CPUThrottled
+	// Pack cpu + memory into the Before/After fields. The wire format mirrors
+	// what the React store already understands for status events: a single
+	// string is cheap to encode and the store has a tiny parser. UI updates
+	// the namespace.apps[] entry in place. The MemoryPercent / CPUThrottled
+	// fields ride along via the next full namespace fetch (ToNamespaceDto) —
+	// the SSE keeps the table cells live; threshold-tint changes settle on
+	// the next per-1s tick that produces an actual app_stats event.
+	r.emitEvent(api.EventDto{
+		Type:        "app_stats",
+		Timestamp:   time.Now().UnixMilli(),
+		NamespaceID: r.nsID,
+		AppName:     res.TaskID.App,
+		Before:      payload.CPU,
+		After:       payload.Memory,
+	})
 }
 
 // dispatchPlan is an immutable description of a worker task to dispatch.
@@ -1015,8 +1086,10 @@ func (r *Runtime) fetchContainerStats(ctx context.Context, containerID string) w
 		return workers.Result{Err: err}
 	}
 	return workers.Result{Payload: workers.StatsPayload{
-		CPU:    fmt.Sprintf("%.1f%%", stats.CPUPercent),
-		Memory: formatMemory(stats.MemUsage, stats.MemLimit),
+		CPU:           fmt.Sprintf("%.1f%%", stats.CPUPercent),
+		Memory:        formatMemory(stats.MemUsage, stats.MemLimit),
+		MemoryPercent: stats.MemoryPercent,
+		CPUThrottled:  stats.CPUThrottled,
 	}}
 }
 

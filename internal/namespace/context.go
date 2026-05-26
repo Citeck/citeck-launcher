@@ -93,7 +93,11 @@ type NsGenContext struct {
 	Files           map[string][]byte
 	Applications    map[string]*AppBuilder
 	CloudConfig     map[string]map[string]any // per-app ext cloud config (for CloudConfigServer on :8761)
-	portsCounter    atomic.Int32
+	// ExtraLicenses are user-added enterprise licenses stored encrypted via the
+	// license.Service. Merged with WorkspaceConfig.Licenses in the eapps cloud
+	// config so UI-added licenses actually reach the running webapps.
+	ExtraLicenses []bundle.LicenseInstance
+	portsCounter  atomic.Int32
 }
 
 // NewNsGenContext creates a new generation context for the given config and bundle.

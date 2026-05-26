@@ -138,6 +138,7 @@ func TestAllRoutesRegistered(t *testing.T) {
 		{"PUT", "/api/v1/apps/test/config"},
 		{"PUT", "/api/v1/apps/test/lock"},
 		{"GET", "/api/v1/apps/test/files"},
+		{"POST", "/api/v1/apps/test/files/reset?path=foo/bar"},
 		{"GET", "/api/v1/apps/test/files/some/path"},
 		{"PUT", "/api/v1/apps/test/files/some/path"},
 		// Health + Metrics
@@ -145,6 +146,9 @@ func TestAllRoutesRegistered(t *testing.T) {
 		{"GET", "/api/v1/metrics"},
 		// System
 		{"GET", "/api/v1/system/dump"},
+		{"POST", api.SystemOpenDir},
+		// Workspace
+		{"POST", api.WorkspaceUpdate},
 		// Volumes
 		{"GET", "/api/v1/volumes"},
 		{"DELETE", "/api/v1/volumes/test-vol"},

@@ -55,9 +55,13 @@ build-web:
 	rm -rf $(WEBDIST)
 	cp -r web/dist $(WEBDIST)
 
+# Linux desktop build uses Wails GTK3 backend (GTK4 + WebKitGTK 6.0 path is
+# not yet shipping in mainstream distros). Other OSes ignore the gtk3 tag.
+DESKTOP_TAGS := desktop,gtk3
+
 build-desktop: build-web
 	@mkdir -p $(BUILDDIR)
-	CGO_ENABLED=1 go build -tags desktop $(GO_BUILD_FLAGS) -o $(DESKTOP) ./cmd/citeck-desktop
+	CGO_ENABLED=1 go build -tags "$(DESKTOP_TAGS)" $(GO_BUILD_FLAGS) -o $(DESKTOP) ./cmd/citeck-desktop
 
 test:
 	go test -race ./...
@@ -98,7 +102,7 @@ dev-daemon:
 dev-desktop:
 	cd web && pnpm run build
 	@mkdir -p $(BUILDDIR)
-	CGO_ENABLED=1 go build -o $(DESKTOP) ./cmd/citeck-desktop
+	CGO_ENABLED=1 go build -tags "$(DESKTOP_TAGS)" -o $(DESKTOP) ./cmd/citeck-desktop
 	./$(DESKTOP)
 
 clean:

@@ -420,6 +420,99 @@ func TestFindBundleFile_BareFileWithoutExtension(t *testing.T) {
 	assert.Equal(t, filepath.Join(dir, "2025.12"), result)
 }
 
+// TestFindBundleFile_NestedHelmLayout exercises the Kotlin-parity recursive
+// walk for Helm-style nested bundle layouts (docs/porting/07 §4 references
+// BundleUtils.loadKitsFiles). A directory like `archive/2025.5/values.yml`
+// must resolve under key "archive/2025.5", and a plain `archive/2025.6.yml`
+// under "archive/2025.6".
+func TestFindBundleFile_NestedHelmLayout(t *testing.T) {
+	dir := t.TempDir()
+
+	// archive/2025.5/values.yml — values.yml in a subdir → key = parent rel path
+	helmDir := filepath.Join(dir, "archive", "2025.5")
+	require.NoError(t, os.MkdirAll(helmDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(helmDir, "values.yml"), []byte("apps: {}"), 0o644))
+
+	// archive/2025.6.yml — plain nested file → key = full rel path sans ext
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "archive", "2025.6.yml"), []byte("apps: {}"), 0o644))
+
+	// deep/nested/sub/2026.1.yaml — multi-level nesting
+	deepDir := filepath.Join(dir, "deep", "nested", "sub")
+	require.NoError(t, os.MkdirAll(deepDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(deepDir, "2026.1.yaml"), []byte("apps: {}"), 0o644))
+
+	tests := map[string]string{
+		"archive/2025.5":      filepath.Join(helmDir, "values.yml"),
+		"archive/2025.6":      filepath.Join(dir, "archive", "2025.6.yml"),
+		"deep/nested/sub/2026.1": filepath.Join(deepDir, "2026.1.yaml"),
+	}
+	for key, wantPath := range tests {
+		t.Run(key, func(t *testing.T) {
+			got := findBundleFile(dir, key)
+			assert.Equal(t, wantPath, got, "findBundleFile(%q)", key)
+		})
+	}
+}
+
+// TestListBundleVersions_NestedLayout verifies that nested bundles surface in
+// ListBundleVersions output and are sorted correctly across the scope (see
+// BundleKey.compareTo — scoped keys rank below unscoped, then by version).
+func TestListBundleVersions_NestedLayout(t *testing.T) {
+	dir := t.TempDir()
+
+	// Top-level versions
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "2025.12.yaml"), []byte("x"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "2025.10.yaml"), []byte("x"), 0o644))
+
+	// Nested layout: archive/2024.1.yml and archive/2024.2/values.yml
+	archiveDir := filepath.Join(dir, "archive")
+	require.NoError(t, os.MkdirAll(archiveDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(archiveDir, "2024.1.yml"), []byte("x"), 0o644))
+	subDir := filepath.Join(archiveDir, "2024.2")
+	require.NoError(t, os.MkdirAll(subDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(subDir, "values.yml"), []byte("x"), 0o644))
+
+	// Non-version files must be filtered out (README, etc.)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.yml"), []byte("x"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(archiveDir, "README.yaml"), []byte("x"), 0o644))
+
+	got := ListBundleVersions(dir)
+	// Top-level (no scope) ranks above scoped per BundleKey.compareTo.
+	// Within each scope, version-descending.
+	assert.Equal(t, []string{"2025.12", "2025.10", "archive/2024.2", "archive/2024.1"}, got)
+}
+
+// TestFindLatestBundle_NestedLayout verifies that findLatestBundle walks the
+// nested layout and returns the highest-priority key (Kotlin: BundleKey sort).
+func TestFindLatestBundle_NestedLayout(t *testing.T) {
+	dir := t.TempDir()
+	// Helm chart for 2025.10 in nested form.
+	helmDir := filepath.Join(dir, "community", "2025.10")
+	require.NoError(t, os.MkdirAll(helmDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(helmDir, "values.yaml"), []byte("x"), 0o644))
+	// Older nested entry.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "community", "2025.5.yml"), []byte("x"), 0o644))
+
+	got, err := findLatestBundle(dir)
+	require.NoError(t, err)
+	assert.Equal(t, "community/2025.10", got)
+}
+
+// TestFindBundleFile_NestedKeyFallsBackToTreeWalk ensures the flat candidate
+// list still wins for backwards-compat (test exists above), but the tree walk
+// kicks in for keys that would never match a flat candidate.
+func TestFindBundleFile_NestedKeyOnly(t *testing.T) {
+	dir := t.TempDir()
+
+	// Only a nested entry exists — no flat candidate for "scope/2025.1".
+	subDir := filepath.Join(dir, "scope", "sub")
+	require.NoError(t, os.MkdirAll(subDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(subDir, "2025.1.yml"), []byte("x"), 0o644))
+
+	got := findBundleFile(dir, "scope/sub/2025.1")
+	assert.Equal(t, filepath.Join(subDir, "2025.1.yml"), got)
+}
+
 func TestBuildAliasMap_IncludesAlfrescoAliases(t *testing.T) {
 	cfg := &WorkspaceConfig{
 		Webapps: []WebappConfig{

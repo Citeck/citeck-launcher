@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -20,6 +21,11 @@ import (
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/snapshot"
 )
+
+// validSnapshotName mirrors Kotlin's `CreateOrEditSnapshotDialog` regex
+// `[\w-.]+` — alphanumerics + dash + dot + underscore. Validation is applied
+// after stripping the trailing ".zip" suffix.
+var validSnapshotName = regexp.MustCompile(`^[\w.-]+$`)
 
 func (d *Daemon) snapshotsDir() (string, error) {
 	nsID := d.activeNsID()
@@ -103,16 +109,36 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nsName := "namespace"
-	d.configMu.RLock()
-	if d.nsConfig != nil {
-		nsName = sanitizeName(d.nsConfig.Name)
-		if nsName == "" {
-			nsName = d.nsConfig.ID
+	// Custom snapshot name from `name` query param (Kotlin parity: CreateOrEditSnapshotDialog).
+	// Validation matches Kotlin: alphanumerics + dot/dash/underscore only; trailing
+	// ".zip" is stripped before validation; reject duplicates.
+	var fileName string
+	if customName := strings.TrimSpace(r.URL.Query().Get("name")); customName != "" {
+		base := strings.TrimSuffix(customName, ".zip")
+		if !validSnapshotName.MatchString(base) {
+			d.snapshotMu.Unlock()
+			writeError(w, http.StatusBadRequest,
+				"snapshot name must contain only letters, digits, dots, dashes and underscores")
+			return
 		}
+		fileName = base + ".zip"
+		if _, statErr := os.Stat(filepath.Join(dir, fileName)); statErr == nil {
+			d.snapshotMu.Unlock()
+			writeError(w, http.StatusConflict, "snapshot with this name already exists")
+			return
+		}
+	} else {
+		nsName := "namespace"
+		d.configMu.RLock()
+		if d.nsConfig != nil {
+			nsName = sanitizeName(d.nsConfig.Name)
+			if nsName == "" {
+				nsName = d.nsConfig.ID
+			}
+		}
+		d.configMu.RUnlock()
+		fileName = fmt.Sprintf("%s_%s.zip", nsName, time.Now().Format("2006-01-02_15-04-05"))
 	}
-	d.configMu.RUnlock()
-	fileName := fmt.Sprintf("%s_%s.zip", nsName, time.Now().Format("2006-01-02_15-04-05"))
 	outputPath := filepath.Join(dir, fileName)
 
 	nsID := d.activeNsID()
@@ -307,14 +333,17 @@ func (d *Daemon) handleDownloadSnapshot(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Run download in background, report via SSE events
+	// Run download in background, report via SSE events. Use the Kotlin-parity
+	// retry loop (DownloadWithRetry) so a stalled connection or transient
+	// server hiccup doesn't drop the user-initiated download on the first
+	// EOF — the single-shot path silently failed on flaky links.
 	nsID := d.activeNsID()
 	d.bgWg.Go(func() {
 		d.broadcastEvent(api.EventDto{
 			Type: "snapshot_download", Timestamp: time.Now().UnixMilli(),
 			NamespaceID: nsID, After: fmt.Sprintf("downloading %s", fileName),
 		})
-		if err := snapshot.DownloadWithClient(d.bgCtx, ssrfSafeClient, req.URL, destPath, req.SHA256, nil); err != nil {
+		if err := snapshot.DownloadWithRetry(d.bgCtx, ssrfSafeClient, req.URL, destPath, req.SHA256, nil); err != nil {
 			slog.Error("Snapshot download failed", "url", req.URL, "err", err)
 			d.broadcastEvent(api.EventDto{
 				Type: "snapshot_error", Timestamp: time.Now().UnixMilli(),
@@ -351,6 +380,9 @@ func safeSnapshotFileName(rawURL string) string {
 }
 
 // downloadAndImportSnapshot downloads a snapshot in the background and imports it into the namespace.
+// The download is cached at workspace scope (`<AppDir>/ws/<wsID>/snapshots/<snapshotID>.zip`)
+// matching Kotlin's WorkspaceSnapshots layout (docs/porting/07 §3.2). This lets multiple
+// namespaces in the same workspace share one cached archive instead of re-downloading.
 //
 //nolint:nestif // download+import orchestration requires nested SHA256 verification and retry logic
 func (d *Daemon) downloadAndImportSnapshot(snapshotID, wsID, nsID string) {
@@ -368,33 +400,43 @@ func (d *Daemon) downloadAndImportSnapshot(snapshotID, wsID, nsID string) {
 		return
 	}
 
-	// Use the new namespace's volumes base, not the active namespace
+	// Per Kotlin parity: workspace-scope cache at
+	// <AppDir>/ws/<wsID>/snapshots/<snapshotID>.zip — shared across all
+	// namespaces in this workspace. Used directly as the import source so
+	// the same file isn't copied into each per-namespace dir.
 	volumesBase := config.ResolveVolumesBase(wsID, nsID)
-	dir := filepath.Join(volumesBase, "snapshots")
-	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // snapshot dirs need 0o755 for container access
-		slog.Error("Create snapshots dir", "err", err)
+	cacheDir := config.WorkspaceSnapshotsDir(wsID)
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil { //nolint:gosec // snapshot dirs need 0o755 for container access
+		slog.Error("Create workspace snapshots cache dir", "err", err)
 		return
 	}
-
-	fileName := safeSnapshotFileName(snapDef.URL)
-	if !strings.HasSuffix(fileName, ".zip") {
-		fileName += ".zip"
-	}
-	destPath := filepath.Join(dir, fileName)
+	destPath := filepath.Join(cacheDir, snapshotID+".zip")
 
 	d.broadcastEvent(api.EventDto{
 		Type: "snapshot_download", Timestamp: time.Now().UnixMilli(),
-		NamespaceID: nsID, After: fmt.Sprintf("downloading %s", fileName),
+		NamespaceID: nsID, After: fmt.Sprintf("downloading %s", snapshotID+".zip"),
 	})
 
-	// Check if file already exists and matches expected hash
+	// Fast-path: existing cached file with a matching SHA-256 is the
+	// happy case for shared workspace caches — skip both download and
+	// stash dance, jump straight to import.
 	needsDownload := true
-	if _, err := os.Stat(destPath); err == nil {
+	if _, err := os.Stat(destPath); err == nil { //nolint:gosec // G304: destPath built from validated wsID + snapshotID
 		if snapDef.SHA256 != "" {
-			if actual, err := snapshot.FileSHA256(destPath); err == nil && strings.EqualFold(actual, snapDef.SHA256) {
+			if actual, hashErr := snapshot.FileSHA256(destPath); hashErr == nil && strings.EqualFold(actual, snapDef.SHA256) {
 				needsDownload = false
+				slog.Info("Workspace snapshot cache hit, skipping download", "id", snapshotID, "path", destPath)
 			} else {
-				_ = os.Remove(destPath) // stale or corrupted — re-download
+				// Stale cached file — preserve as `_outdated_<ts>` so an
+				// operator can inspect what the cache contained (Kotlin
+				// parity: docs/porting/07 §3.2). Fall back to delete so
+				// the next attempt has a clean destination.
+				if renameErr := snapshot.StashOutdatedFile(destPath); renameErr != nil {
+					slog.Debug("Stash outdated cached snapshot failed; removing", "path", destPath, "err", renameErr)
+					_ = os.Remove(destPath)
+				} else {
+					slog.Warn("Cached workspace snapshot SHA mismatch — stashed as _outdated_", "id", snapshotID)
+				}
 			}
 		} else {
 			needsDownload = false // no hash to verify, trust existing file
@@ -413,20 +455,8 @@ func (d *Daemon) downloadAndImportSnapshot(snapshotID, wsID, nsID string) {
 			})
 		}
 
-		// Retry loop — up to 3 attempts with 3-second delay
-		const maxRetries = 3
-		var downloadErr error
-		for attempt := 1; attempt <= maxRetries; attempt++ {
-			downloadErr = snapshot.DownloadWithClient(d.bgCtx, ssrfSafeClient, snapDef.URL, destPath, snapDef.SHA256, progress)
-			if downloadErr == nil {
-				break
-			}
-			slog.Warn("Snapshot download attempt failed", "attempt", attempt, "err", downloadErr)
-			if attempt < maxRetries {
-				time.Sleep(3 * time.Second)
-			}
-		}
-		if downloadErr != nil {
+		// Kotlin-parity retry: 100 total / 3 without progress / 3s delay.
+		if downloadErr := snapshot.DownloadWithRetry(d.bgCtx, ssrfSafeClient, snapDef.URL, destPath, snapDef.SHA256, progress); downloadErr != nil {
 			slog.Error("Snapshot download failed after retries", "url", snapDef.URL, "err", downloadErr)
 			d.broadcastEvent(api.EventDto{
 				Type: "snapshot_error", Timestamp: time.Now().UnixMilli(),
@@ -532,6 +562,37 @@ func (d *Daemon) handleRenameSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("Renamed to %s", newName)})
+}
+
+// handleDeleteSnapshot removes a namespace-local snapshot file. Mirrors Kotlin's
+// SnapshotsDialog per-row trash button. The {name} path value MUST end with
+// ".zip" and the basename must validate against safeIDPattern (no path traversal).
+func (d *Daemon) handleDeleteSnapshot(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" || !strings.HasSuffix(name, ".zip") {
+		writeError(w, http.StatusBadRequest, "invalid snapshot name")
+		return
+	}
+	base := strings.TrimSuffix(name, ".zip")
+	if !safeIDPattern.MatchString(base) {
+		writeError(w, http.StatusBadRequest, "invalid snapshot name")
+		return
+	}
+	dir, err := d.snapshotsDir()
+	if err != nil {
+		writeInternalError(w, err)
+		return
+	}
+	path := filepath.Join(dir, name)
+	if _, statErr := os.Stat(path); os.IsNotExist(statErr) { //nolint:gosec // G304: name validated by safeIDPattern above
+		writeError(w, http.StatusNotFound, "snapshot not found")
+		return
+	}
+	if rmErr := os.Remove(path); rmErr != nil { //nolint:gosec // G304: name validated by safeIDPattern above
+		writeInternalError(w, rmErr)
+		return
+	}
+	writeJSON(w, api.ActionResultDto{Success: true, Message: "Snapshot deleted"})
 }
 
 // validateSnapshotURL checks that a URL is safe for server-side download (SSRF protection).

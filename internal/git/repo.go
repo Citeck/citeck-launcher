@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,19 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport/http"
 	"golang.org/x/sync/singleflight"
 )
+
+// DefaultSkipPullDuration is the Kotlin-parity host-level pull suppression
+// window (docs/porting/07 §1.9: "Skip … записывает host в
+// skipPullForRepoDecisionAt на 1 час"). Surfaced as the default of the
+// daemon's git skip-pull endpoint so the frontend doesn't have to hard-code
+// the value.
+const DefaultSkipPullDuration = time.Hour
+
+// ErrPullSkippedByUser is returned by pull operations when the host has been
+// skipped via SkipPullForHost. Surfaces as an info-level outcome rather than
+// a failure; callers should treat it like "pull period not elapsed" and
+// continue with the existing local clone.
+var ErrPullSkippedByUser = errors.New("git pull skipped by user decision")
 
 // RepoOpts configures a git clone/pull operation.
 type RepoOpts struct {
@@ -37,6 +51,79 @@ var (
 	lastSyncTimes = make(map[string]time.Time)
 	cloneFlight   singleflight.Group // 8b-12: dedup concurrent ops on same dir
 )
+
+// Host-level pull suppression: when the user clicks Skip in GitPullErrorDialog,
+// the decision is remembered for an hour so subsequent pulls against the same
+// host (e.g. all bundle repos hosted on a temporarily-broken GitLab instance)
+// don't re-prompt. Kotlin parity: docs/porting/07 §1.9
+// (`skipPullForRepoDecisionAt` map keyed by host).
+var (
+	skipMu          sync.Mutex
+	skipUntilByHost = make(map[string]time.Time)
+)
+
+// SkipPullForHost suppresses pull operations against `host` until `time.Now() + d`.
+// `host` is the bare hostname (no scheme, no port); use HostFromURL to derive it
+// from a repo URL. Setting d <= 0 clears any existing skip for that host.
+func SkipPullForHost(host string, d time.Duration) {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return
+	}
+	skipMu.Lock()
+	defer skipMu.Unlock()
+	if d <= 0 {
+		delete(skipUntilByHost, host)
+		return
+	}
+	skipUntilByHost[host] = time.Now().Add(d)
+}
+
+// IsSkipped reports whether `host` is currently within an active skip window.
+// Hosts whose skip window has elapsed are evicted lazily on the next check.
+func IsSkipped(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return false
+	}
+	skipMu.Lock()
+	defer skipMu.Unlock()
+	until, ok := skipUntilByHost[host]
+	if !ok {
+		return false
+	}
+	if time.Now().After(until) {
+		delete(skipUntilByHost, host)
+		return false
+	}
+	return true
+}
+
+// HostFromURL extracts the bare hostname (lowercased, port stripped) from a
+// git URL. Supports https/ssh URLs and the `git@host:path` SCP form. Returns
+// empty string if no host can be parsed.
+func HostFromURL(repoURL string) string {
+	repoURL = strings.TrimSpace(repoURL)
+	if repoURL == "" {
+		return ""
+	}
+	// SCP-like form: git@host:user/repo.git
+	if !strings.Contains(repoURL, "://") {
+		if at := strings.Index(repoURL, "@"); at >= 0 {
+			rest := repoURL[at+1:]
+			if colon := strings.Index(rest, ":"); colon >= 0 {
+				return strings.ToLower(rest[:colon])
+			}
+			return strings.ToLower(rest)
+		}
+		return ""
+	}
+	u, err := url.Parse(repoURL)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Hostname())
+}
 
 // CloneOrPull clones a repo if not present, or pulls latest changes.
 func CloneOrPull(repoURL, branch, destDir string) error {
@@ -60,7 +147,11 @@ func CloneOrPullWithAuth(ctx context.Context, opts RepoOpts) error {
 func cloneOrPullInner(ctx context.Context, opts RepoOpts) error {
 	gitDir := filepath.Join(opts.DestDir, ".git")
 	if _, err := os.Stat(gitDir); err != nil {
-		// No .git directory — fresh clone
+		// No .git directory — fresh clone. The host-skip flag does NOT apply
+		// here: skipping a clone would leave the daemon with no usable repo
+		// at all (worse than a noisy retry against a flaky host). Kotlin
+		// behaves identically — `GitUpdatePolicy.ALLOWED_IF_NOT_EXISTS` lets
+		// clone proceed even when Skip is active.
 		cloneErr := doClone(ctx, opts)
 		if cloneErr == nil {
 			recordSync(opts)
@@ -76,6 +167,18 @@ func cloneOrPullInner(ctx context.Context, opts RepoOpts) error {
 			recordSync(opts)
 		}
 		return err
+	}
+
+	// Host-level pull suppression (Kotlin parity: docs/porting/07 §1.9). When
+	// the user clicked Skip in GitPullErrorDialog within the last hour, treat
+	// the pull as a no-op for any repo on the same host so we don't re-prompt
+	// for bundle-repo / workspace-repo siblings that all live on a temporarily-
+	// broken GitLab instance. Returning nil (rather than ErrPullSkippedByUser)
+	// preserves the existing local clone unchanged — same outcome as throttled
+	// pulls.
+	if host := HostFromURL(opts.URL); host != "" && IsSkipped(host) {
+		slog.Info("Skipping pull (host-level user skip active)", "host", host, "dir", opts.DestDir)
+		return nil
 	}
 
 	if opts.PullPeriod > 0 {
