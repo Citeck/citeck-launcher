@@ -530,6 +530,8 @@ const ja: Translations = {
 
   // -- ブロッキングローディングオーバーレイ(Kotlin LoadingDialog 対応) --
   'longOp.pleaseWait': 'お待ちください…',
+  'longOp.stalled': '接続が切れました。サーバー側で処理が続行している可能性があります — 再読み込みで確認してください。',
+  'longOp.dismiss': '閉じる',
   'longOp.progress.volumes': '{total} ボリューム中 {current}',
   'longOp.progress.indeterminate': 'この処理には数分かかる場合があります。',
   'longOp.snapshot.export': 'スナップショットを作成中…',

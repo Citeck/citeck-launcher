@@ -297,12 +297,35 @@ func (d *Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
+	// EventSource automatically attaches Last-Event-ID on browser-driven
+	// reconnects. The ?lastSeq= query param is the explicit override used by
+	// the longop watchdog path (and by tests) so the client controls replay
+	// regardless of EventSource quirks.
+	lastSeq := parseLastEventID(r)
+
 	ch, ok2 := d.addSubscriber()
 	if !ok2 {
 		writeError(w, http.StatusServiceUnavailable, "too many SSE subscribers")
 		return
 	}
 	defer d.removeSubscriber(ch)
+
+	if lastSeq > 0 && d.eventRing != nil {
+		replay, ringOK := d.eventRing.since(lastSeq)
+		if !ringOK {
+			// Buffer wrapped past the gap — tell the client to resync. The
+			// store's existing gap-detection (event.seq > lastSeq + 1) will
+			// fire fetchData() once live events resume.
+			fmt.Fprint(w, "event: resync\ndata: {}\n\n")
+			flusher.Flush()
+		}
+		for _, evt := range replay {
+			writeSSEEvent(w, evt)
+		}
+		if len(replay) > 0 || !ringOK {
+			flusher.Flush()
+		}
+	}
 
 	ctx := r.Context()
 	ticker := time.NewTicker(15 * time.Second)
@@ -312,8 +335,7 @@ func (d *Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			return
 		case evt := <-ch:
-			data, _ := json.Marshal(evt)
-			fmt.Fprintf(w, "data: %s\n\n", data)
+			writeSSEEvent(w, evt)
 			flusher.Flush()
 			ticker.Reset(15 * time.Second)
 		case <-ticker.C:
@@ -321,6 +343,31 @@ func (d *Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+// parseLastEventID resolves the client's last-seen Seq from either the
+// standard SSE Last-Event-ID header (browser EventSource auto-reconnect) or
+// an explicit ?lastSeq= query param (frontend watchdog-driven reconnect).
+// Returns 0 on absence or malformed input — treated as a fresh subscription.
+func parseLastEventID(r *http.Request) int64 {
+	if q := r.URL.Query().Get("lastSeq"); q != "" {
+		if n, err := strconv.ParseInt(q, 10, 64); err == nil && n > 0 {
+			return n
+		}
+	}
+	if h := r.Header.Get("Last-Event-ID"); h != "" {
+		if n, err := strconv.ParseInt(h, 10, 64); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 0
+}
+
+func writeSSEEvent(w io.Writer, evt api.EventDto) {
+	data, _ := json.Marshal(evt)
+	// Emit `id:` so browser EventSource captures it for Last-Event-ID on
+	// reconnect. Field order (id before data) matches the SSE spec example.
+	fmt.Fprintf(w, "id: %d\ndata: %s\n\n", evt.Seq, data)
 }
 
 func (d *Daemon) handleDaemonLogs(w http.ResponseWriter, r *http.Request) {

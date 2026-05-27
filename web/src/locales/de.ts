@@ -530,6 +530,8 @@ const de: Translations = {
 
   // -- Blockierendes Lade-Overlay (Kotlin-Parität: LoadingDialog) --
   'longOp.pleaseWait': 'Bitte warten…',
+  'longOp.stalled': 'Verbindung unterbrochen. Der Vorgang läuft möglicherweise noch auf dem Server — zum Prüfen neu laden.',
+  'longOp.dismiss': 'Schließen',
   'longOp.progress.volumes': '{current} von {total} Volumes',
   'longOp.progress.indeterminate': 'Dies kann einige Minuten dauern.',
   'longOp.snapshot.export': 'Snapshot wird erstellt…',

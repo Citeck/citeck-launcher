@@ -530,6 +530,8 @@ const fr: Translations = {
 
   // -- Overlay de chargement bloquant (parité Kotlin : LoadingDialog) --
   'longOp.pleaseWait': 'Veuillez patienter…',
+  'longOp.stalled': 'Connexion perdue. L’opération peut être encore en cours sur le serveur — rafraîchissez pour vérifier.',
+  'longOp.dismiss': 'Fermer',
   'longOp.progress.volumes': '{current} sur {total} volumes',
   'longOp.progress.indeterminate': 'Cela peut prendre plusieurs minutes.',
   'longOp.snapshot.export': 'Création du snapshot…',

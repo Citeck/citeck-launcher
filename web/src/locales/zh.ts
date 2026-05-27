@@ -530,6 +530,8 @@ const zh: Translations = {
 
   // -- 阻塞式加载遮罩(对应 Kotlin LoadingDialog)--
   'longOp.pleaseWait': '请稍候…',
+  'longOp.stalled': '连接已断开。该操作可能仍在服务器上运行 — 请刷新以检查。',
+  'longOp.dismiss': '关闭',
   'longOp.progress.volumes': '{current} / {total} 个卷',
   'longOp.progress.indeterminate': '这可能需要几分钟时间。',
   'longOp.snapshot.export': '正在创建快照…',

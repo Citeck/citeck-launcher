@@ -92,6 +92,7 @@ type Daemon struct {
 	startTime       time.Time
 	eventSubs       []chan api.EventDto
 	eventMu         sync.Mutex
+	eventRing       *eventRing // bounded replay buffer for SSE reconnects (Last-Event-ID)
 	configMu        sync.RWMutex // protects nsConfig, bundleDef, appDefs, workspaceConfig, systemSecrets
 	version         string
 	bundleError     string // non-empty if bundle resolution failed
@@ -680,6 +681,7 @@ func Start(opts StartOptions) error {
 		logLevel:        &globalLogLevel,
 		desktop:         opts.Desktop,
 		licenses:        license.NewService(secretSvc),
+		eventRing:       newEventRing(eventReplayBufferSize),
 	}
 
 	// Wire up event broadcasting
@@ -1149,6 +1151,9 @@ func resolveServerCertHost(tcpAddr string, nsCfg *namespace.Config) string {
 
 func (d *Daemon) broadcastEvent(evt api.EventDto) {
 	evt.Seq = d.eventSeq.Add(1)
+	if d.eventRing != nil {
+		d.eventRing.push(evt)
+	}
 	d.eventMu.Lock()
 	defer d.eventMu.Unlock()
 	for _, ch := range d.eventSubs {
@@ -1162,6 +1167,11 @@ func (d *Daemon) broadcastEvent(evt api.EventDto) {
 }
 
 const maxSSESubscribers = 100
+
+// eventReplayBufferSize caps the ring buffer used by SSE reconnects. ~500 events
+// covers typical disconnect windows even under pull-progress bursts; older
+// events force the client to do a full resync via the existing gap-detection.
+const eventReplayBufferSize = 500
 
 func (d *Daemon) addSubscriber() (chan api.EventDto, bool) {
 	d.eventMu.Lock()

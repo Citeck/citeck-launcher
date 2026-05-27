@@ -25,6 +25,10 @@ interface DashboardState {
   reconnectDelay: number
   lastSeq: number
   reconnectGen: number  // prevents race: two reconnects creating two EventSource streams
+  /** True while the SSE EventSource is open. Drives the longop watchdog. */
+  sseConnected: boolean
+  /** Epoch-ms of the last successful disconnect → reconnect cycle. */
+  disconnectedAt: number | null
   /** Per-app pull progress (live, transient — not from AppDto). Cleared when the
    * app leaves PULLING via `app_status`. Key = app name. */
   pullProgress: Record<string, PullProgress>
@@ -39,9 +43,39 @@ interface DashboardState {
   clearPullAuthRequired: (appName: string) => void
 }
 
+/** Watchdog thresholds — chosen to stay quiet on normal LAN/Wi-Fi blips
+ *  (most reconnects land inside 5–10s) while still surfacing a stuck
+ *  long-op within a reasonable upper bound on the reconnect side. */
+const SSE_DISCONNECT_DISMISS_MS = 15_000
+const LONGOP_PROGRESS_STALL_MS = 30_000
+const WATCHDOG_TICK_MS = 5_000
+
 export const useDashboardStore = create<DashboardState>((set, get) => {
 
 let fetchDebounceTimer: ReturnType<typeof setTimeout> | null = null
+let watchdogTimer: ReturnType<typeof setInterval> | null = null
+
+const ensureWatchdog = () => {
+  if (watchdogTimer !== null) return
+  watchdogTimer = setInterval(() => {
+    const longOp = useLongOpStore.getState().current
+    if (!longOp || longOp.stalled) return
+    const { sseConnected, disconnectedAt } = get()
+    const now = Date.now()
+    const disconnectedFor = !sseConnected && disconnectedAt !== null ? now - disconnectedAt : 0
+    const sinceProgress = now - longOp.lastProgressAt
+    if (disconnectedFor > SSE_DISCONNECT_DISMISS_MS && sinceProgress > LONGOP_PROGRESS_STALL_MS) {
+      useLongOpStore.getState().markStalled()
+    }
+  }, WATCHDOG_TICK_MS)
+}
+
+const stopWatchdog = () => {
+  if (watchdogTimer !== null) {
+    clearInterval(watchdogTimer)
+    watchdogTimer = null
+  }
+}
 
 return ({
   namespace: null,
@@ -52,6 +86,8 @@ return ({
   reconnectDelay: 1000,
   lastSeq: 0,
   reconnectGen: 0,
+  sseConnected: false,
+  disconnectedAt: null,
   pullProgress: {},
   pullAuthRequired: {},
 
@@ -94,6 +130,8 @@ return ({
     const prev = get().stream
     if (prev) prev.close()
 
+    ensureWatchdog()
+
     const stream = connectEvents(
       (event) => {
         // Detect sequence gap — fetch fresh state to catch up
@@ -135,6 +173,10 @@ return ({
         if (event.type === 'snapshot_complete' || event.type === 'snapshot_error') {
           useLongOpStore.getState().end()
         }
+        // Any non-stats event counts as "activity" — keeps the watchdog
+        // quiet during quiet periods of a long-running op (e.g. between
+        // volumes during a large snapshot import).
+        useLongOpStore.getState().markProgress()
 
         // Pull progress — store-side transient annotation, no AppDto change.
         // Backend throttles to ≤1/sec per app so we can update synchronously
@@ -197,7 +239,12 @@ return ({
         if (get().reconnectGen !== gen) return
         const delay = get().reconnectDelay
         const nextDelay = Math.min(delay * 2, 30000)
-        set({ reconnectDelay: nextDelay, stream: null })
+        set({
+          reconnectDelay: nextDelay,
+          stream: null,
+          sseConnected: false,
+          disconnectedAt: get().disconnectedAt ?? Date.now(),
+        })
         setTimeout(() => {
           if (get().reconnectGen === gen) {
             get().startEventStream()
@@ -205,13 +252,17 @@ return ({
         }, delay)
       },
       () => {
-        // onOpen — reconnect succeeded. Reset the backoff. Also clear lastSeq
-        // so the "sequence gap" path inside onEvent doesn't fire the
-        // "connection restored" toast on the very first event of a brand-new
-        // stream (gap detection is meaningful only once we've seen at least
-        // one seq from the current stream).
-        set({ reconnectDelay: 1000, lastSeq: 0 })
+        // onOpen — reconnect succeeded. Reset the backoff. Keep lastSeq so
+        // gap detection still fires if the daemon's ring buffer wrapped
+        // (the server emits an explicit `resync` event in that case and
+        // also bumps Seq past lastSeq+1, both leading to fetchData()).
+        set({ reconnectDelay: 1000, sseConnected: true, disconnectedAt: null })
       },
+      () => {
+        // Ring buffer wrapped past our lastSeq — daemon told us to resync.
+        get().fetchData()
+      },
+      get().lastSeq,
     )
     set({ stream })
   },
@@ -222,8 +273,10 @@ return ({
       clearTimeout(fetchDebounceTimer)
       fetchDebounceTimer = null
     }
+    stopWatchdog()
     set({
       stream: null, reconnectDelay: 1000, lastSeq: 0, reconnectGen: reconnectGen + 1,
+      sseConnected: false, disconnectedAt: null,
       pullProgress: {}, pullAuthRequired: {},
     })
     stream?.close()

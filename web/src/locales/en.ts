@@ -534,6 +534,8 @@ const en: Translations = {
 
   // -- Blocking loading overlay (Kotlin parity: LoadingDialog) --
   'longOp.pleaseWait': 'Please, wait…',
+  'longOp.stalled': 'Connection lost. The operation may still be running on the server — refresh to check.',
+  'longOp.dismiss': 'Dismiss',
   'longOp.progress.volumes': '{current} of {total} volumes',
   'longOp.progress.indeterminate': 'This may take several minutes.',
   'longOp.snapshot.export': 'Creating snapshot…',

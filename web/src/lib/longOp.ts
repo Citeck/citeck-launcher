@@ -12,20 +12,38 @@ export interface LongOp {
   kind: LongOpKind
   title: string
   progress?: LongOpProgress
+  /** Epoch-ms when the op started. Drives the watchdog stall detection. */
+  startedAt: number
+  /** Epoch-ms of the last progress event received. */
+  lastProgressAt: number
+  /** True once the watchdog has flagged the op as stalled (SSE down + no
+   *  progress for the configured windows). Surfaces a Dismiss affordance. */
+  stalled: boolean
 }
 
 interface LongOpState {
   current: LongOp | null
   start: (kind: LongOpKind, title: string) => void
   update: (progress: LongOpProgress) => void
+  markProgress: () => void
+  markStalled: () => void
   end: () => void
 }
 
 export const useLongOpStore = create<LongOpState>((set) => ({
   current: null,
-  start: (kind, title) => set({ current: { kind, title } }),
+  start: (kind, title) => {
+    const now = Date.now()
+    set({ current: { kind, title, startedAt: now, lastProgressAt: now, stalled: false } })
+  },
   update: (progress) =>
-    set((s) => (s.current ? { current: { ...s.current, progress } } : s)),
+    set((s) =>
+      s.current ? { current: { ...s.current, progress, lastProgressAt: Date.now(), stalled: false } } : s,
+    ),
+  markProgress: () =>
+    set((s) => (s.current ? { current: { ...s.current, lastProgressAt: Date.now(), stalled: false } } : s)),
+  markStalled: () =>
+    set((s) => (s.current && !s.current.stalled ? { current: { ...s.current, stalled: true } } : s)),
   end: () => set({ current: null }),
 }))
 

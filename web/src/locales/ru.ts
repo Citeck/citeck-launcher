@@ -527,6 +527,8 @@ const ru: Translations = {
 
   // -- Блокирующий оверлей загрузки (паритет с LoadingDialog Kotlin) --
   'longOp.pleaseWait': 'Пожалуйста, подождите…',
+  'longOp.stalled': 'Соединение потеряно. Операция может всё ещё выполняться на сервере — обновите страницу для проверки.',
+  'longOp.dismiss': 'Закрыть',
   'longOp.progress.volumes': '{current} из {total} томов',
   'longOp.progress.indeterminate': 'Это может занять несколько минут.',
   'longOp.snapshot.export': 'Создание снимка…',
