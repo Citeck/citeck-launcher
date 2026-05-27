@@ -23,8 +23,7 @@
 - One-shot atomic `storage.db → storage.db.kotlin-bak` backup runs
   before the first migration; `storage.db` itself stays byte-identical
   (read-only contract verified against the developer's real
-  `~/.citeck/launcher/storage.db`). `docs/porting/ROLLBACK.md` documents
-  the Go-then-Kotlin rollback procedure end-to-end.
+  `~/.citeck/launcher/storage.db`).
 - Filesystem-fallback safety net (used when the H2 reader cannot open
   the file at all) now emits Kotlin-parity default authentication
   (`BASIC` + `admin/fet`) instead of a stub config.
