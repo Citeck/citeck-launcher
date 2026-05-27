@@ -300,4 +300,55 @@ Loadable из:
 | `AuthSecretsService` | `internal/secrets/service.go` |
 | `SecretsStorage` | `internal/secrets/store.go` (encrypted FileStore) |
 | `SecretsEncryptor` | crypto/aes + crypto/cipher (AES-GCM) |
-| `LicenseService` | TBD (см. gap analysis) |
+| `LicenseService` | `internal/license/` (Instance, Signature, Service) — ported in 2.x |
+
+---
+
+## 5. 2.x порт — landed changes (по состоянию на `6fe02d1`)
+
+### 5.1 License
+
+`internal/license/license.go` реализует Kotlin `LicenseService`:
+
+- `LicenseInstance` поля 1-в-1 (`id`, `tenant`, `priority`, `issuedTo`,
+  `issuedAt`, `validFrom`, `validUntil`, `content`, `signatures`).
+- **Canonical date serializer** (`LicenseTime` wrapper в
+  `internal/license/license.go`): для midnight-UTC дат сериализуется как
+  `"2025-01-01"` (date-only, T-suffix strip), для прочих — full RFC3339.
+  Round-trip принимает оба формата. Это критично — Kotlin-signed лицензии
+  с midnight-UTC `validFrom`/`validUntil` иначе не проходят signature
+  verification на Go стороне (см. REMAINING item 14).
+- `getContentForSign()` — lexicographic key ordering на every nesting level,
+  бинарно совместимо с Kotlin's canonical form.
+- Storage: licenses хранятся через `SecretService` (тот же AES-GCM stack
+  что и auth secrets), не в plain JSON.
+- HTTP routes: `GET/POST/DELETE /api/v1/licenses` (`internal/daemon/routes_licenses.go`).
+
+### 5.2 Secret.Username split (BASIC_AUTH / REGISTRY_AUTH)
+
+Kotlin `AuthSecret.Basic(username, password)` — типизированные поля. Go
+изначально пакёт values как `"user:pass"` в одном поле, что ломалось на
+PAT-токенах с двоеточием и на passwords содержащих `:`.
+
+Fix landed (item 15):
+
+- `Secret.Username` field в `internal/storage/store.go`, JSON tag
+  `username,omitempty`.
+- SQLite migration v3: `ALTER TABLE secrets ADD COLUMN username TEXT NOT
+  NULL DEFAULT ''` + one-shot в-place split legacy `BASIC_AUTH` /
+  `REGISTRY_AUTH` rows (`GIT_TOKEN` исключён — PATs могут содержать `:`).
+- `FileStore.readSecret` ту же split логику применяет on-load.
+- `h2migrate/decrypt.go` пишет `Username` + `Value` как отдельные поля.
+- `SecretsDialog.tsx` рендерит Username input когда type ∈
+  {BASIC_AUTH, REGISTRY_AUTH}.
+
+Encrypted base64 ciphertext является colon-free, так что split никогда не
+трогает encrypted values.
+
+### 5.3 Entity framework
+
+Kotlin generic `EntitiesService` сознательно НЕ портирован — см.
+`docs/porting/10` §7 "Out of scope". В Go каждая entity type
+(workspace/namespace/secret/license/snapshot) имеет hardcoded routes + UI;
+миграция на registry costs ~1500-2000 LOC и оплачивается только начиная
+с ≥8 entity types.

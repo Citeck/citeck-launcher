@@ -1,8 +1,13 @@
-# Remaining Kotlin-parity items (after 2026-05-26 session)
+# Remaining Kotlin-parity items (after 2026-05-27 session)
 
-**Session of 2026-05-27 — final status:** All numbered items 1–26 are closed,
-plus Doubtful A/B/C/F. The only outstanding work is platform-specific visual
-verification that cannot be performed on this Linux dev box:
+**Status after commit `6fe02d1` (2026-05-27 — "close all 1.x→2.x parity gaps
++ rewrite migration on pure-Go"):** All numbered items 1–26 plus
+multi-workspace polish 11a–11d plus Doubtful A/B/C/F are landed. The H2→SQLite
+migrator is now a single pure-Go path (no JAR, no JRE download) and has been
+verified byte-exact against a real Kotlin home dir.
+
+The only outstanding work is platform-specific visual verification that
+cannot be performed on this Linux dev box:
 
 - **macOS Retina tray icon scaling** — needs a Mac to capture 2× / 3× tray
   screenshots and confirm the embedded 256×256 PNG renders cleanly under

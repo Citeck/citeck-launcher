@@ -8,7 +8,9 @@
 
 ## Источники
 
-Документ собран из 6 параллельных исследований кодовой базы и кросс-сверен с состоянием 2.x на ветке `release/2.1.0` (`internal/` + `web/`). Все факты ссылаются на конкретные файлы и строки в `src/main/kotlin/` или `src/main/resources/`.
+Документ собран из 6 параллельных исследований кодовой базы и кросс-сверен с состоянием 2.x. Все факты ссылаются на конкретные файлы и строки в `src/main/kotlin/` или `src/main/resources/`.
+
+**Update (commit `6fe02d1`, 2026-05-27):** все numbered items 1–26 + multi-workspace polish 11a–11d + Doubtful A/B/C/F закрыты. Открытыми остаются только два platform-specific verification теста (macOS Retina tray, GTK tray fallback) — см. `REMAINING.md`. Migration с Kotlin 1.x теперь pure-Go (см. `07` §5).
 
 ## Содержание
 
@@ -24,6 +26,8 @@
 | 08 | [namespace-runtime-and-generator.md](08-namespace-runtime-and-generator.md) | NamespaceConfig, ApplicationDef, NamespaceGenerator (12-шаговая генерация), AppRuntimeStatus state machine, NsRuntimeFiles |
 | 09 | [docker-and-appfiles.md](09-docker-and-appfiles.md) | DockerApi, DockerLabels (контракт обнаружения), DockerConstants (naming), Pull/Start/Stop actions, дефолтные appfiles (alfresco / keycloak / pgadmin / postgres / proxy) |
 | 10 | [2x-status-and-porting-checklist.md](10-2x-status-and-porting-checklist.md) | Что уже сделано в 2.x (internal/ + web/), coverage-матрица, gap analysis, чек-лист критичных вещей которые нельзя сломать |
+| — | [REMAINING.md](REMAINING.md) | Хронологический log items 1–26 + 11a–11d + Doubtful A–F; status markers; what's left (только macOS Retina + GTK tray) |
+| — | [ROLLBACK.md](ROLLBACK.md) | Go 2.x desktop → Kotlin 1.x rollback procedure (storage.db read-only contract, что preserved, container hash drift) |
 
 ## Read order для портёров
 

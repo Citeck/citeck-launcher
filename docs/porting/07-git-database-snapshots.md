@@ -295,10 +295,115 @@ Compression: XZ (через docker-utils container, см. §09).
 |---|---|
 | `GitRepoService` | `internal/git/service.go` |
 | `JGit` | `github.com/go-git/go-git/v5` |
-| `H2 MVStore` | SQLite (`modernc.org/sqlite`) или bbolt |
+| `H2 MVStore` (write) | SQLite (`modernc.org/sqlite`, pure-Go) |
+| `H2 MVStore` (read) | `internal/h2migrate/mvstore.go` (pure-Go reader, one-time migration only) |
 | `Repository<K, V>` | generic Go interface, sqlite-backed |
 | `DataRepo` | shorthand для `Repository[string, DataValue]` |
 | `TxnContext` | `database/sql.Tx` + slice of after-commit callbacks |
 | `LogbackConfigurator` | `slog` + `lumberjack` |
 | `WorkspaceSnapshots.getSnapshot` | `internal/snapshot/downloader.go` |
 | `AppLogUtils.watchAppLogs` | server-side tail + SSE endpoint |
+
+---
+
+## 5. Kotlin 1.x → Go 2.x migration (`internal/h2migrate/`)
+
+### 5.1 Approach
+
+Migration is **pure Go** — no embedded JAR, no Java/JRE download. The
+historical JAR-based exporter (`tools/h2-export/`, `embedded/h2-export.jar`,
+`jarmigrate.go`) was removed in `6fe02d1`; `internal/h2migrate/mvstore.go`
+is now the sole reader.
+
+`storage.db` is opened **read-only** (`os.Open`, never written) so a user
+can revert to Kotlin 1.x at any time. The first migration run produces an
+atomic `storage.db → storage.db.kotlin-bak` backup (temp+rename, idempotent);
+see `internal/h2migrate/migrate.go::ensureBackup` and
+`docs/porting/ROLLBACK.md` for the round-trip story.
+
+### 5.2 MVStore reader
+
+`internal/h2migrate/mvstore.go::OpenMVStore` walks the file:
+
+1. Scan chunks. Each chunk header carries a `block` count, a `root` field
+   pointing at the **layout** map root (not the meta map — this was the
+   first of four correlated bugs in the previous fallback), and a `next`
+   pointer.
+2. Read the **layout map** via the chunk root.
+3. Resolve the **meta map** root via a `name → mapId` lookup in the layout
+   map, not via a fixed chunk-header field.
+4. Resolve each **user-data map** root via the meta map.
+5. Walk B-tree leaf pages; LZF-decompress compressed pages
+   (`internal/h2migrate/lzf.go`). The extended back-reference encoding has
+   the length-extension byte order fix — `(byte0 & 0x1f) << 8 | byte1`
+   needs `byte0` masked first; reversing the order silently returned 0-byte
+   back-refs on long runs.
+6. Strip the H2 `TransactionStore` `VersionedValueType` wrapper on
+   user-data maps only: `varLong(operationId) || rawValue`. Layout and meta
+   pages stay raw.
+
+`internal/h2migrate/varint.go` implements H2's variable-length integer
+encoding for both `int` and `long`.
+
+### 5.3 Translators
+
+Kotlin entity JSON is not byte-identical to Go shapes. Translators live
+under `internal/h2migrate/`:
+
+- `applicationdef_compat.go` — Kotlin `ApplicationDef` → Go `appdef.ApplicationDef`.
+  Handles missing fields, default values, and the `cmd`/`environments`
+  shape variations. Fixture: `testdata/applicationdef_v1.json`.
+- `bundledef_compat.go` — Kotlin `BundleDef` → Go bundle. Fixture:
+  `testdata/bundledef_v1.json`.
+- `decrypt.go` — AES-GCM decrypt of the `secrets!data` blob using
+  `SecretsEncryptor` parameters (PBKDF2-HMAC-SHA256, 1M iterations,
+  16-byte salt, AES-256-GCM, 128-bit tag).
+- `runtimestate.go` — per-namespace runtime state translator:
+  `manualStoppedApps`, `editedApps` (uses `applicationdef_compat`),
+  `editedAndLockedApps`, `changedRuntimeFiles`, `cachedBundle` (uses
+  `bundledef_compat`).
+- `imports.go` — top-level orchestration: `importWorkspaces`,
+  `importNamespaces`, `importSecrets`, `importLauncherState`,
+  `importRuntimeState`, `importWorkspaceState`, `importGitRepoState`.
+
+### 5.4 Pipeline
+
+`internal/h2migrate/migrate.go::Migrate(homeDir, store)`:
+
+1. Skip if no `storage.db`.
+2. `ensureBackup` — atomic temp+rename to `storage.db.kotlin-bak` (idempotent
+   on retry).
+3. `OpenMVStore(storage.db)` (read-only). On open failure → filesystem
+   fallback (next paragraph).
+4. `DumpForImport` extracts every map of interest.
+5. `importXxx` writers fill the SQLite store and per-namespace
+   `state-{nsID}.json` files.
+
+**Filesystem-fallback safety net.** If the MVStore reader cannot open the
+file (corrupted, version mismatch), `Migrate` still emits a Kotlin-parity
+default authentication record (`BASIC` + `admin/fet`) so that Welcome /
+wizard flows work for the user without manual intervention. See
+`internal/h2migrate/migrate.go::importFromFilesystemFallback`.
+
+### 5.5 SQLite schema versions
+
+Applied in order after the import:
+
+| Version | Change | Purpose |
+|---|---|---|
+| v2 | Workspace `auth_type`, `repo_pull_period` columns | Multi-workspace polish 11b |
+| v3 | `secrets.username` column + one-shot legacy `user:pass` split | Item 15 |
+| v4 | `selected_ns` JSON column folding legacy global `namespace_id` | Item 11c |
+| v5 | `git_repo_state` table | Per-repo `lastSync` / commit hash across restarts |
+
+### 5.6 Tests
+
+- `mvstore.go` — read-only golden fixtures from real Kotlin home dirs.
+- `imports_test.go` — round-trips against synthetic Kotlin JSON.
+- `migrate_test.go` — end-to-end with a known H2 fixture.
+- `migrate_fallback_test.go` — filesystem fallback path.
+- `applicationdef_compat_test.go` / `bundledef_compat_test.go` — Kotlin
+  fixture → Go shape parity.
+- `lzf_test.go` — back-reference byte-order regression.
+- `decrypt_test.go` — AES-GCM round-trip, including BASIC_AUTH with
+  colon-containing passwords.

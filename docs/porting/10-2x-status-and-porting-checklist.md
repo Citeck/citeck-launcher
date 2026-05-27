@@ -2,12 +2,21 @@
 
 ## 1. Где сейчас 2.x
 
-Ветка `release/2.1.0` (не текущая ветка `release/1.4.1`). Согласно memory + `.audit-backlog.md`:
+**Status after commit `6fe02d1` (2026-05-27 — "close all 1.x→2.x parity gaps
++ rewrite migration on pure-Go"):**
 
-- **Phase 22 complete** — Phase 2 server testing + enterprise.
+- Все numbered items 1–26 + multi-workspace polish 11a–11d + Doubtful A/B/C/F
+  закрыты. Остаются ТОЛЬКО два platform-specific verification теста
+  (macOS Retina tray + GTK tray fallback) — нужны Mac / стоковый GNOME для
+  проверки. Полный список — см. `REMAINING.md`.
+- Kotlin 1.x → Go 2.x миграция теперь **pure Go**: `tools/h2-export/`,
+  embedded `h2-export.jar`, `jarmigrate.go` и JRE-download path удалены.
+  `internal/h2migrate/mvstore.go` читает H2 MVStore напрямую. Desktop
+  binary -1.1 MB. См. `docs/porting/07` §5 для деталей.
 - Кодовая база Go-демона лежит в `internal/`.
 - Web UI — React 19 + Vite + Tailwind v4.2.2 + Zustand, лежит в `web/`.
-- На текущей `release/1.4.1` ветке `internal/` и `web/` присутствуют только в виде build-артефактов (embedded webdist, без исходников). Source на `release/2.1.0`.
+- На исторической `release/1.4.1` ветке `internal/` и `web/` присутствуют
+  только в виде build-артефактов (embedded webdist, без исходников).
 
 ## 2. Что уже сделано — Go server (`internal/`)
 
@@ -41,13 +50,26 @@
 
 ### 2.3 Persistence
 
-- **Flat JSON/YAML files** (`state-{nsID}.json`, `daemon.yml`, `namespace.yml`) — **не embedded DB**. H2 был Kotlin-only.
-- **Secrets**: encrypted `FileStore` (AES-256-GCM).
+- **Server mode**: flat JSON/YAML files (`state-{nsID}.json`, `daemon.yml`,
+  `namespace.yml`) — `FileStore` в `internal/storage/`.
+- **Desktop mode**: SQLite (pure-Go `modernc.org/sqlite`) в `launcher.db`.
+  Schema versions v2 (workspace `auth_type` / `repo_pull_period`), v3
+  (`secrets.username`), v4 (per-workspace `selected_ns` map), v5
+  (`git_repo_state` table). H2 → SQLite one-time migration через
+  `internal/h2migrate/`.
+- **Secrets**: encrypted via `SecretService` (AES-256-GCM, per-secret).
+  Master password derives через PBKDF2-HMAC-SHA256 (1M iterations,
+  16-byte salt) — совместимо с Kotlin `SecretsEncryptor`.
 
 ### 2.4 Tray / desktop
 
-- `--desktop` flag (Phase 21: hidden). Server-only deployment — нет system tray.
-- Web UI served directly daemon'ом через embedded `webdist/`.
+- **Server mode** (default): Web UI served directly daemon'ом через embedded
+  `webdist/`. Системного трея нет — браузер ИС application.
+- **Desktop mode** (`--desktop` flag, hidden от server help): Wails v3
+  webview hosts the same Web UI; system tray с "Open Window", "Dump System
+  Info", "Quit" пунктами; single-instance lock + `/desktop/focus`
+  hand-off (см. REMAINING item 11d). `cmd/citeck-desktop/main.go` входная
+  точка.
 - Нет отдельного Electron / tray process в Go rewrite.
 
 ## 3. Что уже сделано — Web (`web/`)
@@ -97,7 +119,7 @@
 | Namespace start/stop/reload/upgrade | **Done** | `routes_ns.go`; bundle upgrade в wizard |
 | Snapshots (CRUD/import/export) | **Done** | 10 handlers + UI |
 | Secrets / registry auth | **Done** | `routes_secrets.go` + encrypted FileStore + UI |
-| Workspace management | **Done (server only)** | Server: single-workspace by design ✓. Desktop: **gap** — discovery работает (`internal/config/workspace.go`), но нет CRUD/picker (см. §5.10) |
+| Workspace management | **Done** | Server: single-workspace by design ✓. Desktop: full CRUD via `/api/v1/workspaces` (gated by `requireDesktop`), `WorkspaceSelector` UI on Welcome, per-workspace `SelectedNs` map, second-instance focus hand-off (`/desktop/focus`); see REMAINING items 11, 11a–11d |
 | Bundle versioning (BundleKey) | **Done** | `compareBundleVersions` + parity test |
 | Bundle picker UI | **Done** | Community/enterprise tabs |
 | Docker runtime | **Done** | `runtime_orchestration.go` + docker client |
@@ -105,15 +127,15 @@
 | Init actions (post-start scripts) | **Done** | `AppInitAction` / `init.sh.tmpl` |
 | HTTP startup probes | **Done** | `runtime_probes.go`; hits `127.0.0.1:hostPort` |
 | Liveness probes / auto-restart | **Done** | `reconciler.go` |
-| **License validation** | **NOT FOUND** | `LicenseService` в Kotlin есть, нет equivalent в Go. Нет `/license` route |
+| **License validation** | **Done** | `internal/license/` (Instance, Signature, Service) ported; `LicenseTime` wrapper emits midnight-UTC dates as `YYYY-MM-DD` for Kotlin canonical-form parity; CRUD via `/api/v1/licenses` (`routes_licenses.go`) |
 | Git pull (bundle repo) | **Done** | "Pulling repository..." в wizard output |
 | TLS / ACME / Let's Encrypt | **Done** | `internal/acme/client.go` + 5 TLS modes |
 | Systemd service install | **Done** | Auto в `install.go` wizard |
-| H2 database | **Not applicable** | Replaced by flat files + encrypted FileStore |
-| Entity framework | **Not applicable** | No equivalent; entities → direct config structs |
-| CloudConfigServer (8761) | **Not applicable??** | Replaced by Go HTTP server. **CRITICAL: проверить что Spring Cloud Config endpoint всё ещё работает!** Если нет — все ECOS контейнеры не загрузятся |
-| CPU/memory stats per container | **Partial** | `ContainerStats` есть в Kotlin; stats route в Go не confirmed |
-| Spring properties / file editor (`AppCfgEditWindow`) | **Not found** | Нет equivalent route в Go |
+| H2 database | **Migrated** | Pure-Go reader (`internal/h2migrate/`); writes go to SQLite (desktop) / flat files (server). One-time H2 → SQLite migration, `storage.db` opened read-only, atomic `.kotlin-bak` backup for rollback |
+| Entity framework | **Not ported (out of scope)** | 5 entity types → direct config structs + hardcoded routes; migration к registry pays off только начиная с ≥8 types (см. §7) |
+| CloudConfigServer (8761) | **Done** | `internal/daemon/cloudconfig.go`; `flattenCloudConfig` mirrors Kotlin `buildFlattenedMap` (depth-first `.`-joined keys + `[idx]` bracket notation for lists). Skipped в server mode (webapps disable via env vars). Coverage: `cloudconfig_test.go` |
+| CPU/memory stats per container | **Done** | `app_stats` SSE event stream через `runtime_loop.go`; UI renders в `StatsCell` + sidebar `CompactResourceRow` |
+| Spring properties / file editor (`AppCfgEditWindow`) | **Done** | `AppConfigEditor.tsx` (per-app YAML config + mounted files editor с CodeMirror highlighting + per-file Reset + edited markers); backend `routes_apps.go` файловые endpoints |
 | Keycloak SA / admin password mgmt | **Done** | `routes_admin_password.go`, `_launcher_sa`, `init.sh.tmpl` |
 | Observer integration | **Done (partial)** | ZK works; gateway 403 unresolved |
 | STT sidecar (AI WS proxy) | **Done** | Generator + `stt_models` volume |
@@ -158,18 +180,20 @@
 
 SSE event delivery intentionally blocking (send в `eventCh` cap 256). Любой новый SSE subscriber / event callback **обязан** быть non-blocking — иначе wedge'ит `runtimeLoop`. Спецификация — это hard constraint.
 
-### 5.7 License subsystem
+### 5.7 License subsystem — DONE
 
-`LicenseService` / `LicenseInstance` / `LicenseSignature` есть в Kotlin, **нет confirmed** equivalent в Go. Спецификация:
-- В scope или нет для 2.x?
-- Если в scope: validation algorithm, signature format, где в startup sequence check.
+Ported в `internal/license/` (Instance, Signature, Service). `LicenseTime`
+wrapper решает midnight-UTC canonical-form parity с Kotlin
+`LicenseDateSerializer` (item 14). CRUD via `/api/v1/licenses`. См.
+`docs/porting/06` §5.1.
 
-### 5.8 Container stats + config file editor
+### 5.8 Container stats + config file editor — DONE
 
-`ContainerStats` (CPU/memory per container) + Spring properties / external config file editor (`AppCfgEditWindow.kt`) — confirmed в Kotlin 1.3.0+, **не найдено** в Go routes / UI bundles. Спецификация:
-- В scope?
-- Polling vs streaming для stats
-- API surface для file editor
+Container stats — `app_stats` SSE event stream from `runtime_loop.go`,
+UI consumes в `StatsCell` (per-app) + sidebar `CompactResourceRow`
+(aggregate, REMAINING item 1). Config file editor — `AppConfigEditor.tsx`
+с CodeMirror highlighting, per-file Reset, edited markers, `EditedFileOverlay`
+volume content hash recompute (Doubtful A).
 
 ### 5.9 Observer gateway 403
 
@@ -177,19 +201,23 @@ Observer integration работает на ZK registration + gateway health leve
 - Gateway-side config change? Или
 - Dedicated observer UI в launcher'е?
 
-### 5.10 Multi-workspace divergence
+### 5.10 Multi-workspace divergence — DONE for desktop
 
-Kotlin: `WorkspacesService`, `WorkspaceEntityDef`, full workspace selection screen. Go: single `daemon.yml` + `namespace.yml`.
-
-**Решение (2026-05-26)**: scope зависит от режима запуска:
+**Решение (2026-05-26):**
 - **Server mode** — single-workspace, out of scope (current state correct).
-- **Desktop mode (Wails)** — multi-workspace REQUIRED, нужно достичь Kotlin parity:
-  - Workspace CRUD (create / delete / rename) — UI + storage.
-  - Workspace picker на Welcome screen (Kotlin `WelcomeScreen.kt`).
-  - Active workspace persistence в desktop SQLite store.
-  - Namespace operations scope'нуты по active workspace (filesystem layout `ws/{wsID}/ns/{nsID}/` уже готов; `NamespaceInfo.WorkspaceID` существует).
-
-Текущее состояние (`internal/config/workspace.go`): только discovery (`ListWorkspaces`), нет CRUD и нет UI. Это **gap для desktop**, не для server.
+- **Desktop mode (Wails)** — multi-workspace REQUIRED, Kotlin parity достигнут
+  в `6fe02d1` (REMAINING items 11, 11a–11d):
+  - Workspace CRUD via `GET/POST/PUT/DELETE /api/v1/workspaces[/{id}]` +
+    `POST /workspaces/{id}/activate`, все gated by `requireDesktop` (404
+    в server mode).
+  - `WorkspaceSelector.tsx` dropdown + create/edit/delete dialog on Welcome.
+  - `Daemon.SwitchWorkspace` tears down runtime + docker client, recreates
+    для нового workspace.
+  - Active workspace persisted в SQLite `launcher_state.workspace_id`;
+    per-workspace last namespace в `selected_ns` JSON map (v4 migration).
+  - Bundle resolver honours per-workspace `RepoURL` / `Branch` /
+    `PullPeriod` / `AuthType` (item 11a).
+  - Second-instance focus hand-off via `POST /desktop/focus` (item 11d).
 
 ---
 
@@ -272,15 +300,31 @@ Kotlin: `WorkspacesService`, `WorkspaceEntityDef`, full workspace selection scre
 
 ## 9. Open вопросы (для product/tech-lead)
 
-1. **Apgrade path с 1.x на 2.x**: migrate существующий AppDir (storage.db, ws/, app.lock) или wipe + fresh setup?
-2. **Multi-workspace** — **Решено (2026-05-26)**: out-of-scope для server mode; in-scope для desktop (Wails) — см. §5.10.
-3. **License subsystem** — port or drop?
-4. **CloudConfig 8761** — на 100% порт сохранил? Если backbone'ные тесты ECOS не падают — да; если нужно protocol fixture — добавить.
-5. **`AppCfgEditWindow`** — в Web UI это реализовано или нет? Если нет — нужен endpoint + Monaco editor.
-6. **Manual override locking** (`editedAndLockedApps`) — порт preserves?
-7. **Observer dashboard 403** — fix в gateway или separate UI?
-8. **Container stats stream** — порт via SSE или omitted?
-9. **`UTILS_IMAGE` `registry.citeck.ru/community/launcher-utils:1.0`** — pinned dependency, нужно ensure availability в Go-порте.
+Большинство закрыты после `6fe02d1`. Открытыми остаются:
+
+1. **Observer dashboard 403** — fix в gateway или separate UI? (Не входит
+   в Kotlin parity scope.)
+2. **macOS Retina tray icon scaling** — нужен Mac для verification (см.
+   REMAINING Doubtful D).
+3. **GTK tray fallback** на стоковом GNOME 45+ / KDE без
+   `gnome-shell-extension-appindicator` — нужна тестовая машина (см.
+   REMAINING Doubtful E).
+
+### Закрытые
+
+- **Upgrade path 1.x → 2.x** — pure-Go migrator (`internal/h2migrate/`)
+  читает существующий `storage.db` read-only, пишет в SQLite (desktop) или
+  flat files (server); atomic `.kotlin-bak` backup делает rollback дешёвым
+  (см. `docs/porting/ROLLBACK.md`).
+- **Multi-workspace** — done для desktop (§5.10), out-of-scope для server.
+- **License subsystem** — ported (см. §5.7 + `docs/porting/06` §5.1).
+- **CloudConfig 8761** — done с flatten parity (см. coverage matrix).
+- **`AppCfgEditWindow`** — done (`AppConfigEditor.tsx` + backend endpoints).
+- **Manual override locking** (`editedAndLockedApps`) — preserved через
+  миграцию (`internal/h2migrate/runtimestate.go`); locked apps survive
+  bundle updates (REMAINING item 10).
+- **Container stats stream** — done (`app_stats` SSE).
+- **`UTILS_IMAGE`** — pinned в `internal/snapshot/` + Zookeeper generator.
 
 ---
 
