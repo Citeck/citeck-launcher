@@ -141,6 +141,49 @@ func TestGenerate_PopulatesVolumesContentHash(t *testing.T) {
 		"Generate() did not populate VolumesContentHash on postgres — bind-mount content changes will no longer trigger recreate")
 }
 
+// TestGenerate_EditedFileOverlayChangesHash pins the Web-UI-edit recreate
+// contract: when GenerateOpts.EditedFileOverlay carries new content for a
+// bind-mounted file, the resulting per-app VolumesContentHash MUST differ
+// from a baseline run without the overlay. Without this, a UI edit silently
+// fails to recreate the container because the deployment hash is unchanged.
+func TestGenerate_EditedFileOverlayChangesHash(t *testing.T) {
+	cfg := &Config{
+		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+	}
+	bun := &bundle.Def{
+		Applications: map[string]bundle.AppDef{"emodel": {Image: "nexus.citeck.ru/emodel:1.0"}},
+	}
+	wsCfg := &bundle.WorkspaceConfig{Webapps: []bundle.WebappConfig{{ID: "emodel"}}}
+
+	pickPostgres := func(resp *GenResp) *appdef.ApplicationDef {
+		for i := range resp.Applications {
+			if resp.Applications[i].Name == "postgres" {
+				return &resp.Applications[i]
+			}
+		}
+		return nil
+	}
+
+	baseline, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "j", OIDC: "o"})
+	require.NoError(t, err)
+	pgBaseline := pickPostgres(baseline)
+	require.NotNil(t, pgBaseline)
+	require.NotEmpty(t, pgBaseline.VolumesContentHash)
+
+	overlay := map[string][]byte{
+		"postgres/postgresql.conf": []byte("# user edit via Web UI\nshared_buffers = 512MB\n"),
+	}
+	edited, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "j", OIDC: "o"}, GenerateOpts{
+		EditedFileOverlay: overlay,
+	})
+	require.NoError(t, err)
+	pgEdited := pickPostgres(edited)
+	require.NotNil(t, pgEdited)
+	require.NotEqual(t, pgBaseline.VolumesContentHash, pgEdited.VolumesContentHash,
+		"EditedFileOverlay did not change VolumesContentHash — UI edits won't trigger container recreate")
+}
+
 func TestProxyBaseURL_Port0(t *testing.T) {
 	ctx := makeCtx(0, "localhost", false)
 	url := ctx.ProxyBaseURL()
@@ -379,6 +422,73 @@ func TestAlfrescoContainerDefs(t *testing.T) {
 	if alfSolr.Environments["JAVA_OPTS"] != "-Xms1G -Xmx1G" {
 		t.Errorf("expected solr JAVA_OPTS=-Xms1G -Xmx1G, got %q", alfSolr.Environments["JAVA_OPTS"])
 	}
+}
+
+// alfrescoProxyTargetFixture returns the minimal config / bundle / workspace
+// required to exercise the proxy's alfresco upstream selection logic.
+func alfrescoProxyTargetFixture() (*Config, *bundle.Def, *bundle.WorkspaceConfig) {
+	cfg := &Config{
+		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+	}
+	bun := &bundle.Def{
+		Applications: map[string]bundle.AppDef{
+			"alfresco": {Image: "citeck/alfresco:1.0"},
+			"gateway":  {Image: "nexus.citeck.ru/gateway:1.0"},
+			"proxy":    {Image: "citeck/proxy:1.0"},
+		},
+	}
+	wsCfg := &bundle.WorkspaceConfig{
+		Alfresco: bundle.AlfrescoProps{Enabled: true},
+		Webapps:  []bundle.WebappConfig{{ID: "gateway"}},
+	}
+	return cfg, bun, wsCfg
+}
+
+func TestProxyTarget_AlfrescoEnabled(t *testing.T) {
+	cfg, bun, wsCfg := alfrescoProxyTargetFixture()
+
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	require.NoError(t, err)
+
+	var proxy *appdef.ApplicationDef
+	for i := range resp.Applications {
+		if resp.Applications[i].Name == appdef.AppProxy {
+			proxy = &resp.Applications[i]
+			break
+		}
+	}
+	require.NotNil(t, proxy, "expected proxy app")
+	assert.Equal(t, "alfresco:8080", proxy.Environments["PROXY_TARGET"])
+	assert.Equal(t, "true", proxy.Environments["ALFRESCO_ENABLED"])
+	_, dependsOnAlfresco := proxy.DependsOn[appdef.AppAlfresco]
+	assert.True(t, dependsOnAlfresco, "proxy should depend on alfresco when enabled")
+}
+
+func TestProxyTarget_AlfrescoDetached(t *testing.T) {
+	cfg, bun, wsCfg := alfrescoProxyTargetFixture()
+
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"}, GenerateOpts{
+		DetachedApps: map[string]bool{appdef.AppAlfresco: true},
+	})
+	require.NoError(t, err)
+
+	var proxy *appdef.ApplicationDef
+	for i := range resp.Applications {
+		if resp.Applications[i].Name == appdef.AppProxy {
+			proxy = &resp.Applications[i]
+			break
+		}
+	}
+	require.NotNil(t, proxy, "expected proxy app")
+	assert.NotEqual(t, "alfresco:8080", proxy.Environments["PROXY_TARGET"],
+		"detached alfresco must not be set as proxy target")
+	assert.True(t, strings.HasPrefix(proxy.Environments["PROXY_TARGET"], appdef.AppGateway+":"),
+		"proxy target should fall back to gateway when alfresco is detached, got %q",
+		proxy.Environments["PROXY_TARGET"])
+	assert.Equal(t, "false", proxy.Environments["ALFRESCO_ENABLED"])
+	_, dependsOnAlfresco := proxy.DependsOn[appdef.AppAlfresco]
+	assert.False(t, dependsOnAlfresco, "proxy must not depend on detached alfresco")
 }
 
 func TestNamespaceLevelDataSources(t *testing.T) {

@@ -4,8 +4,12 @@ package desktop
 
 import (
 	"fmt"
+	"log/slog"
+	"os"
 	"syscall"
 	"unsafe"
+
+	"github.com/citeck/citeck-launcher/internal/config"
 )
 
 var (
@@ -30,6 +34,15 @@ func AcquireInstanceLock() (*InstanceLock, error) {
 	}
 	if errno, ok := err.(syscall.Errno); ok && errno == errorAlreadyExists {
 		closeHandle.Call(handle)
+		// Kotlin parity: hand focus off to the running instance over the daemon
+		// socket. Only swallow when the daemon actually answers — a stale mutex
+		// without a live daemon must still surface as an error.
+		notifyErr := NotifyExistingInstance(config.SocketPath())
+		if notifyErr == nil {
+			slog.Info("Another Citeck Desktop instance is running; raised its window and exiting")
+			os.Exit(0)
+		}
+		slog.Warn("Mutex held but no live daemon to focus; treating as stale", "err", notifyErr)
 		return nil, fmt.Errorf("another Citeck Desktop instance is already running")
 	}
 	return &InstanceLock{handle: syscall.Handle(handle)}, nil

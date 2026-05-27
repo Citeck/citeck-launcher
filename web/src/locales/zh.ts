@@ -62,11 +62,30 @@ const zh: Translations = {
   'welcome.delete.message': '确认删除 namespace "{name}"？配置文件将被移除。',
   'welcome.context.open': '打开',
   'welcome.context.delete': '删除',
+  'welcome.namespace.edit': '编辑',
   'welcome.workspace.label': '工作区',
   'welcome.workspace.forceUpdate': '强制更新',
+  'welcome.workspace.forceUpdate.inactive': '强制更新仅适用于活动工作区',
   'welcome.workspace.updating': '正在更新工作区...',
   'welcome.workspace.updateSuccess': '工作区已更新',
   'welcome.workspace.updateFailed': '工作区更新失败：{error}',
+  'welcome.workspace.create': '创建工作区...',
+  'welcome.workspace.edit': '编辑',
+  'welcome.workspace.delete': '删除',
+  'welcome.workspace.deleteConfirm': '删除工作区 "{name}"？将从磁盘移除其配置和仓库缓存。',
+  'welcome.workspace.switched': '已切换到工作区 "{name}"',
+  'welcome.workspace.switchFailed': '工作区切换失败：{error}',
+  'welcome.workspace.form.id': 'ID（可选）',
+  'welcome.workspace.form.idPlaceholder': '从名称推导',
+  'welcome.workspace.form.name': '名称',
+  'welcome.workspace.form.repoUrl': '仓库 URL',
+  'welcome.workspace.form.repoBranch': '分支',
+  'welcome.workspace.form.repoPullPeriod': '拉取间隔（ISO 8601，如 PT2H）',
+  'welcome.workspace.form.authType': '认证方式',
+  'welcome.workspace.form.authType.none': '无（公开仓库）',
+  'welcome.workspace.form.authType.token': '令牌（私有仓库）',
+  'welcome.workspace.form.authTypeTokenHint': '将 git 令牌作为密钥保存在 "{key}" 下。',
+  'welcome.workspace.form.required': '名称和仓库 URL 是必填项',
 
   // -- 仪表盘侧边栏 / namespace 目录 --
   'dashboard.openNsDir': '打开 NS 目录',
@@ -158,6 +177,8 @@ const zh: Translations = {
   'secrets.form.name': '名称',
   'secrets.form.name.placeholder': '我的密钥',
   'secrets.form.type': '类型',
+  'secrets.form.username': '用户名',
+  'secrets.form.username.placeholder': 'registry-user',
   'secrets.form.value': '值',
   'secrets.form.value.placeholder': '密钥值',
   'secrets.form.create': '创建',
@@ -478,6 +499,7 @@ const zh: Translations = {
   'snapshots.create': 'Create Snapshot',
   'snapshots.create.title': 'Create snapshot',
   'snapshots.importFile': 'Import .zip…',
+  'snapshots.openNsDir': '打开 NS 目录',
   'snapshots.import.local.hint': 'Use the .zip stored in the namespace dir to import locally.',
   'snapshots.rename.title': 'Rename snapshot',
   'snapshots.delete.title': 'Delete snapshot "{name}"?',
@@ -517,6 +539,11 @@ const zh: Translations = {
   // -- Snapshot import warning --
   'snapshots.import.confirm.title': '导入快照？',
   'snapshots.import.confirm.message': '导入将删除此命名空间现有的卷。是否继续？',
+
+  // -- Error modal (unified ErrorDialog port) --
+  'errorModal.title': '发生异常',
+  'errorModal.details': '详细信息',
+  'errorModal.downloadDump': '下载系统转储',
 }
 
 export default zh

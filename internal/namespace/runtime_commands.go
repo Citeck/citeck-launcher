@@ -201,7 +201,11 @@ func (r *Runtime) ResetAppDef(appName string) error {
 // edited=false, the flag is cleared (used by ResetEditedFile).
 //
 // State is persisted inline (durable user intent) and r.dirty is cleared so
-// the loop tail does not redundantly re-persist.
+// the loop tail does not redundantly re-persist. On edited=true we enqueue a
+// cmdRegenerate so the next generation overlays the new disk content into
+// VolumesContentHash and the state machine recreates the container — without
+// this, the user's edit would only take effect on the next reload (Kotlin
+// parity: NamespaceRuntime.pushEditedFile updates the per-app hash inline).
 func (r *Runtime) SetFileEdited(appName, relPath string, edited bool) {
 	_ = appName // included for symmetry with ResetEditedFile; relPath already encodes the app prefix
 	r.mu.Lock()
@@ -213,6 +217,11 @@ func (r *Runtime) SetFileEdited(appName, relPath string, edited bool) {
 	}
 	r.persistState()
 	r.dirty.Store(false)
+	if edited {
+		if err := r.cmdQueue.Enqueue(cmdRegenerate{}); err != nil {
+			slog.Warn("Failed to enqueue regenerate after SetFileEdited", "path", relPath, "err", err)
+		}
+	}
 }
 
 // IsFileEdited reports whether relPath ("<app>/<rel-path>", no leading "./")

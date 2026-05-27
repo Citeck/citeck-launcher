@@ -168,6 +168,9 @@ export interface SecretCreateDto {
   id: string
   name: string
   type: string
+  // For BASIC_AUTH / REGISTRY_AUTH only; mirrors Kotlin AuthSecret.Basic so
+  // passwords containing ':' round-trip untouched.
+  username?: string
   value: string
   scope?: string
 }
@@ -195,4 +198,38 @@ export interface SnapshotDto {
   name: string
   createdAt: string
   size: number
+}
+
+// Multi-workspace (desktop-only). Endpoints return 404 in server mode.
+//
+// `repoPullPeriod` is an ISO 8601 duration string (e.g. "PT2H" = 2 hours).
+// `authType` is "NONE" (default) or "TOKEN" (TOKEN resolves a secret stored
+// under key "ws:{id}:repo"). Both fields are optional on create/update — the
+// daemon applies Kotlin-parity defaults when omitted.
+export interface WorkspaceDto {
+  id: string
+  name: string
+  repoUrl: string
+  repoBranch: string
+  repoPullPeriod?: string
+  authType?: string
+  active: boolean
+  namespaces: number
+}
+
+export interface WorkspaceCreateDto {
+  id?: string
+  name: string
+  repoUrl: string
+  repoBranch?: string
+  repoPullPeriod?: string
+  authType?: string
+}
+
+export interface WorkspaceUpdateDto {
+  name?: string
+  repoUrl?: string
+  repoBranch?: string
+  repoPullPeriod?: string
+  authType?: string
 }

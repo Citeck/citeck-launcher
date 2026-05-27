@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -100,14 +101,14 @@ func resetSkipState(t *testing.T) {
 
 func TestHostFromURL(t *testing.T) {
 	cases := map[string]string{
-		"https://github.com/org/repo.git":            "github.com",
-		"https://gitlab.example.com:8080/org/r.git":  "gitlab.example.com",
-		"http://localhost:3000/repo.git":             "localhost",
-		"git@github.com:org/repo.git":                "github.com",
-		"ssh://git@gitlab.example.com:2222/r.git":    "gitlab.example.com",
-		"HTTPS://Github.com/X.git":                   "github.com", // lowercased
-		"":                                           "",
-		"not a url":                                  "",
+		"https://github.com/org/repo.git":           "github.com",
+		"https://gitlab.example.com:8080/org/r.git": "gitlab.example.com",
+		"http://localhost:3000/repo.git":            "localhost",
+		"git@github.com:org/repo.git":               "github.com",
+		"ssh://git@gitlab.example.com:2222/r.git":   "gitlab.example.com",
+		"HTTPS://Github.com/X.git":                  "github.com", // lowercased
+		"":                                          "",
+		"not a url":                                 "",
 	}
 	for in, want := range cases {
 		got := HostFromURL(in)
@@ -178,6 +179,125 @@ func TestHostSkip_IntegrationWithCloneOrPull(t *testing.T) {
 		DestDir: dir,
 	})
 	assert.NoError(t, err, "host-skip should make pull a no-op")
+}
+
+// fakeSyncStore is an in-memory SyncStateStore used to verify the
+// write-through + fault-in behavior of recordSync / loadPersistedSyncLocked.
+type fakeSyncStore struct {
+	mu       sync.Mutex
+	entries  map[string]SyncStateEntry
+	getCalls int
+	setCalls int
+}
+
+func newFakeSyncStore() *fakeSyncStore {
+	return &fakeSyncStore{entries: make(map[string]SyncStateEntry)}
+}
+
+func (f *fakeSyncStore) GetGitRepoState(path string) (*SyncStateEntry, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.getCalls++
+	e, ok := f.entries[path]
+	if !ok {
+		return nil, nil
+	}
+	return &e, nil
+}
+
+func (f *fakeSyncStore) SetGitRepoState(e SyncStateEntry) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.setCalls++
+	f.entries[e.Path] = e
+	return nil
+}
+
+// resetGitState wipes the in-memory caches between tests so a previous test's
+// recordSync doesn't poison the next test's "fresh process" simulation.
+func resetGitState(t *testing.T) {
+	t.Helper()
+	lastSyncMu.Lock()
+	lastSyncTimes = make(map[string]time.Time)
+	lastSyncMu.Unlock()
+	SetSyncStateStore(nil, "")
+}
+
+func TestSyncStateStore_PersistsOnRecordSync(t *testing.T) {
+	resetGitState(t)
+	defer resetGitState(t)
+
+	home := t.TempDir()
+	destDir := filepath.Join(home, "ws", "team-a", "repo")
+	require.NoError(t, os.MkdirAll(filepath.Join(destDir, ".git"), 0o755))
+
+	store := newFakeSyncStore()
+	SetSyncStateStore(store, home)
+
+	opts := RepoOpts{URL: "https://example.com/r.git", Branch: "main", DestDir: destDir}
+	recordSync(opts)
+
+	require.Len(t, store.entries, 1)
+	got, ok := store.entries["ws/team-a/repo"]
+	require.True(t, ok, "entry must use forward-slash relative path")
+	assert.NotZero(t, got.LastSyncMs)
+	// No real git repo here, hash falls back to "" — confirms readHeadHash is best-effort.
+	assert.Equal(t, "", got.LastCommitHash)
+}
+
+func TestSyncStateStore_FaultsInOnFreshProcess(t *testing.T) {
+	resetGitState(t)
+	defer resetGitState(t)
+
+	home := t.TempDir()
+	destDir := filepath.Join(home, "ws", "team-b", "repo")
+	require.NoError(t, os.MkdirAll(filepath.Join(destDir, ".git"), 0o755))
+
+	store := newFakeSyncStore()
+	prevSync := time.Now().Add(-10 * time.Minute)
+	store.entries["ws/team-b/repo"] = SyncStateEntry{
+		Path:       "ws/team-b/repo",
+		LastSyncMs: prevSync.UnixMilli(),
+	}
+	SetSyncStateStore(store, home)
+
+	// PullPeriod = 1h; the persisted sync was 10m ago → cloneOrPullInner must
+	// short-circuit without hitting the network.
+	err := cloneOrPullInner(context.Background(), RepoOpts{
+		URL:        "https://invalid.example.com/r.git",
+		Branch:     "main",
+		DestDir:    destDir,
+		PullPeriod: time.Hour,
+	})
+	assert.NoError(t, err, "throttle must read persisted sync time")
+	assert.Equal(t, 1, store.getCalls, "fault-in must read the store exactly once")
+}
+
+func TestSyncStateStore_NoStoreFallsBackToInMemory(t *testing.T) {
+	resetGitState(t)
+	defer resetGitState(t)
+
+	dir := filepath.Join(t.TempDir(), "repo")
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".git"), 0o755))
+
+	// No store wired — recordSync should not panic.
+	recordSync(RepoOpts{URL: "https://example.com/r.git", Branch: "main", DestDir: dir})
+
+	lastSyncMu.Lock()
+	_, ok := lastSyncTimes[dir]
+	lastSyncMu.Unlock()
+	assert.True(t, ok, "in-memory cache still populated without a store")
+}
+
+func TestRelativeRepoPath_FallsBackWhenOutsideRoot(t *testing.T) {
+	resetGitState(t)
+	defer resetGitState(t)
+
+	SetSyncStateStore(newFakeSyncStore(), "/non/existent/root")
+	// Path with no common ancestor → filepath.Rel returns a ".." path; we keep
+	// it as-is because Kotlin parity only cares about repos under the home.
+	got := relativeRepoPath("/somewhere/else/repo")
+	assert.NotEmpty(t, got)
 }
 
 func TestCloneOrPull_BackwardsCompat(t *testing.T) {

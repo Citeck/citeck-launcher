@@ -140,7 +140,11 @@ func ImportDecryptedSecrets(decrypted map[string]json.RawMessage, store storage.
 			secret.Scope = id // e.g. "ws:py2iwgi:repo"
 		case "BASIC":
 			secret.Type = storage.SecretRegistryAuth
-			secret.Value = s.Username + ":" + s.Password
+			// Username + password as typed fields — passwords containing ':'
+			// (PATs, generated creds) must round-trip untouched (Kotlin
+			// AuthSecret.Basic parity).
+			secret.Username = s.Username
+			secret.Value = s.Password
 			secret.Scope = id // e.g. "images-repo:harbor.citeck.ru"
 		default:
 			continue

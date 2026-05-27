@@ -203,10 +203,23 @@ func (w *WorkspaceConfig) ImageReposByHost() map[string]ImageRepo {
 // Returns empty string if no credentials are available.
 type TokenLookupFunc func(authType string) string
 
+// WorkspaceRepoOpts carries the per-workspace git settings used when cloning
+// the workspace repo (the one that owns workspace-v1.yml). Mirrors Kotlin's
+// WorkspaceDto fields consumed by WorkspacesService.loadWorkspaceConfig —
+// callers that don't supply this (CLI tools in server mode) fall through to
+// the hardcoded defaultBundlesRepo / defaultBundlesBranch / defaultPullPeriod.
+type WorkspaceRepoOpts struct {
+	URL        string
+	Branch     string
+	PullPeriod time.Duration
+	Token      string
+}
+
 // Resolver resolves bundle references to full bundle definitions.
 type Resolver struct {
 	dataDir     string
 	tokenLookup TokenLookupFunc
+	wsRepoOpts  *WorkspaceRepoOpts
 	offline     bool         // skip all git operations, fail if local data missing
 	logger      *slog.Logger // nil → falls back to slog.Default()
 }
@@ -219,6 +232,15 @@ func NewResolver(dataDir string) *Resolver {
 // NewResolverWithAuth creates a resolver with token lookup for authenticated repos.
 func NewResolverWithAuth(dataDir string, tokenLookup TokenLookupFunc) *Resolver {
 	return &Resolver{dataDir: dataDir, tokenLookup: tokenLookup}
+}
+
+// WithWorkspaceRepo configures the active workspace's git repo settings.
+// When opts.URL is empty the resolver falls back to defaultBundlesRepo so
+// passing a partially populated struct (e.g. branch override only) still
+// works. Chainable.
+func (r *Resolver) WithWorkspaceRepo(opts WorkspaceRepoOpts) *Resolver {
+	r.wsRepoOpts = &opts
+	return r
 }
 
 // WithLogger sets the logger used for progress/warning messages. Chainable.
@@ -261,10 +283,11 @@ func (r *Resolver) resolveWorkspace() (cfg *WorkspaceConfig, repoDir string) {
 	// Priority 2: cloned workspace repo (git pull if online)
 	defaultRepoDir := filepath.Join(r.dataDir, "bundles", "workspace")
 	if !r.offline {
+		repoURL, repoBranch, pullPeriod, token := r.workspaceRepoSettings()
 		gitCtx, gitCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		err := git.CloneOrPullWithAuth(gitCtx, git.RepoOpts{
-			URL: defaultBundlesRepo, Branch: defaultBundlesBranch,
-			DestDir: defaultRepoDir, PullPeriod: defaultPullPeriod,
+			URL: repoURL, Branch: repoBranch, Token: token,
+			DestDir: defaultRepoDir, PullPeriod: pullPeriod,
 		})
 		gitCancel()
 		if err != nil {
@@ -275,6 +298,28 @@ func (r *Resolver) resolveWorkspace() (cfg *WorkspaceConfig, repoDir string) {
 		return wsCfg, defaultRepoDir
 	}
 	return &WorkspaceConfig{}, ""
+}
+
+// workspaceRepoSettings resolves the URL/branch/pullPeriod/token to use for
+// the workspace repo clone, layering WithWorkspaceRepo overrides on top of
+// the hardcoded defaults. Empty override fields keep the corresponding
+// default — this lets a workspace ship with only a custom branch and still
+// inherit the canonical Citeck workspace URL.
+func (r *Resolver) workspaceRepoSettings() (url, branch string, pullPeriod time.Duration, token string) {
+	url, branch, pullPeriod = defaultBundlesRepo, defaultBundlesBranch, defaultPullPeriod
+	if r.wsRepoOpts == nil {
+		return url, branch, pullPeriod, ""
+	}
+	if r.wsRepoOpts.URL != "" {
+		url = r.wsRepoOpts.URL
+	}
+	if r.wsRepoOpts.Branch != "" {
+		branch = r.wsRepoOpts.Branch
+	}
+	if r.wsRepoOpts.PullPeriod > 0 {
+		pullPeriod = r.wsRepoOpts.PullPeriod
+	}
+	return url, branch, pullPeriod, r.wsRepoOpts.Token
 }
 
 // ResolveWorkspaceOnly loads workspace config without resolving a bundle.

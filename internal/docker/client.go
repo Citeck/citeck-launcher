@@ -239,12 +239,20 @@ func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef,
 				v = hostPath + ":" + parts[1]
 			} else if !strings.ContainsAny(source, "/.") && volumesBaseDir != "" && !config.IsDesktopMode() {
 				// Server mode: convert named volume to bind mount in runtime dir.
-				// Desktop mode keeps Docker named volumes (compatible with Kotlin launcher).
 				hostDir := filepath.Join(volumesBaseDir, "volumes", source)
 				if err := os.MkdirAll(hostDir, 0o755); err != nil { //nolint:gosec // Docker bind-mount dirs need container-accessible perms
 					return "", fmt.Errorf("create bind-mount directory %s: %w", hostDir, err)
 				}
 				v = hostDir + ":" + parts[1]
+			} else if !strings.ContainsAny(source, "/.") && config.IsDesktopMode() {
+				// Desktop mode: scope the named volume per (ns, ws) so two
+				// namespaces with the same plain volume name don't collide on
+				// one Docker volume. Matches Kotlin DockerApi.createVolume.
+				scopedName, err := c.CreateVolume(ctx, source)
+				if err != nil {
+					return "", err
+				}
+				v = scopedName + ":" + parts[1]
 			}
 		}
 		binds = append(binds, v)

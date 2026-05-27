@@ -33,9 +33,9 @@ func toLicenseDTO(lic license.Instance) licenseDTO {
 		Tenant:     lic.Tenant,
 		Priority:   lic.Priority,
 		IssuedTo:   lic.IssuedTo,
-		IssuedAt:   formatLicenseDate(lic.IssuedAt),
-		ValidFrom:  formatLicenseDate(lic.ValidFrom),
-		ValidUntil: formatLicenseDate(lic.ValidUntil),
+		IssuedAt:   formatLicenseDate(lic.IssuedAt.Time),
+		ValidFrom:  formatLicenseDate(lic.ValidFrom.Time),
+		ValidUntil: formatLicenseDate(lic.ValidUntil.Time),
 		Content:    lic.Content,
 		Valid:      lic.IsValid(),
 	}

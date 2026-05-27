@@ -62,11 +62,30 @@ const en: Translations = {
   'welcome.delete.message': 'Delete namespace "{name}"? This will remove the configuration file.',
   'welcome.context.open': 'Open',
   'welcome.context.delete': 'Delete',
+  'welcome.namespace.edit': 'Edit',
   'welcome.workspace.label': 'Workspace',
   'welcome.workspace.forceUpdate': 'Force Update',
+  'welcome.workspace.forceUpdate.inactive': 'Force Update is available for the active workspace only',
   'welcome.workspace.updating': 'Updating workspace...',
   'welcome.workspace.updateSuccess': 'Workspace updated',
   'welcome.workspace.updateFailed': 'Workspace update failed: {error}',
+  'welcome.workspace.create': 'Create workspace...',
+  'welcome.workspace.edit': 'Edit',
+  'welcome.workspace.delete': 'Delete',
+  'welcome.workspace.deleteConfirm': 'Delete workspace "{name}"? This removes its config + cached repo from disk.',
+  'welcome.workspace.switched': 'Switched to workspace "{name}"',
+  'welcome.workspace.switchFailed': 'Workspace switch failed: {error}',
+  'welcome.workspace.form.id': 'ID (optional)',
+  'welcome.workspace.form.idPlaceholder': 'auto-derived from name',
+  'welcome.workspace.form.name': 'Name',
+  'welcome.workspace.form.repoUrl': 'Repository URL',
+  'welcome.workspace.form.repoBranch': 'Branch',
+  'welcome.workspace.form.repoPullPeriod': 'Pull period (ISO 8601, e.g. PT2H)',
+  'welcome.workspace.form.authType': 'Auth type',
+  'welcome.workspace.form.authType.none': 'None (public repo)',
+  'welcome.workspace.form.authType.token': 'Token (private repo)',
+  'welcome.workspace.form.authTypeTokenHint': 'Store the git token as a secret under key "{key}".',
+  'welcome.workspace.form.required': 'Name and Repository URL are required',
 
   // -- Dashboard sidebar / namespace dir --
   'dashboard.openNsDir': 'Open NS Dir',
@@ -158,6 +177,8 @@ const en: Translations = {
   'secrets.form.name': 'Name',
   'secrets.form.name.placeholder': 'My Secret',
   'secrets.form.type': 'Type',
+  'secrets.form.username': 'Username',
+  'secrets.form.username.placeholder': 'registry-user',
   'secrets.form.value': 'Value',
   'secrets.form.value.placeholder': 'secret value',
   'secrets.form.create': 'Create',
@@ -477,6 +498,7 @@ const en: Translations = {
   'snapshots.create': 'Create Snapshot',
   'snapshots.create.title': 'Create snapshot',
   'snapshots.importFile': 'Import .zip…',
+  'snapshots.openNsDir': 'Open NS Directory',
   'snapshots.import.local.hint': 'Use the .zip stored in the namespace dir to import locally.',
   'snapshots.rename.title': 'Rename snapshot',
   'snapshots.delete.title': 'Delete snapshot "{name}"?',
@@ -521,6 +543,11 @@ const en: Translations = {
   // -- Snapshot import warning --
   'snapshots.import.confirm.title': 'Import snapshot?',
   'snapshots.import.confirm.message': 'Importing will delete existing volumes for this namespace. Continue?',
+
+  // -- Error modal (unified ErrorDialog port) --
+  'errorModal.title': 'Exception occurred',
+  'errorModal.details': 'Details',
+  'errorModal.downloadDump': 'Download System Dump',
 }
 
 export default en

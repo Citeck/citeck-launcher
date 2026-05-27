@@ -30,13 +30,59 @@ func NewCloudConfigServer() *CloudConfigServer {
 
 // UpdateConfig replaces the cloud config data (called after regeneration).
 func (s *CloudConfigServer) UpdateConfig(config map[string]map[string]any, jwtSecret string) {
+	flat := make(map[string]map[string]any, len(config))
+	for app, cfg := range config {
+		out := make(map[string]any, len(cfg))
+		flattenCloudConfig(out, cfg, "")
+		flat[app] = out
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.cloudConfig = config
+	s.cloudConfig = flat
 	if jwtSecret != "" {
 		s.jwtSecret = jwtSecret
 	}
 	s.version++
+}
+
+// flattenCloudConfig mirrors Kotlin CloudConfigImpl.buildFlattenedMap so that
+// nested workspace cloudConfig maps bind correctly to Spring's dot-notation
+// property keys (e.g. spring.datasource.url).
+func flattenCloudConfig(result, source map[string]any, path string) {
+	for srcKey, value := range source {
+		key := srcKey
+		if path != "" && strings.TrimSpace(path) != "" {
+			if strings.HasPrefix(key, "[") {
+				key = path + key
+			} else {
+				key = path + "." + key
+			}
+		}
+		switch v := value.(type) {
+		case string:
+			result[key] = v
+		case map[string]any:
+			flattenCloudConfig(result, v, key)
+		case map[any]any:
+			converted := make(map[string]any, len(v))
+			for k, val := range v {
+				if ks, ok := k.(string); ok {
+					converted[ks] = val
+				}
+			}
+			flattenCloudConfig(result, converted, key)
+		case []any:
+			if len(v) == 0 {
+				result[key] = ""
+			} else {
+				for idx, item := range v {
+					flattenCloudConfig(result, map[string]any{fmt.Sprintf("[%d]", idx): item}, key)
+				}
+			}
+		default:
+			result[key] = v
+		}
+	}
 }
 
 // Start begins serving on port 8761.

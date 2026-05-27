@@ -46,11 +46,97 @@ type RepoOpts struct {
 }
 
 // lastSyncTimes tracks when each repo was last synced.
+//
+// Two-level cache: this in-memory map is the hot path; a persistent backing
+// store can be plugged in via SetSyncStateStore so throttling survives restart
+// (Kotlin parity with `git-repo!instances`). On every recordSync we write
+// through to the backing store; on first access for an unknown DestDir we
+// fault in from the backing store under the same mutex.
 var (
 	lastSyncMu    sync.Mutex
 	lastSyncTimes = make(map[string]time.Time)
 	cloneFlight   singleflight.Group // 8b-12: dedup concurrent ops on same dir
 )
+
+// SyncStateEntry mirrors storage.GitRepoState without dragging the storage
+// package into this one — keeps the dependency direction acyclic.
+type SyncStateEntry struct {
+	Path           string
+	LastSyncMs     int64
+	LastCommitHash string
+}
+
+// SyncStateStore is the persistence hook used to make repo throttling
+// restart-survivable. Implementations are expected to be safe for concurrent
+// use; this package serializes all reads/writes under lastSyncMu anyway, but
+// that's an implementation detail, not a guarantee.
+type SyncStateStore interface {
+	GetGitRepoState(path string) (*SyncStateEntry, error)
+	SetGitRepoState(entry SyncStateEntry) error
+}
+
+var (
+	syncStoreMu     sync.RWMutex
+	syncStore       SyncStateStore
+	syncStoreRoot   string
+	syncStoreLoaded = make(map[string]struct{})
+)
+
+// SetSyncStateStore wires a persistent backing store and the launcher home
+// directory (used to derive Kotlin-compatible relative paths). Pass (nil, "")
+// to detach, e.g. on shutdown. The map of known sync times is NOT cleared so
+// in-flight pulls keep their cached values for the rest of this process's
+// lifetime; only the write-through is suspended.
+func SetSyncStateStore(store SyncStateStore, homeDir string) {
+	syncStoreMu.Lock()
+	defer syncStoreMu.Unlock()
+	syncStore = store
+	syncStoreRoot = homeDir
+	syncStoreLoaded = make(map[string]struct{})
+}
+
+// relativeRepoPath returns a forward-slash relative path from the launcher
+// home to destDir — the same key Kotlin's GitRepoService uses in
+// `git-repo!instances`. Returns destDir verbatim when the home dir is unset
+// or destDir doesn't sit under it (defensive: keeps callers working with
+// absolute paths even outside the standard tree).
+func relativeRepoPath(destDir string) string {
+	syncStoreMu.RLock()
+	root := syncStoreRoot
+	syncStoreMu.RUnlock()
+	if root == "" {
+		return destDir
+	}
+	rel, err := filepath.Rel(root, destDir)
+	if err != nil {
+		return destDir
+	}
+	return filepath.ToSlash(rel)
+}
+
+// loadPersistedSyncLocked faults in the persisted lastSync timestamp the first
+// time a repo path is queried, so a fresh process honors the throttle window
+// set by its predecessor. Must be called with lastSyncMu held.
+func loadPersistedSyncLocked(destDir string) {
+	syncStoreMu.RLock()
+	store := syncStore
+	syncStoreMu.RUnlock()
+	if store == nil {
+		return
+	}
+	if _, ok := syncStoreLoaded[destDir]; ok {
+		return
+	}
+	syncStoreLoaded[destDir] = struct{}{}
+	entry, err := store.GetGitRepoState(relativeRepoPath(destDir))
+	if err != nil || entry == nil {
+		return
+	}
+	if _, already := lastSyncTimes[destDir]; already {
+		return
+	}
+	lastSyncTimes[destDir] = time.UnixMilli(entry.LastSyncMs)
+}
 
 // Host-level pull suppression: when the user clicks Skip in GitPullErrorDialog,
 // the decision is remembered for an hour so subsequent pulls against the same
@@ -183,9 +269,10 @@ func cloneOrPullInner(ctx context.Context, opts RepoOpts) error {
 
 	if opts.PullPeriod > 0 {
 		lastSyncMu.Lock()
+		loadPersistedSyncLocked(opts.DestDir)
 		lastSync := lastSyncTimes[opts.DestDir]
 		lastSyncMu.Unlock()
-		if time.Since(lastSync) < opts.PullPeriod {
+		if !lastSync.IsZero() && time.Since(lastSync) < opts.PullPeriod {
 			slog.Debug("Skipping pull (within pull period)", "dir", opts.DestDir)
 			return nil
 		}
@@ -226,10 +313,44 @@ func saveRepoMeta(opts RepoOpts) {
 }
 
 func recordSync(opts RepoOpts) {
+	now := time.Now()
 	lastSyncMu.Lock()
-	lastSyncTimes[opts.DestDir] = time.Now()
+	lastSyncTimes[opts.DestDir] = now
+	syncStoreLoaded[opts.DestDir] = struct{}{}
 	lastSyncMu.Unlock()
 	saveRepoMeta(opts)
+
+	syncStoreMu.RLock()
+	store := syncStore
+	syncStoreMu.RUnlock()
+	if store == nil {
+		return
+	}
+	commitHash, _ := readHeadHash(opts.DestDir)
+	entry := SyncStateEntry{
+		Path:           relativeRepoPath(opts.DestDir),
+		LastSyncMs:     now.UnixMilli(),
+		LastCommitHash: commitHash,
+	}
+	if err := store.SetGitRepoState(entry); err != nil {
+		slog.Warn("Failed to persist git repo sync state", "path", entry.Path, "err", err)
+	}
+}
+
+// readHeadHash returns the HEAD commit hash of a working repo. Best-effort:
+// failures (broken HEAD, missing .git) collapse to "" so a sync record still
+// gets written with the timestamp — the hash is a Kotlin-parity convenience,
+// not load-bearing for the throttle.
+func readHeadHash(destDir string) (string, error) {
+	repo, err := gogit.PlainOpen(destDir)
+	if err != nil {
+		return "", fmt.Errorf("open repo: %w", err)
+	}
+	head, err := repo.Head()
+	if err != nil {
+		return "", fmt.Errorf("head: %w", err)
+	}
+	return head.Hash().String(), nil
 }
 
 func tokenAuth(token string) *http.BasicAuth {

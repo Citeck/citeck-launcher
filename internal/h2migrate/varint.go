@@ -61,6 +61,13 @@ func readVarString(data []byte, pos int) (s string, n int, _ error) {
 	return string(buf), total, nil
 }
 
+// readVarLong reads an H2 MVStore variable-length long. Identical encoding
+// to readVarInt — kept as a named alias to make call sites that decode a
+// VersionedValueType operationId read at a glance.
+func readVarLong(data []byte, pos int) (result int64, consumed int, _ error) {
+	return readVarInt(data, pos)
+}
+
 // modifiedUTF8CharLen returns the byte length of a modified UTF-8 character.
 func modifiedUTF8CharLen(b byte) int {
 	switch {

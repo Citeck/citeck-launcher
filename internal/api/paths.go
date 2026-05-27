@@ -59,6 +59,9 @@ const (
 	WorkspaceSnapshots = APIV1 + "/workspace/snapshots"
 	WorkspaceUpdate    = APIV1 + "/workspace/update"
 
+	// Multi-workspace (desktop-only). All return 404 in server mode.
+	Workspaces = APIV1 + "/workspaces"
+
 	SystemOpenDir = APIV1 + "/system/open-dir"
 
 	// GitSkipPull records a user "Skip" decision from GitPullErrorDialog so

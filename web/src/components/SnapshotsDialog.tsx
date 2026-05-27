@@ -1,12 +1,13 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { Download, Pencil, Trash2, Loader2 } from 'lucide-react'
-import { getSnapshots, postExportSnapshot, postImportSnapshot, postImportSnapshotByName, getWorkspaceSnapshots, getVolumes, postSnapshotDownload, renameSnapshot, deleteSnapshot } from '../lib/api'
+import { getSnapshots, postExportSnapshot, postImportSnapshot, postImportSnapshotByName, getWorkspaceSnapshots, getVolumes, postSnapshotDownload, renameSnapshot, deleteSnapshot, postOpenDir } from '../lib/api'
 import type { SnapshotDto } from '../lib/types'
 import { JournalDialog, type JournalAction, type JournalColumn, type JournalCustomButton } from './JournalDialog'
 import { ConfirmModal } from './ConfirmModal'
 import { FormDialog, type FormFieldSpec } from './FormDialog'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
+import { showError } from '../lib/errorModal'
 
 interface SnapshotRow extends Record<string, unknown> {
   name: string
@@ -113,7 +114,8 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
     try {
       await fn()
     } catch (e) {
-      toast((e as Error).message, 'error')
+      const err = e as Error
+      showError({ title: t('snapshots.dialog.title'), message: err.message, details: err.stack })
     } finally {
       setBusy(null)
     }
@@ -134,7 +136,8 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
         setPendingImport(target)
       }
     } catch (e) {
-      toast((e as Error).message, 'error')
+      const err = e as Error
+      showError({ title: t('snapshots.dialog.title'), message: err.message, details: err.stack })
     }
   }
 
@@ -199,6 +202,15 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
       loading: true,
       enabledIf: () => namespaceStopped,
       onClick: () => fileInputRef.current?.click(),
+    },
+    {
+      label: t('snapshots.openNsDir'),
+      onClick: () => runWith('openDir', async () => {
+        const res = await postOpenDir('volumes')
+        if (!res.opened && res.path) {
+          toast(res.path, 'success')
+        }
+      }),
     },
   ]
 

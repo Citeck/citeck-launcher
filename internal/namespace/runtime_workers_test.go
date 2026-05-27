@@ -44,6 +44,7 @@ type workerMockDocker struct {
 	waitForExitCalls   int
 	logsFollowCalls    int
 	execCalls          int
+	execCmds           [][]string
 
 	// Programmable fields.
 	imageExists        bool
@@ -218,9 +219,10 @@ func stdcopyFrame(payload string) string {
 	return string(hdr) + payload
 }
 
-func (m *workerMockDocker) ExecInContainer(_ context.Context, _ string, _ []string) (output string, exitCode int, err error) {
+func (m *workerMockDocker) ExecInContainer(_ context.Context, _ string, cmd []string) (output string, exitCode int, err error) {
 	m.mu.Lock()
 	m.execCalls++
+	m.execCmds = append(m.execCmds, append([]string(nil), cmd...))
 	m.mu.Unlock()
 	return "", 0, nil
 }
@@ -744,4 +746,25 @@ func TestDispatcherCancelAppStopsPulls(t *testing.T) {
 	defer md.mu.Unlock()
 	assert.Equal(t, 2, md.pullCalls,
 		"each app should have exactly one pull invocation (no retries on cancel)")
+}
+
+func TestPostStartActionsExecPrefixForShellForm(t *testing.T) {
+	md := newWorkerMockDocker()
+	r := newWorkerTestRuntime(t, md)
+
+	actions := []appdef.AppInitAction{
+		{Exec: []string{"sh", "-c", "/init_db_and_user.sh alfresco"}},
+		{Exec: []string{"/bin/sh", "-c", "nginx -s reload"}},
+		{Exec: []string{"rabbitmqctl", "add_user", "citeck", "secret"}},
+	}
+	plan := r.makePostStartActionsPlan("app1", "container-xyz", actions)
+	res := plan.fn(context.Background())
+	require.NoError(t, res.Err)
+
+	md.mu.Lock()
+	defer md.mu.Unlock()
+	require.Len(t, md.execCmds, 3)
+	assert.Equal(t, []string{"sh", "-c", "exec /init_db_and_user.sh alfresco"}, md.execCmds[0])
+	assert.Equal(t, []string{"/bin/sh", "-c", "exec nginx -s reload"}, md.execCmds[1])
+	assert.Equal(t, []string{"rabbitmqctl", "add_user", "citeck", "secret"}, md.execCmds[2])
 }

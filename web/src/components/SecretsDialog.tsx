@@ -84,11 +84,15 @@ export function SecretsDialog({ open, onClose }: SecretsDialogProps) {
     setCreating(true)
     setCreateError(null)
     try {
+      const type = String(values.type || 'GIT_TOKEN')
       const payload: SecretCreateDto = {
         id: String(values.id || '').trim(),
         name: String(values.name || '').trim(),
-        type: String(values.type || 'GIT_TOKEN'),
+        type,
         value: String(values.value || ''),
+      }
+      if (type === 'BASIC_AUTH' || type === 'REGISTRY_AUTH') {
+        payload.username = String(values.username || '').trim()
       }
       await createSecret(payload)
       toast(t('secrets.create.success'), 'success')
@@ -113,6 +117,9 @@ export function SecretsDialog({ open, onClose }: SecretsDialogProps) {
     }
   }
 
+  const isBasicLike = (ctx: Record<string, unknown>) =>
+    ctx.type === 'BASIC_AUTH' || ctx.type === 'REGISTRY_AUTH'
+
   const createFields: FormFieldSpec[] = [
     { key: 'id', label: t('secrets.form.id'), type: 'text', required: true, placeholder: t('secrets.form.id.placeholder') },
     { key: 'name', label: t('secrets.form.name'), type: 'text', required: true, placeholder: t('secrets.form.name.placeholder') },
@@ -122,6 +129,21 @@ export function SecretsDialog({ open, onClose }: SecretsDialogProps) {
       type: 'select',
       defaultValue: 'GIT_TOKEN',
       options: SECRET_TYPES,
+    },
+    {
+      key: 'username',
+      label: t('secrets.form.username'),
+      type: 'text',
+      placeholder: t('secrets.form.username.placeholder'),
+      visibleWhen: isBasicLike,
+      dependsOn: ['type'],
+      validations: [
+        (ctx, value) => {
+          if (!isBasicLike(ctx)) return ''
+          const s = (value as string | undefined)?.trim() ?? ''
+          return s ? '' : t('form.fieldRequired', { label: t('secrets.form.username') })
+        },
+      ],
     },
     {
       key: 'value',

@@ -770,7 +770,8 @@ func saveRegistrySecret(svc *storage.SecretService, repo bundle.ImageRepo, usern
 			Type:  storage.SecretRegistryAuth,
 			Scope: host,
 		},
-		Value: username + ":" + password,
+		Username: username,
+		Value:    password,
 	}); err != nil {
 		return fmt.Errorf("save secret: %w", err)
 	}

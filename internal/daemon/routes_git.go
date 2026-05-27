@@ -7,7 +7,40 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/git"
+	"github.com/citeck/citeck-launcher/internal/storage"
 )
+
+// gitSyncStoreAdapter forwards git.SyncStateStore reads/writes to the
+// configured storage backend. Defined here (rather than in internal/git) so
+// the git package stays free of a storage import — keeping the dependency
+// direction one-way (daemon depends on both; the two leaves don't see each
+// other).
+type gitSyncStoreAdapter struct {
+	store storage.Store
+}
+
+func (a gitSyncStoreAdapter) GetGitRepoState(path string) (*git.SyncStateEntry, error) {
+	s, err := a.store.GetGitRepoState(path)
+	if err != nil {
+		return nil, err
+	}
+	if s == nil {
+		return nil, nil
+	}
+	return &git.SyncStateEntry{
+		Path:           s.Path,
+		LastSyncMs:     s.LastSyncMs,
+		LastCommitHash: s.LastCommitHash,
+	}, nil
+}
+
+func (a gitSyncStoreAdapter) SetGitRepoState(entry git.SyncStateEntry) error {
+	return a.store.SetGitRepoState(storage.GitRepoState{
+		Path:           entry.Path,
+		LastSyncMs:     entry.LastSyncMs,
+		LastCommitHash: entry.LastCommitHash,
+	})
+}
 
 // SkipPullRequest is the request body for POST /api/v1/git/skip-pull.
 // Mirrors the GitPullErrorDialog Skip action — the frontend posts the host

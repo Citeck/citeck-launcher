@@ -36,6 +36,29 @@ func TestDecompressLZFBackref(t *testing.T) {
 	}
 }
 
+// TestDecompressLZFExtendedBackref covers a back-reference whose 3-bit length
+// nibble is saturated at 7 — the length-extension byte is written BEFORE the
+// offset's low byte in H2's wire format (see org.h2.compress.CompressLZF
+// `expand`). Reading them in the wrong order corrupts every long match.
+func TestDecompressLZFExtendedBackref(t *testing.T) {
+	// Build "abcdefghij abcdefghij" (21 bytes) by literal then a long back-ref.
+	// Literal: ctrl=10 (length 11) + 11 bytes "abcdefghij "
+	// Back-ref: ctrl = (7<<5) | 0 = 0xe0, len-ext = 1 → effective len = 7+1+2 = 10,
+	// offset = 11 → encoded as (offsetLow=10) since offset = (0<<8) + 10 + 1.
+	compressed := []byte{
+		10, 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', ' ',
+		0xe0, 0x01, 0x0a,
+	}
+	got, err := decompressLZF(compressed, 21)
+	if err != nil {
+		t.Fatalf("decompressLZF() error: %v", err)
+	}
+	want := []byte("abcdefghij abcdefghij")
+	if !bytes.Equal(got, want) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 func TestDecompressLZFEmpty(t *testing.T) {
 	got, err := decompressLZF([]byte{}, 0)
 	if err != nil {

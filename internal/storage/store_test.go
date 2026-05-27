@@ -103,6 +103,34 @@ func testStoreSecrets(t *testing.T, store Store) {
 	if len(list) != 0 {
 		t.Errorf("After delete, ListSecrets() = %d items, want 0", len(list))
 	}
+
+	// BASIC_AUTH with typed Username + password containing ':' — round-trip
+	// (Kotlin AuthSecret.Basic parity). Splitting on ':' would truncate the
+	// password; the storage layer must preserve both fields verbatim.
+	basic := Secret{
+		SecretMeta: SecretMeta{
+			ID:    "basic-1",
+			Name:  "Registry creds",
+			Type:  SecretRegistryAuth,
+			Scope: "registry.example.com",
+		},
+		Username: "alice",
+		Value:    "pa:ss:wo:rd",
+	}
+	if err := store.SaveSecret(basic); err != nil {
+		t.Fatalf("SaveSecret(basic) error: %v", err)
+	}
+	got2, err := store.GetSecret("basic-1")
+	if err != nil {
+		t.Fatalf("GetSecret(basic) error: %v", err)
+	}
+	if got2.Username != "alice" {
+		t.Errorf("Username = %q, want 'alice'", got2.Username)
+	}
+	if got2.Value != "pa:ss:wo:rd" {
+		t.Errorf("Value = %q, want 'pa:ss:wo:rd'", got2.Value)
+	}
+	_ = store.DeleteSecret("basic-1")
 }
 
 // testStoreState runs state persistence tests against any Store implementation.
@@ -114,12 +142,15 @@ func testStoreState(t *testing.T, store Store) {
 	if err != nil {
 		t.Fatalf("GetState() error: %v", err)
 	}
-	if state.WorkspaceID != "" || state.NamespaceID != "" {
+	if state.WorkspaceID != "" || state.NamespaceID() != "" {
 		t.Errorf("Initial state should be empty, got %+v", state)
 	}
 
 	// Set state
-	if setErr := store.SetState(LauncherState{WorkspaceID: "ws1", NamespaceID: "ns1"}); setErr != nil {
+	if setErr := store.SetState(LauncherState{
+		WorkspaceID: "ws1",
+		SelectedNs:  map[string]string{"ws1": "ns1"},
+	}); setErr != nil {
 		t.Fatalf("SetState() error: %v", setErr)
 	}
 
@@ -131,17 +162,24 @@ func testStoreState(t *testing.T, store Store) {
 	if state.WorkspaceID != "ws1" {
 		t.Errorf("WorkspaceID = %q, want 'ws1'", state.WorkspaceID)
 	}
-	if state.NamespaceID != "ns1" {
-		t.Errorf("NamespaceID = %q, want 'ns1'", state.NamespaceID)
+	if state.NamespaceID() != "ns1" {
+		t.Errorf("NamespaceID() = %q, want 'ns1'", state.NamespaceID())
 	}
 
-	// Update state
-	if err := store.SetState(LauncherState{WorkspaceID: "ws2", NamespaceID: "ns2"}); err != nil {
+	// Update state — switch to ws2 keeping the ws1 entry to verify per-workspace
+	// preservation (the key invariant introduced by 11c).
+	if err := store.SetState(LauncherState{
+		WorkspaceID: "ws2",
+		SelectedNs:  map[string]string{"ws1": "ns1", "ws2": "ns2"},
+	}); err != nil {
 		t.Fatalf("SetState(update) error: %v", err)
 	}
 	state, _ = store.GetState()
-	if state.WorkspaceID != "ws2" || state.NamespaceID != "ns2" {
+	if state.WorkspaceID != "ws2" || state.NamespaceID() != "ns2" {
 		t.Errorf("After update, state = %+v, want ws2/ns2", state)
+	}
+	if state.SelectedNs["ws1"] != "ns1" {
+		t.Errorf("ws1 selection lost on switch, got %q", state.SelectedNs["ws1"])
 	}
 }
 

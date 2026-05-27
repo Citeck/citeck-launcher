@@ -62,11 +62,30 @@ const ru: Translations = {
   'welcome.delete.message': 'Удалить namespace "{name}"? Файл конфигурации будет удалён.',
   'welcome.context.open': 'Открыть',
   'welcome.context.delete': 'Удалить',
+  'welcome.namespace.edit': 'Редактировать',
   'welcome.workspace.label': 'Рабочее пространство',
   'welcome.workspace.forceUpdate': 'Принудительное обновление',
+  'welcome.workspace.forceUpdate.inactive': 'Force Update доступен только для активного рабочего пространства',
   'welcome.workspace.updating': 'Обновление рабочего пространства...',
   'welcome.workspace.updateSuccess': 'Рабочее пространство обновлено',
   'welcome.workspace.updateFailed': 'Не удалось обновить рабочее пространство: {error}',
+  'welcome.workspace.create': 'Создать рабочее пространство...',
+  'welcome.workspace.edit': 'Изменить',
+  'welcome.workspace.delete': 'Удалить',
+  'welcome.workspace.deleteConfirm': 'Удалить рабочее пространство "{name}"? Конфигурация и кэш репозитория будут удалены с диска.',
+  'welcome.workspace.switched': 'Переключено на рабочее пространство "{name}"',
+  'welcome.workspace.switchFailed': 'Не удалось переключить рабочее пространство: {error}',
+  'welcome.workspace.form.id': 'ID (необязательно)',
+  'welcome.workspace.form.idPlaceholder': 'будет создан из имени',
+  'welcome.workspace.form.name': 'Имя',
+  'welcome.workspace.form.repoUrl': 'URL репозитория',
+  'welcome.workspace.form.repoBranch': 'Ветка',
+  'welcome.workspace.form.repoPullPeriod': 'Период обновления (ISO 8601, напр. PT2H)',
+  'welcome.workspace.form.authType': 'Аутентификация',
+  'welcome.workspace.form.authType.none': 'Нет (публичный репозиторий)',
+  'welcome.workspace.form.authType.token': 'Токен (приватный репозиторий)',
+  'welcome.workspace.form.authTypeTokenHint': 'Сохрани git-токен как секрет с ключом "{key}".',
+  'welcome.workspace.form.required': 'Имя и URL репозитория обязательны',
 
   // -- Боковая панель дашборда / каталог namespace --
   'dashboard.openNsDir': 'Открыть каталог NS',
@@ -158,6 +177,8 @@ const ru: Translations = {
   'secrets.form.name': 'Имя',
   'secrets.form.name.placeholder': 'Мой секрет',
   'secrets.form.type': 'Тип',
+  'secrets.form.username': 'Имя пользователя',
+  'secrets.form.username.placeholder': 'registry-user',
   'secrets.form.value': 'Значение',
   'secrets.form.value.placeholder': 'секретное значение',
   'secrets.form.create': 'Создать',
@@ -475,6 +496,7 @@ const ru: Translations = {
   'snapshots.create': 'Создать снапшот',
   'snapshots.create.title': 'Создать снапшот',
   'snapshots.importFile': 'Импорт .zip…',
+  'snapshots.openNsDir': 'Открыть каталог NS',
   'snapshots.import.local.hint': 'Для локального импорта используйте .zip из директории namespace.',
   'snapshots.rename.title': 'Переименовать снапшот',
   'snapshots.delete.title': 'Удалить снапшот «{name}»?',
@@ -514,6 +536,11 @@ const ru: Translations = {
   // -- Snapshot import warning --
   'snapshots.import.confirm.title': 'Импортировать снимок?',
   'snapshots.import.confirm.message': 'Импорт удалит существующие тома этого namespace. Продолжить?',
+
+  // -- Error modal (unified ErrorDialog port) --
+  'errorModal.title': 'Произошла ошибка',
+  'errorModal.details': 'Подробности',
+  'errorModal.downloadDump': 'Скачать дамп системы',
 }
 
 export default ru

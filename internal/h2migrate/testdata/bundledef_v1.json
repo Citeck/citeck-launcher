@@ -1,0 +1,27 @@
+{
+  "key": "release/2025.1.0",
+  "applications": {
+    "eapps": {
+      "image": "citeck/ecos-apps:2025.1.0"
+    },
+    "emodel": {
+      "image": "citeck/ecos-model:2025.1.0"
+    }
+  },
+  "citeckApps": [
+    {
+      "image": "citeck/ecos-apps:2025.1.0"
+    },
+    {
+      "image": "citeck/ecos-model:2025.1.0"
+    }
+  ],
+  "content": {
+    "name": "release/2025.1.0",
+    "applications": {
+      "eapps": {
+        "image": "citeck/ecos-apps:2025.1.0"
+      }
+    }
+  }
+}

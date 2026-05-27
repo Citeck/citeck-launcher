@@ -182,6 +182,11 @@ func (m *mockStore) GetState() (*storage.LauncherState, error)          { return
 func (m *mockStore) SetState(storage.LauncherState) error               { return nil }
 func (m *mockStore) GetStateValue(string) (string, error)               { return "", nil }
 func (m *mockStore) SetStateValue(string, string) error                 { return nil }
+func (m *mockStore) GetGitRepoState(string) (*storage.GitRepoState, error) {
+	return nil, nil
+}
+func (m *mockStore) SetGitRepoState(storage.GitRepoState) error         { return nil }
+func (m *mockStore) ListGitRepoStates() ([]storage.GitRepoState, error) { return nil, nil }
 func (m *mockStore) Close() error                                       { return nil }
 
 func TestImportDecryptedSecrets_TokenAndBasic(t *testing.T) {
@@ -210,10 +215,34 @@ func TestImportDecryptedSecrets_TokenAndBasic(t *testing.T) {
 	assert.Equal(t, "glpat-xyz", tokenSecret.Value)
 	assert.Equal(t, "ws:test:repo", tokenSecret.Scope)
 
-	// Verify BASIC secret
+	// Verify BASIC secret — typed Username + Password, NOT packed "user:pass"
+	// (Kotlin AuthSecret.Basic parity; passwords with ':' must round-trip).
 	basicSecret := store.secrets["images-repo:harbor.citeck.ru"]
 	assert.Equal(t, storage.SecretRegistryAuth, basicSecret.Type)
-	assert.Equal(t, "admin:pass123", basicSecret.Value)
+	assert.Equal(t, "admin", basicSecret.Username)
+	assert.Equal(t, "pass123", basicSecret.Value)
+}
+
+// TestImportDecryptedSecrets_BasicPasswordWithColon: passwords containing ':'
+// (PATs, generated creds) must round-trip without truncation.
+func TestImportDecryptedSecrets_BasicPasswordWithColon(t *testing.T) {
+	secretsMap := map[string]AuthSecret{
+		"images-repo:harbor.citeck.ru": {
+			ID: "images-repo:harbor.citeck.ru", Type: "BASIC",
+			Username: "alice", Password: "pa:ss:wo:rd",
+		},
+	}
+	raw, err := json.Marshal(secretsMap)
+	require.NoError(t, err)
+
+	store := newMockStore()
+	count, err := ImportDecryptedSecrets(map[string]json.RawMessage{"auth-secrets": raw}, store)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+
+	sec := store.secrets["images-repo:harbor.citeck.ru"]
+	assert.Equal(t, "alice", sec.Username)
+	assert.Equal(t, "pa:ss:wo:rd", sec.Value)
 }
 
 func TestImportDecryptedSecrets_EmptyDecrypted(t *testing.T) {

@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { createNamespace } from '../lib/api'
+import { createNamespace, getDaemonStatus } from '../lib/api'
 import { toast } from '../lib/toast'
 import { useTranslation } from '../lib/i18n'
 import { Wand2, ChevronLeft, ChevronRight, Check } from 'lucide-react'
@@ -36,6 +36,15 @@ export function Wizard() {
   const [step, setStep] = useState(0)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Active workspace id fetched from /daemon/status. Used to scope the new
+  // namespace explicitly in the create request so the backend never falls back
+  // to its own d.workspaceID — the contract should be visible at the call site.
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>('')
+  useEffect(() => {
+    getDaemonStatus()
+      .then((s) => setActiveWorkspaceId(s.workspace || ''))
+      .catch(() => { /* daemon still starting — wizard still works without it */ })
+  }, [])
   const [state, setState] = useState<WizardState>({
     name: '',
     authType: 'BASIC',
@@ -84,6 +93,7 @@ export function Wizard() {
         pgAdminEnabled: state.pgAdmin,
         bundleRepo: '',
         bundleKey: '',
+        workspaceId: activeWorkspaceId || undefined,
         useDefaultPassword: true,
       })
       toast(t('wizard.success'), 'success')

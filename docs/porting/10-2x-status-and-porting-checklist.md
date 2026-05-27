@@ -97,7 +97,7 @@
 | Namespace start/stop/reload/upgrade | **Done** | `routes_ns.go`; bundle upgrade в wizard |
 | Snapshots (CRUD/import/export) | **Done** | 10 handlers + UI |
 | Secrets / registry auth | **Done** | `routes_secrets.go` + encrypted FileStore + UI |
-| Workspace management | **Done (single-workspace)** | `daemon.yml` + `namespace.yml` flat. **Нет** multi-workspace |
+| Workspace management | **Done (server only)** | Server: single-workspace by design ✓. Desktop: **gap** — discovery работает (`internal/config/workspace.go`), но нет CRUD/picker (см. §5.10) |
 | Bundle versioning (BundleKey) | **Done** | `compareBundleVersions` + parity test |
 | Bundle picker UI | **Done** | Community/enterprise tabs |
 | Docker runtime | **Done** | `runtime_orchestration.go` + docker client |
@@ -179,9 +179,17 @@ Observer integration работает на ZK registration + gateway health leve
 
 ### 5.10 Multi-workspace divergence
 
-Kotlin: `WorkspacesService`, `WorkspaceEntityDef`, full workspace selection screen. Go: single `daemon.yml` + `namespace.yml`. Спецификация должна либо:
-- Explicitly scope out multi-workspace для 2.x, либо
-- Define mapping `WorkspacesService` → Go config model (особенно `GET /namespaces` endpoint и его namespace-to-workspace relationship)
+Kotlin: `WorkspacesService`, `WorkspaceEntityDef`, full workspace selection screen. Go: single `daemon.yml` + `namespace.yml`.
+
+**Решение (2026-05-26)**: scope зависит от режима запуска:
+- **Server mode** — single-workspace, out of scope (current state correct).
+- **Desktop mode (Wails)** — multi-workspace REQUIRED, нужно достичь Kotlin parity:
+  - Workspace CRUD (create / delete / rename) — UI + storage.
+  - Workspace picker на Welcome screen (Kotlin `WelcomeScreen.kt`).
+  - Active workspace persistence в desktop SQLite store.
+  - Namespace operations scope'нуты по active workspace (filesystem layout `ws/{wsID}/ns/{nsID}/` уже готов; `NamespaceInfo.WorkspaceID` существует).
+
+Текущее состояние (`internal/config/workspace.go`): только discovery (`ListWorkspaces`), нет CRUD и нет UI. Это **gap для desktop**, не для server.
 
 ---
 
@@ -265,7 +273,7 @@ Kotlin: `WorkspacesService`, `WorkspaceEntityDef`, full workspace selection scre
 ## 9. Open вопросы (для product/tech-lead)
 
 1. **Apgrade path с 1.x на 2.x**: migrate существующий AppDir (storage.db, ws/, app.lock) или wipe + fresh setup?
-2. **Multi-workspace** — fully out of scope в 2.x?
+2. **Multi-workspace** — **Решено (2026-05-26)**: out-of-scope для server mode; in-scope для desktop (Wails) — см. §5.10.
 3. **License subsystem** — port or drop?
 4. **CloudConfig 8761** — на 100% порт сохранил? Если backbone'ные тесты ECOS не падают — да; если нужно protocol fixture — добавить.
 5. **`AppCfgEditWindow`** — в Web UI это реализовано или нет? Если нет — нужен endpoint + Monaco editor.

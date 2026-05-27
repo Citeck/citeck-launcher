@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -511,6 +512,40 @@ func TestFindBundleFile_NestedKeyOnly(t *testing.T) {
 
 	got := findBundleFile(dir, "scope/sub/2025.1")
 	assert.Equal(t, filepath.Join(subDir, "2025.1.yml"), got)
+}
+
+func TestWorkspaceRepoSettings_DefaultsWhenNoOverride(t *testing.T) {
+	r := NewResolver(t.TempDir())
+	url, branch, period, token := r.workspaceRepoSettings()
+	assert.Equal(t, defaultBundlesRepo, url)
+	assert.Equal(t, defaultBundlesBranch, branch)
+	assert.Equal(t, defaultPullPeriod, period)
+	assert.Empty(t, token)
+}
+
+func TestWorkspaceRepoSettings_CustomOverridesApplied(t *testing.T) {
+	r := NewResolver(t.TempDir()).WithWorkspaceRepo(WorkspaceRepoOpts{
+		URL:        "https://gitlab.example.com/citeck/private-ws.git",
+		Branch:     "release/2.1",
+		PullPeriod: 30 * time.Minute,
+		Token:      "glpat-xxx",
+	})
+	url, branch, period, token := r.workspaceRepoSettings()
+	assert.Equal(t, "https://gitlab.example.com/citeck/private-ws.git", url)
+	assert.Equal(t, "release/2.1", branch)
+	assert.Equal(t, 30*time.Minute, period)
+	assert.Equal(t, "glpat-xxx", token)
+}
+
+func TestWorkspaceRepoSettings_EmptyFieldsFallBackPerField(t *testing.T) {
+	r := NewResolver(t.TempDir()).WithWorkspaceRepo(WorkspaceRepoOpts{
+		Branch: "develop",
+	})
+	url, branch, period, token := r.workspaceRepoSettings()
+	assert.Equal(t, defaultBundlesRepo, url, "empty URL should fall back to default")
+	assert.Equal(t, "develop", branch)
+	assert.Equal(t, defaultPullPeriod, period, "zero PullPeriod should fall back to default")
+	assert.Empty(t, token)
 }
 
 func TestBuildAliasMap_IncludesAlfrescoAliases(t *testing.T) {

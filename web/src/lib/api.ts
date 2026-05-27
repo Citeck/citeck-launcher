@@ -16,6 +16,9 @@ import type {
   DiagFixResultDto,
   SnapshotDto,
   RestartEventDto,
+  WorkspaceDto,
+  WorkspaceCreateDto,
+  WorkspaceUpdateDto,
 } from './types'
 
 export const API_BASE = '/api/v1'
@@ -155,6 +158,54 @@ export async function postWorkspaceUpdate(): Promise<ActionResultDto> {
     { method: 'POST', headers: CSRF_HEADER },
     180_000,
   )
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  return res.json()
+}
+
+// Multi-workspace CRUD + activate (desktop-only — server returns 404).
+// listWorkspaces swallows 404 and returns [] so callers in server mode can
+// transparently render "no workspaces" instead of branching on mode.
+export async function listWorkspaces(): Promise<WorkspaceDto[]> {
+  const res = await fetchWithTimeout(`${API_BASE}/workspaces`)
+  if (res.status === 404) return []
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  return res.json()
+}
+
+export async function createWorkspace(data: WorkspaceCreateDto): Promise<WorkspaceDto> {
+  const res = await fetchWithTimeout(`${API_BASE}/workspaces`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  return res.json()
+}
+
+export async function updateWorkspace(id: string, data: WorkspaceUpdateDto): Promise<WorkspaceDto> {
+  const res = await fetchWithTimeout(`${API_BASE}/workspaces/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  return res.json()
+}
+
+export async function deleteWorkspace(id: string): Promise<ActionResultDto> {
+  const res = await fetchWithTimeout(`${API_BASE}/workspaces/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: CSRF_HEADER,
+  })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  return res.json()
+}
+
+export async function activateWorkspace(id: string): Promise<ActionResultDto> {
+  const res = await fetchWithTimeout(`${API_BASE}/workspaces/${encodeURIComponent(id)}/activate`, {
+    method: 'POST',
+    headers: CSRF_HEADER,
+  })
   if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }

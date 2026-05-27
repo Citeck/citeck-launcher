@@ -62,11 +62,30 @@ const de: Translations = {
   'welcome.delete.message': 'Namespace "{name}" löschen? Die Konfigurationsdatei wird entfernt.',
   'welcome.context.open': 'Öffnen',
   'welcome.context.delete': 'Löschen',
+  'welcome.namespace.edit': 'Bearbeiten',
   'welcome.workspace.label': 'Arbeitsbereich',
   'welcome.workspace.forceUpdate': 'Aktualisierung erzwingen',
+  'welcome.workspace.forceUpdate.inactive': 'Aktualisierung erzwingen ist nur für den aktiven Arbeitsbereich verfügbar',
   'welcome.workspace.updating': 'Arbeitsbereich wird aktualisiert...',
   'welcome.workspace.updateSuccess': 'Arbeitsbereich aktualisiert',
   'welcome.workspace.updateFailed': 'Arbeitsbereich-Aktualisierung fehlgeschlagen: {error}',
+  'welcome.workspace.create': 'Arbeitsbereich erstellen...',
+  'welcome.workspace.edit': 'Bearbeiten',
+  'welcome.workspace.delete': 'Löschen',
+  'welcome.workspace.deleteConfirm': 'Arbeitsbereich "{name}" löschen? Konfiguration und Repo-Cache werden von der Festplatte entfernt.',
+  'welcome.workspace.switched': 'Zu Arbeitsbereich "{name}" gewechselt',
+  'welcome.workspace.switchFailed': 'Arbeitsbereichwechsel fehlgeschlagen: {error}',
+  'welcome.workspace.form.id': 'ID (optional)',
+  'welcome.workspace.form.idPlaceholder': 'wird aus Name abgeleitet',
+  'welcome.workspace.form.name': 'Name',
+  'welcome.workspace.form.repoUrl': 'Repository-URL',
+  'welcome.workspace.form.repoBranch': 'Branch',
+  'welcome.workspace.form.repoPullPeriod': 'Aktualisierungsintervall (ISO 8601, z.B. PT2H)',
+  'welcome.workspace.form.authType': 'Authentifizierung',
+  'welcome.workspace.form.authType.none': 'Keine (öffentliches Repository)',
+  'welcome.workspace.form.authType.token': 'Token (privates Repository)',
+  'welcome.workspace.form.authTypeTokenHint': 'Speichere das Git-Token als Geheimnis unter dem Schlüssel "{key}".',
+  'welcome.workspace.form.required': 'Name und Repository-URL sind erforderlich',
 
   // -- Dashboard-Seitenleiste / Namespace-Verzeichnis --
   'dashboard.openNsDir': 'NS-Verzeichnis öffnen',
@@ -158,6 +177,8 @@ const de: Translations = {
   'secrets.form.name': 'Name',
   'secrets.form.name.placeholder': 'Mein Geheimnis',
   'secrets.form.type': 'Typ',
+  'secrets.form.username': 'Benutzername',
+  'secrets.form.username.placeholder': 'registry-user',
   'secrets.form.value': 'Wert',
   'secrets.form.value.placeholder': 'Geheimer Wert',
   'secrets.form.create': 'Erstellen',
@@ -478,6 +499,7 @@ const de: Translations = {
   'snapshots.create': 'Create Snapshot',
   'snapshots.create.title': 'Create snapshot',
   'snapshots.importFile': 'Import .zip…',
+  'snapshots.openNsDir': 'NS-Verzeichnis öffnen',
   'snapshots.import.local.hint': 'Use the .zip stored in the namespace dir to import locally.',
   'snapshots.rename.title': 'Rename snapshot',
   'snapshots.delete.title': 'Delete snapshot "{name}"?',
@@ -517,6 +539,11 @@ const de: Translations = {
   // -- Snapshot import warning --
   'snapshots.import.confirm.title': 'Snapshot importieren?',
   'snapshots.import.confirm.message': 'Beim Importieren werden vorhandene Volumes dieses Namespaces gelöscht. Fortfahren?',
+
+  // -- Error modal (unified ErrorDialog port) --
+  'errorModal.title': 'Ausnahme aufgetreten',
+  'errorModal.details': 'Details',
+  'errorModal.downloadDump': 'Systemabbild herunterladen',
 }
 
 export default de

@@ -149,6 +149,14 @@ func TestAllRoutesRegistered(t *testing.T) {
 		{"POST", api.SystemOpenDir},
 		// Workspace
 		{"POST", api.WorkspaceUpdate},
+		// Multi-workspace (desktop only — in server mode handler returns 404
+		// with JSON DESKTOP_ONLY error, which still counts as "registered").
+		{"GET", api.Workspaces},
+		{"POST", api.Workspaces},
+		{"GET", "/api/v1/workspaces/test-ws"},
+		{"PUT", "/api/v1/workspaces/test-ws"},
+		{"DELETE", "/api/v1/workspaces/test-ws"},
+		{"POST", "/api/v1/workspaces/test-ws/activate"},
 		// Volumes
 		{"GET", "/api/v1/volumes"},
 		{"DELETE", "/api/v1/volumes/test-vol"},

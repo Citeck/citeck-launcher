@@ -97,7 +97,12 @@ type NsGenContext struct {
 	// license.Service. Merged with WorkspaceConfig.Licenses in the eapps cloud
 	// config so UI-added licenses actually reach the running webapps.
 	ExtraLicenses []bundle.LicenseInstance
-	portsCounter  atomic.Int32
+	// EditedFileOverlay is the user-edited disk content keyed by canonical
+	// ctx.Files key. The generator overlays it into the hash input only (not
+	// into ctx.Files itself) so deployment-hash recompute drives container
+	// recreate after a Web UI file edit.
+	EditedFileOverlay map[string][]byte
+	portsCounter      atomic.Int32
 }
 
 // NewNsGenContext creates a new generation context for the given config and bundle.

@@ -10,11 +10,14 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/daemon"
 	"github.com/citeck/citeck-launcher/internal/desktop"
 	"github.com/citeck/citeck-launcher/internal/desktop/wailswin"
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -213,6 +216,18 @@ func main() {
 		},
 	})
 
+	// Second-launch focus hand-off (Kotlin AppLocalSocket parity): the daemon
+	// runs in its own goroutine and never exposes the *Daemon back to us, so
+	// we register the raise callback via a process-global atomic in the daemon
+	// package. Must run on the UI thread (application.InvokeAsync) — calling
+	// Show/Focus directly from the HTTP handler goroutine deadlocks GTK.
+	daemon.SetDesktopFocusHandler(func() {
+		application.InvokeAsync(func() {
+			window.Show()
+			window.Focus()
+		})
+	})
+
 	// Hide on close instead of quitting (minimize to tray)
 	window.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
 		window.Hide()
@@ -234,8 +249,46 @@ func main() {
 		window.Show()
 		window.Focus()
 	})
-	menu.Add("Dump System Info").OnClick(func(_ *application.Context) {
-		dumpSystemInfo(socketPath)
+
+	// In-flight guard prevents double-click from launching parallel dumps
+	// (matches Kotlin LoadingDialog modal semantics — the second click is a
+	// no-op while the first is still running).
+	var dumpInFlight atomic.Bool
+	dumpItem := menu.Add("Dump System Info")
+	dumpItem.OnClick(func(_ *application.Context) {
+		if !dumpInFlight.CompareAndSwap(false, true) {
+			return
+		}
+		dumpItem.SetEnabled(false)
+		dumpItem.SetLabel("Dump System Info (running...)")
+		go func() {
+			defer func() {
+				application.InvokeAsync(func() {
+					dumpItem.SetLabel("Dump System Info")
+					dumpItem.SetEnabled(true)
+				})
+				dumpInFlight.Store(false)
+			}()
+			zipPath, err := dumpSystemInfo(socketPath)
+			application.InvokeAsync(func() {
+				if err != nil {
+					slog.Error("System dump failed", "err", err)
+					app.Dialog.Error().
+						SetTitle("System Dump Failed").
+						SetMessage(err.Error()).
+						Show()
+					return
+				}
+				slog.Info("System dump created", "path", zipPath)
+				if openErr := desktop.OpenBrowser("file://" + filepath.Dir(zipPath)); openErr != nil {
+					slog.Warn("Failed to open dump folder", "err", openErr)
+				}
+				app.Dialog.Info().
+					SetTitle("System Dump Saved").
+					SetMessage("System dump saved to:\n" + zipPath).
+					Show()
+			})
+		}()
 	})
 	menu.Add("Open Launcher Dir").OnClick(func(_ *application.Context) {
 		_ = desktop.OpenBrowser("file://" + config.HomeDir())

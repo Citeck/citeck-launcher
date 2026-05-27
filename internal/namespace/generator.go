@@ -36,6 +36,14 @@ type GenerateOpts struct {
 	// take precedence over workspace entries with the same ID; after dedupe the
 	// merged list is sorted by descending Priority (mirrors Service.List()).
 	ExtraLicenses []bundle.LicenseInstance
+	// EditedFileOverlay maps canonical ctx.Files keys ("<app>/<rel>", no leading
+	// "./") to the on-disk content the user authored via the Web UI. The
+	// generator overlays these onto ctx.Files BEFORE computing per-app
+	// VolumesContentHash so a UI-edit forces a container recreate. Without this
+	// overlay, the hash is computed against the embedded defaults and a user
+	// edit silently does nothing on the next reload — matching Kotlin's
+	// NsRuntimeFiles which re-hashes from the on-disk volumeFiles snapshot.
+	EditedFileOverlay map[string][]byte
 }
 
 // Generate creates container definitions from a namespace config, bundle, and workspace config.
@@ -54,6 +62,7 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 			ctx.SecretReader = opts[0].SecretReader
 		}
 		ctx.ExtraLicenses = opts[0].ExtraLicenses
+		ctx.EditedFileOverlay = opts[0].EditedFileOverlay
 	}
 
 	// Load embedded appfiles
@@ -119,12 +128,24 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 		apps = append(apps, b.Build())
 	}
 
+	// Overlay user-edited file content into a hash-only view of ctx.Files so
+	// the deployment hash reflects on-disk content. ctx.Files itself is left
+	// untouched — writeRuntimeFiles already skips edited keys via its own
+	// snapshot, and re-running the generator must remain deterministic w.r.t.
+	// the embedded defaults regardless of disk state.
+	hashFiles := ctx.Files
+	if len(ctx.EditedFileOverlay) > 0 {
+		hashFiles = make(map[string][]byte, len(ctx.Files)+len(ctx.EditedFileOverlay))
+		maps.Copy(hashFiles, ctx.Files)
+		maps.Copy(hashFiles, ctx.EditedFileOverlay)
+	}
+
 	// Fill VolumesContentHash for each app so the deployment hash changes
 	// when any bind-mount source file's content changes — triggering a
 	// container recreate. Mirrors Kotlin's NsRuntimeFiles.getPathsContentHash
 	// hooked into ApplicationDef.hashField.
 	for i := range apps {
-		apps[i].VolumesContentHash = computeVolumesContentHash(&apps[i], ctx.Files)
+		apps[i].VolumesContentHash = computeVolumesContentHash(&apps[i], hashFiles)
 	}
 
 	// Compute DependsOnDetachedApps: detached apps that are referenced as dependencies
@@ -921,7 +942,7 @@ func generateProxy(ctx *NsGenContext) {
 	app.AddEnv("DEFAULT_LOCATION_V2", "true")
 	app.AddEnv("GATEWAY_TARGET", fmt.Sprintf("%s:%s", appdef.AppGateway, gatewayPort))
 	app.AddEnv("ECOS_INIT_DELAY", "0")
-	alfrescoEnabled := ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.Alfresco.Enabled && ctx.Applications[appdef.AppAlfresco] != nil
+	alfrescoEnabled := ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.Alfresco.Enabled && ctx.Applications[appdef.AppAlfresco] != nil && !ctx.DetachedApps[appdef.AppAlfresco]
 	if alfrescoEnabled {
 		app.AddEnv("ALFRESCO_ENABLED", "true")
 		proxyTarget = fmt.Sprintf("%s:8080", appdef.AppAlfresco)

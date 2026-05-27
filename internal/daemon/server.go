@@ -29,6 +29,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
+	"github.com/citeck/citeck-launcher/internal/git"
 	"github.com/citeck/citeck-launcher/internal/h2migrate"
 	"github.com/citeck/citeck-launcher/internal/license"
 	"github.com/citeck/citeck-launcher/internal/namespace"
@@ -273,40 +274,19 @@ func Start(opts StartOptions) error {
 		wsID = "default"
 
 		// Auto-migrate H2 → SQLite BEFORE any SQLite access (transparent upgrade from Kotlin).
-		// JAR is embedded in the binary. JRE downloaded from Adoptium if Java not in PATH.
-		// Falls back to filesystem migration if JAR approach fails.
-		migStatus := h2migrate.CheckMigration(config.HomeDir())
-		if migStatus.Needed {
-			javaPath := migStatus.JavaPath
-			if !migStatus.HasJava {
-				slog.Info("Java not found, downloading Adoptium JRE for migration")
-				var dlErr error
-				javaPath, dlErr = h2migrate.DownloadJRE(config.HomeDir())
-				if dlErr != nil {
-					slog.Error("JRE download failed", "err", dlErr)
-				}
-				defer h2migrate.CleanupJRE(config.HomeDir())
-			}
-
+		// Pure-Go MVStore reader — no JAR, no JRE. Falls back internally to a
+		// filesystem-only reconstruction if storage.db is unreadable.
+		if needed, _ := h2migrate.NeedsMigration(config.HomeDir()); needed {
 			if migStore, migErr := storage.NewSQLiteStore(config.HomeDir()); migErr == nil {
-				var result *h2migrate.MigrateResult
-				if javaPath != "" {
-					slog.Info("Running H2 migration", "java", javaPath)
-					var migErr error
-					result, migErr = h2migrate.RunJarMigration(config.HomeDir(), javaPath, migStore)
-					if migErr != nil {
-						slog.Error("JAR migration failed, trying filesystem fallback", "err", migErr)
-					}
-				}
-				if result == nil {
-					slog.Warn("Using filesystem fallback migration (no secrets, no namespace names)")
-					result, _ = h2migrate.Migrate(config.HomeDir(), migStore)
-				}
-				if result != nil {
+				result, migRunErr := h2migrate.Migrate(config.HomeDir(), migStore)
+				if migRunErr != nil {
+					slog.Error("H2 migration failed", "err", migRunErr)
+				} else if result != nil {
 					slog.Info("H2 migration complete",
 						"workspaces", result.Workspaces,
 						"secrets", result.Secrets,
 						"namespaces", result.Namespaces,
+						"gitRepos", result.GitRepos,
 					)
 				}
 				_ = migStore.Close()
@@ -319,8 +299,8 @@ func Start(opts StartOptions) error {
 				if state.WorkspaceID != "" {
 					wsID = state.WorkspaceID
 				}
-				if state.NamespaceID != "" {
-					nsID = state.NamespaceID
+				if selected := state.NamespaceID(); selected != "" {
+					nsID = selected
 				}
 			}
 			_ = sqlStore.Close()
@@ -398,6 +378,11 @@ func Start(opts StartOptions) error {
 		}
 	}()
 
+	// Wire git package's persistent sync-state hook so the throttle window
+	// (Kotlin parity: git-repo!instances) survives daemon restart. Without
+	// this every workspace/bundle repo would re-pull on cold start.
+	git.SetSyncStateStore(gitSyncStoreAdapter{store: store}, config.HomeDir())
+
 	// Initialize SecretService (transparent encryption layer for all modes)
 	secretSvc, err := storage.NewSecretService(store)
 	if err != nil {
@@ -460,7 +445,8 @@ func Start(opts StartOptions) error {
 	if config.IsDesktopMode() {
 		bundlesDataDir = filepath.Join(config.HomeDir(), "ws", wsID)
 	}
-	resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(secretSvc))
+	resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(secretSvc)).
+		WithWorkspaceRepo(lookupWorkspaceRepoOpts(store, secretSvc, wsID))
 	// Server mode: never auto-pull git repos (use 'citeck workspace update' for manual sync).
 	// Desktop mode: auto-pull with throttling. --offline flag: skip git entirely.
 	if opts.Offline || !config.IsDesktopMode() {
@@ -550,6 +536,15 @@ func Start(opts StartOptions) error {
 					break
 				}
 			}
+		}
+
+		// Overlay user-edited disk content into the hash input so a UI-edited
+		// file from a prior session forces container recreate on the first
+		// regenerate after daemon restart. Without this, VolumesContentHash is
+		// computed against embedded defaults and existing edits are never
+		// reflected in the running container.
+		if persistedState != nil && len(persistedState.EditedFiles) > 0 {
+			genOpts.EditedFileOverlay = readEditedFileOverlay(volumesBase, persistedState.EditedFiles)
 		}
 
 		// Generate namespace
@@ -960,7 +955,8 @@ func (d *Daemon) doReload() error {
 	if config.IsDesktopMode() {
 		bundlesDataDir = filepath.Join(config.HomeDir(), "ws", d.workspaceID)
 	}
-	resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(d.secretReaderFunc()))
+	resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(d.secretReaderFunc())).
+		WithWorkspaceRepo(d.resolveActiveWorkspaceRepoOpts())
 	resolveResult, err := resolver.Resolve(nsCfg.BundleRef)
 	if err != nil {
 		// Fallback to cached bundle from persisted state
@@ -999,6 +995,9 @@ func (d *Daemon) doReload() error {
 	genOpts.SecretReader = d.nsSecretReader()
 	if d.runtime != nil {
 		genOpts.DetachedApps = d.runtime.ManualStoppedApps()
+		// Overlay user-edited disk content into the hash input so a UI-edited
+		// bind-mount file forces container recreate on this regenerate.
+		genOpts.EditedFileOverlay = d.runtime.EditedFileOverlay(d.volumesBase)
 	}
 	// User-added licenses (encrypted store) merge with workspace-declared ones
 	// in the eapps cloud-config. Locked SecretService yields nil and we fall
@@ -1253,6 +1252,14 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	// Workspace operations
 	mux.HandleFunc("POST "+api.WorkspaceUpdate, d.handleWorkspaceUpdate)
 
+	// Multi-workspace CRUD + activate (desktop-only — handlers return 404 in server mode).
+	mux.HandleFunc("GET "+api.Workspaces, d.handleListWorkspaces)
+	mux.HandleFunc("POST "+api.Workspaces, d.handleCreateWorkspace)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}", d.handleGetWorkspace)
+	mux.HandleFunc("PUT /api/v1/workspaces/{id}", d.handleUpdateWorkspace)
+	mux.HandleFunc("DELETE /api/v1/workspaces/{id}", d.handleDeleteWorkspace)
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/activate", d.handleActivateWorkspace)
+
 	// Git operations
 	mux.HandleFunc("POST "+api.GitSkipPull, d.handleGitSkipPull)
 
@@ -1302,6 +1309,12 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+api.WorkspaceSnapshots, d.handleWorkspaceSnapshots)
 	mux.HandleFunc("PUT /api/v1/snapshots/{name}", d.handleRenameSnapshot)
 	mux.HandleFunc("DELETE /api/v1/snapshots/{name}", d.handleDeleteSnapshot)
+
+	// Desktop-only: second-launch focus hand-off (Kotlin AppLocalSocket parity).
+	// Server mode has no native window to raise; route is not registered there.
+	if config.IsDesktopMode() {
+		mux.HandleFunc("POST /desktop/focus", d.handleDesktopFocus)
+	}
 
 	// Web UI (fallback)
 	mux.Handle("/", WebUIHandler())
@@ -1427,45 +1440,56 @@ func makeRegistryAuthFunc(wsCfg *bundle.WorkspaceConfig, reader secretReader) na
 }
 
 // buildRegistryAuthCache pre-fetches all registry secrets into a map keyed by host.
+//
+// Username and password are read from the typed Secret fields (BASIC_AUTH parity
+// with Kotlin AuthSecret.Basic). A legacy "user:pass" packed Value is split
+// here as a last-resort fallback for any secret that somehow survived the
+// FileStore / SQLite-v3 migration paths without a Username column populated.
 func buildRegistryAuthCache(reposByHost map[string]bundle.ImageRepo, reader secretReader) map[string]*docker.RegistryAuth {
 	result := make(map[string]*docker.RegistryAuth)
 	secrets, err := reader.ListSecrets()
 	if err != nil {
 		return result
 	}
-	// Build scope→value map from all secrets (single ListSecrets + GetSecret per secret)
-	scopeValues := make(map[string]string)
+	scopeSecrets := make(map[string]*storage.Secret)
 	for _, s := range secrets {
 		if s.Scope != "" {
 			sec, err := reader.GetSecret(s.ID)
 			if err != nil {
 				continue // ErrSecretsLocked → skip gracefully
 			}
-			scopeValues[s.Scope] = sec.Value
+			scopeSecrets[s.Scope] = sec
 		}
 	}
 	for host, repo := range reposByHost {
 		if repo.AuthType == "" {
 			continue
 		}
-		value := scopeValues[repo.AuthType]
-		if value == "" {
-			value = scopeValues[host]
+		sec := scopeSecrets[repo.AuthType]
+		if sec == nil {
+			sec = scopeSecrets[host]
 		}
-		if value == "" {
+		if sec == nil {
 			// Kotlin migration compat: scope = "images-repo:{host}"
-			value = scopeValues["images-repo:"+host]
+			sec = scopeSecrets["images-repo:"+host]
 		}
-		if value == "" {
+		if sec == nil {
 			continue
 		}
-		parts := strings.SplitN(value, ":", 2)
-		if len(parts) != 2 {
+		username, password := sec.Username, sec.Value
+		if username == "" {
+			parts := strings.SplitN(sec.Value, ":", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			username, password = parts[0], parts[1]
+		}
+		if username == "" || password == "" {
 			continue
 		}
 		result[host] = &docker.RegistryAuth{
-			Username: parts[0],
-			Password: parts[1],
+			Username: username,
+			Password: password,
 			Registry: "https://" + host,
 		}
 	}
@@ -1814,6 +1838,28 @@ func writeRuntimeFiles(baseDir string, files map[string][]byte, edited map[strin
 			slog.Warn("Failed to chmod generated file", "path", destPath, "err", chmodErr)
 		}
 	}
+}
+
+// readEditedFileOverlay reads on-disk content for every persisted user-edit
+// key under volumesBase. Used at daemon startup before the runtime exists, so
+// the first Generate call sees the user's edits in its VolumesContentHash
+// input and recreates containers whose mounted files were changed in a prior
+// session. Missing/unreadable files are skipped — writeRuntimeFiles will
+// rematerialize the default the next time that key falls out of editedFiles.
+func readEditedFileOverlay(volumesBase string, keys []string) map[string][]byte {
+	if len(keys) == 0 {
+		return nil
+	}
+	out := make(map[string][]byte, len(keys))
+	for _, k := range keys {
+		abs := filepath.Join(volumesBase, k)
+		data, err := os.ReadFile(abs) //nolint:gosec // G304: key is constrained to volumesBase by the original write
+		if err != nil {
+			continue
+		}
+		out[k] = data
+	}
+	return out
 }
 
 // ensureACMECert obtains or refreshes the Let's Encrypt certificate for the

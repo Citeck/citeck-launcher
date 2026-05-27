@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -122,6 +123,7 @@ func (s *FileStore) SaveSecret(secret Secret) error {
 		ID:        secret.ID,
 		Name:      secret.Name,
 		Type:      secret.Type,
+		Username:  secret.Username,
 		Value:     secret.Value,
 		Scope:     secret.Scope,
 		CreatedAt: secret.CreatedAt,
@@ -155,6 +157,10 @@ func (s *FileStore) statePath() string {
 }
 
 // GetState returns the persisted launcher state from state.json.
+//
+// Legacy state.json files written by v2.0 stored a single namespaceId field;
+// they're folded into SelectedNs[WorkspaceID] on read so the next SetState
+// upgrades the on-disk shape transparently.
 func (s *FileStore) GetState() (*LauncherState, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -166,9 +172,22 @@ func (s *FileStore) GetState() (*LauncherState, error) {
 		}
 		return nil, fmt.Errorf("read state file: %w", err)
 	}
-	var state LauncherState
-	if err := json.Unmarshal(data, &state); err != nil {
+	var raw struct {
+		WorkspaceID string            `json:"workspaceId"`
+		NamespaceID string            `json:"namespaceId,omitempty"`
+		SelectedNs  map[string]string `json:"selectedNs,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse state JSON: %w", err)
+	}
+	state := LauncherState{WorkspaceID: raw.WorkspaceID, SelectedNs: raw.SelectedNs}
+	if raw.NamespaceID != "" && raw.WorkspaceID != "" {
+		if state.SelectedNs == nil {
+			state.SelectedNs = make(map[string]string, 1)
+		}
+		if _, ok := state.SelectedNs[raw.WorkspaceID]; !ok {
+			state.SelectedNs[raw.WorkspaceID] = raw.NamespaceID
+		}
 	}
 	return &state, nil
 }
@@ -260,6 +279,80 @@ func (s *FileStore) SetStateValue(key, value string) error {
 	return nil
 }
 
+// --- Git Repo State ---
+
+func (s *FileStore) gitRepoStatePath() string {
+	return filepath.Join(s.baseDir, "git-repo-state.json")
+}
+
+func (s *FileStore) readGitRepoState() (map[string]GitRepoState, error) {
+	data, err := os.ReadFile(s.gitRepoStatePath()) //nolint:gosec // G304: path is constructed from baseDir
+	if err != nil {
+		if os.IsNotExist(err) {
+			return make(map[string]GitRepoState), nil
+		}
+		return nil, fmt.Errorf("read git-repo-state: %w", err)
+	}
+	var m map[string]GitRepoState
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("parse git-repo-state: %w", err)
+	}
+	if m == nil {
+		m = make(map[string]GitRepoState)
+	}
+	return m, nil
+}
+
+// GetGitRepoState returns the persisted sync metadata for a repo path, or
+// (nil, nil) when no row exists.
+func (s *FileStore) GetGitRepoState(path string) (*GitRepoState, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	m, err := s.readGitRepoState()
+	if err != nil {
+		return nil, err
+	}
+	state, ok := m[path]
+	if !ok {
+		return nil, nil
+	}
+	return &state, nil
+}
+
+// SetGitRepoState upserts a git repo state entry (read-modify-write).
+func (s *FileStore) SetGitRepoState(state GitRepoState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, err := s.readGitRepoState()
+	if err != nil {
+		return err
+	}
+	m[state.Path] = state
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal git-repo-state: %w", err)
+	}
+	if err := fsutil.AtomicWriteFile(s.gitRepoStatePath(), data, 0o600); err != nil {
+		return fmt.Errorf("write git-repo-state: %w", err)
+	}
+	return nil
+}
+
+// ListGitRepoStates returns all git repo state rows.
+func (s *FileStore) ListGitRepoStates() ([]GitRepoState, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	m, err := s.readGitRepoState()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]GitRepoState, 0, len(m))
+	for _, st := range m {
+		out = append(out, st)
+	}
+	return out, nil
+}
+
 // Close is a no-op for FileStore (no resources to release).
 func (s *FileStore) Close() error {
 	return nil
@@ -270,6 +363,7 @@ type secretFile struct {
 	ID        string     `json:"id"`
 	Name      string     `json:"name"`
 	Type      SecretType `json:"type"`
+	Username  string     `json:"username,omitempty"`
 	Value     string     `json:"value"`
 	Scope     string     `json:"scope"`
 	CreatedAt time.Time  `json:"createdAt"`
@@ -284,6 +378,15 @@ func (s *FileStore) readSecret(path string) (*Secret, error) {
 	if err := json.Unmarshal(data, &sf); err != nil {
 		return nil, fmt.Errorf("parse secret JSON %s: %w", path, err)
 	}
+	username, value := sf.Username, sf.Value
+	if username == "" && (sf.Type == SecretBasicAuth || sf.Type == SecretRegistryAuth) {
+		// Legacy on-disk format: "user:pass" packed into Value.
+		// Base64-encoded ciphertext never contains ':', so this only fires on
+		// plaintext rows written before the typed Username field landed.
+		if idx := strings.IndexByte(value, ':'); idx >= 0 {
+			username, value = value[:idx], value[idx+1:]
+		}
+	}
 	return &Secret{
 		SecretMeta: SecretMeta{
 			ID:        sf.ID,
@@ -292,6 +395,7 @@ func (s *FileStore) readSecret(path string) (*Secret, error) {
 			Scope:     sf.Scope,
 			CreatedAt: sf.CreatedAt,
 		},
-		Value: sf.Value,
+		Username: username,
+		Value:    value,
 	}, nil
 }

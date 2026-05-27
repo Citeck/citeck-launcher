@@ -4,6 +4,7 @@ package desktop
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -32,6 +33,16 @@ func AcquireInstanceLock() (*InstanceLock, error) {
 	err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) //nolint:gosec // G115: file descriptor fits in int
 	if err != nil {
 		_ = f.Close()
+		// Kotlin parity (core/utils/AppLock.kt + AppLocalSocket.kt): the second
+		// launch hands focus off to the running instance instead of erroring.
+		// Only swallow the lock conflict when the daemon actually answers —
+		// a stale lock file with no live daemon must still surface as an error.
+		notifyErr := NotifyExistingInstance(config.SocketPath())
+		if notifyErr == nil {
+			slog.Info("Another Citeck Desktop instance is running; raised its window and exiting")
+			os.Exit(0)
+		}
+		slog.Warn("Lock held but no live daemon to focus; treating as stale", "err", notifyErr)
 		return nil, fmt.Errorf("another Citeck Desktop instance is already running")
 	}
 

@@ -63,6 +63,8 @@ package namespace
 import (
 	"context"
 	"maps"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -438,6 +440,36 @@ func (r *Runtime) EditedFilesSnapshot() map[string]bool {
 	}
 	out := make(map[string]bool, len(r.editedFiles))
 	maps.Copy(out, r.editedFiles)
+	return out
+}
+
+// EditedFileOverlay reads the on-disk content of every user-edited bind-mount
+// file under volumesBase and returns it keyed by canonical ctx.Files key.
+// Fed into namespace.GenerateOpts so VolumesContentHash reflects user edits
+// and the next regenerate recreates the container with the new content.
+//
+// Files that cannot be read (deleted out-of-band, permission error) are
+// skipped silently — writeRuntimeFiles will rematerialize the default on the
+// next reload when the missing key is no longer in the editedFiles set.
+func (r *Runtime) EditedFileOverlay(volumesBase string) map[string][]byte {
+	r.mu.RLock()
+	keys := make([]string, 0, len(r.editedFiles))
+	for k := range r.editedFiles {
+		keys = append(keys, k)
+	}
+	r.mu.RUnlock()
+	if len(keys) == 0 {
+		return nil
+	}
+	out := make(map[string][]byte, len(keys))
+	for _, k := range keys {
+		abs := filepath.Join(volumesBase, k)
+		data, err := os.ReadFile(abs) //nolint:gosec // G304: key is constrained to volumesBase, validated when the edit was recorded
+		if err != nil {
+			continue
+		}
+		out[k] = data
+	}
 	return out
 }
 

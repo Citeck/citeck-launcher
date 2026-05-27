@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/pprof"
 	"strings"
 	"time"
 
@@ -94,6 +95,14 @@ func (d *Daemon) writeSystemDumpZip(ctx context.Context, w http.ResponseWriter, 
 		if fw, err := zw.Create("system-info.json"); err == nil {
 			_, _ = fw.Write(infoData)
 		}
+	}
+
+	// goroutine-dump.txt — pprof debug=2 emits ThreadInfo-like per-goroutine
+	// stacks (state, locks, full frames). Kotlin parity: SystemDumpUtils.kt
+	// writes `thread-dump.txt` via ThreadMXBean.dumpAllThreads; the closest Go
+	// analogue is the goroutine profile.
+	if fw, err := zw.Create("goroutine-dump.txt"); err == nil {
+		_ = pprof.Lookup("goroutine").WriteTo(fw, 2)
 	}
 
 	// namespace.yml (pre-marshaled under configMu lock)

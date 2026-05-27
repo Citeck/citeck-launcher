@@ -1,0 +1,38 @@
+{
+  "name": "eapps",
+  "image": "citeck/ecos-apps:1.0.0",
+  "environments": {
+    "JAVA_OPTS": "-Xms256m -Xmx1024m",
+    "SPRING_PROFILES_ACTIVE": "prod"
+  },
+  "cmd": ["sh", "-c", "exec /entrypoint.sh"],
+  "ports": ["8080:8080"],
+  "volumes": ["./eapps/conf:/opt/citeck/conf:ro"],
+  "volumesContentHash": "abc123",
+  "initActions": [
+    {"type": "exec-shell", "command": "echo hello && /bin/true"}
+  ],
+  "dependsOn": ["postgres", "rabbitmq"],
+  "startupConditions": [
+    {"probe": {"http": {"path": "/actuator/health", "port": 8080}, "initialDelaySeconds": 30, "periodSeconds": 5}}
+  ],
+  "livenessProbe": {
+    "exec": {"command": ["/bin/sh", "-c", "curl -f http://localhost:8080/actuator/health"]},
+    "initialDelaySeconds": 60,
+    "periodSeconds": 30,
+    "failureThreshold": 3,
+    "timeoutSeconds": 5
+  },
+  "resources": {"limits": {"memory": "1024m"}},
+  "kind": "CITECK_CORE",
+  "shmSize": "128m",
+  "initContainers": [
+    {
+      "image": "busybox:1.36",
+      "environments": {"FOO": "bar"},
+      "volumes": ["./shared:/data"],
+      "kind": "THIRD_PARTY",
+      "cmd": ["sh", "-c", "exec /init.sh"]
+    }
+  ]
+}

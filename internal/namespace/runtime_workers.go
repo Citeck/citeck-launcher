@@ -633,16 +633,35 @@ func (r *Runtime) runPostStartActionsTask(
 				"app", appName, "err", err, "pending", len(actions)-i)
 			return workers.Result{Err: err}
 		}
-		slog.Info("Running init action", "app", appName, "cmd", action.Exec)
-		output, exitCode, execErr := r.docker.ExecInContainer(actCtx, containerID, action.Exec)
+		cmd := withExecPrefix(action.Exec)
+		slog.Info("Running init action", "app", appName, "cmd", cmd)
+		output, exitCode, execErr := r.docker.ExecInContainer(actCtx, containerID, cmd)
 		if execErr != nil {
-			slog.Warn("Init action exec error", "app", appName, "cmd", action.Exec, "err", execErr)
+			slog.Warn("Init action exec error", "app", appName, "cmd", cmd, "err", execErr)
 			continue
 		}
 		if exitCode != 0 {
 			slog.Warn("Init action exited with non-zero code",
-				"app", appName, "cmd", action.Exec, "exitCode", exitCode, "output", output)
+				"app", appName, "cmd", cmd, "exitCode", exitCode, "output", output)
 		}
 	}
 	return workers.Result{Payload: workers.PostStartActionsPayload{}}
+}
+
+// withExecPrefix mirrors Kotlin AppStartAction.kt: when an init action is a
+// shell command (`sh -c <cmd>` or `/bin/sh -c <cmd>`), prepend `exec ` so the
+// init process replaces the shell and inherits PID 1 of the exec — matching
+// signal/PID semantics of the legacy launcher.
+func withExecPrefix(exec []string) []string {
+	if len(exec) != 3 {
+		return exec
+	}
+	if (exec[0] != "sh" && exec[0] != "/bin/sh") || exec[1] != "-c" {
+		return exec
+	}
+	out := make([]string, 3)
+	out[0] = exec[0]
+	out[1] = exec[1]
+	out[2] = "exec " + exec[2]
+	return out
 }

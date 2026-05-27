@@ -48,9 +48,9 @@ func TestCollectExtraLicenses_RoundTripsLicenseStoreThroughGenerator(t *testing.
 		Tenant:     "acme",
 		Priority:   42,
 		IssuedTo:   "Acme Corp",
-		IssuedAt:   time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-		ValidFrom:  time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-		ValidUntil: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC),
+		IssuedAt:   license.LicenseTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
+		ValidFrom:  license.LicenseTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
+		ValidUntil: license.LicenseTime{Time: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)},
 		Content:    json.RawMessage(`{"feature":"enterprise"}`),
 	}
 	require.NoError(t, licSvc.Add(stub))

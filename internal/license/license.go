@@ -16,6 +16,63 @@ import (
 	"time"
 )
 
+// LicenseTime wraps time.Time so Instance dates serialize compatibly with
+// Kotlin's LicenseDateSerializer: midnight-UTC values emit "YYYY-MM-DD",
+// everything else uses ISO-8601 with a `Z` suffix (Java Instant.toString()).
+// Embedding time.Time preserves caller ergonomics (.After/.Before/.IsZero/...).
+type LicenseTime struct {
+	time.Time
+}
+
+// MarshalJSON serializes in Kotlin's LicenseDateSerializer format.
+func (t LicenseTime) MarshalJSON() ([]byte, error) {
+	if t.Time.IsZero() {
+		return []byte(`""`), nil
+	}
+	utc := t.Time.UTC()
+	if utc.Hour() == 0 && utc.Minute() == 0 && utc.Second() == 0 && utc.Nanosecond() == 0 {
+		return []byte(`"` + utc.Format("2006-01-02") + `"`), nil
+	}
+	// Java's Instant.toString() emits e.g. "2025-01-01T12:30:45Z" or with
+	// fractional seconds "2025-01-01T12:30:45.123456789Z" — never a numeric
+	// offset. Go's RFC3339 / RFC3339Nano use the same shape for UTC.
+	var s string
+	if utc.Nanosecond() == 0 {
+		s = utc.Format("2006-01-02T15:04:05Z")
+	} else {
+		s = utc.Format("2006-01-02T15:04:05.999999999Z")
+	}
+	return []byte(`"` + s + `"`), nil
+}
+
+// UnmarshalJSON accepts both "YYYY-MM-DD" (Kotlin's compact form) and full
+// RFC3339, matching the canonical wire format produced by either runtime.
+func (t *LicenseTime) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return fmt.Errorf("license date: %w", err)
+	}
+	if s == "" {
+		t.Time = time.Time{}
+		return nil
+	}
+	if len(s) == 10 {
+		// Date-only form.
+		parsed, err := time.ParseInLocation("2006-01-02", s, time.UTC)
+		if err != nil {
+			return fmt.Errorf("license date %q: %w", s, err)
+		}
+		t.Time = parsed
+		return nil
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return fmt.Errorf("license date %q: %w", s, err)
+	}
+	t.Time = parsed.UTC()
+	return nil
+}
+
 // Instance is a single license record. Fields mirror Kotlin's LicenseInstance
 // in src/main/kotlin/ru/citeck/launcher/core/license/LicenseInstance.kt.
 //
@@ -27,9 +84,9 @@ type Instance struct {
 	Tenant     string          `json:"tenant"`
 	Priority   int64           `json:"priority"`
 	IssuedTo   string          `json:"issuedTo"`
-	IssuedAt   time.Time       `json:"issuedAt"`
-	ValidFrom  time.Time       `json:"validFrom"`
-	ValidUntil time.Time       `json:"validUntil"`
+	IssuedAt   LicenseTime     `json:"issuedAt"`
+	ValidFrom  LicenseTime     `json:"validFrom"`
+	ValidUntil LicenseTime     `json:"validUntil"`
 	Content    json.RawMessage `json:"content"`
 	Signatures []Signature     `json:"signatures"`
 }

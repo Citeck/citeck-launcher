@@ -3,6 +3,7 @@ import { postNamespaceStart, postNamespaceStop, postNamespaceReload } from '../l
 import { useDashboardStore } from '../lib/store'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
+import { showError } from '../lib/errorModal'
 import { ConfirmModal } from './ConfirmModal'
 import { ContextMenu, type ContextMenuItem } from './ContextMenu'
 import { useContextMenu } from '../hooks/useContextMenu'
@@ -52,8 +53,13 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
       setPendingAction(null)
       setTimeout(fetchData, 500)
     } catch (err) {
-      toast((err as Error).message, 'error')
-      setActionError((err as Error).message)
+      const e = err as Error
+      setActionError(e.message)
+      showError({
+        title: t(`ns.confirm.${pendingAction}.title`),
+        message: e.message,
+        details: e.stack,
+      })
     } finally {
       setLoading(false)
     }

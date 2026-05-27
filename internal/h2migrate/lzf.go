@@ -47,21 +47,28 @@ func decompressLiteral(out, compressed []byte, opos, ipos, ctrl int) (newOpos, n
 }
 
 // decompressBackRef handles a back-reference: copy length bytes from earlier in output.
+//
+// Wire-order matters: H2 CompressLZF emits the LENGTH-EXTENSION byte (when
+// the 3-bit length nibble is saturated at 7) BEFORE the offset's low byte,
+// not after. Inverting that order works for short runs that never extend
+// but corrupts every long run, which is what most layout/meta pages use.
+// Reference: org.h2.compress.CompressLZF#expand.
 func decompressBackRef(out, compressed []byte, opos, ipos, ctrl, decompressedLen int) (newOpos, newIpos int, _ error) {
-	length := (ctrl >> 5) + 2
+	rawLen := ctrl >> 5
+	if rawLen == 7 {
+		if ipos >= len(compressed) {
+			return 0, 0, fmt.Errorf("lzf: extended length overflows input at ipos=%d", ipos)
+		}
+		rawLen += int(compressed[ipos])
+		ipos++
+	}
+	length := rawLen + 2
+
 	if ipos >= len(compressed) {
 		return 0, 0, fmt.Errorf("lzf: back-reference overflows input at ipos=%d", ipos)
 	}
 	offset := ((ctrl & 0x1F) << 8) + int(compressed[ipos]) + 1
 	ipos++
-
-	if length == 9 {
-		if ipos >= len(compressed) {
-			return 0, 0, fmt.Errorf("lzf: extended length overflows input at ipos=%d", ipos)
-		}
-		length += int(compressed[ipos])
-		ipos++
-	}
 
 	ref := opos - offset
 	if ref < 0 {
@@ -71,7 +78,7 @@ func decompressBackRef(out, compressed []byte, opos, ipos, ctrl, decompressedLen
 		return 0, 0, fmt.Errorf("lzf: back-reference overflows output at opos=%d, length=%d", opos, length)
 	}
 	// Copy byte-by-byte (overlapping allowed)
-	for i := 0; i < length; i++ {
+	for range length {
 		out[opos] = out[ref]
 		opos++
 		ref++

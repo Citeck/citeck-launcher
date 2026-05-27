@@ -62,11 +62,30 @@ const ja: Translations = {
   'welcome.delete.message': 'namespace \u300c{name}\u300d\u3092\u524a\u9664\u3057\u307e\u3059\u304b\uff1f\u8a2d\u5b9a\u30d5\u30a1\u30a4\u30eb\u304c\u524a\u9664\u3055\u308c\u307e\u3059\u3002',
   'welcome.context.open': '\u958b\u304f',
   'welcome.context.delete': '\u524a\u9664',
+  'welcome.namespace.edit': '編集',
   'welcome.workspace.label': '\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9',
   'welcome.workspace.forceUpdate': '\u5f37\u5236\u66f4\u65b0',
+  'welcome.workspace.forceUpdate.inactive': '強制更新はアクティブなワークスペースでのみ使用できます',
   'welcome.workspace.updating': '\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u3092\u66f4\u65b0\u4e2d...',
   'welcome.workspace.updateSuccess': '\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u3092\u66f4\u65b0\u3057\u307e\u3057\u305f',
   'welcome.workspace.updateFailed': '\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u306e\u66f4\u65b0\u306b\u5931\u6557\u3057\u307e\u3057\u305f: {error}',
+  'welcome.workspace.create': 'ワークスペースを作成...',
+  'welcome.workspace.edit': '編集',
+  'welcome.workspace.delete': '削除',
+  'welcome.workspace.deleteConfirm': 'ワークスペース "{name}" を削除しますか？設定とリポジトリキャッシュがディスクから削除されます。',
+  'welcome.workspace.switched': 'ワークスペース "{name}" に切り替えました',
+  'welcome.workspace.switchFailed': 'ワークスペースの切り替えに失敗しました: {error}',
+  'welcome.workspace.form.id': 'ID (任意)',
+  'welcome.workspace.form.idPlaceholder': '名前から自動生成',
+  'welcome.workspace.form.name': '名前',
+  'welcome.workspace.form.repoUrl': 'リポジトリURL',
+  'welcome.workspace.form.repoBranch': 'ブランチ',
+  'welcome.workspace.form.repoPullPeriod': '更新間隔 (ISO 8601、例: PT2H)',
+  'welcome.workspace.form.authType': '認証方式',
+  'welcome.workspace.form.authType.none': 'なし (パブリックリポジトリ)',
+  'welcome.workspace.form.authType.token': 'トークン (プライベートリポジトリ)',
+  'welcome.workspace.form.authTypeTokenHint': 'git トークンをキー "{key}" でシークレットとして保存します。',
+  'welcome.workspace.form.required': '名前とリポジトリURLは必須です',
 
   // -- \u30c0\u30c3\u30b7\u30e5\u30dc\u30fc\u30c9\u30b5\u30a4\u30c9\u30d0\u30fc / \u30cd\u30fc\u30e0\u30b9\u30da\u30fc\u30b9\u30c7\u30a3\u30ec\u30af\u30c8\u30ea --
   'dashboard.openNsDir': 'NS \u30c7\u30a3\u30ec\u30af\u30c8\u30ea\u3092\u958b\u304f',
@@ -158,6 +177,8 @@ const ja: Translations = {
   'secrets.form.name': '\u540d\u524d',
   'secrets.form.name.placeholder': '\u30de\u30a4\u30b7\u30fc\u30af\u30ec\u30c3\u30c8',
   'secrets.form.type': '\u30bf\u30a4\u30d7',
+  'secrets.form.username': 'ユーザー名',
+  'secrets.form.username.placeholder': 'registry-user',
   'secrets.form.value': '\u5024',
   'secrets.form.value.placeholder': '\u79d8\u5bc6\u306e\u5024',
   'secrets.form.create': '\u4f5c\u6210',
@@ -478,6 +499,7 @@ const ja: Translations = {
   'snapshots.create': 'Create Snapshot',
   'snapshots.create.title': 'Create snapshot',
   'snapshots.importFile': 'Import .zip…',
+  'snapshots.openNsDir': 'NS ディレクトリを開く',
   'snapshots.import.local.hint': 'Use the .zip stored in the namespace dir to import locally.',
   'snapshots.rename.title': 'Rename snapshot',
   'snapshots.delete.title': 'Delete snapshot "{name}"?',
@@ -517,6 +539,11 @@ const ja: Translations = {
   // -- Snapshot import warning --
   'snapshots.import.confirm.title': 'スナップショットをインポートしますか？',
   'snapshots.import.confirm.message': 'インポートすると、この名前空間の既存ボリュームが削除されます。続行しますか？',
+
+  // -- Error modal (unified ErrorDialog port) --
+  'errorModal.title': '例外が発生しました',
+  'errorModal.details': '詳細',
+  'errorModal.downloadDump': 'システムダンプをダウンロード',
 }
 
 export default ja

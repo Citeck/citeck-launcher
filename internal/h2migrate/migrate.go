@@ -3,6 +3,7 @@ package h2migrate
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -12,17 +13,99 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// kotlinBackupSuffix is the filename suffix appended to the legacy storage.db
+// when Migrate creates its pre-migration snapshot. The backup is a one-time
+// parachute: if a future regression breaks the H2 reader, the user can hand
+// this byte-identical copy to support (or roll back to Kotlin 1.x) instead of
+// being stranded.
+const kotlinBackupSuffix = ".kotlin-bak"
+
+// backupKotlinStorage copies storage.db to storage.db.kotlin-bak when no
+// previous backup exists. The backup must be:
+//   - idempotent: subsequent migrations leave the first snapshot untouched so
+//     it always reflects the original pre-migration state, not the most recent
+//     attempt.
+//   - atomic: write to a sibling .tmp and rename so a mid-copy crash never
+//     leaves a truncated parachute that would shadow the real storage.db.
+//   - non-destructive: storage.db is opened read-only via io.Copy; SHA256 of
+//     the source is guaranteed unchanged.
+//
+// Errors are returned to the caller but treated as best-effort by Migrate:
+// users running on a read-only filesystem or with the file already gone
+// should still be allowed to attempt the migration.
+func backupKotlinStorage(h2Path string) error {
+	backupPath := h2Path + kotlinBackupSuffix
+
+	if _, err := os.Stat(backupPath); err == nil {
+		slog.Info("Kotlin storage backup already exists, skipping", "path", backupPath)
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat backup %s: %w", backupPath, err)
+	}
+
+	src, err := os.Open(h2Path) //nolint:gosec // G304: h2Path is the launcher's own storage.db
+	if err != nil {
+		return fmt.Errorf("open storage.db: %w", err)
+	}
+	defer src.Close()
+
+	info, err := src.Stat()
+	if err != nil {
+		return fmt.Errorf("stat storage.db: %w", err)
+	}
+
+	tmpPath := backupPath + ".tmp"
+	// Best-effort cleanup of a stale temp from a previous crashed run.
+	_ = os.Remove(tmpPath)
+
+	tmp, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // G304: tmpPath is derived from the launcher's own storage.db backup target
+	if err != nil {
+		return fmt.Errorf("create backup tmp: %w", err)
+	}
+
+	if _, err := io.Copy(tmp, src); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("copy storage.db: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("sync backup tmp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("close backup tmp: %w", err)
+	}
+	if err := os.Chmod(tmpPath, info.Mode().Perm()); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("chmod backup tmp: %w", err)
+	}
+	if err := os.Rename(tmpPath, backupPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("rename backup: %w", err)
+	}
+
+	slog.Info("Backed up storage.db", "path", backupPath, "bytes", info.Size())
+	return nil
+}
+
+// (backup uses a direct io.Copy rather than fsutil.AtomicWriteFile because
+// AtomicWriteFile materializes the entire payload in RAM, which would be
+// wasteful for a multi-MB MVStore.)
+
 // MigrateResult holds the result of an H2 → SQLite migration.
 type MigrateResult struct {
 	Workspaces int `json:"workspaces"`
 	Namespaces int `json:"namespaces"`
 	Secrets    int `json:"secrets"`
+	GitRepos   int `json:"gitRepos"`
 	Errors     int `json:"errors"`
 }
 
-// NeedsMigration checks if migration is needed:
-// storage.db exists but launcher.db does not.
-// Returns (true, nil) if migration needed, (false, nil) if not, (false, err) on access problems.
+// NeedsMigration reports whether the legacy Kotlin store exists without a
+// SQLite replacement. Returns (true, nil) when storage.db exists and
+// launcher.db does not.
 func NeedsMigration(homeDir string) (bool, error) {
 	h2Path := filepath.Join(homeDir, "storage.db")
 	sqlitePath := filepath.Join(homeDir, "launcher.db")
@@ -30,163 +113,87 @@ func NeedsMigration(homeDir string) (bool, error) {
 	_, h2Err := os.Stat(h2Path)
 	if h2Err != nil {
 		if os.IsNotExist(h2Err) {
-			return false, nil // no H2 database
+			return false, nil
 		}
 		return false, fmt.Errorf("check h2 database: %w", h2Err)
 	}
 
 	_, sqliteErr := os.Stat(sqlitePath)
 	if sqliteErr == nil {
-		return false, nil // SQLite already exists
+		return false, nil
 	}
 	if !os.IsNotExist(sqliteErr) {
 		return false, fmt.Errorf("check sqlite database: %w", sqliteErr)
 	}
 
-	return true, nil // H2 exists, SQLite doesn't
+	return true, nil
 }
 
-// Migrate reads data from H2 MVStore (storage.db) and writes it to a SQLite store.
-// It also creates namespace.yml files in the workspace directory structure.
+// Migrate reads data from H2 MVStore (storage.db) using the pure-Go reader
+// and folds it into SQLite + on-disk namespace.yml / state-<nsID>.json files
+// via the unified import* helpers. The MVStore file is opened read-only and
+// is never modified.
+//
+// If the MVStore reader cannot extract any maps (corrupt header, missing
+// layout, parser bug), Migrate falls back to migrateFromFilesystem which
+// reconstructs minimal state from the on-disk ws/ tree alone.
 func Migrate(homeDir string, store storage.Store) (*MigrateResult, error) {
 	h2Path := filepath.Join(homeDir, "storage.db")
 	result := &MigrateResult{}
 
 	slog.Info("Starting H2 → SQLite migration", "source", h2Path)
 
+	// Defense in depth: snapshot the pre-migration MVStore before opening it
+	// for read. Failures are logged but non-fatal so a read-only home dir or
+	// vanished storage.db still lets the migration attempt proceed (and fail
+	// loudly on OpenMVStore below).
+	if err := backupKotlinStorage(h2Path); err != nil {
+		slog.Warn("Failed to back up Kotlin storage.db", "err", err)
+	}
+
 	mvs, err := OpenMVStore(h2Path)
 	if err != nil {
-		return result, fmt.Errorf("open h2 database: %w", err)
+		slog.Warn("Falling back to filesystem migration: open MVStore failed", "err", err)
+		return migrateFromFilesystem(homeDir, store)
 	}
 	defer mvs.Close()
 
-	// List all maps to understand what data exists
-	mapNames, err := mvs.ListMapNames()
-	if err != nil {
-		slog.Warn("Failed to list map names, trying filesystem fallback", "err", err)
+	maps, dumpErr := mvs.DumpForImport()
+	if reason := dumpFallbackReason(maps, dumpErr); reason != "" {
+		slog.Warn("Falling back to filesystem migration", "reason", reason, "source", h2Path, "err", dumpErr)
 		return migrateFromFilesystem(homeDir, store)
 	}
 
-	slog.Info("H2 maps found", "count", len(mapNames), "names", mapNames)
+	slog.Info("H2 maps loaded", "count", len(maps))
 
-	// Extract workspaces
-	migrateWorkspaces(mvs, mapNames, store, result)
-
-	// Extract secrets/auth
-	migrateSecrets(mvs, mapNames, store, result)
-
-	// Migrate namespace configs from workspace directories (they're already YAML files)
-	if err := migrateNamespaceConfigs(homeDir, result); err != nil {
-		slog.Error("Namespace config migration failed", "err", err)
-		result.Errors++
-	}
+	importWorkspaces(maps, store, result)
+	importNamespaces(homeDir, maps, result)
+	importSecrets(maps, store, result)
+	importRuntimeState(homeDir, maps, result)
+	importGitRepos(maps, store, result)
+	importState(maps, store)
 
 	slog.Info("Migration complete", "result", result)
 	return result, nil
 }
 
-// migrateWorkspaces extracts workspace entities from H2 maps.
-func migrateWorkspaces(mvs *MVStore, mapNames []string, store storage.Store, result *MigrateResult) {
-	// Workspace entities are stored in maps named like "entities!workspace"
-	for _, name := range mapNames {
-		if !strings.Contains(name, "workspace") {
-			continue
-		}
-
-		entries, err := mvs.ReadMap(name)
-		if err != nil {
-			slog.Warn("Failed to read map", "name", name, "err", err)
-			continue
-		}
-
-		for id, data := range entries {
-			ws, err := parseWorkspaceJSON(id, data)
-			if err != nil {
-				slog.Warn("Failed to parse workspace", "id", id, "err", err)
-				continue
-			}
-			if err := store.SaveWorkspace(*ws); err != nil {
-				slog.Warn("Failed to save workspace", "id", ws.ID, "err", err)
-				continue
-			}
-			result.Workspaces++
-			slog.Info("Migrated workspace", "id", ws.ID, "name", ws.Name)
-		}
+// dumpFallbackReason returns a non-empty reason when the pure-Go reader's
+// dump cannot be trusted. Both an error AND an empty map are treated as
+// failure: a real H2 MVStore with user data always carries at least one
+// entity map, and quietly proceeding with zero data would let a broken
+// parser drop every workspace and secret on disk.
+func dumpFallbackReason(maps map[string]map[string]string, err error) string {
+	switch {
+	case err != nil:
+		return "dump error"
+	case len(maps) == 0:
+		return "empty dump (parser likely failed)"
 	}
+	return ""
 }
 
-// migrateSecrets extracts auth/secret data from H2 maps.
-func migrateSecrets(mvs *MVStore, mapNames []string, store storage.Store, result *MigrateResult) {
-	// Auth data is stored in maps named like "auth" or containing "secret"
-	for _, name := range mapNames {
-		if !strings.Contains(name, "auth") && !strings.Contains(name, "secret") {
-			continue
-		}
-
-		entries, err := mvs.ReadMap(name)
-		if err != nil {
-			slog.Warn("Failed to read secret map", "name", name, "err", err)
-			continue
-		}
-
-		for id, data := range entries {
-			secret, err := parseSecretJSON(id, data)
-			if err != nil {
-				slog.Warn("Failed to parse secret", "id", id, "err", err)
-				continue
-			}
-			if err := store.SaveSecret(*secret); err != nil {
-				slog.Warn("Failed to save secret", "id", secret.ID, "err", err)
-				continue
-			}
-			result.Secrets++
-			slog.Info("Migrated secret", "id", secret.ID, "type", secret.Type)
-		}
-	}
-}
-
-// migrateNamespaceConfigs ensures namespace YAML configs exist in the workspace dir structure.
-// The Kotlin app stores them via the entity system, but the actual YAML generation happens
-// when the namespace is created. If namespace.yml files already exist in ws/{id}/ns/{id}/,
-// they don't need migration.
-func migrateNamespaceConfigs(homeDir string, result *MigrateResult) error {
-	wsDir := filepath.Join(homeDir, "ws")
-	entries, err := os.ReadDir(wsDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("read workspaces dir: %w", err)
-	}
-
-	for _, wsEntry := range entries {
-		if !wsEntry.IsDir() {
-			continue
-		}
-
-		nsDir := filepath.Join(wsDir, wsEntry.Name(), "ns")
-		nsEntries, err := os.ReadDir(nsDir)
-		if err != nil {
-			continue
-		}
-
-		for _, nsEntry := range nsEntries {
-			if !nsEntry.IsDir() {
-				continue
-			}
-
-			configPath := filepath.Join(nsDir, nsEntry.Name(), "namespace.yml")
-			if _, err := os.Stat(configPath); err == nil {
-				result.Namespaces++
-				slog.Info("Found namespace config", "ws", wsEntry.Name(), "ns", nsEntry.Name())
-			}
-		}
-	}
-	return nil
-}
-
-// migrateFromFilesystem is a fallback that creates workspace records and stub namespace.yml
-// files from the directory structure when the H2 file can't be parsed.
+// migrateFromFilesystem reconstructs workspace records and stub namespace.yml
+// files from the on-disk ws/ tree when storage.db is unreadable.
 func migrateFromFilesystem(homeDir string, store storage.Store) (*MigrateResult, error) {
 	result := &MigrateResult{}
 	slog.Info("Using filesystem fallback migration")
@@ -206,7 +213,6 @@ func migrateFromFilesystem(homeDir string, store storage.Store) (*MigrateResult,
 		}
 		wsID := entry.Name()
 
-		// Check if workspace has a namespace dir (valid workspace)
 		nsDir := filepath.Join(wsDir, wsID, "ns")
 		if _, err := os.Stat(nsDir); err != nil {
 			continue
@@ -223,14 +229,12 @@ func migrateFromFilesystem(homeDir string, store storage.Store) (*MigrateResult,
 		}
 		result.Workspaces++
 
-		// Read default bundleRef from workspace-v1.yml template (if available)
 		defaultBundleRef := ""
 		wsCfgPath := filepath.Join(wsDir, wsID, "repo", "workspace-v1.yml")
 		if data, err := os.ReadFile(wsCfgPath); err == nil { //nolint:gosec // G304: wsCfgPath is constructed from internal workspace dir
 			defaultBundleRef = extractDefaultBundleRef(data)
 		}
 
-		// Create stub namespace.yml for namespaces that don't have one
 		nsEntries, err := os.ReadDir(nsDir)
 		if err != nil {
 			continue
@@ -242,15 +246,19 @@ func migrateFromFilesystem(homeDir string, store storage.Store) (*MigrateResult,
 			nsID := ns.Name()
 			nsConfigPath := filepath.Join(nsDir, nsID, "namespace.yml")
 			if _, err := os.Stat(nsConfigPath); err == nil {
-				result.Namespaces++ // already has config
+				result.Namespaces++
 				continue
 			}
-			// Create minimal namespace.yml so the launcher can manage this namespace
-			stub := fmt.Sprintf("id: %s\nname: %s\n", nsID, nsID)
-			if defaultBundleRef != "" {
-				stub += fmt.Sprintf("bundleRef: '%s'\n", defaultBundleRef)
+			// Mirrors Kotlin's NamespaceConfig.AuthenticationProps.DEFAULT
+			// (BASIC + admin/fet) so a degraded migration does not surface
+			// as "no users" in the auth dialog.
+			stub, err := buildFallbackNamespaceYAML(nsID, defaultBundleRef)
+			if err != nil {
+				slog.Warn("Failed to build fallback namespace config", "ns", nsID, "err", err)
+				result.Errors++
+				continue
 			}
-			if err := os.WriteFile(nsConfigPath, []byte(stub), 0o644); err != nil { //nolint:gosec // config file needs to be readable
+			if err := os.WriteFile(nsConfigPath, stub, 0o644); err != nil { //nolint:gosec // config file needs to be readable
 				slog.Warn("Failed to create namespace config", "ns", nsID, "err", err)
 				result.Errors++
 				continue
@@ -263,9 +271,29 @@ func migrateFromFilesystem(homeDir string, store storage.Store) (*MigrateResult,
 	return result, nil
 }
 
-// extractDefaultBundleRef reads the first namespaceTemplate bundleRef from workspace-v1.yml.
+// buildFallbackNamespaceYAML produces the default Kotlin-parity namespace
+// config used by the filesystem-fallback migration path. Default
+// authentication mirrors AuthenticationProps.DEFAULT = BASIC + {admin, fet}.
+func buildFallbackNamespaceYAML(nsID, defaultBundleRef string) ([]byte, error) {
+	cfg := map[string]any{
+		"id":   nsID,
+		"name": nsID,
+		"authentication": map[string]any{
+			"type":  "BASIC",
+			"users": []string{"admin", "fet"},
+		},
+	}
+	if defaultBundleRef != "" {
+		cfg["bundleRef"] = defaultBundleRef
+	}
+	out, err := yaml.Marshal(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("marshal fallback namespace yaml: %w", err)
+	}
+	return out, nil
+}
+
 func extractDefaultBundleRef(data []byte) string {
-	// Simple YAML extraction without full unmarshal
 	var cfg struct {
 		NamespaceTemplates []struct {
 			Config struct {
@@ -285,8 +313,11 @@ func extractDefaultBundleRef(data []byte) string {
 }
 
 // parseWorkspaceJSON parses a workspace entity from Jackson JSON bytes.
+//
+// Kotlin's DurationSerializer emits Duration.toString() (e.g. "PT6H"), but the
+// matching deserializer also accepts integer seconds, so hand-edited legacy
+// blobs may carry repoPullPeriod as a number — converted below to "PTnS".
 func parseWorkspaceJSON(id string, data []byte) (*storage.WorkspaceDto, error) {
-	// Kotlin stores workspace data as Jackson JSON
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("unmarshal workspace %s: %w", id, err)
@@ -303,6 +334,12 @@ func parseWorkspaceJSON(id string, data []byte) (*storage.WorkspaceDto, error) {
 	if repoBranch, ok := raw["repoBranch"].(string); ok {
 		ws.RepoBranch = repoBranch
 	}
+	if authType, ok := raw["authType"].(string); ok {
+		ws.AuthType = strings.TrimSpace(authType)
+	}
+	if period := decodeJacksonDuration(raw["repoPullPeriod"]); period != "" {
+		ws.RepoPullPeriod = period
+	}
 
 	if ws.Name == "" {
 		ws.Name = id
@@ -311,37 +348,23 @@ func parseWorkspaceJSON(id string, data []byte) (*storage.WorkspaceDto, error) {
 	return ws, nil
 }
 
-// parseSecretJSON parses a secret/auth entry from Jackson JSON bytes.
-func parseSecretJSON(id string, data []byte) (*storage.Secret, error) {
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("unmarshal secret %s: %w", id, err)
+// decodeJacksonDuration converts a Jackson-serialized Duration value (ISO-8601
+// string from DurationSerializer, or integer seconds from the deserializer's
+// VALUE_NUMBER_INT branch) to the launcher's wire format.
+func decodeJacksonDuration(v any) string {
+	switch x := v.(type) {
+	case string:
+		return strings.TrimSpace(x)
+	case float64:
+		if x == 0 {
+			return ""
+		}
+		return fmt.Sprintf("PT%dS", int64(x))
+	case int64:
+		if x == 0 {
+			return ""
+		}
+		return fmt.Sprintf("PT%dS", x)
 	}
-
-	secret := &storage.Secret{
-		SecretMeta: storage.SecretMeta{
-			ID:   id,
-			Name: id,
-		},
-	}
-
-	if name, ok := raw["name"].(string); ok && name != "" {
-		secret.Name = name
-	}
-	if typ, ok := raw["type"].(string); ok {
-		secret.Type = storage.SecretType(typ)
-	}
-	if value, ok := raw["value"].(string); ok {
-		secret.Value = value
-	}
-	if token, ok := raw["token"].(string); ok && secret.Value == "" {
-		secret.Value = token
-		secret.Type = storage.SecretGitToken
-	}
-	if password, ok := raw["password"].(string); ok && secret.Value == "" {
-		secret.Value = password
-		secret.Type = storage.SecretBasicAuth
-	}
-
-	return secret, nil
+	return ""
 }

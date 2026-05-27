@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -96,8 +97,64 @@ func (s *SQLiteStore) migrate() error {
 				)`,
 			},
 		},
-		// Future migrations go here:
-		// { version: 2, stmts: []string{`ALTER TABLE ...`} },
+		{
+			// v2 — Kotlin-parity workspace fields: repo pull period (ISO 8601,
+			// default "PT2H" = 2h) and auth type (NONE / TOKEN).
+			version: 2,
+			stmts: []string{
+				`ALTER TABLE workspaces ADD COLUMN repo_pull_period TEXT NOT NULL DEFAULT 'PT2H'`,
+				`ALTER TABLE workspaces ADD COLUMN auth_type TEXT NOT NULL DEFAULT 'NONE'`,
+			},
+		},
+		{
+			// v3 — typed BASIC_AUTH: store username separately so passwords
+			// containing ':' round-trip untouched. Legacy "user:pass" rows
+			// are split in-place once. The split is intentionally limited to
+			// BASIC_AUTH / REGISTRY_AUTH; GIT_TOKEN values often contain ':'
+			// in PATs themselves (no user component) and must NOT be split.
+			version: 3,
+			stmts: []string{
+				`ALTER TABLE secrets ADD COLUMN username TEXT NOT NULL DEFAULT ''`,
+				`UPDATE secrets
+				 SET username = substr(value, 1, instr(value, ':') - 1),
+				     value    = substr(value, instr(value, ':') + 1)
+				 WHERE type IN ('BASIC_AUTH', 'REGISTRY_AUTH')
+				   AND username = ''
+				   AND instr(value, ':') > 0`,
+			},
+		},
+		{
+			// v4 — per-workspace namespace selection (Kotlin parity:
+			// workspace-state/{wsId} → SELECTED_NS_PROP). The legacy global
+			// namespace_id key is folded into selected_ns under the current
+			// workspace_id, then dropped.
+			version: 4,
+			stmts: []string{
+				`INSERT INTO launcher_state (key, value)
+				 SELECT 'selected_ns',
+				        json_object(
+				            COALESCE((SELECT value FROM launcher_state WHERE key = 'workspace_id'), ''),
+				            (SELECT value FROM launcher_state WHERE key = 'namespace_id')
+				        )
+				 WHERE EXISTS (SELECT 1 FROM launcher_state WHERE key = 'namespace_id' AND value != '')
+				   AND EXISTS (SELECT 1 FROM launcher_state WHERE key = 'workspace_id' AND value != '')
+				 ON CONFLICT(key) DO NOTHING`,
+				`DELETE FROM launcher_state WHERE key = 'namespace_id'`,
+			},
+		},
+		{
+			// v5 — per-repo git sync metadata (Kotlin parity: git-repo!instances
+			// in GitRepoService). Survives restart so an idle launcher does not
+			// re-pull every workspace/bundle repo on cold start.
+			version: 5,
+			stmts: []string{
+				`CREATE TABLE IF NOT EXISTS git_repo_state (
+					path TEXT PRIMARY KEY,
+					last_sync_ms INTEGER NOT NULL DEFAULT 0,
+					last_commit_hash TEXT NOT NULL DEFAULT ''
+				)`,
+			},
+		},
 	}
 
 	for _, m := range migrations {
@@ -137,7 +194,8 @@ func (s *SQLiteStore) applyMigration(version int, stmts []string) error {
 
 // ListWorkspaces returns all workspaces ordered by ID.
 func (s *SQLiteStore) ListWorkspaces() ([]WorkspaceDto, error) {
-	rows, err := s.db.Query("SELECT id, name, repo_url, repo_branch FROM workspaces ORDER BY id")
+	rows, err := s.db.Query(`SELECT id, name, repo_url, repo_branch, repo_pull_period, auth_type
+		FROM workspaces ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("query workspaces: %w", err)
 	}
@@ -146,7 +204,7 @@ func (s *SQLiteStore) ListWorkspaces() ([]WorkspaceDto, error) {
 	var result []WorkspaceDto
 	for rows.Next() {
 		var ws WorkspaceDto
-		if err := rows.Scan(&ws.ID, &ws.Name, &ws.RepoURL, &ws.RepoBranch); err != nil {
+		if err := rows.Scan(&ws.ID, &ws.Name, &ws.RepoURL, &ws.RepoBranch, &ws.RepoPullPeriod, &ws.AuthType); err != nil {
 			return nil, fmt.Errorf("scan workspace row: %w", err)
 		}
 		result = append(result, ws)
@@ -157,14 +215,18 @@ func (s *SQLiteStore) ListWorkspaces() ([]WorkspaceDto, error) {
 	return result, nil
 }
 
-// GetWorkspace returns a single workspace by ID.
+// GetWorkspace returns a single workspace by ID, or (nil, nil) when the
+// workspace does not exist. Callers should branch on the nil return rather
+// than treating "not found" as an error — this matches FileStore semantics
+// and lets the daemon handlers map missing-workspace to 404 cleanly.
 func (s *SQLiteStore) GetWorkspace(id string) (*WorkspaceDto, error) {
 	var ws WorkspaceDto
 	err := s.db.QueryRow(
-		"SELECT id, name, repo_url, repo_branch FROM workspaces WHERE id = ?", id,
-	).Scan(&ws.ID, &ws.Name, &ws.RepoURL, &ws.RepoBranch)
+		`SELECT id, name, repo_url, repo_branch, repo_pull_period, auth_type
+		 FROM workspaces WHERE id = ?`, id,
+	).Scan(&ws.ID, &ws.Name, &ws.RepoURL, &ws.RepoBranch, &ws.RepoPullPeriod, &ws.AuthType)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("workspace %q not found", id)
+		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("query workspace %s: %w", id, err)
@@ -173,11 +235,26 @@ func (s *SQLiteStore) GetWorkspace(id string) (*WorkspaceDto, error) {
 }
 
 // SaveWorkspace inserts or updates a workspace (upsert).
+// Defaults are applied for empty RepoPullPeriod ("PT2H") and AuthType ("NONE")
+// so callers in older code paths (e.g. h2migrate, legacy desktop fallback) get
+// the Kotlin-parity defaults without having to know the field exists.
 func (s *SQLiteStore) SaveWorkspace(ws WorkspaceDto) error {
+	if ws.RepoPullPeriod == "" {
+		ws.RepoPullPeriod = "PT2H"
+	}
+	if ws.AuthType == "" {
+		ws.AuthType = "NONE"
+	}
 	_, err := s.db.Exec(`
-		INSERT INTO workspaces (id, name, repo_url, repo_branch) VALUES (?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET name=excluded.name, repo_url=excluded.repo_url, repo_branch=excluded.repo_branch
-	`, ws.ID, ws.Name, ws.RepoURL, ws.RepoBranch)
+		INSERT INTO workspaces (id, name, repo_url, repo_branch, repo_pull_period, auth_type)
+			VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			name=excluded.name,
+			repo_url=excluded.repo_url,
+			repo_branch=excluded.repo_branch,
+			repo_pull_period=excluded.repo_pull_period,
+			auth_type=excluded.auth_type
+	`, ws.ID, ws.Name, ws.RepoURL, ws.RepoBranch, ws.RepoPullPeriod, ws.AuthType)
 	if err != nil {
 		return fmt.Errorf("save workspace %s: %w", ws.ID, err)
 	}
@@ -223,8 +300,8 @@ func (s *SQLiteStore) GetSecret(id string) (*Secret, error) {
 	var sec Secret
 	var createdStr string
 	err := s.db.QueryRow(
-		"SELECT id, name, type, value, scope, created_at FROM secrets WHERE id = ?", id,
-	).Scan(&sec.ID, &sec.Name, &sec.Type, &sec.Value, &sec.Scope, &createdStr)
+		"SELECT id, name, type, value, username, scope, created_at FROM secrets WHERE id = ?", id,
+	).Scan(&sec.ID, &sec.Name, &sec.Type, &sec.Value, &sec.Username, &sec.Scope, &createdStr)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("secret %q not found", id)
 	}
@@ -244,9 +321,9 @@ func (s *SQLiteStore) SaveSecret(secret Secret) error {
 		secret.CreatedAt = time.Now()
 	}
 	_, err := s.db.Exec(`
-		INSERT INTO secrets (id, name, type, value, scope, created_at) VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET name=excluded.name, type=excluded.type, value=excluded.value, scope=excluded.scope
-	`, secret.ID, secret.Name, secret.Type, secret.Value, secret.Scope, secret.CreatedAt.Format(time.RFC3339))
+		INSERT INTO secrets (id, name, type, value, username, scope, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET name=excluded.name, type=excluded.type, value=excluded.value, username=excluded.username, scope=excluded.scope
+	`, secret.ID, secret.Name, secret.Type, secret.Value, secret.Username, secret.Scope, secret.CreatedAt.Format(time.RFC3339))
 	if err != nil {
 		return fmt.Errorf("save secret %s: %w", secret.ID, err)
 	}
@@ -267,11 +344,14 @@ func (s *SQLiteStore) DeleteSecret(id string) error {
 func (s *SQLiteStore) GetState() (*LauncherState, error) {
 	state := &LauncherState{}
 	_ = s.db.QueryRow("SELECT value FROM launcher_state WHERE key = 'workspace_id'").Scan(&state.WorkspaceID)
-	_ = s.db.QueryRow("SELECT value FROM launcher_state WHERE key = 'namespace_id'").Scan(&state.NamespaceID)
+	var selectedNsJSON string
+	if err := s.db.QueryRow("SELECT value FROM launcher_state WHERE key = 'selected_ns'").Scan(&selectedNsJSON); err == nil && selectedNsJSON != "" {
+		_ = json.Unmarshal([]byte(selectedNsJSON), &state.SelectedNs)
+	}
 	return state, nil
 }
 
-// SetState persists the launcher state (workspace and namespace selection).
+// SetState persists the launcher state (workspace and per-workspace namespace selection).
 func (s *SQLiteStore) SetState(state LauncherState) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -283,8 +363,16 @@ func (s *SQLiteStore) SetState(state LauncherState) error {
 	if _, err := tx.Exec(stmt, "workspace_id", state.WorkspaceID); err != nil {
 		return fmt.Errorf("set workspace_id: %w", err)
 	}
-	if _, err := tx.Exec(stmt, "namespace_id", state.NamespaceID); err != nil {
-		return fmt.Errorf("set namespace_id: %w", err)
+	selectedNsJSON := ""
+	if len(state.SelectedNs) > 0 {
+		buf, err := json.Marshal(state.SelectedNs)
+		if err != nil {
+			return fmt.Errorf("marshal selected_ns: %w", err)
+		}
+		selectedNsJSON = string(buf)
+	}
+	if _, err := tx.Exec(stmt, "selected_ns", selectedNsJSON); err != nil {
+		return fmt.Errorf("set selected_ns: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit state: %w", err)
@@ -337,6 +425,61 @@ func (s *SQLiteStore) SetStateValue(key, value string) error {
 		return fmt.Errorf("set state %s: %w", key, err)
 	}
 	return nil
+}
+
+// --- Git Repo State ---
+
+// GetGitRepoState returns the persisted sync metadata for a repo path, or
+// (nil, nil) when no row exists. Matches the FileStore convention: callers
+// branch on the nil pointer rather than treating "not found" as an error.
+func (s *SQLiteStore) GetGitRepoState(path string) (*GitRepoState, error) {
+	var state GitRepoState
+	err := s.db.QueryRow(
+		`SELECT path, last_sync_ms, last_commit_hash FROM git_repo_state WHERE path = ?`, path,
+	).Scan(&state.Path, &state.LastSyncMs, &state.LastCommitHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query git repo state %s: %w", path, err)
+	}
+	return &state, nil
+}
+
+// SetGitRepoState upserts a git_repo_state row.
+func (s *SQLiteStore) SetGitRepoState(state GitRepoState) error {
+	_, err := s.db.Exec(`
+		INSERT INTO git_repo_state (path, last_sync_ms, last_commit_hash) VALUES (?, ?, ?)
+		ON CONFLICT(path) DO UPDATE SET
+			last_sync_ms=excluded.last_sync_ms,
+			last_commit_hash=excluded.last_commit_hash
+	`, state.Path, state.LastSyncMs, state.LastCommitHash)
+	if err != nil {
+		return fmt.Errorf("save git repo state %s: %w", state.Path, err)
+	}
+	return nil
+}
+
+// ListGitRepoStates returns every git_repo_state row ordered by path.
+func (s *SQLiteStore) ListGitRepoStates() ([]GitRepoState, error) {
+	rows, err := s.db.Query(`SELECT path, last_sync_ms, last_commit_hash FROM git_repo_state ORDER BY path`)
+	if err != nil {
+		return nil, fmt.Errorf("query git repo states: %w", err)
+	}
+	defer rows.Close()
+
+	var out []GitRepoState
+	for rows.Next() {
+		var st GitRepoState
+		if err := rows.Scan(&st.Path, &st.LastSyncMs, &st.LastCommitHash); err != nil {
+			return nil, fmt.Errorf("scan git repo state row: %w", err)
+		}
+		out = append(out, st)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate git repo states: %w", err)
+	}
+	return out, nil
 }
 
 // DB returns the underlying *sql.DB for transactional operations.

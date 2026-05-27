@@ -197,6 +197,10 @@ const (
 	ErrCodeInternalError      = "INTERNAL_ERROR"
 	ErrCodeNamespaceExists    = "NAMESPACE_EXISTS"
 	ErrCodeReloadInProgress   = "RELOAD_IN_PROGRESS"
+	ErrCodeDesktopOnly        = "DESKTOP_ONLY"
+	ErrCodeWorkspaceExists    = "WORKSPACE_EXISTS"
+	ErrCodeWorkspaceNotFound  = "WORKSPACE_NOT_FOUND"
+	ErrCodeWorkspaceInUse     = "WORKSPACE_IN_USE"
 )
 
 // UpgradeRequestDto is the request body for the namespace upgrade endpoint.
@@ -213,6 +217,43 @@ type NamespaceSummaryDto struct {
 	Name        string `json:"name"`
 	Status      string `json:"status"`
 	BundleRef   string `json:"bundleRef"`
+}
+
+// WorkspaceDto describes a workspace for API consumers (desktop-only multi-workspace).
+//
+// RepoPullPeriod is an ISO 8601 duration string (e.g. "PT2H"); AuthType is
+// "NONE" or "TOKEN" (TOKEN resolves a secret under key "ws:{id}:repo").
+// Defaults applied at the storage layer when fields are empty.
+type WorkspaceDto struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	RepoURL        string `json:"repoUrl"`
+	RepoBranch     string `json:"repoBranch"`
+	RepoPullPeriod string `json:"repoPullPeriod,omitempty"`
+	AuthType       string `json:"authType,omitempty"`
+	Active         bool   `json:"active"`
+	Namespaces     int    `json:"namespaces"`
+}
+
+// WorkspaceCreateDto is the request body for POST /api/v1/workspaces.
+// ID may be empty — the daemon derives a safe slug from Name.
+type WorkspaceCreateDto struct {
+	ID             string `json:"id,omitempty"`
+	Name           string `json:"name"`
+	RepoURL        string `json:"repoUrl"`
+	RepoBranch     string `json:"repoBranch,omitempty"`
+	RepoPullPeriod string `json:"repoPullPeriod,omitempty"`
+	AuthType       string `json:"authType,omitempty"`
+}
+
+// WorkspaceUpdateDto is the request body for PUT /api/v1/workspaces/{id}.
+// Name + repo fields are optional — only non-empty fields are applied.
+type WorkspaceUpdateDto struct {
+	Name           string `json:"name,omitempty"`
+	RepoURL        string `json:"repoUrl,omitempty"`
+	RepoBranch     string `json:"repoBranch,omitempty"`
+	RepoPullPeriod string `json:"repoPullPeriod,omitempty"`
+	AuthType       string `json:"authType,omitempty"`
 }
 
 // QuickStartDto represents a quick-start template entry.
@@ -240,12 +281,17 @@ type SecretMetaDto struct {
 }
 
 // SecretCreateDto is the request body for creating or updating a secret.
+//
+// Username is set for BASIC_AUTH / REGISTRY_AUTH only; Value carries the
+// password verbatim (Kotlin AuthSecret.Basic parity — passwords containing
+// ':' must round-trip untouched).
 type SecretCreateDto struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Type  string `json:"type"`
-	Value string `json:"value"`
-	Scope string `json:"scope,omitempty"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Username string `json:"username,omitempty"`
+	Value    string `json:"value"`
+	Scope    string `json:"scope,omitempty"`
 }
 
 // --- Diagnostics ---

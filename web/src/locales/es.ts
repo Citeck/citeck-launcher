@@ -62,11 +62,30 @@ const es: Translations = {
   'welcome.delete.message': '¿Eliminar el namespace "{name}"? Se eliminará el archivo de configuración.',
   'welcome.context.open': 'Abrir',
   'welcome.context.delete': 'Eliminar',
+  'welcome.namespace.edit': 'Editar',
   'welcome.workspace.label': 'Espacio de trabajo',
   'welcome.workspace.forceUpdate': 'Forzar actualización',
+  'welcome.workspace.forceUpdate.inactive': 'Forzar actualización solo está disponible para el espacio de trabajo activo',
   'welcome.workspace.updating': 'Actualizando espacio de trabajo...',
   'welcome.workspace.updateSuccess': 'Espacio de trabajo actualizado',
   'welcome.workspace.updateFailed': 'Error al actualizar el espacio de trabajo: {error}',
+  'welcome.workspace.create': 'Crear espacio de trabajo...',
+  'welcome.workspace.edit': 'Editar',
+  'welcome.workspace.delete': 'Eliminar',
+  'welcome.workspace.deleteConfirm': '¿Eliminar el espacio de trabajo "{name}"? Esto elimina su configuración y caché del repositorio del disco.',
+  'welcome.workspace.switched': 'Cambiado al espacio de trabajo "{name}"',
+  'welcome.workspace.switchFailed': 'Error al cambiar de espacio de trabajo: {error}',
+  'welcome.workspace.form.id': 'ID (opcional)',
+  'welcome.workspace.form.idPlaceholder': 'se deriva del nombre',
+  'welcome.workspace.form.name': 'Nombre',
+  'welcome.workspace.form.repoUrl': 'URL del repositorio',
+  'welcome.workspace.form.repoBranch': 'Rama',
+  'welcome.workspace.form.repoPullPeriod': 'Periodo de actualización (ISO 8601, p.ej. PT2H)',
+  'welcome.workspace.form.authType': 'Autenticación',
+  'welcome.workspace.form.authType.none': 'Ninguna (repositorio público)',
+  'welcome.workspace.form.authType.token': 'Token (repositorio privado)',
+  'welcome.workspace.form.authTypeTokenHint': 'Guarda el token de git como secreto bajo la clave "{key}".',
+  'welcome.workspace.form.required': 'El nombre y la URL del repositorio son obligatorios',
 
   // -- Barra lateral del panel / directorio del namespace --
   'dashboard.openNsDir': 'Abrir directorio NS',
@@ -158,6 +177,8 @@ const es: Translations = {
   'secrets.form.name': 'Nombre',
   'secrets.form.name.placeholder': 'Mi secreto',
   'secrets.form.type': 'Tipo',
+  'secrets.form.username': 'Usuario',
+  'secrets.form.username.placeholder': 'registry-user',
   'secrets.form.value': 'Valor',
   'secrets.form.value.placeholder': 'valor secreto',
   'secrets.form.create': 'Crear',
@@ -478,6 +499,7 @@ const es: Translations = {
   'snapshots.create': 'Create Snapshot',
   'snapshots.create.title': 'Create snapshot',
   'snapshots.importFile': 'Import .zip…',
+  'snapshots.openNsDir': 'Abrir directorio NS',
   'snapshots.import.local.hint': 'Use the .zip stored in the namespace dir to import locally.',
   'snapshots.rename.title': 'Rename snapshot',
   'snapshots.delete.title': 'Delete snapshot "{name}"?',
@@ -517,6 +539,11 @@ const es: Translations = {
   // -- Snapshot import warning --
   'snapshots.import.confirm.title': '¿Importar instantánea?',
   'snapshots.import.confirm.message': 'La importación eliminará los volúmenes existentes de este espacio de nombres. ¿Continuar?',
+
+  // -- Error modal (unified ErrorDialog port) --
+  'errorModal.title': 'Se produjo una excepción',
+  'errorModal.details': 'Detalles',
+  'errorModal.downloadDump': 'Descargar volcado del sistema',
 }
 
 export default es

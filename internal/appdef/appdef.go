@@ -68,8 +68,7 @@ type LimitsDef struct {
 
 // AppInitAction defines an action to run after container creation.
 type AppInitAction struct {
-	Exec    []string `json:"exec,omitempty" yaml:"exec,omitempty"`
-	Trigger string   `json:"trigger,omitempty" yaml:"trigger,omitempty"` // "on_create" or "always"
+	Exec []string `json:"exec,omitempty" yaml:"exec,omitempty"`
 }
 
 // InitContainerDef defines an init container.

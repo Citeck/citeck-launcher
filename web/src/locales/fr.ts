@@ -62,11 +62,30 @@ const fr: Translations = {
   'welcome.delete.message': 'Supprimer le namespace \u00ab {name} \u00bb ? Le fichier de configuration sera supprim\u00e9.',
   'welcome.context.open': 'Ouvrir',
   'welcome.context.delete': 'Supprimer',
+  'welcome.namespace.edit': 'Modifier',
   'welcome.workspace.label': 'Espace de travail',
   'welcome.workspace.forceUpdate': 'Forcer la mise à jour',
+  'welcome.workspace.forceUpdate.inactive': 'Forcer la mise à jour n’est disponible que pour l’espace de travail actif',
   'welcome.workspace.updating': 'Mise à jour de l’espace de travail...',
   'welcome.workspace.updateSuccess': 'Espace de travail mis à jour',
   'welcome.workspace.updateFailed': 'Échec de la mise à jour de l’espace de travail : {error}',
+  'welcome.workspace.create': 'Créer un espace de travail...',
+  'welcome.workspace.edit': 'Modifier',
+  'welcome.workspace.delete': 'Supprimer',
+  'welcome.workspace.deleteConfirm': 'Supprimer l’espace de travail "{name}" ? Sa configuration et son cache de dépôt seront supprimés du disque.',
+  'welcome.workspace.switched': 'Basculé vers l’espace de travail "{name}"',
+  'welcome.workspace.switchFailed': 'Échec du changement d’espace de travail : {error}',
+  'welcome.workspace.form.id': 'ID (facultatif)',
+  'welcome.workspace.form.idPlaceholder': 'dérivé du nom',
+  'welcome.workspace.form.name': 'Nom',
+  'welcome.workspace.form.repoUrl': 'URL du dépôt',
+  'welcome.workspace.form.repoBranch': 'Branche',
+  'welcome.workspace.form.repoPullPeriod': 'Période de mise à jour (ISO 8601, p.ex. PT2H)',
+  'welcome.workspace.form.authType': 'Authentification',
+  'welcome.workspace.form.authType.none': 'Aucune (dépôt public)',
+  'welcome.workspace.form.authType.token': 'Jeton (dépôt privé)',
+  'welcome.workspace.form.authTypeTokenHint': 'Enregistrez le jeton git comme secret sous la clé "{key}".',
+  'welcome.workspace.form.required': 'Le nom et l’URL du dépôt sont obligatoires',
 
   // -- Barre latérale du tableau de bord / répertoire du namespace --
   'dashboard.openNsDir': 'Ouvrir le dossier NS',
@@ -158,6 +177,8 @@ const fr: Translations = {
   'secrets.form.name': 'Nom',
   'secrets.form.name.placeholder': 'Mon secret',
   'secrets.form.type': 'Type',
+  'secrets.form.username': 'Nom d\'utilisateur',
+  'secrets.form.username.placeholder': 'registry-user',
   'secrets.form.value': 'Valeur',
   'secrets.form.value.placeholder': 'valeur secr\u00e8te',
   'secrets.form.create': 'Cr\u00e9er',
@@ -478,6 +499,7 @@ const fr: Translations = {
   'snapshots.create': 'Create Snapshot',
   'snapshots.create.title': 'Create snapshot',
   'snapshots.importFile': 'Import .zip…',
+  'snapshots.openNsDir': 'Ouvrir le dossier NS',
   'snapshots.import.local.hint': 'Use the .zip stored in the namespace dir to import locally.',
   'snapshots.rename.title': 'Rename snapshot',
   'snapshots.delete.title': 'Delete snapshot "{name}"?',
@@ -517,6 +539,11 @@ const fr: Translations = {
   // -- Snapshot import warning --
   'snapshots.import.confirm.title': "Importer l'instantané ?",
   'snapshots.import.confirm.message': "L'importation supprimera les volumes existants de cet espace de noms. Continuer ?",
+
+  // -- Error modal (unified ErrorDialog port) --
+  'errorModal.title': "Une exception s'est produite",
+  'errorModal.details': 'Détails',
+  'errorModal.downloadDump': 'Télécharger le vidage système',
 }
 
 export default fr

@@ -1,20 +1,22 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { getNamespaces, getQuickStarts, deleteNamespace, postNamespaceStart, createNamespace, getDaemonStatus, postWorkspaceUpdate } from '../lib/api'
+import { getNamespaces, getQuickStarts, deleteNamespace, postNamespaceStart, createNamespace, getDaemonStatus } from '../lib/api'
 import type { NamespaceSummaryDto, QuickStartDto } from '../lib/types'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { NamespaceDialog } from '../components/NamespaceDialog'
+import { NamespaceEditDialog } from '../components/NamespaceEditDialog'
 import { LoadingHint } from '../components/LoadingHint'
 import { GitPullErrorDialog, type GitPullDecision } from '../components/GitPullErrorDialog'
 import { ContextMenu } from '../components/ContextMenu'
 import type { ContextMenuItem } from '../components/ContextMenu'
 import { useContextMenu } from '../hooks/useContextMenu'
+import { WorkspaceSelector } from '../components/WorkspaceSelector'
 import { useTabsStore } from '../lib/tabs'
 import { useDashboardStore } from '../lib/store'
 import { usePanelStore } from '../lib/panels'
 import { useTranslation } from '../lib/i18n'
-import { toast } from '../lib/toast'
-import { MoreHorizontal, MoreVertical, Plus } from 'lucide-react'
+import { showError } from '../lib/errorModal'
+import { MoreHorizontal, Plus } from 'lucide-react'
 
 export function Welcome() {
   const { t } = useTranslation()
@@ -28,12 +30,12 @@ export function Welcome() {
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
   const [moreOpen, setMoreOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
   const [gitErrorOpen, setGitErrorOpen] = useState(false)
-  // Workspace label + force-update menu (Kotlin parity: WelcomeScreen.kt:43-396).
-  // We fetch via daemon/status because there is no dedicated workspace info DTO
-  // yet — server mode only ever exposes a single workspace ID via that field.
-  const [workspaceLabel, setWorkspaceLabel] = useState<string>('')
-  const [workspaceUpdating, setWorkspaceUpdating] = useState(false)
+  // Active workspace ID (used for filtering namespaces + scoping the create
+  // request explicitly). Sourced from /daemon/status.workspace, which is the
+  // workspace ID — server mode exposes exactly one ID via that field.
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>('')
   const navigate = useNavigate()
   const openTab = useTabsStore((s) => s.openTab)
   const fetchData = useDashboardStore((s) => s.fetchData)
@@ -70,33 +72,9 @@ export function Welcome() {
   // generic "Workspace" label).
   useEffect(() => {
     getDaemonStatus()
-      .then((s) => setWorkspaceLabel(s.workspace || ''))
+      .then((s) => setActiveWorkspaceId(s.workspace || ''))
       .catch(() => { /* daemon may still be starting */ })
   }, [])
-
-  const handleWorkspaceForceUpdate = useCallback(async () => {
-    setWorkspaceUpdating(true)
-    try {
-      await postWorkspaceUpdate()
-      toast(t('welcome.workspace.updateSuccess'), 'success')
-      // Refresh the namespace + quick-start lists so any new templates or
-      // snapshots in the pulled workspace YAML appear immediately.
-      loadData()
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      toast(t('welcome.workspace.updateFailed', { error: msg }), 'error')
-    } finally {
-      setWorkspaceUpdating(false)
-    }
-  }, [loadData, t])
-
-  const workspaceMenuItems: ContextMenuItem[] = [
-    {
-      label: t('welcome.workspace.forceUpdate'),
-      disabled: workspaceUpdating,
-      onClick: handleWorkspaceForceUpdate,
-    },
-  ]
 
   async function handleOpenNamespace(ns: NamespaceSummaryDto) {
     if (ns.status === 'STOPPED' || ns.status === 'STALLED') {
@@ -161,6 +139,10 @@ export function Welcome() {
         bundleKey: '',
         template: qs.template || '',
         snapshot: qs.snapshot || '',
+        // Pin the new namespace to the active workspace explicitly so the
+        // backend never has to fall back to d.workspaceID — keeps the
+        // contract obvious when read in isolation.
+        workspaceId: activeWorkspaceId || undefined,
         useDefaultPassword: true,
       })
       await postNamespaceStart()
@@ -170,7 +152,13 @@ export function Welcome() {
       openTab({ id: 'home', title: t('dashboard.title'), path: '/' })
       navigate('/')
     } catch (e) {
-      setStartError(e instanceof Error ? e.message : String(e))
+      const err = e instanceof Error ? e : new Error(String(e))
+      setStartError(err.message)
+      showError({
+        title: t('welcome.quickStart'),
+        message: t('welcome.startFailed', { error: err.message }),
+        details: err.stack,
+      })
     } finally {
       setStarting(false)
     }
@@ -179,31 +167,31 @@ export function Welcome() {
   function nsContextItems(ns: NamespaceSummaryDto): ContextMenuItem[] {
     return [
       { label: t('welcome.context.open'), onClick: () => handleOpenNamespace(ns) },
+      { label: t('welcome.namespace.edit'), onClick: () => setEditOpen(true) },
       { label: t('welcome.context.delete'), variant: 'danger', onClick: () => setDeleteTarget(ns) },
     ]
   }
 
   return (
     <div className="relative flex flex-col items-center justify-center min-h-full p-8">
-      {/* Workspace label + Force Update menu (Kotlin parity: WelcomeScreen.kt
-          TopStart row). Always rendered so the menu is reachable even before
-          the workspace label resolves. */}
+      {/* Workspace selector (Kotlin parity: WelcomeScreen.kt TopStart row).
+          The selector owns the active workspace label + per-workspace
+          actions (Force Update / Edit / Delete). In server mode the
+          /workspaces endpoint returns 404 and the component collapses to
+          nothing; the inline fallback label below preserves layout. */}
       <div className="absolute top-3 left-3 flex items-center gap-1">
-        <span className="text-xs text-muted-foreground">
-          {workspaceLabel ? `${t('welcome.workspace.label')}: ${workspaceLabel}` : t('welcome.workspace.label')}
-        </span>
-        <button
-          type="button"
-          aria-label={t('welcome.workspace.forceUpdate')}
-          title={t('welcome.workspace.forceUpdate')}
-          disabled={workspaceUpdating}
-          className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted/40 disabled:opacity-50"
-          onClick={(e) => showContextMenu(e, workspaceMenuItems)}
-        >
-          <MoreVertical size={14} />
-        </button>
-        {workspaceUpdating && (
-          <span className="text-xs text-muted-foreground">{t('welcome.workspace.updating')}</span>
+        <WorkspaceSelector
+          activeId={activeWorkspaceId}
+          onChanged={() => {
+            // After switch / create / delete / force-update: refetch
+            // namespaces + active id so the picker and the namespace list
+            // reflect the new workspace state.
+            loadData()
+            getDaemonStatus().then((s) => setActiveWorkspaceId(s.workspace || '')).catch(() => {})
+          }}
+        />
+        {!activeWorkspaceId && (
+          <span className="text-xs text-muted-foreground">{t('welcome.workspace.label')}</span>
         )}
       </div>
 
@@ -224,7 +212,10 @@ export function Welcome() {
             {startError && (
               <div className="text-center text-destructive text-sm py-2 mb-2">{t('welcome.startFailed', { error: startError })}</div>
             )}
-            {namespaces.slice(0, 3).map((ns) => (
+            {namespaces
+              .filter((ns) => !activeWorkspaceId || !ns.workspaceId || ns.workspaceId === activeWorkspaceId)
+              .slice(0, 3)
+              .map((ns) => (
               <div key={`${ns.workspaceId}:${ns.id}`} className="relative">
                 <button
                   type="button"
@@ -253,7 +244,9 @@ export function Welcome() {
                 render as a row of small buttons. Each variant creates a
                 namespace directly (no wizard detour) using its template +
                 snapshot. */}
-            {quickStarts.length > 0 && namespaces.length === 0 && (
+            {quickStarts.length > 0 && namespaces.filter((ns) =>
+              !activeWorkspaceId || !ns.workspaceId || ns.workspaceId === activeWorkspaceId,
+            ).length === 0 && (
               <>
                 <button
                   type="button"
@@ -286,7 +279,12 @@ export function Welcome() {
             )}
 
             {/* "More" — opens NamespaceDialog (Kotlin parity: WelcomeScreen.kt:154). */}
-            {(namespaces.length > 3 || (quickStarts.length > 1 && namespaces.length === 0)) && (
+            {(() => {
+              const visibleNs = namespaces.filter((ns) =>
+                !activeWorkspaceId || !ns.workspaceId || ns.workspaceId === activeWorkspaceId,
+              )
+              return (visibleNs.length > 3 || (quickStarts.length > 1 && visibleNs.length === 0))
+            })() && (
               <button
                 type="button"
                 onClick={() => setMoreOpen(true)}
@@ -331,6 +329,8 @@ export function Welcome() {
       />
 
       <NamespaceDialog open={moreOpen} onClose={() => setMoreOpen(false)} />
+
+      <NamespaceEditDialog open={editOpen} onClose={() => { setEditOpen(false); loadData() }} />
 
       {/* Footer logos (Kotlin parity: WelcomeScreen.kt BottomStart / BottomEnd).
           Kept muted via opacity-60 so they don't compete with the namespace
