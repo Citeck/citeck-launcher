@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { useDashboardStore } from './lib/store'
-import { getDaemonStatus } from './lib/api'
+import { useDaemonStatusStore, useIsDesktop } from './lib/daemonStatus'
 import { useI18nStore, type Locale } from './lib/i18n'
 import { primeDesktopModeCache } from './lib/desktop'
 import { Dashboard } from './pages/Dashboard'
@@ -21,7 +21,7 @@ import { TabBar } from './components/TabBar'
 import { ToastContainer } from './components/Toast'
 import { ErrorModalHost } from './components/ErrorModal'
 import { LoadingOverlayHost } from './components/LoadingOverlay'
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 
 function MainLayout() {
   // Select only the two fields Layout actually consumes. Subscribing to the
@@ -30,20 +30,15 @@ function MainLayout() {
   const namespace = useDashboardStore((s) => s.namespace)
   const health = useDashboardStore((s) => s.health)
   const fetchData = useDashboardStore((s) => s.fetchData)
-  const [isDesktop, setIsDesktop] = useState<boolean | null>(null)
+  const isDesktop = useIsDesktop()
 
-  // Fetch daemon status once on mount to detect server/desktop mode and locale.
-  // Also prime the multi-window cache so the first click that wants to open
-  // logs / editor in a native window can route correctly.
   useEffect(() => {
     primeDesktopModeCache()
-    getDaemonStatus().then((s) => {
-      setIsDesktop(s.desktop)
-      // Apply server-configured locale if set and user hasn't manually chosen one
-      if (s.locale && !localStorage.getItem('citeck-locale')) {
+    useDaemonStatusStore.getState().fetch().then((s) => {
+      if (s?.locale && !localStorage.getItem('citeck-locale')) {
         useI18nStore.getState().setLocale(s.locale as Locale)
       }
-    }).catch(() => setIsDesktop(false))
+    })
   }, [])
 
   // Fetch namespace status on mount to determine which screen to show

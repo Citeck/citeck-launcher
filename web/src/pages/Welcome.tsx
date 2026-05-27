@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { getNamespaces, getQuickStarts, deleteNamespace, postNamespaceStart, createNamespace, getDaemonStatus } from '../lib/api'
+import { getNamespaces, getQuickStarts, deleteNamespace, postNamespaceStart, createNamespace } from '../lib/api'
+import { useDaemonStatusStore } from '../lib/daemonStatus'
 import type { NamespaceSummaryDto, QuickStartDto } from '../lib/types'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { NamespaceDialog } from '../components/NamespaceDialog'
@@ -76,9 +77,9 @@ export function Welcome() {
   // welcome screen still renders without it (the header just shows the
   // generic "Workspace" label).
   useEffect(() => {
-    getDaemonStatus()
-      .then((s) => { setActiveWorkspaceId(s.workspace || ''); setWorkspaceLoaded(true) })
-      .catch(() => { setWorkspaceLoaded(true) /* daemon may still be starting */ })
+    useDaemonStatusStore.getState().fetch()
+      .then((s) => { setActiveWorkspaceId(s?.workspace || ''); setWorkspaceLoaded(true) })
+      .catch(() => { setWorkspaceLoaded(true) })
   }, [])
 
   async function handleOpenNamespace(ns: NamespaceSummaryDto) {
@@ -211,7 +212,7 @@ export function Welcome() {
             // namespaces + active id so the picker and the namespace list
             // reflect the new workspace state.
             loadData()
-            getDaemonStatus().then((s) => setActiveWorkspaceId(s.workspace || '')).catch(() => {})
+            useDaemonStatusStore.getState().refresh().then((s) => setActiveWorkspaceId(s?.workspace || '')).catch(() => {})
           }}
         />
         {!activeWorkspaceId && (

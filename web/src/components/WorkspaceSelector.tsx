@@ -10,6 +10,7 @@ import {
 } from '../lib/api'
 import type { WorkspaceCreateDto, WorkspaceDto, WorkspaceUpdateDto } from '../lib/types'
 import { useTranslation } from '../lib/i18n'
+import { useIsDesktop } from '../lib/daemonStatus'
 import { toast } from '../lib/toast'
 import { showError } from '../lib/errorModal'
 import { ConfirmModal } from './ConfirmModal'
@@ -33,6 +34,7 @@ type FormMode = 'create' | { kind: 'edit'; ws: WorkspaceDto }
  */
 export function WorkspaceSelector({ activeId, onChanged }: WorkspaceSelectorProps) {
   const { t } = useTranslation()
+  const isDesktop = useIsDesktop()
   const [workspaces, setWorkspaces] = useState<WorkspaceDto[]>([])
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -55,8 +57,8 @@ export function WorkspaceSelector({ activeId, onChanged }: WorkspaceSelectorProp
   }, [])
 
   useEffect(() => {
-    refresh()
-  }, [refresh])
+    if (isDesktop) refresh()
+  }, [isDesktop, refresh])
 
   // Close the dropdown when clicking outside.
   useEffect(() => {
@@ -70,9 +72,10 @@ export function WorkspaceSelector({ activeId, onChanged }: WorkspaceSelectorProp
     return () => document.removeEventListener('mousedown', onDocClick)
   }, [open])
 
-  // Server mode (no workspaces) — render nothing so the Welcome layout stays
-  // identical to the pre-multi-workspace look.
-  if (workspaces.length === 0 && !loading) {
+  // Server mode is single-workspace by design — hide the picker entirely.
+  // `isDesktop === null` means daemon status hasn't resolved yet; render
+  // nothing rather than flash the selector and then collapse it.
+  if (!isDesktop) {
     return null
   }
 

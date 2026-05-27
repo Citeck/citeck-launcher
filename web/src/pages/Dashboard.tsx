@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router'
 import { useDashboardStore } from '../lib/store'
+import { useIsDesktop } from '../lib/daemonStatus'
 import { useTabsStore } from '../lib/tabs'
 import { usePanelStore } from '../lib/panels'
 import { openSecondaryView } from '../lib/desktop'
@@ -38,6 +39,7 @@ export function Dashboard() {
   // it consumes change, not on every SSE-triggered store mutation (e.g.
   // reconnectDelay / lastSeq / stream internal transitions).
   const namespace = useDashboardStore((s) => s.namespace)
+  const isDesktop = useIsDesktop()
   const loading = useDashboardStore((s) => s.loading)
   const error = useDashboardStore((s) => s.error)
   const fetchData = useDashboardStore((s) => s.fetchData)
@@ -450,10 +452,12 @@ export function Dashboard() {
             {/* Kotlin parity (NamespaceScreen.kt sidebar footer): icon-only row
                 with tooltips, ordered: Back | Open Dir | Launcher Logs |
                 Volumes | Secrets | System Dump | Diagnostics | Restart Events. */}
-            <SidebarIconBtn icon={ArrowLeft}
-              tooltip={namespace.status === 'STOPPED' ? t('dashboard.backToWelcome') : t('dashboard.backToWelcome.disabled')}
-              disabled={namespace.status !== 'STOPPED'}
-              onClick={() => setNamespaceDialogOpen(true)} />
+            {isDesktop && (
+              <SidebarIconBtn icon={ArrowLeft}
+                tooltip={namespace.status === 'STOPPED' ? t('dashboard.backToWelcome') : t('dashboard.backToWelcome.disabled')}
+                disabled={namespace.status !== 'STOPPED'}
+                onClick={() => setNamespaceDialogOpen(true)} />
+            )}
             <SidebarIconBtn icon={FolderOpen}
               tooltip={t('dashboard.openNsDir.tooltip')}
               onClick={handleOpenNsDir} />
