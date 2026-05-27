@@ -527,6 +527,16 @@ const fr: Translations = {
   'errorModal.title': "Une exception s'est produite",
   'errorModal.details': 'Détails',
   'errorModal.downloadDump': 'Télécharger le vidage système',
+
+  // -- Overlay de chargement bloquant (parité Kotlin : LoadingDialog) --
+  'longOp.pleaseWait': 'Veuillez patienter…',
+  'longOp.progress.volumes': '{current} sur {total} volumes',
+  'longOp.progress.indeterminate': 'Cela peut prendre plusieurs minutes.',
+  'longOp.snapshot.export': 'Création du snapshot…',
+  'longOp.snapshot.import': 'Import du snapshot…',
+  'longOp.snapshot.rename': 'Renommage du snapshot…',
+  'longOp.snapshot.delete': 'Suppression du snapshot…',
+  'longOp.snapshot.download': 'Téléchargement du snapshot…',
 }
 
 export default fr

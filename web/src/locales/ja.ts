@@ -527,6 +527,16 @@ const ja: Translations = {
   'errorModal.title': '例外が発生しました',
   'errorModal.details': '詳細',
   'errorModal.downloadDump': 'システムダンプをダウンロード',
+
+  // -- ブロッキングローディングオーバーレイ(Kotlin LoadingDialog 対応) --
+  'longOp.pleaseWait': 'お待ちください…',
+  'longOp.progress.volumes': '{total} ボリューム中 {current}',
+  'longOp.progress.indeterminate': 'この処理には数分かかる場合があります。',
+  'longOp.snapshot.export': 'スナップショットを作成中…',
+  'longOp.snapshot.import': 'スナップショットをインポート中…',
+  'longOp.snapshot.rename': 'スナップショットの名前を変更中…',
+  'longOp.snapshot.delete': 'スナップショットを削除中…',
+  'longOp.snapshot.download': 'スナップショットをダウンロード中…',
 }
 
 export default ja

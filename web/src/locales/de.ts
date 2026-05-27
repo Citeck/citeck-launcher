@@ -527,6 +527,16 @@ const de: Translations = {
   'errorModal.title': 'Ausnahme aufgetreten',
   'errorModal.details': 'Details',
   'errorModal.downloadDump': 'Systemabbild herunterladen',
+
+  // -- Blockierendes Lade-Overlay (Kotlin-Parität: LoadingDialog) --
+  'longOp.pleaseWait': 'Bitte warten…',
+  'longOp.progress.volumes': '{current} von {total} Volumes',
+  'longOp.progress.indeterminate': 'Dies kann einige Minuten dauern.',
+  'longOp.snapshot.export': 'Snapshot wird erstellt…',
+  'longOp.snapshot.import': 'Snapshot wird importiert…',
+  'longOp.snapshot.rename': 'Snapshot wird umbenannt…',
+  'longOp.snapshot.delete': 'Snapshot wird gelöscht…',
+  'longOp.snapshot.download': 'Snapshot wird heruntergeladen…',
 }
 
 export default de

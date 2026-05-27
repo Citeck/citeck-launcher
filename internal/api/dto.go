@@ -91,6 +91,9 @@ type LinkDto struct {
 //   - "pull_progress": Percent (0..100), Phase (active layer id / status string).
 //   - "pull_auth_required": After holds the registry host extracted from the image
 //     reference so the UI can pre-fill the credentials dialog.
+//   - "snapshot_progress": Current (1-based volume index), Total (volume count),
+//     After (volume name). Emitted once per volume during export/import so the
+//     UI can render a determinate progress bar inside the blocking overlay.
 type EventDto struct {
 	Type        string  `json:"type"`
 	Seq         int64   `json:"seq"`
@@ -101,6 +104,8 @@ type EventDto struct {
 	After       string  `json:"after"`
 	Percent     float64 `json:"percent,omitempty"`
 	Phase       string  `json:"phase,omitempty"`
+	Current     int     `json:"current,omitempty"`
+	Total       int     `json:"total,omitempty"`
 }
 
 // HealthDto reports the overall daemon health status.

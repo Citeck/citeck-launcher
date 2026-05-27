@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
-import { Download, Pencil, Trash2, Loader2, Search, X } from 'lucide-react'
+import { Download, Pencil, Trash2, Search, X } from 'lucide-react'
 import { getSnapshots, postExportSnapshot, postImportSnapshot, postImportSnapshotByName, getWorkspaceSnapshots, getVolumes, postSnapshotDownload, renameSnapshot, deleteSnapshot, postOpenDir } from '../lib/api'
 import type { SnapshotDto } from '../lib/types'
 import { ConfirmModal } from './ConfirmModal'
@@ -7,6 +7,7 @@ import { FormDialog, type FormFieldSpec } from './FormDialog'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
 import { showError } from '../lib/errorModal'
+import { startLongOp, endLongOp } from '../lib/longOp'
 
 interface SnapshotRow {
   name: string
@@ -130,13 +131,24 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
 
   async function runImport(target: { kind: 'name'; name: string } | { kind: 'file'; file: File }) {
     const key = target.kind === 'name' ? `import:${target.name}` : 'import'
-    await runWith(key, async () => {
-      const res = target.kind === 'name'
-        ? await postImportSnapshotByName(target.name)
-        : await postImportSnapshot(target.file)
-      toast(res.message, 'success')
-      reload()
-    })
+    startLongOp('snapshot.import', t('longOp.snapshot.import'))
+    let started = false
+    try {
+      await runWith(key, async () => {
+        const res = target.kind === 'name'
+          ? await postImportSnapshotByName(target.name)
+          : await postImportSnapshot(target.file)
+        started = true
+        toast(res.message, 'success')
+        reload()
+      })
+    } finally {
+      // HTTP returned 202 — leave the overlay to the SSE terminal event
+      // (`snapshot_complete`/`snapshot_error`, handled in the dashboard
+      // store). If the HTTP call itself rejected (validation / network),
+      // no background work was scheduled, so clear immediately.
+      if (!started) endLongOp()
+    }
   }
 
   async function handleRename(values: Record<string, unknown>) {
@@ -147,31 +159,48 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
       setRenameTarget(null)
       return
     }
-    await runWith(`rename:${renameTarget.name}`, async () => {
-      await renameSnapshot(renameTarget.name, newName)
-      setRenameTarget(null)
-      reload()
-    })
+    startLongOp('snapshot.rename', t('longOp.snapshot.rename'))
+    try {
+      await runWith(`rename:${renameTarget.name}`, async () => {
+        await renameSnapshot(renameTarget.name, newName)
+        setRenameTarget(null)
+        reload()
+      })
+    } finally {
+      endLongOp()
+    }
   }
 
   async function handleDelete() {
     if (!deleteTarget) return
-    await runWith(`delete:${deleteTarget.name}`, async () => {
-      await deleteSnapshot(deleteTarget.name)
-      toast(t('snapshots.deleted'), 'success')
-      setDeleteTarget(null)
-      reload()
-    })
+    startLongOp('snapshot.delete', t('longOp.snapshot.delete'))
+    try {
+      await runWith(`delete:${deleteTarget.name}`, async () => {
+        await deleteSnapshot(deleteTarget.name)
+        toast(t('snapshots.deleted'), 'success')
+        setDeleteTarget(null)
+        reload()
+      })
+    } finally {
+      endLongOp()
+    }
   }
 
   async function handleCreate(values: Record<string, unknown>) {
     const name = String(values.name || '').trim().replace(/\.zip$/, '')
-    await runWith('export', async () => {
-      const res = await postExportSnapshot(name || undefined)
-      toast(res.message, 'success')
-      setCreateOpen(false)
-      reload()
-    })
+    startLongOp('snapshot.export', t('longOp.snapshot.export'))
+    let started = false
+    try {
+      await runWith('export', async () => {
+        const res = await postExportSnapshot(name || undefined)
+        started = true
+        toast(res.message, 'success')
+        setCreateOpen(false)
+        reload()
+      })
+    } finally {
+      if (!started) endLongOp()
+    }
   }
 
   function handleImportFile(file: File) {
@@ -180,11 +209,20 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
 
   function importRow(row: SnapshotRow) {
     if (row.scope === 'workspace') {
-      void runWith(`download:${row.name}`, async () => {
-        const res = await postSnapshotDownload(row.url!, row.id!)
-        toast(res.message, 'success')
-        reload()
-      })
+      startLongOp('snapshot.download', t('longOp.snapshot.download'))
+      let started = false
+      void (async () => {
+        try {
+          await runWith(`download:${row.name}`, async () => {
+            const res = await postSnapshotDownload(row.url!, row.id!)
+            started = true
+            toast(res.message, 'success')
+            reload()
+          })
+        } finally {
+          if (!started) endLongOp()
+        }
+      })()
       return
     }
     void beginImport({ kind: 'name', name: row.name })
@@ -389,7 +427,6 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
         }}
         onCancel={() => setPendingImport(null)}
       />
-      {busy && <Loader2 className="fixed bottom-4 left-4 z-[60] animate-spin text-muted-foreground" size={20} />}
     </>
   )
 }

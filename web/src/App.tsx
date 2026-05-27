@@ -20,6 +20,7 @@ import { WindowEditor } from './pages/WindowEditor'
 import { TabBar } from './components/TabBar'
 import { ToastContainer } from './components/Toast'
 import { ErrorModalHost } from './components/ErrorModal'
+import { LoadingOverlayHost } from './components/LoadingOverlay'
 import { useEffect, useState } from 'react'
 
 function MainLayout() {
@@ -133,6 +134,7 @@ function App() {
       </BrowserRouter>
       <ToastContainer />
       <ErrorModalHost />
+      <LoadingOverlayHost />
     </ErrorBoundary>
   )
 }

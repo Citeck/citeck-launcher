@@ -524,6 +524,16 @@ const ru: Translations = {
   'errorModal.title': 'Произошла ошибка',
   'errorModal.details': 'Подробности',
   'errorModal.downloadDump': 'Скачать дамп системы',
+
+  // -- Блокирующий оверлей загрузки (паритет с LoadingDialog Kotlin) --
+  'longOp.pleaseWait': 'Пожалуйста, подождите…',
+  'longOp.progress.volumes': '{current} из {total} томов',
+  'longOp.progress.indeterminate': 'Это может занять несколько минут.',
+  'longOp.snapshot.export': 'Создание снимка…',
+  'longOp.snapshot.import': 'Импорт снимка…',
+  'longOp.snapshot.rename': 'Переименование снимка…',
+  'longOp.snapshot.delete': 'Удаление снимка…',
+  'longOp.snapshot.download': 'Загрузка снимка…',
 }
 
 export default ru

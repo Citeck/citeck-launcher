@@ -4,6 +4,7 @@ import { getNamespace, getHealth } from './api'
 import { connectEvents } from './websocket'
 import { toast } from './toast'
 import { t } from './i18n'
+import { useLongOpStore } from './longOp'
 
 interface EventStream {
   close: () => void
@@ -115,6 +116,24 @@ return ({
             set({ namespace: { ...ns, apps } })
           }
           return
+        }
+
+        // Snapshot lifecycle — drive the global LoadingOverlay so the user
+        // cannot navigate away from a running export/import. Progress updates
+        // come from `snapshot_progress`; the overlay clears on terminal
+        // events (`snapshot_complete` / `snapshot_error`). Toasts are owned
+        // by the dialog that initiated the op so they fire in the correct
+        // localized phrasing.
+        if (event.type === 'snapshot_progress') {
+          useLongOpStore.getState().update({
+            current: event.current ?? 0,
+            total: event.total ?? 0,
+            message: event.after || undefined,
+          })
+          return
+        }
+        if (event.type === 'snapshot_complete' || event.type === 'snapshot_error') {
+          useLongOpStore.getState().end()
         }
 
         // Pull progress — store-side transient annotation, no AppDto change.

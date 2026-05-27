@@ -527,6 +527,16 @@ const zh: Translations = {
   'errorModal.title': '发生异常',
   'errorModal.details': '详细信息',
   'errorModal.downloadDump': '下载系统转储',
+
+  // -- 阻塞式加载遮罩(对应 Kotlin LoadingDialog)--
+  'longOp.pleaseWait': '请稍候…',
+  'longOp.progress.volumes': '{current} / {total} 个卷',
+  'longOp.progress.indeterminate': '这可能需要几分钟时间。',
+  'longOp.snapshot.export': '正在创建快照…',
+  'longOp.snapshot.import': '正在导入快照…',
+  'longOp.snapshot.rename': '正在重命名快照…',
+  'longOp.snapshot.delete': '正在删除快照…',
+  'longOp.snapshot.download': '正在下载快照…',
 }
 
 export default zh

@@ -93,6 +93,10 @@ export interface EventDto {
   percent?: number
   /** Human-readable progress phase ("Pulling: 234mb 50%"). Only present on `pull_progress`. */
   phase?: string
+  /** Per-volume index (1-based). Present on `snapshot_progress`. */
+  current?: number
+  /** Total volume count. Present on `snapshot_progress`. */
+  total?: number
 }
 
 export interface AppInspectDto {

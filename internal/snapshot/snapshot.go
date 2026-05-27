@@ -56,10 +56,17 @@ func sanitizeFileName(name string) string {
 	return unsafeChars.ReplaceAllString(name, "_")
 }
 
+// VolumeProgressFunc reports per-volume progress during Export/Import
+// (distinct from ProgressFunc which reports byte-level download progress).
+// current is 1-based volume index, total is the total volume count,
+// volumeName identifies the volume being processed. Implementations
+// must be cheap and non-blocking — callers invoke it on the hot path.
+type VolumeProgressFunc func(current, total int, volumeName string)
+
 // Export creates a snapshot ZIP of all namespace volumes.
 // The namespace MUST be stopped before calling this.
 // volumesBase is the runtime directory containing volumes/ subdirectory.
-func Export(ctx context.Context, dc *docker.Client, outputPath, volumesBase string) (*NamespaceSnapshotMeta, error) {
+func Export(ctx context.Context, dc *docker.Client, outputPath, volumesBase string, progress VolumeProgressFunc) (*NamespaceSnapshotMeta, error) {
 	// Scan bind-mount volumes in {volumesBase}/volumes/
 	volumesDir := filepath.Join(volumesBase, "volumes")
 	entries, err := os.ReadDir(volumesDir)
@@ -94,11 +101,15 @@ func Export(ctx context.Context, dc *docker.Client, outputPath, volumesBase stri
 	}
 
 	// Export each volume via launcher-utils container
-	for _, volName := range volumeDirs {
+	for idx, volName := range volumeDirs {
 		hostPath := filepath.Join(volumesDir, volName)
 		dataFile := sanitizeFileName(volName) + ".tar." + compressionExt
 
 		slog.Info("Exporting volume", "volume", volName, "path", hostPath, "file", dataFile)
+
+		if progress != nil {
+			progress(idx+1, len(volumeDirs), volName)
+		}
 
 		rootStat, exportErr := exportVolume(ctx, dc, hostPath, filepath.Join(tmpDir, dataFile))
 		if exportErr != nil {
@@ -143,7 +154,7 @@ func Export(ctx context.Context, dc *docker.Client, outputPath, volumesBase stri
 
 // Import restores volumes from a snapshot ZIP into bind-mount directories.
 // The namespace MUST be stopped before calling this.
-func Import(ctx context.Context, dc *docker.Client, zipPath, volumesBase string) (*NamespaceSnapshotMeta, error) {
+func Import(ctx context.Context, dc *docker.Client, zipPath, volumesBase string, progress VolumeProgressFunc) (*NamespaceSnapshotMeta, error) {
 	// Estimate needed space (3x ZIP size) and check available disk
 	if zipInfo, err := os.Stat(zipPath); err == nil {
 		needed := zipInfo.Size() * 3
@@ -192,13 +203,17 @@ func Import(ctx context.Context, dc *docker.Client, zipPath, volumesBase string)
 	}
 
 	// Import each volume
-	for _, vol := range meta.Volumes {
+	for idx, vol := range meta.Volumes {
 		tarPath := filepath.Join(tmpDir, vol.DataFile)
 		if _, err := os.Stat(tarPath); err != nil {
 			return nil, fmt.Errorf("volume data file %s not found in snapshot", vol.DataFile)
 		}
 
 		slog.Info("Importing volume", "name", vol.Name, "file", vol.DataFile)
+
+		if progress != nil {
+			progress(idx+1, len(meta.Volumes), vol.Name)
+		}
 
 		if err := importVolume(ctx, dc, vol, tarPath, volumesBase); err != nil {
 			return nil, fmt.Errorf("import volume %s: %w", vol.Name, err)

@@ -527,6 +527,16 @@ const es: Translations = {
   'errorModal.title': 'Se produjo una excepción',
   'errorModal.details': 'Detalles',
   'errorModal.downloadDump': 'Descargar volcado del sistema',
+
+  // -- Overlay de carga bloqueante (paridad con Kotlin LoadingDialog) --
+  'longOp.pleaseWait': 'Por favor, espere…',
+  'longOp.progress.volumes': '{current} de {total} volúmenes',
+  'longOp.progress.indeterminate': 'Esto puede tardar varios minutos.',
+  'longOp.snapshot.export': 'Creando snapshot…',
+  'longOp.snapshot.import': 'Importando snapshot…',
+  'longOp.snapshot.rename': 'Renombrando snapshot…',
+  'longOp.snapshot.delete': 'Eliminando snapshot…',
+  'longOp.snapshot.download': 'Descargando snapshot…',
 }
 
 export default es

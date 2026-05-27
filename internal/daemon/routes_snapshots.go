@@ -149,7 +149,14 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 			Type: "snapshot_export", Timestamp: time.Now().UnixMilli(),
 			NamespaceID: nsID, After: fmt.Sprintf("exporting to %s", fileName),
 		})
-		meta, err := snapshot.Export(d.bgCtx, d.dockerClient, outputPath, d.volumesBase)
+		progress := func(current, total int, volumeName string) {
+			d.broadcastEvent(api.EventDto{
+				Type: "snapshot_progress", Timestamp: time.Now().UnixMilli(),
+				NamespaceID: nsID, After: volumeName,
+				Current: current, Total: total,
+			})
+		}
+		meta, err := snapshot.Export(d.bgCtx, d.dockerClient, outputPath, d.volumesBase, progress)
 		if err != nil {
 			slog.Error("Snapshot export failed", "err", err)
 			d.broadcastEvent(api.EventDto{
@@ -261,7 +268,14 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 			defer os.Remove(tmpPath)
 		}
 		nsID := d.activeNsID()
-		meta, err := snapshot.Import(d.bgCtx, d.dockerClient, importPath, d.volumesBase)
+		progress := func(current, total int, volumeName string) {
+			d.broadcastEvent(api.EventDto{
+				Type: "snapshot_progress", Timestamp: time.Now().UnixMilli(),
+				NamespaceID: nsID, After: volumeName,
+				Current: current, Total: total,
+			})
+		}
+		meta, err := snapshot.Import(d.bgCtx, d.dockerClient, importPath, d.volumesBase, progress)
 		if err != nil {
 			slog.Error("Snapshot import failed", "err", err)
 			d.broadcastEvent(api.EventDto{
@@ -477,7 +491,14 @@ func (d *Daemon) downloadAndImportSnapshot(snapshotID, wsID, nsID string) {
 		NamespaceID: nsID, After: "importing snapshot",
 	})
 
-	meta, err := snapshot.Import(d.bgCtx, d.dockerClient, destPath, volumesBase)
+	importProgress := func(current, total int, volumeName string) {
+		d.broadcastEvent(api.EventDto{
+			Type: "snapshot_progress", Timestamp: time.Now().UnixMilli(),
+			NamespaceID: nsID, After: volumeName,
+			Current: current, Total: total,
+		})
+	}
+	meta, err := snapshot.Import(d.bgCtx, d.dockerClient, destPath, volumesBase, importProgress)
 	if err != nil {
 		slog.Error("Snapshot import failed", "err", err)
 		d.broadcastEvent(api.EventDto{

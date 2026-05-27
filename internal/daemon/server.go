@@ -1723,7 +1723,7 @@ func importSnapshotIfNeeded(nsCfg *namespace.Config, wsCfg *bundle.WorkspaceConf
 	}
 
 	// Import
-	if _, err := snapshot.Import(importCtx, dc, destPath, volumesBase); err != nil {
+	if _, err := snapshot.Import(importCtx, dc, destPath, volumesBase, nil); err != nil {
 		slog.Error("Snapshot import failed", "err", err)
 		return
 	}

@@ -531,6 +531,16 @@ const en: Translations = {
   'errorModal.title': 'Exception occurred',
   'errorModal.details': 'Details',
   'errorModal.downloadDump': 'Download System Dump',
+
+  // -- Blocking loading overlay (Kotlin parity: LoadingDialog) --
+  'longOp.pleaseWait': 'Please, wait…',
+  'longOp.progress.volumes': '{current} of {total} volumes',
+  'longOp.progress.indeterminate': 'This may take several minutes.',
+  'longOp.snapshot.export': 'Creating snapshot…',
+  'longOp.snapshot.import': 'Importing snapshot…',
+  'longOp.snapshot.rename': 'Renaming snapshot…',
+  'longOp.snapshot.delete': 'Deleting snapshot…',
+  'longOp.snapshot.download': 'Downloading snapshot…',
 }
 
 export default en

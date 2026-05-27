@@ -527,6 +527,16 @@ const pt: Translations = {
   'errorModal.title': 'Ocorreu uma exceção',
   'errorModal.details': 'Detalhes',
   'errorModal.downloadDump': 'Baixar despejo do sistema',
+
+  // -- Overlay de carregamento bloqueante (paridade Kotlin: LoadingDialog) --
+  'longOp.pleaseWait': 'Por favor, aguarde…',
+  'longOp.progress.volumes': '{current} de {total} volumes',
+  'longOp.progress.indeterminate': 'Isso pode levar alguns minutos.',
+  'longOp.snapshot.export': 'Criando snapshot…',
+  'longOp.snapshot.import': 'Importando snapshot…',
+  'longOp.snapshot.rename': 'Renomeando snapshot…',
+  'longOp.snapshot.delete': 'Excluindo snapshot…',
+  'longOp.snapshot.download': 'Baixando snapshot…',
 }
 
 export default pt
