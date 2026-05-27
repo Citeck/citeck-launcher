@@ -262,7 +262,7 @@ export async function getSystemDump(format: 'json' | 'zip' = 'json'): Promise<vo
   setTimeout(() => URL.revokeObjectURL(url), 5000)
 }
 
-export async function getVolumes(): Promise<{ name: string; path: string }[]> {
+export async function getVolumes(): Promise<{ name: string; path: string; size?: number }[]> {
   return fetchJSON('/volumes')
 }
 

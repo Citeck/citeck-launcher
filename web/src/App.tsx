@@ -11,7 +11,6 @@ import { Config } from './pages/Config'
 import { Volumes } from './pages/Volumes'
 import { DaemonLogs } from './pages/DaemonLogs'
 import { Welcome } from './pages/Welcome'
-import { Wizard } from './pages/Wizard'
 import { Secrets } from './pages/Secrets'
 import { Diagnostics } from './pages/Diagnostics'
 import { Licenses } from './pages/Licenses'
@@ -80,7 +79,6 @@ function MainLayout() {
 
           {/* Workspace-level pages (scrollable) */}
           <Route path="/welcome" element={<Scroll><Safe><Welcome /></Safe></Scroll>} />
-          <Route path="/wizard" element={<Scroll><Safe><Wizard /></Safe></Scroll>} />
           <Route path="/secrets" element={<Scroll><Safe><Secrets /></Safe></Scroll>} />
           <Route path="/diagnostics" element={<Scroll><Safe><Diagnostics /></Safe></Scroll>} />
           <Route path="/licenses" element={<Scroll><Safe><Licenses /></Safe></Scroll>} />

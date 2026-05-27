@@ -19,11 +19,11 @@ test.describe('Welcome Screen', () => {
     expect(hasCreate || hasLoading).toBeTruthy()
   })
 
-  test('Create New Namespace button navigates to wizard', async ({ page }) => {
+  test('Create New Namespace button opens dialog', async ({ page }) => {
     const btn = page.getByText('Create New Namespace')
     if (await btn.isVisible().catch(() => false)) {
       await btn.click()
-      await expect(page).toHaveURL('/wizard')
+      await expect(page.getByText('Create Namespace')).toBeVisible()
     }
   })
 

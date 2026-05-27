@@ -1,9 +1,10 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router'
-import { Pencil, Trash2 } from 'lucide-react'
+import { Code2, Pencil, Trash2 } from 'lucide-react'
 import { getNamespaces, deleteNamespace, postNamespaceStart } from '../lib/api'
 import { JournalDialog, type JournalAction, type JournalColumn } from './JournalDialog'
 import { ConfirmModal } from './ConfirmModal'
+import { NamespaceEditDialog } from './NamespaceEditDialog'
 import { useDashboardStore } from '../lib/store'
 import { useTabsStore } from '../lib/tabs'
 import { usePanelStore } from '../lib/panels' // openBottomTab for ConfigEditor
@@ -31,8 +32,9 @@ interface NamespaceDialogProps {
  * (`NamespaceScreen.kt:99` → JournalSelectDialog for NamespaceConfig).
  *
  * Picking a row starts the namespace (if not running) and navigates to "/".
- * Per-row actions: Edit (opens the wizard at the namespace), Delete (with
- * confirm). Footer "Create" routes to /wizard.
+ * Per-row actions: Edit (opens NamespaceEditDialog mode=edit), edit-raw-YAML
+ * (opens the ConfigEditor bottom tab), Delete (with confirm). Footer "Create"
+ * opens NamespaceEditDialog mode=create.
  */
 export function NamespaceDialog({ open, onClose, onOpened }: NamespaceDialogProps) {
   const { t } = useTranslation()
@@ -45,6 +47,8 @@ export function NamespaceDialog({ open, onClose, onOpened }: NamespaceDialogProp
   const [rows, setRows] = useState<NamespaceRow[]>([])
   const [deleteTarget, setDeleteTarget] = useState<NamespaceRow | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [editTarget, setEditTarget] = useState<NamespaceRow | null>(null)
+  const [createOpen, setCreateOpen] = useState(false)
 
   const reload = useCallback(() => {
     getNamespaces()
@@ -96,15 +100,20 @@ export function NamespaceDialog({ open, onClose, onOpened }: NamespaceDialogProp
     {
       icon: Pencil,
       title: t('namespaces.action.edit'),
+      onClick: (row) => setEditTarget(row),
+    },
+    {
+      icon: Code2,
+      title: t('nsEdit.editRawYaml'),
       onClick: async (row) => {
-        // Switch to the target namespace first so the ConfigEditor bottom
-        // tab loads the right namespace.yml, then open the editor.
+        // Switching to the target namespace first ensures the ConfigEditor
+        // bottom tab loads the right namespace.yml (active-namespace scoped).
         if (row.status === 'STOPPED' || row.status === 'STALLED') {
           try { await postNamespaceStart() } catch { /* user can retry */ }
         }
         await fetchData()
         startEventStream()
-        openBottomTab({ id: 'ns-config', type: 'ns-config', title: t('namespaces.action.edit') })
+        openBottomTab({ id: 'ns-config', type: 'ns-config', title: t('nsEdit.editRawYaml') })
         navigate('/')
         onClose()
       },
@@ -141,11 +150,7 @@ export function NamespaceDialog({ open, onClose, onOpened }: NamespaceDialogProp
         columns={columns}
         data={rows}
         rowActions={rowActions}
-        onCreate={() => {
-          openTab({ id: 'wizard', title: t('welcome.createNew'), path: '/wizard' })
-          navigate('/wizard')
-          onClose()
-        }}
+        onCreate={() => setCreateOpen(true)}
         closeWhenEmpty={false}
         selectable
         onSelect={(sel) => { if (sel.length === 1) void openNamespace(sel[0]) }}
@@ -159,6 +164,23 @@ export function NamespaceDialog({ open, onClose, onOpened }: NamespaceDialogProp
         loading={deleting}
         onConfirm={handleDelete}
         onCancel={() => setDeleteTarget(null)}
+      />
+      <NamespaceEditDialog
+        open={createOpen}
+        mode="create"
+        onClose={() => setCreateOpen(false)}
+        onSaved={() => { setCreateOpen(false); reload() }}
+      />
+      <NamespaceEditDialog
+        open={!!editTarget}
+        mode="edit"
+        initial={editTarget ? {
+          name: editTarget.name,
+          bundleRepo: editTarget.bundleRef?.split(':')[0] || '',
+          bundleKey: editTarget.bundleRef?.split(':').slice(1).join(':') || '',
+        } : undefined}
+        onClose={() => setEditTarget(null)}
+        onSaved={() => { setEditTarget(null); reload() }}
       />
     </>
   )

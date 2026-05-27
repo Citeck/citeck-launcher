@@ -23,8 +23,16 @@ function isEditableFile(path: string): boolean {
   return EDITABLE_EXTENSIONS.includes(base.slice(dot + 1))
 }
 import { StatusBadge } from './StatusBadge'
+import { StatsCell } from './StatsCell'
 import { ConfirmModal } from './ConfirmModal'
 import { Square, Play, RotateCw, FileText, Settings, Circle, Lock } from 'lucide-react'
+
+// "2.3%" / "0%" → numeric percent. Empty/unparseable yields 0.
+function parseCpuPercent(s?: string): number {
+  if (!s) return 0
+  const m = s.match(/-?\d+(?:\.\d+)?/)
+  return m ? parseFloat(m[0]) : 0
+}
 
 interface AppTableProps {
   apps: AppDto[]
@@ -228,17 +236,24 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
                 )}
               </span>
             </td>
-            <td
-              className={`py-[3px] pr-2 text-right font-mono ${app.cpuThrottled ? 'text-amber-500' : 'text-muted-foreground'}`}
-              title={app.cpuThrottled ? t('table.cpu.throttled') : undefined}
-            >
-              {app.cpu || ''}
+            <td className="py-[3px] pr-2 text-right">
+              <StatsCell
+                text={app.cpu || ''}
+                percent={parseCpuPercent(app.cpu)}
+                isActive={isRun && !!app.cpu}
+                isWarning={app.cpuThrottled}
+                title={app.cpuThrottled ? t('table.cpu.throttled') : undefined}
+              />
             </td>
-            <td
-              className={`py-[3px] pr-4 text-right font-mono ${app.memoryCritical ? 'text-red-500' : app.memoryWarning ? 'text-amber-500' : 'text-muted-foreground'}`}
-              title={app.memoryCritical ? t('table.memory.critical') : app.memoryWarning ? t('table.memory.warning') : undefined}
-            >
-              {app.memory ? app.memory.split(' / ')[0] : ''}
+            <td className="py-[3px] pr-4 text-right">
+              <StatsCell
+                text={app.memory ? app.memory.split(' / ')[0] : ''}
+                percent={app.memoryPercent ?? 0}
+                isActive={isRun && !!app.memory}
+                isWarning={app.memoryWarning}
+                isCritical={app.memoryCritical}
+                title={app.memoryCritical ? t('table.memory.critical') : app.memoryWarning ? t('table.memory.warning') : undefined}
+              />
             </td>
             <td className="py-[3px] pr-4 font-mono text-muted-foreground whitespace-nowrap" title={app.ports?.join(', ')}>
               {portsShort(app.ports)}

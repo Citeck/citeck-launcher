@@ -565,6 +565,7 @@ export function Dashboard() {
       />
       <NamespaceEditDialog
         open={nsEditOpen}
+        mode="edit"
         onClose={() => setNsEditOpen(false)}
       />
       {contextMenu && (

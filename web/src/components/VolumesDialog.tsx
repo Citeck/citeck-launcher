@@ -8,8 +8,17 @@ import { toast } from '../lib/toast'
 
 interface VolumeRow extends Record<string, unknown> {
   name: string
-  path: string
   size: string
+}
+
+// Mirrors SnapshotsDialog.formatBytes; kept inline to avoid pulling a shared
+// formatter just for two dialogs (Kotlin used ContainerStats.formatBytes).
+function formatBytes(bytes?: number): string {
+  if (!bytes || bytes <= 0) return '—'
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  return `${bytes} B`
 }
 
 interface VolumesDialogProps {
@@ -26,6 +35,8 @@ interface VolumesDialogProps {
  * (`NamespaceScreen.kt:357` opens a JournalSelectDialog over `VolumeInfo`).
  *
  * Columns: Name + Size (matches Kotlin column widths 200-450dp / 50-100dp).
+ * Size comes from Docker's /system/df endpoint (desktop mode); server mode bind
+ * mounts under volumesDir do not expose size cheaply — those entries show "—".
  * Per-row action: delete (only when namespace is STOPPED).
  * Custom footer buttons:
  *  - "Snapshots" — opens the SnapshotsDialog
@@ -43,7 +54,7 @@ export function VolumesDialog({ open, onClose, onOpenSnapshots, namespaceStopped
   const reload = useCallback(() => {
     setError(null)
     getVolumes()
-      .then((vs) => setVolumes(vs.map((v) => ({ name: v.name, path: v.path, size: '—' }))))
+      .then((vs) => setVolumes(vs.map((v) => ({ name: v.name, size: formatBytes(v.size) }))))
       .catch((e) => setError(e.message))
   }, [])
 
@@ -52,8 +63,8 @@ export function VolumesDialog({ open, onClose, onOpenSnapshots, namespaceStopped
   }, [open, reload])
 
   const columns: JournalColumn<VolumeRow>[] = [
-    { label: t('volumes.table.name'), key: 'name', width: '60%' },
-    { label: t('volumes.table.path'), key: 'path' },
+    { label: t('volumes.table.name'), key: 'name', width: '70%' },
+    { label: t('volumes.table.size'), key: 'size' },
   ]
 
   const rowActions: JournalAction<VolumeRow>[] = [

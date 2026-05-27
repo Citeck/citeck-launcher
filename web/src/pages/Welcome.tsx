@@ -30,7 +30,8 @@ export function Welcome() {
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
   const [moreOpen, setMoreOpen] = useState(false)
-  const [editOpen, setEditOpen] = useState(false)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [editTarget, setEditTarget] = useState<NamespaceSummaryDto | null>(null)
   const [gitErrorOpen, setGitErrorOpen] = useState(false)
   // Active workspace ID (used for filtering namespaces + scoping the create
   // request explicitly). Sourced from /daemon/status.workspace, which is the
@@ -116,8 +117,16 @@ export function Welcome() {
   }
 
   function handleCreateNew() {
-    openTab({ id: 'wizard', title: t('welcome.createNew'), path: '/wizard' })
-    navigate('/wizard')
+    setCreateOpen(true)
+  }
+
+  async function afterCreated() {
+    await loadData()
+    await fetchData()
+    startEventStream()
+    resetPanels()
+    openTab({ id: 'home', title: t('dashboard.title'), path: '/' })
+    navigate('/')
   }
 
   // Kotlin parity (WelcomeScreen.kt prepareNsDataToCreate): each quickstart
@@ -128,20 +137,21 @@ export function Welcome() {
     setStarting(true)
     setStartError(null)
     try {
+      // Kotlin parity (WelcomeScreen.prepareNsDataToCreate): the server
+      // copies the namespaceTemplate into the new config and overrides only
+      // name/template/snapshot. We do not send authType/host/port/TLS/pgAdmin
+      // so the template defaults survive.
       await createNamespace({
-        name: 'Citeck Default',
-        authType: 'KEYCLOAK',
-        host: 'localhost',
-        port: 80,
-        tlsEnabled: false,
-        pgAdminEnabled: false,
-        bundleRepo: '',
-        bundleKey: '',
+        name: qs.name || 'Citeck Default',
         template: qs.template || '',
         snapshot: qs.snapshot || '',
-        // Pin the new namespace to the active workspace explicitly so the
-        // backend never has to fall back to d.workspaceID — keeps the
-        // contract obvious when read in isolation.
+        bundleRepo: '',
+        bundleKey: '',
+        authType: '',
+        host: '',
+        port: 0,
+        tlsEnabled: false,
+        pgAdminEnabled: false,
         workspaceId: activeWorkspaceId || undefined,
         useDefaultPassword: true,
       })
@@ -167,7 +177,7 @@ export function Welcome() {
   function nsContextItems(ns: NamespaceSummaryDto): ContextMenuItem[] {
     return [
       { label: t('welcome.context.open'), onClick: () => handleOpenNamespace(ns) },
-      { label: t('welcome.namespace.edit'), onClick: () => setEditOpen(true) },
+      { label: t('welcome.namespace.edit'), onClick: () => setEditTarget(ns) },
       { label: t('welcome.context.delete'), variant: 'danger', onClick: () => setDeleteTarget(ns) },
     ]
   }
@@ -330,7 +340,25 @@ export function Welcome() {
 
       <NamespaceDialog open={moreOpen} onClose={() => setMoreOpen(false)} />
 
-      <NamespaceEditDialog open={editOpen} onClose={() => { setEditOpen(false); loadData() }} />
+      <NamespaceEditDialog
+        open={createOpen}
+        mode="create"
+        workspaceId={activeWorkspaceId}
+        onClose={() => setCreateOpen(false)}
+        onSaved={afterCreated}
+      />
+
+      <NamespaceEditDialog
+        open={!!editTarget}
+        mode="edit"
+        initial={editTarget ? {
+          name: editTarget.name || editTarget.id,
+          bundleRepo: editTarget.bundleRef?.split(':')[0] || '',
+          bundleKey: editTarget.bundleRef?.split(':').slice(1).join(':') || '',
+        } : undefined}
+        onClose={() => setEditTarget(null)}
+        onSaved={() => { setEditTarget(null); loadData() }}
+      />
 
       {/* Footer logos (Kotlin parity: WelcomeScreen.kt BottomStart / BottomEnd).
           Kept muted via opacity-60 so they don't compete with the namespace

@@ -1,189 +1,393 @@
-import { useEffect, useState, useMemo } from 'react'
-import { FormDialog, type FormFieldSpec, type FormValues, type SelectOption } from './FormDialog'
-import { getBundles, getNamespaceEdit, putNamespaceEdit, type NamespaceEditDto } from '../lib/api'
-import type { BundleInfoDto } from '../lib/types'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { RefreshCw, X } from 'lucide-react'
+import {
+  createNamespace,
+  getBundles,
+  getNamespaceEdit,
+  getWorkspaceSnapshots,
+  putNamespaceEdit,
+  type NamespaceEditDto,
+} from '../lib/api'
+import type { BundleInfoDto, NamespaceCreateDto } from '../lib/types'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
-import { useDashboardStore } from '../lib/store'
+
+export interface NamespaceEditInitial {
+  name?: string
+  bundleRepo?: string
+  bundleKey?: string
+  authType?: string
+  users?: string[]
+}
 
 interface NamespaceEditDialogProps {
   open: boolean
+  mode: 'create' | 'edit'
+  initial?: NamespaceEditInitial
+  workspaceId?: string
   onClose: () => void
+  onSaved?: () => void
+}
+
+interface WsSnapshotOpt {
+  id: string
+  name: string
 }
 
 /**
- * NamespaceEditDialog is the Web port of Kotlin's EditNamespaceDialog —
- * a typed FormDialog over the namespace.yml fields most users actually want
- * to change. Power users can still edit raw YAML via the RMB "Edit raw YAML"
- * affordance on the Dashboard gear icon.
- *
- * The list of bundle repos is fetched once when the dialog opens; if a repo
- * is not in the dropdown (e.g. the namespace was originally created against
- * a repo that was later removed from workspace-v1.yml), we keep the current
- * value as the default and append a synthetic option so the form does not
- * silently drop it.
+ * Single-modal namespace create/edit form (Kotlin parity:
+ * NamespaceEntityDef.formSpec). The 1:1 field set is name, bundlesRepo,
+ * bundleKey, snapshot (CREATE only), authType, authUsers (when BASIC).
+ * Host/port/TLS/pgAdmin are NOT part of this form — power users edit those
+ * via raw YAML (Dashboard cog → "Edit raw YAML").
  */
-export function NamespaceEditDialog({ open, onClose }: NamespaceEditDialogProps) {
+export function NamespaceEditDialog({
+  open,
+  mode,
+  initial,
+  workspaceId,
+  onClose,
+  onSaved,
+}: NamespaceEditDialogProps) {
   const { t } = useTranslation()
-  const [initial, setInitial] = useState<NamespaceEditDto | null>(null)
+  const dialogRef = useRef<HTMLDialogElement>(null)
+
+  const [name, setName] = useState('')
+  const [bundleRepo, setBundleRepo] = useState('')
+  const [bundleKey, setBundleKey] = useState('')
+  const [snapshot, setSnapshot] = useState('')
+  const [authType, setAuthType] = useState('KEYCLOAK')
+  const [authUsers, setAuthUsers] = useState('')
+
   const [bundles, setBundles] = useState<BundleInfoDto[]>([])
+  const [snapshots, setSnapshots] = useState<WsSnapshotOpt[]>([])
+  const [bundlesLoading, setBundlesLoading] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const fetchData = useDashboardStore((s) => s.fetchData)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    const dlg = dialogRef.current
+    if (!dlg) return
+    if (open && !dlg.open) dlg.showModal()
+    else if (!open && dlg.open) dlg.close()
+  }, [open])
 
   useEffect(() => {
     if (!open) {
-      setInitial(null)
-      setError(null)
+      setSubmitError(null)
+      setFieldErrors({})
       return
     }
-    let active = true
-    Promise.all([
-      getNamespaceEdit().catch((e) => { throw e }),
-      getBundles().catch(() => [] as BundleInfoDto[]),
-    ])
-      .then(([n, b]) => {
-        if (!active) return
-        setInitial(n)
-        setBundles(b)
-      })
-      .catch((e) => { if (active) setError((e as Error).message) })
-    return () => { active = false }
-  }, [open])
 
-  const bundleOptions: SelectOption[] = useMemo(() => {
-    const opts: SelectOption[] = bundles.map((b) => ({ label: b.repo, value: b.repo }))
-    if (initial?.bundleRepo && !opts.some((o) => o.value === initial.bundleRepo)) {
-      opts.unshift({ label: initial.bundleRepo, value: initial.bundleRepo })
+    setBundlesLoading(true)
+    getBundles()
+      .then((bs) => setBundles(bs))
+      .catch(() => setBundles([]))
+      .finally(() => setBundlesLoading(false))
+
+    if (mode === 'create') {
+      getWorkspaceSnapshots()
+        .then((s) => setSnapshots(s.map((x) => ({ id: x.id, name: x.name }))))
+        .catch(() => setSnapshots([]))
+    }
+
+    if (mode === 'edit') {
+      const init = initial
+      if (init && init.name !== undefined) {
+        setName(init.name ?? '')
+        setBundleRepo(init.bundleRepo ?? '')
+        setBundleKey(init.bundleKey ?? '')
+        setAuthType(init.authType || 'KEYCLOAK')
+        setAuthUsers((init.users ?? []).join(', '))
+      } else {
+        getNamespaceEdit()
+          .then((n: NamespaceEditDto) => {
+            setName(n.name)
+            setBundleRepo(n.bundleRepo)
+            setBundleKey(n.bundleKey)
+            setAuthType(n.authType || 'KEYCLOAK')
+            setAuthUsers((n.users ?? []).join(', '))
+          })
+          .catch((e) => setSubmitError((e as Error).message))
+      }
+    } else {
+      setName('')
+      setBundleRepo('')
+      setBundleKey('')
+      setSnapshot('')
+      setAuthType('KEYCLOAK')
+      setAuthUsers('')
+    }
+  }, [open, mode, initial])
+
+  const bundleRepoOptions = useMemo(() => {
+    const opts = bundles.map((b) => ({ value: b.repo, label: b.repo }))
+    // Preserve a current value not present in the dropdown (e.g. a repo that
+    // was later removed from workspace-v1.yml) so edits don't silently drop it.
+    if (bundleRepo && !opts.some((o) => o.value === bundleRepo)) {
+      opts.unshift({ value: bundleRepo, label: bundleRepo })
     }
     return opts
-  }, [bundles, initial?.bundleRepo])
+  }, [bundles, bundleRepo])
 
-  const fields: FormFieldSpec[] = useMemo(() => [
-    {
-      key: 'name',
-      label: t('nsEdit.field.name'),
-      type: 'text',
-      required: true,
-    },
-    {
-      key: 'bundleRepo',
-      label: t('nsEdit.field.bundleRepo'),
-      type: 'select',
-      required: true,
-      options: bundleOptions,
-    },
-    {
-      key: 'bundleKey',
-      label: t('nsEdit.field.bundleKey'),
-      type: 'text',
-      required: true,
-      defaultValue: 'LATEST',
-    },
-    {
-      key: 'authType',
-      label: t('nsEdit.field.authType'),
-      type: 'select',
-      required: true,
-      options: [
-        { label: 'BASIC', value: 'BASIC' },
-        { label: 'KEYCLOAK', value: 'KEYCLOAK' },
-      ],
-    },
-    {
-      key: 'users',
-      label: t('nsEdit.field.users'),
-      type: 'text',
-      placeholder: 'admin, user1, user2',
-    },
-    {
-      key: 'host',
-      label: t('nsEdit.field.host'),
-      type: 'text',
-      required: true,
-    },
-    {
-      key: 'port',
-      label: t('nsEdit.field.port'),
-      type: 'number',
-      required: true,
-      validations: [
-        (_, v) => {
-          const n = typeof v === 'number' ? v : parseInt(String(v ?? 0), 10) || 0
-          return n >= 1 && n <= 65535 ? '' : 'Port must be 1-65535'
-        },
-      ],
-    },
-    {
-      key: 'tlsEnabled',
-      label: t('nsEdit.field.tlsEnabled'),
-      type: 'checkbox',
-    },
-    {
-      key: 'pgAdminEnabled',
-      label: t('nsEdit.field.pgAdminEnabled'),
-      type: 'checkbox',
-    },
-  ], [t, bundleOptions])
-
-  // Convert the typed DTO into FormValues. Users array is collapsed to a
-  // comma-separated string for the text input; submit splits it back.
-  const initialValues: FormValues | undefined = useMemo(() => {
-    if (!initial) return undefined
-    return {
-      name: initial.name,
-      bundleRepo: initial.bundleRepo,
-      bundleKey: initial.bundleKey || 'LATEST',
-      authType: initial.authType || 'BASIC',
-      users: (initial.users ?? []).join(', '),
-      host: initial.host,
-      port: initial.port,
-      tlsEnabled: initial.tlsEnabled,
-      pgAdminEnabled: initial.pgAdminEnabled,
+  const bundleKeyOptions = useMemo(() => {
+    const repo = bundles.find((b) => b.repo === bundleRepo)
+    const versions = repo?.versions ?? []
+    const opts = versions.map((v) => ({ value: v, label: v }))
+    if (bundleKey && !opts.some((o) => o.value === bundleKey)) {
+      opts.unshift({ value: bundleKey, label: bundleKey })
     }
-  }, [initial])
+    return opts
+  }, [bundles, bundleRepo, bundleKey])
 
-  async function handleSubmit(values: FormValues) {
+  // Reset bundleKey when the user picks a different repo so the dependent
+  // select doesn't end up with a value that doesn't exist in the new list.
+  useEffect(() => {
+    if (!bundleRepo) return
+    const repo = bundles.find((b) => b.repo === bundleRepo)
+    const versions = repo?.versions ?? []
+    if (bundleKey && !versions.includes(bundleKey) && versions.length > 0) {
+      setBundleKey(versions[0])
+    }
+  }, [bundleRepo, bundles, bundleKey])
+
+  function refreshBundles() {
+    setBundlesLoading(true)
+    getBundles()
+      .then((bs) => setBundles(bs))
+      .catch(() => { /* silent; user can retry */ })
+      .finally(() => setBundlesLoading(false))
+  }
+
+  function validate(): boolean {
+    const errors: Record<string, string> = {}
+    if (!name.trim()) errors.name = t('namespace.form.required')
+    else if (name.length > 50) errors.name = t('namespace.form.nameTooLong')
+    if (!bundleRepo) errors.bundleRepo = t('namespace.form.required')
+    if (!bundleKey) errors.bundleKey = t('namespace.form.required')
+    if (!authType) errors.authType = t('namespace.form.required')
+    if (authType === 'BASIC' && !authUsers.trim()) {
+      errors.authUsers = t('namespace.form.required')
+    }
+    setFieldErrors(errors)
+    return Object.keys(errors).length === 0
+  }
+
+  async function handleSubmit(e?: React.FormEvent) {
+    e?.preventDefault()
+    if (!validate()) return
     setLoading(true)
-    setError(null)
+    setSubmitError(null)
     try {
-      const users = String(values.users ?? '')
-        .split(',')
-        .map((u) => u.trim())
-        .filter(Boolean)
-      const payload: NamespaceEditDto = {
-        name: String(values.name ?? ''),
-        bundleRepo: String(values.bundleRepo ?? ''),
-        bundleKey: String(values.bundleKey ?? 'LATEST'),
-        authType: String(values.authType ?? 'BASIC'),
-        users,
-        host: String(values.host ?? ''),
-        port: typeof values.port === 'number' ? values.port : parseInt(String(values.port ?? 0), 10) || 0,
-        tlsEnabled: Boolean(values.tlsEnabled),
-        pgAdminEnabled: Boolean(values.pgAdminEnabled),
+      const users = authType === 'BASIC'
+        ? authUsers.split(',').map((u) => u.trim()).filter(Boolean)
+        : undefined
+
+      if (mode === 'create') {
+        const payload: NamespaceCreateDto = {
+          name: name.trim(),
+          authType,
+          users,
+          bundleRepo,
+          bundleKey,
+          // Server overlays template defaults; we don't override
+          // host/port/TLS/pgAdmin from the form (Kotlin parity).
+          host: '',
+          port: 0,
+          tlsEnabled: false,
+          pgAdminEnabled: false,
+          workspaceId: workspaceId || undefined,
+          snapshot: snapshot || undefined,
+          useDefaultPassword: true,
+        }
+        await createNamespace(payload)
+        toast(t('namespace.form.createSuccess'), 'success')
+      } else {
+        const payload: NamespaceEditDto = {
+          name: name.trim(),
+          bundleRepo,
+          bundleKey,
+          authType,
+          users: users ?? [],
+          // PUT preserves on-disk values for fields outside the form; pass
+          // zero/false placeholders so they don't overwrite anything.
+          host: '',
+          port: 0,
+          tlsEnabled: false,
+          pgAdminEnabled: false,
+        }
+        await putNamespaceEdit(payload)
+        toast(t('nsEdit.saveSuccess'), 'success')
       }
-      await putNamespaceEdit(payload)
-      toast(t('nsEdit.saveSuccess'), 'success')
+      onSaved?.()
       onClose()
-      fetchData()
-    } catch (e) {
-      setError((e as Error).message)
+    } catch (err) {
+      setSubmitError((err as Error).message)
     } finally {
       setLoading(false)
     }
   }
 
+  const title = mode === 'create' ? t('namespace.dialog.create') : t('namespace.dialog.edit')
+
   return (
-    <FormDialog
-      open={open}
-      title={t('nsEdit.title')}
-      fields={fields}
-      initialValues={initialValues}
-      onSubmit={handleSubmit}
-      onCancel={onClose}
-      loading={loading}
-      error={error}
-      submitLabel={t('nsEdit.save')}
-    />
+    <dialog
+      ref={dialogRef}
+      className="fixed inset-0 z-50 m-auto w-[480px] max-w-[90vw] rounded-lg border border-border bg-card p-0 text-foreground backdrop:bg-black/50"
+      onClose={onClose}
+    >
+      <form onSubmit={handleSubmit} className="flex flex-col">
+        <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
+          <h2 className="text-sm font-semibold">{title}</h2>
+          <button
+            type="button"
+            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+            onClick={onClose}
+            aria-label={t('namespace.form.cancel')}
+          >
+            <X size={14} />
+          </button>
+        </div>
+
+        <div className="space-y-3 px-4 py-3 max-h-[70vh] overflow-y-auto">
+          <Field label={t('namespace.form.name')} error={fieldErrors.name} required>
+            <input
+              type="text"
+              className="w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              maxLength={50}
+              autoFocus
+            />
+          </Field>
+
+          <Field label={t('namespace.form.bundlesRepo')} error={fieldErrors.bundleRepo} required>
+            <select
+              className="w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary"
+              value={bundleRepo}
+              onChange={(e) => setBundleRepo(e.target.value)}
+              disabled={bundlesLoading}
+            >
+              <option value="">—</option>
+              {bundleRepoOptions.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </Field>
+
+          <Field label={t('namespace.form.bundleKey')} error={fieldErrors.bundleKey} required>
+            <div className="flex items-center gap-1.5">
+              <select
+                className="flex-1 rounded border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary"
+                value={bundleKey}
+                onChange={(e) => setBundleKey(e.target.value)}
+                disabled={!bundleRepo || bundlesLoading}
+              >
+                <option value="">—</option>
+                {bundleKeyOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="rounded border border-border bg-background p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                onClick={refreshBundles}
+                title={t('namespace.form.refreshBundles')}
+                disabled={bundlesLoading}
+              >
+                <RefreshCw size={14} className={bundlesLoading ? 'animate-spin' : ''} />
+              </button>
+            </div>
+          </Field>
+
+          {mode === 'create' && (
+            <Field label={t('namespace.form.snapshot')}>
+              <select
+                className="w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary"
+                value={snapshot}
+                onChange={(e) => setSnapshot(e.target.value)}
+              >
+                <option value="">{t('namespace.form.snapshot.none')}</option>
+                {snapshots.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </Field>
+          )}
+
+          <Field label={t('namespace.form.authType')} error={fieldErrors.authType} required>
+            <select
+              className="w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary"
+              value={authType}
+              onChange={(e) => setAuthType(e.target.value)}
+            >
+              <option value="BASIC">BASIC</option>
+              <option value="KEYCLOAK">KEYCLOAK</option>
+            </select>
+          </Field>
+
+          {authType === 'BASIC' && (
+            <Field label={t('namespace.form.authUsers')} error={fieldErrors.authUsers} required>
+              <input
+                type="text"
+                className="w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary"
+                value={authUsers}
+                onChange={(e) => setAuthUsers(e.target.value)}
+                placeholder="admin, user1"
+              />
+            </Field>
+          )}
+
+          {submitError && (
+            <div className="rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">
+              {submitError}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between border-t border-border px-4 py-2.5">
+          <button
+            type="button"
+            className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted disabled:opacity-50"
+            onClick={onClose}
+            disabled={loading}
+          >
+            {t('namespace.form.cancel')}
+          </button>
+          <button
+            type="submit"
+            className="rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-xs font-medium hover:bg-primary/90 disabled:opacity-50"
+            disabled={loading}
+          >
+            {loading
+              ? t('common.working')
+              : mode === 'create'
+                ? t('namespace.form.submit')
+                : t('namespace.form.save')}
+          </button>
+        </div>
+      </form>
+    </dialog>
+  )
+}
+
+interface FieldProps {
+  label: string
+  error?: string
+  required?: boolean
+  children: React.ReactNode
+}
+
+function Field({ label, error, required, children }: FieldProps) {
+  return (
+    <div>
+      <label className="block text-xs font-medium mb-1">
+        {label}
+        {required && <span className="ml-0.5 text-destructive">*</span>}
+      </label>
+      {children}
+      {error && <div className="mt-1 text-[11px] text-destructive">{error}</div>}
+    </div>
   )
 }
