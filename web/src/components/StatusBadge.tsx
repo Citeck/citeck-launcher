@@ -2,6 +2,8 @@ import { t } from '../lib/i18n'
 
 interface StatusBadgeProps {
   status: string
+  /** "pill" (default, used in app table rows) or "indicator" (Kotlin sidebar — large filled circle + UPPERCASE name). */
+  variant?: 'pill' | 'indicator'
 }
 
 // Kotlin parity (AppRuntimeStatus.kt) — category → hex. See docs/porting/02 §7.2.
@@ -30,10 +32,21 @@ const statusColor: Record<string, string> = {
 // Statuses where the dot pulses (in-flight transitions, parity with Kotlin).
 const PULSE_DOT = new Set(['STARTING', 'PULLING', 'DEPS_WAITING', 'STOPPING'])
 
-export function StatusBadge({ status }: StatusBadgeProps) {
+export function StatusBadge({ status, variant = 'pill' }: StatusBadgeProps) {
   const color = statusColor[status] ?? C_STOPPED
   const label = t('status.' + status)
   const pulse = PULSE_DOT.has(status) ? 'animate-pulse' : ''
+  if (variant === 'indicator') {
+    return (
+      <span className="inline-flex items-center gap-2 text-xs font-medium uppercase tracking-wide">
+        <span
+          className={`inline-block h-3 w-3 rounded-full border border-black/60 ${pulse}`}
+          style={{ backgroundColor: color }}
+        />
+        <span style={{ color }}>{label}</span>
+      </span>
+    )
+  }
   return (
     <span
       className="inline-flex items-center gap-1.5 rounded px-1.5 py-0 text-[11px] font-medium leading-5"

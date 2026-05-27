@@ -49,6 +49,7 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
       onChange={(v) => onChange?.(v)}
       editable={!readOnly}
       autoFocus={autoFocus}
+      theme="dark"
       basicSetup={{
         lineNumbers: true,
         highlightActiveLine: !readOnly,

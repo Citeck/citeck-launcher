@@ -44,6 +44,8 @@ const ru: Translations = {
   'dashboard.restartEvents': 'Перезапуски',
   'dashboard.systemDump': 'Дамп системы',
   'dashboard.systemDump.success': 'Дамп системы скачан',
+  'dashboard.backToWelcome': 'Назад к выбору',
+  'dashboard.backToWelcome.disabled': 'Остановите все запущенные приложения, прежде чем вернуться',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'Загрузка занимает больше времени, чем обычно.\nЧтобы мы помогли разобраться, нажмите «Dump System Info» и отправьте дамп нам.',
@@ -215,7 +217,7 @@ const ru: Translations = {
   'table.tag': 'Тег',
   'table.actions': 'Действия',
   'table.restartCount': 'Количество перезапусков',
-  'table.cog.tooltip': 'ЛКМ: редактировать конфигурацию приложения\nПКМ: выбрать монтированный файл',
+  'table.cog.tooltip': 'ЛКМ — изменить Docker-конфигурацию приложения\nПКМ — изменить файлы тома\n\nСиний маркер означает, что конфигурация приложения или подключённый файл изменён.',
   'table.noEditableFiles': 'Нет редактируемых файлов',
   'table.group.core': 'Citeck Core',
   'table.group.coreExt': 'Citeck Core Extensions',
@@ -369,6 +371,7 @@ const ru: Translations = {
   'common.delete': 'Удалить',
   'common.close': 'Закрыть',
   'common.confirm': 'Подтвердить',
+  'common.confirm.defaultTitle': 'Вы уверены?',
   'common.working': 'Выполнение...',
   'common.submit': 'Отправить',
   'common.select': 'Выбрать',
@@ -446,6 +449,8 @@ const ru: Translations = {
   'snapshots.dialog.title': 'Снапшоты',
   'snapshots.scope.workspace': 'Workspace',
   'snapshots.scope.namespace': 'Namespace',
+  'snapshots.section.workspace': 'Снапшоты воркспейса',
+  'snapshots.section.namespace': 'Снапшоты namespace',
   'snapshots.col.name': 'Имя',
   'snapshots.col.size': 'Размер',
   'snapshots.col.created': 'Создан',
@@ -464,6 +469,7 @@ const ru: Translations = {
   'snapshots.deleted': 'Снапшот удалён',
   'snapshots.field.name': 'Имя снапшота',
   'snapshots.field.name.invalid': 'Имя может содержать только буквы, цифры, точки, дефисы и подчёркивания.',
+  'snapshots.field.name.alreadyExists': 'Снапшот с таким именем уже существует. Пожалуйста, введите другое имя.',
   'secrets.dialog.title': 'Auth Secrets',
   'secrets.test.ok': 'Проверка секрета пройдена',
 

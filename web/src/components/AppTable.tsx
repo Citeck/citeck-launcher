@@ -10,18 +10,7 @@ import { toast } from '../lib/toast'
 import { useDashboardStore } from '../lib/store'
 import { RegistryCredentialsDialog } from './RegistryCredentialsDialog'
 import { KeyRound } from 'lucide-react'
-
-// Files with these extensions show up in the COG right-click menu (Kotlin
-// EDITABLE_FILE_EXTENSIONS — docs/porting/02 §7.4).
-const EDITABLE_EXTENSIONS = ['yaml', 'yml', 'json', 'kt', 'java', 'js', 'lua', 'Dockerfile', 'sh', 'txt', 'conf']
-
-function isEditableFile(path: string): boolean {
-  const base = path.split('/').pop() ?? path
-  if (base === 'Dockerfile') return true
-  const dot = base.lastIndexOf('.')
-  if (dot < 0) return false
-  return EDITABLE_EXTENSIONS.includes(base.slice(dot + 1))
-}
+import { isEditableFile } from '../lib/files'
 import { StatusBadge } from './StatusBadge'
 import { StatsCell } from './StatsCell'
 import { ConfirmModal } from './ConfirmModal'
@@ -167,6 +156,15 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
         .filter((f) => isEditableFile(f.path))
         .map((f) => ({
           label: f.path,
+          // Kotlin v1.3.8 rendered a 5dp blue vertical bar before edited
+          // entries in the COG RMB menu — same visual marker the inline list
+          // already shows.
+          decoration: f.edited ? (
+            <span
+              className="inline-block w-0.5 h-3 bg-blue-500 mr-1.5 align-middle shrink-0"
+              title={t('appConfig.fileEdited.badge')}
+            />
+          ) : undefined,
           onClick: () => openSecondaryView({
             id: `editor:${appName}:${f.path}`,
             type: 'app-config',
@@ -277,7 +275,10 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
                 {isTransitional && (
                   <IconBtn icon={Square} title={t('table.action.stop')} color="hover:text-destructive" onClick={() => onAction({ type: 'stop', appName: app.name })} />
                 )}
-                <button type="button" className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted" title={t('logs.title', { name: app.name })}
+                <button type="button"
+                  className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted disabled:hover:bg-transparent disabled:hover:text-muted-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+                  title={t('logs.title', { name: app.name })}
+                  disabled={app.status === 'STOPPED'}
                   onClick={() => openSecondaryView({ id: `logs:${app.name}`, type: 'logs', title: t('logs.title', { name: app.name }), appName: app.name })}>
                   <FileText size={14} />
                 </button>

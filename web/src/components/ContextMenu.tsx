@@ -3,6 +3,9 @@ import { useEffect, useRef } from 'react'
 export interface ContextMenuItem {
   label: string
   icon?: React.ReactNode
+  // Inline marker rendered before the label (e.g. blue vertical bar for an
+  // edited mounted file). Kept distinct from `icon` so callers can use both.
+  decoration?: React.ReactNode
   onClick: () => void
   disabled?: boolean
   variant?: 'default' | 'danger'
@@ -64,6 +67,7 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
             }}
           >
             {item.icon && <span className="w-4 h-4 flex items-center justify-center">{item.icon}</span>}
+            {item.decoration}
             {item.label}
           </button>
         ),

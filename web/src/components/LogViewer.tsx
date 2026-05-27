@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { getAppLogs, API_BASE } from '../lib/api'
+import { getAppLogs, getDaemonLogs, API_BASE } from '../lib/api'
 import { useTranslation } from '../lib/i18n'
 
 type LogLevel = 'ERROR' | 'WARN' | 'INFO' | 'DEBUG' | 'TRACE'
@@ -69,9 +69,11 @@ interface LogViewerProps {
   appName: string
   compact?: boolean
   active?: boolean
+  /** 'app' (default) = /apps/{name}/logs; 'daemon' = /daemon/logs. */
+  source?: 'app' | 'daemon'
 }
 
-export function LogViewer({ appName, compact = false, active = true }: LogViewerProps) {
+export function LogViewer({ appName, compact = false, active = true, source = 'app' }: LogViewerProps) {
   const { t } = useTranslation()
   const [lines, setLines] = useState<string[]>([])
   const [levels, setLevels] = useState<(LogLevel | null)[]>([])
@@ -158,13 +160,14 @@ export function LogViewer({ appName, compact = false, active = true }: LogViewer
   // Initial load via REST, then stream via follow endpoint
   const fetchInitialLogs = useCallback(() => {
     if (!appName) return
-    getAppLogs(appName, tail)
+    const fetcher = source === 'daemon' ? getDaemonLogs(tail) : getAppLogs(appName, tail)
+    fetcher
       .then((data) => {
         setLinesWithLevels(data.split('\n'))
         setError(null)
       })
       .catch((e) => setError(e.message))
-  }, [appName, tail, setLinesWithLevels])
+  }, [appName, tail, setLinesWithLevels, source])
 
   // Non-follow mode: load via REST
   useEffect(() => {
@@ -180,9 +183,13 @@ export function LogViewer({ appName, compact = false, active = true }: LogViewer
     const controller = new AbortController()
     abortRef.current = controller
 
+    const streamUrl = source === 'daemon'
+      ? `${API_BASE}/daemon/logs?follow=true&tail=${tail}`
+      : `${API_BASE}/apps/${appName}/logs?follow=true&tail=${tail}`
+
     const startStream = async () => {
       try {
-        const res = await fetch(`${API_BASE}/apps/${appName}/logs?follow=true&tail=${tail}`, {
+        const res = await fetch(streamUrl, {
           signal: controller.signal,
         })
         if (!res.ok || !res.body) return
@@ -221,15 +228,16 @@ export function LogViewer({ appName, compact = false, active = true }: LogViewer
         retryTimerRef.current = null
       }
     }
-  }, [follow, appName, tail, appendChunk, setLinesWithLevels, active])
+  }, [follow, appName, tail, appendChunk, setLinesWithLevels, active, source])
 
   // Keyboard shortcuts — match Kotlin LogsWindow (docs/porting/04 §2.3)
   useEffect(() => {
     if (!active) return
     function handleKeyDown(e: KeyboardEvent) {
       const ctrl = e.ctrlKey || e.metaKey
-      // Ctrl+F: focus search and SELECT all (Kotlin parity — next keypress replaces query)
-      if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'f') {
+      // Ctrl+F: focus search and SELECT all (Kotlin parity — next keypress replaces query).
+      // e.code is layout-invariant so Cyrillic/other non-Latin layouts still match.
+      if (ctrl && !e.shiftKey && e.code === 'KeyF') {
         e.preventDefault()
         const el = searchRef.current
         if (el) {
@@ -239,25 +247,25 @@ export function LogViewer({ appName, compact = false, active = true }: LogViewer
         return
       }
       // F3 / Ctrl+G — next match; Shift+F3 / Ctrl+Shift+G — prev
-      if (e.key === 'F3' || (ctrl && e.key.toLowerCase() === 'g')) {
+      if (e.key === 'F3' || (ctrl && e.code === 'KeyG')) {
         e.preventDefault()
         setMatchIndex((prev) => prev + (e.shiftKey ? -1 : 1))
         return
       }
       // Ctrl+L — clear (Kotlin parity)
-      if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'l') {
+      if (ctrl && !e.shiftKey && e.code === 'KeyL') {
         e.preventDefault()
         setLinesWithLevels([])
         return
       }
       // Ctrl+Shift+C — copy all visible (Kotlin LogsToolbar shortcut)
-      if (ctrl && e.shiftKey && e.key.toLowerCase() === 'c') {
+      if (ctrl && e.shiftKey && e.code === 'KeyC') {
         e.preventDefault()
         copyToClipboardRef.current?.()
         return
       }
       // Ctrl+S — export to file (Kotlin LogsToolbar shortcut)
-      if (ctrl && !e.shiftKey && e.key.toLowerCase() === 's') {
+      if (ctrl && !e.shiftKey && e.code === 'KeyS') {
         e.preventDefault()
         downloadRef.current?.()
         return
@@ -367,7 +375,7 @@ export function LogViewer({ appName, compact = false, active = true }: LogViewer
     const d = new Date()
     const pad = (n: number) => String(n).padStart(2, '0')
     const ts = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
-    a.download = `${appName}_${ts}.log`
+    a.download = source === 'daemon' ? `daemon_${ts}.log` : `${appName}_${ts}.log`
     a.click()
     setTimeout(() => URL.revokeObjectURL(url), 5000)
   }

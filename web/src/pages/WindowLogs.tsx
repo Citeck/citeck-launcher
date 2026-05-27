@@ -22,6 +22,19 @@ export function WindowLogs() {
     document.title = name ? `Logs — ${name}` : 'Launcher Logs'
   }, [name])
 
+  // Escape closes the secondary window; skip when typing in the search input so
+  // LogViewer's existing Esc-to-clear behaviour is preserved.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return
+      const tag = (document.activeElement as HTMLElement | null)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      window.close()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
   return (
     <div className="h-screen bg-background text-text flex flex-col">
       <header className="px-3 py-1.5 border-b border-border bg-bg-secondary text-sm flex items-center gap-2">

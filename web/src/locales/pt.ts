@@ -44,6 +44,8 @@ const pt: Translations = {
   'dashboard.restartEvents': 'Reinicializacoes',
   'dashboard.systemDump': 'Despejo do sistema',
   'dashboard.systemDump.success': 'Despejo do sistema baixado',
+  'dashboard.backToWelcome': 'Voltar à Boas-vindas',
+  'dashboard.backToWelcome.disabled': 'Pare todos os aplicativos em execução antes de voltar à tela inicial',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'Still loading... This is taking longer than expected.\nTo help us diagnose the issue, please click the \'Dump System Info\' button and send the data to the maintainers.',
@@ -215,7 +217,7 @@ const pt: Translations = {
   'table.tag': 'Tag',
   'table.actions': 'A\u00e7\u00f5es',
   'table.restartCount': 'Reinicializacoes',
-  'table.cog.tooltip': 'Left click: edit app config\nRight click: edit a mounted file',
+  'table.cog.tooltip': 'Clique esquerdo - Editar a configuração Docker do app\nClique direito - Editar arquivos de volume\n\nUm marcador azul indica que a configuração do app ou um arquivo montado foi editado.',
   'table.noEditableFiles': 'No editable files',
   'table.group.core': 'Citeck Core',
   'table.group.coreExt': 'Extens\u00f5es Citeck Core',
@@ -369,6 +371,7 @@ const pt: Translations = {
   'common.delete': 'Excluir',
   'common.close': 'Fechar',
   'common.confirm': 'Confirmar',
+  'common.confirm.defaultTitle': 'Tem certeza?',
   'common.working': 'Processando...',
   'common.submit': 'Enviar',
   'common.select': 'Selecionar',
@@ -449,6 +452,8 @@ const pt: Translations = {
   'snapshots.dialog.title': 'Snapshots',
   'snapshots.scope.workspace': 'Workspace',
   'snapshots.scope.namespace': 'Namespace',
+  'snapshots.section.workspace': 'Snapshots do workspace',
+  'snapshots.section.namespace': 'Snapshots do namespace',
   'snapshots.col.name': 'Name',
   'snapshots.col.size': 'Size',
   'snapshots.col.created': 'Created',
@@ -467,6 +472,7 @@ const pt: Translations = {
   'snapshots.deleted': 'Snapshot deleted',
   'snapshots.field.name': 'Snapshot name',
   'snapshots.field.name.invalid': 'Name can only contain letters, digits, dots, dashes and underscores.',
+  'snapshots.field.name.alreadyExists': 'Já existe um snapshot com este nome. Por favor, insira outro nome.',
   'secrets.dialog.title': 'Auth Secrets',
   'secrets.test.ok': 'Secret test passed',
 

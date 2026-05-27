@@ -44,6 +44,8 @@ const en: Translations = {
   'dashboard.restartEvents': 'Restart Events',
   'dashboard.systemDump': 'System Dump',
   'dashboard.systemDump.success': 'System dump downloaded',
+  'dashboard.backToWelcome': 'Back to Welcome',
+  'dashboard.backToWelcome.disabled': 'Stop all running apps before returning to Welcome',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'Still loading... This is taking longer than expected.\nTo help us diagnose the issue, please click the \'Dump System Info\' button and send the data to the maintainers.',
@@ -215,7 +217,7 @@ const en: Translations = {
   'table.tag': 'Tag',
   'table.actions': 'Actions',
   'table.restartCount': 'Restart count',
-  'table.cog.tooltip': 'Left click: edit app config\nRight click: edit a mounted file',
+  'table.cog.tooltip': 'Left Click - Edit App Docker Config\nRight Click - Edit Volume Files\n\nA blue marker means the application config or a mounted file is edited.',
   'table.noEditableFiles': 'No editable files',
   'table.group.core': 'Citeck Core',
   'table.group.coreExt': 'Citeck Core Extensions',
@@ -369,6 +371,7 @@ const en: Translations = {
   'common.delete': 'Delete',
   'common.close': 'Close',
   'common.confirm': 'Confirm',
+  'common.confirm.defaultTitle': 'Are you sure?',
   'common.working': 'Working...',
   'common.submit': 'Submit',
   'common.select': 'Select',
@@ -448,6 +451,8 @@ const en: Translations = {
   'snapshots.dialog.title': 'Snapshots',
   'snapshots.scope.workspace': 'Workspace',
   'snapshots.scope.namespace': 'Namespace',
+  'snapshots.section.workspace': 'Workspace Snapshots',
+  'snapshots.section.namespace': 'Namespace Snapshots',
   'snapshots.col.name': 'Name',
   'snapshots.col.size': 'Size',
   'snapshots.col.created': 'Created',
@@ -466,6 +471,7 @@ const en: Translations = {
   'snapshots.deleted': 'Snapshot deleted',
   'snapshots.field.name': 'Snapshot name',
   'snapshots.field.name.invalid': 'Name can only contain letters, digits, dots, dashes and underscores.',
+  'snapshots.field.name.alreadyExists': 'Snapshot with this name already exists. Please, enter other name.',
 
   // -- Secrets dialog (modal port) --
   'secrets.dialog.title': 'Auth Secrets',

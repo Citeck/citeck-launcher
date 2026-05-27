@@ -3,7 +3,8 @@ import { useTranslation } from '../lib/i18n'
 
 interface ConfirmModalProps {
   open: boolean
-  title: string
+  /** Optional — falls back to the generic localized "Are you sure?" prompt. */
+  title?: string
   message: string
   confirmLabel?: string
   confirmVariant?: 'primary' | 'danger'
@@ -49,7 +50,7 @@ export function ConfirmModal({
       onClose={onCancel}
     >
       <div className="p-6">
-        <h2 className="text-lg font-semibold">{title}</h2>
+        <h2 className="text-lg font-semibold">{title ?? t('common.confirm.defaultTitle')}</h2>
         <p className="mt-2 text-sm text-muted-foreground">{message}</p>
         {error && (
           <p className="mt-2 rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 text-sm text-destructive">

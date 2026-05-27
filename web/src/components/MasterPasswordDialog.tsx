@@ -46,7 +46,10 @@ export function MasterPasswordDialog({
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  // Two reveal flags so the confirm field toggles independently of the primary
+  // password field (each eye icon controls only its own input).
   const [revealed, setRevealed] = useState(false)
+  const [revealedConfirm, setRevealedConfirm] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
   const [localError, setLocalError] = useState<string | null>(null)
 
@@ -63,6 +66,7 @@ export function MasterPasswordDialog({
       setPassword('')
       setConfirmPassword('')
       setRevealed(false)
+      setRevealedConfirm(false)
       setLocalError(null)
     }
   }, [open])
@@ -115,8 +119,8 @@ export function MasterPasswordDialog({
               <PasswordField
                 value={confirmPassword}
                 onChange={setConfirmPassword}
-                revealed={revealed}
-                onToggleReveal={() => setRevealed((r) => !r)}
+                revealed={revealedConfirm}
+                onToggleReveal={() => setRevealedConfirm((r) => !r)}
                 onEnter={submit}
                 placeholder={t('migration.password.confirmPlaceholder')}
               />

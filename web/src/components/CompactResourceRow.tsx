@@ -4,6 +4,8 @@ interface CompactResourceRowProps {
   total?: string
   percent: number // 0..100 — drives the bar fill and color thresholds
   throttled?: boolean
+  /** No running apps — render an empty bar so the sidebar height stays stable (Kotlin parity). */
+  inactive?: boolean
 }
 
 // Kotlin parity (ContainerStatViews.kt CompactResourceRow) — aggregate
@@ -19,8 +21,8 @@ function barColor(p: number, throttled?: boolean): string {
   return C_GREEN
 }
 
-export function CompactResourceRow({ label, used, total, percent, throttled }: CompactResourceRowProps) {
-  const clamped = Math.max(0, Math.min(100, percent))
+export function CompactResourceRow({ label, used, total, percent, throttled, inactive }: CompactResourceRowProps) {
+  const clamped = inactive ? 0 : Math.max(0, Math.min(100, percent))
   const color = barColor(clamped, throttled)
   const valueText = total ? `${used} / ${total}` : used
   return (
@@ -28,10 +30,12 @@ export function CompactResourceRow({ label, used, total, percent, throttled }: C
       <span className="text-muted-foreground w-7 shrink-0">{label}</span>
       <span className="font-mono flex-1 truncate" title={valueText}>{valueText}</span>
       <div className="h-1.5 w-20 rounded-full bg-muted overflow-hidden shrink-0">
-        <div
-          className="h-full rounded-full transition-all duration-300"
-          style={{ width: `${clamped}%`, backgroundColor: color }}
-        />
+        {!inactive && (
+          <div
+            className="h-full rounded-full transition-all duration-300"
+            style={{ width: `${clamped}%`, backgroundColor: color }}
+          />
+        )}
       </div>
     </div>
   )

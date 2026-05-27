@@ -364,8 +364,8 @@ export function Welcome() {
           Kept muted via opacity-60 so they don't compete with the namespace
           buttons for attention. */}
       <footer className="absolute bottom-3 left-4 right-4 flex items-end justify-between pointer-events-none">
-        <img src="/logo/slsoft_full_logo.svg" alt="slsoft" className="h-12 opacity-60" />
-        <img src="/logo/citeck_full_logo.svg" alt="Citeck" className="h-8 opacity-60" />
+        <img src="/logo/slsoft_full_logo.svg" alt="slsoft" className="h-20" />
+        <img src="/logo/citeck_full_logo.svg" alt="Citeck" className="h-10" />
       </footer>
 
       {/* Surface git pull failures with the dedicated dialog (Kotlin parity) */}

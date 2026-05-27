@@ -44,6 +44,8 @@ const zh: Translations = {
   'dashboard.restartEvents': '重启事件',
   'dashboard.systemDump': '系统转储',
   'dashboard.systemDump.success': '系统转储已下载',
+  'dashboard.backToWelcome': '返回欢迎页',
+  'dashboard.backToWelcome.disabled': '请先停止所有正在运行的应用',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'Still loading... This is taking longer than expected.\nTo help us diagnose the issue, please click the \'Dump System Info\' button and send the data to the maintainers.',
@@ -215,7 +217,7 @@ const zh: Translations = {
   'table.tag': '标签',
   'table.actions': '操作',
   'table.restartCount': '重启次数',
-  'table.cog.tooltip': 'Left click: edit app config\nRight click: edit a mounted file',
+  'table.cog.tooltip': '左键单击 - 编辑应用的 Docker 配置\n右键单击 - 编辑挂载的文件\n\n蓝色标记表示应用配置或挂载文件已被编辑。',
   'table.noEditableFiles': 'No editable files',
   'table.group.core': 'Citeck Core',
   'table.group.coreExt': 'Citeck Core Extensions',
@@ -369,6 +371,7 @@ const zh: Translations = {
   'common.delete': '删除',
   'common.close': '关闭',
   'common.confirm': '确认',
+  'common.confirm.defaultTitle': '确定吗？',
   'common.working': '处理中...',
   'common.submit': '提交',
   'common.select': '选择',
@@ -449,6 +452,8 @@ const zh: Translations = {
   'snapshots.dialog.title': 'Snapshots',
   'snapshots.scope.workspace': 'Workspace',
   'snapshots.scope.namespace': 'Namespace',
+  'snapshots.section.workspace': '工作区快照',
+  'snapshots.section.namespace': '命名空间快照',
   'snapshots.col.name': 'Name',
   'snapshots.col.size': 'Size',
   'snapshots.col.created': 'Created',
@@ -467,6 +472,7 @@ const zh: Translations = {
   'snapshots.deleted': 'Snapshot deleted',
   'snapshots.field.name': 'Snapshot name',
   'snapshots.field.name.invalid': 'Name can only contain letters, digits, dots, dashes and underscores.',
+  'snapshots.field.name.alreadyExists': '已存在同名快照。请输入其他名称。',
   'secrets.dialog.title': 'Auth Secrets',
   'secrets.test.ok': 'Secret test passed',
 

@@ -176,9 +176,11 @@ export interface SecretCreateDto {
 }
 
 // Phase F2: Diagnostics
+export type DiagnosticsStatus = 'ok' | 'warn' | 'warning' | 'error'
+
 export interface DiagnosticCheckDto {
   name: string
-  status: string
+  status: DiagnosticsStatus
   message: string
   fixable: boolean
 }

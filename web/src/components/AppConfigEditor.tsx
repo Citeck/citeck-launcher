@@ -9,6 +9,7 @@ import { toast } from '../lib/toast'
 import { useTranslation } from '../lib/i18n'
 import { FileCode, Lock, Unlock, RotateCcw } from 'lucide-react'
 import type { AppFileDto } from '../lib/types'
+import { isEditableFile } from '../lib/files'
 
 /**
  * Imperative handle for window-mode embedding (WindowEditor). Lets the parent
@@ -234,11 +235,13 @@ export const AppConfigEditor = forwardRef<AppConfigEditorHandle, AppConfigEditor
         </div>
       )}
 
-      {/* Mounted Files */}
-      {files.length > 0 && (
+      {/* Mounted Files — only editable extensions, matching the COG RMB menu
+          and Kotlin v1.3.8 behaviour (binaries like fonts/jars/certs would
+          break the textual editor). */}
+      {files.filter((f) => isEditableFile(f.path)).length > 0 && (
         <div className="rounded border border-border bg-card p-2">
           <div className="text-xs font-medium mb-1">{t('appConfig.files')}</div>
-          {files.map((f) => (
+          {files.filter((f) => isEditableFile(f.path)).map((f) => (
             <div key={f.path} className="flex items-center gap-2 text-[11px] font-mono">
               {f.edited && <span className="inline-block w-0.5 h-3 bg-blue-500 mr-1.5 align-middle shrink-0" title={t('appConfig.fileEdited.badge')} />}
               <span className="text-muted-foreground flex-1 break-all">{f.path}</span>

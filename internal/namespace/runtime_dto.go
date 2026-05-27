@@ -112,8 +112,8 @@ func (r *Runtime) generateLinks() []api.LinkDto {
 
 	// Global links (always available) — Kotlin parity: GlobalLinks.LINKS
 	links = append(links,
-		api.LinkDto{Name: "Documentation", URL: "https://citeck-ecos.readthedocs.io/", Icon: "docs", Order: 100, Category: catResources, Description: "Citeck documentation"},
-		api.LinkDto{Name: "AI Documentation Bot", URL: "https://t.me/haski_citeck_bot", Icon: "telegram", Order: 101, Category: catResources, Description: "Telegram bot for AI documentation assistance"},
+		api.LinkDto{Name: "Documentation", URL: "https://citeck-ecos.readthedocs.io/", Icon: "docs", Order: 100, Category: catResources, Description: "Citeck documentation", AlwaysEnabled: true},
+		api.LinkDto{Name: "AI Documentation Bot", URL: "https://t.me/haski_citeck_bot", Icon: "telegram", Order: 101, Category: catResources, Description: "Telegram bot for AI documentation assistance", AlwaysEnabled: true},
 	)
 
 	return links

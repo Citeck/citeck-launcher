@@ -29,7 +29,7 @@ import { RestartEvents } from '../components/RestartEvents'
 import { FormDialog } from '../components/FormDialog'
 import type { BottomPanelTab } from '../lib/panels'
 import { toast } from '../lib/toast'
-import { ExternalLink, FolderOpen, Globe, Download, AlertTriangle, HardDrive, Key, Stethoscope, FileText, Settings, ArrowUpCircle } from 'lucide-react'
+import { ExternalLink, FolderOpen, Globe, Download, AlertTriangle, HardDrive, Key, Stethoscope, FileText, Settings, ArrowUpCircle, ArrowLeft } from 'lucide-react'
 import { LoadingHint } from '../components/LoadingHint'
 import { postOpenDir } from '../lib/api'
 
@@ -38,7 +38,6 @@ export function Dashboard() {
   // it consumes change, not on every SSE-triggered store mutation (e.g.
   // reconnectDelay / lastSeq / stream internal transitions).
   const namespace = useDashboardStore((s) => s.namespace)
-  const health = useDashboardStore((s) => s.health)
   const loading = useDashboardStore((s) => s.loading)
   const error = useDashboardStore((s) => s.error)
   const fetchData = useDashboardStore((s) => s.fetchData)
@@ -223,30 +222,9 @@ export function Dashboard() {
 
   if (loading && !namespace) {
     return (
-      <div className="flex h-full">
-        {/* Skeleton left panel */}
-        <div className="w-56 shrink-0 border-r border-border bg-card p-3 flex flex-col gap-3">
-          <div className="h-4 w-32 bg-muted rounded animate-pulse" />
-          <div className="h-3 w-24 bg-muted rounded animate-pulse" />
-          <div className="h-6 w-20 bg-muted rounded animate-pulse" />
-          <div className="h-px bg-border my-1" />
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-3 w-full bg-muted rounded animate-pulse" />
-          ))}
-        </div>
-        {/* Skeleton table */}
-        <div className="flex-1 p-4 space-y-3">
-          <div className="h-5 w-48 bg-muted rounded animate-pulse" />
-          {Array.from({ length: 8 }).map((_, i) => (
-            <div key={i} className="h-8 w-full bg-muted rounded animate-pulse" />
-          ))}
-          {/* Kotlin LoadingScreen parity (docs/porting/02 §5.2): after 30s of
-              continuous loading, surface the "still loading" hint with
-              recovery actions (open daemon logs / dump system info). */}
-          <div className="flex justify-center pt-2">
-            <LoadingHint active={loading} />
-          </div>
-        </div>
+      <div className="flex flex-col items-center justify-center h-full w-full">
+        <div className="text-2xl text-foreground">{t('common.loading')}</div>
+        <LoadingHint active={loading} />
       </div>
     )
   }
@@ -257,8 +235,6 @@ export function Dashboard() {
 
   if (!namespace) return null
 
-  const dockerCheck = health?.checks.find((c) => c.name === 'docker')
-  const dockerError = dockerCheck?.status === 'error' ? dockerCheck.message : null
   const apps = namespace.apps ?? []
   const runningCount = apps.filter((a) => a.status === 'RUNNING').length
   const isRunning = namespace.status === 'RUNNING'
@@ -348,7 +324,10 @@ export function Dashboard() {
               title={t('namespaces.switch')}
               onClick={() => setNamespaceDialogOpen(true)}
             >
-              <div className="text-sm font-semibold truncate">{namespace.name}</div>
+              <div className="text-sm font-semibold truncate">
+                {namespace.name}
+                <span className="ml-1 font-normal text-muted-foreground">({namespace.id})</span>
+              </div>
               <div className="text-[11px] text-muted-foreground mt-0.5 truncate">{namespace.bundleRef}</div>
             </button>
             <div className="flex items-center gap-0.5 shrink-0">
@@ -382,27 +361,27 @@ export function Dashboard() {
           </div>
 
           <div className="flex items-center gap-2">
-            <StatusBadge status={namespace.status} />
+            <StatusBadge status={namespace.status} variant="indicator" />
             <span className="text-xs text-muted-foreground">{runningCount}/{apps.length}</span>
           </div>
 
-          {runningApps.length > 0 && (
-            <div className="space-y-0.5">
-              <CompactResourceRow
-                label={t('dashboard.cpu')}
-                used={`${totalCpu.toFixed(1)}%`}
-                total={maxCpu > 0 ? `${maxCpu}%` : undefined}
-                percent={cpuPercent}
-                throttled={runningApps.some((a) => a.cpuThrottled)}
-              />
-              <CompactResourceRow
-                label={t('dashboard.mem')}
-                used={fmtMB(totalMem)}
-                total={maxMem > 0 ? fmtMB(maxMem) : undefined}
-                percent={memPercent}
-              />
-            </div>
-          )}
+          <div className="space-y-0.5">
+            <CompactResourceRow
+              label={t('dashboard.cpu')}
+              used={runningApps.length > 0 ? `${totalCpu.toFixed(1)}%` : '-'}
+              total={runningApps.length > 0 && maxCpu > 0 ? `${maxCpu}%` : undefined}
+              percent={cpuPercent}
+              throttled={runningApps.some((a) => a.cpuThrottled)}
+              inactive={runningApps.length === 0}
+            />
+            <CompactResourceRow
+              label={t('dashboard.mem')}
+              used={runningApps.length > 0 ? fmtMB(totalMem) : '-'}
+              total={runningApps.length > 0 && maxMem > 0 ? fmtMB(maxMem) : undefined}
+              percent={memPercent}
+              inactive={runningApps.length === 0}
+            />
+          </div>
 
           <NamespaceControls status={namespace.status} />
 
@@ -422,14 +401,6 @@ export function Dashboard() {
             </button>
           )}
 
-          {dockerError && (
-            <div className="rounded border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-[11px] text-destructive">
-              <AlertTriangle size={12} className="inline mr-1" />
-              {t('dashboard.docker.error', { error: dockerError })}
-              <button type="button" className="underline ml-1" onClick={fetchData}>{t('dashboard.docker.retry')}</button>
-            </div>
-          )}
-
           {serviceLinks.length > 0 && (
             <div>
               <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider mb-1">{t('dashboard.links')}</div>
@@ -441,6 +412,8 @@ export function Dashboard() {
                 {serviceLinks.map((l, i) => {
                   const prevCategory = i > 0 ? (serviceLinks[i - 1].category ?? '') : '__INIT__'
                   const showHeader = (l.category ?? '') !== prevCategory && l.category
+                  const alwaysOn = isLinkAlwaysEnabled(l)
+                  const enabled = isRunning || alwaysOn
                   return (
                     <div key={l.name}>
                       {showHeader && (
@@ -449,11 +422,11 @@ export function Dashboard() {
                       <a href={l.url} target="_blank" rel="noopener noreferrer"
                         title={l.description ?? l.name}
                         className={`flex items-center gap-1.5 text-xs py-0.5 ${
-                          (isRunning || l.order >= 100) ? 'text-primary hover:underline' : 'text-muted-foreground cursor-not-allowed'
+                          enabled ? 'text-primary hover:underline' : 'text-muted-foreground cursor-not-allowed'
                         }`}
                         onClick={(e) => {
                           e.preventDefault()
-                          if (!isRunning && l.order < 100) return
+                          if (!enabled) return
                           openExternal(l.url)
                         }}>
                         {l.icon
@@ -471,6 +444,14 @@ export function Dashboard() {
           </div>
           {/* Fixed footer — always visible at bottom */}
           <div className="shrink-0 p-3 pt-2 border-t border-border flex flex-col gap-1">
+            {/* Kotlin parity (NamespaceScreen.kt:308-324): back-to-Welcome arrow,
+                only enabled when no apps are running so the user can't strand
+                containers by switching namespaces mid-flight. */}
+            <SidebarBtn icon={ArrowLeft}
+              label={t('dashboard.backToWelcome')}
+              tooltip={namespace.status === 'STOPPED' ? t('dashboard.backToWelcome') : t('dashboard.backToWelcome.disabled')}
+              disabled={namespace.status !== 'STOPPED'}
+              onClick={() => setNamespaceDialogOpen(true)} />
             <SidebarBtn icon={HardDrive} label={t('dashboard.volumes')}
               onClick={() => setVolumesDialogOpen(true)} />
             {/* Open NS Dir — Kotlin parity (NamespaceScreen.kt sidebar
@@ -579,15 +560,35 @@ export function Dashboard() {
   )
 }
 
-function SidebarBtn({ icon: Icon, label, tooltip, onClick }: { icon: React.ElementType; label: string; tooltip?: string; onClick?: () => void }) {
+function SidebarBtn({ icon: Icon, label, tooltip, onClick, disabled }: { icon: React.ElementType; label: string; tooltip?: string; onClick?: () => void; disabled?: boolean }) {
   return (
     <button type="button"
-      className="flex items-center gap-1.5 text-xs py-1 px-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted"
+      disabled={disabled}
+      className={`flex items-center gap-1.5 text-xs py-1 px-1 rounded ${
+        disabled ? 'text-muted-foreground/40 cursor-not-allowed' : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+      }`}
       onClick={onClick} title={tooltip ?? label}>
       <Icon size={13} />
       {label}
     </button>
   )
+}
+
+// Older daemon builds (or workspace configs that haven't been migrated yet) don't
+// populate `alwaysEnabled` — fall back to the original order>=100 convention
+// (GlobalLinks in Kotlin) and warn once so the deprecation is visible.
+const linkOrderFallbackLogged = new Set<string>()
+function isLinkAlwaysEnabled(l: { alwaysEnabled?: boolean; order: number; name: string }): boolean {
+  if (l.alwaysEnabled !== undefined) return l.alwaysEnabled
+  if (l.order >= 100) {
+    if (!linkOrderFallbackLogged.has(l.name)) {
+      linkOrderFallbackLogged.add(l.name)
+      // eslint-disable-next-line no-console
+      console.warn(`[deprecation] sidebar link "${l.name}" uses order>=100 fallback for alwaysEnabled — daemon should set links[].alwaysEnabled=true.`)
+    }
+    return true
+  }
+  return false
 }
 
 // Kotlin parity (NamespaceScreen.kt) — per-status tooltip on Open In Browser.

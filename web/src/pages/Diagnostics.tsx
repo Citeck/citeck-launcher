@@ -4,15 +4,19 @@ import type { DiagnosticCheckDto } from '../lib/types'
 import { useTranslation } from '../lib/i18n'
 import { Stethoscope, RefreshCw, Wrench } from 'lucide-react'
 
+// Backend emits both "warn" and "warning" — keep both keys so a future
+// rename on either side doesn't silently fall through to the muted style.
 const statusColor: Record<string, string> = {
   ok: 'text-green-500',
   warn: 'text-yellow-500',
+  warning: 'text-warning',
   error: 'text-destructive',
 }
 
 const statusBg: Record<string, string> = {
   ok: 'bg-green-500/10',
   warn: 'bg-yellow-500/10',
+  warning: 'bg-warning/10',
   error: 'bg-destructive/10',
 }
 

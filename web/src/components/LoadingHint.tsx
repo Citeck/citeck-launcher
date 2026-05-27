@@ -6,6 +6,11 @@ import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
 
 const HINT_DELAY_MS = 30_000
+const TICK_MS = 5_000
+
+function hasOpenDialog(): boolean {
+  return typeof document !== 'undefined' && document.querySelector('dialog[open]') !== null
+}
 
 interface LoadingHintProps {
   /** When true, the parent is in a loading state — start the 30s timer. */
@@ -29,8 +34,20 @@ export function LoadingHint({ active }: LoadingHintProps) {
       setShow(false)
       return
     }
-    const timer = setTimeout(() => setShow(true), HINT_DELAY_MS)
-    return () => clearTimeout(timer)
+    // Kotlin parity (LoadingScreen.kt:33-35): if a modal dialog is open, the
+    // user is in an interactive flow — reset the start time instead of
+    // accusing them of being stuck.
+    let startedAt = Date.now()
+    const interval = setInterval(() => {
+      if (hasOpenDialog()) {
+        startedAt = Date.now()
+        return
+      }
+      if (Date.now() - startedAt >= HINT_DELAY_MS) {
+        setShow(true)
+      }
+    }, TICK_MS)
+    return () => clearInterval(interval)
   }, [active])
 
   if (!show) return null

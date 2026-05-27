@@ -204,13 +204,17 @@ func main() {
 
 	windowManager = wailswin.NewWindowManager(app)
 
-	// Main window — loads from Wails AssetServer (which proxies to daemon)
+	// Strip a "dev-" prefix from link-time-injected version so the title reads
+	// "Citeck Launcher v20260527-..." instead of "Citeck Launcher vdev-..."
+	titleVersion := strings.TrimPrefix(version, "dev-")
 	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:            "main",
-		Title:           "Citeck Launcher",
+		Title:           fmt.Sprintf("Citeck Launcher v%s", titleVersion),
 		DevToolsEnabled: true,
 		Width:           1280,
 		Height:          800,
+		MinWidth:        300,
+		MinHeight:       400,
 		Windows: application.WindowsWindow{
 			HiddenOnTaskbar: false,
 		},

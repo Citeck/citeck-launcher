@@ -44,6 +44,8 @@ const ja: Translations = {
   'dashboard.restartEvents': '\u518d\u8d77\u52d5\u30a4\u30d9\u30f3\u30c8',
   'dashboard.systemDump': '\u30b7\u30b9\u30c6\u30e0\u30c0\u30f3\u30d7',
   'dashboard.systemDump.success': '\u30b7\u30b9\u30c6\u30e0\u30c0\u30f3\u30d7\u3092\u30c0\u30a6\u30f3\u30ed\u30fc\u30c9\u3057\u307e\u3057\u305f',
+  'dashboard.backToWelcome': 'ウェルカムへ戻る',
+  'dashboard.backToWelcome.disabled': 'ウェルカムへ戻る前に、実行中のアプリをすべて停止してください',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'Still loading... This is taking longer than expected.\nTo help us diagnose the issue, please click the \'Dump System Info\' button and send the data to the maintainers.',
@@ -215,7 +217,7 @@ const ja: Translations = {
   'table.tag': '\u30bf\u30b0',
   'table.actions': '\u64cd\u4f5c',
   'table.restartCount': '\u518d\u8d77\u52d5\u56de\u6570',
-  'table.cog.tooltip': 'Left click: edit app config\nRight click: edit a mounted file',
+  'table.cog.tooltip': '左クリック: アプリの Docker 設定を編集\n右クリック: マウントされたファイルを編集\n\n青いマーカーはアプリ設定またはマウントされたファイルが編集済みであることを示します。',
   'table.noEditableFiles': 'No editable files',
   'table.group.core': 'Citeck Core',
   'table.group.coreExt': 'Citeck Core \u62e1\u5f35',
@@ -369,6 +371,7 @@ const ja: Translations = {
   'common.delete': '\u524a\u9664',
   'common.close': '\u9589\u3058\u308b',
   'common.confirm': '\u78ba\u8a8d',
+  'common.confirm.defaultTitle': '\u3088\u308d\u3057\u3044\u3067\u3059\u304b\uff1f',
   'common.working': '\u51e6\u7406\u4e2d...',
   'common.submit': '\u9001\u4fe1',
   'common.select': '\u9078\u629e',
@@ -449,6 +452,8 @@ const ja: Translations = {
   'snapshots.dialog.title': 'Snapshots',
   'snapshots.scope.workspace': 'Workspace',
   'snapshots.scope.namespace': 'Namespace',
+  'snapshots.section.workspace': 'ワークスペースのスナップショット',
+  'snapshots.section.namespace': 'ネームスペースのスナップショット',
   'snapshots.col.name': 'Name',
   'snapshots.col.size': 'Size',
   'snapshots.col.created': 'Created',
@@ -467,6 +472,7 @@ const ja: Translations = {
   'snapshots.deleted': 'Snapshot deleted',
   'snapshots.field.name': 'Snapshot name',
   'snapshots.field.name.invalid': 'Name can only contain letters, digits, dots, dashes and underscores.',
+  'snapshots.field.name.alreadyExists': 'この名前のスナップショットは既に存在します。別の名前を入力してください。',
   'secrets.dialog.title': 'Auth Secrets',
   'secrets.test.ok': 'Secret test passed',
 

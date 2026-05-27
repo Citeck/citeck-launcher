@@ -23,6 +23,19 @@ export function WindowEditor() {
     document.title = name ? `Config — ${name}` : 'Editor'
   }, [name])
 
+  // Escape closes the secondary window; skip when typing in the editor so a
+  // single key press doesn't dismiss in-progress edits.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return
+      const tag = (document.activeElement as HTMLElement | null)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      window.close()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
   // Poll the editor handle once a render to keep the "edited" badge synced.
   // Cheap because the handle is created via useImperativeHandle and only
   // re-renders when the editor state changes.
