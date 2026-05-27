@@ -58,6 +58,9 @@ const ja: Translations = {
   'welcome.error': '\u30a8\u30e9\u30fc: {error}',
   'welcome.startFailed': '\u958b\u59cb\u306b\u5931\u6557: {error}',
   'welcome.quickStart': '\u30af\u30a4\u30c3\u30af\u30b9\u30bf\u30fc\u30c8',
+  'welcome.quickStart.default': '\u30af\u30a4\u30c3\u30af\u30b9\u30bf\u30fc\u30c8',
+  'welcome.quickStart.alreadyHasNamespaces': '\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u306b\u306f\u65e2\u306b\u30cd\u30fc\u30e0\u30b9\u30da\u30fc\u30b9\u304c\u3042\u308a\u307e\u3059\n\u30af\u30a4\u30c3\u30af\u30b9\u30bf\u30fc\u30c8\u306f\u7121\u52b9\u3067\u3059\u3002',
+  'welcome.workspace.empty': '\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u306f\u7a7a\u3067\u3059',
   'welcome.more': '\u305d\u306e\u4ed6',
   'welcome.createNew': '\u65b0\u898f namespace \u3092\u4f5c\u6210',
   'welcome.delete.title': 'namespace \u3092\u524a\u9664',
@@ -132,6 +135,9 @@ const ja: Translations = {
 
   // -- Secrets --
   'secrets.title': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8',
+  'secrets.type.gitToken': '\u30c8\u30fc\u30af\u30f3',
+  'secrets.type.basicAuth': 'Basic\uff08\u30e6\u30fc\u30b6\u30fc\u540d\uff0f\u30d1\u30b9\u30ef\u30fc\u30c9\uff09',
+  'secrets.type.registryAuth': 'Basic\uff08\u30e6\u30fc\u30b6\u30fc\u540d\uff0f\u30d1\u30b9\u30ef\u30fc\u30c9\uff09\u2014 \u30ec\u30b8\u30b9\u30c8\u30ea',
   'secrets.add': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u3092\u8ffd\u52a0',
   'secrets.form.id': 'ID',
   'secrets.form.id.placeholder': 'unique-id',
@@ -297,6 +303,8 @@ const ja: Translations = {
 
   // -- Log Viewer --
   'logViewer.search': '\u691c\u7d22... (Ctrl+F)',
+  'logViewer.filter': '\u30d5\u30a3\u30eb\u30bf\u30fc... (*)',
+  'logViewer.filter.tooltip': '\u4e00\u81f4\u3057\u306a\u3044\u884c\u3092\u975e\u8868\u793a (\u30ef\u30a4\u30eb\u30c9\u30ab\u30fc\u30c9: *)',
   'logViewer.toggleRegex': '\u6b63\u898f\u8868\u73fe\u306e\u5207\u308a\u66ff\u3048',
   'logViewer.prevMatch': '\u524d\u306e\u4e00\u81f4 (Shift+F3)',
   'logViewer.nextMatch': '\u6b21\u306e\u4e00\u81f4 (F3)',
@@ -325,6 +333,7 @@ const ja: Translations = {
 
   // -- Namespace Controls --
   'ns.start': '\u958b\u59cb',
+  'ns.updateAndStart': '\u66f4\u65b0\u3057\u3066\u958b\u59cb',
   'ns.forceStart': '\u5f37\u5236\u66f4\u65b0\u3057\u3066\u958b\u59cb',
   'ns.stop': '\u505c\u6b62',
   'ns.reload': '\u30ea\u30ed\u30fc\u30c9',
@@ -371,6 +380,7 @@ const ja: Translations = {
   'common.delete': '\u524a\u9664',
   'common.close': '\u9589\u3058\u308b',
   'common.confirm': '\u78ba\u8a8d',
+  'common.ok': 'OK',
   'common.confirm.defaultTitle': '\u3088\u308d\u3057\u3044\u3067\u3059\u304b\uff1f',
   'common.working': '\u51e6\u7406\u4e2d...',
   'common.submit': '\u9001\u4fe1',
@@ -471,7 +481,7 @@ const ja: Translations = {
   'snapshots.delete.notSupported': 'Snapshot deletion is not exposed via API; remove the .zip from the namespace dir.',
   'snapshots.deleted': 'Snapshot deleted',
   'snapshots.field.name': 'Snapshot name',
-  'snapshots.field.name.invalid': 'Name can only contain letters, digits, dots, dashes and underscores.',
+  'snapshots.field.name.invalid': '無効なスナップショット名です。\n文字、数字、ドット、ハイフン、アンダースコアを使用してください。',
   'snapshots.field.name.alreadyExists': 'この名前のスナップショットは既に存在します。別の名前を入力してください。',
   'secrets.dialog.title': 'Auth Secrets',
   'secrets.test.ok': 'Secret test passed',

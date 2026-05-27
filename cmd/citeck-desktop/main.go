@@ -211,7 +211,7 @@ func main() {
 		Name:            "main",
 		Title:           fmt.Sprintf("Citeck Launcher v%s", titleVersion),
 		DevToolsEnabled: true,
-		Width:           1280,
+		Width:           1200,
 		Height:          800,
 		MinWidth:        300,
 		MinHeight:       400,

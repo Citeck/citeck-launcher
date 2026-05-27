@@ -94,6 +94,11 @@ func (m *WindowManager) handleOpen(w http.ResponseWriter, r *http.Request) {
 	if spec.Title == "" {
 		spec.Title = defaultTitle(spec.Kind, spec.ID)
 	}
+	// Kotlin parity (LogsWindow / EditorWindow opened at 90% of the active
+	// screen). If the JSON payload doesn't override Width/Height, derive them
+	// from the primary screen's work area; otherwise fall back to per-kind
+	// defaults so non-GTK builds and tests stay deterministic.
+	autoSized := spec.Width == 0 && spec.Height == 0
 	if spec.Width == 0 {
 		spec.Width = defaultWidth(spec.Kind)
 	}
@@ -115,12 +120,24 @@ func (m *WindowManager) handleOpen(w http.ResponseWriter, r *http.Request) {
 
 	created := make(chan application.Window, 1)
 	application.InvokeAsync(func() {
+		width, height := spec.Width, spec.Height
+		var targetScreen *application.Screen
+		if autoSized {
+			if s := application.GetScreenByIndex(0); s != nil {
+				targetScreen = s
+				if w90, h90 := percentOfScreen(s, 90); w90 > 0 && h90 > 0 {
+					width, height = w90, h90
+				}
+			}
+		}
 		win := m.app.Window.NewWithOptions(application.WebviewWindowOptions{
 			Name:            name,
 			Title:           spec.Title,
 			URL:             spec.Route,
-			Width:           spec.Width,
-			Height:          spec.Height,
+			Width:           width,
+			Height:          height,
+			InitialPosition: application.WindowCentered,
+			Screen:          targetScreen,
 			DevToolsEnabled: true,
 		})
 		win.RegisterHook(events.Common.WindowClosing, func(_ *application.WindowEvent) {
@@ -237,6 +254,24 @@ func capitalize(s string) string {
 	}
 	first := strings.ToUpper(s[:1])
 	return first + s[1:]
+}
+
+// percentOfScreen returns p% of the screen's WorkArea (excludes OS taskbars).
+// Returns (0,0) if the screen reports zero bounds so the caller falls back.
+func percentOfScreen(s *application.Screen, p int) (int, int) {
+	if s == nil {
+		return 0, 0
+	}
+	w := s.WorkArea.Width
+	h := s.WorkArea.Height
+	if w <= 0 || h <= 0 {
+		w = s.Size.Width
+		h = s.Size.Height
+	}
+	if w <= 0 || h <= 0 {
+		return 0, 0
+	}
+	return w * p / 100, h * p / 100
 }
 
 func defaultWidth(kind string) int {

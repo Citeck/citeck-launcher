@@ -21,11 +21,17 @@ interface SecretsDialogProps {
   onClose: () => void
 }
 
-const SECRET_TYPES = [
-  { label: 'Git token', value: 'GIT_TOKEN' },
-  { label: 'Basic auth', value: 'BASIC_AUTH' },
-  { label: 'Registry auth', value: 'REGISTRY_AUTH' },
-]
+// Kotlin parity (AuthType.kt:3-7): displayed names mirror the JVM launcher's
+// AuthType.displayName — "Token" / "Basic (Username/Password)". REGISTRY_AUTH
+// is Go-only (the JVM launcher had no separate registry auth secret), so it
+// reuses the Basic display name with a registry suffix to disambiguate.
+function buildSecretTypes(t: (key: string, params?: Record<string, string | number>) => string) {
+  return [
+    { label: t('secrets.type.gitToken'), value: 'GIT_TOKEN' },
+    { label: t('secrets.type.basicAuth'), value: 'BASIC_AUTH' },
+    { label: t('secrets.type.registryAuth'), value: 'REGISTRY_AUTH' },
+  ]
+}
 
 /**
  * SecretsDialog is the modal port of Kotlin's "Show Auth Secrets" affordance
@@ -128,7 +134,7 @@ export function SecretsDialog({ open, onClose }: SecretsDialogProps) {
       label: t('secrets.form.type'),
       type: 'select',
       defaultValue: 'GIT_TOKEN',
-      options: SECRET_TYPES,
+      options: buildSecretTypes(t),
     },
     {
       key: 'username',

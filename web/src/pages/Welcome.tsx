@@ -37,6 +37,10 @@ export function Welcome() {
   // request explicitly). Sourced from /daemon/status.workspace, which is the
   // workspace ID — server mode exposes exactly one ID via that field.
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>('')
+  const [workspaceLoaded, setWorkspaceLoaded] = useState(false)
+  // Kotlin parity (WelcomeScreen.kt:281) — guard MessageDialog when QS clicked
+  // but the workspace already has namespaces. Tracked as a transient flag.
+  const [qsBlockedOpen, setQsBlockedOpen] = useState(false)
   const navigate = useNavigate()
   const openTab = useTabsStore((s) => s.openTab)
   const fetchData = useDashboardStore((s) => s.fetchData)
@@ -73,8 +77,8 @@ export function Welcome() {
   // generic "Workspace" label).
   useEffect(() => {
     getDaemonStatus()
-      .then((s) => setActiveWorkspaceId(s.workspace || ''))
-      .catch(() => { /* daemon may still be starting */ })
+      .then((s) => { setActiveWorkspaceId(s.workspace || ''); setWorkspaceLoaded(true) })
+      .catch(() => { setWorkspaceLoaded(true) /* daemon may still be starting */ })
   }, [])
 
   async function handleOpenNamespace(ns: NamespaceSummaryDto) {
@@ -133,7 +137,17 @@ export function Welcome() {
   // variant maps to a NamespaceConfig pre-filled from the template; the daemon
   // already overlays template fields on top of NamespaceCreateDto, so we only
   // need to pass {name, template, snapshot} and the form defaults handle the rest.
-  async function handleQuickStart(qs: QuickStartDto) {
+  async function handleQuickStart(qs: QuickStartDto | null) {
+    // Kotlin parity: QS is disabled when the workspace already has namespaces;
+    // clicking a QS button in that state shows MessageDialog rather than
+    // silently creating a duplicate namespace.
+    const visibleNsExists = namespaces.some(
+      (ns) => !activeWorkspaceId || !ns.workspaceId || ns.workspaceId === activeWorkspaceId,
+    )
+    if (visibleNsExists) {
+      setQsBlockedOpen(true)
+      return
+    }
     setStarting(true)
     setStartError(null)
     try {
@@ -142,9 +156,9 @@ export function Welcome() {
       // name/template/snapshot. We do not send authType/host/port/TLS/pgAdmin
       // so the template defaults survive.
       await createNamespace({
-        name: qs.name || 'Citeck Default',
-        template: qs.template || '',
-        snapshot: qs.snapshot || '',
+        name: (qs && qs.name) || 'Citeck Default',
+        template: (qs && qs.template) || '',
+        snapshot: (qs && qs.snapshot) || '',
         bundleRepo: '',
         bundleKey: '',
         authType: '',
@@ -217,6 +231,11 @@ export function Welcome() {
           </>
         ) : loadError ? (
           <div className="text-center text-destructive text-sm py-4">{t('welcome.error', { error: loadError })}</div>
+        ) : workspaceLoaded && !activeWorkspaceId ? (
+          // Kotlin parity (WelcomeScreen.kt:101 — `workspaceServices == null`):
+          // the central column collapses to a single "Workspace Is Empty" hint
+          // rather than rendering the namespace/QS buttons against no workspace.
+          <div className="text-center text-foreground text-base py-10">{t('welcome.workspace.empty')}</div>
         ) : (
           <>
             {startError && (
@@ -253,40 +272,57 @@ export function Welcome() {
                 first variant is the big primary button; secondary variants
                 render as a row of small buttons. Each variant creates a
                 namespace directly (no wizard detour) using its template +
-                snapshot. */}
-            {quickStarts.length > 0 && namespaces.filter((ns) =>
-              !activeWorkspaceId || !ns.workspaceId || ns.workspaceId === activeWorkspaceId,
-            ).length === 0 && (
-              <>
-                <button
-                  type="button"
-                  disabled={starting}
-                  onClick={() => handleQuickStart(quickStarts[0])}
-                  className="w-full rounded-lg bg-muted hover:bg-muted/70 px-6 py-3.5 text-center transition-colors disabled:opacity-50"
-                >
-                  <div className="text-sm font-semibold text-foreground">{quickStarts[0].name || t('welcome.quickStart')}</div>
-                  {quickStarts[0].template && (
-                    <div className="text-xs text-muted-foreground mt-0.5">{quickStarts[0].template}</div>
+                snapshot.
+
+                The QS section is always rendered when the workspace exposes
+                variants (Kotlin always rendered them). Clicking a QS while
+                namespaces already exist shows the MessageDialog guard from
+                WelcomeScreen.kt:281 instead of creating a duplicate. The
+                empty-namespaces case in Kotlin (WelcomeScreen.kt:130-132)
+                also falls back to a single "Quick Start" button when the
+                workspace defines no variants. */}
+            {(() => {
+              const visibleNs = namespaces.filter(
+                (ns) => !activeWorkspaceId || !ns.workspaceId || ns.workspaceId === activeWorkspaceId,
+              )
+              const showFallback = quickStarts.length === 0 && visibleNs.length === 0
+              if (quickStarts.length === 0 && !showFallback) return null
+              const list: QuickStartDto[] = quickStarts.length > 0
+                ? quickStarts
+                : [{ name: t('welcome.quickStart.default'), template: '' }]
+              const primary = list[0]
+              return (
+                <>
+                  <button
+                    type="button"
+                    disabled={starting}
+                    onClick={() => handleQuickStart(quickStarts.length === 0 ? null : primary)}
+                    className="w-full rounded-lg bg-muted hover:bg-muted/70 px-6 py-3.5 text-center transition-colors disabled:opacity-50"
+                  >
+                    <div className="text-sm font-semibold text-foreground">{primary.name || t('welcome.quickStart')}</div>
+                    {(primary.bundleRef || primary.template) && (
+                      <div className="text-xs text-muted-foreground mt-0.5">{primary.bundleRef || primary.template}</div>
+                    )}
+                  </button>
+                  {list.length > 1 && (
+                    <div className="flex gap-2 flex-wrap">
+                      {list.slice(1).map((qs, i) => (
+                        <button
+                          key={qs.name || `qs-${i}`}
+                          type="button"
+                          disabled={starting}
+                          onClick={() => handleQuickStart(qs)}
+                          className="flex-1 min-w-0 rounded-lg bg-muted hover:bg-muted/70 px-4 py-2 text-center text-xs font-medium text-foreground transition-colors disabled:opacity-50"
+                          title={qs.bundleRef || qs.template}
+                        >
+                          {qs.name || `${t('welcome.quickStart')} ${i + 2}`}
+                        </button>
+                      ))}
+                    </div>
                   )}
-                </button>
-                {quickStarts.length > 1 && (
-                  <div className="flex gap-2 flex-wrap">
-                    {quickStarts.slice(1).map((qs, i) => (
-                      <button
-                        key={qs.name || `qs-${i}`}
-                        type="button"
-                        disabled={starting}
-                        onClick={() => handleQuickStart(qs)}
-                        className="flex-1 min-w-0 rounded-lg bg-muted hover:bg-muted/70 px-4 py-2 text-center text-xs font-medium text-foreground transition-colors disabled:opacity-50"
-                        title={qs.template}
-                      >
-                        {qs.name || `${t('welcome.quickStart')} ${i + 2}`}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
+                </>
+              )
+            })()}
 
             {/* "More" — opens NamespaceDialog (Kotlin parity: WelcomeScreen.kt:154). */}
             {(() => {
@@ -336,6 +372,19 @@ export function Welcome() {
         error={deleteError}
         onConfirm={handleDelete}
         onCancel={() => { setDeleteTarget(null); setDeleteError('') }}
+      />
+
+      {/* Kotlin parity (WelcomeScreen.kt:281): MessageDialog-equivalent when
+          QS is clicked while the workspace already has namespaces. Reused
+          ConfirmModal with no cancel + OK confirm — the dialog purely
+          informs, no destructive action. */}
+      <ConfirmModal
+        open={qsBlockedOpen}
+        title={t('welcome.quickStart')}
+        message={t('welcome.quickStart.alreadyHasNamespaces')}
+        confirmLabel={t('common.ok')}
+        onConfirm={() => setQsBlockedOpen(false)}
+        onCancel={() => setQsBlockedOpen(false)}
       />
 
       <NamespaceDialog open={moreOpen} onClose={() => setMoreOpen(false)} />

@@ -7,7 +7,7 @@ import { showError } from '../lib/errorModal'
 import { ConfirmModal } from './ConfirmModal'
 import { ContextMenu, type ContextMenuItem } from './ContextMenu'
 import { useContextMenu } from '../hooks/useContextMenu'
-import { Play, Square, RefreshCw } from 'lucide-react'
+import { Play, Square } from 'lucide-react'
 
 interface NamespaceControlsProps {
   status: string
@@ -39,6 +39,14 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
 
   const isStopped = status === 'STOPPED'
   const isRunning = status === 'RUNNING' || status === 'STALLED'
+  const isStarting = status === 'STARTING'
+  // Kotlin parity: stop button is disabled when the namespace is already stopped.
+  const stopEnabled = !isStopped
+  // Kotlin parity: primary (Update&Start) is clickable while stopped or running.
+  // While STARTING/STOPPING, the only safe operation is stop.
+  const primaryEnabled = isStopped || isRunning
+  // Kotlin used reload semantics when running, start when stopped.
+  const primaryAction: Exclude<Action, null> = isRunning ? 'reload' : 'start'
 
   async function handleConfirm() {
     if (!pendingAction) return
@@ -46,8 +54,7 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
     setActionError(null)
     try {
       await actionFns[pendingAction]()
-      // Kotlin parity: surface a single user-facing label per action even
-      // though forceStart maps to "start" semantically for the toast text.
+      // forceStart maps to "start" semantically for the toast label.
       const toastAction = pendingAction === 'forceStart' ? 'start' : pendingAction
       toast(t('ns.toast.success', { action: toastAction }), 'success')
       setPendingAction(null)
@@ -65,7 +72,7 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
     }
   }
 
-  function startContextItems(): ContextMenuItem[] {
+  function primaryContextItems(): ContextMenuItem[] {
     return [
       { label: t('ns.forceStart'), onClick: () => setPendingAction('forceStart') },
     ]
@@ -81,21 +88,36 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
 
   return (
     <>
-      <div className="flex items-center gap-1.5">
-        {isStopped && (
-          <button type="button" className="flex items-center gap-1 rounded border border-success/40 px-2 py-1 text-xs text-success hover:bg-success/10"
-            onClick={() => setPendingAction('start')}
-            onContextMenu={(e) => { e.preventDefault(); showContextMenu(e, startContextItems()) }}
-          ><Play size={12} /> {t('ns.start')}</button>
-        )}
-        {(isRunning || status === 'STARTING') && (
-          <button type="button" className="flex items-center gap-1 rounded border border-destructive/40 px-2 py-1 text-xs text-destructive hover:bg-destructive/10"
-            onClick={() => setPendingAction('stop')}><Square size={12} /> {t('ns.stop')}</button>
-        )}
-        {isRunning && (
-          <button type="button" className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-            onClick={() => setPendingAction('reload')}><RefreshCw size={12} /> {t('ns.reload')}</button>
-        )}
+      <div className="flex items-stretch h-7 rounded border border-border overflow-hidden">
+        <button
+          type="button"
+          disabled={!primaryEnabled || isStarting}
+          className={`flex items-center justify-center gap-1 px-2 text-xs border-r border-border ${
+            primaryEnabled && !isStarting
+              ? 'text-success hover:bg-success/10'
+              : 'text-muted-foreground/40 cursor-not-allowed'
+          }`}
+          style={{ flex: 7 }}
+          onClick={() => setPendingAction(primaryAction)}
+          onContextMenu={(e) => { e.preventDefault(); if (primaryEnabled && !isStarting) showContextMenu(e, primaryContextItems()) }}
+          title={t('ns.updateAndStart')}
+        >
+          <Play size={12} /> {t('ns.updateAndStart')}
+        </button>
+        <button
+          type="button"
+          disabled={!stopEnabled}
+          className={`flex items-center justify-center gap-1 px-2 text-xs ${
+            stopEnabled
+              ? 'text-destructive hover:bg-destructive/10'
+              : 'text-muted-foreground/40 cursor-not-allowed'
+          }`}
+          style={{ flex: 3 }}
+          onClick={() => setPendingAction('stop')}
+          title={t('ns.stop')}
+        >
+          <Square size={12} /> {t('ns.stop')}
+        </button>
       </div>
 
       {contextMenu && (

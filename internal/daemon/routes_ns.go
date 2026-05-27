@@ -141,9 +141,10 @@ func (d *Daemon) handleGetQuickStarts(w http.ResponseWriter, _ *http.Request) {
 	if wsCfg != nil {
 		for _, qs := range wsCfg.QuickStartVariants {
 			quickStarts = append(quickStarts, api.QuickStartDto{
-				Name:     qs.Name,
-				Template: qs.Template,
-				Snapshot: qs.Snapshot,
+				Name:      qs.Name,
+				Template:  qs.Template,
+				Snapshot:  qs.Snapshot,
+				BundleRef: resolveQuickStartBundleRef(wsCfg, qs),
 			})
 		}
 	}
@@ -151,6 +152,36 @@ func (d *Daemon) handleGetQuickStarts(w http.ResponseWriter, _ *http.Request) {
 		quickStarts = []api.QuickStartDto{}
 	}
 	writeJSON(w, quickStarts)
+}
+
+// resolveQuickStartBundleRef mirrors Kotlin WelcomeScreen.kt:prepareNsDataToCreate:
+// QS bundleRef wins; otherwise the namespace template's bundleRef; otherwise
+// `{firstBundleRepoId}:LATEST`. The actual git "LATEST" resolution is deferred
+// to namespace-create time — here we just surface the symbolic ref so the
+// Welcome screen subtitle matches what Kotlin used to render.
+func resolveQuickStartBundleRef(wsCfg *bundle.WorkspaceConfig, qs bundle.QuickStartVariant) string {
+	if !qs.Bundle.IsEmpty() {
+		return qs.Bundle.String()
+	}
+	templateID := qs.Template
+	for _, tmpl := range wsCfg.NamespaceTemplates {
+		if templateID != "" && tmpl.ID != templateID {
+			continue
+		}
+		if templateID == "" && tmpl.ID != "default" {
+			continue
+		}
+		if raw, ok := tmpl.Config["bundleRef"]; ok {
+			if s, ok := raw.(string); ok && s != "" {
+				return s
+			}
+		}
+		break
+	}
+	if len(wsCfg.BundleRepos) > 0 {
+		return wsCfg.BundleRepos[0].ID + ":LATEST"
+	}
+	return ""
 }
 
 // --- Forms ---

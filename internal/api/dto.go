@@ -262,11 +262,14 @@ type WorkspaceUpdateDto struct {
 	AuthType       string `json:"authType,omitempty"`
 }
 
-// QuickStartDto represents a quick-start template entry.
+// QuickStartDto represents a quick-start template entry. BundleRef is the
+// resolved "repo:key" reference the QS button surfaces as its subtitle
+// (Kotlin parity: WelcomeScreen.kt:387 renders `namespaceConfig.bundleRef`).
 type QuickStartDto struct {
-	Name     string `json:"name"`
-	Template string `json:"template"`
-	Snapshot string `json:"snapshot,omitempty"`
+	Name      string `json:"name"`
+	Template  string `json:"template"`
+	Snapshot  string `json:"snapshot,omitempty"`
+	BundleRef string `json:"bundleRef,omitempty"`
 }
 
 // TemplateDto represents a namespace template.

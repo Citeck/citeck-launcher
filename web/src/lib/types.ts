@@ -128,6 +128,9 @@ export interface QuickStartDto {
   name: string
   template: string
   snapshot?: string
+  // Resolved bundle ref ("repo:key") — Kotlin showed this as the QS button
+  // subtitle. Falls back to template when the daemon couldn't resolve it.
+  bundleRef?: string
 }
 
 export interface TemplateDto {

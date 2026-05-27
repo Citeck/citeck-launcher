@@ -58,6 +58,9 @@ const es: Translations = {
   'welcome.error': 'Error: {error}',
   'welcome.startFailed': 'Error al iniciar: {error}',
   'welcome.quickStart': 'Inicio rápido',
+  'welcome.quickStart.default': 'Inicio rápido',
+  'welcome.quickStart.alreadyHasNamespaces': 'El espacio de trabajo ya tiene namespaces\nEl inicio rápido está deshabilitado.',
+  'welcome.workspace.empty': 'El espacio de trabajo está vacío',
   'welcome.more': 'Más',
   'welcome.createNew': 'Crear nuevo namespace',
   'welcome.delete.title': 'Eliminar namespace',
@@ -132,6 +135,9 @@ const es: Translations = {
 
   // -- Secrets --
   'secrets.title': 'Secretos',
+  'secrets.type.gitToken': 'Token',
+  'secrets.type.basicAuth': 'Basic (usuario/contraseña)',
+  'secrets.type.registryAuth': 'Basic (usuario/contraseña) — Registro',
   'secrets.add': 'Agregar secreto',
   'secrets.form.id': 'ID',
   'secrets.form.id.placeholder': 'unique-id',
@@ -297,6 +303,8 @@ const es: Translations = {
 
   // -- Log Viewer --
   'logViewer.search': 'Buscar... (Ctrl+F)',
+  'logViewer.filter': 'Filtrar... (*)',
+  'logViewer.filter.tooltip': 'Ocultar líneas no coincidentes (comodines: *)',
   'logViewer.toggleRegex': 'Alternar regex',
   'logViewer.prevMatch': 'Coincidencia anterior (Shift+F3)',
   'logViewer.nextMatch': 'Siguiente coincidencia (F3)',
@@ -325,6 +333,7 @@ const es: Translations = {
 
   // -- Namespace Controls --
   'ns.start': 'Iniciar',
+  'ns.updateAndStart': 'Actualizar e iniciar',
   'ns.forceStart': 'Forzar actualización e iniciar',
   'ns.stop': 'Detener',
   'ns.reload': 'Recargar',
@@ -371,6 +380,7 @@ const es: Translations = {
   'common.delete': 'Eliminar',
   'common.close': 'Cerrar',
   'common.confirm': 'Confirmar',
+  'common.ok': 'OK',
   'common.confirm.defaultTitle': '¿Está seguro?',
   'common.working': 'Trabajando...',
   'common.submit': 'Enviar',
@@ -471,7 +481,7 @@ const es: Translations = {
   'snapshots.delete.notSupported': 'Snapshot deletion is not exposed via API; remove the .zip from the namespace dir.',
   'snapshots.deleted': 'Snapshot deleted',
   'snapshots.field.name': 'Snapshot name',
-  'snapshots.field.name.invalid': 'Name can only contain letters, digits, dots, dashes and underscores.',
+  'snapshots.field.name.invalid': 'Nombre de instantánea no válido.\nPor favor, utilice letras, dígitos, puntos, guion o guion bajo.',
   'snapshots.field.name.alreadyExists': 'Ya existe un snapshot con este nombre. Por favor, introduzca otro nombre.',
   'secrets.dialog.title': 'Auth Secrets',
   'secrets.test.ok': 'Secret test passed',

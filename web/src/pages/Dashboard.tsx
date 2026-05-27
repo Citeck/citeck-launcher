@@ -443,34 +443,38 @@ export function Dashboard() {
 
           </div>
           {/* Fixed footer — always visible at bottom */}
-          <div className="shrink-0 p-3 pt-2 border-t border-border flex flex-col gap-1">
+          <div className="shrink-0 p-3 pt-2 border-t border-border flex flex-row flex-wrap items-center gap-1">
             {/* Kotlin parity (NamespaceScreen.kt:308-324): back-to-Welcome arrow,
                 only enabled when no apps are running so the user can't strand
                 containers by switching namespaces mid-flight. */}
-            <SidebarBtn icon={ArrowLeft}
-              label={t('dashboard.backToWelcome')}
+            {/* Kotlin parity (NamespaceScreen.kt sidebar footer): icon-only row
+                with tooltips, ordered: Back | Open Dir | Launcher Logs |
+                Volumes | Secrets | System Dump | Diagnostics | Restart Events. */}
+            <SidebarIconBtn icon={ArrowLeft}
               tooltip={namespace.status === 'STOPPED' ? t('dashboard.backToWelcome') : t('dashboard.backToWelcome.disabled')}
               disabled={namespace.status !== 'STOPPED'}
               onClick={() => setNamespaceDialogOpen(true)} />
-            <SidebarBtn icon={HardDrive} label={t('dashboard.volumes')}
-              onClick={() => setVolumesDialogOpen(true)} />
-            {/* Open NS Dir — Kotlin parity (NamespaceScreen.kt sidebar
-                "Open Namespace Dir"). Desktop mode shells out to the OS file
-                manager; server mode returns the path so the user can open it
-                manually on the daemon host. */}
-            <SidebarBtn icon={FolderOpen} label={t('dashboard.openNsDir')}
+            <SidebarIconBtn icon={FolderOpen}
               tooltip={t('dashboard.openNsDir.tooltip')}
               onClick={handleOpenNsDir} />
-            <SidebarBtn icon={Key} label={t('dashboard.secrets')}
-              onClick={() => setSecretsDialogOpen(true)} />
-            <SidebarBtn icon={Stethoscope} label={t('dashboard.diagnostics')}
-              onClick={() => { openTab({ id: 'diagnostics', title: t('dashboard.diagnostics'), path: '/diagnostics' }); navigate('/diagnostics') }} />
-            <SidebarBtn icon={AlertTriangle} label={t('dashboard.restartEvents')}
-              onClick={() => openBottomTab({ id: 'restart-events', type: 'restart-events', title: t('dashboard.restartEvents') })} />
-            <SidebarBtn icon={FileText} label={t('dashboard.launcherLogs')}
+            <SidebarIconBtn icon={FileText}
+              tooltip={t('dashboard.launcherLogs')}
               onClick={() => openSecondaryView({ id: 'daemon-logs', type: 'daemon-logs', title: t('daemonLogs.title') })} />
-            <SidebarBtn icon={Download} label={t('dashboard.systemDump')}
+            <SidebarIconBtn icon={HardDrive}
+              tooltip={t('dashboard.volumes')}
+              onClick={() => setVolumesDialogOpen(true)} />
+            <SidebarIconBtn icon={Key}
+              tooltip={t('dashboard.secrets')}
+              onClick={() => setSecretsDialogOpen(true)} />
+            <SidebarIconBtn icon={AlertTriangle}
+              tooltip={t('dashboard.systemDump')}
               onClick={() => getSystemDump('zip').then(() => toast(t('dashboard.systemDump.success'), 'success')).catch((e) => toast((e as Error).message, 'error'))} />
+            <SidebarIconBtn icon={Stethoscope}
+              tooltip={t('dashboard.diagnostics')}
+              onClick={() => { openTab({ id: 'diagnostics', title: t('dashboard.diagnostics'), path: '/diagnostics' }); navigate('/diagnostics') }} />
+            <SidebarIconBtn icon={Download}
+              tooltip={t('dashboard.restartEvents')}
+              onClick={() => openBottomTab({ id: 'restart-events', type: 'restart-events', title: t('dashboard.restartEvents') })} />
           </div>
         </aside>
 
@@ -560,16 +564,15 @@ export function Dashboard() {
   )
 }
 
-function SidebarBtn({ icon: Icon, label, tooltip, onClick, disabled }: { icon: React.ElementType; label: string; tooltip?: string; onClick?: () => void; disabled?: boolean }) {
+function SidebarIconBtn({ icon: Icon, tooltip, onClick, disabled }: { icon: React.ElementType; tooltip: string; onClick?: () => void; disabled?: boolean }) {
   return (
     <button type="button"
       disabled={disabled}
-      className={`flex items-center gap-1.5 text-xs py-1 px-1 rounded ${
+      className={`flex items-center justify-center w-7 h-7 rounded ${
         disabled ? 'text-muted-foreground/40 cursor-not-allowed' : 'text-muted-foreground hover:text-foreground hover:bg-muted'
       }`}
-      onClick={onClick} title={tooltip ?? label}>
-      <Icon size={13} />
-      {label}
+      onClick={onClick} title={tooltip}>
+      <Icon size={16} />
     </button>
   )
 }

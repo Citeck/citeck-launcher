@@ -58,6 +58,9 @@ const en: Translations = {
   'welcome.error': 'Error: {error}',
   'welcome.startFailed': 'Start failed: {error}',
   'welcome.quickStart': 'Quick Start',
+  'welcome.quickStart.default': 'Quick Start',
+  'welcome.quickStart.alreadyHasNamespaces': 'Workspace already has namespaces\nQuick start is disabled.',
+  'welcome.workspace.empty': 'Workspace Is Empty',
   'welcome.more': 'More',
   'welcome.createNew': 'Create New Namespace',
   'welcome.delete.title': 'Delete Namespace',
@@ -132,6 +135,9 @@ const en: Translations = {
 
   // -- Secrets --
   'secrets.title': 'Secrets',
+  'secrets.type.gitToken': 'Token',
+  'secrets.type.basicAuth': 'Basic (Username/Password)',
+  'secrets.type.registryAuth': 'Basic (Username/Password) — Registry',
   'secrets.add': 'Add Secret',
   'secrets.form.id': 'ID',
   'secrets.form.id.placeholder': 'unique-id',
@@ -297,6 +303,8 @@ const en: Translations = {
 
   // -- Log Viewer --
   'logViewer.search': 'Search... (Ctrl+F)',
+  'logViewer.filter': 'Filter... (*)',
+  'logViewer.filter.tooltip': 'Hide non-matching lines (wildcards: *)',
   'logViewer.toggleRegex': 'Toggle regex',
   'logViewer.prevMatch': 'Previous match (Shift+F3)',
   'logViewer.nextMatch': 'Next match (F3)',
@@ -325,6 +333,7 @@ const en: Translations = {
 
   // -- Namespace Controls --
   'ns.start': 'Start',
+  'ns.updateAndStart': 'Update & Start',
   'ns.forceStart': 'Force Update And Start',
   'ns.stop': 'Stop',
   'ns.reload': 'Reload',
@@ -371,6 +380,7 @@ const en: Translations = {
   'common.delete': 'Delete',
   'common.close': 'Close',
   'common.confirm': 'Confirm',
+  'common.ok': 'OK',
   'common.confirm.defaultTitle': 'Are you sure?',
   'common.working': 'Working...',
   'common.submit': 'Submit',
@@ -470,7 +480,7 @@ const en: Translations = {
   'snapshots.delete.notSupported': 'Snapshot deletion is not exposed via API; remove the .zip from the namespace dir.',
   'snapshots.deleted': 'Snapshot deleted',
   'snapshots.field.name': 'Snapshot name',
-  'snapshots.field.name.invalid': 'Name can only contain letters, digits, dots, dashes and underscores.',
+  'snapshots.field.name.invalid': 'Invalid snapshot name.\nPlease, enter name using characters, digits, dots, dash or underscore.',
   'snapshots.field.name.alreadyExists': 'Snapshot with this name already exists. Please, enter other name.',
 
   // -- Secrets dialog (modal port) --

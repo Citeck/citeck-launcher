@@ -58,6 +58,9 @@ const de: Translations = {
   'welcome.error': 'Fehler: {error}',
   'welcome.startFailed': 'Start fehlgeschlagen: {error}',
   'welcome.quickStart': 'Schnellstart',
+  'welcome.quickStart.default': 'Schnellstart',
+  'welcome.quickStart.alreadyHasNamespaces': 'Der Arbeitsbereich enthält bereits Namespaces\nSchnellstart ist deaktiviert.',
+  'welcome.workspace.empty': 'Arbeitsbereich ist leer',
   'welcome.more': 'Mehr',
   'welcome.createNew': 'Neuen Namespace erstellen',
   'welcome.delete.title': 'Namespace löschen',
@@ -132,6 +135,9 @@ const de: Translations = {
 
   // -- Secrets --
   'secrets.title': 'Geheimnisse',
+  'secrets.type.gitToken': 'Token',
+  'secrets.type.basicAuth': 'Basic (Benutzername/Passwort)',
+  'secrets.type.registryAuth': 'Basic (Benutzername/Passwort) — Registry',
   'secrets.add': 'Geheimnis hinzufügen',
   'secrets.form.id': 'ID',
   'secrets.form.id.placeholder': 'unique-id',
@@ -297,6 +303,8 @@ const de: Translations = {
 
   // -- Log Viewer --
   'logViewer.search': 'Suchen... (Strg+F)',
+  'logViewer.filter': 'Filter... (*)',
+  'logViewer.filter.tooltip': 'Nicht passende Zeilen ausblenden (Platzhalter: *)',
   'logViewer.toggleRegex': 'Regex umschalten',
   'logViewer.prevMatch': 'Vorheriger Treffer (Umschalt+F3)',
   'logViewer.nextMatch': 'Nächster Treffer (F3)',
@@ -325,6 +333,7 @@ const de: Translations = {
 
   // -- Namespace Controls --
   'ns.start': 'Starten',
+  'ns.updateAndStart': 'Aktualisieren & Starten',
   'ns.forceStart': 'Aktualisieren erzwingen und starten',
   'ns.stop': 'Stoppen',
   'ns.reload': 'Neu laden',
@@ -371,6 +380,7 @@ const de: Translations = {
   'common.delete': 'Löschen',
   'common.close': 'Schließen',
   'common.confirm': 'Bestätigen',
+  'common.ok': 'OK',
   'common.confirm.defaultTitle': 'Sind Sie sicher?',
   'common.working': 'Arbeitet...',
   'common.submit': 'Absenden',
@@ -471,7 +481,7 @@ const de: Translations = {
   'snapshots.delete.notSupported': 'Snapshot deletion is not exposed via API; remove the .zip from the namespace dir.',
   'snapshots.deleted': 'Snapshot deleted',
   'snapshots.field.name': 'Snapshot name',
-  'snapshots.field.name.invalid': 'Name can only contain letters, digits, dots, dashes and underscores.',
+  'snapshots.field.name.invalid': 'Ungültiger Snapshot-Name.\nBitte verwenden Sie Buchstaben, Ziffern, Punkte, Bindestrich oder Unterstrich.',
   'snapshots.field.name.alreadyExists': 'Ein Snapshot mit diesem Namen existiert bereits. Bitte geben Sie einen anderen Namen ein.',
   'secrets.dialog.title': 'Auth Secrets',
   'secrets.test.ok': 'Secret test passed',

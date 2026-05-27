@@ -58,6 +58,9 @@ const fr: Translations = {
   'welcome.error': 'Erreur : {error}',
   'welcome.startFailed': '\u00c9chec du d\u00e9marrage : {error}',
   'welcome.quickStart': 'D\u00e9marrage rapide',
+  'welcome.quickStart.default': 'D\u00e9marrage rapide',
+  'welcome.quickStart.alreadyHasNamespaces': 'L\'espace de travail contient d\u00e9j\u00e0 des namespaces\nLe d\u00e9marrage rapide est d\u00e9sactiv\u00e9.',
+  'welcome.workspace.empty': 'L\'espace de travail est vide',
   'welcome.more': 'Plus',
   'welcome.createNew': 'Cr\u00e9er un nouveau namespace',
   'welcome.delete.title': 'Supprimer le namespace',
@@ -132,6 +135,9 @@ const fr: Translations = {
 
   // -- Secrets --
   'secrets.title': 'Secrets',
+  'secrets.type.gitToken': 'Token',
+  'secrets.type.basicAuth': 'Basic (utilisateur/mot de passe)',
+  'secrets.type.registryAuth': 'Basic (utilisateur/mot de passe) — Registre',
   'secrets.add': 'Ajouter un secret',
   'secrets.form.id': 'ID',
   'secrets.form.id.placeholder': 'identifiant-unique',
@@ -297,6 +303,8 @@ const fr: Translations = {
 
   // -- Log Viewer --
   'logViewer.search': 'Rechercher... (Ctrl+F)',
+  'logViewer.filter': 'Filtrer... (*)',
+  'logViewer.filter.tooltip': 'Masquer les lignes non correspondantes (jokers : *)',
   'logViewer.toggleRegex': 'Activer/d\u00e9sactiver la regex',
   'logViewer.prevMatch': 'Correspondance pr\u00e9c\u00e9dente (Shift+F3)',
   'logViewer.nextMatch': 'Correspondance suivante (F3)',
@@ -325,6 +333,7 @@ const fr: Translations = {
 
   // -- Namespace Controls --
   'ns.start': 'D\u00e9marrer',
+  'ns.updateAndStart': 'Mettre \u00e0 jour et d\u00e9marrer',
   'ns.forceStart': 'Forcer la mise \u00e0 jour et d\u00e9marrer',
   'ns.stop': 'Arr\u00eater',
   'ns.reload': 'Recharger',
@@ -371,6 +380,7 @@ const fr: Translations = {
   'common.delete': 'Supprimer',
   'common.close': 'Fermer',
   'common.confirm': 'Confirmer',
+  'common.ok': 'OK',
   'common.confirm.defaultTitle': 'Êtes-vous sûr ?',
   'common.working': 'En cours...',
   'common.submit': 'Envoyer',
@@ -471,7 +481,7 @@ const fr: Translations = {
   'snapshots.delete.notSupported': 'Snapshot deletion is not exposed via API; remove the .zip from the namespace dir.',
   'snapshots.deleted': 'Snapshot deleted',
   'snapshots.field.name': 'Snapshot name',
-  'snapshots.field.name.invalid': 'Name can only contain letters, digits, dots, dashes and underscores.',
+  'snapshots.field.name.invalid': 'Nom d\'instantané non valide.\nVeuillez utiliser des lettres, chiffres, points, tiret ou tiret bas.',
   'snapshots.field.name.alreadyExists': 'Un snapshot avec ce nom existe déjà. Veuillez saisir un autre nom.',
   'secrets.dialog.title': 'Auth Secrets',
   'secrets.test.ok': 'Secret test passed',

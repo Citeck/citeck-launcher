@@ -58,6 +58,9 @@ const zh: Translations = {
   'welcome.error': '错误：{error}',
   'welcome.startFailed': '启动失败：{error}',
   'welcome.quickStart': '快速开始',
+  'welcome.quickStart.default': '快速开始',
+  'welcome.quickStart.alreadyHasNamespaces': '工作区已存在命名空间\n快速开始已禁用。',
+  'welcome.workspace.empty': '工作区为空',
   'welcome.more': '更多',
   'welcome.createNew': '创建新 namespace',
   'welcome.delete.title': '删除 namespace',
@@ -132,6 +135,9 @@ const zh: Translations = {
 
   // -- Secrets --
   'secrets.title': '密钥',
+  'secrets.type.gitToken': '令牌',
+  'secrets.type.basicAuth': 'Basic（用户名/密码）',
+  'secrets.type.registryAuth': 'Basic（用户名/密码）— 镜像仓库',
   'secrets.add': '添加密钥',
   'secrets.form.id': 'ID',
   'secrets.form.id.placeholder': 'unique-id',
@@ -297,6 +303,8 @@ const zh: Translations = {
 
   // -- Log Viewer --
   'logViewer.search': '搜索...（Ctrl+F）',
+  'logViewer.filter': '过滤...（*）',
+  'logViewer.filter.tooltip': '隐藏不匹配的行（通配符：*）',
   'logViewer.toggleRegex': '切换正则表达式',
   'logViewer.prevMatch': '上一个匹配 (Shift+F3)',
   'logViewer.nextMatch': '下一个匹配 (F3)',
@@ -325,6 +333,7 @@ const zh: Translations = {
 
   // -- Namespace Controls --
   'ns.start': '启动',
+  'ns.updateAndStart': '更新并启动',
   'ns.forceStart': '强制更新并启动',
   'ns.stop': '停止',
   'ns.reload': '重新加载',
@@ -371,6 +380,7 @@ const zh: Translations = {
   'common.delete': '删除',
   'common.close': '关闭',
   'common.confirm': '确认',
+  'common.ok': '确定',
   'common.confirm.defaultTitle': '确定吗？',
   'common.working': '处理中...',
   'common.submit': '提交',
@@ -471,7 +481,7 @@ const zh: Translations = {
   'snapshots.delete.notSupported': 'Snapshot deletion is not exposed via API; remove the .zip from the namespace dir.',
   'snapshots.deleted': 'Snapshot deleted',
   'snapshots.field.name': 'Snapshot name',
-  'snapshots.field.name.invalid': 'Name can only contain letters, digits, dots, dashes and underscores.',
+  'snapshots.field.name.invalid': '快照名称无效。\n请使用字母、数字、点、连字符或下划线。',
   'snapshots.field.name.alreadyExists': '已存在同名快照。请输入其他名称。',
   'secrets.dialog.title': 'Auth Secrets',
   'secrets.test.ok': 'Secret test passed',

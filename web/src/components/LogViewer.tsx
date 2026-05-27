@@ -3,9 +3,9 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { getAppLogs, getDaemonLogs, API_BASE } from '../lib/api'
 import { useTranslation } from '../lib/i18n'
 
-type LogLevel = 'ERROR' | 'WARN' | 'INFO' | 'DEBUG' | 'TRACE'
+type LogLevel = 'ERROR' | 'WARN' | 'INFO' | 'DEBUG' | 'TRACE' | 'UNKNOWN'
 
-const LOG_LEVELS: LogLevel[] = ['ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE']
+const LOG_LEVELS: LogLevel[] = ['ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE', 'UNKNOWN']
 
 const LEVEL_COLORS: Record<LogLevel, string> = {
   ERROR: 'text-[#ef5350]',
@@ -13,6 +13,7 @@ const LEVEL_COLORS: Record<LogLevel, string> = {
   INFO: 'text-[#66bb6a]',
   DEBUG: 'text-[#9e9e9e]',
   TRACE: 'text-[#bdbdbd]',
+  UNKNOWN: 'text-[#7c7c7c]',
 }
 
 const LEVEL_PATTERNS: [RegExp, number][] = [
@@ -81,6 +82,8 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
   const [tail, setTail] = useState(500)
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [filterText, setFilterText] = useState('')
+  const [debouncedFilter, setDebouncedFilter] = useState('')
   const [useRegex, setUseRegex] = useState(false)
   const [follow, setFollow] = useState(true)
   const [wordWrap, setWordWrap] = useState(true)
@@ -156,6 +159,12 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
     const timer = setTimeout(() => setDebouncedSearch(trimmed), 300)
     return () => clearTimeout(timer)
   }, [search])
+
+  useEffect(() => {
+    const trimmed = filterText.slice(0, 200)
+    const timer = setTimeout(() => setDebouncedFilter(trimmed), 300)
+    return () => clearTimeout(timer)
+  }, [filterText])
 
   // Initial load via REST, then stream via follow endpoint
   const fetchInitialLogs = useCallback(() => {
@@ -279,16 +288,32 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [setLinesWithLevels, active])
 
+  // Kotlin parity: lines without a parsed level fall into the UNKNOWN bucket
+  // and respect its dedicated toggle (LogsViewer.kt:151-158).
   const { filteredLines, filteredLevels, totalLineCount } = useMemo(() => {
+    let pattern: RegExp | null = null
+    if (debouncedFilter && debouncedFilter.length >= 2) {
+      try {
+        const escaped = debouncedFilter.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')
+        pattern = new RegExp(escaped, 'i')
+      } catch {
+        pattern = null
+      }
+    }
     const entries = lines
-      .map((line, i) => ({ line, level: levels[i] ?? null }))
-      .filter(({ level }) => !level || enabledLevels.has(level))
+      .map((line, i) => ({ line, level: (levels[i] ?? null) as LogLevel | null }))
+      .filter(({ line, level }) => {
+        const bucket: LogLevel = level ?? 'UNKNOWN'
+        if (!enabledLevels.has(bucket)) return false
+        if (pattern && !pattern.test(line)) return false
+        return true
+      })
     return {
       filteredLines: entries.map((e) => e.line),
       filteredLevels: entries.map((e) => e.level),
       totalLineCount: lines.length,
     }
-  }, [lines, levels, enabledLevels])
+  }, [lines, levels, enabledLevels, debouncedFilter])
 
   const { safeSearchRegex, regexWarning } = useMemo(() => {
     if (!debouncedSearch) {
@@ -414,6 +439,18 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
           )}
           {regexWarning && <span className="text-xs text-warning">{t('logViewer.regexWarning')}</span>}
         </div>
+
+        <div className="h-5 w-px bg-border" />
+
+        {/* Filter (wildcard, hides non-matching lines — Kotlin LogsViewer.kt:217) */}
+        <input
+          type="text"
+          value={filterText}
+          onChange={(e) => setFilterText(e.target.value)}
+          placeholder={t('logViewer.filter')}
+          title={t('logViewer.filter.tooltip')}
+          className={`rounded-md border border-border bg-card px-2 py-1 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary ${compact ? 'w-32 text-xs' : 'w-44 text-sm py-1.5 px-3'}`}
+        />
 
         <div className="h-5 w-px bg-border" />
 

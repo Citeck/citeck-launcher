@@ -109,9 +109,29 @@ export function VolumesDialog({ open, onClose, onOpenSnapshots, namespaceStopped
   async function handleDeleteAll() {
     setDeletingAll(true)
     try {
-      // Kotlin iterates up to 100 times. We iterate sequentially with first-error stop.
-      for (const v of volumes) {
-        await deleteVolume(v.name)
+      // Kotlin parity (NamespaceScreen.kt:362-389): retry up to 100 iterations,
+      // re-listing after each pass. Docker may refuse a volume that is still
+      // attached to a stopping container; on subsequent passes it is gone.
+      let iterations = 100
+      let remaining = await getVolumes()
+      while (iterations-- > 0 && remaining.length > 0) {
+        let progressed = false
+        for (const v of remaining) {
+          try {
+            await deleteVolume(v.name)
+            progressed = true
+          } catch {
+            // ignored: a volume might be transiently busy — caught by the
+            // outer loop's re-list + 500ms back-off
+          }
+        }
+        if (!progressed) {
+          await new Promise((r) => setTimeout(r, 500))
+        }
+        remaining = await getVolumes()
+      }
+      if (remaining.length > 0) {
+        throw new Error(`Delete All did not converge: ${remaining.map((v) => v.name).join(', ')}`)
       }
       toast(t('volumes.deleteAll.success'), 'success')
       setDeleteAllOpen(false)

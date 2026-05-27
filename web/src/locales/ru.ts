@@ -58,6 +58,9 @@ const ru: Translations = {
   'welcome.error': 'Ошибка: {error}',
   'welcome.startFailed': 'Запуск не удался: {error}',
   'welcome.quickStart': 'Быстрый старт',
+  'welcome.quickStart.default': 'Быстрый старт',
+  'welcome.quickStart.alreadyHasNamespaces': 'В рабочем пространстве уже есть пространства имён\nБыстрый старт отключён.',
+  'welcome.workspace.empty': 'Рабочее пространство пусто',
   'welcome.more': 'Ещё',
   'welcome.createNew': 'Создать новый namespace',
   'welcome.delete.title': 'Удалить namespace',
@@ -132,6 +135,9 @@ const ru: Translations = {
 
   // -- Secrets --
   'secrets.title': 'Секреты',
+  'secrets.type.gitToken': 'Токен',
+  'secrets.type.basicAuth': 'Basic (логин/пароль)',
+  'secrets.type.registryAuth': 'Basic (логин/пароль) — реестр',
   'secrets.add': 'Добавить секрет',
   'secrets.form.id': 'ID',
   'secrets.form.id.placeholder': 'unique-id',
@@ -297,6 +303,8 @@ const ru: Translations = {
 
   // -- Log Viewer --
   'logViewer.search': 'Поиск... (Ctrl+F)',
+  'logViewer.filter': 'Фильтр... (*)',
+  'logViewer.filter.tooltip': 'Скрыть несовпадающие строки (шаблоны: *)',
   'logViewer.toggleRegex': 'Переключить регулярное выражение',
   'logViewer.prevMatch': 'Предыдущее совпадение (Shift+F3)',
   'logViewer.nextMatch': 'Следующее совпадение (F3)',
@@ -325,6 +333,7 @@ const ru: Translations = {
 
   // -- Namespace Controls --
   'ns.start': 'Запустить',
+  'ns.updateAndStart': 'Обновить и запустить',
   'ns.forceStart': 'Принудительно обновить и запустить',
   'ns.stop': 'Остановить',
   'ns.reload': 'Перезагрузить',
@@ -371,6 +380,7 @@ const ru: Translations = {
   'common.delete': 'Удалить',
   'common.close': 'Закрыть',
   'common.confirm': 'Подтвердить',
+  'common.ok': 'ОК',
   'common.confirm.defaultTitle': 'Вы уверены?',
   'common.working': 'Выполнение...',
   'common.submit': 'Отправить',
@@ -468,7 +478,7 @@ const ru: Translations = {
   'snapshots.delete.notSupported': 'Удаление снапшота не реализовано в API; удалите .zip из директории namespace.',
   'snapshots.deleted': 'Снапшот удалён',
   'snapshots.field.name': 'Имя снапшота',
-  'snapshots.field.name.invalid': 'Имя может содержать только буквы, цифры, точки, дефисы и подчёркивания.',
+  'snapshots.field.name.invalid': 'Недопустимое имя снимка.\nПожалуйста, используйте буквы, цифры, точки, дефис или подчёркивание.',
   'snapshots.field.name.alreadyExists': 'Снапшот с таким именем уже существует. Пожалуйста, введите другое имя.',
   'secrets.dialog.title': 'Auth Secrets',
   'secrets.test.ok': 'Проверка секрета пройдена',

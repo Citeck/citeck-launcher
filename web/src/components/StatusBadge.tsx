@@ -40,7 +40,7 @@ export function StatusBadge({ status, variant = 'pill' }: StatusBadgeProps) {
     return (
       <span className="inline-flex items-center gap-2 text-xs font-medium uppercase tracking-wide">
         <span
-          className={`inline-block h-3 w-3 rounded-full border border-black/60 ${pulse}`}
+          className={`inline-block h-5 w-5 rounded-full border border-black/60 ${pulse}`}
           style={{ backgroundColor: color }}
         />
         <span style={{ color }}>{label}</span>
