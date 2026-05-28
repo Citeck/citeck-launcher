@@ -15,10 +15,15 @@ import (
 	goacme "golang.org/x/crypto/acme"
 )
 
-// authorizeOrderWithProfile creates an ACME order with a profile field.
+// acmeShortlivedProfile is the ACME profile required for IP-address certificates
+// (Let's Encrypt shortlived ~6 day certs). Hard-coded because all callers use
+// this value; if future ACME profiles are needed, add a profile parameter then.
+const acmeShortlivedProfile = "shortlived"
+
+// authorizeOrderWithProfile creates an ACME order with the "shortlived" profile.
 // This is needed for IP address certificates which require the "shortlived" profile.
 // The Go acme library doesn't support profiles yet, so we implement JWS signing manually.
-func authorizeOrderWithProfile(ctx context.Context, client *goacme.Client, ids []goacme.AuthzID, profile string) (*goacme.Order, error) {
+func authorizeOrderWithProfile(ctx context.Context, client *goacme.Client, ids []goacme.AuthzID) (*goacme.Order, error) {
 	// Get directory to find newOrder URL
 	dir, err := client.Discover(ctx)
 	if err != nil {
@@ -40,7 +45,7 @@ func authorizeOrderWithProfile(ctx context.Context, client *goacme.Client, ids [
 		Identifiers []identifier `json:"identifiers"`
 		Profile     string       `json:"profile,omitempty"`
 	}{
-		Profile: profile,
+		Profile: acmeShortlivedProfile,
 	}
 	for _, id := range ids {
 		orderReq.Identifiers = append(orderReq.Identifiers, identifier{

@@ -317,5 +317,9 @@
   "setup.port.invalidNumber": "无效的数字。",
   "setup.port.outOfRange": "端口必须在 1-65535 范围内。",
   "setup.s3.invalidUrl": "URL 无效，必须包含协议（例如 https://s3.example.com）。",
-  "setup.auth.usersRequired": "至少需要一个用户。"
+  "setup.auth.usersRequired": "至少需要一个用户。",
+  "namespaces.dialog.title.locked": "切换前请停止命名空间 (当前: {status})",
+  "namespaces.col.active": "活动命名空间",
+  "namespaces.switch.blocked": "切换前请停止当前命名空间",
+  "namespaces.switch.success": "已切换到 {name}"
 }

@@ -46,7 +46,13 @@ export function LoadingOverlay({ open, title, progress, stalled, onDismiss }: Lo
       ref={dialogRef}
       className="fixed inset-0 z-[100] m-auto max-w-sm w-full rounded-lg border border-border bg-card p-0 text-foreground backdrop:bg-black/60"
       onCancel={(e) => {
-        if (!stalled) e.preventDefault()
+        // Always cancel the native Escape close — the dialog is a controlled
+        // component (open driven by long-op store). When stalled, surface the
+        // Escape gesture as a Dismiss so the consumer can clear the store;
+        // otherwise the native close would race the next render's showModal
+        // and the overlay would silently re-open without sync state.
+        e.preventDefault()
+        if (stalled) onDismiss?.()
       }}
     >
       <div className="px-6 py-8 flex flex-col items-center gap-4">

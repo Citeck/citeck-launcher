@@ -93,16 +93,29 @@ export function AppTable({ apps, highlightedApp }: AppTableProps) {
 
   return (
     <>
-      <table className="w-full text-xs border-collapse">
+      <table className="w-full text-xs border-collapse table-fixed">
+        {/* Column widths follow Kotlin AppTableColumns.kt: NAME / STATUS are
+            proportional (NAME wider), CPU / MEM / PORTS / TAG / ACTIONS are
+            fixed in dp. table-fixed prevents a wide status-text from pushing
+            the whole row sideways — long content truncates inside its cell. */}
+        <colgroup>
+          <col style={{ width: '28%' }} />
+          <col style={{ width: 'auto' }} />
+          <col style={{ width: '70px' }} />
+          <col style={{ width: '90px' }} />
+          <col style={{ width: '80px' }} />
+          <col style={{ width: '120px' }} />
+          <col style={{ width: '104px' }} />
+        </colgroup>
         <thead>
           <tr className="text-left text-muted-foreground border-b border-border">
             <th className="py-1 pr-4 font-medium">{t('table.name')}</th>
             <th className="py-1 pr-4 font-medium">{t('table.status')}</th>
-            <th className="py-1 pr-2 font-medium text-right w-16">{t('table.cpu')}</th>
-            <th className="py-1 pr-4 font-medium text-right w-20">{t('table.mem')}</th>
-            <th className="py-1 pr-4 font-medium w-20">{t('table.ports')}</th>
+            <th className="py-1 pr-2 font-medium text-right">{t('table.cpu')}</th>
+            <th className="py-1 pr-4 font-medium text-right">{t('table.mem')}</th>
+            <th className="py-1 pr-4 font-medium">{t('table.ports')}</th>
             <th className="py-1 pr-4 font-medium">{t('table.tag')}</th>
-            <th className="py-1 font-medium text-right w-24">{t('table.actions')}</th>
+            <th className="py-1 font-medium text-right">{t('table.actions')}</th>
           </tr>
         </thead>
         <tbody>
@@ -201,11 +214,11 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
                 {app.name}
               </button>
             </td>
-            <td className="py-[3px] pr-4 whitespace-nowrap">
-              <span className="inline-flex items-center gap-1.5">
+            <td className="py-[3px] pr-4 overflow-hidden">
+              <span className="flex items-center gap-1.5 min-w-0">
                 <StatusBadge status={app.status} />
                 {(app.restartCount ?? 0) > 0 && (
-                  <span className="ml-1 inline-flex items-center rounded bg-destructive/10 px-1 py-0 text-[10px] font-medium text-destructive leading-4"
+                  <span className="ml-1 inline-flex shrink-0 items-center rounded bg-destructive/10 px-1 py-0 text-[10px] font-medium text-destructive leading-4"
                     title={t('table.restartCount')}>
                     {'\u21bb'}{app.restartCount}
                   </span>
@@ -216,7 +229,14 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
                     phase={pullProgress[app.name].phase}
                   />
                 ) : (
-                  app.statusText && <span className="text-muted-foreground text-[10px]">{app.statusText}</span>
+                  app.statusText && (
+                    <span
+                      className="text-muted-foreground text-[10px] truncate min-w-0"
+                      title={app.statusText}
+                    >
+                      {app.statusText}
+                    </span>
+                  )
                 )}
                 {app.status === 'PULL_FAILED' && pullAuthRequired[app.name] && (
                   <button
@@ -315,6 +335,7 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
       <RegistryCredentialsDialog
         open={credsFor !== null}
         host={credsFor?.host ?? ''}
+        retryApp={credsFor?.app}
         onClose={handleCredsClose}
         onSaved={handleCredsSaved}
       />

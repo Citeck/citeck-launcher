@@ -355,7 +355,7 @@ func TestAuthorizeOrderWithProfile_HappyPath(t *testing.T) {
 	}
 
 	ids := goacme.IPIDs("192.0.2.1")
-	order, err := authorizeOrderWithProfile(ctx, client, ids, "shortlived")
+	order, err := authorizeOrderWithProfile(ctx, client, ids)
 	if err != nil {
 		t.Fatalf("authorizeOrderWithProfile: %v", err)
 	}
@@ -394,7 +394,7 @@ func TestAuthorizeOrderWithProfile_RateLimited(t *testing.T) {
 		t.Fatalf("Register: %v", regErr)
 	}
 
-	_, err = authorizeOrderWithProfile(ctx, client, goacme.IPIDs("192.0.2.2"), "shortlived")
+	_, err = authorizeOrderWithProfile(ctx, client, goacme.IPIDs("192.0.2.2"))
 	if err == nil {
 		t.Fatal("expected error on 429, got nil")
 	}
@@ -417,14 +417,14 @@ func TestAuthorizeOrderWithProfile_DirectoryUnreachable(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	_, err = authorizeOrderWithProfile(ctx, client, goacme.IPIDs("192.0.2.3"), "shortlived")
+	_, err = authorizeOrderWithProfile(ctx, client, goacme.IPIDs("192.0.2.3"))
 	if err == nil {
 		t.Fatal("expected error for unreachable directory")
 	}
 }
 
 // ----------------------------------------------------------------------------
-// Rate-limit gate invariant (docs/porting/10 §5.2)
+// Rate-limit gate invariant
 // ----------------------------------------------------------------------------
 
 // TestCheckAndRenew_RespectsRateLimit verifies that when a rate-limit marker
@@ -438,7 +438,7 @@ func TestCheckAndRenew_RespectsRateLimit(t *testing.T) {
 	confDir := t.TempDir()
 	dataDir := t.TempDir()
 	// Cert that's 90% expired → would trigger renewal.
-	writeTempCertWithSAN(t, confDir, "example.com",
+	writeExampleCert(t, confDir,
 		time.Now().Add(-100*time.Hour), time.Now().Add(10*time.Hour))
 
 	// Plant rate-limit marker.
@@ -600,6 +600,6 @@ func TestNewClient_LayoutPaths(t *testing.T) {
 	}
 }
 
-// silence import-not-used if writeTempCertWithSAN signature ever changes.
+// silence import-not-used if writeExampleCert signature ever changes.
 var _ = x509.CreateCertificate
 var _ = pkix.Name{}

@@ -239,7 +239,7 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
     }
   }, [follow, appName, tail, appendChunk, setLinesWithLevels, active, source])
 
-  // Keyboard shortcuts — match Kotlin LogsWindow (docs/porting/04 §2.3)
+  // Keyboard shortcuts — match Kotlin LogsWindow.
   useEffect(() => {
     if (!active) return
     function handleKeyDown(e: KeyboardEvent) {
@@ -561,9 +561,9 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
                     width: '100%',
                     transform: `translateY(${virtualItem.start}px)`,
                   }}
-                  className={`${colorClass} ${wordWrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'} ${isCurrentMatch ? 'bg-primary/20' : searchMatches.has(idx) ? 'bg-primary/10' : ''}`}
+                  className={`${colorClass} ${wordWrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'} ${isCurrentMatch ? 'bg-primary/10' : ''}`}
                 >
-                  {safeSearchRegex ? highlightSearch(line, safeSearchRegex) : line}
+                  {safeSearchRegex ? highlightSearch(line, safeSearchRegex, isCurrentMatch) : line}
                 </div>
               )
             })}
@@ -586,19 +586,28 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
   )
 }
 
-function highlightSearch(line: string, regex: RegExp): React.ReactNode {
+function highlightSearch(line: string, regex: RegExp, isCurrent: boolean): React.ReactNode {
   regex.lastIndex = 0
   const parts = line.split(regex)
   if (parts.length === 1) return line
   regex.lastIndex = 0
   const matches = line.match(regex)
   if (!matches) return line
+  // Kotlin parity (LogsComponents.kt LogLevelColors): current match → #FF9800
+  // orange on black; other matches → #FFEB3B yellow on black. Both colors are
+  // applied via inline `style` (not Tailwind classes) so the pair is visible
+  // side by side without hopping between tailwind.config and palette.
+  const markStyle = {
+    backgroundColor: isCurrent ? '#FF9800' : '#FFEB3B',
+    color: '#000',
+  }
+  const markClass = 'rounded-sm px-0.5'
   const result: React.ReactNode[] = []
   for (let i = 0; i < parts.length; i++) {
     if (parts[i]) result.push(parts[i])
     if (i < matches.length) {
       result.push(
-        <mark key={i} className="bg-warning/40 text-inherit rounded-sm px-0.5">
+        <mark key={i} className={markClass} style={markStyle}>
           {matches[i]}
         </mark>,
       )

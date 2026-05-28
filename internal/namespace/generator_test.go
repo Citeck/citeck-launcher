@@ -689,7 +689,6 @@ func TestGeneratorLivenessProbes(t *testing.T) {
 	for _, name := range []string{
 		appdef.AppPostgres,
 		appdef.AppZookeeper,
-		appdef.AppRabbitmq,
 		appdef.AppMongodb,
 		appdef.AppKeycloak,
 		appdef.AppObserver,
@@ -704,11 +703,16 @@ func TestGeneratorLivenessProbes(t *testing.T) {
 	}
 
 	// Services that must NOT have liveness probes
+	// rabbitmq is intentionally skipped (Kotlin v1.3.8 parity — the
+	// rabbitmq-diagnostics probe spawns a short Erlang VM that at the 256m
+	// memory limit pushes the long-lived broker into the kill zone often
+	// enough to restart healthy nodes mid-init-action.
 	for _, name := range []string{
 		appdef.AppMailhog,
 		appdef.AppPgadmin, // disabled by default
 		appdef.AppOnlyoffice,
 		appdef.AppProxy,
+		appdef.AppRabbitmq,
 	} {
 		app := findApp(name)
 		if app != nil {

@@ -181,7 +181,8 @@ func (s *MVStore) ReadMap(mapName string) (map[string][]byte, error) {
 	// prefix is a single 0x00 byte before the actual `varInt(len) || bytes`
 	// payload. layout and meta maps are NOT transactional — they store raw
 	// StringDataType values — so the prefix is only stripped here.
-	return s.readPageTreeVersioned(rootPos, true)
+	const stripVersionedWrapper = true
+	return s.readPageAt(rootPos, stripVersionedWrapper)
 }
 
 // decodePagePos extracts chunk ID and offset from an encoded page position.
@@ -463,13 +464,6 @@ func (s *MVStore) readChunkData(c chunkMeta) ([]byte, error) {
 	}
 
 	return data, nil
-}
-
-// readPageTreeVersioned reads a B-tree page and all its children, returning
-// leaf key-value pairs. When `versioned` is true the VersionedValueType
-// wrapper is stripped from each value.
-func (s *MVStore) readPageTreeVersioned(rootPos int64, versioned bool) (map[string][]byte, error) {
-	return s.readPageAt(rootPos, versioned)
 }
 
 // readLeafPage reads entries from a B-tree page (leaf or internal node).

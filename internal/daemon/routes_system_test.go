@@ -6,7 +6,6 @@ import (
 	"context"
 	"io"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -44,7 +43,7 @@ func TestWriteSystemDumpZip_IncludesGoroutineDump(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, data, "goroutine dump entry should be non-empty")
 	// pprof debug=2 starts each goroutine block with `goroutine N [state]:`.
-	assert.True(t, strings.Contains(string(data), "goroutine "),
+	assert.Contains(t, string(data), "goroutine ",
 		"goroutine dump should contain pprof debug=2 header, got: %q", truncate(string(data), 200))
 }
 

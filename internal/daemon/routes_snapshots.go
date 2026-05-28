@@ -27,6 +27,42 @@ import (
 // after stripping the trailing ".zip" suffix.
 var validSnapshotName = regexp.MustCompile(`^[\w.-]+$`)
 
+// snapshotNameError carries an HTTP status code alongside the message.
+type snapshotNameError struct {
+	code int
+	msg  string
+}
+
+func (e *snapshotNameError) Error() string { return e.msg }
+
+// resolveSnapshotFileName returns the target .zip filename for a new snapshot.
+// If customName is non-empty it validates it and checks for conflicts; otherwise
+// it generates a timestamped name from the current namespace.
+func (d *Daemon) resolveSnapshotFileName(dir, customName string) (string, *snapshotNameError) {
+	if customName != "" {
+		base := strings.TrimSuffix(customName, ".zip")
+		if !validSnapshotName.MatchString(base) {
+			return "", &snapshotNameError{http.StatusBadRequest,
+				"snapshot name must contain only letters, digits, dots, dashes and underscores"}
+		}
+		name := base + ".zip"
+		if _, statErr := os.Stat(filepath.Join(dir, name)); statErr == nil { //nolint:gosec // G703: false positive — name validated by validSnapshotName (alphanumeric+dot+dash+underscore)
+			return "", &snapshotNameError{http.StatusConflict, "snapshot with this name already exists"}
+		}
+		return name, nil
+	}
+	nsName := "namespace"
+	d.configMu.RLock()
+	if d.nsConfig != nil {
+		nsName = sanitizeName(d.nsConfig.Name)
+		if nsName == "" {
+			nsName = d.nsConfig.ID
+		}
+	}
+	d.configMu.RUnlock()
+	return fmt.Sprintf("%s_%s.zip", nsName, time.Now().Format("2006-01-02_15-04-05")), nil
+}
+
 func (d *Daemon) snapshotsDir() (string, error) {
 	nsID := d.activeNsID()
 	if nsID == "" {
@@ -112,32 +148,11 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 	// Custom snapshot name from `name` query param (Kotlin parity: CreateOrEditSnapshotDialog).
 	// Validation matches Kotlin: alphanumerics + dot/dash/underscore only; trailing
 	// ".zip" is stripped before validation; reject duplicates.
-	var fileName string
-	if customName := strings.TrimSpace(r.URL.Query().Get("name")); customName != "" {
-		base := strings.TrimSuffix(customName, ".zip")
-		if !validSnapshotName.MatchString(base) {
-			d.snapshotMu.Unlock()
-			writeError(w, http.StatusBadRequest,
-				"snapshot name must contain only letters, digits, dots, dashes and underscores")
-			return
-		}
-		fileName = base + ".zip"
-		if _, statErr := os.Stat(filepath.Join(dir, fileName)); statErr == nil {
-			d.snapshotMu.Unlock()
-			writeError(w, http.StatusConflict, "snapshot with this name already exists")
-			return
-		}
-	} else {
-		nsName := "namespace"
-		d.configMu.RLock()
-		if d.nsConfig != nil {
-			nsName = sanitizeName(d.nsConfig.Name)
-			if nsName == "" {
-				nsName = d.nsConfig.ID
-			}
-		}
-		d.configMu.RUnlock()
-		fileName = fmt.Sprintf("%s_%s.zip", nsName, time.Now().Format("2006-01-02_15-04-05"))
+	fileName, nameErr := d.resolveSnapshotFileName(dir, strings.TrimSpace(r.URL.Query().Get("name")))
+	if nameErr != nil {
+		d.snapshotMu.Unlock()
+		writeError(w, nameErr.code, nameErr.Error())
+		return
 	}
 	outputPath := filepath.Join(dir, fileName)
 
@@ -395,7 +410,7 @@ func safeSnapshotFileName(rawURL string) string {
 
 // downloadAndImportSnapshot downloads a snapshot in the background and imports it into the namespace.
 // The download is cached at workspace scope (`<AppDir>/ws/<wsID>/snapshots/<snapshotID>.zip`)
-// matching Kotlin's WorkspaceSnapshots layout (docs/porting/07 §3.2). This lets multiple
+// matching Kotlin's WorkspaceSnapshots layout. This lets multiple
 // namespaces in the same workspace share one cached archive instead of re-downloading.
 //
 //nolint:nestif // download+import orchestration requires nested SHA256 verification and retry logic
@@ -443,8 +458,8 @@ func (d *Daemon) downloadAndImportSnapshot(snapshotID, wsID, nsID string) {
 			} else {
 				// Stale cached file — preserve as `_outdated_<ts>` so an
 				// operator can inspect what the cache contained (Kotlin
-				// parity: docs/porting/07 §3.2). Fall back to delete so
-				// the next attempt has a clean destination.
+				// parity). Fall back to delete so the next attempt has
+				// a clean destination.
 				if renameErr := snapshot.StashOutdatedFile(destPath); renameErr != nil {
 					slog.Debug("Stash outdated cached snapshot failed; removing", "path", destPath, "err", renameErr)
 					_ = os.Remove(destPath)

@@ -66,7 +66,7 @@ func TestNetworkNameFormat_Desktop(t *testing.T) {
 }
 
 // TestLabelWorkspaceValue verifies that LabelWorkspace carries the workspace
-// ID (Kotlin contract — docs/porting/10 §6 critical contracts list). The bug
+// ID (Kotlin contract — see container labels list). The bug
 // fix here ensures the container-create path no longer mis-uses c.namespace
 // as the workspace value (the network and utils-container paths already used
 // c.workspace correctly). The label value must be derivable from c.workspace

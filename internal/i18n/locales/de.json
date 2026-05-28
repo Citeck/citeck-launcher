@@ -317,5 +317,9 @@
   "setup.port.invalidNumber": "Ungültige Zahl.",
   "setup.port.outOfRange": "Port muss zwischen 1 und 65535 liegen.",
   "setup.s3.invalidUrl": "Ungültige URL — muss Schema enthalten (z. B. https://s3.example.com).",
-  "setup.auth.usersRequired": "Mindestens ein Benutzer ist erforderlich."
+  "setup.auth.usersRequired": "Mindestens ein Benutzer ist erforderlich.",
+  "namespaces.dialog.title.locked": "Stoppen Sie den Namespace vor dem Wechsel (aktuell: {status})",
+  "namespaces.col.active": "Aktiver Namespace",
+  "namespaces.switch.blocked": "Stoppen Sie den aktuellen Namespace vor dem Wechsel",
+  "namespaces.switch.success": "Gewechselt zu {name}"
 }

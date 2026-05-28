@@ -103,7 +103,12 @@ type Daemon struct {
 	bgWg            sync.WaitGroup // tracks background goroutines (snapshot, downloads)
 	snapshotMu      sync.Mutex     // guards concurrent snapshot import/export
 	daemonCfg       config.DaemonConfig
-	eventSeq        atomic.Int64 // monotonic event sequence counter
+	// eventSeq is the monotonic SSE event counter. All mutations (.Add) and
+	// the cutoff Load happen under eventMu — the atomic type is retained
+	// purely for Load() ergonomics from addSubscriber's lock holder and the
+	// rare read from diagnostics; treat the field as logically protected by
+	// eventMu, not as concurrent-safe by itself.
+	eventSeq        atomic.Int64
 	sseDropped      atomic.Int64 // SSE events dropped due to slow consumers
 	logWriter       *fsutil.RotatingWriter
 	logLevel        *slog.LevelVar
@@ -184,6 +189,35 @@ func collectExtraLicensesFrom(svc *license.Service) []bundle.LicenseInstance {
 		out = append(out, bl)
 	}
 	return out
+}
+
+// startACMERenewalIfConfigured starts the ACME renewal service when the
+// active namespace uses Let's Encrypt. No-op when ACME isn't configured or
+// a renewal service is already running. Shared between initial daemon Start
+// and the live namespace-switch path.
+func (d *Daemon) startACMERenewalIfConfigured() {
+	d.configMu.RLock()
+	nsCfg := d.nsConfig
+	existing := d.acmeRenewal
+	d.configMu.RUnlock()
+	if existing != nil {
+		return
+	}
+	if nsCfg == nil || !nsCfg.Proxy.TLS.Enabled || !nsCfg.Proxy.TLS.LetsEncrypt || nsCfg.Proxy.Host == "" {
+		return
+	}
+	acmeClient := acme.NewClient(config.DataDir(), config.ConfDir(), nsCfg.Proxy.Host)
+	svc := acme.NewRenewalService(acmeClient, func() {
+		if d.runtime != nil {
+			if restartErr := d.runtime.RestartApp("proxy"); restartErr != nil {
+				slog.Error("ACME: restart proxy after renewal failed", "err", restartErr)
+			}
+		}
+	})
+	d.configMu.Lock()
+	d.acmeRenewal = svc
+	d.configMu.Unlock()
+	svc.Start()
 }
 
 // rebuildAuthCaches rebuilds token lookup and registry auth caches from current secrets,
@@ -391,17 +425,25 @@ func Start(opts StartOptions) error {
 	}
 	if secretSvc.IsEncrypted() {
 		if secretSvc.IsDefaultPassword() {
-			// Default password — auto-unlock
-			if unlockErr := secretSvc.Unlock("citeck"); unlockErr != nil {
+			// Default password — auto-unlock. In server mode this is the
+			// expected steady state. In desktop mode it's a legacy artifact
+			// from older builds that auto-initialized encryption with "citeck";
+			// the SYSTEM-secrets refactor leaves user-secret encryption alone,
+			// so a desktop install staying on the default password is harmless
+			// until the user adds a real user secret (Harbor / nexus / git)
+			// — at that point the UI prompts for a real master password.
+			if unlockErr := secretSvc.Unlock(storage.DefaultMasterPassword); unlockErr != nil {
 				slog.Warn("Auto-unlock with default password failed", "err", unlockErr)
 			} else {
 				slog.Info("Secrets auto-unlocked with default password")
 			}
 		} else if config.IsDesktopMode() {
-			// Desktop mode: Web UI unlock flow — don't block startup
-			slog.Info("Secrets are encrypted with custom password, waiting for unlock via Web UI")
+			// Desktop mode: Web UI unlock flow — don't block startup. System
+			// secrets are plain in launcher_state so the daemon can keep
+			// running even with a locked user-secret store.
+			slog.Info("User secrets are encrypted with custom password, waiting for unlock via Web UI")
 		} else {
-			// Server mode: unlock now with password from CLI
+			// Server mode: unlock now with password from CLI.
 			if opts.MasterPassword == "" {
 				return fmt.Errorf("secrets are encrypted but no master password provided")
 			}
@@ -410,247 +452,59 @@ func Start(opts StartOptions) error {
 			}
 			slog.Info("Secrets unlocked successfully")
 		}
-	} else {
-		// First start: set up encryption with the default password so that
-		// secrets generated later in this session are encrypted immediately.
-		// Previously, encryption was set up by the install CLI in a separate
-		// process after the daemon had already saved secrets as plaintext,
-		// causing a split-brain where the daemon's in-memory SecretService
-		// had encrypted=false while files on disk were encrypted.
+	} else if !config.IsDesktopMode() {
+		// Server mode first start: pre-initialize encryption with the default
+		// password so secrets generated later in this session are encrypted
+		// immediately. Avoids the historical install-CLI / daemon race where
+		// the daemon had encrypted=false in memory while files on disk were
+		// already encrypted.
 		if setupErr := secretSvc.SetMasterPassword(storage.DefaultMasterPassword, true); setupErr != nil {
 			slog.Warn("Failed to set up default encryption", "err", setupErr)
 		} else {
 			slog.Info("Secrets encryption initialized with default password")
 		}
+	} else {
+		// Desktop mode first start: SecretService stays unencrypted and empty
+		// (Kotlin v1.x parity — master password is set only when the user adds
+		// their first user secret via the UI). SYSTEM secrets live in plain
+		// launcher_state and are unaffected.
+		slog.Info("Desktop mode: user-secret encryption deferred until first user secret is added")
 	}
 
-	// Load namespace config (mode-aware path)
-	nsCfgPath := config.ResolveNamespaceConfigPath(wsID, nsID)
-	nsCfg, err := namespace.LoadNamespaceConfig(nsCfgPath)
+	// Load namespace state (config + bundle + secrets + generator + runtime).
+	// loadNamespace returns a non-nil result with a nil NsConfig when there's
+	// no namespace.yml on disk — the daemon still boots into the wizard.
+	loaded, err := loadNamespace(loadNamespaceInput{
+		Store:         store,
+		SecretService: secretSvc,
+		DockerClient:  dockerClient,
+		DaemonCfg:     daemonCfg,
+		Licenses:      license.NewService(secretSvc),
+		WorkspaceID:   wsID,
+		NamespaceID:   nsID,
+		Offline:       opts.Offline,
+		Desktop:       opts.Desktop,
+	})
 	if err != nil {
-		slog.Warn("No namespace config found", "path", nsCfgPath, "err", err)
-		nsCfg = nil
+		return err
 	}
-
-	var bundleDef *bundle.Def
-	var wsCfg *bundle.WorkspaceConfig
-	var runtime *namespace.Runtime
-	var appDefs []appdef.ApplicationDef
-	var cloudCfgSrv *CloudConfigServer
-	var bundleError string
-	var systemSecrets namespace.SystemSecrets
-	volumesBase := config.ResolveVolumesBase(wsID, nsID)
-
-	// Resolve workspace config first — needed by wizard even without a namespace.
-	bundlesDataDir := config.DataDir()
-	if config.IsDesktopMode() {
-		bundlesDataDir = filepath.Join(config.HomeDir(), "ws", wsID)
-	}
-	resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(secretSvc)).
-		WithWorkspaceRepo(lookupWorkspaceRepoOpts(store, secretSvc, wsID))
-	// Server mode: never auto-pull git repos (use 'citeck workspace update' for manual sync).
-	// Desktop mode: auto-pull with throttling. --offline flag: skip git entirely.
-	if opts.Offline || !config.IsDesktopMode() {
-		resolver.SetOffline(true)
-	}
-	wsCfg = resolver.ResolveWorkspaceOnly()
+	nsCfg := loaded.NsConfig
+	bundleDef := loaded.BundleDef
+	wsCfg := loaded.WorkspaceConfig
+	runtime := loaded.Runtime
+	appDefs := loaded.AppDefs
+	cloudCfgSrv := loaded.CloudCfgServer
+	systemSecrets := loaded.SystemSecrets
+	volumesBase := loaded.VolumesBase
+	bundleError := loaded.BundleError
 
 	if nsCfg != nil {
-		if nsCfg.ID == "" {
-			nsCfg.ID = nsID
-		}
-
-		// Resolve bundle (reuses resolver created above for workspace config).
-		resolveResult, resolveErr := resolver.Resolve(nsCfg.BundleRef)
-		if resolveErr != nil {
-			if opts.Offline {
-				return fmt.Errorf("offline mode: bundle %q not available locally — use 'citeck workspace import' to provide workspace data: %w", nsCfg.BundleRef, resolveErr)
-			}
-			// Fallback to cached bundle from persisted state (survives bundle file deletion/move)
-			cachedState := namespace.LoadNsState(volumesBase, nsID)
-			if cachedState != nil && cachedState.CachedBundle != nil && !cachedState.CachedBundle.IsEmpty() {
-				slog.Warn("Bundle resolution failed, using cached bundle", "ref", nsCfg.BundleRef, "err", resolveErr,
-					"cachedVersion", cachedState.CachedBundle.Key.Version, "cachedApps", len(cachedState.CachedBundle.Applications))
-				resolveResult = &bundle.ResolveResult{Bundle: cachedState.CachedBundle, Workspace: &bundle.WorkspaceConfig{}}
-			} else {
-				slog.Error("Failed to resolve bundle and no cache available — daemon starts with 0 apps", "ref", nsCfg.BundleRef, "err", resolveErr)
-				bundleError = resolveErr.Error()
-				resolveResult = &bundle.ResolveResult{Bundle: &bundle.EmptyDef, Workspace: &bundle.WorkspaceConfig{}}
-			}
-		}
-		bundleDef = resolveResult.Bundle
-		wsCfg = resolveResult.Workspace
-
-		slog.Info("Using bundle", "ref", nsCfg.BundleRef, "apps", len(bundleDef.Applications))
-
-		// Self-signed cert: generate if TLS enabled + no cert paths + no LE
-		ensureSelfSignedCert(nsCfg)
-
-		// Let's Encrypt: obtain certificate if configured and not yet present
-		_ = ensureACMECert(nsCfg, "")
-
-		// Appfiles are not extracted here. The namespace generator owns the
-		// full file set: it seeds ctx.Files from the embedded resources,
-		// mutates some (proxy lua scheme/secret, realm JSON, etc.), appends
-		// others, and returns the final map in genResp.Files. That map is
-		// written to disk below via writeRuntimeFiles, which is the ONLY
-		// path that touches bind-mount source files. This avoids the
-		// double-write bug where an embed re-extract would revert a
-		// generator-customized file back to its default content.
-
-		// Resolve system secrets (JWT, OIDC) — migrate from plain files or generate new.
-		// Skip when locked (desktop mode with encrypted secrets — resolved after Web UI unlock).
-		if !secretSvc.IsLocked() {
-			var sysErr error
-			systemSecrets, sysErr = resolveSystemSecrets(secretSvc, opts.Desktop)
-			if sysErr != nil {
-				return fmt.Errorf("resolve system secrets: %w", sysErr)
-			}
-		}
-
-		// Load persisted state for detached apps and status recovery.
-		// Detached apps must be known BEFORE Generate() so the generator can
-		// exclude them from proxy upstreams and compute DependsOnDetachedApps.
-		persistedState := namespace.LoadNsState(volumesBase, nsID)
-		var genOpts namespace.GenerateOpts
-		genOpts.SecretReader = &secretReaderAdapter{svc: secretSvc}
-		// Inject user-added licenses (encrypted store). The license.Service
-		// instance used here is the same one wired into *Daemon below
-		// (license.NewService is cheap + safe to call twice). When secrets
-		// are locked, the helper returns nil and the generator falls back to
-		// workspace-only licenses — never aborts startup.
-		genOpts.ExtraLicenses = collectExtraLicensesFrom(license.NewService(secretSvc))
-		if persistedState != nil {
-			genOpts.DetachedApps = make(map[string]bool)
-			for _, name := range persistedState.ManualStoppedApps {
-				genOpts.DetachedApps[name] = true
-			}
-		} else if resolveResult.Workspace != nil && nsCfg.Template != "" {
-			// First start: seed detached apps from workspace template
-			for _, tmpl := range resolveResult.Workspace.NamespaceTemplates {
-				if tmpl.ID == nsCfg.Template && len(tmpl.DetachedApps) > 0 {
-					genOpts.DetachedApps = make(map[string]bool, len(tmpl.DetachedApps))
-					for _, name := range tmpl.DetachedApps {
-						genOpts.DetachedApps[name] = true
-					}
-					slog.Info("Seeded detached apps from template", "template", nsCfg.Template, "apps", tmpl.DetachedApps)
-					break
-				}
-			}
-		}
-
-		// Overlay user-edited disk content into the hash input so a UI-edited
-		// file from a prior session forces container recreate on the first
-		// regenerate after daemon restart. Without this, VolumesContentHash is
-		// computed against embedded defaults and existing edits are never
-		// reflected in the running container.
-		if persistedState != nil && len(persistedState.EditedFiles) > 0 {
-			genOpts.EditedFileOverlay = readEditedFileOverlay(volumesBase, persistedState.EditedFiles)
-		}
-
-		// Generate namespace
-		genResp, genErr := namespace.Generate(nsCfg, bundleDef, resolveResult.Workspace, systemSecrets, genOpts)
-		if genErr != nil {
-			return fmt.Errorf("generate namespace %q: %w", nsID, genErr)
-		}
-
-		// Build the edited-file skip set from persisted state BEFORE the
-		// initial writeRuntimeFiles so user edits made in a previous session
-		// are not overwritten by the freshly generated defaults. The runtime
-		// is created below; we mirror this set into r.editedFiles via
-		// RestoreEditedFiles so subsequent reload/regenerate paths reuse it.
-		var editedFilesSkip map[string]bool
-		if persistedState != nil && len(persistedState.EditedFiles) > 0 {
-			editedFilesSkip = make(map[string]bool, len(persistedState.EditedFiles))
-			for _, p := range persistedState.EditedFiles {
-				editedFilesSkip[p] = true
-			}
-		}
-
-		// Write the full runtime file set (embedded defaults + generator
-		// modifications) to disk. Single source of truth; never overwritten
-		// by a separate embed re-extract.
-		writeRuntimeFiles(volumesBase, genResp.Files, editedFilesSkip)
-		slog.Info("Generated namespace", "apps", len(genResp.Applications), "files", len(genResp.Files))
-
-		appDefs = genResp.Applications
-		runtime = namespace.NewRuntime(nsCfg, dockerClient, volumesBase)
-
-		// Cache the successfully resolved bundle for fallback on future resolve failures
-		if !bundleDef.IsEmpty() {
-			runtime.SetCachedBundle(bundleDef)
-		}
-
-		// Wire registry auth and operation history into runtime
-		runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(wsCfg, secretSvc))
-		runtime.SetHistory(namespace.NewOperationHistory(config.LogDir()))
-
-		// Apply daemon.yml overrides for reconciler and pull concurrency
-		if daemonCfg.Reconciler.IntervalSeconds > 0 || daemonCfg.Reconciler.LivenessPeriodMs > 0 || daemonCfg.Reconciler.LivenessEnabled != nil {
-			rcfg := namespace.DefaultReconcilerConfig()
-			if daemonCfg.Reconciler.IntervalSeconds > 0 {
-				rcfg.IntervalSeconds = daemonCfg.Reconciler.IntervalSeconds
-			}
-			if daemonCfg.Reconciler.LivenessPeriodMs > 0 {
-				rcfg.LivenessPeriod = time.Duration(daemonCfg.Reconciler.LivenessPeriodMs) * time.Millisecond
-			}
-			if daemonCfg.Reconciler.LivenessEnabled != nil {
-				rcfg.LivenessEnabled = *daemonCfg.Reconciler.LivenessEnabled
-			}
-			runtime.SetReconcilerConfig(rcfg)
-		}
-		if daemonCfg.Docker.PullConcurrency > 0 {
-			runtime.SetPullConcurrency(daemonCfg.Docker.PullConcurrency)
-		}
-		if daemonCfg.Docker.StopTimeout > 0 {
-			runtime.SetDefaultStopTimeout(daemonCfg.Docker.StopTimeout)
-		}
-
-		// Restore persisted state: manual stopped apps, edited apps, locked apps.
-		// genOpts.DetachedApps was already populated above (from persisted state or template).
-		if persistedState != nil {
-			if len(persistedState.ManualStoppedApps) > 0 {
-				stopped := make(map[string]bool)
-				for _, name := range persistedState.ManualStoppedApps {
-					stopped[name] = true
-				}
-				runtime.SetManualStoppedApps(stopped)
-			}
-			runtime.RestoreEditedApps(persistedState.EditedApps, persistedState.EditedLockedApps)
-			runtime.RestoreEditedFiles(persistedState.EditedFiles)
-			runtime.RestoreRestartState(persistedState.RestartEvents, persistedState.RestartCounts)
-		} else if len(genOpts.DetachedApps) > 0 {
-			// First start with template detached apps — apply to runtime
-			runtime.SetManualStoppedApps(genOpts.DetachedApps)
-		}
-		// Wire DependsOnDetachedApps so RestartApp can trigger regen for dependency apps
-		runtime.SetDependsOnDetachedApps(genResp.DependsOnDetachedApps)
-
-		// Start CloudConfigServer only in desktop mode — server-mode webapps
-		// have SPRING_CLOUD_CONFIG_ENABLED=false and don't connect to it.
-		// Desktop mode uses the config server for local development workflows.
-		if config.IsDesktopMode() {
-			cloudCfgSrv = NewCloudConfigServer()
-			cloudCfgSrv.UpdateConfig(genResp.CloudConfig, systemSecrets.JWT)
-			if startErr := cloudCfgSrv.Start(); startErr != nil {
-				slog.Warn("CloudConfigServer failed to start", "err", startErr)
-			}
-		}
-
-		// Status recovery: if previous status was RUNNING/STARTING/STALLED → start namespace
-		// If STOPPING → leave stopped (interrupted stop completed by clean restart)
-		shouldStart := true
-		if persistedState != nil && persistedState.Status == namespace.NsStatusStopping {
-			slog.Info("Previous status was STOPPING — not auto-starting")
-			shouldStart = false
-		}
 		// Snapshot auto-import: run synchronously BEFORE start so volumes are populated
 		if nsCfg.Snapshot != "" {
 			slog.Info("Running snapshot auto-import before namespace start", "snapshot", nsCfg.Snapshot)
 			importSnapshotIfNeeded(nsCfg, wsCfg, dockerClient, wsID, volumesBase)
 		}
-
-		if shouldStart {
+		if loaded.ShouldStart {
 			runtime.Start(appDefs)
 		}
 	}
@@ -692,17 +546,7 @@ func Start(opts StartOptions) error {
 	}
 
 	// Start ACME renewal service if Let's Encrypt is enabled
-	if nsCfg != nil && nsCfg.Proxy.TLS.Enabled && nsCfg.Proxy.TLS.LetsEncrypt && nsCfg.Proxy.Host != "" {
-		acmeClient := acme.NewClient(config.DataDir(), config.ConfDir(), nsCfg.Proxy.Host)
-		d.acmeRenewal = acme.NewRenewalService(acmeClient, func() {
-			if d.runtime != nil {
-				if restartErr := d.runtime.RestartApp("proxy"); restartErr != nil {
-					slog.Error("ACME: restart proxy after renewal failed", "err", restartErr)
-				}
-			}
-		})
-		d.acmeRenewal.Start()
-	}
+	d.startACMERenewalIfConfigured()
 
 	// Create HTTP server — single mux for all routes.
 	// Localhost TCP is trusted (desktop thin client), non-localhost requires mTLS.
@@ -728,8 +572,11 @@ func Start(opts StartOptions) error {
 
 	// TCP listener for Web UI (controlled by daemon.yml and --no-ui flag).
 	// Desktop mode: Wails proxies through the Unix socket directly — no TCP needed.
+	// E2E-testing escape hatch: CITECK_DESKTOP_TCP=1 also binds TCP in desktop
+	// mode so Playwright can drive the same UI the user sees in the Wails window.
 	tcpAddr := daemonCfg.Server.WebUI.Listen
-	if daemonCfg.Server.WebUI.Enabled && !config.IsDesktopMode() {
+	allowDesktopTCP := os.Getenv("CITECK_DESKTOP_TCP") == "1"
+	if daemonCfg.Server.WebUI.Enabled && (!config.IsDesktopMode() || allowDesktopTCP) {
 		tcpListener, err := net.Listen("tcp", tcpAddr)
 		if err != nil {
 			slog.Warn("TCP listener failed, Web UI unavailable", "addr", tcpAddr, "err", err)
@@ -1150,12 +997,17 @@ func resolveServerCertHost(tcpAddr string, nsCfg *namespace.Config) string {
 }
 
 func (d *Daemon) broadcastEvent(evt api.EventDto) {
+	// Seq assignment, ring push, and fanout all happen under eventMu so a
+	// subscriber added between Add and fanout cannot observe a published seq
+	// before the event reaches its channel. Paired with addSubscriber, which
+	// snapshots eventSeq under the same lock — that snapshot is the cutoff
+	// the replay path uses to avoid duplicating live deliveries.
+	d.eventMu.Lock()
+	defer d.eventMu.Unlock()
 	evt.Seq = d.eventSeq.Add(1)
 	if d.eventRing != nil {
 		d.eventRing.push(evt)
 	}
-	d.eventMu.Lock()
-	defer d.eventMu.Unlock()
 	for _, ch := range d.eventSubs {
 		select {
 		case ch <- evt:
@@ -1173,15 +1025,20 @@ const maxSSESubscribers = 100
 // events force the client to do a full resync via the existing gap-detection.
 const eventReplayBufferSize = 500
 
-func (d *Daemon) addSubscriber() (chan api.EventDto, bool) {
+// addSubscriber registers a new SSE channel and returns the cutoff Seq for
+// replay filtering. Events with Seq <= cutoff were broadcast before the
+// channel joined the subscriber list and will NOT arrive on `ch`; events with
+// Seq > cutoff are guaranteed to arrive live. Both pieces of state are read
+// under eventMu so broadcastEvent cannot interleave between them.
+func (d *Daemon) addSubscriber() (ch chan api.EventDto, cutoffSeq int64, ok bool) {
 	d.eventMu.Lock()
 	defer d.eventMu.Unlock()
 	if len(d.eventSubs) >= maxSSESubscribers {
-		return nil, false
+		return nil, 0, false
 	}
-	ch := make(chan api.EventDto, 256)
+	ch = make(chan api.EventDto, 256)
 	d.eventSubs = append(d.eventSubs, ch)
-	return ch, true
+	return ch, d.eventSeq.Load(), true
 }
 
 func (d *Daemon) removeSubscriber(ch chan api.EventDto) {
@@ -1277,6 +1134,7 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+api.Namespaces, d.handleListNamespaces)
 	mux.HandleFunc("POST "+api.Namespaces, d.handleCreateNamespace)
 	mux.HandleFunc("DELETE /api/v1/namespaces/{id}", d.handleDeleteNamespace)
+	mux.HandleFunc("POST /api/v1/namespaces/{id}/activate", d.handleActivateNamespace)
 	mux.HandleFunc("GET "+api.Templates, d.handleGetTemplates)
 	mux.HandleFunc("GET "+api.QuickStarts, d.handleGetQuickStarts)
 
@@ -1471,6 +1329,24 @@ func buildRegistryAuthCache(reposByHost map[string]bundle.ImageRepo, reader secr
 			scopeSecrets[s.Scope] = sec
 		}
 	}
+	addAuth := func(host string, sec *storage.Secret) {
+		username, password := sec.Username, sec.Value
+		if username == "" {
+			parts := strings.SplitN(sec.Value, ":", 2)
+			if len(parts) != 2 {
+				return
+			}
+			username, password = parts[0], parts[1]
+		}
+		if username == "" || password == "" {
+			return
+		}
+		result[host] = &docker.RegistryAuth{
+			Username: username,
+			Password: password,
+			Registry: "https://" + host,
+		}
+	}
 	for host, repo := range reposByHost {
 		if repo.AuthType == "" {
 			continue
@@ -1486,35 +1362,54 @@ func buildRegistryAuthCache(reposByHost map[string]bundle.ImageRepo, reader secr
 		if sec == nil {
 			continue
 		}
-		username, password := sec.Username, sec.Value
-		if username == "" {
-			parts := strings.SplitN(sec.Value, ":", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			username, password = parts[0], parts[1]
-		}
-		if username == "" || password == "" {
+		addAuth(host, sec)
+	}
+	// Kotlin v1.x parity: a secret with scope "images-repo:<host>" should
+	// authenticate pulls from <host> even when workspace-v1.yml doesn't
+	// declare that host under imageRepos. Kotlin built the secret ID from
+	// the image host directly. Skipping this fallback strands migrated
+	// secrets for any registry the current workspace config no longer lists
+	// (e.g. enterprise-registry.citeck.ru when only harbor.citeck.ru is
+	// declared) — pulls silently degrade to anonymous → 401.
+	const scopePrefix = "images-repo:"
+	for scope, sec := range scopeSecrets {
+		host, ok := strings.CutPrefix(scope, scopePrefix)
+		if !ok || host == "" {
 			continue
 		}
-		result[host] = &docker.RegistryAuth{
-			Username: username,
-			Password: password,
-			Registry: "https://" + host,
+		if _, already := result[host]; already {
+			continue
 		}
+		addAuth(host, sec)
 	}
 	return result
 }
 
-// resolveSystemSecrets reads or generates JWT and OIDC secrets.
-// Priority: Store → plain files (with migration) → generate new.
-// In desktop mode the admin password is always "admin" (the desktop
-// launcher is a local dev tool, not a production deployment).
-func resolveSystemSecrets(svc *storage.SecretService, desktop bool) (namespace.SystemSecrets, error) {
+// resolveSystemSecrets reads or generates JWT, OIDC, admin, and citeck-SA values.
+//
+// System secrets are plain (unencrypted) in launcher_state — they only protect
+// the local machine itself (Kotlin v1.x parity: JWT was a hardcoded constant,
+// OIDC was hardcoded in realm.json, KK admin password was "admin"). Their
+// secrecy adds nothing on a developer workstation, and on a server they're
+// already constrained by the binary's own filesystem permissions. The
+// SecretService keeps holding USER-added auth secrets (Harbor / nexus / git
+// tokens) where encryption matters — those reach external resources.
+//
+// Migration paths supported:
+//   - Read from launcher_state plain (new home).
+//   - Read from SecretService (older installs where SYSTEM rows were stored
+//     encrypted alongside user secrets); migrated to plain on first read.
+//   - Read from conf/secrets/<id>-secret plain file (pre-Store launcher);
+//     migrated to plain on first read.
+//   - Generate fresh.
+//
+// In desktop mode the admin password is always "admin" and citeck SA defaults
+// to "citeck" — the Kotlin v1.x developer-tool convention.
+func resolveSystemSecrets(store storage.Store, svc *storage.SecretService, desktop bool) (namespace.SystemSecrets, error) {
 	var secrets namespace.SystemSecrets
 
 	// JWT
-	jwt, err := resolveOneSystemSecret(svc, "_jwt", func() string {
+	jwt, err := resolveOneSystemSecret(store, svc, "_jwt", func() string {
 		b := make([]byte, 64)
 		if _, err := rand.Read(b); err != nil {
 			slog.Error("Failed to generate JWT secret", "err", err)
@@ -1528,7 +1423,7 @@ func resolveSystemSecrets(svc *storage.SecretService, desktop bool) (namespace.S
 	secrets.JWT = jwt
 
 	// OIDC
-	oidc, err := resolveOneSystemSecret(svc, "_oidc", func() string {
+	oidc, err := resolveOneSystemSecret(store, svc, "_oidc", func() string {
 		b := make([]byte, 32)
 		if _, randErr := rand.Read(b); randErr != nil {
 			slog.Error("Failed to generate OIDC secret", "err", randErr)
@@ -1541,13 +1436,11 @@ func resolveSystemSecrets(svc *storage.SecretService, desktop bool) (namespace.S
 	}
 	secrets.OIDC = oidc
 
-	// ecos-app realm admin password. In server mode a random password is
-	// generated on first start, persisted, and re-used on every reload.
-	// In desktop mode we always use "admin" — it's a local dev tool.
+	// ecos-app realm admin password.
 	if desktop {
 		secrets.AdminPassword = "admin"
 	} else {
-		adminPass, adminErr := resolveOneSystemSecret(svc, "_admin_password", func() string {
+		adminPass, adminErr := resolveOneSystemSecret(store, svc, "_admin_password", func() string {
 			p, genErr := namespace.GenerateSimpleAdminPassword()
 			if genErr != nil {
 				slog.Error("Failed to generate admin password", "err", genErr)
@@ -1561,15 +1454,15 @@ func resolveSystemSecrets(svc *storage.SecretService, desktop bool) (namespace.S
 		secrets.AdminPassword = adminPass
 	}
 
-	// "citeck" service account password — shared between Keycloak master
-	// realm (admin role) and RabbitMQ (monitoring tag). Always generated;
-	// same for desktop and server modes. Prefer the new _citeck_sa key but
-	// seamlessly migrate from the legacy _launcher_sa key written by older
-	// launcher versions so existing installs keep their stable SA password.
-	citeckSA, saErr := resolveOneSystemSecret(svc, "_citeck_sa", func() string {
+	// citeck SA password. Desktop default is "citeck" (username = password
+	// convenience on a dev workstation), server keeps a 32-char random.
+	citeckSA, saErr := resolveOneSystemSecret(store, svc, "_citeck_sa", func() string {
 		if legacy, err := svc.GetSecret("_launcher_sa"); err == nil && legacy.Value != "" {
 			slog.Info("Migrating legacy _launcher_sa secret to _citeck_sa")
 			return legacy.Value
+		}
+		if desktop {
+			return "citeck"
 		}
 		p, genErr := namespace.GenerateCiteckSAPassword()
 		if genErr != nil {
@@ -1586,11 +1479,10 @@ func resolveSystemSecrets(svc *storage.SecretService, desktop bool) (namespace.S
 	}
 	secrets.CiteckSA = citeckSA
 
-	// Cleanup: once _citeck_sa exists in the Store, the legacy _launcher_sa
-	// entry is obsolete. Delete it to avoid a stale encrypted file lingering
-	// in conf/secrets/. Mirrors the `os.Remove(plainFile)` cleanup in
-	// resolveOneSystemSecret for pre-encryption plain-file migrations. Errors
-	// here are non-fatal — migration has already succeeded.
+	// Legacy cleanup: delete _launcher_sa from BOTH the new plain state and
+	// the SecretService once migration produced a fresh _citeck_sa. Errors
+	// non-fatal — migration already succeeded.
+	_ = store.SetStateValue(sysSecretKey("_launcher_sa"), "")
 	if legacy, err := svc.GetSecret("_launcher_sa"); err == nil && legacy.Value != "" {
 		if delErr := svc.DeleteSecret("_launcher_sa"); delErr != nil {
 			slog.Warn("Failed to delete legacy _launcher_sa secret after migration", "err", delErr)
@@ -1602,42 +1494,66 @@ func resolveSystemSecrets(svc *storage.SecretService, desktop bool) (namespace.S
 	return secrets, nil
 }
 
-// resolveOneSystemSecret reads a system secret from Store, migrates from plain file, or generates new.
-func resolveOneSystemSecret(svc *storage.SecretService, id string, generate func() string) (string, error) {
-	// 1. Try Store
-	sec, err := svc.GetSecret(id)
-	if err == nil && sec.Value != "" {
-		return sec.Value, nil
+// sysSecretKey returns the launcher_state key for a system secret id.
+// Keeps the `_sys_` prefix as the source-of-truth namespace for plain
+// system values so they never collide with SecretService-managed user secrets.
+func sysSecretKey(id string) string {
+	return "_sys" + id // e.g. "_jwt" → "_sys_jwt"
+}
+
+// resolveOneSystemSecret returns a system secret value, sourcing it in this
+// priority order and migrating older locations into the new plain state:
+//   1. launcher_state plain (new home — `_sys<id>`).
+//   2. SecretService SYSTEM row (older installs); migrate to plain + delete.
+//   3. conf/secrets/<id-without-underscore>-secret plain file (pre-Store
+//      launcher); migrate to plain + delete.
+//   4. Generate fresh.
+func resolveOneSystemSecret(store storage.Store, svc *storage.SecretService, id string, generate func() string) (string, error) {
+	stateKey := sysSecretKey(id)
+
+	// 1. Try launcher_state plain
+	if v, err := store.GetStateValue(stateKey); err == nil && v != "" {
+		return v, nil
 	}
 
-	// 2. Fallback: read plain file (migration from pre-encryption launcher)
+	// 2. Fallback: SecretService SYSTEM row — migrate to plain + delete.
+	if sec, err := svc.GetSecret(id); err == nil && sec.Value != "" {
+		value := sec.Value
+		if id == "_jwt" {
+			value = migrateJWTSecretToStdBase64(value)
+		}
+		if saveErr := store.SetStateValue(stateKey, value); saveErr != nil {
+			return "", fmt.Errorf("save migrated secret %s: %w", id, saveErr)
+		}
+		slog.Info("Migrated SYSTEM secret out of SecretService into plain state", "id", id)
+		if delErr := svc.DeleteSecret(id); delErr != nil {
+			slog.Warn("Failed to delete migrated SYSTEM secret from SecretService", "id", id, "err", delErr)
+		}
+		return value, nil
+	}
+
+	// 3. Fallback: read plain file (pre-Store launcher migration).
 	plainFile := filepath.Join(config.ConfDir(), strings.TrimPrefix(id, "_")+"-secret")
 	if data, readErr := os.ReadFile(plainFile); readErr == nil && len(data) > 0 { //nolint:gosec // path from trusted confDir
 		value := string(data)
 		if id == "_jwt" {
 			value = migrateJWTSecretToStdBase64(value)
 		}
-		slog.Info("Migrating system secret from plain file to Store", "id", id)
-		if saveErr := svc.SaveSecret(storage.Secret{
-			SecretMeta: storage.SecretMeta{ID: id, Name: id, Type: storage.SecretSystem},
-			Value:      value,
-		}); saveErr != nil {
+		slog.Info("Migrating system secret from plain file to launcher_state", "id", id)
+		if saveErr := store.SetStateValue(stateKey, value); saveErr != nil {
 			return "", fmt.Errorf("save migrated secret %s: %w", id, saveErr)
 		}
 		_ = os.Remove(plainFile)
 		return value, nil
 	}
 
-	// 3. Generate new
+	// 4. Generate new.
 	value := generate()
 	if value == "" {
 		return "", fmt.Errorf("failed to generate secret %s", id)
 	}
 	slog.Info("Generated new system secret", "id", id)
-	if saveErr := svc.SaveSecret(storage.Secret{
-		SecretMeta: storage.SecretMeta{ID: id, Name: id, Type: storage.SecretSystem},
-		Value:      value,
-	}); saveErr != nil {
+	if saveErr := store.SetStateValue(stateKey, value); saveErr != nil {
 		return "", fmt.Errorf("save generated secret %s: %w", id, saveErr)
 	}
 	return value, nil
@@ -1665,7 +1581,7 @@ func migrateJWTSecretToStdBase64(stored string) string {
 // The marker (`imported-<nsID>`) stays in the per-namespace `volumesBase/snapshots/`
 // dir because it is namespace-scoped state. The archive itself lives in the
 // workspace-shared cache `<AppDir>/ws/<wsID>/snapshots/<snapshotID>.zip`, matching
-// Kotlin's WorkspaceSnapshots layout (docs/porting/07 §3.2) so multiple namespaces
+// Kotlin's WorkspaceSnapshots layout so multiple namespaces
 // in the same workspace share a single download.
 //
 //nolint:nestif // snapshot import requires nested SHA256 verification and download fallback logic

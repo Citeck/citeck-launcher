@@ -17,15 +17,9 @@ import (
 	"github.com/citeck/citeck-launcher/internal/storage"
 )
 
-// workspaceRepoURL mirrors the default workspace repo URL hardcoded in
-// internal/bundle/resolver.go (defaultBundlesRepo). It is duplicated here
-// because the bundle package owns its own constant and exposes neither the
-// URL nor a "force pull workspace" helper. The two values must stay in sync —
-// keep this comment and update both sites when the upstream repo changes.
-const (
-	workspaceRepoURL    = "https://github.com/Citeck/launcher-workspace.git"
-	workspaceRepoBranch = "main"
-)
+// Workspace repo URL/branch defaults are owned by the bundle package
+// (see bundle.DefaultBundlesRepo / DefaultBundlesBranch). Reference them
+// directly from there rather than redeclaring local constants.
 
 // workspaceRepoSecretKey returns the conventional secret key for a workspace's
 // git auth token (Kotlin parity: WorkspacesService.getRepoAuthId).
@@ -43,12 +37,12 @@ func (d *Daemon) resolveActiveRepoOpts() (url, branch, token string) {
 	if opts.URL != "" {
 		url = opts.URL
 	} else {
-		url = workspaceRepoURL
+		url = bundle.DefaultBundlesRepo
 	}
 	if opts.Branch != "" {
 		branch = opts.Branch
 	} else {
-		branch = workspaceRepoBranch
+		branch = bundle.DefaultBundlesBranch
 	}
 	return url, branch, opts.Token
 }

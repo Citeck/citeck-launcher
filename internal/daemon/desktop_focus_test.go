@@ -27,6 +27,7 @@ func TestDesktopFocusHandler_InvokesRegisteredCallback(t *testing.T) {
 }
 
 func TestDesktopFocusHandler_NoCallback(t *testing.T) {
+	t.Cleanup(func() { SetDesktopFocusHandler(nil) })
 	SetDesktopFocusHandler(nil)
 	d := &Daemon{}
 	req := httptest.NewRequest(http.MethodPost, "/desktop/focus", http.NoBody)

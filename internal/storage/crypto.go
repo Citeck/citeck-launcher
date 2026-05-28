@@ -25,6 +25,12 @@ var ErrAlreadyEncrypted = errors.New("encryption already configured")
 // ErrCorruptedKeystore is returned when encryption metadata is missing or unreadable.
 var ErrCorruptedKeystore = errors.New("keystore is corrupted or missing key params")
 
+// ErrEncryptionNotSetUp is returned when a user secret is saved into a
+// SecretService that has no master password configured yet. The desktop UI
+// catches this and prompts the user to set up a master password (Kotlin
+// `CreateMasterPwdDialog` parity) before retrying the save.
+var ErrEncryptionNotSetUp = errors.New("master password not set: user secrets cannot be saved before setup")
+
 // DefaultMasterPassword is the well-known default password used for secret
 // encryption when no custom password has been set. Exported so that both the
 // daemon (server.go) and the CLI (start.go) reference the same value.
@@ -244,6 +250,14 @@ func (ss *SecretService) SaveSecret(secret Secret) error {
 			return fmt.Errorf("encrypt secret: %w", err)
 		}
 		secret.Value = enc
+	} else {
+		// Desktop first-run state: SecretService is unencrypted because the
+		// user hasn't set a master password yet. Reject user secrets so they
+		// never land on disk in plaintext — the UI catches this sentinel and
+		// runs CreateMasterPwd before retrying the save. SYSTEM secrets are
+		// no longer routed through SaveSecret (they live in launcher_state
+		// plain), so this check is safe.
+		return ErrEncryptionNotSetUp
 	}
 	if err := ss.store.SaveSecret(secret); err != nil {
 		return fmt.Errorf("save secret: %w", err)

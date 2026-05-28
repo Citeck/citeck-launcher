@@ -303,12 +303,18 @@ func (d *Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 	// regardless of EventSource quirks.
 	lastSeq := parseLastEventID(r)
 
-	ch, ok2 := d.addSubscriber()
+	ch, replayCutoff, ok2 := d.addSubscriber()
 	if !ok2 {
 		writeError(w, http.StatusServiceUnavailable, "too many SSE subscribers")
 		return
 	}
 	defer d.removeSubscriber(ch)
+
+	// replayCutoff is captured under the same eventMu that broadcastEvent
+	// uses for fanout, so the partition is total: events with Seq > cutoff
+	// are guaranteed to arrive live on `ch`; events with Seq <= cutoff were
+	// broadcast before the subscription and reach this client only via the
+	// replay loop below.
 
 	if lastSeq > 0 && d.eventRing != nil {
 		replay, ringOK := d.eventRing.since(lastSeq)
@@ -319,10 +325,15 @@ func (d *Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprint(w, "event: resync\ndata: {}\n\n")
 			flusher.Flush()
 		}
+		wrote := false
 		for _, evt := range replay {
+			if evt.Seq > replayCutoff {
+				continue
+			}
 			writeSSEEvent(w, evt)
+			wrote = true
 		}
-		if len(replay) > 0 || !ringOK {
+		if wrote || !ringOK {
 			flusher.Flush()
 		}
 	}

@@ -154,7 +154,7 @@ export const AppConfigEditor = forwardRef<AppConfigEditorHandle, AppConfigEditor
     resetConfig: () => handleResetConfig(),
   // handleApplyConfig / handleResetConfig close over current state; recompute
   // the handle on every render to avoid stale closures.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }))
 
   if (!loaded) {
@@ -356,13 +356,13 @@ function validateYamlContent(content: string, filename: string): void {
   try {
     yaml.load(content)
   } catch (e) {
-    throw new Error('Invalid YAML: ' + (e as Error).message)
+    throw new Error('Invalid YAML: ' + (e as Error).message, { cause: e })
   }
   if (filename.toLowerCase().endsWith('.json')) {
     try {
       JSON.parse(content)
     } catch (e) {
-      throw new Error('Invalid JSON: ' + (e as Error).message)
+      throw new Error('Invalid JSON: ' + (e as Error).message, { cause: e })
     }
   }
 }

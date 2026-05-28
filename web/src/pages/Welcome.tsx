@@ -41,7 +41,6 @@ export function Welcome() {
   const [workspaceLoaded, setWorkspaceLoaded] = useState(false)
   // Kotlin parity (WelcomeScreen.kt:281) — guard MessageDialog when QS clicked
   // but the workspace already has namespaces. Tracked as a transient flag.
-  const [qsBlockedOpen, setQsBlockedOpen] = useState(false)
   const navigate = useNavigate()
   const openTab = useTabsStore((s) => s.openTab)
   const fetchData = useDashboardStore((s) => s.fetchData)
@@ -82,25 +81,12 @@ export function Welcome() {
       .catch(() => { setWorkspaceLoaded(true) })
   }, [])
 
-  async function handleOpenNamespace(ns: NamespaceSummaryDto) {
-    if (ns.status === 'STOPPED' || ns.status === 'STALLED') {
-      // Start the namespace, then navigate
-      setStarting(true)
-      setStartError(null)
-      try {
-        await postNamespaceStart()
-        await fetchData()
-        startEventStream()
-      } catch (e) {
-        setStarting(false)
-        setStartError(e instanceof Error ? e.message : String(e))
-        return
-      }
-      setStarting(false)
-    } else {
-      await fetchData()
-      startEventStream()
-    }
+  async function handleOpenNamespace() {
+    // Just navigate to Dashboard. The user starts the namespace explicitly
+    // via the Start button — auto-start on click is reserved for Quick Start
+    // (which creates a fresh namespace from scratch).
+    await fetchData()
+    startEventStream()
     resetPanels()
     openTab({ id: 'home', title: t('dashboard.title'), path: '/' })
     navigate('/')
@@ -139,16 +125,9 @@ export function Welcome() {
   // already overlays template fields on top of NamespaceCreateDto, so we only
   // need to pass {name, template, snapshot} and the form defaults handle the rest.
   async function handleQuickStart(qs: QuickStartDto | null) {
-    // Kotlin parity: QS is disabled when the workspace already has namespaces;
-    // clicking a QS button in that state shows MessageDialog rather than
-    // silently creating a duplicate namespace.
-    const visibleNsExists = namespaces.some(
-      (ns) => !activeWorkspaceId || !ns.workspaceId || ns.workspaceId === activeWorkspaceId,
-    )
-    if (visibleNsExists) {
-      setQsBlockedOpen(true)
-      return
-    }
+    // QS buttons are only rendered when the workspace has no namespaces yet
+    // (see the render gate below) so this handler runs only for the empty-
+    // workspace bootstrap path.
     setStarting(true)
     setStartError(null)
     try {
@@ -191,7 +170,7 @@ export function Welcome() {
 
   function nsContextItems(ns: NamespaceSummaryDto): ContextMenuItem[] {
     return [
-      { label: t('welcome.context.open'), onClick: () => handleOpenNamespace(ns) },
+      { label: t('welcome.context.open'), onClick: () => handleOpenNamespace() },
       { label: t('welcome.namespace.edit'), onClick: () => setEditTarget(ns) },
       { label: t('welcome.context.delete'), variant: 'danger', onClick: () => setDeleteTarget(ns) },
     ]
@@ -250,7 +229,7 @@ export function Welcome() {
                 <button
                   type="button"
                   disabled={starting}
-                  onClick={() => handleOpenNamespace(ns)}
+                  onClick={() => handleOpenNamespace()}
                   className="w-full rounded-lg bg-muted hover:bg-muted/70 px-6 py-3.5 text-center transition-colors disabled:opacity-50"
                 >
                   <div className="text-sm font-semibold text-foreground">{ns.name || ns.id}</div>
@@ -269,24 +248,23 @@ export function Welcome() {
               </div>
             ))}
 
-            {/* Quick starts — Kotlin parity (WelcomeScreen.kt 4.3 case B):
-                first variant is the big primary button; secondary variants
-                render as a row of small buttons. Each variant creates a
-                namespace directly (no wizard detour) using its template +
-                snapshot.
+            {/* Quick starts — first variant is the big primary button;
+                secondary variants render as a row of small buttons. Each
+                variant creates a namespace directly (no wizard detour) using
+                its template + snapshot.
 
-                The QS section is always rendered when the workspace exposes
-                variants (Kotlin always rendered them). Clicking a QS while
-                namespaces already exist shows the MessageDialog guard from
-                WelcomeScreen.kt:281 instead of creating a duplicate. The
-                empty-namespaces case in Kotlin (WelcomeScreen.kt:130-132)
-                also falls back to a single "Quick Start" button when the
-                workspace defines no variants. */}
+                Quick Start buttons are hidden as soon as the workspace has
+                any namespace — they are an empty-workspace bootstrap path,
+                not an ongoing "create another" entry point. When the
+                workspace defines no variants at all, fall back to a single
+                generic "Quick Start" button (Kotlin parity:
+                WelcomeScreen.kt:130-132). */}
             {(() => {
               const visibleNs = namespaces.filter(
                 (ns) => !activeWorkspaceId || !ns.workspaceId || ns.workspaceId === activeWorkspaceId,
               )
-              const showFallback = quickStarts.length === 0 && visibleNs.length === 0
+              if (visibleNs.length > 0) return null
+              const showFallback = quickStarts.length === 0
               if (quickStarts.length === 0 && !showFallback) return null
               const list: QuickStartDto[] = quickStarts.length > 0
                 ? quickStarts
@@ -373,19 +351,6 @@ export function Welcome() {
         error={deleteError}
         onConfirm={handleDelete}
         onCancel={() => { setDeleteTarget(null); setDeleteError('') }}
-      />
-
-      {/* Kotlin parity (WelcomeScreen.kt:281): MessageDialog-equivalent when
-          QS is clicked while the workspace already has namespaces. Reused
-          ConfirmModal with no cancel + OK confirm — the dialog purely
-          informs, no destructive action. */}
-      <ConfirmModal
-        open={qsBlockedOpen}
-        title={t('welcome.quickStart')}
-        message={t('welcome.quickStart.alreadyHasNamespaces')}
-        confirmLabel={t('common.ok')}
-        onConfirm={() => setQsBlockedOpen(false)}
-        onCancel={() => setQsBlockedOpen(false)}
       />
 
       <NamespaceDialog open={moreOpen} onClose={() => setMoreOpen(false)} />

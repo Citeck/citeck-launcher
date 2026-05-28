@@ -177,7 +177,7 @@ func WorkspaceBundlesDir(wsID string) string {
 }
 
 // WorkspaceSnapshotsDir returns the per-workspace snapshot cache dir matching
-// Kotlin's `<AppDir>/ws/<workspaceId>/snapshots/` layout (docs/porting/07 §3.2).
+// Kotlin's `<AppDir>/ws/<workspaceId>/snapshots/` layout.
 //
 // Snapshots referenced from workspace-v1.yml are immutable artifacts identified
 // by ID + SHA-256; caching them at workspace scope (instead of per-namespace)

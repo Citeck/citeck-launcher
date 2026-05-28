@@ -94,15 +94,19 @@ func TestWorkspaceRoutes_DesktopCRUD(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusConflict, rec.Code)
 
-	// List
+	// List — implicit "default" workspace is always synthesized + prepended,
+	// so the list reports two entries even though only one row exists in the
+	// store (Kotlin parity: the default workspace is code-defined, never
+	// persisted unless the user explicitly customizes it).
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest("GET", api.Workspaces, http.NoBody)
 	mux.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 	var list []api.WorkspaceDto
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
-	require.Len(t, list, 1)
-	assert.Equal(t, "acme-workspace", list[0].ID)
+	require.Len(t, list, 2)
+	assert.Equal(t, "default", list[0].ID)
+	assert.Equal(t, "acme-workspace", list[1].ID)
 
 	// Get
 	rec = httptest.NewRecorder()

@@ -317,5 +317,9 @@
   "setup.port.invalidNumber": "無効な数値です。",
   "setup.port.outOfRange": "ポートは 1-65535 の範囲で指定してください。",
   "setup.s3.invalidUrl": "無効な URL — スキームを含めてください (例: https://s3.example.com)。",
-  "setup.auth.usersRequired": "ユーザーは最低 1 人必要です。"
+  "setup.auth.usersRequired": "ユーザーは最低 1 人必要です。",
+  "namespaces.dialog.title.locked": "切り替え前に namespace を停止してください (現在: {status})",
+  "namespaces.col.active": "アクティブな namespace",
+  "namespaces.switch.blocked": "切り替え前に現在の namespace を停止してください",
+  "namespaces.switch.success": "{name} に切り替えました"
 }

@@ -15,12 +15,11 @@ func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 	for _, app := range r.apps {
 		_, edited := r.editedApps[app.Name]
 		// Memory thresholds match the Kotlin per-app StatsCell tooltip
-		// boundaries (80% warning / 95% critical) — see ContainerStatViews.kt
-		// and docs/porting/10 #4.
+		// boundaries (80% warning / 95% critical) — see ContainerStatViews.kt.
 		memPct := app.MemoryPercent
 		apps = append(apps, api.AppDto{
 			Name:             app.Name,
-			Status:           string(app.Status),
+			Status:           displayAppStatus(app, r.manualStoppedApps[app.Name]),
 			StatusText:       app.StatusText,
 			Image:            app.Def.Image,
 			CPU:              app.CPU,
@@ -45,6 +44,34 @@ func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 		Apps:      apps,
 		Links:     r.generateLinks(),
 	}
+}
+
+// displayAppStatus rewrites an app's runtime status into the user-facing
+// status the UI should render. The state machine occasionally walks an app
+// through STOPPING / STOPPED as part of a runtime-initiated recreate
+// (hash-changed regenerate, T17a liveness-restart, RestartApp). From the
+// user's perspective the app is "starting", not "stopping" — they didn't
+// ask for a stop. So:
+//
+//   - STOPPING with desiredNext set (runtime-initiated recreate) → render as
+//     PULLING. The container is being torn down only to be re-pulled and
+//     re-started in the same logical operation.
+//   - STOPPING when the user explicitly detached (manualStoppedApps) → render
+//     as-is so the user sees their action take effect.
+//
+// initialSweep is an orthogonal hint (set on the runtime-initiated recreate
+// branch in doRegenerate / RestartApp); we treat it as equivalent to a
+// non-empty desiredNext for display purposes.
+func displayAppStatus(app *AppRuntime, manualStopped bool) string {
+	if manualStopped {
+		return string(app.Status)
+	}
+	if app.Status == AppStatusStopping && (app.initialSweep || app.desiredNext != "") {
+		// Recreate in flight — show "pulling" since the next leg is
+		// pull → start, regardless of the specific desiredNext value.
+		return string(AppStatusPulling)
+	}
+	return string(app.Status)
 }
 
 // AppliedConfig returns the config currently driving this runtime (the "applied" config).
@@ -82,8 +109,8 @@ func (r *Runtime) generateLinks() []api.LinkDto {
 		proxyHost = "localhost"
 	}
 
-	// Categories mirror Kotlin `NamespaceLink.category` grouping
-	// (docs/porting/02 §7.2). Empty category = top of the list, no header.
+	// Categories mirror Kotlin `NamespaceLink.category` grouping.
+	// Empty category = top of the list, no header.
 	const catApps = "Apps"
 	const catResources = "Resources"
 

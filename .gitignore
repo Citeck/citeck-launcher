@@ -60,9 +60,6 @@ PROMPT-*.md
 ### Audit artifacts (audit-project skill) ###
 .audit-backlog.md
 
-### Porting scratch (1.x → 2.x migration; not tracked) ###
-docs/porting/
-
 ### Custom ###
 *.png
 !icons/**/*.png

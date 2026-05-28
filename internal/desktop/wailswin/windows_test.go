@@ -22,7 +22,6 @@ func TestWindowKey(t *testing.T) {
 		{"editor app/file id keeps slashes", "editor", "eapps/app-def.yml", "editor|eapps/app-def.yml"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got := windowKey(tc.kind, tc.id)

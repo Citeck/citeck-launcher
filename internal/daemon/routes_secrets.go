@@ -52,7 +52,7 @@ func (d *Daemon) handleCreateSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if !validateID(req.ID) {
+	if !validateSecretID(req.ID) {
 		writeError(w, http.StatusBadRequest, "invalid secret id")
 		return
 	}
@@ -77,6 +77,11 @@ func (d *Daemon) handleCreateSecret(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusLocked, "secrets are locked")
 			return
 		}
+		if errors.Is(err, storage.ErrEncryptionNotSetUp) {
+			writeErrorCode(w, http.StatusPreconditionRequired, api.ErrCodeEncryptionNotSetUp,
+				"master password not set: create one before saving user secrets")
+			return
+		}
 		writeInternalError(w, err)
 		return
 	}
@@ -88,7 +93,7 @@ func (d *Daemon) handleCreateSecret(w http.ResponseWriter, r *http.Request) {
 
 func (d *Daemon) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if !validateID(id) {
+	if !validateSecretID(id) {
 		writeError(w, http.StatusBadRequest, "invalid secret id")
 		return
 	}
@@ -109,7 +114,7 @@ func (d *Daemon) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 
 func (d *Daemon) handleTestSecret(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if !validateID(id) {
+	if !validateSecretID(id) {
 		writeError(w, http.StatusBadRequest, "invalid secret id")
 		return
 	}

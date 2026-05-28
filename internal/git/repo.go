@@ -22,10 +22,9 @@ import (
 )
 
 // DefaultSkipPullDuration is the Kotlin-parity host-level pull suppression
-// window (docs/porting/07 §1.9: "Skip … записывает host в
-// skipPullForRepoDecisionAt на 1 час"). Surfaced as the default of the
-// daemon's git skip-pull endpoint so the frontend doesn't have to hard-code
-// the value.
+// window: a "Skip" decision suppresses pulls against the same host for one
+// hour. Surfaced as the default of the daemon's git skip-pull endpoint so
+// the frontend doesn't have to hard-code the value.
 const DefaultSkipPullDuration = time.Hour
 
 // ErrPullSkippedByUser is returned by pull operations when the host has been
@@ -141,8 +140,7 @@ func loadPersistedSyncLocked(destDir string) {
 // Host-level pull suppression: when the user clicks Skip in GitPullErrorDialog,
 // the decision is remembered for an hour so subsequent pulls against the same
 // host (e.g. all bundle repos hosted on a temporarily-broken GitLab instance)
-// don't re-prompt. Kotlin parity: docs/porting/07 §1.9
-// (`skipPullForRepoDecisionAt` map keyed by host).
+// don't re-prompt. Kotlin parity: `skipPullForRepoDecisionAt` map keyed by host.
 var (
 	skipMu          sync.Mutex
 	skipUntilByHost = make(map[string]time.Time)
@@ -195,12 +193,11 @@ func HostFromURL(repoURL string) string {
 	}
 	// SCP-like form: git@host:user/repo.git
 	if !strings.Contains(repoURL, "://") {
-		if at := strings.Index(repoURL, "@"); at >= 0 {
-			rest := repoURL[at+1:]
-			if colon := strings.Index(rest, ":"); colon >= 0 {
-				return strings.ToLower(rest[:colon])
+		if _, after, ok := strings.Cut(repoURL, "@"); ok {
+			if host, _, ok2 := strings.Cut(after, ":"); ok2 {
+				return strings.ToLower(host)
 			}
-			return strings.ToLower(rest)
+			return strings.ToLower(after)
 		}
 		return ""
 	}
@@ -255,7 +252,7 @@ func cloneOrPullInner(ctx context.Context, opts RepoOpts) error {
 		return err
 	}
 
-	// Host-level pull suppression (Kotlin parity: docs/porting/07 §1.9). When
+	// Host-level pull suppression (Kotlin parity). When
 	// the user clicked Skip in GitPullErrorDialog within the last hour, treat
 	// the pull as a no-op for any repo on the same host so we don't re-prompt
 	// for bundle-repo / workspace-repo siblings that all live on a temporarily-

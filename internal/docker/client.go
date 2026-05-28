@@ -259,8 +259,8 @@ func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef,
 	}
 
 	// Labels (must match Kotlin DockerLabels for backward compatibility).
-	// LabelWorkspace holds the workspace ID (Kotlin contract — see
-	// docs/porting/10 §6). In server mode the workspace ID is empty; we set
+	// LabelWorkspace holds the workspace ID (Kotlin contract).
+	// In server mode the workspace ID is empty; we set
 	// the label to "" rather than mis-attribute it to the namespace value,
 	// which would falsely identify containers as belonging to a workspace
 	// named after their namespace.

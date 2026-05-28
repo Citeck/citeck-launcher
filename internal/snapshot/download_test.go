@@ -57,7 +57,7 @@ func TestDownload_SHA256Verify(t *testing.T) {
 
 	// Wrong hash: surface as ErrSHA256Mismatch sentinel + stash bad
 	// download as "<base>_outdated_<ts>.part" instead of silently deleting
-	// (Kotlin parity, docs/porting/07 §3.2). The active .part path must
+	// (Kotlin parity). The active .part path must
 	// disappear so the next attempt can re-download from scratch.
 	dir := t.TempDir()
 	dest2 := filepath.Join(dir, "bad.zip")

@@ -79,7 +79,7 @@ func (c *Client) ObtainCertificate(ctx context.Context) error {
 	var order *acme.Order
 	if isIP {
 		// IP certs require "shortlived" ACME profile — use custom JWS request
-		order, err = authorizeOrderWithProfile(ctx, client, ids, "shortlived")
+		order, err = authorizeOrderWithProfile(ctx, client, ids)
 	} else {
 		order, err = client.AuthorizeOrder(ctx, ids)
 	}
@@ -298,7 +298,7 @@ func TryStaging(ctx context.Context, hostname string) error {
 	}
 	var order *acme.Order
 	if isIP {
-		order, err = authorizeOrderWithProfile(ctx, client, ids, "shortlived")
+		order, err = authorizeOrderWithProfile(ctx, client, ids)
 	} else {
 		order, err = client.AuthorizeOrder(ctx, ids)
 	}

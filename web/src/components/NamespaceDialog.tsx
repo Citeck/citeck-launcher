@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router'
-import { Code2, Pencil, Trash2 } from 'lucide-react'
-import { getNamespaces, deleteNamespace, postNamespaceStart } from '../lib/api'
+import { Check, Code2, Pencil, Trash2 } from 'lucide-react'
+import { getNamespaces, deleteNamespace, activateNamespace } from '../lib/api'
 import { JournalDialog, type JournalAction, type JournalColumn } from './JournalDialog'
 import { ConfirmModal } from './ConfirmModal'
 import { NamespaceEditDialog } from './NamespaceEditDialog'
@@ -39,6 +39,7 @@ interface NamespaceDialogProps {
 export function NamespaceDialog({ open, onClose, onOpened }: NamespaceDialogProps) {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const namespace = useDashboardStore((s) => s.namespace)
   const fetchData = useDashboardStore((s) => s.fetchData)
   const startEventStream = useDashboardStore((s) => s.startEventStream)
   const openTab = useTabsStore((s) => s.openTab)
@@ -49,6 +50,13 @@ export function NamespaceDialog({ open, onClose, onOpened }: NamespaceDialogProp
   const [deleting, setDeleting] = useState(false)
   const [editTarget, setEditTarget] = useState<NamespaceRow | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
+  const [switching, setSwitching] = useState(false)
+
+  // Currently active namespace ID — used to mark the row in the list and to
+  // refuse switching when the active runtime is not STOPPED.
+  const activeNsID = namespace?.id ?? ''
+  const activeStatus = namespace?.status ?? ''
+  const canSwitch = !activeNsID || activeStatus === 'STOPPED'
 
   const reload = useCallback(() => {
     getNamespaces()
@@ -67,7 +75,21 @@ export function NamespaceDialog({ open, onClose, onOpened }: NamespaceDialogProp
   }, [open, reload])
 
   const columns: JournalColumn<NamespaceRow>[] = [
-    { label: t('namespaces.col.name'), key: 'name', width: '40%' },
+    {
+      label: t('namespaces.col.name'),
+      key: 'name',
+      width: '40%',
+      // Mark the currently active namespace with a check icon (Kotlin parity:
+      // JournalSelectDialog tagged the active record with a leading glyph).
+      render: (row) => (
+        <span className="inline-flex items-center gap-1">
+          {row.id === activeNsID && (
+            <Check size={11} className="text-primary shrink-0" aria-label={t('namespaces.col.active')} />
+          )}
+          <span className="truncate">{row.name}</span>
+        </span>
+      ),
+    },
     { label: t('namespaces.col.bundle'), key: 'bundleRef' },
     {
       label: t('namespaces.col.status'),
@@ -77,11 +99,22 @@ export function NamespaceDialog({ open, onClose, onOpened }: NamespaceDialogProp
     },
   ]
 
-  async function openNamespace(row: NamespaceRow) {
+  // Switch the active namespace (within the current workspace) without
+  // auto-starting it. Daemon rejects with 409 when the current namespace
+  // isn't STOPPED — we still pre-check via canSwitch to give a clearer
+  // toast and avoid a server round-trip.
+  async function switchToNamespace(row: NamespaceRow) {
+    if (row.id === activeNsID) {
+      onClose()
+      return
+    }
+    if (!canSwitch) {
+      toast(t('namespaces.switch.blocked'), 'error')
+      return
+    }
+    setSwitching(true)
     try {
-      if (row.status === 'STOPPED' || row.status === 'STALLED') {
-        await postNamespaceStart()
-      }
+      await activateNamespace(row.id)
       await fetchData()
       startEventStream()
       resetPanels()
@@ -89,8 +122,11 @@ export function NamespaceDialog({ open, onClose, onOpened }: NamespaceDialogProp
       navigate('/')
       onClose()
       onOpened?.()
+      toast(t('namespaces.switch.success', { name: row.name }), 'success')
     } catch (e) {
       toast((e as Error).message, 'error')
+    } finally {
+      setSwitching(false)
     }
   }
 
@@ -106,10 +142,16 @@ export function NamespaceDialog({ open, onClose, onOpened }: NamespaceDialogProp
       icon: Code2,
       title: t('nsEdit.editRawYaml'),
       onClick: async (row) => {
-        // Switching to the target namespace first ensures the ConfigEditor
-        // bottom tab loads the right namespace.yml (active-namespace scoped).
-        if (row.status === 'STOPPED' || row.status === 'STALLED') {
-          try { await postNamespaceStart() } catch { /* user can retry */ }
+        // ConfigEditor is scoped to the active namespace, so switching first
+        // is required when picking a different row. Refuse if current ns is
+        // not STOPPED — same guard as the row-select switch.
+        if (row.id !== activeNsID) {
+          if (!canSwitch) {
+            toast(t('namespaces.switch.blocked'), 'error')
+            return
+          }
+          try { await activateNamespace(row.id) }
+          catch (e) { toast((e as Error).message, 'error'); return }
         }
         await fetchData()
         startEventStream()
@@ -146,14 +188,18 @@ export function NamespaceDialog({ open, onClose, onOpened }: NamespaceDialogProp
       <JournalDialog<NamespaceRow>
         open={open}
         onClose={onClose}
-        title={t('namespaces.dialog.title')}
+        title={
+          canSwitch
+            ? t('namespaces.dialog.title')
+            : t('namespaces.dialog.title.locked', { status: activeStatus })
+        }
         columns={columns}
         data={rows}
         rowActions={rowActions}
         onCreate={() => setCreateOpen(true)}
         closeWhenEmpty={false}
-        selectable
-        onSelect={(sel) => { if (sel.length === 1) void openNamespace(sel[0]) }}
+        selectable={canSwitch && !switching}
+        onSelect={(sel) => { if (sel.length === 1) void switchToNamespace(sel[0]) }}
       />
       <ConfirmModal
         open={!!deleteTarget}

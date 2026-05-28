@@ -15,9 +15,9 @@ func TestContentForSign_DropsSignaturesAndSortsKeys(t *testing.T) {
 		Tenant:     "acme",
 		Priority:   10,
 		IssuedTo:   "Acme Corp",
-		IssuedAt:   LicenseTime{time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)},
-		ValidFrom:  LicenseTime{time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)},
-		ValidUntil: LicenseTime{time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
+		IssuedAt:   Time{time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)},
+		ValidFrom:  Time{time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)},
+		ValidUntil: Time{time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
 		Content:    json.RawMessage(`{"z":1,"a":{"y":2,"b":[3,2,1]}}`),
 		Signatures: []Signature{{
 			Time:   "2025-01-01T00:00:00Z",
@@ -50,7 +50,7 @@ func TestValidAt_BoundaryConditions(t *testing.T) {
 	from := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	until := time.Date(2025, 12, 31, 0, 0, 0, 0, time.UTC)
 	lic := Instance{
-		ID: "x", ValidFrom: LicenseTime{from}, ValidUntil: LicenseTime{until},
+		ID: "x", ValidFrom: Time{from}, ValidUntil: Time{until},
 		Signatures: []Signature{{Time: "2025-06-01T00:00:00Z", Issuer: "x"}}, // 1 sig — IsValid still false (no cert) but boundaries check fires
 	}
 
@@ -70,9 +70,9 @@ func TestValidAt_BoundaryConditions(t *testing.T) {
 	}
 }
 
-func TestLicenseTime_MarshalMidnightUTC(t *testing.T) {
+func TestTime_MarshalMidnightUTC(t *testing.T) {
 	t.Parallel()
-	lt := LicenseTime{time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)}
+	lt := Time{time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)}
 	got, err := json.Marshal(lt)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -82,10 +82,10 @@ func TestLicenseTime_MarshalMidnightUTC(t *testing.T) {
 	}
 }
 
-func TestLicenseTime_MarshalNonMidnight(t *testing.T) {
+func TestTime_MarshalNonMidnight(t *testing.T) {
 	t.Parallel()
 	// Non-midnight UTC → full ISO-8601 with Z (matches Java Instant.toString()).
-	lt := LicenseTime{time.Date(2025, 1, 1, 12, 30, 45, 0, time.UTC)}
+	lt := Time{time.Date(2025, 1, 1, 12, 30, 45, 0, time.UTC)}
 	got, err := json.Marshal(lt)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -96,7 +96,7 @@ func TestLicenseTime_MarshalNonMidnight(t *testing.T) {
 
 	// Non-UTC zone → still emit Z (Kotlin uses Instant which normalises to UTC).
 	tz, _ := time.LoadLocation("America/New_York")
-	lt2 := LicenseTime{time.Date(2025, 1, 1, 7, 30, 45, 0, tz)} // 12:30:45 UTC
+	lt2 := Time{time.Date(2025, 1, 1, 7, 30, 45, 0, tz)} // 12:30:45 UTC
 	got2, err := json.Marshal(lt2)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -106,30 +106,30 @@ func TestLicenseTime_MarshalNonMidnight(t *testing.T) {
 	}
 }
 
-func TestLicenseTime_UnmarshalBothForms(t *testing.T) {
+func TestTime_UnmarshalBothForms(t *testing.T) {
 	t.Parallel()
 	// Date-only form.
-	var a LicenseTime
+	var a Time
 	if err := json.Unmarshal([]byte(`"2025-01-01"`), &a); err != nil {
 		t.Fatalf("unmarshal date-only: %v", err)
 	}
 	want := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-	if !a.Time.Equal(want) {
-		t.Fatalf("date-only got %v, want %v", a.Time, want)
+	if !a.Equal(want) {
+		t.Fatalf("date-only got %v, want %v", a, want)
 	}
 
 	// Full RFC3339 form.
-	var b LicenseTime
+	var b Time
 	if err := json.Unmarshal([]byte(`"2025-01-01T12:30:45Z"`), &b); err != nil {
 		t.Fatalf("unmarshal rfc3339: %v", err)
 	}
 	want2 := time.Date(2025, 1, 1, 12, 30, 45, 0, time.UTC)
-	if !b.Time.Equal(want2) {
-		t.Fatalf("rfc3339 got %v, want %v", b.Time, want2)
+	if !b.Equal(want2) {
+		t.Fatalf("rfc3339 got %v, want %v", b, want2)
 	}
 }
 
-func TestLicenseTime_RoundTripStable(t *testing.T) {
+func TestTime_RoundTripStable(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
@@ -140,10 +140,9 @@ func TestLicenseTime_RoundTripStable(t *testing.T) {
 		{"full-time", `"2025-06-15T18:42:11Z"`},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var lt LicenseTime
+			var lt Time
 			if err := json.Unmarshal([]byte(tc.in), &lt); err != nil {
 				t.Fatalf("unmarshal: %v", err)
 			}
@@ -155,13 +154,13 @@ func TestLicenseTime_RoundTripStable(t *testing.T) {
 				t.Fatalf("round-trip mismatch: in=%s out=%s", tc.in, out)
 			}
 			// Second round-trip must be identical (idempotent).
-			var lt2 LicenseTime
-			if err := json.Unmarshal(out, &lt2); err != nil {
-				t.Fatalf("second unmarshal: %v", err)
+			var lt2 Time
+			if err2 := json.Unmarshal(out, &lt2); err2 != nil {
+				t.Fatalf("second unmarshal: %v", err2)
 			}
-			out2, err := json.Marshal(lt2)
-			if err != nil {
-				t.Fatalf("second marshal: %v", err)
+			out2, err2 := json.Marshal(lt2)
+			if err2 != nil {
+				t.Fatalf("second marshal: %v", err2)
 			}
 			if !bytes.Equal(out, out2) {
 				t.Fatalf("not idempotent: %s vs %s", out, out2)
@@ -173,7 +172,7 @@ func TestLicenseTime_RoundTripStable(t *testing.T) {
 // TestContentForSign_KotlinCanonicalBytes asserts the exact byte sequence
 // Kotlin's getContentForSign() would produce for a license with midnight-UTC
 // dates. This is the regression that motivated item #14 in REMAINING.md:
-// before the LicenseTime wrapper, Go emitted full RFC3339 strings while
+// before the Time wrapper, Go emitted full RFC3339 strings while
 // Kotlin's LicenseDateSerializer stripped "T00:00:00Z", so the signed bytes
 // diverged and signature verification failed.
 func TestContentForSign_KotlinCanonicalBytes(t *testing.T) {
@@ -183,9 +182,9 @@ func TestContentForSign_KotlinCanonicalBytes(t *testing.T) {
 		Tenant:     "acme",
 		Priority:   42,
 		IssuedTo:   "Acme",
-		IssuedAt:   LicenseTime{time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)},
-		ValidFrom:  LicenseTime{time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)},
-		ValidUntil: LicenseTime{time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
+		IssuedAt:   Time{time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)},
+		ValidFrom:  Time{time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)},
+		ValidUntil: Time{time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
 		Content:    json.RawMessage(`{"feature":"enterprise"}`),
 		Signatures: []Signature{{Time: "irrelevant", Issuer: "irrelevant"}},
 	}
@@ -209,9 +208,9 @@ func TestContentForSign_KotlinCanonicalBytesNonMidnight(t *testing.T) {
 		Tenant:     "acme",
 		Priority:   1,
 		IssuedTo:   "Acme",
-		IssuedAt:   LicenseTime{time.Date(2025, 1, 1, 9, 0, 0, 0, time.UTC)},
-		ValidFrom:  LicenseTime{time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)},
-		ValidUntil: LicenseTime{time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
+		IssuedAt:   Time{time.Date(2025, 1, 1, 9, 0, 0, 0, time.UTC)},
+		ValidFrom:  Time{time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)},
+		ValidUntil: Time{time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
 		Content:    json.RawMessage(`{}`),
 	}
 	got, err := lic.ContentForSign()
@@ -257,9 +256,9 @@ func TestContentForSign_IsStableAcrossCalls(t *testing.T) {
 		ID:         "x",
 		Tenant:     "t",
 		Priority:   1,
-		IssuedAt:   LicenseTime{time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)},
-		ValidFrom:  LicenseTime{time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)},
-		ValidUntil: LicenseTime{time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
+		IssuedAt:   Time{time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)},
+		ValidFrom:  Time{time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)},
+		ValidUntil: Time{time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
 		Content:    json.RawMessage(`{"k":"v"}`),
 	}
 	a, err := lic.ContentForSign()

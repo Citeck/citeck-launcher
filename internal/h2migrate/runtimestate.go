@@ -31,7 +31,7 @@ const runtimeStateMapPrefix = "namespace-runtime-state!"
 //
 // Status is intentionally skipped: it is recomputed by the state machine on
 // first start. bundleDef IS migrated because the upstream bundles repo can
-// reorganise (e.g. bundle moves develop/ → release/) and the Kotlin contract
+// reorganize (e.g. bundle moves develop/ → release/) and the Kotlin contract
 // is to keep using the previously-resolved BundleDef rather than failing to
 // resolve. The Go server already implements the same fallback rule at
 // daemon/server.go (uses state.CachedBundle when bundlesService can't find
@@ -188,7 +188,7 @@ func decodeStringArray(raw []byte, existing []string) []string {
 // decodeCachedBundle translates the Kotlin BundleDef wire shape into Go's
 // bundle.Def. An existing non-empty cache from a prior partial migration run
 // is preserved when the incoming blob is malformed or empty; this matches the
-// Kotlin behaviour where a parse failure falls back to BundleDef.EMPTY (so
+// Kotlin behavior where a parse failure falls back to BundleDef.EMPTY (so
 // having any prior value is strictly better than losing it).
 func decodeCachedBundle(raw []byte, existing *bundle.Def, wsID, nsID string) *bundle.Def {
 	def, err := decodeKotlinBundleDef(raw)

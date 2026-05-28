@@ -13,9 +13,23 @@ import (
 // safeIDPattern allows only alphanumeric, hyphens, underscores, dots.
 var safeIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 
+// safeSecretIDPattern additionally allows ':' so scoped secret keys
+// ("images-repo:harbor.citeck.ru", "ws:<wsID>:repo") round-trip through the
+// API. Secrets IDs are stored as SQLite PKs (parameterized queries, safe) and
+// never used as file paths, so the broader char set is fine.
+var safeSecretIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:-]*$`)
+
 // validateID checks that an ID is safe for use in file paths and SQL queries.
 func validateID(id string) bool {
 	return id != "" && len(id) <= 128 && safeIDPattern.MatchString(id) &&
+		!strings.Contains(id, "..") && !strings.ContainsAny(id, "/\\")
+}
+
+// validateSecretID is the secret-key-specific validator. Mirrors validateID
+// but also permits ':' which the Kotlin parity scheme uses to namespace
+// secrets by purpose (images-repo:<host>, ws:<wsID>:repo, etc.).
+func validateSecretID(id string) bool {
+	return id != "" && len(id) <= 128 && safeSecretIDPattern.MatchString(id) &&
 		!strings.Contains(id, "..") && !strings.ContainsAny(id, "/\\")
 }
 

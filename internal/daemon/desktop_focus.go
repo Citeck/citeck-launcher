@@ -24,7 +24,7 @@ func SetDesktopFocusHandler(fn func()) {
 
 func (d *Daemon) handleDesktopFocus(w http.ResponseWriter, _ *http.Request) {
 	fn := desktopFocusHandler.Load()
-	if fn == nil || *fn == nil {
+	if fn == nil {
 		http.Error(w, "no focus handler registered", http.StatusServiceUnavailable)
 		return
 	}

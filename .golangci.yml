@@ -1,4 +1,8 @@
 version: "2"
+run:
+  build-tags:
+    - desktop
+    - gtk3
 linters:
   default: none
   enable:

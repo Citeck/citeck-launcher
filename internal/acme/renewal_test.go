@@ -96,9 +96,10 @@ func TestCheckAndRenew_SkipsWhenMoreThanHalfValid(t *testing.T) {
 	}
 }
 
-// writeTempCertWithSAN creates a cert with a DNS SAN for hostname verification tests.
-func writeTempCertWithSAN(t *testing.T, dir, hostname string, notBefore, notAfter time.Time) {
+// writeExampleCert creates a cert with a DNS SAN for "example.com" hostname verification tests.
+func writeExampleCert(t *testing.T, dir string, notBefore, notAfter time.Time) {
 	t.Helper()
+	const hostname = "example.com"
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -128,7 +129,7 @@ func writeTempCertWithSAN(t *testing.T, dir, hostname string, notBefore, notAfte
 
 func TestCertMatchesHost_Valid(t *testing.T) {
 	dir := t.TempDir()
-	writeTempCertWithSAN(t, dir, "example.com", time.Now().Add(-time.Hour), time.Now().Add(24*time.Hour))
+	writeExampleCert(t, dir, time.Now().Add(-time.Hour), time.Now().Add(24*time.Hour))
 	client := &Client{confDir: dir, hostname: "example.com"}
 	if !client.CertMatchesHost() {
 		t.Error("expected CertMatchesHost=true for matching hostname")
@@ -137,7 +138,7 @@ func TestCertMatchesHost_Valid(t *testing.T) {
 
 func TestCertMatchesHost_WrongHost(t *testing.T) {
 	dir := t.TempDir()
-	writeTempCertWithSAN(t, dir, "example.com", time.Now().Add(-time.Hour), time.Now().Add(24*time.Hour))
+	writeExampleCert(t, dir, time.Now().Add(-time.Hour), time.Now().Add(24*time.Hour))
 	client := &Client{confDir: dir, hostname: "other.com"}
 	if client.CertMatchesHost() {
 		t.Error("expected CertMatchesHost=false for wrong hostname")
@@ -146,7 +147,7 @@ func TestCertMatchesHost_WrongHost(t *testing.T) {
 
 func TestCertMatchesHost_Expired(t *testing.T) {
 	dir := t.TempDir()
-	writeTempCertWithSAN(t, dir, "example.com", time.Now().Add(-48*time.Hour), time.Now().Add(-1*time.Hour))
+	writeExampleCert(t, dir, time.Now().Add(-48*time.Hour), time.Now().Add(-1*time.Hour))
 	client := &Client{confDir: dir, hostname: "example.com"}
 	if client.CertMatchesHost() {
 		t.Error("expected CertMatchesHost=false for expired cert")

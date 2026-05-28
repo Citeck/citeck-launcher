@@ -24,7 +24,7 @@ type AppDto struct {
 	// configured limit. Surfaces a "near OOM limit" warning in the UI.
 	MemoryCritical bool `json:"memoryCritical,omitempty"`
 	// CPUThrottled is true when the container hit its CPU quota in the
-	// most recent stats sample (Kotlin parity — see docs/porting/10 #4).
+	// most recent stats sample (Kotlin parity).
 	CPUThrottled     bool     `json:"cpuThrottled,omitempty"`
 	Kind             string   `json:"kind"`
 	Ports            []string `json:"ports,omitempty"`
@@ -207,6 +207,11 @@ const (
 	ErrCodeWorkspaceExists    = "WORKSPACE_EXISTS"
 	ErrCodeWorkspaceNotFound  = "WORKSPACE_NOT_FOUND"
 	ErrCodeWorkspaceInUse     = "WORKSPACE_IN_USE"
+	// ErrCodeEncryptionNotSetUp is returned by secret-write endpoints when the
+	// SecretService has no master password yet (Kotlin parity — desktop never
+	// auto-initializes encryption). The UI catches this and runs the
+	// CreateMasterPwd flow before retrying the original save.
+	ErrCodeEncryptionNotSetUp = "ENCRYPTION_NOT_SET_UP" //nolint:gosec // G101: error code constant, not a credential
 )
 
 // UpgradeRequestDto is the request body for the namespace upgrade endpoint.

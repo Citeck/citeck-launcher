@@ -116,7 +116,7 @@ type RemoveNetworkPayload struct{}
 // MemoryPercent is 0..100 (zero when no memory limit is configured) and
 // CPUThrottled flags whether the container hit its CPU quota in the most
 // recent docker-stats sample window — both surface as AppDto fields for the
-// per-app table tooltips (Kotlin parity — docs/porting/10 #4).
+// per-app table tooltips (Kotlin parity).
 type StatsPayload struct {
 	CPU           string
 	Memory        string

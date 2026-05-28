@@ -40,8 +40,7 @@ func effectiveMemoryUsage(m memoryStats) int64 {
 	if usage <= 0 || len(m.Stats) == 0 {
 		return usage
 	}
-	// Order matches the Kotlin launcher's lookup order — see
-	// docs/porting/10 §6 (item #16) and the original ContainerStats.kt.
+	// Order matches the Kotlin launcher's lookup order — see ContainerStats.kt.
 	for _, key := range []string{"inactive_file", "total_inactive_file", "cache"} {
 		if v, ok := m.Stats[key]; ok && v > 0 {
 			adjusted := usage - v
@@ -83,8 +82,9 @@ func parseContainerStats(reader io.Reader) (*ContainerStat, error) {
 	// Throttle delta — only periods accumulated since the previous sample
 	// count as "currently throttled", which avoids permanently flagging a
 	// container that hit its CPU quota once at startup and recovered.
-	throttleDelta := int64(stats.CPUStats.ThrottlingData.ThrottledPeriods) - int64(stats.PreCPUStats.ThrottlingData.ThrottledPeriods)
-	cpuThrottled := throttleDelta > 0
+	// Compare as uint64 to avoid the G115 overflow; a decrease (counter reset)
+	// means zero new throttled periods, so cpuThrottled stays false.
+	cpuThrottled := stats.CPUStats.ThrottlingData.ThrottledPeriods > stats.PreCPUStats.ThrottlingData.ThrottledPeriods
 
 	return &ContainerStat{
 		CPUPercent:    cpuPercent,

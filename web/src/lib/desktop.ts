@@ -1,6 +1,16 @@
 import { hasDesktopWindowManager, openDesktopWindow } from './api'
 import { usePanelStore, type BottomPanelTab } from './panels'
 
+/** Returns true if the daemon health message looks like "docker stopped" vs "docker missing". */
+export function detectInstalledButStopped(message: string): boolean {
+  const m = message.toLowerCase()
+  return m.includes('connection refused') ||
+    m.includes('connection reset') ||
+    m.includes('no such file') ||
+    m.includes('cannot connect') ||
+    m.includes('dial unix')
+}
+
 /**
  * Detection of "desktop mode" runs once per page load and is cached. It hits
  * /desktop/windows/list which is only mounted by the Wails desktop binary, so

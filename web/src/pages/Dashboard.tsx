@@ -10,10 +10,9 @@ import { SecretsDialog } from '../components/SecretsDialog'
 import { SnapshotsDialog } from '../components/SnapshotsDialog'
 import { NamespaceDialog } from '../components/NamespaceDialog'
 import { NamespaceEditDialog } from '../components/NamespaceEditDialog'
-import { MasterPasswordDialog } from '../components/MasterPasswordDialog'
 import { ContextMenu } from '../components/ContextMenu'
 import { useContextMenu } from '../hooks/useContextMenu'
-import { getSystemDump, getMigrationStatus, submitMasterPassword, unlockSecrets, setupSecretsPassword, resetSecrets, openExternal, getBundles, upgradeNamespace } from '../lib/api'
+import { getSystemDump, openExternal, getBundles, upgradeNamespace } from '../lib/api'
 import { useTranslation } from '../lib/i18n'
 import { StatusBadge } from '../components/StatusBadge'
 import { AppTable } from '../components/AppTable'
@@ -52,15 +51,9 @@ export function Dashboard() {
   const openBottomTab = usePanelStore((s) => s.openBottomTab)
   const { t } = useTranslation()
 
-  // Secret management dialog (Kotlin migration, setup, unlock)
-  // Server mode: daemon auto-encrypts/auto-unlocks with default password, so
-  // setup-password and unlock dialogs are never triggered. Only kotlin-decrypt
-  // needs user input (original Kotlin master password).
-  // Desktop mode: all three dialogs can appear.
-  const [dialogStep, setDialogStep] = useState<'kotlin-decrypt' | 'setup-password' | 'unlock' | null>(null)
-  const [dialogError, setDialogError] = useState('')
-  const [dialogLoading, setDialogLoading] = useState(false)
-  const [dialogChecked, setDialogChecked] = useState(false)
+  // Master-password / secrets-unlock flow is handled by SecretsUnlockGuard at
+  // the App layout level — runs once before any namespace start so registry
+  // pulls have access to credentials.
 
   // Upgrade dialog state
   const [upgradeOpen, setUpgradeOpen] = useState(false)
@@ -118,80 +111,6 @@ export function Dashboard() {
       toast((e as Error).message, 'error')
     }
   }, [namespace?.bundleRef, t])
-
-  // On mount: detect which dialog step is needed.
-  // Server mode: daemon auto-encrypts + auto-unlocks with default password, so only
-  // kotlin-decrypt (Kotlin migration) ever triggers. Desktop mode: all three possible.
-  useEffect(() => {
-    if (!namespace) {
-      // Daemon/namespace dropped (e.g. restart). Reset the guard so the check
-      // re-fires when a namespace comes back.
-      if (dialogChecked) setDialogChecked(false)
-      return
-    }
-    if (dialogChecked || dialogStep) return
-    setDialogChecked(true)
-    getMigrationStatus().then((s) => {
-      if (s.hasPendingSecrets) setDialogStep('kotlin-decrypt')
-      else if (s.encrypted && s.locked) setDialogStep('unlock')
-      else if (!s.encrypted && s.hasSecrets) setDialogStep('setup-password')
-    }).catch(() => {})
-  }, [namespace, dialogChecked, dialogStep])
-
-  // Kotlin decrypt → import + encrypt secrets in one step
-  const handleKotlinDecrypt = useCallback(async (pwd: string) => {
-    if (!pwd) return
-    setDialogLoading(true)
-    setDialogError('')
-    try {
-      await submitMasterPassword(pwd)
-      toast(t('migration.secretsImported'), 'success')
-      setDialogStep(null)
-      fetchData()
-    } catch {
-      setDialogError(t('migration.wrongPassword'))
-    } finally {
-      setDialogLoading(false)
-    }
-  }, [fetchData, t])
-
-  // Setup password — encrypt all secrets (desktop mode only)
-  const handleSetupPassword = useCallback(async (pwd: string) => {
-    setDialogLoading(true)
-    setDialogError('')
-    try {
-      await setupSecretsPassword(pwd)
-      toast(t('migration.setupPassword.success'), 'success')
-      setDialogStep(null)
-      fetchData()
-    } catch (e) {
-      setDialogError((e as Error).message)
-    } finally {
-      setDialogLoading(false)
-    }
-  }, [fetchData, t])
-
-  // Unlock encrypted secrets (desktop mode only)
-  const handleUnlock = useCallback(async (pwd: string) => {
-    if (!pwd) return
-    setDialogLoading(true)
-    setDialogError('')
-    try {
-      await unlockSecrets(pwd)
-      toast(t('migration.unlock.success'), 'success')
-      setDialogStep(null)
-      fetchData()
-    } catch {
-      setDialogError(t('migration.wrongPassword'))
-    } finally {
-      setDialogLoading(false)
-    }
-  }, [fetchData, t])
-
-  const handleSkipDialog = useCallback(() => {
-    setDialogStep(null)
-    setDialogError('')
-  }, [])
 
   useEffect(() => {
     setHomeTab(t('dashboard.title'))
@@ -290,29 +209,6 @@ export function Dashboard() {
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-      {/* Master password modal — kotlin-decrypt / create / ask (Kotlin parity) */}
-      <MasterPasswordDialog
-        mode={dialogStep === 'setup-password' ? 'create' : dialogStep === 'unlock' ? 'ask' : 'kotlin-decrypt'}
-        open={!!dialogStep}
-        loading={dialogLoading}
-        error={dialogError}
-        onSubmit={async (pwd) => {
-          if (dialogStep === 'kotlin-decrypt') await handleKotlinDecrypt(pwd)
-          else if (dialogStep === 'setup-password') await handleSetupPassword(pwd)
-          else if (dialogStep === 'unlock') await handleUnlock(pwd)
-        }}
-        onSkip={(dialogStep === 'kotlin-decrypt' || dialogStep === 'unlock') ? handleSkipDialog : undefined}
-        onReset={dialogStep === 'unlock' ? async () => {
-          setDialogLoading(true)
-          try {
-            await resetSecrets()
-            toast(t('migration.unlock.reset.success'), 'success')
-            setDialogStep(null)
-          } catch (e) { setDialogError((e as Error).message) }
-          finally { setDialogLoading(false) }
-        } : undefined}
-      />
-
       {/* Top: sidebar + table + drawer overlay */}
       <div className="flex flex-1 min-h-0 relative">
         {/* Left info panel */}
@@ -456,7 +352,7 @@ export function Dashboard() {
               <SidebarIconBtn icon={ArrowLeft}
                 tooltip={namespace.status === 'STOPPED' ? t('dashboard.backToWelcome') : t('dashboard.backToWelcome.disabled')}
                 disabled={namespace.status !== 'STOPPED'}
-                onClick={() => setNamespaceDialogOpen(true)} />
+                onClick={() => navigate('/welcome')} />
             )}
             <SidebarIconBtn icon={FolderOpen}
               tooltip={t('dashboard.openNsDir.tooltip')}
@@ -590,7 +486,7 @@ function isLinkAlwaysEnabled(l: { alwaysEnabled?: boolean; order: number; name: 
   if (l.order >= 100) {
     if (!linkOrderFallbackLogged.has(l.name)) {
       linkOrderFallbackLogged.add(l.name)
-      // eslint-disable-next-line no-console
+       
       console.warn(`[deprecation] sidebar link "${l.name}" uses order>=100 fallback for alwaysEnabled — daemon should set links[].alwaysEnabled=true.`)
     }
     return true

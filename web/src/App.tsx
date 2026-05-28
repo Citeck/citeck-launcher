@@ -3,7 +3,7 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { useDashboardStore } from './lib/store'
 import { useDaemonStatusStore, useIsDesktop } from './lib/daemonStatus'
 import { useI18nStore, type Locale } from './lib/i18n'
-import { primeDesktopModeCache } from './lib/desktop'
+import { primeDesktopModeCache, detectInstalledButStopped } from './lib/desktop'
 import { Dashboard } from './pages/Dashboard'
 import { AppDetail } from './pages/AppDetail'
 import { Logs } from './pages/Logs'
@@ -14,13 +14,14 @@ import { Welcome } from './pages/Welcome'
 import { Secrets } from './pages/Secrets'
 import { Diagnostics } from './pages/Diagnostics'
 import { Licenses } from './pages/Licenses'
-import { DockerNotAvailable, detectInstalledButStopped } from './pages/DockerNotAvailable'
+import { DockerNotAvailable } from './pages/DockerNotAvailable'
 import { WindowLogs } from './pages/WindowLogs'
 import { WindowEditor } from './pages/WindowEditor'
 import { TabBar } from './components/TabBar'
 import { ToastContainer } from './components/Toast'
 import { ErrorModalHost } from './components/ErrorModal'
 import { LoadingOverlayHost } from './components/LoadingOverlay'
+import { SecretsUnlockGuard } from './components/SecretsUnlockGuard'
 import { useEffect } from 'react'
 
 function MainLayout() {
@@ -67,6 +68,10 @@ function MainLayout() {
 
   return (
     <div className="h-screen bg-background flex flex-col overflow-hidden">
+      {/* Master-password prompt — runs once on app mount before any namespace
+          start, so private-registry pulls (Harbor, nexus, etc.) have access
+          to creds from the unlocked SecretService. */}
+      <SecretsUnlockGuard />
       <TabBar />
       <main className="flex-1 min-h-0 flex flex-col">
         <Routes>

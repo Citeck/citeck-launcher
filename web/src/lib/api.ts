@@ -25,12 +25,36 @@ export const API_BASE = '/api/v1'
 
 const CSRF_HEADER = { 'X-Citeck-CSRF': '1' }
 
-async function extractErrorMessage(res: Response): Promise<string> {
+/**
+ * ApiError preserves the machine-readable `code` field that the daemon sends
+ * in JSON error bodies alongside `message`. Callers can branch on `code` to
+ * trigger UI flows (e.g. `ENCRYPTION_NOT_SET_UP` → run CreateMasterPwd before
+ * retrying the request) without parsing error message strings.
+ */
+export class ApiError extends Error {
+  readonly status: number
+  readonly code: string
+  constructor(message: string, status: number, code: string) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.code = code
+  }
+}
+
+async function extractApiError(res: Response): Promise<ApiError> {
+  let message = res.statusText || `HTTP ${res.status}`
+  let code = ''
   try {
     const body = await res.json()
-    if (body.message) return body.message
-  } catch { /* not JSON, use statusText */ }
-  return res.statusText || `HTTP ${res.status}`
+    if (typeof body.message === 'string') message = body.message
+    if (typeof body.code === 'string') code = body.code
+  } catch { /* not JSON, fall through with statusText */ }
+  return new ApiError(message, res.status, code)
+}
+
+async function extractErrorMessage(res: Response): Promise<string> {
+  return (await extractApiError(res)).message
 }
 
 function fetchWithTimeout(url: string, opts?: RequestInit, timeoutMs = 30_000): Promise<Response> {
@@ -119,6 +143,14 @@ export async function postNamespaceStop(): Promise<ActionResultDto> {
 
 export async function postNamespaceReload(): Promise<ActionResultDto> {
   const res = await fetchWithTimeout(`${API_BASE}/namespace/reload`, { method: 'POST', headers: CSRF_HEADER })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  return res.json()
+}
+
+// activateNamespace switches the active namespace within the current workspace.
+// Daemon rejects with 409 if the current namespace is not STOPPED.
+export async function activateNamespace(id: string): Promise<ActionResultDto> {
+  const res = await fetchWithTimeout(`${API_BASE}/namespaces/${id}/activate`, { method: 'POST', headers: CSRF_HEADER })
   if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }
@@ -452,7 +484,9 @@ export async function createSecret(data: SecretCreateDto): Promise<ActionResultD
     headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
     body: JSON.stringify(data),
   })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  // Use ApiError so the SecretsDialog can branch on `code === 'ENCRYPTION_NOT_SET_UP'`
+  // and run CreateMasterPwd before retrying the save.
+  if (!res.ok) throw await extractApiError(res)
   return res.json()
 }
 

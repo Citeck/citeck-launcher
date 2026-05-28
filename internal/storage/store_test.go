@@ -96,7 +96,8 @@ func testStoreSecrets(t *testing.T, store Store) {
 	}
 
 	// Delete
-	if err := store.DeleteSecret("git-token"); err != nil {
+	err = store.DeleteSecret("git-token")
+	if err != nil {
 		t.Fatalf("DeleteSecret() error: %v", err)
 	}
 	list, _ = store.ListSecrets()
@@ -117,7 +118,8 @@ func testStoreSecrets(t *testing.T, store Store) {
 		Username: "alice",
 		Value:    "pa:ss:wo:rd",
 	}
-	if err := store.SaveSecret(basic); err != nil {
+	err = store.SaveSecret(basic)
+	if err != nil {
 		t.Fatalf("SaveSecret(basic) error: %v", err)
 	}
 	got2, err := store.GetSecret("basic-1")

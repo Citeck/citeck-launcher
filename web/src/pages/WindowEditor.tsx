@@ -3,6 +3,7 @@ import { AppConfigEditor, type AppConfigEditorHandle } from '../components/AppCo
 import { useTranslation } from '../lib/i18n'
 import { useEffect, useRef, useState } from 'react'
 import { RotateCcw } from 'lucide-react'
+import { useDashboardStore } from '../lib/store'
 
 /**
  * Standalone editor page used by native multi-window mode.
@@ -17,7 +18,10 @@ export function WindowEditor() {
   const { name } = useParams<{ name: string }>()
   const editorRef = useRef<AppConfigEditorHandle>(null)
   const [dirty, setDirty] = useState(false)
-  const [edited, setEdited] = useState(false)
+  // Read "edited" (user-saved overrides on disk) from the dashboard store —
+  // the same source AppConfigEditor uses — so no polling via the imperative
+  // handle is needed and setState-in-effect is avoided.
+  const edited = useDashboardStore((s) => s.namespace?.apps?.find((a) => a.name === name)?.edited ?? false)
 
   useEffect(() => {
     document.title = name ? `Config — ${name}` : 'Editor'
@@ -35,13 +39,6 @@ export function WindowEditor() {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
-
-  // Poll the editor handle once a render to keep the "edited" badge synced.
-  // Cheap because the handle is created via useImperativeHandle and only
-  // re-renders when the editor state changes.
-  useEffect(() => {
-    setEdited(editorRef.current?.isEdited() ?? false)
-  })
 
   if (!name) {
     return (

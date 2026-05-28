@@ -51,6 +51,13 @@ func ListWorkspaces() ([]WorkspaceInfo, error) {
 	return workspaces, nil
 }
 
+// ListNamespacesInWorkspace returns namespace IDs found in ws/{wsID}/ns/
+// (alphabetical order as ReadDir returns them). Empty slice + nil error
+// when the workspace directory doesn't exist yet.
+func ListNamespacesInWorkspace(wsID string) ([]string, error) {
+	return listNamespacesInWorkspace(wsID)
+}
+
 // listNamespacesInWorkspace returns namespace IDs found in ws/{wsID}/ns/
 func listNamespacesInWorkspace(wsID string) ([]string, error) {
 	nsRoot := filepath.Join(WorkspaceDir(wsID), "ns")

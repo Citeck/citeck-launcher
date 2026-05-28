@@ -30,14 +30,16 @@ import (
 // caught here rather than at runtime when a webapp can't see its license.
 func TestCollectExtraLicenses_RoundTripsLicenseStoreThroughGenerator(t *testing.T) {
 	// Stand up a real SQLite-backed SecretService — same code the daemon
-	// uses in desktop mode. NewSecretService auto-enables the default
-	// password so we never hit the locked-store branch.
+	// uses. SecretService no longer auto-encrypts at construction time
+	// (desktop-first-start lazy-setup contract), so the test seeds the
+	// default password explicitly to keep license persistence available.
 	store, err := storage.NewSQLiteStore(t.TempDir())
 	require.NoError(t, err)
 	defer store.Close()
 
 	svc, err := storage.NewSecretService(store)
 	require.NoError(t, err)
+	require.NoError(t, svc.SetMasterPassword(storage.DefaultMasterPassword, true))
 	licSvc := license.NewService(svc)
 
 	// Persist a stub enterprise license. IsValid will be false (no real
@@ -48,9 +50,9 @@ func TestCollectExtraLicenses_RoundTripsLicenseStoreThroughGenerator(t *testing.
 		Tenant:     "acme",
 		Priority:   42,
 		IssuedTo:   "Acme Corp",
-		IssuedAt:   license.LicenseTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
-		ValidFrom:  license.LicenseTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
-		ValidUntil: license.LicenseTime{Time: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)},
+		IssuedAt:   license.Time{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
+		ValidFrom:  license.Time{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
+		ValidUntil: license.Time{Time: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)},
 		Content:    json.RawMessage(`{"feature":"enterprise"}`),
 	}
 	require.NoError(t, licSvc.Add(stub))
@@ -97,7 +99,7 @@ func TestCollectExtraLicenses_RoundTripsLicenseStoreThroughGenerator(t *testing.
 	assert.True(t,
 		strings.Contains(yamlStr, "instances:") && strings.Contains(yamlStr, "license:"),
 		"expected license/instances keys in the eapps cloud-config YAML, got:\n%s", yamlStr)
-	// Stronger: the marshalled license must include our stub ID and tenant.
+	// Stronger: the marshaled license must include our stub ID and tenant.
 	assert.Contains(t, yamlStr, `"id":"stub-1"`,
 		"stub license id must reach the eapps cloud-config")
 	assert.Contains(t, yamlStr, `"tenant":"acme"`,

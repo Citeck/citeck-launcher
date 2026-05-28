@@ -186,10 +186,18 @@ export function JournalDialog<T extends Record<string, unknown>>({
   return (
     <dialog
       ref={dialogRef}
-      className="fixed inset-0 z-50 m-auto max-w-3xl w-full max-h-[80vh] rounded-lg border border-border bg-card p-0 text-foreground backdrop:bg-black/50"
+      className="z-50 fixed rounded-lg border border-border bg-card p-0 text-foreground backdrop:bg-black/50"
+      style={{
+        width: 'min(90vw, 768px)',
+        maxHeight: '80vh',
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%)',
+        margin: 0,
+      }}
       onClose={onClose}
     >
-      <div className="flex flex-col h-full max-h-[80vh]">
+      <div className="flex flex-col max-h-[80vh]" style={{ width: '100%' }}>
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
           <h2 className="text-sm font-semibold">{title}</h2>

@@ -520,6 +520,7 @@ const en: Translations = {
   'namespace.dialog.edit': 'Edit Namespace',
   'namespace.form.name': 'Name',
   'namespace.form.bundlesRepo': 'Bundles Repo',
+  'namespace.form.bundles.refresh': 'Refresh bundles (git pull)',
   'namespace.form.bundleKey': 'Bundle',
   'namespace.form.snapshot': 'Snapshot',
   'namespace.form.authType': 'Authentication Type',

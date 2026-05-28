@@ -5,12 +5,14 @@ import {
   getBundles,
   getNamespaceEdit,
   getWorkspaceSnapshots,
+  postWorkspaceUpdate,
   putNamespaceEdit,
   type NamespaceEditDto,
 } from '../lib/api'
 import type { BundleInfoDto, NamespaceCreateDto } from '../lib/types'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
+import { Select } from './Select'
 
 export interface NamespaceEditInitial {
   name?: string
@@ -152,14 +154,6 @@ export function NamespaceEditDialog({
     }
   }, [bundleRepo, bundles, bundleKey])
 
-  function refreshBundles() {
-    setBundlesLoading(true)
-    getBundles()
-      .then((bs) => setBundles(bs))
-      .catch(() => { /* silent; user can retry */ })
-      .finally(() => setBundlesLoading(false))
-  }
-
   function validate(): boolean {
     const errors: Record<string, string> = {}
     if (!name.trim()) errors.name = t('namespace.form.required')
@@ -263,68 +257,69 @@ export function NamespaceEditDialog({
           </Field>
 
           <Field label={t('namespace.form.bundlesRepo')} error={fieldErrors.bundleRepo} required>
-            <select
-              className="w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary"
-              value={bundleRepo}
-              onChange={(e) => setBundleRepo(e.target.value)}
-              disabled={bundlesLoading}
-            >
-              <option value="">—</option>
-              {bundleRepoOptions.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-          </Field>
-
-          <Field label={t('namespace.form.bundleKey')} error={fieldErrors.bundleKey} required>
             <div className="flex items-center gap-1.5">
-              <select
-                className="flex-1 rounded border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary"
-                value={bundleKey}
-                onChange={(e) => setBundleKey(e.target.value)}
-                disabled={!bundleRepo || bundlesLoading}
-              >
-                <option value="">—</option>
-                {bundleKeyOptions.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
+              <div className="flex-1 min-w-0">
+                <Select
+                  value={bundleRepo}
+                  options={bundleRepoOptions}
+                  onChange={setBundleRepo}
+                  required
+                  disabled={bundlesLoading}
+                  placeholder="—"
+                />
+              </div>
               <button
                 type="button"
-                className="rounded border border-border bg-background p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
-                onClick={refreshBundles}
-                title={t('namespace.form.refreshBundles')}
+                className="shrink-0 rounded border border-border p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
                 disabled={bundlesLoading}
+                title={t('namespace.form.bundles.refresh')}
+                aria-label={t('namespace.form.bundles.refresh')}
+                onClick={() => {
+                  setBundlesLoading(true)
+                  postWorkspaceUpdate()
+                    .then(() => getBundles())
+                    .then((bs) => setBundles(bs))
+                    .catch((e) => toast((e as Error).message, 'error'))
+                    .finally(() => setBundlesLoading(false))
+                }}
               >
                 <RefreshCw size={14} className={bundlesLoading ? 'animate-spin' : ''} />
               </button>
             </div>
           </Field>
 
+          <Field label={t('namespace.form.bundleKey')} error={fieldErrors.bundleKey} required>
+            <Select
+              value={bundleKey}
+              options={bundleKeyOptions}
+              onChange={setBundleKey}
+              required
+              disabled={!bundleRepo || bundlesLoading}
+              placeholder="—"
+            />
+          </Field>
+
           {mode === 'create' && (
             <Field label={t('namespace.form.snapshot')}>
-              <select
-                className="w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary"
+              <Select
                 value={snapshot}
-                onChange={(e) => setSnapshot(e.target.value)}
-              >
-                <option value="">{t('namespace.form.snapshot.none')}</option>
-                {snapshots.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
+                options={snapshots.map((s) => ({ value: s.id, label: s.name }))}
+                onChange={setSnapshot}
+                placeholder={t('namespace.form.snapshot.none')}
+              />
             </Field>
           )}
 
           <Field label={t('namespace.form.authType')} error={fieldErrors.authType} required>
-            <select
-              className="w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary"
+            <Select
               value={authType}
-              onChange={(e) => setAuthType(e.target.value)}
-            >
-              <option value="BASIC">BASIC</option>
-              <option value="KEYCLOAK">KEYCLOAK</option>
-            </select>
+              options={[
+                { value: 'BASIC', label: 'BASIC' },
+                { value: 'KEYCLOAK', label: 'KEYCLOAK' },
+              ]}
+              onChange={setAuthType}
+              required
+            />
           </Field>
 
           {authType === 'BASIC' && (

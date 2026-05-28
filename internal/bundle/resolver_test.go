@@ -422,8 +422,8 @@ func TestFindBundleFile_BareFileWithoutExtension(t *testing.T) {
 }
 
 // TestFindBundleFile_NestedHelmLayout exercises the Kotlin-parity recursive
-// walk for Helm-style nested bundle layouts (docs/porting/07 §4 references
-// BundleUtils.loadKitsFiles). A directory like `archive/2025.5/values.yml`
+// walk for Helm-style nested bundle layouts (BundleUtils.loadKitsFiles).
+// A directory like `archive/2025.5/values.yml`
 // must resolve under key "archive/2025.5", and a plain `archive/2025.6.yml`
 // under "archive/2025.6".
 func TestFindBundleFile_NestedHelmLayout(t *testing.T) {
@@ -517,8 +517,8 @@ func TestFindBundleFile_NestedKeyOnly(t *testing.T) {
 func TestWorkspaceRepoSettings_DefaultsWhenNoOverride(t *testing.T) {
 	r := NewResolver(t.TempDir())
 	url, branch, period, token := r.workspaceRepoSettings()
-	assert.Equal(t, defaultBundlesRepo, url)
-	assert.Equal(t, defaultBundlesBranch, branch)
+	assert.Equal(t, DefaultBundlesRepo, url)
+	assert.Equal(t, DefaultBundlesBranch, branch)
 	assert.Equal(t, defaultPullPeriod, period)
 	assert.Empty(t, token)
 }
@@ -542,7 +542,7 @@ func TestWorkspaceRepoSettings_EmptyFieldsFallBackPerField(t *testing.T) {
 		Branch: "develop",
 	})
 	url, branch, period, token := r.workspaceRepoSettings()
-	assert.Equal(t, defaultBundlesRepo, url, "empty URL should fall back to default")
+	assert.Equal(t, DefaultBundlesRepo, url, "empty URL should fall back to default")
 	assert.Equal(t, "develop", branch)
 	assert.Equal(t, defaultPullPeriod, period, "zero PullPeriod should fall back to default")
 	assert.Empty(t, token)

@@ -258,7 +258,7 @@ func capitalize(s string) string {
 
 // percentOfScreen returns p% of the screen's WorkArea (excludes OS taskbars).
 // Returns (0,0) if the screen reports zero bounds so the caller falls back.
-func percentOfScreen(s *application.Screen, p int) (int, int) {
+func percentOfScreen(s *application.Screen, p int) (width, height int) {
 	if s == nil {
 		return 0, 0
 	}
@@ -306,7 +306,6 @@ func (m *WindowManager) Quit() {
 	m.windows = make(map[string]application.Window)
 	m.mu.Unlock()
 	for _, win := range windows {
-		win := win
 		application.InvokeAsync(func() { win.Close() })
 	}
 }

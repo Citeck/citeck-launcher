@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -22,7 +23,7 @@ type gitSyncStoreAdapter struct {
 func (a gitSyncStoreAdapter) GetGitRepoState(path string) (*git.SyncStateEntry, error) {
 	s, err := a.store.GetGitRepoState(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get git repo state: %w", err)
 	}
 	if s == nil {
 		return nil, nil
@@ -35,11 +36,14 @@ func (a gitSyncStoreAdapter) GetGitRepoState(path string) (*git.SyncStateEntry, 
 }
 
 func (a gitSyncStoreAdapter) SetGitRepoState(entry git.SyncStateEntry) error {
-	return a.store.SetGitRepoState(storage.GitRepoState{
+	if err := a.store.SetGitRepoState(storage.GitRepoState{
 		Path:           entry.Path,
 		LastSyncMs:     entry.LastSyncMs,
 		LastCommitHash: entry.LastCommitHash,
-	})
+	}); err != nil {
+		return fmt.Errorf("set git repo state: %w", err)
+	}
+	return nil
 }
 
 // SkipPullRequest is the request body for POST /api/v1/git/skip-pull.
@@ -55,7 +59,7 @@ type SkipPullRequest struct {
 
 // handleGitSkipPull records a user "Skip" decision from GitPullErrorDialog so
 // subsequent pulls against the same host no-op for the suppression window.
-// Mirrors Kotlin's `skipPullForRepoDecisionAt` map (docs/porting/07 §1.9).
+// Mirrors Kotlin's `skipPullForRepoDecisionAt` map.
 //
 // The handler is intentionally tiny: validation lives in the host parser and
 // the duration clamp, and persistence is process-local (matches Kotlin —

@@ -95,8 +95,8 @@ func TestSwitchWorkspaceRoundTrip(t *testing.T) {
 
 	mustSet := func(ws, ns string, all map[string]string) {
 		t.Helper()
-		if err := store.SetState(LauncherState{WorkspaceID: ws, SelectedNs: all}); err != nil {
-			t.Fatalf("SetState(%s/%s): %v", ws, ns, err)
+		if setErr := store.SetState(LauncherState{WorkspaceID: ws, SelectedNs: all}); setErr != nil {
+			t.Fatalf("SetState(%s/%s): %v", ws, ns, setErr)
 		}
 	}
 

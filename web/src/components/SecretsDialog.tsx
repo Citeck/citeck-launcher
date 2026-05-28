@@ -1,10 +1,11 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Trash2, FlaskConical } from 'lucide-react'
-import { getSecrets, createSecret, deleteSecret, testSecret } from '../lib/api'
+import { ApiError, getSecrets, createSecret, deleteSecret, testSecret, setupSecretsPassword } from '../lib/api'
 import type { SecretMetaDto, SecretCreateDto } from '../lib/types'
 import { JournalDialog, type JournalAction, type JournalColumn } from './JournalDialog'
 import { ConfirmModal } from './ConfirmModal'
 import { FormDialog, type FormFieldSpec } from './FormDialog'
+import { MasterPasswordDialog } from './MasterPasswordDialog'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
 
@@ -48,10 +49,21 @@ export function SecretsDialog({ open, onClose }: SecretsDialogProps) {
   const [createOpen, setCreateOpen] = useState(false)
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
+  // When the daemon reports ENCRYPTION_NOT_SET_UP, we cache the pending save
+  // payload, run CreateMasterPwd, then retry the save with the same data so
+  // the user doesn't have to retype.
+  const [pendingPayload, setPendingPayload] = useState<SecretCreateDto | null>(null)
+  const [createMasterOpen, setCreateMasterOpen] = useState(false)
+  const [createMasterLoading, setCreateMasterLoading] = useState(false)
+  const [createMasterError, setCreateMasterError] = useState('')
 
   const reload = useCallback(() => {
     getSecrets()
-      .then((s) => setSecrets(s.map(toRow)))
+      // SYSTEM secrets (_jwt, _oidc, _citeck_sa) are daemon-managed and have
+      // sensible defaults — the user shouldn't see them in the Secrets UI
+      // (they neither edit them nor reason about them). Only user-added
+      // GIT_TOKEN / BASIC_AUTH / REGISTRY_AUTH entries belong here.
+      .then((s) => setSecrets(s.filter((sec) => sec.type !== 'SYSTEM').map(toRow)))
       .catch((e) => toast((e as Error).message, 'error'))
   }, [])
 
@@ -86,6 +98,15 @@ export function SecretsDialog({ open, onClose }: SecretsDialogProps) {
     },
   ]
 
+  async function savePayload(payload: SecretCreateDto): Promise<boolean> {
+    await createSecret(payload)
+    toast(t('secrets.create.success'), 'success')
+    setCreateOpen(false)
+    setPendingPayload(null)
+    reload()
+    return true
+  }
+
   async function handleCreate(values: Record<string, unknown>) {
     setCreating(true)
     setCreateError(null)
@@ -100,14 +121,47 @@ export function SecretsDialog({ open, onClose }: SecretsDialogProps) {
       if (type === 'BASIC_AUTH' || type === 'REGISTRY_AUTH') {
         payload.username = String(values.username || '').trim()
       }
-      await createSecret(payload)
-      toast(t('secrets.create.success'), 'success')
-      setCreateOpen(false)
-      reload()
+      try {
+        await savePayload(payload)
+      } catch (e) {
+        if (e instanceof ApiError && e.code === 'ENCRYPTION_NOT_SET_UP') {
+          // Desktop first-time secret. Stash the payload, open CreateMasterPwd;
+          // after the user picks a master, we'll retry the save.
+          setPendingPayload(payload)
+          setCreateError(null)
+          setCreateMasterOpen(true)
+          return
+        }
+        throw e
+      }
     } catch (e) {
       setCreateError((e as Error).message)
     } finally {
       setCreating(false)
+    }
+  }
+
+  async function handleCreateMaster(pwd: string) {
+    if (!pwd) return
+    setCreateMasterLoading(true)
+    setCreateMasterError('')
+    try {
+      await setupSecretsPassword(pwd)
+      setCreateMasterOpen(false)
+      if (pendingPayload) {
+        setCreating(true)
+        try {
+          await savePayload(pendingPayload)
+        } catch (e) {
+          setCreateError((e as Error).message)
+        } finally {
+          setCreating(false)
+        }
+      }
+    } catch (e) {
+      setCreateMasterError((e as Error).message)
+    } finally {
+      setCreateMasterLoading(false)
     }
   }
 
@@ -180,6 +234,22 @@ export function SecretsDialog({ open, onClose }: SecretsDialogProps) {
         loading={creating}
         error={createError}
         submitLabel={t('common.create')}
+      />
+      {/* Master-password setup runs only when the user actually attempts to
+          save a user secret on a fresh desktop install (Kotlin parity —
+          CreateMasterPwdDialog from view/commons/dialog). Cancelling leaves
+          the pending payload in memory so the user can choose to abort the
+          whole create flow. */}
+      <MasterPasswordDialog
+        mode="create"
+        open={createMasterOpen}
+        loading={createMasterLoading}
+        error={createMasterError}
+        onSubmit={handleCreateMaster}
+        onSkip={() => {
+          setCreateMasterOpen(false)
+          setPendingPayload(null)
+        }}
       />
       <ConfirmModal
         open={!!deleteTarget}

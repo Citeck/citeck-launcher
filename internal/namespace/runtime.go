@@ -119,7 +119,7 @@ type AppRuntime struct {
 	CPU          string
 	Memory       string
 	// MemoryPercent is 0..100 (zero when no memory limit set). Surfaced as
-	// AppDto.MemoryPercent so the UI can colour-band the per-app cell.
+	// AppDto.MemoryPercent so the UI can color-band the per-app cell.
 	MemoryPercent float64
 	// CPUThrottled flags whether the container is currently being CPU-throttled
 	// (set from docker-stats throttling_data deltas). Mirrors AppDto.CPUThrottled.

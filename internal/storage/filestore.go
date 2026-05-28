@@ -383,8 +383,8 @@ func (s *FileStore) readSecret(path string) (*Secret, error) {
 		// Legacy on-disk format: "user:pass" packed into Value.
 		// Base64-encoded ciphertext never contains ':', so this only fires on
 		// plaintext rows written before the typed Username field landed.
-		if idx := strings.IndexByte(value, ':'); idx >= 0 {
-			username, value = value[:idx], value[idx+1:]
+		if u, v, ok := strings.Cut(value, ":"); ok {
+			username, value = u, v
 		}
 	}
 	return &Secret{

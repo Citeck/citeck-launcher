@@ -549,6 +549,7 @@ const pt: Translations = {
   'longOp.snapshot.rename': 'Renomeando snapshot…',
   'longOp.snapshot.delete': 'Excluindo snapshot…',
   'longOp.snapshot.download': 'Baixando snapshot…',
+  'namespace.form.bundles.refresh': 'Atualizar bundles (git pull)',
 }
 
 export default pt

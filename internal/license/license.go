@@ -16,20 +16,20 @@ import (
 	"time"
 )
 
-// LicenseTime wraps time.Time so Instance dates serialize compatibly with
+// Time wraps time.Time so Instance dates serialize compatibly with
 // Kotlin's LicenseDateSerializer: midnight-UTC values emit "YYYY-MM-DD",
 // everything else uses ISO-8601 with a `Z` suffix (Java Instant.toString()).
 // Embedding time.Time preserves caller ergonomics (.After/.Before/.IsZero/...).
-type LicenseTime struct {
+type Time struct {
 	time.Time
 }
 
 // MarshalJSON serializes in Kotlin's LicenseDateSerializer format.
-func (t LicenseTime) MarshalJSON() ([]byte, error) {
-	if t.Time.IsZero() {
+func (t Time) MarshalJSON() ([]byte, error) {
+	if t.IsZero() {
 		return []byte(`""`), nil
 	}
-	utc := t.Time.UTC()
+	utc := t.UTC()
 	if utc.Hour() == 0 && utc.Minute() == 0 && utc.Second() == 0 && utc.Nanosecond() == 0 {
 		return []byte(`"` + utc.Format("2006-01-02") + `"`), nil
 	}
@@ -47,7 +47,7 @@ func (t LicenseTime) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON accepts both "YYYY-MM-DD" (Kotlin's compact form) and full
 // RFC3339, matching the canonical wire format produced by either runtime.
-func (t *LicenseTime) UnmarshalJSON(data []byte) error {
+func (t *Time) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
 		return fmt.Errorf("license date: %w", err)
@@ -84,9 +84,9 @@ type Instance struct {
 	Tenant     string          `json:"tenant"`
 	Priority   int64           `json:"priority"`
 	IssuedTo   string          `json:"issuedTo"`
-	IssuedAt   LicenseTime     `json:"issuedAt"`
-	ValidFrom  LicenseTime     `json:"validFrom"`
-	ValidUntil LicenseTime     `json:"validUntil"`
+	IssuedAt   Time     `json:"issuedAt"`
+	ValidFrom  Time     `json:"validFrom"`
+	ValidUntil Time     `json:"validUntil"`
 	Content    json.RawMessage `json:"content"`
 	Signatures []Signature     `json:"signatures"`
 }
@@ -211,7 +211,7 @@ func writeCanonical(w *bytes.Buffer, v any) error {
 	default:
 		b, err := json.Marshal(v)
 		if err != nil {
-			return err
+			return fmt.Errorf("marshal value: %w", err)
 		}
 		w.Write(b)
 		return nil
@@ -221,7 +221,7 @@ func writeCanonical(w *bytes.Buffer, v any) error {
 func writeJSONString(w *bytes.Buffer, s string) error {
 	b, err := json.Marshal(s)
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal string: %w", err)
 	}
 	w.Write(b)
 	return nil
@@ -248,7 +248,7 @@ func verifySignature(content []byte, sig Signature) (bool, error) {
 	data = append(data, content...)
 	data = append(data, []byte(sig.Time)...)
 	if err := cert.CheckSignature(cert.SignatureAlgorithm, data, sig.Signature); err != nil {
-		return false, err
+		return false, fmt.Errorf("check signature: %w", err)
 	}
 	return true, nil
 }

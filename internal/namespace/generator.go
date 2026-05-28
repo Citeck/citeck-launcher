@@ -195,6 +195,22 @@ func generateMongoDB(ctx *NsGenContext) {
 	app.AddPort(fmt.Sprintf("27017:%d", MongoPort))
 	app.AddVolume("mongo2:/data/db")
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "512m"}}
+	// StartupCondition: same exec probe as liveness, polled until ping
+	// succeeds. Without this mongo jumps straight to RUNNING the moment the
+	// container is up and liveness (below) starts firing while mongod is
+	// still loading WiredTiger / replaying the journal. With FailureThreshold:3
+	// that race could restart a healthy mongo within 90 s of start — same
+	// failure mode as the pre-fix zookeeper case. Cold-start ping passes
+	// within a few seconds on a populated volume, so happy-path startup time
+	// is unchanged.
+	app.StartupConditions = []appdef.StartupCondition{
+		{Probe: &appdef.AppProbeDef{
+			Exec:             &appdef.ExecProbeDef{Command: []string{"mongo", "--quiet", "--eval", "db.adminCommand('ping')"}},
+			PeriodSeconds:    5,
+			FailureThreshold: 60,
+			TimeoutSeconds:   5,
+		}},
+	}
 	app.LivenessProbe = &appdef.AppProbeDef{
 		Exec:             &appdef.ExecProbeDef{Command: []string{"mongo", "--quiet", "--eval", "db.adminCommand('ping')"}},
 		FailureThreshold: 3,
@@ -287,6 +303,28 @@ func generateZookeeper(ctx *NsGenContext) {
 	app.AddEnv("ZOO_DATA_LOG_DIR", "/citeck/zookeeper/datalog")
 	app.AddVolume("zookeeper2:/citeck/zookeeper")
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "512m"}}
+	// StartupCondition: poll the admin server until /commands/ruok is up. The
+	// ZK process opens 2181 in a few seconds but the embedded Jetty admin
+	// (port 8080) lags 10–30 s behind on cold start, depending on JVM warmup.
+	// Without a startup probe the app jumps straight to RUNNING and the
+	// liveness probe (below) starts checking immediately, racing the admin
+	// server start and accumulating spurious failures → restart loop
+	// (observed: ↻8 within 30 min of testing).
+	//
+	// PeriodSeconds:5 + FailureThreshold:60 caps the wait at 5 minutes — well
+	// past the worst observed cold-start. Startup time itself isn't extended
+	// for the happy path: the first ruok succeeds within ~15 s and the app
+	// transitions to RUNNING then, identical to the pre-fix path. Only the
+	// "admin still warming" window is now correctly classified as STARTING
+	// instead of RUNNING-with-failing-liveness.
+	app.StartupConditions = []appdef.StartupCondition{
+		{Probe: &appdef.AppProbeDef{
+			HTTP:             &appdef.HTTPProbeDef{Path: "/commands/ruok", Port: 8080},
+			PeriodSeconds:    5,
+			FailureThreshold: 60,
+			TimeoutSeconds:   5,
+		}},
+	}
 	app.LivenessProbe = &appdef.AppProbeDef{
 		HTTP:             &appdef.HTTPProbeDef{Path: "/commands/ruok", Port: 8080},
 		FailureThreshold: 3,
@@ -320,11 +358,15 @@ func generateRabbitMQ(ctx *NsGenContext) {
 			TimeoutSeconds:   10,
 		}},
 	}
-	app.LivenessProbe = &appdef.AppProbeDef{
-		Exec:             &appdef.ExecProbeDef{Command: []string{"rabbitmq-diagnostics", "check_running", "-q"}},
-		FailureThreshold: 3,
-		TimeoutSeconds:   5,
-	}
+	// No LivenessProbe (Kotlin v1.3.8 parity). rabbitmq-diagnostics spawns a
+	// short-lived Erlang VM for the check — at the 256m memory limit that
+	// pushes the long-lived RMQ process into the kill zone often enough that
+	// a default-aggressive liveness (3× / 30s) restarts a healthy broker
+	// mid-operation. Init actions run after the startup probe; restarting
+	// the container while they're in flight strands set_permissions /
+	// set_user_tags in a "rabbit app not running" state, breaking webapp
+	// auth. StartupConditions still gate readiness; container exit codes
+	// still surface real crashes without polling.
 
 	// Ensure the stable "citeck" SA user exists in RabbitMQ. Webapps connect
 	// as this user so admin-password changes never require recreating webapp
@@ -1233,6 +1275,7 @@ func applyEappsInitContainers(name string, app *AppBuilder, ctx *NsGenContext) {
 // is created/synced in RabbitMQ by generateRabbitMQ's InitActions.
 func addWebappInfraEnv(app *AppBuilder, ctx *NsGenContext) {
 	app.AddEnv("ECOS_WEBAPP_RABBITMQ_HOST", RMQHost)
+	app.AddEnv("ECOS_WEBAPP_RABBITMQ_PORT", fmt.Sprintf("%d", RMQPort))
 	if ctx.Secrets.CiteckSA != "" {
 		app.AddEnv("ECOS_WEBAPP_RABBITMQ_USERNAME", CiteckSAUser)
 		app.AddEnv("ECOS_WEBAPP_RABBITMQ_PASSWORD", ctx.Secrets.CiteckSA)

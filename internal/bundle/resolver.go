@@ -2,6 +2,7 @@ package bundle
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -23,10 +24,16 @@ import (
 // probe can treat this as a benign outcome via errors.Is(err, ErrNoBundles).
 var ErrNoBundles = errors.New("no bundles found")
 
+// DefaultBundlesRepo is the canonical launcher-workspace git remote. Exported
+// so daemon code (workspace CRUD routes, helpers) can reuse the same value
+// without duplicating the URL.
+const DefaultBundlesRepo = "https://github.com/Citeck/launcher-workspace.git"
+
+// DefaultBundlesBranch is the canonical branch on DefaultBundlesRepo.
+const DefaultBundlesBranch = "main"
+
 const (
-	defaultBundlesRepo   = "https://github.com/Citeck/launcher-workspace.git"
-	defaultBundlesBranch = "main"
-	defaultPullPeriod    = time.Hour
+	defaultPullPeriod = time.Hour
 )
 
 // ImageRepo maps a short prefix like "core" to a full registry URL like "nexus.citeck.ru".
@@ -143,15 +150,87 @@ type AlfrescoProps struct {
 
 // LicenseInstance represents a Citeck enterprise license.
 type LicenseInstance struct {
-	ID         string `json:"id" yaml:"id"`
-	Tenant     string `json:"tenant" yaml:"tenant"`
-	Priority   int64  `json:"priority" yaml:"priority"`
-	IssuedTo   string `json:"issuedTo" yaml:"issuedTo"`
-	IssuedAt   string `json:"issuedAt" yaml:"issuedAt"`
-	ValidFrom  string `json:"validFrom" yaml:"validFrom"`
-	ValidUntil string `json:"validUntil" yaml:"validUntil"`
-	Content    any    `json:"content" yaml:"content"`
-	Signatures []any  `json:"signatures" yaml:"signatures"`
+	ID         string             `json:"id" yaml:"id"`
+	Tenant     string             `json:"tenant" yaml:"tenant"`
+	Priority   int64              `json:"priority" yaml:"priority"`
+	IssuedTo   string             `json:"issuedTo" yaml:"issuedTo"`
+	IssuedAt   string             `json:"issuedAt" yaml:"issuedAt"`
+	ValidFrom  string             `json:"validFrom" yaml:"validFrom"`
+	ValidUntil string             `json:"validUntil" yaml:"validUntil"`
+	Content    any                `json:"content" yaml:"content"`
+	Signatures []LicenseSignature `json:"signatures" yaml:"signatures"`
+}
+
+// LicenseSignature mirrors Kotlin's LicenseSignature record. Signature and
+// Certificates are typed as `[]byte` so the downstream `json.Marshal` emits
+// base64 strings (Go's default for `[]byte`), which is what eapps' Jackson
+// expects for `byte[]` deserialization.
+//
+// YAML decoding requires the custom UnmarshalYAML below: yaml.v3 refuses to
+// decode `!!binary` straight into `[]byte`, and when the target was `any` it
+// stuffed the raw decoded bytes into a Go `string`. Marshalled to JSON, that
+// string surfaced as raw binary peppered with U+FFFD replacement chars — and
+// eapps' Jackson aborted with "Illegal character in base64 content" inside
+// LicensesZkProviderInitializer, leaving eapps in a permanent "STARTING".
+type LicenseSignature struct {
+	Time         string   `json:"time"`
+	Issuer       string   `json:"issuer"`
+	Signature    []byte   `json:"signature"`
+	Certificates [][]byte `json:"certificates"`
+}
+
+// UnmarshalYAML decodes a license signature from YAML, accepting both
+// `!!binary` (the canonical workspace-v1.yml form, emitted by the Kotlin
+// signing tool) and plain base64-encoded strings.
+func (s *LicenseSignature) UnmarshalYAML(node *yaml.Node) error {
+	var raw struct {
+		Time         string      `yaml:"time"`
+		Issuer       string      `yaml:"issuer"`
+		Signature    yaml.Node   `yaml:"signature"`
+		Certificates []yaml.Node `yaml:"certificates"`
+	}
+	if err := node.Decode(&raw); err != nil {
+		return fmt.Errorf("decode license signature: %w", err)
+	}
+	s.Time = raw.Time
+	s.Issuer = raw.Issuer
+	sig, err := decodeBinaryNode(&raw.Signature)
+	if err != nil {
+		return fmt.Errorf("decode signature bytes: %w", err)
+	}
+	s.Signature = sig
+	s.Certificates = make([][]byte, 0, len(raw.Certificates))
+	for i := range raw.Certificates {
+		cert, err := decodeBinaryNode(&raw.Certificates[i])
+		if err != nil {
+			return fmt.Errorf("decode certificate[%d]: %w", i, err)
+		}
+		s.Certificates = append(s.Certificates, cert)
+	}
+	return nil
+}
+
+// decodeBinaryNode reads a scalar holding base64-encoded bytes. yaml.v3
+// preserves the raw base64 literal in node.Value for `!!binary`-tagged scalars
+// (it does not auto-decode), and an untagged scalar carries the same kind of
+// payload from manually-base64'd workspace YAMLs. Either way we decode once.
+func decodeBinaryNode(n *yaml.Node) ([]byte, error) {
+	if n == nil || n.Value == "" {
+		return nil, nil
+	}
+	// Strip newlines/whitespace introduced by block scalars (`|-`) so the
+	// inner base64 is one contiguous string before decoding.
+	clean := strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == ' ' || r == '\t' {
+			return -1
+		}
+		return r
+	}, n.Value)
+	decoded, err := base64.StdEncoding.DecodeString(clean)
+	if err != nil {
+		return nil, fmt.Errorf("base64 decode: %w", err)
+	}
+	return decoded, nil
 }
 
 // SttSidecarProps configures the STT (speech-to-text) sidecar that proxies
@@ -207,7 +286,7 @@ type TokenLookupFunc func(authType string) string
 // the workspace repo (the one that owns workspace-v1.yml). Mirrors Kotlin's
 // WorkspaceDto fields consumed by WorkspacesService.loadWorkspaceConfig —
 // callers that don't supply this (CLI tools in server mode) fall through to
-// the hardcoded defaultBundlesRepo / defaultBundlesBranch / defaultPullPeriod.
+// the hardcoded DefaultBundlesRepo / DefaultBundlesBranch / defaultPullPeriod.
 type WorkspaceRepoOpts struct {
 	URL        string
 	Branch     string
@@ -235,7 +314,7 @@ func NewResolverWithAuth(dataDir string, tokenLookup TokenLookupFunc) *Resolver 
 }
 
 // WithWorkspaceRepo configures the active workspace's git repo settings.
-// When opts.URL is empty the resolver falls back to defaultBundlesRepo so
+// When opts.URL is empty the resolver falls back to DefaultBundlesRepo so
 // passing a partially populated struct (e.g. branch override only) still
 // works. Chainable.
 func (r *Resolver) WithWorkspaceRepo(opts WorkspaceRepoOpts) *Resolver {
@@ -306,7 +385,7 @@ func (r *Resolver) resolveWorkspace() (cfg *WorkspaceConfig, repoDir string) {
 // default — this lets a workspace ship with only a custom branch and still
 // inherit the canonical Citeck workspace URL.
 func (r *Resolver) workspaceRepoSettings() (url, branch string, pullPeriod time.Duration, token string) {
-	url, branch, pullPeriod = defaultBundlesRepo, defaultBundlesBranch, defaultPullPeriod
+	url, branch, pullPeriod = DefaultBundlesRepo, DefaultBundlesBranch, defaultPullPeriod
 	if r.wsRepoOpts == nil {
 		return url, branch, pullPeriod, ""
 	}
@@ -404,8 +483,8 @@ func shouldUseLocalBundles(wsRepoDir string, bundleRepo *BundlesRepo) bool {
 // syncBundleRepo clones or pulls the bundle git repository and returns its local directory.
 func (r *Resolver) syncBundleRepo(repoID string, bundleRepo *BundlesRepo) string {
 	repoDir := filepath.Join(r.dataDir, "bundles", repoID)
-	repoURL := defaultBundlesRepo
-	repoBranch := defaultBundlesBranch
+	repoURL := DefaultBundlesRepo
+	repoBranch := DefaultBundlesBranch
 	var repoToken string
 
 	if bundleRepo != nil {
@@ -703,8 +782,7 @@ type bundleEntry struct {
 }
 
 // walkBundles yields every bundle YAML file under root, computing the
-// Kotlin-equivalent key per file. Matches BundleUtils.loadKitsFiles semantics
-// (docs/porting/07 §4 reference points to it):
+// Kotlin-equivalent key per file. Matches BundleUtils.loadKitsFiles semantics:
 //
 //   - Recurses into all subdirectories.
 //   - For `.yml`/`.yaml` files, the key is the file's path relative to root,

@@ -42,8 +42,45 @@ export function MasterPasswordDialog({
   onSkip,
   onReset,
 }: MasterPasswordDialogProps) {
-  const { t } = useTranslation()
   const dialogRef = useRef<HTMLDialogElement>(null)
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (!dialog) return
+    if (open && !dialog.open) dialog.showModal()
+    else if (!open && dialog.open) dialog.close()
+  }, [open])
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="fixed inset-0 z-50 m-auto max-w-md w-full rounded-lg border border-border bg-card p-0 text-foreground backdrop:bg-black/50"
+      // No onClose: dialog is dismiss-only via explicit buttons (Kotlin parity).
+    >
+      {/* key resets form state on each open/close toggle — avoids setState-in-effect */}
+      <MasterPasswordForm
+        key={open ? 1 : 0}
+        mode={mode}
+        loading={loading}
+        error={error}
+        onSubmit={onSubmit}
+        onSkip={onSkip}
+        onReset={onReset}
+      />
+    </dialog>
+  )
+}
+
+interface MasterPasswordFormProps {
+  mode: MasterPasswordMode
+  loading: boolean
+  error: string | null
+  onSubmit: (password: string) => void | Promise<void>
+  onSkip?: () => void
+  onReset?: () => void | Promise<void>
+}
+
+function MasterPasswordForm({ mode, loading, error, onSubmit, onSkip, onReset }: MasterPasswordFormProps) {
+  const { t } = useTranslation()
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   // Two reveal flags so the confirm field toggles independently of the primary
@@ -52,24 +89,6 @@ export function MasterPasswordDialog({
   const [revealedConfirm, setRevealedConfirm] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
   const [localError, setLocalError] = useState<string | null>(null)
-
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (!dialog) return
-    if (open && !dialog.open) dialog.showModal()
-    else if (!open && dialog.open) dialog.close()
-  }, [open])
-
-  // Reset transient state when dialog opens.
-  useEffect(() => {
-    if (open) {
-      setPassword('')
-      setConfirmPassword('')
-      setRevealed(false)
-      setRevealedConfirm(false)
-      setLocalError(null)
-    }
-  }, [open])
 
   function submit() {
     setLocalError(null)
@@ -88,81 +107,75 @@ export function MasterPasswordDialog({
 
   return (
     <>
-      <dialog
-        ref={dialogRef}
-        className="fixed inset-0 z-50 m-auto max-w-md w-full rounded-lg border border-border bg-card p-0 text-foreground backdrop:bg-black/50"
-        // No onClose: dialog is dismiss-only via explicit buttons (Kotlin parity).
-      >
-        <div className="p-6">
-          <h2 className="text-lg font-semibold mb-2">
-            {mode === 'kotlin-decrypt' && t('migration.title')}
-            {mode === 'create' && t('migration.setupPassword.title')}
-            {mode === 'ask' && t('migration.unlock.title')}
-          </h2>
-          <p className="text-sm text-muted-foreground mb-4">
-            {mode === 'kotlin-decrypt' && t('migration.description')}
-            {mode === 'create' && t('migration.setupPassword.description')}
-            {mode === 'ask' && t('migration.unlock.description')}
-          </p>
+      <div className="p-6">
+        <h2 className="text-lg font-semibold mb-2">
+          {mode === 'kotlin-decrypt' && t('migration.title')}
+          {mode === 'create' && t('migration.setupPassword.title')}
+          {mode === 'ask' && t('migration.unlock.title')}
+        </h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          {mode === 'kotlin-decrypt' && t('migration.description')}
+          {mode === 'create' && t('migration.setupPassword.description')}
+          {mode === 'ask' && t('migration.unlock.description')}
+        </p>
 
-          <PasswordField
-            value={password}
-            onChange={setPassword}
-            revealed={revealed}
-            onToggleReveal={() => setRevealed((r) => !r)}
-            onEnter={submit}
-            autoFocus
-          />
+        <PasswordField
+          value={password}
+          onChange={setPassword}
+          revealed={revealed}
+          onToggleReveal={() => setRevealed((r) => !r)}
+          onEnter={submit}
+          autoFocus
+        />
 
-          {mode === 'create' && (
-            <div className="mt-2">
-              <PasswordField
-                value={confirmPassword}
-                onChange={setConfirmPassword}
-                revealed={revealedConfirm}
-                onToggleReveal={() => setRevealedConfirm((r) => !r)}
-                onEnter={submit}
-                placeholder={t('migration.password.confirmPlaceholder')}
-              />
-            </div>
+        {mode === 'create' && (
+          <div className="mt-2">
+            <PasswordField
+              value={confirmPassword}
+              onChange={setConfirmPassword}
+              revealed={revealedConfirm}
+              onToggleReveal={() => setRevealedConfirm((r) => !r)}
+              onEnter={submit}
+              placeholder={t('migration.password.confirmPlaceholder')}
+            />
+          </div>
+        )}
+
+        {showError && <p className="text-destructive text-sm mt-2">{showError}</p>}
+
+        <div className="mt-4 flex items-center justify-between gap-2 flex-wrap">
+          {mode === 'ask' && onReset && (
+            <button
+              type="button"
+              className="text-xs text-destructive/80 hover:text-destructive"
+              onClick={() => setConfirmReset(true)}
+              disabled={loading}
+            >
+              {t('migration.unlock.reset')}
+            </button>
           )}
-
-          {showError && <p className="text-destructive text-sm mt-2">{showError}</p>}
-
-          <div className="mt-4 flex items-center justify-between gap-2 flex-wrap">
-            {mode === 'ask' && onReset && (
+          <div className="flex items-center gap-2 ml-auto">
+            {onSkip && (mode === 'kotlin-decrypt' || mode === 'ask') && (
               <button
                 type="button"
-                className="text-xs text-destructive/80 hover:text-destructive"
-                onClick={() => setConfirmReset(true)}
+                className="text-sm text-muted-foreground hover:text-foreground"
+                onClick={onSkip}
                 disabled={loading}
               >
-                {t('migration.unlock.reset')}
+                {t('migration.skip')}
               </button>
             )}
-            <div className="flex items-center gap-2 ml-auto">
-              {onSkip && (mode === 'kotlin-decrypt' || mode === 'ask') && (
-                <button
-                  type="button"
-                  className="text-sm text-muted-foreground hover:text-foreground"
-                  onClick={onSkip}
-                  disabled={loading}
-                >
-                  {t('migration.skip')}
-                </button>
-              )}
-              <button
-                type="button"
-                className="rounded bg-primary text-primary-foreground px-4 py-1.5 text-sm font-medium disabled:opacity-50"
-                onClick={submit}
-                disabled={loading || !password || (mode === 'create' && !confirmPassword)}
-              >
-                {loading ? '…' : mode === 'ask' ? t('migration.unlock.confirm') : t('migration.confirm')}
-              </button>
-            </div>
+            <button
+              type="button"
+              className="rounded bg-primary text-primary-foreground px-4 py-1.5 text-sm font-medium disabled:opacity-50"
+              onClick={submit}
+              disabled={loading || !password || (mode === 'create' && !confirmPassword)}
+            >
+              {loading ? '…' : mode === 'ask' ? t('migration.unlock.confirm') : t('migration.confirm')}
+            </button>
           </div>
         </div>
-      </dialog>
+      </div>
 
       <ConfirmModal
         open={confirmReset}

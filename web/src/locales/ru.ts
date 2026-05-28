@@ -513,6 +513,7 @@ const ru: Translations = {
   'namespace.dialog.edit': 'Редактировать namespace',
   'namespace.form.name': 'Имя',
   'namespace.form.bundlesRepo': 'Репозиторий бандлов',
+  'namespace.form.bundles.refresh': 'Обновить список бандлов (git pull)',
   'namespace.form.bundleKey': 'Бандл',
   'namespace.form.snapshot': 'Снэпшот',
   'namespace.form.authType': 'Тип аутентификации',

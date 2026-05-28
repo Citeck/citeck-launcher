@@ -6,20 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Citeck Launcher manages Citeck namespaces and Docker containers. It is a single Go binary (~24 MB) that serves as both CLI and daemon. The embedded React Web UI is served over TCP by the server-mode daemon (port configurable via `daemon.yml`; disabled with `--no-ui`); desktop mode renders the same Web UI through a Wails webview that talks to the daemon over the Unix socket.
 
-### History
-
-This is a **Go rewrite** (v2.0) of the original Kotlin/JVM launcher (v1.x). The Kotlin source is in the same repo under tags `v1.0.0`–`v1.3.9` (branch `master` before Go rewrite). Use `git show v1.3.8:path/to/file` to read Kotlin source.
-
-**Kotlin launcher key details:**
-- Built with Gradle, Kotlin, Compose Desktop (JVM)
-- Storage: H2 MVStore (`storage.db`) — binary key-value store with compressed chunks
-- Secrets: AES-256-GCM encrypted with master password (PBKDF2-HMAC-SHA256, 1M iterations, 16-byte salt)
-- Encrypted payload: `EncryptedStorage { key: KeyParams, alg: 0, iv: byte[], tagLen: 128, data: byte[] }`
-- Entity storage: JSON serialized to ByteArray in MVStore maps like `entities/{wsId}!{entityType}`
-- Namespace configs stored in H2 (not as YAML files) under `entities/{wsId}!namespace`
-- Secrets stored encrypted in `secrets!data` map → key `"storage"` → encrypted blob containing all auth secrets
-- State: `launcher!state` (selectedWorkspace), `workspace-state!{wsId}` (selectedNamespace)
-- Key source files: `Database.kt`, `SecretsEncryptor.kt`, `SecretsStorage.kt`, `EncryptedStorage.kt`, `EntitiesService.kt`
+The repo also keeps the legacy Kotlin/JVM launcher under git tags `v1.0.0`–`v1.3.9` for reference and rollback (`git show v1.3.8:path/to/file`). The desktop migrator opens its H2 `storage.db` read-only on first start.
 
 ## Build & Development Commands
 
@@ -175,7 +162,7 @@ React 19 + Vite + TypeScript + Tailwind CSS 4. Embedded into Go binary via `go:e
 - **Template detachedApps**: workspace `namespaceTemplates[].detachedApps` applied on first start (no persisted state). Install wizard sets `template: "default"` in namespace.yml.
 - **`GetHashInput` stability** is a hard compatibility contract across versions — changes require migration
 - **Secrets**: AES-256-GCM per-secret encryption via `SecretService`; system secrets (JWT, OIDC, admin password, citeck SA) via `resolveOneSystemSecret` pattern
-- **citeck service account**: single shared SA named `citeck` (renamed from `citeck-launcher` in 2.1.0) used in two systems: (1) Keycloak master realm (admin role) for kcadm ops, (2) RabbitMQ (monitoring tag, vhost `/` full perms) for webapp AMQP auth and observer management-API monitoring. One 32-char random password stored as `_citeck_sa` system secret; `_launcher_sa` is auto-migrated on first read. Used by init script (kcadm.sh), admin password change handler, and webapp→Keycloak integration (`${KK_ADMIN_USER}/${KK_ADMIN_PASSWORD}` template vars + `ECOS_WEBAPP_RABBITMQ_USERNAME/_PASSWORD`). Survives snapshot import because Keycloak and RabbitMQ init actions create/sync the SA on every container start. The legacy `citeck-launcher` Keycloak user is deleted by the Keycloak init script after upgrade.
+- **citeck service account**: single shared SA named `citeck` used in two systems: (1) Keycloak master realm (admin role) for kcadm ops, (2) RabbitMQ (monitoring tag, vhost `/` full perms) for webapp AMQP auth and observer management-API monitoring. One 32-char random password stored as `_citeck_sa` system secret. Used by init script (kcadm.sh), admin password change handler, and webapp→Keycloak integration (`${KK_ADMIN_USER}/${KK_ADMIN_PASSWORD}` template vars + `ECOS_WEBAPP_RABBITMQ_USERNAME/_PASSWORD`). Survives snapshot import because Keycloak and RabbitMQ init actions create/sync the SA on every container start.
 - **Admin password**: generated on first server-mode start; seeded into both Keycloak realms (`master` via `KC_BOOTSTRAP_ADMIN_PASSWORD` on empty DB + `ecos-app` realm via init script) and shared with RabbitMQ / PgAdmin admin-UI users. Webapps do NOT use the admin user to connect to RabbitMQ — they use the stable `citeck` SA, so admin-password rotation never requires webapp recreation. Desktop mode always uses "admin". The Keycloak init script never touches the master realm `admin` password on re-run, so rotations done via `citeck setup admin-password` are preserved across container restarts.
 - **Admin password change** via `citeck setup admin-password`: rotates Keycloak `master` + `ecos-app` realms, RabbitMQ, and PgAdmin. The SA `citeck` password is stable (launcher uses it for internal Keycloak/RabbitMQ auth and must not lose access). Authenticates as the citeck SA → kcadm.sh set-password for `ecos-app` (fatal on failure), then `master` (best-effort — logged but non-fatal since the SA can still manage Keycloak), then rabbitmqctl change_password for the RabbitMQ admin user (UI only), then setup.py for PgAdmin. All runtime, no container restart; **no webapp reload** — webapps use the citeck SA for RabbitMQ and are unaffected by the admin-password change.
 - **Email config**: via env vars (`SPRING_MAIL_HOST/PORT/PROTOCOL`, `ECOS_NOTIFICATIONS_EMAIL_FROM_DEFAULT/FIXED`), NOT CloudConfig (disabled in server mode). When email configured, mailhog container is not generated and proxy skips `MAILHOG_TARGET` env.
@@ -202,7 +189,7 @@ React 19 + Vite + TypeScript + Tailwind CSS 4. Embedded into Go binary via `go:e
 
 ## Agent Testing Guide (server-side)
 
-Lessons from Phase 2 automated testing on a 16GB test server. Read before running server lifecycle tests.
+Constraints and tactics for automated server-side testing on a 16GB box. Read before running lifecycle tests.
 
 ### Memory management (critical)
 
@@ -238,7 +225,7 @@ Don't poll more frequently than 30s. Use `sleep 120 && check` in background task
 
 ### Keycloak and auth
 
-- **citeck SA** is the service account used for all launcher→Keycloak ops and webapp→RabbitMQ AMQP auth. Password in `/opt/citeck/conf/secrets/_citeck_sa.json` (encrypted; legacy `_launcher_sa.json` is auto-migrated on first read). Survives snapshot import. In Keycloak it has the master `admin` role; in RabbitMQ it has `monitoring` tag + vhost `/` full permissions.
+- **citeck SA** is the service account used for all launcher→Keycloak ops and webapp→RabbitMQ AMQP auth. Password in `/opt/citeck/conf/secrets/_citeck_sa.json` (encrypted). Survives snapshot import. In Keycloak it has the master `admin` role; in RabbitMQ it has `monitoring` tag + vhost `/` full permissions.
 - **Admin bootstrap password**: `docker exec citeck_keycloak_default printenv KC_BOOTSTRAP_ADMIN_PASSWORD` — one-time bootstrap for master admin, not the current password after snapshot restore.
 - **OIDC client secret**: `docker exec citeck_keycloak_default /opt/keycloak/bin/kcadm.sh ...` to fetch (see `internal/namespace/generator.go` init script).
 - **Gateway access**: OIDC token via `/realms/ecos-app/protocol/openid-connect/token` + `Authorization: Bearer <token>`.

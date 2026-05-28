@@ -82,7 +82,7 @@ func importWorkspaces(maps map[string]map[string]string, store storage.Store, re
 	}
 }
 
-func importNamespaces(homeDir string, maps map[string]map[string]string, result *MigrateResult) {
+func importNamespaces(homeDir string, maps map[string]map[string]string, _ storage.Store, result *MigrateResult) {
 	for mapName, entries := range maps {
 		// Match entities/{wsId}!namespace (not versions, not runtime)
 		if !strings.HasSuffix(mapName, "!namespace") {

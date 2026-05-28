@@ -41,7 +41,12 @@ export function Secrets() {
 
   const loadSecrets = useCallback(() => {
     setLoading(true)
-    getSecrets().then(setSecrets).catch((e) => setError(e.message)).finally(() => setLoading(false))
+    // SYSTEM secrets are daemon-managed (_jwt, _oidc, _citeck_sa) — hide from
+    // the user-facing list. Only user-added auth secrets belong here.
+    getSecrets()
+      .then((s) => setSecrets(s.filter((sec) => sec.type !== 'SYSTEM')))
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false))
   }, [])
 
   useEffect(() => { loadSecrets() }, [loadSecrets])

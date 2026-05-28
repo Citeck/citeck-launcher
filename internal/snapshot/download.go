@@ -28,7 +28,7 @@ var httpClient = &http.Client{
 	// Context cancellation is the proper way to abort.
 }
 
-// Kotlin parity retry policy (docs/porting/07-git-database-snapshots.md §3.2):
+// Kotlin parity retry policy:
 //
 //	REPEATS_LIMIT_TOTAL = 100 — absolute upper bound on retry attempts
 //	REPEATS_LIMIT_WITHOUT_PROGRESS = 3 — stall guard; resets on byte progress
@@ -101,7 +101,7 @@ func DownloadWithRetry(ctx context.Context, client *http.Client, rawURL, destPat
 	for {
 		if err := ctx.Err(); err != nil {
 			if lastErr != nil {
-				return fmt.Errorf("download %s: %w (last err: %v)", rawURL, err, lastErr)
+				return fmt.Errorf("download %s: %w", rawURL, errors.Join(err, lastErr))
 			}
 			return fmt.Errorf("download %s: %w", rawURL, err)
 		}
@@ -154,7 +154,7 @@ func DownloadWithRetry(ctx context.Context, client *http.Client, rawURL, destPat
 		// Constant delay; context-aware sleep so cancellation is responsive.
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("download %s: %w (last err: %v)", rawURL, ctx.Err(), err)
+			return fmt.Errorf("download %s: %w", rawURL, errors.Join(ctx.Err(), err))
 		case <-time.After(retryDelay):
 		}
 	}
@@ -264,7 +264,7 @@ func download(ctx context.Context, client *http.Client, rawURL, destPath, expect
 
 // stashOutdatedFile renames a stale file to "<base>_outdated_<YYYYMMDD_HHMMSS><ext>"
 // in the same directory so the failed download isn't silently deleted (Kotlin parity:
-// docs/porting/07 §3.2 — "rename old to <name>_outdated_<datetime>.zip"). The format
+// "rename old to <name>_outdated_<datetime>.zip"). The format
 // preserves the original extension (.zip, .part, etc.) so naive directory listings
 // still group the files. Returns an error if the rename fails; callers should fall
 // back to delete in that case (better to lose the bad file than to leave it where
@@ -280,7 +280,10 @@ func stashOutdatedFile(path string) error {
 	ext := filepath.Ext(base)
 	stem := strings.TrimSuffix(base, ext)
 	newName := stem + "_outdated_" + stamp + ext
-	return os.Rename(path, filepath.Join(dir, newName))
+	if err := os.Rename(path, filepath.Join(dir, newName)); err != nil {
+		return fmt.Errorf("stash outdated file: %w", err)
+	}
+	return nil
 }
 
 // StashOutdatedFile is exported so callers that perform their own SHA-256

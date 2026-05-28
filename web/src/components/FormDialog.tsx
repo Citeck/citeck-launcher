@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useMemo } from 'react'
 import { Eye, EyeOff, RefreshCw } from 'lucide-react'
 import { useTranslation } from '../lib/i18n'
+import { Select } from './Select'
 
 /**
  * Form values keyed by field key. Everything goes through this typed shape so
@@ -294,16 +295,15 @@ export function FormDialog({
 
                 {field.type === 'select' && (
                   <div className="flex items-center gap-1">
-                    <select
-                      className="flex-1 rounded border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary disabled:opacity-50"
+                    <Select
+                      className="flex-1"
                       value={(values[field.key] as string) ?? ''}
-                      onChange={(e) => setValue(field.key, e.target.value)}
+                      options={resolveOptions(field)}
+                      onChange={(v) => setValue(field.key, v)}
                       disabled={!enabled}
-                    >
-                      {resolveOptions(field).map((opt) => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                      ))}
-                    </select>
+                      required={field.required}
+                      placeholder={field.placeholder}
+                    />
                     {field.onManualUpdate && (
                       <button
                         type="button"

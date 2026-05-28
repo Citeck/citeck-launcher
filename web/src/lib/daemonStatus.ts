@@ -27,34 +27,40 @@ export const useDaemonStatusStore = create<DaemonStatusState>((set, get) => ({
     if (cached) return cached
     if (inFlight) return inFlight
     set({ loading: true, error: null })
-    inFlight = getDaemonStatus()
+    const promise: Promise<DaemonStatusDto | null> = getDaemonStatus()
       .then((s) => {
         set({ status: s, loading: false })
-        return s
+        return s as DaemonStatusDto | null
       })
       .catch((e) => {
         set({ error: String(e), loading: false })
         return null
       })
       .finally(() => {
-        inFlight = null
+        // Identity check — only clear the slot if it still points at our
+        // promise. A concurrent refresh() will have replaced inFlight with
+        // its own promise; we must not null it on its behalf or the next
+        // dedup check would issue a redundant third request.
+        if (inFlight === promise) inFlight = null
       })
-    return inFlight
+    inFlight = promise
+    return promise
   },
   refresh: async () => {
-    inFlight = getDaemonStatus()
+    const promise: Promise<DaemonStatusDto | null> = getDaemonStatus()
       .then((s) => {
         set({ status: s, loading: false, error: null })
-        return s
+        return s as DaemonStatusDto | null
       })
       .catch((e) => {
         set({ error: String(e), loading: false })
         return null
       })
       .finally(() => {
-        inFlight = null
+        if (inFlight === promise) inFlight = null
       })
-    return inFlight
+    inFlight = promise
+    return promise
   },
 }))
 

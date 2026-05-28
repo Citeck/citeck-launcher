@@ -167,7 +167,7 @@ func Migrate(homeDir string, store storage.Store) (*MigrateResult, error) {
 	slog.Info("H2 maps loaded", "count", len(maps))
 
 	importWorkspaces(maps, store, result)
-	importNamespaces(homeDir, maps, result)
+	importNamespaces(homeDir, maps, store, result)
 	importSecrets(maps, store, result)
 	importRuntimeState(homeDir, maps, result)
 	importGitRepos(maps, store, result)

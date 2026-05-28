@@ -27,7 +27,7 @@ interface CodeEditorProps {
 
 /**
  * Thin wrapper around CodeMirror 6 with syntax highlighting driven by file
- * extension. Matches Kotlin `EditorWindow` language table (docs/porting/03 §5.1):
+ * extension. Matches Kotlin `EditorWindow` language table:
  *   yml/yaml → YAML, kt/java → C-like, js → JavaScript, json → JSON,
  *   lua → Lua, Dockerfile → Dockerfile, sh → Unix shell, anything else → plain.
  *

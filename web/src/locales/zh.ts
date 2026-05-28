@@ -549,6 +549,7 @@ const zh: Translations = {
   'longOp.snapshot.rename': '正在重命名快照…',
   'longOp.snapshot.delete': '正在删除快照…',
   'longOp.snapshot.download': '正在下载快照…',
+  'namespace.form.bundles.refresh': '刷新 bundles (git pull)',
 }
 
 export default zh

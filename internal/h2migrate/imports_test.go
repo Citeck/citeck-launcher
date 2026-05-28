@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/storage"
 )
 
@@ -18,7 +19,7 @@ import (
 func runImports(homeDir string, maps map[string]map[string]string, store storage.Store) *MigrateResult {
 	result := &MigrateResult{}
 	importWorkspaces(maps, store, result)
-	importNamespaces(homeDir, maps, result)
+	importNamespaces(homeDir, maps, store, result)
 	importSecrets(maps, store, result)
 	importRuntimeState(homeDir, maps, result)
 	importGitRepos(maps, store, result)
@@ -393,6 +394,19 @@ func TestImportRuntimeStatePreservesDetachAndEdits(t *testing.T) {
 	require.Contains(t, apps, "eapps")
 	assert.Equal(t, "citeck/ecos-apps:2025.1.0", apps["eapps"].(map[string]any)["image"])
 
+	// Typed-field assertion on bundle.Def directly. The map[string]any
+	// inspection above only proves the round-trip JSON shape; if Def.Key's
+	// JSON tag ever drifted from "version" the map assertion would catch
+	// it, but the value-level invariant is clearer when read from the
+	// typed struct.
+	var typedState struct {
+		CachedBundle *bundle.Def `json:"cachedBundle"`
+	}
+	require.NoError(t, json.Unmarshal(stateBytes, &typedState))
+	require.NotNil(t, typedState.CachedBundle)
+	assert.Equal(t, "release/2025.1.0", typedState.CachedBundle.Key.Version)
+	assert.Equal(t, "citeck/ecos-apps:2025.1.0", typedState.CachedBundle.Applications["eapps"].Image)
+
 	assert.ElementsMatch(t, []string{"proxy/Caddyfile", "keycloak/init.sh"}, state.EditedFiles)
 
 	caddy, err := os.ReadFile(filepath.Join(volumesBase, "proxy", "Caddyfile")) //nolint:gosec // G304: test paths under t.TempDir()
@@ -475,7 +489,7 @@ func TestImportState_OnlyOtherWorkspaceSelectionsNoActive(t *testing.T) {
 
 	state, err := store.GetState()
 	require.NoError(t, err)
-	assert.Equal(t, "", state.WorkspaceID)
+	assert.Empty(t, state.WorkspaceID)
 	assert.Equal(t, "ns-1", state.SelectedNs["ws-1"])
 }
 

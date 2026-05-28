@@ -18,22 +18,19 @@ interface LoadingHintProps {
 }
 
 /**
- * Inline "Still loading…" hint. Mirrors Kotlin's LoadingScreen behavior
- * (docs/porting/02 §5.2): after {@link HINT_DELAY_MS} of continuous loading
- * the hint becomes visible with two recovery buttons.
+ * Inline "Still loading…" hint. Mirrors Kotlin's LoadingScreen behavior:
+ * after {@link HINT_DELAY_MS} of continuous loading the hint becomes
+ * visible with two recovery buttons.
  *
  * The component renders nothing during the first 30s, so embedding it is
  * cheap; parents just include it next to their loading skeleton.
  */
 export function LoadingHint({ active }: LoadingHintProps) {
   const { t } = useTranslation()
-  const [show, setShow] = useState(false)
+  const [timerFired, setTimerFired] = useState(false)
 
   useEffect(() => {
-    if (!active) {
-      setShow(false)
-      return
-    }
+    if (!active) return
     // Kotlin parity (LoadingScreen.kt:33-35): if a modal dialog is open, the
     // user is in an interactive flow — reset the start time instead of
     // accusing them of being stuck.
@@ -44,13 +41,18 @@ export function LoadingHint({ active }: LoadingHintProps) {
         return
       }
       if (Date.now() - startedAt >= HINT_DELAY_MS) {
-        setShow(true)
+        setTimerFired(true)
       }
     }, TICK_MS)
-    return () => clearInterval(interval)
+    return () => {
+      clearInterval(interval)
+      // Reset on cleanup (active→false) so a subsequent activation starts fresh.
+      setTimerFired(false)
+    }
   }, [active])
 
-  if (!show) return null
+  // show only while actively loading AND the timer has fired
+  if (!active || !timerFired) return null
 
   return (
     <div className="mt-6 max-w-md text-center">

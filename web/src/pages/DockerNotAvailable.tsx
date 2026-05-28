@@ -15,8 +15,7 @@ interface DockerNotAvailableProps {
 /**
  * Full-screen "Docker is not available" UI shown when the daemon's health
  * check reports the docker daemon as unreachable. Replaces the previous
- * inline banner inside Dashboard with a dedicated screen (Kotlin parity —
- * docs/porting/02 §6).
+ * inline banner inside Dashboard with a dedicated screen (Kotlin parity).
  *
  * "Installed but stopped" vs "missing" is heuristic — we don't have a
  * reliable "is docker binary present" signal from the daemon, so we treat
@@ -60,12 +59,3 @@ export function DockerNotAvailable({ error, installedButStopped, onRetry }: Dock
   )
 }
 
-/** Returns true if the daemon health message looks like "docker stopped" vs "docker missing". */
-export function detectInstalledButStopped(message: string): boolean {
-  const m = message.toLowerCase()
-  return m.includes('connection refused') ||
-    m.includes('connection reset') ||
-    m.includes('no such file') ||
-    m.includes('cannot connect') ||
-    m.includes('dial unix')
-}

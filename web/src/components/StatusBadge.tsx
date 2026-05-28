@@ -6,7 +6,7 @@ interface StatusBadgeProps {
   variant?: 'pill' | 'indicator'
 }
 
-// Kotlin parity (AppRuntimeStatus.kt) — category → hex. See docs/porting/02 §7.2.
+// Kotlin parity (AppRuntimeStatus.kt) — category → hex.
 const C_RUNNING = '#33AB50'
 const C_TRANSIENT = '#F4E909' // STARTING / PULLING / STOPPING / READY_*
 const C_STALLED = '#DB831D' // PULL_FAILED / START_FAILED / STOPPING_FAILED / STALLED / FAILED

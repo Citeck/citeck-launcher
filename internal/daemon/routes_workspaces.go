@@ -19,6 +19,8 @@ import (
 var (
 	errWorkspaceNotFound = errors.New("workspace not found")
 	errWorkspaceBusy     = errors.New("namespace is running; stop it before switching workspaces")
+	errNamespaceNotFound = errors.New("namespace not found")
+	errNamespaceBusy     = errors.New("namespace is running; stop it before switching")
 )
 
 // Multi-workspace endpoints (desktop only).
@@ -64,6 +66,59 @@ func validateRepoPullPeriod(p string) error {
 	return nil
 }
 
+// defaultWorkspaceID is the implicit workspace ID Kotlin v1.x reserved for the
+// no-config-needed bundles repo. Go inherits the convention: namespaces created
+// without a workspace land under `default`, but the workspace itself is never
+// written to the database unless the user explicitly customizes it.
+const defaultWorkspaceID = "default"
+
+// syntheticDefaultWorkspace returns the in-memory representation of the
+// implicit "default" workspace. Used everywhere the DB lookup would miss it
+// (fresh installs, migrations from Kotlin) so the UI's WorkspaceSelector
+// always sees both `default` and any user-created workspaces.
+func syntheticDefaultWorkspace() storage.WorkspaceDto {
+	return storage.WorkspaceDto{
+		ID:   defaultWorkspaceID,
+		Name: defaultWorkspaceID,
+	}
+}
+
+// listWorkspacesWithDefault returns the stored workspaces plus the implicit
+// "default" entry when no explicit row exists for it. The default is prepended
+// so it shows first in the picker (matches Kotlin v1.x ordering — default
+// workspace is the entry point on a fresh install).
+func (d *Daemon) listWorkspacesWithDefault() ([]storage.WorkspaceDto, error) {
+	list, err := d.store.ListWorkspaces()
+	if err != nil {
+		return nil, err
+	}
+	for i := range list {
+		if list[i].ID == defaultWorkspaceID {
+			return list, nil
+		}
+	}
+	return append([]storage.WorkspaceDto{syntheticDefaultWorkspace()}, list...), nil
+}
+
+// getWorkspaceWithDefault wraps store.GetWorkspace so callers receive a
+// synthetic record for the implicit "default" workspace when no row exists.
+// Returns (nil, nil) for unknown non-default IDs — same contract as the
+// underlying store.
+func (d *Daemon) getWorkspaceWithDefault(id string) (*storage.WorkspaceDto, error) {
+	ws, err := d.store.GetWorkspace(id)
+	if err != nil {
+		return nil, err
+	}
+	if ws != nil {
+		return ws, nil
+	}
+	if id == defaultWorkspaceID {
+		synth := syntheticDefaultWorkspace()
+		return &synth, nil
+	}
+	return nil, nil
+}
+
 // requireDesktop returns true and writes a 404 response when the daemon is not
 // running in desktop mode. All workspace CRUD/activate handlers guard with it.
 func (d *Daemon) requireDesktop(w http.ResponseWriter) bool {
@@ -79,7 +134,7 @@ func (d *Daemon) handleListWorkspaces(w http.ResponseWriter, _ *http.Request) {
 	if !d.requireDesktop(w) {
 		return
 	}
-	list, err := d.store.ListWorkspaces()
+	list, err := d.listWorkspacesWithDefault()
 	if err != nil {
 		writeInternalError(w, err)
 		return
@@ -116,7 +171,7 @@ func (d *Daemon) handleGetWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid workspace id")
 		return
 	}
-	ws, err := d.store.GetWorkspace(id)
+	ws, err := d.getWorkspaceWithDefault(id)
 	if err != nil {
 		writeInternalError(w, err)
 		return
@@ -191,6 +246,11 @@ func (d *Daemon) handleCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		pullPeriod = storage.DefaultRepoPullPeriod
 	}
 
+	if id == defaultWorkspaceID {
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeWorkspaceExists,
+			fmt.Sprintf("workspace %q is the reserved built-in default; pick a different id", id))
+		return
+	}
 	existing, err := d.store.GetWorkspace(id)
 	if err != nil {
 		writeInternalError(w, err)
@@ -234,6 +294,11 @@ func (d *Daemon) handleUpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !validateID(id) {
 		writeError(w, http.StatusBadRequest, "invalid workspace id")
+		return
+	}
+	if id == defaultWorkspaceID {
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeWorkspaceExists,
+			"workspace \"default\" is built-in and cannot be edited; its config is defined in code")
 		return
 	}
 	var req api.WorkspaceUpdateDto
@@ -293,6 +358,11 @@ func (d *Daemon) handleDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid workspace id")
 		return
 	}
+	if id == defaultWorkspaceID {
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeWorkspaceInUse,
+			"workspace \"default\" is built-in and cannot be deleted")
+		return
+	}
 	existing, err := d.store.GetWorkspace(id)
 	if err != nil {
 		writeInternalError(w, err)
@@ -335,19 +405,18 @@ func (d *Daemon) handleDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 //     workspace-state/{wsId} → SELECTED_NS_PROP) so re-activating the old
 //     workspace restores its namespace instead of dropping to Welcome.
 //   - Update d.workspaceID and d.dockerClient.
-//   - Clear nsConfig / bundleDef / appDefs / workspaceConfig / runtime so the
-//     UI sees a clean slate. The caller (UI) is expected to fetch
-//     /api/v1/namespaces and let the user pick one, which loads via the
-//     existing reload path.
-//
-// The current implementation does not auto-load a namespace from the new
-// workspace — that keeps this function side-effect-light and reuses the
-// existing namespace selection UX.
+//   - Auto-load the new workspace's last-selected namespace via loadNamespace
+//     (Kotlin parity — switching workspace lands the user on their previously
+//     active namespace, not Welcome). When no namespace was ever selected,
+//     or the load fails, daemon falls back to a clean "no namespace" state
+//     and the UI shows Welcome with the namespace picker.
 func (d *Daemon) SwitchWorkspace(wsID string) error {
 	if wsID == d.workspaceID {
 		return nil // no-op
 	}
-	ws, err := d.store.GetWorkspace(wsID)
+	// getWorkspaceWithDefault so switching to the built-in "default" works
+	// even when no row has ever been written to the DB.
+	ws, err := d.getWorkspaceWithDefault(wsID)
 	if err != nil {
 		return fmt.Errorf("lookup workspace: %w", err)
 	}
@@ -370,24 +439,6 @@ func (d *Daemon) SwitchWorkspace(wsID string) error {
 		return errWorkspaceBusy
 	}
 
-	// Tear down the previous runtime + docker client. Shutdown is a no-op when
-	// the runtime is already stopped; we still call it to drain dispatcher
-	// workers and prevent goroutine leaks.
-	if rt != nil {
-		rt.Shutdown()
-	}
-	if d.dockerClient != nil {
-		_ = d.dockerClient.Close()
-	}
-
-	// Recreate the docker client scoped to the new workspace. In server mode
-	// this code path is unreachable (requireDesktop guards), so we always
-	// include the workspace label.
-	newClient, err := docker.NewClient(wsID, "")
-	if err != nil {
-		return fmt.Errorf("create docker client for workspace %q: %w", wsID, err)
-	}
-
 	// Persist the switch. Errors here are logged but not fatal — the in-memory
 	// state still reflects the new workspace. Record oldWsID's current ns
 	// selection so re-activating the old workspace restores it.
@@ -407,7 +458,48 @@ func (d *Daemon) SwitchWorkspace(wsID string) error {
 			"wsID", wsID, "err", err)
 	}
 
+	// Determine the new workspace's target namespace BEFORE creating the
+	// docker client so the client is scoped to it via labels (otherwise
+	// GetContainers/GetVolumes return nothing and existing containers from
+	// a prior daemon session look like they "disappeared"). Persisted
+	// SelectedNs[wsID] wins; otherwise fall back to the first on-disk
+	// namespace (handles workspaces migrated from Kotlin v1.x that never
+	// had an explicit selection recorded).
+	newNsID := state.SelectedNs[wsID]
+	if newNsID == "" {
+		nsList, listErr := config.ListNamespacesInWorkspace(wsID)
+		if listErr != nil {
+			slog.Warn("Workspace switch: list namespaces failed", "wsID", wsID, "err", listErr)
+		} else if len(nsList) > 0 {
+			newNsID = nsList[0]
+			slog.Info("Workspace switch: no persisted ns selection, falling back to first on-disk", "wsID", wsID, "nsID", newNsID)
+		}
+	}
+
+	// Tear down the previous runtime + docker client. Shutdown is a no-op when
+	// the runtime is already stopped; we still call it to drain dispatcher
+	// workers and prevent goroutine leaks.
+	if rt != nil {
+		rt.Shutdown()
+	}
+	if d.dockerClient != nil {
+		_ = d.dockerClient.Close()
+	}
+
+	// Recreate the docker client scoped to the new (workspace, namespace) pair
+	// so container/volume queries via labels resolve correctly. nsID can be
+	// "" when the workspace has no namespaces yet — the client still
+	// constructs OK, just returns no matches until a namespace is loaded.
+	newClient, err := docker.NewClient(wsID, newNsID)
+	if err != nil {
+		return fmt.Errorf("create docker client for workspace %q: %w", wsID, err)
+	}
+
+	// Tear down any ACME renewal from the previous workspace's namespace
+	// before swapping in the new docker client + state.
 	d.configMu.Lock()
+	oldACME := d.acmeRenewal
+	oldCloudCfg := d.cloudCfgServer
 	d.workspaceID = wsID
 	d.dockerClient = newClient
 	d.runtime = nil
@@ -415,11 +507,54 @@ func (d *Daemon) SwitchWorkspace(wsID string) error {
 	d.bundleDef = nil
 	d.appDefs = nil
 	d.workspaceConfig = nil
+	d.cloudCfgServer = nil
 	d.systemSecrets = namespace.SystemSecrets{}
 	d.volumesBase = ""
+	d.acmeRenewal = nil
 	d.configMu.Unlock()
+	if oldACME != nil {
+		oldACME.Stop()
+	}
+	if oldCloudCfg != nil {
+		oldCloudCfg.Stop()
+	}
 
 	slog.Info("Workspace switched", "wsID", wsID) //nolint:gosec // G706: wsID validated by caller
+
+	// Auto-load the new workspace's last-selected namespace if any. newNsID
+	// was already resolved above (so the docker client could be scoped to
+	// it via labels). Failure is non-fatal: daemon stays in the "no
+	// namespace" state and the UI shows Welcome.
+	if newNsID == "" {
+		return nil
+	}
+	cfgPath := config.ResolveNamespaceConfigPath(wsID, newNsID)
+	if _, statErr := os.Stat(cfgPath); statErr != nil {
+		slog.Info("Workspace last-selected namespace missing, skipping auto-load", "wsID", wsID, "nsID", newNsID)
+		return nil
+	}
+	loaded, loadErr := loadNamespace(loadNamespaceInput{
+		Store:         d.store,
+		SecretService: d.secretService,
+		DockerClient:  d.dockerClient,
+		DaemonCfg:     d.daemonCfg,
+		Licenses:      d.licenses,
+		WorkspaceID:   wsID,
+		NamespaceID:   newNsID,
+		Desktop:       d.desktop,
+	})
+	if loadErr != nil {
+		slog.Warn("Workspace switch: auto-load namespace failed", "wsID", wsID, "nsID", newNsID, "err", loadErr)
+		return nil //nolint:nilerr // workspace switch succeeded; namespace auto-load is best-effort
+	}
+	if loaded.NsConfig == nil {
+		return nil
+	}
+	if err := d.installLoadedNamespace(loaded, wsID, newNsID); err != nil {
+		slog.Warn("Workspace switch: install loaded namespace failed", "wsID", wsID, "nsID", newNsID, "err", err)
+		return nil //nolint:nilerr // workspace switch succeeded; install failure is best-effort
+	}
+	slog.Info("Workspace switch: namespace auto-loaded", "wsID", wsID, "nsID", newNsID)
 	return nil
 }
 

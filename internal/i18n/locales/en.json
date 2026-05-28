@@ -317,5 +317,9 @@
   "setup.port.invalidNumber": "Invalid number.",
   "setup.port.outOfRange": "Port must be 1-65535.",
   "setup.s3.invalidUrl": "Invalid URL — must include scheme (e.g. https://s3.example.com).",
-  "setup.auth.usersRequired": "At least one user is required."
+  "setup.auth.usersRequired": "At least one user is required.",
+  "namespaces.dialog.title.locked": "Stop the namespace before switching (current: {status})",
+  "namespaces.col.active": "Active namespace",
+  "namespaces.switch.blocked": "Stop the current namespace before switching",
+  "namespaces.switch.success": "Switched to {name}"
 }

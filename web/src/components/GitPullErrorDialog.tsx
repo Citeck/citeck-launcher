@@ -14,7 +14,7 @@ interface GitPullErrorDialogProps {
 }
 
 /**
- * Port of Kotlin's `GitPullErrorDialog` (docs/porting/03 §1.7).
+ * Port of Kotlin's `GitPullErrorDialog`.
  *
  * Surfaces a recoverable git pull failure with three actions:
  *  - Retry — re-attempt the pull
@@ -22,8 +22,8 @@ interface GitPullErrorDialogProps {
  *    Kotlin: skipAvailable=true). The host portion of `repoUrl` is posted
  *    to /api/v1/git/skip-pull so the daemon suppresses pull operations
  *    against the same host for the next hour — sibling bundle / workspace
- *    repos hosted there won't re-prompt either (Kotlin parity, docs/porting/07
- *    §1.9 — `skipPullForRepoDecisionAt` map).
+ *    repos hosted there won't re-prompt either (Kotlin parity —
+ *    `skipPullForRepoDecisionAt` map).
  *  - Cancel — abort the higher-level operation (only when allowed by caller).
  */
 export function GitPullErrorDialog({ open, repoUrl, errorMessage, skipAvailable, cancelAvailable, onDecide }: GitPullErrorDialogProps) {
@@ -47,7 +47,7 @@ export function GitPullErrorDialog({ open, repoUrl, errorMessage, skipAvailable,
       postGitSkipPull(host, 3600).catch((err) => {
         // Surface in console so QA can spot daemon-side issues, but never
         // block the UI on this side-effect.
-        // eslint-disable-next-line no-console
+         
         console.warn('git skip-pull request failed:', err)
       })
     }

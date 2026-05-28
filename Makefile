@@ -21,7 +21,7 @@ endif
 
 GOLANGCI_LINT=$(GOBIN)/golangci-lint
 
-.PHONY: all build build-fast build-web build-desktop test test-unit test-race test-coverage \
+.PHONY: all build build-fast build-web build-desktop run test test-unit test-race test-coverage \
         lint fmt tidy tools clean help dev-daemon dev-desktop
 
 all: test build
@@ -31,6 +31,7 @@ help:
 	@echo "  make build          - Build Go binary + embed React web UI"
 	@echo "  make build-fast     - Build Go only (skip web rebuild)"
 	@echo "  make build-desktop  - Build desktop (Wails) binary"
+	@echo "  make run            - Build desktop binary and run it"
 	@echo "  make test           - Run all tests (Go + Vitest)"
 	@echo "  make test-unit      - Go unit tests only (./internal/...)"
 	@echo "  make test-race      - Go tests with race detector + timeout"
@@ -62,6 +63,9 @@ DESKTOP_TAGS := desktop,gtk3
 build-desktop: build-web
 	@mkdir -p $(BUILDDIR)
 	CGO_ENABLED=1 go build -tags "$(DESKTOP_TAGS)" $(GO_BUILD_FLAGS) -o $(DESKTOP) ./cmd/citeck-desktop
+
+run: build-desktop
+	./$(DESKTOP)
 
 test:
 	go test -race ./...

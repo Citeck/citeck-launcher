@@ -25,7 +25,13 @@ export function BottomPanel({ renderTab }: BottomPanelProps) {
 
   // Track which tabs have been activated at least once (lazy mount).
   // Uses the "adjust state during render" pattern (React-supported, no effect needed).
-  const [mounted, setMounted] = useState<Set<string>>(new Set())
+  // Seed `mounted` with the initial activeBottomTabId so a tab already active
+  // on first render (persisted store state, immediate-open via sidebar) mounts
+  // — without the seed, prevActiveTab == activeBottomTabId on first render and
+  // the diff branch below never fires.
+  const [mounted, setMounted] = useState<Set<string>>(
+    () => activeBottomTabId ? new Set([activeBottomTabId]) : new Set()
+  )
   const [prevActiveTab, setPrevActiveTab] = useState(activeBottomTabId)
   if (activeBottomTabId && activeBottomTabId !== prevActiveTab) {
     setPrevActiveTab(activeBottomTabId)

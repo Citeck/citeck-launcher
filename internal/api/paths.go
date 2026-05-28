@@ -66,7 +66,7 @@ const (
 
 	// GitSkipPull records a user "Skip" decision from GitPullErrorDialog so
 	// subsequent pulls against the same host no-op for the suppression window
-	// (Kotlin parity, docs/porting/07 §1.9 — 1 hour default).
+	// (Kotlin parity — 1 hour default).
 	GitSkipPull = APIV1 + "/git/skip-pull"
 )
 

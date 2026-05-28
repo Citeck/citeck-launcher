@@ -549,6 +549,7 @@ const ja: Translations = {
   'longOp.snapshot.rename': 'スナップショットの名前を変更中…',
   'longOp.snapshot.delete': 'スナップショットを削除中…',
   'longOp.snapshot.download': 'スナップショットをダウンロード中…',
+  'namespace.form.bundles.refresh': 'バンドルを更新 (git pull)',
 }
 
 export default ja

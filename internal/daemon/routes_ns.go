@@ -196,6 +196,101 @@ func (d *Daemon) handleGetForm(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, spec)
 }
 
+// --- Namespace activation ---
+
+// handleActivateNamespace switches the active namespace within the current
+// workspace. Desktop-only — server-mode has a single CLI-pinned namespace.
+//
+// Contract (Kotlin parity with NamespaceScreen.kt namespace-picker semantics):
+//   - Refuse when no target namespace is specified.
+//   - Refuse when the requested namespace doesn't exist on disk.
+//   - Refuse when the currently active namespace is not STOPPED (the user
+//     must stop running containers before switching).
+//   - On success: tear down the current runtime, build the new namespace's
+//     runtime via loadNamespace, atomically swap it into the daemon, and
+//     persist the selection in LauncherState.SelectedNs[wsID]. The new
+//     namespace is loaded in STOPPED state — the user clicks Start to run it.
+func (d *Daemon) handleActivateNamespace(w http.ResponseWriter, r *http.Request) {
+	if !d.requireDesktop(w) {
+		return
+	}
+	if !d.reloadMu.TryLock() {
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeReloadInProgress, "reload already in progress")
+		return
+	}
+	defer d.reloadMu.Unlock()
+
+	nsID := r.PathValue("id")
+	if !validateID(nsID) {
+		writeError(w, http.StatusBadRequest, "invalid namespace id")
+		return
+	}
+
+	d.configMu.RLock()
+	rt := d.runtime
+	wsID := d.workspaceID
+	curNs := ""
+	if d.nsConfig != nil {
+		curNs = d.nsConfig.ID
+	}
+	d.configMu.RUnlock()
+
+	if curNs == nsID {
+		writeJSON(w, api.ActionResultDto{Success: true, Message: "namespace already active"})
+		return
+	}
+	if rt != nil && rt.Status() != namespace.NsStatusStopped {
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeNamespaceRunning,
+			"current namespace is not stopped; stop it before switching")
+		return
+	}
+
+	// Target must exist on disk in the current workspace.
+	cfgPath := config.ResolveNamespaceConfigPath(wsID, nsID)
+	if _, err := os.Stat(cfgPath); err != nil {
+		writeErrorCode(w, http.StatusNotFound, api.ErrCodeAppNotFound,
+			fmt.Sprintf("namespace %q not found in workspace %q", nsID, wsID))
+		return
+	}
+
+	// Build the new namespace runtime BEFORE persisting the selection or
+	// tearing down current state — if loading fails, the daemon stays on
+	// the previous namespace and the user can retry without a restart.
+	loaded, err := loadNamespace(loadNamespaceInput{
+		Store:         d.store,
+		SecretService: d.secretService,
+		DockerClient:  d.dockerClient,
+		DaemonCfg:     d.daemonCfg,
+		Licenses:      d.licenses,
+		WorkspaceID:   wsID,
+		NamespaceID:   nsID,
+		Desktop:       d.desktop,
+	})
+	if err != nil {
+		writeInternalError(w, fmt.Errorf("load namespace %q: %w", nsID, err))
+		return
+	}
+	if loaded.NsConfig == nil {
+		writeErrorCode(w, http.StatusNotFound, api.ErrCodeAppNotFound,
+			fmt.Sprintf("namespace %q config could not be loaded", nsID))
+		return
+	}
+
+	// Atomically swap in the new namespace state. The old runtime's
+	// dispatcher / SSE / probes are torn down after the swap so external
+	// observers see a clean handoff. Switched namespace is loaded but NOT
+	// auto-started — user clicks Start (Kotlin parity).
+	if err := d.installLoadedNamespace(loaded, wsID, nsID); err != nil {
+		writeInternalError(w, err)
+		return
+	}
+
+	writeJSON(w, api.ActionResultDto{
+		Success: true,
+		Message: fmt.Sprintf("switched to namespace %q", loaded.NsConfig.Name),
+	})
+}
+
 // --- Namespace creation + Bundles ---
 
 //nolint:gocyclo,nestif // namespace creation orchestrates validation, template resolution, config generation, and async snapshot import
@@ -358,6 +453,48 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// Auto-activate the newly-created namespace in desktop mode when the
+	// daemon has no current namespace loaded (Welcome / quick-start flow).
+	// Without this, the UI's immediate postNamespaceStart() after createNamespace
+	// fails with "no namespace configured" because the on-disk config was
+	// written but never wired into d.runtime. We narrowly guard on no-current-ns
+	// so a user creating a second namespace from an already-loaded workspace
+	// keeps the current one active (they switch explicitly via the picker).
+	if config.IsDesktopMode() {
+		targetWsID := req.WorkspaceID
+		if targetWsID == "" {
+			targetWsID = d.workspaceID
+		}
+		d.configMu.RLock()
+		hasCurrent := d.runtime != nil && d.nsConfig != nil
+		activeWsID := d.workspaceID
+		d.configMu.RUnlock()
+		if !hasCurrent && targetWsID == activeWsID {
+			if d.reloadMu.TryLock() {
+				defer d.reloadMu.Unlock()
+				loaded, loadErr := loadNamespace(loadNamespaceInput{
+					Store:         d.store,
+					SecretService: d.secretService,
+					DockerClient:  d.dockerClient,
+					DaemonCfg:     d.daemonCfg,
+					Licenses:      d.licenses,
+					WorkspaceID:   activeWsID,
+					NamespaceID:   nsCfg.ID,
+					Desktop:       d.desktop,
+				})
+				if loadErr != nil {
+					slog.Warn("Auto-activate after create failed (load)", "nsID", nsCfg.ID, "err", loadErr)
+				} else if loaded.NsConfig != nil {
+					if err := d.installLoadedNamespace(loaded, activeWsID, nsCfg.ID); err != nil {
+						slog.Warn("Auto-activate after create failed (install)", "nsID", nsCfg.ID, "err", err)
+					} else {
+						slog.Info("Auto-activated newly-created namespace", "nsID", nsCfg.ID)
+					}
+				}
+			}
+		}
+	}
+
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("namespace %q created", nsCfg.Name)})
 }
 
@@ -448,8 +585,8 @@ func (d *Daemon) handlePutNamespaceEdit(w http.ResponseWriter, r *http.Request) 
 	current.Proxy.TLS.Enabled = req.TLSEnabled
 	current.PgAdmin.Enabled = req.PgAdminEnabled
 
-	if err := namespace.ValidateNamespaceConfig(current); err != nil {
-		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeInvalidConfig, err.Error())
+	if valErr := namespace.ValidateNamespaceConfig(current); valErr != nil {
+		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeInvalidConfig, valErr.Error())
 		return
 	}
 

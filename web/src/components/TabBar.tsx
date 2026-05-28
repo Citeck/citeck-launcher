@@ -20,42 +20,51 @@ export function TabBar() {
     }
   }, [location.pathname, tabs, activeTabId, setActiveTab])
 
+  // Hide the tab strip entirely when only the home tab exists — there's no
+  // navigation choice to offer, so the "Панель управления" pill is pure noise
+  // (Kotlin original had no IDE tabs at all on the dashboard view). Right-side
+  // controls (language, theme, settings) still render in a slim icon strip.
+  const showTabs = tabs.length > 1 || (tabs.length === 1 && tabs[0].id !== 'home')
+
   return (
     <div className="flex items-center border-b border-border bg-card shrink-0">
-      <div className="flex items-center overflow-x-auto flex-1 min-w-0 scrollbar-hide">
-        {tabs.map((tab) => {
-          const isActive = tab.id === activeTabId
-          return (
-            <div
-              key={tab.id}
-              className={`group flex items-center gap-1 px-3 py-1.5 text-xs border-r border-border cursor-pointer shrink-0 select-none ${
-                isActive
-                  ? 'bg-background text-foreground border-b-2 border-b-primary -mb-px'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-accent'
-              }`}
-              onClick={() => {
-                setActiveTab(tab.id)
-                navigate(tab.path)
-              }}
-            >
-              <span className="truncate max-w-[140px]">{tab.title}</span>
-              {tab.id !== 'home' && (
-                <button
-                  type="button"
-                  className="ml-0.5 p-0.5 rounded hover:bg-muted opacity-0 group-hover:opacity-100 transition-opacity"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    const navTo = closeTab(tab.id)
-                    if (navTo !== null) navigate(navTo)
-                  }}
-                >
-                  <X size={10} />
-                </button>
-              )}
-            </div>
-          )
-        })}
-      </div>
+      {showTabs && (
+        <div className="flex items-center overflow-x-auto flex-1 min-w-0 scrollbar-hide">
+          {tabs.map((tab) => {
+            const isActive = tab.id === activeTabId
+            return (
+              <div
+                key={tab.id}
+                className={`group flex items-center gap-1 px-3 py-1.5 text-xs border-r border-border cursor-pointer shrink-0 select-none ${
+                  isActive
+                    ? 'bg-background text-foreground border-b-2 border-b-primary -mb-px'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+                }`}
+                onClick={() => {
+                  setActiveTab(tab.id)
+                  navigate(tab.path)
+                }}
+              >
+                <span className="truncate max-w-[140px]">{tab.title}</span>
+                {tab.id !== 'home' && (
+                  <button
+                    type="button"
+                    className="ml-0.5 p-0.5 rounded hover:bg-muted opacity-0 group-hover:opacity-100 transition-opacity"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      const navTo = closeTab(tab.id)
+                      if (navTo !== null) navigate(navTo)
+                    }}
+                  >
+                    <X size={10} />
+                  </button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {!showTabs && <div className="flex-1" />}
       {/* Right-side buttons */}
       <div className="flex items-center border-l border-border shrink-0">
         <LanguageSelector />

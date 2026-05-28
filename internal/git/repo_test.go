@@ -242,7 +242,7 @@ func TestSyncStateStore_PersistsOnRecordSync(t *testing.T) {
 	require.True(t, ok, "entry must use forward-slash relative path")
 	assert.NotZero(t, got.LastSyncMs)
 	// No real git repo here, hash falls back to "" — confirms readHeadHash is best-effort.
-	assert.Equal(t, "", got.LastCommitHash)
+	assert.Empty(t, got.LastCommitHash)
 }
 
 func TestSyncStateStore_FaultsInOnFreshProcess(t *testing.T) {
@@ -269,7 +269,7 @@ func TestSyncStateStore_FaultsInOnFreshProcess(t *testing.T) {
 		DestDir:    destDir,
 		PullPeriod: time.Hour,
 	})
-	assert.NoError(t, err, "throttle must read persisted sync time")
+	require.NoError(t, err, "throttle must read persisted sync time")
 	assert.Equal(t, 1, store.getCalls, "fault-in must read the store exactly once")
 }
 

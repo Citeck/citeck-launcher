@@ -317,5 +317,9 @@
   "setup.port.invalidNumber": "Неверное число.",
   "setup.port.outOfRange": "Порт должен быть в диапазоне 1-65535.",
   "setup.s3.invalidUrl": "Некорректный URL — должен включать схему (например, https://s3.example.com).",
-  "setup.auth.usersRequired": "Нужен хотя бы один пользователь."
+  "setup.auth.usersRequired": "Нужен хотя бы один пользователь.",
+  "namespaces.dialog.title.locked": "Остановите namespace перед переключением (сейчас: {status})",
+  "namespaces.col.active": "Активный namespace",
+  "namespaces.switch.blocked": "Остановите текущий namespace перед переключением",
+  "namespaces.switch.success": "Переключено на {name}"
 }
