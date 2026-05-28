@@ -416,9 +416,12 @@ func generateKeycloak(ctx *NsGenContext) error {
 	// realms. Falls back to "admin" in tests where ctx.Secrets is empty.
 	app.AddEnv("KC_BOOTSTRAP_ADMIN_USERNAME", "admin")
 	app.AddEnv("KC_BOOTSTRAP_ADMIN_PASSWORD", ctx.Secrets.AdminPasswordOrDefault())
-	// Use strict HTTPS if TLS is enabled or if external host (behind reverse proxy)
-	strictHTTPS := ctx.TLSEnabled() || !ctx.IsLocalHost()
-	app.AddEnv("KC_HOSTNAME_STRICT_HTTPS", fmt.Sprintf("%v", strictHTTPS))
+	// STRICT_HTTPS forces KC to reject http:// redirect_uri / hostname. Enable
+	// when clients actually reach the platform over HTTPS (local TLS or a
+	// reverse proxy terminating TLS in front of a domain). Raw-IP HTTP-only
+	// deployments must keep it off — otherwise KC rejects the http:// redirect
+	// the browser is forced to use.
+	app.AddEnv("KC_HOSTNAME_STRICT_HTTPS", fmt.Sprintf("%v", ctx.PresumedHTTPS()))
 	app.AddDependsOn(appdef.AppPostgres)
 	app.AddVolume("./keycloak/ecos-app-realm.json:/opt/keycloak/data/import/ecos-app-realm.json")
 	app.AddVolume("./keycloak/healthcheck.sh:/healthcheck.sh")
@@ -1335,7 +1338,17 @@ func processWebappDataSources(appName string, app *AppBuilder, ctx *NsGenContext
 	webappCloudConfig := make(map[string]any)
 	extCloudConfig := make(map[string]any)
 
-	for dsKey, dsCfg := range dataSources {
+	// Sort datasource keys for deterministic iteration — postgres InitActions
+	// are appended in iteration order and feed into the deployment hash. A
+	// random map walk on a no-op reload would produce a different action
+	// ordering, hash-bust postgres, and trigger a spurious recreate.
+	dsKeys := make([]string, 0, len(dataSources))
+	for k := range dataSources {
+		dsKeys = append(dsKeys, k)
+	}
+	sort.Strings(dsKeys)
+	for _, dsKey := range dsKeys {
+		dsCfg := dataSources[dsKey]
 		url := resolveTemplateVars(dsCfg.URL)
 		dsPrefix := "ecos.webapp.dataSources." + dsKey
 

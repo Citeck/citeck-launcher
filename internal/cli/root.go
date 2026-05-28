@@ -45,6 +45,7 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 			if flagOutput == "json" {
 				output.SetFormat(output.FormatJSON)
 			}
+			ensureI18n()
 		},
 		SilenceUsage:  true,
 		SilenceErrors: true,

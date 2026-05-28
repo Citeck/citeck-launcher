@@ -46,16 +46,24 @@ func newStartCmd(version string) *cobra.Command {
 				return runDaemonMode(version, desktop, noUI, offline)
 			}
 
-			// If daemon is already running, send start command or stream status
-			if c := client.TryNew(clientOpts()); c != nil {
-				defer c.Close()
-				return startOnRunningDaemon(c, args, detach, follow)
-			}
+			// --foreground means "be the daemon" — used by systemd ExecStart.
+			// Don't peek at the socket: during `systemctl restart`, the previous
+			// daemon may still be detached but alive, and we'd silently fall back
+			// to client mode and exit, leaving the unit dead. Skip ahead to the
+			// foreground block which calls daemon.Start() (binds the socket and
+			// returns an error if it's truly in use).
+			if !foreground {
+				// If daemon is already running, send start command or stream status
+				if c := client.TryNew(clientOpts()); c != nil {
+					defer c.Close()
+					return startOnRunningDaemon(c, args, detach, follow)
+				}
 
-			// Daemon not running
-			if len(args) == 1 {
-				ensureI18n()
-				return errors.New(t("cli.daemonNotRunningStart"))
+				// Daemon not running
+				if len(args) == 1 {
+					ensureI18n()
+					return errors.New(t("cli.daemonNotRunningStart"))
+				}
 			}
 
 			// Server mode: require namespace.yml before starting
