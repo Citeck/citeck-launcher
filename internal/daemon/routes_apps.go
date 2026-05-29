@@ -565,15 +565,21 @@ func (d *Daemon) handlePutAppFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "path outside workspace")
 		return
 	}
-	if err := fsutil.AtomicWriteFile(absPath, body, 0o644); err != nil {
-		writeInternalError(w, err)
-		return
-	}
-	// Record the user edit so writeRuntimeFiles skips this path on the next
-	// reload/regenerate. Key is the canonical "<app>/<rel-path>" form (no
-	// leading "./") — same form the generator's Files map uses.
+	// Atomic: write the file AND mark it as edited under the same runtime
+	// lock so a regenerate already in-flight can't read a stale edited map
+	// and overwrite the user's content with the bundle template right after
+	// the write. Falling back to the legacy two-step write+SetFileEdited if
+	// the runtime is not available (server-mode test stubs).
 	if d.runtime != nil {
-		d.runtime.SetFileEdited(name, filePath, true)
+		if err := d.runtime.WriteEditedFile(filePath, absPath, body); err != nil {
+			writeInternalError(w, err)
+			return
+		}
+	} else {
+		if err := fsutil.AtomicWriteFile(absPath, body, 0o644); err != nil {
+			writeInternalError(w, err)
+			return
+		}
 	}
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "File updated"})
 }

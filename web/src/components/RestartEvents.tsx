@@ -24,7 +24,12 @@ export function RestartEvents({ active }: RestartEventsProps) {
     startTransition(async () => {
       const data = await fetchRestartEvents()
       if (!cancelled) {
-        setEvents([...data].reverse())
+        // The "Перезапуски" tab is reserved for non-user causes (OOM,
+        // liveness, stop-failed, pull-failed retries, …). New daemons no
+        // longer emit user_restart, but events persisted by an older
+        // daemon may still carry the reason — strip those at render time
+        // so old sessions don't show stale noise.
+        setEvents([...data].reverse().filter((e) => e.reason !== 'user_restart'))
       }
     })
     return () => { cancelled = true }

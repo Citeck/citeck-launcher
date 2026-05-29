@@ -9,6 +9,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
+	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/namespace/workers"
 )
 
@@ -222,6 +223,31 @@ func (r *Runtime) SetFileEdited(appName, relPath string, edited bool) {
 			slog.Warn("Failed to enqueue regenerate after SetFileEdited", "path", relPath, "err", err)
 		}
 	}
+}
+
+// WriteEditedFile atomically writes user-edited content for a mounted file
+// AND marks it as edited under a single r.mu hold. Without the atomic
+// combination, a regenerate that is already in-flight or already in the
+// queue can call writeRuntimeFiles with an editedFiles snapshot that
+// pre-dates the flag — and overwrite the just-written content with the
+// generator's template, leaving the user staring at "old value" on reopen.
+//
+// absPath MUST resolve under volumesBase (the caller validates this); we
+// re-use the existing fsutil.AtomicWriteFile here so a crash mid-write
+// leaves the previous file intact.
+func (r *Runtime) WriteEditedFile(relPath, absPath string, content []byte) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := fsutil.AtomicWriteFile(absPath, content, 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", absPath, err)
+	}
+	r.editedFiles[relPath] = true
+	r.persistState()
+	r.dirty.Store(false)
+	if err := r.cmdQueue.Enqueue(cmdRegenerate{}); err != nil {
+		slog.Warn("Failed to enqueue regenerate after WriteEditedFile", "path", relPath, "err", err)
+	}
+	return nil
 }
 
 // IsFileEdited reports whether relPath ("<app>/<rel-path>", no leading "./")
@@ -513,11 +539,14 @@ func (r *Runtime) RetryPullFailedApps() int {
 //     direct re-entry at READY_TO_PULL.
 //   - For already-in-progress states (PULLING / READY_TO_START / DEPS_WAITING):
 //     no-op — the app is already on the path.
-//   - For STOPPING: set desiredNext=READY_TO_PULL so T21 routes to READY_TO_PULL
-//     instead of STOPPED.
+//   - For STOPPING: set desiredNext=READY_TO_PULL set desiredNext=READY_TO_PULL so T21
+//     routes to READY_TO_PULL instead of STOPPED.
 //
-// Emits exactly one restart_event{reason:"user_restart"} via emitRestartEvent,
-// the sole write path for restart_event.
+// Restart counter is bumped but NO restart_event is emitted: the
+// "Перезапуски" tab is reserved for non-user causes (OOM, liveness,
+// stop-failed, pull-failed retries, …) — explicit user restarts would
+// just pollute the log with rows the user already knows about. Reason
+// `user_restart` is consequently no longer produced anywhere.
 func (r *Runtime) RestartApp(appName string) error { //nolint:gocyclo // single-pass dispatch over the per-status restart branches
 	r.mu.Lock()
 	if _, ok := r.apps[appName]; !ok {
@@ -596,12 +625,11 @@ func (r *Runtime) RestartApp(appName string) error { //nolint:gocyclo // single-
 		app.desiredNext = AppStatusReadyToPull
 		app.initialSweep = false
 		app.stoppingStartedAt = r.nowFunc()
-		r.emitRestartEvent(app, "user_restart", "", "")
 		r.incrementRestartCount(appName)
 		containerID := app.ContainerID
 		r.setAppStatus(app, AppStatusUpdating)
-		// RestartApp clears manualStoppedApps (re-attach) and appends a
-		// user_restart event — durable intent. Persist inline + clear r.dirty.
+		// RestartApp clears manualStoppedApps (re-attach) — durable intent.
+		// Persist inline + clear r.dirty. No restart_event emitted (UI policy).
 		r.persistState()
 		r.dirty.Store(false)
 		r.mu.Unlock()
@@ -625,11 +653,11 @@ func (r *Runtime) RestartApp(appName string) error { //nolint:gocyclo // single-
 			r.mu.Unlock()
 		}
 	case AppStatusStopped, AppStatusReadyToPull, AppStatusPullFailed:
-		// Direct re-entry to READY_TO_PULL — no container in flight.
-		r.emitRestartEvent(app, "user_restart", "", "")
+		// Direct re-entry to READY_TO_PULL — no container in flight. No
+		// restart_event for explicit user actions (UI policy).
 		r.incrementRestartCount(appName)
 		r.setAppStatus(app, AppStatusReadyToPull)
-		// Durable detach-clear + restart event. Persist inline + clear r.dirty.
+		// Durable detach-clear. Persist inline + clear r.dirty.
 		r.persistState()
 		r.dirty.Store(false)
 		r.mu.Unlock()
@@ -642,9 +670,8 @@ func (r *Runtime) RestartApp(appName string) error { //nolint:gocyclo // single-
 		// READY_TO_PULL on completion. STOPPING came from a user stop the
 		// caller now wants to flip into a restart — promote the status to
 		// UPDATING so the daemon log reflects the new intent. UPDATING was
-		// already on a recreate path; leave it alone. Emit a user_restart
-		// event either way so observers can distinguish this caller's intent.
-		r.emitRestartEvent(app, "user_restart", "", "")
+		// already on a recreate path; leave it alone. No restart_event for
+		// explicit user actions (UI policy).
 		r.incrementRestartCount(appName)
 		app.desiredNext = AppStatusReadyToPull
 		if app.Status == AppStatusStopping {

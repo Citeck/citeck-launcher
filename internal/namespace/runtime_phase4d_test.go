@@ -87,8 +87,9 @@ func TestRestartDetachedDepTriggersRegenerate(t *testing.T) {
 // TestRestartAppGoesThroughStoppingThenReadyToPull: sanity check for the
 // state-machine routing. RestartApp on a RUNNING app must transition through
 // STOPPING (desiredNext=READY_TO_PULL → T21 → READY_TO_PULL → T2/T3 → RUNNING).
-// Emits exactly one restart_event{reason:"user_restart"} via the single
-// emitRestartEvent write path.
+// Does NOT emit a restart_event — explicit user actions are excluded from the
+// "Перезапуски" log (UI policy); only non-user causes (OOM, liveness, etc.)
+// surface there.
 func TestRestartAppGoesThroughStoppingThenReadyToPull(t *testing.T) {
 	md := newMockDocker()
 	r := NewRuntime(testConfig(), md, t.TempDir())
@@ -136,7 +137,8 @@ func TestRestartAppGoesThroughStoppingThenReadyToPull(t *testing.T) {
 	assert.False(t, slices.Contains(seen, string(AppStatusStopping)),
 		"RestartApp must NOT route through STOPPING — that label is reserved for user-initiated stops; sequence: %v", seen)
 
-	// Exactly one restart_event with reason=user_restart.
+	// No restart_event for explicit user actions (UI policy). The restart
+	// counter is still bumped so the App table badge reflects the recreate.
 	r.mu.RLock()
 	var userRestarts int
 	for _, evt := range r.restartEvents {
@@ -146,7 +148,7 @@ func TestRestartAppGoesThroughStoppingThenReadyToPull(t *testing.T) {
 	}
 	postRestartCount := r.apps[def.Name].RestartCount
 	r.mu.RUnlock()
-	assert.Equal(t, 1, userRestarts, "expected exactly one user_restart event")
+	assert.Equal(t, 0, userRestarts, "expected no user_restart events (UI policy)")
 	assert.Equal(t, preRestartCount+1, postRestartCount,
 		"restart count must be bumped by exactly one (pre=%d post=%d)",
 		preRestartCount, postRestartCount)
@@ -199,11 +201,9 @@ func TestRapidRestartAppDoesNotOverlapStopContainers(t *testing.T) {
 		t.Fatalf("app did not settle back to RUNNING after rapid restart, got %s", status)
 	}
 
-	// Both RestartApp calls must emit user_restart. The second arrived while
-	// the app was STOPPING from the first; the STOPPING branch of RestartApp
-	// emits user_restart so observers can distinguish this caller's intent
-	// from the prior call's. Key invariant: emits are accurate (one per call)
-	// and the app does not end up STOPPING_FAILED.
+	// No user_restart events for explicit user actions (UI policy). The
+	// restart counter still tracks both calls; key invariant remains that
+	// the app does not end up STOPPING_FAILED.
 	r.mu.RLock()
 	var userRestarts int
 	for _, evt := range r.restartEvents {
@@ -212,7 +212,7 @@ func TestRapidRestartAppDoesNotOverlapStopContainers(t *testing.T) {
 		}
 	}
 	r.mu.RUnlock()
-	assert.Equal(t, 2, userRestarts, "expected exactly two user_restart events (one per RestartApp call)")
+	assert.Equal(t, 0, userRestarts, "expected no user_restart events (UI policy)")
 }
 
 // TestEventOrderWithinTick pins event ordering: within a single runtimeLoop
