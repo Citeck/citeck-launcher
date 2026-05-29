@@ -45,13 +45,24 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
     // controls what gets inserted when the user invokes indent.
     exts.push(EditorState.tabSize.of(2))
     exts.push(indentUnit.of('  '))
-    // Make CodeMirror's editor view paint its theme on the full parent
-    // rectangle even when content is short — without this the cm-scroller
-    // sizes to content height and the user sees a hard cut-off mid-window.
+    // Paint the editor surface on the full parent rectangle even when the
+    // file is short. @uiw/react-codemirror's outer wrapper takes the `height`
+    // prop, but the inner cm-editor / cm-scroller / cm-content default to
+    // content-sized layout — so a 19-line yaml inside a 700px window leaves
+    // a 500px dark band the user has to stare at. Force the inner stack to
+    // flex-fill its wrapper.
     exts.push(EditorView.theme({
-      '&': { height: '100%' },
-      '.cm-scroller': { minHeight: '100%' },
+      '&': {
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+      },
+      '.cm-scroller': {
+        flex: '1 1 auto',
+        minHeight: '0',
+      },
       '.cm-content': { minHeight: '100%' },
+      '.cm-gutters': { minHeight: '100%' },
     }))
     return exts
   }, [filename])
@@ -60,6 +71,12 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
     <CodeMirror
       value={value}
       height={height}
+      // Wrapper className: also force h-full on @uiw/react-codemirror's
+      // own outer div — its `height` prop sets a style on the wrapper, but
+      // h-full guarantees the inline style honours 100% even when the prop
+      // is omitted by a caller that just wants the editor to fill its
+      // flex parent.
+      className="h-full"
       extensions={extensions}
       onChange={(v) => onChange?.(v)}
       editable={!readOnly}
