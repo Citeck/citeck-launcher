@@ -102,3 +102,11 @@ func HasKey(key string) bool {
 
 // LocaleFS exposes the embedded locale filesystem for tests.
 var LocaleFS = localeFS
+
+// ResetForTest drops the loaded translations so the next EnsureI18n() call
+// re-runs the lookup-from-config path. Intended only for tests that assert on
+// init behavior; production code must never need this.
+func ResetForTest() {
+	cliTranslations = nil
+	cliFallback = nil
+}

@@ -308,6 +308,70 @@ func TestProcessWebappDataSources_JDBC(t *testing.T) {
 	}
 }
 
+// Pins the deterministic ordering of postgres init actions. A random map walk
+// over datasources used to feed postgres' InitActions in different orders on
+// each Generate(), so the deployment hash would flip on every no-op reload
+// and trigger a spurious postgres recreate. The hash is the contract here —
+// failing this means `citeck reload` will recreate postgres for no real
+// config change, briefly killing every webapp's DB connection.
+func TestProcessWebappDataSources_PostgresInitActionsDeterministic(t *testing.T) {
+	cfg := &Config{
+		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+	}
+	bun := &bundle.Def{
+		Applications: map[string]bundle.AppDef{
+			"emodel": {Image: "nexus.citeck.ru/emodel:1.0"},
+		},
+	}
+	// Many datasource keys with names that span the alphabet to make any
+	// non-deterministic walk show up as a hash difference across runs.
+	wsCfg := &bundle.WorkspaceConfig{
+		Webapps: []bundle.WebappConfig{{
+			ID: "emodel",
+			DefaultProps: bundle.WebappDefaultProps{
+				DataSources: map[string]bundle.DataSourceConfig{
+					"main":     {URL: "jdbc:postgresql://${PG_HOST}:${PG_PORT}/emodel"},
+					"audit":    {URL: "jdbc:postgresql://${PG_HOST}:${PG_PORT}/emodel_audit"},
+					"tracking": {URL: "jdbc:postgresql://${PG_HOST}:${PG_PORT}/emodel_tracking"},
+					"queue":    {URL: "jdbc:postgresql://${PG_HOST}:${PG_PORT}/emodel_queue"},
+					"history":  {URL: "jdbc:postgresql://${PG_HOST}:${PG_PORT}/emodel_history"},
+				},
+			},
+		}},
+	}
+
+	const runs = 20
+	var firstHash string
+	var firstInitActions []string
+	for i := 0; i < runs; i++ {
+		resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+		require.NoError(t, err)
+		var pgApp *appdef.ApplicationDef
+		for j := range resp.Applications {
+			if resp.Applications[j].Name == "postgres" {
+				pgApp = &resp.Applications[j]
+				break
+			}
+		}
+		require.NotNil(t, pgApp, "expected postgres app")
+		initStrings := make([]string, 0, len(pgApp.InitActions))
+		for _, ia := range pgApp.InitActions {
+			initStrings = append(initStrings, strings.Join(ia.Exec, " "))
+		}
+		hash := pgApp.GetHash()
+		if i == 0 {
+			firstHash = hash
+			firstInitActions = initStrings
+			continue
+		}
+		require.Equal(t, firstInitActions, initStrings,
+			"postgres InitActions ordering differs on run %d — datasource map walk is non-deterministic, this hash-busts postgres on every reload", i)
+		require.Equal(t, firstHash, hash,
+			"postgres hash differs on run %d — same input must produce the same deployment hash", i)
+	}
+}
+
 func TestProcessWebappDataSources_CloudConfigOnly(t *testing.T) {
 	// Test that cloudConfig from namespace config is merged even when there are no datasources
 	cfg := &Config{
