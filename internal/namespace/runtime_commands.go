@@ -186,9 +186,13 @@ func (r *Runtime) ResetAppDef(appName string) error {
 	r.dirty.Store(false)
 	// Trigger a regeneration so the original ApplicationDef is re-installed
 	// on the running runtime; without this the user would have to manually
-	// reload the namespace to see the reset take effect.
-	if err := r.cmdQueue.Enqueue(cmdRegenerate{}); err != nil {
-		slog.Warn("Failed to enqueue regenerate after ResetAppDef", "app", appName, "err", err)
+	// reload the namespace to see the reset take effect. Pass r.lastApps —
+	// an empty cmdRegenerate{} wipes r.apps because doRegenerate treats
+	// apps=nil as "every app removed from the desired set".
+	if len(r.lastApps) > 0 {
+		if err := r.cmdQueue.Enqueue(cmdRegenerate{apps: r.lastApps}); err != nil {
+			slog.Warn("Failed to enqueue regenerate after ResetAppDef", "app", appName, "err", err)
+		}
 	}
 	return nil
 }
@@ -218,8 +222,14 @@ func (r *Runtime) SetFileEdited(appName, relPath string, edited bool) {
 	}
 	r.persistState()
 	r.dirty.Store(false)
-	if edited {
-		if err := r.cmdQueue.Enqueue(cmdRegenerate{}); err != nil {
+	if edited && len(r.lastApps) > 0 {
+		// MUST pass the current desired set. cmdRegenerate{} with apps=nil
+		// makes doRegenerate treat every existing app as "removed from the
+		// desired set" and wipe r.apps, breaking subsequent findApp calls.
+		// When the runtime hasn't started yet (lastApps empty), there's
+		// nothing to recreate — the on-disk file alone is enough; the next
+		// Start will pick the new content up via VolumesContentHash.
+		if err := r.cmdQueue.Enqueue(cmdRegenerate{apps: r.lastApps}); err != nil {
 			slog.Warn("Failed to enqueue regenerate after SetFileEdited", "path", relPath, "err", err)
 		}
 	}
@@ -244,8 +254,15 @@ func (r *Runtime) WriteEditedFile(relPath, absPath string, content []byte) error
 	r.editedFiles[relPath] = true
 	r.persistState()
 	r.dirty.Store(false)
-	if err := r.cmdQueue.Enqueue(cmdRegenerate{}); err != nil {
-		slog.Warn("Failed to enqueue regenerate after WriteEditedFile", "path", relPath, "err", err)
+	// MUST pass the current desired set — see SetFileEdited for the same
+	// gotcha: an empty cmdRegenerate{} wipes r.apps because doRegenerate
+	// treats apps=nil as "every app removed from the desired set". Skip the
+	// regenerate when the runtime hasn't started yet (the on-disk file is
+	// enough; the next Start picks it up via VolumesContentHash).
+	if len(r.lastApps) > 0 {
+		if err := r.cmdQueue.Enqueue(cmdRegenerate{apps: r.lastApps}); err != nil {
+			slog.Warn("Failed to enqueue regenerate after WriteEditedFile", "path", relPath, "err", err)
+		}
 	}
 	return nil
 }
