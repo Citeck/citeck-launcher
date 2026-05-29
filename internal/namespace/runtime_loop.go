@@ -646,6 +646,7 @@ func (r *Runtime) handleInitResult(res workers.Result) {
 	if res.Err != nil {
 		// T10: STARTING → START_FAILED. Reset chain index so a T25 retry
 		// restarts init from the first container.
+		slog.Warn("Init container failed", "app", app.Name, "err", res.Err)
 		app.initStepIdx = 0
 		r.recordRetryAttempt(app.Name)
 		app.StatusText = res.Err.Error()
@@ -717,6 +718,7 @@ func (r *Runtime) handleStartResult(res workers.Result) {
 	}
 	if res.Err != nil {
 		// T13: STARTING → START_FAILED.
+		slog.Warn("Container start failed", "app", app.Name, "err", res.Err)
 		app.initStepIdx = 0
 		r.recordRetryAttempt(app.Name)
 		app.StatusText = res.Err.Error()
@@ -757,6 +759,7 @@ func (r *Runtime) handleProbeResult(res workers.Result) {
 	}
 	if res.Err != nil {
 		// T16b: STARTING → START_FAILED.
+		slog.Warn("Startup probe failed", "app", app.Name, "err", res.Err)
 		app.initStepIdx = 0
 		r.recordRetryAttempt(app.Name)
 		app.StatusText = res.Err.Error()
