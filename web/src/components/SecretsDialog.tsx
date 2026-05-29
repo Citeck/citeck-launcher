@@ -56,8 +56,10 @@ export function SecretsDialog({ open, onClose }: SecretsDialogProps) {
   const [createMasterOpen, setCreateMasterOpen] = useState(false)
   const [createMasterLoading, setCreateMasterLoading] = useState(false)
   const [createMasterError, setCreateMasterError] = useState('')
+  const [loading, setLoading] = useState(false)
 
   const reload = useCallback(() => {
+    setLoading(true)
     getSecrets()
       // SYSTEM secrets (_jwt, _oidc, _citeck_sa) are daemon-managed and have
       // sensible defaults — the user shouldn't see them in the Secrets UI
@@ -65,6 +67,7 @@ export function SecretsDialog({ open, onClose }: SecretsDialogProps) {
       // GIT_TOKEN / BASIC_AUTH / REGISTRY_AUTH entries belong here.
       .then((s) => setSecrets(s.filter((sec) => sec.type !== 'SYSTEM').map(toRow)))
       .catch((e) => toast((e as Error).message, 'error'))
+      .finally(() => setLoading(false))
   }, [])
 
   useEffect(() => {
@@ -224,6 +227,7 @@ export function SecretsDialog({ open, onClose }: SecretsDialogProps) {
         data={secrets}
         rowActions={rowActions}
         onCreate={() => setCreateOpen(true)}
+        loading={loading}
       />
       <FormDialog
         open={createOpen}

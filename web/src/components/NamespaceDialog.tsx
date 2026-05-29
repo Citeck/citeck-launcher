@@ -46,6 +46,7 @@ export function NamespaceDialog({ open, onClose, onOpened }: NamespaceDialogProp
   const resetPanels = usePanelStore((s) => s.resetPanels)
 
   const [rows, setRows] = useState<NamespaceRow[]>([])
+  const [loading, setLoading] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<NamespaceRow | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [editTarget, setEditTarget] = useState<NamespaceRow | null>(null)
@@ -59,6 +60,7 @@ export function NamespaceDialog({ open, onClose, onOpened }: NamespaceDialogProp
   const canSwitch = !activeNsID || activeStatus === 'STOPPED'
 
   const reload = useCallback(() => {
+    setLoading(true)
     getNamespaces()
       .then((ns) => setRows(ns.map((n) => ({
         id: n.id,
@@ -68,6 +70,7 @@ export function NamespaceDialog({ open, onClose, onOpened }: NamespaceDialogProp
         workspaceId: n.workspaceId,
       }))))
       .catch((e) => toast((e as Error).message, 'error'))
+      .finally(() => setLoading(false))
   }, [])
 
   useEffect(() => {
@@ -200,6 +203,7 @@ export function NamespaceDialog({ open, onClose, onOpened }: NamespaceDialogProp
         closeWhenEmpty={false}
         selectable={canSwitch && !switching}
         onSelect={(sel) => { if (sel.length === 1) void switchToNamespace(sel[0]) }}
+        loading={loading}
       />
       <ConfirmModal
         open={!!deleteTarget}

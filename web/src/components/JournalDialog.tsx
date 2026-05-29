@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useMemo } from 'react'
-import { Search, X, Plus } from 'lucide-react'
+import { Loader2, Search, X, Plus } from 'lucide-react'
 import { useTranslation } from '../lib/i18n'
 
 /**
@@ -66,6 +66,10 @@ interface JournalDialogProps<T extends Record<string, unknown>> {
   onCreate?: () => void
   /** When true, auto-closes when the table becomes empty (Kotlin `closeWhenAllRecordsDeleted`). */
   closeWhenEmpty?: boolean
+  /** Shows a spinner row instead of the "no data" placeholder while data
+   *  is being fetched, so the dialog doesn't flash "Нет данных" on open
+   *  for caller fetches that take a few hundred ms. */
+  loading?: boolean
 }
 
 /**
@@ -89,6 +93,7 @@ export function JournalDialog<T extends Record<string, unknown>>({
   customButtons,
   onCreate,
   closeWhenEmpty = false,
+  loading = false,
 }: JournalDialogProps<T>) {
   const { t } = useTranslation()
   const dialogRef = useRef<HTMLDialogElement>(null)
@@ -321,7 +326,12 @@ export function JournalDialog<T extends Record<string, unknown>>({
                     colSpan={columns.length + (selectable ? 1 : 0) + (rowActions && rowActions.length > 0 ? 1 : 0)}
                     className="py-4 text-center text-muted-foreground"
                   >
-                    {search ? t('journal.noMatchingRows') : t('journal.noData')}
+                    {loading ? (
+                      <span className="inline-flex items-center gap-2">
+                        <Loader2 size={14} className="animate-spin" />
+                        {t('common.loading')}
+                      </span>
+                    ) : search ? t('journal.noMatchingRows') : t('journal.noData')}
                   </td>
                 </tr>
               )}

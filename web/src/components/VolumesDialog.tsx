@@ -45,6 +45,7 @@ interface VolumesDialogProps {
 export function VolumesDialog({ open, onClose, onOpenSnapshots, namespaceStopped }: VolumesDialogProps) {
   const { t } = useTranslation()
   const [volumes, setVolumes] = useState<VolumeRow[]>([])
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -53,6 +54,7 @@ export function VolumesDialog({ open, onClose, onOpenSnapshots, namespaceStopped
 
   const reload = useCallback(() => {
     setError(null)
+    setLoading(true)
     getVolumes()
       .then((vs) => {
         if (!Array.isArray(vs)) {
@@ -70,6 +72,7 @@ export function VolumesDialog({ open, onClose, onOpenSnapshots, namespaceStopped
         console.error('[VolumesDialog] getVolumes failed:', e)
         setError((e as Error).message || String(e))
       })
+      .finally(() => setLoading(false))
   }, [])
 
   useEffect(() => {
@@ -167,6 +170,7 @@ export function VolumesDialog({ open, onClose, onOpenSnapshots, namespaceStopped
         data={volumes}
         rowActions={rowActions}
         customButtons={customButtons}
+        loading={loading}
       />
       {error && open && (
         // In-dialog banner (z-[60] sits above the JournalDialog backdrop) —

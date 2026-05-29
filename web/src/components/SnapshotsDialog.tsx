@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
-import { Download, Pencil, Trash2, Search, X } from 'lucide-react'
+import { Download, Loader2, Pencil, Trash2, Search, X } from 'lucide-react'
 import { getSnapshots, postExportSnapshot, postImportSnapshot, postImportSnapshotByName, getWorkspaceSnapshots, getVolumes, postSnapshotDownload, renameSnapshot, deleteSnapshot, postOpenDir } from '../lib/api'
 import type { SnapshotDto } from '../lib/types'
 import { ConfirmModal } from './ConfirmModal'
@@ -46,6 +46,7 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [nsRows, setNsRows] = useState<SnapshotRow[]>([])
   const [wsRows, setWsRows] = useState<SnapshotRow[]>([])
+  const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [renameTarget, setRenameTarget] = useState<SnapshotRow | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<SnapshotRow | null>(null)
@@ -68,6 +69,7 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
   }, [open])
 
   const reload = useCallback(() => {
+    setLoading(true)
     Promise.all([
       getSnapshots().catch(() => [] as SnapshotDto[]),
       getWorkspaceSnapshots().catch(() => [] as WsSnapshot[]),
@@ -93,7 +95,7 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
           id: s.id,
         })),
       )
-    })
+    }).finally(() => setLoading(false))
   }, [])
 
   useEffect(() => {
@@ -321,6 +323,12 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
           </div>
 
           <div className="flex-1 overflow-auto px-4 py-2 space-y-4">
+            {loading && filteredWs.length === 0 && filteredNs.length === 0 && (
+              <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+                <Loader2 size={14} className="animate-spin" />
+                {t('common.loading')}
+              </div>
+            )}
             {filteredWs.length > 0 && (
               <Section title={t('snapshots.section.workspace')}>
                 <SnapshotsTable
@@ -335,6 +343,7 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
               </Section>
             )}
 
+            {!(loading && filteredWs.length === 0 && filteredNs.length === 0) && (
             <Section title={t('snapshots.section.namespace')}>
               <SnapshotsTable
                 rows={filteredNs}
@@ -346,6 +355,7 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
                 onDelete={(r) => setDeleteTarget(r)}
               />
             </Section>
+            )}
           </div>
 
           <div className="flex items-center justify-end px-4 py-3 border-t border-border shrink-0 gap-2 flex-wrap">
