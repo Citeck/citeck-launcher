@@ -164,6 +164,8 @@ func TestAllRoutesRegistered(t *testing.T) {
 		{"GET", api.Namespaces},
 		{"POST", api.Namespaces},
 		{"DELETE", "/api/v1/namespaces/test-ns"},
+		{"POST", "/api/v1/namespaces/test-ns/activate"},
+		{"POST", "/api/v1/namespaces/deactivate"},
 		{"GET", api.Templates},
 		{"GET", api.QuickStarts},
 		// Bundles

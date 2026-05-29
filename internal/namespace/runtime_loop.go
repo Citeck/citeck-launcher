@@ -592,7 +592,7 @@ func (r *Runtime) handleStopResult(res workers.Result) {
 		return
 	}
 	if res.Err != nil {
-		// T22: STOPPING → STOPPING_FAILED. Drop desiredNext (restart intent
+		// T22: STOPPING / UPDATING → STOPPING_FAILED. Drop desiredNext (restart intent
 		// discarded; stuck state requires manual intervention via T30).
 		priorDesiredNext := app.desiredNext
 		app.desiredNext = ""

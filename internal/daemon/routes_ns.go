@@ -248,7 +248,7 @@ func (d *Daemon) handleActivateNamespace(w http.ResponseWriter, r *http.Request)
 	// Target must exist on disk in the current workspace.
 	cfgPath := config.ResolveNamespaceConfigPath(wsID, nsID)
 	if _, err := os.Stat(cfgPath); err != nil { //nolint:gosec // G703: path built from validated nsID/wsID
-		writeErrorCode(w, http.StatusNotFound, api.ErrCodeAppNotFound,
+		writeErrorCode(w, http.StatusNotFound, api.ErrCodeNamespaceNotFound,
 			fmt.Sprintf("namespace %q not found in workspace %q", nsID, wsID))
 		return
 	}
@@ -271,7 +271,7 @@ func (d *Daemon) handleActivateNamespace(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if loaded.NsConfig == nil {
-		writeErrorCode(w, http.StatusNotFound, api.ErrCodeAppNotFound,
+		writeErrorCode(w, http.StatusNotFound, api.ErrCodeNamespaceNotFound,
 			fmt.Sprintf("namespace %q config could not be loaded", nsID))
 		return
 	}

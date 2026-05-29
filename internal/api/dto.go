@@ -220,6 +220,7 @@ const (
 	ErrCodeDesktopOnly        = "DESKTOP_ONLY"
 	ErrCodeWorkspaceExists    = "WORKSPACE_EXISTS"
 	ErrCodeWorkspaceNotFound  = "WORKSPACE_NOT_FOUND"
+	ErrCodeNamespaceNotFound  = "NAMESPACE_NOT_FOUND"
 	ErrCodeWorkspaceInUse     = "WORKSPACE_IN_USE"
 	// ErrCodeEncryptionNotSetUp is returned by secret-write endpoints when the
 	// SecretService has no master password yet (Kotlin parity — desktop never
