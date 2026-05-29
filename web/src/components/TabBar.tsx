@@ -36,8 +36,48 @@ export function TabBar() {
 
   return (
     <div className="flex items-center border-b border-border bg-card shrink-0">
+      {/* NS identity (dashboard only) — pinned to the LEFT edge: name + (id)
+          + · + bundle, click jumps to namespace switcher. The Edit gear sits
+          adjacent. Tabs (when present) follow to the right of this block. */}
+      {onDashboard && namespace && (
+        <>
+          <button
+            type="button"
+            className="flex items-center gap-2 px-3 text-xs hover:bg-muted/30 min-w-0 max-w-[55%] h-full"
+            title={t('namespaces.switch')}
+            onClick={() => setNsSwitcherOpen(true)}
+          >
+            <span className="font-semibold truncate">
+              {namespace.name}
+              <span className="ml-1 font-normal text-muted-foreground">({namespace.id})</span>
+            </span>
+            <span className="text-muted-foreground/60" aria-hidden="true">·</span>
+            <span className="text-muted-foreground truncate">{namespace.bundleRef}</span>
+          </button>
+          {/* Left-click → typed form; right-click → raw YAML / form choice. */}
+          <button
+            type="button"
+            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted"
+            title={t('dashboard.nsConfig')}
+            onClick={() => setNsEditOpen(true)}
+            onContextMenu={(e) => showContextMenu(e, [
+              {
+                label: t('nsEdit.title'),
+                onClick: () => setNsEditOpen(true),
+              },
+              {
+                label: t('nsEdit.editRawYaml'),
+                onClick: () => openBottomTab({ id: 'ns-config', type: 'ns-config', title: t('configEditor.title') }),
+              },
+            ])}
+          >
+            <Settings size={14} />
+          </button>
+        </>
+      )}
+
       {showTabs && (
-        <div className="flex items-center overflow-x-auto flex-1 min-w-0 scrollbar-hide">
+        <div className="flex items-center overflow-x-auto min-w-0 scrollbar-hide border-l border-border">
           {tabs.map((tab) => {
             const isActive = tab.id === activeTabId
             return (
@@ -72,61 +112,28 @@ export function TabBar() {
           })}
         </div>
       )}
-      {!showTabs && <div className="flex-1" />}
 
-      {/* NS identity (dashboard only) — name + (id) + · + bundle, click jumps
-          to namespace switcher. Sits between tabs and right-side controls so
-          the gear ends up adjacent to language/theme rather than far-right. */}
-      {onDashboard && namespace && (
-        <button
-          type="button"
-          className="hidden sm:flex items-center gap-2 px-3 text-xs hover:bg-muted/30 min-w-0 max-w-[40%] border-l border-border h-full"
-          title={t('namespaces.switch')}
-          onClick={() => setNsSwitcherOpen(true)}
-        >
-          <span className="font-semibold truncate">
-            {namespace.name}
-            <span className="ml-1 font-normal text-muted-foreground">({namespace.id})</span>
-          </span>
-          <span className="text-muted-foreground/60" aria-hidden="true">·</span>
-          <span className="text-muted-foreground truncate">{namespace.bundleRef}</span>
-        </button>
-      )}
+      {/* Spacer pushes language/theme to the right edge while everything
+          above hugs the left. */}
+      <div className="flex-1" />
 
-      {/* Right-side buttons */}
+      {/* Right-side buttons — locale + theme. On non-dashboard routes the
+          Settings gear lives here as a global config affordance; on the
+          dashboard the gear is already inline next to NS identity so it
+          would be duplicate. */}
       <div className="flex items-center border-l border-border shrink-0">
         <LanguageSelector />
         <ThemeToggle />
-        {/* On the dashboard route the gear maps to namespace editing: left-click
-            opens the typed form (NamespaceEditDialog), right-click offers raw
-            YAML as a second option via context menu. On other pages it falls
-            back to the global Settings panel route. */}
-        <button
-          type="button"
-          className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted"
-          title={onDashboard && namespace ? t('dashboard.nsConfig') : t('common.settings')}
-          onClick={() => {
-            if (onDashboard && namespace) {
-              setNsEditOpen(true)
-            } else if (onDashboard) {
-              openBottomTab({ id: 'ns-config', type: 'ns-config', title: t('configEditor.title') })
-            } else {
-              navigate('/config')
-            }
-          }}
-          onContextMenu={onDashboard && namespace ? ((e) => showContextMenu(e, [
-            {
-              label: t('nsEdit.title'),
-              onClick: () => setNsEditOpen(true),
-            },
-            {
-              label: t('nsEdit.editRawYaml'),
-              onClick: () => openBottomTab({ id: 'ns-config', type: 'ns-config', title: t('configEditor.title') }),
-            },
-          ])) : undefined}
-        >
-          <Settings size={14} />
-        </button>
+        {!onDashboard && (
+          <button
+            type="button"
+            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted"
+            title={t('common.settings')}
+            onClick={() => navigate('/config')}
+          >
+            <Settings size={14} />
+          </button>
+        )}
       </div>
       {contextMenu && <ContextMenu items={contextMenu.items} position={contextMenu.position} onClose={hideContextMenu} />}
     </div>
