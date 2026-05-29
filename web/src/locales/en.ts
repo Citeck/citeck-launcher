@@ -444,10 +444,6 @@ const en: Translations = {
   'secrets.setPassword.description': 'Encrypt your secrets with a master password. You will need it each time you start the launcher.',
 
   // -- Upgrade --
-  'upgrade.title': 'Upgrade Bundle',
-  'upgrade.select': 'Select version',
-  'upgrade.success': 'Upgrade successful',
-  'upgrade.alreadyLatest': 'Already on latest version',
   'form.fieldRequired': '{label} is required',
 
   // -- Volumes dialog (modal port) --

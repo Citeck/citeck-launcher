@@ -444,10 +444,6 @@ const de: Translations = {
   'secrets.setPassword.description': 'Verschlüsseln Sie Ihre Geheimnisse mit einem Master-Passwort. Sie benötigen es bei jedem Start des Launchers.',
 
   // -- Upgrade --
-  'upgrade.title': 'Bundle aktualisieren',
-  'upgrade.select': 'Version auswählen',
-  'upgrade.success': 'Aktualisierung erfolgreich',
-  'upgrade.alreadyLatest': 'Bereits auf der neuesten Version',
   'form.fieldRequired': '{label} ist erforderlich',
   'form.showPassword': 'Passwort anzeigen',
   'form.hidePassword': 'Passwort verbergen',

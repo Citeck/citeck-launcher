@@ -444,10 +444,6 @@ const fr: Translations = {
   'secrets.setPassword.description': 'Chiffrez vos secrets avec un mot de passe principal. Vous en aurez besoin \u00e0 chaque d\u00e9marrage du lanceur.',
 
   // -- Upgrade --
-  'upgrade.title': 'Mettre \u00e0 jour le bundle',
-  'upgrade.select': 'S\u00e9lectionner la version',
-  'upgrade.success': 'Mise \u00e0 jour r\u00e9ussie',
-  'upgrade.alreadyLatest': 'D\u00e9j\u00e0 sur la derni\u00e8re version',
   'form.fieldRequired': '{label} est requis',
   'form.showPassword': 'Afficher le mot de passe',
   'form.hidePassword': 'Masquer le mot de passe',

@@ -444,10 +444,6 @@ const zh: Translations = {
   'secrets.setPassword.description': '使用主密码加密您的密钥。每次启动启动器时都需要输入该密码。',
 
   // -- Upgrade --
-  'upgrade.title': '升级 Bundle',
-  'upgrade.select': '选择版本',
-  'upgrade.success': '升级成功',
-  'upgrade.alreadyLatest': '已是最新版本',
   'form.fieldRequired': '{label} 是必填项',
   'form.showPassword': '显示密码',
   'form.hidePassword': '隐藏密码',

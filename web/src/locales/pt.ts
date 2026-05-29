@@ -444,10 +444,6 @@ const pt: Translations = {
   'secrets.setPassword.description': 'Criptografe seus secrets com uma senha mestra. Você precisará dela toda vez que iniciar o launcher.',
 
   // -- Upgrade --
-  'upgrade.title': 'Atualizar bundle',
-  'upgrade.select': 'Selecionar versão',
-  'upgrade.success': 'Atualização bem-sucedida',
-  'upgrade.alreadyLatest': 'Já está na versão mais recente',
   'form.fieldRequired': '{label} é obrigatório',
   'form.showPassword': 'Mostrar senha',
   'form.hidePassword': 'Ocultar senha',

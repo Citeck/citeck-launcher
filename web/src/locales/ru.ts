@@ -441,10 +441,6 @@ const ru: Translations = {
   'secrets.setPassword.description': 'Зашифруйте секреты мастер-паролем. Он потребуется при каждом запуске лончера.',
 
   // -- Upgrade --
-  'upgrade.title': 'Обновить бандл',
-  'upgrade.select': 'Выберите версию',
-  'upgrade.success': 'Обновление выполнено',
-  'upgrade.alreadyLatest': 'Уже установлена последняя версия',
   'form.fieldRequired': '{label} обязательно',
   'form.showPassword': 'Показать пароль',
   'form.hidePassword': 'Скрыть пароль',

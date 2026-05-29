@@ -444,10 +444,6 @@ const es: Translations = {
   'secrets.setPassword.description': 'Cifre sus secretos con una contraseña maestra. La necesitará cada vez que inicie el lanzador.',
 
   // -- Upgrade --
-  'upgrade.title': 'Actualizar bundle',
-  'upgrade.select': 'Seleccionar versión',
-  'upgrade.success': 'Actualización exitosa',
-  'upgrade.alreadyLatest': 'Ya está en la última versión',
   'form.fieldRequired': '{label} es obligatorio',
   'form.showPassword': 'Mostrar contraseña',
   'form.hidePassword': 'Ocultar contraseña',

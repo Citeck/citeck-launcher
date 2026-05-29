@@ -12,7 +12,7 @@ import { NamespaceDialog } from '../components/NamespaceDialog'
 import { NamespaceEditDialog } from '../components/NamespaceEditDialog'
 import { ContextMenu } from '../components/ContextMenu'
 import { useContextMenu } from '../hooks/useContextMenu'
-import { getSystemDump, openExternal, getBundles, upgradeNamespace } from '../lib/api'
+import { getSystemDump, openExternal } from '../lib/api'
 import { useTranslation } from '../lib/i18n'
 import { StatusBadge } from '../components/StatusBadge'
 import { AppTable } from '../components/AppTable'
@@ -26,10 +26,9 @@ import { ConfigEditor } from '../components/ConfigEditor'
 import { DaemonLogsViewer } from '../components/DaemonLogsViewer'
 import { AppConfigEditor } from '../components/AppConfigEditor'
 import { RestartEvents } from '../components/RestartEvents'
-import { FormDialog } from '../components/FormDialog'
 import type { BottomPanelTab } from '../lib/panels'
 import { toast } from '../lib/toast'
-import { ExternalLink, FolderOpen, Globe, Download, AlertTriangle, HardDrive, Key, Stethoscope, FileText, Settings, ArrowUpCircle, ArrowLeft } from 'lucide-react'
+import { ExternalLink, FolderOpen, Globe, Download, AlertTriangle, HardDrive, Key, Stethoscope, FileText, Settings, ArrowLeft } from 'lucide-react'
 import { LoadingHint } from '../components/LoadingHint'
 import { postOpenDir } from '../lib/api'
 
@@ -54,12 +53,6 @@ export function Dashboard() {
   // Master-password / secrets-unlock flow is handled by SecretsUnlockGuard at
   // the App layout level — runs once before any namespace start so registry
   // pulls have access to credentials.
-
-  // Upgrade dialog state
-  const [upgradeOpen, setUpgradeOpen] = useState(false)
-  const [upgradeVersions, setUpgradeVersions] = useState<{ label: string; value: string }[]>([])
-  const [upgradeLoading, setUpgradeLoading] = useState(false)
-  const [upgradeError, setUpgradeError] = useState<string | null>(null)
 
   // Modal dialog state — sidebar buttons open these as overlays (Kotlin parity)
   const [volumesDialogOpen, setVolumesDialogOpen] = useState(false)
@@ -86,31 +79,6 @@ export function Dashboard() {
       toast(t('dashboard.openNsDir.failed', { error: (e as Error).message }), 'error')
     }
   }, [t])
-
-  const handleUpgradeClick = useCallback(async () => {
-    try {
-      const bundles = await getBundles()
-      const currentRef = namespace?.bundleRef ?? ''
-      const options: { label: string; value: string }[] = []
-      for (const b of bundles) {
-        for (const v of b.versions) {
-          const ref = `${b.repo}:${v}`
-          if (ref !== currentRef) {
-            options.push({ label: ref, value: ref })
-          }
-        }
-      }
-      if (options.length === 0) {
-        toast(t('upgrade.alreadyLatest'), 'info')
-        return
-      }
-      setUpgradeVersions(options)
-      setUpgradeError(null)
-      setUpgradeOpen(true)
-    } catch (e) {
-      toast((e as Error).message, 'error')
-    }
-  }, [namespace?.bundleRef, t])
 
   useEffect(() => {
     setHomeTab(t('dashboard.title'))
@@ -229,14 +197,6 @@ export function Dashboard() {
               <div className="text-[11px] text-muted-foreground mt-0.5 truncate">{namespace.bundleRef}</div>
             </button>
             <div className="flex items-center gap-0.5 shrink-0">
-              <button
-                type="button"
-                className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted"
-                title={t('upgrade.title')}
-                onClick={handleUpgradeClick}
-              >
-                <ArrowUpCircle size={14} />
-              </button>
               <button
                 type="button"
                 className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted"
@@ -397,36 +357,6 @@ export function Dashboard() {
 
       {/* Bottom panel */}
       {bottomTabs.length > 0 && <BottomPanel renderTab={renderBottomTab} />}
-
-      {/* Upgrade dialog */}
-      <FormDialog
-        title={t('upgrade.title')}
-        fields={[{
-          key: 'bundleRef',
-          label: t('upgrade.select'),
-          type: 'select',
-          required: true,
-          options: upgradeVersions,
-        }]}
-        onSubmit={async (data) => {
-          setUpgradeLoading(true)
-          setUpgradeError(null)
-          try {
-            await upgradeNamespace(data.bundleRef as string)
-            toast(t('upgrade.success'), 'success')
-            setUpgradeOpen(false)
-            fetchData()
-          } catch (e) {
-            setUpgradeError((e as Error).message)
-          } finally {
-            setUpgradeLoading(false)
-          }
-        }}
-        onCancel={() => setUpgradeOpen(false)}
-        open={upgradeOpen}
-        loading={upgradeLoading}
-        error={upgradeError}
-      />
 
       {/* Sidebar-opened modal dialogs (Kotlin parity) */}
       <VolumesDialog
