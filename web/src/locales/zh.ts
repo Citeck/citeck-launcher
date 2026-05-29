@@ -360,6 +360,7 @@ const zh: Translations = {
   'status.READY_TO_PULL': '排队中',
   'status.READY_TO_START': '就绪',
   'status.STOPPING': '停止中',
+  'status.UPDATING': '更新中',
   'status.STOPPED': '已停止',
   'status.STALLED': '已挂起',
 

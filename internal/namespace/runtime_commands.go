@@ -365,6 +365,15 @@ func (r *Runtime) StopApp(appName string) error { //nolint:gocyclo // single-pas
 	case AppStatusStopping:
 		// Already stopping — no-op other than recording detach intent
 		// (which we already did above).
+	case AppStatusUpdating:
+		// Runtime-driven recreate is in flight. The user pressed Stop —
+		// promote it to a real stop: drop desiredNext (don't let T21 route
+		// to READY_TO_PULL after the stopContainer Result lands) and flip
+		// the status to STOPPING so handleStopResult routes to STOPPED
+		// rather than continuing the recreate.
+		app.desiredNext = ""
+		app.initialSweep = false
+		r.setAppStatus(app, AppStatusStopping)
 	case AppStatusStopped:
 		// Already stopped — record intent only.
 	}
@@ -429,13 +438,14 @@ func (r *Runtime) StartApp(appName string) error {
 		r.setAppStatus(app, AppStatusReadyToStart)
 	case AppStatusStoppingFailed:
 		// T30: fresh stop attempt. desiredNext=READY_TO_PULL routes through
-		// STOPPING → T21 → READY_TO_PULL → start. The new dispatch supersedes
+		// UPDATING → T21 → READY_TO_PULL → start. The new dispatch supersedes
 		// any prior canceled stop via the dispatcher (attemptID bump).
+		// UPDATING (not STOPPING) marks this as recreate-in-flight.
 		delete(r.manualStoppedApps, appName)
 		app.desiredNext = AppStatusReadyToPull
 		app.initialSweep = false
 		app.stoppingStartedAt = r.nowFunc()
-		r.setAppStatus(app, AppStatusStopping)
+		r.setAppStatus(app, AppStatusUpdating)
 		stopTimeout := r.resolveStopTimeout(app.Def.StopTimeout)
 		containerName := r.docker.ContainerName(appName)
 		plan = r.makeStopPlan(appName, containerName, stopTimeout)
@@ -580,7 +590,8 @@ func (r *Runtime) RestartApp(appName string) error { //nolint:gocyclo // single-
 		// desiredNext=READY_TO_PULL so T21 routes back to the pull-side entry
 		// point. Cancel in-flight OpStart / OpInit / OpProbe workers; an
 		// earlier OpStop dispatch is superseded by the new Dispatch (attemptID
-		// bump).
+		// bump). UPDATING (not STOPPING) marks the user-restart recreate so
+		// the daemon log distinguishes it from a final stop.
 		r.dispatcher.CancelApp(appName, workers.CancelStopApp, workers.OpStop)
 		app.desiredNext = AppStatusReadyToPull
 		app.initialSweep = false
@@ -588,7 +599,7 @@ func (r *Runtime) RestartApp(appName string) error { //nolint:gocyclo // single-
 		r.emitRestartEvent(app, "user_restart", "", "")
 		r.incrementRestartCount(appName)
 		containerID := app.ContainerID
-		r.setAppStatus(app, AppStatusStopping)
+		r.setAppStatus(app, AppStatusUpdating)
 		// RestartApp clears manualStoppedApps (re-attach) and appends a
 		// user_restart event — durable intent. Persist inline + clear r.dirty.
 		r.persistState()
@@ -602,7 +613,7 @@ func (r *Runtime) RestartApp(appName string) error { //nolint:gocyclo // single-
 			// worker was just canceled; there is nothing to stop, so skip the
 			// stopContainer dispatch and manually advance desiredNext.
 			r.mu.Lock()
-			if app, ok = r.apps[appName]; ok && app.Status == AppStatusStopping {
+			if app, ok = r.apps[appName]; ok && app.Status == AppStatusUpdating {
 				app.ContainerID = ""
 				next := app.desiredNext
 				app.desiredNext = ""
@@ -626,14 +637,19 @@ func (r *Runtime) RestartApp(appName string) error { //nolint:gocyclo // single-
 		// Already on the path; no-op. No restart_event emitted — the user's
 		// intent is already being satisfied by the in-flight progression.
 		r.mu.Unlock()
-	case AppStatusStopping:
-		// Stop already in flight; set desiredNext so T21 routes to
-		// READY_TO_PULL on completion. Emit a user_restart event so observers
-		// can distinguish this caller's intent from any prior StopApp/
-		// RestartApp that drove the app into STOPPING.
+	case AppStatusStopping, AppStatusUpdating:
+		// Stop or update already in flight; set desiredNext so T21 routes to
+		// READY_TO_PULL on completion. STOPPING came from a user stop the
+		// caller now wants to flip into a restart — promote the status to
+		// UPDATING so the daemon log reflects the new intent. UPDATING was
+		// already on a recreate path; leave it alone. Emit a user_restart
+		// event either way so observers can distinguish this caller's intent.
 		r.emitRestartEvent(app, "user_restart", "", "")
 		r.incrementRestartCount(appName)
 		app.desiredNext = AppStatusReadyToPull
+		if app.Status == AppStatusStopping {
+			r.setAppStatus(app, AppStatusUpdating)
+		}
 		r.mu.Unlock()
 	default:
 		r.mu.Unlock()

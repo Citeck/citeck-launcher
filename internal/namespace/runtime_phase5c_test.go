@@ -56,13 +56,13 @@ func TestCmdRegenerateChangedHashUsesLongTimeout(t *testing.T) {
 	apps2 := []appdef.ApplicationDef{simpleApp("postgres", "postgres:18")}
 	r.Regenerate(apps2, nil, nil)
 
-	// The app must enter STOPPING with initialSweep=true.
+	// The app must enter UPDATING (hash-mismatch recreate) with initialSweep=true.
 	var sawInitialSweep bool
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		r.mu.RLock()
 		app, ok := r.apps["postgres"]
-		if ok && app.Status == AppStatusStopping && app.initialSweep {
+		if ok && app.Status == AppStatusUpdating && app.initialSweep {
 			sawInitialSweep = true
 			r.mu.RUnlock()
 			break
@@ -71,15 +71,15 @@ func TestCmdRegenerateChangedHashUsesLongTimeout(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	require.True(t, sawInitialSweep,
-		"changed-hash app did not enter STOPPING with initialSweep=true")
+		"changed-hash app did not enter UPDATING with initialSweep=true")
 
 	// Poll ~1.5s: past 1s groupTimeout, well before 3s stopDelay. App must
-	// stay STOPPING — T23 must NOT fire at any moment in this window.
+	// stay UPDATING — T23 must NOT fire at any moment in this window.
 	assert.Never(t, func() bool {
 		a := r.FindApp("postgres")
-		return a != nil && a.Status != AppStatusStopping
+		return a != nil && a.Status != AppStatusUpdating
 	}, 1500*time.Millisecond, 50*time.Millisecond,
-		"long-stop budget not honored on reload-triggered recreate: app transitioned out of STOPPING before 3s stopDelay elapsed")
+		"long-stop budget not honored on reload-triggered recreate: app transitioned out of UPDATING before 3s stopDelay elapsed")
 
 	// Allow the stop to complete + state machine to walk RUNNING.
 	if !waitForAppStatus(r, "postgres", AppStatusRunning, 10*time.Second) {

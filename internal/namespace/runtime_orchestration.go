@@ -209,15 +209,15 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) { //nolint:gocyclo // or
 			// p.reuse == false && !detached.
 			if existing, ok := existingContainers[p.def.Name]; ok {
 				// Stale container present — schedule state-machine recreate.
-				// Enter STOPPING with desiredNext=READY_TO_PULL and
-				// initialSweep=true so tick() T23 uses longStopTimeout
+				// Enter UPDATING (not STOPPING) with desiredNext=READY_TO_PULL
+				// and initialSweep=true so tick() T23 uses longStopTimeout
 				// (default 60s — Java SIGTERM tolerance). ContainerID is
 				// carried through so handleStopResult can clear it on T21.
 				slog.Info("Scheduling stale container sweep via state machine", "app", p.def.Name)
 				stopTimeout := r.resolveStopTimeout(p.def.StopTimeout)
 				newApps[p.def.Name] = &AppRuntime{
 					Name:              p.def.Name,
-					Status:            AppStatusStopping,
+					Status:            AppStatusUpdating,
 					StatusText:        "initial sweep",
 					Def:               p.def,
 					ContainerID:       existing.containerID,
@@ -382,8 +382,10 @@ func (r *Runtime) doRegenerate(apps []appdef.ApplicationDef) { //nolint:gocyclo 
 			continue
 		}
 
-		// Hash changed: queue a recreate via STOPPING + desiredNext=READY_TO_PULL.
-		// initialSweep=true selects the long-stop budget for Java SIGTERM tolerance.
+		// Hash changed: queue a recreate via UPDATING + desiredNext=READY_TO_PULL.
+		// UPDATING (not STOPPING) marks runtime-driven recreate so the daemon
+		// log distinguishes it from a user-initiated stop. initialSweep=true
+		// still selects the long-stop budget for Java SIGTERM tolerance.
 		existing.Def = ra.def
 		existing.StatusText = ""
 
@@ -395,7 +397,7 @@ func (r *Runtime) doRegenerate(apps []appdef.ApplicationDef) { //nolint:gocyclo 
 			existing.desiredNext = AppStatusReadyToPull
 			existing.initialSweep = true
 			existing.stoppingStartedAt = now
-			r.setAppStatus(existing, AppStatusStopping)
+			r.setAppStatus(existing, AppStatusUpdating)
 			stopTimeout := r.resolveStopTimeout(existing.Def.StopTimeout)
 			containerName := r.docker.ContainerName(existing.Name)
 			stopPlans = append(stopPlans, r.makeStopPlan(existing.Name, containerName, stopTimeout))
@@ -581,15 +583,21 @@ func (r *Runtime) beginGroupStopUnderLock(group []*AppRuntime) []dispatchPlan {
 			app.desiredNext = ""
 			app.initialSweep = false
 			r.setAppStatus(app, AppStatusStopped)
-		case AppStatusStopping:
-			// Already in flight — but if a prior RestartApp (or T17a liveness)
-			// set desiredNext=READY_TO_PULL, T21 would route the app back
-			// through READY_TO_PULL instead of STOPPED, stalling the
-			// stop-continuation predicate (allAppsTerminalInGroup never
-			// becomes true) and deadlocking Shutdown. Clear desiredNext so
-			// T21 routes directly to STOPPED. Operator shutdown intent
-			// overrides any pending restart intent.
+		case AppStatusStopping, AppStatusUpdating:
+			// Stop / update already in flight. If a prior RestartApp, T17a
+			// liveness, or hash-mismatch recreate set desiredNext=READY_TO_PULL,
+			// T21 would route the app back through READY_TO_PULL instead of
+			// STOPPED, stalling the stop-continuation predicate
+			// (allAppsTerminalInGroup never becomes true) and deadlocking
+			// Shutdown. Clear desiredNext so T21 routes directly to STOPPED.
+			// Also flip UPDATING → STOPPING so the log reflects "operator
+			// stop overrode the recreate" rather than continuing the update
+			// label. Operator shutdown intent overrides pending restart intent.
 			app.desiredNext = ""
+			app.initialSweep = false
+			if app.Status == AppStatusUpdating {
+				r.setAppStatus(app, AppStatusStopping)
+			}
 		case AppStatusStopped:
 			// Already terminal — skip.
 		}

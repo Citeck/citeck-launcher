@@ -360,6 +360,7 @@ const de: Translations = {
   'status.READY_TO_PULL': 'In Warteschlange',
   'status.READY_TO_START': 'Bereit',
   'status.STOPPING': 'Wird gestoppt',
+  'status.UPDATING': 'Wird aktualisiert',
   'status.STOPPED': 'Gestoppt',
   'status.STALLED': 'Blockiert',
 

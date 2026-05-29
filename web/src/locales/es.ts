@@ -360,6 +360,7 @@ const es: Translations = {
   'status.READY_TO_PULL': 'En cola',
   'status.READY_TO_START': 'Listo',
   'status.STOPPING': 'Deteniendo',
+  'status.UPDATING': 'Actualizando',
   'status.STOPPED': 'Detenido',
   'status.STALLED': 'Bloqueado',
 

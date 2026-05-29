@@ -186,6 +186,14 @@ const (
 	AppStatusStopping       = "STOPPING"
 	AppStatusStoppingFailed = "STOPPING_FAILED"
 	AppStatusStopped        = "STOPPED"
+	// AppStatusUpdating is the in-flight recreate state: the runtime sent
+	// SIGTERM to the old container because its deployment hash diverged from
+	// the new desired definition, and the very next leg is READY_TO_PULL →
+	// PULLING → READY_TO_START → STARTING. STOPPING is reserved for explicit
+	// user-initiated stops; UPDATING marks transitions the runtime drives
+	// itself so the daemon log reads the way the state machine actually
+	// behaves rather than masking a stop via desiredNext lookahead.
+	AppStatusUpdating = "UPDATING"
 )
 
 // ErrCodeAppNotFound and related constants are machine-readable error codes for API consumers.

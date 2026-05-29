@@ -50,7 +50,7 @@ func StatusColor(status string) string {
 		return Green
 	case "FAILED", "UNHEALTHY", "PULL_FAILED", "START_FAILED", "STOPPING_FAILED", "error":
 		return Red
-	case "STARTING", "PULLING", "DEPS_WAITING", "READY_TO_PULL", "READY_TO_START", "warning":
+	case "STARTING", "PULLING", "DEPS_WAITING", "READY_TO_PULL", "READY_TO_START", "UPDATING", "warning":
 		return Yellow
 	case "STOPPED":
 		return Dim

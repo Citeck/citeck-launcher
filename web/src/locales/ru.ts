@@ -360,6 +360,7 @@ const ru: Translations = {
   'status.READY_TO_PULL': 'В очереди',
   'status.READY_TO_START': 'Готов',
   'status.STOPPING': 'Остановка',
+  'status.UPDATING': 'Обновление',
   'status.STOPPED': 'Остановлен',
   'status.STALLED': 'Зависло',
 

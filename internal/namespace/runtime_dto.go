@@ -19,7 +19,7 @@ func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 		memPct := app.MemoryPercent
 		apps = append(apps, api.AppDto{
 			Name:             app.Name,
-			Status:           displayAppStatus(app, r.manualStoppedApps[app.Name]),
+			Status:           displayAppStatus(app),
 			StatusText:       app.StatusText,
 			Image:            app.Def.Image,
 			CPU:              app.CPU,
@@ -47,30 +47,13 @@ func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 }
 
 // displayAppStatus rewrites an app's runtime status into the user-facing
-// status the UI should render. The state machine occasionally walks an app
-// through STOPPING / STOPPED as part of a runtime-initiated recreate
-// (hash-changed regenerate, T17a liveness-restart, RestartApp). From the
-// user's perspective the app is "starting", not "stopping" — they didn't
-// ask for a stop. So:
-//
-//   - STOPPING with desiredNext set (runtime-initiated recreate) → render as
-//     PULLING. The container is being torn down only to be re-pulled and
-//     re-started in the same logical operation.
-//   - STOPPING when the user explicitly detached (manualStoppedApps) → render
-//     as-is so the user sees their action take effect.
-//
-// initialSweep is an orthogonal hint (set on the runtime-initiated recreate
-// branch in doRegenerate / RestartApp); we treat it as equivalent to a
-// non-empty desiredNext for display purposes.
-func displayAppStatus(app *AppRuntime, manualStopped bool) string {
-	if manualStopped {
-		return string(app.Status)
-	}
-	if app.Status == AppStatusStopping && (app.initialSweep || app.desiredNext != "") {
-		// Recreate in flight — show "pulling" since the next leg is
-		// pull → start, regardless of the specific desiredNext value.
-		return string(AppStatusPulling)
-	}
+// status the UI should render. Recreate-in-flight is its own first-class
+// state now (UPDATING) — set directly by doRegenerate, T17a liveness
+// restart, RestartApp, and the STOPPING_FAILED retry — so we no longer mask
+// STOPPING with desiredNext as the UI cue. UPDATING is surfaced as-is so
+// the dashboard and the daemon log read the same way the state machine
+// actually behaves.
+func displayAppStatus(app *AppRuntime) string {
 	return string(app.Status)
 }
 

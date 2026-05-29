@@ -360,6 +360,7 @@ const ja: Translations = {
   'status.READY_TO_PULL': '\u30ad\u30e5\u30fc\u5f85\u3061',
   'status.READY_TO_START': '\u6e96\u5099\u5b8c\u4e86',
   'status.STOPPING': '\u505c\u6b62\u4e2d',
+  'status.UPDATING': '更新中',
   'status.STOPPED': '\u505c\u6b62\u6e08\u307f',
   'status.STALLED': '\u30b9\u30c8\u30fc\u30eb',
 

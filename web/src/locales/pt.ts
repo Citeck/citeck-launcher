@@ -360,6 +360,7 @@ const pt: Translations = {
   'status.READY_TO_PULL': 'Na fila',
   'status.READY_TO_START': 'Pronto',
   'status.STOPPING': 'Parando',
+  'status.UPDATING': 'Atualizando',
   'status.STOPPED': 'Parado',
   'status.STALLED': 'Travado',
 

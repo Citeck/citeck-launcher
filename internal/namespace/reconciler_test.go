@@ -117,7 +117,7 @@ func TestCheckLivenessFailureCounting(t *testing.T) {
 	r.mu.RLock()
 	assert.Contains(t,
 		[]AppRuntimeStatus{
-			AppStatusStopping, AppStatusReadyToPull, AppStatusPulling,
+			AppStatusUpdating, AppStatusReadyToPull, AppStatusPulling,
 			AppStatusReadyToStart, AppStatusStarting, AppStatusRunning,
 		},
 		r.apps["emodel"].Status,
@@ -161,7 +161,7 @@ func TestCheckLivenessRunsInStalledState(t *testing.T) {
 	// post-T17a status; the race-free invariant is the RestartCount bump.
 	assert.Contains(t,
 		[]AppRuntimeStatus{
-			AppStatusStopping, AppStatusReadyToPull, AppStatusPulling,
+			AppStatusUpdating, AppStatusReadyToPull, AppStatusPulling,
 			AppStatusReadyToStart, AppStatusStarting, AppStatusRunning,
 		},
 		r.apps["emodel"].Status,

@@ -8,7 +8,7 @@ interface StatusBadgeProps {
 
 // Kotlin parity (AppRuntimeStatus.kt) — category → hex.
 const C_RUNNING = '#33AB50'
-const C_TRANSIENT = '#F4E909' // STARTING / PULLING / STOPPING / READY_*
+const C_TRANSIENT = '#F4E909' // STARTING / PULLING / STOPPING / UPDATING / READY_*
 const C_STALLED = '#DB831D' // PULL_FAILED / START_FAILED / STOPPING_FAILED / STALLED / FAILED
 const C_STOPPED = '#424242'
 
@@ -21,6 +21,7 @@ const statusColor: Record<string, string> = {
   READY_TO_PULL: C_TRANSIENT,
   READY_TO_START: C_TRANSIENT,
   STOPPING: C_TRANSIENT,
+  UPDATING: C_TRANSIENT,
   FAILED: C_STALLED,
   PULL_FAILED: C_STALLED,
   START_FAILED: C_STALLED,
@@ -30,7 +31,7 @@ const statusColor: Record<string, string> = {
 }
 
 // Statuses where the dot pulses (in-flight transitions, parity with Kotlin).
-const PULSE_DOT = new Set(['STARTING', 'PULLING', 'DEPS_WAITING', 'STOPPING'])
+const PULSE_DOT = new Set(['STARTING', 'PULLING', 'DEPS_WAITING', 'STOPPING', 'UPDATING'])
 
 export function StatusBadge({ status, variant = 'pill' }: StatusBadgeProps) {
   const color = statusColor[status] ?? C_STOPPED

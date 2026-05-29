@@ -107,6 +107,7 @@ const (
 	AppStatusStopping       AppRuntimeStatus = api.AppStatusStopping
 	AppStatusStoppingFailed AppRuntimeStatus = api.AppStatusStoppingFailed
 	AppStatusStopped        AppRuntimeStatus = api.AppStatusStopped
+	AppStatusUpdating       AppRuntimeStatus = api.AppStatusUpdating
 )
 
 // AppRuntime holds the state for a single app.

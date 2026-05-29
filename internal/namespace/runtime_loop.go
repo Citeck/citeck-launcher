@@ -579,14 +579,16 @@ func allAppsTerminalInGroup(rt *Runtime, groups [][]*AppRuntime, idx int) bool {
 // else STOPPED; clear ContainerID + initialSweep) and T22 (stopContainer
 // Result error → STOPPING_FAILED; clear desiredNext; WARN).
 //
-// App-level guard: only STOPPING is a valid source state. Any other status
-// means the state machine has moved on (rare — STOPPING is a terminal
-// dispatch) and the Result is a no-op.
+// App-level guard: only STOPPING / UPDATING are valid source states. STOPPING
+// is the user-initiated path; UPDATING is the runtime-driven recreate path
+// (hash mismatch, liveness restart, RestartApp). Any other status means the
+// state machine has moved on (rare — both states are terminal dispatch waits)
+// and the Result is a no-op.
 func (r *Runtime) handleStopResult(res workers.Result) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	app, ok := r.apps[res.TaskID.App]
-	if !ok || app.Status != AppStatusStopping {
+	if !ok || (app.Status != AppStatusStopping && app.Status != AppStatusUpdating) {
 		return
 	}
 	if res.Err != nil {
@@ -933,7 +935,9 @@ func (r *Runtime) tickUnderLock() []dispatchPlan {
 	// guard (Status==STOPPING) no longer matches.
 	longBudget := r.longStopTimeout
 	for _, app := range r.apps {
-		if app.Status != AppStatusStopping {
+		// STOPPING (user-initiated) and UPDATING (runtime recreate) both have
+		// a stopContainer dispatch in flight; both need the timeout sweep.
+		if app.Status != AppStatusStopping && app.Status != AppStatusUpdating {
 			continue
 		}
 		var budget time.Duration
@@ -1229,13 +1233,14 @@ func (r *Runtime) handleLivenessProbeResult(res workers.Result) {
 		r.mu.Unlock()
 		return
 	}
-	// T17a: RUNNING → STOPPING; desiredNext=READY_TO_PULL so T21 routes
-	// through READY_TO_PULL → T2/T3 → start.
+	// T17a: RUNNING → UPDATING; desiredNext=READY_TO_PULL so T21 routes
+	// through READY_TO_PULL → T2/T3 → start. UPDATING (not STOPPING) marks
+	// this as a runtime-driven liveness recreate, distinct from a user stop.
 	app.desiredNext = AppStatusReadyToPull
 	app.stoppingStartedAt = r.nowFunc()
 	r.incrementRestartCount(appName)
 	r.emitRestartEvent(app, "liveness", reason, diag)
-	r.setAppStatus(app, AppStatusStopping)
+	r.setAppStatus(app, AppStatusUpdating)
 	delete(r.livenessFailures, appName)
 	// incrementRestartCount + emitRestartEvent mutate persistable state
 	// (restartCounts, restartEvents); flip dirty so the loop tail persists

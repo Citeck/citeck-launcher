@@ -16,6 +16,7 @@ func TestIsAppTerminalFailed(t *testing.T) {
 		api.AppStatusDepsWaiting:    false,
 		api.AppStatusStopped:        false,
 		api.AppStatusStopping:       false,
+		api.AppStatusUpdating:       false,
 		"":                          false,
 		api.AppStatusStartFailed:    true,
 		api.AppStatusPullFailed:     true,

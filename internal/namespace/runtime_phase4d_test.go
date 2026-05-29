@@ -128,10 +128,13 @@ func TestRestartAppGoesThroughStoppingThenReadyToPull(t *testing.T) {
 	seen := append([]string(nil), statuses...)
 	mu.Unlock()
 
-	// STOPPING must appear in the sequence (state-machine routing) — not a
-	// direct RUNNING → READY_TO_PULL jump.
-	assert.True(t, slices.Contains(seen, string(AppStatusStopping)),
-		"expected STOPPING transition in sequence: %v", seen)
+	// UPDATING must appear in the sequence (state-machine routing for
+	// recreate) — not a direct RUNNING → READY_TO_PULL jump, and not via
+	// the user-stop label STOPPING.
+	assert.True(t, slices.Contains(seen, string(AppStatusUpdating)),
+		"expected UPDATING transition in sequence: %v", seen)
+	assert.False(t, slices.Contains(seen, string(AppStatusStopping)),
+		"RestartApp must NOT route through STOPPING — that label is reserved for user-initiated stops; sequence: %v", seen)
 
 	// Exactly one restart_event with reason=user_restart.
 	r.mu.RLock()
