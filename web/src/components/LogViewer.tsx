@@ -351,20 +351,39 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
     overscan: 30,
   })
 
-  useEffect(() => {
-    if (follow && filteredLines.length > 0) {
-      virtualizer.scrollToIndex(filteredLines.length - 1, { align: 'end' })
-    }
-  }, [filteredLines.length, follow, virtualizer])
+  // Refs so the layout effects don't have to list `virtualizer` (a fresh
+  // instance every render) or `matchIndices` (a fresh array every chunk
+  // arrival) in their dep arrays — without these, the scroll-to-index calls
+  // re-fired on every render and yanked the viewport away from a user who
+  // had scrolled up to read older lines.
+  const virtualizerRef = useRef(virtualizer)
+  virtualizerRef.current = virtualizer
+  const matchIndicesRef = useRef(matchIndices)
+  matchIndicesRef.current = matchIndices
+  const prevFollowedLengthRef = useRef(filteredLines.length)
 
+  // Auto-scroll-to-bottom: only when follow is on AND the visible row count
+  // actually grew. Plain re-renders (e.g. virtualizer re-measuring an item
+  // in view) no longer trigger a scroll.
   useEffect(() => {
-    if (matchIndices.length > 0) {
-      const targetIdx = matchIndices[safeMatchIndex]
-      if (targetIdx !== undefined) {
-        virtualizer.scrollToIndex(targetIdx, { align: 'center' })
-      }
+    const len = filteredLines.length
+    if (follow && len > 0 && len !== prevFollowedLengthRef.current) {
+      virtualizerRef.current.scrollToIndex(len - 1, { align: 'end' })
     }
-  }, [safeMatchIndex, matchIndices, virtualizer])
+    prevFollowedLengthRef.current = len
+  }, [filteredLines.length, follow])
+
+  // Search target: scroll only when the user explicitly navigated to a new
+  // match (Ctrl+F / F3 / arrow buttons → safeMatchIndex changes). New chunks
+  // that grow matchIndices but don't shift the active index must NOT
+  // re-center the viewport on a user who has scrolled elsewhere.
+  useEffect(() => {
+    const idxs = matchIndicesRef.current
+    if (idxs.length === 0) return
+    const targetIdx = idxs[safeMatchIndex]
+    if (targetIdx === undefined) return
+    virtualizerRef.current.scrollToIndex(targetIdx, { align: 'center' })
+  }, [safeMatchIndex])
 
   function toggleLevel(level: LogLevel) {
     setEnabledLevels((prev) => {
