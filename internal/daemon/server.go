@@ -328,39 +328,26 @@ func Start(opts StartOptions) error {
 			}
 		}
 
-		// Try SQLiteStore for preferred workspace/namespace from launcher_state.
-		// `deactivated` tracks whether the user has explicitly clicked
-		// "Exit to Welcome" — recorded as SelectedNs[wsID]="" by
-		// handleDeactivateNamespace. The first-namespace auto-pick below
-		// must not override this.
-		deactivated := false
+		// Resolve previously-selected workspace + namespace from launcher_state.
+		// Entry into a namespace is always explicit (Welcome → Quick Start /
+		// Create / pick existing), so an absent / empty SelectedNs entry
+		// simply lands on Welcome — there is no first-namespace auto-pick.
+		nsID = ""
 		if sqlStore, sqlErr := storage.NewSQLiteStore(config.HomeDir()); sqlErr == nil {
 			if state, stateErr := sqlStore.GetState(); stateErr == nil && state != nil {
 				if state.WorkspaceID != "" {
 					wsID = state.WorkspaceID
 				}
-				lookupWs := state.WorkspaceID
-				if lookupWs == "" {
-					lookupWs = wsID
-				}
 				if state.SelectedNs != nil {
-					if selected, present := state.SelectedNs[lookupWs]; present {
-						if selected != "" {
-							nsID = selected
-						} else {
-							// Sentinel: user clicked Exit to Welcome.
-							deactivated = true
-							nsID = ""
-						}
-					}
+					nsID = state.SelectedNs[wsID]
 				}
 			}
 			_ = sqlStore.Close()
 		}
 
-		// Fallback: use first available workspace if stored one doesn't exist
+		// Validate wsID against the on-disk workspace list (handles a stored
+		// wsID that no longer exists, e.g. after a workspace delete).
 		if workspaces, listErr := config.ListWorkspaces(); listErr == nil && len(workspaces) > 0 {
-			// Verify the stored wsID exists
 			wsExists := false
 			for _, ws := range workspaces {
 				if ws.ID == wsID {
@@ -369,6 +356,7 @@ func Start(opts StartOptions) error {
 				}
 			}
 			if !wsExists {
+				nsID = "" // stored ns belongs to a workspace that's gone
 				found := false
 				for _, ws := range workspaces {
 					if ws.ID == "default" || ws.ID == "DEFAULT" {
@@ -379,16 +367,6 @@ func Start(opts StartOptions) error {
 				}
 				if !found {
 					wsID = workspaces[0].ID
-				}
-			}
-			// First-namespace auto-pick: only on fresh install. If `deactivated`,
-			// the user explicitly asked for Welcome — do not override.
-			if !deactivated && nsID == "default" {
-				for _, ws := range workspaces {
-					if ws.ID == wsID && len(ws.Namespaces) > 0 {
-						nsID = ws.Namespaces[0]
-						break
-					}
 				}
 			}
 		}
