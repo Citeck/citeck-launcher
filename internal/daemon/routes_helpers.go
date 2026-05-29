@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"crypto/rand"
+	"encoding/base32"
 	"net/http"
 	"path/filepath"
 	"regexp"
@@ -9,6 +11,22 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/api"
 )
+
+// generateEntityID mirrors Kotlin's IdUtils.createStrId: 4 random bytes →
+// lowercase base32 with the padding stripped (≈7 chars, e.g. "3v3ithq").
+// Entity IDs are opaque to the user — the human-facing Name is stored
+// separately. Two separate concerns, two separate fields.
+func generateEntityID() string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand on Linux can only fail catastrophically; surface as
+		// the empty string so the caller can reject the request rather than
+		// silently writing zero-entropy IDs.
+		return ""
+	}
+	enc := strings.ToLower(base32.StdEncoding.EncodeToString(b[:]))
+	return strings.TrimRight(enc, "=")
+}
 
 // safeIDPattern allows only alphanumeric, hyphens, underscores, dots.
 var safeIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)

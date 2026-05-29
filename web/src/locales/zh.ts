@@ -81,7 +81,7 @@ const zh: Translations = {
   'welcome.workspace.switched': '已切换到工作区 "{name}"',
   'welcome.workspace.switchFailed': '工作区切换失败：{error}',
   'welcome.workspace.form.id': 'ID（可选）',
-  'welcome.workspace.form.idPlaceholder': '从名称推导',
+  'welcome.workspace.form.idPlaceholder': '自动生成',
   'welcome.workspace.form.name': '名称',
   'welcome.workspace.form.repoUrl': '仓库 URL',
   'welcome.workspace.form.repoBranch': '分支',

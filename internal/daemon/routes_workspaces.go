@@ -219,7 +219,24 @@ func (d *Daemon) handleCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	id := req.ID
 	if id == "" {
-		id = sanitizeName(req.Name)
+		// Opaque random slug (Kotlin parity: IdUtils.createStrId). The
+		// user-facing Name is reference info only — collisions are
+		// improbable but we still retry against existing IDs to be safe.
+		for range 10 {
+			candidate := generateEntityID()
+			if candidate == "" {
+				continue
+			}
+			ws, err := d.store.GetWorkspace(candidate)
+			if err == nil && ws == nil && candidate != defaultWorkspaceID {
+				id = candidate
+				break
+			}
+		}
+		if id == "" {
+			writeInternalError(w, fmt.Errorf("failed to generate workspace id"))
+			return
+		}
 	}
 	if !validateID(id) {
 		writeError(w, http.StatusBadRequest, "invalid workspace id (alphanumeric, dot, dash, underscore)")

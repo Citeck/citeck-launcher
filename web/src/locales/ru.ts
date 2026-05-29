@@ -81,7 +81,7 @@ const ru: Translations = {
   'welcome.workspace.switched': 'Переключено на рабочее пространство "{name}"',
   'welcome.workspace.switchFailed': 'Не удалось переключить рабочее пространство: {error}',
   'welcome.workspace.form.id': 'ID (необязательно)',
-  'welcome.workspace.form.idPlaceholder': 'будет создан из имени',
+  'welcome.workspace.form.idPlaceholder': 'сгенерируется автоматически',
   'welcome.workspace.form.name': 'Имя',
   'welcome.workspace.form.repoUrl': 'URL репозитория',
   'welcome.workspace.form.repoBranch': 'Ветка',

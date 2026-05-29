@@ -81,7 +81,7 @@ const de: Translations = {
   'welcome.workspace.switched': 'Zu Arbeitsbereich "{name}" gewechselt',
   'welcome.workspace.switchFailed': 'Arbeitsbereichwechsel fehlgeschlagen: {error}',
   'welcome.workspace.form.id': 'ID (optional)',
-  'welcome.workspace.form.idPlaceholder': 'wird aus Name abgeleitet',
+  'welcome.workspace.form.idPlaceholder': 'wird automatisch generiert',
   'welcome.workspace.form.name': 'Name',
   'welcome.workspace.form.repoUrl': 'Repository-URL',
   'welcome.workspace.form.repoBranch': 'Branch',

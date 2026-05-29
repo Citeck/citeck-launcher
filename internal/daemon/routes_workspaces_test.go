@@ -84,33 +84,28 @@ func TestWorkspaceRoutes_DesktopCRUD(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, "create body=%s", rec.Body.String())
 	var created api.WorkspaceDto
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
-	assert.Equal(t, "acme-workspace", created.ID, "id slug derived from name")
+	// ID is an opaque server-generated slug (Kotlin IdUtils.createStrId
+	// parity), not derived from the human Name. We just assert it's a
+	// non-empty lowercase base32-ish token.
+	assert.NotEmpty(t, created.ID, "id slug generated server-side")
+	assert.NotEqual(t, "acme-workspace", created.ID, "id is generated, not slugified name")
+	createdID := created.ID
 	assert.Equal(t, "main", created.RepoBranch, "default branch applied when omitted")
 
-	// Duplicate → 409
+	// A second POST with the same name does NOT collide (random ID each time).
+	// The dedup semantic is per-ID, not per-name — names are reference info.
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest("POST", api.Workspaces, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	mux.ServeHTTP(rec, req)
-	assert.Equal(t, http.StatusConflict, rec.Code)
-
-	// List — implicit "default" workspace is always synthesized + prepended,
-	// so the list reports two entries even though only one row exists in the
-	// store (Kotlin parity: the default workspace is code-defined, never
-	// persisted unless the user explicitly customizes it).
-	rec = httptest.NewRecorder()
-	req = httptest.NewRequest("GET", api.Workspaces, http.NoBody)
-	mux.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
-	var list []api.WorkspaceDto
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
-	require.Len(t, list, 2)
-	assert.Equal(t, "default", list[0].ID)
-	assert.Equal(t, "acme-workspace", list[1].ID)
+	var second api.WorkspaceDto
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &second))
+	assert.NotEqual(t, createdID, second.ID, "each create gets a fresh ID")
 
-	// Get
+	// Get the first workspace by its generated ID.
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest("GET", "/api/v1/workspaces/acme-workspace", http.NoBody)
+	req = httptest.NewRequest("GET", "/api/v1/workspaces/"+createdID, http.NoBody)
 	mux.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 
@@ -126,7 +121,7 @@ func TestWorkspaceRoutes_DesktopCRUD(t *testing.T) {
 	// Update
 	upd, _ := json.Marshal(api.WorkspaceUpdateDto{Name: "Renamed", RepoBranch: "develop"})
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest("PUT", "/api/v1/workspaces/acme-workspace", bytes.NewReader(upd))
+	req = httptest.NewRequest("PUT", "/api/v1/workspaces/"+createdID, bytes.NewReader(upd))
 	req.Header.Set("Content-Type", "application/json")
 	mux.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code, "update body=%s", rec.Body.String())
@@ -138,13 +133,13 @@ func TestWorkspaceRoutes_DesktopCRUD(t *testing.T) {
 
 	// Delete
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest("DELETE", "/api/v1/workspaces/acme-workspace", http.NoBody)
+	req = httptest.NewRequest("DELETE", "/api/v1/workspaces/"+createdID, http.NoBody)
 	mux.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	// Get after delete → 404
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest("GET", "/api/v1/workspaces/acme-workspace", http.NoBody)
+	req = httptest.NewRequest("GET", "/api/v1/workspaces/"+createdID, http.NoBody)
 	mux.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }

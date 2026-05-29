@@ -445,9 +445,29 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	nsCfg.Name = req.Name
-	nsCfg.ID = sanitizeName(req.Name)
+	// Opaque random ID — the human Name and the on-disk ID are decoupled
+	// (Kotlin parity: IdUtils.createStrId). Retry a few times to dodge an
+	// extremely unlikely collision with an existing on-disk slug. wsID
+	// resolves the same way the create-config-path block below resolves it.
+	createWsID := req.WorkspaceID
+	if createWsID == "" {
+		createWsID = d.workspaceID
+	}
+	for range 10 {
+		candidate := generateEntityID()
+		if candidate == "" {
+			continue
+		}
+		if config.IsDesktopMode() {
+			if _, statErr := os.Stat(config.WorkspaceNamespaceConfigPath(createWsID, candidate)); statErr == nil {
+				continue // taken
+			}
+		}
+		nsCfg.ID = candidate
+		break
+	}
 	if nsCfg.ID == "" {
-		writeError(w, http.StatusBadRequest, "name produces empty ID after sanitization")
+		writeInternalError(w, fmt.Errorf("failed to generate namespace id"))
 		return
 	}
 	if req.AuthType != "" {

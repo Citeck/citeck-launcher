@@ -2,6 +2,8 @@ package namespace
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -11,6 +13,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cespare/xxhash/v2"
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/appfiles"
 	"github.com/citeck/citeck-launcher/internal/bundle"
@@ -1676,11 +1679,23 @@ func loadAppFiles(ctx *NsGenContext) {
 	maps.Copy(ctx.Files, files)
 }
 
-// computeVolumesContentHash returns a deterministic SHA-256 of the content
-// of every bind-mount source file referenced by `app` (own volumes + init
-// container volumes). Feeds into ApplicationDef.GetHashInput so the
+// computeVolumesContentHash returns a short, human-friendly digest of the
+// content of every bind-mount source file referenced by `app` (own volumes
+// + init container volumes). Feeds into ApplicationDef.GetHashInput so the
 // deployment hash changes when any bind-mounted file content changes —
 // prompting the runtime to recreate the container with the fresh content.
+//
+// Algorithm (Kotlin parity — NsRuntimeFiles.getPathsContentHash):
+//  1. Per file: SHA-256 hex digest.
+//  2. Aggregate: feed each per-file digest into a 64-bit non-crypto hash
+//     stream (xxhash), walking files in sorted-path order so the result
+//     is deterministic across runs and map iteration order.
+//  3. Render: encode the 8-byte sum as URL-safe base64 with padding
+//     stripped — ~11 chars instead of 64-char hex.
+//
+// We picked the small-output aggregator on purpose so the hash doesn't
+// visually swamp logs and Docker labels; xxhash's collision odds at our
+// scale (<10⁴ distinct file sets per namespace) are negligible.
 //
 // Only `./...` host paths are hashed. Named volumes (`pgdata:/var/lib/...`)
 // and absolute host paths (`/etc/foo:/inside`) aren't touched — those are
@@ -1698,20 +1713,25 @@ func computeVolumesContentHash(app *appdef.ApplicationDef, files map[string][]by
 		return ""
 	}
 	sort.Strings(keys) // stable order — map iteration isn't
-	h := sha256.New()
+	agg := xxhash.New()
 	for _, k := range keys {
 		content, ok := files[k]
 		if !ok {
 			continue
 		}
-		// Include the key itself so renaming a file produces a different hash
-		// even if the content happens to match another file.
-		h.Write([]byte(k))
-		h.Write([]byte{0})
-		h.Write(content)
-		h.Write([]byte{0})
+		// Per-file digest folds the path into SHA-256 so a rename (same
+		// content, different key) still flips the aggregate hash. Kotlin's
+		// runtimeFilesHash was keyed by path and the TreeMap ordering did
+		// this implicitly; in Go we make it explicit.
+		perFile := sha256.New()
+		perFile.Write([]byte(k))
+		perFile.Write([]byte{0})
+		perFile.Write(content)
+		_, _ = agg.WriteString(hex.EncodeToString(perFile.Sum(nil)))
 	}
-	return hex.EncodeToString(h.Sum(nil))
+	var buf [8]byte
+	binary.BigEndian.PutUint64(buf[:], agg.Sum64())
+	return base64.RawURLEncoding.EncodeToString(buf[:])
 }
 
 // collectFileKeysFromVolumes extracts the ctx.Files keys (e.g.
