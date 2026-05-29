@@ -22,7 +22,7 @@ endif
 GOLANGCI_LINT=$(GOBIN)/golangci-lint
 
 .PHONY: all build build-fast build-web build-desktop run test test-unit test-race test-coverage \
-        lint fmt tidy tools clean help dev-daemon dev-desktop
+        lint fmt tidy tools clean help dev-daemon dev-desktop web-deps
 
 all: test build
 
@@ -51,7 +51,12 @@ build-fast:
 	@test -f $(WEBDIST)/index.html || echo '<html><body>Run "make build" to include web UI</body></html>' > $(WEBDIST)/index.html
 	go build $(GO_BUILD_FLAGS) -o $(BINARY) ./cmd/citeck
 
-build-web:
+# Install web deps only when node_modules is missing — keeps incremental
+# builds fast while letting a fresh checkout `make run` with zero setup.
+web-deps:
+	@test -d web/node_modules || (cd web && pnpm install)
+
+build-web: web-deps
 	cd web && pnpm run build
 	rm -rf $(WEBDIST)
 	cp -r web/dist $(WEBDIST)
@@ -99,11 +104,11 @@ tools:
 	@echo "Installing dev tools..."
 	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4
 
-dev-daemon:
+dev-daemon: web-deps
 	go run ./cmd/citeck start --foreground &
 	cd web && pnpm dev
 
-dev-desktop:
+dev-desktop: web-deps
 	cd web && pnpm run build
 	@mkdir -p $(BUILDDIR)
 	CGO_ENABLED=1 go build -tags "$(DESKTOP_TAGS)" -o $(DESKTOP) ./cmd/citeck-desktop
