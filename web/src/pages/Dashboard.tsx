@@ -177,47 +177,52 @@ export function Dashboard() {
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+      {/* Top NS strip — namespace identity + bundle + edit (Settings) gear.
+          Lifted out of the sidebar so the left panel can focus on live state
+          (status / CPU / MEM / controls). The strip spans the full width so
+          the gear sits in a predictable place independent of sidebar width. */}
+      <div className="flex items-center gap-2 h-9 px-3 border-b border-border bg-card text-sm shrink-0">
+        <button
+          type="button"
+          className="min-w-0 text-left hover:bg-muted/30 -mx-1 px-1 py-0.5 rounded flex items-center gap-2 min-w-0"
+          title={t('namespaces.switch')}
+          onClick={() => setNamespaceDialogOpen(true)}
+        >
+          <span className="font-semibold truncate">
+            {namespace.name}
+            <span className="ml-1 font-normal text-muted-foreground">({namespace.id})</span>
+          </span>
+          <span className="text-muted-foreground/60" aria-hidden="true">·</span>
+          <span className="text-[11px] text-muted-foreground truncate">{namespace.bundleRef}</span>
+        </button>
+        <div className="ml-auto flex items-center gap-0.5 shrink-0">
+          <button
+            type="button"
+            className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted"
+            title={t('dashboard.nsConfig')}
+            onClick={() => setNsEditOpen(true)}
+            onContextMenu={(e) => showContextMenu(e, [
+              {
+                label: t('nsEdit.title'),
+                onClick: () => setNsEditOpen(true),
+              },
+              {
+                label: t('nsEdit.editRawYaml'),
+                onClick: () => openBottomTab({ id: 'ns-config', type: 'ns-config', title: t('configEditor.title') }),
+              },
+            ])}
+          >
+            <Settings size={14} />
+          </button>
+        </div>
+      </div>
+
       {/* Top: sidebar + table + drawer overlay */}
       <div className="flex flex-1 min-h-0 relative">
         {/* Left info panel */}
         <aside className="w-60 shrink-0 border-r border-border bg-card flex flex-col h-full">
           {/* Scrollable content */}
           <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <button
-              type="button"
-              className="min-w-0 text-left hover:bg-muted/30 -mx-1 px-1 py-0.5 rounded"
-              title={t('namespaces.switch')}
-              onClick={() => setNamespaceDialogOpen(true)}
-            >
-              <div className="text-sm font-semibold truncate">
-                {namespace.name}
-                <span className="ml-1 font-normal text-muted-foreground">({namespace.id})</span>
-              </div>
-              <div className="text-[11px] text-muted-foreground mt-0.5 truncate">{namespace.bundleRef}</div>
-            </button>
-            <div className="flex items-center gap-0.5 shrink-0">
-              <button
-                type="button"
-                className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted"
-                title={t('dashboard.nsConfig')}
-                onClick={() => setNsEditOpen(true)}
-                onContextMenu={(e) => showContextMenu(e, [
-                  {
-                    label: t('nsEdit.title'),
-                    onClick: () => setNsEditOpen(true),
-                  },
-                  {
-                    label: t('nsEdit.editRawYaml'),
-                    onClick: () => openBottomTab({ id: 'ns-config', type: 'ns-config', title: t('configEditor.title') }),
-                  },
-                ])}
-              >
-                <Settings size={14} />
-              </button>
-            </div>
-          </div>
-
           <div className="flex items-center gap-2">
             <StatusBadge status={namespace.status} variant="indicator" />
             <span className="text-xs text-muted-foreground">{runningCount}/{apps.length}</span>
