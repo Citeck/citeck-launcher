@@ -357,8 +357,14 @@ func (d *Daemon) handleGetAppConfig(w http.ResponseWriter, r *http.Request) {
 		writeAppNotFound(w, name)
 		return
 	}
-	// Serialize ApplicationDef to YAML
-	data, err := yaml.Marshal(app.Def)
+	// Hide the runtime-internal cache fields from the editor view: the digest
+	// is re-resolved from the image at every container start, and the volume
+	// content hash is recomputed by the generator. Showing them suggests the
+	// operator should manage them; ignoring them on PUT is the matching half.
+	clean := app.Def
+	clean.ImageDigest = ""
+	clean.VolumesContentHash = ""
+	data, err := yaml.Marshal(clean)
 	if err != nil {
 		writeInternalError(w, err)
 		return
@@ -401,22 +407,16 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 	// a desktop launcher the operator IS the user, so the reset just made
 	// it look like saves silently failed for any "wrong" field.
 	//
-	// Lock only the genuinely non-editable fields: the canonical Name (the
-	// URL says which app this is), the auto-resolved ImageDigest (we
-	// re-resolve below from the possibly-new Image), and the computed
-	// VolumesContentHash (recomputed by the generator on next regenerate).
-	oldDef := app.Def
+	// Lock only the genuinely non-editable fields: the canonical Name (URL
+	// keys the app). ImageDigest is a runtime cache (resolved at container
+	// start from the image tag) so we always drop it on save; the next pull
+	// resolves the correct digest for whatever image the user chose.
+	// VolumesContentHash is recomputed by the generator on the next
+	// regenerate — also a runtime cache, also always cleared.
+	_ = app.Def // oldDef no longer needed — every formerly-pinned field is now editable.
 	newDef.Name = name
-	newDef.VolumesContentHash = oldDef.VolumesContentHash
-	if newDef.Image == oldDef.Image {
-		newDef.ImageDigest = oldDef.ImageDigest
-	} else {
-		// Image changed — clear the cached digest so the next pull resolves
-		// the new tag's actual digest. Without this the runtime would keep
-		// using the old digest and the container would silently start from
-		// the previous image.
-		newDef.ImageDigest = ""
-	}
+	newDef.ImageDigest = ""
+	newDef.VolumesContentHash = ""
 
 	if err := d.runtime.UpdateAppDef(name, newDef, true); err != nil {
 		writeInternalError(w, err)

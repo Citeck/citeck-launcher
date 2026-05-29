@@ -1,13 +1,13 @@
 import { useEffect, useState, useCallback, useImperativeHandle, forwardRef } from 'react'
 import yaml from 'js-yaml'
-import { getAppConfig, putAppConfig, resetAppConfig, putAppLock, getAppFiles, getAppFile, putAppFile, resetAppFile } from '../lib/api'
+import { getAppConfig, putAppConfig, resetAppConfig, getAppFiles, getAppFile, putAppFile, resetAppFile } from '../lib/api'
 import { useDashboardStore } from '../lib/store'
 import { ConfirmModal } from './ConfirmModal'
 import { CodeEditor } from './CodeEditor'
 import { YamlViewer } from './YamlViewer'
 import { toast } from '../lib/toast'
 import { useTranslation } from '../lib/i18n'
-import { FileCode, Lock, Unlock, RotateCcw } from 'lucide-react'
+import { FileCode, RotateCcw } from 'lucide-react'
 import type { AppFileDto } from '../lib/types'
 import { isEditableFile } from '../lib/files'
 
@@ -82,7 +82,9 @@ export const AppConfigEditor = forwardRef<AppConfigEditorHandle, AppConfigEditor
   const nsApps = useDashboardStore((s) => s.namespace?.apps)
   const appMeta = nsApps?.find((a) => a.name === appName)
   const isEdited = appMeta?.edited ?? false
-  const isLocked = appMeta?.locked ?? false
+  // appMeta.locked still arrives in the namespace DTO for backwards-compat
+  // with older daemons; the editor no longer surfaces an unlock control (any
+  // saved edit is permanently authoritative until Reset, by design).
 
   const load = useCallback(() => {
     const controller = new AbortController()
@@ -262,26 +264,23 @@ export const AppConfigEditor = forwardRef<AppConfigEditorHandle, AppConfigEditor
           }>
             <div className="flex items-center gap-1 text-xs font-medium">
               <FileCode size={13} /> {t('appConfig.title')}
-              {isEdited && <span className="text-[10px] text-blue-500 font-normal ml-1">{t('appConfig.edited', { detail: isLocked ? ', locked' : '' })}</span>}
+              {isEdited && <span className="text-[10px] text-blue-500 font-normal ml-1">{t('appConfig.edited', { detail: '' })}</span>}
             </div>
             {!hideInnerActions && (
               <div className="flex items-center gap-1">
                 {isEdited && (
-                  <>
-                    <button type="button"
-                      className={`flex items-center gap-0.5 rounded border border-border px-2 py-0.5 text-xs hover:bg-muted ${isLocked ? 'text-blue-500' : 'text-muted-foreground'}`}
-                      title={isLocked ? t('appConfig.lock.unlockTooltip') : t('appConfig.lock.lockTooltip')}
-                      onClick={() => putAppLock(appName, !isLocked).catch((e) => setConfigError((e as Error).message))}>
-                      {isLocked ? <Lock size={11} /> : <Unlock size={11} />}
-                      {isLocked ? t('appConfig.lock.locked') : t('appConfig.lock.unlocked')}
-                    </button>
-                    <button type="button"
-                      className="flex items-center gap-0.5 rounded border border-border px-2 py-0.5 text-xs hover:bg-muted text-muted-foreground"
-                      title={t('appConfig.reset.tooltip')}
-                      onClick={() => setShowResetConfirm(true)}>
-                      <RotateCcw size={11} /> {t('appConfig.reset')}
-                    </button>
-                  </>
+                  // Reset is the ONLY way back to the generator's def — by
+                  // design, any saved edit is permanently authoritative until
+                  // Reset is hit. No Lock/Unlock toggle: edits are implicitly
+                  // locked by save, and surfacing the toggle would suggest
+                  // the launcher might silently re-apply the generator's
+                  // version on regenerate, which is not the model.
+                  <button type="button"
+                    className="flex items-center gap-0.5 rounded border border-border px-2 py-0.5 text-xs hover:bg-muted text-muted-foreground"
+                    title={t('appConfig.reset.tooltip')}
+                    onClick={() => setShowResetConfirm(true)}>
+                    <RotateCcw size={11} /> {t('appConfig.reset')}
+                  </button>
                 )}
                 {!configEditing ? (
                   <button type="button" className="rounded border border-border px-2 py-0.5 text-xs hover:bg-muted"
