@@ -707,10 +707,29 @@ func isPathUnder(path, base string) bool {
 	return strings.HasPrefix(cleanPath, cleanBase+string(filepath.Separator))
 }
 
+// isAppBindMount reports whether relPath (with leading "./") is reachable
+// through one of the app's bind mounts. Accepts both:
+//   - exact match for individual-file mounts ("./proxy/lua_oidc_full_access.lua:/...")
+//   - any path under a directory mount ("./app/eapps/props:/..." matches
+//     "./app/eapps/props/application-launcher.yml" and any deeper entry)
+//
+// The directory case is required for Spring webapps (props/ dir mount), which
+// is what handleListAppFiles enumerates via filepath.WalkDir; without this
+// the editor would refuse to read or write the files the menu surfaced.
 func isAppBindMount(app *namespace.AppRuntime, relPath string) bool {
 	for _, v := range app.Def.Volumes {
 		parts := strings.SplitN(v, ":", 2)
-		if len(parts) >= 2 && parts[0] == relPath {
+		if len(parts) < 2 {
+			continue
+		}
+		host := parts[0]
+		if host == relPath {
+			return true
+		}
+		// Directory mount: relPath must live strictly below host. The
+		// trailing "/" check rejects sibling paths that happen to share a
+		// prefix (e.g. "./app/eapps-other" vs "./app/eapps").
+		if strings.HasPrefix(relPath, strings.TrimSuffix(host, "/")+"/") {
 			return true
 		}
 	}

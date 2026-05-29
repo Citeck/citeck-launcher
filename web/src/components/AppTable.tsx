@@ -167,25 +167,32 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
       const files = await getAppFiles(appName)
       const items: ContextMenuItem[] = files
         .filter((f) => isEditableFile(f.path))
-        .map((f) => ({
-          label: f.path,
-          // Kotlin v1.3.8 rendered a 5dp blue vertical bar before edited
-          // entries in the COG RMB menu — same visual marker the inline list
-          // already shows.
-          decoration: f.edited ? (
-            <span
-              className="inline-block w-0.5 h-3 bg-blue-500 mr-1.5 align-middle shrink-0"
-              title={t('appConfig.fileEdited.badge')}
-            />
-          ) : undefined,
-          onClick: () => openSecondaryView({
-            id: `editor:${appName}:${f.path}`,
-            type: 'app-config',
-            title: t('appConfig.tabTitle', { name: `${appName} — ${f.path}` }),
-            appName,
-            filePath: f.path,
-          }),
-        }))
+        .map((f) => {
+          // Show just the basename in the menu — Kotlin parity. The full
+          // bind-mount path stays in the title attribute for the user who
+          // needs to disambiguate two same-named files from different dirs.
+          const slash = f.path.lastIndexOf('/')
+          const basename = slash >= 0 ? f.path.slice(slash + 1) : f.path
+          return {
+            label: basename,
+            // Kotlin v1.3.8 rendered a 5dp blue vertical bar before edited
+            // entries in the COG RMB menu — same visual marker the inline list
+            // already shows.
+            decoration: f.edited ? (
+              <span
+                className="inline-block w-0.5 h-3 bg-blue-500 mr-1.5 align-middle shrink-0"
+                title={t('appConfig.fileEdited.badge')}
+              />
+            ) : undefined,
+            onClick: () => openSecondaryView({
+              id: `editor:${appName}:${f.path}`,
+              type: 'app-config',
+              title: t('appConfig.tabTitle', { name: `${appName} — ${basename}` }),
+              appName,
+              filePath: f.path,
+            }),
+          }
+        })
       if (items.length === 0) {
         items.push({ label: t('table.noEditableFiles'), onClick: () => {}, variant: 'danger' })
       }
