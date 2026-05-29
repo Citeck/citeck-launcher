@@ -21,8 +21,13 @@ export interface AppConfigEditorHandle {
   isDirty(): boolean
   /** True when a non-default config exists on disk (lock + reset enabled). */
   isEdited(): boolean
-  /** Save the current YAML buffer (no-op if not dirty). Returns promise that resolves on success/error. */
-  apply(): Promise<void>
+  /**
+   * Save the current YAML buffer. Resolves to true if the daemon accepted
+   * the update; false if validation failed or the daemon returned an error.
+   * Window-mode callers use this to decide whether to close the secondary
+   * window after Save.
+   */
+  apply(): Promise<boolean>
   /** Revert the in-memory edit buffer to the saved config. */
   cancelEdit(): void
   /** Reset the on-disk config back to the generator-supplied default. */
@@ -135,15 +140,15 @@ export const AppConfigEditor = forwardRef<AppConfigEditorHandle, AppConfigEditor
     onDirtyChange?.(isDirty)
   }, [isDirty, onDirtyChange])
 
-  async function handleApplyConfig() {
+  async function handleApplyConfig(): Promise<boolean> {
     if (!loadOK) {
       // Defensive — the imperative handle and the inner Apply button both
       // gate on isDirty/loadOK, so this branch only catches a programmer
       // error (e.g. a future caller bypassing the handle).
       setConfigError(t('appConfig.loadError.cannotSave'))
-      return
+      return false
     }
-    if (!editYaml) return
+    if (!editYaml) return false
     // Real YAML validation (Kotlin EditorWindow parity) — js-yaml parse catches
     // indentation errors, dangling keys, broken anchors, etc. The daemon also
     // validates, but failing fast here gives a clearer client-side message.
@@ -151,17 +156,30 @@ export const AppConfigEditor = forwardRef<AppConfigEditorHandle, AppConfigEditor
       validateYamlContent(editYaml, 'app-config.yml')
     } catch (e) {
       setConfigError((e as Error).message)
-      return
+      return false
     }
     setConfigSaving(true); setConfigError(null)
     try {
       await putAppConfig(appName, editYaml)
-      setConfigYaml(editYaml)
+      // Reload from the daemon so the editor reflects what was actually
+      // stored (the daemon resets a few structural fields like image / ports
+      // for safety, so the submitted YAML and the stored YAML can differ).
+      try {
+        const stored = await getAppConfig(appName)
+        setConfigYaml(stored ?? '')
+        setEditYaml(stored ?? '')
+      } catch {
+        // Daemon accepted the write but the post-save read failed — keep the
+        // in-memory buffer the user submitted so they don't see stale data.
+        setConfigYaml(editYaml)
+      }
       setConfigEditing(false)
       setShowApplyConfirm(false)
       toast(t('appConfig.saved'), 'success')
+      return true
     } catch (e) {
       setConfigError((e as Error).message)
+      return false
     } finally {
       setConfigSaving(false)
     }

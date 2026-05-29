@@ -458,6 +458,11 @@ func (d *Daemon) handleListAppFiles(w http.ResponseWriter, r *http.Request) {
 	// `path` keeps the human-readable "./app/..." form for backwards-compat
 	// with existing UI code; `edited` reflects whether the user has edited
 	// the file via the Web UI (key stored without the leading "./").
+	//
+	// Bind-mount source can be a regular file OR a directory. For directory
+	// mounts (typical for Spring webapps: `./app/<name>/props:/run/...`) we
+	// walk the directory and emit each regular file inside — Kotlin 1.x
+	// behaviour the COG RMB menu relied on to surface application.yml etc.
 	files := make([]api.AppFileDto, 0)
 	for _, v := range app.Def.Volumes {
 		parts := strings.SplitN(v, ":", 2)
@@ -468,12 +473,32 @@ func (d *Daemon) handleListAppFiles(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(hostPath, "./") {
 			continue
 		}
-		// Resolve and check if the path is a regular file (not a directory)
 		absPath := filepath.Join(d.volumesBase, hostPath[2:])
-		if info, err := os.Stat(absPath); err == nil && !info.IsDir() {
+		info, statErr := os.Stat(absPath) //nolint:gosec // G304: absPath derived from validated bind mount + volumesBase
+		if statErr != nil {
+			continue
+		}
+		if !info.IsDir() {
 			edited := d.runtime != nil && d.runtime.IsFileEdited(hostPath[2:])
 			files = append(files, api.AppFileDto{Path: hostPath, Edited: edited})
+			continue
 		}
+		// Directory mount — walk it and surface every regular file inside.
+		// The walker is bounded to the bind-mount root so it cannot escape
+		// volumesBase even if a hostile bundle planted symlinks.
+		_ = filepath.WalkDir(absPath, func(child string, d2 os.DirEntry, walkErr error) error {
+			if walkErr != nil || d2.IsDir() {
+				return nil
+			}
+			rel, relErr := filepath.Rel(d.volumesBase, child)
+			if relErr != nil {
+				return nil
+			}
+			relSlash := filepath.ToSlash(rel)
+			edited := d.runtime != nil && d.runtime.IsFileEdited(relSlash)
+			files = append(files, api.AppFileDto{Path: "./" + relSlash, Edited: edited})
+			return nil
+		})
 	}
 	writeJSON(w, files)
 }

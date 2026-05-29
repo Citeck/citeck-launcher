@@ -113,7 +113,10 @@ export function WindowEditor() {
           type="button"
           className="rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
           disabled={!dirty}
-          onClick={async () => { await editorRef.current?.apply() }}
+          onClick={async () => {
+            const ok = await editorRef.current?.apply()
+            if (ok) close()
+          }}
         >
           {t('common.save')}
         </button>
