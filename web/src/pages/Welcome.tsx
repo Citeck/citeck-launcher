@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { getNamespaces, getQuickStarts, deleteNamespace, postNamespaceStart, createNamespace } from '../lib/api'
+import { activateNamespace, getNamespaces, getQuickStarts, deleteNamespace, postNamespaceStart, createNamespace } from '../lib/api'
 import { useDaemonStatusStore } from '../lib/daemonStatus'
 import type { NamespaceSummaryDto, QuickStartDto } from '../lib/types'
 import { ConfirmModal } from '../components/ConfirmModal'
@@ -81,15 +81,27 @@ export function Welcome() {
       .catch(() => { setWorkspaceLoaded(true) })
   }, [])
 
-  async function handleOpenNamespace() {
-    // Just navigate to Dashboard. The user starts the namespace explicitly
-    // via the Start button — auto-start on click is reserved for Quick Start
-    // (which creates a fresh namespace from scratch).
-    await fetchData()
-    startEventStream()
-    resetPanels()
-    openTab({ id: 'home', title: t('dashboard.title'), path: '/' })
-    navigate('/')
+  async function handleOpenNamespace(ns: NamespaceSummaryDto) {
+    // Activate the clicked namespace on the daemon FIRST — the daemon's
+    // SelectedNs[wsID] only gets set inside installLoadedNamespace, so
+    // without this call the choice never persists and the next reload
+    // bounces straight back to Welcome. The namespace stays STOPPED until
+    // the user clicks Start (auto-start on click is reserved for Quick
+    // Start, which creates the namespace from scratch).
+    setStartError(null)
+    setStarting(true)
+    try {
+      await activateNamespace(ns.id)
+      await fetchData()
+      startEventStream()
+      resetPanels()
+      openTab({ id: 'home', title: t('dashboard.title'), path: '/' })
+      navigate('/')
+    } catch (err) {
+      setStartError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setStarting(false)
+    }
   }
 
   async function handleDelete() {
@@ -170,7 +182,7 @@ export function Welcome() {
 
   function nsContextItems(ns: NamespaceSummaryDto): ContextMenuItem[] {
     return [
-      { label: t('welcome.context.open'), onClick: () => handleOpenNamespace() },
+      { label: t('welcome.context.open'), onClick: () => handleOpenNamespace(ns) },
       { label: t('welcome.namespace.edit'), onClick: () => setEditTarget(ns) },
       { label: t('welcome.context.delete'), variant: 'danger', onClick: () => setDeleteTarget(ns) },
     ]
@@ -229,7 +241,7 @@ export function Welcome() {
                 <button
                   type="button"
                   disabled={starting}
-                  onClick={() => handleOpenNamespace()}
+                  onClick={() => handleOpenNamespace(ns)}
                   className="w-full rounded-lg bg-muted hover:bg-muted/70 px-6 py-3.5 text-center transition-colors disabled:opacity-50"
                 >
                   <div className="text-sm font-semibold text-foreground">{ns.name || ns.id}</div>
