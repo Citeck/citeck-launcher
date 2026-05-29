@@ -329,25 +329,30 @@ func Start(opts StartOptions) error {
 		}
 
 		// Try SQLiteStore for preferred workspace/namespace from launcher_state.
-		// `stateExists` tracks whether the user has ever persisted a choice —
-		// the first-namespace fallback below only kicks in when there's no
-		// prior record. After the user explicitly deactivates, the record
-		// exists but SelectedNs[wsID] is missing — we want Welcome, not the
-		// auto-pick of the first ns on disk.
-		stateExists := false
+		// `deactivated` tracks whether the user has explicitly clicked
+		// "Exit to Welcome" — recorded as SelectedNs[wsID]="" by
+		// handleDeactivateNamespace. The first-namespace auto-pick below
+		// must not override this.
+		deactivated := false
 		if sqlStore, sqlErr := storage.NewSQLiteStore(config.HomeDir()); sqlErr == nil {
 			if state, stateErr := sqlStore.GetState(); stateErr == nil && state != nil {
 				if state.WorkspaceID != "" {
 					wsID = state.WorkspaceID
-					stateExists = true
 				}
-				if selected := state.NamespaceID(); selected != "" {
-					nsID = selected
-				} else if stateExists {
-					// Record exists, no namespace selected → user deactivated.
-					// Clear the initial "default" placeholder so loadNamespace
-					// lands on the Welcome screen.
-					nsID = ""
+				lookupWs := state.WorkspaceID
+				if lookupWs == "" {
+					lookupWs = wsID
+				}
+				if state.SelectedNs != nil {
+					if selected, present := state.SelectedNs[lookupWs]; present {
+						if selected != "" {
+							nsID = selected
+						} else {
+							// Sentinel: user clicked Exit to Welcome.
+							deactivated = true
+							nsID = ""
+						}
+					}
 				}
 			}
 			_ = sqlStore.Close()
@@ -376,11 +381,9 @@ func Start(opts StartOptions) error {
 					wsID = workspaces[0].ID
 				}
 			}
-			// First-namespace auto-pick: only on fresh install (no state record).
-			// If `stateExists`, the user has interacted with the launcher before
-			// — either they selected a namespace (already restored above) or
-			// they deactivated (nsID is empty by design). Do not override.
-			if !stateExists && nsID == "default" {
+			// First-namespace auto-pick: only on fresh install. If `deactivated`,
+			// the user explicitly asked for Welcome — do not override.
+			if !deactivated && nsID == "default" {
 				for _, ws := range workspaces {
 					if ws.ID == wsID && len(ws.Namespaces) > 0 {
 						nsID = ws.Namespaces[0]

@@ -319,15 +319,21 @@ func (d *Daemon) handleDeactivateNamespace(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Persist: clear SelectedNs[wsID] so the next daemon start lands on
-	// Welcome instead of reopening this namespace.
+	// Persist: write SelectedNs[wsID]="" as an explicit "user deactivated"
+	// sentinel so the next daemon start lands on Welcome instead of
+	// reopening this namespace. Deleting the key would be ambiguous with
+	// the "never selected" case the first-ns fallback handles.
 	state, _ := d.store.GetState()
 	if state == nil {
-		state = &storage.LauncherState{WorkspaceID: wsID}
+		state = &storage.LauncherState{}
 	}
-	if state.SelectedNs != nil {
-		delete(state.SelectedNs, wsID)
+	if state.WorkspaceID == "" {
+		state.WorkspaceID = wsID
 	}
+	if state.SelectedNs == nil {
+		state.SelectedNs = make(map[string]string, 1)
+	}
+	state.SelectedNs[wsID] = ""
 	if err := d.store.SetState(*state); err != nil {
 		writeInternalError(w, fmt.Errorf("persist namespace selection: %w", err))
 		return
