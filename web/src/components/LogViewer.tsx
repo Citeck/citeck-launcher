@@ -472,17 +472,28 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
 
         <div className="h-5 w-px bg-border" />
 
-        {/* Tail lines */}
+        {/* Tail lines — appearance:none kills the OS-native chevron / popup
+            so the dropdown stays themed even in secondary Wails windows
+            (otherwise WebKit-GTK falls back to system colors and renders a
+            light, oversized control). The custom chevron is layered via
+            background-image so the trigger stays just text + arrow. */}
         <select
           value={tail}
           onChange={(e) => setTail(Number(e.target.value))}
-          className="rounded-md border border-border bg-card px-2 py-1 text-xs text-foreground"
+          className="appearance-none rounded border border-border bg-card pl-2 pr-6 py-1 text-xs text-foreground focus:outline-none focus:border-primary cursor-pointer"
+          style={{
+            backgroundImage:
+              "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%239da0a8' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E\")",
+            backgroundPosition: 'right 6px center',
+            backgroundRepeat: 'no-repeat',
+            backgroundSize: '8px 5px',
+          }}
         >
-          <option value={100}>100</option>
-          <option value={200}>200</option>
-          <option value={500}>500</option>
-          <option value={1000}>1000</option>
-          <option value={5000}>5000</option>
+          <option value={100} className="bg-card text-foreground">100</option>
+          <option value={200} className="bg-card text-foreground">200</option>
+          <option value={500} className="bg-card text-foreground">500</option>
+          <option value={1000} className="bg-card text-foreground">1000</option>
+          <option value={5000} className="bg-card text-foreground">5000</option>
         </select>
 
         <div className="h-5 w-px bg-border" />

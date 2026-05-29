@@ -77,22 +77,84 @@ func (d *Daemon) handleAppLogsFollow(w http.ResponseWriter, r *http.Request, con
 
 	// Use stdcopy to demux Docker multiplex headers, writing clean text to the response.
 	// stdcopy.StdCopy blocks until the reader is closed (context cancellation or container stop).
-	_, _ = stdcopy.StdCopy(flushWriter{w, flusher}, flushWriter{w, flusher}, reader)
+	stdoutW := &flushWriter{w: w, f: flusher}
+	stderrW := &flushWriter{w: w, f: flusher}
+	_, _ = stdcopy.StdCopy(stdoutW, stderrW, reader)
 }
 
-// flushWriter wraps an http.ResponseWriter to flush after every write.
+// flushWriter wraps an http.ResponseWriter to flush after every write and to
+// strip ANSI escape codes / normalize tabs the same way the non-follow path
+// (handleAppLogs → stripAnsi) does. Without this, Java apps that print to
+// stdout with ANSI color SGR sequences ("\x1b[32mINFO\x1b[0m") leak raw
+// "[32mINFO[0m" into the log viewer when follow=true.
+//
+// Strip is byte-buffered because an SGR sequence can straddle two stdcopy
+// chunks; pendingEsc holds an unfinished "\x1b[..." run between writes.
 type flushWriter struct {
-	w http.ResponseWriter
-	f http.Flusher
+	w          http.ResponseWriter
+	f          http.Flusher
+	pendingEsc []byte
 }
 
-func (fw flushWriter) Write(p []byte) (int, error) {
-	n, err := fw.w.Write(p)
-	if err != nil {
-		return n, fmt.Errorf("write: %w", err)
+func (fw *flushWriter) Write(p []byte) (int, error) {
+	cleaned, leftover := stripAnsiBytes(p, fw.pendingEsc)
+	fw.pendingEsc = leftover
+	if len(cleaned) > 0 {
+		if _, err := fw.w.Write(cleaned); err != nil {
+			return 0, fmt.Errorf("write: %w", err)
+		}
 	}
 	fw.f.Flush()
-	return n, nil
+	return len(p), nil
+}
+
+// stripAnsiBytes removes CSI escape codes from b (carrying over any unfinished
+// sequence from `carry`), converts tabs to four spaces, and returns the
+// cleaned slice plus a new carry to feed into the next call.
+//
+// CSI grammar: ESC '[' (parameter bytes 0x30–0x3f)* (intermediate 0x20–0x2f)*
+// (final byte 0x40–0x7e). We treat parameter and intermediate as one merged
+// range 0x20–0x3f to keep the loop tight; malformed sequences (ESC followed
+// by something other than '[') drop just the ESC byte.
+func stripAnsiBytes(b []byte, carry []byte) (cleaned []byte, leftover []byte) {
+	if len(carry) > 0 {
+		b = append(carry, b...)
+	}
+	out := make([]byte, 0, len(b))
+	i := 0
+	for i < len(b) {
+		c := b[i]
+		switch {
+		case c == 0x1b:
+			if i+1 >= len(b) {
+				return out, b[i:]
+			}
+			if b[i+1] != '[' {
+				i++
+				continue
+			}
+			j := i + 2
+			for j < len(b) && b[j] >= 0x20 && b[j] <= 0x3f {
+				j++
+			}
+			if j >= len(b) {
+				return out, b[i:]
+			}
+			if b[j] >= 0x40 && b[j] <= 0x7e {
+				i = j + 1
+				continue
+			}
+			// Malformed terminator — skip just the ESC.
+			i++
+		case c == '\t':
+			out = append(out, ' ', ' ', ' ', ' ')
+			i++
+		default:
+			out = append(out, c)
+			i++
+		}
+	}
+	return out, nil
 }
 
 // handleAppsRetryPullFailed re-queues all PULL_FAILED apps for a fresh pull
