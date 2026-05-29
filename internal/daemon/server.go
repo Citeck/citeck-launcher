@@ -341,6 +341,14 @@ func Start(opts StartOptions) error {
 				if state.SelectedNs != nil {
 					nsID = state.SelectedNs[wsID]
 				}
+				slog.Info("Startup: loaded launcher_state",
+					"persistedWorkspaceID", state.WorkspaceID,
+					"selectedNs", state.SelectedNs,
+					"resolvedWsID", wsID,
+					"resolvedNsID", nsID,
+				)
+			} else {
+				slog.Info("Startup: no launcher_state record", "err", stateErr)
 			}
 			_ = sqlStore.Close()
 		}

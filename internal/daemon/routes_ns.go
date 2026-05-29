@@ -334,6 +334,17 @@ func (d *Daemon) handleDeactivateNamespace(w http.ResponseWriter, r *http.Reques
 		writeInternalError(w, fmt.Errorf("persist namespace selection: %w", err))
 		return
 	}
+	// Verify the persisted state immediately after writing — diagnostic for
+	// the "Exit to Welcome doesn't survive restart" bug.
+	if check, checkErr := d.store.GetState(); checkErr == nil && check != nil {
+		_, stillPresent := check.SelectedNs[wsID]
+		slog.Info("Deactivated namespace, persisted state",
+			"wsID", wsID,
+			"selectedNs", check.SelectedNs,
+			"keyStillPresent", stillPresent,
+			"persistedWorkspaceID", check.WorkspaceID,
+		)
+	}
 
 	// Tear down the current runtime under configMu. Subsequent API calls see
 	// d.runtime == nil and treat the daemon as "no namespace loaded" — the

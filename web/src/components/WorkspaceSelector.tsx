@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, ChevronDown, Loader2, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { Modal, ModalField } from './Modal'
+import { Select } from './Select'
 import {
   activateWorkspace,
   createWorkspace,
@@ -375,14 +376,15 @@ function WorkspaceFormDialog({ mode, onClose, onSaved }: WorkspaceFormDialogProp
         />
       </ModalField>
       <ModalField label={t('welcome.workspace.form.authType')}>
-        <select
+        <Select
           value={authType}
-          onChange={(e) => setAuthType(e.target.value as 'NONE' | 'TOKEN')}
-          className={inputCls}
-        >
-          <option value="NONE">{t('welcome.workspace.form.authType.none')}</option>
-          <option value="TOKEN">{t('welcome.workspace.form.authType.token')}</option>
-        </select>
+          options={[
+            { value: 'NONE', label: t('welcome.workspace.form.authType.none') },
+            { value: 'TOKEN', label: t('welcome.workspace.form.authType.token') },
+          ]}
+          onChange={(v) => setAuthType(v as 'NONE' | 'TOKEN')}
+          required
+        />
       </ModalField>
       {authType === 'TOKEN' && (
         <p className="text-xs text-muted-foreground">
