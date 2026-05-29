@@ -125,18 +125,27 @@ func (m *WindowManager) handleOpen(w http.ResponseWriter, r *http.Request) {
 		if autoSized {
 			if s := application.GetScreenByIndex(0); s != nil {
 				targetScreen = s
-				// Kotlin parity: `<default>.coerceAtMost(screenSize * 0.9)`
-				// — clamp the per-kind default DOWN to 90% of the screen
-				// on small monitors, but never INFLATE up to 90% on big
-				// ones. Earlier the inflation made the editor / logs
-				// windows fill almost the whole screen even though the
-				// content needed far less.
-				if w90, h90 := percentOfScreen(s, 90); w90 > 0 && h90 > 0 {
-					if w90 < width {
-						width = w90
+				// Per-kind Kotlin-parity sizing rules:
+				//   * editor → min(default, screen * 0.9): never inflate
+				//     up to 90% on a 4K monitor; clamp down on small ones.
+				//   * logs / daemon-logs → 100% width, 90% height: Kotlin
+				//     LogsWindow opened essentially horizontally-maximised
+				//     because typical log lines are long and lots of room
+				//     reduces wrap-induced re-flows.
+				switch spec.Kind {
+				case "logs", "daemon-logs":
+					if sw, sh := workAreaSize(s); sw > 0 && sh > 0 {
+						width = sw
+						height = sh * 90 / 100
 					}
-					if h90 < height {
-						height = h90
+				default:
+					if w90, h90 := percentOfScreen(s, 90); w90 > 0 && h90 > 0 {
+						if w90 < width {
+							width = w90
+						}
+						if h90 < height {
+							height = h90
+						}
 					}
 				}
 			}
@@ -283,6 +292,19 @@ func percentOfScreen(s *application.Screen, p int) (width, height int) {
 		return 0, 0
 	}
 	return w * p / 100, h * p / 100
+}
+
+// workAreaSize returns the screen's work area (excluding taskbar/dock) so
+// fullscreen-ish windows don't overlap system chrome. Falls back to total
+// size on platforms where WorkArea is unreported.
+func workAreaSize(s *application.Screen) (int, int) {
+	w := s.WorkArea.Width
+	h := s.WorkArea.Height
+	if w <= 0 || h <= 0 {
+		w = s.Size.Width
+		h = s.Size.Height
+	}
+	return w, h
 }
 
 func defaultWidth(kind string) int {

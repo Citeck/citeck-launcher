@@ -86,7 +86,11 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
   const [debouncedFilter, setDebouncedFilter] = useState('')
   const [useRegex, setUseRegex] = useState(false)
   const [follow, setFollow] = useState(true)
-  const [wordWrap, setWordWrap] = useState(true)
+  // Kotlin parity (LogsViewer.kt — wordWrap defaulted to false): logs are
+  // typically already line-oriented; soft-wrapping every long line by default
+  // hides the indentation cues that make stack traces and JSON-payload lines
+  // scannable. User can flip "Перенос" on when they want it.
+  const [wordWrap, setWordWrap] = useState(false)
   const [enabledLevels, setEnabledLevels] = useState<Set<LogLevel>>(new Set(LOG_LEVELS))
   const [error] = useState<string | null>(null)
   const [matchIndex, setMatchIndex] = useState(0)
@@ -98,6 +102,14 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
   followRef.current = follow
   const activeRef = useRef(active)
   activeRef.current = active
+  // When we programmatically scroll (auto-stick-to-bottom, search recentre,
+  // initial backlog landing), the browser still fires onScroll. Without this
+  // gate the handler reads "scrollTop=0 + tall content" during the very
+  // first paint and immediately disables follow — leaving the new window
+  // pinned at the top instead of at the live tail. Pulse-high during the
+  // animation frame following a programmatic scroll so the onScroll handler
+  // can tell user input from layout-driven scrolling.
+  const programmaticScrollRef = useRef(false)
   // Refs to copy/download functions so keyboard shortcuts can fire without
   // adding them to the keydown effect's deps (they capture filteredLines).
   const copyToClipboardRef = useRef<() => void>(undefined)
@@ -362,13 +374,23 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
   matchIndicesRef.current = matchIndices
   const prevFollowedLengthRef = useRef(filteredLines.length)
 
+  function programmaticScrollTo(idx: number, align: 'start' | 'center' | 'end') {
+    programmaticScrollRef.current = true
+    virtualizerRef.current.scrollToIndex(idx, { align })
+    // Clear after two animation frames so the onScroll event emitted by the
+    // browser as a result of this call has time to run + be ignored.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => { programmaticScrollRef.current = false })
+    })
+  }
+
   // Auto-scroll-to-bottom: only when follow is on AND the visible row count
   // actually grew. Plain re-renders (e.g. virtualizer re-measuring an item
   // in view) no longer trigger a scroll.
   useEffect(() => {
     const len = filteredLines.length
     if (follow && len > 0 && len !== prevFollowedLengthRef.current) {
-      virtualizerRef.current.scrollToIndex(len - 1, { align: 'end' })
+      programmaticScrollTo(len - 1, 'end')
     }
     prevFollowedLengthRef.current = len
   }, [filteredLines.length, follow])
@@ -382,7 +404,7 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
     if (idxs.length === 0) return
     const targetIdx = idxs[safeMatchIndex]
     if (targetIdx === undefined) return
-    virtualizerRef.current.scrollToIndex(targetIdx, { align: 'center' })
+    programmaticScrollTo(targetIdx, 'center')
   }, [safeMatchIndex])
 
   function toggleLevel(level: LogLevel) {
@@ -543,11 +565,15 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
         className={`flex-1 overflow-auto rounded-lg border border-border bg-card p-4 font-mono text-xs ${wordWrap ? '' : 'overflow-x-auto'} ${compact ? 'mx-2 mb-1' : ''}`}
         onScroll={() => {
           if (!parentRef.current) return
+          // Programmatic scroll (auto-stick / search recentre) also fires
+          // onScroll. Ignore those — otherwise the initial backlog landing
+          // would flip follow off the moment the viewport sat at scrollTop=0
+          // with a tall total size, leaving the new window pinned at the
+          // start instead of at the live tail.
+          if (programmaticScrollRef.current) return
           const { scrollTop, scrollHeight, clientHeight } = parentRef.current
           // Stick-to-bottom: drop follow when the user scrolls up past
-          // ~50px, re-arm it when they scroll back to the bottom. The
-          // threshold has to be larger than virtualizer overscan so a
-          // re-arm doesn't fight the auto-scroll on the next chunk.
+          // ~50px, re-arm it when they scroll back to the bottom.
           const distFromBottom = scrollHeight - scrollTop - clientHeight
           if (distFromBottom > 50) {
             if (followRef.current) setFollow(false)
