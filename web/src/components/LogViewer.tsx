@@ -94,6 +94,13 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
   const [enabledLevels, setEnabledLevels] = useState<Set<LogLevel>>(new Set(LOG_LEVELS))
   const [error] = useState<string | null>(null)
   const [matchIndex, setMatchIndex] = useState(0)
+  // Tick incremented on EXPLICIT user navigation (typing a fresh query,
+  // pressing Enter / F3 / Shift+F3, clicking the ↑/↓ buttons). The
+  // scroll-to-match effect listens to this tick instead of safeMatchIndex so
+  // incidental index resets (e.g. a new chunk shifting matchIndices) don't
+  // snap the viewport and lock the user out of free scrolling.
+  const [searchNavTick, setSearchNavTick] = useState(0)
+  const bumpSearchNav = useCallback(() => setSearchNavTick((t) => t + 1), [])
   const parentRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -260,6 +267,7 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
       if (e.key === 'F3' || (ctrl && e.code === 'KeyG')) {
         e.preventDefault()
         setMatchIndex((prev) => prev + (e.shiftKey ? -1 : 1))
+        bumpSearchNav()
         return
       }
       // Ctrl+L — clear (Kotlin parity)
@@ -287,7 +295,7 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [setLinesWithLevels, active])
+  }, [setLinesWithLevels, active, bumpSearchNav])
 
   // Kotlin parity: lines without a parsed level fall into the UNKNOWN bucket
   // and respect its dedicated toggle (LogsViewer.kt:151-158).
@@ -353,7 +361,12 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
     ? ((matchIndex % matchIndices.length) + matchIndices.length) % matchIndices.length
     : 0
 
-  useEffect(() => { setMatchIndex(0) }, [searchMatches])
+  // Reset matchIndex when the query itself changes (not when matchIndices
+  // just shifts due to new chunks).
+  useEffect(() => {
+    setMatchIndex(0)
+    if (debouncedSearch) bumpSearchNav()
+  }, [debouncedSearch, useRegex, bumpSearchNav])
 
   // eslint-disable-next-line react-hooks/incompatible-library -- useVirtualizer returns are consumed locally, no stale UI risk
   const virtualizer = useVirtualizer({
@@ -395,17 +408,21 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
     prevFollowedLengthRef.current = len
   }, [filteredLines.length, follow])
 
-  // Search target: scroll only when the user explicitly navigated to a new
-  // match (Ctrl+F / F3 / arrow buttons → safeMatchIndex changes). New chunks
-  // that grow matchIndices but don't shift the active index must NOT
-  // re-center the viewport on a user who has scrolled elsewhere.
+  // Search target: scroll only when the user explicitly navigated (the tick
+  // bumps on a fresh query or F3 / Enter / ↑↓ button presses). Listening to
+  // safeMatchIndex directly used to re-fire on every chunk arrival that
+  // shifted matchIndices, hard-pinning the viewport on the current match
+  // and making free scrolling impossible while a search was active.
   useEffect(() => {
+    if (searchNavTick === 0) return
     const idxs = matchIndicesRef.current
     if (idxs.length === 0) return
     const targetIdx = idxs[safeMatchIndex]
     if (targetIdx === undefined) return
     programmaticScrollTo(targetIdx, 'center')
-  }, [safeMatchIndex])
+  // safeMatchIndex is intentionally NOT in deps — only the tick drives this.
+
+  }, [searchNavTick])
 
   function toggleLevel(level: LogLevel) {
     setEnabledLevels((prev) => {
@@ -447,6 +464,15 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
             type="text"
             value={search}
             onChange={(e) => { setSearch(e.target.value); setMatchIndex(0) }}
+            onKeyDown={(e) => {
+              // Enter → next match, Shift+Enter → previous. Matches the
+              // standard browser find-bar behaviour and the Kotlin viewer's
+              // F3 / Shift+F3 shortcut.
+              if (e.key !== 'Enter') return
+              e.preventDefault()
+              setMatchIndex((p) => p + (e.shiftKey ? -1 : 1))
+              bumpSearchNav()
+            }}
             placeholder={t('logViewer.search')}
             className={`rounded-md border border-border bg-card px-2 py-1 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary ${compact ? 'w-40 text-xs' : 'w-56 text-sm py-1.5 px-3'}`}
           />
@@ -461,9 +487,9 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
           {matchIndices.length > 0 && (
             <>
               <button type="button" className="rounded px-1.5 py-1 text-xs border border-border text-muted-foreground hover:bg-muted"
-                onClick={() => setMatchIndex((p) => p - 1)} title={t('logViewer.prevMatch')}>&uarr;</button>
+                onClick={() => { setMatchIndex((p) => p - 1); bumpSearchNav() }} title={t('logViewer.prevMatch')}>&uarr;</button>
               <button type="button" className="rounded px-1.5 py-1 text-xs border border-border text-muted-foreground hover:bg-muted"
-                onClick={() => setMatchIndex((p) => p + 1)} title={t('logViewer.nextMatch')}>&darr;</button>
+                onClick={() => { setMatchIndex((p) => p + 1); bumpSearchNav() }} title={t('logViewer.nextMatch')}>&darr;</button>
               <span className="text-xs text-muted-foreground">{safeMatchIndex + 1}/{matchIndices.length}</span>
             </>
           )}
