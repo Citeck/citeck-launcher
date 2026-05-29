@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, ChevronDown, Loader2, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { Modal, ModalField } from './Modal'
 import {
   activateWorkspace,
   createWorkspace,
@@ -258,14 +259,11 @@ interface WorkspaceFormDialogProps {
 
 function WorkspaceFormDialog({ mode, onClose, onSaved }: WorkspaceFormDialogProps) {
   const { t } = useTranslation()
-  const dialogRef = useRef<HTMLDialogElement>(null)
   const isEdit = mode !== 'create'
   const existing = isEdit ? mode.ws : null
 
-  // ID is server-generated (opaque random slug) when the form leaves it
-  // blank. We still expose an override input for power users, but no
-  // longer derive it from the name — name is reference info only.
-  const [id, setId] = useState(existing?.id ?? '')
+  // ID is server-generated (opaque random slug) — never exposed in the UI.
+  // Name is the user-facing reference info.
   const [name, setName] = useState(existing?.name ?? '')
   const [repoUrl, setRepoUrl] = useState(existing?.repoUrl ?? '')
   const [repoBranch, setRepoBranch] = useState(existing?.repoBranch ?? 'main')
@@ -273,13 +271,6 @@ function WorkspaceFormDialog({ mode, onClose, onSaved }: WorkspaceFormDialogProp
   const [authType, setAuthType] = useState<'NONE' | 'TOKEN'>((existing?.authType as 'NONE' | 'TOKEN') ?? 'NONE')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-
-  useEffect(() => {
-    const dlg = dialogRef.current
-    if (!dlg) return
-    if (!dlg.open) dlg.showModal()
-    return () => { if (dlg.open) dlg.close() }
-  }, [])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -301,7 +292,6 @@ function WorkspaceFormDialog({ mode, onClose, onSaved }: WorkspaceFormDialogProp
         await updateWorkspace(existing!.id, update)
       } else {
         const create: WorkspaceCreateDto = {
-          id: id.trim() || undefined,
           name: name.trim(),
           repoUrl: repoUrl.trim(),
           repoBranch: repoBranch.trim() || undefined,
@@ -318,105 +308,92 @@ function WorkspaceFormDialog({ mode, onClose, onSaved }: WorkspaceFormDialogProp
     }
   }
 
+  const title = isEdit ? t('welcome.workspace.edit') : t('welcome.workspace.create')
+  const inputCls = 'w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary'
+
   return (
-    <dialog
-      ref={dialogRef}
+    <Modal
+      open
+      title={title}
       onClose={onClose}
-      className="rounded-lg border border-border bg-popover text-foreground backdrop:bg-black/50 p-0"
-    >
-      <form onSubmit={handleSubmit} className="w-96 p-4">
-        <h2 className="text-sm font-semibold mb-3">
-          {isEdit ? t('welcome.workspace.edit') : t('welcome.workspace.create')}
-        </h2>
-        <div className="flex flex-col gap-2 text-xs">
-          <label className="flex flex-col gap-1">
-            <span className="text-muted-foreground">{t('welcome.workspace.form.name')}</span>
-            <input
-              type="text"
-              required
-              autoFocus
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="rounded border border-border bg-background px-2 py-1"
-            />
-          </label>
-          {!isEdit && (
-            <label className="flex flex-col gap-1">
-              <span className="text-muted-foreground">{t('welcome.workspace.form.id')}</span>
-              <input
-                type="text"
-                value={id}
-                onChange={(e) => setId(e.target.value)}
-                placeholder={t('welcome.workspace.form.idPlaceholder')}
-                className="rounded border border-border bg-background px-2 py-1"
-              />
-            </label>
-          )}
-          <label className="flex flex-col gap-1">
-            <span className="text-muted-foreground">{t('welcome.workspace.form.repoUrl')}</span>
-            <input
-              type="url"
-              required
-              value={repoUrl}
-              onChange={(e) => setRepoUrl(e.target.value)}
-              placeholder="https://github.com/Citeck/launcher-workspace.git"
-              className="rounded border border-border bg-background px-2 py-1"
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-muted-foreground">{t('welcome.workspace.form.repoBranch')}</span>
-            <input
-              type="text"
-              value={repoBranch}
-              onChange={(e) => setRepoBranch(e.target.value)}
-              className="rounded border border-border bg-background px-2 py-1"
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-muted-foreground">{t('welcome.workspace.form.repoPullPeriod')}</span>
-            <input
-              type="text"
-              value={repoPullPeriod}
-              onChange={(e) => setRepoPullPeriod(e.target.value)}
-              placeholder="PT2H"
-              className="rounded border border-border bg-background px-2 py-1"
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-muted-foreground">{t('welcome.workspace.form.authType')}</span>
-            <select
-              value={authType}
-              onChange={(e) => setAuthType(e.target.value as 'NONE' | 'TOKEN')}
-              className="rounded border border-border bg-background px-2 py-1"
-            >
-              <option value="NONE">{t('welcome.workspace.form.authType.none')}</option>
-              <option value="TOKEN">{t('welcome.workspace.form.authType.token')}</option>
-            </select>
-          </label>
-          {authType === 'TOKEN' && (
-            <p className="text-xs text-muted-foreground">
-              {t('welcome.workspace.form.authTypeTokenHint', { key: `ws:${(id || (existing?.id ?? '')).trim() || '{id}'}:repo` })}
-            </p>
-          )}
-        </div>
-        {error && <div className="text-destructive text-xs mt-2">{error}</div>}
-        <div className="mt-4 flex justify-end gap-2">
+      onSubmit={handleSubmit}
+      footer={
+        <>
           <button
             type="button"
+            className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted disabled:opacity-50"
             onClick={onClose}
-            className="rounded px-3 py-1 text-xs text-muted-foreground hover:bg-muted/40"
+            disabled={busy}
           >
             {t('common.cancel')}
           </button>
           <button
             type="submit"
             disabled={busy}
-            className="rounded bg-primary text-primary-foreground px-3 py-1 text-xs hover:opacity-90 disabled:opacity-50"
+            className="rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-xs font-medium hover:bg-primary/90 disabled:opacity-50"
           >
             {busy ? <Loader2 size={12} className="animate-spin" /> : t('common.save')}
           </button>
+        </>
+      }
+    >
+      <ModalField label={t('welcome.workspace.form.name')} required>
+        <input
+          type="text"
+          required
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className={inputCls}
+        />
+      </ModalField>
+      <ModalField label={t('welcome.workspace.form.repoUrl')} required>
+        <input
+          type="url"
+          required
+          value={repoUrl}
+          onChange={(e) => setRepoUrl(e.target.value)}
+          placeholder="https://github.com/Citeck/launcher-workspace.git"
+          className={inputCls}
+        />
+      </ModalField>
+      <ModalField label={t('welcome.workspace.form.repoBranch')}>
+        <input
+          type="text"
+          value={repoBranch}
+          onChange={(e) => setRepoBranch(e.target.value)}
+          className={inputCls}
+        />
+      </ModalField>
+      <ModalField label={t('welcome.workspace.form.repoPullPeriod')}>
+        <input
+          type="text"
+          value={repoPullPeriod}
+          onChange={(e) => setRepoPullPeriod(e.target.value)}
+          placeholder="PT2H"
+          className={inputCls}
+        />
+      </ModalField>
+      <ModalField label={t('welcome.workspace.form.authType')}>
+        <select
+          value={authType}
+          onChange={(e) => setAuthType(e.target.value as 'NONE' | 'TOKEN')}
+          className={inputCls}
+        >
+          <option value="NONE">{t('welcome.workspace.form.authType.none')}</option>
+          <option value="TOKEN">{t('welcome.workspace.form.authType.token')}</option>
+        </select>
+      </ModalField>
+      {authType === 'TOKEN' && (
+        <p className="text-xs text-muted-foreground">
+          {t('welcome.workspace.form.authTypeTokenHint', { key: `ws:${existing?.id ?? '{id}'}:repo` })}
+        </p>
+      )}
+      {error && (
+        <div className="rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">
+          {error}
         </div>
-      </form>
-    </dialog>
+      )}
+    </Modal>
   )
 }

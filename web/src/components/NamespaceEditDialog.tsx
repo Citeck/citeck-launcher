@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { RefreshCw, X } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { RefreshCw } from 'lucide-react'
 import {
   createNamespace,
   getBundles,
@@ -14,6 +14,7 @@ import type { BundleInfoDto, NamespaceCreateDto } from '../lib/types'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
 import { Select } from './Select'
+import { Modal, ModalField } from './Modal'
 
 export interface NamespaceEditInitial {
   name?: string
@@ -53,7 +54,6 @@ export function NamespaceEditDialog({
   onSaved,
 }: NamespaceEditDialogProps) {
   const { t } = useTranslation()
-  const dialogRef = useRef<HTMLDialogElement>(null)
 
   const [name, setName] = useState('')
   const [bundleRepo, setBundleRepo] = useState('')
@@ -68,13 +68,6 @@ export function NamespaceEditDialog({
   const [loading, setLoading] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
-
-  useEffect(() => {
-    const dlg = dialogRef.current
-    if (!dlg) return
-    if (open && !dlg.open) dlg.showModal()
-    else if (!open && dlg.open) dlg.close()
-  }, [open])
 
   useEffect(() => {
     if (!open) {
@@ -241,124 +234,16 @@ export function NamespaceEditDialog({
   }
 
   const title = mode === 'create' ? t('namespace.dialog.create') : t('namespace.dialog.edit')
+  const inputCls = 'w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary'
 
   return (
-    <dialog
-      ref={dialogRef}
-      className="fixed inset-0 z-50 m-auto w-[480px] max-w-[90vw] rounded-lg border border-border bg-card p-0 text-foreground backdrop:bg-black/50"
+    <Modal
+      open={open}
+      title={title}
       onClose={onClose}
-    >
-      <form onSubmit={handleSubmit} className="flex flex-col">
-        <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
-          <h2 className="text-sm font-semibold">{title}</h2>
-          <button
-            type="button"
-            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-            onClick={onClose}
-            aria-label={t('namespace.form.cancel')}
-          >
-            <X size={14} />
-          </button>
-        </div>
-
-        <div className="space-y-3 px-4 py-3 max-h-[70vh] overflow-y-auto">
-          <Field label={t('namespace.form.name')} error={fieldErrors.name} required>
-            <input
-              type="text"
-              className="w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              maxLength={64}
-              autoFocus
-            />
-          </Field>
-
-          <Field label={t('namespace.form.bundlesRepo')} error={fieldErrors.bundleRepo} required>
-            <Select
-              value={bundleRepo}
-              options={bundleRepoOptions}
-              onChange={setBundleRepo}
-              required
-              disabled={bundlesLoading}
-              placeholder="—"
-            />
-          </Field>
-
-          <Field label={t('namespace.form.bundleKey')} error={fieldErrors.bundleKey} required>
-            <div className="flex items-center gap-1.5">
-              <div className="flex-1 min-w-0">
-                <Select
-                  value={bundleKey}
-                  options={bundleKeyOptions}
-                  onChange={setBundleKey}
-                  required
-                  disabled={!bundleRepo || bundlesLoading}
-                  placeholder="—"
-                />
-              </div>
-              <button
-                type="button"
-                className="shrink-0 rounded border border-border p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
-                disabled={bundlesLoading}
-                title={t('namespace.form.bundles.refresh')}
-                aria-label={t('namespace.form.bundles.refresh')}
-                onClick={() => {
-                  setBundlesLoading(true)
-                  postWorkspaceUpdate()
-                    .then(() => getBundles())
-                    .then((bs) => setBundles(bs))
-                    .catch((e) => toast((e as Error).message, 'error'))
-                    .finally(() => setBundlesLoading(false))
-                }}
-              >
-                <RefreshCw size={14} className={bundlesLoading ? 'animate-spin' : ''} />
-              </button>
-            </div>
-          </Field>
-
-          {mode === 'create' && (
-            <Field label={t('namespace.form.snapshot')}>
-              <Select
-                value={snapshot}
-                options={snapshots.map((s) => ({ value: s.id, label: s.name }))}
-                onChange={setSnapshot}
-                placeholder={t('namespace.form.snapshot.none')}
-              />
-            </Field>
-          )}
-
-          <Field label={t('namespace.form.authType')} error={fieldErrors.authType} required>
-            <Select
-              value={authType}
-              options={[
-                { value: 'BASIC', label: 'BASIC' },
-                { value: 'KEYCLOAK', label: 'KEYCLOAK' },
-              ]}
-              onChange={setAuthType}
-              required
-            />
-          </Field>
-
-          {authType === 'BASIC' && (
-            <Field label={t('namespace.form.authUsers')} error={fieldErrors.authUsers} required>
-              <input
-                type="text"
-                className="w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary"
-                value={authUsers}
-                onChange={(e) => setAuthUsers(e.target.value)}
-                placeholder="admin, user1"
-              />
-            </Field>
-          )}
-
-          {submitError && (
-            <div className="rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">
-              {submitError}
-            </div>
-          )}
-        </div>
-
-        <div className="flex items-center justify-between border-t border-border px-4 py-2.5">
+      onSubmit={handleSubmit}
+      footer={
+        <>
           <button
             type="button"
             className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted disabled:opacity-50"
@@ -378,28 +263,104 @@ export function NamespaceEditDialog({
                 ? t('namespace.form.submit')
                 : t('namespace.form.save')}
           </button>
+        </>
+      }
+    >
+      <ModalField label={t('namespace.form.name')} error={fieldErrors.name} required>
+        <input
+          type="text"
+          className={inputCls}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          maxLength={64}
+          autoFocus
+        />
+      </ModalField>
+
+      <ModalField label={t('namespace.form.bundlesRepo')} error={fieldErrors.bundleRepo} required>
+        <Select
+          value={bundleRepo}
+          options={bundleRepoOptions}
+          onChange={setBundleRepo}
+          required
+          disabled={bundlesLoading}
+          placeholder="—"
+        />
+      </ModalField>
+
+      <ModalField label={t('namespace.form.bundleKey')} error={fieldErrors.bundleKey} required>
+        <div className="flex items-center gap-1.5">
+          <div className="flex-1 min-w-0">
+            <Select
+              value={bundleKey}
+              options={bundleKeyOptions}
+              onChange={setBundleKey}
+              required
+              disabled={!bundleRepo || bundlesLoading}
+              placeholder="—"
+            />
+          </div>
+          <button
+            type="button"
+            className="shrink-0 rounded border border-border p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+            disabled={bundlesLoading}
+            title={t('namespace.form.bundles.refresh')}
+            aria-label={t('namespace.form.bundles.refresh')}
+            onClick={() => {
+              setBundlesLoading(true)
+              postWorkspaceUpdate()
+                .then(() => getBundles())
+                .then((bs) => setBundles(bs))
+                .catch((e) => toast((e as Error).message, 'error'))
+                .finally(() => setBundlesLoading(false))
+            }}
+          >
+            <RefreshCw size={14} className={bundlesLoading ? 'animate-spin' : ''} />
+          </button>
         </div>
-      </form>
-    </dialog>
+      </ModalField>
+
+      {mode === 'create' && (
+        <ModalField label={t('namespace.form.snapshot')}>
+          <Select
+            value={snapshot}
+            options={snapshots.map((s) => ({ value: s.id, label: s.name }))}
+            onChange={setSnapshot}
+            placeholder={t('namespace.form.snapshot.none')}
+          />
+        </ModalField>
+      )}
+
+      <ModalField label={t('namespace.form.authType')} error={fieldErrors.authType} required>
+        <Select
+          value={authType}
+          options={[
+            { value: 'BASIC', label: 'BASIC' },
+            { value: 'KEYCLOAK', label: 'KEYCLOAK' },
+          ]}
+          onChange={setAuthType}
+          required
+        />
+      </ModalField>
+
+      {authType === 'BASIC' && (
+        <ModalField label={t('namespace.form.authUsers')} error={fieldErrors.authUsers} required>
+          <input
+            type="text"
+            className={inputCls}
+            value={authUsers}
+            onChange={(e) => setAuthUsers(e.target.value)}
+            placeholder="admin, user1"
+          />
+        </ModalField>
+      )}
+
+      {submitError && (
+        <div className="rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">
+          {submitError}
+        </div>
+      )}
+    </Modal>
   )
 }
 
-interface FieldProps {
-  label: string
-  error?: string
-  required?: boolean
-  children: React.ReactNode
-}
-
-function Field({ label, error, required, children }: FieldProps) {
-  return (
-    <div>
-      <label className="block text-xs font-medium mb-1">
-        {label}
-        {required && <span className="ml-0.5 text-destructive">*</span>}
-      </label>
-      {children}
-      {error && <div className="mt-1 text-[11px] text-destructive">{error}</div>}
-    </div>
-  )
-}
