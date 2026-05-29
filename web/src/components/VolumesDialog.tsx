@@ -54,8 +54,22 @@ export function VolumesDialog({ open, onClose, onOpenSnapshots, namespaceStopped
   const reload = useCallback(() => {
     setError(null)
     getVolumes()
-      .then((vs) => setVolumes(vs.map((v) => ({ name: v.name, size: formatBytes(v.size) }))))
-      .catch((e) => setError(e.message))
+      .then((vs) => {
+        if (!Array.isArray(vs)) {
+          // Defensive: a misbehaving daemon shouldn't crash the dialog.
+          // Surface the unexpected shape instead of silently rendering empty.
+          console.error('[VolumesDialog] /volumes returned non-array:', vs)
+          setError(`Unexpected response: ${JSON.stringify(vs)}`)
+          setVolumes([])
+          return
+        }
+        console.debug('[VolumesDialog] loaded', vs.length, 'volumes')
+        setVolumes(vs.map((v) => ({ name: v.name, size: formatBytes(v.size) })))
+      })
+      .catch((e) => {
+        console.error('[VolumesDialog] getVolumes failed:', e)
+        setError((e as Error).message || String(e))
+      })
   }, [])
 
   useEffect(() => {
@@ -154,8 +168,11 @@ export function VolumesDialog({ open, onClose, onOpenSnapshots, namespaceStopped
         rowActions={rowActions}
         customButtons={customButtons}
       />
-      {error && (
-        <div className="fixed bottom-4 right-4 z-[60] rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive shadow-lg">
+      {error && open && (
+        // In-dialog banner (z-[60] sits above the JournalDialog backdrop) —
+        // previously a fixed bottom-right toast that was easy to miss while
+        // the user kept staring at "Нет данных".
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[60] rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive shadow-lg max-w-[80vw]">
           {error}
         </div>
       )}
