@@ -183,6 +183,7 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
             type: 'app-config',
             title: t('appConfig.tabTitle', { name: `${appName} — ${f.path}` }),
             appName,
+            filePath: f.path,
           }),
         }))
       if (items.length === 0) {

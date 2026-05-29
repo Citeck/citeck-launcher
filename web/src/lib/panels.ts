@@ -5,6 +5,12 @@ export interface BottomPanelTab {
   type: 'logs' | 'ns-config' | 'daemon-logs' | 'app-config' | 'restart-events'
   title: string
   appName?: string     // for logs and app-config types
+  /**
+   * Bind-mount path (with leading "./") of the file to open inside the
+   * app-config editor. When set, the COG RMB menu's per-file entry routes
+   * straight to that file instead of the app's YAML config.
+   */
+  filePath?: string
 }
 
 interface PanelState {

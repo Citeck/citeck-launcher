@@ -1,4 +1,4 @@
-import { useParams } from 'react-router'
+import { useParams, useSearchParams } from 'react-router'
 import { AppConfigEditor, type AppConfigEditorHandle } from '../components/AppConfigEditor'
 import { useTranslation } from '../lib/i18n'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -6,6 +6,7 @@ import { RotateCcw } from 'lucide-react'
 import { useDashboardStore } from '../lib/store'
 import { useInheritedTheme } from '../hooks/useInheritedTheme'
 import { closeCurrentDesktopWindow } from '../lib/api'
+import { WindowFileEditor } from './WindowFileEditor'
 
 /**
  * Standalone editor page used by native multi-window mode.
@@ -18,6 +19,15 @@ import { closeCurrentDesktopWindow } from '../lib/api'
 export function WindowEditor() {
   const { t } = useTranslation()
   const { name } = useParams<{ name: string }>()
+  const [searchParams] = useSearchParams()
+  // COG RMB menu → per-file edit dispatches to /window/editor/:name?file=...
+  // The per-file UI is a distinct surface (no app YAML, no inner Lock/Reset
+  // controls), so delegate to a dedicated component instead of cluttering
+  // AppConfigEditor with an `initialFile` mode.
+  const file = searchParams.get('file')
+  if (file) {
+    return <WindowFileEditor />
+  }
   const editorRef = useRef<AppConfigEditorHandle>(null)
   const [dirty, setDirty] = useState(false)
   // Read "edited" (user-saved overrides on disk) from the dashboard store —

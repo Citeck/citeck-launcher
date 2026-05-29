@@ -70,9 +70,27 @@ export function openSecondaryView(tab: BottomPanelTab): void {
     case 'logs':
       void openDesktopWindow({ kind: 'logs', id: tab.appName, title: tab.title })
       return
-    case 'app-config':
+    case 'app-config': {
+      // When the COG RMB menu picks a specific file, route the secondary
+      // window at /window/editor/:name?file=<relPath> so WindowEditor can
+      // open the per-file editor instead of the app YAML editor. Re-using a
+      // distinct route + id pair keeps multiple file editors open at once
+      // (Wails reuses windows by name, hence the per-file `id`).
+      const filePath = tab.filePath
+      if (filePath) {
+        const file = encodeURIComponent(filePath)
+        const id = `${tab.appName}::${filePath}`
+        void openDesktopWindow({
+          kind: 'editor',
+          id,
+          route: `/window/editor/${tab.appName}?file=${file}`,
+          title: tab.title,
+        })
+        return
+      }
       void openDesktopWindow({ kind: 'editor', id: tab.appName, title: tab.title })
       return
+    }
     case 'daemon-logs':
       void openDesktopWindow({ kind: 'daemon-logs', title: tab.title })
       return
