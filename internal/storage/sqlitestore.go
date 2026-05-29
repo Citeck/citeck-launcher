@@ -24,9 +24,14 @@ func NewSQLiteStore(dir string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("create store dir: %w", err)
 	}
 	dbPath := filepath.Join(dir, "launcher.db")
-	// Remove stale WAL/SHM files from unclean shutdown — prevents SQLITE_IOERR_SHORT_READ
-	_ = os.Remove(dbPath + "-wal")
-	_ = os.Remove(dbPath + "-shm")
+	// IMPORTANT: do NOT delete `launcher.db-wal` / `launcher.db-shm` here.
+	// In WAL mode those files hold committed transactions that haven't yet
+	// been checkpointed into the main DB. Deleting them on the next start
+	// silently drops the previous session's most recent writes — that's how
+	// the "Exit to Welcome doesn't persist" regression hid: deactivate
+	// committed `SelectedNs[wsID]={}` into the WAL, the daemon shut down
+	// before a checkpoint, and the next start wiped the WAL and read the
+	// stale namespace selection out of the main DB.
 	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(wal)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
@@ -487,8 +492,21 @@ func (s *SQLiteStore) DB() *sql.DB {
 	return s.db
 }
 
-// Close releases the database connection.
+// Close releases the database connection. Runs a TRUNCATE checkpoint
+// beforehand so the WAL is folded into the main DB and the next process
+// sees an empty WAL — independent of whether the OS / sqlite recovery
+// path keeps the WAL file around between sessions.
 func (s *SQLiteStore) Close() error {
+	if _, err := s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+		// Non-fatal: WAL recovery will still replay it on next open. Log via
+		// the returned error so callers can decide; we still attempt Close.
+		// (Most callers ignore Close errors, which is fine here.)
+		closeErr := s.db.Close()
+		if closeErr != nil {
+			return fmt.Errorf("close database (checkpoint failed: %v): %w", err, closeErr)
+		}
+		return fmt.Errorf("checkpoint database: %w", err)
+	}
 	if err := s.db.Close(); err != nil {
 		return fmt.Errorf("close database: %w", err)
 	}
