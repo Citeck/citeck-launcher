@@ -214,6 +214,14 @@ hostStep:
 	nsCfg.Name = "Citeck"
 
 	// --- Step 4: TLS ---
+	// TODO(proxy.publicScheme): the current "HTTP only" option leaves the
+	// presumed-scheme heuristic (https for any non-local host) untouched, which
+	// works for the common "raw-IP + CDN/CF tunnel in front" deployment but
+	// breaks "raw-IP + no terminator" — Keycloak rejects the https:// redirect
+	// the browser cannot reach. Splitting "HTTP only — no terminator" out as a
+	// separate option (sets `proxy.publicScheme: http`) closes this. Pinning the
+	// TODO here so the wizard change lands together with the namespace.Config
+	// + ProxyScheme() change. See memory/feedback_proxy_public_scheme.md.
 	isLocalhost := hostname == "localhost" || hostname == "127.0.0.1"
 	var tlsOptions []string
 	if !isLocalhost && !isOffline {

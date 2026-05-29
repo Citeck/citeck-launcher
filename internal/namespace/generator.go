@@ -416,12 +416,11 @@ func generateKeycloak(ctx *NsGenContext) error {
 	// realms. Falls back to "admin" in tests where ctx.Secrets is empty.
 	app.AddEnv("KC_BOOTSTRAP_ADMIN_USERNAME", "admin")
 	app.AddEnv("KC_BOOTSTRAP_ADMIN_PASSWORD", ctx.Secrets.AdminPasswordOrDefault())
-	// STRICT_HTTPS forces KC to reject http:// redirect_uri / hostname. Enable
-	// when clients actually reach the platform over HTTPS (local TLS or a
-	// reverse proxy terminating TLS in front of a domain). Raw-IP HTTP-only
-	// deployments must keep it off — otherwise KC rejects the http:// redirect
-	// the browser is forced to use.
-	app.AddEnv("KC_HOSTNAME_STRICT_HTTPS", fmt.Sprintf("%v", ctx.PresumedHTTPS()))
+	// Use strict HTTPS if TLS is enabled or if external host (behind reverse proxy).
+	// Same caveat as namespace.ProxyScheme(): wrong for raw-IP HTTP-only installs
+	// without a TLS terminator. Will revisit together with proxy.publicScheme.
+	strictHTTPS := ctx.TLSEnabled() || !ctx.IsLocalHost()
+	app.AddEnv("KC_HOSTNAME_STRICT_HTTPS", fmt.Sprintf("%v", strictHTTPS))
 	app.AddDependsOn(appdef.AppPostgres)
 	app.AddVolume("./keycloak/ecos-app-realm.json:/opt/keycloak/data/import/ecos-app-realm.json")
 	app.AddVolume("./keycloak/healthcheck.sh:/healthcheck.sh")

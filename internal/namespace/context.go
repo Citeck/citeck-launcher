@@ -2,7 +2,6 @@ package namespace
 
 import (
 	"fmt"
-	"net"
 	"sync/atomic"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
@@ -160,27 +159,26 @@ func (c *NsGenContext) IsLocalHost() bool {
 	return h == "" || h == "localhost" || h == "127.0.0.1" || h == "::1"
 }
 
-// PresumedHTTPS reports whether clients reach the platform over HTTPS, either
-// because local TLS is on, or because a reverse proxy (Cloudflare / nginx)
-// terminates TLS in front of a domain host. Raw IP hosts are never assumed
-// to sit behind such a proxy.
-func (c *NsGenContext) PresumedHTTPS() bool {
-	if c.TLSEnabled() {
-		return true
-	}
-	if c.IsLocalHost() {
-		return false
-	}
-	return net.ParseIP(c.Config.Proxy.Host) == nil
-}
-
 // ProxyScheme returns "https" or "http".
-// For non-local domain hosts, returns "https" (assumed behind reverse proxy
-// terminating TLS). Raw IP hosts with TLS disabled get "http" so OIDC
-// redirect URIs match what the browser can actually reach — a stale https://
-// here makes Keycloak reject the redirect_uri with "Invalid parameter".
+// For non-local hosts, always returns "https" (assumed behind reverse proxy).
+//
+// NOTE: this heuristic can be wrong in either direction:
+//   - IP + HTTP only without a TLS terminator in front (raw IP server) gets
+//     `https://` here, which makes Keycloak reject the OIDC redirect_uri
+//     ("Invalid parameter"), and webapp env vars (ECOS_WEBAPP_PROPERTIES_WEB_URL,
+//     ECOS_INTEGRATIONS_DOMAIN, etc.) advertise an unreachable URL.
+//   - Conversely, switching this to `http` for all IPs would break the IP +
+//     reverse-proxy-terminator scenario (CF tunnel, internal nginx, etc.).
+//
+// The honest fix is an explicit signal: a `proxy.publicScheme` field on
+// ProxyProps and a matching "HTTP only — TLS terminated by reverse proxy"
+// option in the install wizard. Until that lands, the assumption above is
+// the lesser-evil default (most production deployments have a TLS terminator
+// in front of the launcher), but raw-IP HTTP-only installs are broken for
+// OIDC login. See TODO in the wizard for the planned UX. Pinned by
+// TestProxyBaseURL_* — adjust those when adding publicScheme.
 func (c *NsGenContext) ProxyScheme() string {
-	if c.PresumedHTTPS() {
+	if c.TLSEnabled() || !c.IsLocalHost() {
 		return "https"
 	}
 	return "http"
@@ -192,10 +190,10 @@ func (c *NsGenContext) ProxyBaseURL() string {
 }
 
 // BuildProxyBaseURL builds a proxy base URL from proxy config.
-// For non-local domain hosts with TLS disabled, assumes a reverse proxy
-// (Cloudflare, nginx) terminates TLS and uses https without port. For raw
-// IP hosts with TLS disabled, there's no plausible reverse proxy in front
-// — emit http://ip:port directly so the printed URL actually works.
+// For non-local hosts (not localhost/127.0.0.1), always uses https scheme
+// even when TLS is disabled locally — the server is assumed to be behind
+// a reverse proxy (Cloudflare, nginx) that terminates TLS.
+// See ProxyScheme() for the caveat about raw-IP HTTP-only deployments.
 func BuildProxyBaseURL(p ProxyProps) string {
 	host := p.Host
 	if host == "" {
@@ -203,10 +201,9 @@ func BuildProxyBaseURL(p ProxyProps) string {
 	}
 
 	isLocal := host == "localhost" || host == "127.0.0.1" || host == "::1"
-	isIP := net.ParseIP(host) != nil
 
 	scheme := "http"
-	if p.TLS.Enabled || (!isLocal && !isIP) {
+	if p.TLS.Enabled || !isLocal {
 		scheme = "https"
 	}
 
@@ -216,10 +213,9 @@ func BuildProxyBaseURL(p ProxyProps) string {
 	if scheme == "https" {
 		defaultPort = 443
 	}
-	// For external domain hosts without local TLS, port 80 is the local
-	// listen port but clients connect via reverse proxy on 443 — omit port
-	// from URL. Raw IP hosts fall through to the explicit port branch.
-	if !isLocal && !isIP && !p.TLS.Enabled && port == 80 {
+	// For external hosts without local TLS, port 80 is the local listen port
+	// but clients connect via reverse proxy on 443 — omit port from URL.
+	if !isLocal && !p.TLS.Enabled && port == 80 {
 		return fmt.Sprintf("%s://%s", scheme, host)
 	}
 	if port == 0 || port == defaultPort {
