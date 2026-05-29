@@ -7,8 +7,8 @@ import { useEffect } from 'react'
 /**
  * Standalone log viewer page used by native multi-window mode.
  * Renders without the main app shell (no TabBar, no global layout) — the
- * window chrome is provided by the OS, so the SPA reduces to just the
- * viewer plus a thin header showing what is being tailed.
+ * window chrome is provided by the OS title bar, so the SPA is just the
+ * viewer. Window title carries the source label (no in-page heading).
  *
  * Routes:
  *   /window/logs/:name        — per-app container logs
@@ -18,9 +18,24 @@ export function WindowLogs() {
   const { t } = useTranslation()
   const { name } = useParams<{ name: string }>()
 
+  // Theme isn't shared automatically between the main and secondary Wails
+  // windows — the secondary one mounts with no `data-theme` attribute, so
+  // a system "prefers-color-scheme: light" lights up the whole viewer.
+  // Read the user's persisted choice and apply it on mount.
   useEffect(() => {
-    document.title = name ? `Logs — ${name}` : 'Launcher Logs'
-  }, [name])
+    try {
+      const stored = localStorage.getItem('theme')
+      const isDark = stored ? stored === 'dark' : !window.matchMedia?.('(prefers-color-scheme: light)').matches
+      document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light')
+    } catch {
+      document.documentElement.setAttribute('data-theme', 'dark')
+    }
+  }, [])
+
+  useEffect(() => {
+    const label = name ?? t('daemonLogs.title')
+    document.title = `${t('window.logs.heading')} ${label}`
+  }, [name, t])
 
   // Escape closes the secondary window; skip when typing in the search input so
   // LogViewer's existing Esc-to-clear behaviour is preserved.
@@ -36,15 +51,11 @@ export function WindowLogs() {
   }, [])
 
   return (
-    <div className="h-screen bg-background text-text flex flex-col">
-      <header className="px-3 py-1.5 border-b border-border bg-bg-secondary text-sm flex items-center gap-2">
-        <span className="text-text-muted">{t('window.logs.heading')}</span>
-        <span className="font-medium">{name ?? 'Launcher daemon'}</span>
-      </header>
+    <div className="h-screen bg-background text-foreground flex flex-col">
       <main className="flex-1 min-h-0">
         {name
           ? <LogViewer appName={name} compact />
-          : <DaemonLogsViewer />}
+          : <DaemonLogsViewer compact />}
       </main>
     </div>
   )

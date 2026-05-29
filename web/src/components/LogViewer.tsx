@@ -407,7 +407,7 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
   downloadRef.current = downloadLogs
 
   return (
-    <div className={compact ? 'flex flex-col h-full' : 'flex flex-col h-[calc(100vh-100px)]'}>
+    <div className="flex flex-col h-full">
       {/* Toolbar */}
       <div className={`flex items-center gap-2 flex-wrap ${compact ? 'px-2 py-1' : 'mb-3'}`}>
         {/* Search */}
@@ -514,8 +514,6 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
           onClick={downloadLogs} title={t('logViewer.download.tooltip')}>{t('logViewer.download')}</button>
         <button type="button" className="rounded px-2 py-1 text-xs border border-border text-muted-foreground hover:bg-muted"
           onClick={() => setLinesWithLevels([])} title={t('logViewer.clear.tooltip')}>{t('logViewer.clear')}</button>
-        <button type="button" className="rounded px-2 py-1 text-xs border border-border text-muted-foreground hover:bg-muted"
-          onClick={fetchInitialLogs}>{t('logViewer.refresh')}</button>
       </div>
 
       {error && <div className="text-destructive text-sm mb-2 px-2">{t('common.error', { error })}</div>}
@@ -527,8 +525,15 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
         onScroll={() => {
           if (!parentRef.current) return
           const { scrollTop, scrollHeight, clientHeight } = parentRef.current
-          if (scrollHeight - scrollTop - clientHeight > 50) {
-            setFollow(false)
+          // Stick-to-bottom: drop follow when the user scrolls up past
+          // ~50px, re-arm it when they scroll back to the bottom. The
+          // threshold has to be larger than virtualizer overscan so a
+          // re-arm doesn't fight the auto-scroll on the next chunk.
+          const distFromBottom = scrollHeight - scrollTop - clientHeight
+          if (distFromBottom > 50) {
+            if (followRef.current) setFollow(false)
+          } else {
+            if (!followRef.current) setFollow(true)
           }
         }}
       >
