@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { getAppLogs, getDaemonLogs, API_BASE } from '../lib/api'
+import { API_BASE } from '../lib/api'
 import { useTranslation } from '../lib/i18n'
 
 type LogLevel = 'ERROR' | 'WARN' | 'INFO' | 'DEBUG' | 'TRACE' | 'UNKNOWN'
@@ -88,7 +88,7 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
   const [follow, setFollow] = useState(true)
   const [wordWrap, setWordWrap] = useState(true)
   const [enabledLevels, setEnabledLevels] = useState<Set<LogLevel>>(new Set(LOG_LEVELS))
-  const [error, setError] = useState<string | null>(null)
+  const [error] = useState<string | null>(null)
   const [matchIndex, setMatchIndex] = useState(0)
   const parentRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
@@ -166,27 +166,16 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
     return () => clearTimeout(timer)
   }, [filterText])
 
-  // Initial load via REST, then stream via follow endpoint
-  const fetchInitialLogs = useCallback(() => {
-    if (!appName) return
-    const fetcher = source === 'daemon' ? getDaemonLogs(tail) : getAppLogs(appName, tail)
-    fetcher
-      .then((data) => {
-        setLinesWithLevels(data.split('\n'))
-        setError(null)
-      })
-      .catch((e) => setError(e.message))
-  }, [appName, tail, setLinesWithLevels, source])
-
-  // Non-follow mode: load via REST
+  // Streaming — the endpoint replays last `tail` lines then streams. First
+  // chunk replaces state (backlog), subsequent chunks append. The stream is
+  // kept open regardless of the `follow` UI toggle: follow now only controls
+  // whether new chunks auto-scroll the viewport. Earlier we tore down the
+  // stream on follow→false and re-fetched via REST instead, which (a) sent
+  // the whole tail every time the user scrolled up, and (b) caused a visible
+  // flicker between the stripped REST output and the raw stream output as
+  // follow flipped (the REST path stripped ANSI, the stream did not).
   useEffect(() => {
-    if (!follow && active) fetchInitialLogs()
-  }, [fetchInitialLogs, follow, active])
-
-  // Streaming follow — the endpoint replays last `tail` lines then streams.
-  // First chunk replaces state (backlog), subsequent chunks append.
-  useEffect(() => {
-    if (!follow || !appName || !active) return
+    if (!appName || !active) return
 
     abortRef.current?.abort()
     const controller = new AbortController()
@@ -223,7 +212,7 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
         if (e instanceof DOMException && e.name === 'AbortError') return
         retryTimerRef.current = setTimeout(() => {
           retryTimerRef.current = null
-          if (followRef.current && activeRef.current) startStream()
+          if (activeRef.current) startStream()
         }, 3000)
       }
     }
@@ -237,7 +226,7 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
         retryTimerRef.current = null
       }
     }
-  }, [follow, appName, tail, appendChunk, setLinesWithLevels, active, source])
+  }, [appName, tail, appendChunk, setLinesWithLevels, active, source])
 
   // Keyboard shortcuts — match Kotlin LogsWindow.
   useEffect(() => {

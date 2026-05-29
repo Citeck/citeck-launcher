@@ -61,6 +61,11 @@ export const AppConfigEditor = forwardRef<AppConfigEditorHandle, AppConfigEditor
   const [fileResetting, setFileResetting] = useState(false)
   const [fileError, setFileError] = useState<string | null>(null)
   const [loaded, setLoaded] = useState(false)
+  // True once getAppConfig has returned actual YAML. Stays false on load
+  // errors so the save path stays locked — otherwise an editor opened with
+  // an empty placeholder would overwrite the real config with "" on save.
+  const [loadOK, setLoadOK] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   const nsApps = useDashboardStore((s) => s.namespace?.apps)
   const appMeta = nsApps?.find((a) => a.name === appName)
@@ -71,6 +76,8 @@ export const AppConfigEditor = forwardRef<AppConfigEditorHandle, AppConfigEditor
     const controller = new AbortController()
     const signal = controller.signal
     setConfigError(null)
+    setLoadError(null)
+    setLoadOK(false)
     getAppConfig(appName)
       .then((y) => {
         if (signal.aborted) return
@@ -78,15 +85,19 @@ export const AppConfigEditor = forwardRef<AppConfigEditorHandle, AppConfigEditor
         // show the editor with empty content so the user can start typing.
         setConfigYaml(y ?? '')
         setEditYaml(y ?? '')
+        setLoadOK(true)
       })
       .catch((e) => {
         if (signal.aborted) return
         console.error('[AppConfigEditor] getAppConfig failed:', e)
-        setConfigError((e as Error).message || String(e))
-        // Surface the editor anyway so the user isn't stuck staring at a
-        // placeholder when, say, the daemon hiccuped on the first load.
-        setConfigYaml('')
-        setEditYaml('')
+        const msg = (e as Error).message || String(e)
+        setLoadError(msg)
+        // Leave configYaml as null so the render branch knows the load
+        // failed; the editor is shown in read-only mode with an error
+        // banner and a Retry button so the user can recover without
+        // closing and re-opening the window.
+        setConfigYaml(null)
+        setEditYaml(null)
       })
       .finally(() => { if (!signal.aborted) setLoaded(true) })
     getAppFiles(appName)
@@ -109,13 +120,22 @@ export const AppConfigEditor = forwardRef<AppConfigEditorHandle, AppConfigEditor
   }, [hideInnerActions, configYaml, configEditing])
 
   // Notify the optional parent (window mode) whenever dirty state flips so the
-  // outer Apply / Submit button can enable/disable in sync.
-  const isDirty = configEditing && editYaml !== configYaml
+  // outer Apply / Submit button can enable/disable in sync. Only dirty when
+  // the original load succeeded — otherwise editYaml is a placeholder and
+  // "dirty" would lure the user into saving over the real config.
+  const isDirty = loadOK && configEditing && editYaml !== configYaml
   useEffect(() => {
     onDirtyChange?.(isDirty)
   }, [isDirty, onDirtyChange])
 
   async function handleApplyConfig() {
+    if (!loadOK) {
+      // Defensive — the imperative handle and the inner Apply button both
+      // gate on isDirty/loadOK, so this branch only catches a programmer
+      // error (e.g. a future caller bypassing the handle).
+      setConfigError(t('appConfig.loadError.cannotSave'))
+      return
+    }
     if (!editYaml) return
     // Real YAML validation (Kotlin EditorWindow parity) — js-yaml parse catches
     // indentation errors, dangling keys, broken anchors, etc. The daemon also
@@ -178,6 +198,27 @@ export const AppConfigEditor = forwardRef<AppConfigEditorHandle, AppConfigEditor
         {Array.from({ length: 3 }).map((_, i) => (
           <div key={i} className="h-3 w-full bg-muted rounded animate-pulse" />
         ))}
+      </div>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <div className="p-3 space-y-3">
+        <div className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <div className="font-medium mb-1">{t('appConfig.loadError.title')}</div>
+          <div className="font-mono break-all">{loadError}</div>
+        </div>
+        <div className="text-[11px] text-muted-foreground">
+          {t('appConfig.loadError.hint')}
+        </div>
+        <button
+          type="button"
+          className="rounded border border-border px-3 py-1.5 text-xs hover:bg-muted"
+          onClick={() => load()}
+        >
+          {t('common.retry')}
+        </button>
       </div>
     )
   }
