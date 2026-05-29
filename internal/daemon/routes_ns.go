@@ -631,8 +631,17 @@ func (d *Daemon) handleListBundles(w http.ResponseWriter, _ *http.Request) {
 
 // resolveBundleDir returns the on-disk directory for a bundle repo.
 // Delegates to the shared ResolveBundleRepoDir which handles offline import,
-// workspace repo, and cloned repo priorities.
+// workspace repo, and cloned repo priorities. In desktop mode bundles live
+// under ~/.citeck/launcher/ws/{wsID}/, mirroring the path the namespace
+// loader (namespace_loader.go) uses to feed `bundle.NewResolverWithAuth` —
+// without this branch `versions[]` came back empty in desktop mode and the
+// bundle dropdown in the namespace-edit dialog only showed the currently
+// selected key as a stale fallback.
 func (d *Daemon) resolveBundleDir(repo bundle.BundlesRepo) string {
-	wsRepoDir := filepath.Join(config.DataDir(), "bundles", "workspace")
-	return bundle.ResolveBundleRepoDir(config.DataDir(), wsRepoDir, repo)
+	dataDir := config.DataDir()
+	if config.IsDesktopMode() && d.workspaceID != "" {
+		dataDir = filepath.Join(config.HomeDir(), "ws", d.workspaceID)
+	}
+	wsRepoDir := filepath.Join(dataDir, "bundles", "workspace")
+	return bundle.ResolveBundleRepoDir(dataDir, wsRepoDir, repo)
 }
