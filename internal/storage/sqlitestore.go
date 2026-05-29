@@ -5,12 +5,67 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // Pure Go SQLite driver
 )
+
+// openWithWALRecovery opens launcher.db. If the open succeeds but the first
+// real query reveals WAL/SHM corruption (truncated WAL, mismatched SHM,
+// SQLITE_IOERR_SHORT_READ — symptoms of an unclean shutdown that the WAL
+// recovery path can't repair), it closes the DB, removes the WAL+SHM
+// sidecars, and reopens. The main DB file itself is never touched here —
+// only the recoverable journal. The previous implementation removed the
+// sidecars unconditionally on every start, which silently dropped the
+// last session's committed-but-not-checkpointed writes.
+func openWithWALRecovery(dbPath string) (*sql.DB, error) {
+	connStr := dbPath + "?_pragma=journal_mode(wal)&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", connStr)
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite: %w", err)
+	}
+	// Touch the DB to surface WAL-replay errors. sql.Open is lazy; quick_check
+	// is the cheapest call that forces the recovery path to run.
+	if _, probeErr := db.Exec("PRAGMA quick_check"); probeErr != nil {
+		if !isWALCorruptionError(probeErr) {
+			_ = db.Close()
+			return nil, fmt.Errorf("probe sqlite: %w", probeErr)
+		}
+		slog.Warn("SQLite WAL appears corrupt, removing journal sidecars and retrying",
+			"err", probeErr, "wal", dbPath+"-wal", "shm", dbPath+"-shm")
+		_ = db.Close()
+		_ = os.Remove(dbPath + "-wal")
+		_ = os.Remove(dbPath + "-shm")
+		db, err = sql.Open("sqlite", connStr)
+		if err != nil {
+			return nil, fmt.Errorf("reopen sqlite after wal cleanup: %w", err)
+		}
+		if _, retryErr := db.Exec("PRAGMA quick_check"); retryErr != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("sqlite still failing after wal cleanup: %w", retryErr)
+		}
+	}
+	return db, nil
+}
+
+// isWALCorruptionError matches the small set of error signatures that the
+// WAL/SHM sidecars can produce when they survive an unclean shutdown
+// without matching the main DB. We deliberately do NOT match generic IO
+// errors (permission denied, ENOENT on the main DB) — those need to bubble
+// up so the caller sees the real problem instead of a silent data wipe.
+func isWALCorruptionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "short read") || // SQLITE_IOERR_SHORT_READ
+		strings.Contains(msg, "wal") && strings.Contains(msg, "corrupt") ||
+		strings.Contains(msg, "database disk image is malformed") && strings.Contains(msg, "wal")
+}
 
 // SQLiteStore implements Store using a SQLite database. Used in desktop mode.
 type SQLiteStore struct {
@@ -24,17 +79,15 @@ func NewSQLiteStore(dir string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("create store dir: %w", err)
 	}
 	dbPath := filepath.Join(dir, "launcher.db")
-	// IMPORTANT: do NOT delete `launcher.db-wal` / `launcher.db-shm` here.
-	// In WAL mode those files hold committed transactions that haven't yet
-	// been checkpointed into the main DB. Deleting them on the next start
-	// silently drops the previous session's most recent writes — that's how
-	// the "Exit to Welcome doesn't persist" regression hid: deactivate
-	// committed `SelectedNs[wsID]={}` into the WAL, the daemon shut down
-	// before a checkpoint, and the next start wiped the WAL and read the
-	// stale namespace selection out of the main DB.
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(wal)&_pragma=busy_timeout(5000)")
+	// WAL/SHM files are NOT swept on open. In WAL mode they hold
+	// committed transactions that haven't been checkpointed into the
+	// main DB yet — wiping them on every start silently drops the
+	// previous session's last writes (that's how 'Exit to Welcome
+	// doesn't persist' hid). They're only deleted as a recovery action
+	// when the open itself fails with a WAL-corruption signature.
+	db, err := openWithWALRecovery(dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("open sqlite: %w", err)
+		return nil, err
 	}
 	// Serialize all database access — correct for single-tenant desktop app,
 	// prevents concurrent write deadlocks with pure-Go SQLite driver.

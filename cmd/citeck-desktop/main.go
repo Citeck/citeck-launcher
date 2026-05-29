@@ -10,10 +10,13 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/config"
@@ -40,9 +43,34 @@ func main() {
 	}
 	defer lock.Release()
 
-	// Context for daemon lifecycle — canceled when Wails quits
+	// Context for daemon lifecycle — canceled when Wails quits OR the
+	// process receives SIGINT/SIGTERM. The signal path is the only way the
+	// daemon hits a graceful shutdown (and therefore SQLiteStore.Close →
+	// WAL checkpoint) when the user runs `make run` and hits Ctrl-C, or
+	// when systemd / a shell session sends TERM. Without it, the daemon's
+	// background goroutine would just be killed mid-write and the WAL
+	// could end up with the wrong "last word" on disk.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	sigCh := make(chan os.Signal, 2)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		slog.Info("Signal received, requesting graceful shutdown")
+		// First, let the daemon drain via the same path Wails uses on
+		// window-quit (cancel propagates into daemon's external-ctx hook
+		// → d.shutdown(false) → store.Close → WAL checkpoint).
+		cancel()
+		// Second-signal escape: if shutdown is hung (e.g. Docker daemon
+		// stuck stopping containers), let the user force-exit with
+		// another ^C instead of being trapped in the terminal.
+		go func() {
+			<-sigCh
+			slog.Warn("Second signal received, forcing exit")
+			os.Exit(1)
+		}()
+	}()
 
 	// ReadyCh receives notification when daemon HTTP server is ready
 	readyCh := make(chan string, 1)
