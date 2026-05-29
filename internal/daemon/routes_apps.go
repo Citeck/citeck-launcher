@@ -716,22 +716,32 @@ func isPathUnder(path, base string) bool {
 // The directory case is required for Spring webapps (props/ dir mount), which
 // is what handleListAppFiles enumerates via filepath.WalkDir; without this
 // the editor would refuse to read or write the files the menu surfaced.
+//
+// Paths are normalised via filepath.Clean and the directory-mount check is
+// performed via filepath.Rel so a payload like "./app/eapps/props/../../etc/passwd"
+// (which lexically starts with the host prefix but escapes it) is rejected.
 func isAppBindMount(app *namespace.AppRuntime, relPath string) bool {
+	cleanRel := filepath.Clean(relPath)
 	for _, v := range app.Def.Volumes {
 		parts := strings.SplitN(v, ":", 2)
 		if len(parts) < 2 {
 			continue
 		}
 		host := parts[0]
-		if host == relPath {
+		cleanHost := filepath.Clean(strings.TrimSuffix(host, "/"))
+		if cleanHost == cleanRel {
 			return true
 		}
-		// Directory mount: relPath must live strictly below host. The
-		// trailing "/" check rejects sibling paths that happen to share a
-		// prefix (e.g. "./app/eapps-other" vs "./app/eapps").
-		if strings.HasPrefix(relPath, strings.TrimSuffix(host, "/")+"/") {
-			return true
+		rel, err := filepath.Rel(cleanHost, cleanRel)
+		if err != nil {
+			continue
 		}
+		// rel == "." means equal (handled above); rel == ".." or starting
+		// with "../" means cleanRel escapes the host directory.
+		if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		return true
 	}
 	return false
 }

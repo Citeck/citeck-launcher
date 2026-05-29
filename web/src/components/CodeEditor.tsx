@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import CodeMirror, { type Extension } from '@uiw/react-codemirror'
+import CodeMirror, { type Extension, EditorState, EditorView } from '@uiw/react-codemirror'
 import { yaml } from '@codemirror/lang-yaml'
 import { json } from '@codemirror/lang-json'
 import { javascript } from '@codemirror/lang-javascript'
@@ -10,7 +10,7 @@ import { clike } from '@codemirror/legacy-modes/mode/clike'
 // StreamLanguage isn't re-exported from `@uiw/react-codemirror`, so pull it
 // from the canonical `@codemirror/language` package. The lock-file already
 // pins this via the legacy-modes peer chain.
-import { StreamLanguage } from '@codemirror/language'
+import { indentUnit, StreamLanguage } from '@codemirror/language'
 
 interface CodeEditorProps {
   value: string
@@ -38,7 +38,22 @@ interface CodeEditorProps {
 export function CodeEditor({ value, onChange, readOnly = false, filename = '', height, autoFocus = false }: CodeEditorProps) {
   const extensions = useMemo<Extension[]>(() => {
     const lang = detectLanguage(filename)
-    return lang ? [lang] : []
+    const exts: Extension[] = []
+    if (lang) exts.push(lang)
+    // 2-space tabs everywhere — Kotlin EditorWindow / our YAML conventions.
+    // tabSize.of controls how a literal tab character renders, indentUnit.of
+    // controls what gets inserted when the user invokes indent.
+    exts.push(EditorState.tabSize.of(2))
+    exts.push(indentUnit.of('  '))
+    // Make CodeMirror's editor view paint its theme on the full parent
+    // rectangle even when content is short — without this the cm-scroller
+    // sizes to content height and the user sees a hard cut-off mid-window.
+    exts.push(EditorView.theme({
+      '&': { height: '100%' },
+      '.cm-scroller': { minHeight: '100%' },
+      '.cm-content': { minHeight: '100%' },
+    }))
+    return exts
   }, [filename])
 
   return (
