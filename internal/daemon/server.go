@@ -694,15 +694,14 @@ func Start(opts StartOptions) error {
 	// Startup complete — disable cleanup defers
 	startupFailed = false
 
-	// Wait for initial reconciliation before notifying caller — avoids
-	// the webview seeing all apps as STOPPED for a few seconds.
-	if d.runtime != nil && opts.ReadyCh != nil {
-		waitCtx, waitCancel := context.WithTimeout(context.Background(), 15*time.Second)
-		d.runtime.WaitForInitialReconcile(waitCtx)
-		waitCancel()
-	}
-
-	// Notify caller that the daemon is ready
+	// Notify caller that the daemon is ready as soon as the HTTP listener
+	// is up — do NOT wait for the namespace to finish reconciling. On a
+	// cold start the namespace stays in STARTING for the full 5–10 minute
+	// webapp boot, and an earlier WaitForInitialReconcile(15s) here meant
+	// the desktop spinner blocked for a hard 15 seconds before the
+	// dashboard appeared. The dashboard already renders STOPPED / STARTING
+	// / PULLING fine and updates live via SSE — a brief STOPPED flicker is
+	// vastly better UX than a 15 s blank wait.
 	if opts.ReadyCh != nil {
 		opts.ReadyCh <- readyURL
 	}
