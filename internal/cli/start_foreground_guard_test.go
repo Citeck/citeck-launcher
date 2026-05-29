@@ -117,7 +117,7 @@ func findTryNewClientCalls(root ast.Node) []*ast.CallExpr {
 // any enclosing IfStmt has the condition `!foreground`. We don't accept other
 // truthy conditions — the rule is narrow and the comment in start.go ties it
 // specifically to the foreground flag.
-func isInsideNotForegroundBlock(root ast.Node, target ast.Node) bool {
+func isInsideNotForegroundBlock(root, target ast.Node) bool {
 	stack := []ast.Node{}
 	found := false
 	ast.Inspect(root, func(n ast.Node) bool {

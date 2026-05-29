@@ -8,20 +8,20 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
-	_ "modernc.org/sqlite" // Pure Go SQLite driver
+	sqlitedrv "modernc.org/sqlite" // Pure Go SQLite driver — named for *sqlitedrv.Error
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // openWithWALRecovery opens launcher.db. If the open succeeds but the first
-// real query reveals WAL/SHM corruption (truncated WAL, mismatched SHM,
-// SQLITE_IOERR_SHORT_READ — symptoms of an unclean shutdown that the WAL
-// recovery path can't repair), it closes the DB, removes the WAL+SHM
-// sidecars, and reopens. The main DB file itself is never touched here —
-// only the recoverable journal. The previous implementation removed the
-// sidecars unconditionally on every start, which silently dropped the
-// last session's committed-but-not-checkpointed writes.
+// real query reveals an unclean WAL state (SQLITE_IOERR_SHORT_READ — the
+// code modernc.org/sqlite emits when the WAL header or last frame is
+// truncated), it closes the DB, removes the WAL+SHM sidecars, and reopens.
+// The main DB file itself is never touched here — only the recoverable
+// journal. The previous implementation removed the sidecars unconditionally
+// on every start, which silently dropped the last session's committed-but-
+// not-checkpointed writes.
 func openWithWALRecovery(dbPath string) (*sql.DB, error) {
 	connStr := dbPath + "?_pragma=journal_mode(wal)&_pragma=busy_timeout(5000)"
 	db, err := sql.Open("sqlite", connStr)
@@ -52,19 +52,22 @@ func openWithWALRecovery(dbPath string) (*sql.DB, error) {
 	return db, nil
 }
 
-// isWALCorruptionError matches the small set of error signatures that the
-// WAL/SHM sidecars can produce when they survive an unclean shutdown
-// without matching the main DB. We deliberately do NOT match generic IO
+// isWALCorruptionError matches the error code emitted when the WAL/SHM
+// sidecars survive an unclean shutdown without matching the main DB.
+// Match by `sqlite.Error.Code()` because modernc.org/sqlite renders
+// IOERR_SHORT_READ as `"disk I/O error (522)"` — substring matching on
+// `"short read"` never fires. We deliberately do NOT match generic IO
 // errors (permission denied, ENOENT on the main DB) — those need to bubble
 // up so the caller sees the real problem instead of a silent data wipe.
 func isWALCorruptionError(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "short read") || // SQLITE_IOERR_SHORT_READ
-		strings.Contains(msg, "wal") && strings.Contains(msg, "corrupt") ||
-		strings.Contains(msg, "database disk image is malformed") && strings.Contains(msg, "wal")
+	var sqliteErr *sqlitedrv.Error
+	if !errors.As(err, &sqliteErr) {
+		return false
+	}
+	return sqliteErr.Code() == sqlite3.SQLITE_IOERR_SHORT_READ
 }
 
 // SQLiteStore implements Store using a SQLite database. Used in desktop mode.
@@ -556,7 +559,7 @@ func (s *SQLiteStore) Close() error {
 		// (Most callers ignore Close errors, which is fine here.)
 		closeErr := s.db.Close()
 		if closeErr != nil {
-			return fmt.Errorf("close database (checkpoint failed: %v): %w", err, closeErr)
+			return fmt.Errorf("close database (checkpoint failed: %w): %w", err, closeErr)
 		}
 		return fmt.Errorf("checkpoint database: %w", err)
 	}

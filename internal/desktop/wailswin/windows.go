@@ -123,32 +123,7 @@ func (m *WindowManager) handleOpen(w http.ResponseWriter, r *http.Request) {
 		width, height := spec.Width, spec.Height
 		var targetScreen *application.Screen
 		if autoSized {
-			if s := application.GetScreenByIndex(0); s != nil {
-				targetScreen = s
-				// Per-kind Kotlin-parity sizing rules:
-				//   * editor → min(default, screen * 0.9): never inflate
-				//     up to 90% on a 4K monitor; clamp down on small ones.
-				//   * logs / daemon-logs → 100% width, 90% height: Kotlin
-				//     LogsWindow opened essentially horizontally-maximised
-				//     because typical log lines are long and lots of room
-				//     reduces wrap-induced re-flows.
-				switch spec.Kind {
-				case "logs", "daemon-logs":
-					if sw, sh := workAreaSize(s); sw > 0 && sh > 0 {
-						width = sw
-						height = sh * 90 / 100
-					}
-				default:
-					if w90, h90 := percentOfScreen(s, 90); w90 > 0 && h90 > 0 {
-						if w90 < width {
-							width = w90
-						}
-						if h90 < height {
-							height = h90
-						}
-					}
-				}
-			}
+			targetScreen, width, height = applyAutoSize(spec.Kind, width, height)
 		}
 		win := m.app.Window.NewWithOptions(application.WebviewWindowOptions{
 			Name:            name,
@@ -299,10 +274,42 @@ func percentOfScreen(s *application.Screen, p int) (width, height int) {
 	return w * p / 100, h * p / 100
 }
 
+// applyAutoSize selects the primary screen, applies per-kind Kotlin-parity
+// sizing rules, and returns the target screen plus adjusted dimensions.
+// Returns (nil, w, h) unchanged when no screen is available.
+//
+// Sizing rules:
+//   - logs/daemon-logs → 100% work-area width, 90% height (long lines benefit
+//     from maximum horizontal space)
+//   - editor → min(default, screen*0.9): never inflate to 90% on a 4K monitor
+func applyAutoSize(kind string, w, h int) (screen *application.Screen, width, height int) {
+	s := application.GetScreenByIndex(0)
+	if s == nil {
+		return nil, w, h
+	}
+	switch kind {
+	case "logs", "daemon-logs":
+		if sw, sh := workAreaSize(s); sw > 0 && sh > 0 {
+			w = sw
+			h = sh * 90 / 100
+		}
+	default:
+		if w90, h90 := percentOfScreen(s, 90); w90 > 0 && h90 > 0 {
+			if w90 < w {
+				w = w90
+			}
+			if h90 < h {
+				h = h90
+			}
+		}
+	}
+	return s, w, h
+}
+
 // workAreaSize returns the screen's work area (excluding taskbar/dock) so
 // fullscreen-ish windows don't overlap system chrome. Falls back to total
 // size on platforms where WorkArea is unreported.
-func workAreaSize(s *application.Screen) (int, int) {
+func workAreaSize(s *application.Screen) (width, height int) {
 	w := s.WorkArea.Width
 	h := s.WorkArea.Height
 	if w <= 0 || h <= 0 {

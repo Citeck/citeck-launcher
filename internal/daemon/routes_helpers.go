@@ -51,24 +51,6 @@ func validateSecretID(id string) bool {
 		!strings.Contains(id, "..") && !strings.ContainsAny(id, "/\\")
 }
 
-// sanitizeName converts a human name to a safe filesystem ID.
-func sanitizeName(name string) string {
-	name = strings.ToLower(strings.TrimSpace(name))
-	var b strings.Builder
-	for _, r := range name {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
-			b.WriteRune(r)
-		} else if r == ' ' {
-			b.WriteByte('-')
-		}
-	}
-	id := b.String()
-	if len(id) > 64 {
-		id = id[:64]
-	}
-	return id
-}
-
 func (d *Daemon) activeNsID() string {
 	d.configMu.RLock()
 	defer d.configMu.RUnlock()

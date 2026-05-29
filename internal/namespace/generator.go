@@ -1442,30 +1442,14 @@ func processWebappDataSources(appName string, app *AppBuilder, ctx *NsGenContext
 		deepMergeMaps(webappCloudConfig, wp.CloudConfig)
 	}
 
-	// License and bundle-key injection for eapps
+	// License and bundle-key injection for eapps.
+	// Merge user-added licenses (from license.Service / encrypted store) with
+	// workspace-declared ones. UI licenses take precedence by ID; the merged
+	// list is sorted by descending Priority so the highest-priority license
+	// is first — matches license.Service.List() semantics consumed by the UI.
 	if appName == appdef.AppEapps && ctx.WorkspaceConfig != nil {
-		// Merge user-added licenses (from license.Service / encrypted store) with
-		// workspace-declared ones. UI licenses take precedence by ID; the merged
-		// list is sorted by descending Priority so the highest-priority license
-		// is first — matches license.Service.List() semantics consumed by the UI.
 		mergedLicenses := mergeLicenses(ctx.WorkspaceConfig.Licenses, ctx.ExtraLicenses)
-		if len(mergedLicenses) > 0 {
-			var licenseStrings []string
-			for _, lic := range mergedLicenses {
-				if data, err := json.Marshal(lic); err == nil {
-					licenseStrings = append(licenseStrings, string(data))
-				}
-			}
-			webappCloudConfig["ecos.webapp.license.instances"] = licenseStrings
-			bundleKey := ctx.Bundle.Key.Version
-			webappCloudConfig["citeck.bundle.key"] = bundleKey
-			extCloudConfig["citeck.bundle.key"] = bundleKey
-			if ctx.Bundle.Content != nil {
-				bundleContent, _ := json.Marshal(ctx.Bundle.Content)
-				webappCloudConfig["citeck.bundle.content"] = string(bundleContent)
-				extCloudConfig["citeck.bundle.content"] = string(bundleContent)
-			}
-		}
+		injectLicensesAndBundleKey(mergedLicenses, ctx.Bundle, webappCloudConfig, extCloudConfig)
 	}
 
 	// Always write cloud config YAML and mount props directory (matching Kotlin behavior).
@@ -1482,6 +1466,29 @@ func processWebappDataSources(appName string, app *AppBuilder, ctx *NsGenContext
 	// Store ext cloud config for CloudConfigServer
 	if len(extCloudConfig) > 0 {
 		ctx.CloudConfig[appName] = extCloudConfig
+	}
+}
+
+// injectLicensesAndBundleKey writes eapps license + bundle-key entries into the
+// webapp and external cloud-config maps. It is a no-op when mergedLicenses is empty.
+func injectLicensesAndBundleKey(mergedLicenses []bundle.LicenseInstance, bun *bundle.Def, webappCC, extCC map[string]any) {
+	if len(mergedLicenses) == 0 {
+		return
+	}
+	var licenseStrings []string
+	for _, lic := range mergedLicenses {
+		if data, err := json.Marshal(lic); err == nil {
+			licenseStrings = append(licenseStrings, string(data))
+		}
+	}
+	webappCC["ecos.webapp.license.instances"] = licenseStrings
+	bundleKey := bun.Key.Version
+	webappCC["citeck.bundle.key"] = bundleKey
+	extCC["citeck.bundle.key"] = bundleKey
+	if bun.Content != nil {
+		bundleContent, _ := json.Marshal(bun.Content)
+		webappCC["citeck.bundle.content"] = string(bundleContent)
+		extCC["citeck.bundle.content"] = string(bundleContent)
 	}
 }
 

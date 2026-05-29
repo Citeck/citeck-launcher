@@ -119,4 +119,3 @@ func ResolveVolumesBase(wsID, nsID string) string {
 	}
 	return NamespaceRtfilesDir(wsID, nsID)
 }
-

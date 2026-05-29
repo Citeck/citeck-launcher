@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 
 export interface ContextMenuItem {
   label: string
@@ -20,11 +20,11 @@ export interface ContextMenuProps {
 
 export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null)
-  const [adjusted, setAdjusted] = useState(position)
 
   // Clamp the menu inside the viewport so it doesn't get clipped when the
   // anchor (e.g. a gear icon) sits near the right/bottom edge. Measured after
   // mount because we need the actual rendered size, not min-width.
+  // Mutates the element's style directly to avoid a state-driven re-render.
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
@@ -38,7 +38,8 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
     if (y + rect.height > window.innerHeight - margin) {
       y = Math.max(margin, window.innerHeight - rect.height - margin)
     }
-    setAdjusted({ x, y })
+    el.style.left = `${x}px`
+    el.style.top = `${y}px`
   }, [position])
 
   useEffect(() => {
@@ -62,7 +63,7 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
     <div
       ref={ref}
       className="fixed z-50 bg-card border border-border rounded shadow-lg py-1 min-w-[160px]"
-      style={{ left: adjusted.x, top: adjusted.y }}
+      style={{ left: position.x, top: position.y }}
     >
       {items.map((item, i) =>
         item.divider ? (

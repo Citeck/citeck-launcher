@@ -443,8 +443,8 @@ func TestFindBundleFile_NestedHelmLayout(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(deepDir, "2026.1.yaml"), []byte("apps: {}"), 0o644))
 
 	tests := map[string]string{
-		"archive/2025.5":      filepath.Join(helmDir, "values.yml"),
-		"archive/2025.6":      filepath.Join(dir, "archive", "2025.6.yml"),
+		"archive/2025.5":         filepath.Join(helmDir, "values.yml"),
+		"archive/2025.6":         filepath.Join(dir, "archive", "2025.6.yml"),
 		"deep/nested/sub/2026.1": filepath.Join(deepDir, "2026.1.yaml"),
 	}
 	for key, wantPath := range tests {

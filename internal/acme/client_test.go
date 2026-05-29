@@ -1,11 +1,11 @@
 package acme
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"bytes"
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"

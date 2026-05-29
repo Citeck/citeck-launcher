@@ -80,8 +80,6 @@ const en: Translations = {
   'welcome.workspace.deleteConfirm': 'Delete workspace "{name}"? This removes its config + cached repo from disk.',
   'welcome.workspace.switched': 'Switched to workspace "{name}"',
   'welcome.workspace.switchFailed': 'Workspace switch failed: {error}',
-  'welcome.workspace.form.id': 'ID (optional)',
-  'welcome.workspace.form.idPlaceholder': 'auto-generated',
   'welcome.workspace.form.name': 'Name',
   'welcome.workspace.form.repoUrl': 'Repository URL',
   'welcome.workspace.form.repoBranch': 'Branch',

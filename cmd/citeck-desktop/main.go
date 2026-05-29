@@ -54,7 +54,7 @@ func main() {
 	// The signal handler is installed below, after the Wails app is created,
 	// so it can call app.Quit() (Wails' clean shutdown path: tears down
 	// windows + the tray + the event loop, then fires OnShutdown which
-	// cancels ctx). Cancelling ctx without quitting Wails would gracefully
+	// cancels ctx). Canceling ctx without quitting Wails would gracefully
 	// stop the daemon but leave the main Wails loop running, hanging the
 	// terminal on Ctrl-C.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -221,7 +221,7 @@ func main() {
 	windowManager = wailswin.NewWindowManager(app)
 
 	// SIGINT/SIGTERM → app.Quit() (Wails' own clean shutdown). Routing
-	// through Wails — rather than cancelling ctx directly — is necessary
+	// through Wails — rather than canceling ctx directly — is necessary
 	// because cancel alone stops the daemon but leaves the Wails event
 	// loop running, hanging the terminal on Ctrl-C until the user kills
 	// the process. app.Quit closes windows, fires OnShutdown (which in

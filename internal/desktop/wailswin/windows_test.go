@@ -13,9 +13,9 @@ import (
 func TestWindowKey(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name      string
-		kind, id  string
-		expected  string
+		name     string
+		kind, id string
+		expected string
 	}{
 		{"empty id collapses to kind", "logs", "", "logs"},
 		{"non-empty id is separated by pipe", "logs", "eapps", "logs|eapps"},

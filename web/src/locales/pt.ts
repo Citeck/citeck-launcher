@@ -80,8 +80,6 @@ const pt: Translations = {
   'welcome.workspace.deleteConfirm': 'Excluir o espaço de trabalho "{name}"? Sua configuração e cache do repositório serão removidos do disco.',
   'welcome.workspace.switched': 'Alternado para o espaço de trabalho "{name}"',
   'welcome.workspace.switchFailed': 'Falha ao alternar espaço de trabalho: {error}',
-  'welcome.workspace.form.id': 'ID (opcional)',
-  'welcome.workspace.form.idPlaceholder': 'gerado automaticamente',
   'welcome.workspace.form.name': 'Nome',
   'welcome.workspace.form.repoUrl': 'URL do repositório',
   'welcome.workspace.form.repoBranch': 'Branch',

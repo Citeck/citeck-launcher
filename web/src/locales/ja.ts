@@ -80,8 +80,6 @@ const ja: Translations = {
   'welcome.workspace.deleteConfirm': 'ワークスペース "{name}" を削除しますか？設定とリポジトリキャッシュがディスクから削除されます。',
   'welcome.workspace.switched': 'ワークスペース "{name}" に切り替えました',
   'welcome.workspace.switchFailed': 'ワークスペースの切り替えに失敗しました: {error}',
-  'welcome.workspace.form.id': 'ID (任意)',
-  'welcome.workspace.form.idPlaceholder': '自動生成',
   'welcome.workspace.form.name': '名前',
   'welcome.workspace.form.repoUrl': 'リポジトリURL',
   'welcome.workspace.form.repoBranch': 'ブランチ',

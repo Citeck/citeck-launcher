@@ -125,7 +125,7 @@ func (fw *flushWriter) Write(p []byte) (int, error) {
 // (final byte 0x40–0x7e). We treat parameter and intermediate as one merged
 // range 0x20–0x3f to keep the loop tight; malformed sequences (ESC followed
 // by something other than '[') drop just the ESC byte.
-func stripAnsiBytes(b []byte, carry []byte) (cleaned []byte, leftover []byte) {
+func stripAnsiBytes(b, carry []byte) (cleaned, leftover []byte) {
 	if len(carry) > 0 {
 		b = append(carry, b...)
 	}
@@ -133,8 +133,8 @@ func stripAnsiBytes(b []byte, carry []byte) (cleaned []byte, leftover []byte) {
 	i := 0
 	for i < len(b) {
 		c := b[i]
-		switch {
-		case c == 0x1b:
+		switch c {
+		case 0x1b:
 			if i+1 >= len(b) {
 				return out, b[i:]
 			}
@@ -155,7 +155,7 @@ func stripAnsiBytes(b []byte, carry []byte) (cleaned []byte, leftover []byte) {
 			}
 			// Malformed terminator — skip just the ESC.
 			i++
-		case c == '\t':
+		case '\t':
 			out = append(out, ' ', ' ', ' ', ' ')
 			i++
 		default:
@@ -476,7 +476,7 @@ func (d *Daemon) handleListAppFiles(w http.ResponseWriter, r *http.Request) {
 	// Bind-mount source can be a regular file OR a directory. For directory
 	// mounts (typical for Spring webapps: `./app/<name>/props:/run/...`) we
 	// walk the directory and emit each regular file inside — Kotlin 1.x
-	// behaviour the COG RMB menu relied on to surface application.yml etc.
+	// behavior the COG RMB menu relied on to surface application.yml etc.
 	files := make([]api.AppFileDto, 0)
 	for _, v := range app.Def.Volumes {
 		parts := strings.SplitN(v, ":", 2)

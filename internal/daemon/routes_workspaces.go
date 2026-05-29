@@ -19,8 +19,6 @@ import (
 var (
 	errWorkspaceNotFound = errors.New("workspace not found")
 	errWorkspaceBusy     = errors.New("namespace is running; stop it before switching workspaces")
-	errNamespaceNotFound = errors.New("namespace not found")
-	errNamespaceBusy     = errors.New("namespace is running; stop it before switching")
 )
 
 // Multi-workspace endpoints (desktop only).
@@ -90,7 +88,7 @@ func syntheticDefaultWorkspace() storage.WorkspaceDto {
 func (d *Daemon) listWorkspacesWithDefault() ([]storage.WorkspaceDto, error) {
 	list, err := d.store.ListWorkspaces()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list workspaces: %w", err)
 	}
 	for i := range list {
 		if list[i].ID == defaultWorkspaceID {
@@ -107,7 +105,7 @@ func (d *Daemon) listWorkspacesWithDefault() ([]storage.WorkspaceDto, error) {
 func (d *Daemon) getWorkspaceWithDefault(id string) (*storage.WorkspaceDto, error) {
 	ws, err := d.store.GetWorkspace(id)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get workspace: %w", err)
 	}
 	if ws != nil {
 		return ws, nil
@@ -470,9 +468,9 @@ func (d *Daemon) SwitchWorkspace(wsID string) error {
 		state.SelectedNs[oldWsID] = oldNsID
 	}
 	state.WorkspaceID = wsID
-	if err := d.store.SetState(*state); err != nil {
+	if setErr := d.store.SetState(*state); setErr != nil {
 		slog.Warn("Persist workspace switch failed", //nolint:gosec // G706: wsID validated by caller (handleActivateWorkspace) before SwitchWorkspace
-			"wsID", wsID, "err", err)
+			"wsID", wsID, "err", setErr)
 	}
 
 	// Determine the new workspace's target namespace BEFORE creating the
@@ -486,10 +484,10 @@ func (d *Daemon) SwitchWorkspace(wsID string) error {
 	if newNsID == "" {
 		nsList, listErr := config.ListNamespacesInWorkspace(wsID)
 		if listErr != nil {
-			slog.Warn("Workspace switch: list namespaces failed", "wsID", wsID, "err", listErr)
+			slog.Warn("Workspace switch: list namespaces failed", "wsID", wsID, "err", listErr) //nolint:gosec // G706: wsID validated by caller
 		} else if len(nsList) > 0 {
 			newNsID = nsList[0]
-			slog.Info("Workspace switch: no persisted ns selection, falling back to first on-disk", "wsID", wsID, "nsID", newNsID)
+			slog.Info("Workspace switch: no persisted ns selection, falling back to first on-disk", "wsID", wsID, "nsID", newNsID) //nolint:gosec // G706: wsID/newNsID from validated on-disk list
 		}
 	}
 
@@ -546,8 +544,8 @@ func (d *Daemon) SwitchWorkspace(wsID string) error {
 		return nil
 	}
 	cfgPath := config.ResolveNamespaceConfigPath(wsID, newNsID)
-	if _, statErr := os.Stat(cfgPath); statErr != nil {
-		slog.Info("Workspace last-selected namespace missing, skipping auto-load", "wsID", wsID, "nsID", newNsID)
+	if _, statErr := os.Stat(cfgPath); statErr != nil { //nolint:gosec // G703: path built from validated wsID/newNsID
+		slog.Info("Workspace last-selected namespace missing, skipping auto-load", "wsID", wsID, "nsID", newNsID) //nolint:gosec // G706: wsID/newNsID validated
 		return nil
 	}
 	loaded, loadErr := loadNamespace(loadNamespaceInput{
@@ -561,17 +559,17 @@ func (d *Daemon) SwitchWorkspace(wsID string) error {
 		Desktop:       d.desktop,
 	})
 	if loadErr != nil {
-		slog.Warn("Workspace switch: auto-load namespace failed", "wsID", wsID, "nsID", newNsID, "err", loadErr)
+		slog.Warn("Workspace switch: auto-load namespace failed", "wsID", wsID, "nsID", newNsID, "err", loadErr) //nolint:gosec // G706: wsID/newNsID validated
 		return nil //nolint:nilerr // workspace switch succeeded; namespace auto-load is best-effort
 	}
 	if loaded.NsConfig == nil {
 		return nil
 	}
 	if err := d.installLoadedNamespace(loaded, wsID, newNsID); err != nil {
-		slog.Warn("Workspace switch: install loaded namespace failed", "wsID", wsID, "nsID", newNsID, "err", err)
+		slog.Warn("Workspace switch: install loaded namespace failed", "wsID", wsID, "nsID", newNsID, "err", err) //nolint:gosec // G706: wsID/newNsID validated
 		return nil //nolint:nilerr // workspace switch succeeded; install failure is best-effort
 	}
-	slog.Info("Workspace switch: namespace auto-loaded", "wsID", wsID, "nsID", newNsID)
+	slog.Info("Workspace switch: namespace auto-loaded", "wsID", wsID, "nsID", newNsID) //nolint:gosec // G706: wsID/newNsID validated
 	return nil
 }
 

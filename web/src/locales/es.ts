@@ -80,8 +80,6 @@ const es: Translations = {
   'welcome.workspace.deleteConfirm': '¿Eliminar el espacio de trabajo "{name}"? Esto elimina su configuración y caché del repositorio del disco.',
   'welcome.workspace.switched': 'Cambiado al espacio de trabajo "{name}"',
   'welcome.workspace.switchFailed': 'Error al cambiar de espacio de trabajo: {error}',
-  'welcome.workspace.form.id': 'ID (opcional)',
-  'welcome.workspace.form.idPlaceholder': 'se genera automáticamente',
   'welcome.workspace.form.name': 'Nombre',
   'welcome.workspace.form.repoUrl': 'URL del repositorio',
   'welcome.workspace.form.repoBranch': 'Rama',

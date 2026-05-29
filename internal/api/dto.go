@@ -82,13 +82,13 @@ type NamespaceDto struct {
 
 // LinkDto represents a named URL link associated with a namespace.
 type LinkDto struct {
-	Name           string  `json:"name"`
-	URL            string  `json:"url"`
-	Icon           string  `json:"icon,omitempty"`
-	Order          float64 `json:"order"`
-	Category       string  `json:"category,omitempty"`    // grouping header in the sidebar
-	Description    string  `json:"description,omitempty"` // tooltip
-	AlwaysEnabled  bool    `json:"alwaysEnabled,omitempty"` // remains clickable when namespace is STOPPED (Kotlin parity)
+	Name          string  `json:"name"`
+	URL           string  `json:"url"`
+	Icon          string  `json:"icon,omitempty"`
+	Order         float64 `json:"order"`
+	Category      string  `json:"category,omitempty"`      // grouping header in the sidebar
+	Description   string  `json:"description,omitempty"`   // tooltip
+	AlwaysEnabled bool    `json:"alwaysEnabled,omitempty"` // remains clickable when namespace is STOPPED (Kotlin parity)
 }
 
 // EventDto represents a server-sent event for state changes.

@@ -92,7 +92,7 @@ type Daemon struct {
 	startTime       time.Time
 	eventSubs       []chan api.EventDto
 	eventMu         sync.Mutex
-	eventRing       *eventRing // bounded replay buffer for SSE reconnects (Last-Event-ID)
+	eventRing       *eventRing   // bounded replay buffer for SSE reconnects (Last-Event-ID)
 	configMu        sync.RWMutex // protects nsConfig, bundleDef, appDefs, workspaceConfig, systemSecrets
 	version         string
 	bundleError     string // non-empty if bundle resolution failed
@@ -108,14 +108,14 @@ type Daemon struct {
 	// purely for Load() ergonomics from addSubscriber's lock holder and the
 	// rare read from diagnostics; treat the field as logically protected by
 	// eventMu, not as concurrent-safe by itself.
-	eventSeq        atomic.Int64
-	sseDropped      atomic.Int64 // SSE events dropped due to slow consumers
-	logWriter       *fsutil.RotatingWriter
-	logLevel        *slog.LevelVar
-	systemSecrets   namespace.SystemSecrets // resolved JWT/OIDC secrets
-	desktop         bool                    // desktop mode: log writer shared across restarts
-	reloadMu        sync.Mutex              // guards concurrent reload requests
-	licenses        *license.Service        // user-added enterprise licenses
+	eventSeq      atomic.Int64
+	sseDropped    atomic.Int64 // SSE events dropped due to slow consumers
+	logWriter     *fsutil.RotatingWriter
+	logLevel      *slog.LevelVar
+	systemSecrets namespace.SystemSecrets // resolved JWT/OIDC secrets
+	desktop       bool                    // desktop mode: log writer shared across restarts
+	reloadMu      sync.Mutex              // guards concurrent reload requests
+	licenses      *license.Service        // user-added enterprise licenses
 }
 
 // secretReaderFunc returns the SecretService as a secretReader (transparent decryption).
@@ -341,14 +341,14 @@ func Start(opts StartOptions) error {
 				if state.SelectedNs != nil {
 					nsID = state.SelectedNs[wsID]
 				}
-				slog.Info("Startup: loaded launcher_state",
+				slog.Debug("Startup: loaded launcher_state",
 					"persistedWorkspaceID", state.WorkspaceID,
 					"selectedNs", state.SelectedNs,
 					"resolvedWsID", wsID,
 					"resolvedNsID", nsID,
 				)
 			} else {
-				slog.Info("Startup: no launcher_state record", "err", stateErr)
+				slog.Debug("Startup: no launcher_state record", "err", stateErr)
 			}
 			_ = sqlStore.Close()
 		}
@@ -1526,11 +1526,11 @@ func sysSecretKey(id string) string {
 
 // resolveOneSystemSecret returns a system secret value, sourcing it in this
 // priority order and migrating older locations into the new plain state:
-//   1. launcher_state plain (new home — `_sys<id>`).
-//   2. SecretService SYSTEM row (older installs); migrate to plain + delete.
-//   3. conf/secrets/<id-without-underscore>-secret plain file (pre-Store
-//      launcher); migrate to plain + delete.
-//   4. Generate fresh.
+//  1. launcher_state plain (new home — `_sys<id>`).
+//  2. SecretService SYSTEM row (older installs); migrate to plain + delete.
+//  3. conf/secrets/<id-without-underscore>-secret plain file (pre-Store
+//     launcher); migrate to plain + delete.
+//  4. Generate fresh.
 func resolveOneSystemSecret(store storage.Store, svc *storage.SecretService, id string, generate func() string) (string, error) {
 	stateKey := sysSecretKey(id)
 

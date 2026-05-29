@@ -385,6 +385,11 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
   virtualizerRef.current = virtualizer
   const matchIndicesRef = useRef(matchIndices)
   matchIndicesRef.current = matchIndices
+  // safeMatchIndexRef mirrors safeMatchIndex so the scroll effect can read it
+  // without making it a dependency (which would re-fire on every chunk arrival
+  // that shifts matchIndices, hard-pinning the viewport and blocking free scroll).
+  const safeMatchIndexRef = useRef(safeMatchIndex)
+  safeMatchIndexRef.current = safeMatchIndex
   const prevFollowedLengthRef = useRef(filteredLines.length)
 
   function programmaticScrollTo(idx: number, align: 'start' | 'center' | 'end') {
@@ -417,11 +422,9 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
     if (searchNavTick === 0) return
     const idxs = matchIndicesRef.current
     if (idxs.length === 0) return
-    const targetIdx = idxs[safeMatchIndex]
+    const targetIdx = idxs[safeMatchIndexRef.current]
     if (targetIdx === undefined) return
     programmaticScrollTo(targetIdx, 'center')
-  // safeMatchIndex is intentionally NOT in deps — only the tick drives this.
-
   }, [searchNavTick])
 
   function toggleLevel(level: LogLevel) {

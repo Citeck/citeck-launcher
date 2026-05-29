@@ -305,4 +305,3 @@ func TestEventOrderWithinTick(t *testing.T) {
 		"event order violated: namespace_status(RUNNING) appeared BEFORE app_status(RUNNING) (ns=%d app=%d)",
 		nsRunningIdx, lastAppRunningIdx)
 }
-

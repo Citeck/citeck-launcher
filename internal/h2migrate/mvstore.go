@@ -675,4 +675,3 @@ func (s *MVStore) loadChunkData(chunkID int, currentData []byte) ([]byte, error)
 	}
 	return s.readChunkData(chunk)
 }
-

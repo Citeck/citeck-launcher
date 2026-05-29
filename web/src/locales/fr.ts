@@ -80,8 +80,6 @@ const fr: Translations = {
   'welcome.workspace.deleteConfirm': 'Supprimer l’espace de travail "{name}" ? Sa configuration et son cache de dépôt seront supprimés du disque.',
   'welcome.workspace.switched': 'Basculé vers l’espace de travail "{name}"',
   'welcome.workspace.switchFailed': 'Échec du changement d’espace de travail : {error}',
-  'welcome.workspace.form.id': 'ID (facultatif)',
-  'welcome.workspace.form.idPlaceholder': 'généré automatiquement',
   'welcome.workspace.form.name': 'Nom',
   'welcome.workspace.form.repoUrl': 'URL du dépôt',
   'welcome.workspace.form.repoBranch': 'Branche',

@@ -112,13 +112,13 @@ const (
 
 // AppRuntime holds the state for a single app.
 type AppRuntime struct {
-	Name string
-	Status       AppRuntimeStatus
-	StatusText   string
-	Def          appdef.ApplicationDef
-	ContainerID  string
-	CPU          string
-	Memory       string
+	Name        string
+	Status      AppRuntimeStatus
+	StatusText  string
+	Def         appdef.ApplicationDef
+	ContainerID string
+	CPU         string
+	Memory      string
 	// MemoryPercent is 0..100 (zero when no memory limit set). Surfaced as
 	// AppDto.MemoryPercent so the UI can color-band the per-app cell.
 	MemoryPercent float64

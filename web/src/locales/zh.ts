@@ -80,8 +80,6 @@ const zh: Translations = {
   'welcome.workspace.deleteConfirm': '删除工作区 "{name}"？将从磁盘移除其配置和仓库缓存。',
   'welcome.workspace.switched': '已切换到工作区 "{name}"',
   'welcome.workspace.switchFailed': '工作区切换失败：{error}',
-  'welcome.workspace.form.id': 'ID（可选）',
-  'welcome.workspace.form.idPlaceholder': '自动生成',
   'welcome.workspace.form.name': '名称',
   'welcome.workspace.form.repoUrl': '仓库 URL',
   'welcome.workspace.form.repoBranch': '分支',

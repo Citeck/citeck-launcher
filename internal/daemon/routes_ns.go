@@ -247,7 +247,7 @@ func (d *Daemon) handleActivateNamespace(w http.ResponseWriter, r *http.Request)
 
 	// Target must exist on disk in the current workspace.
 	cfgPath := config.ResolveNamespaceConfigPath(wsID, nsID)
-	if _, err := os.Stat(cfgPath); err != nil {
+	if _, err := os.Stat(cfgPath); err != nil { //nolint:gosec // G703: path built from validated nsID/wsID
 		writeErrorCode(w, http.StatusNotFound, api.ErrCodeAppNotFound,
 			fmt.Sprintf("namespace %q not found in workspace %q", nsID, wsID))
 		return
@@ -333,17 +333,6 @@ func (d *Daemon) handleDeactivateNamespace(w http.ResponseWriter, r *http.Reques
 	if err := d.store.SetState(*state); err != nil {
 		writeInternalError(w, fmt.Errorf("persist namespace selection: %w", err))
 		return
-	}
-	// Verify the persisted state immediately after writing — diagnostic for
-	// the "Exit to Welcome doesn't survive restart" bug.
-	if check, checkErr := d.store.GetState(); checkErr == nil && check != nil {
-		_, stillPresent := check.SelectedNs[wsID]
-		slog.Info("Deactivated namespace, persisted state",
-			"wsID", wsID,
-			"selectedNs", check.SelectedNs,
-			"keyStillPresent", stillPresent,
-			"persistedWorkspaceID", check.WorkspaceID,
-		)
 	}
 
 	// Tear down the current runtime under configMu. Subsequent API calls see

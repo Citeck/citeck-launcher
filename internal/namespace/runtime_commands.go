@@ -134,7 +134,7 @@ func (r *Runtime) shutdownAfter(leaveRunning bool) {
 			}
 			r.wg.Wait()
 		}
-		close(r.eventCh) // stops dispatchLoop
+		close(r.eventCh)            // stops dispatchLoop
 		fakeClockBindings.delete(r) // no-op for production runtimes (not in map)
 	})
 }

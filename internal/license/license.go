@@ -84,9 +84,9 @@ type Instance struct {
 	Tenant     string          `json:"tenant"`
 	Priority   int64           `json:"priority"`
 	IssuedTo   string          `json:"issuedTo"`
-	IssuedAt   Time     `json:"issuedAt"`
-	ValidFrom  Time     `json:"validFrom"`
-	ValidUntil Time     `json:"validUntil"`
+	IssuedAt   Time            `json:"issuedAt"`
+	ValidFrom  Time            `json:"validFrom"`
+	ValidUntil Time            `json:"validUntil"`
 	Content    json.RawMessage `json:"content"`
 	Signatures []Signature     `json:"signatures"`
 }

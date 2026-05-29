@@ -344,7 +344,7 @@ func TestProcessWebappDataSources_PostgresInitActionsDeterministic(t *testing.T)
 	const runs = 20
 	var firstHash string
 	var firstInitActions []string
-	for i := 0; i < runs; i++ {
+	for i := range runs {
 		resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
 		require.NoError(t, err)
 		var pgApp *appdef.ApplicationDef

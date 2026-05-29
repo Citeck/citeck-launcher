@@ -168,7 +168,7 @@ type LicenseInstance struct {
 //
 // YAML decoding requires the custom UnmarshalYAML below: yaml.v3 refuses to
 // decode `!!binary` straight into `[]byte`, and when the target was `any` it
-// stuffed the raw decoded bytes into a Go `string`. Marshalled to JSON, that
+// stuffed the raw decoded bytes into a Go `string`. Marshaled to JSON, that
 // string surfaced as raw binary peppered with U+FFFD replacement chars — and
 // eapps' Jackson aborted with "Illegal character in base64 content" inside
 // LicensesZkProviderInitializer, leaving eapps in a permanent "STARTING".
