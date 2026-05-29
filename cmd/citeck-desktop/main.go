@@ -50,27 +50,15 @@ func main() {
 	// when systemd / a shell session sends TERM. Without it, the daemon's
 	// background goroutine would just be killed mid-write and the WAL
 	// could end up with the wrong "last word" on disk.
+	//
+	// The signal handler is installed below, after the Wails app is created,
+	// so it can call app.Quit() (Wails' clean shutdown path: tears down
+	// windows + the tray + the event loop, then fires OnShutdown which
+	// cancels ctx). Cancelling ctx without quitting Wails would gracefully
+	// stop the daemon but leave the main Wails loop running, hanging the
+	// terminal on Ctrl-C.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	sigCh := make(chan os.Signal, 2)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigCh
-		slog.Info("Signal received, requesting graceful shutdown")
-		// First, let the daemon drain via the same path Wails uses on
-		// window-quit (cancel propagates into daemon's external-ctx hook
-		// → d.shutdown(false) → store.Close → WAL checkpoint).
-		cancel()
-		// Second-signal escape: if shutdown is hung (e.g. Docker daemon
-		// stuck stopping containers), let the user force-exit with
-		// another ^C instead of being trapped in the terminal.
-		go func() {
-			<-sigCh
-			slog.Warn("Second signal received, forcing exit")
-			os.Exit(1)
-		}()
-	}()
 
 	// ReadyCh receives notification when daemon HTTP server is ready
 	readyCh := make(chan string, 1)
@@ -231,6 +219,28 @@ func main() {
 	})
 
 	windowManager = wailswin.NewWindowManager(app)
+
+	// SIGINT/SIGTERM → app.Quit() (Wails' own clean shutdown). Routing
+	// through Wails — rather than cancelling ctx directly — is necessary
+	// because cancel alone stops the daemon but leaves the Wails event
+	// loop running, hanging the terminal on Ctrl-C until the user kills
+	// the process. app.Quit closes windows, fires OnShutdown (which in
+	// turn calls cancel and drains the daemon), and exits Run().
+	sigCh := make(chan os.Signal, 2)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		slog.Info("Signal received, requesting graceful shutdown")
+		app.Quit()
+		// Second-signal escape: if Wails / the daemon shutdown is hung
+		// (e.g. Docker stuck stopping containers), let the user force-exit
+		// with another ^C instead of being trapped in the terminal.
+		go func() {
+			<-sigCh
+			slog.Warn("Second signal received, forcing exit")
+			os.Exit(1)
+		}()
+	}()
 
 	// Strip a "dev-" prefix from link-time-injected version so the title reads
 	// "Citeck Launcher v20260527-..." instead of "Citeck Launcher vdev-..."
