@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { subscribeRefresh } from '../lib/windowBus'
 import { useNavigate } from 'react-router'
 import { useDashboardStore } from '../lib/store'
 import { useIsDesktop } from '../lib/daemonStatus'
@@ -90,7 +91,20 @@ export function Dashboard() {
     setHomeTab(t('dashboard.title'))
     fetchData()
     startEventStream()
-    return () => stopEventStream()
+    // Cross-window refresh ping: secondary editor windows post a message
+    // after a successful save so the dashboard can refetch immediately,
+    // bypassing Wails' background-window EventSource throttling.
+    const unsub = subscribeRefresh(() => fetchData())
+    // Manual refresh: Wails doesn't pass through the browser-default F5
+    // reload, so dashboard refetch is exposed as an explicit shortcut.
+    const onF5 = (e: KeyboardEvent) => {
+      if (e.key === 'F5' || (e.ctrlKey && e.code === 'KeyR' && !e.shiftKey)) {
+        e.preventDefault()
+        fetchData()
+      }
+    }
+    window.addEventListener('keydown', onF5)
+    return () => { unsub(); stopEventStream(); window.removeEventListener('keydown', onF5) }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- store methods are stable
   }, [])
 

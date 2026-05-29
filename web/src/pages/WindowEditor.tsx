@@ -7,6 +7,7 @@ import { useDashboardStore } from '../lib/store'
 import { useInheritedTheme } from '../hooks/useInheritedTheme'
 import { closeCurrentDesktopWindow } from '../lib/api'
 import { WindowFileEditor } from './WindowFileEditor'
+import { publishRefresh } from '../lib/windowBus'
 
 /**
  * Standalone editor page used by native multi-window mode.
@@ -125,7 +126,13 @@ export function WindowEditor() {
           disabled={!dirty}
           onClick={async () => {
             const ok = await editorRef.current?.apply()
-            if (ok) close()
+            if (ok) {
+              // Ping the dashboard window before closing so it refetches
+              // immediately; SSE between Wails webviews can lag when the
+              // dashboard is backgrounded.
+              publishRefresh()
+              close()
+            }
           }}
         >
           {t('common.save')}

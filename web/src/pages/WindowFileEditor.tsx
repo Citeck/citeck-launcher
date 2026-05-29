@@ -2,6 +2,7 @@ import { useParams, useSearchParams } from 'react-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import yaml from 'js-yaml'
 import { getAppFile, putAppFile, resetAppFile, closeCurrentDesktopWindow } from '../lib/api'
+import { publishRefresh } from '../lib/windowBus'
 import { CodeEditor } from '../components/CodeEditor'
 import { useTranslation } from '../lib/i18n'
 import { useInheritedTheme } from '../hooks/useInheritedTheme'
@@ -232,7 +233,13 @@ export function WindowFileEditor() {
           disabled={!dirty || saving}
           onClick={async () => {
             const ok = await handleSave()
-            if (ok) close()
+            if (ok) {
+              // Ping the dashboard so its table refetches immediately;
+              // SSE delivery between Wails webviews can lag when the
+              // dashboard window is in the background.
+              publishRefresh()
+              close()
+            }
           }}
         >
           {saving ? t('common.saving') : t('common.save')}
