@@ -291,6 +291,82 @@ func (d *Daemon) handleActivateNamespace(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// handleDeactivateNamespace clears the workspace's namespace selection so the
+// dashboard returns to Welcome and a daemon restart no longer auto-loads the
+// previous namespace. Desktop-only — server-mode has a single CLI-pinned
+// namespace and no Welcome screen.
+//
+// Refuses while the current namespace is not STOPPED (mirrors switch).
+func (d *Daemon) handleDeactivateNamespace(w http.ResponseWriter, r *http.Request) {
+	_ = r
+	if !d.requireDesktop(w) {
+		return
+	}
+	if !d.reloadMu.TryLock() {
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeReloadInProgress, "reload already in progress")
+		return
+	}
+	defer d.reloadMu.Unlock()
+
+	d.configMu.RLock()
+	rt := d.runtime
+	wsID := d.workspaceID
+	d.configMu.RUnlock()
+
+	if rt != nil && rt.Status() != namespace.NsStatusStopped {
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeNamespaceRunning,
+			"current namespace is not stopped; stop it before exiting")
+		return
+	}
+
+	// Persist: clear SelectedNs[wsID] so the next daemon start lands on
+	// Welcome instead of reopening this namespace.
+	state, _ := d.store.GetState()
+	if state == nil {
+		state = &storage.LauncherState{WorkspaceID: wsID}
+	}
+	if state.SelectedNs != nil {
+		delete(state.SelectedNs, wsID)
+	}
+	if err := d.store.SetState(*state); err != nil {
+		writeInternalError(w, fmt.Errorf("persist namespace selection: %w", err))
+		return
+	}
+
+	// Tear down the current runtime under configMu. Subsequent API calls see
+	// d.runtime == nil and treat the daemon as "no namespace loaded" — the
+	// UI's Welcome screen path already handles that state.
+	d.configMu.Lock()
+	oldRuntime := d.runtime
+	oldCloudCfgSrv := d.cloudCfgServer
+	oldACME := d.acmeRenewal
+	d.runtime = nil
+	d.nsConfig = nil
+	d.bundleDef = nil
+	d.appDefs = nil
+	d.cloudCfgServer = nil
+	d.systemSecrets = namespace.SystemSecrets{}
+	d.volumesBase = ""
+	d.acmeRenewal = nil
+	d.bundleError = ""
+	d.configMu.Unlock()
+
+	if oldRuntime != nil {
+		oldRuntime.Shutdown()
+	}
+	if oldCloudCfgSrv != nil {
+		oldCloudCfgSrv.Stop()
+	}
+	if oldACME != nil {
+		oldACME.Stop()
+	}
+
+	writeJSON(w, api.ActionResultDto{
+		Success: true,
+		Message: "namespace deactivated",
+	})
+}
+
 // --- Namespace creation + Bundles ---
 
 //nolint:gocyclo,nestif // namespace creation orchestrates validation, template resolution, config generation, and async snapshot import

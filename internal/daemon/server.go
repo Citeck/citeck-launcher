@@ -1134,6 +1134,7 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+api.Namespaces, d.handleCreateNamespace)
 	mux.HandleFunc("DELETE /api/v1/namespaces/{id}", d.handleDeleteNamespace)
 	mux.HandleFunc("POST /api/v1/namespaces/{id}/activate", d.handleActivateNamespace)
+	mux.HandleFunc("POST /api/v1/namespaces/deactivate", d.handleDeactivateNamespace)
 	mux.HandleFunc("GET "+api.Templates, d.handleGetTemplates)
 	mux.HandleFunc("GET "+api.QuickStarts, d.handleGetQuickStarts)
 

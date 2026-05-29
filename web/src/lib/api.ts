@@ -155,6 +155,15 @@ export async function activateNamespace(id: string): Promise<ActionResultDto> {
   return res.json()
 }
 
+// deactivateNamespace clears the workspace's namespace selection so the next
+// daemon start lands on Welcome instead of re-loading the previous namespace.
+// Daemon rejects with 409 if the current namespace is not STOPPED.
+export async function deactivateNamespace(): Promise<ActionResultDto> {
+  const res = await fetchWithTimeout(`${API_BASE}/namespaces/deactivate`, { method: 'POST', headers: CSRF_HEADER })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  return res.json()
+}
+
 /**
  * Suppress git pull operations against `host` for `durationSeconds` (default
  * 3600s = 1 hour, Kotlin parity). Wired into GitPullErrorDialog Skip: clicking

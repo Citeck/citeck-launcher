@@ -13,7 +13,7 @@ import { NamespaceDialog } from '../components/NamespaceDialog'
 import { NamespaceEditDialog } from '../components/NamespaceEditDialog'
 import { ContextMenu } from '../components/ContextMenu'
 import { useContextMenu } from '../hooks/useContextMenu'
-import { getSystemDump, openExternal } from '../lib/api'
+import { getSystemDump, openExternal, deactivateNamespace } from '../lib/api'
 import { useTranslation } from '../lib/i18n'
 import { StatusBadge } from '../components/StatusBadge'
 import { AppTable } from '../components/AppTable'
@@ -301,7 +301,17 @@ export function Dashboard() {
               <SidebarIconBtn icon={ArrowLeft}
                 tooltip={namespace.status === 'STOPPED' ? t('dashboard.backToWelcome') : t('dashboard.backToWelcome.disabled')}
                 disabled={namespace.status !== 'STOPPED'}
-                onClick={() => navigate('/welcome')} />
+                onClick={async () => {
+                  // Tell the daemon to drop the selection — otherwise the
+                  // next launcher start auto-loads this namespace again.
+                  try {
+                    await deactivateNamespace()
+                  } catch (e) {
+                    toast((e as Error).message, 'error')
+                    return
+                  }
+                  navigate('/welcome')
+                }} />
             )}
             <SidebarIconBtn icon={FolderOpen}
               tooltip={t('dashboard.openNsDir.tooltip')}
