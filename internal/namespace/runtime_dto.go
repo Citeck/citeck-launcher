@@ -2,6 +2,7 @@ package namespace
 
 import (
 	"fmt"
+	goruntime "runtime"
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
@@ -43,6 +44,11 @@ func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 		BundleRef: r.config.BundleRef.String(),
 		Apps:      apps,
 		Links:     r.generateLinks(),
+		// Host CPU count for the UI's aggregate CPU progress-bar cap. Pulled
+		// from the Go runtime — matches Docker stats' OnlineCPUs as long as
+		// no cpuset restrictions are set on the daemon, which is the case
+		// in every supported deployment.
+		HostCPUs: goruntime.NumCPU(),
 	}
 }
 

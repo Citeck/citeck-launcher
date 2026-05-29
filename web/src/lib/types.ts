@@ -56,6 +56,11 @@ export interface NamespaceDto {
   bundleError?: string
   apps: AppDto[]
   links?: LinkDto[]
+  // Host CPU core count from the daemon (runtime.NumCPU). Caps the aggregate
+  // CPU progress bar at hostCpus*100% — Docker per-container stats span all
+  // cores, so per-app 100% caps were wrong by a factor of N (N apps × 100
+  // is unrelated to the host's actual capacity).
+  hostCpus?: number
 }
 
 export interface HealthDto {

@@ -72,6 +72,12 @@ type NamespaceDto struct {
 	BundleError string    `json:"bundleError,omitempty"`
 	Apps        []AppDto  `json:"apps"`
 	Links       []LinkDto `json:"links,omitempty"`
+	// HostCPUs is the number of CPU cores visible to the daemon process,
+	// straight from runtime.NumCPU(). The UI uses it to cap the aggregate
+	// CPU progress bar at (HostCPUs * 100)% — Docker per-container stats
+	// already span all cores (a container fully using N cores reads as
+	// N*100%), so the host total is the only meaningful aggregate ceiling.
+	HostCPUs int `json:"hostCpus,omitempty"`
 }
 
 // LinkDto represents a named URL link associated with a namespace.

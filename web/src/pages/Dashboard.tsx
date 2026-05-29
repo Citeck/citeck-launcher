@@ -146,10 +146,14 @@ export function Dashboard() {
     if (m.endsWith('M')) return sum + parseFloat(m)
     return sum
   }, 0)
-  // Aggregate caps for the sidebar progress bars (Kotlin CompactResourceRow):
-  // CPU max = runningApps × 100 (each container can use a whole core).
-  // MEM max = sum of per-app memory limits parsed from "used / limit".
-  const maxCpu = runningApps.length * 100
+  // Aggregate caps for the sidebar progress bars:
+  //   CPU max = host CPU cores × 100 (Docker per-container stats span all
+  //   cores, so the meaningful aggregate ceiling is host capacity, not
+  //   apps × 100 which over-counts by N). hostCpus comes from the daemon
+  //   (runtime.NumCPU); fall back to the old wrong-but-non-zero formula
+  //   only when the daemon hasn't reported a value yet.
+  //   MEM max = sum of per-app memory limits parsed from "used / limit".
+  const maxCpu = (namespace.hostCpus ?? runningApps.length) * 100
   const maxMem = runningApps.reduce((sum, a) => {
     const m = a.memory?.split(' / ')[1]
     if (!m) return sum
