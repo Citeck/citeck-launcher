@@ -1,10 +1,11 @@
 import { useParams } from 'react-router'
 import { AppConfigEditor, type AppConfigEditorHandle } from '../components/AppConfigEditor'
 import { useTranslation } from '../lib/i18n'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { RotateCcw } from 'lucide-react'
 import { useDashboardStore } from '../lib/store'
 import { useInheritedTheme } from '../hooks/useInheritedTheme'
+import { closeCurrentDesktopWindow } from '../lib/api'
 
 /**
  * Standalone editor page used by native multi-window mode.
@@ -32,18 +33,43 @@ export function WindowEditor() {
       : t('window.editor.heading')
   }, [name, t])
 
-  // Escape closes the secondary window; skip when typing in the editor so a
-  // single key press doesn't dismiss in-progress edits.
+  const close = useCallback(() => {
+    if (!name) return
+    void closeCurrentDesktopWindow({ kind: 'editor', id: name })
+  }, [name])
+
+  // Window-level keyboard shortcuts. Ctrl+F focuses the CodeMirror editor so
+  // its built-in search panel opens — otherwise the user has to click into
+  // the editor first and the shortcut feels broken. Escape closes the window
+  // (except while typing in a control so a stray Esc doesn't drop edits).
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key !== 'Escape') return
-      const tag = (document.activeElement as HTMLElement | null)?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return
-      window.close()
+      const ctrl = e.ctrlKey || e.metaKey
+      if (ctrl && !e.shiftKey && !e.altKey && e.code === 'KeyF') {
+        const cm = document.querySelector('.cm-content') as HTMLElement | null
+        if (cm && document.activeElement !== cm) {
+          e.preventDefault()
+          cm.focus()
+          // Re-emit Ctrl+F so CodeMirror's searchKeymap picks it up — without
+          // this the user would have to press the shortcut twice.
+          cm.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'f', code: 'KeyF', ctrlKey: true, bubbles: true, cancelable: true,
+          }))
+        }
+        return
+      }
+      if (e.key === 'Escape') {
+        const tag = (document.activeElement as HTMLElement | null)?.tagName
+        if (tag === 'INPUT' || tag === 'TEXTAREA') return
+        // Don't close while CodeMirror's search panel has focus — let CM
+        // handle Esc (close panel) first.
+        if ((document.activeElement as HTMLElement | null)?.closest?.('.cm-panels')) return
+        close()
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  }, [close])
 
   if (!name) {
     return (
@@ -53,19 +79,14 @@ export function WindowEditor() {
     )
   }
 
-  function close() {
-    // Best-effort close — works in the Wails secondary window. In a browser
-    // tab fallback, window.close() is a no-op unless the tab was script-opened.
-    window.close()
-  }
-
   return (
     <div className="h-screen bg-background text-foreground flex flex-col">
-      <main className="flex-1 min-h-0 overflow-auto p-3">
+      <main className="flex-1 min-h-0 flex flex-col">
         <AppConfigEditor
           ref={editorRef}
           appName={name}
           hideInnerActions
+          fullHeight
           onDirtyChange={setDirty}
         />
       </main>

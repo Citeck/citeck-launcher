@@ -722,6 +722,25 @@ export async function openDesktopWindow(spec: DesktopWindowSpec): Promise<boolea
   return false
 }
 
+/**
+ * Closes the currently focused secondary Wails window. Used by Cancel /
+ * Esc handlers in /window/* pages where `window.close()` can be a no-op
+ * inside the webview (browsers only allow it for windows opened via
+ * window.open from the same script). Best-effort: silently no-ops in
+ * server mode or when the window manager doesn't recognise the caller.
+ */
+export async function closeCurrentDesktopWindow(spec: { kind: 'logs' | 'editor' | 'daemon-logs'; id?: string }): Promise<void> {
+  try {
+    await fetch('/desktop/windows/close', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(spec),
+    })
+  } catch { /* not in Wails desktop */ }
+  // Belt-and-suspenders for the server-mode browser fallback.
+  window.close()
+}
+
 /** True if /desktop/windows/* is reachable (i.e. running inside Wails desktop). */
 export async function hasDesktopWindowManager(): Promise<boolean> {
   try {

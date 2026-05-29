@@ -82,24 +82,24 @@ type InitContainerDef struct {
 
 // ApplicationDef is a fully resolved container definition.
 type ApplicationDef struct {
-	Name               string             `json:"name"`
-	NetworkAliases     []string           `json:"networkAliases,omitempty"`
-	Image              string             `json:"image"`
-	ImageDigest        string             `json:"imageDigest,omitempty"` // Docker image digest for change detection
-	Environments       map[string]string  `json:"environments,omitempty"`
-	Cmd                []string           `json:"cmd,omitempty"`
-	Ports              []string           `json:"ports,omitempty"`
-	Volumes            []string           `json:"volumes,omitempty"`
-	VolumesContentHash string             `json:"volumesContentHash,omitempty"`
-	InitActions        []AppInitAction    `json:"initActions,omitempty"`
-	DependsOn          map[string]bool    `json:"dependsOn,omitempty"`
-	StartupConditions  []StartupCondition `json:"startupConditions,omitempty"`
-	LivenessProbe      *AppProbeDef       `json:"livenessProbe,omitempty"`
-	Resources          *AppResourcesDef   `json:"resources,omitempty"`
-	Kind               ApplicationKind    `json:"kind"`
-	ShmSize            string             `json:"shmSize,omitempty"`
-	InitContainers     []InitContainerDef `json:"initContainers,omitempty"`
-	IsInit             bool               `json:"-"`                                                  // true for init containers (no restart policy)
+	Name               string             `json:"name" yaml:"name"`
+	NetworkAliases     []string           `json:"networkAliases,omitempty" yaml:"networkAliases,omitempty"`
+	Image              string             `json:"image" yaml:"image"`
+	ImageDigest        string             `json:"imageDigest,omitempty" yaml:"imageDigest,omitempty"` // Docker image digest for change detection
+	Environments       map[string]string  `json:"environments,omitempty" yaml:"environments,omitempty"`
+	Cmd                []string           `json:"cmd,omitempty" yaml:"cmd,omitempty"`
+	Ports              []string           `json:"ports,omitempty" yaml:"ports,omitempty"`
+	Volumes            []string           `json:"volumes,omitempty" yaml:"volumes,omitempty"`
+	VolumesContentHash string             `json:"volumesContentHash,omitempty" yaml:"volumesContentHash,omitempty"`
+	InitActions        []AppInitAction    `json:"initActions,omitempty" yaml:"initActions,omitempty"`
+	DependsOn          map[string]bool    `json:"dependsOn,omitempty" yaml:"dependsOn,omitempty"`
+	StartupConditions  []StartupCondition `json:"startupConditions,omitempty" yaml:"startupConditions,omitempty"`
+	LivenessProbe      *AppProbeDef       `json:"livenessProbe,omitempty" yaml:"livenessProbe,omitempty"`
+	Resources          *AppResourcesDef   `json:"resources,omitempty" yaml:"resources,omitempty"`
+	Kind               ApplicationKind    `json:"kind" yaml:"kind"`
+	ShmSize            string             `json:"shmSize,omitempty" yaml:"shmSize,omitempty"`
+	InitContainers     []InitContainerDef `json:"initContainers,omitempty" yaml:"initContainers,omitempty"`
+	IsInit             bool               `json:"-" yaml:"-"`                                         // true for init containers (no restart policy)
 	StopTimeout        int                `json:"stopTimeout,omitempty" yaml:"stopTimeout,omitempty"` // seconds; 0 = default (15s webapps, 30s infra)
 }
 

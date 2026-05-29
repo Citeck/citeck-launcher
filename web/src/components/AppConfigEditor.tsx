@@ -37,12 +37,19 @@ interface AppConfigEditorProps {
    * drives this editor via the {@link AppConfigEditorHandle} ref.
    */
   hideInnerActions?: boolean
+  /**
+   * When true, the YAML CodeEditor fills the remaining height of its
+   * container (flex-1) instead of using the inline default. Used by
+   * WindowEditor so the editor takes the whole secondary window minus its
+   * footer, not a tiny 350px slot.
+   */
+  fullHeight?: boolean
   /** Notify parent when the dirty state changes. */
   onDirtyChange?: (dirty: boolean) => void
 }
 
 export const AppConfigEditor = forwardRef<AppConfigEditorHandle, AppConfigEditorProps>(function AppConfigEditorImpl(
-  { appName, hideInnerActions = false, onDirtyChange },
+  { appName, hideInnerActions = false, fullHeight = false, onDirtyChange },
   ref,
 ) {
   const { t } = useTranslation()
@@ -224,11 +231,17 @@ export const AppConfigEditor = forwardRef<AppConfigEditorHandle, AppConfigEditor
   }
 
   return (
-    <div className="p-2 space-y-2 overflow-y-auto h-full">
+    <div className={fullHeight ? 'flex flex-col h-full' : 'p-2 space-y-2 overflow-y-auto h-full'}>
       {/* App config editor */}
       {configYaml !== null ? (
-        <div className="rounded border border-border bg-card p-2">
-          <div className="flex items-center justify-between mb-1">
+        <div className={fullHeight
+          ? 'flex flex-col flex-1 min-h-0 bg-card'
+          : 'rounded border border-border bg-card p-2'
+        }>
+          <div className={fullHeight
+            ? 'flex items-center justify-between px-3 py-2 border-b border-border shrink-0'
+            : 'flex items-center justify-between mb-1'
+          }>
             <div className="flex items-center gap-1 text-xs font-medium">
               <FileCode size={13} /> {t('appConfig.title')}
               {isEdited && <span className="text-[10px] text-blue-500 font-normal ml-1">{t('appConfig.edited', { detail: isLocked ? ', locked' : '' })}</span>}
@@ -268,19 +281,22 @@ export const AppConfigEditor = forwardRef<AppConfigEditorHandle, AppConfigEditor
               </div>
             )}
           </div>
-          {configError && <div className="text-[11px] text-destructive mb-1">{configError}</div>}
+          {configError && <div className={fullHeight ? 'px-3 py-1.5 text-[11px] text-destructive border-b border-border shrink-0' : 'text-[11px] text-destructive mb-1'}>{configError}</div>}
           {configEditing ? (
-            <div className="rounded border border-border overflow-hidden">
+            <div className={fullHeight
+              ? 'flex-1 min-h-0 overflow-hidden'
+              : 'rounded border border-border overflow-hidden'
+            }>
               <CodeEditor
                 value={editYaml ?? ''}
                 onChange={setEditYaml}
                 filename="app-config.yml"
-                height="350px"
+                height={fullHeight ? '100%' : '350px'}
                 autoFocus
               />
             </div>
           ) : (
-            <div className="max-h-48 overflow-auto">
+            <div className={fullHeight ? 'flex-1 min-h-0 overflow-auto' : 'max-h-48 overflow-auto'}>
               <YamlViewer content={configYaml} />
             </div>
           )}
