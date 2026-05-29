@@ -381,6 +381,19 @@ type SnapshotDownloadDto struct {
 	Name   string `json:"name,omitempty"` // output file name (auto-generated if empty)
 }
 
+// NamespaceCreateDefaultsDto is the pre-filled form payload for the create
+// dialog. Mirrors the Kotlin 1.x `toFormData(null)` path in NamespacesService:
+// auto-generated "Citeck #N" name + bundle/auth defaults pulled from the
+// workspace's "default" namespace template (with LATEST → first repo + LATEST
+// fallback). Returned by GET /namespace/create-defaults.
+type NamespaceCreateDefaultsDto struct {
+	Name       string   `json:"name"`
+	BundleRepo string   `json:"bundleRepo"`
+	BundleKey  string   `json:"bundleKey"`
+	AuthType   string   `json:"authType"`
+	Users      []string `json:"users,omitempty"`
+}
+
 // NamespaceEditDto exposes the typed subset of namespace.yml that the Web
 // UI's "edit namespace" form drives. Mirrors the field set the Kotlin
 // EditNamespaceDialog exposed (name, bundleRef, authType, users, proxy host

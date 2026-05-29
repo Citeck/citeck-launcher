@@ -377,14 +377,21 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Server-side validation
+	// Server-side validation. Host/port aren't exposed by the create dialog —
+	// the user edits them via raw YAML — so only feed them to the validator
+	// when the request actually carries a non-empty/non-zero value. Otherwise
+	// the form spec's required-range check rejects the implicit port=0.
 	spec := form.GetSpec(form.NamespaceCreateFormID)
 	if spec != nil {
 		data := map[string]any{
 			"name":     req.Name,
 			"authType": req.AuthType,
-			"host":     req.Host,
-			"port":     float64(req.Port),
+		}
+		if req.Host != "" {
+			data["host"] = req.Host
+		}
+		if req.Port > 0 {
+			data["port"] = float64(req.Port)
 		}
 		if fieldErrs := form.Validate(spec, data); len(fieldErrs) > 0 {
 			fields := make([]api.FieldErrorDto, len(fieldErrs))
@@ -404,7 +411,6 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	// Generate namespace config — start from template if specified
 	nsCfg := namespace.DefaultNamespaceConfig()
 
-	// Apply namespace template if specified
 	templateID := req.Template
 	if templateID == "" {
 		templateID = "default" // use default template if none specified
@@ -412,21 +418,25 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	d.configMu.RLock()
 	wsCfg := d.workspaceConfig
 	d.configMu.RUnlock()
-	if wsCfg != nil {
+	if templateID == "default" {
+		// Shared helper — keeps this path in lockstep with
+		// handleNamespaceCreateDefaults so the form preview matches what
+		// the server actually persists.
+		applyDefaultTemplate(&nsCfg, wsCfg)
+		nsCfg.Template = templateID
+	} else if wsCfg != nil {
+		// Non-default templates (QuickStart variants) — apply explicit template.
 		for _, tmpl := range wsCfg.NamespaceTemplates {
 			if tmpl.ID == templateID {
-				// Apply template config as base by marshaling to YAML and re-parsing
 				if len(tmpl.Config) > 0 {
 					if tmplData, err := yaml.Marshal(tmpl.Config); err == nil {
 						_ = yaml.Unmarshal(tmplData, &nsCfg)
 					}
 				}
-				// Set template ID for runtime use
 				nsCfg.Template = templateID
 				break
 			}
 		}
-		// If no bundleRef from template or request, use first bundle repo + LATEST
 		if nsCfg.BundleRef.IsEmpty() && req.BundleRepo == "" && len(wsCfg.BundleRepos) > 0 {
 			nsCfg.BundleRef = bundle.Ref{Repo: wsCfg.BundleRepos[0].ID, Key: "LATEST"}
 		}
@@ -603,6 +613,103 @@ func (d *Daemon) handleGetNamespaceEdit(w http.ResponseWriter, _ *http.Request) 
 		PgAdminEnabled: nsCfg.PgAdmin.Enabled,
 	}
 	writeJSON(w, dto)
+}
+
+// handleNamespaceCreateDefaults computes pre-filled form values for the
+// "Create namespace" dialog (Kotlin 1.x parity — NamespacesService.toFormData
+// when entity is null). Returns:
+//   - Name: auto-generated "Citeck #N" where N is the first integer that
+//     doesn't collide with an existing namespace name in the workspace.
+//   - BundleRepo / BundleKey: from the "default" namespace template's bundleRef;
+//     empty parts fall back to first BundleRepo + "LATEST". "LATEST" stays
+//     symbolic — git resolution happens at namespace-create time on the server.
+//   - AuthType / Users: from the template's authentication block, falling back
+//     to namespace.DefaultNamespaceConfig() (BASIC + ["admin"]).
+//
+// Desktop-only — the create dialog isn't reachable in server mode. We still
+// answer with sane fallbacks so the endpoint never 404s the frontend.
+func (d *Daemon) handleNamespaceCreateDefaults(w http.ResponseWriter, _ *http.Request) {
+	d.configMu.RLock()
+	wsCfg := d.workspaceConfig
+	wsID := d.workspaceID
+	d.configMu.RUnlock()
+
+	nsCfg := namespace.DefaultNamespaceConfig()
+	applyDefaultTemplate(&nsCfg, wsCfg)
+
+	users := nsCfg.Authentication.Users
+	if users == nil {
+		users = []string{}
+	}
+	dto := api.NamespaceCreateDefaultsDto{
+		Name:       nextDefaultNamespaceName(wsID),
+		BundleRepo: nsCfg.BundleRef.Repo,
+		BundleKey:  nsCfg.BundleRef.Key,
+		AuthType:   string(nsCfg.Authentication.Type),
+		Users:      users,
+	}
+	writeJSON(w, dto)
+}
+
+// nextDefaultNamespaceName scans existing namespaces (desktop: all in the
+// active workspace; server: the single CLI-pinned one) and returns the first
+// "Citeck #N" name that isn't taken. Mirrors the Kotlin defaultNameNum loop.
+func nextDefaultNamespaceName(wsID string) string {
+	used := collectUsedNamespaceNames(wsID)
+	num := len(used) + 1
+	for {
+		candidate := fmt.Sprintf("Citeck #%d", num)
+		if _, exists := used[candidate]; !exists {
+			return candidate
+		}
+		num++
+	}
+}
+
+func collectUsedNamespaceNames(wsID string) map[string]struct{} {
+	used := map[string]struct{}{}
+	if !config.IsDesktopMode() {
+		return used
+	}
+	entries, err := config.ListAllNamespaces()
+	if err != nil {
+		return used
+	}
+	for _, ns := range entries {
+		if wsID != "" && ns.WorkspaceID != wsID {
+			continue
+		}
+		cfg, err := namespace.LoadNamespaceConfig(ns.ConfigPath)
+		if err != nil || cfg.Name == "" {
+			continue
+		}
+		used[cfg.Name] = struct{}{}
+	}
+	return used
+}
+
+// applyDefaultTemplate overlays the workspace's "default" namespace template
+// onto cfg (matching the create endpoint's template-application logic) and
+// applies the "first repo + LATEST" bundle fallback. Centralized so the
+// /create-defaults endpoint stays in lockstep with handleCreateNamespace.
+func applyDefaultTemplate(cfg *namespace.Config, wsCfg *bundle.WorkspaceConfig) {
+	if wsCfg == nil {
+		return
+	}
+	for _, tmpl := range wsCfg.NamespaceTemplates {
+		if tmpl.ID != "default" {
+			continue
+		}
+		if len(tmpl.Config) > 0 {
+			if tmplData, err := yaml.Marshal(tmpl.Config); err == nil {
+				_ = yaml.Unmarshal(tmplData, cfg)
+			}
+		}
+		break
+	}
+	if cfg.BundleRef.IsEmpty() && len(wsCfg.BundleRepos) > 0 {
+		cfg.BundleRef = bundle.Ref{Repo: wsCfg.BundleRepos[0].ID, Key: "LATEST"}
+	}
 }
 
 // handlePutNamespaceEdit applies the typed edit form back onto namespace.yml.

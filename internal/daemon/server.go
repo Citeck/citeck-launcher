@@ -1088,6 +1088,7 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+api.NamespaceUpgrade, d.handleUpgradeNamespace)
 	mux.HandleFunc("GET "+api.NamespaceEdit, d.handleGetNamespaceEdit)
 	mux.HandleFunc("PUT "+api.NamespaceEdit, d.handlePutNamespaceEdit)
+	mux.HandleFunc("GET "+api.NamespaceCreateDefaults, d.handleNamespaceCreateDefaults)
 	mux.HandleFunc("POST "+api.NamespaceAdminPassword, d.handleSetAdminPassword)
 	mux.HandleFunc("GET "+api.RestartEvents, d.handleRestartEvents)
 	mux.HandleFunc("GET /api/v1/diagnostics-file", d.handleDiagnosticsFile)

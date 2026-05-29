@@ -3,6 +3,7 @@ import { RefreshCw, X } from 'lucide-react'
 import {
   createNamespace,
   getBundles,
+  getNamespaceCreateDefaults,
   getNamespaceEdit,
   getWorkspaceSnapshots,
   postWorkspaceUpdate,
@@ -114,12 +115,28 @@ export function NamespaceEditDialog({
           .catch((e) => setSubmitError((e as Error).message))
       }
     } else {
+      // mode=create: blank the form, then overlay server-computed defaults
+      // (Kotlin 1.x parity — auto "Citeck #N" + template-driven bundle/auth).
+      // Failure is non-fatal: the user just sees an empty form, which is the
+      // pre-port behavior. The active workspace is implicit on the daemon —
+      // it picks defaults from whichever workspace currently owns the socket.
       setName('')
       setBundleRepo('')
       setBundleKey('')
       setSnapshot('')
-      setAuthType('KEYCLOAK')
+      setAuthType('')
       setAuthUsers('')
+      getNamespaceCreateDefaults()
+        .then((d) => {
+          setName(d.name)
+          setBundleRepo(d.bundleRepo)
+          setBundleKey(d.bundleKey)
+          setAuthType(d.authType || 'KEYCLOAK')
+          setAuthUsers((d.users ?? []).join(', '))
+        })
+        .catch(() => {
+          setAuthType('KEYCLOAK')
+        })
     }
   }, [open, mode, initial])
 

@@ -462,6 +462,24 @@ export async function getNamespaceEdit(): Promise<NamespaceEditDto> {
   return fetchJSON('/namespace/edit')
 }
 
+/**
+ * Pre-filled defaults for the "Create namespace" dialog. Mirrors Kotlin 1.x —
+ * the server reads the workspace's default template, resolves bundle defaults
+ * (first repo + LATEST when the template doesn't pin one), and picks the next
+ * unused "Citeck #N" name.
+ */
+export interface NamespaceCreateDefaultsDto {
+  name: string
+  bundleRepo: string
+  bundleKey: string
+  authType: string
+  users?: string[]
+}
+
+export async function getNamespaceCreateDefaults(): Promise<NamespaceCreateDefaultsDto> {
+  return fetchJSON('/namespace/create-defaults')
+}
+
 export async function putNamespaceEdit(data: NamespaceEditDto): Promise<ActionResultDto> {
   const res = await fetchWithTimeout(`${API_BASE}/namespace/edit`, {
     method: 'PUT',
