@@ -159,6 +159,11 @@ func (m *WindowManager) handleOpen(w http.ResponseWriter, r *http.Request) {
 			InitialPosition: application.WindowCentered,
 			Screen:          targetScreen,
 			DevToolsEnabled: true,
+			// F12 opens DevTools per-window (logs / editor windows are full
+			// webviews, so the shortcut has to be registered on each).
+			KeyBindings: map[string]func(application.Window){
+				"F12": func(w application.Window) { w.OpenDevTools() },
+			},
 		})
 		win.RegisterHook(events.Common.WindowClosing, func(_ *application.WindowEvent) {
 			m.mu.Lock()

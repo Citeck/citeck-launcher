@@ -146,10 +146,11 @@ func TestValidate_NamespaceCreateSpec(t *testing.T) {
 		t.Errorf("expected no errors, got %v", errs)
 	}
 
-	// Invalid name pattern
-	errs = Validate(spec, map[string]any{"name": "-invalid"})
-	if len(errs) != 1 {
-		t.Errorf("expected 1 pattern error, got %v", errs)
+	// Free-form name — no pattern restriction (the on-disk ID is generated
+	// via sanitizeName, the human label may include #, spaces, punctuation).
+	errs = Validate(spec, map[string]any{"name": "Citeck #2"})
+	if len(errs) != 0 {
+		t.Errorf("expected name %q to validate, got %v", "Citeck #2", errs)
 	}
 }
 

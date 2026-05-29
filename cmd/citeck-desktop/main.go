@@ -215,6 +215,10 @@ func main() {
 		Height:          800,
 		MinWidth:        300,
 		MinHeight:       400,
+		// F12 mirrors the tray "DevTools" entry — common browser muscle memory.
+		KeyBindings: map[string]func(application.Window){
+			"F12": func(w application.Window) { w.OpenDevTools() },
+		},
 		Windows: application.WindowsWindow{
 			HiddenOnTaskbar: false,
 		},

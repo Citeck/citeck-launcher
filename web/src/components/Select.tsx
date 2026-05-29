@@ -40,6 +40,10 @@ export function Select({
 }: SelectProps) {
   const [open, setOpen] = useState(false)
   const [activeIdx, setActiveIdx] = useState(-1)
+  // `flipUp`: true when there's more room above the trigger than below, e.g.
+  // the field sits near the dialog footer and a downward popup would be
+  // clipped by the buttons row. Recomputed every time the dropdown opens.
+  const [flipUp, setFlipUp] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
 
@@ -99,7 +103,20 @@ export function Select({
         disabled={disabled}
         onClick={() => {
           if (popupOptions.length === 0) return
-          setOpen((o) => !o)
+          setOpen((o) => {
+            const next = !o
+            if (next && triggerRef.current) {
+              // Decide flip direction at open-time so the popup never gets
+              // covered by the dialog footer. Estimated height = visible
+              // items × row height + 4px slack for the border/padding.
+              const rect = triggerRef.current.getBoundingClientRect()
+              const popupHeight = Math.min(popupOptions.length, MAX_VISIBLE_ITEMS) * ITEM_HEIGHT + 4
+              const spaceBelow = window.innerHeight - rect.bottom
+              const spaceAbove = rect.top
+              setFlipUp(spaceBelow < popupHeight && spaceAbove > spaceBelow)
+            }
+            return next
+          })
           // Start the active highlight on the currently-selected option so
           // keyboard Enter is a safe no-op confirm.
           const selIdx = popupOptions.findIndex((o) => o.value === value)
@@ -132,7 +149,9 @@ export function Select({
 
       {open && popupOptions.length > 0 && (
         <div
-          className="absolute left-0 right-0 z-50 mt-1 overflow-y-auto rounded border border-border bg-card shadow-lg"
+          className={`absolute left-0 right-0 z-50 overflow-y-auto rounded border border-border bg-card shadow-lg ${
+            flipUp ? 'bottom-full mb-1' : 'top-full mt-1'
+          }`}
           style={{ maxHeight: ITEM_HEIGHT * MAX_VISIBLE_ITEMS }}
           role="listbox"
         >

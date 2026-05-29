@@ -51,16 +51,16 @@ func (d *Daemon) resolveSnapshotFileName(dir, customName string) (string, *snaps
 		}
 		return name, nil
 	}
-	nsName := "namespace"
+	// Snapshot filename uses the namespace ID (filesystem-safe slug), not the
+	// user-facing Name. Name is reference/display info only and may contain
+	// arbitrary characters (#, /, …) that don't belong in a zip filename.
+	nsID := "namespace"
 	d.configMu.RLock()
-	if d.nsConfig != nil {
-		nsName = sanitizeName(d.nsConfig.Name)
-		if nsName == "" {
-			nsName = d.nsConfig.ID
-		}
+	if d.nsConfig != nil && d.nsConfig.ID != "" {
+		nsID = d.nsConfig.ID
 	}
 	d.configMu.RUnlock()
-	return fmt.Sprintf("%s_%s.zip", nsName, time.Now().Format("2006-01-02_15-04-05")), nil
+	return fmt.Sprintf("%s_%s.zip", nsID, time.Now().Format("2006-01-02_15-04-05")), nil
 }
 
 func (d *Daemon) snapshotsDir() (string, error) {

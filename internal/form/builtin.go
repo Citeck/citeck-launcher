@@ -10,11 +10,14 @@ func NamespaceCreateSpec() *Spec {
 		Name: "Create Namespace",
 		Components: []ComponentSpec{
 			{
+				// Free-form human label — Kotlin parity (NameField accepts any
+				// printable string). The on-disk namespace ID is derived via
+				// sanitizeName at namespace-create time, so the human name
+				// doesn't have to conform to filesystem-safe characters.
 				Key: "name", Label: "Name", Type: "text", Required: true,
 				Validations: []ValidationRule{
 					{Type: "minLength", Value: 1, Message: "Name is required"},
 					{Type: "maxLength", Value: 64, Message: "Name must be at most 64 characters"},
-					{Type: "pattern", Value: `^[a-zA-Z0-9][a-zA-Z0-9 _-]*$`, Message: "Name must start with a letter or digit and contain only letters, digits, spaces, hyphens, underscores"},
 				},
 			},
 			{

@@ -174,7 +174,7 @@ export function NamespaceEditDialog({
   function validate(): boolean {
     const errors: Record<string, string> = {}
     if (!name.trim()) errors.name = t('namespace.form.required')
-    else if (name.length > 50) errors.name = t('namespace.form.nameTooLong')
+    else if (name.length > 64) errors.name = t('namespace.form.nameTooLong')
     if (!bundleRepo) errors.bundleRepo = t('namespace.form.required')
     if (!bundleKey) errors.bundleKey = t('namespace.form.required')
     if (!authType) errors.authType = t('namespace.form.required')
@@ -268,20 +268,31 @@ export function NamespaceEditDialog({
               className="w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              maxLength={50}
+              maxLength={64}
               autoFocus
             />
           </Field>
 
           <Field label={t('namespace.form.bundlesRepo')} error={fieldErrors.bundleRepo} required>
+            <Select
+              value={bundleRepo}
+              options={bundleRepoOptions}
+              onChange={setBundleRepo}
+              required
+              disabled={bundlesLoading}
+              placeholder="—"
+            />
+          </Field>
+
+          <Field label={t('namespace.form.bundleKey')} error={fieldErrors.bundleKey} required>
             <div className="flex items-center gap-1.5">
               <div className="flex-1 min-w-0">
                 <Select
-                  value={bundleRepo}
-                  options={bundleRepoOptions}
-                  onChange={setBundleRepo}
+                  value={bundleKey}
+                  options={bundleKeyOptions}
+                  onChange={setBundleKey}
                   required
-                  disabled={bundlesLoading}
+                  disabled={!bundleRepo || bundlesLoading}
                   placeholder="—"
                 />
               </div>
@@ -303,17 +314,6 @@ export function NamespaceEditDialog({
                 <RefreshCw size={14} className={bundlesLoading ? 'animate-spin' : ''} />
               </button>
             </div>
-          </Field>
-
-          <Field label={t('namespace.form.bundleKey')} error={fieldErrors.bundleKey} required>
-            <Select
-              value={bundleKey}
-              options={bundleKeyOptions}
-              onChange={setBundleKey}
-              required
-              disabled={!bundleRepo || bundlesLoading}
-              placeholder="—"
-            />
           </Field>
 
           {mode === 'create' && (
