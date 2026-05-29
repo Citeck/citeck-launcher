@@ -1,16 +1,24 @@
 import { useNavigate, useLocation } from 'react-router'
 import { useTabsStore } from '../lib/tabs'
 import { usePanelStore } from '../lib/panels'
+import { useDashboardStore } from '../lib/store'
 import { useTranslation, LOCALES, useI18nStore } from '../lib/i18n'
 import { X, Settings, Sun, Moon, ChevronDown } from 'lucide-react'
 import { useEffect, useState, useRef } from 'react'
+import { useContextMenu } from '../hooks/useContextMenu'
+import { ContextMenu } from './ContextMenu'
 
 export function TabBar() {
   const { tabs, activeTabId, setActiveTab, closeTab } = useTabsStore()
   const openBottomTab = usePanelStore((s) => s.openBottomTab)
+  const setNsEditOpen = usePanelStore((s) => s.setNsEditOpen)
+  const setNsSwitcherOpen = usePanelStore((s) => s.setNsSwitcherOpen)
+  const namespace = useDashboardStore((s) => s.namespace)
   const navigate = useNavigate()
   const location = useLocation()
   const { t } = useTranslation()
+  const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu()
+  const onDashboard = location.pathname === '/'
 
   // Sync active tab with current location
   useEffect(() => {
@@ -65,25 +73,62 @@ export function TabBar() {
         </div>
       )}
       {!showTabs && <div className="flex-1" />}
+
+      {/* NS identity (dashboard only) — name + (id) + · + bundle, click jumps
+          to namespace switcher. Sits between tabs and right-side controls so
+          the gear ends up adjacent to language/theme rather than far-right. */}
+      {onDashboard && namespace && (
+        <button
+          type="button"
+          className="hidden sm:flex items-center gap-2 px-3 text-xs hover:bg-muted/30 min-w-0 max-w-[40%] border-l border-border h-full"
+          title={t('namespaces.switch')}
+          onClick={() => setNsSwitcherOpen(true)}
+        >
+          <span className="font-semibold truncate">
+            {namespace.name}
+            <span className="ml-1 font-normal text-muted-foreground">({namespace.id})</span>
+          </span>
+          <span className="text-muted-foreground/60" aria-hidden="true">·</span>
+          <span className="text-muted-foreground truncate">{namespace.bundleRef}</span>
+        </button>
+      )}
+
       {/* Right-side buttons */}
       <div className="flex items-center border-l border-border shrink-0">
         <LanguageSelector />
         <ThemeToggle />
+        {/* On the dashboard route the gear maps to namespace editing: left-click
+            opens the typed form (NamespaceEditDialog), right-click offers raw
+            YAML as a second option via context menu. On other pages it falls
+            back to the global Settings panel route. */}
         <button
           type="button"
           className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted"
-          title={t('common.settings')}
+          title={onDashboard && namespace ? t('dashboard.nsConfig') : t('common.settings')}
           onClick={() => {
-            if (location.pathname === '/') {
+            if (onDashboard && namespace) {
+              setNsEditOpen(true)
+            } else if (onDashboard) {
               openBottomTab({ id: 'ns-config', type: 'ns-config', title: t('configEditor.title') })
             } else {
               navigate('/config')
             }
           }}
+          onContextMenu={onDashboard && namespace ? ((e) => showContextMenu(e, [
+            {
+              label: t('nsEdit.title'),
+              onClick: () => setNsEditOpen(true),
+            },
+            {
+              label: t('nsEdit.editRawYaml'),
+              onClick: () => openBottomTab({ id: 'ns-config', type: 'ns-config', title: t('configEditor.title') }),
+            },
+          ])) : undefined}
         >
           <Settings size={14} />
         </button>
       </div>
+      {contextMenu && <ContextMenu items={contextMenu.items} position={contextMenu.position} onClose={hideContextMenu} />}
     </div>
   )
 }

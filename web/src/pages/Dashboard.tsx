@@ -28,7 +28,7 @@ import { AppConfigEditor } from '../components/AppConfigEditor'
 import { RestartEvents } from '../components/RestartEvents'
 import type { BottomPanelTab } from '../lib/panels'
 import { toast } from '../lib/toast'
-import { ExternalLink, FolderOpen, Globe, Download, AlertTriangle, HardDrive, Key, Stethoscope, FileText, Settings, ArrowLeft } from 'lucide-react'
+import { ExternalLink, FolderOpen, Globe, Download, AlertTriangle, HardDrive, Key, Stethoscope, FileText, ArrowLeft } from 'lucide-react'
 import { LoadingHint } from '../components/LoadingHint'
 import { postOpenDir } from '../lib/api'
 
@@ -58,11 +58,17 @@ export function Dashboard() {
   const [volumesDialogOpen, setVolumesDialogOpen] = useState(false)
   const [secretsDialogOpen, setSecretsDialogOpen] = useState(false)
   const [snapshotsDialogOpen, setSnapshotsDialogOpen] = useState(false)
-  const [namespaceDialogOpen, setNamespaceDialogOpen] = useState(false)
-  const [nsEditOpen, setNsEditOpen] = useState(false)
+  // nsEditOpen + nsSwitcherOpen live in the panel store so the global TabBar
+  // can open them without prop-drilling through Dashboard.
+  const nsEditOpen = usePanelStore((s) => s.nsEditOpen)
+  const setNsEditOpen = usePanelStore((s) => s.setNsEditOpen)
+  const namespaceDialogOpen = usePanelStore((s) => s.nsSwitcherOpen)
+  const setNamespaceDialogOpen = usePanelStore((s) => s.setNsSwitcherOpen)
 
-  // Context menu for the gear button (LMB → typed form, RMB → raw YAML).
-  const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu()
+  // Context menu state still owned by Dashboard for in-page right-clicks
+  // (the gear's context menu lives in TabBar). showContextMenu omitted —
+  // intentional: no caller here anymore.
+  const { contextMenu, hideContextMenu } = useContextMenu()
 
   const handleOpenNsDir = useCallback(async () => {
     try {
@@ -177,46 +183,6 @@ export function Dashboard() {
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-      {/* Top NS strip — namespace identity + bundle + edit (Settings) gear.
-          Lifted out of the sidebar so the left panel can focus on live state
-          (status / CPU / MEM / controls). The strip spans the full width so
-          the gear sits in a predictable place independent of sidebar width. */}
-      <div className="flex items-center gap-2 h-9 px-3 border-b border-border bg-card text-sm shrink-0">
-        <button
-          type="button"
-          className="min-w-0 text-left hover:bg-muted/30 -mx-1 px-1 py-0.5 rounded flex items-center gap-2 min-w-0"
-          title={t('namespaces.switch')}
-          onClick={() => setNamespaceDialogOpen(true)}
-        >
-          <span className="font-semibold truncate">
-            {namespace.name}
-            <span className="ml-1 font-normal text-muted-foreground">({namespace.id})</span>
-          </span>
-          <span className="text-muted-foreground/60" aria-hidden="true">·</span>
-          <span className="text-[11px] text-muted-foreground truncate">{namespace.bundleRef}</span>
-        </button>
-        <div className="ml-auto flex items-center gap-0.5 shrink-0">
-          <button
-            type="button"
-            className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted"
-            title={t('dashboard.nsConfig')}
-            onClick={() => setNsEditOpen(true)}
-            onContextMenu={(e) => showContextMenu(e, [
-              {
-                label: t('nsEdit.title'),
-                onClick: () => setNsEditOpen(true),
-              },
-              {
-                label: t('nsEdit.editRawYaml'),
-                onClick: () => openBottomTab({ id: 'ns-config', type: 'ns-config', title: t('configEditor.title') }),
-              },
-            ])}
-          >
-            <Settings size={14} />
-          </button>
-        </div>
-      </div>
-
       {/* Top: sidebar + table + drawer overlay */}
       <div className="flex flex-1 min-h-0 relative">
         {/* Left info panel */}

@@ -13,6 +13,11 @@ interface PanelState {
   activeBottomTabId: string | null
   bottomPanelOpen: boolean
   bottomPanelHeight: number
+  // nsEditOpen + nsSwitcherOpen live here so the TabBar (top chrome) can
+  // open these dialogs without Dashboard having to own their state.
+  // Dashboard subscribes and renders the dialogs when truthy.
+  nsEditOpen: boolean
+  nsSwitcherOpen: boolean
 
   openDrawer: (appName: string) => void
   closeDrawer: () => void
@@ -22,6 +27,8 @@ interface PanelState {
   setBottomPanelHeight: (h: number) => void
   toggleBottomPanel: () => void
   resetPanels: () => void
+  setNsEditOpen: (open: boolean) => void
+  setNsSwitcherOpen: (open: boolean) => void
 }
 
 const STORAGE_KEY = 'citeck-bp-height'
@@ -45,6 +52,8 @@ export const usePanelStore = create<PanelState>((set, get) => ({
   activeBottomTabId: null,
   bottomPanelOpen: false,
   bottomPanelHeight: loadHeight(),
+  nsEditOpen: false,
+  nsSwitcherOpen: false,
 
   openDrawer: (appName) => {
     set({ drawerAppName: appName })
@@ -99,12 +108,22 @@ export const usePanelStore = create<PanelState>((set, get) => ({
     set((s) => ({ bottomPanelOpen: !s.bottomPanelOpen }))
   },
 
+  setNsEditOpen: (open) => {
+    set({ nsEditOpen: open })
+  },
+
+  setNsSwitcherOpen: (open) => {
+    set({ nsSwitcherOpen: open })
+  },
+
   resetPanels: () => {
     set({
       drawerAppName: null,
       bottomTabs: [],
       activeBottomTabId: null,
       bottomPanelOpen: false,
+      nsEditOpen: false,
+      nsSwitcherOpen: false,
     })
   },
 }))
