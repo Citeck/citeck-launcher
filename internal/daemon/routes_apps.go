@@ -32,6 +32,15 @@ func (d *Daemon) handleAppLogs(w http.ResponseWriter, r *http.Request) {
 		writeAppNotFound(w, name)
 		return
 	}
+	// Container hasn't been created yet (PULL_FAILED / START_FAILED before
+	// docker create, or a freshly-loaded namespace that never started).
+	// Return an empty body instead of bouncing the request through the Docker
+	// client just to surface "invalid container name or ID: value is empty"
+	// as a 500 in the log.
+	if app.ContainerID == "" {
+		w.Header().Set("Content-Type", "text/plain")
+		return
+	}
 
 	if follow {
 		d.handleAppLogsFollow(w, r, app.ContainerID, tail)
