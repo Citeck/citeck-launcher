@@ -283,9 +283,9 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
         className="z-50 fixed rounded-lg border border-border bg-card p-0 text-foreground backdrop:bg-black/50"
         style={{
           width: 'min(90vw, 768px)',
-          // Auto-grow to content with a floor so empty/loading doesn't
-          // collapse and a ceiling so long lists scroll inside the dialog.
-          minHeight: 'min(320px, 70vh)',
+          // Auto-grow to content; the body has its own max-height + scroll
+          // and the empty-state row has a min-height so short lists don't
+          // pad and empty lists don't collapse.
           maxHeight: 'min(80vh, 720px)',
           top: '50%',
           left: '50%',
@@ -294,7 +294,7 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
         }}
         onClose={onClose}
       >
-        <div className="flex flex-col h-full">
+        <div className="flex flex-col">
           <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
             <h2 className="text-sm font-semibold">{t('snapshots.dialog.title')}</h2>
             <button
@@ -321,7 +321,7 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
             </div>
           </div>
 
-          <div className="flex-1 overflow-auto px-4 py-2 space-y-4">
+          <div className="overflow-auto px-4 py-2 space-y-4" style={{ maxHeight: 'calc(min(80vh, 720px) - 140px)' }}>
             {loading && filteredWs.length === 0 && filteredNs.length === 0 && (
               <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
                 <Loader2 size={14} className="animate-spin" />
@@ -528,7 +528,7 @@ function SnapshotsTable({ rows, showCreated, busy, namespaceStopped, onImport, o
         ))}
         {rows.length === 0 && (
           <tr>
-            <td colSpan={showCreated ? 4 : 3} className="py-4 text-center text-muted-foreground">
+            <td colSpan={showCreated ? 4 : 3} className="text-center text-muted-foreground" style={{ height: 80 }}>
               {t('journal.noData')}
             </td>
           </tr>

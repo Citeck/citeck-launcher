@@ -194,10 +194,10 @@ export function JournalDialog<T extends Record<string, unknown>>({
       className="z-50 fixed rounded-lg border border-border bg-card p-0 text-foreground backdrop:bg-black/50"
       style={{
         width: 'min(90vw, 768px)',
-        // Auto-grow to content with a floor (so empty/loading doesn't
-        // collapse to a few pixels) and a ceiling (so long lists scroll
-        // inside the dialog instead of pushing the footer off-screen).
-        minHeight: 'min(320px, 70vh)',
+        // Dialog auto-grows to its content; the table body has its own
+        // max-height + scroll, and the empty/loading row a min-height so
+        // a short list doesn't add padding and an empty list doesn't
+        // collapse to zero.
         maxHeight: 'min(80vh, 720px)',
         top: '50%',
         left: '50%',
@@ -206,7 +206,7 @@ export function JournalDialog<T extends Record<string, unknown>>({
       }}
       onClose={onClose}
     >
-      <div className="flex flex-col h-full" style={{ width: '100%' }}>
+      <div className="flex flex-col" style={{ width: '100%' }}>
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
           <h2 className="text-sm font-semibold">{title}</h2>
@@ -235,8 +235,9 @@ export function JournalDialog<T extends Record<string, unknown>>({
           </div>
         </div>
 
-        {/* Table */}
-        <div className="flex-1 overflow-auto px-4">
+        {/* Table — own scroll viewport so the dialog grows naturally with
+            short lists but caps when the list is long enough to fill it. */}
+        <div className="overflow-auto px-4" style={{ maxHeight: 'calc(min(80vh, 720px) - 140px)' }}>
           <table className="w-full text-xs border-collapse">
             <thead className="sticky top-0 bg-card">
               <tr className="text-left text-muted-foreground border-b border-border">
@@ -324,7 +325,8 @@ export function JournalDialog<T extends Record<string, unknown>>({
                 <tr>
                   <td
                     colSpan={columns.length + (selectable ? 1 : 0) + (rowActions && rowActions.length > 0 ? 1 : 0)}
-                    className="py-4 text-center text-muted-foreground"
+                    className="text-center text-muted-foreground"
+                    style={{ height: 120 }}
                   >
                     {loading ? (
                       <span className="inline-flex items-center gap-2">
