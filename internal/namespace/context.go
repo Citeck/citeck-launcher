@@ -30,6 +30,17 @@ const (
 	MailhogHost    = "mailhog"
 	OnlyofficeHost = "onlyoffice"
 	ObsPGHost      = "observer-postgres"
+
+	// Keycloak 26+ exposes its health/metrics on a dedicated management
+	// interface (container port 9000). KCManagementHostPort is the host-side
+	// publish slot used in desktop mode so the liveness HTTP probe lands on
+	// 127.0.0.1:<host-port> instead of an unreachable container IP. 17013
+	// sits next to the other infra-admin ports (ZK admin 17018,
+	// Alfresco 17019) and stays clear of the 9000 collision cluster shared
+	// by Portainer / SonarQube / Adminer / MinIO. In server mode this port
+	// is stripped along with every other non-proxy publish.
+	KCManagementHostPort      = 17013
+	KCManagementContainerPort = 9000
 )
 
 // CiteckSAUser is the canonical service-account username. The same name is

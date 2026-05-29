@@ -455,18 +455,23 @@ func generateKeycloak(ctx *NsGenContext) error {
 		}},
 	}
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "1g"}}
-	// Publish KC management port 9000 so the HTTP liveness probe lands on
-	// 127.0.0.1:9000 (host-side mapping). Without this AddPort the reconciler
-	// falls back to http://<container-ip>:9000, which is unreachable from the
-	// host on rootless Docker (Linux) and Docker Desktop (macOS) — container
-	// IP isn't routed across the user-namespace / VM boundary — so liveness
-	// fails 3× ≈ 30s after every start and KC enters a restart loop the
-	// moment auth is switched to KEYCLOAK. In server mode this port is
-	// stripped (only proxy publishes), and the probe falls back to container
-	// IP which IS reachable under rootful Docker on a Linux server.
-	app.AddPort("9000:9000")
+	// Publish KC management port (container 9000) on a fixed infra-admin
+	// host port — 17013 sits in the same cluster as ZK admin 17018 and
+	// Alfresco 17019 and is high enough to avoid the popular 9000 collision
+	// space (Portainer, SonarQube, Adminer, MinIO, php-fpm). Without the
+	// publish, the HTTP liveness probe falls back to
+	// http://<container-ip>:9000, which is unreachable from the host on
+	// rootless Docker (Linux) and Docker Desktop (macOS) — container IP
+	// isn't routed across the user-namespace / VM boundary — so liveness
+	// fails 3× ≈ 30s and KC enters a restart loop the moment auth switches
+	// to KEYCLOAK. In server mode this port is stripped by the non-proxy
+	// strip block (only proxy publishes), and the probe falls back to the
+	// container IP, which IS reachable under rootful Docker on a Linux
+	// server. The HTTP probe Port stays at the *container-side* 9000;
+	// reconciler.GetPublishedPort translates that to 17013 on the host.
+	app.AddPort(fmt.Sprintf("%d:%d", KCManagementHostPort, KCManagementContainerPort))
 	app.LivenessProbe = &appdef.AppProbeDef{
-		HTTP:             &appdef.HTTPProbeDef{Path: "/health/live", Port: 9000}, // Keycloak 26+ management interface
+		HTTP:             &appdef.HTTPProbeDef{Path: "/health/live", Port: KCManagementContainerPort},
 		FailureThreshold: 3,
 		TimeoutSeconds:   5,
 	}
@@ -617,7 +622,7 @@ func generateObserver(ctx *NsGenContext) {
 	}
 
 	const (
-		// Observer ports: 17014–17017 (before ZK admin 17018, Alfresco 17019, webapps 17020+)
+		// Observer ports: 17014–17017 (KC mgmt 17013 sits below; ZK admin 17018, Alfresco 17019, webapps 17020+)
 		obsLogUDP   = 17014 // UDP log receiver
 		obsOTLPHTTP = 17015 // OTLP HTTP/protobuf receiver
 		obsHTTP     = 17016 // HTTP API + embedded UI

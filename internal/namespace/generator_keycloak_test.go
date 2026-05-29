@@ -3,6 +3,7 @@ package namespace
 import (
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -286,11 +287,13 @@ func TestGenerateKeycloak_LivenessReachesManagementPort(t *testing.T) {
 	}
 	require.NotNil(t, kc, "keycloak must be generated when auth.type=KEYCLOAK")
 
-	require.Contains(t, kc.Ports, "9000:9000",
-		"keycloak must publish management port 9000:9000 — the HTTP liveness probe goes to 127.0.0.1:<published>, and falling back to container-IP fails on rootless Docker / Docker Desktop")
+	wantPort := fmt.Sprintf("%d:%d", KCManagementHostPort, KCManagementContainerPort)
+	require.Contains(t, kc.Ports, wantPort,
+		"keycloak must publish management port %s — the HTTP liveness probe goes to 127.0.0.1:<published>, and falling back to container-IP fails on rootless Docker / Docker Desktop", wantPort)
 
 	require.NotNil(t, kc.LivenessProbe, "keycloak must have a LivenessProbe")
 	require.NotNil(t, kc.LivenessProbe.HTTP, "keycloak LivenessProbe must be HTTP — exec would skip the published-port path entirely")
-	require.Equal(t, 9000, kc.LivenessProbe.HTTP.Port, "liveness HTTP probe must target the published management port 9000")
+	require.Equal(t, KCManagementContainerPort, kc.LivenessProbe.HTTP.Port,
+		"liveness HTTP probe Port is the *container-side* port; reconciler.GetPublishedPort then maps it to %d on the host", KCManagementHostPort)
 	require.Equal(t, "/health/live", kc.LivenessProbe.HTTP.Path, "liveness HTTP probe must hit the KC 26+ /health/live endpoint")
 }
