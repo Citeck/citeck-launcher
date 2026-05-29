@@ -393,25 +393,30 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Defense-in-depth: only allow safe mutable fields (environments, resources,
-	// startupConditions, livenessProbe, stopTimeout).
-	// Structural fields (image, cmd, ports, volumes) are locked to the original
-	// definition to prevent container escape.
+	// Kotlin 1.x's AppCfgEditWindow let the operator edit any field in the
+	// YAML — image, cmd, ports, volumes, environments, etc. — and the
+	// runtime treated the result as the new ApplicationDef (with a
+	// recreated container on hash change). Earlier we copied a defense-in-
+	// depth reset of structural fields from a hardened-server mindset; in
+	// a desktop launcher the operator IS the user, so the reset just made
+	// it look like saves silently failed for any "wrong" field.
+	//
+	// Lock only the genuinely non-editable fields: the canonical Name (the
+	// URL says which app this is), the auto-resolved ImageDigest (we
+	// re-resolve below from the possibly-new Image), and the computed
+	// VolumesContentHash (recomputed by the generator on next regenerate).
 	oldDef := app.Def
 	newDef.Name = name
-	newDef.Image = oldDef.Image
-	newDef.ImageDigest = oldDef.ImageDigest
-	newDef.Cmd = oldDef.Cmd
-	newDef.Ports = oldDef.Ports
-	newDef.Volumes = oldDef.Volumes
 	newDef.VolumesContentHash = oldDef.VolumesContentHash
-	newDef.InitContainers = oldDef.InitContainers
-	newDef.InitActions = oldDef.InitActions
-	newDef.NetworkAliases = oldDef.NetworkAliases
-	newDef.Kind = oldDef.Kind
-	newDef.IsInit = oldDef.IsInit
-	newDef.DependsOn = oldDef.DependsOn
-	newDef.ShmSize = oldDef.ShmSize
+	if newDef.Image == oldDef.Image {
+		newDef.ImageDigest = oldDef.ImageDigest
+	} else {
+		// Image changed — clear the cached digest so the next pull resolves
+		// the new tag's actual digest. Without this the runtime would keep
+		// using the old digest and the container would silently start from
+		// the previous image.
+		newDef.ImageDigest = ""
+	}
 
 	if err := d.runtime.UpdateAppDef(name, newDef, true); err != nil {
 		writeInternalError(w, err)
