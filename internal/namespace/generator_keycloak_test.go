@@ -9,7 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/appfiles"
+	"github.com/citeck/citeck-launcher/internal/bundle"
+	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -249,4 +252,45 @@ func TestKeycloakInitScript_UserCheckBash(t *testing.T) {
 // script, escaping any embedded single quotes.
 func shellEscape(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// Pins the contract that makes KC's HTTP liveness probe actually work in
+// desktop mode: management port 9000 must be in the published ports list so
+// the reconciler reaches it via 127.0.0.1:9000 (host-side mapping) instead
+// of falling back to http://<container-ip>:9000. The container-IP route is
+// unreachable from the host on rootless Docker (Linux) and Docker Desktop
+// (macOS) — container IP isn't routed across the user-namespace / VM
+// boundary — and KC enters a restart loop the moment auth switches to
+// KEYCLOAK. Failing this test means the AddPort got dropped; the probe
+// itself is also checked to stay HTTP/:9000 so the two halves can't drift.
+func TestGenerateKeycloak_LivenessReachesManagementPort(t *testing.T) {
+	// Force desktop mode for this test — server mode strips ports for all
+	// non-proxy apps (only proxy publishes externally), and the rootless /
+	// Docker-Desktop reachability problem this test pins is desktop-specific.
+	config.SetDesktopMode(true)
+	t.Cleanup(func() { config.SetDesktopMode(false) })
+
+	cfg := &Config{
+		Authentication: AuthenticationProps{Type: AuthKeycloak, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80, Host: "localhost"},
+	}
+	resp, err := Generate(cfg, &bundle.Def{}, nil, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	require.NoError(t, err)
+
+	var kc *appdef.ApplicationDef
+	for i := range resp.Applications {
+		if resp.Applications[i].Name == "keycloak" {
+			kc = &resp.Applications[i]
+			break
+		}
+	}
+	require.NotNil(t, kc, "keycloak must be generated when auth.type=KEYCLOAK")
+
+	require.Contains(t, kc.Ports, "9000:9000",
+		"keycloak must publish management port 9000:9000 — the HTTP liveness probe goes to 127.0.0.1:<published>, and falling back to container-IP fails on rootless Docker / Docker Desktop")
+
+	require.NotNil(t, kc.LivenessProbe, "keycloak must have a LivenessProbe")
+	require.NotNil(t, kc.LivenessProbe.HTTP, "keycloak LivenessProbe must be HTTP — exec would skip the published-port path entirely")
+	require.Equal(t, 9000, kc.LivenessProbe.HTTP.Port, "liveness HTTP probe must target the published management port 9000")
+	require.Equal(t, "/health/live", kc.LivenessProbe.HTTP.Path, "liveness HTTP probe must hit the KC 26+ /health/live endpoint")
 }

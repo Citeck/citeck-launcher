@@ -455,6 +455,16 @@ func generateKeycloak(ctx *NsGenContext) error {
 		}},
 	}
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "1g"}}
+	// Publish KC management port 9000 so the HTTP liveness probe lands on
+	// 127.0.0.1:9000 (host-side mapping). Without this AddPort the reconciler
+	// falls back to http://<container-ip>:9000, which is unreachable from the
+	// host on rootless Docker (Linux) and Docker Desktop (macOS) — container
+	// IP isn't routed across the user-namespace / VM boundary — so liveness
+	// fails 3× ≈ 30s after every start and KC enters a restart loop the
+	// moment auth is switched to KEYCLOAK. In server mode this port is
+	// stripped (only proxy publishes), and the probe falls back to container
+	// IP which IS reachable under rootful Docker on a Linux server.
+	app.AddPort("9000:9000")
 	app.LivenessProbe = &appdef.AppProbeDef{
 		HTTP:             &appdef.HTTPProbeDef{Path: "/health/live", Port: 9000}, // Keycloak 26+ management interface
 		FailureThreshold: 3,
