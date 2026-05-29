@@ -112,8 +112,17 @@ export function WindowEditor() {
         {edited && (
           <button
             type="button"
-            className="flex items-center gap-1 rounded border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted"
-            onClick={() => { void editorRef.current?.resetConfig() }}
+            className="flex items-center gap-1 rounded border border-border px-3 py-1.5 text-xs text-foreground hover:bg-muted"
+            onClick={async () => {
+              await editorRef.current?.resetConfig()
+              // After the on-disk override is cleared, ping the dashboard
+              // so its table refetches the generator's def, then close —
+              // mirrors the Save flow (Kotlin parity: Reset is a one-shot
+              // commit that drops the window).
+              publishRefresh()
+              void fetchNamespaceData()
+              close()
+            }}
             title={t('appConfig.reset.tooltip')}
           >
             <RotateCcw size={12} />
