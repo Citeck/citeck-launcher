@@ -326,8 +326,10 @@ export const AppConfigEditor = forwardRef<AppConfigEditorHandle, AppConfigEditor
 
       {/* Mounted Files — only editable extensions, matching the COG RMB menu
           and Kotlin v1.3.8 behaviour (binaries like fonts/jars/certs would
-          break the textual editor). */}
-      {files.filter((f) => isEditableFile(f.path)).length > 0 && (
+          break the textual editor). In window mode the COG RMB menu owns
+          per-file edits via dedicated WindowFileEditor windows, so this
+          panel only renders inside the main shell (AppDetail / drawer). */}
+      {!fullHeight && files.filter((f) => isEditableFile(f.path)).length > 0 && (
         <div className="rounded border border-border bg-card p-2">
           <div className="text-xs font-medium mb-1">{t('appConfig.files')}</div>
           {files.filter((f) => isEditableFile(f.path)).map((f) => (

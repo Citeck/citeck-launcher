@@ -35,6 +35,13 @@ export function WindowEditor() {
   // the same source AppConfigEditor uses — so no polling via the imperative
   // handle is needed and setState-in-effect is avoided.
   const edited = useDashboardStore((s) => s.namespace?.apps?.find((a) => a.name === name)?.edited ?? false)
+  const fetchNamespaceData = useDashboardStore((s) => s.fetchData)
+  // Wails secondary window has its own (empty) Zustand store + no SSE
+  // subscription. Pull the namespace snapshot on mount so the Reset button
+  // can correctly render based on the current `edited` flag, and refresh
+  // after a successful save (publishRefresh is fire-and-forget; we want a
+  // local refetch too).
+  useEffect(() => { void fetchNamespaceData() }, [fetchNamespaceData])
 
   useInheritedTheme()
 
@@ -127,9 +134,10 @@ export function WindowEditor() {
           onClick={async () => {
             const ok = await editorRef.current?.apply()
             if (ok) {
-              // Ping the dashboard window before closing so it refetches
-              // immediately; SSE between Wails webviews can lag when the
-              // dashboard is backgrounded.
+              // Refresh our own store so the Reset button shows up if the
+              // app wasn't previously edited; ping the dashboard so its
+              // table refetches; then close.
+              void fetchNamespaceData()
               publishRefresh()
               close()
             }
