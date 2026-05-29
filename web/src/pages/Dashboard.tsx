@@ -337,7 +337,7 @@ export function Dashboard() {
       <VolumesDialog
         open={volumesDialogOpen}
         onClose={() => setVolumesDialogOpen(false)}
-        onOpenSnapshots={() => { setVolumesDialogOpen(false); setSnapshotsDialogOpen(true) }}
+        onOpenSnapshots={() => setSnapshotsDialogOpen(true)}
         namespaceStopped={namespace?.status === 'STOPPED'}
       />
       <SnapshotsDialog
