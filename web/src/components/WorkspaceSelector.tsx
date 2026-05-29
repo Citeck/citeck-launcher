@@ -256,6 +256,22 @@ interface WorkspaceFormDialogProps {
   onSaved: () => void
 }
 
+// sanitizeWorkspaceID mirrors the server's slug rules so the ID preview
+// matches what the daemon would persist. Letters/digits pass through
+// (lowercased), space becomes '-', everything else is dropped.
+function sanitizeWorkspaceID(name: string): string {
+  const lower = name.toLowerCase().trim()
+  let out = ''
+  for (const ch of lower) {
+    if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch === '-' || ch === '_') {
+      out += ch
+    } else if (ch === ' ') {
+      out += '-'
+    }
+  }
+  return out.slice(0, 64)
+}
+
 function WorkspaceFormDialog({ mode, onClose, onSaved }: WorkspaceFormDialogProps) {
   const { t } = useTranslation()
   const dialogRef = useRef<HTMLDialogElement>(null)
@@ -263,6 +279,9 @@ function WorkspaceFormDialog({ mode, onClose, onSaved }: WorkspaceFormDialogProp
   const existing = isEdit ? mode.ws : null
 
   const [id, setId] = useState(existing?.id ?? '')
+  // `idTouched`: once the user types in the ID input we stop mirroring name.
+  // Pre-checked in edit mode so we don't clobber the existing slug.
+  const [idTouched, setIdTouched] = useState(isEdit)
   const [name, setName] = useState(existing?.name ?? '')
   const [repoUrl, setRepoUrl] = useState(existing?.repoUrl ?? '')
   const [repoBranch, setRepoBranch] = useState(existing?.repoBranch ?? 'main')
@@ -326,28 +345,36 @@ function WorkspaceFormDialog({ mode, onClose, onSaved }: WorkspaceFormDialogProp
           {isEdit ? t('welcome.workspace.edit') : t('welcome.workspace.create')}
         </h2>
         <div className="flex flex-col gap-2 text-xs">
+          <label className="flex flex-col gap-1">
+            <span className="text-muted-foreground">{t('welcome.workspace.form.name')}</span>
+            <input
+              type="text"
+              required
+              autoFocus
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value)
+                // Live-derive ID from name until the user takes manual control.
+                if (!idTouched) setId(sanitizeWorkspaceID(e.target.value))
+              }}
+              className="rounded border border-border bg-background px-2 py-1"
+            />
+          </label>
           {!isEdit && (
             <label className="flex flex-col gap-1">
               <span className="text-muted-foreground">{t('welcome.workspace.form.id')}</span>
               <input
                 type="text"
                 value={id}
-                onChange={(e) => setId(e.target.value)}
+                onChange={(e) => {
+                  setIdTouched(true)
+                  setId(e.target.value)
+                }}
                 placeholder={t('welcome.workspace.form.idPlaceholder')}
                 className="rounded border border-border bg-background px-2 py-1"
               />
             </label>
           )}
-          <label className="flex flex-col gap-1">
-            <span className="text-muted-foreground">{t('welcome.workspace.form.name')}</span>
-            <input
-              type="text"
-              required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="rounded border border-border bg-background px-2 py-1"
-            />
-          </label>
           <label className="flex flex-col gap-1">
             <span className="text-muted-foreground">{t('welcome.workspace.form.repoUrl')}</span>
             <input
