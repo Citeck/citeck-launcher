@@ -189,7 +189,11 @@ export function JournalDialog<T extends Record<string, unknown>>({
       className="z-50 fixed rounded-lg border border-border bg-card p-0 text-foreground backdrop:bg-black/50"
       style={{
         width: 'min(90vw, 768px)',
-        maxHeight: '80vh',
+        // Fixed height so the body's `flex-1 overflow-auto` actually fills
+        // space — see comment in SnapshotsDialog. With `max-height` alone a
+        // native <dialog> collapses to content auto-height and empty-state
+        // tables render as a few-pixel-tall modal.
+        height: 'min(80vh, 720px)',
         top: '50%',
         left: '50%',
         transform: 'translate(-50%, -50%)',
@@ -197,7 +201,7 @@ export function JournalDialog<T extends Record<string, unknown>>({
       }}
       onClose={onClose}
     >
-      <div className="flex flex-col max-h-[80vh]" style={{ width: '100%' }}>
+      <div className="flex flex-col h-full" style={{ width: '100%' }}>
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
           <h2 className="text-sm font-semibold">{title}</h2>

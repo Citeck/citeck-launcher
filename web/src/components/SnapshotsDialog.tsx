@@ -281,7 +281,11 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
         className="z-50 fixed rounded-lg border border-border bg-card p-0 text-foreground backdrop:bg-black/50"
         style={{
           width: 'min(90vw, 768px)',
-          maxHeight: '80vh',
+          // Fixed height (not max-height) so the inner flex-1 body actually
+          // fills space. With max-height alone a native <dialog> shrinks to
+          // its content's auto height and `flex-1` collapses to 0 — empty
+          // tables ("Нет данных") then render as a few-pixel-tall modal.
+          height: 'min(80vh, 720px)',
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)',
@@ -289,7 +293,7 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
         }}
         onClose={onClose}
       >
-        <div className="flex flex-col h-full max-h-[80vh]">
+        <div className="flex flex-col h-full">
           <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
             <h2 className="text-sm font-semibold">{t('snapshots.dialog.title')}</h2>
             <button

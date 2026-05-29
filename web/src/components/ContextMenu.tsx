@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 export interface ContextMenuItem {
   label: string
@@ -20,6 +20,26 @@ export interface ContextMenuProps {
 
 export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null)
+  const [adjusted, setAdjusted] = useState(position)
+
+  // Clamp the menu inside the viewport so it doesn't get clipped when the
+  // anchor (e.g. a gear icon) sits near the right/bottom edge. Measured after
+  // mount because we need the actual rendered size, not min-width.
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const margin = 4
+    let x = position.x
+    let y = position.y
+    if (x + rect.width > window.innerWidth - margin) {
+      x = Math.max(margin, window.innerWidth - rect.width - margin)
+    }
+    if (y + rect.height > window.innerHeight - margin) {
+      y = Math.max(margin, window.innerHeight - rect.height - margin)
+    }
+    setAdjusted({ x, y })
+  }, [position])
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -42,7 +62,7 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
     <div
       ref={ref}
       className="fixed z-50 bg-card border border-border rounded shadow-lg py-1 min-w-[160px]"
-      style={{ left: position.x, top: position.y }}
+      style={{ left: adjusted.x, top: adjusted.y }}
     >
       {items.map((item, i) =>
         item.divider ? (
