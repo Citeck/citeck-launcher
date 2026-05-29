@@ -845,7 +845,7 @@ func (d *Daemon) handleListBundles(w http.ResponseWriter, _ *http.Request) {
 func (d *Daemon) resolveBundleDir(repo bundle.BundlesRepo) string {
 	dataDir := config.DataDir()
 	if config.IsDesktopMode() && d.workspaceID != "" {
-		dataDir = filepath.Join(config.HomeDir(), "ws", d.workspaceID)
+		dataDir = config.WorkspaceDir(d.workspaceID)
 	}
 	wsRepoDir := filepath.Join(dataDir, "bundles", "workspace")
 	return bundle.ResolveBundleRepoDir(dataDir, wsRepoDir, repo)

@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/citeck/citeck-launcher/internal/api"
+	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/storage"
 )
 
@@ -316,6 +318,44 @@ func TestResetAppConfig_NoRuntimeReturnsNotFound(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusNotFound, rec.Code)
 	assert.Equal(t, api.ErrCodeAppNotFound, decodeErr(t, rec).Code)
+}
+
+// TestIsAppBindMount covers the four cases isAppBindMount has to discriminate
+// between: exact file mount, file nested under a directory mount, traversal
+// escape via `../`, and a sibling-path miss. The mux-level test below catches
+// the most common attack shape (a raw `..` in the URL), but isAppBindMount is
+// also reached from POST /files/{path} where the path comes from the JSON
+// body and bypasses the mux's normalisation — so the function itself has to
+// reject escapes on its own.
+func TestIsAppBindMount(t *testing.T) {
+	app := &namespace.AppRuntime{
+		Def: appdef.ApplicationDef{
+			Volumes: []string{
+				"./proxy/lua_oidc_full_access.lua:/usr/local/openresty/lualib/x.lua",
+				"./app/eapps/props:/opt/citeck/props",
+			},
+		},
+	}
+	cases := []struct {
+		name    string
+		relPath string
+		want    bool
+	}{
+		{"exact file mount", "./proxy/lua_oidc_full_access.lua", true},
+		{"file under dir mount", "./app/eapps/props/application-launcher.yml", true},
+		{"nested file under dir mount", "./app/eapps/props/sub/deeper/x.yml", true},
+		{"dir mount itself is a match", "./app/eapps/props", true},
+		{"traversal escape rejected", "./app/eapps/props/../../etc/shadow", false},
+		{"sibling directory rejected", "./app/eapps/other/y.yml", false},
+		{"sibling under root rejected", "./app/other", false},
+		{"unrelated path rejected", "./somewhere/else.yml", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := isAppBindMount(app, tc.relPath)
+			assert.Equal(t, tc.want, got, "relPath=%q", tc.relPath)
+		})
+	}
 }
 
 // TestGetAppFile_PathTraversalRejectedByMux confirms that the standard

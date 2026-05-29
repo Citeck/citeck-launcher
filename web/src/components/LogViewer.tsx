@@ -92,7 +92,6 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
   // scannable. User can flip "Перенос" on when they want it.
   const [wordWrap, setWordWrap] = useState(false)
   const [enabledLevels, setEnabledLevels] = useState<Set<LogLevel>>(new Set(LOG_LEVELS))
-  const [error] = useState<string | null>(null)
   const [matchIndex, setMatchIndex] = useState(0)
   // Tick incremented on EXPLICIT user navigation (typing a fresh query,
   // pressing Enter / F3 / Shift+F3, clicking the ↑/↓ buttons). The
@@ -585,8 +584,6 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
         <button type="button" className="rounded px-2 py-1 text-xs border border-border text-muted-foreground hover:bg-muted"
           onClick={() => setLinesWithLevels([])} title={t('logViewer.clear.tooltip')}>{t('logViewer.clear')}</button>
       </div>
-
-      {error && <div className="text-destructive text-sm mb-2 px-2">{t('common.error', { error })}</div>}
 
       {/* Log output — virtualized */}
       <div

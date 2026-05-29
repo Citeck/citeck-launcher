@@ -499,10 +499,20 @@ func (d *Daemon) handleListAppFiles(w http.ResponseWriter, r *http.Request) {
 		}
 		// Directory mount — walk it and surface every regular file inside.
 		// The walker is bounded to the bind-mount root so it cannot escape
-		// volumesBase even if a hostile bundle planted symlinks.
+		// volumesBase even if a hostile bundle planted symlinks. We also cap
+		// the result count: a pathological bundle (or operator typo) that
+		// mounts `./` or another large directory would otherwise materialize
+		// thousands of entries into the editor menu and the response JSON.
+		// 500 is well above the legitimate range (Spring props ≈ 10, log /
+		// data dirs reach a few dozen) and well below the worst-case noise.
+		const dirMountFileCap = 500
+		walkedHere := 0
 		_ = filepath.WalkDir(absPath, func(child string, d2 os.DirEntry, walkErr error) error {
 			if walkErr != nil || d2.IsDir() {
 				return nil
+			}
+			if walkedHere >= dirMountFileCap {
+				return filepath.SkipAll
 			}
 			rel, relErr := filepath.Rel(d.volumesBase, child)
 			if relErr != nil {
@@ -511,6 +521,7 @@ func (d *Daemon) handleListAppFiles(w http.ResponseWriter, r *http.Request) {
 			relSlash := filepath.ToSlash(rel)
 			edited := d.runtime != nil && d.runtime.IsFileEdited(relSlash)
 			files = append(files, api.AppFileDto{Path: "./" + relSlash, Edited: edited})
+			walkedHere++
 			return nil
 		})
 	}

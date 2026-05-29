@@ -560,7 +560,7 @@ func (r *Runtime) RetryPullFailedApps() int {
 //     direct re-entry at READY_TO_PULL.
 //   - For already-in-progress states (PULLING / READY_TO_START / DEPS_WAITING):
 //     no-op — the app is already on the path.
-//   - For STOPPING: set desiredNext=READY_TO_PULL set desiredNext=READY_TO_PULL so T21
+//   - For STOPPING: set desiredNext=READY_TO_PULL so T21
 //     routes to READY_TO_PULL instead of STOPPED.
 //
 // Restart counter is bumped but NO restart_event is emitted: the
