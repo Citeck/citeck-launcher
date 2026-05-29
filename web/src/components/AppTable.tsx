@@ -13,7 +13,6 @@ import { KeyRound } from 'lucide-react'
 import { isEditableFile } from '../lib/files'
 import { StatusBadge } from './StatusBadge'
 import { StatsCell } from './StatsCell'
-import { ConfirmModal } from './ConfirmModal'
 import { Square, Play, RotateCw, FileText, Settings, Circle, Lock } from 'lucide-react'
 
 // "2.3%" / "0%" → numeric percent. Empty/unparseable yields 0.
@@ -66,30 +65,22 @@ function portsShort(p?: string[]) {
 }
 
 export function AppTable({ apps, highlightedApp }: AppTableProps) {
-  const [action, setAction] = useState<AppAction>(null)
-  const [loading, setLoading] = useState(false)
-  const [actionError, setActionError] = useState<string | null>(null)
   const groups = groupByKind(apps)
   const { t } = useTranslation()
 
-  async function handleConfirm() {
-    if (!action) return
-    setLoading(true); setActionError(null)
+  // Start / stop / restart fire immediately — Kotlin parity. The
+  // ConfirmModal that used to gate every click added a click-cost the user
+  // had to pay for actions they had already explicitly clicked.
+  const runAction = async (a: NonNullable<AppAction>) => {
     try {
-      if (action.type === 'stop') await postAppStop(action.appName)
-      else if (action.type === 'start') await postAppStart(action.appName)
-      else await postAppRestart(action.appName)
-      toast(t('table.toast.success', { action: action.type.charAt(0).toUpperCase() + action.type.slice(1), name: action.appName }), 'success')
-      setAction(null)
-    } catch (err) { setActionError((err as Error).message) }
-    finally { setLoading(false) }
+      if (a.type === 'stop') await postAppStop(a.appName)
+      else if (a.type === 'start') await postAppStart(a.appName)
+      else await postAppRestart(a.appName)
+      toast(t('table.toast.success', { action: a.type.charAt(0).toUpperCase() + a.type.slice(1), name: a.appName }), 'success')
+    } catch (err) {
+      toast((err as Error).message, 'error')
+    }
   }
-
-  const mc = action ? {
-    stop: { title: t('table.confirm.stop.title', { name: action.appName }), msg: t('table.confirm.stop.message', { name: action.appName }), label: t('table.action.stop'), variant: 'danger' as const },
-    start: { title: t('table.confirm.start.title', { name: action.appName }), msg: t('table.confirm.start.message', { name: action.appName }), label: t('table.action.start'), variant: 'primary' as const },
-    restart: { title: t('table.confirm.restart.title', { name: action.appName }), msg: t('table.confirm.restart.message', { name: action.appName }), label: t('table.action.restart'), variant: 'primary' as const },
-  }[action.type] : null
 
   return (
     <>
@@ -120,23 +111,15 @@ export function AppTable({ apps, highlightedApp }: AppTableProps) {
         </thead>
         <tbody>
           {groups.map((g) => (
-            <GroupRows key={g.kind} labelKey={g.labelKey} apps={g.apps} onAction={setAction} highlightedApp={highlightedApp} />
+            <GroupRows key={g.kind} labelKey={g.labelKey} apps={g.apps} onAction={runAction} highlightedApp={highlightedApp} />
           ))}
         </tbody>
       </table>
-
-      {mc && (
-        <ConfirmModal open={!!action} title={mc.title} message={mc.msg}
-          confirmLabel={mc.label} confirmVariant={mc.variant}
-          loading={loading} error={actionError}
-          onConfirm={handleConfirm} onCancel={() => { setAction(null); setActionError(null) }}
-        />
-      )}
     </>
   )
 }
 
-function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: string; apps: AppDto[]; onAction: (a: AppAction) => void; highlightedApp?: string | null }) {
+function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: string; apps: AppDto[]; onAction: (a: NonNullable<AppAction>) => void; highlightedApp?: string | null }) {
   const { openDrawer } = usePanelStore()
   const { t } = useTranslation()
   const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu()

@@ -1,10 +1,8 @@
-import { useState } from 'react'
 import { postNamespaceStart, postNamespaceStop, postNamespaceReload } from '../lib/api'
 import { useDashboardStore } from '../lib/store'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
 import { showError } from '../lib/errorModal'
-import { ConfirmModal } from './ConfirmModal'
 import { ContextMenu, type ContextMenuItem } from './ContextMenu'
 import { useContextMenu } from '../hooks/useContextMenu'
 import { Play, Square } from 'lucide-react'
@@ -13,26 +11,16 @@ interface NamespaceControlsProps {
   status: string
 }
 
-type Action = 'start' | 'stop' | 'reload' | 'forceStart' | null
+type Action = 'start' | 'stop' | 'reload' | 'forceStart'
 
-const actionFns: Record<Exclude<Action, null>, () => Promise<unknown>> = {
+const actionFns: Record<Action, () => Promise<unknown>> = {
   start: () => postNamespaceStart(false),
   forceStart: () => postNamespaceStart(true),
   stop: postNamespaceStop,
   reload: postNamespaceReload,
 }
 
-const actionVariants: Record<Exclude<Action, null>, 'primary' | 'danger'> = {
-  start: 'primary',
-  forceStart: 'primary',
-  stop: 'danger',
-  reload: 'primary',
-}
-
 export function NamespaceControls({ status }: NamespaceControlsProps) {
-  const [pendingAction, setPendingAction] = useState<Action>(null)
-  const [loading, setLoading] = useState(false)
-  const [actionError, setActionError] = useState<string | null>(null)
   const fetchData = useDashboardStore((s) => s.fetchData)
   const { t } = useTranslation()
   const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu()
@@ -46,45 +34,32 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
   // While STARTING/STOPPING, the only safe operation is stop.
   const primaryEnabled = isStopped || isRunning
   // Kotlin used reload semantics when running, start when stopped.
-  const primaryAction: Exclude<Action, null> = isRunning ? 'reload' : 'start'
+  const primaryAction: Action = isRunning ? 'reload' : 'start'
 
-  async function handleConfirm() {
-    if (!pendingAction) return
-    setLoading(true)
-    setActionError(null)
+  // Fire start / stop / reload immediately. The ConfirmModal that used to
+  // gate every click was double-bookkeeping for actions the user had already
+  // explicitly clicked; errors go to the global error modal as before.
+  async function run(a: Action) {
     try {
-      await actionFns[pendingAction]()
-      // forceStart maps to "start" semantically for the toast label.
-      const toastAction = pendingAction === 'forceStart' ? 'start' : pendingAction
+      await actionFns[a]()
+      const toastAction = a === 'forceStart' ? 'start' : a
       toast(t('ns.toast.success', { action: toastAction }), 'success')
-      setPendingAction(null)
       setTimeout(fetchData, 500)
     } catch (err) {
       const e = err as Error
-      setActionError(e.message)
       showError({
-        title: t(`ns.confirm.${pendingAction}.title`),
+        title: t(`ns.confirm.${a}.title`),
         message: e.message,
         details: e.stack,
       })
-    } finally {
-      setLoading(false)
     }
   }
 
   function primaryContextItems(): ContextMenuItem[] {
     return [
-      { label: t('ns.forceStart'), onClick: () => setPendingAction('forceStart') },
+      { label: t('ns.forceStart'), onClick: () => { void run('forceStart') } },
     ]
   }
-
-  const dialogKey: Exclude<Action, null> | null = pendingAction
-  const configForAction = dialogKey ? {
-    title: t(`ns.confirm.${dialogKey}.title`),
-    message: t(`ns.confirm.${dialogKey}.message`),
-    confirmLabel: t(`ns.${dialogKey}`),
-    confirmVariant: actionVariants[dialogKey],
-  } : null
 
   return (
     <>
@@ -98,7 +73,7 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
               : 'text-muted-foreground/40 cursor-not-allowed'
           }`}
           style={{ flex: 7 }}
-          onClick={() => setPendingAction(primaryAction)}
+          onClick={() => { void run(primaryAction) }}
           onContextMenu={(e) => { e.preventDefault(); if (primaryEnabled && !isStarting) showContextMenu(e, primaryContextItems()) }}
           title={t('ns.updateAndStart')}
         >
@@ -113,7 +88,7 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
               : 'text-muted-foreground/40 cursor-not-allowed'
           }`}
           style={{ flex: 3 }}
-          onClick={() => setPendingAction('stop')}
+          onClick={() => { void run('stop') }}
           title={t('ns.stop')}
         >
           <Square size={12} /> {t('ns.stop')}
@@ -122,20 +97,6 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
 
       {contextMenu && (
         <ContextMenu items={contextMenu.items} position={contextMenu.position} onClose={hideContextMenu} />
-      )}
-
-      {configForAction && (
-        <ConfirmModal
-          open={!!pendingAction}
-          title={configForAction.title}
-          message={configForAction.message}
-          confirmLabel={configForAction.confirmLabel}
-          confirmVariant={configForAction.confirmVariant}
-          loading={loading}
-          error={actionError}
-          onConfirm={handleConfirm}
-          onCancel={() => { setPendingAction(null); setActionError(null) }}
-        />
       )}
     </>
   )
