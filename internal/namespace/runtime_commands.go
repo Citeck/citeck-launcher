@@ -320,10 +320,14 @@ func (r *Runtime) ResetEditedFile(appName, relPath string) error {
 	r.persistState()
 	r.dirty.Store(false)
 	// Trigger a regeneration so the original file content is written back to
-	// disk on the next writeRuntimeFiles. Without this, the on-disk file would
-	// still contain the user's edit until the next reload / start.
-	if err := r.cmdQueue.Enqueue(cmdRegenerate{}); err != nil {
-		slog.Warn("Failed to enqueue regenerate after ResetEditedFile", "app", appName, "path", relPath, "err", err)
+	// disk on the next writeRuntimeFiles. MUST pass r.lastApps — an empty
+	// cmdRegenerate{} makes doRegenerate treat every existing app as
+	// removed-from-desired-set and wipe r.apps (same gotcha as SetFileEdited /
+	// WriteEditedFile / ResetAppDef).
+	if len(r.lastApps) > 0 {
+		if err := r.cmdQueue.Enqueue(cmdRegenerate{apps: r.lastApps}); err != nil {
+			slog.Warn("Failed to enqueue regenerate after ResetEditedFile", "app", appName, "path", relPath, "err", err)
+		}
 	}
 	return nil
 }

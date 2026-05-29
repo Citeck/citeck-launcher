@@ -806,6 +806,7 @@ func (d *Daemon) doReload() error {
 	resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(d.secretReaderFunc())).
 		WithWorkspaceRepo(d.resolveActiveWorkspaceRepoOpts())
 	resolveResult, err := resolver.Resolve(nsCfg.BundleRef)
+	bundleFallback := false
 	if err != nil {
 		// Fallback to cached bundle from persisted state
 		cachedState := namespace.LoadNsState(d.volumesBase, nsID)
@@ -813,6 +814,7 @@ func (d *Daemon) doReload() error {
 			slog.Warn("Bundle resolution failed on reload, using cached bundle", "ref", nsCfg.BundleRef, "err", err,
 				"cachedVersion", cachedState.CachedBundle.Key.Version)
 			resolveResult = &bundle.ResolveResult{Bundle: cachedState.CachedBundle, Workspace: d.workspaceConfig}
+			bundleFallback = true
 		} else {
 			return fmt.Errorf("resolve bundle: %w", err)
 		}
@@ -890,7 +892,23 @@ func (d *Daemon) doReload() error {
 	d.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(resolveResult.Workspace, d.secretReaderFunc()))
 	d.runtime.SetDependsOnDetachedApps(genResp.DependsOnDetachedApps)
 
-	// Phase 3: regenerate runtime with updated config (async stop + start)
+	// Phase 3: regenerate runtime with updated config (async stop + start).
+	// When the bundle had to fall back to the cached on-disk copy (e.g. git
+	// pull failed), the generated Applications set can come back smaller than
+	// the live runtime's r.apps — handing that to Regenerate would mark every
+	// missing app for removal and tear down running containers we don't have
+	// authoritative info to remove. Skip the regenerate in that case so the
+	// runtime keeps its current apps; the user fixes the bundle source and
+	// re-runs reload to get the real desired set applied.
+	currentAppCount := 0
+	if d.runtime != nil {
+		currentAppCount = d.runtime.AppCount()
+	}
+	if bundleFallback && len(genResp.Applications) < currentAppCount {
+		slog.Warn("Bundle fallback produced a smaller app set; preserving current runtime",
+			"current", currentAppCount, "fallback", len(genResp.Applications))
+		return nil
+	}
 	d.runtime.Regenerate(genResp.Applications, nsCfg, resolveResult.Bundle)
 	return nil
 }

@@ -1,65 +1,119 @@
 import { useParams, useSearchParams } from 'react-router'
-import { AppConfigEditor, type AppConfigEditorHandle } from '../components/AppConfigEditor'
-import { useTranslation } from '../lib/i18n'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import yaml from 'js-yaml'
 import { RotateCcw } from 'lucide-react'
+import { CodeEditor } from '../components/CodeEditor'
+import { useTranslation } from '../lib/i18n'
+import {
+  getAppConfig, putAppConfig, resetAppConfig,
+  getAppFile, putAppFile, resetAppFile, getAppFiles,
+  closeCurrentDesktopWindow,
+} from '../lib/api'
 import { useDashboardStore } from '../lib/store'
 import { useInheritedTheme } from '../hooks/useInheritedTheme'
-import { closeCurrentDesktopWindow } from '../lib/api'
-import { WindowFileEditor } from './WindowFileEditor'
+import { toast } from '../lib/toast'
 import { publishRefresh } from '../lib/windowBus'
 
 /**
- * Standalone editor page used by native multi-window mode.
- * Renders the same {@link AppConfigEditor} that AppDetail uses, but in a
- * fullscreen layout without the app shell, with an explicit Reset / Cancel /
- * Submit action row at the bottom (Kotlin EditorWindow parity).
+ * Standalone editor used by the multi-window desktop mode. Drives two
+ * surfaces under one component so the chrome, keyboard handlers, refresh
+ * plumbing and footer button policy stay in sync:
  *
- * Route: /window/editor/:name
+ *   /window/editor/:name              — app YAML config editor
+ *   /window/editor/:name?file=<path>  — per-file editor (mounted bind-mount file)
+ *
+ * Both surfaces:
+ *  - Load via REST, fail to a Retry screen on error (no half-loaded editor)
+ *  - Save → re-fetch from daemon → publishRefresh() → close window
+ *  - Reset → daemon-side reset → publishRefresh() → close window
+ *  - Ctrl+F focuses CodeMirror; Esc closes the window (unless typing or
+ *    CodeMirror's search panel has focus)
  */
 export function WindowEditor() {
   const { t } = useTranslation()
   const { name } = useParams<{ name: string }>()
-  const [searchParams] = useSearchParams()
-  // COG RMB menu → per-file edit dispatches to /window/editor/:name?file=...
-  // The per-file UI is a distinct surface (no app YAML, no inner Lock/Reset
-  // controls), so delegate to a dedicated component instead of cluttering
-  // AppConfigEditor with an `initialFile` mode.
-  const file = searchParams.get('file')
-  if (file) {
-    return <WindowFileEditor />
-  }
-  const editorRef = useRef<AppConfigEditorHandle>(null)
-  const [dirty, setDirty] = useState(false)
-  // Read "edited" (user-saved overrides on disk) from the dashboard store —
-  // the same source AppConfigEditor uses — so no polling via the imperative
-  // handle is needed and setState-in-effect is avoided.
-  const edited = useDashboardStore((s) => s.namespace?.apps?.find((a) => a.name === name)?.edited ?? false)
-  const fetchNamespaceData = useDashboardStore((s) => s.fetchData)
-  // Wails secondary window has its own (empty) Zustand store + no SSE
-  // subscription. Pull the namespace snapshot on mount so the Reset button
-  // can correctly render based on the current `edited` flag, and refresh
-  // after a successful save (publishRefresh is fire-and-forget; we want a
-  // local refetch too).
-  useEffect(() => { void fetchNamespaceData() }, [fetchNamespaceData])
+  const [params] = useSearchParams()
+  const filePath = params.get('file')
+  const isFile = !!filePath
 
   useInheritedTheme()
 
-  useEffect(() => {
-    document.title = name
-      ? t('appConfig.tabTitle', { name })
-      : t('window.editor.heading')
-  }, [name, t])
+  const fetchNamespaceData = useDashboardStore((s) => s.fetchData)
+  // Wails secondary windows start with an empty store; pull the namespace
+  // snapshot so the Reset visibility selectors below resolve correctly.
+  useEffect(() => { void fetchNamespaceData() }, [fetchNamespaceData])
+
+  // For app-mode, the dashboard DTO's `edited` flag drives Reset visibility.
+  // For file-mode, we ask /apps/<name>/files for this specific path.
+  const appEdited = useDashboardStore((s) =>
+    !isFile && name ? (s.namespace?.apps?.find((a) => a.name === name)?.edited ?? false) : false,
+  )
+  const [fileEdited, setFileEdited] = useState(false)
+
+  const [content, setContent] = useState<string | null>(null)
+  const [editContent, setEditContent] = useState('')
+  const [loaded, setLoaded] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [resetting, setResetting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const close = useCallback(() => {
     if (!name) return
-    void closeCurrentDesktopWindow({ kind: 'editor', id: name })
-  }, [name])
+    const id = isFile ? `${name}::${filePath}` : name
+    void closeCurrentDesktopWindow({ kind: 'editor', id })
+  }, [name, filePath, isFile])
 
-  // Window-level keyboard shortcuts. Ctrl+F focuses the CodeMirror editor so
-  // its built-in search panel opens — otherwise the user has to click into
-  // the editor first and the shortcut feels broken. Escape closes the window
-  // (except while typing in a control so a stray Esc doesn't drop edits).
+  useEffect(() => {
+    if (!name) {
+      document.title = t('window.editor.heading')
+      return
+    }
+    if (isFile && filePath) {
+      const slash = filePath.lastIndexOf('/')
+      const basename = slash >= 0 ? filePath.slice(slash + 1) : filePath
+      document.title = `${t('appConfig.tabTitle', { name })} — ${basename}`
+    } else {
+      document.title = t('appConfig.tabTitle', { name })
+    }
+  }, [name, filePath, isFile, t])
+
+  const load = useCallback(async () => {
+    if (!name) return
+    setLoaded(false)
+    setLoadError(null)
+    setError(null)
+    try {
+      let text: string
+      if (isFile && filePath) {
+        text = await getAppFile(name, filePath)
+        // edited-flag is a per-file fact maintained by the daemon's
+        // /apps/<name>/files endpoint — read it back so Reset visibility
+        // matches the COG RMB menu's badge.
+        try {
+          const files = await getAppFiles(name)
+          const entry = files.find((f) => f.path === filePath)
+          setFileEdited(entry?.edited ?? false)
+        } catch { /* edited flag is non-essential; default false on error */ }
+      } else {
+        text = await getAppConfig(name)
+      }
+      setContent(text ?? '')
+      setEditContent(text ?? '')
+    } catch (e) {
+      setLoadError((e as Error).message || String(e))
+      setContent(null)
+      setEditContent('')
+    } finally {
+      setLoaded(true)
+    }
+  }, [name, filePath, isFile])
+
+  useEffect(() => { void load() }, [load])
+
+  // Window-level shortcuts: Ctrl+F focuses CodeMirror (its built-in search
+  // panel opens), Esc closes the window (unless typing or the CodeMirror
+  // search panel currently has focus — first Esc closes the panel).
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       const ctrl = e.ctrlKey || e.metaKey
@@ -68,8 +122,6 @@ export function WindowEditor() {
         if (cm && document.activeElement !== cm) {
           e.preventDefault()
           cm.focus()
-          // Re-emit Ctrl+F so CodeMirror's searchKeymap picks it up — without
-          // this the user would have to press the shortcut twice.
           cm.dispatchEvent(new KeyboardEvent('keydown', {
             key: 'f', code: 'KeyF', ctrlKey: true, bubbles: true, cancelable: true,
           }))
@@ -79,8 +131,6 @@ export function WindowEditor() {
       if (e.key === 'Escape') {
         const tag = (document.activeElement as HTMLElement | null)?.tagName
         if (tag === 'INPUT' || tag === 'TEXTAREA') return
-        // Don't close while CodeMirror's search panel has focus — let CM
-        // handle Esc (close panel) first.
         if ((document.activeElement as HTMLElement | null)?.closest?.('.cm-panels')) return
         close()
       }
@@ -91,34 +141,140 @@ export function WindowEditor() {
 
   if (!name) {
     return (
-      <div className="p-4 text-sm text-text-muted">
+      <div className="p-4 text-sm text-muted-foreground">
         {t('window.editor.noApp')}
       </div>
     )
   }
 
+  if (!loaded) {
+    return (
+      <div className="p-4 space-y-2">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div key={i} className="h-3 w-full bg-muted rounded animate-pulse" />
+        ))}
+      </div>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <div className="h-screen bg-background text-foreground flex flex-col p-3 space-y-3">
+        <div className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <div className="font-medium mb-1">{t('appConfig.loadError.title')}</div>
+          <div className="font-mono break-all">{loadError}</div>
+        </div>
+        <div className="text-[11px] text-muted-foreground">
+          {t('appConfig.loadError.hint')}
+        </div>
+        <div>
+          <button
+            type="button"
+            className="rounded border border-border px-3 py-1.5 text-xs hover:bg-muted"
+            onClick={() => { void load() }}
+          >
+            {t('common.retry')}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  const loadOK = content !== null
+  const dirty = loadOK && editContent !== content
+  const reseable = isFile ? fileEdited : appEdited
+  // Filename hint drives CodeMirror's syntax highlighter; for app-YAML we
+  // pretend it's a yml so YAML mode kicks in.
+  const editorFilename = isFile && filePath ? filePath : 'app-config.yml'
+
+  async function handleSave(): Promise<boolean> {
+    if (!loadOK || !name) {
+      setError(t('appConfig.loadError.cannotSave'))
+      return false
+    }
+    // Validate structured formats before round-trip (mirrors the original
+    // AppCfgEditWindow's pre-flight check in Kotlin).
+    const lowerName = editorFilename.toLowerCase()
+    if (/\.(ya?ml|json)$/i.test(lowerName)) {
+      try {
+        if (editContent.trim() === '') throw new Error('YAML is empty')
+        yaml.load(editContent)
+        if (lowerName.endsWith('.json')) JSON.parse(editContent)
+      } catch (e) {
+        setError(`Invalid ${lowerName.endsWith('.json') ? 'JSON' : 'YAML'}: ${(e as Error).message}`)
+        return false
+      }
+    }
+    setSaving(true); setError(null)
+    try {
+      if (isFile && filePath) {
+        await putAppFile(name, filePath, editContent)
+      } else {
+        await putAppConfig(name, editContent)
+      }
+      // Re-fetch so the local buffer reflects whatever the daemon actually
+      // stored (defense-in-depth resets, normalisation, etc).
+      try {
+        const stored = isFile && filePath
+          ? await getAppFile(name, filePath)
+          : await getAppConfig(name)
+        setContent(stored ?? '')
+        setEditContent(stored ?? '')
+      } catch {
+        setContent(editContent)
+      }
+      toast(isFile ? t('appConfig.fileSaved') : t('appConfig.saved'), 'success')
+      return true
+    } catch (e) {
+      setError((e as Error).message)
+      return false
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleReset() {
+    if (!name) return
+    setResetting(true); setError(null)
+    try {
+      if (isFile && filePath) {
+        await resetAppFile(name, filePath)
+      } else {
+        await resetAppConfig(name)
+      }
+      toast(isFile ? t('appConfig.fileReset.success') : t('appConfig.reset.success'), 'success')
+    } catch (e) {
+      setError((e as Error).message)
+      throw e
+    } finally {
+      setResetting(false)
+    }
+  }
+
   return (
     <div className="h-screen bg-background text-foreground flex flex-col">
       <main className="flex-1 min-h-0 flex flex-col">
-        <AppConfigEditor
-          ref={editorRef}
-          appName={name}
-          hideInnerActions
-          fullHeight
-          onDirtyChange={setDirty}
-        />
+        {error && (
+          <div className="px-3 py-1.5 text-[11px] text-destructive border-b border-border shrink-0">{error}</div>
+        )}
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <CodeEditor
+            value={editContent}
+            onChange={setEditContent}
+            filename={editorFilename}
+            height="100%"
+            autoFocus
+          />
+        </div>
       </main>
       <footer className="border-t border-border bg-card px-3 py-2 flex items-center justify-end gap-2">
-        {edited && (
+        {reseable && (
           <button
             type="button"
-            className="flex items-center gap-1 rounded border border-border px-3 py-1.5 text-xs text-foreground hover:bg-muted"
+            className="flex items-center gap-1 rounded border border-border px-3 py-1.5 text-xs text-foreground hover:bg-muted disabled:opacity-50"
+            disabled={resetting || saving}
             onClick={async () => {
-              await editorRef.current?.resetConfig()
-              // After the on-disk override is cleared, ping the dashboard
-              // so its table refetches the generator's def, then close —
-              // mirrors the Save flow (Kotlin parity: Reset is a one-shot
-              // commit that drops the window).
+              try { await handleReset() } catch { return }
               publishRefresh()
               void fetchNamespaceData()
               close()
@@ -132,27 +288,24 @@ export function WindowEditor() {
         <button
           type="button"
           className="rounded border border-border px-3 py-1.5 text-xs hover:bg-muted"
-          onClick={() => { editorRef.current?.cancelEdit(); close() }}
+          onClick={close}
         >
           {t('common.cancel')}
         </button>
         <button
           type="button"
           className="rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-          disabled={!dirty}
+          disabled={!dirty || saving}
           onClick={async () => {
-            const ok = await editorRef.current?.apply()
+            const ok = await handleSave()
             if (ok) {
-              // Refresh our own store so the Reset button shows up if the
-              // app wasn't previously edited; ping the dashboard so its
-              // table refetches; then close.
-              void fetchNamespaceData()
               publishRefresh()
+              void fetchNamespaceData()
               close()
             }
           }}
         >
-          {t('common.save')}
+          {saving ? t('common.saving') : t('common.save')}
         </button>
       </footer>
     </div>

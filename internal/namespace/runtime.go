@@ -312,6 +312,16 @@ func (r *Runtime) resolveStopTimeout(appStopTimeout int) int {
 	return r.defaultStopTimeout
 }
 
+// AppCount returns the current size of r.apps under RLock — used by the
+// reload safety net that refuses to regenerate from a bundle-fallback set
+// smaller than the live runtime (which would mass-tear-down running apps
+// just because git auth failed).
+func (r *Runtime) AppCount() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.apps)
+}
+
 // ManualStoppedApps returns a copy of manually stopped apps (for generator detached apps).
 func (r *Runtime) ManualStoppedApps() map[string]bool {
 	r.mu.RLock()

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useImperativeHandle, forwardRef } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import yaml from 'js-yaml'
 import { getAppConfig, putAppConfig, resetAppConfig, getAppFiles, getAppFile, putAppFile, resetAppFile } from '../lib/api'
 import { useDashboardStore } from '../lib/store'
@@ -11,52 +11,11 @@ import { FileCode, RotateCcw } from 'lucide-react'
 import type { AppFileDto } from '../lib/types'
 import { isEditableFile } from '../lib/files'
 
-/**
- * Imperative handle for window-mode embedding (WindowEditor). Lets the parent
- * standalone window drive the editor's Apply / Cancel / Reset paths without
- * duplicating state.
- */
-export interface AppConfigEditorHandle {
-  /** True when the YAML buffer differs from the saved config. */
-  isDirty(): boolean
-  /** True when a non-default config exists on disk (lock + reset enabled). */
-  isEdited(): boolean
-  /**
-   * Save the current YAML buffer. Resolves to true if the daemon accepted
-   * the update; false if validation failed or the daemon returned an error.
-   * Window-mode callers use this to decide whether to close the secondary
-   * window after Save.
-   */
-  apply(): Promise<boolean>
-  /** Revert the in-memory edit buffer to the saved config. */
-  cancelEdit(): void
-  /** Reset the on-disk config back to the generator-supplied default. */
-  resetConfig(): Promise<void>
-}
-
 interface AppConfigEditorProps {
   appName: string
-  /**
-   * When true, the per-app inner action buttons (Cancel/Apply/Reset/Lock) are
-   * hidden. Used by WindowEditor which renders its own bottom action row and
-   * drives this editor via the {@link AppConfigEditorHandle} ref.
-   */
-  hideInnerActions?: boolean
-  /**
-   * When true, the YAML CodeEditor fills the remaining height of its
-   * container (flex-1) instead of using the inline default. Used by
-   * WindowEditor so the editor takes the whole secondary window minus its
-   * footer, not a tiny 350px slot.
-   */
-  fullHeight?: boolean
-  /** Notify parent when the dirty state changes. */
-  onDirtyChange?: (dirty: boolean) => void
 }
 
-export const AppConfigEditor = forwardRef<AppConfigEditorHandle, AppConfigEditorProps>(function AppConfigEditorImpl(
-  { appName, hideInnerActions = false, fullHeight = false, onDirtyChange },
-  ref,
-) {
+export function AppConfigEditor({ appName }: AppConfigEditorProps) {
   const { t } = useTranslation()
   const [configYaml, setConfigYaml] = useState<string | null>(null)
   const [editYaml, setEditYaml] = useState<string | null>(null)
@@ -125,28 +84,8 @@ export const AppConfigEditor = forwardRef<AppConfigEditorHandle, AppConfigEditor
     return () => controller.abort()
   }, [load])
 
-  // Window mode: always edit, so the outer Reset/Cancel/Submit row drives the
-  // single mode of operation. We flip configEditing as soon as the YAML loads.
-  useEffect(() => {
-    if (hideInnerActions && configYaml !== null && !configEditing) {
-      setConfigEditing(true)
-    }
-  }, [hideInnerActions, configYaml, configEditing])
-
-  // Notify the optional parent (window mode) whenever dirty state flips so the
-  // outer Apply / Submit button can enable/disable in sync. Only dirty when
-  // the original load succeeded — otherwise editYaml is a placeholder and
-  // "dirty" would lure the user into saving over the real config.
-  const isDirty = loadOK && configEditing && editYaml !== configYaml
-  useEffect(() => {
-    onDirtyChange?.(isDirty)
-  }, [isDirty, onDirtyChange])
-
   async function handleApplyConfig(): Promise<boolean> {
     if (!loadOK) {
-      // Defensive — the imperative handle and the inner Apply button both
-      // gate on isDirty/loadOK, so this branch only catches a programmer
-      // error (e.g. a future caller bypassing the handle).
       setConfigError(t('appConfig.loadError.cannotSave'))
       return false
     }
@@ -203,22 +142,6 @@ export const AppConfigEditor = forwardRef<AppConfigEditorHandle, AppConfigEditor
     }
   }
 
-  // Expose imperative methods for window-mode embedding (WindowEditor).
-  useImperativeHandle(ref, () => ({
-    isDirty: () => isDirty,
-    isEdited: () => isEdited,
-    apply: () => handleApplyConfig(),
-    cancelEdit: () => {
-      setEditYaml(configYaml)
-      setConfigEditing(false)
-      setConfigError(null)
-    },
-    resetConfig: () => handleResetConfig(),
-  // handleApplyConfig / handleResetConfig close over current state; recompute
-  // the handle on every render to avoid stale closures.
-   
-  }))
-
   if (!loaded) {
     return (
       <div className="p-2 space-y-2">
@@ -251,69 +174,58 @@ export const AppConfigEditor = forwardRef<AppConfigEditorHandle, AppConfigEditor
   }
 
   return (
-    <div className={fullHeight ? 'flex flex-col h-full' : 'p-2 space-y-2 overflow-y-auto h-full'}>
+    <div className="p-2 space-y-2 overflow-y-auto h-full">
       {/* App config editor */}
       {configYaml !== null ? (
-        <div className={fullHeight
-          ? 'flex flex-col flex-1 min-h-0 bg-card'
-          : 'rounded border border-border bg-card p-2'
-        }>
-          <div className={fullHeight
-            ? 'flex items-center justify-between px-3 py-2 border-b border-border shrink-0'
-            : 'flex items-center justify-between mb-1'
-          }>
+        <div className="rounded border border-border bg-card p-2">
+          <div className="flex items-center justify-between mb-1">
             <div className="flex items-center gap-1 text-xs font-medium">
               <FileCode size={13} /> {t('appConfig.title')}
               {isEdited && <span className="text-[10px] text-blue-500 font-normal ml-1">{t('appConfig.edited', { detail: '' })}</span>}
             </div>
-            {!hideInnerActions && (
-              <div className="flex items-center gap-1">
-                {isEdited && (
-                  // Reset is the ONLY way back to the generator's def — by
-                  // design, any saved edit is permanently authoritative until
-                  // Reset is hit. No Lock/Unlock toggle: edits are implicitly
-                  // locked by save, and surfacing the toggle would suggest
-                  // the launcher might silently re-apply the generator's
-                  // version on regenerate, which is not the model.
-                  <button type="button"
-                    className="flex items-center gap-0.5 rounded border border-border px-2 py-0.5 text-xs hover:bg-muted text-muted-foreground"
-                    title={t('appConfig.reset.tooltip')}
-                    onClick={() => setShowResetConfirm(true)}>
-                    <RotateCcw size={11} /> {t('appConfig.reset')}
-                  </button>
-                )}
-                {!configEditing ? (
+            <div className="flex items-center gap-1">
+              {isEdited && (
+                // Reset is the ONLY way back to the generator's def — by
+                // design, any saved edit is permanently authoritative until
+                // Reset is hit. No Lock/Unlock toggle: edits are implicitly
+                // locked by save, and surfacing the toggle would suggest
+                // the launcher might silently re-apply the generator's
+                // version on regenerate, which is not the model.
+                <button type="button"
+                  className="flex items-center gap-0.5 rounded border border-border px-2 py-0.5 text-xs hover:bg-muted text-muted-foreground"
+                  title={t('appConfig.reset.tooltip')}
+                  onClick={() => setShowResetConfirm(true)}>
+                  <RotateCcw size={11} /> {t('appConfig.reset')}
+                </button>
+              )}
+              {!configEditing ? (
+                <button type="button" className="rounded border border-border px-2 py-0.5 text-xs hover:bg-muted"
+                  onClick={() => { setEditYaml(configYaml); setConfigEditing(true); setConfigError(null) }}>
+                  {t('common.edit')}
+                </button>
+              ) : (
+                <div className="flex gap-1">
                   <button type="button" className="rounded border border-border px-2 py-0.5 text-xs hover:bg-muted"
-                    onClick={() => { setEditYaml(configYaml); setConfigEditing(true); setConfigError(null) }}>
-                    {t('common.edit')}
-                  </button>
-                ) : (
-                  <div className="flex gap-1">
-                    <button type="button" className="rounded border border-border px-2 py-0.5 text-xs hover:bg-muted"
-                      onClick={() => setConfigEditing(false)}>{t('common.cancel')}</button>
-                    <button type="button" className="rounded bg-primary px-2 py-0.5 text-xs text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-                      onClick={() => setShowApplyConfirm(true)} disabled={editYaml === configYaml}>{t('common.apply')}</button>
-                  </div>
-                )}
-              </div>
-            )}
+                    onClick={() => setConfigEditing(false)}>{t('common.cancel')}</button>
+                  <button type="button" className="rounded bg-primary px-2 py-0.5 text-xs text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                    onClick={() => setShowApplyConfirm(true)} disabled={editYaml === configYaml}>{t('common.apply')}</button>
+                </div>
+              )}
+            </div>
           </div>
-          {configError && <div className={fullHeight ? 'px-3 py-1.5 text-[11px] text-destructive border-b border-border shrink-0' : 'text-[11px] text-destructive mb-1'}>{configError}</div>}
+          {configError && <div className="text-[11px] text-destructive mb-1">{configError}</div>}
           {configEditing ? (
-            <div className={fullHeight
-              ? 'flex-1 min-h-0 overflow-hidden'
-              : 'rounded border border-border overflow-hidden'
-            }>
+            <div className="rounded border border-border overflow-hidden">
               <CodeEditor
                 value={editYaml ?? ''}
                 onChange={setEditYaml}
                 filename="app-config.yml"
-                height={fullHeight ? '100%' : '350px'}
+                height="350px"
                 autoFocus
               />
             </div>
           ) : (
-            <div className={fullHeight ? 'flex-1 min-h-0 overflow-auto' : 'max-h-48 overflow-auto'}>
+            <div className="max-h-48 overflow-auto">
               <YamlViewer content={configYaml} />
             </div>
           )}
@@ -327,9 +239,9 @@ export const AppConfigEditor = forwardRef<AppConfigEditorHandle, AppConfigEditor
       {/* Mounted Files — only editable extensions, matching the COG RMB menu
           and Kotlin v1.3.8 behaviour (binaries like fonts/jars/certs would
           break the textual editor). In window mode the COG RMB menu owns
-          per-file edits via dedicated WindowFileEditor windows, so this
-          panel only renders inside the main shell (AppDetail / drawer). */}
-      {!fullHeight && files.filter((f) => isEditableFile(f.path)).length > 0 && (
+          per-file edits via dedicated WindowEditor windows, so this panel
+          only renders inside the main shell (AppDetail / drawer). */}
+      {files.filter((f) => isEditableFile(f.path)).length > 0 && (
         <div className="rounded border border-border bg-card p-2">
           <div className="text-xs font-medium mb-1">{t('appConfig.files')}</div>
           {files.filter((f) => isEditableFile(f.path)).map((f) => (
@@ -429,7 +341,7 @@ export const AppConfigEditor = forwardRef<AppConfigEditorHandle, AppConfigEditor
         onConfirm={handleResetConfig} onCancel={() => setShowResetConfirm(false)} />
     </div>
   )
-})
+}
 
 /**
  * Real YAML / JSON validation (Kotlin EditorWindow.validate parity).
