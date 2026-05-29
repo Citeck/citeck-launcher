@@ -3,6 +3,7 @@ import { LogViewer } from '../components/LogViewer'
 import { DaemonLogsViewer } from '../components/DaemonLogsViewer'
 import { useTranslation } from '../lib/i18n'
 import { useEffect } from 'react'
+import { useInheritedTheme } from '../hooks/useInheritedTheme'
 
 /**
  * Standalone log viewer page used by native multi-window mode.
@@ -18,19 +19,7 @@ export function WindowLogs() {
   const { t } = useTranslation()
   const { name } = useParams<{ name: string }>()
 
-  // Theme isn't shared automatically between the main and secondary Wails
-  // windows — the secondary one mounts with no `data-theme` attribute, so
-  // a system "prefers-color-scheme: light" lights up the whole viewer.
-  // Read the user's persisted choice and apply it on mount.
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem('theme')
-      const isDark = stored ? stored === 'dark' : !window.matchMedia?.('(prefers-color-scheme: light)').matches
-      document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light')
-    } catch {
-      document.documentElement.setAttribute('data-theme', 'dark')
-    }
-  }, [])
+  useInheritedTheme()
 
   useEffect(() => {
     const label = name ?? t('daemonLogs.title')

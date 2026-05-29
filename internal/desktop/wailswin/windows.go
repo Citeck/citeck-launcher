@@ -125,8 +125,19 @@ func (m *WindowManager) handleOpen(w http.ResponseWriter, r *http.Request) {
 		if autoSized {
 			if s := application.GetScreenByIndex(0); s != nil {
 				targetScreen = s
+				// Kotlin parity: `<default>.coerceAtMost(screenSize * 0.9)`
+				// — clamp the per-kind default DOWN to 90% of the screen
+				// on small monitors, but never INFLATE up to 90% on big
+				// ones. Earlier the inflation made the editor / logs
+				// windows fill almost the whole screen even though the
+				// content needed far less.
 				if w90, h90 := percentOfScreen(s, 90); w90 > 0 && h90 > 0 {
-					width, height = w90, h90
+					if w90 < width {
+						width = w90
+					}
+					if h90 < height {
+						height = h90
+					}
 				}
 			}
 		}

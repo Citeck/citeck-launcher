@@ -4,6 +4,7 @@ import { useTranslation } from '../lib/i18n'
 import { useEffect, useRef, useState } from 'react'
 import { RotateCcw } from 'lucide-react'
 import { useDashboardStore } from '../lib/store'
+import { useInheritedTheme } from '../hooks/useInheritedTheme'
 
 /**
  * Standalone editor page used by native multi-window mode.
@@ -23,9 +24,13 @@ export function WindowEditor() {
   // handle is needed and setState-in-effect is avoided.
   const edited = useDashboardStore((s) => s.namespace?.apps?.find((a) => a.name === name)?.edited ?? false)
 
+  useInheritedTheme()
+
   useEffect(() => {
-    document.title = name ? `Config — ${name}` : 'Editor'
-  }, [name])
+    document.title = name
+      ? t('appConfig.tabTitle', { name })
+      : t('window.editor.heading')
+  }, [name, t])
 
   // Escape closes the secondary window; skip when typing in the editor so a
   // single key press doesn't dismiss in-progress edits.
@@ -55,11 +60,7 @@ export function WindowEditor() {
   }
 
   return (
-    <div className="h-screen bg-background text-text flex flex-col">
-      <header className="px-3 py-1.5 border-b border-border bg-bg-secondary text-sm flex items-center gap-2">
-        <span className="text-text-muted">{t('window.editor.heading')}</span>
-        <span className="font-medium">{name}</span>
-      </header>
+    <div className="h-screen bg-background text-foreground flex flex-col">
       <main className="flex-1 min-h-0 overflow-auto p-3">
         <AppConfigEditor
           ref={editorRef}

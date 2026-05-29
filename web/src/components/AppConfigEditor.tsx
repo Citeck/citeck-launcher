@@ -70,9 +70,24 @@ export const AppConfigEditor = forwardRef<AppConfigEditorHandle, AppConfigEditor
   const load = useCallback(() => {
     const controller = new AbortController()
     const signal = controller.signal
+    setConfigError(null)
     getAppConfig(appName)
-      .then((y) => { if (!signal.aborted) { setConfigYaml(y); setEditYaml(y) } })
-      .catch(() => { if (!signal.aborted) setConfigYaml(null) })
+      .then((y) => {
+        if (signal.aborted) return
+        // Empty string is a legitimate result (app has no overrides yet) —
+        // show the editor with empty content so the user can start typing.
+        setConfigYaml(y ?? '')
+        setEditYaml(y ?? '')
+      })
+      .catch((e) => {
+        if (signal.aborted) return
+        console.error('[AppConfigEditor] getAppConfig failed:', e)
+        setConfigError((e as Error).message || String(e))
+        // Surface the editor anyway so the user isn't stuck staring at a
+        // placeholder when, say, the daemon hiccuped on the first load.
+        setConfigYaml('')
+        setEditYaml('')
+      })
       .finally(() => { if (!signal.aborted) setLoaded(true) })
     getAppFiles(appName)
       .then((f) => { if (!signal.aborted) setFiles(f) })
