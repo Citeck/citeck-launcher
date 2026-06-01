@@ -472,11 +472,18 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w, err)
 		return
 	}
-	if err := d.runtime.RestartApp(name); err != nil {
+	// While the namespace is stopped the edit is persisted as an override and
+	// applies on the next start, so we must NOT call RestartApp — it would
+	// error with "runtime not started" and surface a spurious failure for a
+	// save that actually succeeded. When running, restart to apply immediately.
+	msg := fmt.Sprintf("App %s config updated and restart requested", name)
+	if d.runtime.Status() == namespace.NsStatusStopped {
+		msg = fmt.Sprintf("App %s config saved; applies on next start", name)
+	} else if err := d.runtime.RestartApp(name); err != nil {
 		writeInternalError(w, err)
 		return
 	}
-	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("App %s config updated and restart requested", name)})
+	writeJSON(w, api.ActionResultDto{Success: true, Message: msg})
 }
 
 // handleResetAppConfig clears any user-edited ApplicationDef override for the

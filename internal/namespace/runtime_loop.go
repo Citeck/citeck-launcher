@@ -510,8 +510,16 @@ func (r *Runtime) handleRemoveNetworkResult(res workers.Result) {
 		}
 	}
 	r.mu.Lock()
-	// Wipe apps + restart tracking (matches legacy doStop final-phase).
-	r.apps = make(map[string]*AppRuntime)
+	// Retain the app DEFINITIONS while stopped, reset to a clean STOPPED,
+	// container-less state. The containers are gone, but the apps still
+	// conceptually exist, so per-app definition/file operations — viewing &
+	// editing app config, mounted files, lock/reset — keep working when the
+	// namespace is stopped (they resolve via FindApp). The runtimeLoop has
+	// exited by now (shutdownComplete closed), so nothing advances these
+	// entries; Start() clears the map and doStart rebuilds it from scratch.
+	for name, app := range r.apps {
+		r.apps[name] = &AppRuntime{Name: name, Def: app.Def, Status: AppStatusStopped}
+	}
 	r.restartCounts = make(map[string]int)
 	r.restartEvents = nil
 	r.livenessFailures = make(map[string]int)

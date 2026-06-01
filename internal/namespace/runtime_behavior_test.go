@@ -360,6 +360,64 @@ func TestStartAndStop(t *testing.T) {
 	}
 }
 
+// TestStoppedRetainsAppDefinitions pins the Option A behavior: after a full
+// stop the runtime keeps each app's definition (as STOPPED), so per-app
+// definition/file operations (config view/edit, mounted files, lock) keep
+// working while stopped instead of failing with "app not found". A subsequent
+// Start must rebuild from a clean slate and bring the apps back to RUNNING.
+func TestStoppedRetainsAppDefinitions(t *testing.T) {
+	md := newMockDocker()
+	r := NewRuntime(testConfig(), md, t.TempDir())
+	defer r.Shutdown()
+
+	apps := []appdef.ApplicationDef{
+		simpleApp("postgres", "postgres:17"),
+		simpleApp("emodel", "ecos-model:2.0", "postgres"),
+	}
+
+	r.Start(apps)
+	if !waitForStatus(r, NsStatusRunning, 10*time.Second) {
+		t.Fatalf("namespace did not reach RUNNING, got %v", r.Status())
+	}
+
+	r.Stop()
+	if !waitForStatus(r, NsStatusStopped, 10*time.Second) {
+		t.Fatalf("namespace did not reach STOPPED, got %v", r.Status())
+	}
+
+	// Definitions must survive the stop so the daemon's per-app handlers
+	// (FindApp) can still resolve them while stopped.
+	for _, app := range apps {
+		found := r.FindApp(app.Name)
+		if found == nil {
+			t.Fatalf("app %s not found after stop — definition was wiped", app.Name)
+		}
+		if found.Status != AppStatusStopped {
+			t.Errorf("app %s: expected STOPPED after stop, got %s", app.Name, found.Status)
+		}
+		if found.Def.Image != app.Image {
+			t.Errorf("app %s: definition not retained (image %q != %q)", app.Name, found.Def.Image, app.Image)
+		}
+		if found.ContainerID != "" {
+			t.Errorf("app %s: container id should be cleared when stopped, got %q", app.Name, found.ContainerID)
+		}
+	}
+	if len(r.Apps()) != len(apps) {
+		t.Errorf("Apps() after stop = %d, want %d", len(r.Apps()), len(apps))
+	}
+
+	// Start again: the retained STOPPED entries must not block a clean restart.
+	r.Start(apps)
+	if !waitForStatus(r, NsStatusRunning, 10*time.Second) {
+		t.Fatalf("namespace did not reach RUNNING on restart, got %v", r.Status())
+	}
+	for _, app := range apps {
+		if !waitForAppStatus(r, app.Name, AppStatusRunning, 5*time.Second) {
+			t.Fatalf("app %s did not reach RUNNING on restart", app.Name)
+		}
+	}
+}
+
 func TestWaitForDeps(t *testing.T) {
 	md := newMockDocker()
 	r := NewRuntime(testConfig(), md, t.TempDir())

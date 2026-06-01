@@ -40,6 +40,11 @@ func (r *Runtime) Start(apps []appdef.ApplicationDef) {
 	r.shutdownComplete = make(chan struct{})
 	r.signalOnce = sync.Once{}
 	r.detaching.Store(false)
+	// Drop any STOPPED definitions retained from the prior run (doStop keeps
+	// them so per-app config/file editing works while stopped) so the restarted
+	// loop starts from a clean slate; the cmdStart below (doStart) rebuilds
+	// r.apps from the desired set before the first stepAllApps.
+	r.apps = make(map[string]*AppRuntime)
 	r.mu.Unlock()
 
 	r.wg.Add(1)
