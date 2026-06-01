@@ -1,3 +1,10 @@
+//go:build desktop
+
+// The desktop command pulls in Wails + wailswin (CGO/GTK), which only build
+// under the desktop/gtk3 tags. Without this constraint `go vet ./...` and
+// `go build ./...` (no tags) fail trying to compile it against the
+// build-constraint-excluded wailswin package. `make build-desktop` passes
+// `-tags desktop,gtk3`, so the real desktop build still includes these files.
 package main
 
 import (
