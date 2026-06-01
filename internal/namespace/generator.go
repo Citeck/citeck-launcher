@@ -72,7 +72,7 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 	loadAppFiles(ctx)
 
 	// Generate infrastructure services
-	generateMailhog(ctx)
+	generateMailpit(ctx)
 	generateMongoDB(ctx)
 	generatePgAdmin(ctx)
 	generatePostgres(ctx)
@@ -175,13 +175,19 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 	}, nil
 }
 
-func generateMailhog(ctx *NsGenContext) {
+func generateMailpit(ctx *NsGenContext) {
 	if ctx.Config.Email != nil {
 		return
 	}
-	app := ctx.GetOrCreateApp(appdef.AppMailhog)
-	app.Image = bundleImageOr(ctx, appdef.AppMailhog, "mailhog/mailhog:v1.0.1")
+	app := ctx.GetOrCreateApp(appdef.AppMailpit)
+	app.Image = bundleImageOr(ctx, appdef.AppMailpit, "axllent/mailpit:v1.30.1")
 	app.Kind = appdef.KindThirdParty
+	// Keep the legacy "mailhog" network alias so the SMTP wiring resolves
+	// without per-app rewiring: webapps connect via SPRING_MAIL_HOST=mailhog
+	// (bundle default), Alfresco via MAIL_HOST=mailhog, and the proxy via
+	// MAILHOG_TARGET=mailhog:8025. Mailpit is a drop-in replacement for mailhog
+	// on the same SMTP (1025) and web-UI (8025) ports.
+	app.NetworkAliases = []string{MailhogHost}
 	app.AddPort("1025:1025").AddPort("8025:8025")
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "128m"}}
 }
@@ -222,7 +228,17 @@ func generateMongoDB(ctx *NsGenContext) {
 }
 
 func generatePgAdmin(ctx *NsGenContext) {
-	if !ctx.Config.PgAdmin.Enabled {
+	// pgAdmin is a desktop-only convenience: its admin UI is published on a
+	// fixed host port (5050) for local DB inspection. In server mode only the
+	// proxy publishes ports, so the UI is unreachable there — skip it entirely
+	// rather than run a 256m container nobody can reach.
+	//
+	// In desktop mode it's always generated (Kotlin 1.x parity — pgAdmin was on
+	// by default). We intentionally do NOT gate on Config.PgAdmin.Enabled: the
+	// Web UI never surfaces it as a real toggle (create/edit always send
+	// pgAdminEnabled=false), so honoring the flag would mean pgAdmin never
+	// appears at all.
+	if !config.IsDesktopMode() {
 		return
 	}
 	img := ctx.Config.PgAdmin.Image

@@ -6,9 +6,64 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
+	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func findGeneratedApp(resp *GenResp, name string) *appdef.ApplicationDef {
+	for i := range resp.Applications {
+		if resp.Applications[i].Name == name {
+			return &resp.Applications[i]
+		}
+	}
+	return nil
+}
+
+// TestGeneratePgAdminDesktopOnly pins pgAdmin to desktop mode: never generated
+// in server mode (its fixed-port UI is unreachable there), always generated in
+// desktop mode independent of the vestigial PgAdmin.Enabled flag (the Web UI
+// never sets it true, so honoring it would mean pgAdmin never appears).
+func TestGeneratePgAdminDesktopOnly(t *testing.T) {
+	cfg := &Config{
+		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+		PgAdmin:        PgAdminProps{Enabled: false}, // flag is dead — must not matter
+	}
+	secrets := SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"}
+
+	config.ResetDesktopMode()
+	resp, err := Generate(cfg, &bundle.Def{}, nil, secrets)
+	require.NoError(t, err)
+	assert.Nil(t, findGeneratedApp(resp, appdef.AppPgadmin), "pgAdmin must not be generated in server mode")
+
+	config.SetDesktopMode(true)
+	t.Cleanup(func() { config.ResetDesktopMode() })
+	resp, err = Generate(cfg, &bundle.Def{}, nil, secrets)
+	require.NoError(t, err)
+	pg := findGeneratedApp(resp, appdef.AppPgadmin)
+	require.NotNil(t, pg, "pgAdmin must be generated in desktop mode even with Enabled=false")
+	assert.Contains(t, pg.Image, "pgadmin")
+}
+
+// TestGenerateMailpit verifies mailhog was replaced by mailpit while keeping the
+// legacy "mailhog" network alias so the existing SMTP wiring (webapp
+// SPRING_MAIL_HOST, Alfresco MAIL_HOST, proxy MAILHOG_TARGET) keeps resolving.
+func TestGenerateMailpit(t *testing.T) {
+	config.ResetDesktopMode()
+	cfg := &Config{
+		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+	}
+	resp, err := Generate(cfg, &bundle.Def{}, nil, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	require.NoError(t, err)
+
+	mailpit := findGeneratedApp(resp, appdef.AppMailpit)
+	require.NotNil(t, mailpit, "mailpit must be generated when no external email is configured")
+	assert.Contains(t, mailpit.Image, "axllent/mailpit")
+	assert.Contains(t, mailpit.NetworkAliases, MailhogHost, "mailpit must keep the legacy mailhog alias")
+	assert.Nil(t, findGeneratedApp(resp, appdef.AppMailpit).LivenessProbe)
+}
 
 func TestFlatMapToYAML_NestedKeys(t *testing.T) {
 	m := map[string]any{
@@ -772,8 +827,8 @@ func TestGeneratorLivenessProbes(t *testing.T) {
 	// memory limit pushes the long-lived broker into the kill zone often
 	// enough to restart healthy nodes mid-init-action.
 	for _, name := range []string{
-		appdef.AppMailhog,
-		appdef.AppPgadmin, // disabled by default
+		appdef.AppMailpit,
+		appdef.AppPgadmin, // desktop-only — not generated in server-mode tests
 		appdef.AppOnlyoffice,
 		appdef.AppProxy,
 		appdef.AppRabbitmq,

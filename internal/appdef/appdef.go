@@ -171,7 +171,7 @@ const (
 	AppZookeeper       = "zookeeper"
 	AppRabbitmq        = "rabbitmq"
 	AppMongodb         = "mongo"
-	AppMailhog         = "mailhog"
+	AppMailpit         = "mailpit"
 	AppKeycloak        = "keycloak"
 	AppPgadmin         = "pgadmin"
 	AppOnlyoffice      = "onlyoffice"

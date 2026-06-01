@@ -72,7 +72,7 @@ type WebappProps struct {
 	LivenessDisabled bool                               `yaml:"livenessDisabled,omitempty" json:"livenessDisabled,omitempty"`
 }
 
-// EmailConfig configures external SMTP. When set, mailhog is not generated.
+// EmailConfig configures external SMTP. When set, mailpit is not generated.
 // Password field uses "secret:<key>" reference to SecretService.
 type EmailConfig struct {
 	Host     string `yaml:"host" json:"host"`
