@@ -73,7 +73,7 @@ export function Modal({ open, title, onClose, width = 'md', children, footer, on
     <dialog
       ref={ref}
       onClose={onClose}
-      className={`fixed inset-0 z-50 m-auto ${widthClass} max-w-[90vw] rounded-lg border border-border bg-card p-0 text-foreground backdrop:bg-black/50`}
+      className={`fixed inset-0 z-50 m-auto ${widthClass} max-w-[90vw] rounded-lg border border-border bg-card p-0 text-foreground shadow-xl`}
     >
       {onSubmit ? (
         <form onSubmit={onSubmit} className="flex flex-col">{body}</form>

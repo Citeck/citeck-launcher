@@ -63,11 +63,14 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
 
   return (
     <>
-      <div className="flex items-stretch h-7 rounded border border-border overflow-hidden">
+      {/* min-h instead of fixed h-7 so long locale labels (e.g. RU
+          "Обновить и запустить") wrap to a centered second line instead of
+          being clipped; short labels keep the single-row height. */}
+      <div className="flex items-stretch min-h-[28px] rounded border border-border overflow-hidden">
         <button
           type="button"
           disabled={!primaryEnabled || isStarting}
-          className={`flex items-center justify-center gap-1 px-2 text-xs border-r border-border ${
+          className={`flex items-center justify-center gap-1.5 px-2 py-1 text-xs leading-tight text-center border-r border-border ${
             primaryEnabled && !isStarting
               ? 'text-success hover:bg-success/10'
               : 'text-muted-foreground/40 cursor-not-allowed'
@@ -77,12 +80,12 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
           onContextMenu={(e) => { e.preventDefault(); if (primaryEnabled && !isStarting) showContextMenu(e, primaryContextItems()) }}
           title={t('ns.updateAndStart')}
         >
-          <Play size={12} /> {t('ns.updateAndStart')}
+          <Play size={12} className="shrink-0" /> {t('ns.updateAndStart')}
         </button>
         <button
           type="button"
           disabled={!stopEnabled}
-          className={`flex items-center justify-center gap-1 px-2 text-xs ${
+          className={`flex items-center justify-center gap-1.5 px-2 py-1 text-xs leading-tight text-center ${
             stopEnabled
               ? 'text-destructive hover:bg-destructive/10'
               : 'text-muted-foreground/40 cursor-not-allowed'
@@ -91,7 +94,7 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
           onClick={() => { void run('stop') }}
           title={t('ns.stop')}
         >
-          <Square size={12} /> {t('ns.stop')}
+          <Square size={12} className="shrink-0" /> {t('ns.stop')}
         </button>
       </div>
 

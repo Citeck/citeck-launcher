@@ -285,6 +285,10 @@ const zh: Translations = {
   'appConfig.fileReset.success': '文件已重置为默认值',
   'appConfig.fileEdited.badge': '已修改',
   'appConfig.tabTitle': '配置：{name}',
+  'appConfig.loadError.title': '加载配置失败',
+  'appConfig.loadError.hint': '在加载成功之前，保存将被禁用——否则当前配置可能会被空值覆盖。',
+  'appConfig.loadError.cannotSave': '无法保存：未加载源配置。',
+  'common.retry': '重试',
 
   // -- Config Editor --
   'configEditor.title': 'namespace.yml',

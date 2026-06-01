@@ -6,11 +6,13 @@ interface StatusBadgeProps {
   variant?: 'pill' | 'indicator'
 }
 
-// Kotlin parity (AppRuntimeStatus.kt) — category → hex.
-const C_RUNNING = '#33AB50'
-const C_TRANSIENT = '#F4E909' // STARTING / PULLING / STOPPING / UPDATING / READY_*
-const C_STALLED = '#DB831D' // PULL_FAILED / START_FAILED / STOPPING_FAILED / STALLED / FAILED
-const C_STOPPED = '#424242'
+// Status → theme-aware CSS color token (defined in index.css). Using a var
+// instead of a fixed hex lets the same status read correctly on both the dark
+// and light surfaces — see the --color-status-* tokens.
+const C_RUNNING = 'var(--color-status-running)'
+const C_TRANSIENT = 'var(--color-status-transient)' // STARTING / PULLING / STOPPING / UPDATING / READY_*
+const C_STALLED = 'var(--color-status-stalled)' // PULL_FAILED / START_FAILED / STOPPING_FAILED / STALLED / FAILED
+const C_STOPPED = 'var(--color-status-stopped)'
 
 const statusColor: Record<string, string> = {
   RUNNING: C_RUNNING,
@@ -41,8 +43,8 @@ export function StatusBadge({ status, variant = 'pill' }: StatusBadgeProps) {
     return (
       <span className="inline-flex items-center gap-2 text-xs font-medium uppercase tracking-wide">
         <span
-          className={`inline-block h-5 w-5 rounded-full border border-black/60 ${pulse}`}
-          style={{ backgroundColor: color }}
+          className={`inline-block h-3.5 w-3.5 rounded-full ring-2 ring-inset ring-black/15 ${pulse}`}
+          style={{ backgroundColor: color, boxShadow: `0 0 0 3px color-mix(in srgb, ${color} 22%, transparent)` }}
         />
         <span style={{ color }}>{label}</span>
       </span>
@@ -50,8 +52,8 @@ export function StatusBadge({ status, variant = 'pill' }: StatusBadgeProps) {
   }
   return (
     <span
-      className="inline-flex items-center gap-1.5 rounded px-1.5 py-0 text-[11px] font-medium leading-5"
-      style={{ backgroundColor: `${color}1A`, color }}
+      className="inline-flex items-center gap-1.5 rounded px-1.5 py-0 text-[11px] font-medium leading-[17px]"
+      style={{ backgroundColor: `color-mix(in srgb, ${color} 14%, transparent)`, color }}
     >
       <span
         className={`inline-block h-1.5 w-1.5 rounded-full ${pulse}`}

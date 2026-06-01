@@ -60,17 +60,19 @@ export function NamespaceDialog({ open, onClose, onOpened }: NamespaceDialogProp
   const canSwitch = !activeNsID || activeStatus === 'STOPPED'
 
   const reload = useCallback(() => {
-    setLoading(true)
-    getNamespaces()
-      .then((ns) => setRows(ns.map((n) => ({
-        id: n.id,
-        name: n.name || n.id,
-        bundleRef: n.bundleRef ?? '',
-        status: n.status,
-        workspaceId: n.workspaceId,
-      }))))
-      .catch((e) => toast((e as Error).message, 'error'))
-      .finally(() => setLoading(false))
+    void Promise.resolve().then(() => {
+      setLoading(true)
+      return getNamespaces()
+        .then((ns) => setRows(ns.map((n) => ({
+          id: n.id,
+          name: n.name || n.id,
+          bundleRef: n.bundleRef ?? '',
+          status: n.status,
+          workspaceId: n.workspaceId,
+        }))))
+        .catch((e) => toast((e as Error).message, 'error'))
+        .finally(() => setLoading(false))
+    })
   }, [])
 
   useEffect(() => {
@@ -204,6 +206,7 @@ export function NamespaceDialog({ open, onClose, onOpened }: NamespaceDialogProp
         selectable={canSwitch && !switching}
         onSelect={(sel) => { if (sel.length === 1) void switchToNamespace(sel[0]) }}
         loading={loading}
+        hideSearch
       />
       <ConfirmModal
         open={!!deleteTarget}

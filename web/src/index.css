@@ -15,6 +15,31 @@
   --color-success: #5fad65;
   --color-warning: #e8c44d;
   --color-accent: #393b40;
+
+  /* Status colors — theme-aware so the pill text/dot stay legible on BOTH the
+     dark (#1e1f22) and light (#fff) surfaces. A single hex can't do that, which
+     is why the old acidic #F4E909 yellow was near-invisible on the light theme.
+     Tuned calmer on dark, darkened for AA-ish contrast on light (see below). */
+  --color-status-running: #4eb45e;   /* RUNNING / HEALTHY */
+  --color-status-transient: #e0b53a; /* STARTING / PULLING / READY_* / STOPPING — calmer than the old acid yellow */
+  --color-status-stalled: #e08740;   /* *_FAILED / STALLED */
+  --color-status-stopped: #7c7f87;   /* STOPPED — lifted off near-black so the dot is actually visible */
+
+  /* IDE-grade monospace stack — prefers real developer fonts when present on
+     the host, falling back through OS defaults. No bundled/CDN assets, so it
+     never breaks the offline daemon; data cells just get sharper glyphs when
+     a good mono is available. */
+  --font-mono: "JetBrains Mono", "SF Mono", "Cascadia Code", "Fira Code",
+    "Roboto Mono", ui-monospace, "Menlo", "Consolas", monospace;
+
+  /* Tinted elevation — shadows carry the dark background's blue-charcoal hue
+     instead of pure black, so popovers/dropdowns/modals read as lifted off
+     the surface rather than punched into it. Overrides Tailwind's shadow-*
+     utilities globally. */
+  --shadow-sm: 0 1px 2px rgba(10, 11, 14, 0.45);
+  --shadow-md: 0 2px 6px rgba(10, 11, 14, 0.5), 0 1px 2px rgba(10, 11, 14, 0.4);
+  --shadow-lg: 0 8px 24px rgba(8, 9, 12, 0.55), 0 2px 6px rgba(8, 9, 12, 0.45);
+  --shadow-xl: 0 16px 40px rgba(8, 9, 12, 0.6), 0 4px 10px rgba(8, 9, 12, 0.5);
 }
 
 body {
@@ -26,15 +51,43 @@ body {
   line-height: 1.4;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Tabular figures everywhere — this is a live monitoring tool, so CPU/MEM/
+     percent columns update on a tick. Proportional digits make those columns
+     twitch sideways as values change; tabular figures keep them rock-steady. */
+  font-variant-numeric: tabular-nums;
 }
 
 #root {
   min-height: 100vh;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 /* Smooth transitions on interactive elements */
 button, a, [role="button"] {
-  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease, transform 0.08s ease;
+}
+
+/* Physical press feedback — a barely-there nudge on click so buttons feel like
+   they depress. Excludes disabled controls. */
+button:not(:disabled):active,
+[role="button"]:not([aria-disabled="true"]):active {
+  transform: translateY(0.5px);
+}
+
+/* Respect users who ask for less motion — kills the status-dot pulse,
+   smooth-scroll, and press nudge. */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  button:not(:disabled):active,
+  [role="button"]:active { transform: none; }
 }
 
 /* Focus-visible for keyboard accessibility */
@@ -64,6 +117,11 @@ button, a, [role="button"] {
   --color-success: #16a34a;
   --color-warning: #ca8a04;
   --color-accent: #ecedf0;
+  /* Darkened status colors so pill text/dots read on the near-white surface. */
+  --color-status-running: #2e7d32;
+  --color-status-transient: #a9761a;
+  --color-status-stalled: #c2410c;
+  --color-status-stopped: #6b7280;
 }
 
 /* Respect OS preference on first visit */
@@ -82,6 +140,10 @@ button, a, [role="button"] {
     --color-success: #16a34a;
     --color-warning: #ca8a04;
     --color-accent: #ecedf0;
+    --color-status-running: #2e7d32;
+    --color-status-transient: #a9761a;
+    --color-status-stalled: #c2410c;
+    --color-status-stopped: #6b7280;
   }
 }
 
@@ -109,8 +171,9 @@ button, a, [role="button"] {
   scrollbar-width: none;
 }
 
-/* Dialog backdrop */
+/* Dialog backdrop — tinted toward the app's blue-charcoal rather than pure
+   black, so the dimmed surface still feels part of the same room. */
 dialog::backdrop {
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(12, 14, 20, 0.6);
   backdrop-filter: blur(2px);
 }

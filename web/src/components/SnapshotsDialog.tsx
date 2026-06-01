@@ -69,33 +69,35 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
   }, [open])
 
   const reload = useCallback(() => {
-    setLoading(true)
-    Promise.all([
-      getSnapshots().catch(() => [] as SnapshotDto[]),
-      getWorkspaceSnapshots().catch(() => [] as WsSnapshot[]),
-    ]).then(([ns, ws]) => {
-      setNsRows(
-        ns
-          .slice()
-          .sort((a, b) => (b.createdAt > a.createdAt ? 1 : -1))
-          .map((s) => ({
+    void Promise.resolve().then(() => {
+      setLoading(true)
+      return Promise.all([
+        getSnapshots().catch(() => [] as SnapshotDto[]),
+        getWorkspaceSnapshots().catch(() => [] as WsSnapshot[]),
+      ]).then(([ns, ws]) => {
+        setNsRows(
+          ns
+            .slice()
+            .sort((a, b) => (b.createdAt > a.createdAt ? 1 : -1))
+            .map((s) => ({
+              name: s.name,
+              size: formatBytes(s.size),
+              created: formatSnapshotDate(new Date(s.createdAt)),
+              scope: 'namespace' as const,
+            })),
+        )
+        setWsRows(
+          ws.map((s) => ({
             name: s.name,
-            size: formatBytes(s.size),
-            created: formatSnapshotDate(new Date(s.createdAt)),
-            scope: 'namespace' as const,
+            size: s.size ?? '—',
+            created: '—',
+            scope: 'workspace' as const,
+            url: s.url,
+            id: s.id,
           })),
-      )
-      setWsRows(
-        ws.map((s) => ({
-          name: s.name,
-          size: s.size ?? '—',
-          created: '—',
-          scope: 'workspace' as const,
-          url: s.url,
-          id: s.id,
-        })),
-      )
-    }).finally(() => setLoading(false))
+        )
+      }).finally(() => setLoading(false))
+    })
   }, [])
 
   useEffect(() => {
@@ -280,7 +282,7 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
     <>
       <dialog
         ref={dialogRef}
-        className="z-50 fixed rounded-lg border border-border bg-card p-0 text-foreground backdrop:bg-black/50"
+        className="z-50 fixed rounded-lg border border-border bg-card p-0 text-foreground shadow-xl"
         style={{
           width: 'min(90vw, 768px)',
           // Auto-grow to content; the body has its own max-height + scroll
@@ -378,7 +380,7 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
               type="button"
               className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted"
               onClick={() => runWith('openDir', async () => {
-                const res = await postOpenDir('volumes')
+                const res = await postOpenDir('snapshots')
                 if (!res.opened && res.path) {
                   toast(res.path, 'success')
                 }

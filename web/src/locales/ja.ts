@@ -285,6 +285,10 @@ const ja: Translations = {
   'appConfig.fileReset.success': '\u30d5\u30a1\u30a4\u30eb\u3092\u30c7\u30d5\u30a9\u30eb\u30c8\u306b\u30ea\u30bb\u30c3\u30c8\u3057\u307e\u3057\u305f',
   'appConfig.fileEdited.badge': '\u7de8\u96c6\u6e08\u307f',
   'appConfig.tabTitle': '\u8a2d\u5b9a: {name}',
+  'appConfig.loadError.title': '設定の読み込みに失敗しました',
+  'appConfig.loadError.hint': '読み込みが成功するまで保存は無効になります。そうしないと、現在の設定が空の値で上書きされる可能性があります。',
+  'appConfig.loadError.cannotSave': '保存できません: 元の設定が読み込まれていません。',
+  'common.retry': '再試行',
 
   // -- Config Editor --
   'configEditor.title': 'namespace.yml',

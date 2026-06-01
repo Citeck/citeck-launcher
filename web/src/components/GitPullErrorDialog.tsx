@@ -57,7 +57,7 @@ export function GitPullErrorDialog({ open, repoUrl, errorMessage, skipAvailable,
   return (
     <dialog
       ref={dialogRef}
-      className="fixed inset-0 z-50 m-auto max-w-lg w-full rounded-lg border border-border bg-card p-0 text-foreground backdrop:bg-black/50"
+      className="fixed inset-0 z-50 m-auto max-w-lg w-full rounded-lg border border-border bg-card p-0 text-foreground shadow-xl"
     >
       <div className="p-6">
         <h2 className="text-lg font-semibold mb-3">{t('gitPullError.title')}</h2>

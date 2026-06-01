@@ -31,11 +31,11 @@ export function StatsCell({ text, percent, isActive, isWarning, isCritical, titl
   const textColor = isCritical ? 'text-red-500' : isWarning ? 'text-amber-500' : 'text-muted-foreground'
   return (
     <span
-      className={`inline-flex flex-col gap-0.5 leading-none ${align === 'right' ? 'items-end' : 'items-start'}`}
+      className={`inline-flex flex-col gap-px leading-none ${align === 'right' ? 'items-end' : 'items-start'}`}
       title={title}
     >
-      <span className={`font-mono ${textColor}`}>{text}</span>
-      <span className="block h-[3px] w-[60px] rounded-full bg-muted overflow-hidden">
+      <span className={`font-mono leading-none ${textColor}`}>{text}</span>
+      <span className="block h-[3px] w-[56px] rounded-full bg-muted overflow-hidden">
         <span
           className="block h-full rounded-full transition-[width] duration-300"
           style={{ width: `${clamped}%`, backgroundColor: bar }}

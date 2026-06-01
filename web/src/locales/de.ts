@@ -285,6 +285,10 @@ const de: Translations = {
   'appConfig.fileReset.success': 'Datei auf Standard zurückgesetzt',
   'appConfig.fileEdited.badge': 'geändert',
   'appConfig.tabTitle': 'Konfiguration: {name}',
+  'appConfig.loadError.title': 'Konfiguration konnte nicht geladen werden',
+  'appConfig.loadError.hint': 'Das Speichern ist deaktiviert, bis das Laden erfolgreich ist — andernfalls könnte die aktuelle Konfiguration mit einem leeren Wert überschrieben werden.',
+  'appConfig.loadError.cannotSave': 'Speichern nicht möglich: Die Quellkonfiguration wurde nicht geladen.',
+  'common.retry': 'Wiederholen',
 
   // -- Config Editor --
   'configEditor.title': 'namespace.yml',

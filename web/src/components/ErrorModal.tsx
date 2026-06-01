@@ -27,8 +27,15 @@ export function ErrorModal({ open, onClose, title, message, details }: ErrorModa
     } else if (!open && dialog.open) {
       dialog.close()
     }
-    if (!open) setExpanded(false)
   }, [open])
+
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (!dialog) return
+    const handleClose = () => setExpanded(false)
+    dialog.addEventListener('close', handleClose)
+    return () => dialog.removeEventListener('close', handleClose)
+  }, [])
 
   async function handleDump() {
     setDumping(true)
@@ -45,7 +52,7 @@ export function ErrorModal({ open, onClose, title, message, details }: ErrorModa
   return (
     <dialog
       ref={dialogRef}
-      className="fixed inset-0 z-50 m-auto max-w-2xl rounded-lg border border-border bg-card p-0 text-foreground backdrop:bg-black/50"
+      className="fixed inset-0 z-50 m-auto max-w-2xl rounded-lg border border-border bg-card p-0 text-foreground shadow-xl"
       onClose={onClose}
     >
       <div className="p-6">

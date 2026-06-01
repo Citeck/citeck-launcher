@@ -265,7 +265,7 @@ export interface OpenDirResponse {
   message?: string
 }
 
-export async function postOpenDir(kind: 'volumes'): Promise<OpenDirResponse> {
+export async function postOpenDir(kind: 'volumes' | 'snapshots'): Promise<OpenDirResponse> {
   const res = await fetchWithTimeout(`${API_BASE}/system/open-dir`, {
     method: 'POST',
     headers: { ...CSRF_HEADER, 'Content-Type': 'application/json' },

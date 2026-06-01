@@ -53,7 +53,7 @@ export function MasterPasswordDialog({
   return (
     <dialog
       ref={dialogRef}
-      className="fixed inset-0 z-50 m-auto max-w-md w-full rounded-lg border border-border bg-card p-0 text-foreground backdrop:bg-black/50"
+      className="fixed inset-0 z-50 m-auto max-w-md w-full rounded-lg border border-border bg-card p-0 text-foreground shadow-xl"
       // No onClose: dialog is dismiss-only via explicit buttons (Kotlin parity).
     >
       {/* key resets form state on each open/close toggle — avoids setState-in-effect */}

@@ -5,7 +5,6 @@ import { useDashboardStore } from '../lib/store'
 import { openSecondaryView } from '../lib/desktop'
 import { RegistryCredentialsDialog } from './RegistryCredentialsDialog'
 import { useTranslation } from '../lib/i18n'
-import { StatusBadge } from './StatusBadge'
 import { toast } from '../lib/toast'
 import { RotateCw, FileText, Settings, KeyRound } from 'lucide-react'
 
@@ -74,12 +73,10 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
 
   return (
     <div className="space-y-3">
-      {/* Live status from SSE */}
-      {appMeta && (
-        <div className="flex items-center gap-2">
-          <StatusBadge status={appMeta.status} />
-          {appMeta.statusText && <span className="text-[10px] text-muted-foreground">{appMeta.statusText}</span>}
-        </div>
+      {/* Status badge already shown in the drawer header (subtitle); here we
+          only surface statusText (e.g. failure detail), when present. */}
+      {appMeta?.statusText && (
+        <div className="text-[11px] text-muted-foreground">{appMeta.statusText}</div>
       )}
 
       {/* Details grid */}

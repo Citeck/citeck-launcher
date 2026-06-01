@@ -84,7 +84,10 @@ export function AppTable({ apps, highlightedApp }: AppTableProps) {
 
   return (
     <>
-      <table className="w-full text-xs border-collapse table-fixed">
+      {/* whitespace-nowrap inherits to every cell — long status text / labels
+          truncate within their fixed column instead of wrapping and inflating
+          row height. */}
+      <table className="w-full text-[13px] leading-tight border-collapse table-fixed whitespace-nowrap">
         {/* Column widths follow Kotlin AppTableColumns.kt: NAME / STATUS are
             proportional (NAME wider), CPU / MEM / PORTS / TAG / ACTIONS are
             fixed in dp. table-fixed prevents a wide status-text from pushing
@@ -98,15 +101,28 @@ export function AppTable({ apps, highlightedApp }: AppTableProps) {
           <col style={{ width: '120px' }} />
           <col style={{ width: '104px' }} />
         </colgroup>
+        {/* Sticky header — the app list scrolls (24 rows on enterprise), so the
+            column labels stay pinned to the top of the scroll container. bg +
+            bottom border live on the th cells (a sticky <tr>'s own border can
+            disappear under the scrolling body). */}
         <thead>
-          <tr className="text-left text-muted-foreground border-b border-border">
-            <th className="py-1 pr-4 font-medium">{t('table.name')}</th>
-            <th className="py-1 pr-4 font-medium">{t('table.status')}</th>
-            <th className="py-1 pr-2 font-medium text-right">{t('table.cpu')}</th>
-            <th className="py-1 pr-4 font-medium text-right">{t('table.mem')}</th>
-            <th className="py-1 pr-4 font-medium">{t('table.ports')}</th>
-            <th className="py-1 pr-4 font-medium">{t('table.tag')}</th>
-            <th className="py-1 font-medium text-right">{t('table.actions')}</th>
+          <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+            {[
+              { k: 'table.name', c: 'pr-4' },
+              { k: 'table.status', c: 'pr-4' },
+              { k: 'table.cpu', c: 'pr-2 text-right' },
+              { k: 'table.mem', c: 'pr-4 text-right' },
+              { k: 'table.ports', c: 'pr-4' },
+              { k: 'table.tag', c: 'pr-4' },
+              { k: 'table.actions', c: 'text-right' },
+            ].map((col) => (
+              <th
+                key={col.k}
+                className={`sticky top-0 z-10 bg-background py-1.5 font-medium shadow-[inset_0_-1px_0_var(--color-border)] ${col.c}`}
+              >
+                {t(col.k)}
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
@@ -188,8 +204,17 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
   return (
     <>
       <tr>
-        <td colSpan={7} className="pt-4 pb-1 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-          {t(labelKey)}
+        {/* Section anchor — the old launcher used bold headers as the primary
+            grouping signal. A label + trailing hairline keeps that clarity
+            without the heavy weight, so the eye can find group boundaries in a
+            24-row list. */}
+        <td colSpan={7} className="pt-3.5 pb-1">
+          <div className="flex items-center gap-2.5">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-foreground/65">
+              {t(labelKey)}
+            </span>
+            <span className="h-px flex-1 bg-border/70" aria-hidden="true" />
+          </div>
         </td>
       </tr>
       {apps.map((app) => {
@@ -198,14 +223,15 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
         const isTransitional = TRANSITIONAL.includes(app.status)
         const isHighlighted = highlightedApp === app.name
         return (
-          <tr key={app.name} className={`border-b border-border/20 ${isHighlighted ? 'bg-primary/8' : 'hover:bg-accent'}`}>
-            <td className="py-[3px] pr-4 font-mono whitespace-nowrap">
-              <button type="button" className="text-primary hover:underline cursor-pointer"
-                onClick={() => openDrawer(app.name)}>
-                {app.name}
-              </button>
+          // Whole row opens the inspect drawer; the actions cell and the
+          // tag-copy cell stop propagation so their own clicks still win.
+          <tr key={app.name}
+            className={`group cursor-pointer border-b border-border/20 ${isHighlighted ? 'bg-primary/8' : 'hover:bg-accent'}`}
+            onClick={() => openDrawer(app.name)}>
+            <td className="py-[2px] pr-4 font-mono whitespace-nowrap">
+              <span className="text-primary group-hover:underline">{app.name}</span>
             </td>
-            <td className="py-[3px] pr-4 overflow-hidden">
+            <td className="py-[2px] pr-4 overflow-hidden">
               <span className="flex items-center gap-1.5 min-w-0">
                 <StatusBadge status={app.status} />
                 {(app.restartCount ?? 0) > 0 && (
@@ -245,7 +271,7 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
                 )}
               </span>
             </td>
-            <td className="py-[3px] pr-2 text-right">
+            <td className="py-[2px] pr-2 text-right">
               <StatsCell
                 text={app.cpu || ''}
                 percent={parseCpuPercent(app.cpu)}
@@ -254,7 +280,7 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
                 title={app.cpuThrottled ? t('table.cpu.throttled') : undefined}
               />
             </td>
-            <td className="py-[3px] pr-4 text-right">
+            <td className="py-[2px] pr-4 text-right">
               <StatsCell
                 text={app.memory ? app.memory.split(' / ')[0] : ''}
                 percent={app.memoryPercent ?? 0}
@@ -264,36 +290,36 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
                 title={app.memoryCritical ? t('table.memory.critical') : app.memoryWarning ? t('table.memory.warning') : undefined}
               />
             </td>
-            <td className="py-[3px] pr-4 font-mono text-muted-foreground whitespace-nowrap" title={app.ports?.join(', ')}>
+            <td className="py-[2px] pr-4 font-mono text-muted-foreground whitespace-nowrap" title={app.ports?.join(', ')}>
               {portsShort(app.ports)}
             </td>
-            <td className="py-[3px] pr-4 font-mono text-muted-foreground whitespace-nowrap cursor-pointer hover:text-foreground"
+            <td className="py-[2px] pr-4 font-mono text-muted-foreground whitespace-nowrap cursor-pointer hover:text-foreground"
               title={t('table.copy', { image: app.image })}
-              onClick={() => navigator.clipboard.writeText(app.image)}>
+              onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(app.image) }}>
               {tag(app.image)}
             </td>
-            <td className="py-[3px] text-right whitespace-nowrap">
+            <td className="py-[2px] text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
               <div className="inline-flex items-center gap-0.5">
                 {isRun && (
                   <>
-                    <IconBtn icon={Square} title={t('table.action.stop')} color="hover:text-destructive" onClick={() => onAction({ type: 'stop', appName: app.name })} />
+                    <IconBtn icon={Square} filled title={t('table.action.stop')} color="hover:text-destructive" onClick={() => onAction({ type: 'stop', appName: app.name })} />
                     <IconBtn icon={RotateCw} title={t('table.action.restart')} onClick={() => onAction({ type: 'restart', appName: app.name })} />
                   </>
                 )}
                 {isStop && (
-                  <IconBtn icon={Play} title={t('table.action.start')} color="hover:text-success" onClick={() => onAction({ type: 'start', appName: app.name })} />
+                  <IconBtn icon={Play} filled title={t('table.action.start')} color="hover:text-success" onClick={() => onAction({ type: 'start', appName: app.name })} />
                 )}
                 {isTransitional && (
-                  <IconBtn icon={Square} title={t('table.action.stop')} color="hover:text-destructive" onClick={() => onAction({ type: 'stop', appName: app.name })} />
+                  <IconBtn icon={Square} filled title={t('table.action.stop')} color="hover:text-destructive" onClick={() => onAction({ type: 'stop', appName: app.name })} />
                 )}
                 <button type="button"
-                  className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted disabled:hover:bg-transparent disabled:hover:text-muted-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="px-1 py-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted disabled:hover:bg-transparent disabled:hover:text-muted-foreground disabled:opacity-40 disabled:cursor-not-allowed"
                   title={t('logs.title', { name: app.name })}
                   disabled={app.status === 'STOPPED'}
                   onClick={() => openSecondaryView({ id: `logs:${app.name}`, type: 'logs', title: t('logs.title', { name: app.name }), appName: app.name })}>
                   <FileText size={14} />
                 </button>
-                <button type="button" className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted relative"
+                <button type="button" className="px-1 py-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted relative"
                   title={t('table.cog.tooltip')}
                   onClick={() => openSecondaryView({ id: `app-config:${app.name}`, type: 'app-config', title: t('appConfig.tabTitle', { name: app.name }), appName: app.name })}
                   onContextMenu={async (e) => {
@@ -353,15 +379,17 @@ function PullProgressBar({ percent, phase }: { percent: number; phase: string })
   )
 }
 
-function IconBtn({ icon: Icon, title, color, onClick }: { icon: React.ElementType; title: string; color?: string; onClick: () => void }) {
+function IconBtn({ icon: Icon, title, color, onClick, filled }: { icon: React.ElementType; title: string; color?: string; onClick: () => void; filled?: boolean }) {
   return (
     <button
       type="button"
-      className={`p-1 rounded text-muted-foreground ${color ?? 'hover:text-foreground'} hover:bg-muted`}
+      className={`px-1 py-0.5 rounded text-muted-foreground ${color ?? 'hover:text-foreground'} hover:bg-muted`}
       onClick={onClick}
       title={title}
     >
-      <Icon size={14} />
+      {/* Transport-style controls (stop/play) render filled so the stop button
+          reads as a solid square, not a hollow checkbox. */}
+      <Icon size={14} className={filled ? 'fill-current' : undefined} />
     </button>
   )
 }

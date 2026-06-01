@@ -66,6 +66,9 @@ interface JournalDialogProps<T extends Record<string, unknown>> {
   onCreate?: () => void
   /** When true, auto-closes when the table becomes empty (Kotlin `closeWhenAllRecordsDeleted`). */
   closeWhenEmpty?: boolean
+  /** Hide the search/filter input row (these dialogs show short lists where the
+   *  filter is just clutter). Filtering logic stays inert with an empty query. */
+  hideSearch?: boolean
   /** Shows a spinner row instead of the "no data" placeholder while data
    *  is being fetched, so the dialog doesn't flash "Нет данных" on open
    *  for caller fetches that take a few hundred ms. */
@@ -94,6 +97,7 @@ export function JournalDialog<T extends Record<string, unknown>>({
   onCreate,
   closeWhenEmpty = false,
   loading = false,
+  hideSearch = false,
 }: JournalDialogProps<T>) {
   const { t } = useTranslation()
   const dialogRef = useRef<HTMLDialogElement>(null)
@@ -191,7 +195,7 @@ export function JournalDialog<T extends Record<string, unknown>>({
   return (
     <dialog
       ref={dialogRef}
-      className="z-50 fixed rounded-lg border border-border bg-card p-0 text-foreground backdrop:bg-black/50"
+      className="z-50 fixed rounded-lg border border-border bg-card p-0 text-foreground shadow-xl"
       style={{
         width: 'min(90vw, 768px)',
         // Dialog auto-grows to its content; the table body has its own
@@ -222,18 +226,20 @@ export function JournalDialog<T extends Record<string, unknown>>({
         </div>
 
         {/* Search */}
-        <div className="px-4 py-2 border-b border-border shrink-0">
-          <div className="relative">
-            <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <input
-              type="text"
-              className="w-full rounded border border-border bg-background pl-7 pr-2 py-1 text-xs focus:outline-none focus:border-primary"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={t('journal.filter')}
-            />
+        {!hideSearch && (
+          <div className="px-4 py-2 border-b border-border shrink-0">
+            <div className="relative">
+              <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <input
+                type="text"
+                className="w-full rounded border border-border bg-background pl-7 pr-2 py-1 text-xs focus:outline-none focus:border-primary"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={t('journal.filter')}
+              />
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Table — own scroll viewport so the dialog grows naturally with
             short lists but caps when the list is long enough to fill it. */}

@@ -285,6 +285,10 @@ const es: Translations = {
   'appConfig.fileReset.success': 'Archivo restablecido al valor predeterminado',
   'appConfig.fileEdited.badge': 'editado',
   'appConfig.tabTitle': 'Configuración: {name}',
+  'appConfig.loadError.title': 'No se pudo cargar la configuración',
+  'appConfig.loadError.hint': 'El guardado está deshabilitado hasta que la carga se complete correctamente; de lo contrario, la configuración actual podría sobrescribirse con un valor vacío.',
+  'appConfig.loadError.cannotSave': 'No se puede guardar: la configuración de origen no se cargó.',
+  'common.retry': 'Reintentar',
 
   // -- Config Editor --
   'configEditor.title': 'namespace.yml',

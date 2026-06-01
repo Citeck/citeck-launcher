@@ -29,7 +29,7 @@ import { AppConfigEditor } from '../components/AppConfigEditor'
 import { RestartEvents } from '../components/RestartEvents'
 import type { BottomPanelTab } from '../lib/panels'
 import { toast } from '../lib/toast'
-import { ExternalLink, FolderOpen, Globe, Download, AlertTriangle, HardDrive, Key, Stethoscope, FileText, ArrowLeft } from 'lucide-react'
+import { ExternalLink, FolderOpen, Globe, Download, AlertTriangle, HardDrive, Key, FileText, ArrowLeft } from 'lucide-react'
 import { LoadingHint } from '../components/LoadingHint'
 import { postOpenDir } from '../lib/api'
 
@@ -127,7 +127,6 @@ export function Dashboard() {
   }, [])
 
   const navigate = useNavigate()
-  const openTab = useTabsStore((s) => s.openTab)
 
   if (loading && !namespace) {
     return (
@@ -250,12 +249,14 @@ export function Dashboard() {
 
           {serviceLinks.length > 0 && (
             <div>
-              <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider mb-1">{t('dashboard.links')}</div>
-              {/* Kotlin parity: group by `category`. The first link in a new
-                  category gets a small header. Links without a category render
-                  before the first header (matching the alwaysEnabled=true /
-                  category=undefined case). */}
-              <div className="flex flex-col gap-0.5">
+              <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider mb-1.5">{t('dashboard.links')}</div>
+              {/* Group by `category`. The first link in a new category gets a
+                  small header. Links without a category render before the first
+                  header (matching the alwaysEnabled=true / category=undefined
+                  case). Rendered as roomy nav rows (bigger icon + 13px label +
+                  full-width hover) — the old launcher's links were prominent and
+                  the compact version felt cramped. */}
+              <div className="flex flex-col gap-px">
                 {serviceLinks.map((l, i) => {
                   const prevCategory = i > 0 ? (serviceLinks[i - 1].category ?? '') : '__INIT__'
                   const showHeader = (l.category ?? '') !== prevCategory && l.category
@@ -264,12 +265,12 @@ export function Dashboard() {
                   return (
                     <div key={l.name}>
                       {showHeader && (
-                        <div className="text-[10px] text-muted-foreground/80 mt-1.5 mb-0.5">{l.category}</div>
+                        <div className="text-[11px] text-muted-foreground/80 mt-2 mb-0.5">{l.category}</div>
                       )}
                       <a href={l.url} target="_blank" rel="noopener noreferrer"
                         title={l.description ?? l.name}
-                        className={`flex items-center gap-1.5 text-xs py-0.5 ${
-                          enabled ? 'text-primary hover:underline' : 'text-muted-foreground cursor-not-allowed'
+                        className={`flex items-center gap-2.5 text-[13px] rounded px-1.5 py-1 -mx-1.5 ${
+                          enabled ? 'text-primary hover:bg-muted/70' : 'text-muted-foreground cursor-not-allowed'
                         }`}
                         onClick={(e) => {
                           e.preventDefault()
@@ -277,9 +278,9 @@ export function Dashboard() {
                           openExternal(l.url)
                         }}>
                         {l.icon
-                          ? <img src={`/icons/${l.icon}.svg`} alt="" width={12} height={12} className="opacity-80" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
-                          : <ExternalLink size={11} />}
-                        {l.name}
+                          ? <img src={`/icons/${l.icon}.svg`} alt="" width={18} height={18} className="shrink-0 opacity-90" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+                          : <ExternalLink size={15} className="shrink-0" />}
+                        <span className="truncate">{l.name}</span>
                       </a>
                     </div>
                   )
@@ -289,8 +290,10 @@ export function Dashboard() {
           )}
 
           </div>
-          {/* Fixed footer — always visible at bottom */}
-          <div className="shrink-0 p-3 pt-2 border-t border-border flex flex-row flex-wrap items-center gap-1">
+          {/* Fixed footer — always visible at bottom. Single evenly-spaced row
+              (justify-between) so the icon strip reads as one deliberate toolbar
+              instead of wrapping into a lopsided two-row block. */}
+          <div className="shrink-0 px-2.5 py-2 border-t border-border flex flex-row items-center justify-between">
             {/* Kotlin parity (NamespaceScreen.kt:308-324): back-to-Welcome arrow,
                 only enabled when no apps are running so the user can't strand
                 containers by switching namespaces mid-flight. */}
@@ -328,9 +331,6 @@ export function Dashboard() {
             <SidebarIconBtn icon={AlertTriangle}
               tooltip={t('dashboard.systemDump')}
               onClick={() => getSystemDump('zip').then(() => toast(t('dashboard.systemDump.success'), 'success')).catch((e) => toast((e as Error).message, 'error'))} />
-            <SidebarIconBtn icon={Stethoscope}
-              tooltip={t('dashboard.diagnostics')}
-              onClick={() => { openTab({ id: 'diagnostics', title: t('dashboard.diagnostics'), path: '/diagnostics' }); navigate('/diagnostics') }} />
             <SidebarIconBtn icon={Download}
               tooltip={t('dashboard.restartEvents')}
               onClick={() => openBottomTab({ id: 'restart-events', type: 'restart-events', title: t('dashboard.restartEvents') })} />
@@ -397,11 +397,11 @@ function SidebarIconBtn({ icon: Icon, tooltip, onClick, disabled }: { icon: Reac
   return (
     <button type="button"
       disabled={disabled}
-      className={`flex items-center justify-center w-7 h-7 rounded ${
+      className={`flex items-center justify-center w-6 h-6 rounded ${
         disabled ? 'text-muted-foreground/40 cursor-not-allowed' : 'text-muted-foreground hover:text-foreground hover:bg-muted'
       }`}
       onClick={onClick} title={tooltip}>
-      <Icon size={16} />
+      <Icon size={15} />
     </button>
   )
 }

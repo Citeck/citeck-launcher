@@ -59,15 +59,17 @@ export function SecretsDialog({ open, onClose }: SecretsDialogProps) {
   const [loading, setLoading] = useState(false)
 
   const reload = useCallback(() => {
-    setLoading(true)
-    getSecrets()
-      // SYSTEM secrets (_jwt, _oidc, _citeck_sa) are daemon-managed and have
-      // sensible defaults — the user shouldn't see them in the Secrets UI
-      // (they neither edit them nor reason about them). Only user-added
-      // GIT_TOKEN / BASIC_AUTH / REGISTRY_AUTH entries belong here.
-      .then((s) => setSecrets(s.filter((sec) => sec.type !== 'SYSTEM').map(toRow)))
-      .catch((e) => toast((e as Error).message, 'error'))
-      .finally(() => setLoading(false))
+    void Promise.resolve().then(() => {
+      setLoading(true)
+      return getSecrets()
+        // SYSTEM secrets (_jwt, _oidc, _citeck_sa) are daemon-managed and have
+        // sensible defaults — the user shouldn't see them in the Secrets UI
+        // (they neither edit them nor reason about them). Only user-added
+        // GIT_TOKEN / BASIC_AUTH / REGISTRY_AUTH entries belong here.
+        .then((s) => setSecrets(s.filter((sec) => sec.type !== 'SYSTEM').map(toRow)))
+        .catch((e) => toast((e as Error).message, 'error'))
+        .finally(() => setLoading(false))
+    })
   }, [])
 
   useEffect(() => {
@@ -228,6 +230,7 @@ export function SecretsDialog({ open, onClose }: SecretsDialogProps) {
         rowActions={rowActions}
         onCreate={() => setCreateOpen(true)}
         loading={loading}
+        hideSearch
       />
       <FormDialog
         open={createOpen}

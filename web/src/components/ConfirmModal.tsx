@@ -46,7 +46,7 @@ export function ConfirmModal({
   return (
     <dialog
       ref={dialogRef}
-      className="fixed inset-0 z-50 m-auto max-w-md rounded-lg border border-border bg-card p-0 text-foreground backdrop:bg-black/50"
+      className="fixed inset-0 z-50 m-auto max-w-md rounded-lg border border-border bg-card p-0 text-foreground shadow-xl"
       onClose={onCancel}
       onKeyDown={(e) => {
         if (e.key === 'Enter' && !loading) {

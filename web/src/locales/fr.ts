@@ -285,6 +285,10 @@ const fr: Translations = {
   'appConfig.fileReset.success': 'Fichier réinitialisé à la valeur par défaut',
   'appConfig.fileEdited.badge': 'modifié',
   'appConfig.tabTitle': 'Configuration : {name}',
+  'appConfig.loadError.title': 'Échec du chargement de la configuration',
+  'appConfig.loadError.hint': 'L’enregistrement est désactivé tant que le chargement n’a pas réussi — sinon, la configuration actuelle pourrait être écrasée par une valeur vide.',
+  'appConfig.loadError.cannotSave': 'Impossible d’enregistrer : la configuration source n’a pas été chargée.',
+  'common.retry': 'Réessayer',
 
   // -- Config Editor --
   'configEditor.title': 'namespace.yml',

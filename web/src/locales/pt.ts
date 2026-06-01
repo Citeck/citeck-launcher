@@ -285,6 +285,10 @@ const pt: Translations = {
   'appConfig.fileReset.success': 'Arquivo restaurado para o padr\u00e3o',
   'appConfig.fileEdited.badge': 'editado',
   'appConfig.tabTitle': 'Configura\u00e7\u00e3o: {name}',
+  'appConfig.loadError.title': 'Falha ao carregar a configuração',
+  'appConfig.loadError.hint': 'O salvamento fica desabilitado até que o carregamento seja bem-sucedido — caso contrário, a configuração atual poderia ser sobrescrita com um valor vazio.',
+  'appConfig.loadError.cannotSave': 'Não é possível salvar: a configuração de origem não foi carregada.',
+  'common.retry': 'Tentar novamente',
 
   // -- Config Editor --
   'configEditor.title': 'namespace.yml',
