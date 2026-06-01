@@ -440,7 +440,8 @@ type FieldErrorDto struct {
 // modes resolve the directory differently.
 type OpenDirRequestDto struct {
 	// Kind selects which allowlisted directory to open.
-	// Supported values: "volumes" (current namespace's volumes/runtime base).
+	// Supported values: "volumes" (current namespace's volumes/runtime base),
+	// "snapshots" (current namespace's snapshot cache folder).
 	Kind string `json:"kind"`
 }
 

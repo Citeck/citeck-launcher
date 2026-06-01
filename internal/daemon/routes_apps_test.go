@@ -248,11 +248,11 @@ func TestAppLogs_HostileTailParamDoesNotCrash(t *testing.T) {
 	mux := newAppsTestDaemon(t)
 
 	cases := []string{
-		"abc",         // non-numeric
-		"-5",          // negative
-		"999999999",   // way over cap
-		"",            // missing
-		"100%3Brm",    // URL-encoded shell-ish string — doesn't parse, no harm done
+		"abc",       // non-numeric
+		"-5",        // negative
+		"999999999", // way over cap
+		"",          // missing
+		"100%3Brm",  // URL-encoded shell-ish string — doesn't parse, no harm done
 	}
 	for _, tail := range cases {
 		t.Run("tail="+tail, func(t *testing.T) {

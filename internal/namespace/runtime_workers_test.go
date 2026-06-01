@@ -133,6 +133,10 @@ func (m *workerMockDocker) GetContainers(_ context.Context) ([]container.Summary
 	return nil, nil
 }
 
+func (m *workerMockDocker) ListAllLauncherContainers(_ context.Context) ([]container.Summary, error) {
+	return nil, nil
+}
+
 func (m *workerMockDocker) InspectContainer(_ context.Context, _ string) (container.InspectResponse, error) {
 	return container.InspectResponse{}, nil
 }

@@ -560,14 +560,14 @@ func (d *Daemon) SwitchWorkspace(wsID string) error {
 	})
 	if loadErr != nil {
 		slog.Warn("Workspace switch: auto-load namespace failed", "wsID", wsID, "nsID", newNsID, "err", loadErr) //nolint:gosec // G706: wsID/newNsID validated
-		return nil //nolint:nilerr // workspace switch succeeded; namespace auto-load is best-effort
+		return nil                                                                                               //nolint:nilerr // workspace switch succeeded; namespace auto-load is best-effort
 	}
 	if loaded.NsConfig == nil {
 		return nil
 	}
 	if err := d.installLoadedNamespace(loaded, wsID, newNsID); err != nil {
 		slog.Warn("Workspace switch: install loaded namespace failed", "wsID", wsID, "nsID", newNsID, "err", err) //nolint:gosec // G706: wsID/newNsID validated
-		return nil //nolint:nilerr // workspace switch succeeded; install failure is best-effort
+		return nil                                                                                                //nolint:nilerr // workspace switch succeeded; install failure is best-effort
 	}
 	slog.Info("Workspace switch: namespace auto-loaded", "wsID", wsID, "nsID", newNsID) //nolint:gosec // G706: wsID/newNsID validated
 	return nil

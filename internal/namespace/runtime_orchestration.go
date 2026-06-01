@@ -37,6 +37,13 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) { //nolint:gocyclo // or
 		slog.Error("Failed to create network", "err", err)
 	}
 
+	// Pre-flight: if one of OUR containers from ANOTHER namespace already holds
+	// a published host port one of our apps needs (e.g. mailhog/onlyoffice/
+	// pgadmin use fixed host ports shared across namespaces), stop+remove it so
+	// this start doesn't fail with a cryptic Docker "port is already allocated".
+	// Only launcher-created containers are ever touched.
+	r.resolveHostPortConflicts(ctx, apps)
+
 	// Check existing containers for deployment hash match
 	existingContainers := r.buildExistingContainerMap(ctx)
 
@@ -527,9 +534,9 @@ func (r *Runtime) doStop() {
 //
 // Per-app routing:
 //   - RUNNING / FAILED / START_FAILED: T20 (STOPPING + stopContainer).
-//   - STARTING with ContainerID != "": T20 (main container exists).
-//   - STARTING with ContainerID == "": T20c (init-phase; cancel init worker,
-//     stop the `{appName}-init` container).
+//   - STARTING: T20/T20c (cancel init worker; stop BOTH the main and the
+//     `{appName}-init` container — the main may already exist while its
+//     ContainerID Result is not yet applied, so we never branch on ContainerID).
 //   - STOPPING_FAILED: fresh T20 (re-dispatch stopContainer; attemptID bump
 //     supersedes any stale entry).
 //   - PULLING / READY_TO_PULL / READY_TO_START / DEPS_WAITING / PULL_FAILED:
@@ -556,16 +563,12 @@ func (r *Runtime) beginGroupStopUnderLock(group []*AppRuntime) []dispatchPlan {
 			app.initialSweep = false
 			r.setAppStatus(app, AppStatusStopping)
 			r.dispatcher.CancelApp(app.Name, workers.CancelExternalStop, workers.OpStop)
-			var containerName string
-			if app.ContainerID != "" {
-				// T20 — main container already created; stop by app container name.
-				containerName = r.docker.ContainerName(app.Name)
-			} else {
-				// T20c — init phase; the init worker was just canceled, but
-				// the init container may still be running. Target its name.
-				containerName = r.docker.ContainerName(app.Name + "-init")
-			}
-			plans = append(plans, r.makeStopPlan(app.Name, containerName, r.resolveStopTimeout(app.Def.StopTimeout)))
+			// T20/T20c — stop BOTH the main and a possibly-orphaned "<app>-init"
+			// container. We must not branch on ContainerID: the start worker can
+			// have already created the main container while its ContainerID
+			// Result is not yet applied (app.ContainerID == ""), and targeting
+			// only "<app>-init" there leaked the running main container.
+			plans = append(plans, r.makeStartingStopPlan(app.Name, r.resolveStopTimeout(app.Def.StopTimeout)))
 		case AppStatusStoppingFailed:
 			// Fresh T20: re-attempt stopContainer. The new Dispatch supersedes
 			// any stale slot via attemptID bump.

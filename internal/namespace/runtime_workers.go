@@ -321,6 +321,37 @@ func (r *Runtime) makeStopPlan(appName, containerName string, stopTimeout int) d
 	}
 }
 
+// makeStartingStopPlan stops+removes both the main container and a possibly-
+// orphaned "<app>-init" container for an app caught mid-STARTING.
+//
+// The main container is authoritative (its removal determines success); the
+// init container is best-effort. This covers the start/stop race where the
+// start worker has already created+started the main container but its
+// ContainerID Result has not yet been applied to runtime state
+// (app.ContainerID == ""). Targeting only "<app>-init" in that window — as the
+// old ContainerID heuristic did — left the running main container alive,
+// holding its (often fixed) host ports and colliding with other namespaces.
+//
+// runStopTask treats a missing container as success (idempotent remove), so the
+// genuine init-phase case (no main container yet) also returns cleanly.
+func (r *Runtime) makeStartingStopPlan(appName string, stopTimeout int) dispatchPlan {
+	mainName := r.docker.ContainerName(appName)
+	initName := r.docker.ContainerName(appName + "-init")
+	return dispatchPlan{
+		taskID: workers.TaskID{App: appName, Op: workers.OpStop},
+		fn: func(ctx context.Context) workers.Result {
+			var result workers.Result
+			pprof.Do(ctx, pprof.Labels("work", stopWorkLabel), func(ctx context.Context) {
+				// Best-effort: clear a possibly-running init container.
+				_ = r.docker.StopAndRemoveContainer(ctx, initName, stopTimeout)
+				// Authoritative: stop+remove the main container.
+				result = r.runStopTask(ctx, appName, mainName, stopTimeout)
+			})
+			return result
+		},
+	}
+}
+
 func (r *Runtime) runStopTask(ctx context.Context, appName, containerName string, stopTimeout int) workers.Result {
 	const maxAttempts = 3 // attempt 0 + 2 retries
 	var lastErr error

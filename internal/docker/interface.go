@@ -23,6 +23,7 @@ type RuntimeClient interface {
 	RemoveContainer(ctx context.Context, id string) error
 	StopAndRemoveContainer(ctx context.Context, name string, timeoutSec int) error
 	GetContainers(ctx context.Context) ([]container.Summary, error)
+	ListAllLauncherContainers(ctx context.Context) ([]container.Summary, error)
 	InspectContainer(ctx context.Context, id string) (container.InspectResponse, error)
 	PullImage(ctx context.Context, img string, auth *RegistryAuth) error
 	PullImageWithProgress(ctx context.Context, img string, auth *RegistryAuth, progressFn PullProgressFn) error

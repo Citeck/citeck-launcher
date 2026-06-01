@@ -25,8 +25,13 @@ type mockDocker struct {
 	mu              sync.Mutex
 	containers      map[string]mockContainer // app name → container
 	nextID          int
-	stopRemoveCalls int // number of StopAndRemoveContainer invocations
-	removeNetCalls  int // number of RemoveNetwork invocations
+	stopRemoveCalls int      // number of StopAndRemoveContainer invocations
+	stoppedNames    []string // raw names/IDs passed to StopAndRemoveContainer (cross-namespace conflict tests)
+	removeNetCalls  int      // number of RemoveNetwork invocations
+
+	// If non-nil, ListAllLauncherContainers returns this verbatim (cross-namespace
+	// port-conflict tests); otherwise it falls back to GetContainers.
+	allLauncherList []container.Summary
 
 	// Test knobs (nil-safe defaults preserve normal behavior).
 	pullCalls      int               // incremented on each PullImageWithProgress call
@@ -102,6 +107,7 @@ func (m *mockDocker) RemoveContainer(ctx context.Context, id string) error { ret
 func (m *mockDocker) StopAndRemoveContainer(ctx context.Context, name string, timeoutSec int) error {
 	m.mu.Lock()
 	m.stopRemoveCalls++
+	m.stoppedNames = append(m.stoppedNames, name)
 	block := m.stopBlock
 	delay := m.stopDelay
 	// Strip the "test-" prefix added by ContainerName so we delete the right key.
@@ -138,6 +144,19 @@ func (m *mockDocker) GetContainers(ctx context.Context) ([]container.Summary, er
 		})
 	}
 	return result, nil
+}
+
+// ListAllLauncherContainers returns the mock's containers (cross-namespace
+// awareness isn't exercised by the mock; the pre-flight detection is unit-
+// tested directly in runtime_portconflict_test.go).
+func (m *mockDocker) ListAllLauncherContainers(ctx context.Context) ([]container.Summary, error) {
+	m.mu.Lock()
+	custom := m.allLauncherList
+	m.mu.Unlock()
+	if custom != nil {
+		return custom, nil
+	}
+	return m.GetContainers(ctx)
 }
 
 func (m *mockDocker) InspectContainer(ctx context.Context, id string) (container.InspectResponse, error) {

@@ -377,28 +377,19 @@ func (r *Runtime) StopApp(appName string) error { //nolint:gocyclo // single-pas
 		app.ContainerID = ""
 		r.setAppStatus(app, AppStatusStopped)
 	case AppStatusStarting:
-		if app.ContainerID == "" {
-			// T19c: STARTING in init phase. Cancel the init worker; spare
-			// any pre-existing OpStop. Dispatch stopContainer targeting the
-			// init container name; on T21 desiredNext="" routes to STOPPED.
-			r.dispatcher.CancelApp(appName, workers.CancelStopApp, workers.OpStop)
-			app.desiredNext = ""
-			app.initialSweep = false
-			app.stoppingStartedAt = r.nowFunc()
-			r.setAppStatus(app, AppStatusStopping)
-			initContainerName := r.docker.ContainerName(appName + "-init")
-			plan = r.makeStopPlan(appName, initContainerName, stopTimeout)
-			dispatchStop = true
-		} else {
-			// T19 (STARTING-startPhase / probePhase): main container exists.
-			r.dispatcher.CancelApp(appName, workers.CancelStopApp, workers.OpStop)
-			app.desiredNext = ""
-			app.initialSweep = false
-			app.stoppingStartedAt = r.nowFunc()
-			r.setAppStatus(app, AppStatusStopping)
-			plan = r.makeStopPlan(appName, containerName, stopTimeout)
-			dispatchStop = true
-		}
+		// T19/T19c: cancel the init worker, then stop BOTH the main and a
+		// possibly-orphaned "<app>-init" container. We must not branch on
+		// ContainerID: the start worker can have already created the main
+		// container while its ContainerID Result is not yet applied
+		// (app.ContainerID == ""), and targeting only "<app>-init" there leaked
+		// the running main container (and stranded its host ports).
+		r.dispatcher.CancelApp(appName, workers.CancelStopApp, workers.OpStop)
+		app.desiredNext = ""
+		app.initialSweep = false
+		app.stoppingStartedAt = r.nowFunc()
+		r.setAppStatus(app, AppStatusStopping)
+		plan = r.makeStartingStopPlan(appName, stopTimeout)
+		dispatchStop = true
 	case AppStatusRunning, AppStatusFailed, AppStatusStartFailed, AppStatusStoppingFailed:
 		// T19: container exists (or is presumed to). Dispatch stop and
 		// transition to STOPPING.

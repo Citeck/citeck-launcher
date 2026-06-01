@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -225,6 +226,18 @@ func (d *Daemon) resolveOpenDirPath(kind string) (string, error) {
 			return "", fmt.Errorf("no namespace configured")
 		}
 		return base, nil
+	case "snapshots":
+		dir, err := d.snapshotsDir()
+		if err != nil {
+			return "", err
+		}
+		// Ensure it exists so opening the snapshots folder on a namespace that
+		// has never had a snapshot taken lands the user in an empty directory
+		// rather than failing on a missing path.
+		if mkErr := os.MkdirAll(dir, 0o750); mkErr != nil {
+			return "", fmt.Errorf("create snapshots dir: %w", mkErr)
+		}
+		return dir, nil
 	default:
 		return "", fmt.Errorf("unsupported open-dir kind: %q", kind)
 	}

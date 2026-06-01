@@ -14,6 +14,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/config"
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
@@ -357,9 +358,17 @@ func (c *Client) StopContainer(ctx context.Context, id string, timeoutSec int) e
 	return nil
 }
 
-// RemoveContainer removes a container.
+// RemoveContainer removes a container. Removing a container that no longer
+// exists is treated as success (idempotent): a not-found result means the
+// desired end state — container gone — is already achieved. Without this, a
+// stop plan that targets an absent container (e.g. a never-created "<app>-init"
+// during a mid-start stop) would fail, mask a real leak as STOPPING_FAILED, and
+// abort the rest of the stop.
 func (c *Client) RemoveContainer(ctx context.Context, id string) error {
 	if err := c.cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true, RemoveVolumes: true}); err != nil {
+		if cerrdefs.IsNotFound(err) {
+			return nil
+		}
 		return fmt.Errorf("remove container %s: %w", id, err)
 	}
 	return nil
