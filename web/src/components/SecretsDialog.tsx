@@ -6,6 +6,7 @@ import { JournalDialog, type JournalAction, type JournalColumn } from './Journal
 import { ConfirmModal } from './ConfirmModal'
 import { FormDialog, type FormFieldSpec } from './FormDialog'
 import { MasterPasswordDialog } from './MasterPasswordDialog'
+import { formatDateTime } from '../lib/datetime'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
 
@@ -277,6 +278,6 @@ function toRow(s: SecretMetaDto): SecretRow {
     name: s.name,
     type: s.type,
     scope: s.scope ?? '',
-    created: s.createdAt ? new Date(s.createdAt).toLocaleString() : '',
+    created: s.createdAt ? formatDateTime(s.createdAt) : '',
   }
 }

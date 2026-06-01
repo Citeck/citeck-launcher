@@ -3,6 +3,7 @@ import { getAppInspect, postAppRestart } from '../lib/api'
 import type { AppInspectDto } from '../lib/types'
 import { useDashboardStore } from '../lib/store'
 import { openSecondaryView } from '../lib/desktop'
+import { formatDateTime } from '../lib/datetime'
 import { RegistryCredentialsDialog } from './RegistryCredentialsDialog'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
@@ -85,7 +86,7 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
         <D l={t('drawer.image')} v={inspect.image} />
         <D l={t('drawer.state')} v={inspect.state} dim={isStopped} />
         <D l={t('drawer.network')} v={inspect.network} />
-        <D l={t('drawer.started')} v={inspect.startedAt ? new Date(inspect.startedAt).toLocaleString() : '—'} dim={isStopped} />
+        <D l={t('drawer.started')} v={inspect.startedAt ? formatDateTime(inspect.startedAt) : '—'} dim={isStopped} />
         <D l={t('drawer.uptime')} v={formatUptime(inspect.uptime)} dim={isStopped} />
         <D l={t('drawer.restarts')} v={String(inspect.restartCount)} />
         <D l={t('drawer.ports')} v={inspect.ports?.join(', ') || '—'} />

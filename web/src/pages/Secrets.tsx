@@ -3,6 +3,7 @@ import { getSecrets, createSecret, deleteSecret, testSecret, getSecretsStatus, s
 import type { SecretMetaDto } from '../lib/types'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { toast } from '../lib/toast'
+import { formatDate } from '../lib/datetime'
 import { useTranslation } from '../lib/i18n'
 import { Trash2, Plus, FlaskConical, CheckCircle, XCircle, KeyRound, Lock, ShieldCheck } from 'lucide-react'
 
@@ -322,7 +323,7 @@ export function Secrets() {
               <td className="py-[3px] pr-4 font-mono">{s.name}</td>
               <td className="py-[3px] pr-4 text-muted-foreground">{s.type}</td>
               <td className="py-[3px] pr-4 text-muted-foreground">{s.scope}</td>
-              <td className="py-[3px] pr-4 text-muted-foreground">{new Date(s.createdAt).toLocaleDateString()}</td>
+              <td className="py-[3px] pr-4 text-muted-foreground">{formatDate(s.createdAt)}</td>
               <td className="py-[3px] text-right flex items-center justify-end gap-1">
                 <button
                   type="button"

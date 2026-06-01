@@ -3,6 +3,7 @@ import { fetchRestartEvents } from '../lib/api'
 import { useDashboardStore } from '../lib/store'
 import { useTranslation } from '../lib/i18n'
 import type { RestartEventDto } from '../lib/types'
+import { formatDateTime } from '../lib/datetime'
 
 interface RestartEventsProps {
   active: boolean
@@ -57,7 +58,7 @@ export function RestartEvents({ active }: RestartEventsProps) {
         <tbody>
           {events.map((e, i) => (
             <tr key={i} className="border-b border-border/50 hover:bg-muted/30">
-              <td className="px-3 py-1 text-muted-foreground whitespace-nowrap">{new Date(e.ts).toLocaleString()}</td>
+              <td className="px-3 py-1 text-muted-foreground whitespace-nowrap">{formatDateTime(e.ts)}</td>
               <td className="px-3 py-1 font-medium">{e.app}</td>
               <td className="px-3 py-1">
                 <span className={`inline-flex items-center rounded px-1.5 py-0 text-[10px] font-medium leading-4 ${

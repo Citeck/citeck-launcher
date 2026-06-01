@@ -3,6 +3,7 @@ import { getVolumes, deleteVolume, getSnapshots, postExportSnapshot, postImportS
 import type { SnapshotDto } from '../lib/types'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { toast } from '../lib/toast'
+import { formatDateTime } from '../lib/datetime'
 import { useTranslation } from '../lib/i18n'
 import { Trash2, Download, Upload, Archive, Loader2, Pencil, Cloud } from 'lucide-react'
 
@@ -222,7 +223,7 @@ export function Volumes() {
                     )}
                   </td>
                   <td className="py-[3px] pr-4 text-muted-foreground">{formatSize(s.size)}</td>
-                  <td className="py-[3px] pr-4 text-muted-foreground">{new Date(s.createdAt).toLocaleString()}</td>
+                  <td className="py-[3px] pr-4 text-muted-foreground">{formatDateTime(s.createdAt)}</td>
                 </tr>
               ))}
             </tbody>

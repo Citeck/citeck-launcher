@@ -6,6 +6,7 @@ import { ConfirmModal } from './ConfirmModal'
 import { FormDialog, type FormFieldSpec } from './FormDialog'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
+import { formatDateTime } from '../lib/datetime'
 import { showError } from '../lib/errorModal'
 import { startLongOp, endLongOp } from '../lib/longOp'
 
@@ -82,7 +83,7 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
             .map((s) => ({
               name: s.name,
               size: formatBytes(s.size),
-              created: formatSnapshotDate(new Date(s.createdAt)),
+              created: formatDateTime(s.createdAt),
               scope: 'namespace' as const,
             })),
         )
@@ -568,12 +569,6 @@ function formatBytes(bytes: number): string {
   if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`
   if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`
   return `${bytes} B`
-}
-
-/** Format a Date as "HH:MM dd.MM.yyyy" — Kotlin parity (SnapshotsDialog.kt). */
-function formatSnapshotDate(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${pad(date.getHours())}:${pad(date.getMinutes())} ${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()}`
 }
 
 function defaultSnapshotName(): string {
