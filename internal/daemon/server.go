@@ -670,14 +670,19 @@ func Start(opts StartOptions) error {
 	)
 
 	// Handle shutdown: external context (desktop) or signal-based (CLI).
-	// Both paths perform a full shutdown (containers stopped) — the detach
-	// (leave-running) path is only triggered explicitly via the HTTP endpoint.
-	if opts.Ctx != nil {
-		// Desktop mode: context provided externally (Wails owns lifecycle)
+	// Desktop quit DETACHES — containers are left running and re-adopted on the
+	// next launch via doStart's hash match — so the launcher and the Docker apps
+	// live independently (the kubelet principle). CLI/server signal shutdown
+	// (systemd is server-only) performs a full stop. Detach is also triggered
+	// explicitly via the HTTP endpoint for binary upgrades.
+	if opts.Desktop {
+		// Desktop mode: Wails owns the lifecycle and provides opts.Ctx, canceled
+		// on quit. Closing the launcher is not a request to tear the namespace
+		// down; explicit teardown stays available via the UI Stop button.
 		go func() {
 			<-opts.Ctx.Done()
-			slog.Info("External context canceled, shutting down")
-			d.shutdown(false)
+			slog.Info("External context canceled, detaching (containers left running)")
+			d.shutdown(true)
 		}()
 	} else {
 		// CLI mode: first SIGINT/SIGTERM → graceful, second → force exit

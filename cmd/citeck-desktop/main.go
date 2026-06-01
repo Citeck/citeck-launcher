@@ -137,13 +137,21 @@ func main() {
 			}
 		}
 		w.WriteHeader(resp.StatusCode)
-		// Stream response body (supports SSE and chunked logs)
+		// Stream response body (supports SSE and chunked logs). Break on a write
+		// error: a broken pipe means the webview closed the request (the user
+		// switched the log tail or closed the window), so we stop reading and let
+		// the deferred resp.Body.Close tear the upstream daemon stream down.
+		// Without this the proxy goroutine — and the daemon-side follow stream it
+		// holds open — leak for the life of the process every time a follow
+		// stream's client goes away.
 		if f, ok := w.(http.Flusher); ok {
 			buf := make([]byte, 4096)
 			for {
 				n, readErr := resp.Body.Read(buf)
 				if n > 0 {
-					_, _ = w.Write(buf[:n])
+					if _, werr := w.Write(buf[:n]); werr != nil {
+						break
+					}
 					f.Flush()
 				}
 				if readErr != nil {
@@ -262,16 +270,41 @@ func main() {
 		},
 	})
 
+	// raiseToFront shows the window and brings it above other windows with
+	// focus. On Linux/GTK, Focus() maps to gtk_window_present, which is subject
+	// to the window manager's focus-stealing prevention and intermittently
+	// leaves the window behind others when shown from the tray. Forcing
+	// keep-above raises it reliably; we drop the hint on the next UI-loop tick
+	// so normal stacking resumes (the window stays raised+focused, just no
+	// longer pinned above everything). Must be called on the UI thread.
+	raiseToFront := func() {
+		window.Show()
+		if runtime.GOOS == "linux" {
+			// Linux/GTK: Show() maps the window asynchronously, and Focus()
+			// (gtk_window_present) gets denied by the WM's focus-stealing
+			// prevention on a tray click — it blinks the taskbar instead of
+			// raising. Pin keep-above so the WM restacks the window above
+			// others when it maps, regardless of focus rules, then release the
+			// pin after a delay long enough for the map+restack to land.
+			// Dropping it on the next UI tick raced the async GTK map and left
+			// the window behind (the bug this replaces).
+			window.SetAlwaysOnTop(true)
+			window.Focus()
+			time.AfterFunc(700*time.Millisecond, func() {
+				application.InvokeAsync(func() { window.SetAlwaysOnTop(false) })
+			})
+		} else {
+			window.Focus()
+		}
+	}
+
 	// Second-launch focus hand-off (Kotlin AppLocalSocket parity): the daemon
 	// runs in its own goroutine and never exposes the *Daemon back to us, so
 	// we register the raise callback via a process-global atomic in the daemon
 	// package. Must run on the UI thread (application.InvokeAsync) — calling
 	// Show/Focus directly from the HTTP handler goroutine deadlocks GTK.
 	daemon.SetDesktopFocusHandler(func() {
-		application.InvokeAsync(func() {
-			window.Show()
-			window.Focus()
-		})
+		application.InvokeAsync(raiseToFront)
 	})
 
 	// Hide on close instead of quitting (minimize to tray)
@@ -292,8 +325,7 @@ func main() {
 
 	menu := app.NewMenu()
 	menu.Add("Open").OnClick(func(_ *application.Context) {
-		window.Show()
-		window.Focus()
+		raiseToFront()
 	})
 
 	// In-flight guard prevents double-click from launching parallel dumps
@@ -348,10 +380,10 @@ func main() {
 	})
 
 	tray.SetMenu(menu)
-	tray.OnClick(func() {
-		window.Show()
-		window.Focus()
-	})
+	// Left-click on the tray icon raises the window to the front — including
+	// when it's already open but behind other windows (Show() is then a no-op
+	// and the keep-above raise in raiseToFront does the work).
+	tray.OnClick(raiseToFront)
 
 	if runErr := app.Run(); runErr != nil {
 		slog.Error("Application exited with error", "err", runErr)
