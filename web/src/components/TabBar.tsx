@@ -2,11 +2,13 @@ import { useNavigate, useLocation } from 'react-router'
 import { useTabsStore } from '../lib/tabs'
 import { usePanelStore } from '../lib/panels'
 import { useDashboardStore } from '../lib/store'
+import { useActiveWorkspaceId, useIsDesktop, useDaemonStatusStore } from '../lib/daemonStatus'
 import { useTranslation, LOCALES, useI18nStore } from '../lib/i18n'
 import { X, Settings, Sun, Moon, ChevronDown } from 'lucide-react'
 import { useEffect, useState, useRef } from 'react'
 import { useContextMenu } from '../hooks/useContextMenu'
 import { ContextMenu } from './ContextMenu'
+import { WorkspaceSelector } from './WorkspaceSelector'
 
 export function TabBar() {
   const { tabs, activeTabId, setActiveTab, closeTab } = useTabsStore()
@@ -14,6 +16,8 @@ export function TabBar() {
   const setNsEditOpen = usePanelStore((s) => s.setNsEditOpen)
   const setNsSwitcherOpen = usePanelStore((s) => s.setNsSwitcherOpen)
   const namespace = useDashboardStore((s) => s.namespace)
+  const activeWorkspaceId = useActiveWorkspaceId()
+  const isDesktop = useIsDesktop()
   const navigate = useNavigate()
   const location = useLocation()
   const { t } = useTranslation()
@@ -74,6 +78,18 @@ export function TabBar() {
             <Settings size={14} />
           </button>
         </>
+      )}
+
+      {/* Welcome view (no namespace open): the workspace picker lives in the
+          top panel instead of floating in the page's top-left corner. Desktop
+          only — WorkspaceSelector self-hides in server mode. */}
+      {!namespace && isDesktop && (
+        <div className="flex items-center px-2 h-full">
+          <WorkspaceSelector
+            activeId={activeWorkspaceId}
+            onChanged={() => { void useDaemonStatusStore.getState().refresh() }}
+          />
+        </div>
       )}
 
       {showTabs && (

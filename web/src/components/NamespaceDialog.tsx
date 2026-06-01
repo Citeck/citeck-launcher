@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router'
-import { Check, Code2, Pencil, Trash2 } from 'lucide-react'
+import { Pencil, Trash2 } from 'lucide-react'
 import { getNamespaces, deleteNamespace, activateNamespace } from '../lib/api'
 import { JournalDialog, type JournalAction, type JournalColumn } from './JournalDialog'
 import { ConfirmModal } from './ConfirmModal'
@@ -84,16 +84,9 @@ export function NamespaceDialog({ open, onClose, onOpened }: NamespaceDialogProp
       label: t('namespaces.col.name'),
       key: 'name',
       width: '40%',
-      // Mark the currently active namespace with a check icon (Kotlin parity:
-      // JournalSelectDialog tagged the active record with a leading glyph).
-      render: (row) => (
-        <span className="inline-flex items-center gap-1">
-          {row.id === activeNsID && (
-            <Check size={11} className="text-primary shrink-0" aria-label={t('namespaces.col.active')} />
-          )}
-          <span className="truncate">{row.name}</span>
-        </span>
-      ),
+      // The active namespace is marked by its pre-checked left checkbox
+      // (initialSelectedKeys below), so no extra glyph here.
+      render: (row) => <span className="truncate">{row.name}</span>,
     },
     { label: t('namespaces.col.bundle'), key: 'bundleRef' },
     {
@@ -135,35 +128,15 @@ export function NamespaceDialog({ open, onClose, onOpened }: NamespaceDialogProp
     }
   }
 
-  const openBottomTab = usePanelStore((s) => s.openBottomTab)
+  // Key (first-column value = name) of the active namespace row, so the dialog
+  // can pre-check its left checkbox instead of a separate active-marker glyph.
+  const activeKey = rows.find((r) => r.id === activeNsID)?.name
 
   const rowActions: JournalAction<NamespaceRow>[] = [
     {
       icon: Pencil,
       title: t('namespaces.action.edit'),
       onClick: (row) => setEditTarget(row),
-    },
-    {
-      icon: Code2,
-      title: t('nsEdit.editRawYaml'),
-      onClick: async (row) => {
-        // ConfigEditor is scoped to the active namespace, so switching first
-        // is required when picking a different row. Refuse if current ns is
-        // not STOPPED — same guard as the row-select switch.
-        if (row.id !== activeNsID) {
-          if (!canSwitch) {
-            toast(t('namespaces.switch.blocked'), 'error')
-            return
-          }
-          try { await activateNamespace(row.id) }
-          catch (e) { toast((e as Error).message, 'error'); return }
-        }
-        await fetchData()
-        startEventStream()
-        openBottomTab({ id: 'ns-config', type: 'ns-config', title: t('nsEdit.editRawYaml') })
-        navigate('/')
-        onClose()
-      },
     },
     {
       icon: Trash2,
@@ -204,6 +177,7 @@ export function NamespaceDialog({ open, onClose, onOpened }: NamespaceDialogProp
         onCreate={() => setCreateOpen(true)}
         closeWhenEmpty={false}
         selectable={canSwitch && !switching}
+        initialSelectedKeys={activeKey ? [activeKey] : []}
         onSelect={(sel) => { if (sel.length === 1) void switchToNamespace(sel[0]) }}
         loading={loading}
         hideSearch

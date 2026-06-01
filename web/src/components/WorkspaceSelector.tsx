@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, ChevronDown, Loader2, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { ChevronDown, Loader2, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { Modal, ModalField } from './Modal'
 import { Select } from './Select'
 import {
@@ -168,9 +168,13 @@ export function WorkspaceSelector({ activeId, onChanged }: WorkspaceSelectorProp
                   className="flex-1 flex items-center gap-1.5 text-left text-xs text-foreground"
                   onClick={() => handleActivate(ws)}
                 >
-                  <span className="w-3 inline-flex">
-                    {ws.id === activeId && <Check size={12} className="text-primary" />}
-                  </span>
+                  <input
+                    type="checkbox"
+                    readOnly
+                    checked={ws.id === activeId}
+                    aria-label={t('welcome.workspace.label')}
+                    className="rounded border-border pointer-events-none shrink-0"
+                  />
                   <span className="truncate">
                     {ws.name || ws.id}
                     <span className="ml-1 text-muted-foreground">({ws.namespaces})</span>

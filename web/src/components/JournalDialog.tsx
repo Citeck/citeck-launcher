@@ -55,10 +55,14 @@ interface JournalDialogProps<T extends Record<string, unknown>> {
   data: T[]
   open: boolean
   onClose: () => void
-  /** If true, rows are selectable via checkbox/radio. */
+  /** If true, rows are selectable via checkbox. */
   selectable?: boolean
-  /** If true (and selectable), multi-select via checkboxes; else single-select via radio. */
+  /** If true (and selectable), multi-select; else single-select (clicking a row
+   *  clears the others). Both render as checkboxes. */
   multiple?: boolean
+  /** Row keys (first-column value) to pre-select whenever the data changes —
+   *  e.g. the currently-active record, so it shows as a checked checkbox. */
+  initialSelectedKeys?: string[]
   onSelect?: (selected: T[]) => void
   rowActions?: JournalAction<T>[]
   customButtons?: JournalCustomButton<T>[]
@@ -91,6 +95,7 @@ export function JournalDialog<T extends Record<string, unknown>>({
   onClose,
   selectable = false,
   multiple = false,
+  initialSelectedKeys,
   onSelect,
   rowActions,
   customButtons,
@@ -102,7 +107,7 @@ export function JournalDialog<T extends Record<string, unknown>>({
   const { t } = useTranslation()
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [search, setSearch] = useState('')
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(initialSelectedKeys ?? []))
   const [buttonLoading, setButtonLoading] = useState<string | null>(null)
 
   useEffect(() => {
@@ -112,11 +117,12 @@ export function JournalDialog<T extends Record<string, unknown>>({
     else if (!open && dialog.open) dialog.close()
   }, [open])
 
-  // Reset selection + search when data identity changes (e.g. caller refreshes).
+  // Reset selection when data identity changes (e.g. caller refreshes), seeding
+  // it with the caller's pre-selected keys (the active record).
   const [prevData, setPrevData] = useState(data)
   if (data !== prevData) {
     setPrevData(data)
-    setSelected(new Set())
+    setSelected(new Set(initialSelectedKeys ?? []))
   }
 
   // Kotlin parity: auto-close when the table is emptied. Used by namespace
@@ -283,7 +289,7 @@ export function JournalDialog<T extends Record<string, unknown>>({
                     {selectable && (
                       <td className="py-[3px] pr-2">
                         <input
-                          type={multiple ? 'checkbox' : 'radio'}
+                          type="checkbox"
                           className="rounded border-border"
                           checked={isSelected}
                           onChange={() => toggleRow(row)}

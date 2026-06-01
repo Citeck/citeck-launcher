@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { activateNamespace, getNamespaces, getQuickStarts, deleteNamespace, postNamespaceStart, createNamespace } from '../lib/api'
-import { useDaemonStatusStore } from '../lib/daemonStatus'
+import { useDaemonStatusStore, useActiveWorkspaceId } from '../lib/daemonStatus'
 import type { NamespaceSummaryDto, QuickStartDto } from '../lib/types'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { NamespaceDialog } from '../components/NamespaceDialog'
@@ -11,7 +11,6 @@ import { GitPullErrorDialog, type GitPullDecision } from '../components/GitPullE
 import { ContextMenu } from '../components/ContextMenu'
 import type { ContextMenuItem } from '../components/ContextMenu'
 import { useContextMenu } from '../hooks/useContextMenu'
-import { WorkspaceSelector } from '../components/WorkspaceSelector'
 import { useTabsStore } from '../lib/tabs'
 import { useDashboardStore } from '../lib/store'
 import { usePanelStore } from '../lib/panels'
@@ -35,10 +34,10 @@ export function Welcome() {
   const [editTarget, setEditTarget] = useState<NamespaceSummaryDto | null>(null)
   const [gitErrorOpen, setGitErrorOpen] = useState(false)
   // Active workspace ID (used for filtering namespaces + scoping the create
-  // request explicitly). Sourced from /daemon/status.workspace, which is the
-  // workspace ID — server mode exposes exactly one ID via that field.
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>('')
-  const [workspaceLoaded, setWorkspaceLoaded] = useState(false)
+  // request explicitly). Sourced from the daemon-status store so a workspace
+  // switch from the top-panel picker re-renders + reloads this screen.
+  const activeWorkspaceId = useActiveWorkspaceId()
+  const workspaceLoaded = useDaemonStatusStore((s) => s.status !== null)
   // Kotlin parity (WelcomeScreen.kt:281) — guard MessageDialog when QS clicked
   // but the workspace already has namespaces. Tracked as a transient flag.
   const navigate = useNavigate()
@@ -68,17 +67,16 @@ export function Welcome() {
     }
   }, [])
 
+  // Reload the namespace list on mount and whenever the active workspace
+  // changes (e.g. the user switches workspace from the top-panel picker).
   useEffect(() => {
     loadData()
-  }, [loadData])
+  }, [loadData, activeWorkspaceId])
 
-  // Workspace label — fetched once on mount. Fails silently because the
-  // welcome screen still renders without it (the header just shows the
-  // generic "Workspace" label).
+  // Ensure daemon status is loaded so the active workspace id resolves. Fails
+  // silently — the screen still renders without it.
   useEffect(() => {
-    useDaemonStatusStore.getState().fetch()
-      .then((s) => { setActiveWorkspaceId(s?.workspace || ''); setWorkspaceLoaded(true) })
-      .catch(() => { setWorkspaceLoaded(true) })
+    void useDaemonStatusStore.getState().fetch()
   }, [])
 
   async function handleOpenNamespace(ns: NamespaceSummaryDto) {
@@ -190,27 +188,6 @@ export function Welcome() {
 
   return (
     <div className="relative flex flex-col items-center justify-center min-h-full p-8">
-      {/* Workspace selector (Kotlin parity: WelcomeScreen.kt TopStart row).
-          The selector owns the active workspace label + per-workspace
-          actions (Force Update / Edit / Delete). In server mode the
-          /workspaces endpoint returns 404 and the component collapses to
-          nothing; the inline fallback label below preserves layout. */}
-      <div className="absolute top-3 left-3 flex items-center gap-1">
-        <WorkspaceSelector
-          activeId={activeWorkspaceId}
-          onChanged={() => {
-            // After switch / create / delete / force-update: refetch
-            // namespaces + active id so the picker and the namespace list
-            // reflect the new workspace state.
-            loadData()
-            useDaemonStatusStore.getState().refresh().then((s) => setActiveWorkspaceId(s?.workspace || '')).catch(() => {})
-          }}
-        />
-        {!activeWorkspaceId && (
-          <span className="text-xs text-muted-foreground">{t('welcome.workspace.label')}</span>
-        )}
-      </div>
-
       {/* Title */}
       <h1 className="text-3xl font-bold text-foreground mb-12">{t('welcome.title')}</h1>
 
