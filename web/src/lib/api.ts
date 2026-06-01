@@ -308,6 +308,19 @@ export async function getSystemDump(format: 'json' | 'zip' = 'json'): Promise<vo
   setTimeout(() => URL.revokeObjectURL(url), 5000)
 }
 
+/**
+ * Desktop-only system dump. The browser <a download> path getSystemDump uses
+ * is silently dropped by the WebKitGTK webview (no download handler), so the
+ * desktop UI POSTs here instead: the Wails layer writes the ZIP to disk and
+ * opens the containing folder (Kotlin 1.x parity), returning the saved path.
+ */
+export async function saveSystemDumpNative(): Promise<string> {
+  const res = await fetchWithTimeout('/desktop/system-dump', { method: 'POST', headers: CSRF_HEADER }, 60_000)
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  const data = await res.json() as { path?: string }
+  return data.path ?? ''
+}
+
 export async function getVolumes(): Promise<{ name: string; path: string; size?: number }[]> {
   return fetchJSON('/volumes')
 }

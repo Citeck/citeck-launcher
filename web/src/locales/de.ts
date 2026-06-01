@@ -44,6 +44,7 @@ const de: Translations = {
   'dashboard.restartEvents': 'Neustarts',
   'dashboard.systemDump': 'Systemabbild',
   'dashboard.systemDump.success': 'Systemabbild heruntergeladen',
+  'dashboard.systemDump.saved': 'Systemabbild gespeichert unter {path}',
   'dashboard.backToWelcome': 'Zurück zur Startseite',
   'dashboard.backToWelcome.disabled': 'Stoppen Sie alle laufenden Anwendungen, bevor Sie zur Startseite zurückkehren',
 

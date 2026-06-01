@@ -44,6 +44,7 @@ const fr: Translations = {
   'dashboard.restartEvents': 'Redemarrages',
   'dashboard.systemDump': 'Vidage syst\u00e8me',
   'dashboard.systemDump.success': 'Vidage syst\u00e8me t\u00e9l\u00e9charg\u00e9',
+  'dashboard.systemDump.saved': 'Vidage syst\u00e8me enregistr\u00e9 dans {path}',
   'dashboard.backToWelcome': 'Retour à l’accueil',
   'dashboard.backToWelcome.disabled': 'Arrêtez toutes les applications avant de revenir à l’accueil',
 

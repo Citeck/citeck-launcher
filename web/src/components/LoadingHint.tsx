@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { FileText, Download } from 'lucide-react'
-import { getSystemDump } from '../lib/api'
-import { openSecondaryView } from '../lib/desktop'
+import { openSecondaryView, triggerSystemDump } from '../lib/desktop'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
 
@@ -71,8 +70,8 @@ export function LoadingHint({ active }: LoadingHintProps) {
         <button
           type="button"
           className="inline-flex items-center gap-1 rounded border border-border px-2.5 py-1 hover:bg-muted text-foreground"
-          onClick={() => getSystemDump('zip')
-            .then(() => toast(t('dashboard.systemDump.success'), 'success'))
+          onClick={() => triggerSystemDump()
+            .then((path) => toast(path ? t('dashboard.systemDump.saved', { path }) : t('dashboard.systemDump.success'), 'success'))
             .catch((e) => toast((e as Error).message, 'error'))}
         >
           <Download size={12} /> {t('loadingHint.dumpSystemInfo')}

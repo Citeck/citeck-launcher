@@ -44,6 +44,7 @@ const ru: Translations = {
   'dashboard.restartEvents': 'Перезапуски',
   'dashboard.systemDump': 'Дамп системы',
   'dashboard.systemDump.success': 'Дамп системы скачан',
+  'dashboard.systemDump.saved': 'Дамп системы сохранён: {path}',
   'dashboard.backToWelcome': 'Назад к выбору',
   'dashboard.backToWelcome.disabled': 'Остановите все запущенные приложения, прежде чем вернуться',
 

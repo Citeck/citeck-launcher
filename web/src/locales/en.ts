@@ -44,6 +44,7 @@ const en: Translations = {
   'dashboard.restartEvents': 'Restart Events',
   'dashboard.systemDump': 'System Dump',
   'dashboard.systemDump.success': 'System dump downloaded',
+  'dashboard.systemDump.saved': 'System dump saved to {path}',
   'dashboard.backToWelcome': 'Back to Welcome',
   'dashboard.backToWelcome.disabled': 'Stop all running apps before returning to Welcome',
 

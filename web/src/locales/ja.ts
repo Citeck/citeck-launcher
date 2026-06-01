@@ -44,6 +44,7 @@ const ja: Translations = {
   'dashboard.restartEvents': '\u518d\u8d77\u52d5\u30a4\u30d9\u30f3\u30c8',
   'dashboard.systemDump': '\u30b7\u30b9\u30c6\u30e0\u30c0\u30f3\u30d7',
   'dashboard.systemDump.success': '\u30b7\u30b9\u30c6\u30e0\u30c0\u30f3\u30d7\u3092\u30c0\u30a6\u30f3\u30ed\u30fc\u30c9\u3057\u307e\u3057\u305f',
+  'dashboard.systemDump.saved': '\u30b7\u30b9\u30c6\u30e0\u30c0\u30f3\u30d7\u3092 {path} \u306b\u4fdd\u5b58\u3057\u307e\u3057\u305f',
   'dashboard.backToWelcome': 'ウェルカムへ戻る',
   'dashboard.backToWelcome.disabled': 'ウェルカムへ戻る前に、実行中のアプリをすべて停止してください',
 

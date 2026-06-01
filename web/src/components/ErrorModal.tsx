@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronRight, Download } from 'lucide-react'
 import { useTranslation } from '../lib/i18n'
 import { useErrorModalStore } from '../lib/errorModal'
-import { getSystemDump } from '../lib/api'
+import { triggerSystemDump } from '../lib/desktop'
 import { toast } from '../lib/toast'
 
 interface ErrorModalProps {
@@ -40,8 +40,8 @@ export function ErrorModal({ open, onClose, title, message, details }: ErrorModa
   async function handleDump() {
     setDumping(true)
     try {
-      await getSystemDump('zip')
-      toast(t('dashboard.systemDump.success'), 'success')
+      const path = await triggerSystemDump()
+      toast(path ? t('dashboard.systemDump.saved', { path }) : t('dashboard.systemDump.success'), 'success')
     } catch (e) {
       toast((e as Error).message, 'error')
     } finally {

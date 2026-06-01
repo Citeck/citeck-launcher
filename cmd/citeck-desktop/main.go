@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -167,6 +168,12 @@ func main() {
 	// /desktop/windows/* into it.
 	var windowManager *wailswin.WindowManager
 
+	// In-flight guard shared by the tray "Dump System Info" item and the web
+	// UI's /desktop/system-dump route, so a tray dump and a button dump can't
+	// run two parallel exports at once (matches Kotlin LoadingDialog modal
+	// semantics — a second trigger is a no-op while the first is running).
+	var dumpInFlight atomic.Bool
+
 	// Loading/error page handler — served until daemon is ready, then proxies.
 	// /desktop/windows/* is intercepted before the daemon proxy because it is
 	// a Wails-only API (server mode has no native windows to manage).
@@ -177,6 +184,20 @@ func main() {
 				return
 			}
 			http.StripPrefix("/desktop/windows", windowManager.HTTPHandler()).ServeHTTP(w, r)
+			return
+		}
+		// Native system dump for the web UI. The browser <a download> path the
+		// web button used does nothing in the WebKitGTK webview (no download
+		// handler), so the desktop UI routes here instead: write the ZIP to
+		// disk and open the containing folder, exactly like the tray item and
+		// Kotlin 1.x's SystemDumpUtils (Desktop.open(reportDir)). Returns the
+		// saved path so the frontend can show it in the success toast.
+		if r.URL.Path == "/desktop/system-dump" {
+			if r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			handleDesktopSystemDump(w, socketPath, &dumpInFlight)
 			return
 		}
 		select {
@@ -313,10 +334,8 @@ func main() {
 		raiseToFront()
 	})
 
-	// In-flight guard prevents double-click from launching parallel dumps
-	// (matches Kotlin LoadingDialog modal semantics — the second click is a
-	// no-op while the first is still running).
-	var dumpInFlight atomic.Bool
+	// dumpInFlight (declared near the asset handler) is shared with the web
+	// UI's /desktop/system-dump route so the two can't export in parallel.
 	dumpItem := menu.Add("Dump System Info")
 	dumpItem.OnClick(func(_ *application.Context) {
 		if !dumpInFlight.CompareAndSwap(false, true) {
@@ -373,6 +392,33 @@ func main() {
 	if runErr := app.Run(); runErr != nil {
 		slog.Error("Application exited with error", "err", runErr)
 	}
+}
+
+// handleDesktopSystemDump runs the native system dump on behalf of the web UI
+// button. The browser <a download> path the button used does nothing in the
+// WebKitGTK webview (no download handler), so the desktop UI POSTs here: we
+// write the ZIP to disk and open its folder, exactly like the tray item and
+// Kotlin 1.x's SystemDumpUtils (Desktop.open(reportDir)), then return the saved
+// path so the frontend can show it. dumpInFlight is shared with the tray item
+// so the two can't export in parallel.
+func handleDesktopSystemDump(w http.ResponseWriter, socketPath string, dumpInFlight *atomic.Bool) {
+	if !dumpInFlight.CompareAndSwap(false, true) {
+		http.Error(w, "dump already in progress", http.StatusConflict)
+		return
+	}
+	defer dumpInFlight.Store(false)
+	zipPath, err := dumpSystemInfo(socketPath)
+	if err != nil {
+		slog.Error("System dump failed", "err", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	slog.Info("System dump created", "path", zipPath)
+	if openErr := desktop.OpenBrowser("file://" + filepath.Dir(zipPath)); openErr != nil {
+		slog.Warn("Failed to open dump folder", "err", openErr)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"path": zipPath})
 }
 
 // streamResponseBody copies a (possibly streaming) upstream response body to w,

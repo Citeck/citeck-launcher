@@ -5,7 +5,7 @@ import { useDashboardStore } from '../lib/store'
 import { useIsDesktop } from '../lib/daemonStatus'
 import { useTabsStore } from '../lib/tabs'
 import { usePanelStore } from '../lib/panels'
-import { openSecondaryView } from '../lib/desktop'
+import { openSecondaryView, triggerSystemDump } from '../lib/desktop'
 import { VolumesDialog } from '../components/VolumesDialog'
 import { SecretsDialog } from '../components/SecretsDialog'
 import { SnapshotsDialog } from '../components/SnapshotsDialog'
@@ -13,7 +13,7 @@ import { NamespaceDialog } from '../components/NamespaceDialog'
 import { NamespaceEditDialog } from '../components/NamespaceEditDialog'
 import { ContextMenu } from '../components/ContextMenu'
 import { useContextMenu } from '../hooks/useContextMenu'
-import { getSystemDump, openExternal, deactivateNamespace } from '../lib/api'
+import { openExternal, deactivateNamespace } from '../lib/api'
 import { useTranslation } from '../lib/i18n'
 import { StatusBadge } from '../components/StatusBadge'
 import { AppTable } from '../components/AppTable'
@@ -326,7 +326,7 @@ export function Dashboard() {
               onClick={() => setSecretsDialogOpen(true)} />
             <SidebarIconBtn icon={AlertTriangle}
               tooltip={t('dashboard.systemDump')}
-              onClick={() => getSystemDump('zip').then(() => toast(t('dashboard.systemDump.success'), 'success')).catch((e) => toast((e as Error).message, 'error'))} />
+              onClick={() => triggerSystemDump().then((path) => toast(path ? t('dashboard.systemDump.saved', { path }) : t('dashboard.systemDump.success'), 'success')).catch((e) => toast((e as Error).message, 'error'))} />
           </div>
         </aside>
 

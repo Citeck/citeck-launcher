@@ -1,4 +1,4 @@
-import { hasDesktopWindowManager, openDesktopWindow } from './api'
+import { hasDesktopWindowManager, openDesktopWindow, getSystemDump, saveSystemDumpNative } from './api'
 import { usePanelStore, type BottomPanelTab } from './panels'
 
 /** Returns true if the daemon health message looks like "docker stopped" vs "docker missing". */
@@ -44,6 +44,22 @@ export function isDesktopModeSync(): boolean {
 export function resetDesktopModeCache() {
   cached = null
   cachedSync = false
+}
+
+/**
+ * Exports a system dump. Returns the saved file path in desktop mode (where
+ * the Wails layer writes the ZIP to disk and opens its folder), or null in
+ * server mode (where the browser downloads it). The browser <a download> path
+ * does nothing inside the WebKitGTK webview, so desktop routes to the native
+ * endpoint instead. Awaits the desktop-mode probe rather than the sync cache
+ * so a dump triggered before the probe resolves still picks the right path.
+ */
+export async function triggerSystemDump(): Promise<string | null> {
+  if (await primeDesktopModeCache()) {
+    return saveSystemDumpNative()
+  }
+  await getSystemDump('zip')
+  return null
 }
 
 /**

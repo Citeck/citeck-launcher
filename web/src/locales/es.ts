@@ -44,6 +44,7 @@ const es: Translations = {
   'dashboard.restartEvents': 'Reinicios',
   'dashboard.systemDump': 'Volcado del sistema',
   'dashboard.systemDump.success': 'Volcado del sistema descargado',
+  'dashboard.systemDump.saved': 'Volcado del sistema guardado en {path}',
   'dashboard.backToWelcome': 'Volver a Inicio',
   'dashboard.backToWelcome.disabled': 'Detenga todas las aplicaciones en ejecución antes de volver al Inicio',
 

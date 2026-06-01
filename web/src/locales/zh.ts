@@ -44,6 +44,7 @@ const zh: Translations = {
   'dashboard.restartEvents': '重启事件',
   'dashboard.systemDump': '系统转储',
   'dashboard.systemDump.success': '系统转储已下载',
+  'dashboard.systemDump.saved': '系统转储已保存到 {path}',
   'dashboard.backToWelcome': '返回欢迎页',
   'dashboard.backToWelcome.disabled': '请先停止所有正在运行的应用',
 

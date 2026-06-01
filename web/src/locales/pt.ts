@@ -44,6 +44,7 @@ const pt: Translations = {
   'dashboard.restartEvents': 'Reinicializacoes',
   'dashboard.systemDump': 'Despejo do sistema',
   'dashboard.systemDump.success': 'Despejo do sistema baixado',
+  'dashboard.systemDump.saved': 'Despejo do sistema salvo em {path}',
   'dashboard.backToWelcome': 'Voltar à Boas-vindas',
   'dashboard.backToWelcome.disabled': 'Pare todos os aplicativos em execução antes de voltar à tela inicial',
 

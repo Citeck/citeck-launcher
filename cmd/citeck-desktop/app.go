@@ -20,9 +20,15 @@ import (
 // surfacing UX (folder-open, toast, error dialog) so the menu item can react
 // uniformly to success and failure.
 func dumpSystemInfo(socketPath string) (string, error) {
-	homeDir := config.HomeDir()
+	// Write into a dedicated reports/ subfolder rather than the launcher root,
+	// so dumps don't clutter the home dir next to launcher.db / storage.db /
+	// conf (Kotlin 1.x parity: SystemDumpUtils wrote under AppDir/reports).
+	reportsDir := filepath.Join(config.HomeDir(), "reports")
+	if err := os.MkdirAll(reportsDir, 0o750); err != nil {
+		return "", fmt.Errorf("create reports dir: %w", err)
+	}
 	ts := time.Now().Format("20060102-150405")
-	zipPath := filepath.Join(homeDir, fmt.Sprintf("system-dump-%s.zip", ts))
+	zipPath := filepath.Join(reportsDir, fmt.Sprintf("system-dump-%s.zip", ts))
 
 	client := &http.Client{
 		Timeout: 5 * time.Minute,
