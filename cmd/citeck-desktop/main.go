@@ -144,30 +144,8 @@ func main() {
 			}
 		}
 		w.WriteHeader(resp.StatusCode)
-		// Stream response body (supports SSE and chunked logs). Break on a write
-		// error: a broken pipe means the webview closed the request (the user
-		// switched the log tail or closed the window), so we stop reading and let
-		// the deferred resp.Body.Close tear the upstream daemon stream down.
-		// Without this the proxy goroutine — and the daemon-side follow stream it
-		// holds open — leak for the life of the process every time a follow
-		// stream's client goes away.
-		if f, ok := w.(http.Flusher); ok {
-			buf := make([]byte, 4096)
-			for {
-				n, readErr := resp.Body.Read(buf)
-				if n > 0 {
-					if _, werr := w.Write(buf[:n]); werr != nil {
-						break
-					}
-					f.Flush()
-				}
-				if readErr != nil {
-					break
-				}
-			}
-		} else {
-			_, _ = io.Copy(w, resp.Body)
-		}
+		// Stream the (possibly SSE / chunked-log) response body to the webview.
+		streamResponseBody(w, resp.Body)
 	}
 
 	// Wait for daemon in a goroutine, set ready flag
@@ -394,6 +372,34 @@ func main() {
 
 	if runErr := app.Run(); runErr != nil {
 		slog.Error("Application exited with error", "err", runErr)
+	}
+}
+
+// streamResponseBody copies a (possibly streaming) upstream response body to w,
+// flushing after each chunk so SSE events and chunked logs arrive live. It stops
+// on a write error: a broken pipe means the webview closed the request (the user
+// switched the log tail or closed the window), so we must stop reading and let
+// the caller's deferred Body.Close tear the upstream daemon stream down —
+// otherwise the proxy goroutine and the daemon-side follow stream leak for the
+// life of the process.
+func streamResponseBody(w http.ResponseWriter, body io.Reader) {
+	f, ok := w.(http.Flusher)
+	if !ok {
+		_, _ = io.Copy(w, body)
+		return
+	}
+	buf := make([]byte, 4096)
+	for {
+		n, readErr := body.Read(buf)
+		if n > 0 {
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				return
+			}
+			f.Flush()
+		}
+		if readErr != nil {
+			return
+		}
 	}
 }
 
