@@ -270,7 +270,15 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 		if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
 			attrs = append(attrs, "cn", r.TLS.PeerCertificates[0].Subject.CommonName)
 		}
-		slog.Info("HTTP request", attrs...) //nolint:gosec // G706: HTTP request logging for observability
+		// Per-request logging is DEBUG noise — suppressed at the default INFO
+		// level so the launcher log isn't dominated by routine traffic (the
+		// follow-log poll alone is constant). Server errors (5xx) stay visible
+		// at WARN. Flip the daemon log level to DEBUG to see every request.
+		level := slog.LevelDebug
+		if rec.status >= http.StatusInternalServerError {
+			level = slog.LevelWarn
+		}
+		slog.Log(r.Context(), level, "HTTP request", attrs...) //nolint:gosec // G706: HTTP request logging for observability
 
 		// Record metrics
 		httpMetrics.record(r.Method, r.URL.Path, rec.status, time.Since(start))

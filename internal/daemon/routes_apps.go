@@ -60,7 +60,16 @@ func (d *Daemon) handleAppLogs(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(logs)) //nolint:gosec // G705 XSS taint: Content-Type is text/plain, not HTML
 }
 
-// handleAppLogsFollow streams container logs using Docker follow with proper stdcopy demux.
+// handleAppLogsFollow streams container logs: the backlog first, then a live
+// follow.
+//
+// The backlog is fetched via the NON-follow path on purpose. Docker's
+// Follow=true + Tail=N stream desyncs stdcopy when tail < total lines — it
+// misframes the partial backlog, reads a bogus frame length, and stalls after
+// ~100 lines (this truncated eproc's 500-line tail to ~111). The non-follow
+// ContainerLogs path demuxes the exact same Tail=N backlog correctly (and has a
+// TTY fallback), so we use it for the backlog and follow only for live output,
+// started with Tail=0 so there is no backlog for stdcopy to desync on.
 func (d *Daemon) handleAppLogsFollow(w http.ResponseWriter, r *http.Request, containerID string, tail int) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -73,16 +82,30 @@ func (d *Daemon) handleAppLogsFollow(w http.ResponseWriter, r *http.Request, con
 	_ = rc.SetWriteDeadline(time.Time{})
 
 	ctx := r.Context()
-	reader, err := d.dockerClient.ContainerLogsFollow(ctx, containerID, tail)
-	if err != nil {
-		writeInternalError(w, err)
-		return
-	}
-	defer reader.Close()
 
 	w.Header().Set("Content-Type", "text/plain")
 	w.Header().Set("Transfer-Encoding", "chunked")
 	w.Header().Set("Cache-Control", "no-cache")
+
+	// Backlog (last `tail` lines) via the robust non-follow demux.
+	if tail != 0 {
+		if backlog, err := d.dockerClient.ContainerLogs(ctx, containerID, tail); err == nil && backlog != "" {
+			_, _ = w.Write([]byte(stripAnsi(backlog))) //nolint:gosec // G705 XSS taint: Content-Type is text/plain, not HTML
+			flusher.Flush()
+		}
+	}
+
+	// Live tail: Tail=0 → docker emits only NEW lines from the current position,
+	// so the follow stream starts frame-aligned (no mid-backlog stdcopy desync).
+	// A line emitted in the gap between the backlog read and this call is a rare
+	// single-line seam — acceptable for a log viewer, and far better than the
+	// silent truncation it replaces.
+	reader, err := d.dockerClient.ContainerLogsFollow(ctx, containerID, 0)
+	if err != nil {
+		// Backlog already written; we can't change the status code now.
+		return
+	}
+	defer reader.Close()
 
 	// Use stdcopy to demux Docker multiplex headers, writing clean text to the response.
 	// stdcopy.StdCopy blocks until the reader is closed (context cancellation or container stop).

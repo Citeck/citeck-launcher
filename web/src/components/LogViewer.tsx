@@ -1,11 +1,16 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
+import { ArrowDown } from 'lucide-react'
 import { API_BASE } from '../lib/api'
 import { useTranslation } from '../lib/i18n'
 
 type LogLevel = 'ERROR' | 'WARN' | 'INFO' | 'DEBUG' | 'TRACE' | 'UNKNOWN'
 
 const LOG_LEVELS: LogLevel[] = ['ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE', 'UNKNOWN']
+
+// DEBUG is hidden by default — it's high-volume, low-signal for routine viewing
+// (e.g. the daemon's per-request lines). The user can toggle it back on.
+const DEFAULT_ENABLED_LEVELS: LogLevel[] = LOG_LEVELS.filter((l) => l !== 'DEBUG')
 
 const LEVEL_COLORS: Record<LogLevel, string> = {
   ERROR: 'text-[#ef5350]',
@@ -91,7 +96,7 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
   // hides the indentation cues that make stack traces and JSON-payload lines
   // scannable. User can flip "Перенос" on when they want it.
   const [wordWrap, setWordWrap] = useState(false)
-  const [enabledLevels, setEnabledLevels] = useState<Set<LogLevel>>(new Set(LOG_LEVELS))
+  const [enabledLevels, setEnabledLevels] = useState<Set<LogLevel>>(new Set(DEFAULT_ENABLED_LEVELS))
   const [matchIndex, setMatchIndex] = useState(0)
   // Tick incremented on EXPLICIT user navigation (typing a fresh query,
   // pressing Enter / F3 / Shift+F3, clicking the ↑/↓ buttons). The
@@ -104,6 +109,15 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
   const searchRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Trailing partial line not yet terminated by '\n'. Held out of `lines` so
+  // the rendered buffer only ever contains COMPLETE lines — no perpetual
+  // trailing "" inflating the count (500, not 501) — while still joining lines
+  // split across stream reads.
+  const pendingRef = useRef('')
+  // Current tail selection, mirrored into a ref so the []-dep appendChunk can
+  // cap the live buffer without being recreated (which would restart the stream).
+  const tailRef = useRef(tail)
+  tailRef.current = tail
   const followRef = useRef(follow)
   followRef.current = follow
   const activeRef = useRef(active)
@@ -122,43 +136,43 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
   const downloadRef = useRef<() => void>(undefined)
 
   const setLinesWithLevels = useCallback((newLines: string[]) => {
+    // Drop the trailing empty element left when a backlog that ends in '\n' is
+    // split, so the count matches the tail exactly (500, not 501). Resets the
+    // partial-line buffer — the backlog is a complete, self-contained response.
+    const trimmed = newLines.slice()
+    while (trimmed.length > 0 && trimmed[trimmed.length - 1] === '') trimmed.pop()
+    pendingRef.current = ''
     lastLevelRef.current = null
-    const { levels: newLevels, lastLevel } = detectLevelsForLines(newLines, null)
+    const { levels: newLevels, lastLevel } = detectLevelsForLines(trimmed, null)
     lastLevelRef.current = lastLevel
-    setLines(newLines)
+    setLines(trimmed)
     setLevels(newLevels)
   }, [])
 
   const appendChunk = useCallback((chunk: string) => {
+    // Buffer the trailing partial line in pendingRef; commit only complete
+    // lines. This both joins lines split across reads and keeps `lines` free of
+    // a perpetual trailing "".
+    const combined = pendingRef.current + chunk
+    const parts = combined.split('\n')
+    pendingRef.current = parts.pop() ?? ''
+    if (parts.length === 0) return
+    const newLines = parts
     setLines(prev => {
-      const newLines = chunk.split('\n')
-      let merged: string[]
-      let newCount: number
-      if (prev.length > 0 && newLines.length > 0 && !chunk.startsWith('\n')) {
-        const lastLine = prev[prev.length - 1] + newLines[0]
-        merged = [...prev.slice(0, -1), lastLine, ...newLines.slice(1)]
-        newCount = newLines.length
-      } else {
-        merged = [...prev, ...newLines]
-        newCount = newLines.length
-      }
-      const trimmed = merged.length > MAX_LOG_LINES
+      let merged = [...prev, ...newLines]
+      // Cap the live buffer at the selected tail — oldest lines scroll off as
+      // new ones arrive — bounded by the hard MAX_LOG_LINES safety ceiling.
+      const cap = Math.min(MAX_LOG_LINES, Math.max(1, tailRef.current))
+      const trimmed = merged.length > cap
       if (trimmed) {
-        merged = merged.slice(-MAX_LOG_LINES)
-      }
-      if (trimmed) {
+        merged = merged.slice(-cap)
         const { levels: allLevels, lastLevel } = detectLevelsForLines(merged, null)
         lastLevelRef.current = lastLevel
         setLevels(allLevels)
       } else {
-        const appendStart = Math.max(0, merged.length - newCount)
-        const appendedLines = merged.slice(appendStart)
-        const { levels: newLevels, lastLevel } = detectLevelsForLines(appendedLines, lastLevelRef.current)
+        const { levels: newLevels, lastLevel } = detectLevelsForLines(newLines, lastLevelRef.current)
         lastLevelRef.current = lastLevel
-        setLevels(prevLevels => {
-          const kept = prevLevels.slice(0, appendStart)
-          return [...kept, ...newLevels]
-        })
+        setLevels(prevLevels => [...prevLevels, ...newLevels])
       }
       return merged
     })
@@ -199,43 +213,59 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
     const controller = new AbortController()
     abortRef.current = controller
 
-    const streamUrl = source === 'daemon'
-      ? `${API_BASE}/daemon/logs?follow=true&tail=${tail}`
-      : `${API_BASE}/apps/${appName}/logs?follow=true&tail=${tail}`
+    const base = source === 'daemon'
+      ? `${API_BASE}/daemon/logs`
+      : `${API_BASE}/apps/${appName}/logs`
 
-    const startStream = async () => {
+    // Live tail: follow with tail=0 → only NEW lines, never a backlog burst.
+    // The bulk backlog is fetched separately as a complete (closed) response.
+    //
+    // Why the split: the desktop webview reaches the daemon through the Wails
+    // asset-server proxy (cmd/citeck-desktop/main.go). A long, flushed burst
+    // (the whole `tail` backlog) leaves its tail stuck in the Wails/WebKitGTK
+    // stream buffer — the buffer only drains to the fetch ReadableStream when
+    // more bytes arrive or the response *closes*, so a follow stream that goes
+    // idle right after the burst silently truncates the backlog (e.g. 144/200).
+    // A non-follow GET closes, flushing the buffer in full; the follow stream
+    // then carries only small live increments that each push the previous out.
+    const startLiveStream = async () => {
       try {
-        const res = await fetch(streamUrl, {
-          signal: controller.signal,
-        })
+        const res = await fetch(`${base}?follow=true&tail=0`, { signal: controller.signal })
         if (!res.ok || !res.body) return
-
         const reader = res.body.getReader()
         const decoder = new TextDecoder()
-        let isFirst = true
-
         while (true) {
           const { done, value } = await reader.read()
           if (done) break
-          const chunk = decoder.decode(value, { stream: true })
-          if (isFirst) {
-            // First chunk is the tail backlog — replace state to avoid duplication
-            setLinesWithLevels(chunk.split('\n'))
-            isFirst = false
-          } else {
-            appendChunk(chunk)
-          }
+          appendChunk(decoder.decode(value, { stream: true }))
         }
       } catch (e) {
         if (e instanceof DOMException && e.name === 'AbortError') return
         retryTimerRef.current = setTimeout(() => {
           retryTimerRef.current = null
-          if (activeRef.current) startStream()
+          if (activeRef.current) startLiveStream()
         }, 3000)
       }
     }
 
-    startStream()
+    // Backlog: non-follow GET → a complete, closed response, delivered in full
+    // over the asset bridge. Replaces state; the live stream then appends.
+    const loadBacklogThenStream = async () => {
+      try {
+        const res = await fetch(`${base}?tail=${tail}`, { signal: controller.signal })
+        if (res.ok) {
+          const text = await res.text()
+          setLinesWithLevels(text.split('\n'))
+        }
+      } catch (e) {
+        if (e instanceof DOMException && e.name === 'AbortError') return
+        // A transient backlog error shouldn't block live tailing — fall through.
+      }
+      if (controller.signal.aborted) return
+      startLiveStream()
+    }
+
+    loadBacklogThenStream()
 
     return () => {
       controller.abort()
@@ -273,6 +303,27 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
       if (ctrl && !e.shiftKey && e.code === 'KeyL') {
         e.preventDefault()
         setLinesWithLevels([])
+        return
+      }
+      // Ctrl+A — select only the log lines, not the whole window. The browser's
+      // default select-all grabs the toolbar, status bar and window chrome too;
+      // scope the selection to the log viewport instead. Skip when a text field
+      // is focused so the search/filter inputs keep native select-all.
+      if (ctrl && !e.shiftKey && e.code === 'KeyA') {
+        const tag = (document.activeElement as HTMLElement | null)?.tagName
+        if (tag === 'INPUT' || tag === 'TEXTAREA') return
+        e.preventDefault()
+        const el = parentRef.current
+        if (el) {
+          const sel = window.getSelection()
+          sel?.removeAllRanges()
+          const range = document.createRange()
+          range.selectNodeContents(el)
+          sel?.addRange(range)
+          // Mark select-all so a subsequent copy grabs every filtered line, not
+          // just the virtualized rows currently in the DOM.
+          selectAllRef.current = true
+        }
         return
       }
       // Ctrl+Shift+C — copy all visible (Kotlin LogsToolbar shortcut)
@@ -322,6 +373,28 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
       totalLineCount: lines.length,
     }
   }, [lines, levels, enabledLevels, debouncedFilter])
+
+  // The log list is virtualized, so a native Ctrl+A selection only spans the
+  // rendered rows. selectAllRef tracks an active "select all" so the copy
+  // handler below can place the FULL filtered text on the clipboard; the ref
+  // mirrors filteredLines for that synchronous copy-event read.
+  const filteredLinesRef = useRef(filteredLines)
+  filteredLinesRef.current = filteredLines
+  const selectAllRef = useRef(false)
+
+  // Override copy when select-all is active and the selection sits inside the
+  // log viewport: hand over every filtered line, not just the rendered slice.
+  useEffect(() => {
+    const onCopy = (e: ClipboardEvent) => {
+      if (!selectAllRef.current) return
+      const sel = window.getSelection()
+      if (!sel || sel.rangeCount === 0 || !parentRef.current?.contains(sel.anchorNode)) return
+      e.preventDefault()
+      e.clipboardData?.setData('text/plain', filteredLinesRef.current.join('\n'))
+    }
+    document.addEventListener('copy', onCopy)
+    return () => document.removeEventListener('copy', onCopy)
+  }, [])
 
   const { safeSearchRegex, regexWarning } = useMemo(() => {
     if (!debouncedSearch) {
@@ -375,6 +448,25 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
     overscan: 30,
   })
 
+  // While Ctrl+A "select all" is active, re-apply the full-container selection
+  // whenever the virtualized range changes (scroll / new lines) so every
+  // freshly-mounted row shows as selected too — the range set once on Ctrl+A
+  // only covers the rows that existed at that instant. (Copy already grabs
+  // every filtered line via the copy handler; this is the matching visual.)
+  const renderedItems = virtualizer.getVirtualItems()
+  const renderedRangeKey = renderedItems.length
+    ? `${renderedItems[0].index}:${renderedItems[renderedItems.length - 1].index}`
+    : ''
+  useEffect(() => {
+    if (!selectAllRef.current || !parentRef.current) return
+    const sel = window.getSelection()
+    if (!sel) return
+    sel.removeAllRanges()
+    const range = document.createRange()
+    range.selectNodeContents(parentRef.current)
+    sel.addRange(range)
+  }, [renderedRangeKey])
+
   // Refs so the layout effects don't have to list `virtualizer` (a fresh
   // instance every render) or `matchIndices` (a fresh array every chunk
   // arrival) in their dep arrays — without these, the scroll-to-index calls
@@ -401,6 +493,14 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
     })
   }
 
+  // Resume following: jump to the newest line and re-arm follow. Fired by the
+  // floating button.
+  function resumeFollow() {
+    setFollow(true)
+    const len = filteredLines.length
+    if (len > 0) programmaticScrollTo(len - 1, 'end')
+  }
+
   // Auto-scroll-to-bottom: only when follow is on AND the visible row count
   // actually grew. Plain re-renders (e.g. virtualizer re-measuring an item
   // in view) no longer trigger a scroll.
@@ -411,6 +511,27 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
     }
     prevFollowedLengthRef.current = len
   }, [filteredLines.length, follow])
+
+  // Keep the newest line pinned to the bottom while following when the viewport
+  // resizes (window resize, panel drag, wrap toggle changing row heights).
+  // A size change moves the scroll bottom without firing onScroll, so without
+  // this the view would drift off the tail.
+  useEffect(() => {
+    const el = parentRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(() => {
+      if (!followRef.current) return
+      const len = filteredLinesRef.current.length
+      if (len === 0) return
+      programmaticScrollRef.current = true
+      virtualizerRef.current.scrollToIndex(len - 1, { align: 'end' })
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => { programmaticScrollRef.current = false })
+      })
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   // Search target: scroll only when the user explicitly navigated (the tick
   // bumps on a fresh query or F3 / Enter / ↑↓ button presses). Listening to
@@ -486,15 +607,17 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
           >
             .*
           </button>
-          {matchIndices.length > 0 && (
-            <>
-              <button type="button" className="rounded px-1.5 py-1 text-xs border border-border text-muted-foreground hover:bg-muted"
-                onClick={() => { setMatchIndex((p) => p - 1); bumpSearchNav() }} title={t('logViewer.prevMatch')}>&uarr;</button>
-              <button type="button" className="rounded px-1.5 py-1 text-xs border border-border text-muted-foreground hover:bg-muted"
-                onClick={() => { setMatchIndex((p) => p + 1); bumpSearchNav() }} title={t('logViewer.nextMatch')}>&darr;</button>
-              <span className="text-xs text-muted-foreground">{safeMatchIndex + 1}/{matchIndices.length}</span>
-            </>
-          )}
+          {/* Match nav is rendered unconditionally and disabled when there are
+              no matches — otherwise the controls pop in/out and the whole
+              toolbar jumps sideways whenever the match count crosses zero
+              (e.g. toggling a level filter that hides every current match). */}
+          <button type="button" disabled={matchIndices.length === 0}
+            className={`rounded px-1.5 py-1 text-xs border border-border ${matchIndices.length === 0 ? 'text-muted-foreground/40 cursor-not-allowed' : 'text-muted-foreground hover:bg-muted'}`}
+            onClick={() => { setMatchIndex((p) => p - 1); bumpSearchNav() }} title={t('logViewer.prevMatch')}>&uarr;</button>
+          <button type="button" disabled={matchIndices.length === 0}
+            className={`rounded px-1.5 py-1 text-xs border border-border ${matchIndices.length === 0 ? 'text-muted-foreground/40 cursor-not-allowed' : 'text-muted-foreground hover:bg-muted'}`}
+            onClick={() => { setMatchIndex((p) => p + 1); bumpSearchNav() }} title={t('logViewer.nextMatch')}>&darr;</button>
+          <span className="text-xs text-muted-foreground tabular-nums">{matchIndices.length === 0 ? 0 : safeMatchIndex + 1}/{matchIndices.length}</span>
           {regexWarning && <span className="text-xs text-warning">{t('logViewer.regexWarning')}</span>}
         </div>
 
@@ -556,15 +679,8 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
 
         <div className="h-5 w-px bg-border" />
 
-        {/* Toggles */}
-        <button
-          type="button"
-          className={`rounded px-2 py-1 text-xs border ${follow ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted'}`}
-          onClick={() => setFollow(!follow)}
-          title={t('logViewer.follow.tooltip')}
-        >
-          {t('logViewer.follow')}
-        </button>
+        {/* Toggles — "Follow" is now a floating button at the bottom-right of
+            the log viewport (shown only when follow is off), so it isn't here. */}
         <button
           type="button"
           className={`rounded px-2 py-1 text-xs border ${wordWrap ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted'}`}
@@ -585,10 +701,12 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
           onClick={() => setLinesWithLevels([])} title={t('logViewer.clear.tooltip')}>{t('logViewer.clear')}</button>
       </div>
 
-      {/* Log output — virtualized */}
+      {/* Log output — virtualized. Wrapped in a relative box so the floating
+          "follow" button can sit at the bottom-right of the viewport. */}
+      <div className={`relative flex-1 min-h-0 ${compact ? 'mx-2 mb-1' : ''}`}>
       <div
         ref={parentRef}
-        className={`flex-1 overflow-auto rounded-lg border border-border bg-card p-4 font-mono text-xs ${wordWrap ? '' : 'overflow-x-auto'} ${compact ? 'mx-2 mb-1' : ''}`}
+        className={`h-full w-full overflow-auto rounded-lg border border-border bg-card p-4 font-mono text-xs ${wordWrap ? '' : 'overflow-x-auto'}`}
         onScroll={() => {
           if (!parentRef.current) return
           // Programmatic scroll (auto-stick / search recentre) also fires
@@ -617,6 +735,11 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
               width: '100%',
               position: 'relative',
             }}
+            // mousedown on the actual content (not the scrollbar) starts a
+            // manual selection → cancel the Ctrl+A "select all" so copy returns
+            // just the user's range. Scrollbar drags land on the parent, not
+            // here, so scrolling keeps select-all alive.
+            onMouseDown={() => { selectAllRef.current = false }}
           >
             {virtualizer.getVirtualItems().map((virtualItem) => {
               const idx = virtualItem.index
@@ -644,6 +767,20 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
               )
             })}
           </div>
+        )}
+      </div>
+        {/* Floating follow button — only while NOT following. Click resumes
+            follow AND jumps to the newest line. */}
+        {!follow && (
+          <button
+            type="button"
+            onClick={resumeFollow}
+            title={t('logViewer.follow.tooltip')}
+            className="absolute bottom-3 right-4 z-10 flex items-center gap-1 rounded-full border border-border bg-card/95 px-3 py-1.5 text-xs text-foreground shadow-lg backdrop-blur hover:bg-muted"
+          >
+            <ArrowDown size={14} />
+            {t('logViewer.follow')}
+          </button>
         )}
       </div>
 
