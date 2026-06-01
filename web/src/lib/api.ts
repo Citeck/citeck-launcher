@@ -281,6 +281,11 @@ export async function fetchRestartEvents(): Promise<RestartEventDto[]> {
   return resp.json()
 }
 
+export async function clearAppRestartEvents(name: string): Promise<void> {
+  const res = await fetchWithTimeout(`${API_BASE}/apps/${name}/restart-events`, { method: 'DELETE', headers: CSRF_HEADER })
+  if (!res.ok) throw await extractApiError(res)
+}
+
 export async function getDaemonLogs(tail = 200): Promise<string> {
   const res = await fetchWithTimeout(`${API_BASE}/daemon/logs?tail=${tail}`)
   if (!res.ok) throw new Error(await extractErrorMessage(res))

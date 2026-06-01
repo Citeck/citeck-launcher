@@ -499,6 +499,35 @@ func (r *Runtime) SetAppLocked(appName string, locked bool) {
 	r.dirty.Store(false)
 }
 
+// ClearRestartEvents removes the restart-event log AND resets the restart
+// counter (the ↻N badge) for one app, or all apps when appName is "".
+func (r *Runtime) ClearRestartEvents(appName string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if appName == "" {
+		r.restartEvents = nil
+		r.restartCounts = make(map[string]int)
+		for _, app := range r.apps {
+			app.RestartCount = 0
+		}
+	} else {
+		kept := r.restartEvents[:0:0]
+		for _, e := range r.restartEvents {
+			if e.App != appName {
+				kept = append(kept, e)
+			}
+		}
+		r.restartEvents = kept
+		delete(r.restartCounts, appName)
+		if app, ok := r.apps[appName]; ok {
+			app.RestartCount = 0
+		}
+	}
+	// Persist inline + clear r.dirty so the loop tail does not re-persist.
+	r.persistState()
+	r.dirty.Store(false)
+}
+
 // SetDependsOnDetachedApps stores which detached apps trigger regeneration when restarted.
 // Takes a defensive copy — the generator's map may be reused.
 func (r *Runtime) SetDependsOnDetachedApps(apps map[string]bool) {

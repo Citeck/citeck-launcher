@@ -26,10 +26,9 @@ import { LogViewer } from '../components/LogViewer'
 import { ConfigEditor } from '../components/ConfigEditor'
 import { DaemonLogsViewer } from '../components/DaemonLogsViewer'
 import { AppConfigEditor } from '../components/AppConfigEditor'
-import { RestartEvents } from '../components/RestartEvents'
 import type { BottomPanelTab } from '../lib/panels'
 import { toast } from '../lib/toast'
-import { ExternalLink, FolderOpen, Globe, Download, AlertTriangle, HardDrive, Key, FileText, ArrowLeft } from 'lucide-react'
+import { ExternalLink, FolderOpen, Globe, AlertTriangle, HardDrive, Key, FileText, ArrowLeft } from 'lucide-react'
 import { LoadingHint } from '../components/LoadingHint'
 import { postOpenDir } from '../lib/api'
 
@@ -48,7 +47,6 @@ export function Dashboard() {
   const drawerAppName = usePanelStore((s) => s.drawerAppName)
   const closeDrawer = usePanelStore((s) => s.closeDrawer)
   const bottomTabs = usePanelStore((s) => s.bottomTabs)
-  const openBottomTab = usePanelStore((s) => s.openBottomTab)
   const { t } = useTranslation()
 
   // Master-password / secrets-unlock flow is handled by SecretsUnlockGuard at
@@ -191,8 +189,6 @@ export function Dashboard() {
         return <DaemonLogsViewer compact active={active} />
       case 'app-config':
         return <AppConfigEditor appName={tab.appName!} />
-      case 'restart-events':
-        return <RestartEvents active={active} />
       default:
         return null
     }
@@ -331,9 +327,6 @@ export function Dashboard() {
             <SidebarIconBtn icon={AlertTriangle}
               tooltip={t('dashboard.systemDump')}
               onClick={() => getSystemDump('zip').then(() => toast(t('dashboard.systemDump.success'), 'success')).catch((e) => toast((e as Error).message, 'error'))} />
-            <SidebarIconBtn icon={Download}
-              tooltip={t('dashboard.restartEvents')}
-              onClick={() => openBottomTab({ id: 'restart-events', type: 'restart-events', title: t('dashboard.restartEvents') })} />
           </div>
         </aside>
 

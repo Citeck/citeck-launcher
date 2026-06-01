@@ -5,6 +5,7 @@ import { useDashboardStore } from '../lib/store'
 import { openSecondaryView } from '../lib/desktop'
 import { formatDateTime } from '../lib/datetime'
 import { RegistryCredentialsDialog } from './RegistryCredentialsDialog'
+import { RestartEvents } from './RestartEvents'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
 import { RotateCw, FileText, Settings, KeyRound } from 'lucide-react'
@@ -124,6 +125,11 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
           </div>
         </div>
       )}
+
+      {/* Restart log (per-app) — moved here from the former bottom "Перезапуски" tab. */}
+      <div className="pt-2 border-t border-border">
+        <RestartEvents appName={appName} />
+      </div>
 
       {/* Action buttons */}
       <div className="flex gap-2 pt-2 border-t border-border flex-wrap">

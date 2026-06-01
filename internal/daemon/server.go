@@ -1123,6 +1123,7 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/apps/{name}/config", d.handlePutAppConfig)
 	mux.HandleFunc("POST /api/v1/apps/{name}/config/reset", d.handleResetAppConfig)
 	mux.HandleFunc("PUT /api/v1/apps/{name}/lock", d.handleAppLockToggle)
+	mux.HandleFunc("DELETE /api/v1/apps/{name}/restart-events", d.handleClearAppRestartEvents)
 	mux.HandleFunc("GET /api/v1/apps/{name}/files", d.handleListAppFiles)
 	mux.HandleFunc("POST /api/v1/apps/{name}/files/reset", d.handleResetAppFile)
 	mux.HandleFunc("GET /api/v1/apps/{name}/files/{path...}", d.handleGetAppFile)

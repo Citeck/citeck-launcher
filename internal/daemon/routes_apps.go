@@ -271,6 +271,24 @@ func (d *Daemon) handleAppStart(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("App %s start requested", name)})
 }
 
+// handleClearAppRestartEvents wipes the restart-event log for a single app.
+// Surfaced by the "clear" button in the app's right-drawer restart section.
+func (d *Daemon) handleClearAppRestartEvents(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !validateAppName(w, name) {
+		return
+	}
+	if !d.requireRuntime(w) {
+		return
+	}
+	if d.findApp(name) == nil {
+		writeAppNotFound(w, name)
+		return
+	}
+	d.runtime.ClearRestartEvents(name)
+	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("Restart events cleared for %s", name)})
+}
+
 func (d *Daemon) handleAppInspect(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !validateAppName(w, name) {
