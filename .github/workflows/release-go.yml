@@ -1,4 +1,4 @@
-name: Release Server Binary
+name: Release
 
 on:
   push:
@@ -95,15 +95,220 @@ jobs:
             citeck_*.tar.gz.sha256
           if-no-files-found: error
 
+  desktop-linux:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install GTK3 / WebKit dev libs
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Install nfpm
+        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.41.0
+
+      - name: Build web UI
+        run: cd web && pnpm install --frozen-lockfile && pnpm run build
+
+      - name: Embed web UI
+        run: rm -rf internal/daemon/webdist && cp -r web/dist internal/daemon/webdist
+
+      - name: Build desktop binary
+        env:
+          VERSION_TAG: ${{ github.ref_name }}
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          VERSION="${VERSION_TAG#v}"
+          mkdir -p build/bin
+          CGO_ENABLED=1 go build -tags "desktop,gtk3" \
+            -ldflags "-s -w -X main.version=${VERSION} -X main.gitCommit=$(git rev-parse --short HEAD) -X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o build/bin/citeck-launcher ./cmd/citeck-desktop
+
+      - name: Package deb + rpm
+        env:
+          VERSION_TAG: ${{ github.ref_name }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          export VERSION="${VERSION_TAG#v}"
+          mkdir -p dist
+          nfpm package --config packaging/nfpm.yaml --packager deb \
+            --target "dist/citeck-launcher_${VERSION}_linux_${ARCH}.deb"
+          nfpm package --config packaging/nfpm.yaml --packager rpm \
+            --target "dist/citeck-launcher_${VERSION}_linux_${ARCH}.rpm"
+          cd dist && for f in *.deb *.rpm; do sha256sum "$f" > "$f.sha256"; done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  desktop-windows:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Build web UI
+        run: cd web; pnpm install --frozen-lockfile; pnpm run build
+
+      - name: Embed web UI
+        run: |
+          Remove-Item -Recurse -Force internal/daemon/webdist -ErrorAction SilentlyContinue
+          Copy-Item -Recurse web/dist internal/daemon/webdist
+
+      - name: Build desktop binary
+        env:
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: "0"
+        run: |
+          $ver = "${{ github.ref_name }}".TrimStart("v")
+          New-Item -ItemType Directory -Force build/bin | Out-Null
+          go build -tags desktop -ldflags "-s -w -X main.version=$ver" -o build/bin/citeck-launcher.exe ./cmd/citeck-desktop
+
+      - name: Install WiX
+        run: dotnet tool install --global wix --version 5.*
+
+      - name: Build MSI
+        run: |
+          $ver = "${{ github.ref_name }}".TrimStart("v")
+          $wixArch = if ("${{ matrix.arch }}" -eq "amd64") { "x64" } else { "arm64" }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          wix build packaging/windows/citeck-launcher.wxs -arch $wixArch -d Version=$ver -b . -o "dist/citeck-launcher_${ver}_windows_${{ matrix.arch }}.msi"
+
+      # --- Code signing (disabled — enable when secrets are configured) ---
+      # Required secrets: WINDOWS_CERT_PFX (base64 .pfx), WINDOWS_CERT_PASSWORD
+      # - name: Sign MSI
+      #   env:
+      #     WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+      #     WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+      #   run: |
+      #     [IO.File]::WriteAllBytes("cert.pfx", [Convert]::FromBase64String($env:WINDOWS_CERT_PFX))
+      #     signtool sign /f cert.pfx /p $env:WINDOWS_CERT_PASSWORD /fd sha256 /tr http://timestamp.digicert.com /td sha256 dist\*.msi
+
+      - name: Checksums
+        run: |
+          Get-ChildItem dist/*.msi | ForEach-Object {
+            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$h  $($_.Name)" | Out-File "$($_.FullName).sha256" -Encoding ascii -NoNewline
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  desktop-macos:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: macos-13
+          - arch: arm64
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Build web UI
+        run: cd web && pnpm install --frozen-lockfile && pnpm run build
+
+      - name: Embed web UI
+        run: rm -rf internal/daemon/webdist && cp -r web/dist internal/daemon/webdist
+
+      - name: Build desktop binary
+        env:
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: "1"
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p build/bin
+          go build -tags desktop -ldflags "-s -w -X main.version=${VERSION}" -o build/bin/citeck-launcher ./cmd/citeck-desktop
+
+      - name: Build .app + .dmg
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          bash packaging/macos/make-app.sh "${VERSION}" build/bin/citeck-launcher
+          bash packaging/macos/make-dmg.sh "${VERSION}" "${{ matrix.arch }}"
+
+      # --- Codesign + notarization (disabled — enable when secrets are configured) ---
+      # Required secrets: MACOS_CERT_P12 (base64), MACOS_CERT_PASSWORD,
+      #                   MACOS_NOTARY_APPLE_ID, MACOS_NOTARY_TEAM_ID, MACOS_NOTARY_PASSWORD
+      # - name: Codesign + notarize
+      #   run: |
+      #     codesign --deep --force --options runtime --sign "Developer ID Application: Citeck LLC" dist/citeck-launcher.app
+      #     # (rebuild the dmg after signing the .app, then:)
+      #     xcrun notarytool submit dist/*.dmg --apple-id "$MACOS_NOTARY_APPLE_ID" --team-id "$MACOS_NOTARY_TEAM_ID" --password "$MACOS_NOTARY_PASSWORD" --wait
+      #     xcrun stapler staple dist/*.dmg
+
+      - name: Checksums
+        run: cd dist && for f in *.dmg; do shasum -a 256 "$f" > "$f.sha256"; done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-macos-${{ matrix.arch }}
+          path: dist/*.dmg*
+          if-no-files-found: error
+
   release:
-    needs: build
+    needs: [build, desktop-linux, desktop-windows, desktop-macos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: citeck-*
           merge-multiple: true
 
       - name: Extract changelog
@@ -138,6 +343,7 @@ jobs:
           files: |
             citeck_*.tar.gz
             citeck_*.tar.gz.sha256
+            citeck-launcher_*
             install.sh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
