@@ -46,6 +46,7 @@ export interface LinkDto {
   order: number
   category?: string
   description?: string
+  descriptionKey?: string
 }
 
 export interface NamespaceDto {

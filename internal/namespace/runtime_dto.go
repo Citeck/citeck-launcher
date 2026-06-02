@@ -105,31 +105,34 @@ func (r *Runtime) generateLinks() []api.LinkDto {
 
 	// Icon names are looked up by `/icons/<name>.svg` in the Web UI; the SVGs
 	// are bundled from the Kotlin launcher's resources/icons/app/ folder.
+	// DescriptionKey carries an i18n key the Web UI resolves to a localized
+	// hover tooltip (Kotlin v1 parity: links showed a description + default
+	// credentials). Description keeps an English fallback for non-UI consumers.
 	links := []api.LinkDto{
 		{Name: "Citeck UI", URL: proxyBase, Order: -100},
-		{Name: "Spring Boot Admin", URL: proxyBase + "/gateway/eapps/admin/wallboard", Icon: "spring-boot-admin", Order: -1, Category: catApps},
-		{Name: "RabbitMQ", URL: fmt.Sprintf("http://%s:15672", proxyHost), Icon: "rabbitmq", Order: 2, Category: catApps},
-		{Name: "Mailpit", URL: fmt.Sprintf("http://%s:8025", proxyHost), Icon: "mailpit", Order: 1, Category: catApps},
+		{Name: "Spring Boot Admin", URL: proxyBase + "/gateway/eapps/admin/wallboard", Icon: "spring-boot-admin", Order: -1, Category: catApps, DescriptionKey: "links.springBootAdmin.tooltip"},
+		{Name: "RabbitMQ", URL: fmt.Sprintf("http://%s:15672", proxyHost), Icon: "rabbitmq", Order: 2, Category: catApps, DescriptionKey: "links.rabbitmq.tooltip"},
+		{Name: "Mailpit", URL: fmt.Sprintf("http://%s:8025", proxyHost), Icon: "mailpit", Order: 1, Category: catApps, DescriptionKey: "links.mailpit.tooltip"},
 	}
 
 	// Keycloak link (only if auth is KEYCLOAK)
 	if r.config.Authentication.Type == AuthKeycloak {
 		links = append(links, api.LinkDto{
-			Name: "Keycloak Admin", URL: proxyBase + "/ecos-idp/auth/", Icon: "keycloak", Order: -10, Category: catApps,
+			Name: "Keycloak Admin", URL: proxyBase + "/ecos-idp/auth/", Icon: "keycloak", Order: -10, Category: catApps, DescriptionKey: "links.keycloak.tooltip",
 		})
 	}
 
 	// PgAdmin link (if app exists)
 	if _, ok := r.apps["pgadmin"]; ok {
 		links = append(links, api.LinkDto{
-			Name: "PG Admin", URL: fmt.Sprintf("http://%s:5050", proxyHost), Icon: "postgres", Order: 0, Category: catApps,
+			Name: "PG Admin", URL: fmt.Sprintf("http://%s:5050", proxyHost), Icon: "postgres", Order: 0, Category: catApps, DescriptionKey: "links.pgAdmin.tooltip",
 		})
 	}
 
 	// Global links (always available) — Kotlin parity: GlobalLinks.LINKS
 	links = append(links,
-		api.LinkDto{Name: "Documentation", URL: "https://citeck-ecos.readthedocs.io/", Icon: "docs", Order: 100, Category: catResources, Description: "Citeck documentation", AlwaysEnabled: true},
-		api.LinkDto{Name: "AI Documentation Bot", URL: "https://t.me/haski_citeck_bot", Icon: "telegram", Order: 101, Category: catResources, Description: "Telegram bot for AI documentation assistance", AlwaysEnabled: true},
+		api.LinkDto{Name: "Documentation", URL: "https://citeck-ecos.readthedocs.io/", Icon: "docs", Order: 100, Category: catResources, Description: "Citeck documentation", DescriptionKey: "links.documentation.tooltip", AlwaysEnabled: true},
+		api.LinkDto{Name: "AI Documentation Bot", URL: "https://t.me/haski_citeck_bot", Icon: "telegram", Order: 101, Category: catResources, Description: "Telegram bot for AI documentation assistance", DescriptionKey: "links.aiBot.tooltip", AlwaysEnabled: true},
 	)
 
 	return links

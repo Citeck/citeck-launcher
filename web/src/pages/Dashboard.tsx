@@ -264,7 +264,7 @@ export function Dashboard() {
                         <div className="text-[11px] text-muted-foreground/80 mt-2 mb-0.5">{l.category}</div>
                       )}
                       <a href={l.url} target="_blank" rel="noopener noreferrer"
-                        title={l.description ?? l.name}
+                        title={l.descriptionKey ? t(l.descriptionKey) : (l.description ?? l.name)}
                         className={`flex items-center gap-2.5 text-[13px] rounded px-1.5 py-1 -mx-1.5 ${
                           enabled ? 'text-primary hover:bg-muted/70' : 'text-muted-foreground cursor-not-allowed'
                         }`}

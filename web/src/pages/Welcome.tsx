@@ -16,7 +16,7 @@ import { useDashboardStore } from '../lib/store'
 import { usePanelStore } from '../lib/panels'
 import { useTranslation } from '../lib/i18n'
 import { showError } from '../lib/errorModal'
-import { MoreHorizontal, Plus } from 'lucide-react'
+import { MoreHorizontal, Plus, Loader2 } from 'lucide-react'
 
 export function Welcome() {
   const { t } = useTranslation()
@@ -328,6 +328,18 @@ export function Welcome() {
           position={contextMenu.position}
           onClose={hideContextMenu}
         />
+      )}
+
+      {/* Opening a namespace activates it on the daemon + refetches state,
+          which can take a moment. Show a blocking loader modal so the click
+          gives immediate feedback instead of a frozen-looking Welcome page. */}
+      {starting && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="flex flex-col items-center gap-3 rounded-lg border border-border bg-card px-10 py-7 shadow-xl">
+            <Loader2 className="h-7 w-7 animate-spin text-primary" />
+            <span className="text-sm text-foreground">{t('welcome.opening')}</span>
+          </div>
+        </div>
       )}
 
       <ConfirmModal
