@@ -15,7 +15,7 @@ The repo also keeps the legacy Kotlin/JVM launcher under git tags `v1.0.0`–`v1
 ```bash
 make build                    # Build Go binary + embed React web UI → build/bin/citeck-server
 make build-fast               # Build Go only (skip web rebuild) → build/bin/citeck-server
-make build-desktop            # Build desktop (Wails) binary → build/bin/citeck-desktop
+make build-desktop            # Build desktop (Wails) binary → build/bin/citeck-launcher
 make test                     # Run all tests (Go + Vitest)
 make test-unit                # Go unit tests only (./internal/...)
 make test-race                # Go tests with race detector + 120s timeout
@@ -26,8 +26,17 @@ make tidy                     # go mod tidy
 make tools                    # Install golangci-lint v2.11.4
 make clean                    # Remove build artifacts
 build/bin/citeck-server start --foreground   # Run daemon in foreground
-./build/bin/citeck-desktop            # Run desktop app (Wails webview)
+./build/bin/citeck-launcher            # Run desktop app (Wails webview)
 ```
+
+### Desktop installers
+
+Packaging configs live in `packaging/` (nfpm → deb/rpm, WiX → msi, macOS scripts → dmg).
+A `v*.*.*` tag builds all installers via `.github/workflows/release-go.yml` and attaches
+them to the GitHub Release alongside the server tarballs. Clean upgrade over the legacy
+1.* installer: same deb/rpm package name `citeck-launcher`, shared Windows `UpgradeCode`,
+and a `citeck-launcher.app` bundle name matching 1.*'s path. Run the local clean-upgrade
+e2e with `./scripts/test-deb-upgrade.sh` (needs Docker + GTK3 dev libs).
 
 ## Architecture
 
