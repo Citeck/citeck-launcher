@@ -25,7 +25,7 @@ echo "==> [2/4] Packaging 2.* deb via nfpm"
 command -v nfpm >/dev/null 2>&1 || go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.41.0
 NFPM="$(command -v nfpm || echo "$(go env GOPATH)/bin/nfpm")"
 VERSION="$VERSION" ARCH="$ARCH" "$NFPM" package --config packaging/nfpm.yaml \
-  --packager deb --target "$DIST/citeck-launcher_${VERSION}_linux_${ARCH}.deb"
+  --packager deb --target "$DIST/citeck-desktop_${VERSION}_linux_${ARCH}.deb"
 
 echo "==> [3/4] Building synthetic 1.4.1 deb (jpackage-like /opt layout)"
 LEGACY="$(mktemp -d)"
@@ -47,7 +47,7 @@ dpkg-deb --build --root-owner-group "$LEGACY" "$DIST/citeck-launcher_1.4.1_legac
 
 echo "==> [4/4] Running upgrade scenario in ubuntu:24.04"
 docker run --rm -e VERSION="$VERSION" -v "$DIST:/work:ro" ubuntu:24.04 bash -euxc '
-  NEW="/work/citeck-launcher_${VERSION}_linux_amd64.deb"
+  NEW="/work/citeck-desktop_${VERSION}_linux_amd64.deb"
   OLD="/work/citeck-launcher_1.4.1_legacy_amd64.deb"
 
   # Install legacy 1.*

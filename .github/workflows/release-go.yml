@@ -152,9 +152,9 @@ jobs:
           export VERSION="${VERSION_TAG#v}"
           mkdir -p dist
           nfpm package --config packaging/nfpm.yaml --packager deb \
-            --target "dist/citeck-launcher_${VERSION}_linux_${ARCH}.deb"
+            --target "dist/citeck-desktop_${VERSION}_linux_${ARCH}.deb"
           nfpm package --config packaging/nfpm.yaml --packager rpm \
-            --target "dist/citeck-launcher_${VERSION}_linux_${ARCH}.rpm"
+            --target "dist/citeck-desktop_${VERSION}_linux_${ARCH}.rpm"
           cd dist && for f in *.deb *.rpm; do sha256sum "$f" > "$f.sha256"; done
 
       - uses: actions/upload-artifact@v4
@@ -210,7 +210,7 @@ jobs:
           $ver = "${{ github.ref_name }}".TrimStart("v")
           $wixArch = if ("${{ matrix.arch }}" -eq "amd64") { "x64" } else { "arm64" }
           New-Item -ItemType Directory -Force dist | Out-Null
-          wix build packaging/windows/citeck-launcher.wxs -arch $wixArch -d Version=$ver -b . -o "dist/citeck-launcher_${ver}_windows_${{ matrix.arch }}.msi"
+          wix build packaging/windows/citeck-launcher.wxs -arch $wixArch -d Version=$ver -b . -o "dist/citeck-desktop_${ver}_windows_${{ matrix.arch }}.msi"
 
       # --- Code signing (disabled — enable when secrets are configured) ---
       # Required secrets: WINDOWS_CERT_PFX (base64 .pfx), WINDOWS_CERT_PASSWORD
@@ -343,7 +343,7 @@ jobs:
           files: |
             citeck_*.tar.gz
             citeck_*.tar.gz.sha256
-            citeck-launcher_*
+            citeck-desktop_*
             install.sh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

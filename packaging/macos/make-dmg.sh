@@ -15,7 +15,7 @@ trap 'rm -rf "$STAGING"' EXIT
 cp -R "$APP" "$STAGING/"
 ln -s /Applications "$STAGING/Applications"
 
-OUT="$ROOT/dist/citeck-launcher_${VERSION}_darwin_${ARCH}.dmg"
+OUT="$ROOT/dist/citeck-desktop_${VERSION}_darwin_${ARCH}.dmg"
 rm -f "$OUT"
 hdiutil create -volname "Citeck Launcher" -srcfolder "$STAGING" -ov -format UDZO "$OUT"
 rm -rf "$STAGING"
