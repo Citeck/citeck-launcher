@@ -431,6 +431,9 @@ func (d *Daemon) handleGetAppConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/yaml")
+	// Lead with the YAML document marker (Kotlin AppCfgEditWindow parity) so the
+	// gear/config editor opens on a clear "---" start.
+	_, _ = io.WriteString(w, "---\n")
 	_, _ = w.Write(buf.Bytes())
 }
 

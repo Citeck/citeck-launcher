@@ -262,10 +262,10 @@ func generatePgAdmin(ctx *NsGenContext) {
 	// reused pgadmin2 volume keeps any servers the user added/edited manually.
 	// From-scratch deploys (fresh volume) get the connection pre-filled.
 	app.AddVolume("./pgadmin/servers.json:/pgadmin4/servers.json")
-	// 300m: pgAdmin 4 9.x idles at ~250m, so 256m has no headroom and OOM-kills
-	// under any use (and during the first-init server import). 300m clears the
-	// import and light use (verified, no OOM) without the waste of 512m.
-	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "300m"}}
+	// 400m: pgAdmin 4 9.x idles at ~250m, so 256m has no headroom and OOM-kills
+	// under any use (and during the first-init server import). 400m gives
+	// comfortable headroom for the import and real browsing without the waste of 512m.
+	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "400m"}}
 }
 
 func generatePostgres(ctx *NsGenContext) {
