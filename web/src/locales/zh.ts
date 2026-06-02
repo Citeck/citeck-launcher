@@ -105,6 +105,7 @@ const zh: Translations = {
   'volumes.table.path': '路径',
   'volumes.table.size': '大小',
   'volumes.delete.tooltip': '删除存储卷',
+  'volumes.delete.disabledHint': '停止 namespace 以删除存储卷',
   'volumes.empty': '未找到存储卷',
   'volumes.delete.title': '删除存储卷 {name}？',
   'volumes.delete.message': '此操作将永久删除该存储卷及其所有数据。',

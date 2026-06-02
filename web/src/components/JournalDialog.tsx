@@ -308,12 +308,19 @@ export function JournalDialog<T extends Record<string, unknown>>({
                           const enabled = act.enabledIf ? act.enabledIf(row) : true
                           const deco = act.decoration ? act.decoration(row) : null
                           const Icon = act.icon
-                          const hover = act.variant === 'danger' ? 'hover:text-destructive' : 'hover:text-foreground'
+                          // Only colour the hover when the action is actually
+                          // clickable. A disabled danger button that still turns
+                          // red on hover reads as "active but broken" — the user
+                          // clicks and nothing happens. Gate hover on `enabled`
+                          // and show a not-allowed cursor instead.
+                          const hover = !enabled
+                            ? 'cursor-not-allowed'
+                            : `hover:bg-muted ${act.variant === 'danger' ? 'hover:text-destructive' : 'hover:text-foreground'}`
                           return (
                             <button
                               key={idx}
                               type="button"
-                              className={`relative inline-flex items-center justify-center p-1 rounded text-muted-foreground ${hover} hover:bg-muted disabled:opacity-40 disabled:hover:bg-transparent`}
+                              className={`relative inline-flex items-center justify-center p-1 rounded text-muted-foreground ${hover} disabled:opacity-40 disabled:hover:bg-transparent`}
                               title={act.title}
                               disabled={!enabled}
                               onClick={(e) => { e.stopPropagation(); void act.onClick(row) }}

@@ -105,6 +105,7 @@ const de: Translations = {
   'volumes.table.path': 'Pfad',
   'volumes.table.size': 'Größe',
   'volumes.delete.tooltip': 'Volume löschen',
+  'volumes.delete.disabledHint': 'Namespace stoppen, um Volumes zu löschen',
   'volumes.empty': 'Keine Volumes gefunden',
   'volumes.delete.title': 'Volume {name} löschen?',
   'volumes.delete.message': 'Das Volume und alle zugehörigen Daten werden unwiderruflich gelöscht.',

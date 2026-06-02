@@ -89,7 +89,10 @@ export function VolumesDialog({ open, onClose, onOpenSnapshots, namespaceStopped
   const rowActions: JournalAction<VolumeRow>[] = [
     {
       icon: Trash2,
-      title: t('volumes.delete.tooltip'),
+      // When the namespace is running the action is disabled (Docker can't
+      // remove a volume attached to a live container). Surface *why* in the
+      // tooltip instead of leaving a dead-looking button.
+      title: namespaceStopped ? t('volumes.delete.tooltip') : t('volumes.delete.disabledHint'),
       variant: 'danger',
       enabledIf: () => namespaceStopped,
       onClick: (row) => setDeleteTarget(row.name),

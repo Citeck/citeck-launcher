@@ -105,6 +105,7 @@ const ru: Translations = {
   'volumes.table.path': 'Путь',
   'volumes.table.size': 'Размер',
   'volumes.delete.tooltip': 'Удалить том',
+  'volumes.delete.disabledHint': 'Остановите namespace, чтобы удалить тома',
   'volumes.empty': 'Тома не найдены',
   'volumes.delete.title': 'Удалить том {name}?',
   'volumes.delete.message': 'Том и все его данные будут безвозвратно удалены.',

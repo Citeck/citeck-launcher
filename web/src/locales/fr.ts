@@ -105,6 +105,7 @@ const fr: Translations = {
   'volumes.table.path': 'Chemin',
   'volumes.table.size': 'Taille',
   'volumes.delete.tooltip': 'Supprimer le volume',
+  'volumes.delete.disabledHint': 'Arrêtez le namespace pour supprimer les volumes',
   'volumes.empty': 'Aucun volume trouv\u00e9',
   'volumes.delete.title': 'Supprimer le volume {name} ?',
   'volumes.delete.message': 'Cette action supprimera d\u00e9finitivement le volume et toutes ses donn\u00e9es.',
