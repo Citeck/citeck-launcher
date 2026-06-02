@@ -141,7 +141,7 @@ jobs:
           VERSION="${VERSION_TAG#v}"
           mkdir -p build/bin
           CGO_ENABLED=1 go build -tags "desktop,gtk3" \
-            -ldflags "-s -w -X main.version=${VERSION} -X main.gitCommit=$(git rev-parse --short HEAD) -X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -ldflags "-s -w -X main.version=${VERSION}" \
             -o build/bin/citeck-launcher ./cmd/citeck-desktop
 
       - name: Package deb + rpm
@@ -226,7 +226,7 @@ jobs:
         run: |
           Get-ChildItem dist/*.msi | ForEach-Object {
             $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
-            "$h  $($_.Name)" | Out-File "$($_.FullName).sha256" -Encoding ascii -NoNewline
+            [IO.File]::WriteAllText("$($_.FullName).sha256", "$h  $($_.Name)`n")
           }
 
       - uses: actions/upload-artifact@v4
@@ -242,7 +242,7 @@ jobs:
       matrix:
         include:
           - arch: amd64
-            runner: macos-13
+            runner: macos-15-intel
           - arch: arm64
             runner: macos-latest
     runs-on: ${{ matrix.runner }}
