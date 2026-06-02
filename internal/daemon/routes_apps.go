@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -414,13 +415,23 @@ func (d *Daemon) handleGetAppConfig(w http.ResponseWriter, r *http.Request) {
 	clean := app.Def
 	clean.ImageDigest = ""
 	clean.VolumesContentHash = ""
-	data, err := yaml.Marshal(clean)
-	if err != nil {
+	// yaml.v3's package Marshal hardcodes a 4-space indent; drive an Encoder
+	// directly for the 2-space indent the editor expects. ApplicationKind now
+	// renders as its enum name (kind: CITECK_CORE) instead of an integer.
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(clean); err != nil {
+		_ = enc.Close()
+		writeInternalError(w, err)
+		return
+	}
+	if err := enc.Close(); err != nil {
 		writeInternalError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/yaml")
-	_, _ = w.Write(data)
+	_, _ = w.Write(buf.Bytes())
 }
 
 func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {

@@ -4,7 +4,10 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // ApplicationKind categorizes apps by their role.
@@ -21,6 +24,63 @@ const (
 // IsCiteckApp returns true if the application kind is a Citeck platform app.
 func (k ApplicationKind) IsCiteckApp() bool {
 	return k == KindCiteckCore || k == KindCiteckCoreExtension || k == KindCiteckAdditional
+}
+
+// String returns the Kotlin-parity enum name (CITECK_CORE / THIRD_PARTY / ...)
+// used when serializing to the human-edited config YAML. Unknown values fall
+// back to their numeric form so the round-trip stays lossless.
+func (k ApplicationKind) String() string {
+	switch k {
+	case KindCiteckCore:
+		return "CITECK_CORE"
+	case KindCiteckCoreExtension:
+		return "CITECK_CORE_EXTENSION"
+	case KindCiteckAdditional:
+		return "CITECK_ADDITIONAL"
+	case KindThirdParty:
+		return "THIRD_PARTY"
+	default:
+		return strconv.Itoa(int(k))
+	}
+}
+
+// ParseApplicationKind maps an enum name back to its ApplicationKind. It also
+// accepts the legacy numeric form (e.g. "0") so configs written by older
+// builds keep parsing. Unknown names default to KindThirdParty, matching the
+// H2-migration translator's treatment of unrecognized/empty kinds.
+func ParseApplicationKind(s string) ApplicationKind {
+	switch strings.ToUpper(strings.TrimSpace(s)) {
+	case "CITECK_CORE":
+		return KindCiteckCore
+	case "CITECK_CORE_EXTENSION":
+		return KindCiteckCoreExtension
+	case "CITECK_ADDITIONAL":
+		return KindCiteckAdditional
+	case "THIRD_PARTY", "":
+		return KindThirdParty
+	default:
+		if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
+			return ApplicationKind(n)
+		}
+		return KindThirdParty
+	}
+}
+
+// MarshalYAML emits the enum name so the config editor shows readable text
+// (kind: CITECK_CORE) instead of an opaque integer.
+func (k ApplicationKind) MarshalYAML() (any, error) {
+	return k.String(), nil
+}
+
+// UnmarshalYAML accepts both the string name and the legacy integer form, so
+// existing numeric configs and freshly edited string configs both load.
+func (k *ApplicationKind) UnmarshalYAML(value *yaml.Node) error {
+	if n, err := strconv.Atoi(strings.TrimSpace(value.Value)); err == nil {
+		*k = ApplicationKind(n)
+		return nil
+	}
+	*k = ParseApplicationKind(value.Value)
+	return nil
 }
 
 // AppProbeDef defines a startup/liveness probe.

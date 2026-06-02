@@ -1,6 +1,7 @@
 package namespace
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 
@@ -144,13 +145,30 @@ func LoadNamespaceConfig(path string) (*Config, error) {
 	return ParseNamespaceConfig(data)
 }
 
-// MarshalNamespaceConfig serializes a namespace config to YAML.
+// MarshalNamespaceConfig serializes a namespace config to YAML with a 2-space
+// indent (matching the Kotlin 1.x launcher and the editor's display width).
 func MarshalNamespaceConfig(cfg *Config) ([]byte, error) {
 	out := *cfg
 	if out.APIVersion == "" {
 		out.APIVersion = "v1"
 	}
-	return yaml.Marshal(&out) //nolint:wrapcheck // transparent wrapper
+	return marshalYAML2(&out)
+}
+
+// marshalYAML2 marshals v to YAML using a 2-space indent. yaml.v3's package
+// Marshal hardcodes a 4-space indent, so we drive an Encoder directly.
+func marshalYAML2(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(v); err != nil {
+		_ = enc.Close()
+		return nil, fmt.Errorf("marshal yaml: %w", err)
+	}
+	if err := enc.Close(); err != nil {
+		return nil, fmt.Errorf("close yaml encoder: %w", err)
+	}
+	return buf.Bytes(), nil
 }
 
 // ParseNamespaceConfig parses YAML data into a namespace config, applying defaults and validation.
