@@ -7,8 +7,12 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
+for tool in go docker dpkg-deb; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "ERROR: required tool '$tool' not found in PATH" >&2; exit 1; }
+done
+
 VERSION="${VERSION:-2.3.2}"
-ARCH="amd64"
+ARCH="amd64"   # local smoke test is amd64-only; CI matrix covers arm64 separately
 DIST="$REPO_ROOT/dist"
 mkdir -p "$DIST"
 
@@ -25,6 +29,7 @@ VERSION="$VERSION" ARCH="$ARCH" "$NFPM" package --config packaging/nfpm.yaml \
 
 echo "==> [3/4] Building synthetic 1.4.1 deb (jpackage-like /opt layout)"
 LEGACY="$(mktemp -d)"
+trap 'rm -rf "$LEGACY"' EXIT
 mkdir -p "$LEGACY/DEBIAN" "$LEGACY/opt/citeck-launcher/bin" "$LEGACY/opt/citeck-launcher/lib/runtime"
 cat > "$LEGACY/DEBIAN/control" <<EOF
 Package: citeck-launcher
@@ -39,12 +44,11 @@ printf '#!/bin/sh\necho legacy 1.4.1\n' > "$LEGACY/opt/citeck-launcher/bin/citec
 chmod 0755 "$LEGACY/opt/citeck-launcher/bin/citeck-launcher"
 echo "1.4.1" > "$LEGACY/opt/citeck-launcher/lib/runtime/release"
 dpkg-deb --build --root-owner-group "$LEGACY" "$DIST/citeck-launcher_1.4.1_legacy_${ARCH}.deb"
-rm -rf "$LEGACY"
 
 echo "==> [4/4] Running upgrade scenario in ubuntu:24.04"
-docker run --rm -v "$DIST:/work:ro" ubuntu:24.04 bash -euxc '
-  NEW=$(ls /work/citeck-launcher_*_linux_amd64.deb)
-  OLD=$(ls /work/citeck-launcher_1.4.1_legacy_amd64.deb)
+docker run --rm -e VERSION="$VERSION" -v "$DIST:/work:ro" ubuntu:24.04 bash -euxc '
+  NEW="/work/citeck-launcher_${VERSION}_linux_amd64.deb"
+  OLD="/work/citeck-launcher_1.4.1_legacy_amd64.deb"
 
   # Install legacy 1.*
   dpkg -i "$OLD"
