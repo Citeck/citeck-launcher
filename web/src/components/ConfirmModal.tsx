@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useTranslation } from '../lib/i18n'
+import { LoadingLabel } from './LoadingLabel'
 
 interface ConfirmModalProps {
   open: boolean
@@ -78,7 +79,7 @@ export function ConfirmModal({
             onClick={onConfirm}
             disabled={loading}
           >
-            {loading ? t('common.working') : (confirmLabel || t('common.confirm'))}
+            <LoadingLabel loading={loading}>{confirmLabel || t('common.confirm')}</LoadingLabel>
           </button>
         </div>
       </div>

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 import yaml from 'js-yaml'
 import { RotateCcw } from 'lucide-react'
 import { CodeEditor } from '../components/CodeEditor'
+import { LoadingLabel } from '../components/LoadingLabel'
 import { useTranslation } from '../lib/i18n'
 import {
   getAppConfig, putAppConfig, resetAppConfig,
@@ -305,7 +306,7 @@ export function WindowEditor() {
             }
           }}
         >
-          {saving ? t('common.saving') : t('common.save')}
+          <LoadingLabel loading={saving}>{t('common.save')}</LoadingLabel>
         </button>
       </footer>
     </div>

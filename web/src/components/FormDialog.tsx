@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useMemo } from 'react'
 import { Eye, EyeOff, RefreshCw } from 'lucide-react'
 import { useTranslation } from '../lib/i18n'
 import { Select } from './Select'
+import { LoadingLabel } from './LoadingLabel'
 
 /**
  * Form values keyed by field key. Everything goes through this typed shape so
@@ -365,7 +366,7 @@ export function FormDialog({
             className="rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
             disabled={loading}
           >
-            {loading ? t('common.working') : (submitLabel ?? t('common.submit'))}
+            <LoadingLabel loading={loading}>{submitLabel ?? t('common.submit')}</LoadingLabel>
           </button>
         </div>
       </form>

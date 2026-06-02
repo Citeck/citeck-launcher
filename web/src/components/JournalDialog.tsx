@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useMemo } from 'react'
 import { Loader2, Search, X, Plus } from 'lucide-react'
+import { LoadingLabel } from './LoadingLabel'
 import { useTranslation } from '../lib/i18n'
 
 /**
@@ -380,19 +381,23 @@ export function JournalDialog<T extends Record<string, unknown>>({
             )}
             {customButtons?.map((btn) => {
               const enabled = btn.enabledIf ? btn.enabledIf(getSelectedRows()) : true
+              const isDisabled = !enabled || buttonLoading === btn.label
+              // Gate the hover background on the enabled state — :hover still
+              // fires on disabled buttons, so an always-on hover class makes a
+              // disabled "Delete All" look clickable when it isn't.
               const variant =
-                btn.variant === 'primary' ? 'bg-primary text-primary-foreground hover:bg-primary/90'
-                : btn.variant === 'danger' ? 'border border-destructive/40 text-destructive hover:bg-destructive/10'
-                : 'border border-border hover:bg-muted'
+                btn.variant === 'primary' ? `bg-primary text-primary-foreground ${isDisabled ? '' : 'hover:bg-primary/90'}`
+                : btn.variant === 'danger' ? `border border-destructive/40 text-destructive ${isDisabled ? '' : 'hover:bg-destructive/10'}`
+                : `border border-border ${isDisabled ? '' : 'hover:bg-muted'}`
               return (
                 <button
                   key={btn.label}
                   type="button"
-                  className={`rounded-md px-3 py-1.5 text-xs disabled:opacity-50 ${variant}`}
-                  disabled={!enabled || buttonLoading === btn.label}
+                  className={`rounded-md px-3 py-1.5 text-xs disabled:opacity-50 ${isDisabled ? 'cursor-not-allowed' : ''} ${variant}`}
+                  disabled={isDisabled}
                   onClick={() => runCustomButton(btn)}
                 >
-                  {buttonLoading === btn.label ? `${btn.label}…` : btn.label}
+                  <LoadingLabel loading={buttonLoading === btn.label}>{btn.label}</LoadingLabel>
                 </button>
               )
             })}

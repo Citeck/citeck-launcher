@@ -15,6 +15,7 @@ import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
 import { Select } from './Select'
 import { Modal, ModalField } from './Modal'
+import { LoadingLabel } from './LoadingLabel'
 
 export interface NamespaceEditInitial {
   name?: string
@@ -257,11 +258,9 @@ export function NamespaceEditDialog({
             className="rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-xs font-medium hover:bg-primary/90 disabled:opacity-50"
             disabled={loading}
           >
-            {loading
-              ? t('common.working')
-              : mode === 'create'
-                ? t('namespace.form.submit')
-                : t('namespace.form.save')}
+            <LoadingLabel loading={loading}>
+              {mode === 'create' ? t('namespace.form.submit') : t('namespace.form.save')}
+            </LoadingLabel>
           </button>
         </>
       }
