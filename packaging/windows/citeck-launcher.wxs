@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WiX v5 authoring for the Citeck Launcher per-user MSI.
+  Build (on Windows): wix build packaging/windows/citeck-launcher.wxs \
+      -arch x64 -d Version=2.3.2 -o dist/citeck-launcher_2.3.2_windows_amd64.msi
+  UpgradeCode is intentionally identical to the legacy 1.* jpackage MSI
+  (upgradeUuid in build.gradle.kts @ v1.4.1) so MajorUpgrade removes 1.* on install.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Citeck Launcher"
+           Manufacturer="Citeck LLC"
+           Version="$(Version)"
+           UpgradeCode="3FA61060-0739-4463-985E-C58D1BC4E9B2"
+           Scope="perUser"
+           Compressed="yes">
+
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of Citeck Launcher is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="AppIcon" SourceFile="icons/logo.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Citeck Launcher" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppMenuFolder" Name="Citeck Tools" />
+    </StandardDirectory>
+
+    <Component Id="MainExe" Directory="INSTALLFOLDER" Guid="*">
+      <File Id="CiteckLauncherExe" Source="build\bin\citeck-launcher.exe" KeyPath="yes" />
+    </Component>
+
+    <Component Id="StartMenuShortcut" Directory="AppMenuFolder" Guid="*">
+      <Shortcut Id="AppShortcut"
+                Name="Citeck Launcher"
+                Target="[INSTALLFOLDER]citeck-launcher.exe"
+                WorkingDirectory="INSTALLFOLDER"
+                Icon="AppIcon" />
+      <RemoveFolder Id="RemoveAppMenuFolder" Directory="AppMenuFolder" On="uninstall" />
+      <RegistryValue Root="HKCU" Key="Software\Citeck\Launcher"
+                     Name="installed" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <Feature Id="Main" Title="Citeck Launcher" Level="1">
+      <ComponentRef Id="MainExe" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+  </Package>
+</Wix>
