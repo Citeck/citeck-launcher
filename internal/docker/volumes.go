@@ -3,9 +3,10 @@ package docker
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
-	"github.com/docker/docker/api/types"
+	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/volume"
 )
@@ -24,6 +25,10 @@ type VolumeInfo struct {
 // ListVolumes returns volumes scoped to (namespace, workspace) by label,
 // mirroring Kotlin DockerApi.getVolumes(nsRef). Workspace match is
 // case-insensitive — Kotlin compares with String.equals(..., true).
+//
+// Sizes are NOT computed here (Size == -1): measuring volume sizes is slow, so
+// the list loads instantly and callers fetch a single volume's size lazily, on
+// demand, via VolumeSize.
 func (c *Client) ListVolumes(ctx context.Context) ([]VolumeInfo, error) {
 	resp, err := c.cli.VolumeList(ctx, volume.ListOptions{
 		Filters: filters.NewArgs(
@@ -33,50 +38,53 @@ func (c *Client) ListVolumes(ctx context.Context) ([]VolumeInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list volumes: %w", err)
 	}
-	sizes, sizeErr := c.VolumesSize(ctx)
-	if sizeErr != nil {
-		// /system/df may be slow or unsupported; fall through with -1 sizes.
-		sizes = nil
-	}
 	out := make([]VolumeInfo, 0, len(resp.Volumes))
 	for _, v := range resp.Volumes {
 		if !strings.EqualFold(v.Labels[LabelWorkspace], c.workspace) {
 			continue
-		}
-		size := int64(-1)
-		if sz, ok := sizes[v.Name]; ok {
-			size = sz
 		}
 		out = append(out, VolumeInfo{
 			Name:       v.Name,
 			OrigName:   v.Labels[LabelOrigName],
 			CreatedAt:  v.CreatedAt,
 			MountPoint: v.Mountpoint,
-			Size:       size,
+			Size:       -1, // computed lazily via VolumeSize
 		})
 	}
 	return out, nil
 }
 
-// VolumesSize returns a map of volume-name → size-in-bytes from the engine's
-// /system/df endpoint, matching Kotlin DockerApi.getVolumesSize. Volumes with
-// no UsageData reported (size == -1) are still included so callers can
-// distinguish "not yet measured" from "absent".
-func (c *Client) VolumesSize(ctx context.Context) (map[string]int64, error) {
-	du, err := c.cli.DiskUsage(ctx, types.DiskUsageOptions{
-		Types: []types.DiskUsageObject{types.VolumeObject},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("disk usage: %w", err)
+// VolumeSize computes the on-disk size (in bytes) of a SINGLE named volume by
+// running `du` in a throwaway utils container that mounts the volume read-only.
+// Unlike Docker's /system/df — which walks every volume and takes 10-25s — this
+// measures only the requested volume, so the Web UI can compute sizes per row on
+// demand. The utils container is the same one snapshots use to read volume data,
+// so it can read the contents under rootless Docker.
+func (c *Client) VolumeSize(ctx context.Context, name string) (int64, error) {
+	utilsImage := config.UtilsImage()
+	if !c.ImageExists(ctx, utilsImage) {
+		if err := c.PullImage(ctx, utilsImage, nil); err != nil {
+			return 0, fmt.Errorf("pull utils image: %w", err)
+		}
 	}
-	result := make(map[string]int64, len(du.Volumes))
-	for _, v := range du.Volumes {
-		if v == nil || v.UsageData == nil {
+	// busybox du: -s summarize, -k 1024-byte blocks (portable; busybox has no -b).
+	out, _, err := c.RunUtilsContainer(ctx, []string{"du", "-sk", "/vol"}, []string{name + ":/vol:ro"})
+	if err != nil {
+		return 0, fmt.Errorf("run du for volume %s: %w", name, err)
+	}
+	// `du -s` prints the total as the LAST line ("<kb>\t/vol"); any permission
+	// warnings precede it. Scan from the end for the first numeric first-field.
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		fields := strings.Fields(lines[i])
+		if len(fields) == 0 {
 			continue
 		}
-		result[v.Name] = v.UsageData.Size
+		if kb, perr := strconv.ParseInt(fields[0], 10, 64); perr == nil {
+			return kb * 1024, nil
+		}
 	}
-	return result, nil
+	return 0, fmt.Errorf("no numeric size in du output for volume %s: %q", name, out)
 }
 
 // RemoveVolume removes a Docker named volume by name, matching Kotlin

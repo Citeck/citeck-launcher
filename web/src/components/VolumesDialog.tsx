@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Trash2 } from 'lucide-react'
-import { getVolumes, deleteVolume } from '../lib/api'
+import { getVolumes, deleteVolume, getVolumeSize } from '../lib/api'
+import { LoadingLabel } from './LoadingLabel'
 import { JournalDialog, type JournalAction, type JournalColumn, type JournalCustomButton } from './JournalDialog'
 import { ConfirmModal } from './ConfirmModal'
 import { useTranslation } from '../lib/i18n'
@@ -8,8 +9,9 @@ import { toast } from '../lib/toast'
 
 interface VolumeRow extends Record<string, unknown> {
   name: string
-  size: string
 }
+
+type SizeState = { status: 'idle' | 'loading' | 'done'; bytes?: number }
 
 // Mirrors SnapshotsDialog.formatBytes; kept inline to avoid pulling a shared
 // formatter just for two dialogs (Kotlin used ContainerStats.formatBytes).
@@ -51,8 +53,15 @@ export function VolumesDialog({ open, onClose, onOpenSnapshots, namespaceStopped
   const [deleting, setDeleting] = useState(false)
   const [deleteAllOpen, setDeleteAllOpen] = useState(false)
   const [deletingAll, setDeletingAll] = useState(false)
+  // Per-row lazy size state. Computing a volume's size walks it via `du` in a
+  // utils container (Docker has no cheap per-volume size API and /system/df is
+  // slow), so the list loads without sizes and the user computes a single row's
+  // size on demand by clicking "Compute".
+  const [rowSizes, setRowSizes] = useState<Record<string, SizeState>>({})
 
   const reload = useCallback(() => {
+    // Volumes changed → drop any computed sizes so a recompute reflects reality.
+    setRowSizes({})
     void Promise.resolve().then(() => {
       setError(null)
       setLoading(true)
@@ -67,7 +76,7 @@ export function VolumesDialog({ open, onClose, onOpenSnapshots, namespaceStopped
             return
           }
           console.debug('[VolumesDialog] loaded', vs.length, 'volumes')
-          setVolumes(vs.map((v) => ({ name: v.name, size: formatBytes(v.size) })))
+          setVolumes(vs.map((v) => ({ name: v.name })))
         })
         .catch((e) => {
           console.error('[VolumesDialog] getVolumes failed:', e)
@@ -81,9 +90,39 @@ export function VolumesDialog({ open, onClose, onOpenSnapshots, namespaceStopped
     if (open) reload()
   }, [open, reload])
 
+  const computeSize = useCallback((name: string) => {
+    setRowSizes((s) => ({ ...s, [name]: { status: 'loading' } }))
+    getVolumeSize(name)
+      .then(({ size }) => {
+        setRowSizes((s) => ({ ...s, [name]: { status: 'done', bytes: size >= 0 ? size : undefined } }))
+      })
+      .catch((e) => {
+        setRowSizes((s) => ({ ...s, [name]: { status: 'idle' } }))
+        toast((e as Error).message, 'error')
+      })
+  }, [])
+
   const columns: JournalColumn<VolumeRow>[] = [
     { label: t('volumes.table.name'), key: 'name', width: '70%' },
-    { label: t('volumes.table.size'), key: 'size' },
+    {
+      label: t('volumes.table.size'),
+      key: 'size',
+      render: (row) => {
+        const st = rowSizes[row.name]
+        if (st?.status === 'done') return <span>{st.bytes != null ? formatBytes(st.bytes) : '—'}</span>
+        const isLoading = st?.status === 'loading'
+        return (
+          <button
+            type="button"
+            disabled={isLoading}
+            onClick={() => computeSize(row.name)}
+            className="rounded border border-border px-1.5 py-0.5 text-[11px] text-foreground hover:bg-muted disabled:opacity-70"
+          >
+            <LoadingLabel loading={isLoading}>{t('volumes.size.compute')}</LoadingLabel>
+          </button>
+        )
+      },
+    },
   ]
 
   const rowActions: JournalAction<VolumeRow>[] = [
@@ -115,14 +154,21 @@ export function VolumesDialog({ open, onClose, onOpenSnapshots, namespaceStopped
 
   async function handleDeleteOne() {
     if (!deleteTarget) return
+    const target = deleteTarget
     setDeleting(true)
     try {
-      await deleteVolume(deleteTarget)
+      await deleteVolume(target)
       toast(t('volumes.delete.success'), 'success')
       setDeleteTarget(null)
+      // Drop the row immediately. The authoritative reload below can take many
+      // seconds (Docker /system/df is slow), and a lingering deleted row invites
+      // repeat clicks that used to 500 with "no such volume".
+      setVolumes((vs) => vs.filter((v) => v.name !== target))
       reload()
     } catch (e) {
       toast((e as Error).message, 'error')
+      setDeleteTarget(null)
+      reload() // resync the list in case the volume was already gone
     } finally {
       setDeleting(false)
     }

@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/config"
@@ -74,6 +76,34 @@ func (d *Daemon) handleListVolumesDesktop(w http.ResponseWriter, r *http.Request
 	writeJSON(w, result)
 }
 
+// volSizeMu serializes per-volume size computations. RunUtilsContainer uses a
+// fixed container name, so concurrent calls would collide (one would tear down
+// the other's container). The user computes sizes one row at a time anyway.
+var volSizeMu sync.Mutex
+
+// handleVolumeSize computes the on-disk size of a SINGLE volume on demand. It is
+// the lazy counterpart to the (now size-free) volume list: the Web UI calls it
+// when the user clicks "Compute" on a row, so the size of only THAT volume is
+// measured (via `du` in a utils container) — not every volume via /system/df.
+func (d *Daemon) handleVolumeSize(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !validateAppName(w, name) {
+		return
+	}
+	if !config.IsDesktopMode() || d.dockerClient == nil {
+		writeJSON(w, map[string]int64{"size": -1})
+		return
+	}
+	volSizeMu.Lock()
+	defer volSizeMu.Unlock()
+	size, err := d.dockerClient.VolumeSize(r.Context(), name)
+	if err != nil {
+		writeInternalError(w, err)
+		return
+	}
+	writeJSON(w, map[string]int64{"size": size})
+}
+
 func (d *Daemon) handleDeleteVolume(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !validateAppName(w, name) {
@@ -92,10 +122,13 @@ func (d *Daemon) handleDeleteVolume(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := d.dockerClient.RemoveVolume(r.Context(), name); err != nil {
-			// Docker returns 404 for unknown volumes; surface that to the UI
-			// instead of a generic 500 so the user sees "volume not found".
+			// Idempotent delete: if the volume is already gone, the desired end
+			// state is reached, so report success. The volume list (GET
+			// /volumes) is slow on some engines (/system/df), so a deleted row
+			// can linger for seconds and get clicked again — that retry must not
+			// surface a scary 500 for a volume that is, in fact, already deleted.
 			if isNotFoundErr(err) {
-				writeError(w, http.StatusNotFound, "volume not found")
+				writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("Volume %s already removed", name)})
 				return
 			}
 			writeInternalError(w, err)
@@ -120,12 +153,15 @@ func isNotFoundErr(err error) bool {
 	if err == nil {
 		return false
 	}
-	// docker SDK wraps "No such volume" responses in errdefs.NotFound; checking
-	// the error string is brittle but avoids pulling in errdefs just for one route.
+	// docker SDK wraps "No such volume" responses in errdefs.NotFound.
 	type notFounder interface{ NotFound() bool }
 	var nf notFounder
-	if errors.As(err, &nf) {
-		return nf.NotFound()
+	if errors.As(err, &nf) && nf.NotFound() {
+		return true
 	}
-	return false
+	// Fallback: VolumeRemove can return a plain error ("Error response from
+	// daemon: get <name>: no such volume") that does NOT implement the errdefs
+	// NotFound interface, so the typed check above misses it. Match the message.
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no such volume") || strings.Contains(msg, "volume not found")
 }

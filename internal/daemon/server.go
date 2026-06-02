@@ -1134,6 +1134,7 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 
 	// Volumes
 	mux.HandleFunc("GET /api/v1/volumes", d.handleListVolumes)
+	mux.HandleFunc("GET /api/v1/volumes/{name}/size", d.handleVolumeSize)
 	mux.HandleFunc("DELETE /api/v1/volumes/{name}", d.handleDeleteVolume)
 
 	// Health + Metrics

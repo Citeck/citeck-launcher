@@ -325,6 +325,13 @@ export async function getVolumes(): Promise<{ name: string; path: string; size?:
   return fetchJSON('/volumes')
 }
 
+// Lazily compute the size of a single volume on demand (the list loads without
+// sizes because Docker /system/df is slow). Measures only this volume via `du`
+// in a utils container. Returns size in bytes (-1 if unavailable).
+export async function getVolumeSize(name: string): Promise<{ size: number }> {
+  return fetchJSON(`/volumes/${encodeURIComponent(name)}/size`)
+}
+
 export async function deleteVolume(name: string): Promise<ActionResultDto> {
   const res = await fetchWithTimeout(`${API_BASE}/volumes/${name}`, { method: 'DELETE', headers: CSRF_HEADER })
   if (!res.ok) throw new Error(await extractErrorMessage(res))
