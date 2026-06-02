@@ -28,3 +28,17 @@ contents:
     dst: /usr/share/icons/hicolor/256x256/apps/citeck-launcher.png
     file_info:
       mode: 0644
+
+# Runtime shared-library deps: the Wails binary dynamically links GTK3 + WebKit2GTK.
+# (Docker is intentionally NOT a dependency — it's an external runtime, like 1.*.)
+overrides:
+  deb:
+    depends:
+      # Ubuntu 24.04+ renamed libgtk-3-0 -> libgtk-3-0t64 (time_t transition);
+      # the alternative keeps the package installable on both new and old systems.
+      - "libgtk-3-0t64 | libgtk-3-0"
+      - libwebkit2gtk-4.1-0
+  rpm:
+    depends:
+      - gtk3
+      - webkit2gtk4.1
