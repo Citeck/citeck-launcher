@@ -246,7 +246,7 @@ func generatePgAdmin(ctx *NsGenContext) {
 		if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.PgAdmin.Image != "" {
 			img = ctx.WorkspaceConfig.PgAdmin.Image
 		} else {
-			img = bundleImageOr(ctx, appdef.AppPgadmin, "dpage/pgadmin4:9.10.0")
+			img = bundleImageOr(ctx, appdef.AppPgadmin, "dpage/pgadmin4:9.15.0")
 		}
 	}
 	app := ctx.GetOrCreateApp(appdef.AppPgadmin)
@@ -256,8 +256,16 @@ func generatePgAdmin(ctx *NsGenContext) {
 	app.AddEnv("PGADMIN_DEFAULT_EMAIL", "admin@admin.com")
 	app.AddEnv("PGADMIN_DEFAULT_PASSWORD", ctx.Secrets.AdminPasswordOrDefault())
 	app.AddVolume("pgadmin2:/var/lib/pgadmin")
+	// servers.json pre-registers the postgres connection. The entrypoint
+	// auto-imports it from the default /pgadmin4/servers.json on first DB init
+	// only — we deliberately do NOT force a re-import on every start, so a
+	// reused pgadmin2 volume keeps any servers the user added/edited manually.
+	// From-scratch deploys (fresh volume) get the connection pre-filled.
 	app.AddVolume("./pgadmin/servers.json:/pgadmin4/servers.json")
-	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "256m"}}
+	// 300m: pgAdmin 4 9.x idles at ~250m, so 256m has no headroom and OOM-kills
+	// under any use (and during the first-init server import). 300m clears the
+	// import and light use (verified, no OOM) without the waste of 512m.
+	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "300m"}}
 }
 
 func generatePostgres(ctx *NsGenContext) {
