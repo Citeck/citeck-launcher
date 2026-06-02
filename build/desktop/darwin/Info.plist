@@ -15,7 +15,7 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>
-    <string>citeck-desktop</string>
+    <string>citeck-launcher</string>
     <key>CFBundleIconFile</key>
     <string>appicon</string>
     <key>LSMinimumSystemVersion</key>

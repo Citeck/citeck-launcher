@@ -52,7 +52,8 @@ coverage.html
 
 ### Binaries (prevent accidental root-dir builds) ###
 /citeck
-/citeck-desktop
+/citeck-launcher
+/dist/
 
 ### Prompt files ###
 PROMPT-*.md

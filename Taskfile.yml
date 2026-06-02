@@ -1,7 +1,7 @@
 version: '3'
 
 vars:
-  APP_NAME: citeck-desktop
+  APP_NAME: citeck-launcher
   BIN_DIR: bin
 
 includes:

@@ -2,8 +2,8 @@
 Type=Application
 Name=Citeck Launcher
 Comment=Citeck Platform Launcher
-Exec=citeck-desktop
-Icon=citeck-desktop
+Exec=citeck-launcher
+Icon=citeck-launcher
 Terminal=false
 Categories=Development;
-StartupWMClass=citeck-desktop
+StartupWMClass=citeck-launcher
