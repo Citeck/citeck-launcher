@@ -148,7 +148,10 @@ func (d *Daemon) writeSystemDumpZip(ctx context.Context, w http.ResponseWriter, 
 			}
 			fname := fmt.Sprintf("logs/%s.log", app.Name)
 			if fw, err := zw.Create(fname); err == nil {
-				_, _ = fw.Write([]byte(logs))
+				// Strip ANSI color codes (Spring Boot emits SGR sequences) so the
+				// dumped .log files are readable in a plain text editor — same
+				// normalization the live log viewer already applies.
+				_, _ = fw.Write([]byte(stripAnsi(logs)))
 			}
 		}
 	}

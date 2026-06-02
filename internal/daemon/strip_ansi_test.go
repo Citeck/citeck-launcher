@@ -5,6 +5,18 @@ import (
 	"testing"
 )
 
+// TestStripAnsi covers the string variant used when writing per-app logs into
+// the system dump zip — the same Spring Boot SGR sequences that rendered as
+// gibberish ("[0;39m", "[2m", raw ESC) when opening a dumped .log in a text
+// editor. ANSI codes are removed and tabs normalized to 4 spaces.
+func TestStripAnsi(t *testing.T) {
+	in := "\x1b[2m2026-06-02 03:35:30\x1b[0;39m \x1b[32m INFO\x1b[0;39m\t\x1b[36mEcosProjectTracker\x1b[0;39m"
+	want := "2026-06-02 03:35:30  INFO    EcosProjectTracker"
+	if got := stripAnsi(in); got != want {
+		t.Errorf("stripAnsi:\n got  %q\n want %q", got, want)
+	}
+}
+
 func TestStripAnsiBytes_WholeAndSplit(t *testing.T) {
 	// Sample chunk that exhibits the Java/Spring SGR pattern that was leaking
 	// into the log viewer when follow=true: [2m timestamps [0;39m, [32m INFO
