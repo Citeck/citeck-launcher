@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   WiX v5 authoring for the Citeck Launcher per-user MSI.
-  Build (on Windows): wix build packaging/windows/citeck-launcher.wxs \
-      -arch x64 -d Version=2.3.2 -o dist/citeck-launcher_2.3.2_windows_amd64.msi
+  Build (on Windows, run from the REPO ROOT): wix build packaging/windows/citeck-launcher.wxs \
+      -arch x64 -d Version=2.3.2 -b . -o dist/citeck-launcher_2.3.2_windows_amd64.msi
+  The `-b .` adds the repo root as a bind path so the relative File/Icon Source
+  paths (build\bin\citeck-launcher.exe, icons\logo.ico) resolve during binding.
   UpgradeCode is intentionally identical to the legacy 1.* jpackage MSI
   (upgradeUuid in build.gradle.kts @ v1.4.1) so MajorUpgrade removes 1.* on install.
 -->
@@ -30,7 +32,8 @@
       <Directory Id="AppMenuFolder" Name="Citeck Tools" />
     </StandardDirectory>
 
-    <Component Id="MainExe" Directory="INSTALLFOLDER" Guid="*">
+    <!-- Fixed GUID (not "*") so component identity is stable across 2.x releases. -->
+    <Component Id="MainExe" Directory="INSTALLFOLDER" Guid="824BB0B5-2F67-483E-8489-DF9545AFB47B">
       <File Id="CiteckLauncherExe" Source="build\bin\citeck-launcher.exe" KeyPath="yes" />
     </Component>
 
