@@ -18,7 +18,7 @@ chmod +x "$APP/Contents/MacOS/citeck-launcher"
 cp "$ROOT/icons/icon.icns" "$APP/Contents/Resources/appicon.icns"
 cp "$ROOT/build/desktop/darwin/Info.plist" "$APP/Contents/Info.plist"
 
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION}" "$APP/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion '${VERSION}'" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString '${VERSION}'" "$APP/Contents/Info.plist"
 
 echo "Built $APP (version ${VERSION})"

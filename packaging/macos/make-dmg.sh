@@ -11,6 +11,7 @@ APP="$ROOT/dist/citeck-launcher.app"
 test -d "$APP" || { echo "missing $APP — run make-app.sh first"; exit 1; }
 
 STAGING="$(mktemp -d)"
+trap 'rm -rf "$STAGING"' EXIT
 cp -R "$APP" "$STAGING/"
 ln -s /Applications "$STAGING/Applications"
 
