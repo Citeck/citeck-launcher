@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { activateNamespace, getNamespaces, getQuickStarts, deleteNamespace, postNamespaceStart, createNamespace } from '../lib/api'
 import { useDaemonStatusStore, useActiveWorkspaceId } from '../lib/daemonStatus'
@@ -47,6 +47,11 @@ export function Welcome() {
   const resetPanels = usePanelStore((s) => s.resetPanels)
   const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu()
 
+  // Holds the latest loadData so the silent-retry timeout can call it without
+  // referencing the callback before it's declared (temporal dead zone) and
+  // without re-creating loadData on every render.
+  const loadDataRef = useRef<() => void>(undefined)
+
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
@@ -58,7 +63,7 @@ export function Welcome() {
       const msg = e instanceof Error ? e.message : String(e)
       // Daemon still starting — retry silently
       if (msg.includes('Service Unavailable') || msg.includes('503') || msg.includes('Failed to fetch')) {
-        setTimeout(loadData, 1000)
+        setTimeout(() => loadDataRef.current?.(), 1000)
         return
       }
       setLoadError(msg)
@@ -67,9 +72,18 @@ export function Welcome() {
     }
   }, [])
 
+  // Keep the ref pointing at the latest loadData (stable here, but updated via
+  // an effect to avoid mutating a ref during render).
+  useEffect(() => {
+    loadDataRef.current = loadData
+  }, [loadData])
+
   // Reload the namespace list on mount and whenever the active workspace
   // changes (e.g. the user switches workspace from the top-panel picker).
   useEffect(() => {
+    // Intentional: load-on-mount / on-workspace-change fetch sets a loading
+    // flag then awaits; not a cascading render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadData()
   }, [loadData, activeWorkspaceId])
 

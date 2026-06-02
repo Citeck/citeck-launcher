@@ -50,6 +50,9 @@ export function Secrets() {
       .finally(() => setLoading(false))
   }, [])
 
+  // Intentional: one-shot loading flag for the on-mount secrets fetch;
+  // not a cascading render.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { loadSecrets() }, [loadSecrets])
 
   useEffect(() => {

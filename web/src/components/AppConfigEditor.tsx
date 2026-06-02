@@ -80,6 +80,9 @@ export function AppConfigEditor({ appName }: AppConfigEditorProps) {
   }, [appName])
 
   useEffect(() => {
+    // Intentional: load-on-mount / on-appName-change clears the loading flag
+    // then fetches; not a cascading render. AbortController cleans up in-flight.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     const controller = load()
     return () => controller.abort()
   }, [load])

@@ -87,6 +87,9 @@ export function VolumesDialog({ open, onClose, onOpenSnapshots, namespaceStopped
   }, [])
 
   useEffect(() => {
+    // Intentional: reload the volume list when the dialog opens (open-prop
+    // change); clears cached sizes then fetches. Not a cascading render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (open) reload()
   }, [open, reload])
 

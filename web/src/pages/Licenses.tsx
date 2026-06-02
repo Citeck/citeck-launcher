@@ -35,6 +35,9 @@ export function Licenses() {
       .finally(() => setLoading(false))
   }, [])
 
+  // Intentional: one-shot loading flag for the on-mount licenses fetch;
+  // not a cascading render.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { load() }, [load])
 
   async function handleCreate() {

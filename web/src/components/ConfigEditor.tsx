@@ -30,6 +30,8 @@ export function ConfigEditor({ compact = false }: ConfigEditorProps) {
   }, [])
 
   useEffect(() => {
+    // Intentional: one-shot load-on-mount data fetch; not a cascading render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadData()
   }, [loadData])
 
