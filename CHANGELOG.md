@@ -101,6 +101,24 @@
 - `internal/h2migrate/jarmigrate.go` + tests (~850 LOC) and all
   JRE-download / java-binary discovery logic.
 
+## Desktop installers
+
+- Native desktop installers for **Windows, macOS, and Linux**, built in CI on each
+  `v*.*.*` tag and attached to the GitHub Release: `.deb` + `.rpm` (amd64, arm64),
+  `.msi` (amd64, arm64), and `.dmg` (Intel + Apple Silicon). Artifacts are named
+  `citeck-desktop_<version>_<os>_<arch>.<ext>` with `.sha256` sidecars; the server
+  tarballs and `install.sh` ship in the same release.
+- **Clean upgrade over the legacy 1.x desktop app — no leftover executables.** The
+  `.deb`/`.rpm` reuse the package name `citeck-launcher` (dpkg/dnf in-place replace),
+  the Windows `.msi` reuses 1.x's `UpgradeCode` (major upgrade auto-removes 1.x), and
+  the macOS `.app` keeps the `citeck-launcher.app` bundle name (Finder replaces in
+  place). User data is never touched — it is preserved for the 1.x → 2.x migration.
+- Desktop build output renamed to `citeck-launcher`. Packaging via nfpm (deb/rpm),
+  WiX (msi), and `.app` + `hdiutil` (dmg). Code-signing / notarization steps are
+  scaffolded in the workflow but disabled until signing secrets are configured.
+- Windows desktop builds are CGO-free (added a Windows `availableDiskSpace` via
+  `GetDiskFreeSpaceExW`); the release matrix covers Windows amd64 + arm64.
+
 # Release 2.3.2
 
 ## Fixes

@@ -33,7 +33,9 @@ build/bin/citeck-server start --foreground   # Run daemon in foreground
 
 Packaging configs live in `packaging/` (nfpm → deb/rpm, WiX → msi, macOS scripts → dmg).
 A `v*.*.*` tag builds all installers via `.github/workflows/release-go.yml` and attaches
-them to the GitHub Release alongside the server tarballs. Clean upgrade over the legacy
+them to the GitHub Release alongside the server tarballs. Release artifacts are named
+`citeck-desktop_<version>_<os>_<arch>.<ext>` (the package/app *identity* stays `citeck-launcher`
+for the upgrade contract). Clean upgrade over the legacy
 1.* installer: same deb/rpm package name `citeck-launcher`, shared Windows `UpgradeCode`,
 and a `citeck-launcher.app` bundle name matching 1.*'s path. Run the local clean-upgrade
 e2e with `./scripts/test-deb-upgrade.sh` (needs Docker + GTK3 dev libs).

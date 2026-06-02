@@ -43,6 +43,26 @@ citeck install --workspace /path/to/launcher-workspace.zip --offline
 The `--workspace` flag extracts bundle repos locally so no internet is needed during startup.
 To update workspace later from a new archive without reinstalling: `citeck update -f <zip>`.
 
+## Desktop App
+
+Citeck Launcher is also available as a **desktop application** for Windows, macOS, and Linux —
+the same daemon and Web UI wrapped in a native window (Wails). Desktop installers are attached
+to each [GitHub release](https://github.com/Citeck/citeck-launcher/releases); download the one
+for your platform:
+
+| OS | File | Arch |
+|----|------|------|
+| Windows | `citeck-desktop_<version>_windows_<arch>.msi` | amd64, arm64 |
+| macOS | `citeck-desktop_<version>_darwin_<arch>.dmg` | amd64 (Intel), arm64 (Apple Silicon) |
+| Linux | `citeck-desktop_<version>_linux_<arch>.deb` / `.rpm` | amd64, arm64 |
+
+Each installer has a `.sha256` sidecar for verification.
+
+**Installing 2.x over the legacy 1.x desktop app is a clean in-place upgrade** — no leftover old
+executables, and your data is kept (the 1.x → 2.x migration runs automatically on first start).
+The OS handles the replacement: the `.deb`/`.rpm` keep the `citeck-launcher` package name, the
+Windows `.msi` reuses 1.x's upgrade code, and the macOS `.app` keeps its bundle name.
+
 ## Features
 
 - **Interactive installer** with TLS auto-detection (Let's Encrypt / self-signed / custom cert)
