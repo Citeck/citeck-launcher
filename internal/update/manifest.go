@@ -13,6 +13,7 @@ import (
 // State is the lifecycle of a staged daemon payload.
 type State string
 
+// State constants for the staged-payload lifecycle.
 const (
 	StateStaged  State = "staged"  // downloaded + verified, not yet applied
 	StatePending State = "pending" // user applied; under health-gate this boot
@@ -102,6 +103,7 @@ func MarkState(updatesDir, version string, state State) error {
 			m.Entries[i].State = state
 			m.Entries[i].HealthAt = time.Now().UTC().Format(time.RFC3339)
 			found = true
+			break // AddStaged dedupes by version, so at most one matches
 		}
 	}
 	if !found {

@@ -53,7 +53,7 @@ func TestManifestRoundTripAndSelectBest(t *testing.T) {
 	}
 
 	// never-downgrade: current already newer than every good → ok=false.
-	if _, ok := SelectBest(dir, "2.9.0"); ok {
+	if _, downOK := SelectBest(dir, "2.9.0"); downOK {
 		t.Fatal("SelectBest must not pick a version <= current (never-downgrade)")
 	}
 
@@ -76,5 +76,44 @@ func TestManifestRoundTripAndSelectBest(t *testing.T) {
 	got, ok = SelectBest(dir, "2.4.0")
 	if !ok || filepath.Base(filepath.Dir(got)) != "2.5.0" {
 		t.Fatalf("missing-file entries must be skipped, got %q ok=%v", got, ok)
+	}
+}
+
+func TestFailedNewerThan(t *testing.T) {
+	dir := t.TempDir()
+
+	// No manifest → empty.
+	if v := FailedNewerThan(dir, "2.4.0"); v != "" {
+		t.Fatalf("empty: got %q want \"\"", v)
+	}
+
+	p := writeFakeBinary(t, dir, "2.6.0")
+	if err := AddStaged(dir, Entry{Version: "2.6.0", Path: p}); err != nil {
+		t.Fatal(err)
+	}
+	// staged/pending/good must NOT count as failed.
+	if v := FailedNewerThan(dir, "2.4.0"); v != "" {
+		t.Fatalf("non-failed: got %q want \"\"", v)
+	}
+
+	if err := MarkState(dir, "2.6.0", StateFailed); err != nil {
+		t.Fatal(err)
+	}
+	if v := FailedNewerThan(dir, "2.4.0"); v != "2.6.0" {
+		t.Fatalf("failed newer: got %q want 2.6.0", v)
+	}
+	// never-downgrade: a failed version <= current is ignored.
+	if v := FailedNewerThan(dir, "2.6.0"); v != "" {
+		t.Fatalf("failed not newer: got %q want \"\"", v)
+	}
+}
+
+func TestLoadRejectsCorruptJSON(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), []byte("{bad"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(dir); err == nil {
+		t.Fatal("corrupt JSON must return an error")
 	}
 }
