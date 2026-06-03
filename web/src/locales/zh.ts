@@ -575,7 +575,6 @@ const zh: Translations = {
   'update.checkNow': '立即检查',
   'update.install': '更新并重启',
   'update.installing': '正在更新…',
-  'update.upToDate': '已是最新版本',
   'update.failed': '更新失败：{error}',
 }
 

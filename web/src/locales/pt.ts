@@ -575,7 +575,6 @@ const pt: Translations = {
   'update.checkNow': 'Verificar agora',
   'update.install': 'Atualizar e reiniciar',
   'update.installing': 'Atualizando…',
-  'update.upToDate': 'Atualizado',
   'update.failed': 'Falha na atualização: {error}',
 }
 

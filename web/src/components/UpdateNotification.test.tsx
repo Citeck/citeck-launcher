@@ -32,4 +32,14 @@ describe('UpdateNotification', () => {
     render(<UpdateNotification />)
     expect(screen.getByRole('button')).toBeInTheDocument()
   })
+
+  it('shows a red error badge when the last update rolled back', () => {
+    useUpdateStore.setState({
+      status: { currentVersion: '2.4.0', available: false, applyError: '2.6.0', applying: false },
+    })
+    const { container } = render(<UpdateNotification />)
+    expect(screen.getByRole('button')).toBeInTheDocument()
+    expect(container.querySelector('.bg-red-500')).not.toBeNull()
+    expect(container.querySelector('.bg-emerald-500')).toBeNull()
+  })
 })

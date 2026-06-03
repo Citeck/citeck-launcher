@@ -575,7 +575,6 @@ const fr: Translations = {
   'update.checkNow': 'Vérifier maintenant',
   'update.install': 'Mettre à jour et redémarrer',
   'update.installing': 'Mise à jour…',
-  'update.upToDate': 'À jour',
   'update.failed': 'Échec de la mise à jour : {error}',
 }
 

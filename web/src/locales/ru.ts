@@ -572,7 +572,6 @@ const ru: Translations = {
   'update.checkNow': 'Проверить сейчас',
   'update.install': 'Обновить и перезапустить',
   'update.installing': 'Обновление…',
-  'update.upToDate': 'Актуальная версия',
   'update.failed': 'Не удалось обновить: {error}',
 }
 

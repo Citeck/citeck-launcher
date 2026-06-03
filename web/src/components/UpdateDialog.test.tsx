@@ -28,4 +28,15 @@ describe('UpdateDialog', () => {
     // Version label from the release-note header (unique — not duplicated in body).
     expect(screen.getByText('2.5.0')).toBeInTheDocument()
   })
+
+  it('shows the rollback banner and hides Install when the last update failed', async () => {
+    useUpdateStore.setState({
+      // No latestVersion → the failed version 2.6.0 appears only in the banner.
+      status: { currentVersion: '2.4.0', available: false, applyError: '2.6.0', applying: false },
+    })
+    const { container } = render(<UpdateDialog open onClose={() => {}} />)
+    await waitFor(() => expect(screen.getByText(/2\.6\.0/)).toBeInTheDocument())
+    // Install (the primary button) is gated on `available` → absent after rollback.
+    expect(container.querySelector('.bg-primary')).toBeNull()
+  })
 })

@@ -575,7 +575,6 @@ const ja: Translations = {
   'update.checkNow': '今すぐ確認',
   'update.install': '更新して再起動',
   'update.installing': '更新中…',
-  'update.upToDate': '最新です',
   'update.failed': '更新に失敗しました: {error}',
 }
 

@@ -579,7 +579,6 @@ const en: Translations = {
   'update.checkNow': 'Check now',
   'update.install': 'Update & restart',
   'update.installing': 'Updating…',
-  'update.upToDate': 'Up to date',
   'update.failed': 'Update failed: {error}',
 }
 
