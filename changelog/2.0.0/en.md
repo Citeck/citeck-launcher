@@ -1,4 +1,3 @@
-# 2.0.0
 Complete rewrite from Kotlin/Compose to Go + React. Single binary — CLI, daemon, and embedded Web UI.
 
 ## Core

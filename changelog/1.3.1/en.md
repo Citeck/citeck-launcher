@@ -1,4 +1,3 @@
-# 1.3.1
 ## New features
 
 * Added tray actions: Open Launcher Directory and Dump System Info

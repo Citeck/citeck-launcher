@@ -1,4 +1,3 @@
-# 1.1.10
 ## New features
 
 * Added ability to pull latest workspace changes

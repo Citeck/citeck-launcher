@@ -1,4 +1,3 @@
-# 2.1.0
 ## Architecture: unified service account
 
 - Unified `citeck` service account across Keycloak (master realm, admin role) and RabbitMQ (monitoring tag, vhost `/` full perms). Webapps connect to RabbitMQ as the stable SA instead of the user-facing `admin` user.

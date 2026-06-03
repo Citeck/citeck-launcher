@@ -1,4 +1,3 @@
-# 1.1.2
 ## New features
 
 * Added project name to group all containers into a single collection in Docker Desktop

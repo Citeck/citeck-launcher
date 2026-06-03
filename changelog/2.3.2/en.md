@@ -1,4 +1,3 @@
-# 2.3.2
 ## Fixes
 
 - Admin-password reset and keycloak `init.sh` now self-heal when the

@@ -1,4 +1,3 @@
-# 2.4.0
 ## Highlights
 
 - **Kotlin 1.x → Go 2.x migration is now pure Go.** The embedded

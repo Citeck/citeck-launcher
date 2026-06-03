@@ -1,4 +1,3 @@
-# 1.1.6
 ## Fixes
 
 * Fixed "HTTPS required" error when using local Keycloak

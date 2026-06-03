@@ -1,4 +1,3 @@
-# 1.2.0
 ## Updates
 
 * Update keycloak 26.3.1 -> 26.4.5

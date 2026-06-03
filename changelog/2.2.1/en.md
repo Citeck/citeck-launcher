@@ -1,4 +1,3 @@
-# 2.2.1
 ## Fixes
 
 - `citeck start` immediately after `citeck stop` no longer prints

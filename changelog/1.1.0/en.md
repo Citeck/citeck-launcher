@@ -1,4 +1,3 @@
-# 1.1.0
 ## New features
 - Added ability to start the system with demo data
 - Added links to administration tools: **Keycloak**, **Mailhog**, **RabbitMQ**, **Spring Boot Admin**, **PG Admin**

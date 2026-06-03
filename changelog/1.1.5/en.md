@@ -1,4 +1,3 @@
-# 1.1.5
 ## New features
 
 * Updated OnlyOffice to version **9.0.3.1**

@@ -1,4 +1,3 @@
-# 1.3.2
 ## Fixes
 
 * Fixed Citeck logo

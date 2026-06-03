@@ -1,4 +1,3 @@
-# 1.1.1
 ## New features
 
 - Added ability to start individual applications even when the namespace is stopped

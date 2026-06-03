@@ -1,4 +1,3 @@
-# 1.2.1
 ## New features
 
 * Reordered bundles to improve consistency

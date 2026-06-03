@@ -1,4 +1,3 @@
-# 2.2.0
 ## Dev workflow
 
 - `:snapshot` images are now re-fetched from the registry on every

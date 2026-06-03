@@ -1,4 +1,3 @@
-# 2.2.2
 ## Fixes
 
 - `citeck install` no longer prints "Daemon did not become ready"

@@ -1,4 +1,3 @@
-# 1.1.4
 ## New features
 
 * Introduced a new dialog system: less boilerplate, unified and consistent design.

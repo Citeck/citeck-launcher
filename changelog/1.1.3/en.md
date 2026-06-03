@@ -1,4 +1,3 @@
-# 1.1.3
 ## New features
 
 * Added the ability to edit a namespace without stopping all services

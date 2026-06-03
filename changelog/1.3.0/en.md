@@ -1,4 +1,3 @@
-# 1.3.0
 ## New features
 
 * Edit Spring properties and other external configuration files directly from the UI

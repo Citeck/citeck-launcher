@@ -1,4 +1,3 @@
-# 1.2.3
 ## New features
 
 * Added support for closing the Invalid Password dialog with the Enter key

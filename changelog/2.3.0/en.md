@@ -1,4 +1,3 @@
-# 2.3.0
 ## Fixes
 
 - Daemon no longer hammers Let's Encrypt on restart / reload while a

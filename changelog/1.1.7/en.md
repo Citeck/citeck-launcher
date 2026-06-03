@@ -1,4 +1,3 @@
-# 1.1.7
 ## New features
 
 * Added 'Open' action in tray menu

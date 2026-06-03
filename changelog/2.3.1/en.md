@@ -1,4 +1,3 @@
-# 2.3.1
 ## Fixes
 
 - Webapps now receive `ecos.webapp.properties.webUrl` from proxy
