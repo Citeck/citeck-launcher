@@ -225,9 +225,8 @@ func (s *Supervisor) superviseLoop(ctx context.Context) {
 			s.intentionalRestart.Store(false)
 			backoff = supervisorInitialBackoff
 			failures = 0
-			if serr := s.spawn(ctx); serr != nil {
-				slog.Error("Intentional restart respawn failed", "err", serr)
-				failures++
+			if !s.respawn(ctx, &backoff, &failures) {
+				return
 			}
 			continue
 		}
@@ -261,9 +260,42 @@ func (s *Supervisor) superviseLoop(ctx context.Context) {
 		if ctx.Err() != nil || s.stopping.Load() {
 			return
 		}
-		if err := s.spawn(ctx); err != nil {
-			slog.Error("Daemon child respawn failed", "err", err)
-			failures++
+		if !s.respawn(ctx, &backoff, &failures) {
+			return
+		}
+	}
+}
+
+// respawn keeps trying to start a fresh child until one starts — restoring the
+// superviseLoop invariant that s.cmd/s.done point at a running child whose Wait
+// has not been called — or until ctx is canceled, Stop is requested, or the
+// failure budget is exhausted. It returns false if superviseLoop should exit.
+// Without this, a failed s.spawn would leave s.cmd/s.done pointing at the exited
+// child, and the next loop iteration would re-Wait it and re-close an already
+// closed done channel (panic). *backoff and *failures are updated in place.
+func (s *Supervisor) respawn(ctx context.Context, backoff *time.Duration, failures *int) bool {
+	for {
+		err := s.spawn(ctx)
+		if err == nil {
+			return true
+		}
+		slog.Error("Daemon child respawn failed", "err", err)
+		*failures++
+		if *failures >= supervisorMaxFailures {
+			slog.Error("Daemon child failed too many times; giving up restarts", "failures", *failures)
+			<-ctx.Done()
+			return false
+		}
+		select {
+		case <-time.After(*backoff):
+			*backoff = min(*backoff*2, supervisorMaxBackoff)
+		case <-ctx.Done():
+			return false
+		case <-s.stopCh:
+			return false
+		}
+		if ctx.Err() != nil || s.stopping.Load() {
+			return false
 		}
 	}
 }
