@@ -1145,6 +1145,9 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/system/dump", d.handleSystemDump)
 	mux.HandleFunc("POST "+api.SystemOpenDir, d.handleSystemOpenDir)
 
+	// Desktop tray menu
+	mux.HandleFunc("GET "+api.DesktopTrayMenu, d.handleTrayMenu)
+
 	// Workspace operations
 	mux.HandleFunc("POST "+api.WorkspaceUpdate, d.handleWorkspaceUpdate)
 

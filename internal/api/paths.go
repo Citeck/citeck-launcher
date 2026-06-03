@@ -65,6 +65,8 @@ const (
 
 	SystemOpenDir = APIV1 + "/system/open-dir"
 
+	DesktopTrayMenu = APIV1 + "/desktop/tray-menu"
+
 	// GitSkipPull records a user "Skip" decision from GitPullErrorDialog so
 	// subsequent pulls against the same host no-op for the suppression window
 	// (Kotlin parity — 1 hour default).
