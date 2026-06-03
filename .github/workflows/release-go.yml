@@ -139,9 +139,11 @@ jobs:
           GOARCH: ${{ matrix.arch }}
         run: |
           VERSION="${VERSION_TAG#v}"
+          COMMIT="$(git rev-parse --short HEAD)"
+          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           mkdir -p build/bin
           CGO_ENABLED=1 go build -tags "desktop,gtk3" \
-            -ldflags "-s -w -X main.version=${VERSION}" \
+            -ldflags "-s -w -X main.version=${VERSION} -X main.gitCommit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
             -o build/bin/citeck-launcher ./cmd/citeck-desktop
 
       - name: Package bare desktop binary (auto-update payload)

@@ -125,3 +125,39 @@ func TestServiceStageRejectsBadChecksum(t *testing.T) {
 		t.Fatal("rejected stage must not leave a selectable payload")
 	}
 }
+
+func TestServiceStageRefusesFailedVersion(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/Citeck/citeck-launcher/releases/latest", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/Citeck/citeck-launcher/releases/tag/v2.6.0", http.StatusFound)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	dir := t.TempDir()
+	// Pre-mark 2.6.0 as a payload that already failed its health-gate.
+	bin := writeFakeBinary(t, dir, "2.6.0")
+	if err := AddStaged(dir, Entry{Version: "2.6.0", Path: bin}); err != nil {
+		t.Fatal(err)
+	}
+	if err := MarkState(dir, "2.6.0", StateFailed); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewService("2.4.0", dir)
+	svc.repo = "Citeck/citeck-launcher"
+	svc.githubBase = srv.URL
+	svc.rawBase = srv.URL
+	svc.http = http.DefaultClient
+	svc.noRedirectHTTP = noRedirect()
+	svc.noRedirectHTTP.Transport = http.DefaultTransport
+
+	// Stage must refuse to re-download/re-apply a failed release (no infinite loop).
+	if _, err := svc.Stage(context.Background()); err == nil {
+		t.Fatal("Stage must refuse a version already marked failed")
+	}
+	// And the failed latest is not offered.
+	if svc.Status().Available {
+		t.Fatal("Status.Available must be false when latest is a failed version")
+	}
+}

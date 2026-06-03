@@ -70,6 +70,12 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
           })}
         </p>
 
+        {status?.applyError && (
+          <p className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {t('update.failed', { error: status.applyError })}
+          </p>
+        )}
+
         <div className="mt-4 flex-1 overflow-auto rounded-md border border-border bg-background p-4">
           {loading && <p className="text-sm text-muted-foreground">{t('update.loadingChangelog')}</p>}
           {!loading && error && <p className="text-sm text-destructive">{error}</p>}
@@ -108,14 +114,16 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
           >
             {t('common.cancel')}
           </button>
-          <button
-            type="button"
-            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
-            onClick={() => void onInstall()}
-            disabled={applying}
-          >
-            {applying ? t('update.installing') : t('update.install')}
-          </button>
+          {status?.available && (
+            <button
+              type="button"
+              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+              onClick={() => void onInstall()}
+              disabled={applying}
+            >
+              {applying ? t('update.installing') : t('update.install')}
+            </button>
+          )}
         </div>
       </div>
     </dialog>

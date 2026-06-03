@@ -17,6 +17,9 @@ const (
 	defaultGitHubBase = "https://github.com"
 	defaultRawBase    = "https://raw.githubusercontent.com"
 	httpTimeout       = 30 * time.Second
+	// maxDownloadBytes caps a payload download (the daemon is ~24 MB); a hostile
+	// redirect cannot fill the disk before the tar extraction cap applies.
+	maxDownloadBytes = 500 << 20 // 500 MiB
 )
 
 // client wraps GitHub access. Bases are overridable in tests; production uses the
@@ -115,7 +118,9 @@ func (c *client) downloadFile(ctx context.Context, srcURL, dst string) error {
 		return fmt.Errorf("create temp: %w", err)
 	}
 	tmpName := tmp.Name()
-	if _, err := io.Copy(tmp, resp.Body); err != nil { //nolint:gosec // G110: server-controlled size; size-capped by registry
+	// Cap the download well above the ~24 MB daemon so a hostile or compromised
+	// redirect cannot fill the disk before the extraction cap would apply.
+	if _, err := io.Copy(tmp, io.LimitReader(resp.Body, maxDownloadBytes)); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmpName)
 		return fmt.Errorf("write download: %w", err)

@@ -18,18 +18,28 @@ export function UpdateNotification() {
     return () => clearInterval(id)
   }, [refresh])
 
-  if (!status?.available) return null
+  // Show the badge when an update is available OR when the last apply failed and
+  // rolled back (so the user learns about it instead of the badge silently
+  // vanishing). A rolled-back failure shows only when no newer install is offered.
+  const rolledBack = !status?.available && !!status?.applyError
+  if (!status?.available && !rolledBack) return null
 
   return (
     <>
       <button
         type="button"
         className="relative p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted"
-        title={t('update.newVersion', { version: status.latestVersion ?? '' })}
+        title={
+          rolledBack
+            ? t('update.failed', { error: status?.applyError ?? '' })
+            : t('update.newVersion', { version: status?.latestVersion ?? '' })
+        }
         onClick={() => setOpen(true)}
       >
         <Download size={14} />
-        <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-emerald-500" />
+        <span
+          className={`absolute right-1 top-1 h-1.5 w-1.5 rounded-full ${rolledBack ? 'bg-red-500' : 'bg-emerald-500'}`}
+        />
       </button>
       <UpdateDialog open={open} onClose={() => setOpen(false)} />
     </>
