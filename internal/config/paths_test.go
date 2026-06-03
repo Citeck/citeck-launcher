@@ -166,3 +166,24 @@ func TestResolvePathsDesktopMode(t *testing.T) {
 func containsDir(path, dir string) bool {
 	return slices.Contains(strings.Split(filepath.ToSlash(path), "/"), dir)
 }
+
+func TestWrapperSocketPath(t *testing.T) {
+	t.Setenv("CITECK_RUN", "/tmp/citeck-run")
+	if got := WrapperSocketPath(); got != "/tmp/citeck-run/wrapper.sock" {
+		t.Fatalf("WrapperSocketPath()=%q", got)
+	}
+}
+
+func TestDaemonPidPath(t *testing.T) {
+	t.Setenv("CITECK_RUN", "/tmp/citeck-run")
+	if got := DaemonPidPath(); got != "/tmp/citeck-run/daemon.pid" {
+		t.Fatalf("DaemonPidPath()=%q", got)
+	}
+}
+
+func TestUpdatesDir(t *testing.T) {
+	t.Setenv("CITECK_HOME", "/tmp/citeck-home")
+	if got := UpdatesDir(); got != "/tmp/citeck-home/updates" {
+		t.Fatalf("UpdatesDir()=%q", got)
+	}
+}

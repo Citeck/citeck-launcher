@@ -144,6 +144,24 @@ func SocketPath() string {
 	return filepath.Join(RunDir(), socketFile)
 }
 
+// WrapperSocketPath is the desktop wrapper's control socket (daemon → wrapper
+// native-verb calls). Lives next to the daemon socket under RunDir.
+func WrapperSocketPath() string {
+	return filepath.Join(RunDir(), "wrapper.sock")
+}
+
+// DaemonPidPath records the supervised daemon child PID so a restarted wrapper
+// can reap an orphaned daemon (macOS/Windows have no Pdeathsig).
+func DaemonPidPath() string {
+	return filepath.Join(RunDir(), "daemon.pid")
+}
+
+// UpdatesDir holds downloaded daemon payloads for desktop auto-update (Spec 2b).
+// Created here so the layout is stable; 2a does not write to it.
+func UpdatesDir() string {
+	return filepath.Join(HomeDir(), "updates")
+}
+
 // DaemonLogPath returns the path to the daemon log file.
 func DaemonLogPath() string {
 	return filepath.Join(LogDir(), "daemon.log")
