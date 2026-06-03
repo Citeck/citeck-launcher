@@ -1,6 +1,9 @@
 package desktop
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"slices"
+)
 
 // CapsContractVersion is bumped when the verb set / semantics change in a way
 // the backend must detect. Backend feature-detects via Supports().
@@ -49,12 +52,7 @@ func (c Capabilities) Encode() string {
 
 // Supports reports whether the wrapper advertised the given verb.
 func (c Capabilities) Supports(verb string) bool {
-	for _, v := range c.Verbs {
-		if v == verb {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(c.Verbs, verb)
 }
 
 // ParseCapabilities reads CITECK_WRAPPER_CAPS; empty string yields empty caps.

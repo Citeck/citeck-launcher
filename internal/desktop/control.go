@@ -9,7 +9,11 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
+
+// ctrlReadHeaderTimeout bounds request-header reads (Slowloris guard).
+const ctrlReadHeaderTimeout = 5 * time.Second
 
 // VerbHandler executes a native verb. params is the raw JSON body; the return
 // value (if non-nil) is JSON-encoded back to the caller.
@@ -59,7 +63,7 @@ func (c *ControlServer) Start() error {
 	c.ln = ln
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /verb/", c.handleVerb)
-	c.srv = &http.Server{Handler: mux}
+	c.srv = &http.Server{Handler: mux, ReadHeaderTimeout: ctrlReadHeaderTimeout}
 	go func() { _ = c.srv.Serve(ln) }()
 	return nil
 }
