@@ -124,6 +124,8 @@ func (c *client) downloadFile(ctx context.Context, url, dst string) error {
 }
 
 // assetURL builds the release-asset download URL for a given tag + filename.
+//
+//nolint:unused // consumed by Service.Stage in service.go (Task 5); remove this directive there.
 func (c *client) assetURL(tag, name string) string {
 	return fmt.Sprintf("%s/%s/releases/download/%s/%s", c.githubBase, c.repo, tag, name)
 }
