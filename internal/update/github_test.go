@@ -61,3 +61,43 @@ func TestFetchRawAndDownload(t *testing.T) {
 		t.Fatalf("downloaded = %q", got)
 	}
 }
+
+func TestResolveLatestNoRedirect(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK) // 200, no Location header
+	}))
+	defer srv.Close()
+
+	c := &client{http: noRedirect(), githubBase: srv.URL, repo: "Citeck/citeck-launcher"}
+	if _, err := c.resolveLatest(context.Background()); err == nil {
+		t.Fatal("resolveLatest must error when there is no redirect Location")
+	}
+}
+
+func TestResolveLatestStripsQueryFragment(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/Citeck/citeck-launcher/releases/tag/v2.6.0?x=1#notes", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	c := &client{http: noRedirect(), githubBase: srv.URL, repo: "Citeck/citeck-launcher"}
+	tag, err := c.resolveLatest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tag != "v2.6.0" {
+		t.Fatalf("tag = %q want v2.6.0 (query/fragment stripped)", tag)
+	}
+}
+
+func TestFetchRawNon2xx(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.NotFound(w, nil)
+	}))
+	defer srv.Close()
+
+	c := &client{http: http.DefaultClient, rawBase: srv.URL, repo: "Citeck/citeck-launcher"}
+	if _, err := c.fetchRaw(context.Background(), "v2.6.0", "changelog/missing.json"); err == nil {
+		t.Fatal("fetchRaw must error on non-2xx")
+	}
+}
