@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -546,8 +547,10 @@ func Start(opts StartOptions) error {
 
 	// Desktop auto-update service (Spec 2b): discovers the GitHub `latest`
 	// release and stages payloads. Server mode has no wrapper to apply a swap, so
-	// the routes + service are desktop-only.
-	if config.IsDesktopMode() {
+	// the routes + service are desktop-only. Scope is linux-first: only linux
+	// publishes the bare-binary payload, so gating here keeps the macOS/Windows
+	// UI from showing an update it cannot install (the routes 404 when nil).
+	if config.IsDesktopMode() && goruntime.GOOS == "linux" {
 		d.updateSvc = update.NewService(opts.Version, config.UpdatesDir())
 		go d.updateSvc.RunPeriodic(bgCtx)
 	}
@@ -1247,6 +1250,10 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	// Server mode has no native window to raise; route is not registered there.
 	if config.IsDesktopMode() {
 		mux.HandleFunc("POST /desktop/focus", d.handleDesktopFocus)
+	}
+	// Update routes only when the service exists (desktop + linux); otherwise the
+	// paths are unregistered and the Web UI's update check 404s and stays quiet.
+	if d.updateSvc != nil {
 		mux.HandleFunc("GET "+api.DesktopUpdateStatus, d.handleUpdateStatus)
 		mux.HandleFunc("POST "+api.DesktopUpdateCheck, d.handleUpdateCheck)
 		mux.HandleFunc("GET "+api.DesktopUpdateChangelog, d.handleUpdateChangelog)

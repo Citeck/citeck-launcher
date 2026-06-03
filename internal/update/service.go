@@ -105,10 +105,16 @@ func (s *Service) Status() Status {
 	latest, lastCheck, lastErr := s.latest, s.lastCheck, s.lastErr
 	s.mu.Unlock()
 
+	// A release that already failed its health-gate is not offered again (until a
+	// newer one appears) — otherwise the badge stays lit and clicking Install
+	// re-downloads and re-applies the same broken release forever.
+	available := latest.Version != "" &&
+		Greater(latest.Version, s.current) &&
+		!IsVersionFailed(s.updatesDir, latest.Version)
 	st := Status{
 		CurrentVersion: s.current,
 		LatestVersion:  latest.Version,
-		Available:      latest.Version != "" && Greater(latest.Version, s.current),
+		Available:      available,
 		Error:          lastErr,
 		Applying:       s.applying.Load(),
 		ApplyError:     FailedNewerThan(s.updatesDir, s.current),
@@ -154,6 +160,11 @@ func (s *Service) Stage(ctx context.Context) (string, error) {
 	// hostile redirect cannot smuggle path traversal (e.g. "..").
 	if !IsValidVersion(latest.Version) {
 		return "", fmt.Errorf("refusing unsafe version string %q", latest.Version)
+	}
+	// Don't re-apply a release that already failed its health-gate; wait for a
+	// newer one (prevents an infinite download→apply→rollback loop).
+	if IsVersionFailed(s.updatesDir, latest.Version) {
+		return "", fmt.Errorf("version %s previously failed to apply; awaiting a newer release", latest.Version)
 	}
 
 	c := s.dataClient()

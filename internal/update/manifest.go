@@ -139,6 +139,22 @@ func SelectBest(updatesDir, currentVersion string) (path string, ok bool) {
 	return path, best != ""
 }
 
+// IsVersionFailed reports whether the given version is recorded as a failed
+// payload (health-gate failure). Used to stop re-offering / re-applying a release
+// that already failed, until a newer one appears.
+func IsVersionFailed(updatesDir, version string) bool {
+	m, err := Load(updatesDir)
+	if err != nil {
+		return false
+	}
+	for _, e := range m.Entries {
+		if e.Version == version && e.State == StateFailed {
+			return true
+		}
+	}
+	return false
+}
+
 // FailedNewerThan returns the version of a failed payload newer than current, if
 // any — used by Status to report "update failed, rolled back".
 func FailedNewerThan(updatesDir, currentVersion string) string {

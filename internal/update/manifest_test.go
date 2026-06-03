@@ -106,6 +106,14 @@ func TestFailedNewerThan(t *testing.T) {
 	if v := FailedNewerThan(dir, "2.6.0"); v != "" {
 		t.Fatalf("failed not newer: got %q want \"\"", v)
 	}
+
+	// IsVersionFailed tracks the exact version's failed state.
+	if !IsVersionFailed(dir, "2.6.0") {
+		t.Fatal("IsVersionFailed(2.6.0) = false, want true")
+	}
+	if IsVersionFailed(dir, "2.7.0") {
+		t.Fatal("IsVersionFailed(2.7.0) = true, want false (no such entry)")
+	}
 }
 
 func TestLoadRejectsCorruptJSON(t *testing.T) {
