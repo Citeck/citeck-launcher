@@ -9,6 +9,7 @@ import { useEffect, useState, useRef } from 'react'
 import { useContextMenu } from '../hooks/useContextMenu'
 import { ContextMenu } from './ContextMenu'
 import { WorkspaceSelector } from './WorkspaceSelector'
+import { UpdateNotification } from './UpdateNotification'
 
 export function TabBar() {
   const { tabs, activeTabId, setActiveTab, closeTab } = useTabsStore()
@@ -140,6 +141,7 @@ export function TabBar() {
       <div className="flex items-center border-l border-border shrink-0">
         <LanguageSelector />
         <ThemeToggle />
+        <UpdateNotification />
         {!onDashboard && (
           <button
             type="button"
