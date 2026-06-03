@@ -14,6 +14,7 @@ func TestGreater(t *testing.T) {
 		{"2.5.0", "v2.5.0", false},
 		{"2.5.0", "dev", true}, // invalid current sorts lowest (dev always older)
 		{"dev", "2.5.0", false},
+		{"dev", "nightly", false}, // two invalid versions: both v0.0.0, no update
 		{"2.10.0", "2.9.0", true}, // numeric, not lexical
 	}
 	for _, c := range cases {
