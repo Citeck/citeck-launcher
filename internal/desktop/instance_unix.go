@@ -51,6 +51,14 @@ func AcquireInstanceLock() (*InstanceLock, error) {
 	fmt.Fprintf(f, "%d\n", os.Getpid())
 	_ = f.Sync()
 
+	// We are the primary instance. Reap a daemon left orphaned by a previously
+	// crashed wrapper (macOS/Windows have no Pdeathsig, so a hard-killed wrapper
+	// can leave its daemon child running). Best-effort — a failure here must not
+	// block startup.
+	if err := ReapOrphanDaemon(); err != nil {
+		slog.Warn("Failed to reap orphan daemon on startup", "err", err)
+	}
+
 	return &InstanceLock{file: f}, nil
 }
 

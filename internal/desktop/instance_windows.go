@@ -45,6 +45,13 @@ func AcquireInstanceLock() (*InstanceLock, error) {
 		slog.Warn("Mutex held but no live daemon to focus; treating as stale", "err", notifyErr)
 		return nil, fmt.Errorf("another Citeck Desktop instance is already running")
 	}
+	// We are the primary instance. Reap a daemon left orphaned by a previously
+	// crashed wrapper (Windows has no Pdeathsig, so a hard-killed wrapper can
+	// leave its daemon child running). Best-effort — a failure here must not
+	// block startup.
+	if err := ReapOrphanDaemon(); err != nil {
+		slog.Warn("Failed to reap orphan daemon on startup", "err", err)
+	}
 	return &InstanceLock{handle: syscall.Handle(handle)}, nil
 }
 

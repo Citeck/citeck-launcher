@@ -1,33 +1,36 @@
 package daemon
 
 import (
+	"context"
 	"net/http"
-	"sync/atomic"
+	"os"
+	"time"
 )
 
-// desktopFocusHandler is a process-global atomic pointer so the desktop main
-// process can register a "raise main window" callback after Wails is wired,
-// even though daemon.Start runs in a separate goroutine and never returns the
-// *Daemon instance. The atomic is nil in server mode and ignored unless the
-// /desktop/focus route was registered (desktop mode only).
-var desktopFocusHandler atomic.Pointer[func()]
-
-// SetDesktopFocusHandler registers a callback invoked by POST /desktop/focus.
-// Pass nil to clear (used by tests).
-func SetDesktopFocusHandler(fn func()) {
-	if fn == nil {
-		desktopFocusHandler.Store(nil)
+// handleDesktopFocus raises the desktop wrapper's main window in response to a
+// second-instance launch (Kotlin AppLocalSocket parity).
+//
+// The daemon now runs as a separate process from the Wails wrapper, so it can no
+// longer invoke a process-global UI callback. Instead it calls the wrapper's
+// control socket (CITECK_WRAPPER_SOCK) with the "window.focus" verb. The verb
+// string is the literal value of desktop.VerbWindowFocus — the daemon package
+// cannot import internal/desktop (that would be an import cycle), so the constant
+// is duplicated here exactly as in desktop_tray.go.
+//
+// In server mode CITECK_WRAPPER_SOCK is unset → 503 (no wrapper to focus). If the
+// wrapper socket is set but the call fails → 502 (wrapper unreachable). On
+// success → 204.
+func (d *Daemon) handleDesktopFocus(w http.ResponseWriter, r *http.Request) {
+	sock := os.Getenv("CITECK_WRAPPER_SOCK")
+	if sock == "" {
+		http.Error(w, "no wrapper socket configured", http.StatusServiceUnavailable)
 		return
 	}
-	desktopFocusHandler.Store(&fn)
-}
-
-func (d *Daemon) handleDesktopFocus(w http.ResponseWriter, _ *http.Request) {
-	fn := desktopFocusHandler.Load()
-	if fn == nil {
-		http.Error(w, "no focus handler registered", http.StatusServiceUnavailable)
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	if err := newWrapperClient(sock).call(ctx, "window.focus", nil); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	(*fn)()
 	w.WriteHeader(http.StatusNoContent)
 }

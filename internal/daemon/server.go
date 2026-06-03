@@ -675,13 +675,35 @@ func Start(opts StartOptions) error {
 	// live independently (the kubelet principle). CLI/server signal shutdown
 	// (systemd is server-only) performs a full stop. Detach is also triggered
 	// explicitly via the HTTP endpoint for binary upgrades.
-	if opts.Desktop {
-		// Desktop mode: Wails owns the lifecycle and provides opts.Ctx, canceled
-		// on quit. Closing the launcher is not a request to tear the namespace
-		// down; explicit teardown stays available via the UI Stop button.
+	if opts.Desktop && opts.Ctx != nil {
+		// Desktop in-process mode (legacy): the Wails runner provides opts.Ctx,
+		// canceled on quit. Closing the launcher is not a request to tear the
+		// namespace down; explicit teardown stays available via the UI Stop
+		// button. (The thin-wrapper desktop runs the daemon as a SEPARATE process
+		// via runDaemonMode, which passes no Ctx — that path is handled below.)
 		go func() {
 			<-opts.Ctx.Done()
 			slog.Info("External context canceled, detaching (containers left running)")
+			d.shutdown(true)
+		}()
+	} else if opts.Desktop {
+		// Thin-wrapper desktop mode: the daemon is a standalone child process
+		// supervised by the Wails wrapper. It has no in-process parent context;
+		// the wrapper drives a graceful exit by POSTing the shutdown endpoint
+		// (with leave_running=true → detach) on quit, and SIGKILLs as a fallback.
+		// A direct SIGTERM/SIGINT (supervisor fallback, or a stray signal) must
+		// still DETACH, not full-stop — preserving the kubelet principle that
+		// closing the launcher leaves the platform containers running.
+		sigCh := make(chan os.Signal, 2)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			<-sigCh
+			slog.Info("Shutdown signal received (desktop child), detaching (containers left running)")
+			go func() {
+				<-sigCh
+				slog.Warn("Second signal received, forcing exit")
+				os.Exit(1)
+			}()
 			d.shutdown(true)
 		}()
 	} else {

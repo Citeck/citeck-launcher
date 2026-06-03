@@ -67,6 +67,13 @@ type Supervisor struct {
 	ReadyCheck func() bool
 	// LogWriter receives the child's stdout+stderr. If nil, os.Stderr is used.
 	LogWriter io.Writer
+	// OnExit, if non-nil, is called with the child's exit error each time the
+	// child exits unexpectedly (i.e. not during a clean Stop/ctx-cancel). The
+	// desktop runner wires this to DaemonStatus.SetError so the loading/error
+	// splash still surfaces the daemon's last error (parity with the historical
+	// in-process RunDaemonLoop, which set Status.SetError on unexpected exit).
+	// Optional and nil-safe — tests leave it unset.
+	OnExit func(err error)
 
 	mu       sync.Mutex
 	cmd      *exec.Cmd
@@ -191,6 +198,9 @@ func (s *Supervisor) superviseLoop(ctx context.Context) {
 			failures++
 		}
 		slog.Error("Daemon child exited unexpectedly", "err", err, "retry", backoff, "failures", failures)
+		if s.OnExit != nil {
+			s.OnExit(err)
+		}
 
 		if failures >= supervisorMaxFailures {
 			slog.Error("Daemon child failed too many times; giving up restarts", "failures", failures)
@@ -308,12 +318,17 @@ func defaultReadyCheck() bool {
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }
 
-// postDaemonShutdown POSTs api.DaemonShutdown over the daemon socket.
+// postDaemonShutdown POSTs api.DaemonShutdown over the daemon socket with
+// leave_running=true. The desktop "kubelet principle" is that closing the
+// launcher DETACHES — the platform containers are left running and re-adopted on
+// the next launch — rather than tearing the namespace down. This matches the
+// legacy in-process behavior (Wails ctx cancel → d.shutdown(true)); explicit
+// teardown stays available via the UI Stop button.
 func postDaemonShutdown(ctx context.Context) error {
 	dialCtx, cancel := context.WithTimeout(ctx, daemonDialTimeout)
 	defer cancel()
 	client := unixSocketClient(config.SocketPath())
-	req, err := http.NewRequestWithContext(dialCtx, http.MethodPost, "http://daemon"+api.DaemonShutdown, http.NoBody)
+	req, err := http.NewRequestWithContext(dialCtx, http.MethodPost, "http://daemon"+api.DaemonShutdown+"?leave_running=true", http.NoBody)
 	if err != nil {
 		return fmt.Errorf("build shutdown request: %w", err)
 	}

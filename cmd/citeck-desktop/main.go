@@ -22,11 +22,14 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/citeck/citeck-launcher/internal/api"
+	"github.com/citeck/citeck-launcher/internal/cli"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/daemon"
 	"github.com/citeck/citeck-launcher/internal/desktop"
@@ -38,16 +41,53 @@ import (
 //go:embed logo.png
 var citeckLogo []byte
 
-var version = "dev"
+// Build metadata injected via ldflags (see Makefile build-desktop). gitCommit /
+// buildDate are forwarded to the daemon child's BuildInfo so the supervised
+// daemon reports the same version as the wrapper.
+var (
+	version   = "dev"
+	gitCommit = ""
+	buildDate = ""
+)
 
 func main() {
+	// Thin-wrapper dispatch: the supervisor spawns this same binary
+	// (SelectDaemonBinary returns os.Executable()) with `start --_daemon
+	// --desktop` to run the DAEMON, not a second GUI. Detect that invocation and
+	// route it through the CLI (cobra → runDaemonMode → daemon.Start, blocking),
+	// exactly like the server binary. Without this the spawned child would
+	// re-launch the Wails GUI, hit the single-instance lock, and crash-loop.
+	// cli.Execute calls os.Exit, so this never returns for the daemon child.
+	if isDaemonInvocation() {
+		cli.Execute(cli.BuildInfo{Version: version, Commit: gitCommit, BuildDate: buildDate})
+		return
+	}
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// isDaemonInvocation reports whether this process was started as the daemon
+// child (`... start --_daemon ...`). The flag is the same hidden one the server
+// binary uses; matching it as a bare token is sufficient because the supervisor
+// passes it as a standalone argument.
+func isDaemonInvocation() bool {
+	return slices.Contains(os.Args[1:], "--_daemon")
+}
+
+// run wires the wrapper and blocks in app.Run until the GUI exits. It returns an
+// error for any fatal startup failure; main turns that into log.Fatal. Keeping
+// the body in run (rather than main) lets the deferred cleanups (lock release,
+// ctx cancel) fire on an early error return instead of being skipped by a
+// log.Fatal mid-startup (gocritic exitAfterDefer).
+func run() error {
 	// Set desktop mode early so config paths are correct
 	config.SetDesktopMode(true)
 
 	// Single instance check
 	lock, err := desktop.AcquireInstanceLock()
 	if err != nil {
-		log.Fatal(err)
+		return err //nolint:wrapcheck // top-level startup error surfaced verbatim
 	}
 	defer lock.Release()
 
@@ -68,20 +108,13 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// ReadyCh receives notification when daemon HTTP server is ready
-	readyCh := make(chan string, 1)
-
 	socketPath := config.SocketPath()
 
-	// Observable daemon status — shared between daemon loop and proxy handlers
+	// Observable daemon status — shared between the supervisor (LogWriter +
+	// OnExit) and the proxy/loading handlers (LastError + LogLines for the
+	// splash). The supervisor is created below, after the Wails app/window and
+	// the control server exist, because its verb handlers touch the UI thread.
 	daemonStatus := &desktop.DaemonStatus{}
-
-	// Start daemon in background
-	go desktop.RunDaemonLoop(ctx, desktop.DaemonOpts{
-		Version: version,
-		ReadyCh: readyCh,
-		Status:  daemonStatus,
-	})
 
 	// HTTP client that connects to daemon via Unix socket.
 	socketClient := &http.Client{
@@ -95,77 +128,15 @@ func main() {
 		},
 	}
 
-	// proxyViaSockets forwards the request to the daemon via Unix socket manually.
-	// Wails AssetServer sends body with ContentLength=0 (streamed), which breaks
-	// httputil.ReverseProxy. Direct HTTP client handles this correctly.
-	proxyViaSocket := func(w http.ResponseWriter, r *http.Request) {
-		// Buffer body — Wails may stream it with ContentLength=0
-		var bodyReader io.Reader = http.NoBody
-		if r.Body != nil {
-			bodyBytes, _ := io.ReadAll(r.Body)
-			_ = r.Body.Close()
-			if len(bodyBytes) > 0 {
-				bodyReader = bytes.NewReader(bodyBytes)
-			}
-		}
-
-		targetURL := "http://localhost" + r.URL.RequestURI()
-		proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, bodyReader) //nolint:gosec // G704: proxy to local Unix socket, not user-controlled URL
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-		// Copy headers
-		for k, vv := range r.Header {
-			for _, v := range vv {
-				proxyReq.Header.Add(k, v)
-			}
-		}
-
-		resp, err := socketClient.Do(proxyReq) //nolint:gosec // G704: proxy to local Unix socket, not user-controlled URL
-		if err != nil {
-			if strings.HasPrefix(r.URL.Path, "/api/") {
-				msg := "daemon starting"
-				if lastErr := daemonStatus.LastError(); lastErr != "" {
-					msg = lastErr
-				}
-				http.Error(w, msg, http.StatusBadGateway)
-				return
-			}
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write([]byte(errorPageHTML(daemonStatus, err)))
-			return
-		}
-		defer resp.Body.Close()
-
-		// Copy response headers
-		for k, vv := range resp.Header {
-			for _, v := range vv {
-				w.Header().Add(k, v)
-			}
-		}
-		w.WriteHeader(resp.StatusCode)
-		// Stream the (possibly SSE / chunked-log) response body to the webview.
-		streamResponseBody(w, resp.Body)
-	}
-
-	// Wait for daemon in a goroutine, set ready flag
+	// daemonReady is closed once the supervised daemon child reports ready (or
+	// the 30s budget elapses — we proxy anyway, mirroring the historical
+	// behavior). The goroutine that polls sv.Ready() is started after the
+	// supervisor is created (below); the gate is consumed by the asset handler.
 	daemonReady := make(chan struct{})
-	go func() {
-		select {
-		case <-readyCh:
-			slog.Info("Daemon ready", "socket", socketPath)
-		case <-time.After(30 * time.Second):
-			slog.Warn("Daemon not ready after 30s, proxying anyway")
-		case <-ctx.Done():
-			return
-		}
-		close(daemonReady)
-	}()
 
-	// windowManager is wired below once Wails is constructed. Declared here so
-	// the asset handler closure (which Wails calls before app.Run) can route
-	// /desktop/windows/* into it.
+	// windowManager is wired below once Wails is constructed. The asset handler
+	// reads it via *windowManager (Wails calls the handler before app.Run, after
+	// windowManager is assigned), so /desktop/windows/* routes into it.
 	var windowManager *wailswin.WindowManager
 
 	// In-flight guard shared by the tray "Dump System Info" item and the web
@@ -174,43 +145,13 @@ func main() {
 	// semantics — a second trigger is a no-op while the first is running).
 	var dumpInFlight atomic.Bool
 
-	// Loading/error page handler — served until daemon is ready, then proxies.
-	// /desktop/windows/* is intercepted before the daemon proxy because it is
-	// a Wails-only API (server mode has no native windows to manage).
-	loadingHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/desktop/windows/") {
-			if windowManager == nil {
-				http.Error(w, "window manager not ready", http.StatusServiceUnavailable)
-				return
-			}
-			http.StripPrefix("/desktop/windows", windowManager.HTTPHandler()).ServeHTTP(w, r)
-			return
-		}
-		// Native system dump for the web UI. The browser <a download> path the
-		// web button used does nothing in the WebKitGTK webview (no download
-		// handler), so the desktop UI routes here instead: write the ZIP to
-		// disk and open the containing folder, exactly like the tray item and
-		// Kotlin 1.x's SystemDumpUtils (Desktop.open(reportDir)). Returns the
-		// saved path so the frontend can show it in the success toast.
-		if r.URL.Path == "/desktop/system-dump" {
-			if r.Method != http.MethodPost {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-				return
-			}
-			handleDesktopSystemDump(w, socketPath, &dumpInFlight)
-			return
-		}
-		select {
-		case <-daemonReady:
-			proxyViaSocket(w, r)
-		default:
-			if strings.HasPrefix(r.URL.Path, "/api/") {
-				http.Error(w, "daemon starting", http.StatusBadGateway)
-				return
-			}
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write([]byte(errorPageHTML(daemonStatus, nil)))
-		}
+	loadingHandler := newAssetHandler(assetDeps{
+		socketPath:   socketPath,
+		socketClient: socketClient,
+		daemonStatus: daemonStatus,
+		daemonReady:  daemonReady,
+		windowMgr:    &windowManager,
+		dumpInFlight: &dumpInFlight,
 	})
 
 	app := application.New(application.Options{
@@ -225,6 +166,18 @@ func main() {
 		},
 		OnShutdown: func() {
 			slog.Info("Wails shutting down, stopping daemon")
+			// Order: stop the child daemon (graceful — drains the SQLite WAL),
+			// then close the control server (releases the wrapper socket), then
+			// tear down native windows, then cancel ctx. supervisor/controlServer
+			// are wired below before app.Run, so they are non-nil here.
+			if supervisor != nil {
+				stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				_ = supervisor.Stop(stopCtx)
+				stopCancel()
+			}
+			if controlServer != nil {
+				controlServer.Close()
+			}
 			if windowManager != nil {
 				windowManager.Quit()
 			}
@@ -239,7 +192,8 @@ func main() {
 	// because cancel alone stops the daemon but leaves the Wails event
 	// loop running, hanging the terminal on Ctrl-C until the user kills
 	// the process. app.Quit closes windows, fires OnShutdown (which in
-	// turn calls cancel and drains the daemon), and exits Run().
+	// turn stops the daemon child, closes the control server, calls cancel,
+	// and drains the daemon), and exits Run().
 	sigCh := make(chan os.Signal, 2)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -304,14 +258,139 @@ func main() {
 		}
 	}
 
-	// Second-launch focus hand-off (Kotlin AppLocalSocket parity): the daemon
-	// runs in its own goroutine and never exposes the *Daemon back to us, so
-	// we register the raise callback via a process-global atomic in the daemon
-	// package. Must run on the UI thread (application.InvokeAsync) — calling
-	// Show/Focus directly from the HTTP handler goroutine deadlocks GTK.
-	daemon.SetDesktopFocusHandler(func() {
-		application.InvokeAsync(raiseToFront)
+	// dispatchVerb performs a native verb on the UI thread. It is shared by the
+	// control-server handlers (which the daemon POSTs to over the wrapper
+	// socket) and the data-driven tray menu OnClicks, so both paths stay in
+	// sync. Returns an error for an unknown/invalid verb so the control server
+	// can surface it; UI actions are queued via InvokeAsync (calling Wails
+	// window/app methods directly off the UI thread deadlocks GTK).
+	dispatchVerb := func(verb string, params map[string]any) error {
+		switch verb {
+		case desktop.VerbWindowFocus:
+			application.InvokeAsync(raiseToFront)
+		case desktop.VerbWindowShow:
+			application.InvokeAsync(func() { window.Show() })
+		case desktop.VerbWindowHide:
+			application.InvokeAsync(func() { window.Hide() })
+		case desktop.VerbDevtoolsOpen:
+			application.InvokeAsync(func() { window.OpenDevTools() })
+		case desktop.VerbAppQuit:
+			application.InvokeAsync(func() { app.Quit() })
+		case desktop.VerbShellOpenPath:
+			path, _ := params["path"].(string)
+			if path == "" {
+				return fmt.Errorf("%s: empty path", desktop.VerbShellOpenPath)
+			}
+			return desktop.OpenBrowser("file://" + path)
+		case desktop.VerbShellOpenURL:
+			url, _ := params["url"].(string)
+			if url == "" {
+				return fmt.Errorf("%s: empty url", desktop.VerbShellOpenURL)
+			}
+			return desktop.OpenBrowser(url)
+		default:
+			return fmt.Errorf("unsupported verb: %s", verb)
+		}
+		return nil
+	}
+
+	// Control server: the daemon (a separate process) calls native verbs over
+	// the wrapper unix socket. Register handlers BEFORE building capabilities so
+	// the advertised verb set honestly reflects what is wired. Only register
+	// verbs whose Wails API is confirmed in this alpha — anything else stays out
+	// of cs.Verbs() and is excluded from the advertised capabilities.
+	controlServer = desktop.NewControlServer(config.WrapperSocketPath())
+	controlServer.Handle(desktop.VerbWindowFocus, func(json.RawMessage) (any, error) {
+		return nil, dispatchVerb(desktop.VerbWindowFocus, nil)
 	})
+	controlServer.Handle(desktop.VerbAppQuit, func(json.RawMessage) (any, error) {
+		return nil, dispatchVerb(desktop.VerbAppQuit, nil)
+	})
+	controlServer.Handle(desktop.VerbDevtoolsOpen, func(json.RawMessage) (any, error) {
+		return nil, dispatchVerb(desktop.VerbDevtoolsOpen, nil)
+	})
+	controlServer.Handle(desktop.VerbWindowShow, func(json.RawMessage) (any, error) {
+		return nil, dispatchVerb(desktop.VerbWindowShow, nil)
+	})
+	controlServer.Handle(desktop.VerbWindowHide, func(json.RawMessage) (any, error) {
+		return nil, dispatchVerb(desktop.VerbWindowHide, nil)
+	})
+	controlServer.Handle(desktop.VerbShellOpenPath, func(p json.RawMessage) (any, error) {
+		var args struct {
+			Path string `json:"path"`
+		}
+		_ = json.Unmarshal(p, &args)
+		return nil, dispatchVerb(desktop.VerbShellOpenPath, map[string]any{"path": args.Path})
+	})
+	controlServer.Handle(desktop.VerbShellOpenURL, func(p json.RawMessage) (any, error) {
+		var args struct {
+			URL string `json:"url"`
+		}
+		_ = json.Unmarshal(p, &args)
+		return nil, dispatchVerb(desktop.VerbShellOpenURL, map[string]any{"url": args.URL})
+	})
+	if startErr := controlServer.Start(); startErr != nil {
+		return fmt.Errorf("start wrapper control server: %w", startErr)
+	}
+
+	// Build capabilities AFTER registering handlers so Verbs() reflects exactly
+	// what we wired, then start the supervisor with the wrapper socket + caps in
+	// the child's environment.
+	caps := desktop.Capabilities{ContractVersion: desktop.CapsContractVersion, Verbs: controlServer.Verbs()}
+
+	binPath, err := desktop.SelectDaemonBinary()
+	if err != nil {
+		return fmt.Errorf("select daemon binary: %w", err)
+	}
+	supervisor = &desktop.Supervisor{
+		BinaryPath: binPath,
+		// Empty master-password line; the desktop daemon ignores opts.MasterPassword
+		// (default-password auto-unlocks; custom password defers to the Web UI),
+		// so feeding an empty line preserves behavior. See supervisor.go.
+		Stdin: "\n",
+		ExtraEnv: []string{
+			"CITECK_WRAPPER_SOCK=" + config.WrapperSocketPath(),
+			"CITECK_WRAPPER_CAPS=" + caps.Encode(),
+		},
+		LogWriter: daemonStatus.LogWriter(),
+		// Restore the in-process loop's splash-error parity: surface the daemon's
+		// last exit error on the loading/error page.
+		OnExit: daemonStatus.SetError,
+	}
+	if startErr := supervisor.Start(ctx); startErr != nil {
+		return fmt.Errorf("start daemon supervisor: %w", startErr)
+	}
+
+	// Wait for the daemon to become ready, then open the readiness gate. Mirror
+	// the historical behavior: after 30s, proxy anyway (do NOT hard-fail) so a
+	// slow-but-eventually-ready daemon still gets through.
+	go func() {
+		deadline := time.Now().Add(30 * time.Second)
+		ticker := time.NewTicker(200 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			if supervisor.Ready() {
+				slog.Info("Daemon ready", "socket", socketPath)
+				break
+			}
+			if time.Now().After(deadline) {
+				slog.Warn("Daemon not ready after 30s, proxying anyway")
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+		close(daemonReady)
+	}()
+
+	// Second-launch focus hand-off (Kotlin AppLocalSocket parity) now flows
+	// entirely through the control server: a new wrapper → NotifyExistingInstance
+	// → the running daemon's POST /desktop/focus → daemon calls the wrapper
+	// control socket's "window.focus" verb → dispatchVerb(raiseToFront). No
+	// process-global daemon callback is needed anymore.
 
 	// Hide on close instead of quitting (minimize to tray)
 	window.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
@@ -319,7 +398,9 @@ func main() {
 		e.Cancel()
 	})
 
-	// System tray
+	// System tray. We build a minimal hardcoded fallback menu immediately so the
+	// tray is usable before the daemon is ready, then replace it with the
+	// backend-defined (data-driven) menu once the daemon answers.
 	tray := app.SystemTray.New()
 	tray.SetLabel("Citeck Launcher")
 	tray.SetTooltip("Citeck Launcher")
@@ -329,24 +410,124 @@ func main() {
 		tray.SetIcon(citeckLogo)
 	}
 
-	menu := app.NewMenu()
-	menu.Add("Open").OnClick(func(_ *application.Context) {
-		raiseToFront()
-	})
+	fallback := app.NewMenu()
+	fallback.Add("Open").OnClick(func(_ *application.Context) { raiseToFront() })
+	fallback.AddSeparator()
+	fallback.Add("Exit").OnClick(func(_ *application.Context) { app.Quit() })
+	tray.SetMenu(fallback)
 
-	// dumpInFlight (declared near the asset handler) is shared with the web
-	// UI's /desktop/system-dump route so the two can't export in parallel.
-	dumpItem := menu.Add("Dump System Info")
+	// Left-click on the tray icon raises the window to the front — including
+	// when it's already open but behind other windows (Show() is then a no-op
+	// and the keep-above raise in raiseToFront does the work).
+	tray.OnClick(raiseToFront)
+
+	// Once the daemon is ready, fetch its tray menu and replace the fallback
+	// with the data-driven native menu. The dump item reuses the existing
+	// in-flight-guarded dump flow; verb items dispatch via dispatchVerb.
+	go func() {
+		<-daemonReady
+		menu, err := buildTrayMenuFromBackend(app, socketClient, dispatchVerb, &dumpInFlight, socketPath)
+		if err != nil {
+			slog.Warn("Failed to build tray menu from backend; keeping fallback", "err", err)
+			return
+		}
+		// Wails alpha.95 live-replaces the menu via SystemTray.SetMenu
+		// (linuxSystemTray.setMenu rebuilds the D-Bus menu + refresh), so no
+		// tray recreation is needed.
+		application.InvokeAsync(func() { tray.SetMenu(menu) })
+	}()
+
+	// app.Run blocks until the GUI exits. As before, a run error is logged (not
+	// returned) so the process still exits 0 on a normal Wails teardown; the
+	// deferred lock release + ctx cancel fire on return.
+	if runErr := app.Run(); runErr != nil {
+		slog.Error("Application exited with error", "err", runErr)
+	}
+	return nil
+}
+
+// supervisor and controlServer are package-level so OnShutdown (an
+// application.Options field set before they are constructed) can reference them.
+// They are assigned in run before app.Run, and only read in the OnShutdown
+// callback, which Wails fires on the UI thread during shutdown — after run has
+// finished wiring them — so no synchronization is required.
+var (
+	supervisor    *desktop.Supervisor
+	controlServer *desktop.ControlServer
+)
+
+// buildTrayMenuFromBackend fetches GET api.DesktopTrayMenu over the daemon
+// socket and builds a native Wails menu from it. Verb items dispatch through
+// dispatchVerb; the backend "system-dump" item reuses the existing in-flight-
+// guarded dump flow (label toggle + dialogs), preserving Kotlin LoadingDialog
+// parity. Unknown action kinds/endpoints are skipped.
+func buildTrayMenuFromBackend(
+	app *application.App,
+	socketClient *http.Client,
+	dispatchVerb func(verb string, params map[string]any) error,
+	dumpInFlight *atomic.Bool,
+	socketPath string,
+) (*application.Menu, error) {
+	req, err := http.NewRequest(http.MethodGet, "http://daemon"+api.DesktopTrayMenu, http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("build tray-menu request: %w", err)
+	}
+	resp, err := socketClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch tray menu: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("tray-menu endpoint returned %d", resp.StatusCode)
+	}
+	var tm daemon.TrayMenu
+	if err := json.NewDecoder(resp.Body).Decode(&tm); err != nil {
+		return nil, fmt.Errorf("decode tray menu: %w", err)
+	}
+
+	menu := app.NewMenu()
+	for _, item := range tm.Items {
+		switch item.Action.Kind {
+		case "verb":
+			verb := item.Action.Verb
+			params := item.Action.Params
+			mi := menu.Add(item.Label)
+			mi.SetEnabled(item.Enabled)
+			mi.OnClick(func(_ *application.Context) {
+				if derr := dispatchVerb(verb, params); derr != nil {
+					slog.Warn("Tray verb failed", "verb", verb, "err", derr)
+				}
+			})
+		case "backend":
+			if item.Action.Endpoint == "/desktop/system-dump" {
+				wireDumpItem(menu.Add(item.Label), app, dumpInFlight, socketPath)
+				continue
+			}
+			slog.Warn("Skipping tray item with unsupported backend endpoint", "endpoint", item.Action.Endpoint)
+		default:
+			slog.Warn("Skipping tray item with unknown action kind", "kind", item.Action.Kind)
+		}
+	}
+	return menu, nil
+}
+
+// wireDumpItem attaches the native system-dump flow to a tray menu item. It
+// reuses the shared dumpInFlight guard (so a tray dump and a web-UI dump can't
+// run in parallel), toggles the item's label/enabled while running, opens the
+// containing folder, and shows a success/error dialog — identical to the legacy
+// hardcoded dumpItem.
+func wireDumpItem(dumpItem *application.MenuItem, app *application.App, dumpInFlight *atomic.Bool, socketPath string) {
+	const idle = "Dump System Info"
 	dumpItem.OnClick(func(_ *application.Context) {
 		if !dumpInFlight.CompareAndSwap(false, true) {
 			return
 		}
 		dumpItem.SetEnabled(false)
-		dumpItem.SetLabel("Dump System Info (running...)")
+		dumpItem.SetLabel(idle + " (running...)")
 		go func() {
 			defer func() {
 				application.InvokeAsync(func() {
-					dumpItem.SetLabel("Dump System Info")
+					dumpItem.SetLabel(idle)
 					dumpItem.SetEnabled(true)
 				})
 				dumpInFlight.Store(false)
@@ -372,26 +553,115 @@ func main() {
 			})
 		}()
 	})
-	menu.Add("Open Launcher Dir").OnClick(func(_ *application.Context) {
-		_ = desktop.OpenBrowser("file://" + config.HomeDir())
-	})
-	menu.Add("DevTools").OnClick(func(_ *application.Context) {
-		window.OpenDevTools()
-	})
-	menu.AddSeparator()
-	menu.Add("Exit").OnClick(func(_ *application.Context) {
-		app.Quit()
-	})
+}
 
-	tray.SetMenu(menu)
-	// Left-click on the tray icon raises the window to the front — including
-	// when it's already open but behind other windows (Show() is then a no-op
-	// and the keep-above raise in raiseToFront does the work).
-	tray.OnClick(raiseToFront)
+// assetDeps bundles the shared state the Wails asset handler needs. windowMgr is
+// a double pointer because the WindowManager is assigned after this handler is
+// constructed (Wails dereferences it lazily, at request time, by which point it
+// is wired).
+type assetDeps struct {
+	socketPath   string
+	socketClient *http.Client
+	daemonStatus *desktop.DaemonStatus
+	daemonReady  <-chan struct{}
+	windowMgr    **wailswin.WindowManager
+	dumpInFlight *atomic.Bool
+}
 
-	if runErr := app.Run(); runErr != nil {
-		slog.Error("Application exited with error", "err", runErr)
+// newAssetHandler builds the loading/error + proxy asset handler. It is served
+// until the daemon is ready, then proxies to the daemon over the unix socket.
+// /desktop/windows/* and /desktop/system-dump are intercepted (Wails-only APIs).
+func newAssetHandler(d assetDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/desktop/windows/") {
+			wm := *d.windowMgr
+			if wm == nil {
+				http.Error(w, "window manager not ready", http.StatusServiceUnavailable)
+				return
+			}
+			http.StripPrefix("/desktop/windows", wm.HTTPHandler()).ServeHTTP(w, r)
+			return
+		}
+		// Native system dump for the web UI. The browser <a download> path the
+		// web button used does nothing in the WebKitGTK webview (no download
+		// handler), so the desktop UI routes here instead: write the ZIP to
+		// disk and open the containing folder, exactly like the tray item and
+		// Kotlin 1.x's SystemDumpUtils (Desktop.open(reportDir)). Returns the
+		// saved path so the frontend can show it in the success toast.
+		if r.URL.Path == "/desktop/system-dump" {
+			if r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			handleDesktopSystemDump(w, d.socketPath, d.dumpInFlight)
+			return
+		}
+		select {
+		case <-d.daemonReady:
+			proxyViaSocket(w, r, d.socketClient, d.daemonStatus)
+		default:
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				http.Error(w, "daemon starting", http.StatusBadGateway)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(errorPageHTML(d.daemonStatus, nil)))
+		}
 	}
+}
+
+// proxyViaSocket forwards the request to the daemon via the Unix socket
+// manually. Wails AssetServer sends the body with ContentLength=0 (streamed),
+// which breaks httputil.ReverseProxy; a direct HTTP client handles it correctly.
+func proxyViaSocket(w http.ResponseWriter, r *http.Request, socketClient *http.Client, daemonStatus *desktop.DaemonStatus) {
+	// Buffer body — Wails may stream it with ContentLength=0
+	var bodyReader io.Reader = http.NoBody
+	if r.Body != nil {
+		bodyBytes, _ := io.ReadAll(r.Body)
+		_ = r.Body.Close()
+		if len(bodyBytes) > 0 {
+			bodyReader = bytes.NewReader(bodyBytes)
+		}
+	}
+
+	targetURL := "http://localhost" + r.URL.RequestURI()
+	proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, bodyReader) //nolint:gosec // G704: proxy to local Unix socket, not user-controlled URL
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	// Copy headers
+	for k, vv := range r.Header {
+		for _, v := range vv {
+			proxyReq.Header.Add(k, v)
+		}
+	}
+
+	resp, err := socketClient.Do(proxyReq) //nolint:gosec // G704: proxy to local Unix socket, not user-controlled URL
+	if err != nil {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			msg := "daemon starting"
+			if lastErr := daemonStatus.LastError(); lastErr != "" {
+				msg = lastErr
+			}
+			http.Error(w, msg, http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(errorPageHTML(daemonStatus, err)))
+		return
+	}
+	defer resp.Body.Close()
+
+	// Copy response headers
+	for k, vv := range resp.Header {
+		for _, v := range vv {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	// Stream the (possibly SSE / chunked-log) response body to the webview.
+	streamResponseBody(w, resp.Body)
 }
 
 // handleDesktopSystemDump runs the native system dump on behalf of the web UI
