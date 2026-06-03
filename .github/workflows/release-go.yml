@@ -144,6 +144,17 @@ jobs:
             -ldflags "-s -w -X main.version=${VERSION}" \
             -o build/bin/citeck-launcher ./cmd/citeck-desktop
 
+      - name: Package bare desktop binary (auto-update payload)
+        env:
+          VERSION_TAG: ${{ github.ref_name }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          VERSION="${VERSION_TAG#v}"
+          mkdir -p dist
+          ASSET="citeck-desktop_${VERSION}_linux_${ARCH}.tar.gz"
+          tar -czf "dist/${ASSET}" -C build/bin citeck-launcher
+          ( cd dist && sha256sum "${ASSET}" > "${ASSET}.sha256" )
+
       - name: Package deb + rpm
         env:
           VERSION_TAG: ${{ github.ref_name }}
