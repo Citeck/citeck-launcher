@@ -34,6 +34,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/daemon"
 	"github.com/citeck/citeck-launcher/internal/desktop"
 	"github.com/citeck/citeck-launcher/internal/desktop/wailswin"
+	"github.com/citeck/citeck-launcher/internal/update"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 )
@@ -329,6 +330,19 @@ func run() error {
 		_ = json.Unmarshal(p, &args)
 		return nil, dispatchVerb(desktop.VerbShellOpenURL, map[string]any{"url": args.URL})
 	})
+	controlServer.Handle(desktop.VerbUpdateApply, func(p json.RawMessage) (any, error) {
+		var args struct {
+			Version string `json:"version"`
+		}
+		_ = json.Unmarshal(p, &args)
+		if args.Version == "" {
+			return nil, fmt.Errorf("%s: empty version", desktop.VerbUpdateApply)
+		}
+		// Async: the daemon that called this is about to be replaced. Returning
+		// immediately lets it flush its HTTP response before we stop it.
+		go applyDaemonSwap(ctx, args.Version, window)
+		return nil, nil
+	})
 	if startErr := controlServer.Start(); startErr != nil {
 		return fmt.Errorf("start wrapper control server: %w", startErr)
 	}
@@ -338,12 +352,11 @@ func run() error {
 	// the child's environment.
 	caps := desktop.Capabilities{ContractVersion: desktop.CapsContractVersion, Verbs: controlServer.Verbs()}
 
-	binPath, err := desktop.SelectDaemonBinary()
-	if err != nil {
-		return fmt.Errorf("select daemon binary: %w", err)
-	}
 	supervisor = &desktop.Supervisor{
-		BinaryPath: binPath,
+		// Re-resolve on every spawn so a staged auto-update payload / rollback
+		// takes effect on restart (Spec 2b). currentVersion is our own ldflags
+		// version; SelectDaemonBinary never downgrades below it.
+		BinarySelector: func() (string, error) { return desktop.SelectDaemonBinary(version) },
 		// Empty master-password line; the desktop daemon ignores opts.MasterPassword
 		// (default-password auto-unlocks; custom password defers to the Web UI),
 		// so feeding an empty line preserves behavior. See supervisor.go.
@@ -444,6 +457,37 @@ func run() error {
 		slog.Error("Application exited with error", "err", runErr)
 	}
 	return nil
+}
+
+// applySwapSettleDelay gives the just-responded daemon a moment to flush its
+// HTTP response to the webview before we stop it for the swap.
+const applySwapSettleDelay = 300 * time.Millisecond
+
+// applyDaemonSwap performs the health-gated daemon swap on the wrapper side
+// (Spec 2b). The staged (pending) payload is already chosen by SelectDaemonBinary
+// (it is newer than our bundled version). On health-gate failure it marks the
+// payload failed — so SelectDaemonBinary then returns the previous good / bundled
+// binary — and restarts into that (rollback). Either way it reloads the webview so
+// the UI reflects the now-running daemon and its /desktop/update/status.
+func applyDaemonSwap(ctx context.Context, version string, window *application.WebviewWindow) {
+	time.Sleep(applySwapSettleDelay)
+	updatesDir := config.UpdatesDir()
+
+	if err := supervisor.Restart(ctx, desktop.UpdateHealthTimeout); err != nil {
+		slog.Error("Daemon update failed health-gate; rolling back", "version", version, "err", err)
+		if merr := update.MarkState(updatesDir, version, update.StateFailed); merr != nil {
+			slog.Error("Failed to mark update failed", "err", merr)
+		}
+		if rerr := supervisor.Restart(ctx, desktop.UpdateHealthTimeout); rerr != nil {
+			slog.Error("Rollback restart also failed", "err", rerr)
+		}
+	} else {
+		if merr := update.MarkState(updatesDir, version, update.StateGood); merr != nil {
+			slog.Error("Failed to mark update good", "err", merr)
+		}
+		slog.Info("Daemon update applied", "version", version)
+	}
+	window.Reload() // re-request assets through the proxy → the now-running daemon
 }
 
 // supervisor and controlServer are package-level so OnShutdown (an

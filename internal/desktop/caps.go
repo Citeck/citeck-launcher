@@ -36,6 +36,7 @@ const (
 	VerbTraySetTooltip = "tray.setTooltip"
 	VerbAutostartSet   = "autostart.set"
 	VerbAutostartGet   = "autostart.get"
+	VerbUpdateApply    = "update.apply"
 )
 
 // Capabilities is what the wrapper advertises to the daemon (env CITECK_WRAPPER_CAPS).
