@@ -37,6 +37,10 @@ const (
 	// production ReadyCheck and for the graceful Stop shutdown POST. Short,
 	// because a hung daemon must not block the wrapper.
 	daemonDialTimeout = 2 * time.Second
+
+	// UpdateHealthTimeout bounds how long Restart waits for a swapped daemon to
+	// report ready before the caller rolls back (Spec 2b).
+	UpdateHealthTimeout = 60 * time.Second
 )
 
 // Supervisor spawns the daemon as a separate child process (`<bin> start
@@ -75,6 +79,12 @@ type Supervisor struct {
 	// Optional and nil-safe — tests leave it unset.
 	OnExit func(err error)
 
+	// BinarySelector, if non-nil, is called on every spawn to choose the daemon
+	// binary (Spec 2b auto-update: SelectDaemonBinary prefers a staged payload).
+	// When nil, BinaryPath is used. Letting spawn re-resolve is what makes a
+	// daemon swap / rollback take effect on the next (re)start.
+	BinarySelector func() (string, error)
+
 	mu       sync.Mutex
 	cmd      *exec.Cmd
 	pid      int
@@ -89,6 +99,10 @@ type Supervisor struct {
 	// goroutine reads (Start is the single setup site; there is no constructor).
 	stopCh   chan struct{}
 	stopOnce sync.Once
+
+	// intentionalRestart marks the next child exit as a deliberate Restart (not a
+	// crash), so superviseLoop respawns immediately (no backoff / failure count).
+	intentionalRestart atomic.Bool
 }
 
 // Start spawns the daemon child and launches the ready-poll and supervise
@@ -96,8 +110,8 @@ type Supervisor struct {
 // ready); call Ready to observe readiness. The child is restarted on crash
 // until ctx is canceled, Stop is called, or the failure budget is exhausted.
 func (s *Supervisor) Start(ctx context.Context) error {
-	if s.BinaryPath == "" {
-		return errors.New("supervisor: BinaryPath is required")
+	if s.BinaryPath == "" && s.BinarySelector == nil {
+		return errors.New("supervisor: BinaryPath or BinarySelector is required")
 	}
 	if s.ReadyCheck == nil {
 		s.ReadyCheck = defaultReadyCheck
@@ -116,12 +130,28 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	return nil
 }
 
+// resolveBinary picks the daemon binary for the next spawn: the selector if set,
+// else the fixed BinaryPath.
+func (s *Supervisor) resolveBinary() (string, error) {
+	if s.BinarySelector != nil {
+		return s.BinarySelector()
+	}
+	if s.BinaryPath == "" {
+		return "", errors.New("supervisor: no BinaryPath and no BinarySelector")
+	}
+	return s.BinaryPath, nil
+}
+
 // spawn builds and starts one child process, recording its handle/pid and a
 // fresh done channel under the mutex. It also (best-effort) persists the child
 // pid so a restarted wrapper can reap an orphan via ReapOrphanDaemon.
 func (s *Supervisor) spawn(ctx context.Context) error {
+	bin, rerr := s.resolveBinary()
+	if rerr != nil {
+		return rerr
+	}
 	args := append([]string{"start", "--_daemon", "--desktop"}, s.Args...)
-	cmd := exec.CommandContext(ctx, s.BinaryPath, args...) //nolint:gosec // G204: BinaryPath is our own daemon binary
+	cmd := exec.CommandContext(ctx, bin, args...) //nolint:gosec // G204: bin is our own daemon binary
 	cmd.Stdin = strings.NewReader(s.Stdin)
 	cmd.Env = append(os.Environ(), s.ExtraEnv...)
 	if s.LogWriter != nil {
@@ -189,6 +219,17 @@ func (s *Supervisor) superviseLoop(ctx context.Context) {
 
 		if ctx.Err() != nil || s.stopping.Load() {
 			return // clean shutdown — do not restart
+		}
+
+		if s.intentionalRestart.Load() {
+			s.intentionalRestart.Store(false)
+			backoff = supervisorInitialBackoff
+			failures = 0
+			if serr := s.spawn(ctx); serr != nil {
+				slog.Error("Intentional restart respawn failed", "err", serr)
+				failures++
+			}
+			continue
 		}
 
 		if time.Since(startedAt) > supervisorHealthyUptime {
@@ -282,6 +323,35 @@ func (s *Supervisor) Stop(ctx context.Context) error {
 // daemonStopGrace is how long Stop waits for a graceful exit after the shutdown
 // POST before force-killing the child.
 const daemonStopGrace = 5 * time.Second
+
+// Restart performs a controlled daemon swap: it marks the next exit intentional,
+// gracefully shuts the current child down (leave_running=true — containers keep
+// running), and waits for superviseLoop to respawn it via the binary selector
+// (so a staged payload / rollback takes effect). It then polls readiness up to
+// healthTimeout. Returns an error if the respawned daemon does not become ready
+// in time — the caller marks the payload failed and calls Restart again to roll
+// back to the previous good/bundled binary.
+func (s *Supervisor) Restart(ctx context.Context, healthTimeout time.Duration) error {
+	s.intentionalRestart.Store(true)
+	if err := postDaemonShutdown(ctx); err != nil {
+		slog.Warn("Restart: graceful shutdown POST failed; child will be killed", "err", err)
+	}
+	s.Wait(daemonStopGrace) // force-kill if it doesn't exit; superviseLoop respawns
+	s.ready.Store(false)
+
+	deadline := time.Now().Add(healthTimeout)
+	for time.Now().Before(deadline) {
+		if s.Ready() {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err() //nolint:wrapcheck // ctx error is self-explanatory
+		case <-time.After(readyPollInterval):
+		}
+	}
+	return fmt.Errorf("supervisor: daemon not ready within %s after restart", healthTimeout)
+}
 
 // --- default production ReadyCheck / shutdown POST over the unix socket ---
 
