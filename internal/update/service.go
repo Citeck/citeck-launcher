@@ -149,6 +149,12 @@ func (s *Service) Stage(ctx context.Context) (string, error) {
 	if !Greater(latest.Version, s.current) {
 		return "", fmt.Errorf("no update available (current %s, latest %s)", s.current, latest.Version)
 	}
+	// Defense-in-depth: latest.Version comes from a GitHub redirect and is joined
+	// into filesystem paths below. Reject anything that is not clean semver so a
+	// hostile redirect cannot smuggle path traversal (e.g. "..").
+	if !IsValidVersion(latest.Version) {
+		return "", fmt.Errorf("refusing unsafe version string %q", latest.Version)
+	}
 
 	c := s.dataClient()
 	asset := fmt.Sprintf("citeck-desktop_%s_linux_%s.tar.gz", latest.Version, runtime.GOARCH)

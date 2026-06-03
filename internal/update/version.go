@@ -23,6 +23,15 @@ func canon(v string) string {
 	return v
 }
 
+// IsValidVersion reports whether v is a syntactically valid release version
+// (semver, with or without a leading "v"). It is used to reject path-unsafe
+// version strings (e.g. "..", values containing separators) before they are
+// joined into filesystem paths — semver rejects anything that is not a clean
+// MAJOR.MINOR.PATCH[-pre][+meta] token.
+func IsValidVersion(v string) bool {
+	return semver.IsValid(canon(v))
+}
+
 // Greater reports whether release a is strictly newer than release b.
 // Invalid versions (e.g. "dev" builds) sort lowest, so a dev build is always
 // considered older than any real release — updates are offered and stageable

@@ -23,3 +23,18 @@ func TestGreater(t *testing.T) {
 		}
 	}
 }
+
+func TestIsValidVersion(t *testing.T) {
+	valid := []string{"2.6.0", "v2.6.0", "2.6.0-rc1", "10.0.1"}
+	invalid := []string{"", "..", "../etc", "2.6.0/../x", "dev", "nightly", "v"}
+	for _, v := range valid {
+		if !IsValidVersion(v) {
+			t.Errorf("IsValidVersion(%q) = false, want true", v)
+		}
+	}
+	for _, v := range invalid {
+		if IsValidVersion(v) {
+			t.Errorf("IsValidVersion(%q) = true, want false (path-unsafe / not semver)", v)
+		}
+	}
+}
