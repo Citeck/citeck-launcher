@@ -335,8 +335,11 @@ func run() error {
 			Version string `json:"version"`
 		}
 		_ = json.Unmarshal(p, &args)
-		if args.Version == "" {
-			return nil, fmt.Errorf("%s: empty version", desktop.VerbUpdateApply)
+		// Defense-in-depth: the control socket is local, but reject any version
+		// that is not clean semver before it reaches manifest/state operations,
+		// consistent with the daemon-side guard in update.Service.Stage.
+		if !update.IsValidVersion(args.Version) {
+			return nil, fmt.Errorf("%s: invalid version %q", desktop.VerbUpdateApply, args.Version)
 		}
 		// Async: the daemon that called this is about to be replaced. Returning
 		// immediately lets it flush its HTTP response before we stop it.
