@@ -74,3 +74,14 @@ func TestSupervisorStartsAndStopsChild(t *testing.T) {
 		t.Fatalf("child %d still alive after stop", pid)
 	}
 }
+
+// TestReapOrphanDaemonNoPidFile asserts ReapOrphanDaemon is a safe no-op when no
+// pid file exists. Pointing CITECK_RUN at an empty temp dir makes
+// config.DaemonPidPath() resolve to a path with no file, so nothing is touched
+// and no real daemon is contacted.
+func TestReapOrphanDaemonNoPidFile(t *testing.T) {
+	t.Setenv("CITECK_RUN", t.TempDir())
+	if err := ReapOrphanDaemon(); err != nil {
+		t.Fatalf("ReapOrphanDaemon() with no pid file = %v, want nil", err)
+	}
+}

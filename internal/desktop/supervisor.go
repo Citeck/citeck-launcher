@@ -72,9 +72,16 @@ type Supervisor struct {
 	cmd      *exec.Cmd
 	pid      int
 	done     chan struct{} // closed when the current child exits
-	ctx      context.Context
 	ready    atomic.Bool
 	stopping atomic.Bool
+
+	// stopCh is closed by Stop (guarded by stopOnce) to wake a superviseLoop
+	// sleeping in the restart backoff so it returns immediately instead of
+	// after up to supervisorMaxBackoff. Initialized at the top of Start before
+	// any goroutine is launched, so the -race-visible write happens-before the
+	// goroutine reads (Start is the single setup site; there is no constructor).
+	stopCh   chan struct{}
+	stopOnce sync.Once
 }
 
 // Start spawns the daemon child and launches the ready-poll and supervise
@@ -88,7 +95,10 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	if s.ReadyCheck == nil {
 		s.ReadyCheck = defaultReadyCheck
 	}
-	s.ctx = ctx
+	// Initialize stopCh before launching goroutines so superviseLoop's read of
+	// it is safely ordered after this write (no constructor exists; Start is the
+	// sole setup site).
+	s.stopCh = make(chan struct{})
 
 	if err := s.spawn(ctx); err != nil {
 		return err
@@ -193,6 +203,8 @@ func (s *Supervisor) superviseLoop(ctx context.Context) {
 			backoff = min(backoff*2, supervisorMaxBackoff)
 		case <-ctx.Done():
 			return
+		case <-s.stopCh:
+			return // Stop requested during backoff — do not respawn
 		}
 
 		if ctx.Err() != nil || s.stopping.Load() {
@@ -233,7 +245,7 @@ func (s *Supervisor) Wait(timeout time.Duration) {
 		return
 	case <-time.After(timeout):
 		_ = cmd.Process.Kill()
-		<-done // superviseLoop closes done after Wait() returns
+		<-done // superviseLoop closes done once the child's cmd.Wait() returns
 	}
 }
 
@@ -244,6 +256,11 @@ func (s *Supervisor) Wait(timeout time.Duration) {
 // process exits.
 func (s *Supervisor) Stop(ctx context.Context) error {
 	s.stopping.Store(true)
+	// Wake a superviseLoop sleeping in the restart backoff. stopOnce makes this
+	// safe under repeated Stop calls; the nil guard tolerates Stop-before-Start.
+	if s.stopCh != nil {
+		s.stopOnce.Do(func() { close(s.stopCh) })
+	}
 
 	if err := postDaemonShutdown(ctx); err != nil {
 		slog.Warn("Daemon shutdown POST failed; will kill child", "err", err)
