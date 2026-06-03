@@ -29,8 +29,6 @@ type indexEntry struct {
 
 // supportedLocales is the set of UI locales; mirrors web/src/locales and
 // internal/i18n/locales. en is the fallback and is always required per release.
-//
-//nolint:unused // consumed by changelog_repo_test.go (Task 16); remove this directive there.
 var supportedLocales = []string{"en", "ru", "zh", "es", "de", "fr", "pt", "ja"}
 
 // changelog fetches changelog/index.json at the latest tag, filters releases in
