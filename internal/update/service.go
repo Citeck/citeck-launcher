@@ -55,9 +55,28 @@ type Service struct {
 	lastErr   string
 }
 
+// Option overrides Service defaults. Production callers use NewService with no
+// options; tests / integration harnesses point the Service at a mock GitHub via
+// WithBaseURLs + WithRepo (see internal/update/updatetest).
+type Option func(*Service)
+
+// WithBaseURLs overrides the GitHub and raw-content base URLs (e.g. an httptest
+// mock server). Both default to the real github.com / raw.githubusercontent.com.
+func WithBaseURLs(githubBase, rawBase string) Option {
+	return func(s *Service) {
+		s.githubBase = githubBase
+		s.rawBase = rawBase
+	}
+}
+
+// WithRepo overrides the "owner/name" repo slug (default Citeck/citeck-launcher).
+func WithRepo(repo string) Option {
+	return func(s *Service) { s.repo = repo }
+}
+
 // NewService builds a Service for the given running version and updates dir.
-func NewService(current, updatesDir string) *Service {
-	return &Service{
+func NewService(current, updatesDir string, opts ...Option) *Service {
+	s := &Service{
 		current:        current,
 		updatesDir:     updatesDir,
 		repo:           defaultRepo,
@@ -66,6 +85,10 @@ func NewService(current, updatesDir string) *Service {
 		http:           &http.Client{Timeout: httpTimeout},
 		noRedirectHTTP: noRedirect(),
 	}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 func (s *Service) latestClient() *client {
