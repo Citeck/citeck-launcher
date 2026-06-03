@@ -36,6 +36,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/snapshot"
 	"github.com/citeck/citeck-launcher/internal/storage"
 	"github.com/citeck/citeck-launcher/internal/tlsutil"
+	"github.com/citeck/citeck-launcher/internal/update"
 )
 
 // ErrShutdownRequested is returned by Start when an external context is canceled.
@@ -116,6 +117,7 @@ type Daemon struct {
 	desktop       bool                    // desktop mode: log writer shared across restarts
 	reloadMu      sync.Mutex              // guards concurrent reload requests
 	licenses      *license.Service        // user-added enterprise licenses
+	updateSvc     *update.Service         // desktop auto-update service (nil in server mode)
 }
 
 // secretReaderFunc returns the SecretService as a secretReader (transparent decryption).
@@ -540,6 +542,14 @@ func Start(opts StartOptions) error {
 		desktop:         opts.Desktop,
 		licenses:        license.NewService(secretSvc),
 		eventRing:       newEventRing(eventReplayBufferSize),
+	}
+
+	// Desktop auto-update service (Spec 2b): discovers the GitHub `latest`
+	// release and stages payloads. Server mode has no wrapper to apply a swap, so
+	// the routes + service are desktop-only.
+	if config.IsDesktopMode() {
+		d.updateSvc = update.NewService(opts.Version, config.UpdatesDir())
+		go d.updateSvc.RunPeriodic(bgCtx)
 	}
 
 	// Wire up event broadcasting
@@ -1237,6 +1247,10 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	// Server mode has no native window to raise; route is not registered there.
 	if config.IsDesktopMode() {
 		mux.HandleFunc("POST /desktop/focus", d.handleDesktopFocus)
+		mux.HandleFunc("GET "+api.DesktopUpdateStatus, d.handleUpdateStatus)
+		mux.HandleFunc("POST "+api.DesktopUpdateCheck, d.handleUpdateCheck)
+		mux.HandleFunc("GET "+api.DesktopUpdateChangelog, d.handleUpdateChangelog)
+		mux.HandleFunc("POST "+api.DesktopUpdateApply, d.handleUpdateApply)
 	}
 
 	// Web UI (fallback)
