@@ -566,6 +566,17 @@ const zh: Translations = {
   'longOp.snapshot.delete': '正在删除快照…',
   'longOp.snapshot.download': '正在下载快照…',
   'namespace.form.bundles.refresh': '刷新 bundles (git pull)',
+  // -- Auto-update (Spec 2b) --
+  'update.newVersion': '有新版本 {version}',
+  'update.title': '更新到 {version}',
+  'update.fromTo': '当前：{current} → 最新：{latest}',
+  'update.loadingChangelog': '正在加载更新日志…',
+  'update.noChangelog': '没有可用的更新日志。',
+  'update.checkNow': '立即检查',
+  'update.install': '更新并重启',
+  'update.installing': '正在更新…',
+  'update.upToDate': '已是最新版本',
+  'update.failed': '更新失败：{error}',
 }
 
 export default zh

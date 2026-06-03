@@ -570,6 +570,17 @@ const en: Translations = {
   'longOp.snapshot.rename': 'Renaming snapshot…',
   'longOp.snapshot.delete': 'Deleting snapshot…',
   'longOp.snapshot.download': 'Downloading snapshot…',
+  // -- Auto-update (Spec 2b) --
+  'update.newVersion': 'New version {version} available',
+  'update.title': 'Update to {version}',
+  'update.fromTo': 'Current: {current} → Latest: {latest}',
+  'update.loadingChangelog': 'Loading changelog…',
+  'update.noChangelog': 'No changelog available.',
+  'update.checkNow': 'Check now',
+  'update.install': 'Update & restart',
+  'update.installing': 'Updating…',
+  'update.upToDate': 'Up to date',
+  'update.failed': 'Update failed: {error}',
 }
 
 export default en

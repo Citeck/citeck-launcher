@@ -566,6 +566,17 @@ const de: Translations = {
   'longOp.snapshot.delete': 'Snapshot wird gelöscht…',
   'longOp.snapshot.download': 'Snapshot wird heruntergeladen…',
   'namespace.form.bundles.refresh': 'Bundles aktualisieren (git pull)',
+  // -- Auto-update (Spec 2b) --
+  'update.newVersion': 'Neue Version {version} verfügbar',
+  'update.title': 'Auf {version} aktualisieren',
+  'update.fromTo': 'Aktuell: {current} → Neueste: {latest}',
+  'update.loadingChangelog': 'Änderungsprotokoll wird geladen…',
+  'update.noChangelog': 'Kein Änderungsprotokoll verfügbar.',
+  'update.checkNow': 'Jetzt prüfen',
+  'update.install': 'Aktualisieren & neu starten',
+  'update.installing': 'Wird aktualisiert…',
+  'update.upToDate': 'Aktuell',
+  'update.failed': 'Aktualisierung fehlgeschlagen: {error}',
 }
 
 export default de

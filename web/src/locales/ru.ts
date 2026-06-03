@@ -563,6 +563,17 @@ const ru: Translations = {
   'longOp.snapshot.rename': 'Переименование снимка…',
   'longOp.snapshot.delete': 'Удаление снимка…',
   'longOp.snapshot.download': 'Загрузка снимка…',
+  // -- Auto-update (Spec 2b) --
+  'update.newVersion': 'Доступна новая версия {version}',
+  'update.title': 'Обновление до {version}',
+  'update.fromTo': 'Текущая: {current} → Последняя: {latest}',
+  'update.loadingChangelog': 'Загрузка списка изменений…',
+  'update.noChangelog': 'Список изменений недоступен.',
+  'update.checkNow': 'Проверить сейчас',
+  'update.install': 'Обновить и перезапустить',
+  'update.installing': 'Обновление…',
+  'update.upToDate': 'Актуальная версия',
+  'update.failed': 'Не удалось обновить: {error}',
 }
 
 export default ru
