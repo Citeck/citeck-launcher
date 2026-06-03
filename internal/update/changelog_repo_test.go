@@ -37,7 +37,15 @@ func TestChangelogRepoConsistency(t *testing.T) {
 		if e.Date == "" {
 			t.Errorf("index entry %s has empty date", e.Version)
 		}
-		for _, loc := range supportedLocales {
+		// en.md is the runtime fallback — required for EVERY release.
+		// Auto-update-era releases (> 2.4.0) must additionally ship all 8 locales;
+		// historical releases (<= 2.4.0, migrated en-only from the old CHANGELOG.md)
+		// only need en.md.
+		required := []string{"en"}
+		if Greater(e.Version, "2.4.0") {
+			required = supportedLocales
+		}
+		for _, loc := range required {
 			p := filepath.Join(dir, e.Version, loc+".md")
 			info, statErr := os.Stat(p)
 			if statErr != nil {

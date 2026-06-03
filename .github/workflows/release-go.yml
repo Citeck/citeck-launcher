@@ -330,18 +330,13 @@ jobs:
           VERSION_TAG: ${{ github.ref_name }}
         run: |
           TAG_VERSION="${VERSION_TAG#v}"
-          body=$(awk -v ver="$TAG_VERSION" '
-            $0 ~ "^# Release "ver {
-              print_line=1
-              next
-            }
-            print_line && $0 ~ "^# Release " {
-              exit
-            }
-            print_line { print }
-          ' CHANGELOG.md)
-          if [ -z "$body" ]; then
-            body="See CHANGELOG.md for details."
+          # Release notes are the English changelog for this version (the in-app
+          # auto-updater shows the localized variants from changelog/<ver>/<locale>.md).
+          NOTES="changelog/${TAG_VERSION}/en.md"
+          if [ -f "$NOTES" ]; then
+            body="$(cat "$NOTES")"
+          else
+            body="Release ${TAG_VERSION}"
           fi
           echo "body<<EOF" >> "$GITHUB_OUTPUT"
           echo "$body" >> "$GITHUB_OUTPUT"
