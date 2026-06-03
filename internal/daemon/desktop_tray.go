@@ -57,6 +57,6 @@ func buildTrayMenu() TrayMenu {
 	}}
 }
 
-func (d *Daemon) handleTrayMenu(w http.ResponseWriter, r *http.Request) {
+func (d *Daemon) handleTrayMenu(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, buildTrayMenu())
 }

@@ -22,4 +22,10 @@ func TestBuildTrayMenuHasCoreItems(t *testing.T) {
 	if ids["exit"].Verb != "app.quit" {
 		t.Fatalf("exit action = %+v", ids["exit"])
 	}
+	if ids["dump"].Kind != "backend" || ids["dump"].Endpoint != "/desktop/system-dump" {
+		t.Fatalf("dump action = %+v", ids["dump"])
+	}
+	if ids["open-dir"].Kind != "verb" || ids["open-dir"].Verb != "shell.openPath" || ids["open-dir"].Params["path"] == "" {
+		t.Fatalf("open-dir action = %+v", ids["open-dir"])
+	}
 }
