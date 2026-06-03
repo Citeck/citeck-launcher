@@ -248,3 +248,19 @@ export interface WorkspaceUpdateDto {
   repoPullPeriod?: string
   authType?: string
 }
+
+export interface UpdateStatusDto {
+  currentVersion: string
+  latestVersion?: string
+  available: boolean
+  lastCheckAt?: string
+  error?: string
+  applyError?: string
+  applying: boolean
+}
+
+export interface ReleaseNoteDto {
+  version: string
+  date: string
+  markdown: string
+}

@@ -19,6 +19,8 @@ import type {
   WorkspaceDto,
   WorkspaceCreateDto,
   WorkspaceUpdateDto,
+  UpdateStatusDto,
+  ReleaseNoteDto,
 } from './types'
 
 export const API_BASE = '/api/v1'
@@ -801,4 +803,30 @@ export async function hasDesktopWindowManager(): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+// --- Desktop auto-update (Spec 2b; desktop-only — 404 in server mode) ---
+
+export async function getUpdateStatus(): Promise<UpdateStatusDto> {
+  return fetchJSON('/desktop/update/status')
+}
+
+export async function checkUpdate(): Promise<UpdateStatusDto> {
+  const res = await fetchWithTimeout(`${API_BASE}/desktop/update/check`, { method: 'POST', headers: CSRF_HEADER })
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  return res.json()
+}
+
+export async function getUpdateChangelog(locale: string): Promise<ReleaseNoteDto[]> {
+  return fetchJSON(`/desktop/update/changelog?locale=${encodeURIComponent(locale)}`)
+}
+
+export async function applyUpdate(): Promise<{ applying: boolean; version: string }> {
+  const res = await fetchWithTimeout(
+    `${API_BASE}/desktop/update/apply`,
+    { method: 'POST', headers: CSRF_HEADER },
+    120_000,
+  )
+  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  return res.json()
 }
