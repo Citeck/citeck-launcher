@@ -61,6 +61,9 @@ PROMPT-*.md
 ### Audit artifacts (audit-project skill) ###
 .audit-backlog.md
 
+### Working notes (superpowers specs/plans — kept local, never committed) ###
+docs/superpowers/
+
 ### Custom ###
 *.png
 !icons/**/*.png
