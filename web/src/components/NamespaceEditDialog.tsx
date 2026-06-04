@@ -74,7 +74,6 @@ export function NamespaceEditDialog({
     if (!open) {
       // Intentional: reset form error state when the dialog closes so it opens
       // clean next time; not a cascading render.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSubmitError(null)
       setFieldErrors({})
       return
@@ -166,7 +165,6 @@ export function NamespaceEditDialog({
     if (bundleKey && !versions.includes(bundleKey) && versions.length > 0) {
       // Intentional: reset the dependent select to a valid value when the repo
       // changes so it never holds a stale version; not a cascading render.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setBundleKey(versions[0])
     }
   }, [bundleRepo, bundles, bundleKey])

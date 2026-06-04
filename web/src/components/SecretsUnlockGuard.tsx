@@ -39,7 +39,6 @@ export function SecretsUnlockGuard() {
     if (checked || step) return
     // Intentional: one-shot guard flag for the on-mount migration-status check;
     // the `checked` guard makes this run exactly once, not a cascading render.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setChecked(true)
     getMigrationStatus().then((s) => {
       if (s.hasPendingSecrets) setStep('kotlin-decrypt')

@@ -112,7 +112,6 @@ export function WindowEditor() {
 
   // Intentional: one-shot loading flag for the on-mount file/config fetch
   // (reloads when name/filePath change); not a cascading render.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void load() }, [load])
 
   // Window-level shortcuts: Ctrl+F focuses CodeMirror (its built-in search

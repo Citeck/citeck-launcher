@@ -49,7 +49,6 @@ export function Volumes() {
 
   // Intentional: one-shot loading flag for the on-mount volumes/snapshots
   // fetch; not a cascading render.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { loadData() }, [loadData])
 
   async function handleDelete() {

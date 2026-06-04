@@ -61,7 +61,6 @@ export function WorkspaceSelector({ activeId, onChanged }: WorkspaceSelectorProp
   useEffect(() => {
     // Intentional: load-on-mount workspace list (desktop only); not a
     // cascading render.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (isDesktop) refresh()
   }, [isDesktop, refresh])
 
