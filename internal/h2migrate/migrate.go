@@ -172,7 +172,9 @@ func Migrate(homeDir string, store storage.Store) (*MigrateResult, error) {
 		return nil, err
 	}
 	importSecrets(maps, store, result)
-	importRuntimeState(homeDir, maps, result)
+	if err := importRuntimeState(homeDir, maps, store, result); err != nil {
+		return nil, err
+	}
 	importGitRepos(maps, store, result)
 	importState(maps, store)
 

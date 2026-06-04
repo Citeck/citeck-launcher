@@ -22,7 +22,7 @@ func runImports(t *testing.T, homeDir string, maps map[string]map[string]string,
 	importWorkspaces(maps, store, result)
 	require.NoError(t, importNamespaces(maps, store, result))
 	importSecrets(maps, store, result)
-	importRuntimeState(homeDir, maps, result)
+	require.NoError(t, importRuntimeState(homeDir, maps, store, result))
 	importGitRepos(maps, store, result)
 	importState(maps, store)
 	return result
@@ -363,9 +363,10 @@ func TestImportRuntimeStatePreservesDetachAndEdits(t *testing.T) {
 	runImports(t, homeDir, maps, store)
 
 	volumesBase := filepath.Join(homeDir, "ws", "ws1", "ns", "nsA", "rtfiles")
-	statePath := filepath.Join(volumesBase, "state-nsA.json")
-	stateBytes, err := os.ReadFile(statePath) //nolint:gosec // G304: test paths under t.TempDir()
-	require.NoError(t, err, "state-nsA.json should be written")
+	stateJSON, ok, err := store.LoadNamespaceState("ws1", "nsA")
+	require.NoError(t, err)
+	require.True(t, ok, "namespace state should be written to the store")
+	stateBytes := []byte(stateJSON)
 
 	var state struct {
 		ManualStoppedApps []string                  `json:"manualStoppedApps"`

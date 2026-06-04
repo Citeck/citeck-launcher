@@ -3,6 +3,7 @@ package h2migrate
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/namespace"
+	"github.com/citeck/citeck-launcher/internal/storage"
 )
 
 // runtimeStateMapPrefix is the Kotlin scope-name + scope-delimiter prefix used
@@ -36,7 +38,7 @@ const runtimeStateMapPrefix = "namespace-runtime-state!"
 // resolve. The Go server already implements the same fallback rule at
 // daemon/server.go (uses state.CachedBundle when bundlesService can't find
 // the ref); we just need to seed it from the Kotlin store.
-func importRuntimeState(homeDir string, maps map[string]map[string]string, result *MigrateResult) {
+func importRuntimeState(homeDir string, maps map[string]map[string]string, store storage.Store, result *MigrateResult) error {
 	// First pass: locate the file-overlay maps separately so we can fold them
 	// into the same per-namespace state struct.
 	dataMaps := make(map[string]map[string]string) // wsId:nsId -> entries
@@ -87,10 +89,18 @@ func importRuntimeState(homeDir string, maps map[string]map[string]string, resul
 			applyChangedRuntimeFiles(files, volumesBase, state, wsID, nsID, result)
 		}
 
-		if err := namespace.SaveNsState(volumesBase, nsID, state); err != nil {
-			slog.Warn("Failed to write migrated namespace state", "ws", wsID, "ns", nsID, "err", err)
-			result.Errors++
-			continue
+		data, merr := json.Marshal(state)
+		if merr != nil {
+			slog.Error("CRITICAL: cannot marshal migrated state — aborting", "ws", wsID, "ns", nsID, "err", merr)
+			return fmt.Errorf("marshal migrated state %s/%s: %w", wsID, nsID, merr)
+		}
+		var rt namespace.NsPersistedState
+		if uerr := json.Unmarshal(data, &rt); uerr != nil {
+			slog.Error("CRITICAL: migrated state JSON does not round-trip — aborting", "ws", wsID, "ns", nsID, "err", uerr)
+			return fmt.Errorf("state round-trip %s/%s: %w", wsID, nsID, uerr)
+		}
+		if err := store.SaveNamespaceState(wsID, nsID, string(state.Status), string(data)); err != nil {
+			return fmt.Errorf("save migrated state %s/%s: %w", wsID, nsID, err)
 		}
 		bundleVersion := ""
 		if state.CachedBundle != nil {
@@ -105,6 +115,7 @@ func importRuntimeState(homeDir string, maps map[string]map[string]string, resul
 			"cachedBundle", bundleVersion,
 		)
 	}
+	return nil
 }
 
 // splitNsRepoKey parses "<wsId>:<nsId>" — wsId / nsId contain no ':' / '!' by
