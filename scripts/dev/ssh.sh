@@ -1,7 +1,7 @@
 #!/bin/bash
 # Run a command on the test server via SSH.
-# Usage: ./scripts/ssh.sh 'citeck status'
-#        ./scripts/ssh.sh   (interactive shell)
+# Usage: ./scripts/dev/ssh.sh 'citeck status'
+#        ./scripts/dev/ssh.sh   (interactive shell)
 #
 # Credentials: sourced from $CITECK_TEST_ENV_FILE (default:
 # ~/.claude/projects/-home-spk-IdeaProjects-citeck-launcher2/phase3-creds.env).

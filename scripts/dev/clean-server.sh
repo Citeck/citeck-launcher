@@ -1,8 +1,8 @@
 #!/bin/bash
 # Full cleanup of test server: stop platform, remove all data, containers, volumes.
-# Usage: ./scripts/clean-server.sh
+# Usage: ./scripts/dev/clean-server.sh
 #
-# Credentials: see scripts/ssh.sh (sourced from $CITECK_TEST_ENV_FILE).
+# Credentials: see scripts/dev/ssh.sh (sourced from $CITECK_TEST_ENV_FILE).
 set -e
 
 CREDS_FILE="${CITECK_TEST_ENV_FILE:-$HOME/.claude/projects/-home-spk-IdeaProjects-citeck-launcher2/phase3-creds.env}"

@@ -39,7 +39,7 @@ them to the GitHub Release alongside the server tarballs. Release artifacts are 
 for the upgrade contract). Clean upgrade over the legacy
 1.* installer: same deb/rpm package name `citeck-launcher`, shared Windows `UpgradeCode`,
 and a `citeck-launcher.app` bundle name matching 1.*'s path. Run the local clean-upgrade
-e2e with `./scripts/test-deb-upgrade.sh` (needs Docker + GTK3 dev libs).
+e2e with `./scripts/test/test-deb-upgrade.sh` (needs Docker + GTK3 dev libs).
 
 ## Architecture
 
@@ -263,14 +263,14 @@ Don't poll background SSH commands with `cat output.file` every second — waste
 
 ```bash
 # Quick status
-./scripts/ssh.sh 'citeck status 2>/dev/null | grep -c "RUNNING"'
+./scripts/dev/ssh.sh 'citeck status 2>/dev/null | grep -c "RUNNING"'
 # Use grep -c "RUNNING" NOT -cw RUNNING — ANSI colors break word boundary
 
 # Memory check
-./scripts/ssh.sh 'free -h | grep Mem'
+./scripts/dev/ssh.sh 'free -h | grep Mem'
 
 # Emergency stop all containers (recover from OOM)
-./scripts/ssh.sh 'docker kill $(docker ps -q); citeck stop --shutdown'
+./scripts/dev/ssh.sh 'docker kill $(docker ps -q); citeck stop --shutdown'
 ```
 
 ## TUI Testing

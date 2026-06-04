@@ -1,8 +1,8 @@
 #!/bin/bash
 # Quick deploy: build server binary and upload to test server.
-# Usage: ./scripts/deploy.sh [--restart]
+# Usage: ./scripts/dev/deploy.sh [--restart]
 #
-# Credentials: see scripts/ssh.sh (sourced from $CITECK_TEST_ENV_FILE).
+# Credentials: see scripts/dev/ssh.sh (sourced from $CITECK_TEST_ENV_FILE).
 set -e
 
 CREDS_FILE="${CITECK_TEST_ENV_FILE:-$HOME/.claude/projects/-home-spk-IdeaProjects-citeck-launcher2/phase3-creds.env}"

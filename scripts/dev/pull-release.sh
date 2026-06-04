@@ -9,7 +9,7 @@ set -e
 # It skips the daemon lifecycle (stop old daemon, container adoption,
 # atomic swap, re-exec) that the real installer performs.
 #
-# Usage: bash scripts/pull-release.sh
+# Usage: bash scripts/dev/pull-release.sh
 
 REPO="Citeck/citeck-launcher"
 INSTALL_DIR="/usr/local/bin"
