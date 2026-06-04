@@ -28,7 +28,7 @@ func TestChangelogRepoConsistency(t *testing.T) {
 		t.Fatalf("parse index.json: %v", jErr)
 	}
 	if len(idx) == 0 {
-		t.Fatal("index.json is empty — the first 2b release must be listed")
+		t.Fatal("index.json is empty — at least one release must be listed")
 	}
 
 	indexed := map[string]bool{}
@@ -38,11 +38,11 @@ func TestChangelogRepoConsistency(t *testing.T) {
 			t.Errorf("index entry %s has empty date", e.Version)
 		}
 		// en.md is the runtime fallback — required for EVERY release.
-		// Auto-update-era releases (> 2.4.0) must additionally ship all 8 locales;
-		// historical releases (<= 2.4.0, migrated en-only from the old CHANGELOG.md)
-		// only need en.md.
+		// Desktop / auto-update-era releases (2.4.0 and newer) must additionally
+		// ship all 8 locales; historical releases (<= 2.3.2, migrated en-only from
+		// the old CHANGELOG.md) only need en.md.
 		required := []string{"en"}
-		if Greater(e.Version, "2.4.0") {
+		if Greater(e.Version, "2.3.2") {
 			required = supportedLocales
 		}
 		for _, loc := range required {
