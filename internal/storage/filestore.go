@@ -369,6 +369,7 @@ func (s *FileStore) nsStatePath(nsID string) string {
 	return filepath.Join(s.runtimeBase, nsID, "state-"+nsID+".json")
 }
 
+// ListNamespaces returns the single server namespace (0-or-1 row) from conf/namespace.yml.
 func (s *FileStore) ListNamespaces(_ string) ([]NamespaceRow, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -392,7 +393,8 @@ func (s *FileStore) ListNamespaces(_ string) ([]NamespaceRow, error) {
 	return []NamespaceRow{{ID: m.ID, Name: m.Name}}, nil
 }
 
-func (s *FileStore) LoadNamespaceConfig(_, _ string) (string, bool, error) {
+// LoadNamespaceConfig returns the server namespace config YAML from conf/namespace.yml.
+func (s *FileStore) LoadNamespaceConfig(_, _ string) (configYAML string, ok bool, err error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	data, err := os.ReadFile(s.nsConfigPath()) //nolint:gosec // path is conf/namespace.yml
@@ -405,6 +407,7 @@ func (s *FileStore) LoadNamespaceConfig(_, _ string) (string, bool, error) {
 	return string(data), true, nil
 }
 
+// SaveNamespaceConfig writes the server namespace config to conf/namespace.yml.
 func (s *FileStore) SaveNamespaceConfig(_, _, _, configYAML string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -414,7 +417,8 @@ func (s *FileStore) SaveNamespaceConfig(_, _, _, configYAML string) error {
 	return nil
 }
 
-func (s *FileStore) LoadNamespaceState(_, nsID string) (string, bool, error) {
+// LoadNamespaceState returns the runtime-state JSON for the server namespace.
+func (s *FileStore) LoadNamespaceState(_, nsID string) (stateJSON string, ok bool, err error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	data, err := os.ReadFile(s.nsStatePath(nsID)) //nolint:gosec // path from runtimeBase + nsID
@@ -427,6 +431,7 @@ func (s *FileStore) LoadNamespaceState(_, nsID string) (string, bool, error) {
 	return string(data), true, nil
 }
 
+// SaveNamespaceState writes the runtime-state JSON for the server namespace.
 func (s *FileStore) SaveNamespaceState(_, nsID, _, stateJSON string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -438,6 +443,7 @@ func (s *FileStore) SaveNamespaceState(_, nsID, _, stateJSON string) error {
 	return nil
 }
 
+// DeleteNamespace removes the server namespace config + state files.
 func (s *FileStore) DeleteNamespace(_, nsID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

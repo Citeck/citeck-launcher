@@ -190,9 +190,13 @@ func (m *mockStore) ListGitRepoStates() ([]storage.GitRepoState, error) { return
 func (m *mockStore) ListNamespaces(string) ([]storage.NamespaceRow, error) {
 	return nil, nil
 }
-func (m *mockStore) LoadNamespaceConfig(_, _ string) (string, bool, error) { return "", false, nil }
-func (m *mockStore) SaveNamespaceConfig(_, _, _, _ string) error           { return nil }
-func (m *mockStore) LoadNamespaceState(_, _ string) (string, bool, error)  { return "", false, nil }
+func (m *mockStore) LoadNamespaceConfig(_, _ string) (configYAML string, ok bool, err error) {
+	return "", false, nil
+}
+func (m *mockStore) SaveNamespaceConfig(_, _, _, _ string) error { return nil }
+func (m *mockStore) LoadNamespaceState(_, _ string) (stateJSON string, ok bool, err error) {
+	return "", false, nil
+}
 func (m *mockStore) SaveNamespaceState(_, _, _, _ string) error            { return nil }
 func (m *mockStore) DeleteNamespace(_, _ string) error                     { return nil }
 func (m *mockStore) Close() error                                          { return nil }

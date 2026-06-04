@@ -162,23 +162,23 @@ func TestSQLiteNamespaceCRUD(t *testing.T) {
 	yaml, ok, err := s.LoadNamespaceConfig("ws1", "nsA")
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, "id: nsA\nname: Alpha\n", yaml)
+	require.Equal(t, "id: nsA\nname: Alpha\n", yaml) //nolint:testifylint // verbatim byte storage, not semantic equality
 
 	// save state does NOT clobber config
 	require.NoError(t, s.SaveNamespaceState("ws1", "nsA", "RUNNING", `{"status":"RUNNING"}`))
 	yaml, ok, _ = s.LoadNamespaceConfig("ws1", "nsA")
 	require.True(t, ok)
-	require.Equal(t, "id: nsA\nname: Alpha\n", yaml, "state save must not clobber config")
+	require.Equal(t, "id: nsA\nname: Alpha\n", yaml, "state save must not clobber config") //nolint:testifylint // verbatim byte storage, not semantic equality
 	js, ok, err := s.LoadNamespaceState("ws1", "nsA")
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, `{"status":"RUNNING"}`, js)
+	require.Equal(t, `{"status":"RUNNING"}`, js) //nolint:testifylint // verbatim byte storage, not semantic equality
 
 	// save config again does NOT clobber state
 	require.NoError(t, s.SaveNamespaceConfig("ws1", "nsA", "Alpha2", "id: nsA\nname: Alpha2\n"))
 	js, ok, _ = s.LoadNamespaceState("ws1", "nsA")
 	require.True(t, ok)
-	require.Equal(t, `{"status":"RUNNING"}`, js, "config save must not clobber state")
+	require.Equal(t, `{"status":"RUNNING"}`, js, "config save must not clobber state") //nolint:testifylint // verbatim byte storage, not semantic equality
 
 	// listing reflects denormalized name + status, scoped by ws
 	require.NoError(t, s.SaveNamespaceConfig("ws1", "nsB", "Beta", "id: nsB\n"))

@@ -1311,10 +1311,10 @@ func writeInternalError(w http.ResponseWriter, err error) {
 }
 
 // activeNsKey returns the (workspaceID, namespaceID) of the active namespace.
-func (d *Daemon) activeNsKey() (string, string) {
+func (d *Daemon) activeNsKey() (wsID, nsID string) {
 	d.configMu.RLock()
 	defer d.configMu.RUnlock()
-	nsID := "default"
+	nsID = "default"
 	if d.nsConfig != nil {
 		nsID = d.nsConfig.ID
 	}

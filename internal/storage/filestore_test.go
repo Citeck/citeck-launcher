@@ -44,9 +44,9 @@ func TestFileStoreNamespaceMapsToFiles(t *testing.T) {
 	require.NoError(t, s.SaveNamespaceState("daemon", "prod", "RUNNING", `{"status":"RUNNING"}`))
 	stateOnDisk, err := os.ReadFile(filepath.Join(runtimeBase, "prod", "state-prod.json"))
 	require.NoError(t, err)
-	require.Equal(t, `{"status":"RUNNING"}`, string(stateOnDisk))
+	require.Equal(t, `{"status":"RUNNING"}`, string(stateOnDisk)) //nolint:testifylint // verbatim byte storage, not semantic equality
 	js, ok, err := s.LoadNamespaceState("daemon", "prod")
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, `{"status":"RUNNING"}`, js)
+	require.Equal(t, `{"status":"RUNNING"}`, js) //nolint:testifylint // verbatim byte storage, not semantic equality
 }

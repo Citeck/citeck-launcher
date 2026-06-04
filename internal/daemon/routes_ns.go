@@ -112,7 +112,7 @@ func (d *Daemon) handleDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 		// cannot resurrect a ghost entry.
 		nsDir := config.NamespaceDir(d.workspaceID, nsID)
 		if err := os.RemoveAll(nsDir); err != nil { //nolint:gosec // path from config.NamespaceDir
-			slog.Warn("Failed to remove namespace rtfiles dir", "dir", nsDir, "err", err)
+			slog.Warn("Failed to remove namespace rtfiles dir", "dir", nsDir, "err", err) //nolint:gosec // G706: nsDir from config.NamespaceDir(validated ids)
 		}
 	} else {
 		writeError(w, http.StatusBadRequest, "cannot delete namespace in server mode")

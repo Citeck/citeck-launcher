@@ -564,6 +564,7 @@ func (s *SQLiteStore) ListGitRepoStates() ([]GitRepoState, error) {
 
 // --- Namespaces (config + per-NS runtime state, keyed-blob) ---
 
+// ListNamespaces returns id/name/status rows for a workspace, ordered by ns_id.
 func (s *SQLiteStore) ListNamespaces(wsID string) ([]NamespaceRow, error) {
 	rows, err := s.db.Query(
 		`SELECT ns_id, name, status FROM namespaces WHERE ws_id = ? ORDER BY ns_id`, wsID)
@@ -585,9 +586,10 @@ func (s *SQLiteStore) ListNamespaces(wsID string) ([]NamespaceRow, error) {
 	return out, nil
 }
 
-func (s *SQLiteStore) LoadNamespaceConfig(wsID, nsID string) (string, bool, error) {
+// LoadNamespaceConfig returns the stored config YAML for a namespace (ok=false if absent).
+func (s *SQLiteStore) LoadNamespaceConfig(wsID, nsID string) (configYAML string, ok bool, err error) {
 	var y string
-	err := s.db.QueryRow(
+	err = s.db.QueryRow(
 		`SELECT config_yaml FROM namespaces WHERE ws_id = ? AND ns_id = ?`, wsID, nsID).Scan(&y)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
@@ -601,6 +603,7 @@ func (s *SQLiteStore) LoadNamespaceConfig(wsID, nsID string) (string, bool, erro
 	return y, true, nil
 }
 
+// SaveNamespaceConfig upserts the config YAML + denormalized name (state row untouched).
 func (s *SQLiteStore) SaveNamespaceConfig(wsID, nsID, name, configYAML string) error {
 	_, err := s.db.Exec(`
 		INSERT INTO namespaces (ws_id, ns_id, name, config_yaml) VALUES (?, ?, ?, ?)
@@ -612,9 +615,10 @@ func (s *SQLiteStore) SaveNamespaceConfig(wsID, nsID, name, configYAML string) e
 	return nil
 }
 
-func (s *SQLiteStore) LoadNamespaceState(wsID, nsID string) (string, bool, error) {
+// LoadNamespaceState returns the stored runtime-state JSON for a namespace (ok=false if absent).
+func (s *SQLiteStore) LoadNamespaceState(wsID, nsID string) (stateJSON string, ok bool, err error) {
 	var j string
-	err := s.db.QueryRow(
+	err = s.db.QueryRow(
 		`SELECT state_json FROM namespaces WHERE ws_id = ? AND ns_id = ?`, wsID, nsID).Scan(&j)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
@@ -628,6 +632,7 @@ func (s *SQLiteStore) LoadNamespaceState(wsID, nsID string) (string, bool, error
 	return j, true, nil
 }
 
+// SaveNamespaceState upserts the runtime-state JSON + denormalized status (config untouched).
 func (s *SQLiteStore) SaveNamespaceState(wsID, nsID, status, stateJSON string) error {
 	_, err := s.db.Exec(`
 		INSERT INTO namespaces (ws_id, ns_id, status, state_json) VALUES (?, ?, ?, ?)
@@ -639,6 +644,7 @@ func (s *SQLiteStore) SaveNamespaceState(wsID, nsID, status, stateJSON string) e
 	return nil
 }
 
+// DeleteNamespace removes the namespace's config + state row.
 func (s *SQLiteStore) DeleteNamespace(wsID, nsID string) error {
 	if _, err := s.db.Exec(`DELETE FROM namespaces WHERE ws_id = ? AND ns_id = ?`, wsID, nsID); err != nil {
 		return fmt.Errorf("delete namespace %s/%s: %w", wsID, nsID, err)
