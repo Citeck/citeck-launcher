@@ -75,16 +75,18 @@ build-desktop: build-web
 run: build-desktop
 	./$(DESKTOP)
 
-# ===== Release artifacts (CI calls these; build logic lives in packaging/release-*.sh) =====
+# ===== Release artifacts (CI calls these; build logic lives under packaging/) =====
 # Everything lands in dist/. VERSION/ARCH/GOOS/GOARCH come from the environment.
+# release-server is cross-OS (GOOS/GOARCH); the desktop scripts live in their
+# per-OS packaging subfolder next to that OS's config.
 release-server: build-web
 	bash packaging/release-server.sh
 release-desktop-linux: build-web
-	bash packaging/release-desktop-linux.sh
+	bash packaging/linux/release.sh
 release-desktop-windows: build-web
-	bash packaging/release-desktop-windows.sh
+	bash packaging/windows/release.sh
 release-desktop-macos: build-web
-	bash packaging/release-desktop-macos.sh
+	bash packaging/macos/release.sh
 
 test:
 	go test -race ./...
