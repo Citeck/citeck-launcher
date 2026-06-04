@@ -3,8 +3,6 @@ package namespace
 import (
 	"bytes"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"testing"
@@ -87,17 +85,17 @@ func TestPersistenceFormatStable(t *testing.T) {
 // ALL N transitions land in the same iteration. The loop tail then does
 // exactly ONE persistState.
 //
-// We can't count persistState calls directly (no hook), but mtime on the state
-// file is a faithful proxy: SaveNsState does an atomic temp+rename, so each
-// successful persist advances mtime. We assert that a 5-transition burst
-// results in at most 2 mtime advances (one for the burst itself, plus
-// potentially one more from any late tick activity after we release the lock).
-// Without coalescing, each transition would produce a separate persist — this
-// bound rejects that regression.
+// We count persistState calls via the injected fakePersister. We assert that a
+// 5-transition burst results in at most 2 persists since the baseline (one for
+// the burst itself, plus potentially one more from any late tick activity after
+// we release the lock). Without coalescing, each transition would produce a
+// separate persist — this bound rejects that regression.
 func TestPersistCoalescesTransientStatusTransitions(t *testing.T) {
 	md := newMockDocker()
 	dir := t.TempDir()
 	r := NewRuntime(testConfig(), md, dir)
+	fp := &fakePersister{}
+	r.SetStatePersister(fp)
 	defer r.Shutdown()
 
 	r.Start([]appdef.ApplicationDef{simpleApp("foo", "foo:1")})
@@ -109,11 +107,7 @@ func TestPersistCoalescesTransientStatusTransitions(t *testing.T) {
 		t.Fatalf("r.dirty never cleared after startup")
 	}
 
-	statePath := filepath.Join(dir, "state-test.json")
-	info0, err := os.Stat(statePath)
-	if err != nil {
-		t.Fatalf("stat state baseline: %v", err)
-	}
+	baselineCalls := fp.callCount()
 
 	// Hold r.mu and flip NS status back-and-forth several times. Each
 	// setStatus flips r.dirty. The runtimeLoop is blocked on r.mu for
@@ -138,18 +132,17 @@ func TestPersistCoalescesTransientStatusTransitions(t *testing.T) {
 		t.Fatalf("r.dirty never cleared after burst — loop tail did not persist")
 	}
 
-	// Count mtime advances since the baseline. We allow at most 2:
-	// one mandatory persist for the burst itself, plus at most one
-	// incidental persist from unrelated loop activity (a tick that ran
-	// between Unlock and our dirty-drained check). The pre-7c code
-	// would have advanced mtime 5 times (once per transition) and failed
-	// this bound.
-	info1, err := os.Stat(statePath)
-	if err != nil {
-		t.Fatalf("stat state after burst: %v", err)
+	// Count persists since the baseline. We allow at most 2: one mandatory
+	// persist for the burst itself, plus at most one incidental persist from
+	// unrelated loop activity (a tick that ran between Unlock and our
+	// dirty-drained check). The pre-coalescing code would have persisted 5
+	// times (once per transition) and failed this bound.
+	burstCalls := fp.callCount()
+	if burstCalls <= baselineCalls {
+		t.Fatalf("state not persisted after burst (calls unchanged at %d)", burstCalls)
 	}
-	if !info1.ModTime().After(info0.ModTime()) {
-		t.Fatalf("state file not persisted after burst (mtime unchanged)")
+	if delta := burstCalls - baselineCalls; delta > 2 {
+		t.Fatalf("burst produced %d persists (> 2) — coalescing broken", delta)
 	}
 	// Probe over ~3.6s (>3× tickerPeriod) to ensure we're truly idle — no
 	// runaway persist loop re-firing on each tick. assert.Never fails fast
@@ -158,15 +151,10 @@ func TestPersistCoalescesTransientStatusTransitions(t *testing.T) {
 		return r.dirty.Load()
 	}, 3600*time.Millisecond, 100*time.Millisecond,
 		"r.dirty re-raised without mutation — coalescing broken")
-	info2, err := os.Stat(statePath)
-	if err != nil {
-		t.Fatalf("stat state after idle: %v", err)
-	}
-	// After idle, mtime should equal post-burst mtime (no ticks persist
-	// an already-clean state).
-	if info2.ModTime().After(info1.ModTime()) {
-		t.Fatalf("state file advanced while idle: mtime went %v → %v",
-			info1.ModTime(), info2.ModTime())
+	// After idle, no further persists should have fired (no ticks persist an
+	// already-clean state).
+	if idleCalls := fp.callCount(); idleCalls > burstCalls {
+		t.Fatalf("state persisted while idle: calls went %d → %d", burstCalls, idleCalls)
 	}
 }
 
@@ -179,6 +167,8 @@ func TestStopAppBurstPersistsDetach(t *testing.T) {
 	md := newMockDocker()
 	dir := t.TempDir()
 	r := NewRuntime(testConfig(), md, dir)
+	fp := &fakePersister{}
+	r.SetStatePersister(fp)
 	defer r.Shutdown()
 
 	r.Start([]appdef.ApplicationDef{simpleApp("foo", "foo:1")})
@@ -186,7 +176,6 @@ func TestStopAppBurstPersistsDetach(t *testing.T) {
 		t.Fatalf("app did not reach RUNNING")
 	}
 
-	statePath := filepath.Join(dir, "state-test.json")
 	if stopErr := r.StopApp("foo"); stopErr != nil {
 		t.Fatalf("StopApp: %v", stopErr)
 	}
@@ -194,13 +183,9 @@ func TestStopAppBurstPersistsDetach(t *testing.T) {
 		t.Fatalf("foo did not reach STOPPED")
 	}
 
-	// Read IMMEDIATELY — inline persist must have fired.
-	data, readErr := os.ReadFile(statePath)
-	if readErr != nil {
-		t.Fatalf("read state: %v", readErr)
-	}
+	// Inspect the most recent persist — inline persist must have fired.
 	var persisted NsPersistedState
-	if unmarshalErr := json.Unmarshal(data, &persisted); unmarshalErr != nil {
+	if unmarshalErr := json.Unmarshal([]byte(fp.lastJSON()), &persisted); unmarshalErr != nil {
 		t.Fatalf("unmarshal state: %v", unmarshalErr)
 	}
 	if !slices.Contains(persisted.ManualStoppedApps, "foo") {
@@ -217,6 +202,8 @@ func TestStopAppInlinePersistIsEager(t *testing.T) {
 	md := newMockDocker()
 	dir := t.TempDir()
 	r := NewRuntime(testConfig(), md, dir)
+	fp := &fakePersister{}
+	r.SetStatePersister(fp)
 	defer r.Shutdown()
 
 	r.Start([]appdef.ApplicationDef{simpleApp("foo", "foo:1")})
@@ -228,14 +215,10 @@ func TestStopAppInlinePersistIsEager(t *testing.T) {
 		t.Fatalf("StopApp: %v", err)
 	}
 
-	// Read the state file IMMEDIATELY — no waiting for the loop tail.
-	statePath := filepath.Join(dir, "state-test.json")
-	data, err := os.ReadFile(statePath)
-	if err != nil {
-		t.Fatalf("read state: %v", err)
-	}
+	// Inspect the most recent persist IMMEDIATELY — no waiting for the loop
+	// tail. StopApp persists inline, so fakePersister already holds the detach.
 	var persisted NsPersistedState
-	if err := json.Unmarshal(data, &persisted); err != nil {
+	if err := json.Unmarshal([]byte(fp.lastJSON()), &persisted); err != nil {
 		t.Fatalf("unmarshal state: %v", err)
 	}
 	if !slices.Contains(persisted.ManualStoppedApps, "foo") {

@@ -1,6 +1,7 @@
 package namespace
 
 import (
+	"encoding/json"
 	"log/slog"
 	"maps"
 	"time"
@@ -19,7 +20,7 @@ import (
 // between loop iterations. After an inline persist, the caller clears
 // r.dirty.Store(false) so the loop tail does not redundantly re-persist.
 func (r *Runtime) persistState() {
-	if r.volumesBase == "" {
+	if r.statePersister == nil {
 		return
 	}
 	state := &NsPersistedState{
@@ -49,7 +50,12 @@ func (r *Runtime) persistState() {
 		state.RestartCounts = make(map[string]int, len(r.restartCounts))
 		maps.Copy(state.RestartCounts, r.restartCounts)
 	}
-	if err := SaveNsState(r.volumesBase, r.nsID, state); err != nil {
+	data, err := json.Marshal(state)
+	if err != nil {
+		slog.Warn("Failed to marshal namespace state", "err", err)
+		return
+	}
+	if err := r.statePersister.SaveNamespaceState(string(state.Status), string(data)); err != nil {
 		slog.Warn("Failed to persist namespace state", "err", err)
 	}
 }

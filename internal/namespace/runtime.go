@@ -156,6 +156,7 @@ type Runtime struct {
 	running               atomic.Bool
 	nsID                  string
 	volumesBase           string
+	statePersister        NsStatePersister // injected by daemon; nil in unit tests -> persistState is a no-op
 	eventCb               atomic.Pointer[EventCallback]
 	eventCh               chan api.EventDto
 	registryAuthFn        atomic.Pointer[RegistryAuthFunc]
@@ -260,6 +261,13 @@ func (r *Runtime) registryAuth(image string) *docker.RegistryAuth {
 // SetHistory sets the operation history logger.
 func (r *Runtime) SetHistory(h *OperationHistory) {
 	r.history = h
+}
+
+// SetStatePersister injects the runtime-state persister (daemon → storage.Store).
+func (r *Runtime) SetStatePersister(p NsStatePersister) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.statePersister = p
 }
 
 // SetReconcilerConfig overrides default reconciler settings (from daemon.yml).
