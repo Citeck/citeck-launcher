@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { ChevronDown, X } from 'lucide-react'
 
 export interface SelectOption {
@@ -19,6 +20,13 @@ interface SelectProps {
 const ITEM_HEIGHT = 30
 const MAX_VISIBLE_ITEMS = 8
 
+interface PopupPos {
+  left: number
+  width: number
+  top?: number
+  bottom?: number
+}
+
 /**
  * Custom select component:
  * - Clear (X) button shown when `!required && value !== ''`.
@@ -28,6 +36,10 @@ const MAX_VISIBLE_ITEMS = 8
  *   that made a single-option select uncloseable / unclickable — the
  *   trigger would refuse to open since `popupOptions` was empty.)
  * - Outside click / Escape closes the popup.
+ * - The popup is rendered through a portal into <body> with fixed positioning
+ *   derived from the trigger's rect, so it is never clipped by an ancestor
+ *   with `overflow` (dialog body, scroll panel, wizard step). It flips above
+ *   the trigger when there isn't room below.
  */
 export function Select({
   value,
@@ -40,12 +52,10 @@ export function Select({
 }: SelectProps) {
   const [open, setOpen] = useState(false)
   const [activeIdx, setActiveIdx] = useState(-1)
-  // `flipUp`: true when there's more room above the trigger than below, e.g.
-  // the field sits near the dialog footer and a downward popup would be
-  // clipped by the buttons row. Recomputed every time the dropdown opens.
-  const [flipUp, setFlipUp] = useState(false)
+  const [popupPos, setPopupPos] = useState<PopupPos | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const popupRef = useRef<HTMLDivElement>(null)
 
   const selectedOption = options.find((o) => o.value === value)
   const popupOptions = options
@@ -53,19 +63,53 @@ export function Select({
   useEffect(() => {
     if (!open) return
     function onDocClick(e: MouseEvent) {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setOpen(false)
-      }
+      const target = e.target as Node
+      // The popup lives in a portal (outside rootRef), so a click on an option
+      // must NOT count as "outside" — otherwise mousedown would close the popup
+      // before the option's click handler runs and the selection would be lost.
+      if (rootRef.current?.contains(target) || popupRef.current?.contains(target)) return
+      setOpen(false)
+    }
+    // The popup is fixed-positioned from a snapshot of the trigger rect; if the
+    // page scrolls or resizes while it's open the anchor moves, so just close it.
+    // But ignore scrolling INSIDE the popup's own option list.
+    function onReposition(e: Event) {
+      if (e.type === 'scroll' && e.target instanceof Node && popupRef.current?.contains(e.target)) return
+      setOpen(false)
     }
     document.addEventListener('mousedown', onDocClick)
-    return () => document.removeEventListener('mousedown', onDocClick)
+    window.addEventListener('resize', onReposition)
+    window.addEventListener('scroll', onReposition, true) // capture: any ancestor scroll
+    return () => {
+      document.removeEventListener('mousedown', onDocClick)
+      window.removeEventListener('resize', onReposition)
+      window.removeEventListener('scroll', onReposition, true)
+    }
   }, [open])
+
+  function openPopup() {
+    if (!triggerRef.current) return
+    const rect = triggerRef.current.getBoundingClientRect()
+    const popupHeight = Math.min(popupOptions.length, MAX_VISIBLE_ITEMS) * ITEM_HEIGHT + 4
+    const spaceBelow = window.innerHeight - rect.bottom
+    const spaceAbove = rect.top
+    // Flip above the trigger when a downward popup would be clipped by the
+    // viewport bottom and there's more room above.
+    const up = spaceBelow < popupHeight && spaceAbove > spaceBelow
+    setPopupPos({
+      left: rect.left,
+      width: rect.width,
+      top: up ? undefined : rect.bottom + 4,
+      bottom: up ? window.innerHeight - rect.top + 4 : undefined,
+    })
+  }
 
   function onKeyDown(e: React.KeyboardEvent) {
     if (disabled) return
     if (!open) {
       if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
         e.preventDefault()
+        openPopup()
         setOpen(true)
         setActiveIdx(0)
       }
@@ -103,20 +147,8 @@ export function Select({
         disabled={disabled}
         onClick={() => {
           if (popupOptions.length === 0) return
-          setOpen((o) => {
-            const next = !o
-            if (next && triggerRef.current) {
-              // Decide flip direction at open-time so the popup never gets
-              // covered by the dialog footer. Estimated height = visible
-              // items × row height + 4px slack for the border/padding.
-              const rect = triggerRef.current.getBoundingClientRect()
-              const popupHeight = Math.min(popupOptions.length, MAX_VISIBLE_ITEMS) * ITEM_HEIGHT + 4
-              const spaceBelow = window.innerHeight - rect.bottom
-              const spaceAbove = rect.top
-              setFlipUp(spaceBelow < popupHeight && spaceAbove > spaceBelow)
-            }
-            return next
-          })
+          if (!open) openPopup()
+          setOpen((o) => !o)
           // Start the active highlight on the currently-selected option so
           // keyboard Enter is a safe no-op confirm.
           const selIdx = popupOptions.findIndex((o) => o.value === value)
@@ -147,12 +179,17 @@ export function Select({
         <ChevronDown size={16} className="text-muted-foreground" />
       </button>
 
-      {open && popupOptions.length > 0 && (
+      {open && popupOptions.length > 0 && popupPos && createPortal(
         <div
-          className={`absolute left-0 right-0 z-50 overflow-y-auto rounded border border-border bg-card shadow-lg ${
-            flipUp ? 'bottom-full mb-1' : 'top-full mt-1'
-          }`}
-          style={{ maxHeight: ITEM_HEIGHT * MAX_VISIBLE_ITEMS }}
+          ref={popupRef}
+          className="fixed z-50 overflow-y-auto rounded border border-border bg-card shadow-lg"
+          style={{
+            left: popupPos.left,
+            width: popupPos.width,
+            top: popupPos.top,
+            bottom: popupPos.bottom,
+            maxHeight: ITEM_HEIGHT * MAX_VISIBLE_ITEMS,
+          }}
           role="listbox"
         >
           {popupOptions.map((opt, idx) => {
@@ -177,7 +214,8 @@ export function Select({
               </button>
             )
           })}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )
