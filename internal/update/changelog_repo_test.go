@@ -67,6 +67,12 @@ func TestChangelogRepoConsistency(t *testing.T) {
 		if !ent.IsDir() {
 			continue
 		}
+		// Pre-2.0 releases are archived under changelog/archive/ (en-only
+		// historical notes with their own index.json) and are not fetched by
+		// the updater, so they are not required in the main index.
+		if ent.Name() == "archive" {
+			continue
+		}
 		if !indexed[ent.Name()] {
 			t.Errorf("release folder changelog/%s/ is not listed in index.json", ent.Name())
 		}
