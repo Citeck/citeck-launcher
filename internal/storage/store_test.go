@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -186,7 +187,7 @@ func testStoreState(t *testing.T, store Store) {
 }
 
 func TestFileStore(t *testing.T) {
-	store, err := NewFileStore(t.TempDir())
+	store, err := NewFileStore(t.TempDir(), filepath.Join(t.TempDir(), "runtime"))
 	if err != nil {
 		t.Fatalf("NewFileStore() error: %v", err)
 	}

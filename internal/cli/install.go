@@ -724,7 +724,7 @@ func readAdminPasswordFromStore() string {
 // Encryption is set up by the daemon on first start — this function only unlocks.
 // Returns (service, error). Caller should not use if error is non-nil.
 func openSecretService() (*storage.SecretService, error) {
-	store, err := storage.NewFileStore(config.ConfDir())
+	store, err := storage.NewFileStore(config.ConfDir(), filepath.Join(config.DataDir(), "runtime"))
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}

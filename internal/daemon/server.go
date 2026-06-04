@@ -409,7 +409,7 @@ func Start(opts StartOptions) error {
 			return fmt.Errorf("create sqlite store: %w", err)
 		}
 	} else {
-		store, err = storage.NewFileStore(config.ConfDir())
+		store, err = storage.NewFileStore(config.ConfDir(), filepath.Join(config.DataDir(), "runtime"))
 		if err != nil {
 			return fmt.Errorf("create file store: %w", err)
 		}

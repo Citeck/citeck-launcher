@@ -179,7 +179,7 @@ func resolvePassword(desktop bool) (string, error) {
 	if desktop {
 		store, err = storage.NewSQLiteStore(config.HomeDir())
 	} else {
-		store, err = storage.NewFileStore(config.ConfDir())
+		store, err = storage.NewFileStore(config.ConfDir(), filepath.Join(config.DataDir(), "runtime"))
 	}
 	if err != nil {
 		return "", fmt.Errorf("open store: %w", err)

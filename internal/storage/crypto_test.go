@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,7 +20,7 @@ func newTestSQLiteStore(t *testing.T) *SQLiteStore {
 func newTestFileStore(t *testing.T) *FileStore {
 	t.Helper()
 	dir := t.TempDir()
-	store, err := NewFileStore(dir)
+	store, err := NewFileStore(dir, filepath.Join(t.TempDir(), "runtime"))
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 	return store

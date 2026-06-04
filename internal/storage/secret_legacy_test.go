@@ -119,7 +119,7 @@ func TestFileStore_LegacyUserPassSplitOnLoad(t *testing.T) {
 		t.Fatalf("write legacy secret: %v", err)
 	}
 
-	store, err := NewFileStore(dir)
+	store, err := NewFileStore(dir, filepath.Join(t.TempDir(), "runtime"))
 	if err != nil {
 		t.Fatalf("NewFileStore: %v", err)
 	}

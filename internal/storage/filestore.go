@@ -11,23 +11,25 @@ import (
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/fsutil"
+	"gopkg.in/yaml.v3"
 )
 
 // FileStore implements Store using flat files. Used in server mode.
 // Workspaces are not used in server mode (single namespace), but the interface
 // is satisfied with a no-op default workspace.
 type FileStore struct {
-	baseDir string
-	mu      sync.RWMutex
+	baseDir     string // conf dir: holds namespace.yml + secrets/ + *.json
+	runtimeBase string // server runtime root: {DataDir}/runtime ; per-NS state lives at {runtimeBase}/{nsID}/state-{nsID}.json
+	mu          sync.RWMutex
 }
 
-// NewFileStore creates a FileStore rooted at baseDir.
-func NewFileStore(baseDir string) (*FileStore, error) {
+// NewFileStore creates a FileStore rooted at baseDir with runtime state at runtimeBase.
+func NewFileStore(baseDir, runtimeBase string) (*FileStore, error) {
 	secretsDir := filepath.Join(baseDir, "secrets")
 	if err := os.MkdirAll(secretsDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create secrets dir: %w", err)
 	}
-	return &FileStore{baseDir: baseDir}, nil
+	return &FileStore{baseDir: baseDir, runtimeBase: runtimeBase}, nil
 }
 
 // --- Workspaces (server mode: single implicit workspace) ---
@@ -351,6 +353,97 @@ func (s *FileStore) ListGitRepoStates() ([]GitRepoState, error) {
 		out = append(out, st)
 	}
 	return out, nil
+}
+
+// --- Namespaces (server-mode single-namespace file mapping) ---
+//
+// Server mode keeps the single namespace as conf/namespace.yml and runtime
+// state as {runtimeBase}/{nsID}/state-{nsID}.json, so the daemon can use the
+// Store API uniformly while the on-disk bytes (hand-editable, written by
+// `citeck setup`) stay exactly as before. The wsID param is ignored — server
+// mode has one implicit "daemon" workspace.
+
+func (s *FileStore) nsConfigPath() string { return filepath.Join(s.baseDir, "namespace.yml") }
+
+func (s *FileStore) nsStatePath(nsID string) string {
+	return filepath.Join(s.runtimeBase, nsID, "state-"+nsID+".json")
+}
+
+func (s *FileStore) ListNamespaces(_ string) ([]NamespaceRow, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	data, err := os.ReadFile(s.nsConfigPath()) //nolint:gosec // path is conf/namespace.yml, not user input
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read namespace config: %w", err)
+	}
+	var m struct {
+		ID   string `yaml:"id"`
+		Name string `yaml:"name"`
+	}
+	if err := yaml.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("parse namespace config: %w", err)
+	}
+	if m.ID == "" {
+		m.ID = "default"
+	}
+	return []NamespaceRow{{ID: m.ID, Name: m.Name}}, nil
+}
+
+func (s *FileStore) LoadNamespaceConfig(_, _ string) (string, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	data, err := os.ReadFile(s.nsConfigPath()) //nolint:gosec // path is conf/namespace.yml
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("read namespace config: %w", err)
+	}
+	return string(data), true, nil
+}
+
+func (s *FileStore) SaveNamespaceConfig(_, _, _, configYAML string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := fsutil.AtomicWriteFile(s.nsConfigPath(), []byte(configYAML), 0o644); err != nil {
+		return fmt.Errorf("write namespace config: %w", err)
+	}
+	return nil
+}
+
+func (s *FileStore) LoadNamespaceState(_, nsID string) (string, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	data, err := os.ReadFile(s.nsStatePath(nsID)) //nolint:gosec // path from runtimeBase + nsID
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("read namespace state: %w", err)
+	}
+	return string(data), true, nil
+}
+
+func (s *FileStore) SaveNamespaceState(_, nsID, _, stateJSON string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.nsStatePath(nsID)
+	_ = os.MkdirAll(filepath.Dir(p), 0o750)
+	if err := fsutil.AtomicWriteFile(p, []byte(stateJSON), 0o644); err != nil {
+		return fmt.Errorf("write namespace state: %w", err)
+	}
+	return nil
+}
+
+func (s *FileStore) DeleteNamespace(_, nsID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_ = os.Remove(s.nsConfigPath())
+	_ = os.Remove(s.nsStatePath(nsID))
+	return nil
 }
 
 // Close is a no-op for FileStore (no resources to release).

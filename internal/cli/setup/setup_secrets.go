@@ -3,6 +3,7 @@ package setup
 import (
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"sort"
 	"time"
 
@@ -135,7 +136,7 @@ func writePendingSecretsLocal(sctx *setupContext, svc *storage.SecretService, ti
 // openLocalSecretService creates a FileStore + SecretService and auto-unlocks
 // with the default password if applicable.
 func openLocalSecretService() (*storage.SecretService, error) {
-	store, err := storage.NewFileStore(config.ConfDir())
+	store, err := storage.NewFileStore(config.ConfDir(), filepath.Join(config.DataDir(), "runtime"))
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}

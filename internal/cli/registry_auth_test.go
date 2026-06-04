@@ -73,7 +73,7 @@ func setupRegistryAuthHome(t *testing.T, withAuthRepo, withUnusedAuthRepo bool) 
 
 func saveTestRegistryCred(t *testing.T, value string) {
 	t.Helper()
-	store, err := storage.NewFileStore(config.ConfDir())
+	store, err := storage.NewFileStore(config.ConfDir(), filepath.Join(config.DataDir(), "runtime"))
 	if err != nil {
 		t.Fatalf("new file store: %v", err)
 	}
