@@ -22,7 +22,7 @@ func TestSelectDaemonBinaryPrefersHealthyPayload(t *testing.T) {
 	}
 
 	// Stage a good 2.5.0 newer than current → preferred.
-	bin := filepath.Join(updatesDir, "2.5.0", "citeck-launcher")
+	bin := filepath.Join(updatesDir, "2.5.0", "citeck")
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -37,7 +37,7 @@ func makeTarGz(t *testing.T, content string) []byte {
 func TestServiceCheckAndStage(t *testing.T) {
 	targz := makeTarGz(t, "new-daemon-binary")
 	sum := sha256.Sum256(targz)
-	asset := fmt.Sprintf("citeck-desktop_2.6.0_linux_%s.tar.gz", runtime.GOARCH)
+	asset := fmt.Sprintf("citeck_2.6.0_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/Citeck/citeck-launcher/releases/latest", func(w http.ResponseWriter, r *http.Request) {
@@ -81,7 +81,7 @@ func TestServiceCheckAndStage(t *testing.T) {
 	if version != "2.6.0" {
 		t.Fatalf("staged version = %q", version)
 	}
-	staged := filepath.Join(dir, "2.6.0", "citeck-launcher")
+	staged := filepath.Join(dir, "2.6.0", "citeck")
 	got, _ := os.ReadFile(staged)
 	if string(got) != "new-daemon-binary" {
 		t.Fatalf("staged binary = %q", got)
@@ -94,7 +94,7 @@ func TestServiceCheckAndStage(t *testing.T) {
 
 func TestServiceStageRejectsBadChecksum(t *testing.T) {
 	targz := makeTarGz(t, "x")
-	asset := fmt.Sprintf("citeck-desktop_2.6.0_linux_%s.tar.gz", runtime.GOARCH)
+	asset := fmt.Sprintf("citeck_2.6.0_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/Citeck/citeck-launcher/releases/latest", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/Citeck/citeck-launcher/releases/tag/v2.6.0", http.StatusFound)

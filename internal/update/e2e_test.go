@@ -65,7 +65,7 @@ func TestAutoUpdateE2E_DiscoverChangelogStageSelect(t *testing.T) {
 	if ver != "2.6.0" {
 		t.Fatalf("staged %q, want 2.6.0", ver)
 	}
-	staged := filepath.Join(dir, "2.6.0", "citeck-launcher")
+	staged := filepath.Join(dir, "2.6.0", "citeck")
 	got, err := os.ReadFile(staged) //nolint:gosec // test path
 	if err != nil || string(got) != "daemon-bin-2.6.0" {
 		t.Fatalf("staged binary content = %q err=%v", got, err)

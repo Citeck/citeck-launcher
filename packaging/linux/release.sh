@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# Build the Linux desktop release artifacts into dist/: the desktop binary, a
-# bare tarball (auto-update payload), and .deb + .rpm packages, each with a
-# .sha256. Requires GTK3/WebKit dev libs (CGO) and nfpm on PATH. The embedded
-# web UI must already be built into internal/daemon/webdist.
+# Build the Linux desktop release artifacts into dist/: the desktop binary and
+# .deb + .rpm packages, each with a .sha256. Requires GTK3/WebKit dev libs (CGO)
+# and nfpm on PATH. The embedded web UI must already be built into
+# internal/daemon/webdist.
+#
+# No separate desktop auto-update payload is built here: the desktop daemon is
+# the server binary, so the in-app updater downloads the server release tarball
+# (citeck_<ver>_linux_<arch>.tar.gz) produced by release-server.sh.
 #
 # Env: VERSION (with or without leading "v"), ARCH (amd64|arm64).
 set -euo pipefail
@@ -17,11 +21,6 @@ CGO_ENABLED=1 go build -tags "desktop,gtk3" \
   -ldflags "-s -w -X main.version=${VERSION} -X main.gitCommit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
   -o dist/bin/citeck-launcher ./cmd/citeck-desktop
 
-# Bare binary tarball — the desktop auto-updater's payload.
-ASSET="citeck-desktop_${VERSION}_linux_${ARCH}.tar.gz"
-tar -czf "dist/${ASSET}" -C dist/bin citeck-launcher
-( cd dist && sha256sum "${ASSET}" > "${ASSET}.sha256" )
-
 # .deb + .rpm (nfpm reads ARCH/VERSION from the environment).
 export VERSION ARCH
 nfpm package --config packaging/nfpm.yaml --packager deb \
@@ -29,4 +28,4 @@ nfpm package --config packaging/nfpm.yaml --packager deb \
 nfpm package --config packaging/nfpm.yaml --packager rpm \
   --target "dist/citeck-desktop_${VERSION}_linux_${ARCH}.rpm"
 ( cd dist && for f in *.deb *.rpm; do sha256sum "$f" > "$f.sha256"; done )
-echo "Built dist/${ASSET}, .deb, .rpm"
+echo "Built dist/citeck-desktop_${VERSION}_linux_${ARCH}.deb, .rpm"

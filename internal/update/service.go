@@ -161,10 +161,12 @@ func (s *Service) Changelog(ctx context.Context, locale string) ([]ReleaseNote, 
 	return changelog(ctx, s.dataClient(), s.current, latest, locale)
 }
 
-// Stage downloads the latest desktop payload, verifies its sha256, extracts the
-// daemon binary into updates/<ver>/citeck-launcher, and records it pending in the
-// manifest. Returns the staged version. The full download+verify completes BEFORE
-// any swap so a failure never disturbs the running daemon.
+// Stage downloads the latest server release tarball (the same artifact a server
+// install uses — the desktop wrapper supervises it as the daemon, so there is no
+// separate desktop payload), verifies its sha256, extracts the binary into
+// updates/<ver>/citeck, and records it pending in the manifest. Returns the
+// staged version. The full download+verify completes BEFORE any swap so a
+// failure never disturbs the running daemon.
 func (s *Service) Stage(ctx context.Context) (string, error) {
 	if !s.applying.CompareAndSwap(false, true) {
 		return "", errors.New("update already in progress")
@@ -191,10 +193,14 @@ func (s *Service) Stage(ctx context.Context) (string, error) {
 	}
 
 	c := s.dataClient()
-	asset := fmt.Sprintf("citeck-desktop_%s_linux_%s.tar.gz", latest.Version, runtime.GOARCH)
+	// Reuse the server release tarball — the desktop daemon is the server binary,
+	// so there is no separate desktop payload to build or ship. Desktop
+	// auto-update is Linux-only today; runtime.GOOS is "linux" here and matches
+	// the server tarball naming (citeck_<ver>_<os>_<arch>.tar.gz).
+	asset := fmt.Sprintf("citeck_%s_%s_%s.tar.gz", latest.Version, runtime.GOOS, runtime.GOARCH)
 	verDir := filepath.Join(s.updatesDir, latest.Version)
 	targz := filepath.Join(verDir, asset)
-	binPath := filepath.Join(verDir, "citeck-launcher")
+	binPath := filepath.Join(verDir, "citeck")
 
 	if err := c.downloadFile(ctx, c.assetURL(latest.Tag, asset), targz); err != nil {
 		return "", err
@@ -283,7 +289,7 @@ func verifySHA256(path, expectedHex string) error {
 }
 
 // extractDaemonBinary writes the first regular file in the tar.gz (the
-// citeck-launcher binary) to dst with mode 0755.
+// citeck daemon binary) to dst with mode 0755.
 func extractDaemonBinary(targz, dst string) error {
 	f, err := os.Open(targz) //nolint:gosec // our own download
 	if err != nil {

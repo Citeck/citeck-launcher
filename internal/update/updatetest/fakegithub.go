@@ -49,18 +49,19 @@ type FakeGitHub struct {
 	releases []Release
 }
 
-// assetName mirrors update.Service's asset naming for the host arch.
+// assetName mirrors update.Service's asset naming (the server release tarball)
+// for the host arch.
 func assetName(version string) string {
-	return fmt.Sprintf("citeck-desktop_%s_linux_%s.tar.gz", version, runtime.GOARCH)
+	return fmt.Sprintf("citeck_%s_%s_%s.tar.gz", version, runtime.GOOS, runtime.GOARCH)
 }
 
-// makeTarGz packs content as a single executable file "citeck-launcher".
+// makeTarGz packs content as a single executable file "citeck".
 func makeTarGz(content string) []byte {
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
 	body := []byte(content)
-	_ = tw.WriteHeader(&tar.Header{Name: "citeck-launcher", Mode: 0o755, Size: int64(len(body))})
+	_ = tw.WriteHeader(&tar.Header{Name: "citeck", Mode: 0o755, Size: int64(len(body))})
 	_, _ = tw.Write(body)
 	_ = tw.Close()
 	_ = gz.Close()
