@@ -16,10 +16,11 @@ import (
 
 // runImports drives the same import pipeline that Migrate uses but with a
 // caller-supplied synthetic dump, so tests don't need a real MVStore file.
-func runImports(homeDir string, maps map[string]map[string]string, store storage.Store) *MigrateResult {
+func runImports(t *testing.T, homeDir string, maps map[string]map[string]string, store storage.Store) *MigrateResult {
+	t.Helper()
 	result := &MigrateResult{}
 	importWorkspaces(maps, store, result)
-	importNamespaces(homeDir, maps, store, result)
+	require.NoError(t, importNamespaces(maps, store, result))
 	importSecrets(maps, store, result)
 	importRuntimeState(homeDir, maps, result)
 	importGitRepos(maps, store, result)
@@ -67,7 +68,7 @@ func TestImports_SyntheticData(t *testing.T) {
 		},
 	}
 
-	result := runImports(homeDir, maps, store)
+	result := runImports(t, homeDir, maps, store)
 
 	assert.Equal(t, 1, result.Workspaces)
 	assert.Equal(t, 1, result.Namespaces)
@@ -81,10 +82,9 @@ func TestImports_SyntheticData(t *testing.T) {
 	assert.Equal(t, "https://github.com/test/repo.git", ws.RepoURL)
 	assert.Equal(t, "develop", ws.RepoBranch)
 
-	nsConfigPath := filepath.Join(homeDir, "ws", "ws-001", "ns", "ns-abc", "namespace.yml")
-	nsContent, err := os.ReadFile(nsConfigPath) //nolint:gosec // G304: test paths under t.TempDir()
+	nsStr, ok, err := store.LoadNamespaceConfig("ws-001", "ns-abc")
 	require.NoError(t, err)
-	nsStr := string(nsContent)
+	require.True(t, ok)
 	assert.Contains(t, nsStr, "ns-abc")
 	assert.Contains(t, nsStr, "My Namespace")
 	assert.Contains(t, nsStr, "community:2025.12")
@@ -114,7 +114,7 @@ func TestImportWorkspaces_DefaultsNameToID(t *testing.T) {
 		},
 	}
 
-	result := runImports(homeDir, maps, store)
+	result := runImports(t, homeDir, maps, store)
 	assert.Equal(t, 1, result.Workspaces)
 
 	ws, err := store.GetWorkspace("DEFAULT")
@@ -144,7 +144,7 @@ func TestImportNamespaces_SkipsVersionsAndRuntime(t *testing.T) {
 		},
 	}
 
-	result := runImports(homeDir, maps, store)
+	result := runImports(t, homeDir, maps, store)
 	assert.Equal(t, 1, result.Namespaces, "should only import the real namespace, not versions/runtime")
 }
 
@@ -206,7 +206,7 @@ func TestImports_RoundTripsAuthAndPullPeriod(t *testing.T) {
 		},
 	}
 
-	result := runImports(homeDir, maps, store)
+	result := runImports(t, homeDir, maps, store)
 	assert.Equal(t, 1, result.Workspaces)
 
 	ws, err := store.GetWorkspace("ws-priv")
@@ -282,13 +282,12 @@ func TestImportNamespacesPreservesAllFields(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	result := runImports(homeDir, maps, store)
+	result := runImports(t, homeDir, maps, store)
 	assert.Equal(t, 1, result.Namespaces)
 
-	nsConfigPath := filepath.Join(homeDir, "ws", "ws1", "ns", "ns-full", "namespace.yml")
-	body, readErr := os.ReadFile(nsConfigPath) //nolint:gosec // G304: test paths under t.TempDir()
+	yamlStr, ok, readErr := store.LoadNamespaceConfig("ws1", "ns-full")
 	require.NoError(t, readErr)
-	yamlStr := string(body)
+	require.True(t, ok)
 
 	for _, want := range []string{
 		"id: ns-full",
@@ -361,7 +360,7 @@ func TestImportRuntimeStatePreservesDetachAndEdits(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	runImports(homeDir, maps, store)
+	runImports(t, homeDir, maps, store)
 
 	volumesBase := filepath.Join(homeDir, "ws", "ws1", "ns", "nsA", "rtfiles")
 	statePath := filepath.Join(volumesBase, "state-nsA.json")
@@ -431,7 +430,7 @@ func TestImportRuntimeStateRejectsPathTraversal(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	runImports(homeDir, maps, store)
+	runImports(t, homeDir, maps, store)
 
 	volumesBase := filepath.Join(homeDir, "ws", "ws1", "ns", "nsA", "rtfiles")
 	good, err := os.ReadFile(filepath.Join(volumesBase, "good", "file")) //nolint:gosec // G304: test paths under t.TempDir()
@@ -463,7 +462,7 @@ func TestImportState_MultiWorkspaceCoversAllMaps(t *testing.T) {
 		},
 	}
 
-	runImports(homeDir, maps, store)
+	runImports(t, homeDir, maps, store)
 
 	state, err := store.GetState()
 	require.NoError(t, err)
@@ -485,7 +484,7 @@ func TestImportState_OnlyOtherWorkspaceSelectionsNoActive(t *testing.T) {
 		},
 	}
 
-	runImports(homeDir, maps, store)
+	runImports(t, homeDir, maps, store)
 
 	state, err := store.GetState()
 	require.NoError(t, err)
@@ -517,7 +516,7 @@ func TestImportGitRepos_WritesRows(t *testing.T) {
 		},
 	}
 
-	result := runImports(homeDir, maps, store)
+	result := runImports(t, homeDir, maps, store)
 	assert.Equal(t, 2, result.GitRepos)
 
 	st1, err := store.GetGitRepoState("ws/team-a/repo")
@@ -553,7 +552,7 @@ func TestImportGitRepos_SkipsZeroTimestamp(t *testing.T) {
 		},
 	}
 
-	result := runImports(homeDir, maps, store)
+	result := runImports(t, homeDir, maps, store)
 	assert.Equal(t, 0, result.GitRepos)
 }
 

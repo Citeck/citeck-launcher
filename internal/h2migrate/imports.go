@@ -3,11 +3,11 @@ package h2migrate
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 
+	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/storage"
 	"gopkg.in/yaml.v3"
 )
@@ -82,16 +82,23 @@ func importWorkspaces(maps map[string]map[string]string, store storage.Store, re
 	}
 }
 
-func importNamespaces(homeDir string, maps map[string]map[string]string, _ storage.Store, result *MigrateResult) {
+// importNamespaces translates every Kotlin namespace entity, validates the
+// marshaled YAML, and writes it to the store as a row. Validation is hard:
+// any invalid config (bad input OR a serializer defect) aborts the whole
+// migration with an error so the defect is fixed rather than silently stored.
+func importNamespaces(maps map[string]map[string]string, store storage.Store, result *MigrateResult) error {
+	type staged struct {
+		wsID, nsID, name, yaml string
+	}
+	var rows []staged
+
 	for mapName, entries := range maps {
-		// Match entities/{wsId}!namespace (not versions, not runtime)
 		if !strings.HasSuffix(mapName, "!namespace") {
 			continue
 		}
 		if strings.Contains(mapName, "/versions") || strings.Contains(mapName, "runtime") {
 			continue
 		}
-
 		wsID := strings.TrimPrefix(mapName, "entities/")
 		wsID = strings.TrimSuffix(wsID, "!namespace")
 
@@ -100,31 +107,33 @@ func importNamespaces(homeDir string, maps map[string]map[string]string, _ stora
 			if err != nil {
 				continue
 			}
-
 			nsCfg, err := buildNamespaceYAMLMap(nsID, raw)
 			if err != nil {
 				slog.Warn("Failed to parse namespace", "ws", wsID, "ns", nsID, "err", err)
 				continue
 			}
-
 			yamlBytes, err := yaml.Marshal(nsCfg)
 			if err != nil {
-				continue
+				return fmt.Errorf("marshal migrated namespace %s/%s: %w", wsID, nsID, err)
 			}
-
-			nsDir := filepath.Join(homeDir, "ws", wsID, "ns", nsID)
-			_ = os.MkdirAll(nsDir, 0o755) //nolint:gosec // G301: namespace dirs need 0o755
-			nsConfigPath := filepath.Join(nsDir, "namespace.yml")
-
-			if err := os.WriteFile(nsConfigPath, yamlBytes, 0o644); err != nil { //nolint:gosec // config file needs to be readable
-				slog.Warn("Failed to write namespace config", "path", nsConfigPath, "err", err)
-				result.Errors++
-				continue
+			if _, verr := namespace.ValidateYAML(yamlBytes); verr != nil {
+				slog.Error("CRITICAL: migrated namespace config is invalid — aborting migration",
+					"ws", wsID, "ns", nsID, "err", verr)
+				return fmt.Errorf("invalid migrated namespace %s/%s: %w", wsID, nsID, verr)
 			}
-			result.Namespaces++
-			slog.Info("Migrated namespace", "ws", wsID, "ns", nsID, "name", nsCfg["name"], "bundle", nsCfg["bundleRef"])
+			name, _ := nsCfg["name"].(string)
+			rows = append(rows, staged{wsID: wsID, nsID: nsID, name: name, yaml: string(yamlBytes)})
 		}
 	}
+
+	for _, r := range rows {
+		if err := store.SaveNamespaceConfig(r.wsID, r.nsID, r.name, r.yaml); err != nil {
+			return fmt.Errorf("save migrated namespace %s/%s: %w", r.wsID, r.nsID, err)
+		}
+		result.Namespaces++
+		slog.Info("Migrated namespace", "ws", r.wsID, "ns", r.nsID, "name", r.name)
+	}
+	return nil
 }
 
 // buildNamespaceYAMLMap turns a Kotlin Jackson-serialized NamespaceConfig blob

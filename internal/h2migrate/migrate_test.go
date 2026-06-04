@@ -2,6 +2,7 @@ package h2migrate
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"os"
 	"path/filepath"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/citeck/citeck-launcher/internal/storage"
 )
 
 // sha256File returns the hex-encoded SHA256 of path. Used to lock in the
@@ -107,4 +110,21 @@ func TestBackupKotlinStorage_NoLeftoverTmp(t *testing.T) {
 	tmpPath := h2Path + kotlinBackupSuffix + ".tmp"
 	_, err := os.Stat(tmpPath)
 	assert.True(t, os.IsNotExist(err), "no .tmp file should remain after successful backup; got err=%v", err)
+}
+
+func TestImportNamespacesAbortsOnInvalidConfig(t *testing.T) {
+	s, err := storage.NewSQLiteStore(t.TempDir())
+	require.NoError(t, err)
+	defer s.Close()
+
+	bad := base64.StdEncoding.EncodeToString([]byte(`{"id":"nsBad","citeckProxy":{"port":70000}}`))
+	maps := map[string]map[string]string{
+		"entities/ws1!namespace": {"nsBad": bad},
+	}
+	res := &MigrateResult{}
+	err = importNamespaces(maps, s, res)
+	require.Error(t, err)
+	require.Equal(t, 0, res.Namespaces)
+	_, ok, _ := s.LoadNamespaceConfig("ws1", "nsBad")
+	require.False(t, ok, "no namespace row may be written when one config is invalid")
 }

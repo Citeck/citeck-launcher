@@ -187,7 +187,15 @@ func (m *mockStore) GetGitRepoState(string) (*storage.GitRepoState, error) {
 }
 func (m *mockStore) SetGitRepoState(storage.GitRepoState) error         { return nil }
 func (m *mockStore) ListGitRepoStates() ([]storage.GitRepoState, error) { return nil, nil }
-func (m *mockStore) Close() error                                       { return nil }
+func (m *mockStore) ListNamespaces(string) ([]storage.NamespaceRow, error) {
+	return nil, nil
+}
+func (m *mockStore) LoadNamespaceConfig(_, _ string) (string, bool, error) { return "", false, nil }
+func (m *mockStore) SaveNamespaceConfig(_, _, _, _ string) error           { return nil }
+func (m *mockStore) LoadNamespaceState(_, _ string) (string, bool, error)  { return "", false, nil }
+func (m *mockStore) SaveNamespaceState(_, _, _, _ string) error            { return nil }
+func (m *mockStore) DeleteNamespace(_, _ string) error                     { return nil }
+func (m *mockStore) Close() error                                          { return nil }
 
 func TestImportDecryptedSecrets_TokenAndBasic(t *testing.T) {
 	secretsMap := map[string]AuthSecret{

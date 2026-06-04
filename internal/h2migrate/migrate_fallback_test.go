@@ -76,10 +76,11 @@ func TestFilesystemFallbackPopulatesAuthDefaults(t *testing.T) {
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, res.Namespaces, 1)
 
-	body, err := os.ReadFile(filepath.Join(nsDir, "namespace.yml")) //nolint:gosec // G304: test path under t.TempDir()
+	body, ok, err := store.LoadNamespaceConfig("default", "demo")
 	require.NoError(t, err)
+	require.True(t, ok)
 	var parsed map[string]any
-	require.NoError(t, yaml.Unmarshal(body, &parsed))
+	require.NoError(t, yaml.Unmarshal([]byte(body), &parsed))
 	auth, ok := parsed["authentication"].(map[string]any)
 	require.True(t, ok, "authentication block must be present in fallback yaml")
 	assert.Equal(t, "BASIC", auth["type"])

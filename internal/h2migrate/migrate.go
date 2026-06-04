@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/storage"
 	"gopkg.in/yaml.v3"
 )
@@ -167,7 +168,9 @@ func Migrate(homeDir string, store storage.Store) (*MigrateResult, error) {
 	slog.Info("H2 maps loaded", "count", len(maps))
 
 	importWorkspaces(maps, store, result)
-	importNamespaces(homeDir, maps, store, result)
+	if err := importNamespaces(maps, store, result); err != nil {
+		return nil, err
+	}
 	importSecrets(maps, store, result)
 	importRuntimeState(homeDir, maps, result)
 	importGitRepos(maps, store, result)
@@ -244,24 +247,23 @@ func migrateFromFilesystem(homeDir string, store storage.Store) (*MigrateResult,
 				continue
 			}
 			nsID := ns.Name()
-			nsConfigPath := filepath.Join(nsDir, nsID, "namespace.yml")
-			if _, err := os.Stat(nsConfigPath); err == nil {
+			if _, exists, _ := store.LoadNamespaceConfig(wsID, nsID); exists {
 				result.Namespaces++
 				continue
 			}
-			// Mirrors Kotlin's NamespaceConfig.AuthenticationProps.DEFAULT
-			// (BASIC + admin/fet) so a degraded migration does not surface
-			// as "no users" in the auth dialog.
 			stub, err := buildFallbackNamespaceYAML(nsID, defaultBundleRef)
 			if err != nil {
 				slog.Warn("Failed to build fallback namespace config", "ns", nsID, "err", err)
 				result.Errors++
 				continue
 			}
-			if err := os.WriteFile(nsConfigPath, stub, 0o644); err != nil { //nolint:gosec // config file needs to be readable
-				slog.Warn("Failed to create namespace config", "ns", nsID, "err", err)
-				result.Errors++
-				continue
+			if _, verr := namespace.ValidateYAML(stub); verr != nil {
+				slog.Error("CRITICAL: fallback namespace config is invalid — aborting migration",
+					"ws", wsID, "ns", nsID, "err", verr)
+				return nil, fmt.Errorf("invalid fallback namespace %s/%s: %w", wsID, nsID, verr)
+			}
+			if err := store.SaveNamespaceConfig(wsID, nsID, nsID, string(stub)); err != nil {
+				return nil, fmt.Errorf("save fallback namespace %s/%s: %w", wsID, nsID, err)
 			}
 			result.Namespaces++
 			slog.Info("Created stub namespace config", "ws", wsID, "ns", nsID, "bundleRef", defaultBundleRef)
