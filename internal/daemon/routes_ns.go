@@ -119,7 +119,16 @@ func (d *Daemon) handleDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer d.reloadMu.Unlock()
-		d.teardownActiveNamespaceForDelete(wsID, nsID)
+		// Re-check under reloadMu: a concurrent activate (also reloadMu-gated)
+		// may have changed the active namespace since the snapshot above. Only
+		// tear down if THIS namespace is still active, so we never shut down a
+		// different, now-current runtime.
+		d.configMu.RLock()
+		stillActive := d.nsConfig != nil && d.nsConfig.ID == nsID
+		d.configMu.RUnlock()
+		if stillActive {
+			d.teardownActiveNamespaceForDelete(wsID, nsID)
+		}
 	}
 
 	// Source of truth: drop the config + state row.
