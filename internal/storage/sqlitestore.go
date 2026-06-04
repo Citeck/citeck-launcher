@@ -216,6 +216,25 @@ func (s *SQLiteStore) migrate() error {
 				)`,
 			},
 		},
+		{
+			// v6 — namespace config + per-NS runtime state moved off disk into
+			// the DB (desktop). config_yaml is the exact namespace.yml text;
+			// state_json is the exact state-{nsID}.json. name/status are
+			// denormalized so the list query never parses a blob. Enumeration
+			// by row (not directory scan) removes the ghost-namespace class.
+			version: 6,
+			stmts: []string{
+				`CREATE TABLE IF NOT EXISTS namespaces (
+					ws_id       TEXT NOT NULL,
+					ns_id       TEXT NOT NULL,
+					name        TEXT NOT NULL DEFAULT '',
+					status      TEXT NOT NULL DEFAULT '',
+					config_yaml TEXT NOT NULL DEFAULT '',
+					state_json  TEXT NOT NULL DEFAULT '',
+					PRIMARY KEY (ws_id, ns_id)
+				)`,
+			},
+		},
 	}
 
 	for _, m := range migrations {

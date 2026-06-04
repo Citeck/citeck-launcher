@@ -8,6 +8,7 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/stretchr/testify/require"
 	sqlitedrv "modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 )
@@ -138,5 +139,31 @@ func TestOpenWithWALRecovery_TruncatedWALIsCleanedUp(t *testing.T) {
 	}
 	if st.WorkspaceID != "ws-1" {
 		t.Errorf("after recovery, expected workspaceID 'ws-1', got %q", st.WorkspaceID)
+	}
+}
+
+func TestSQLiteSchemaV6NamespacesTable(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewSQLiteStore(dir)
+	require.NoError(t, err)
+	defer s.Close()
+
+	// schema_version reached at least 6
+	var v int
+	require.NoError(t, s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&v))
+	require.GreaterOrEqual(t, v, 6)
+
+	// namespaces table exists with the expected columns
+	rows, err := s.db.Query(`SELECT name FROM pragma_table_info('namespaces')`)
+	require.NoError(t, err)
+	defer rows.Close()
+	cols := map[string]bool{}
+	for rows.Next() {
+		var c string
+		require.NoError(t, rows.Scan(&c))
+		cols[c] = true
+	}
+	for _, want := range []string{"ws_id", "ns_id", "name", "status", "config_yaml", "state_json"} {
+		require.True(t, cols[want], "missing column %q", want)
 	}
 }
