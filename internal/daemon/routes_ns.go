@@ -88,38 +88,95 @@ func (d *Daemon) handleDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Don't allow deleting the active namespace
+	if !config.IsDesktopMode() {
+		writeError(w, http.StatusBadRequest, "cannot delete namespace in server mode")
+		return
+	}
+
 	d.configMu.RLock()
 	activeID := ""
 	if d.nsConfig != nil {
 		activeID = d.nsConfig.ID
 	}
 	rt := d.runtime
+	wsID := d.workspaceID
 	d.configMu.RUnlock()
+
+	// Don't allow deleting the active namespace while it is running.
 	if activeID == nsID && rt != nil && rt.Status() != namespace.NsStatusStopped {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeNamespaceRunning, "cannot delete active namespace; stop it first")
 		return
 	}
 
-	if config.IsDesktopMode() {
-		// Source of truth first: drop the config + state row.
-		if err := d.store.DeleteNamespace(d.workspaceID, nsID); err != nil {
-			writeInternalError(w, err)
+	// Deleting the active (stopped) namespace: tear down its runtime FIRST so
+	// its still-bound state persister cannot re-insert the row after we drop it
+	// (which would resurrect a ghost card). Mirrors handleDeactivateNamespace,
+	// and the row-delete below runs only after Shutdown drains the loop, so any
+	// final persist during shutdown is overwritten by the delete.
+	if activeID == nsID {
+		if !d.reloadMu.TryLock() {
+			writeErrorCode(w, http.StatusConflict, api.ErrCodeReloadInProgress, "reload already in progress")
 			return
 		}
-		// Best-effort: remove the on-disk rtfiles dir so generated bind-mount
-		// files don't leak. Enumeration is row-based now, so a failure here
-		// cannot resurrect a ghost entry.
-		nsDir := config.NamespaceDir(d.workspaceID, nsID)
-		if err := os.RemoveAll(nsDir); err != nil { //nolint:gosec // path from config.NamespaceDir
-			slog.Warn("Failed to remove namespace rtfiles dir", "dir", nsDir, "err", err) //nolint:gosec // G706: nsDir from config.NamespaceDir(validated ids)
-		}
-	} else {
-		writeError(w, http.StatusBadRequest, "cannot delete namespace in server mode")
+		defer d.reloadMu.Unlock()
+		d.teardownActiveNamespaceForDelete(wsID, nsID)
+	}
+
+	// Source of truth: drop the config + state row.
+	if err := d.store.DeleteNamespace(d.workspaceID, nsID); err != nil {
+		writeInternalError(w, err)
 		return
+	}
+	// Best-effort: remove the on-disk rtfiles dir so generated bind-mount
+	// files don't leak. Enumeration is row-based now, so a failure here
+	// cannot resurrect a ghost entry.
+	nsDir := config.NamespaceDir(d.workspaceID, nsID)
+	if err := os.RemoveAll(nsDir); err != nil { //nolint:gosec // path from config.NamespaceDir
+		slog.Warn("Failed to remove namespace rtfiles dir", "dir", nsDir, "err", err) //nolint:gosec // G706: nsDir from config.NamespaceDir(validated ids)
 	}
 
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "namespace deleted"})
+}
+
+// teardownActiveNamespaceForDelete shuts down the active namespace's runtime
+// and clears its persisted selection so deleting the active (stopped)
+// namespace cannot be undone by a late state persist (which would resurrect a
+// ghost row). Mirrors handleDeactivateNamespace's teardown. Caller holds
+// reloadMu; the row delete must run AFTER this returns (Shutdown drains the
+// loop, so any final persist is then overwritten by the delete).
+func (d *Daemon) teardownActiveNamespaceForDelete(wsID, nsID string) {
+	// Drop the persisted selection so the next start lands on Welcome.
+	if state, _ := d.store.GetState(); state != nil {
+		delete(state.SelectedNs, wsID)
+		if err := d.store.SetState(*state); err != nil {
+			slog.Warn("Failed to clear namespace selection on delete", "ws", wsID, "ns", nsID, "err", err) //nolint:gosec // G706: validated ids
+		}
+	}
+
+	d.configMu.Lock()
+	oldRuntime := d.runtime
+	oldCloudCfgSrv := d.cloudCfgServer
+	oldACME := d.acmeRenewal
+	d.runtime = nil
+	d.nsConfig = nil
+	d.bundleDef = nil
+	d.appDefs = nil
+	d.cloudCfgServer = nil
+	d.systemSecrets = namespace.SystemSecrets{}
+	d.volumesBase = ""
+	d.acmeRenewal = nil
+	d.bundleError = ""
+	d.configMu.Unlock()
+
+	if oldRuntime != nil {
+		oldRuntime.Shutdown() // drains the loop → no further persistState
+	}
+	if oldCloudCfgSrv != nil {
+		oldCloudCfgSrv.Stop()
+	}
+	if oldACME != nil {
+		oldACME.Stop()
+	}
 }
 
 func (d *Daemon) handleGetTemplates(w http.ResponseWriter, _ *http.Request) {
