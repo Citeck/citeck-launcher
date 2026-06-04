@@ -417,7 +417,10 @@ func writeSettingChanges(sctx *setupContext, target TargetFile, cfgPath, histDir
 		if mErr != nil {
 			return nil, fmt.Errorf("marshal namespace config: %w", mErr)
 		}
-		if wErr := fsutil.AtomicWriteFile(cfgPath, data, 0o644); wErr != nil {
+		// 0o600: namespace.yml can carry plaintext secrets (SMTP password, S3
+		// secret key) — keep it owner-only, matching `citeck install` and the
+		// daemon's FileStore write.
+		if wErr := fsutil.AtomicWriteFile(cfgPath, data, 0o600); wErr != nil {
 			return nil, fmt.Errorf("write namespace config: %w", wErr)
 		}
 	}
