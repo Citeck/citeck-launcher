@@ -63,25 +63,69 @@ func sanitizeFileName(name string) string {
 // must be cheap and non-blocking — callers invoke it on the hot path.
 type VolumeProgressFunc func(current, total int, volumeName string)
 
-// Export creates a snapshot ZIP of all namespace volumes.
-// The namespace MUST be stopped before calling this.
-// volumesBase is the runtime directory containing volumes/ subdirectory.
-func Export(ctx context.Context, dc *docker.Client, outputPath, volumesBase string, progress VolumeProgressFunc) (*NamespaceSnapshotMeta, error) {
-	// Scan bind-mount volumes in {volumesBase}/volumes/
+// volumeOps is the subset of *docker.Client that snapshot export/import needs.
+// Narrowing to an interface decouples the snapshot package from the concrete
+// Docker client and lets tests substitute a fake.
+type volumeOps interface {
+	CreateVolume(ctx context.Context, originalName string) (string, error)
+	ListVolumes(ctx context.Context) ([]docker.VolumeInfo, error)
+	RunUtilsContainer(ctx context.Context, cmd, binds []string) (output string, exitCode int, err error)
+	ImageExists(ctx context.Context, img string) bool
+	PullImage(ctx context.Context, img string, auth *docker.RegistryAuth) error
+}
+
+// exportSource is one volume to archive: name is the snapshot volume name (the
+// original, un-scoped name), sourceBind is the launcher-utils mount spec
+// ("<host-or-volume>:/source:ro") the archiver reads from.
+type exportSource struct {
+	name       string
+	sourceBind string
+}
+
+// exportSources enumerates the namespace's volumes to archive. Desktop mode
+// reads the per-(ns,ws) scoped named Docker volumes the containers actually use
+// (via ListVolumes); server mode scans the {volumesBase}/volumes/ bind dirs.
+// This mirrors docker.CreateContainer's per-mode volume handling so a snapshot
+// captures the data containers really mount.
+func exportSources(ctx context.Context, dc volumeOps, volumesBase string) ([]exportSource, error) {
+	if config.IsDesktopMode() {
+		vols, err := dc.ListVolumes(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list volumes: %w", err)
+		}
+		out := make([]exportSource, 0, len(vols))
+		for _, v := range vols {
+			if v.OrigName == "" {
+				continue // not a launcher-managed app volume — can't round-trip
+			}
+			out = append(out, exportSource{name: v.OrigName, sourceBind: v.Name + ":/source:ro"})
+		}
+		return out, nil
+	}
 	volumesDir := filepath.Join(volumesBase, "volumes")
 	entries, err := os.ReadDir(volumesDir)
 	if err != nil {
 		return nil, fmt.Errorf("list volumes in %s: %w", volumesDir, err)
 	}
-
-	var volumeDirs []string
+	out := make([]exportSource, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() {
-			volumeDirs = append(volumeDirs, e.Name())
+			out = append(out, exportSource{name: e.Name(), sourceBind: filepath.Join(volumesDir, e.Name()) + ":/source:ro"})
 		}
 	}
-	if len(volumeDirs) == 0 {
-		return nil, fmt.Errorf("no volumes found in %s", volumesDir)
+	return out, nil
+}
+
+// Export creates a snapshot ZIP of all namespace volumes.
+// The namespace MUST be stopped before calling this.
+// volumesBase is the runtime directory containing volumes/ subdirectory.
+func Export(ctx context.Context, dc volumeOps, outputPath, volumesBase string, progress VolumeProgressFunc) (*NamespaceSnapshotMeta, error) {
+	sources, err := exportSources(ctx, dc, volumesBase)
+	if err != nil {
+		return nil, err
+	}
+	if len(sources) == 0 {
+		return nil, fmt.Errorf("no volumes found to export")
 	}
 
 	// Ensure launcher-utils image is available
@@ -101,23 +145,22 @@ func Export(ctx context.Context, dc *docker.Client, outputPath, volumesBase stri
 	}
 
 	// Export each volume via launcher-utils container
-	for idx, volName := range volumeDirs {
-		hostPath := filepath.Join(volumesDir, volName)
-		dataFile := sanitizeFileName(volName) + ".tar." + compressionExt
+	for idx, src := range sources {
+		dataFile := sanitizeFileName(src.name) + ".tar." + compressionExt
 
-		slog.Info("Exporting volume", "volume", volName, "path", hostPath, "file", dataFile)
+		slog.Info("Exporting volume", "volume", src.name, "file", dataFile)
 
 		if progress != nil {
-			progress(idx+1, len(volumeDirs), volName)
+			progress(idx+1, len(sources), src.name)
 		}
 
-		rootStat, exportErr := exportVolume(ctx, dc, hostPath, filepath.Join(tmpDir, dataFile))
+		rootStat, exportErr := exportVolume(ctx, dc, src.sourceBind, filepath.Join(tmpDir, dataFile))
 		if exportErr != nil {
-			return nil, fmt.Errorf("export volume %s: %w", volName, exportErr)
+			return nil, fmt.Errorf("export volume %s: %w", src.name, exportErr)
 		}
 
 		meta.Volumes = append(meta.Volumes, VolumeSnapshotMeta{
-			Name:     volName,
+			Name:     src.name,
 			RootStat: rootStat,
 			DataFile: dataFile,
 		})
@@ -154,7 +197,7 @@ func Export(ctx context.Context, dc *docker.Client, outputPath, volumesBase stri
 
 // Import restores volumes from a snapshot ZIP into bind-mount directories.
 // The namespace MUST be stopped before calling this.
-func Import(ctx context.Context, dc *docker.Client, zipPath, volumesBase string, progress VolumeProgressFunc) (*NamespaceSnapshotMeta, error) {
+func Import(ctx context.Context, dc volumeOps, zipPath, volumesBase string, progress VolumeProgressFunc) (*NamespaceSnapshotMeta, error) {
 	// Estimate needed space (3x ZIP size) and check available disk
 	if zipInfo, err := os.Stat(zipPath); err == nil {
 		needed := zipInfo.Size() * 3
@@ -227,7 +270,7 @@ func Import(ctx context.Context, dc *docker.Client, zipPath, volumesBase string,
 // exportVolume archives a single volume directory using launcher-utils.
 // hostPath is the absolute path to the volume directory on the host.
 // Returns rootStat string ("uid:gid|0perms").
-func exportVolume(ctx context.Context, dc *docker.Client, hostPath, outputPath string) (string, error) {
+func exportVolume(ctx context.Context, dc volumeOps, sourceBind, outputPath string) (string, error) {
 	destDir := filepath.Dir(outputPath)
 	dataFile := filepath.Base(outputPath)
 
@@ -244,7 +287,7 @@ func exportVolume(ctx context.Context, dc *docker.Client, hostPath, outputPath s
 	)}
 
 	output, exitCode, err := dc.RunUtilsContainer(ctx, cmd, []string{
-		hostPath + ":/source:ro",
+		sourceBind,
 		destDir + ":/dest",
 	})
 	if err != nil {
@@ -273,11 +316,26 @@ func exportVolume(ctx context.Context, dc *docker.Client, hostPath, outputPath s
 }
 
 // importVolume restores a single volume from a tar archive into a bind-mount directory.
-func importVolume(ctx context.Context, dc *docker.Client, vol VolumeSnapshotMeta, tarPath, volumesBase string) error {
-	// Create host directory for this volume
-	hostDir := filepath.Join(volumesBase, "volumes", vol.Name)
-	if err := os.MkdirAll(hostDir, 0o755); err != nil { //nolint:gosec // G301: volume dirs need 0o755 for Docker access
-		return fmt.Errorf("create volume dir %s: %w", hostDir, err)
+func importVolume(ctx context.Context, dc volumeOps, vol VolumeSnapshotMeta, tarPath, volumesBase string) error {
+	// Resolve the restore target. Desktop containers mount a per-(ns,ws)
+	// scoped named Docker volume (see docker.CreateContainer's desktop branch),
+	// so restore INTO that volume — restoring to a {volumesBase}/volumes/<name>
+	// bind dir (the server layout) would land in a directory no desktop
+	// container mounts, and the imported data would be invisible. Server mode
+	// keeps the bind-mount dir.
+	var destBind string
+	if config.IsDesktopMode() {
+		scopedName, err := dc.CreateVolume(ctx, vol.Name)
+		if err != nil {
+			return fmt.Errorf("create volume %s: %w", vol.Name, err)
+		}
+		destBind = scopedName + ":/dest"
+	} else {
+		hostDir := filepath.Join(volumesBase, "volumes", vol.Name)
+		if err := os.MkdirAll(hostDir, 0o755); err != nil { //nolint:gosec // G301: volume dirs need 0o755 for Docker access
+			return fmt.Errorf("create volume dir %s: %w", hostDir, err)
+		}
+		destBind = hostDir + ":/dest"
 	}
 
 	// Parse rootStat — validate format to prevent shell injection from crafted snapshots.
@@ -307,7 +365,7 @@ func importVolume(ctx context.Context, dc *docker.Client, vol VolumeSnapshotMeta
 	)}
 
 	output, exitCode, err := dc.RunUtilsContainer(ctx, cmd, []string{
-		hostDir + ":/dest",
+		destBind,
 		tarDir + ":/source:ro",
 	})
 	if err != nil {
@@ -321,7 +379,7 @@ func importVolume(ctx context.Context, dc *docker.Client, vol VolumeSnapshotMeta
 }
 
 // ensureUtilsImage pulls the launcher-utils image if not present.
-func ensureUtilsImage(ctx context.Context, dc *docker.Client) error {
+func ensureUtilsImage(ctx context.Context, dc volumeOps) error {
 	if dc.ImageExists(ctx, launcherUtilsImage) {
 		return nil
 	}
