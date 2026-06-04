@@ -137,15 +137,15 @@ func (d *Daemon) handleListWorkspaces(w http.ResponseWriter, _ *http.Request) {
 		writeInternalError(w, err)
 		return
 	}
-	// Augment with namespace counts from the filesystem so the picker can show
-	// "5 namespaces" without forcing a second round-trip per workspace.
-	wsList, _ := config.ListWorkspaces()
-	nsCount := make(map[string]int, len(wsList))
-	for _, ws := range wsList {
-		nsCount[ws.ID] = len(ws.Namespaces)
-	}
+	// Namespace counts come from the store (the source of truth) so the picker
+	// reflects created-but-never-started namespaces too (they have a row but no
+	// on-disk dir yet).
 	out := make([]api.WorkspaceDto, 0, len(list))
 	for _, ws := range list {
+		nsCount := 0
+		if rows, lerr := d.store.ListNamespaces(ws.ID); lerr == nil {
+			nsCount = len(rows)
+		}
 		out = append(out, api.WorkspaceDto{
 			ID:             ws.ID,
 			Name:           ws.Name,
@@ -154,7 +154,7 @@ func (d *Daemon) handleListWorkspaces(w http.ResponseWriter, _ *http.Request) {
 			RepoPullPeriod: ws.RepoPullPeriod,
 			AuthType:       ws.AuthType,
 			Active:         ws.ID == d.workspaceID,
-			Namespaces:     nsCount[ws.ID],
+			Namespaces:     nsCount,
 		})
 	}
 	writeJSON(w, out)
@@ -178,13 +178,9 @@ func (d *Daemon) handleGetWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusNotFound, api.ErrCodeWorkspaceNotFound, "workspace not found")
 		return
 	}
-	wsList, _ := config.ListWorkspaces()
 	nsCount := 0
-	for _, fws := range wsList {
-		if fws.ID == id {
-			nsCount = len(fws.Namespaces)
-			break
-		}
+	if rows, lerr := d.store.ListNamespaces(id); lerr == nil {
+		nsCount = len(rows)
 	}
 	writeJSON(w, api.WorkspaceDto{
 		ID:             ws.ID,
