@@ -1,5 +1,8 @@
 ### Go ###
 internal/daemon/webdist/
+# Generated Windows resource object (embeds the app icon into the .exe),
+# produced from icons/logo.ico by packaging/windows/release.sh.
+cmd/citeck-desktop/*.syso
 
 ### Web ###
 node_modules

@@ -11,6 +11,13 @@ VERSION="${VERSION:?VERSION env required}"; VERSION="${VERSION#v}"
 ARCH="${ARCH:?ARCH env required}"
 
 mkdir -p dist/bin
+
+# Embed the app icon into the .exe via a Windows resource object. `go build`
+# auto-links a matching *_windows_<arch>.syso from the main package dir; it is
+# gitignored and regenerated from icons/logo.ico on every build.
+go run github.com/akavel/rsrc@v0.10.2 -ico icons/logo.ico -arch "$ARCH" \
+  -o "cmd/citeck-desktop/rsrc_windows_${ARCH}.syso"
+
 CGO_ENABLED=0 GOARCH="$ARCH" go build -tags desktop \
   -ldflags "-s -w -X main.version=${VERSION}" \
   -o dist/bin/citeck-launcher.exe ./cmd/citeck-desktop
