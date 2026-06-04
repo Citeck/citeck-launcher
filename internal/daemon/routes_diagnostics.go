@@ -48,8 +48,7 @@ func (d *Daemon) handleGetDiagnostics(w http.ResponseWriter, _ *http.Request) {
 
 	// Check 3: Namespace config valid
 	nsID := d.activeNsID()
-	nsCfgPath := config.ResolveNamespaceConfigPath(d.workspaceID, nsID)
-	if _, err := namespace.LoadNamespaceConfig(nsCfgPath); err != nil {
+	if _, err := d.loadNamespaceConfigFromStore(d.workspaceID, nsID); err != nil {
 		checks = append(checks, api.DiagnosticCheckDto{
 			Name: "Config", Status: "warning", Message: "Namespace config: " + err.Error(), Fixable: false,
 		})

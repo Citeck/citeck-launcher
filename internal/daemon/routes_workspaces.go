@@ -543,8 +543,7 @@ func (d *Daemon) SwitchWorkspace(wsID string) error {
 	if newNsID == "" {
 		return nil
 	}
-	cfgPath := config.ResolveNamespaceConfigPath(wsID, newNsID)
-	if _, statErr := os.Stat(cfgPath); statErr != nil { //nolint:gosec // G703: path built from validated wsID/newNsID
+	if _, ok, _ := d.store.LoadNamespaceConfig(wsID, newNsID); !ok {
 		slog.Info("Workspace last-selected namespace missing, skipping auto-load", "wsID", wsID, "nsID", newNsID) //nolint:gosec // G706: wsID/newNsID validated
 		return nil
 	}

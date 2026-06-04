@@ -16,7 +16,6 @@ import (
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
-	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 )
 
@@ -197,9 +196,8 @@ func (d *Daemon) handleUpgradeNamespace(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Update namespace.yml with new bundleRef
-	nsCfgPath := config.ResolveNamespaceConfigPath(d.workspaceID, nsID)
-	nsCfg, err := namespace.LoadNamespaceConfig(nsCfgPath)
+	// Update the stored config with the new bundleRef (via the choke-point).
+	nsCfg, err := d.loadNamespaceConfigFromStore(d.workspaceID, nsID)
 	if err != nil {
 		writeInternalError(w, fmt.Errorf("load config: %w", err))
 		return
@@ -210,7 +208,7 @@ func (d *Daemon) handleUpgradeNamespace(w http.ResponseWriter, r *http.Request) 
 		writeInternalError(w, fmt.Errorf("marshal config: %w", err))
 		return
 	}
-	if err := fsutil.AtomicWriteFile(nsCfgPath, data, 0o644); err != nil {
+	if err := d.persistNamespaceConfig(d.workspaceID, nsID, data); err != nil {
 		writeInternalError(w, fmt.Errorf("write config: %w", err))
 		return
 	}

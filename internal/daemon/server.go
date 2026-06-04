@@ -838,7 +838,7 @@ func (d *Daemon) doReload() error {
 	d.configMu.RUnlock()
 
 	// Phase 1: slow I/O outside lock (config read, git pull, bundle resolution)
-	nsCfg, err := namespace.LoadNamespaceConfig(config.ResolveNamespaceConfigPath(d.workspaceID, nsID))
+	nsCfg, err := d.loadNamespaceConfigFromStore(d.workspaceID, nsID)
 	if err != nil {
 		return fmt.Errorf("reload config: %w", err)
 	}
