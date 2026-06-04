@@ -20,7 +20,7 @@ contents:
     dst: /usr/bin/citeck-launcher
     file_info:
       mode: 0755
-  - src: ./build/desktop/linux/citeck-launcher.desktop
+  - src: ./packaging/linux/citeck-launcher.desktop
     dst: /usr/share/applications/citeck-launcher.desktop
     file_info:
       mode: 0644

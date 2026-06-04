@@ -115,7 +115,7 @@ dev-desktop: web-deps
 	./$(DESKTOP)
 
 clean:
-	rm -rf $(BUILDDIR) dist
+	rm -rf build dist
 	rm -rf $(WEBDIST)
 	rm -rf web/dist
 	rm -f coverage.out coverage.html

@@ -21,18 +21,10 @@ node_modules
 .kotlin
 
 ### Build artifacts ###
-build/bin/
+# Top-level build/ holds only generated output (binaries) — fully deletable.
+# Packaging source assets live under packaging/, not here.
+/build/
 tools/h2-export/build/
-# Kotlin/Gradle outputs from 1.x checkout (build/classes, build/libs, etc.) —
-# 2.x is Go, so anything under top-level build/ that isn't bin/ is legacy noise.
-build/classes/
-build/generated/
-build/intermediates/
-build/kotlin/
-build/libs/
-build/reports/
-build/resources/
-build/tmp/
 
 ### H2 export tool (Gradle project — wrapper must be tracked) ###
 !tools/h2-export/gradle/
@@ -63,8 +55,3 @@ PROMPT-*.md
 
 ### Working notes (superpowers specs/plans — kept local, never committed) ###
 docs/superpowers/
-
-### Custom ###
-*.png
-!icons/**/*.png
-!cmd/citeck-desktop/logo.png
