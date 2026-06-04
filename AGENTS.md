@@ -14,9 +14,9 @@ The repo also keeps the legacy Kotlin/JVM launcher under git tags `v1.0.0`–`v1
 ### Go + Web UI (primary)
 
 ```bash
-make build                    # Build Go binary + embed React web UI → build/bin/citeck-server
-make build-fast               # Build Go only (skip web rebuild) → build/bin/citeck-server
-make build-desktop            # Build desktop (Wails) binary → build/bin/citeck-launcher
+make build                    # Build Go binary + embed React web UI → dist/bin/citeck-server
+make build-fast               # Build Go only (skip web rebuild) → dist/bin/citeck-server
+make build-desktop            # Build desktop (Wails) binary → dist/bin/citeck-launcher
 make test                     # Run all tests (Go + Vitest)
 make test-unit                # Go unit tests only (./internal/...)
 make test-race                # Go tests with race detector + 120s timeout
@@ -26,8 +26,8 @@ make fmt                      # Format Go code
 make tidy                     # go mod tidy
 make tools                    # Install golangci-lint v2.11.4
 make clean                    # Remove build artifacts
-build/bin/citeck-server start --foreground   # Run daemon in foreground
-./build/bin/citeck-launcher            # Run desktop app (Wails webview)
+dist/bin/citeck-server start --foreground   # Run daemon in foreground
+./dist/bin/citeck-launcher            # Run desktop app (Wails webview)
 ```
 
 ### Desktop installers
@@ -283,7 +283,7 @@ screen capture as plain text and accepts key injection without modifying the bin
 tmux new-session -d -s tui-test -x 120 -y 40
 
 # Launch a TUI command
-tmux send-keys -t tui-test "./build/bin/citeck install" Enter
+tmux send-keys -t tui-test "./dist/bin/citeck install" Enter
 sleep 1
 
 # Read current screen as plain text (no ANSI codes)
