@@ -83,11 +83,18 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	}
 	wsCfg := resolver.ResolveWorkspaceOnly()
 
-	// Load namespace config (mode-aware path)
-	nsCfgPath := config.ResolveNamespaceConfigPath(wsID, nsID)
-	nsCfg, err := namespace.LoadNamespaceConfig(nsCfgPath)
+	// Load namespace config from the store (desktop: DB row; server: file).
+	raw, ok, cfgErr := in.Store.LoadNamespaceConfig(wsID, nsID)
+	if cfgErr != nil || !ok {
+		slog.Warn("No namespace config found", "ws", wsID, "ns", nsID, "err", cfgErr)
+		return &loadedNamespace{
+			WorkspaceConfig: wsCfg,
+			VolumesBase:     volumesBase,
+		}, nil
+	}
+	nsCfg, err := namespace.ParseNamespaceConfig([]byte(raw))
 	if err != nil {
-		slog.Warn("No namespace config found", "path", nsCfgPath, "err", err)
+		slog.Warn("Invalid namespace config", "ws", wsID, "ns", nsID, "err", err)
 		return &loadedNamespace{
 			WorkspaceConfig: wsCfg,
 			VolumesBase:     volumesBase,
