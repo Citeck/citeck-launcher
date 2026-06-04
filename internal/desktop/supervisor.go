@@ -39,7 +39,7 @@ const (
 	daemonDialTimeout = 2 * time.Second
 
 	// UpdateHealthTimeout bounds how long Restart waits for a swapped daemon to
-	// report ready before the caller rolls back (Spec 2b).
+	// report ready before the caller rolls back.
 	UpdateHealthTimeout = 60 * time.Second
 )
 
@@ -80,7 +80,7 @@ type Supervisor struct {
 	OnExit func(err error)
 
 	// BinarySelector, if non-nil, is called on every spawn to choose the daemon
-	// binary (Spec 2b auto-update: SelectDaemonBinary prefers a staged payload).
+	// binary (auto-update: SelectDaemonBinary prefers a staged payload).
 	// When nil, BinaryPath is used. Letting spawn re-resolve is what makes a
 	// daemon swap / rollback take effect on the next (re)start.
 	BinarySelector func() (string, error)

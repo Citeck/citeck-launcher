@@ -156,8 +156,8 @@ func DaemonPidPath() string {
 	return filepath.Join(RunDir(), "daemon.pid")
 }
 
-// UpdatesDir holds downloaded daemon payloads for desktop auto-update (Spec 2b).
-// Created here so the layout is stable; 2a does not write to it.
+// UpdatesDir holds downloaded daemon payloads for desktop auto-update.
+// Created here so the layout is stable.
 func UpdatesDir() string {
 	return filepath.Join(HomeDir(), "updates")
 }

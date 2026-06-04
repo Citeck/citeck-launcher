@@ -566,7 +566,7 @@ const ja: Translations = {
   'longOp.snapshot.delete': 'スナップショットを削除中…',
   'longOp.snapshot.download': 'スナップショットをダウンロード中…',
   'namespace.form.bundles.refresh': 'バンドルを更新 (git pull)',
-  // -- Auto-update (Spec 2b) --
+  // -- Auto-update --
   'update.newVersion': '新しいバージョン {version} が利用可能です',
   'update.title': '{version} に更新',
   'update.fromTo': '現在: {current} → 最新: {latest}',

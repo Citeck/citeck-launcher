@@ -1,4 +1,4 @@
-// Package update implements desktop daemon auto-update (Spec 2b): discovery of
+// Package update implements desktop daemon auto-update: discovery of
 // the GitHub `latest` release, changelog fetch, payload download/verify/stage,
 // and the on-disk manifest the wrapper uses to swap and roll back the daemon
 // binary. It is pure Go (no Wails/daemon imports) so it unit-tests on the host.

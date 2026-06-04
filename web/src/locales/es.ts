@@ -566,7 +566,7 @@ const es: Translations = {
   'longOp.snapshot.delete': 'Eliminando snapshot…',
   'longOp.snapshot.download': 'Descargando snapshot…',
   'namespace.form.bundles.refresh': 'Refrescar bundles (git pull)',
-  // -- Auto-update (Spec 2b) --
+  // -- Auto-update --
   'update.newVersion': 'Nueva versión {version} disponible',
   'update.title': 'Actualizar a {version}',
   'update.fromTo': 'Actual: {current} → Última: {latest}',

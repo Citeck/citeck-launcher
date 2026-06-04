@@ -566,7 +566,7 @@ const zh: Translations = {
   'longOp.snapshot.delete': '正在删除快照…',
   'longOp.snapshot.download': '正在下载快照…',
   'namespace.form.bundles.refresh': '刷新 bundles (git pull)',
-  // -- Auto-update (Spec 2b) --
+  // -- Auto-update --
   'update.newVersion': '有新版本 {version}',
   'update.title': '更新到 {version}',
   'update.fromTo': '当前：{current} → 最新：{latest}',

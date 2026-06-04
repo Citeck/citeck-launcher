@@ -545,7 +545,7 @@ func Start(opts StartOptions) error {
 		eventRing:       newEventRing(eventReplayBufferSize),
 	}
 
-	// Desktop auto-update service (Spec 2b): discovers the GitHub `latest`
+	// Desktop auto-update service: discovers the GitHub `latest`
 	// release and stages payloads. Server mode has no wrapper to apply a swap, so
 	// the routes + service are desktop-only. Scope is linux-first: only linux
 	// publishes the bare-binary payload, so gating here keeps the macOS/Windows

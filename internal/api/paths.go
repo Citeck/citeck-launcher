@@ -67,7 +67,7 @@ const (
 
 	DesktopTrayMenu = APIV1 + "/desktop/tray-menu"
 
-	// Desktop auto-update (Spec 2b) — desktop-only; not registered in server mode.
+	// Desktop auto-update — desktop-only; not registered in server mode.
 	DesktopUpdateStatus    = APIV1 + "/desktop/update/status"
 	DesktopUpdateCheck     = APIV1 + "/desktop/update/check"
 	DesktopUpdateChangelog = APIV1 + "/desktop/update/changelog"

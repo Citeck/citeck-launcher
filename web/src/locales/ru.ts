@@ -563,7 +563,7 @@ const ru: Translations = {
   'longOp.snapshot.rename': 'Переименование снимка…',
   'longOp.snapshot.delete': 'Удаление снимка…',
   'longOp.snapshot.download': 'Загрузка снимка…',
-  // -- Auto-update (Spec 2b) --
+  // -- Auto-update --
   'update.newVersion': 'Доступна новая версия {version}',
   'update.title': 'Обновление до {version}',
   'update.fromTo': 'Текущая: {current} → Последняя: {latest}',

@@ -570,7 +570,7 @@ const en: Translations = {
   'longOp.snapshot.rename': 'Renaming snapshot…',
   'longOp.snapshot.delete': 'Deleting snapshot…',
   'longOp.snapshot.download': 'Downloading snapshot…',
-  // -- Auto-update (Spec 2b) --
+  // -- Auto-update --
   'update.newVersion': 'New version {version} available',
   'update.title': 'Update to {version}',
   'update.fromTo': 'Current: {current} → Latest: {latest}',

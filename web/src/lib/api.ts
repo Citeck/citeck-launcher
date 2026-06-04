@@ -805,7 +805,7 @@ export async function hasDesktopWindowManager(): Promise<boolean> {
   }
 }
 
-// --- Desktop auto-update (Spec 2b; desktop-only — 404 in server mode) ---
+// --- Desktop auto-update (desktop-only — 404 in server mode) ---
 
 export async function getUpdateStatus(): Promise<UpdateStatusDto> {
   return fetchJSON('/desktop/update/status')

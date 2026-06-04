@@ -10,7 +10,7 @@ import (
 // SelectDaemonBinary returns the path to the daemon binary the supervisor should
 // exec as the child process.
 //
-// Spec 2b: prefer the newest healthy (good/pending) staged payload under
+// Prefer the newest healthy (good/pending) staged payload under
 // config.UpdatesDir() whose version is strictly newer than currentVersion
 // (never-downgrade), falling back to the running (bundled) executable when none
 // qualifies. currentVersion is the wrapper's own ldflags-injected version.

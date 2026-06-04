@@ -18,7 +18,7 @@ import (
 const applySwapSettleDelay = 300 * time.Millisecond
 
 // applyDaemonSwap performs the health-gated daemon swap on the wrapper side
-// (Spec 2b). The staged (pending) payload is already chosen by SelectDaemonBinary
+// The staged (pending) payload is already chosen by SelectDaemonBinary
 // (it is newer than our bundled version). On health-gate failure it marks the
 // payload failed — so SelectDaemonBinary then returns the previous good / bundled
 // binary — and restarts into that (rollback). Either way it reloads the webview so

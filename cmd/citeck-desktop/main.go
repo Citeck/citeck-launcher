@@ -356,7 +356,7 @@ func run() error {
 
 	supervisor = &desktop.Supervisor{
 		// Re-resolve on every spawn so a staged auto-update payload / rollback
-		// takes effect on restart (Spec 2b). currentVersion is our own ldflags
+		// takes effect on restart. currentVersion is our own ldflags
 		// version; SelectDaemonBinary never downgrades below it.
 		BinarySelector: func() (string, error) { return desktop.SelectDaemonBinary(version) },
 		// Empty master-password line; the desktop daemon ignores opts.MasterPassword

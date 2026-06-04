@@ -1,5 +1,5 @@
 // Package updatetest provides a reusable in-memory fake of the GitHub surface
-// the desktop auto-updater (Spec 2b) depends on: the `/releases/latest` redirect,
+// the desktop auto-updater depends on: the `/releases/latest` redirect,
 // release-asset downloads with `.sha256` sidecars, and raw changelog files
 // (`changelog/index.json` + `changelog/<ver>/<locale>.md`). It lets any package's
 // tests exercise the real update.Service end-to-end without touching the network.
