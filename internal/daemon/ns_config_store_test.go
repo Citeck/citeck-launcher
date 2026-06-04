@@ -3,6 +3,7 @@ package daemon
 import (
 	"testing"
 
+	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -37,4 +38,25 @@ func TestPersistNamespaceConfigValidates(t *testing.T) {
 	// missing -> errNamespaceNotFound sentinel
 	_, err = d.loadNamespaceConfigFromStore("ws1", "missing")
 	require.ErrorIs(t, err, errNamespaceNotFound)
+}
+
+// TestStoreRoundTripPreservesConfig pins the GetHashInput stability contract:
+// the keyed-blob store keeps the exact YAML, so a config round-tripped through
+// the store parses back identically — the downstream deployment hash
+// (appdef.GetHashInput, computed from the generated ApplicationDefs) is
+// therefore unaffected by the file→DB move.
+func TestStoreRoundTripPreservesConfig(t *testing.T) {
+	s, err := storage.NewSQLiteStore(t.TempDir())
+	require.NoError(t, err)
+	defer s.Close()
+	d := &Daemon{store: s, workspaceID: "ws1"}
+
+	raw := []byte("id: nsA\nname: Alpha\nproxy:\n  port: 80\n")
+	want, err := namespace.ParseNamespaceConfig(raw)
+	require.NoError(t, err)
+
+	require.NoError(t, d.persistNamespaceConfig("ws1", "nsA", raw))
+	got, err := d.loadNamespaceConfigFromStore("ws1", "nsA")
+	require.NoError(t, err)
+	require.Equal(t, want, got, "store round-trip must not perturb the config")
 }
