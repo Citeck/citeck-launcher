@@ -1,12 +1,22 @@
-![Citeck Logo](https://github.com/Citeck/ecos-ui/raw/develop/public/img/logo/ecos-logo.svg)
+![Citeck Launcher](https://github.com/Citeck/ecos-ui/raw/develop/public/img/logo/ecos-logo.svg)
 
 # Citeck Launcher
 
-[Русская версия](README.ru.md)
+**English** · [Русский](readme/README.ru.md) · [中文](readme/README.zh.md) · [Español](readme/README.es.md) · [Deutsch](readme/README.de.md) · [Français](readme/README.fr.md) · [Português](readme/README.pt.md) · [日本語](readme/README.ja.md)
 
-Citeck Launcher manages Citeck namespaces and Docker containers. It is a single Go binary (~24 MB) that serves as both CLI and daemon.
+[![Release](https://img.shields.io/github/v/release/Citeck/citeck-launcher?sort=semver)](https://github.com/Citeck/citeck-launcher/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/Citeck/citeck-launcher/total)](https://github.com/Citeck/citeck-launcher/releases)
+[![License: LGPL v3](https://img.shields.io/badge/license-LGPL--3.0-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
+![Platforms](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-lightgrey)
+[![Documentation](https://img.shields.io/badge/docs-readthedocs-8CA1AF?logo=readthedocs)](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server.html)
 
-> **Full documentation:** https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server.html (Russian: https://citeck-ecos.readthedocs.io/ru/latest/admin/launch_setup/launcher_server.html)
+**Your whole Citeck platform — up and running with a single command.**
+
+Citeck Launcher is a self-hosted installer and container manager for the **Citeck** low-code BPM/ECM platform. It is a single ~24 MB binary that works as a command-line tool, a background daemon, and a cross-platform desktop app, running every Citeck service as a Docker container and grouping them into isolated namespaces.
+
+[Citeck](https://github.com/Citeck) is an open-source low-code platform for Enterprise Content Management (ECM) and Business Process Management (BPM). The launcher installs, upgrades, and operates a full Citeck stack — Keycloak, PostgreSQL, RabbitMQ, and the Citeck web applications — on a single host with one command.
+
+> **Full documentation:** https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server.html
 
 ## Quick Start
 
@@ -22,7 +32,7 @@ The install script downloads the latest release for your platform and installs t
 >
 > Automated / non-interactive install is a future feature — please file an issue if you need it.
 
-To **upgrade** an existing installation, run the same one-liner — the script detects the installed version, prompts to update, stops the daemon, and replaces the binary (a backup is kept at `/usr/local/bin/citeck.bak`, restorable via `bash install.sh --rollback`).
+To **upgrade** an existing installation, run the same one-liner — the script detects the installed version, prompts to update, stops the daemon, and replaces the binary (a backup is kept at `/usr/local/bin/citeck.bak`, restorable via `citeck install --rollback`).
 
 ### Offline Install
 
@@ -46,9 +56,11 @@ To update workspace later from a new archive without reinstalling: `citeck updat
 ## Desktop App
 
 Citeck Launcher is also available as a **desktop application** for Windows, macOS, and Linux —
-the same daemon and Web UI wrapped in a native window (Wails). Desktop installers are attached
-to each [GitHub release](https://github.com/Citeck/citeck-launcher/releases); download the one
-for your platform:
+the same daemon and Web UI wrapped in a native window (Wails). The app supervises the daemon as a
+child process, so your containers keep running even when the window is closed. Desktop installers
+are attached to each
+[GitHub release](https://github.com/Citeck/citeck-launcher/releases); download the one for your
+platform:
 
 | OS | File | Arch |
 |----|------|------|
@@ -56,23 +68,17 @@ for your platform:
 | macOS | `citeck-desktop_<version>_darwin_<arch>.dmg` | amd64 (Intel), arm64 (Apple Silicon) |
 | Linux | `citeck-desktop_<version>_linux_<arch>.deb` / `.rpm` | amd64, arm64 |
 
-Each installer has a `.sha256` sidecar for verification.
-
-**Installing 2.x over the legacy 1.x desktop app is a clean in-place upgrade** — no leftover old
-executables, and your data is kept (the 1.x → 2.x migration runs automatically on first start).
-The OS handles the replacement: the `.deb`/`.rpm` keep the `citeck-launcher` package name, the
-Windows `.msi` reuses 1.x's upgrade code, and the macOS `.app` keeps its bundle name.
+Each installer has a `.sha256` sidecar for verification. Your data is preserved across upgrades.
 
 ## Features
 
 - **Interactive installer** with TLS auto-detection (Let's Encrypt / self-signed / custom cert)
-- **CLI and daemon upgrades** — `install.sh` swaps the daemon binary while platform containers keep running; the new daemon adopts them via deployment-hash matching (k8s-style control-plane restart). Apps whose deployment hash is unchanged keep running with zero downtime; apps whose spec hash changed in the new version are recreated (typical downtime 1–5 min per app, Java services longer). Run `citeck reload --dry-run` after the binary swap to preview which containers will be recreated.
 - **i18n** with 8 languages: English, Russian, Chinese, Spanish, German, French, Portuguese, Japanese
 - **Real-time updates** via SSE events (app status, resource usage)
 - **Volume snapshots** with export/import (ZIP + tar.xz)
 - **Let's Encrypt** integration with auto-renewal (domains and IP addresses)
 - **Self-healing runtime** with liveness probes, restart tracking, and pre-restart diagnostics
-- **Shell completion** for bash, zsh, fish, powershell
+- **Shell completion** for bash, zsh, fish, PowerShell
 
 ## CLI Usage
 

@@ -1,0 +1,116 @@
+![Citeck Launcher](https://github.com/Citeck/ecos-ui/raw/develop/public/img/logo/ecos-logo.svg)
+
+# Citeck Launcher
+
+[English](../README.md) · **Русский** · [中文](README.zh.md) · [Español](README.es.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Português](README.pt.md) · [日本語](README.ja.md)
+
+[![Release](https://img.shields.io/github/v/release/Citeck/citeck-launcher?sort=semver)](https://github.com/Citeck/citeck-launcher/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/Citeck/citeck-launcher/total)](https://github.com/Citeck/citeck-launcher/releases)
+[![License: LGPL v3](https://img.shields.io/badge/license-LGPL--3.0-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
+![Platforms](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-lightgrey)
+[![Documentation](https://img.shields.io/badge/docs-readthedocs-8CA1AF?logo=readthedocs)](https://citeck-ecos.readthedocs.io/ru/latest/admin/launch_setup/launcher_server.html)
+
+**Вся платформа Citeck — разворачивается одной командой.**
+
+Citeck Launcher — это самостоятельно размещаемый установщик и менеджер контейнеров для low-code BPM/ECM-платформы **Citeck**. Это единый бинарник размером ~24 МБ, который работает как инструмент командной строки, фоновый демон и кроссплатформенное десктопное приложение, запуская каждый сервис Citeck как Docker-контейнер и группируя их в изолированные пространства имён.
+
+[Citeck](https://github.com/Citeck) — это open-source low-code платформа для управления корпоративным контентом (Enterprise Content Management, ECM) и управления бизнес-процессами (Business Process Management, BPM). Лаунчер устанавливает, обновляет и обслуживает полный стек Citeck — Keycloak, PostgreSQL, RabbitMQ и веб-приложения Citeck — на одном хосте одной командой.
+
+> **Полная документация:** https://citeck-ecos.readthedocs.io/ru/latest/admin/launch_setup/launcher_server.html
+
+## Быстрый старт
+
+Требования: Docker (запущен).
+
+```bash
+curl -fsSL https://github.com/Citeck/citeck-launcher/releases/latest/download/install.sh | bash
+```
+
+Скрипт скачивает последний релиз для вашей платформы и устанавливает в `/usr/local/bin/`. Мастер установки настроит пространство имён и запустит платформу.
+
+> **Важно:** Команда `citeck install` — это **интерактивный TUI-мастер**, требующий настоящего терминала. В конце мастер **один раз** выводит сгенерированный пароль администратора — обязательно скопируйте и сохраните его, после закрытия экрана его нельзя будет восстановить. Если потеряли, сбросьте через `citeck setup admin-password` (см. [справочник команд](https://citeck-ecos.readthedocs.io/ru/latest/admin/launch_setup/launcher_server/commands.html)). Нажатие `Ctrl+C` до шага «запись конфигурации» завершает мастер без внесения изменений; при прерывании позже проверьте `/opt/citeck/conf/` на частичные файлы.
+>
+> Автоматическая (неинтерактивная) установка — планируемая функция. Если она вам нужна, создайте issue.
+
+Для **обновления** уже установленной версии выполните тот же one-liner — скрипт определит установленную версию, спросит подтверждение, остановит демон и заменит бинарник (бэкап сохраняется в `/usr/local/bin/citeck.bak` и восстанавливается через `citeck install --rollback`).
+
+### Офлайн-установка
+
+Для серверов без доступа в интернет заранее скачайте два файла:
+
+1. **Бинарник** — со [страницы релизов](https://github.com/Citeck/citeck-launcher/releases).
+2. **Архив workspace** — с [Citeck/launcher-workspace](https://github.com/Citeck/launcher-workspace)
+   (раздел Releases или кнопка «Download ZIP»). Архив содержит определения
+   бандлов, которые лаунчер обычно подтягивает из git.
+
+Затем на целевом сервере:
+
+```bash
+citeck install --workspace /path/to/launcher-workspace.zip --offline
+```
+
+Флаг `--workspace` распаковывает репозитории бандлов локально — интернет при запуске не нужен.
+Чтобы позже обновить workspace из нового архива без переустановки: `citeck update -f <zip>`.
+
+## Десктопное приложение
+
+Citeck Launcher доступен и как **десктопное приложение** для Windows, macOS и Linux — тот же
+демон и веб-интерфейс в нативном окне (Wails). Приложение управляет демоном как дочерним
+процессом, поэтому ваши контейнеры продолжают работать даже при закрытии окна. Установщики прикладываются к каждому
+[релизу на GitHub](https://github.com/Citeck/citeck-launcher/releases); скачайте файл для своей
+платформы:
+
+| ОС | Файл | Архитектуры |
+|----|------|-------------|
+| Windows | `citeck-desktop_<версия>_windows_<arch>.msi` | amd64, arm64 |
+| macOS | `citeck-desktop_<версия>_darwin_<arch>.dmg` | amd64 (Intel), arm64 (Apple Silicon) |
+| Linux | `citeck-desktop_<версия>_linux_<arch>.deb` / `.rpm` | amd64, arm64 |
+
+К каждому установщику прилагается файл `.sha256` для проверки. Ваши данные сохраняются при обновлениях.
+
+## Возможности
+
+- **Интерактивный установщик** с авто-определением TLS (Let's Encrypt / самоподписанный / свой сертификат)
+- **8 языков интерфейса**: английский, русский, китайский, испанский, немецкий, французский, португальский, японский
+- **Обновления в реальном времени** через SSE (статус приложений, потребление ресурсов)
+- **Снапшоты томов** с экспортом/импортом (ZIP + tar.xz)
+- **Let's Encrypt** с авто-обновлением (домены и IP-адреса)
+- **Самовосстановление** с liveness-пробами, отслеживанием перезапусков и диагностикой перед перезапуском
+- **Автодополнение** для bash, zsh, fish, PowerShell
+
+## Команды CLI
+
+```
+citeck install [--workspace <zip>]        Interactive setup wizard (offline with --workspace)
+citeck start [app] [-d|--detach]          Start daemon/namespace (--detach = don't wait)
+citeck stop [app...] [-d|--detach]        Stop namespace or app(s) (--detach = don't wait)
+citeck restart [app] [-d|--detach]        Restart an app or the entire namespace (waits by default)
+citeck reload [--dry-run] [-d|--detach]   Reload config and regenerate changed containers
+citeck status [-w|--watch]                Show namespace status
+citeck describe <app>                     Show container details (image, ports, env, volumes)
+citeck health                             Health check (exit 0=healthy, 1=daemon down, 8=unhealthy)
+citeck diagnose [--fix] [--dry-run]       Run diagnostics (with optional auto-fix)
+citeck logs [app] [-f|--follow]           Stream logs (daemon if no app)
+citeck exec <app> -- <command>            Execute command in container
+citeck update [-f|--file <zip>]           Pull workspace/bundle defs (or import from ZIP)
+citeck upgrade [bundle:version] [--yes]   Switch to a different bundle version
+citeck snapshot list|export|import|delete Manage volume snapshots (auto stop/start)
+citeck config view|validate|edit          Show, check, or edit namespace.yml
+citeck setup [setting]                    Configure settings (TUI menu or by ID)
+citeck setup history                      Show config change history
+citeck clean [--force] [--volumes] [--images]  Clean orphaned resources / prune images
+citeck dump-system-info [--full]          Collect diagnostics ZIP (status, logs, docker inspect, journalctl)
+citeck version [--short]                  Show version info
+citeck completion bash|zsh|fish           Generate shell completion
+citeck uninstall [--delete-data]          Remove systemd service, binary, and (optionally) data
+```
+
+Глобальные флаги: `--format (text|json)`, `--yes/-y`.
+
+## Конфигурация
+
+Описание `daemon.yml` и `namespace.yml` — в [справочнике конфигурации](https://citeck-ecos.readthedocs.io/ru/latest/admin/launch_setup/launcher_server/configuration.html).
+
+## Лицензия
+
+См. [LICENSE](../LICENSE).
