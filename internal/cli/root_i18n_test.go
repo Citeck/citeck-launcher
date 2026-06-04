@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -35,9 +36,12 @@ func TestRootCmd_PersistentPreRunInitializesI18n(t *testing.T) {
 
 	root := NewRootCmd(BuildInfo{Version: "test"})
 	root.SetArgs([]string{"version"})
-	// version writes to stdout; redirect to /dev/null to keep test output clean.
-	root.SetOut(os.NewFile(0, os.DevNull))
-	root.SetErr(os.NewFile(0, os.DevNull))
+	// version writes to stdout; discard it to keep test output clean.
+	// (NOT os.NewFile(0, os.DevNull) — that wraps fd 0/stdin, not /dev/null,
+	// and its GC finalizer later closes fd 0, corrupting a reused descriptor →
+	// spurious "bad file descriptor" failures in other tests.)
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
 	if err := root.Execute(); err != nil {
 		t.Fatalf("execute version: %v", err)
 	}

@@ -117,5 +117,12 @@ func captureStdout(t *testing.T, fn func()) string {
 		fn()
 	}()
 	<-done
+	// Close the read end now that io.Copy has drained it (w is already closed
+	// in the deferred restore above). Leaving r open lets its GC finalizer close
+	// the fd LATER — by which time the number may have been reused by another
+	// open file, whose next operation then fails with a spurious EBADF. That was
+	// the source of flaky "bad file descriptor" failures in unrelated tests
+	// (ExtractZip*, DumpSystemInfo) that write/read their own temp files.
+	_ = r.Close()
 	return buf.String()
 }
