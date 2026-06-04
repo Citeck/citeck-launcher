@@ -164,6 +164,14 @@ func newStartCmd(version string) *cobra.Command {
 	return cmd
 }
 
+// stdinFd returns os.Stdin's descriptor as an int for golang.org/x/term.
+// Isolating the single uintptr->int conversion here (instead of nolint-tagging
+// every term.ReadPassword call) keeps gosec G115 quiet: a process's stdin fd is
+// always a small non-negative value.
+func stdinFd() int {
+	return int(os.Stdin.Fd()) //nolint:gosec // G115: stdin fd is a small non-negative value
+}
+
 // resolvePassword checks encryption state and returns the master password.
 func resolvePassword(desktop bool) (string, error) {
 	var store storage.Store
@@ -198,7 +206,7 @@ func resolvePassword(desktop bool) (string, error) {
 	// Prompt for password
 	for range 3 {
 		fmt.Print("Master password (empty to reset): ") //nolint:forbidigo // CLI prompt
-		pwdBytes, err := term.ReadPassword(syscall.Stdin)
+		pwdBytes, err := term.ReadPassword(stdinFd())
 		fmt.Println() //nolint:forbidigo // newline after password
 		if err != nil {
 			return "", fmt.Errorf("read password: %w", err)
@@ -228,7 +236,7 @@ func handlePasswordReset(svc *storage.SecretService) (string, error) {
 	}
 
 	fmt.Print("New master password (empty for default): ") //nolint:forbidigo // CLI prompt
-	pwdBytes, err := term.ReadPassword(syscall.Stdin)
+	pwdBytes, err := term.ReadPassword(stdinFd())
 	fmt.Println() //nolint:forbidigo // newline after password
 	if err != nil {
 		return "", fmt.Errorf("read password: %w", err)
@@ -242,7 +250,7 @@ func handlePasswordReset(svc *storage.SecretService) (string, error) {
 	} else {
 		// Confirm password
 		fmt.Print("Confirm password: ") //nolint:forbidigo // CLI prompt
-		confirmBytes, err := term.ReadPassword(syscall.Stdin)
+		confirmBytes, err := term.ReadPassword(stdinFd())
 		fmt.Println() //nolint:forbidigo // newline after password
 		if err != nil {
 			return "", fmt.Errorf("read confirmation: %w", err)
@@ -314,7 +322,7 @@ func forkDaemon(password string, desktop, noUI, offline bool) error {
 	cmd.Stdin = strings.NewReader(password + "\n")
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.SysProcAttr = daemonSysProcAttr()
 
 	if err := cmd.Start(); err != nil {
 		_ = logFile.Close()
