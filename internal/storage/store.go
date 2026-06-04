@@ -133,6 +133,16 @@ type Store interface {
 	SetGitRepoState(state GitRepoState) error
 	ListGitRepoStates() ([]GitRepoState, error)
 
+	// Namespaces (config + per-NS runtime state). Opaque strings keep this
+	// interface free of internal/namespace (no import cycle). Desktop:
+	// SQLite rows. Server: mapped to conf/namespace.yml + runtime state file.
+	ListNamespaces(wsID string) ([]NamespaceRow, error)
+	LoadNamespaceConfig(wsID, nsID string) (configYAML string, ok bool, err error)
+	SaveNamespaceConfig(wsID, nsID, name, configYAML string) error
+	LoadNamespaceState(wsID, nsID string) (stateJSON string, ok bool, err error)
+	SaveNamespaceState(wsID, nsID, status, stateJSON string) error
+	DeleteNamespace(wsID, nsID string) error
+
 	// Close releases resources (e.g., database connections).
 	Close() error
 }
