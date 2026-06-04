@@ -315,19 +315,27 @@ func Start(opts StartOptions) error {
 		// Pure-Go MVStore reader — no JAR, no JRE. Falls back internally to a
 		// filesystem-only reconstruction if storage.db is unreadable.
 		if needed, _ := h2migrate.NeedsMigration(config.HomeDir()); needed {
-			if migStore, migErr := storage.NewSQLiteStore(config.HomeDir()); migErr == nil {
-				result, migRunErr := h2migrate.Migrate(config.HomeDir(), migStore)
-				if migRunErr != nil {
-					slog.Error("H2 migration failed", "err", migRunErr)
-				} else if result != nil {
-					slog.Info("H2 migration complete",
-						"workspaces", result.Workspaces,
-						"secrets", result.Secrets,
-						"namespaces", result.Namespaces,
-						"gitRepos", result.GitRepos,
-					)
-				}
-				_ = migStore.Close()
+			migStore, migErr := storage.NewSQLiteStore(config.HomeDir())
+			if migErr != nil {
+				return fmt.Errorf("open store for migration: %w", migErr)
+			}
+			result, migRunErr := h2migrate.Migrate(config.HomeDir(), migStore)
+			_ = migStore.Close()
+			if migRunErr != nil {
+				// Option B: a failed/invalid migration is a blocker — do not
+				// proceed into normal operation with partial/garbage data.
+				// storage.db is read-only and already backed up, so the run is
+				// retryable after the defect is fixed.
+				slog.Error("CRITICAL: H2 → SQLite migration failed — refusing to start", "err", migRunErr)
+				return fmt.Errorf("namespace migration failed: %w", migRunErr)
+			}
+			if result != nil {
+				slog.Info("H2 migration complete",
+					"workspaces", result.Workspaces,
+					"secrets", result.Secrets,
+					"namespaces", result.Namespaces,
+					"gitRepos", result.GitRepos,
+				)
 			}
 		}
 
