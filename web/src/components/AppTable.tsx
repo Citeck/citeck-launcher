@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { AppDto } from '../lib/types'
 import { postAppStop, postAppStart, postAppRestart, getAppFiles, postAppsRetryPullFailed } from '../lib/api'
 import { usePanelStore } from '../lib/panels'
@@ -349,13 +350,20 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
           </td>
         </tr>
       )}
-      <RegistryCredentialsDialog
-        open={credsFor !== null}
-        host={credsFor?.host ?? ''}
-        retryApp={credsFor?.app}
-        onClose={handleCredsClose}
-        onSaved={handleCredsSaved}
-      />
+      {/* Portaled to <body>: GroupRows renders inside <tbody>, and a <dialog>
+          is not a valid child of <tbody>. The portal keeps the modal in the
+          component tree (state/props intact) while moving its DOM out of the
+          table. */}
+      {createPortal(
+        <RegistryCredentialsDialog
+          open={credsFor !== null}
+          host={credsFor?.host ?? ''}
+          retryApp={credsFor?.app}
+          onClose={handleCredsClose}
+          onSaved={handleCredsSaved}
+        />,
+        document.body,
+      )}
     </>
   )
 }

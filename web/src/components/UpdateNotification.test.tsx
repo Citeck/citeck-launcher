@@ -12,7 +12,11 @@ vi.mock('../lib/api', () => ({
 
 describe('UpdateNotification', () => {
   beforeEach(() => {
-    useUpdateStore.setState({ status: null })
+    // Stub the mount-effect refresh to a no-op so it doesn't asynchronously
+    // mutate the store after the test's synchronous assertions (which triggers
+    // React's "not wrapped in act(...)" warning). These tests drive state via
+    // setState directly; they don't exercise refresh.
+    useUpdateStore.setState({ status: null, refresh: () => Promise.resolve() })
     HTMLDialogElement.prototype.showModal = vi.fn()
     HTMLDialogElement.prototype.close = vi.fn()
   })
