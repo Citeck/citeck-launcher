@@ -20,7 +20,7 @@ fi
 
 SERVER="${CITECK_TEST_SSH_USER}@${CITECK_TEST_SSH_HOST}"
 SSH_OPTS="-o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking=no"
-BINARY="build/bin/citeck-server"
+BINARY="dist/bin/citeck-server"
 TARGET="/usr/local/bin/citeck"
 
 cd "$(dirname "$0")/.."

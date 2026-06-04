@@ -6,7 +6,11 @@
 VERSION ?= dev-$(shell date -u +%Y%m%d-%H%M%S)
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-BUILDDIR := build/bin
+
+# Use bash for all recipes so they run identically on Linux, macOS, and the
+# Windows runner (Git Bash) — the release-* targets rely on POSIX tools.
+SHELL := bash
+BUILDDIR := dist/bin
 BINARY   := $(BUILDDIR)/citeck-server
 DESKTOP  := $(BUILDDIR)/citeck-launcher
 GO_BUILD_FLAGS := -ldflags "-s -w -X main.version=$(VERSION) -X main.gitCommit=$(COMMIT) -X main.buildDate=$(BUILD_DATE)"
@@ -22,7 +26,8 @@ endif
 GOLANGCI_LINT=$(GOBIN)/golangci-lint
 
 .PHONY: all build build-fast build-web build-desktop run test test-unit test-race test-coverage \
-        lint fmt tidy tools clean help dev-daemon dev-desktop web-deps
+        lint fmt tidy tools clean help dev-daemon dev-desktop web-deps \
+        release-server release-desktop-linux release-desktop-windows release-desktop-macos
 
 all: test build
 
@@ -57,9 +62,7 @@ web-deps:
 	@test -d web/node_modules || (cd web && pnpm install)
 
 build-web: web-deps
-	cd web && pnpm run build
-	rm -rf $(WEBDIST)
-	cp -r web/dist $(WEBDIST)
+	cd web && pnpm run build   # Vite outputs straight into $(WEBDIST) (see web/vite.config.ts)
 
 # Linux desktop build uses Wails GTK3 backend (GTK4 + WebKitGTK 6.0 path is
 # not yet shipping in mainstream distros). Other OSes ignore the gtk3 tag.
@@ -72,6 +75,17 @@ build-desktop: build-web
 run: build-desktop
 	./$(DESKTOP)
 
+# ===== Release artifacts (CI calls these; build logic lives in scripts/release-*.sh) =====
+# Everything lands in dist/. VERSION/ARCH/GOOS/GOARCH come from the environment.
+release-server: build-web
+	bash scripts/release-server.sh
+release-desktop-linux: build-web
+	bash scripts/release-desktop-linux.sh
+release-desktop-windows: build-web
+	bash scripts/release-desktop-windows.sh
+release-desktop-macos: build-web
+	bash scripts/release-desktop-macos.sh
+
 test:
 	go test -race ./...
 	cd web && pnpm test
@@ -83,9 +97,10 @@ test-race:
 	go test -race -timeout=120s -count 1 ./...
 
 test-coverage:
-	go test -coverprofile=coverage.out ./internal/...
-	go tool cover -html=coverage.out -o coverage.html
-	@echo "Coverage report: coverage.html"
+	@mkdir -p dist
+	go test -coverprofile=dist/coverage.out ./internal/...
+	go tool cover -html=dist/coverage.out -o dist/coverage.html
+	@echo "Coverage report: dist/coverage.html"
 
 test-integration:
 	go test -tags=integration ./tests/...
@@ -115,7 +130,4 @@ dev-desktop: web-deps
 	./$(DESKTOP)
 
 clean:
-	rm -rf build dist
-	rm -rf $(WEBDIST)
-	rm -rf web/dist
-	rm -f coverage.out coverage.html
+	rm -rf dist $(WEBDIST)

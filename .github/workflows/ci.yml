@@ -46,10 +46,7 @@ jobs:
         run: cd web && pnpm install --frozen-lockfile && pnpm vitest run
 
       - name: Build server binary
-        run: |
-          cd web && pnpm run build && cd ..
-          rm -rf internal/daemon/webdist && cp -r web/dist internal/daemon/webdist
-          CGO_ENABLED=0 go build -o citeck ./cmd/citeck
+        run: make build   # Vite -> internal/daemon/webdist, then go build -> dist/bin
 
       - name: Cross-compile check (linux/arm64)
         run: |

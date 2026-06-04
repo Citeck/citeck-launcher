@@ -19,7 +19,7 @@ mkdir -p "$DIST"
 echo "==> [1/4] Building 2.* desktop binary"
 CGO_ENABLED=1 go build -tags "desktop,gtk3" \
   -ldflags "-s -w -X main.version=${VERSION}-e2e" \
-  -o build/bin/citeck-launcher ./cmd/citeck-desktop
+  -o dist/bin/citeck-launcher ./cmd/citeck-desktop
 
 echo "==> [2/4] Packaging 2.* deb via nfpm"
 command -v nfpm >/dev/null 2>&1 || go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.41.0

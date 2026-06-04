@@ -29,9 +29,6 @@ jobs:
       - name: Build web UI
         run: cd web && pnpm install --frozen-lockfile && pnpm run build
 
-      - name: Embed web UI
-        run: rm -rf internal/daemon/webdist && cp -r web/dist internal/daemon/webdist
-
       - name: Run Go tests
         run: go test -race ./internal/...
 
@@ -64,35 +61,19 @@ jobs:
         with:
           version: 10
 
-      - name: Build web UI
-        run: cd web && pnpm install --frozen-lockfile && pnpm run build
-
-      - name: Embed web UI
-        run: rm -rf internal/daemon/webdist && cp -r web/dist internal/daemon/webdist
-
-      - name: Build server binary
+      - name: Build release artifacts
         env:
-          VERSION_TAG: ${{ github.ref_name }}
+          VERSION: ${{ github.ref_name }}
           GOOS: ${{ matrix.os }}
           GOARCH: ${{ matrix.arch }}
         run: |
-          VERSION="${VERSION_TAG#v}"
-          COMMIT="$(git rev-parse --short HEAD)"
-          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          CGO_ENABLED=0 go build \
-            -ldflags "-s -w -X main.version=${VERSION} -X main.gitCommit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
-            -o citeck ./cmd/citeck
-          TARBALL="citeck_${VERSION}_${GOOS}_${GOARCH}.tar.gz"
-          tar -czf "$TARBALL" citeck
-          sha256sum "$TARBALL" > "${TARBALL}.sha256"
-          rm citeck
+          cd web && pnpm install --frozen-lockfile && cd ..
+          make release-server
 
       - uses: actions/upload-artifact@v4
         with:
           name: citeck-${{ matrix.os }}-${{ matrix.arch }}
-          path: |
-            citeck_*.tar.gz
-            citeck_*.tar.gz.sha256
+          path: dist/*
           if-no-files-found: error
 
   desktop-linux:
@@ -127,48 +108,13 @@ jobs:
       - name: Install nfpm
         run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.41.0
 
-      - name: Build web UI
-        run: cd web && pnpm install --frozen-lockfile && pnpm run build
-
-      - name: Embed web UI
-        run: rm -rf internal/daemon/webdist && cp -r web/dist internal/daemon/webdist
-
-      - name: Build desktop binary
+      - name: Build release artifacts
         env:
-          VERSION_TAG: ${{ github.ref_name }}
-          GOARCH: ${{ matrix.arch }}
-        run: |
-          VERSION="${VERSION_TAG#v}"
-          COMMIT="$(git rev-parse --short HEAD)"
-          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          mkdir -p build/bin
-          CGO_ENABLED=1 go build -tags "desktop,gtk3" \
-            -ldflags "-s -w -X main.version=${VERSION} -X main.gitCommit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
-            -o build/bin/citeck-launcher ./cmd/citeck-desktop
-
-      - name: Package bare desktop binary (auto-update payload)
-        env:
-          VERSION_TAG: ${{ github.ref_name }}
+          VERSION: ${{ github.ref_name }}
           ARCH: ${{ matrix.arch }}
         run: |
-          VERSION="${VERSION_TAG#v}"
-          mkdir -p dist
-          ASSET="citeck-desktop_${VERSION}_linux_${ARCH}.tar.gz"
-          tar -czf "dist/${ASSET}" -C build/bin citeck-launcher
-          ( cd dist && sha256sum "${ASSET}" > "${ASSET}.sha256" )
-
-      - name: Package deb + rpm
-        env:
-          VERSION_TAG: ${{ github.ref_name }}
-          ARCH: ${{ matrix.arch }}
-        run: |
-          export VERSION="${VERSION_TAG#v}"
-          mkdir -p dist
-          nfpm package --config packaging/nfpm.yaml --packager deb \
-            --target "dist/citeck-desktop_${VERSION}_linux_${ARCH}.deb"
-          nfpm package --config packaging/nfpm.yaml --packager rpm \
-            --target "dist/citeck-desktop_${VERSION}_linux_${ARCH}.rpm"
-          cd dist && for f in *.deb *.rpm; do sha256sum "$f" > "$f.sha256"; done
+          cd web && pnpm install --frozen-lockfile && cd ..
+          make release-desktop-linux
 
       - uses: actions/upload-artifact@v4
         with:
@@ -198,32 +144,20 @@ jobs:
         with:
           version: 10
 
-      - name: Build web UI
-        run: cd web; pnpm install --frozen-lockfile; pnpm run build
-
-      - name: Embed web UI
-        run: |
-          Remove-Item -Recurse -Force internal/daemon/webdist -ErrorAction SilentlyContinue
-          Copy-Item -Recurse web/dist internal/daemon/webdist
-
-      - name: Build desktop binary
-        env:
-          GOARCH: ${{ matrix.arch }}
-          CGO_ENABLED: "0"
-        run: |
-          $ver = "${{ github.ref_name }}".TrimStart("v")
-          New-Item -ItemType Directory -Force build/bin | Out-Null
-          go build -tags desktop -ldflags "-s -w -X main.version=$ver" -o build/bin/citeck-launcher.exe ./cmd/citeck-desktop
+      - name: Install make
+        run: choco install make --no-progress
 
       - name: Install WiX
         run: dotnet tool install --global wix --version 5.*
 
-      - name: Build MSI
+      - name: Build release artifacts
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+          ARCH: ${{ matrix.arch }}
         run: |
-          $ver = "${{ github.ref_name }}".TrimStart("v")
-          $wixArch = if ("${{ matrix.arch }}" -eq "amd64") { "x64" } else { "arm64" }
-          New-Item -ItemType Directory -Force dist | Out-Null
-          wix build packaging/windows/citeck-launcher.wxs -arch $wixArch -d Version=$ver -b . -o "dist/citeck-desktop_${ver}_windows_${{ matrix.arch }}.msi"
+          cd web && pnpm install --frozen-lockfile && cd ..
+          make release-desktop-windows
 
       # --- Code signing (disabled — enable when secrets are configured) ---
       # Required secrets: WINDOWS_CERT_PFX (base64 .pfx), WINDOWS_CERT_PASSWORD
@@ -234,13 +168,6 @@ jobs:
       #   run: |
       #     [IO.File]::WriteAllBytes("cert.pfx", [Convert]::FromBase64String($env:WINDOWS_CERT_PFX))
       #     signtool sign /f cert.pfx /p $env:WINDOWS_CERT_PASSWORD /fd sha256 /tr http://timestamp.digicert.com /td sha256 dist\*.msi
-
-      - name: Checksums
-        run: |
-          Get-ChildItem dist/*.msi | ForEach-Object {
-            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
-            [IO.File]::WriteAllText("$($_.FullName).sha256", "$h  $($_.Name)`n")
-          }
 
       - uses: actions/upload-artifact@v4
         with:
@@ -274,26 +201,13 @@ jobs:
         with:
           version: 10
 
-      - name: Build web UI
-        run: cd web && pnpm install --frozen-lockfile && pnpm run build
-
-      - name: Embed web UI
-        run: rm -rf internal/daemon/webdist && cp -r web/dist internal/daemon/webdist
-
-      - name: Build desktop binary
+      - name: Build release artifacts
         env:
-          GOARCH: ${{ matrix.arch }}
-          CGO_ENABLED: "1"
+          VERSION: ${{ github.ref_name }}
+          ARCH: ${{ matrix.arch }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          mkdir -p build/bin
-          go build -tags desktop -ldflags "-s -w -X main.version=${VERSION}" -o build/bin/citeck-launcher ./cmd/citeck-desktop
-
-      - name: Build .app + .dmg
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          bash packaging/macos/make-app.sh "${VERSION}" build/bin/citeck-launcher
-          bash packaging/macos/make-dmg.sh "${VERSION}" "${{ matrix.arch }}"
+          cd web && pnpm install --frozen-lockfile && cd ..
+          make release-desktop-macos
 
       # --- Codesign + notarization (disabled — enable when secrets are configured) ---
       # Required secrets: MACOS_CERT_P12 (base64), MACOS_CERT_PASSWORD,
@@ -304,9 +218,6 @@ jobs:
       #     # (rebuild the dmg after signing the .app, then:)
       #     xcrun notarytool submit dist/*.dmg --apple-id "$MACOS_NOTARY_APPLE_ID" --team-id "$MACOS_NOTARY_TEAM_ID" --password "$MACOS_NOTARY_PASSWORD" --wait
       #     xcrun stapler staple dist/*.dmg
-
-      - name: Checksums
-        run: cd dist && for f in *.dmg; do shasum -a 256 "$f" > "$f.sha256"; done
 
       - uses: actions/upload-artifact@v4
         with:

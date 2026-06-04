@@ -10,7 +10,11 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: 'dist',
+    // Build straight into the Go embed location: internal/daemon/webui.go has
+    // `//go:embed all:webdist`. emptyOutDir is required because the target is
+    // outside the Vite root (web/). This removes the separate web/dist + copy.
+    outDir: '../internal/daemon/webdist',
+    emptyOutDir: true,
   },
   test: {
     globals: true,

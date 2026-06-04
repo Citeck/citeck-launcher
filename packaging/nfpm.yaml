@@ -16,7 +16,7 @@ description: |
   Citeck Launcher — manage Citeck namespaces and Docker containers.
 license: "Citeck"
 contents:
-  - src: ./build/bin/citeck-launcher
+  - src: ./dist/bin/citeck-launcher
     dst: /usr/bin/citeck-launcher
     file_info:
       mode: 0755

@@ -4,8 +4,8 @@ version: 2
 
 before:
   hooks:
+    # Vite builds straight into internal/daemon/webdist (web/vite.config.ts).
     - cmd: cd web && pnpm install --frozen-lockfile && pnpm run build
-    - cmd: rm -rf internal/daemon/webdist && cp -r web/dist internal/daemon/webdist
 
 builds:
   - id: citeck
