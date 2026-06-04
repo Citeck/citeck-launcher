@@ -111,7 +111,7 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		// strands every webapp's datasources / env / volume binding (workspace-v1.yml
 		// is the source of truth for jdbc URLs, ${PG_HOST} substitution, etc.), and
 		// webapps fall through to baked-in dev defaults pointing at localhost:14523.
-		cachedState := namespace.LoadNsState(volumesBase, nsID)
+		cachedState := loadNsStateFromStore(in.Store, wsID, nsID)
 		preservedWS := wsCfg
 		if preservedWS == nil {
 			preservedWS = &bundle.WorkspaceConfig{}
@@ -164,7 +164,7 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	// Load persisted state for detached apps and status recovery.
 	// Detached apps must be known BEFORE Generate() so the generator can
 	// exclude them from proxy upstreams and compute DependsOnDetachedApps.
-	persistedState := namespace.LoadNsState(volumesBase, nsID)
+	persistedState := loadNsStateFromStore(in.Store, wsID, nsID)
 	var genOpts namespace.GenerateOpts
 	genOpts.SecretReader = &secretReaderAdapter{svc: in.SecretService}
 	// User-added licenses: locked SecretService yields nil and the generator
@@ -227,6 +227,7 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 
 	appDefs := genResp.Applications
 	runtime := namespace.NewRuntime(nsCfg, in.DockerClient, volumesBase)
+	runtime.SetStatePersister(nsStatePersister{store: in.Store, wsID: wsID, nsID: nsID})
 
 	// Cache the successfully resolved bundle for fallback on future resolve failures
 	if !bundleDef.IsEmpty() {
