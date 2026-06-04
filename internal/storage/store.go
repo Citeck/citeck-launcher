@@ -85,6 +85,14 @@ type LauncherState struct {
 	SelectedNs  map[string]string `json:"selectedNs,omitempty"`
 }
 
+// NamespaceRow is namespace listing metadata — enough to render the list
+// without parsing the config/state blobs.
+type NamespaceRow struct {
+	ID     string
+	Name   string
+	Status string
+}
+
 // NamespaceID returns the selected namespace for the current workspace, or ""
 // when no selection is recorded. Convenience accessor for the common case.
 func (s *LauncherState) NamespaceID() string {

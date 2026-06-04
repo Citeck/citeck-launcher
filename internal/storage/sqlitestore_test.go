@@ -142,6 +142,65 @@ func TestOpenWithWALRecovery_TruncatedWALIsCleanedUp(t *testing.T) {
 	}
 }
 
+func TestSQLiteNamespaceCRUD(t *testing.T) {
+	s, err := NewSQLiteStore(t.TempDir())
+	require.NoError(t, err)
+	defer s.Close()
+
+	// empty
+	list, err := s.ListNamespaces("ws1")
+	require.NoError(t, err)
+	require.Empty(t, list)
+
+	// missing load
+	_, ok, err := s.LoadNamespaceConfig("ws1", "nsA")
+	require.NoError(t, err)
+	require.False(t, ok)
+
+	// save config
+	require.NoError(t, s.SaveNamespaceConfig("ws1", "nsA", "Alpha", "id: nsA\nname: Alpha\n"))
+	yaml, ok, err := s.LoadNamespaceConfig("ws1", "nsA")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "id: nsA\nname: Alpha\n", yaml)
+
+	// save state does NOT clobber config
+	require.NoError(t, s.SaveNamespaceState("ws1", "nsA", "RUNNING", `{"status":"RUNNING"}`))
+	yaml, ok, _ = s.LoadNamespaceConfig("ws1", "nsA")
+	require.True(t, ok)
+	require.Equal(t, "id: nsA\nname: Alpha\n", yaml, "state save must not clobber config")
+	js, ok, err := s.LoadNamespaceState("ws1", "nsA")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, `{"status":"RUNNING"}`, js)
+
+	// save config again does NOT clobber state
+	require.NoError(t, s.SaveNamespaceConfig("ws1", "nsA", "Alpha2", "id: nsA\nname: Alpha2\n"))
+	js, ok, _ = s.LoadNamespaceState("ws1", "nsA")
+	require.True(t, ok)
+	require.Equal(t, `{"status":"RUNNING"}`, js, "config save must not clobber state")
+
+	// listing reflects denormalized name + status, scoped by ws
+	require.NoError(t, s.SaveNamespaceConfig("ws1", "nsB", "Beta", "id: nsB\n"))
+	require.NoError(t, s.SaveNamespaceConfig("ws2", "nsZ", "Zeta", "id: nsZ\n"))
+	list, err = s.ListNamespaces("ws1")
+	require.NoError(t, err)
+	require.Len(t, list, 2)
+	require.Equal(t, "nsA", list[0].ID)
+	require.Equal(t, "Alpha2", list[0].Name)
+	require.Equal(t, "RUNNING", list[0].Status)
+	require.Equal(t, "nsB", list[1].ID)
+
+	// delete removes config + state
+	require.NoError(t, s.DeleteNamespace("ws1", "nsA"))
+	_, ok, _ = s.LoadNamespaceConfig("ws1", "nsA")
+	require.False(t, ok)
+	_, ok, _ = s.LoadNamespaceState("ws1", "nsA")
+	require.False(t, ok)
+	list, _ = s.ListNamespaces("ws1")
+	require.Len(t, list, 1)
+}
+
 func TestSQLiteSchemaV6NamespacesTable(t *testing.T) {
 	dir := t.TempDir()
 	s, err := NewSQLiteStore(dir)

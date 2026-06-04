@@ -562,6 +562,90 @@ func (s *SQLiteStore) ListGitRepoStates() ([]GitRepoState, error) {
 	return out, nil
 }
 
+// --- Namespaces (config + per-NS runtime state, keyed-blob) ---
+
+func (s *SQLiteStore) ListNamespaces(wsID string) ([]NamespaceRow, error) {
+	rows, err := s.db.Query(
+		`SELECT ns_id, name, status FROM namespaces WHERE ws_id = ? ORDER BY ns_id`, wsID)
+	if err != nil {
+		return nil, fmt.Errorf("query namespaces for %s: %w", wsID, err)
+	}
+	defer rows.Close()
+	var out []NamespaceRow
+	for rows.Next() {
+		var r NamespaceRow
+		if err := rows.Scan(&r.ID, &r.Name, &r.Status); err != nil {
+			return nil, fmt.Errorf("scan namespace row: %w", err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate namespaces: %w", err)
+	}
+	return out, nil
+}
+
+func (s *SQLiteStore) LoadNamespaceConfig(wsID, nsID string) (string, bool, error) {
+	var y string
+	err := s.db.QueryRow(
+		`SELECT config_yaml FROM namespaces WHERE ws_id = ? AND ns_id = ?`, wsID, nsID).Scan(&y)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("query namespace config %s/%s: %w", wsID, nsID, err)
+	}
+	if y == "" {
+		return "", false, nil
+	}
+	return y, true, nil
+}
+
+func (s *SQLiteStore) SaveNamespaceConfig(wsID, nsID, name, configYAML string) error {
+	_, err := s.db.Exec(`
+		INSERT INTO namespaces (ws_id, ns_id, name, config_yaml) VALUES (?, ?, ?, ?)
+		ON CONFLICT(ws_id, ns_id) DO UPDATE SET name=excluded.name, config_yaml=excluded.config_yaml
+	`, wsID, nsID, name, configYAML)
+	if err != nil {
+		return fmt.Errorf("save namespace config %s/%s: %w", wsID, nsID, err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadNamespaceState(wsID, nsID string) (string, bool, error) {
+	var j string
+	err := s.db.QueryRow(
+		`SELECT state_json FROM namespaces WHERE ws_id = ? AND ns_id = ?`, wsID, nsID).Scan(&j)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("query namespace state %s/%s: %w", wsID, nsID, err)
+	}
+	if j == "" {
+		return "", false, nil
+	}
+	return j, true, nil
+}
+
+func (s *SQLiteStore) SaveNamespaceState(wsID, nsID, status, stateJSON string) error {
+	_, err := s.db.Exec(`
+		INSERT INTO namespaces (ws_id, ns_id, status, state_json) VALUES (?, ?, ?, ?)
+		ON CONFLICT(ws_id, ns_id) DO UPDATE SET status=excluded.status, state_json=excluded.state_json
+	`, wsID, nsID, status, stateJSON)
+	if err != nil {
+		return fmt.Errorf("save namespace state %s/%s: %w", wsID, nsID, err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) DeleteNamespace(wsID, nsID string) error {
+	if _, err := s.db.Exec(`DELETE FROM namespaces WHERE ws_id = ? AND ns_id = ?`, wsID, nsID); err != nil {
+		return fmt.Errorf("delete namespace %s/%s: %w", wsID, nsID, err)
+	}
+	return nil
+}
+
 // DB returns the underlying *sql.DB for transactional operations.
 func (s *SQLiteStore) DB() *sql.DB {
 	return s.db
