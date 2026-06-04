@@ -44,6 +44,7 @@ export function Diagnostics() {
 
   // Intentional: one-shot loading flag for the on-mount diagnostics fetch;
   // not a cascading render.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { runChecks() }, [runChecks])
 
   async function handleFixAll() {

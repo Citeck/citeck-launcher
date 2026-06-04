@@ -83,6 +83,7 @@ export function Welcome() {
   useEffect(() => {
     // Intentional: load-on-mount / on-workspace-change fetch sets a loading
     // flag then awaits; not a cascading render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadData()
   }, [loadData, activeWorkspaceId])
 
