@@ -29,6 +29,12 @@ contents:
     file_info:
       mode: 0644
 
+# Refresh the icon cache + desktop database on install / upgrade / removal so the
+# menu entry and its icon appear without a re-login. Shared by deb and rpm.
+scripts:
+  postinstall: ./packaging/linux/update-caches.sh
+  postremove: ./packaging/linux/update-caches.sh
+
 # Runtime shared-library deps: the Wails binary dynamically links GTK3 + WebKit2GTK.
 # (Docker is intentionally NOT a dependency — it's an external runtime, like 1.*.)
 overrides:
