@@ -861,7 +861,7 @@ func (d *Daemon) doReload() error {
 	bundleFallback := false
 	if err != nil {
 		// Fallback to cached bundle from persisted state
-		cachedState := namespace.LoadNsState(d.volumesBase, nsID)
+		cachedState := loadNsStateFromStore(d.store, d.workspaceID, nsID)
 		if cachedState != nil && cachedState.CachedBundle != nil && !cachedState.CachedBundle.IsEmpty() {
 			slog.Warn("Bundle resolution failed on reload, using cached bundle", "ref", nsCfg.BundleRef, "err", err,
 				"cachedVersion", cachedState.CachedBundle.Key.Version)

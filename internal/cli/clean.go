@@ -12,6 +12,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/output"
+	"github.com/citeck/citeck-launcher/internal/storage"
 	"github.com/spf13/cobra"
 )
 
@@ -229,21 +230,40 @@ func executeCleanRemoval(dc *docker.Client, scan cleanScanResult, images bool) e
 }
 
 func knownNamespaceIDs() (map[string]bool, error) {
-	known := make(map[string]bool)
-
 	if config.IsDesktopMode() {
-		namespaces, err := config.ListAllNamespaces()
-		if err != nil {
-			return nil, fmt.Errorf("list namespaces: %w", err)
+		return desktopKnownNamespaceIDs()
+	}
+
+	// Server mode: read the actual namespace ID from config
+	known := make(map[string]bool)
+	cfgPath := config.NamespaceConfigPath()
+	if cfg, err := namespace.LoadNamespaceConfig(cfgPath); err == nil && cfg.ID != "" {
+		known[cfg.ID] = true
+	}
+	return known, nil
+}
+
+// desktopKnownNamespaceIDs enumerates namespace IDs across all workspaces from
+// the SQLite store (a freshly-created namespace has a store row before any
+// directory exists, so a directory scan would miss it).
+func desktopKnownNamespaceIDs() (map[string]bool, error) {
+	known := make(map[string]bool)
+	store, err := storage.NewSQLiteStore(config.HomeDir())
+	if err != nil {
+		return nil, fmt.Errorf("open store: %w", err)
+	}
+	defer store.Close()
+	workspaces, err := store.ListWorkspaces()
+	if err != nil {
+		return nil, fmt.Errorf("list workspaces: %w", err)
+	}
+	for _, ws := range workspaces {
+		rows, lerr := store.ListNamespaces(ws.ID)
+		if lerr != nil {
+			return nil, fmt.Errorf("list namespaces for %s: %w", ws.ID, lerr)
 		}
-		for _, ns := range namespaces {
-			known[ns.NamespaceID] = true
-		}
-	} else {
-		// Server mode: read the actual namespace ID from config
-		cfgPath := config.NamespaceConfigPath()
-		if cfg, err := namespace.LoadNamespaceConfig(cfgPath); err == nil && cfg.ID != "" {
-			known[cfg.ID] = true
+		for _, row := range rows {
+			known[row.ID] = true
 		}
 	}
 	return known, nil

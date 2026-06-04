@@ -3,6 +3,8 @@ package namespace
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"testing"
@@ -13,11 +15,26 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestPersistenceFormatStable verifies that SaveNsState + LoadNsState must
-// round-trip a populated state without mutation. The coalesced-persist path
-// (via r.dirty) never touches the on-disk format. A drift in the JSON layout
+// saveNsStateForTest persists the state JSON to the file LoadNsState reads.
+// The production write path now goes through the store; this mirrors the
+// on-disk layout LoadNsState still consumes (h2migrate fallback) so the
+// round-trip stability check below remains exercised.
+func saveNsStateForTest(t *testing.T, dir, nsID string, state *NsPersistedState) {
+	t.Helper()
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal state: %v", err)
+	}
+	path := filepath.Join(dir, "state-"+nsID+".json")
+	if err := os.WriteFile(path, data, 0o644); err != nil { //nolint:gosec // test-only fixture
+		t.Fatalf("write state: %v", err)
+	}
+}
+
+// TestPersistenceFormatStable verifies that the NsPersistedState JSON layout
+// round-trips through LoadNsState without mutation. A drift in the JSON layout
 // would break forward/backward compatibility with existing state-*.json files
-// on upgraded daemons.
+// read by the h2migrate fallback path.
 func TestPersistenceFormatStable(t *testing.T) {
 	dir := t.TempDir()
 	state := &NsPersistedState{
@@ -41,16 +58,12 @@ func TestPersistenceFormatStable(t *testing.T) {
 		RestartCounts: map[string]int{"emodel": 2},
 	}
 
-	if err := SaveNsState(dir, "ns1", state); err != nil {
-		t.Fatalf("SaveNsState: %v", err)
-	}
+	saveNsStateForTest(t, dir, "ns1", state)
 	round1 := LoadNsState(dir, "ns1")
 	if round1 == nil {
 		t.Fatalf("LoadNsState returned nil")
 	}
-	if err := SaveNsState(dir, "ns1", round1); err != nil {
-		t.Fatalf("re-SaveNsState: %v", err)
-	}
+	saveNsStateForTest(t, dir, "ns1", round1)
 	round2 := LoadNsState(dir, "ns1")
 	if round2 == nil {
 		t.Fatalf("second LoadNsState returned nil")

@@ -56,34 +56,3 @@ func TestListWorkspacesWithDirs(t *testing.T) {
 		t.Errorf("Workspace 'custom' should have 1 namespace, got %d", len(ws.Namespaces))
 	}
 }
-
-func TestListAllNamespaces(t *testing.T) {
-	tmp := t.TempDir()
-	os.Setenv("CITECK_HOME", tmp)
-	defer os.Unsetenv("CITECK_HOME")
-
-	os.MkdirAll(filepath.Join(tmp, "ws", "default", "ns", "prod"), 0o755)
-	os.MkdirAll(filepath.Join(tmp, "ws", "default", "ns", "dev"), 0o755)
-
-	namespaces, err := ListAllNamespaces()
-	if err != nil {
-		t.Fatalf("ListAllNamespaces() error: %v", err)
-	}
-	if len(namespaces) != 2 {
-		t.Fatalf("Expected 2 namespaces, got %d", len(namespaces))
-	}
-
-	for _, ns := range namespaces {
-		if ns.WorkspaceID != "default" {
-			t.Errorf("WorkspaceID = %q, want 'default'", ns.WorkspaceID)
-		}
-		expectedConfig := filepath.Join(tmp, "ws", "default", "ns", ns.NamespaceID, "namespace.yml")
-		if ns.ConfigPath != expectedConfig {
-			t.Errorf("ConfigPath = %q, want %q", ns.ConfigPath, expectedConfig)
-		}
-		expectedRt := filepath.Join(tmp, "ws", "default", "ns", ns.NamespaceID, "rtfiles")
-		if ns.RtfilesDir != expectedRt {
-			t.Errorf("RtfilesDir = %q, want %q", ns.RtfilesDir, expectedRt)
-		}
-	}
-}

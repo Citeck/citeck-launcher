@@ -482,12 +482,12 @@ func (d *Daemon) SwitchWorkspace(wsID string) error {
 	// had an explicit selection recorded).
 	newNsID := state.SelectedNs[wsID]
 	if newNsID == "" {
-		nsList, listErr := config.ListNamespacesInWorkspace(wsID)
+		rows, listErr := d.store.ListNamespaces(wsID)
 		if listErr != nil {
 			slog.Warn("Workspace switch: list namespaces failed", "wsID", wsID, "err", listErr) //nolint:gosec // G706: wsID validated by caller
-		} else if len(nsList) > 0 {
-			newNsID = nsList[0]
-			slog.Info("Workspace switch: no persisted ns selection, falling back to first on-disk", "wsID", wsID, "nsID", newNsID) //nolint:gosec // G706: wsID/newNsID from validated on-disk list
+		} else if len(rows) > 0 {
+			newNsID = rows[0].ID
+			slog.Info("Workspace switch: no persisted ns selection, falling back to first namespace", "wsID", wsID, "nsID", newNsID) //nolint:gosec // G706: wsID/newNsID from validated store list
 		}
 	}
 

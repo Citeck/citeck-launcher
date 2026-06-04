@@ -2,13 +2,11 @@ package namespace
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
-	"github.com/citeck/citeck-launcher/internal/fsutil"
 )
 
 // NsPersistedState holds runtime state that survives daemon restarts.
@@ -26,20 +24,6 @@ type NsPersistedState struct {
 // statePath returns the path to the persisted state file (namespace-scoped).
 func statePath(volumesBase, nsID string) string {
 	return filepath.Join(volumesBase, "state-"+nsID+".json")
-}
-
-// SaveNsState persists the namespace runtime state to disk.
-func SaveNsState(volumesBase, nsID string, state *NsPersistedState) error {
-	data, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal state: %w", err)
-	}
-	path := statePath(volumesBase, nsID)
-	_ = os.MkdirAll(filepath.Dir(path), 0o750)
-	if err := fsutil.AtomicWriteFile(path, data, 0o644); err != nil {
-		return fmt.Errorf("write state: %w", err)
-	}
-	return nil
 }
 
 // LoadNsState reads the persisted namespace state from disk.

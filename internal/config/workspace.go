@@ -13,14 +13,6 @@ type WorkspaceInfo struct {
 	Namespaces []string `json:"namespaces"`
 }
 
-// NamespaceInfo holds metadata about a namespace within a workspace.
-type NamespaceInfo struct {
-	WorkspaceID string `json:"workspaceId"`
-	NamespaceID string `json:"namespaceId"`
-	ConfigPath  string `json:"configPath"`
-	RtfilesDir  string `json:"rtfilesDir"`
-}
-
 // ListWorkspaces scans the ws/ directory and returns discovered workspaces.
 func ListWorkspaces() ([]WorkspaceInfo, error) {
 	wsRoot := WorkspacesDir()
@@ -51,13 +43,6 @@ func ListWorkspaces() ([]WorkspaceInfo, error) {
 	return workspaces, nil
 }
 
-// ListNamespacesInWorkspace returns namespace IDs found in ws/{wsID}/ns/
-// (alphabetical order as ReadDir returns them). Empty slice + nil error
-// when the workspace directory doesn't exist yet.
-func ListNamespacesInWorkspace(wsID string) ([]string, error) {
-	return listNamespacesInWorkspace(wsID)
-}
-
 // listNamespacesInWorkspace returns namespace IDs found in ws/{wsID}/ns/
 func listNamespacesInWorkspace(wsID string) ([]string, error) {
 	nsRoot := filepath.Join(WorkspaceDir(wsID), "ns")
@@ -77,27 +62,6 @@ func listNamespacesInWorkspace(wsID string) ([]string, error) {
 		namespaces = append(namespaces, entry.Name())
 	}
 	return namespaces, nil
-}
-
-// ListAllNamespaces returns all namespace infos across all workspaces.
-func ListAllNamespaces() ([]NamespaceInfo, error) {
-	workspaces, err := ListWorkspaces()
-	if err != nil {
-		return nil, err
-	}
-
-	var result []NamespaceInfo
-	for _, ws := range workspaces {
-		for _, nsID := range ws.Namespaces {
-			result = append(result, NamespaceInfo{
-				WorkspaceID: ws.ID,
-				NamespaceID: nsID,
-				ConfigPath:  WorkspaceNamespaceConfigPath(ws.ID, nsID),
-				RtfilesDir:  NamespaceRtfilesDir(ws.ID, nsID),
-			})
-		}
-	}
-	return result, nil
 }
 
 // ResolveNamespaceConfigPath resolves the namespace config path based on mode.
