@@ -324,8 +324,17 @@ func Start(opts StartOptions) error {
 			if migRunErr != nil {
 				// Option B: a failed/invalid migration is a blocker — do not
 				// proceed into normal operation with partial/garbage data.
-				// storage.db is read-only and already backed up, so the run is
-				// retryable after the defect is fixed.
+				// Remove the half-built launcher.db so the migration re-runs
+				// cleanly on the next start (NeedsMigration keys off launcher.db
+				// absence). storage.db is opened read-only and already backed
+				// up to storage.db.kotlin-bak, so the source is intact and the
+				// run is retryable once the defect is fixed.
+				dbPath := filepath.Join(config.HomeDir(), "launcher.db")
+				for _, p := range []string{dbPath, dbPath + "-wal", dbPath + "-shm"} {
+					if rmErr := os.Remove(p); rmErr != nil && !os.IsNotExist(rmErr) {
+						slog.Error("CRITICAL: failed to remove partial launcher.db after aborted migration — manual cleanup required before retry", "path", p, "err", rmErr)
+					}
+				}
 				slog.Error("CRITICAL: H2 → SQLite migration failed — refusing to start", "err", migRunErr)
 				return fmt.Errorf("namespace migration failed: %w", migRunErr)
 			}
