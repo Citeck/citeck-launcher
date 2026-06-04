@@ -411,7 +411,11 @@ func (s *FileStore) LoadNamespaceConfig(_, _ string) (configYAML string, ok bool
 func (s *FileStore) SaveNamespaceConfig(_, _, _, configYAML string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := fsutil.AtomicWriteFile(s.nsConfigPath(), []byte(configYAML), 0o644); err != nil {
+	// 0o600: namespace.yml can carry plaintext secrets (SMTP password, S3
+	// secret key), so keep it owner-only — matches `citeck install` and the
+	// pre-refactor raw-config PUT. (Desktop stores config in launcher.db; this
+	// path is server mode only.)
+	if err := fsutil.AtomicWriteFile(s.nsConfigPath(), []byte(configYAML), 0o600); err != nil {
 		return fmt.Errorf("write namespace config: %w", err)
 	}
 	return nil
