@@ -565,6 +565,7 @@ const ru: Translations = {
   'longOp.snapshot.download': 'Загрузка снимка…',
   // -- Auto-update --
   'update.newVersion': 'Доступна новая версия {version}',
+  'update.upToDate': 'У вас последняя версия ({version}).',
   'update.title': 'Обновление до {version}',
   'update.fromTo': 'Текущая: {current} → Последняя: {latest}',
   'update.loadingChangelog': 'Загрузка списка изменений…',

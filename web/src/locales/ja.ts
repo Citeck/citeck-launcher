@@ -568,6 +568,7 @@ const ja: Translations = {
   'namespace.form.bundles.refresh': 'バンドルを更新 (git pull)',
   // -- Auto-update --
   'update.newVersion': '新しいバージョン {version} が利用可能です',
+  'update.upToDate': '最新バージョン（{version}）を使用しています。',
   'update.title': '{version} に更新',
   'update.fromTo': '現在: {current} → 最新: {latest}',
   'update.loadingChangelog': '変更履歴を読み込んでいます…',

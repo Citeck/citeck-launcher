@@ -21,10 +21,18 @@ describe('UpdateNotification', () => {
     HTMLDialogElement.prototype.close = vi.fn()
   })
 
-  it('renders nothing when no update is available', () => {
+  it('shows a check button with no badge dot when up to date', () => {
     useUpdateStore.setState({
       status: { currentVersion: '2.4.0', available: false, applying: false },
     })
+    const { container } = render(<UpdateNotification />)
+    expect(container.querySelector('button')).not.toBeNull()
+    expect(container.querySelector('.bg-emerald-500')).toBeNull()
+    expect(container.querySelector('.bg-red-500')).toBeNull()
+  })
+
+  it('renders nothing when the updater is unavailable (server mode)', () => {
+    useUpdateStore.setState({ status: null })
     const { container } = render(<UpdateNotification />)
     expect(container.querySelector('button')).toBeNull()
   })

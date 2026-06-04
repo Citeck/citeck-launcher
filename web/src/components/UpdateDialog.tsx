@@ -61,14 +61,18 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
     >
       <div className="flex max-h-[80vh] flex-col p-6">
         <h2 className="text-lg font-semibold">
-          {t('update.title', { version: status?.latestVersion ?? '' })}
+          {status?.available
+            ? t('update.title', { version: status?.latestVersion ?? '' })
+            : t('update.upToDate', { version: status?.currentVersion ?? '' })}
         </h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {t('update.fromTo', {
-            current: status?.currentVersion ?? '',
-            latest: status?.latestVersion ?? '',
-          })}
-        </p>
+        {status?.available && (
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t('update.fromTo', {
+              current: status?.currentVersion ?? '',
+              latest: status?.latestVersion ?? '',
+            })}
+          </p>
+        )}
 
         {status?.applyError && (
           <p className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">

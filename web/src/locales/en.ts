@@ -572,6 +572,7 @@ const en: Translations = {
   'longOp.snapshot.download': 'Downloading snapshot…',
   // -- Auto-update --
   'update.newVersion': 'New version {version} available',
+  'update.upToDate': 'You are on the latest version ({version}).',
   'update.title': 'Update to {version}',
   'update.fromTo': 'Current: {current} → Latest: {latest}',
   'update.loadingChangelog': 'Loading changelog…',

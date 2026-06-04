@@ -18,11 +18,15 @@ export function UpdateNotification() {
     return () => clearInterval(id)
   }, [refresh])
 
-  // Show the badge when an update is available OR when the last apply failed and
-  // rolled back (so the user learns about it instead of the badge silently
-  // vanishing). A rolled-back failure shows only when no newer install is offered.
-  const rolledBack = !status?.available && !!status?.applyError
-  if (!status?.available && !rolledBack) return null
+  // The icon is always present in desktop mode (where the updater runs) so the
+  // user can open the dialog and check for updates on demand. status is null in
+  // server mode (the endpoint 404s) or before the first check — render nothing.
+  if (!status) return null
+  const available = !!status.available
+  // A rolled-back failure shows a red dot so the user learns about it instead of
+  // it silently vanishing; an available update shows a green dot.
+  const rolledBack = !available && !!status.applyError
+  const showDot = available || rolledBack
 
   return (
     <>
@@ -30,16 +34,20 @@ export function UpdateNotification() {
         type="button"
         className="relative p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted"
         title={
-          rolledBack
-            ? t('update.failed', { error: status?.applyError ?? '' })
-            : t('update.newVersion', { version: status?.latestVersion ?? '' })
+          available
+            ? t('update.newVersion', { version: status.latestVersion ?? '' })
+            : rolledBack
+              ? t('update.failed', { error: status.applyError ?? '' })
+              : t('update.checkNow')
         }
         onClick={() => setOpen(true)}
       >
         <Download size={14} />
-        <span
-          className={`absolute right-1 top-1 h-1.5 w-1.5 rounded-full ${rolledBack ? 'bg-red-500' : 'bg-emerald-500'}`}
-        />
+        {showDot && (
+          <span
+            className={`absolute right-1 top-1 h-1.5 w-1.5 rounded-full ${rolledBack ? 'bg-red-500' : 'bg-emerald-500'}`}
+          />
+        )}
       </button>
       <UpdateDialog open={open} onClose={() => setOpen(false)} />
     </>

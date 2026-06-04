@@ -568,6 +568,7 @@ const zh: Translations = {
   'namespace.form.bundles.refresh': '刷新 bundles (git pull)',
   // -- Auto-update --
   'update.newVersion': '有新版本 {version}',
+  'update.upToDate': '您使用的是最新版本（{version}）。',
   'update.title': '更新到 {version}',
   'update.fromTo': '当前：{current} → 最新：{latest}',
   'update.loadingChangelog': '正在加载更新日志…',

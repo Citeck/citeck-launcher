@@ -568,6 +568,7 @@ const fr: Translations = {
   'namespace.form.bundles.refresh': 'Actualiser les bundles (git pull)',
   // -- Auto-update --
   'update.newVersion': 'Nouvelle version {version} disponible',
+  'update.upToDate': 'Vous utilisez la dernière version ({version}).',
   'update.title': 'Mettre à jour vers {version}',
   'update.fromTo': 'Actuelle : {current} → Dernière : {latest}',
   'update.loadingChangelog': 'Chargement du journal des modifications…',
