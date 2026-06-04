@@ -186,6 +186,15 @@ func ParseNamespaceConfig(data []byte) (*Config, error) {
 	return &cfg, nil
 }
 
+// ValidateYAML parses raw namespace-config YAML and runs full business-rule
+// validation, returning the parsed Config. It is the single validation gate
+// used before any config is written to the store — on the daemon's write
+// paths and in the H2→SQLite migration alike. Validating the exact bytes that
+// will be stored catches both bad input and a serializer defect.
+func ValidateYAML(raw []byte) (*Config, error) {
+	return ParseNamespaceConfig(raw)
+}
+
 // ValidateNamespaceConfig checks namespace config for common errors.
 func ValidateNamespaceConfig(cfg *Config) error {
 	if cfg.Proxy.Port < 1 || cfg.Proxy.Port > 65535 {

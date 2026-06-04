@@ -196,3 +196,19 @@ bundleRef: "community:LATEST"
 		t.Error("expected PgAdmin enabled by default")
 	}
 }
+
+func TestValidateYAML(t *testing.T) {
+	// valid
+	cfg, err := ValidateYAML([]byte("id: ns1\nname: One\nproxy:\n  port: 80\n"))
+	require.NoError(t, err)
+	require.Equal(t, "ns1", cfg.ID)
+	require.Equal(t, "One", cfg.Name)
+
+	// invalid: proxy port out of range -> ValidateNamespaceConfig rejects
+	_, err = ValidateYAML([]byte("id: ns1\nproxy:\n  port: 70000\n"))
+	require.Error(t, err)
+
+	// invalid: malformed YAML
+	_, err = ValidateYAML([]byte("id: [unclosed\n"))
+	require.Error(t, err)
+}
