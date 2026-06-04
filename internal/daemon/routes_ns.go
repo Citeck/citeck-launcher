@@ -24,29 +24,34 @@ func (d *Daemon) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
 	var result []api.NamespaceSummaryDto
 
 	if config.IsDesktopMode() {
-		namespaces, err := config.ListAllNamespaces()
+		rows, err := d.store.ListNamespaces(d.workspaceID)
 		if err != nil {
 			writeInternalError(w, err)
 			return
 		}
-		for _, ns := range namespaces {
+		d.configMu.RLock()
+		activeID := ""
+		if d.nsConfig != nil {
+			activeID = d.nsConfig.ID
+		}
+		rt := d.runtime
+		d.configMu.RUnlock()
+		for _, row := range rows {
 			summary := api.NamespaceSummaryDto{
-				ID:          ns.NamespaceID,
-				WorkspaceID: ns.WorkspaceID,
-				Status:      string(namespace.NsStatusStopped),
+				ID:          row.ID,
+				WorkspaceID: d.workspaceID,
+				Name:        row.Name,
+				Status:      row.Status,
 			}
-			// Load config to get name and bundle ref
-			cfg, err := namespace.LoadNamespaceConfig(ns.ConfigPath)
-			if err == nil {
-				summary.Name = cfg.Name
+			if summary.Status == "" {
+				summary.Status = string(namespace.NsStatusStopped)
+			}
+			if cfg, cerr := d.loadNamespaceConfigFromStore(d.workspaceID, row.ID); cerr == nil {
 				summary.BundleRef = cfg.BundleRef.String()
 			}
-			// Check if this is the active namespace
-			d.configMu.RLock()
-			if d.runtime != nil && d.nsConfig != nil && d.nsConfig.ID == ns.NamespaceID {
-				summary.Status = string(d.runtime.Status())
+			if activeID == row.ID && rt != nil {
+				summary.Status = string(rt.Status())
 			}
-			d.configMu.RUnlock()
 			result = append(result, summary)
 		}
 	} else {
@@ -97,15 +102,17 @@ func (d *Daemon) handleDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if config.IsDesktopMode() {
-		// Remove the whole namespace directory (<ws>/ns/<id>), not just its
-		// namespace.yml: listNamespacesInWorkspace enumerates namespaces by
-		// directory, so leaving the (now config-less) dir behind keeps the
-		// namespace in the list as a nameless card that renders its raw id and
-		// never goes away.
-		nsDir := config.NamespaceDir(d.workspaceID, nsID)
-		if err := os.RemoveAll(nsDir); err != nil { //nolint:gosec // G703: path from config.NamespaceDir, not user input
+		// Source of truth first: drop the config + state row.
+		if err := d.store.DeleteNamespace(d.workspaceID, nsID); err != nil {
 			writeInternalError(w, err)
 			return
+		}
+		// Best-effort: remove the on-disk rtfiles dir so generated bind-mount
+		// files don't leak. Enumeration is row-based now, so a failure here
+		// cannot resurrect a ghost entry.
+		nsDir := config.NamespaceDir(d.workspaceID, nsID)
+		if err := os.RemoveAll(nsDir); err != nil { //nolint:gosec // path from config.NamespaceDir
+			slog.Warn("Failed to remove namespace rtfiles dir", "dir", nsDir, "err", err)
 		}
 	} else {
 		writeError(w, http.StatusBadRequest, "cannot delete namespace in server mode")
@@ -654,7 +661,7 @@ func (d *Daemon) handleNamespaceCreateDefaults(w http.ResponseWriter, _ *http.Re
 		users = []string{}
 	}
 	dto := api.NamespaceCreateDefaultsDto{
-		Name:       nextDefaultNamespaceName(wsID),
+		Name:       d.nextDefaultNamespaceName(wsID),
 		BundleRepo: nsCfg.BundleRef.Repo,
 		BundleKey:  nsCfg.BundleRef.Key,
 		AuthType:   string(nsCfg.Authentication.Type),
@@ -666,8 +673,8 @@ func (d *Daemon) handleNamespaceCreateDefaults(w http.ResponseWriter, _ *http.Re
 // nextDefaultNamespaceName scans existing namespaces (desktop: all in the
 // active workspace; server: the single CLI-pinned one) and returns the first
 // "Citeck #N" name that isn't taken. Mirrors the Kotlin defaultNameNum loop.
-func nextDefaultNamespaceName(wsID string) string {
-	used := collectUsedNamespaceNames(wsID)
+func (d *Daemon) nextDefaultNamespaceName(wsID string) string {
+	used := d.collectUsedNamespaceNames(wsID)
 	num := len(used) + 1
 	for {
 		candidate := fmt.Sprintf("Citeck #%d", num)
@@ -678,24 +685,19 @@ func nextDefaultNamespaceName(wsID string) string {
 	}
 }
 
-func collectUsedNamespaceNames(wsID string) map[string]struct{} {
+func (d *Daemon) collectUsedNamespaceNames(wsID string) map[string]struct{} {
 	used := map[string]struct{}{}
 	if !config.IsDesktopMode() {
 		return used
 	}
-	entries, err := config.ListAllNamespaces()
+	rows, err := d.store.ListNamespaces(wsID)
 	if err != nil {
 		return used
 	}
-	for _, ns := range entries {
-		if wsID != "" && ns.WorkspaceID != wsID {
-			continue
+	for _, row := range rows {
+		if row.Name != "" {
+			used[row.Name] = struct{}{}
 		}
-		cfg, err := namespace.LoadNamespaceConfig(ns.ConfigPath)
-		if err != nil || cfg.Name == "" {
-			continue
-		}
-		used[cfg.Name] = struct{}{}
 	}
 	return used
 }
