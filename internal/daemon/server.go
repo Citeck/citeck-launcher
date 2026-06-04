@@ -1302,15 +1302,15 @@ func writeInternalError(w http.ResponseWriter, err error) {
 	writeErrorCode(w, http.StatusInternalServerError, api.ErrCodeInternalError, "internal error")
 }
 
-// activeConfigPath returns the namespace config path for the currently loaded namespace.
-func (d *Daemon) activeConfigPath() string {
+// activeNsKey returns the (workspaceID, namespaceID) of the active namespace.
+func (d *Daemon) activeNsKey() (string, string) {
 	d.configMu.RLock()
 	defer d.configMu.RUnlock()
 	nsID := "default"
 	if d.nsConfig != nil {
 		nsID = d.nsConfig.ID
 	}
-	return config.ResolveNamespaceConfigPath(d.workspaceID, nsID)
+	return d.workspaceID, nsID
 }
 
 // readJSON decodes a JSON request body with a 1 MiB hard ceiling. MaxBytesReader

@@ -12,7 +12,6 @@ import (
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/form"
-	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/storage"
 	"gopkg.in/yaml.v3"
@@ -250,9 +249,11 @@ func (d *Daemon) handleActivateNamespace(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Target must exist on disk in the current workspace.
-	cfgPath := config.ResolveNamespaceConfigPath(wsID, nsID)
-	if _, err := os.Stat(cfgPath); err != nil { //nolint:gosec // G703: path built from validated nsID/wsID
+	// Target must exist in the current workspace.
+	if _, ok, err := d.store.LoadNamespaceConfig(wsID, nsID); err != nil {
+		writeInternalError(w, err)
+		return
+	} else if !ok {
 		writeErrorCode(w, http.StatusNotFound, api.ErrCodeNamespaceNotFound,
 			fmt.Sprintf("namespace %q not found in workspace %q", nsID, wsID))
 		return
@@ -463,10 +464,8 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		if candidate == "" {
 			continue
 		}
-		if config.IsDesktopMode() {
-			if _, statErr := os.Stat(config.WorkspaceNamespaceConfigPath(createWsID, candidate)); statErr == nil {
-				continue // taken
-			}
+		if _, taken, _ := d.store.LoadNamespaceConfig(createWsID, candidate); taken {
+			continue // taken
 		}
 		nsCfg.ID = candidate
 		break
@@ -506,43 +505,29 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Write config file
-	var configPath string
-	if config.IsDesktopMode() {
-		wsID := req.WorkspaceID
-		if wsID == "" {
-			wsID = d.workspaceID
-		}
-		if !validateID(wsID) {
-			writeError(w, http.StatusBadRequest, "invalid workspace id")
-			return
-		}
-		nsDir := config.NamespaceDir(wsID, nsCfg.ID)
-		if mkdirErr := os.MkdirAll(nsDir, 0o755); mkdirErr != nil { //nolint:gosec // namespace dirs need 0o755 for container access
-			writeInternalError(w, mkdirErr)
-			return
-		}
-		configPath = config.WorkspaceNamespaceConfigPath(wsID, nsCfg.ID)
-	} else {
-		configPath = config.NamespaceConfigPath()
+	// Resolve the target workspace.
+	wsID := req.WorkspaceID
+	if wsID == "" {
+		wsID = d.workspaceID
 	}
-
-	// Atomic existence check — O_EXCL fails if file already exists (no TOCTOU race)
-	excl, err := os.OpenFile(configPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644) //nolint:gosec // config files need 0o644 for readability
-	if err != nil {
-		if os.IsExist(err) {
-			writeErrorCode(w, http.StatusConflict, api.ErrCodeNamespaceExists,
-				fmt.Sprintf("namespace %q already exists", nsCfg.ID))
-			return
-		}
-		writeInternalError(w, err)
+	if !validateID(wsID) {
+		writeError(w, http.StatusBadRequest, "invalid workspace id")
 		return
 	}
-	_ = excl.Close()
 
-	if err := fsutil.AtomicWriteFile(configPath, data, 0o644); err != nil {
-		_ = os.Remove(configPath) // remove empty placeholder from O_EXCL open
-		writeInternalError(w, err)
+	// Collision check via the store (replaces the O_EXCL file create).
+	if _, exists, lerr := d.store.LoadNamespaceConfig(wsID, nsCfg.ID); lerr != nil {
+		writeInternalError(w, lerr)
+		return
+	} else if exists {
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeNamespaceExists,
+			fmt.Sprintf("namespace %q already exists", nsCfg.ID))
+		return
+	}
+
+	// Validate + persist via the single choke-point.
+	if err := d.persistNamespaceConfig(wsID, nsCfg.ID, data); err != nil {
+		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeInvalidConfig, err.Error())
 		return
 	}
 
@@ -765,8 +750,7 @@ func (d *Daemon) handlePutNamespaceEdit(w http.ResponseWriter, r *http.Request) 
 	}
 	nsID := nsCfg.ID
 
-	cfgPath := config.ResolveNamespaceConfigPath(d.workspaceID, nsID)
-	current, err := namespace.LoadNamespaceConfig(cfgPath)
+	current, err := d.loadNamespaceConfigFromStore(d.workspaceID, nsID)
 	if err != nil {
 		writeInternalError(w, fmt.Errorf("load namespace config: %w", err))
 		return
@@ -805,8 +789,8 @@ func (d *Daemon) handlePutNamespaceEdit(w http.ResponseWriter, r *http.Request) 
 		writeInternalError(w, fmt.Errorf("marshal namespace config: %w", err))
 		return
 	}
-	if err := fsutil.AtomicWriteFile(cfgPath, data, 0o644); err != nil {
-		writeInternalError(w, fmt.Errorf("write namespace config: %w", err))
+	if err := d.persistNamespaceConfig(d.workspaceID, nsID, data); err != nil {
+		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeInvalidConfig, err.Error())
 		return
 	}
 

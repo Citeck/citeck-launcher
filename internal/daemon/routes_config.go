@@ -249,18 +249,22 @@ func (d *Daemon) handleGetAppliedConfig(w http.ResponseWriter, _ *http.Request) 
 }
 
 func (d *Daemon) handleGetConfig(w http.ResponseWriter, r *http.Request) {
-	cfgPath := d.activeConfigPath()
-	data, err := os.ReadFile(cfgPath) //nolint:gosec // path is constructed from daemon-internal config, not user input
+	wsID, nsID := d.activeNsKey()
+	raw, ok, err := d.store.LoadNamespaceConfig(wsID, nsID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("config file not found: %s", cfgPath))
+		writeInternalError(w, err)
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "config not found")
 		return
 	}
 	w.Header().Set("Content-Type", "text/yaml")
-	_, _ = w.Write(data)
+	_, _ = w.Write([]byte(raw))
 }
 
 func (d *Daemon) handlePutConfig(w http.ResponseWriter, r *http.Request) {
-	cfgPath := d.activeConfigPath()
+	wsID, nsID := d.activeNsKey()
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1024*1024)) // 1MB max
 	if err != nil {
@@ -268,14 +272,9 @@ func (d *Daemon) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate by fully parsing through ParseNamespaceConfig (applies business rules)
-	if _, err := namespace.ParseNamespaceConfig(body); err != nil {
+	// Validate + persist the user's exact bytes through the choke-point.
+	if err := d.persistNamespaceConfig(wsID, nsID, body); err != nil {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeInvalidConfig, fmt.Sprintf("invalid config: %s", err.Error()))
-		return
-	}
-
-	if err := fsutil.AtomicWriteFile(cfgPath, body, 0o600); err != nil {
-		writeInternalError(w, fmt.Errorf("save config: %w", err))
 		return
 	}
 
