@@ -237,6 +237,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           draft: false
+          prerelease: true
           name: ${{ github.ref_name }}
           body: ${{ steps.changelog.outputs.body }}
           files: |
