@@ -9,31 +9,11 @@ permissions:
   contents: write
 
 jobs:
+  # Full test suite gate (reusable workflow, same as CI) — must pass before any
+  # build or release work runs. Plain master pushes no longer run CI, so this
+  # tag-time run is the gate for everything that gets published.
   test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
-      - name: Build web UI
-        run: cd web && pnpm install --frozen-lockfile && pnpm run build
-
-      - name: Run Go tests
-        run: go test -race ./internal/...
-
-      - name: Run web tests
-        run: cd web && pnpm vitest run
+    uses: ./.github/workflows/test.yml
 
   build:
     needs: test
