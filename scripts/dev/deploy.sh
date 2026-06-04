@@ -5,7 +5,7 @@
 # Credentials: see scripts/dev/ssh.sh (sourced from $CITECK_TEST_ENV_FILE).
 set -e
 
-CREDS_FILE="${CITECK_TEST_ENV_FILE:-$HOME/.claude/projects/-home-spk-IdeaProjects-citeck-launcher2/phase3-creds.env}"
+CREDS_FILE="${CITECK_TEST_ENV_FILE:-$HOME/.config/citeck-launcher/test-creds.env}"
 if [ -z "${CITECK_TEST_SSH_HOST:-}" ] && [ -f "$CREDS_FILE" ]; then
     set -a
     # shellcheck disable=SC1090
