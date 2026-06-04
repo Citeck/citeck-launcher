@@ -98,8 +98,13 @@ func (d *Daemon) handleDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if config.IsDesktopMode() {
-		configPath := config.WorkspaceNamespaceConfigPath(d.workspaceID, nsID)
-		if err := os.Remove(configPath); err != nil && !os.IsNotExist(err) { //nolint:gosec // G703: path from config.WorkspaceNamespaceConfigPath, not user input
+		// Remove the whole namespace directory (<ws>/ns/<id>), not just its
+		// namespace.yml: listNamespacesInWorkspace enumerates namespaces by
+		// directory, so leaving the (now config-less) dir behind keeps the
+		// namespace in the list as a nameless card that renders its raw id and
+		// never goes away.
+		nsDir := config.NamespaceDir(d.workspaceID, nsID)
+		if err := os.RemoveAll(nsDir); err != nil { //nolint:gosec // G703: path from config.NamespaceDir, not user input
 			writeInternalError(w, err)
 			return
 		}
