@@ -21,6 +21,15 @@ func (r *Runtime) Start(apps []appdef.ApplicationDef) {
 		// production paths defends against accidental flag leakage.
 		panic("namespace.Runtime.Start called on a testMode runtime; use StepOnce / RunUntilQuiescent instead")
 	}
+	// A just-completed stop clears r.running only when the runtimeLoop goroutine
+	// returns (a defer), which lags the STOPPED status by a full loop-tail
+	// iteration (doStop publishes NsStatusStopped, then signalShutdown closes
+	// shutdownComplete, then the loop runs one more tail and only THEN returns →
+	// running=false). A caller that synchronizes on STOPPED and immediately calls
+	// Start() can land in that window, where the guard below would see
+	// running==true and silently drop the restart. Wait for the previous loop to
+	// finish first so a stop→start sequence is never lost.
+	r.awaitStoppedLoopExit()
 	if !r.running.CompareAndSwap(false, true) {
 		slog.Warn("Runtime already running, ignoring Start()")
 		return
@@ -58,6 +67,40 @@ func (r *Runtime) Start(apps []appdef.ApplicationDef) {
 func (r *Runtime) Stop() {
 	if err := r.cmdQueue.Enqueue(cmdStop{}); err != nil {
 		slog.Error("Failed to enqueue cmdStop", "err", err)
+	}
+}
+
+// Stop→start race-window tuning. r.running is cleared by a defer when the
+// runtimeLoop goroutine returns, lagging the published STOPPED status;
+// awaitStoppedLoopExit waits out that gap before a restart.
+const (
+	loopExitWaitTimeout  = 5 * time.Second
+	loopExitPollInterval = time.Millisecond
+)
+
+// awaitStoppedLoopExit blocks until a previous runtimeLoop that is winding down
+// has fully exited (running==false), so Start() does not race the loop's
+// running=false defer. It waits ONLY when a stop/detach has actually been
+// signaled (shutdownComplete is closed); on a fresh or genuinely-running
+// runtime shutdownComplete is open and it returns immediately. The wait is
+// bounded — on timeout Start's CompareAndSwap falls back to the historical
+// "ignoring Start()" behavior rather than blocking forever.
+func (r *Runtime) awaitStoppedLoopExit() {
+	r.mu.RLock()
+	sc := r.shutdownComplete
+	r.mu.RUnlock()
+	select {
+	case <-sc:
+		// A stop/detach was signaled — the loop is exiting (or has exited).
+	default:
+		return // not stopping: genuinely running, or never started
+	}
+	deadline := time.Now().Add(loopExitWaitTimeout)
+	for r.running.Load() {
+		if time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(loopExitPollInterval)
 	}
 }
 
