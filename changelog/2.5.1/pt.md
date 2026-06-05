@@ -5,3 +5,4 @@
 - "Verificar atualizações" não mostra mais um erro 404 quando você já está na versão mais recente.
 - Corrigidos os erros de autenticação do RabbitMQ após reiniciar o servidor ("não é possível carregar o menu"): o contêiner do RabbitMQ tinha pouca memória para concluir a configuração da sua conta de serviço e obtinha uma nova identidade a cada reinício. Agora ele mantém uma identidade estável e tem memória suficiente.
 - O arquivo de diagnóstico (dump-system-info) agora oculta senhas, tokens e outros segredos das variáveis de ambiente dos contêineres, logs e arquivos de configuração.
+- A interface web agora está totalmente traduzida para chinês, espanhol, alemão, francês, português e japonês — muitos textos que antes apareciam em inglês agora estão localizados.
