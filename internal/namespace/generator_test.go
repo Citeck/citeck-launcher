@@ -822,10 +822,9 @@ func TestGeneratorLivenessProbes(t *testing.T) {
 	}
 
 	// Services that must NOT have liveness probes
-	// rabbitmq is intentionally skipped (Kotlin v1.3.8 parity — the
-	// rabbitmq-diagnostics probe spawns a short Erlang VM that at the 256m
-	// memory limit pushes the long-lived broker into the kill zone often
-	// enough to restart healthy nodes mid-init-action.
+	// rabbitmq is intentionally skipped (Kotlin v1.3.8 parity — a
+	// default-aggressive liveness would restart a healthy broker mid-init-action,
+	// stranding set_permissions and breaking webapp auth).
 	for _, name := range []string{
 		appdef.AppMailpit,
 		appdef.AppPgadmin, // desktop-only — not generated in server-mode tests
@@ -918,6 +917,63 @@ func TestGeneratorStartupThresholds(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestRabbitmqMemoryConf pins the generated rabbitmq.conf snippet: the broker
+// can't read the cgroup limit in a container (it detects host RAM and sets the
+// watermark to 0.6 of that — e.g. 14 GB of a 24 GB host), then gets OOM-killed
+// at the 256m/512m cgroup hard limit. We feed it the real budget in BYTES,
+// derived from the SAME limit string that fills HostConfig.Memory, so the
+// override can never drift from the cgroup limit.
+func TestRabbitmqMemoryConf(t *testing.T) {
+	got := rabbitmqMemoryConf("512m")
+	// 512 MiB = 512 * 1024 * 1024 = 536870912 (binary, matches docker.ParseMemory).
+	want := "total_memory_available_override_value = 536870912\n" +
+		"vm_memory_high_watermark.relative = 0.6\n"
+	if got != want {
+		t.Errorf("rabbitmqMemoryConf(\"512m\") =\n%q\nwant\n%q", got, want)
+	}
+}
+
+// TestRabbitmqMemoryLimitAndConf verifies the RabbitMQ OOM fix: the limit is
+// raised from 256m (too small for the rabbitmqctl init actions' transient
+// Erlang VMs) to 512m, and a memory-override conf is mounted into conf.d so the
+// broker self-throttles below the cgroup limit instead of being OOM-killed.
+func TestRabbitmqMemoryLimitAndConf(t *testing.T) {
+	cfg := &Config{
+		Authentication: AuthenticationProps{Type: AuthKeycloak, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+	}
+	resp, err := Generate(cfg, &bundle.Def{}, &bundle.WorkspaceConfig{}, SystemSecrets{
+		JWT:           "test-jwt",
+		OIDC:          "test-oidc",
+		AdminPassword: "admin-pass",
+		CiteckSA:      "citeck-sa-pass",
+	})
+	require.NoError(t, err)
+
+	var rmq *appdef.ApplicationDef
+	for i := range resp.Applications {
+		if resp.Applications[i].Name == appdef.AppRabbitmq {
+			rmq = &resp.Applications[i]
+		}
+	}
+	require.NotNil(t, rmq)
+
+	// 1. Memory raised to 512m.
+	require.NotNil(t, rmq.Resources)
+	assert.Equal(t, "512m", rmq.Resources.Limits.Memory,
+		"RabbitMQ 256m OOM-kills the rabbitmqctl init actions; must be 512m")
+
+	// 2. The override conf is mounted into conf.d (loaded after the image's
+	// own 10-defaultuser.conf).
+	const mount = "./rabbitmq/citeck-memory.conf:/etc/rabbitmq/conf.d/20-citeck-memory.conf:ro"
+	assert.Contains(t, rmq.Volumes, mount, "memory-override conf must be mounted")
+
+	// 3. The conf content lands in the runtime files (→ disk + VolumesContentHash),
+	// with the override byte count derived from the 512m limit.
+	assert.Equal(t, rabbitmqMemoryConf("512m"), string(resp.Files["rabbitmq/citeck-memory.conf"]),
+		"generated conf must match the limit-derived override")
 }
 
 // TestCiteckSAWiring verifies the "citeck" SA wiring introduced to decouple

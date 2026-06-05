@@ -18,6 +18,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/appfiles"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/docker"
 	"gopkg.in/yaml.v3"
 )
 
@@ -364,6 +365,24 @@ func generateZookeeper(ctx *NsGenContext) {
 	}}
 }
 
+// rabbitmqMemoryConf returns a rabbitmq.conf snippet telling the broker its
+// real memory budget. RabbitMQ cannot reliably read a container's cgroup limit
+// (it detects host RAM and sets the watermark to a fraction of that), so without
+// this it never self-throttles and the cgroup OOM-killer terminates the broker —
+// and the rabbitmqctl init actions — before the watermark ever applies.
+// total_memory_available_override_value is derived in BYTES from the same limit
+// string that fills HostConfig.Memory (docker.ParseMemory), so the override can
+// never drift from the cgroup limit. relative 0.6 is RabbitMQ's default fraction,
+// leaving ~40% headroom for the transient rabbitmqctl Erlang VMs that share the
+// cgroup.
+func rabbitmqMemoryConf(memLimit string) string {
+	return fmt.Sprintf(
+		"total_memory_available_override_value = %d\n"+
+			"vm_memory_high_watermark.relative = 0.6\n",
+		docker.ParseMemory(memLimit),
+	)
+}
+
 func generateRabbitMQ(ctx *NsGenContext) {
 	img := bundleImageOr(ctx, appdef.AppRabbitmq, "rabbitmq:4.1.2-management")
 	app := ctx.GetOrCreateApp(appdef.AppRabbitmq)
@@ -376,7 +395,18 @@ func generateRabbitMQ(ctx *NsGenContext) {
 	app.AddEnv("RABBITMQ_DEFAULT_VHOST", "/")
 	app.AddEnv("RABBITMQ_MANAGEMENT_ALLOW_WEB_ACCESS", "true")
 	app.AddVolume("rabbitmq2:/var/lib/rabbitmq")
-	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "256m"}}
+	// 512m (not the legacy 256m): RabbitMQ 4.x + management plus the transient
+	// Erlang VMs that the rabbitmqctl init actions spawn don't fit in 256m, so
+	// the init actions get OOM-killed (exitCode 137) and the citeck SA ends up
+	// without vhost "/" permissions → every webapp fails AMQP auth.
+	const rabbitmqMemLimit = "512m"
+	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: rabbitmqMemLimit}}
+	// Memory-override conf so the broker self-throttles below the cgroup limit
+	// instead of being OOM-killed (see rabbitmqMemoryConf). Mounted into conf.d,
+	// which the official image loads alphabetically after its own
+	// 10-defaultuser.conf, so RABBITMQ_DEFAULT_USER/PASS are preserved.
+	ctx.Files["rabbitmq/citeck-memory.conf"] = []byte(rabbitmqMemoryConf(rabbitmqMemLimit))
+	app.AddVolume("./rabbitmq/citeck-memory.conf:/etc/rabbitmq/conf.d/20-citeck-memory.conf:ro")
 	app.StartupConditions = []appdef.StartupCondition{
 		{Probe: &appdef.AppProbeDef{
 			Exec:             &appdef.ExecProbeDef{Command: []string{"rabbitmq-diagnostics", "check_running", "-q"}},
@@ -386,14 +416,13 @@ func generateRabbitMQ(ctx *NsGenContext) {
 		}},
 	}
 	// No LivenessProbe (Kotlin v1.3.8 parity). rabbitmq-diagnostics spawns a
-	// short-lived Erlang VM for the check — at the 256m memory limit that
-	// pushes the long-lived RMQ process into the kill zone often enough that
-	// a default-aggressive liveness (3× / 30s) restarts a healthy broker
-	// mid-operation. Init actions run after the startup probe; restarting
-	// the container while they're in flight strands set_permissions /
-	// set_user_tags in a "rabbit app not running" state, breaking webapp
-	// auth. StartupConditions still gate readiness; container exit codes
-	// still surface real crashes without polling.
+	// short-lived Erlang VM for the check; with the memory headroom now in place
+	// that is survivable, but a default-aggressive liveness (3× / 30s) would
+	// still restart a healthy broker mid-operation. Init actions run after the
+	// startup probe; restarting the container while they're in flight strands
+	// set_permissions / set_user_tags in a "rabbit app not running" state,
+	// breaking webapp auth. StartupConditions still gate readiness; container
+	// exit codes still surface real crashes without polling.
 
 	// Ensure the stable "citeck" SA user exists in RabbitMQ. Webapps connect
 	// as this user so admin-password changes never require recreating webapp
