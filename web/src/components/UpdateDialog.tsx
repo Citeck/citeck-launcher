@@ -80,6 +80,11 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
           </p>
         )}
 
+        {/* Changelog (what's new) only matters when an update is available.
+            When already on the latest version there is nothing newer to list,
+            so skip the box entirely instead of showing a confusing
+            "no changelog available" line. */}
+        {status?.available && (
         <div className="mt-4 flex-1 overflow-auto rounded-md border border-border bg-background p-4">
           {loading && <p className="text-sm text-muted-foreground">{t('update.loadingChangelog')}</p>}
           {!loading && error && <p className="text-sm text-destructive">{error}</p>}
@@ -100,6 +105,7 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
               </div>
             ))}
         </div>
+        )}
 
         <div className="mt-6 flex items-center justify-end gap-3">
           <button
