@@ -155,4 +155,20 @@ describe('useDashboardStore', () => {
     const state = useDashboardStore.getState()
     expect(state.error).toBe('503 Service Unavailable')
   })
+
+  it('fetchData clears a stale namespace when the daemon reports no namespace configured', async () => {
+    // An active namespace that has since been deactivated (back-to-welcome).
+    useDashboardStore.setState({ namespace: { id: 'ns1', name: 'x', status: 'STOPPED', bundleRef: '', apps: [] } })
+
+    mockedGetNamespace.mockRejectedValueOnce(new Error('no namespace configured'))
+    mockedGetHealth.mockRejectedValueOnce(new Error('no namespace configured'))
+
+    await useDashboardStore.getState().fetchData()
+
+    // Stale namespace must be cleared (so Welcome + workspace picker show), no error.
+    const state = useDashboardStore.getState()
+    expect(state.namespace).toBeNull()
+    expect(state.error).toBeNull()
+    expect(state.loading).toBe(false)
+  })
 })

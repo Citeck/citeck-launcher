@@ -309,6 +309,11 @@ export function Dashboard() {
                     toast((e as Error).message, 'error')
                     return
                   }
+                  // Drop the now-deactivated namespace from the store + stop its
+                  // event stream so the Welcome screen's workspace picker shows
+                  // (TabBar hides it while a namespace is pinned).
+                  stopEventStream()
+                  useDashboardStore.setState({ namespace: null, health: null })
                   navigate('/welcome')
                 }} />
             )}

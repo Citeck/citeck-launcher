@@ -108,6 +108,15 @@ return ({
       set({ namespace, health, loading: false })
     } catch (err) {
       const msg = (err as Error).message
+      // The daemon explicitly reports no namespace (deactivated, deleted, or
+      // never selected). Clear the stale namespace so the UI falls back to
+      // Welcome and the workspace picker reappears — keeping the last namespace
+      // pinned in the store hides the picker (TabBar keys off `namespace`) and
+      // breaks the Welcome-at-root routing.
+      if (msg.includes('no namespace configured') || msg.includes('NOT_CONFIGURED')) {
+        set({ namespace: null, health: null, error: null, loading: false })
+        return
+      }
       // Daemon still starting — retry silently instead of showing error
       if (msg.includes('Service Unavailable') || msg.includes('503') || msg.includes('DAEMON_STARTING') || msg.includes('Failed to fetch')) {
         if (isInitial) {
