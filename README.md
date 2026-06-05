@@ -10,34 +10,62 @@
 ![Platforms](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-lightgrey)
 [![Documentation](https://img.shields.io/badge/docs-readthedocs-8CA1AF?logo=readthedocs)](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server.html)
 
-**Your whole Citeck platform — up and running with a single command.**
+**Install and run a full Citeck platform — as a desktop app on your computer, or with a single command on a server.**
 
-Citeck Launcher is a self-hosted installer and container manager for the **Citeck** low-code BPM/ECM platform. It is a single ~24 MB binary that works as a command-line tool, a background daemon, and a cross-platform desktop app, running every Citeck service as a Docker container and grouping them into isolated namespaces.
+Citeck Launcher is the official installer and container manager for the **Citeck** low-code BPM/ECM platform. A single ~24 MB binary works as a command-line tool, a background daemon, and a cross-platform desktop app — running every Citeck service (Keycloak, PostgreSQL, RabbitMQ, and the Citeck web apps) as a Docker container and grouping them into isolated namespaces.
 
-[Citeck](https://github.com/Citeck) is an open-source low-code platform for Enterprise Content Management (ECM) and Business Process Management (BPM). The launcher installs, upgrades, and operates a full Citeck stack — Keycloak, PostgreSQL, RabbitMQ, and the Citeck web applications — on a single host with one command.
+[Citeck](https://github.com/Citeck) is an open-source low-code platform for Enterprise Content Management (ECM) and Business Process Management (BPM).
 
-> **Full documentation:** https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server.html
+## Desktop or server?
 
-## Quick Start
+There are two ways to run it — pick the one that matches **where** you want Citeck to run:
 
-Prerequisites: Docker (running).
+| | 🖥 **Desktop app** | 🖧 **Server (CLI)** |
+|---|---|---|
+| For | Your own computer | A Linux server / VM (usually over SSH) |
+| Install | Download an installer, click through the wizard | One `curl … \| bash` command |
+| Web UI | Built-in native window | Served over HTTPS (with TLS / Let's Encrypt) |
+| Start here | [Desktop App](#desktop-app) | [Server Install](#server-install) |
+
+> **Heads-up:** the `curl … | bash` quick start and the `citeck` CLI in this README are for **server installs**. On your own computer, run Citeck through the **Desktop app** — everything there is done from the UI.
+
+Requires Docker either way.
+
+## Desktop App
+
+The **desktop application** runs Citeck on your own Windows, macOS, or Linux machine — the same daemon and Web UI wrapped in a native window (Wails). The app supervises the daemon as a child process, so your containers keep running even when the window is closed.
+
+Desktop installers are attached to each [GitHub release](https://github.com/Citeck/citeck-launcher/releases) — download the one for your platform:
+
+| OS | File | Arch |
+|----|------|------|
+| Windows | `citeck-desktop_<version>_windows_<arch>.msi` | amd64, arm64 |
+| macOS | `citeck-desktop_<version>_darwin_<arch>.dmg` | amd64 (Intel), arm64 (Apple Silicon) |
+| Linux | `citeck-desktop_<version>_linux_<arch>.deb` / `.rpm` | amd64, arm64 |
+
+Each installer has a `.sha256` sidecar for verification. Your data is preserved across upgrades.
+
+## Server Install
+
+> **For a Linux server or VM** (run over SSH). On your own computer, run Citeck through the [Desktop app](#desktop-app).
+
+Prerequisites: a Linux host with Docker running.
 
 ```bash
 curl -fsSL https://github.com/Citeck/citeck-launcher/releases/latest/download/install.sh | bash
 ```
 
-The install script downloads the latest release for your platform and installs to `/usr/local/bin/`. The wizard sets up the namespace and starts the platform.
+The install script downloads the latest release for your platform and installs to `/usr/local/bin/`. The wizard then sets up the namespace and starts the platform.
 
-> **Important:** The `citeck install` command is an **interactive TUI wizard** and requires a real terminal. The wizard prints the generated admin password **once** at the end — make sure to copy and save it, as you won't be able to recover it after closing the screen. If you lose it, reset it via `citeck setup admin-password` (see the [commands reference](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html)). Pressing `Ctrl+C` before the final "write configuration" step exits without making changes; if interrupted later, check `/opt/citeck/conf/` for partial state.
+> **Important:** `citeck install` is an **interactive TUI wizard** and requires a real terminal. The wizard prints the generated admin password **once** at the end — copy and save it, as it can't be recovered after closing the screen. If you lose it, reset it via `citeck setup admin-password` (see the [commands reference](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html)). Pressing `Ctrl+C` before the final "write configuration" step exits without making changes; if interrupted later, check `/opt/citeck/conf/` for partial state.
 >
 > Automated / non-interactive install is a future feature — please file an issue if you need it.
 
-To **upgrade** an existing installation, run the same one-liner — the script detects the installed version, prompts to update, stops the daemon, and replaces the binary (a backup is kept at `/usr/local/bin/citeck.bak`, restorable via `citeck install --rollback`).
+To **upgrade** an existing server install, run the same one-liner — the script detects the installed version, prompts to update, stops the daemon, and replaces the binary (a backup is kept at `/usr/local/bin/citeck.bak`, restorable via `citeck install --rollback`).
 
-### Offline Install
+### Offline Install (server)
 
-For servers without internet access, download both the binary and the workspace
-archive beforehand:
+For servers without internet access, download both the binary and the workspace archive beforehand:
 
 1. **Binary:** from the [releases page](https://github.com/Citeck/citeck-launcher/releases).
 2. **Workspace archive:** from [Citeck/launcher-workspace](https://github.com/Citeck/launcher-workspace)
@@ -51,24 +79,7 @@ citeck install --workspace /path/to/launcher-workspace.zip --offline
 ```
 
 The `--workspace` flag extracts bundle repos locally so no internet is needed during startup.
-To update workspace later from a new archive without reinstalling: `citeck update -f <zip>`.
-
-## Desktop App
-
-Citeck Launcher is also available as a **desktop application** for Windows, macOS, and Linux —
-the same daemon and Web UI wrapped in a native window (Wails). The app supervises the daemon as a
-child process, so your containers keep running even when the window is closed. Desktop installers
-are attached to each
-[GitHub release](https://github.com/Citeck/citeck-launcher/releases); download the one for your
-platform:
-
-| OS | File | Arch |
-|----|------|------|
-| Windows | `citeck-desktop_<version>_windows_<arch>.msi` | amd64, arm64 |
-| macOS | `citeck-desktop_<version>_darwin_<arch>.dmg` | amd64 (Intel), arm64 (Apple Silicon) |
-| Linux | `citeck-desktop_<version>_linux_<arch>.deb` / `.rpm` | amd64, arm64 |
-
-Each installer has a `.sha256` sidecar for verification. Your data is preserved across upgrades.
+To update the workspace later from a new archive without reinstalling: `citeck update -f <zip>`.
 
 ## Features
 
@@ -80,7 +91,9 @@ Each installer has a `.sha256` sidecar for verification. Your data is preserved 
 - **Self-healing runtime** with liveness probes, restart tracking, and pre-restart diagnostics
 - **Shell completion** for bash, zsh, fish, PowerShell
 
-## CLI Usage
+## CLI Usage (server mode)
+
+These commands manage a **server-mode** install over the CLI. (In desktop mode the same operations are available from the app's UI.)
 
 ```
 citeck install [--workspace <zip>]        Interactive setup wizard (offline with --workspace)
@@ -109,9 +122,10 @@ citeck uninstall [--delete-data]          Remove systemd service, binary, and (o
 
 Global flags: `--format (text|json)`, `--yes/-y`.
 
-## Configuration
+## Documentation
 
-See the [configuration reference](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/configuration.html) for `daemon.yml` and `namespace.yml` details.
+- **Server mode:** [Launcher server-mode docs](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server.html) — install, configuration (`daemon.yml` / `namespace.yml`), and the [commands reference](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html).
+- **Desktop app:** self-contained — set up through the app's own wizard and UI; no separate configuration needed.
 
 ## License
 

@@ -10,34 +10,62 @@
 ![Platforms](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-lightgrey)
 [![Documentation](https://img.shields.io/badge/docs-readthedocs-8CA1AF?logo=readthedocs)](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server.html)
 
-**Toda a sua plataforma Citeck, no ar com um único comando.**
+**Instale e execute uma plataforma Citeck completa — como um aplicativo desktop no seu computador, ou com um único comando em um servidor.**
 
-O Citeck Launcher é um instalador auto-hospedado e gerenciador de contêineres para a plataforma low-code BPM/ECM **Citeck**. É um único binário de aproximadamente 24 MB que funciona como ferramenta de linha de comando, daemon em segundo plano e aplicativo desktop multiplataforma, executando cada serviço Citeck como um contêiner Docker e agrupando-os em namespaces isolados.
+O Citeck Launcher é o instalador oficial e gerenciador de contêineres para a plataforma low-code BPM/ECM **Citeck**. Um único binário de aproximadamente 24 MB funciona como ferramenta de linha de comando, daemon em segundo plano e aplicativo desktop multiplataforma, executando cada serviço Citeck (Keycloak, PostgreSQL, RabbitMQ e os aplicativos web do Citeck) como um contêiner Docker e agrupando-os em namespaces isolados.
 
-[Citeck](https://github.com/Citeck) é uma plataforma low-code de código aberto para Gestão de Conteúdo Empresarial (ECM) e Gestão de Processos de Negócio (BPM). O launcher instala, atualiza e opera uma stack completa do Citeck — Keycloak, PostgreSQL, RabbitMQ e os aplicativos web do Citeck — em um único host com um comando.
+[Citeck](https://github.com/Citeck) é uma plataforma low-code de código aberto para Gestão de Conteúdo Empresarial (ECM) e Gestão de Processos de Negócio (BPM).
 
-> **Documentação completa:** https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server.html
+## Desktop ou servidor?
 
-## Início Rápido
+Há duas maneiras de executá-lo — escolha a que corresponde a **onde** você quer que o Citeck seja executado:
 
-Pré-requisitos: Docker (em execução).
+| | 🖥 **Aplicativo desktop** | 🖧 **Servidor (CLI)** |
+|---|---|---|
+| Para | Seu próprio computador | Um servidor / VM Linux (geralmente via SSH) |
+| Instalação | Baixe um instalador, percorra o assistente | Um único comando `curl … \| bash` |
+| Web UI | Janela nativa integrada | Servida via HTTPS (com TLS / Let's Encrypt) |
+| Comece aqui | [Aplicativo Desktop](#aplicativo-desktop) | [Instalação no servidor](#instalação-no-servidor) |
+
+> **Atenção:** o início rápido `curl … | bash` e a CLI `citeck` neste README são para **instalações em servidor**. No seu próprio computador, execute o Citeck através do **aplicativo Desktop** — lá tudo é feito a partir da interface.
+
+Requer Docker de qualquer forma.
+
+## Aplicativo Desktop
+
+O **aplicativo desktop** executa o Citeck na sua própria máquina Windows, macOS ou Linux — o mesmo daemon e Web UI encapsulados em uma janela nativa (Wails). O aplicativo supervisiona o daemon como um processo filho, de modo que seus contêineres continuam em execução mesmo quando a janela é fechada.
+
+Os instaladores desktop são anexados a cada [release do GitHub](https://github.com/Citeck/citeck-launcher/releases) — baixe aquele para sua plataforma:
+
+| SO | Arquivo | Arquitetura |
+|----|------|------|
+| Windows | `citeck-desktop_<version>_windows_<arch>.msi` | amd64, arm64 |
+| macOS | `citeck-desktop_<version>_darwin_<arch>.dmg` | amd64 (Intel), arm64 (Apple Silicon) |
+| Linux | `citeck-desktop_<version>_linux_<arch>.deb` / `.rpm` | amd64, arm64 |
+
+Cada instalador tem um arquivo `.sha256` auxiliar para verificação. Seus dados são preservados durante as atualizações.
+
+## Instalação no servidor
+
+> **Para um servidor ou VM Linux** (execute via SSH). No seu próprio computador, execute o Citeck através do [aplicativo Desktop](#aplicativo-desktop).
+
+Pré-requisitos: um host Linux com o Docker em execução.
 
 ```bash
 curl -fsSL https://github.com/Citeck/citeck-launcher/releases/latest/download/install.sh | bash
 ```
 
-O script de instalação baixa a versão mais recente para sua plataforma e instala em `/usr/local/bin/`. O assistente configura o namespace e inicia a plataforma.
+O script de instalação baixa a versão mais recente para sua plataforma e instala em `/usr/local/bin/`. O assistente então configura o namespace e inicia a plataforma.
 
-> **Importante:** O comando `citeck install` é um **assistente TUI interativo** e requer um terminal real. O assistente exibe a senha de administrador gerada **uma única vez** ao final — certifique-se de copiá-la e salvá-la, pois você não conseguirá recuperá-la após fechar a tela. Se você a perder, redefina-a via `citeck setup admin-password` (consulte a [referência de comandos](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html)). Pressionar `Ctrl+C` antes da etapa final de "write configuration" sai sem fazer alterações; se interrompido posteriormente, verifique `/opt/citeck/conf/` para estado parcial.
+> **Importante:** O comando `citeck install` é um **assistente TUI interativo** e requer um terminal real. O assistente exibe a senha de administrador gerada **uma única vez** ao final — copie-a e salve-a, pois ela não pode ser recuperada após fechar a tela. Se você a perder, redefina-a via `citeck setup admin-password` (consulte a [referência de comandos](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html)). Pressionar `Ctrl+C` antes da etapa final de "write configuration" sai sem fazer alterações; se interrompido posteriormente, verifique `/opt/citeck/conf/` para estado parcial.
 >
 > A instalação automatizada / não interativa é um recurso futuro — por favor, abra uma issue se você precisar dela.
 
-Para **atualizar** uma instalação existente, execute o mesmo one-liner — o script detecta a versão instalada, solicita a atualização, para o daemon e substitui o binário (um backup é mantido em `/usr/local/bin/citeck.bak`, restaurável via `citeck install --rollback`).
+Para **atualizar** uma instalação de servidor existente, execute o mesmo one-liner — o script detecta a versão instalada, solicita a atualização, para o daemon e substitui o binário (um backup é mantido em `/usr/local/bin/citeck.bak`, restaurável via `citeck install --rollback`).
 
-### Instalação Offline
+### Instalação Offline (servidor)
 
-Para servidores sem acesso à internet, baixe previamente tanto o binário quanto o arquivo
-do workspace:
+Para servidores sem acesso à internet, baixe previamente tanto o binário quanto o arquivo do workspace:
 
 1. **Binário:** da [página de releases](https://github.com/Citeck/citeck-launcher/releases).
 2. **Arquivo do workspace:** de [Citeck/launcher-workspace](https://github.com/Citeck/launcher-workspace)
@@ -53,22 +81,6 @@ citeck install --workspace /path/to/launcher-workspace.zip --offline
 A flag `--workspace` extrai os repositórios de bundle localmente, de modo que nenhuma internet é necessária durante a inicialização.
 Para atualizar o workspace mais tarde a partir de um novo arquivo sem reinstalar: `citeck update -f <zip>`.
 
-## Aplicativo Desktop
-
-O Citeck Launcher também está disponível como **aplicativo desktop** para Windows, macOS e Linux —
-o mesmo daemon e Web UI encapsulados em uma janela nativa (Wails). O aplicativo supervisiona o daemon como um
-processo filho, de modo que seus contêineres continuam em execução mesmo quando a janela é fechada. Os instaladores desktop são anexados a cada
-[release do GitHub](https://github.com/Citeck/citeck-launcher/releases); baixe aquele para sua
-plataforma:
-
-| SO | Arquivo | Arquitetura |
-|----|------|------|
-| Windows | `citeck-desktop_<version>_windows_<arch>.msi` | amd64, arm64 |
-| macOS | `citeck-desktop_<version>_darwin_<arch>.dmg` | amd64 (Intel), arm64 (Apple Silicon) |
-| Linux | `citeck-desktop_<version>_linux_<arch>.deb` / `.rpm` | amd64, arm64 |
-
-Cada instalador tem um arquivo `.sha256` auxiliar para verificação. Seus dados são preservados durante as atualizações.
-
 ## Recursos
 
 - **Instalador interativo** com detecção automática de TLS (Let's Encrypt / autoassinado / certificado personalizado)
@@ -79,7 +91,9 @@ Cada instalador tem um arquivo `.sha256` auxiliar para verificação. Seus dados
 - **Runtime de autorrecuperação** com liveness probes, rastreamento de reinícios e diagnósticos pré-reinício
 - **Autocompletar de shell** para bash, zsh, fish, PowerShell
 
-## Uso da CLI
+## Uso da CLI (modo servidor)
+
+Estes comandos gerenciam uma instalação em **modo servidor** pela CLI. (No modo desktop as mesmas operações estão disponíveis a partir da interface do aplicativo.)
 
 ```
 citeck install [--workspace <zip>]        Interactive setup wizard (offline with --workspace)
@@ -108,9 +122,10 @@ citeck uninstall [--delete-data]          Remove systemd service, binary, and (o
 
 Flags globais: `--format (text|json)`, `--yes/-y`.
 
-## Configuração
+## Documentação
 
-Consulte a [referência de configuração](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/configuration.html) para detalhes sobre `daemon.yml` e `namespace.yml`.
+- **Modo servidor:** [Documentação do modo servidor do launcher](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server.html) — instalação, configuração (`daemon.yml` / `namespace.yml`) e a [referência de comandos](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html).
+- **Aplicativo desktop:** autossuficiente — configure através do próprio assistente e interface do aplicativo; nenhuma configuração separada é necessária.
 
 ## Licença
 
