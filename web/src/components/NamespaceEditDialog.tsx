@@ -138,9 +138,15 @@ export function NamespaceEditDialog({
   }, [open, mode, initial])
 
   const bundleRepoOptions = useMemo(() => {
-    const opts = bundles.map((b) => ({ value: b.repo, label: b.repo }))
+    // Only offer repos that have at least one release — an empty repo (e.g.
+    // community-rc with no tags yet, which the backend returns with
+    // versions: null) can't yield a valid bundle version to pick.
+    const opts = bundles
+      .filter((b) => (b.versions?.length ?? 0) > 0)
+      .map((b) => ({ value: b.repo, label: b.repo }))
     // Preserve a current value not present in the dropdown (e.g. a repo that
-    // was later removed from workspace-v1.yml) so edits don't silently drop it.
+    // was later removed from workspace-v1.yml, or whose releases aren't synced
+    // yet) so edits don't silently drop it.
     if (bundleRepo && !opts.some((o) => o.value === bundleRepo)) {
       opts.unshift({ value: bundleRepo, label: bundleRepo })
     }
@@ -170,6 +176,16 @@ export function NamespaceEditDialog({
       setBundleKey(versions[0])
     }
   }, [bundleRepo, bundles, bundleKey])
+
+  // When the user picks a different bundle repo, auto-select that repo's latest
+  // release (versions are newest-first). Only fires on a manual repo change —
+  // on initial edit-load the repo is set directly (not through this handler),
+  // so an existing pinned version is preserved.
+  function handleRepoChange(repo: string) {
+    setBundleRepo(repo)
+    const r = bundles.find((b) => b.repo === repo)
+    setBundleKey(r?.versions?.[0] ?? '')
+  }
 
   function validate(): boolean {
     const errors: Record<string, string> = {}
@@ -286,7 +302,7 @@ export function NamespaceEditDialog({
         <Select
           value={bundleRepo}
           options={bundleRepoOptions}
-          onChange={setBundleRepo}
+          onChange={handleRepoChange}
           required
           disabled={bundlesLoading}
           placeholder="—"

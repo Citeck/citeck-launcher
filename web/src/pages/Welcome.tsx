@@ -30,8 +30,10 @@ export function Welcome() {
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
   const [moreOpen, setMoreOpen] = useState(false)
-  const [createOpen, setCreateOpen] = useState(false)
-  const [editTarget, setEditTarget] = useState<NamespaceSummaryDto | null>(null)
+  // One form for both create and edit (NamespaceEditDialog re-initializes on
+  // every open via its [open, mode, initial] effect, so a single instance is
+  // enough — no separate create/edit dialogs). null = closed.
+  const [nsForm, setNsForm] = useState<{ mode: 'create' | 'edit'; target?: NamespaceSummaryDto } | null>(null)
   const [gitErrorOpen, setGitErrorOpen] = useState(false)
   // Active workspace ID (used for filtering namespaces + scoping the create
   // request explicitly). Sourced from the daemon-status store so a workspace
@@ -132,7 +134,7 @@ export function Welcome() {
   }
 
   function handleCreateNew() {
-    setCreateOpen(true)
+    setNsForm({ mode: 'create' })
   }
 
   async function afterCreated() {
@@ -199,7 +201,7 @@ export function Welcome() {
   function nsContextItems(ns: NamespaceSummaryDto): ContextMenuItem[] {
     return [
       { label: t('welcome.context.open'), onClick: () => handleOpenNamespace(ns) },
-      { label: t('welcome.namespace.edit'), onClick: () => setEditTarget(ns) },
+      { label: t('welcome.namespace.edit'), onClick: () => setNsForm({ mode: 'edit', target: ns }) },
       { label: t('welcome.context.delete'), variant: 'danger', onClick: () => setDeleteTarget(ns) },
     ]
   }
@@ -310,12 +312,16 @@ export function Welcome() {
               )
             })()}
 
-            {/* "More" — opens NamespaceDialog (Kotlin parity: WelcomeScreen.kt:154). */}
+            {/* "More" opens NamespaceDialog — the namespace LIST. Show it only
+                when the inline list (capped at 3 above) actually hides some:
+                i.e. more than 3 namespaces exist. With 0 namespaces there is
+                nothing to list, so the button must not appear regardless of how
+                many quick-start variants there are. */}
             {(() => {
               const visibleNs = namespaces.filter((ns) =>
                 !activeWorkspaceId || !ns.workspaceId || ns.workspaceId === activeWorkspaceId,
               )
-              return (visibleNs.length > 3 || (quickStarts.length > 1 && visibleNs.length === 0))
+              return visibleNs.length > 3
             })() && (
               <button
                 type="button"
@@ -375,23 +381,23 @@ export function Welcome() {
       <NamespaceDialog open={moreOpen} onClose={() => setMoreOpen(false)} />
 
       <NamespaceEditDialog
-        open={createOpen}
-        mode="create"
+        open={!!nsForm}
+        mode={nsForm?.mode ?? 'create'}
         workspaceId={activeWorkspaceId}
-        onClose={() => setCreateOpen(false)}
-        onSaved={afterCreated}
-      />
-
-      <NamespaceEditDialog
-        open={!!editTarget}
-        mode="edit"
-        initial={editTarget ? {
-          name: editTarget.name || editTarget.id,
-          bundleRepo: editTarget.bundleRef?.split(':')[0] || '',
-          bundleKey: editTarget.bundleRef?.split(':').slice(1).join(':') || '',
+        initial={nsForm?.mode === 'edit' && nsForm.target ? {
+          name: nsForm.target.name || nsForm.target.id,
+          bundleRepo: nsForm.target.bundleRef?.split(':')[0] || '',
+          bundleKey: nsForm.target.bundleRef?.split(':').slice(1).join(':') || '',
         } : undefined}
-        onClose={() => setEditTarget(null)}
-        onSaved={() => { setEditTarget(null); loadData() }}
+        onClose={() => setNsForm(null)}
+        onSaved={() => {
+          const isCreate = nsForm?.mode === 'create'
+          setNsForm(null)
+          // Create navigates into the new namespace (afterCreated); edit just
+          // refreshes the Welcome list.
+          if (isCreate) void afterCreated()
+          else void loadData()
+        }}
       />
 
       {/* Footer logos (Kotlin parity: WelcomeScreen.kt BottomStart / BottomEnd).
