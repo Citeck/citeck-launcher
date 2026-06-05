@@ -40,7 +40,7 @@ func TestSetupDaemonLogging_DesktopWritesToDesktopPath(t *testing.T) {
 	setupDaemonLogging(StartOptions{Desktop: true})
 	slog.Info("regression-marker-desktop-log")
 
-	logPath := filepath.Join(home, ".citeck", "launcher", "log", "daemon.log")
+	logPath := filepath.Join(home, ".citeck", "launcher", "logs", "daemon.log")
 	require.Equal(t, logPath, config.DaemonLogPath(), "desktop mode must resolve the desktop log path")
 
 	data, err := os.ReadFile(logPath) //nolint:gosec // logPath is under t.TempDir()

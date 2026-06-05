@@ -27,7 +27,7 @@ func TestDumpSystemInfo_ArchiveStructure(t *testing.T) {
 	// Create the config files the dump expects. Content is deliberately
 	// trivial — we're testing file inclusion, not parsing.
 	confDir := filepath.Join(tmp, "conf")
-	logDir := filepath.Join(tmp, "log")
+	logDir := filepath.Join(tmp, "logs")
 	if err := os.MkdirAll(confDir, 0o755); err != nil {
 		t.Fatalf("mkdir conf: %v", err)
 	}

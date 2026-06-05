@@ -118,9 +118,11 @@ func DataDir() string {
 	return filepath.Join(HomeDir(), "data")
 }
 
-// LogDir returns the log directory.
+// LogDir returns the log directory. Named "logs" (plural) to match the legacy
+// Kotlin 1.x launcher, so a desktop upgrade keeps a single log dir instead of
+// leaving the 1.x "logs/" orphaned beside a 2.x "log/".
 func LogDir() string {
-	return filepath.Join(HomeDir(), "log")
+	return filepath.Join(HomeDir(), "logs")
 }
 
 // WebUICADir returns the directory for trusted client certificates (mTLS).
