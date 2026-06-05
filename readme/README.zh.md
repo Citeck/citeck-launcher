@@ -12,7 +12,7 @@
 
 **安装并运行完整的 Citeck 平台——既可作为电脑上的桌面应用，也可在服务器上通过一条命令完成。**
 
-Citeck Launcher 是面向 **Citeck** 低代码 BPM/ECM 平台的官方安装器与容器管理器。一个体积约 24 MB 的单一二进制文件，可作为命令行工具、后台守护进程以及跨平台桌面应用使用——将每个 Citeck 服务（Keycloak、PostgreSQL、RabbitMQ 以及 Citeck Web 应用）作为 Docker 容器运行，并将它们分组到相互隔离的命名空间中。
+Citeck Launcher 是面向 **Citeck** 低代码 BPM/ECM 平台的官方安装器与容器管理器。一个体积约 24 MB 的单一二进制文件，可作为命令行工具、后台守护进程以及跨平台桌面应用使用——将每个 Citeck 服务（Keycloak、PostgreSQL、RabbitMQ 以及 Citeck Web 应用）作为 Docker 容器运行，并将它们分组到相互隔离的命名空间中。 运行哪些应用及其版本由 **bundle** 决定（例如 Community 或 Enterprise 版本）。
 
 [Citeck](https://github.com/Citeck) 是一个用于构建业务应用的开源平台，融合了 **无代码、低代码和专业代码** 三种方式来管理内容与流程。在实际使用中，你可以用它来 **管理文档与记录（ECM）、借助内置的 BPMN 设计器自动化业务流程与审批流程，并以极少代码甚至无需代码构建内部应用——门户、CRM、案件管理**，并内置了用户账户、角色和权限。它是专有 ECM/BPM 套件的自托管替代方案，适合从业务分析师到开发者的所有人。
 

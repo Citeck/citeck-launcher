@@ -12,7 +12,7 @@
 
 **Install and run a full Citeck platform — as a desktop app on your computer, or with a single command on a server.**
 
-Citeck Launcher is the official installer and container manager for the **Citeck** low-code BPM/ECM platform. A single ~24 MB binary works as a command-line tool, a background daemon, and a cross-platform desktop app — running every Citeck service (Keycloak, PostgreSQL, RabbitMQ, and the Citeck web apps) as a Docker container and grouping them into isolated namespaces.
+Citeck Launcher is the official installer and container manager for the **Citeck** low-code BPM/ECM platform. A single ~24 MB binary works as a command-line tool, a background daemon, and a cross-platform desktop app — running every Citeck service (Keycloak, PostgreSQL, RabbitMQ, and the Citeck web apps) as a Docker container and grouping them into isolated namespaces. Which apps and versions to run is defined by a **bundle** (for example, a Community or Enterprise release).
 
 [Citeck](https://github.com/Citeck) is an open-source platform for building business applications, combining **no-code, low-code, and pro-code** approaches to manage content and processes. In practice, you use it to **manage documents and records (ECM), automate business processes and approval workflows with a built-in BPMN designer, and build internal apps — portals, CRM, case management — with little or no code**, with user accounts, roles, and permissions built in. It's a self-hosted alternative to proprietary ECM/BPM suites, suitable for everyone from business analysts to developers.
 
