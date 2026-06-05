@@ -241,8 +241,21 @@ func (d *Daemon) rebuildAuthCaches() {
 
 // Start runs the daemon.
 //
-//nolint:gocyclo,nestif // Start() orchestrates the full daemon lifecycle: storage, Docker, config, TLS, ACME, runtime, and HTTP servers
-func Start(opts StartOptions) error {
+// setupDaemonLogging applies desktop mode and initializes the process-global
+// rotating log writer + slog default. ORDER MATTERS: desktop mode MUST be
+// applied before any filesystem path is resolved, because config.LogDir() /
+// DaemonLogPath() (and every other path) branch on IsDesktopMode(). In the
+// desktop thin-wrapper the daemon is a separate child of the SERVER binary
+// launched with --desktop, so IsDesktopMode() is false on entry. If the log
+// writer were initialized first it would target the SERVER log path
+// (/opt/citeck/log), the open would fail for an unprivileged desktop user,
+// RotatingWriter would swallow the error, and the desktop daemon would write
+// no daemon.log at all.
+func setupDaemonLogging(opts StartOptions) {
+	if opts.Desktop {
+		config.SetDesktopMode(true)
+	}
+
 	// Set up log rotation once — survives daemon restarts in desktop mode.
 	// The RotatingWriter and slog default are process-global; re-creating them
 	// on every Start() would close the previous writer while the new logger
@@ -260,10 +273,15 @@ func Start(opts StartOptions) error {
 	}
 	logHandler := fsutil.NewCleanLogHandler(logDest, &globalLogLevel)
 	slog.SetDefault(slog.New(logHandler))
+}
 
-	if opts.Desktop {
-		config.SetDesktopMode(true)
-	}
+// Start runs the full daemon lifecycle — logging, storage, Docker, config,
+// TLS, ACME, runtime, and the HTTP/Unix-socket servers — and blocks until
+// shutdown is requested.
+//
+//nolint:gocyclo,nestif // Start orchestrates the full daemon lifecycle
+func Start(opts StartOptions) error {
+	setupDaemonLogging(opts)
 
 	slog.Info("Starting daemon",
 		"foreground", opts.Foreground,
