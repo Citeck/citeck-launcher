@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/bundle"
@@ -679,6 +680,13 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	// imported-<nsID> marker on success so a later restart's importSnapshotIfNeeded
 	// skips re-import and never overwrites user data.
 	if nsCfg.Snapshot != "" {
+		// The import (download + volume restore) can run for minutes, exceeding
+		// the server's WriteTimeout — lift the write deadline for this request so
+		// the response isn't cut off mid-import (same approach as the log-follow
+		// handler in routes_config.go). The Web UI applies its own longer client
+		// timeout for snapshot-backed creates.
+		rc := http.NewResponseController(w)
+		_ = rc.SetWriteDeadline(time.Time{})
 		d.downloadAndImportSnapshot(nsCfg.Snapshot, wsID, nsCfg.ID)
 	}
 
