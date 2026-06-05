@@ -28,6 +28,16 @@ contents:
     dst: /usr/share/icons/hicolor/256x256/apps/citeck-launcher.png
     file_info:
       mode: 0644
+  # Legacy flat fallback. The icon-theme (hicolor) cache is only rebuilt in
+  # postinstall, AFTER dpkg unpacks the files — so a desktop shell (e.g.
+  # Cinnamon's menu) that re-reads the new .desktop during that window resolves
+  # Icon=citeck-launcher against a stale theme cache, finds nothing, and caches
+  # the miss ("icon disappears after install"). /usr/share/pixmaps has no theme
+  # cache, so it resolves immediately and closes that race.
+  - src: ./icons/logo.png
+    dst: /usr/share/pixmaps/citeck-launcher.png
+    file_info:
+      mode: 0644
 
 # Refresh the icon cache + desktop database on install / upgrade / removal so the
 # menu entry and its icon appear without a re-login. Shared by deb and rpm.
