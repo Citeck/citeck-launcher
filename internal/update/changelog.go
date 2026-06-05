@@ -3,6 +3,7 @@ package update
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 )
@@ -35,8 +36,23 @@ var supportedLocales = []string{"en", "ru", "zh", "es", "de", "fr", "pt", "ja"}
 // (current, latest], and returns their notes newest-first. Per release it fetches
 // <ver>/<locale>.md, falling back to <ver>/en.md when the locale file is absent.
 func changelog(ctx context.Context, c *client, current string, latest Latest, locale string) ([]ReleaseNote, error) {
+	// Nothing newer than the running version → the (current, latest] range is
+	// empty, so there is no changelog to show. Skip the fetch entirely: this is
+	// the common "you are up to date" case, and the resolved latest tag may be
+	// an older release that predates changelog/index.json (which would 404).
+	// `/releases/latest` excludes pre-releases, so a user running a pre-release
+	// build legitimately sits ahead of the latest stable tag here.
+	if !Greater(latest.Version, current) {
+		return []ReleaseNote{}, nil
+	}
+
 	raw, err := c.fetchRaw(ctx, latest.Tag, "changelog/index.json")
 	if err != nil {
+		// A missing index (a tag from before the changelog feature) is not a
+		// real error — show an empty changelog rather than a scary fetch error.
+		if errors.Is(err, errNotFound) {
+			return []ReleaseNote{}, nil
+		}
 		return nil, fmt.Errorf("fetch changelog index: %w", err)
 	}
 	var idx []indexEntry

@@ -2,6 +2,7 @@ package update
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,11 @@ import (
 	"path/filepath"
 	"time"
 )
+
+// errNotFound wraps a raw fetch that returned 404 so callers can distinguish a
+// genuinely-absent file (e.g. a tag predating the changelog feature) from a
+// transport/other-status error and degrade gracefully instead of surfacing it.
+var errNotFound = errors.New("not found")
 
 const (
 	defaultRepo       = "Citeck/citeck-launcher"
@@ -86,6 +92,9 @@ func (c *client) fetchRaw(ctx context.Context, ref, repoPath string) ([]byte, er
 		return nil, fmt.Errorf("fetch %s: %w", repoPath, err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("fetch %s: %w", repoPath, errNotFound)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("fetch %s: status %d", repoPath, resp.StatusCode)
 	}
