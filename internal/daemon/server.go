@@ -1137,6 +1137,7 @@ func (d *Daemon) removeSubscriber(ch chan api.EventDto) {
 func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	// Daemon
 	mux.HandleFunc("GET "+api.DaemonStatus, d.handleDaemonStatus)
+	mux.HandleFunc("PUT "+api.UIPrefs, d.handlePutUIPrefs)
 	mux.HandleFunc("POST "+api.DaemonShutdown, d.handleDaemonShutdown)
 	mux.HandleFunc("PUT /api/v1/daemon/loglevel", d.handleSetLogLevel)
 	mux.HandleFunc("GET "+api.DaemonLogs, d.handleDaemonLogs)

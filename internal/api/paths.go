@@ -12,6 +12,7 @@ const (
 	DaemonLogs     = APIV1 + "/daemon/logs"
 	Config         = APIV1 + "/config"
 	ConfigApplied  = APIV1 + "/config/applied"
+	UIPrefs        = APIV1 + "/ui-prefs"
 
 	Namespace               = APIV1 + "/namespace"
 	NamespaceStart          = APIV1 + "/namespace/start"

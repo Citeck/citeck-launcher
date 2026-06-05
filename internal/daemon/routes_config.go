@@ -19,7 +19,26 @@ import (
 	"github.com/citeck/citeck-launcher/internal/namespace"
 )
 
+// uiPrefThemeKey / uiPrefLocaleKey are the launcher-state keys under which the
+// web UI's theme and locale are persisted server-side (survives a desktop
+// webview localStorage wipe). The locale here takes precedence over the
+// daemon.yml locale once the user has changed it in the UI.
+const (
+	uiPrefThemeKey  = "ui.theme"
+	uiPrefLocaleKey = "ui.locale"
+)
+
 func (d *Daemon) handleDaemonStatus(w http.ResponseWriter, r *http.Request) {
+	locale := d.daemonCfg.Locale
+	var theme string
+	if d.store != nil {
+		if v, err := d.store.GetStateValue(uiPrefLocaleKey); err == nil && v != "" {
+			locale = v
+		}
+		if v, err := d.store.GetStateValue(uiPrefThemeKey); err == nil {
+			theme = v
+		}
+	}
 	writeJSON(w, api.DaemonStatusDto{
 		Running:    true,
 		PID:        int64(os.Getpid()),
@@ -28,8 +47,52 @@ func (d *Daemon) handleDaemonStatus(w http.ResponseWriter, r *http.Request) {
 		Workspace:  d.workspaceID,
 		SocketPath: d.socketPath,
 		Desktop:    config.IsDesktopMode(),
-		Locale:     d.daemonCfg.Locale,
+		Locale:     locale,
+		Theme:      theme,
 	})
+}
+
+// uiPrefLocales is the set of locales the UI ships (i18n parity). PUT /ui-prefs
+// rejects anything else so junk can't be persisted into launcher state.
+var uiPrefLocales = map[string]bool{
+	"en": true, "ru": true, "zh": true, "es": true,
+	"de": true, "fr": true, "pt": true, "ja": true,
+}
+
+// handlePutUIPrefs persists the web UI theme/locale server-side. Empty fields
+// are left unchanged. Theme must be "dark"|"light"; locale must be a shipped
+// locale. See UIPrefsDto.
+func (d *Daemon) handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
+	var req api.UIPrefsDto
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeInvalidRequest, "invalid request body")
+		return
+	}
+	if d.store == nil {
+		writeError(w, http.StatusServiceUnavailable, "no storage backend")
+		return
+	}
+	if req.Theme != "" {
+		if req.Theme != "dark" && req.Theme != "light" {
+			writeErrorCode(w, http.StatusBadRequest, api.ErrCodeInvalidRequest, "theme must be \"dark\" or \"light\"")
+			return
+		}
+		if err := d.store.SetStateValue(uiPrefThemeKey, req.Theme); err != nil {
+			writeInternalError(w, fmt.Errorf("save theme: %w", err))
+			return
+		}
+	}
+	if req.Locale != "" {
+		if !uiPrefLocales[req.Locale] {
+			writeErrorCode(w, http.StatusBadRequest, api.ErrCodeInvalidRequest, "unknown locale")
+			return
+		}
+		if err := d.store.SetStateValue(uiPrefLocaleKey, req.Locale); err != nil {
+			writeInternalError(w, fmt.Errorf("save locale: %w", err))
+			return
+		}
+	}
+	writeJSON(w, api.ActionResultDto{Success: true, Message: "ui prefs saved"})
 }
 
 func (d *Daemon) handleDaemonShutdown(w http.ResponseWriter, r *http.Request) {

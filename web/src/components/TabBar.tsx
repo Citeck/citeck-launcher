@@ -4,6 +4,7 @@ import { usePanelStore } from '../lib/panels'
 import { useDashboardStore } from '../lib/store'
 import { useActiveWorkspaceId, useIsDesktop, useDaemonStatusStore } from '../lib/daemonStatus'
 import { useTranslation, LOCALES, useI18nStore } from '../lib/i18n'
+import { useThemeStore } from '../lib/theme'
 import { X, Settings, Sun, Moon, ChevronDown } from 'lucide-react'
 import { useEffect, useState, useRef } from 'react'
 import { useContextMenu } from '../hooks/useContextMenu'
@@ -160,27 +161,15 @@ export function TabBar() {
 
 function ThemeToggle() {
   const { t } = useTranslation()
-  const [isDark, setIsDark] = useState(() => {
-    try {
-      const stored = localStorage.getItem('theme')
-      if (stored) return stored === 'dark'
-      return !window.matchMedia?.('(prefers-color-scheme: light)').matches
-    } catch {
-      return true // default to dark
-    }
-  })
-
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light')
-    localStorage.setItem('theme', isDark ? 'dark' : 'light')
-  }, [isDark])
+  const isDark = useThemeStore((s) => s.isDark)
+  const toggle = useThemeStore((s) => s.toggle)
 
   return (
     <button
       type="button"
       className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted"
       title={isDark ? t('theme.toLight') : t('theme.toDark')}
-      onClick={() => setIsDark((d) => !d)}
+      onClick={toggle}
     >
       {isDark ? <Sun size={14} /> : <Moon size={14} />}
     </button>

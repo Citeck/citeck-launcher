@@ -3,6 +3,7 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { useDashboardStore } from './lib/store'
 import { useDaemonStatusStore, useIsDesktop } from './lib/daemonStatus'
 import { useI18nStore, type Locale } from './lib/i18n'
+import { useThemeStore, THEME_STORAGE_KEY } from './lib/theme'
 import { primeDesktopModeCache, detectInstalledButStopped } from './lib/desktop'
 import { Dashboard } from './pages/Dashboard'
 import { AppDetail } from './pages/AppDetail'
@@ -36,8 +37,14 @@ function MainLayout() {
   useEffect(() => {
     primeDesktopModeCache()
     useDaemonStatusStore.getState().fetch().then((s) => {
+      // Re-apply server-persisted prefs only when the local (fast-path) copy is
+      // missing — i.e. after a desktop webview localStorage wipe. A present
+      // local value is the user's explicit choice and wins.
       if (s?.locale && !localStorage.getItem('citeck-locale')) {
-        useI18nStore.getState().setLocale(s.locale as Locale)
+        useI18nStore.getState().setLocale(s.locale as Locale, false)
+      }
+      if (s?.theme && !localStorage.getItem(THEME_STORAGE_KEY)) {
+        useThemeStore.getState().setDark(s.theme === 'dark', false)
       }
     })
   }, [])

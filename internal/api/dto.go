@@ -61,6 +61,15 @@ type DaemonStatusDto struct {
 	SocketPath string `json:"socketPath"`
 	Desktop    bool   `json:"desktop"`
 	Locale     string `json:"locale,omitempty"`
+	Theme      string `json:"theme,omitempty"` // "dark" | "light" — persisted UI theme
+}
+
+// UIPrefsDto is the body of PUT /ui-prefs: user UI preferences persisted
+// server-side so a desktop webview localStorage wipe (e.g. after an update)
+// doesn't reset them. Empty fields are left unchanged.
+type UIPrefsDto struct {
+	Theme  string `json:"theme,omitempty"`  // "dark" | "light"
+	Locale string `json:"locale,omitempty"` // en, ru, zh, es, de, fr, pt, ja
 }
 
 // NamespaceDto represents a namespace with its apps and links.

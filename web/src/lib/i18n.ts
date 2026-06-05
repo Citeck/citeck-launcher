@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { putUIPrefs } from './api'
 import en from '../locales/en'
 import ru from '../locales/ru'
 import zh from '../locales/zh'
@@ -47,7 +48,7 @@ function detectLocale(): Locale {
 interface I18nState {
   locale: Locale
   translations: Translations
-  setLocale: (locale: Locale) => void
+  setLocale: (locale: Locale, persist?: boolean) => void
 }
 
 const initialLocale = detectLocale()
@@ -56,11 +57,15 @@ export const useI18nStore = create<I18nState>((set, get) => ({
   locale: initialLocale,
   translations: allTranslations[initialLocale],
 
-  setLocale: (locale: Locale) => {
+  setLocale: (locale: Locale, persist = true) => {
     if (locale === get().locale) return
     try {
       localStorage.setItem(STORAGE_KEY, locale)
     } catch { /* ignore */ }
+    // Persist server-side too so a desktop webview localStorage wipe doesn't
+    // reset the language. persist=false when applying a value that just came
+    // FROM the server (App bootstrap) to avoid echoing it straight back.
+    if (persist) void putUIPrefs({ locale })
     set({ locale, translations: allTranslations[locale] })
   },
 }))

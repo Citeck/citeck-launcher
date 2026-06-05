@@ -205,6 +205,24 @@ export async function postWorkspaceUpdate(): Promise<ActionResultDto> {
   return res.json()
 }
 
+/**
+ * Persist UI preferences (theme / locale) server-side so a desktop webview
+ * localStorage wipe (e.g. after a daemon auto-update) doesn't reset them.
+ * Fire-and-forget from the caller's perspective — failures are swallowed so a
+ * theme toggle never surfaces an error toast.
+ */
+export async function putUIPrefs(prefs: { theme?: string; locale?: string }): Promise<void> {
+  try {
+    await fetchWithTimeout(`${API_BASE}/ui-prefs`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
+      body: JSON.stringify(prefs),
+    })
+  } catch {
+    /* best-effort: prefs also live in localStorage as the fast path */
+  }
+}
+
 // Multi-workspace CRUD + activate (desktop-only — server returns 404).
 // listWorkspaces swallows 404 and returns [] so callers in server mode can
 // transparently render "no workspaces" instead of branching on mode.

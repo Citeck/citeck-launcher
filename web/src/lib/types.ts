@@ -85,6 +85,7 @@ export interface DaemonStatusDto {
   socketPath: string
   desktop: boolean
   locale?: string
+  theme?: string
 }
 
 export interface EventDto {
