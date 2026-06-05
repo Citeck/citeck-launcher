@@ -31,7 +31,7 @@ Il existe deux façons de l'exécuter — choisissez celle qui correspond à **l
 
 > **À noter :** le démarrage rapide `curl … | bash` et la CLI `citeck` présentés dans ce README concernent les **installations sur serveur**. Sur votre propre ordinateur, exécutez Citeck via l'**application de bureau** — tout s'y fait depuis l'interface.
 
-**Prérequis :** Docker ; environ **16 Go** de RAM pour l’édition Community (**24–32 Go** pour les ~24 services d’Enterprise) ; et des dizaines de Go de disque pour les images.
+**Prérequis :** Docker ; environ **16 Go** de RAM pour l’édition Community (**24 Go** pour les ~24 services d’Enterprise) ; et des dizaines de Go de disque pour les images.
 
 ## Application de bureau
 
