@@ -8,7 +8,7 @@
 [![Downloads](https://img.shields.io/github/downloads/Citeck/citeck-launcher/total)](https://github.com/Citeck/citeck-launcher/releases)
 [![License: LGPL v3](https://img.shields.io/badge/license-LGPL--3.0-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
 ![Platforms](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-lightgrey)
-[![Documentation](https://img.shields.io/badge/docs-readthedocs-8CA1AF?logo=readthedocs)](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server.html)
+[![Documentation](https://img.shields.io/badge/docs-readthedocs-8CA1AF?logo=readthedocs)](https://citeck-ecos.readthedocs.io/en/latest/)
 
 **Installez et exécutez une plateforme Citeck complète — en tant qu'application de bureau sur votre ordinateur, ou avec une seule commande sur un serveur.**
 
@@ -24,7 +24,7 @@ Il existe deux façons de l'exécuter — choisissez celle qui correspond à **l
 |---|---|---|
 | Pour | Votre propre ordinateur | Un serveur / une VM Linux (généralement via SSH) |
 | Installation | Téléchargez un installateur, suivez l'assistant | Une seule commande `curl … \| bash` |
-| Interface Web | Fenêtre native intégrée | Servie via HTTPS (avec TLS / Let's Encrypt) |
+| Interface | Fenêtre native de l'application (GUI) | Terminal — CLI `citeck` + assistant de configuration (TUI) |
 | Commencez ici | [Application de bureau](#application-de-bureau) | [Installation sur un serveur](#installation-sur-un-serveur) |
 
 > **À noter :** le démarrage rapide `curl … | bash` et la CLI `citeck` présentés dans ce README concernent les **installations sur serveur**. Sur votre propre ordinateur, exécutez Citeck via l'**application de bureau** — tout s'y fait depuis l'interface.
@@ -33,7 +33,7 @@ Docker est requis dans les deux cas.
 
 ## Application de bureau
 
-L'**application de bureau** exécute Citeck sur votre propre machine Windows, macOS ou Linux — le même démon et la même interface Web encapsulés dans une fenêtre native (Wails). L'application supervise le démon en tant que processus enfant, de sorte que vos conteneurs continuent de fonctionner même lorsque la fenêtre est fermée.
+L'**application de bureau** exécute Citeck sur votre propre machine Windows, macOS ou Linux : une fenêtre d'application classique, sans ligne de commande. Citeck continue de fonctionner en arrière-plan même après la fermeture de la fenêtre.
 
 Les installateurs de bureau sont joints à chaque [version GitHub](https://github.com/Citeck/citeck-launcher/releases) — téléchargez celui correspondant à votre plateforme :
 
@@ -47,7 +47,7 @@ Chaque installateur dispose d'un fichier `.sha256` associé pour la vérificatio
 
 ## Installation sur un serveur
 
-> **Pour un serveur ou une VM Linux** (à exécuter via SSH). Sur votre propre ordinateur, exécutez Citeck via l'[application de bureau](#application-de-bureau).
+> **Pour un serveur ou une VM Linux** — exécutez ces étapes sur le serveur, via SSH.
 
 Prérequis : un hôte Linux avec Docker en cours d'exécution.
 
@@ -57,9 +57,7 @@ curl -fsSL https://github.com/Citeck/citeck-launcher/releases/latest/download/in
 
 Le script d'installation télécharge la dernière version pour votre plateforme et l'installe dans `/usr/local/bin/`. L'assistant configure ensuite l'espace de noms et démarre la plateforme.
 
-> **Important :** La commande `citeck install` est un **assistant TUI interactif** et nécessite un véritable terminal. L'assistant affiche le mot de passe administrateur généré **une seule fois** à la fin — copiez-le et enregistrez-le, car vous ne pourrez pas le récupérer après avoir fermé l'écran. Si vous le perdez, réinitialisez-le via `citeck setup admin-password` (voir la [référence des commandes](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html)). Appuyer sur `Ctrl+C` avant l'étape finale « écrire la configuration » quitte sans effectuer de modifications ; en cas d'interruption ultérieure, vérifiez `/opt/citeck/conf/` pour un état partiel.
->
-> L'installation automatisée / non interactive est une fonctionnalité à venir — veuillez ouvrir un ticket si vous en avez besoin.
+> **Important :** La commande `citeck install` est un **assistant TUI interactif** et nécessite un véritable terminal. L'assistant affiche le mot de passe administrateur généré **une seule fois** à la fin — copiez-le et enregistrez-le, car vous ne pourrez pas le récupérer après avoir fermé l'écran. Si vous le perdez, réinitialisez-le via `citeck setup admin-password` (voir la [référence des commandes](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html)).
 
 Pour **mettre à niveau** une installation serveur existante, exécutez la même commande en une ligne — le script détecte la version installée, propose la mise à jour, arrête le démon et remplace le binaire (une sauvegarde est conservée dans `/usr/local/bin/citeck.bak`, restaurable via `citeck install --rollback`).
 
@@ -125,7 +123,7 @@ Drapeaux globaux : `--format (text|json)`, `--yes/-y`.
 ## Documentation
 
 - **Mode serveur :** [Documentation du mode serveur du launcher](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server.html) — installation, configuration (`daemon.yml` / `namespace.yml`) et la [référence des commandes](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html).
-- **Application de bureau :** autonome — configurez-la via l'assistant et l'interface de l'application ; aucune configuration séparée n'est nécessaire.
+- **Application de bureau :** [Documentation du mode bureau](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher.html).
 
 ## Licence
 

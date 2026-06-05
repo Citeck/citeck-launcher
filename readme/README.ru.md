@@ -8,7 +8,7 @@
 [![Downloads](https://img.shields.io/github/downloads/Citeck/citeck-launcher/total)](https://github.com/Citeck/citeck-launcher/releases)
 [![License: LGPL v3](https://img.shields.io/badge/license-LGPL--3.0-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
 ![Platforms](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-lightgrey)
-[![Documentation](https://img.shields.io/badge/docs-readthedocs-8CA1AF?logo=readthedocs)](https://citeck-ecos.readthedocs.io/ru/latest/admin/launch_setup/launcher_server.html)
+[![Documentation](https://img.shields.io/badge/docs-readthedocs-8CA1AF?logo=readthedocs)](https://citeck-ecos.readthedocs.io/ru/latest/%D0%92%D0%B2%D0%B5%D0%B4%D0%B5%D0%BD%D0%B8%D0%B5.html)
 
 **Установите и запустите полную платформу Citeck — как десктопное приложение на своём компьютере или одной командой на сервере.**
 
@@ -24,7 +24,7 @@ Citeck Launcher — это официальный установщик и мен
 |---|---|---|
 | Для кого | Ваш собственный компьютер | Linux-сервер / ВМ (обычно по SSH) |
 | Установка | Скачать установщик, пройти мастер | Одна команда `curl … \| bash` |
-| Веб-интерфейс | Встроенное нативное окно | Раздаётся по HTTPS (с TLS / Let's Encrypt) |
+| Интерфейс | Нативное окно приложения (GUI) | Терминал — CLI `citeck` + мастер настройки (TUI) |
 | Начать здесь | [Десктопное приложение](#десктопное-приложение) | [Установка на сервер](#установка-на-сервер) |
 
 > **Обратите внимание:** быстрый старт `curl … | bash` и CLI `citeck` в этом README предназначены для **установок на сервер**. На своём компьютере запускайте Citeck через **Десктопное приложение** — там всё делается из интерфейса.
@@ -33,7 +33,7 @@ Citeck Launcher — это официальный установщик и мен
 
 ## Десктопное приложение
 
-**Десктопное приложение** запускает Citeck на вашей собственной машине с Windows, macOS или Linux — тот же демон и веб-интерфейс в нативном окне (Wails). Приложение управляет демоном как дочерним процессом, поэтому ваши контейнеры продолжают работать даже при закрытии окна.
+**Десктопное приложение** запускает Citeck на вашем компьютере с Windows, macOS или Linux — обычное окно приложения, без командной строки. Citeck продолжает работать в фоне даже после закрытия окна.
 
 Установщики для десктопа прикладываются к каждому [релизу на GitHub](https://github.com/Citeck/citeck-launcher/releases) — скачайте файл для своей платформы:
 
@@ -47,7 +47,7 @@ Citeck Launcher — это официальный установщик и мен
 
 ## Установка на сервер
 
-> **Для Linux-сервера или ВМ** (запуск по SSH). На своём компьютере запускайте Citeck через [Десктопное приложение](#десктопное-приложение).
+> **Для Linux-сервера или ВМ** — выполняйте эти шаги на сервере, по SSH.
 
 Требования: хост с Linux и запущенным Docker.
 
@@ -57,9 +57,7 @@ curl -fsSL https://github.com/Citeck/citeck-launcher/releases/latest/download/in
 
 Скрипт установки скачивает последний релиз для вашей платформы и устанавливает в `/usr/local/bin/`. Затем мастер настроит неймспейс и запустит платформу.
 
-> **Важно:** `citeck install` — это **интерактивный TUI-мастер**, требующий настоящего терминала. В конце мастер **один раз** выводит сгенерированный пароль администратора — обязательно скопируйте и сохраните его, после закрытия экрана его нельзя будет восстановить. Если потеряли, сбросьте через `citeck setup admin-password` (см. [справочник команд](https://citeck-ecos.readthedocs.io/ru/latest/admin/launch_setup/launcher_server/commands.html)). Нажатие `Ctrl+C` до шага «запись конфигурации» завершает мастер без внесения изменений; при прерывании позже проверьте `/opt/citeck/conf/` на частичные файлы.
->
-> Автоматическая (неинтерактивная) установка — планируемая функция. Если она вам нужна, создайте issue.
+> **Важно:** `citeck install` — это **интерактивный TUI-мастер**, требующий настоящего терминала. В конце мастер **один раз** выводит сгенерированный пароль администратора — обязательно скопируйте и сохраните его, после закрытия экрана его нельзя будет восстановить. Если потеряли, сбросьте через `citeck setup admin-password` (см. [справочник команд](https://citeck-ecos.readthedocs.io/ru/latest/admin/launch_setup/launcher_server/commands.html)).
 
 Для **обновления** уже установленной серверной версии выполните тот же one-liner — скрипт определит установленную версию, спросит подтверждение, остановит демон и заменит бинарник (бэкап сохраняется в `/usr/local/bin/citeck.bak` и восстанавливается через `citeck install --rollback`).
 
@@ -125,7 +123,7 @@ citeck uninstall [--delete-data]          Remove systemd service, binary, and (o
 ## Документация
 
 - **Серверный режим:** [документация по серверному режиму лаунчера](https://citeck-ecos.readthedocs.io/ru/latest/admin/launch_setup/launcher_server.html) — установка, конфигурация (`daemon.yml` / `namespace.yml`) и [справочник команд](https://citeck-ecos.readthedocs.io/ru/latest/admin/launch_setup/launcher_server/commands.html).
-- **Десктопное приложение:** самодостаточно — настраивается через собственный мастер и интерфейс приложения; отдельная конфигурация не нужна.
+- **Десктопное приложение:** [Документация по десктопному режиму](https://citeck-ecos.readthedocs.io/ru/latest/admin/launch_setup/launcher.html).
 
 ## Лицензия
 
