@@ -8,13 +8,15 @@
 [![Downloads](https://img.shields.io/github/downloads/Citeck/citeck-launcher/total)](https://github.com/Citeck/citeck-launcher/releases)
 [![License: LGPL v3](https://img.shields.io/badge/license-LGPL--3.0-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
 ![Platforms](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-lightgrey)
-[![Documentation](https://img.shields.io/badge/docs-readthedocs-8CA1AF?logo=readthedocs)](https://citeck-ecos.readthedocs.io/en/latest/)
+[![Documentation](https://img.shields.io/badge/docs-readthedocs-8CA1AF?logo=readthedocs)](https://citeck-ecos.readthedocs.io/en/latest/index.html)
 
 **Installez et exécutez une plateforme Citeck complète — en tant qu'application de bureau sur votre ordinateur, ou avec une seule commande sur un serveur.**
 
 Citeck Launcher est l'installateur officiel et le gestionnaire de conteneurs de la plateforme BPM/ECM low-code **Citeck**. Un unique binaire d'environ 24 Mo fonctionne comme outil en ligne de commande, comme démon en arrière-plan et comme application de bureau multiplateforme — exécutant chaque service Citeck (Keycloak, PostgreSQL, RabbitMQ et les applications web Citeck) en tant que conteneur Docker et les regroupant dans des espaces de noms isolés.
 
-[Citeck](https://github.com/Citeck) est une plateforme low-code open source pour la gestion de contenu d'entreprise (Enterprise Content Management, ECM) et la gestion des processus métier (Business Process Management, BPM).
+[Citeck](https://github.com/Citeck) est une plateforme open source de création d'applications métier, combinant les approches **no-code, low-code et pro-code** pour gérer le contenu et les processus. Concrètement, vous l'utilisez pour **gérer des documents et des enregistrements (ECM), automatiser des processus métier et des flux d'approbation grâce à un concepteur BPMN intégré, et créer des applications internes — portails, CRM, gestion de dossiers — avec peu ou pas de code**, avec comptes utilisateurs, rôles et permissions intégrés. C'est une alternative auto-hébergée aux suites ECM/BPM propriétaires, adaptée à tous, des analystes métier aux développeurs.
+
+L'édition **Community** est entièrement open source et gratuite — elle couvre les fonctionnalités de base de la plateforme et est conçue pour être conviviale aux extensions de tout type. Pour des configurations plus exigeantes, l'édition **Enterprise** commerciale ajoute un support professionnel et des fonctionnalités d'entreprise supplémentaires. Ce launcher installe l'une ou l'autre édition. Pour toute question ou une consultation, [contactez l'équipe Citeck](https://www.citeck.ru/contacts/).
 
 ## Bureau ou serveur ?
 
@@ -29,7 +31,7 @@ Il existe deux façons de l'exécuter — choisissez celle qui correspond à **l
 
 > **À noter :** le démarrage rapide `curl … | bash` et la CLI `citeck` présentés dans ce README concernent les **installations sur serveur**. Sur votre propre ordinateur, exécutez Citeck via l'**application de bureau** — tout s'y fait depuis l'interface.
 
-Docker est requis dans les deux cas.
+**Prérequis :** Docker, ainsi qu'une machine raisonnablement performante — une pile complète exécute de nombreux conteneurs (authentification, bases de données, un broker de messages et les applications web Citeck). Prévoyez environ **16 Go de RAM** pour l'édition Community (24–32 Go pour les ~24 services de l'édition Enterprise) et des dizaines de Go de disque pour les images. Il s'agit d'une plateforme complète, et non d'un outil léger.
 
 ## Application de bureau
 
@@ -127,4 +129,4 @@ Drapeaux globaux : `--format (text|json)`, `--yes/-y`.
 
 ## Licence
 
-Voir [LICENSE](../LICENSE).
+Citeck Launcher est un logiciel open source sous licence **LGPL-3.0** — voir [LICENSE](../LICENSE).

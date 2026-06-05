@@ -8,13 +8,15 @@
 [![Downloads](https://img.shields.io/github/downloads/Citeck/citeck-launcher/total)](https://github.com/Citeck/citeck-launcher/releases)
 [![License: LGPL v3](https://img.shields.io/badge/license-LGPL--3.0-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
 ![Platforms](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-lightgrey)
-[![Documentation](https://img.shields.io/badge/docs-readthedocs-8CA1AF?logo=readthedocs)](https://citeck-ecos.readthedocs.io/en/latest/)
+[![Documentation](https://img.shields.io/badge/docs-readthedocs-8CA1AF?logo=readthedocs)](https://citeck-ecos.readthedocs.io/en/latest/index.html)
 
 **Install and run a full Citeck platform — as a desktop app on your computer, or with a single command on a server.**
 
 Citeck Launcher is the official installer and container manager for the **Citeck** low-code BPM/ECM platform. A single ~24 MB binary works as a command-line tool, a background daemon, and a cross-platform desktop app — running every Citeck service (Keycloak, PostgreSQL, RabbitMQ, and the Citeck web apps) as a Docker container and grouping them into isolated namespaces.
 
-[Citeck](https://github.com/Citeck) is an open-source low-code platform for Enterprise Content Management (ECM) and Business Process Management (BPM).
+[Citeck](https://github.com/Citeck) is an open-source platform for building business applications, combining **no-code, low-code, and pro-code** approaches to manage content and processes. In practice, you use it to **manage documents and records (ECM), automate business processes and approval workflows with a built-in BPMN designer, and build internal apps — portals, CRM, case management — with little or no code**, with user accounts, roles, and permissions built in. It's a self-hosted alternative to proprietary ECM/BPM suites, suitable for everyone from business analysts to developers.
+
+The **Community** edition is fully open source and free — it covers the platform's core functionality and is designed to be friendly to extensions of any kind. For more demanding setups, the commercial **Enterprise** edition adds professional support and extra enterprise features. This launcher installs either edition. For questions or a consultation, [get in touch with the Citeck team](https://www.citeck.ru/contacts/).
 
 ## Desktop or server?
 
@@ -29,7 +31,7 @@ There are two ways to run it — pick the one that matches **where** you want Ci
 
 > **Heads-up:** the `curl … | bash` quick start and the `citeck` CLI in this README are for **server installs**. On your own computer, run Citeck through the **Desktop app** — everything there is done from the UI.
 
-Requires Docker either way.
+**Requirements:** Docker, plus a reasonably capable machine — a full stack runs many containers (authentication, databases, a message broker, and the Citeck web apps). Plan for roughly **16 GB RAM** for the Community edition (24–32 GB for Enterprise's ~24 services) and tens of GB of disk for images. This is a full platform, not a lightweight tool.
 
 ## Desktop App
 
@@ -127,4 +129,4 @@ Global flags: `--format (text|json)`, `--yes/-y`.
 
 ## License
 
-See [LICENSE](LICENSE).
+Citeck Launcher is open source under the **LGPL-3.0** license — see [LICENSE](LICENSE).
