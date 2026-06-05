@@ -277,48 +277,17 @@ func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef,
 	// Memory limit
 	var memoryBytes int64
 	if app.Resources != nil && app.Resources.Limits.Memory != "" {
-		memoryBytes = parseMemory(app.Resources.Limits.Memory)
+		memoryBytes = ParseMemory(app.Resources.Limits.Memory)
 	}
 
 	// SHM size
 	var shmSize int64
 	if app.ShmSize != "" {
-		shmSize = parseMemory(app.ShmSize)
+		shmSize = ParseMemory(app.ShmSize)
 	}
 
-	ctrConfig := &container.Config{
-		Image:        app.Image,
-		Env:          env,
-		Cmd:          app.Cmd,
-		ExposedPorts: exposedPorts,
-		Labels:       labels,
-	}
-
-	// Init containers should not have a restart policy — only main containers
-	restartPolicy := container.RestartPolicy{Name: container.RestartPolicyUnlessStopped}
-	if app.IsInit {
-		restartPolicy = container.RestartPolicy{Name: container.RestartPolicyDisabled}
-	}
-
-	hostConfig := &container.HostConfig{
-		Binds:         binds,
-		PortBindings:  portBindings,
-		NetworkMode:   container.NetworkMode(networkName),
-		RestartPolicy: restartPolicy,
-		LogConfig: container.LogConfig{
-			Type: "json-file",
-			Config: map[string]string{
-				"max-size": "50m",
-				"max-file": "3",
-			},
-		},
-	}
-	if memoryBytes > 0 {
-		hostConfig.Memory = memoryBytes
-	}
-	if shmSize > 0 {
-		hostConfig.ShmSize = shmSize
-	}
+	ctrConfig := buildContainerConfig(app, env, exposedPorts, labels)
+	hostConfig := buildHostConfig(app, binds, portBindings, networkName, memoryBytes, shmSize)
 
 	// Network aliases: app name + any additional aliases
 	aliases := make([]string, 0, 1+len(app.NetworkAliases))
@@ -339,6 +308,71 @@ func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef,
 	}
 
 	return resp.ID, nil
+}
+
+// buildContainerConfig assembles the container.Config for app. It sets
+// Hostname to the app name (Kotlin 1.x parity — AppStartAction.withHostName).
+// Docker otherwise defaults the hostname to the container ID, which for images
+// that derive identity from the hostname — notably RabbitMQ, whose node name is
+// rabbit@<hostname> and whose Mnesia data lives under mnesia/rabbit@<hostname>/
+// — means every container recreate lands in a fresh data dir and silently
+// abandons the previous state (users, permissions, queues).
+func buildContainerConfig(
+	app appdef.ApplicationDef,
+	env []string,
+	exposedPorts nat.PortSet,
+	labels map[string]string,
+) *container.Config {
+	return &container.Config{
+		Hostname:     app.Name,
+		Image:        app.Image,
+		Env:          env,
+		Cmd:          app.Cmd,
+		ExposedPorts: exposedPorts,
+		Labels:       labels,
+	}
+}
+
+// buildHostConfig assembles the container.HostConfig for app. Init containers
+// get no restart policy; main containers restart unless-stopped. When a memory
+// limit is set, swap is pinned equal to it (MemorySwap == Memory) so the limit
+// is a hard RAM cap with NO swap — Kotlin 1.x parity (AppStartAction
+// .withMemorySwap(memory)). Docker otherwise defaults MemorySwap to 2×Memory,
+// letting a capped container spill into swap (thrashing instead of a clean cap;
+// bad for brokers and DBs).
+func buildHostConfig(
+	app appdef.ApplicationDef,
+	binds []string,
+	portBindings nat.PortMap,
+	networkName string,
+	memoryBytes, shmSize int64,
+) *container.HostConfig {
+	restartPolicy := container.RestartPolicy{Name: container.RestartPolicyUnlessStopped}
+	if app.IsInit {
+		restartPolicy = container.RestartPolicy{Name: container.RestartPolicyDisabled}
+	}
+
+	hostConfig := &container.HostConfig{
+		Binds:         binds,
+		PortBindings:  portBindings,
+		NetworkMode:   container.NetworkMode(networkName),
+		RestartPolicy: restartPolicy,
+		LogConfig: container.LogConfig{
+			Type: "json-file",
+			Config: map[string]string{
+				"max-size": "50m",
+				"max-file": "3",
+			},
+		},
+	}
+	if memoryBytes > 0 {
+		hostConfig.Memory = memoryBytes
+		hostConfig.MemorySwap = memoryBytes
+	}
+	if shmSize > 0 {
+		hostConfig.ShmSize = shmSize
+	}
+	return hostConfig
 }
 
 // StartContainer starts a container by ID.
@@ -713,8 +747,11 @@ func (c *Client) WaitForContainerExit(ctx context.Context, containerID string, t
 	}
 }
 
-// parseMemory converts memory strings like "128m", "1g" to bytes.
-func parseMemory(s string) int64 {
+// ParseMemory converts memory strings like "128m", "1g" to bytes.
+// Exported so the namespace generator can derive RabbitMQ's
+// total_memory_available_override_value from the same limit string that fills
+// HostConfig.Memory, keeping the two from ever drifting.
+func ParseMemory(s string) int64 {
 	s = strings.TrimSpace(strings.ToLower(s))
 	if s == "" {
 		return 0
