@@ -228,10 +228,26 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
     // idle right after the burst silently truncates the backlog (e.g. 144/200).
     // A non-follow GET closes, flushing the buffer in full; the follow stream
     // then carries only small live increments that each push the previous out.
+    // Schedule a stream reconnect. Used on every non-aborted stream end —
+    // crucially when the daemon closes the follow because the container was
+    // recreated (a restarting app gets a NEW container id), or when the app has
+    // no container yet (mid-restart). Without this the viewer froze at the
+    // restart point ("logs stuck"): `done` just broke the loop and nothing
+    // re-opened the stream on the new container.
+    const reconnect = (delayMs: number) => {
+      if (controller.signal.aborted) return
+      retryTimerRef.current = setTimeout(() => {
+        retryTimerRef.current = null
+        if (activeRef.current) startLiveStream()
+      }, delayMs)
+    }
     const startLiveStream = async () => {
       try {
         const res = await fetch(`${base}?follow=true&tail=0`, { signal: controller.signal })
-        if (!res.ok || !res.body) return
+        if (!res.ok || !res.body) {
+          reconnect(3000) // app likely has no container right now (mid-restart)
+          return
+        }
         const reader = res.body.getReader()
         const decoder = new TextDecoder()
         while (true) {
@@ -239,12 +255,11 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
           if (done) break
           appendChunk(decoder.decode(value, { stream: true }))
         }
+        // Clean end → container was recreated/stopped: resume on the new one.
+        reconnect(1000)
       } catch (e) {
         if (e instanceof DOMException && e.name === 'AbortError') return
-        retryTimerRef.current = setTimeout(() => {
-          retryTimerRef.current = null
-          if (activeRef.current) startLiveStream()
-        }, 3000)
+        reconnect(3000)
       }
     }
 
