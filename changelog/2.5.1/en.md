@@ -3,3 +3,5 @@
 - The namespace created by Quick Start is named "Citeck Default" again, instead of taking the button's label.
 - The dashboard and namespace list now show the real bundle version (for example 2026.3-RC1) instead of "LATEST".
 - "Check for updates" no longer shows a 404 error when you are already on the latest version.
+- Fixed RabbitMQ authentication errors after a server restart ("cannot load menu"): the RabbitMQ container had too little memory to finish setting up its service account and got a new identity on every restart. It now keeps a stable identity and enough memory.
+- The diagnostics archive (dump-system-info) now redacts passwords, tokens and other secrets from container environment variables, logs and config files.
