@@ -31,7 +31,7 @@ There are two ways to run it — pick the one that matches **where** you want Ci
 
 > **Heads-up:** the `curl … | bash` quick start and the `citeck` CLI in this README are for **server installs**. On your own computer, run Citeck through the **Desktop app** — everything there is done from the UI.
 
-**Requirements:** Docker, plus enough RAM for the stack — roughly **16 GB** for the Community edition and **24–32 GB** for Enterprise's ~24 services, plus some tens of GB of disk for images. That's modest for a full ECM/BPM platform of this kind.
+**Requirements:** Docker; about **16 GB** RAM for the Community edition (**24–32 GB** for Enterprise's ~24 services); and tens of GB of disk for images.
 
 ## Desktop App
 
