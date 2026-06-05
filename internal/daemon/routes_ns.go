@@ -229,12 +229,14 @@ func (d *Daemon) handleGetQuickStarts(w http.ResponseWriter, _ *http.Request) {
 
 	var quickStarts []api.QuickStartDto
 	if wsCfg != nil {
+		latestCache := map[string]string{} // repo → resolved version (memoize per request)
 		for _, qs := range wsCfg.QuickStartVariants {
+			ref := resolveQuickStartBundleRef(wsCfg, qs)
 			quickStarts = append(quickStarts, api.QuickStartDto{
 				Name:      qs.Name,
 				Template:  qs.Template,
 				Snapshot:  qs.Snapshot,
-				BundleRef: resolveQuickStartBundleRef(wsCfg, qs),
+				BundleRef: d.resolveDisplayQuickStartRef(ref, latestCache),
 			})
 		}
 	}
@@ -274,11 +276,37 @@ func resolveQuickStartBundleRef(wsCfg *bundle.WorkspaceConfig, qs bundle.QuickSt
 	return ""
 }
 
+// resolveDisplayQuickStartRef substitutes a concrete version for a "repo:LATEST"
+// quick-start ref so the Welcome button subtitle shows e.g. "community:2026.2"
+// instead of "community:LATEST" (Kotlin parity: renderQuickStartButtons resolves
+// via prepareNsDataToCreate → getLatestRepoBundle BEFORE rendering the label).
+// Best-effort: keeps the symbolic ref when LATEST can't be resolved (repo not
+// synced / offline). latestCache memoizes one resolve per repo per request.
+func (d *Daemon) resolveDisplayQuickStartRef(ref string, latestCache map[string]string) string {
+	repo, key, ok := strings.Cut(ref, ":")
+	if !ok || !strings.EqualFold(key, "LATEST") {
+		return ref
+	}
+	if cached, seen := latestCache[repo]; seen {
+		if cached == "" {
+			return ref
+		}
+		return repo + ":" + cached
+	}
+	resolved, ok := d.resolveLatestBundleKey(d.workspaceID, repo, true /* display: no pull */)
+	if !ok {
+		latestCache[repo] = ""
+		return ref
+	}
+	latestCache[repo] = resolved
+	return repo + ":" + resolved
+}
+
 // resolveLatestBundleKey resolves a repo's symbolic "LATEST" to its concrete
 // latest version via the bundle resolver (Kotlin parity:
 // BundlesService.getLatestRepoBundle). Returns ("", false) on any failure
 // (empty repo, offline, repo not yet synced) so the caller keeps "LATEST".
-func (d *Daemon) resolveLatestBundleKey(wsID, repo string) (string, bool) {
+func (d *Daemon) resolveLatestBundleKey(wsID, repo string, offline bool) (string, bool) {
 	if repo == "" {
 		return "", false
 	}
@@ -289,7 +317,9 @@ func (d *Daemon) resolveLatestBundleKey(wsID, repo string) (string, bool) {
 	resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(d.secretService)).
 		WithWorkspaceRepo(lookupWorkspaceRepoOpts(d.store, d.secretService, wsID))
 	// Server mode never auto-pulls git; desktop may pull to find the latest tag.
-	if !config.IsDesktopMode() {
+	// Callers that resolve only for DISPLAY pass offline=true to avoid a git
+	// pull on the request path (the synced repo is read as-is).
+	if offline || !config.IsDesktopMode() {
 		resolver.SetOffline(true)
 	}
 	res, err := resolver.Resolve(bundle.Ref{Repo: repo, Key: "LATEST"})
@@ -624,7 +654,7 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	// (offline / repo not synced) keep "LATEST"; the runtime resolves it at load
 	// and the UI shows the resolved version via namespace.ResolveDisplayBundleRef.
 	if strings.EqualFold(nsCfg.BundleRef.Key, "LATEST") {
-		if resolved, ok := d.resolveLatestBundleKey(createWsID, nsCfg.BundleRef.Repo); ok {
+		if resolved, ok := d.resolveLatestBundleKey(createWsID, nsCfg.BundleRef.Repo, false /* create: pull to pin truly-latest */); ok {
 			nsCfg.BundleRef.Key = resolved
 		}
 	}

@@ -563,3 +563,44 @@ func TestBuildAliasMap_IncludesAlfrescoAliases(t *testing.T) {
 	assert.Equal(t, "alfresco", m["AlfrescoApp"])
 	assert.Equal(t, "alfresco", m["AlfApp"])
 }
+
+// TestResolveBundleRepoDir_StaleManagedRepoDoesNotShadowWorkspace covers the
+// bug where a git clone left in the offline-import location (repo/.git, from an
+// older launcher) permanently shadowed the freshly pulled bundles/workspace, so
+// a newly released bundle version (e.g. 2026.2) never appeared in the picker.
+func TestResolveBundleRepoDir_StaleManagedRepoDoesNotShadowWorkspace(t *testing.T) {
+	dataDir := t.TempDir()
+	repo := BundlesRepo{ID: "community", Path: "community", URL: "https://example/x.git"}
+
+	// Stale managed clone in repo/ (has .git) — only up to 2026.1.1.
+	staleCommunity := filepath.Join(dataDir, "repo", "community")
+	require.NoError(t, os.MkdirAll(staleCommunity, 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dataDir, "repo", ".git"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(staleCommunity, "2026.1.1.yaml"), []byte("k: v\n"), 0o644))
+
+	// Fresh git-pulled workspace repo — has the new 2026.2.
+	wsRepoDir := filepath.Join(dataDir, "bundles", "workspace")
+	freshCommunity := filepath.Join(wsRepoDir, "community")
+	require.NoError(t, os.MkdirAll(freshCommunity, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(freshCommunity, "2026.2.yaml"), []byte("k: v\n"), 0o644))
+
+	got := ResolveBundleRepoDir(dataDir, wsRepoDir, repo)
+	assert.Equal(t, freshCommunity, got, "managed-clone repo/ must not shadow the fresh workspace repo")
+	assert.Contains(t, ListBundleVersions(got), "2026.2")
+}
+
+// A genuine offline ZIP import (repo/ WITHOUT .git) keeps top priority.
+func TestResolveBundleRepoDir_OfflineZipImportKeepsPriority(t *testing.T) {
+	dataDir := t.TempDir()
+	repo := BundlesRepo{ID: "community", Path: "community", URL: "https://example/x.git"}
+
+	importCommunity := filepath.Join(dataDir, "repo", "community")
+	require.NoError(t, os.MkdirAll(importCommunity, 0o755)) // no .git
+	require.NoError(t, os.WriteFile(filepath.Join(importCommunity, "2025.12.yaml"), []byte("k: v\n"), 0o644))
+
+	wsRepoDir := filepath.Join(dataDir, "bundles", "workspace")
+	require.NoError(t, os.MkdirAll(filepath.Join(wsRepoDir, "community"), 0o755))
+
+	got := ResolveBundleRepoDir(dataDir, wsRepoDir, repo)
+	assert.Equal(t, importCommunity, got, "manual ZIP import (no .git) must keep offline-import priority")
+}

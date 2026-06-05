@@ -353,14 +353,25 @@ type ResolveResult struct {
 // resolveWorkspace loads workspace config from local repo/ dir or clones the default workspace repo.
 // Returns (config, repoDir) where repoDir is the directory the config was loaded from.
 func (r *Resolver) resolveWorkspace() (cfg *WorkspaceConfig, repoDir string) {
-	// Priority 1: local repo/ dir (manual setup or workspace import)
 	localRepoDir := filepath.Join(r.dataDir, "repo")
-	if wsCfg := loadWorkspaceConfig(localRepoDir, r.log()); wsCfg != nil {
-		return wsCfg, localRepoDir
+	defaultRepoDir := filepath.Join(r.dataDir, "bundles", "workspace")
+
+	// A repo/ that is itself a git clone (has .git) is a STALE managed clone
+	// left behind by an older launcher — current code only ever extracts a
+	// workspace ZIP here (no .git). It must not shadow the git-pulled
+	// bundles/workspace, or versions added by auto-pull / Force Update (e.g. a
+	// new "2026.2" bundle) would never appear. A genuine offline ZIP import
+	// (no .git) keeps top priority and stays hands-off (never pulled).
+	repoIsManagedClone := dirIsGitClone(localRepoDir)
+
+	// Priority 1: manual / offline ZIP import (repo/ without .git).
+	if !repoIsManagedClone {
+		if wsCfg := loadWorkspaceConfig(localRepoDir, r.log()); wsCfg != nil {
+			return wsCfg, localRepoDir
+		}
 	}
 
 	// Priority 2: cloned workspace repo (git pull if online)
-	defaultRepoDir := filepath.Join(r.dataDir, "bundles", "workspace")
 	if !r.offline {
 		repoURL, repoBranch, pullPeriod, token := r.workspaceRepoSettings()
 		gitCtx, gitCancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -375,6 +386,14 @@ func (r *Resolver) resolveWorkspace() (cfg *WorkspaceConfig, repoDir string) {
 	}
 	if wsCfg := loadWorkspaceConfig(defaultRepoDir, r.log()); wsCfg != nil {
 		return wsCfg, defaultRepoDir
+	}
+
+	// Priority 3: last-resort fallback to a stale managed clone in repo/ when
+	// nothing else loaded (e.g. offline with no bundles/workspace clone yet).
+	if repoIsManagedClone {
+		if wsCfg := loadWorkspaceConfig(localRepoDir, r.log()); wsCfg != nil {
+			return wsCfg, localRepoDir
+		}
 	}
 	return &WorkspaceConfig{}, ""
 }
@@ -875,8 +894,14 @@ type VersionEntry struct {
 // 3) cloned repo (data/bundles/{repoID}/).
 // Exported so the daemon API can reuse the same resolution logic.
 func ResolveBundleRepoDir(dataDir, wsRepoDir string, repo BundlesRepo) string {
-	if repo.Path != "" {
-		// Priority 1: offline import
+	// A repo/ that is a git clone (has .git) is a stale managed clone from an
+	// older launcher (see resolveWorkspace) — it must not shadow the freshly
+	// pulled workspace repo, or new bundle versions never show up. Only a
+	// manual ZIP import (no .git) keeps offline-import priority.
+	offlineImportIsStaleClone := dirIsGitClone(filepath.Join(dataDir, "repo"))
+
+	if repo.Path != "" && !offlineImportIsStaleClone {
+		// Priority 1: offline ZIP import
 		localRepo := filepath.Join(dataDir, "repo", repo.Path)
 		if info, err := os.Stat(localRepo); err == nil && info.IsDir() {
 			return localRepo
@@ -894,7 +919,30 @@ func ResolveBundleRepoDir(dataDir, wsRepoDir string, repo BundlesRepo) string {
 	if repo.Path != "" {
 		dir = filepath.Join(dir, repo.Path)
 	}
+	if _, err := os.Stat(dir); err == nil {
+		return dir
+	}
+	// Priority 4: last-resort fallback to a stale managed clone in repo/ when
+	// no other layout resolved (keeps offline air-gapped clones working).
+	if repo.Path != "" && offlineImportIsStaleClone {
+		localRepo := filepath.Join(dataDir, "repo", repo.Path)
+		if info, err := os.Stat(localRepo); err == nil && info.IsDir() {
+			return localRepo
+		}
+	}
 	return dir
+}
+
+// dirIsGitClone reports whether dir is a git working clone (has a .git entry).
+// Used to tell a stale *managed* clone left in the offline-import location
+// (repo/) apart from a genuine offline workspace ZIP import (which has no .git
+// and must keep top priority).
+func dirIsGitClone(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(dir, ".git"))
+	return err == nil
 }
 
 // ListAllVersions lists all bundle versions across all configured repos,
