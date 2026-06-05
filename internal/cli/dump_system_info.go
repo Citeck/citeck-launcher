@@ -97,10 +97,11 @@ type stepError struct {
 // dumpWriter wraps zip.Writer with a running byte counter (for the size
 // warning) and an error log that ends up in info.txt.
 type dumpWriter struct {
-	zw     *zip.Writer
-	errs   []stepError
-	bytes  int64
-	cancel bool
+	zw       *zip.Writer
+	errs     []stepError
+	bytes    int64
+	cancel   bool
+	redactor *secretRedactor // when set, masks secret values in every entry
 }
 
 func newDumpWriter(w io.Writer) *dumpWriter {
@@ -111,6 +112,9 @@ func newDumpWriter(w io.Writer) *dumpWriter {
 func (d *dumpWriter) addFile(name string, data []byte) {
 	if d.cancel {
 		return
+	}
+	if d.redactor != nil {
+		data = d.redactor.redact(data)
 	}
 	f, err := d.zw.Create(name)
 	if err != nil {
@@ -183,6 +187,18 @@ func runDumpSystemInfo(ctx context.Context, info BuildInfo, full bool) error {
 	defer out.Close()
 
 	dw := newDumpWriter(out)
+
+	// Harvest secret values up front so every entry written below — container
+	// inspects (env), daemon/container logs (e.g. `rabbitmqctl add_user citeck
+	// <pass>`), and config files — is scrubbed of plaintext secrets.
+	dw.redactor = buildDumpRedactor(ctx)
+	if n := dw.redactor.count(); n > 0 {
+		fmt.Fprintf(os.Stderr, "Redacting %d secret value(s) from the archive\n", n)
+	} else {
+		fmt.Fprintln(os.Stderr,
+			"Warning: no secrets found to redact (daemon/containers may be down) — "+
+				"review the archive before sharing it.")
+	}
 
 	prog := &dumpProgress{total: 20}
 
