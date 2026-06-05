@@ -706,9 +706,9 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	// (Kotlin parity: NamespacesService.kt:131-143 imports in the create
 	// handler). Inline — not a background goroutine — to remove the race where
 	// Quick Start's immediate start brought containers up on empty volumes while
-	// the import was still running. downloadAndImportSnapshot writes the
-	// imported-<nsID> marker on success so a later restart's importSnapshotIfNeeded
-	// skips re-import and never overwrites user data.
+	// the import was still running. This create-time path is the ONLY place a
+	// snapshot is imported on namespace creation; there is no boot-time
+	// auto-import (a `snapshot:` config field never triggers a re-import).
 	if nsCfg.Snapshot != "" {
 		// The import (download + volume restore) can run for minutes, exceeding
 		// the server's WriteTimeout — lift the write deadline for this request so

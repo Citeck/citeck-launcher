@@ -525,17 +525,6 @@ func (d *Daemon) downloadAndImportSnapshot(snapshotID, wsID, nsID string) {
 
 	slog.Info("Snapshot imported for new namespace", "ns", nsID, "volumes", len(meta.Volumes))
 
-	// Write the import marker (same path/format as importSnapshotIfNeeded) so a
-	// later daemon restart's auto-import skips this snapshot instead of
-	// re-importing it over the user's data. Best-effort: a missing marker only
-	// costs one redundant (idempotent) re-import on next boot.
-	markerDir := filepath.Join(volumesBase, "snapshots")
-	if err := os.MkdirAll(markerDir, 0o755); err != nil { //nolint:gosec // G301: marker dir needs 0o755
-		slog.Warn("Create snapshot marker dir", "err", err)
-	} else if err := os.WriteFile(filepath.Join(markerDir, "imported-"+nsID), []byte(snapshotID), 0o644); err != nil { //nolint:gosec // G306: marker file is non-sensitive
-		slog.Warn("Write snapshot import marker", "ns", nsID, "err", err)
-	}
-
 	d.broadcastEvent(api.EventDto{
 		Type: "snapshot_complete", Timestamp: time.Now().UnixMilli(),
 		NamespaceID: nsID, After: fmt.Sprintf("imported %d volumes", len(meta.Volumes)),

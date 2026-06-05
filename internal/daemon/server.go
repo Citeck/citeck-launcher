@@ -34,7 +34,6 @@ import (
 	"github.com/citeck/citeck-launcher/internal/h2migrate"
 	"github.com/citeck/citeck-launcher/internal/license"
 	"github.com/citeck/citeck-launcher/internal/namespace"
-	"github.com/citeck/citeck-launcher/internal/snapshot"
 	"github.com/citeck/citeck-launcher/internal/storage"
 	"github.com/citeck/citeck-launcher/internal/tlsutil"
 	"github.com/citeck/citeck-launcher/internal/update"
@@ -541,11 +540,13 @@ func Start(opts StartOptions) error {
 	bundleError := loaded.BundleError
 
 	if nsCfg != nil {
-		// Snapshot auto-import: run synchronously BEFORE start so volumes are populated
-		if nsCfg.Snapshot != "" {
-			slog.Info("Running snapshot auto-import before namespace start", "snapshot", nsCfg.Snapshot)
-			importSnapshotIfNeeded(nsCfg, wsCfg, dockerClient, wsID, volumesBase)
-		}
+		// Snapshot import is a USER action only — namespace creation with a
+		// selected snapshot (handleCreateNamespace) or an explicit import from the
+		// snapshots list. There is deliberately NO auto-import on daemon start: a
+		// `snapshot:` field in the config is just a record of which snapshot the
+		// namespace was created from, not a trigger. Re-importing it on boot would
+		// clobber the namespace's live volumes — e.g. it restored a stale demo
+		// snapshot over a 1.x→2.x migrated namespace and corrupted its postgres.
 		if loaded.ShouldStart {
 			runtime.Start(appDefs)
 		}
@@ -1685,90 +1686,6 @@ func migrateJWTSecretToStdBase64(stored string) string {
 	}
 	slog.Info("Migrated JWT secret from RawURLEncoding to StdEncoding")
 	return base64.StdEncoding.EncodeToString(raw)
-}
-
-// importSnapshotIfNeeded checks for the snapshot field in namespace config and imports
-// the snapshot if it hasn't been imported yet (tracked by a marker file).
-//
-// The marker (`imported-<nsID>`) stays in the per-namespace `volumesBase/snapshots/`
-// dir because it is namespace-scoped state. The archive itself lives in the
-// workspace-shared cache `<AppDir>/ws/<wsID>/snapshots/<snapshotID>.zip`, matching
-// Kotlin's WorkspaceSnapshots layout so multiple namespaces
-// in the same workspace share a single download.
-//
-//nolint:nestif // snapshot import requires nested SHA256 verification and download fallback logic
-func importSnapshotIfNeeded(nsCfg *namespace.Config, wsCfg *bundle.WorkspaceConfig, dc *docker.Client, wsID, volumesBase string) {
-	if nsCfg.Snapshot == "" || wsCfg == nil {
-		return
-	}
-
-	markerDir := filepath.Join(volumesBase, "snapshots")
-	os.MkdirAll(markerDir, 0o755) //nolint:gosec // G301: marker dir needs 0o755
-	markerFile := filepath.Join(markerDir, "imported-"+nsCfg.ID)
-
-	// Check marker — if already imported this snapshot, skip
-	if data, err := os.ReadFile(markerFile); err == nil { //nolint:gosec // G304: markerFile is derived from internal config
-		if strings.TrimSpace(string(data)) == nsCfg.Snapshot {
-			slog.Info("Snapshot already imported", "snapshot", nsCfg.Snapshot, "ns", nsCfg.ID)
-			return
-		}
-	}
-
-	snapDef := bundle.FindSnapshot(wsCfg, nsCfg.Snapshot)
-	if snapDef == nil {
-		slog.Warn("Snapshot not found in workspace config", "id", nsCfg.Snapshot)
-		return
-	}
-
-	slog.Info("Auto-importing snapshot on startup", "snapshot", snapDef.Name, "ns", nsCfg.ID)
-
-	// Workspace-shared cache path: <AppDir>/ws/<wsID>/snapshots/<snapshotID>.zip
-	cacheDir := config.WorkspaceSnapshotsDir(wsID)
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil { //nolint:gosec // G301: snapshot cache needs 0o755
-		slog.Error("Create workspace snapshots cache dir", "err", err)
-		return
-	}
-	destPath := filepath.Join(cacheDir, nsCfg.Snapshot+".zip")
-
-	// Fast-path: cached file with matching SHA — skip download.
-	needsDownload := true
-	if _, err := os.Stat(destPath); err == nil { //nolint:gosec // G304: destPath built from validated wsID + snapshot id
-		if snapDef.SHA256 != "" {
-			if actual, hashErr := snapshot.FileSHA256(destPath); hashErr == nil && strings.EqualFold(actual, snapDef.SHA256) {
-				needsDownload = false
-			} else {
-				// Preserve stale file as `_outdated_<ts>` (Kotlin parity);
-				// fall back to delete on rename failure so the next attempt
-				// has a clean destination.
-				if renameErr := snapshot.StashOutdatedFile(destPath); renameErr != nil {
-					slog.Debug("Stash outdated cached snapshot failed; removing", "path", destPath, "err", renameErr)
-					_ = os.Remove(destPath)
-				}
-			}
-		} else {
-			needsDownload = false
-		}
-	}
-	importCtx, importCancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer importCancel()
-
-	if needsDownload {
-		// Kotlin-parity retry: 100 total / 3 without progress / 3s delay.
-		if dlErr := snapshot.DownloadWithRetry(importCtx, nil, snapDef.URL, destPath, snapDef.SHA256, nil); dlErr != nil {
-			slog.Error("Snapshot download failed", "url", snapDef.URL, "err", dlErr)
-			return
-		}
-	}
-
-	// Import
-	if _, err := snapshot.Import(importCtx, dc, destPath, volumesBase, nil); err != nil {
-		slog.Error("Snapshot import failed", "err", err)
-		return
-	}
-
-	// Write marker
-	os.WriteFile(markerFile, []byte(nsCfg.Snapshot), 0o644) //nolint:gosec // G306: marker file is non-sensitive
-	slog.Info("Snapshot auto-import completed", "snapshot", nsCfg.Snapshot, "ns", nsCfg.ID)
 }
 
 // isRegularFile returns true if path exists and is a regular file.
