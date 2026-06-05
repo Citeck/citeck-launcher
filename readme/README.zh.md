@@ -63,24 +63,6 @@ curl -fsSL https://github.com/Citeck/citeck-launcher/releases/latest/download/in
 
 要**升级**现有服务器安装，运行同一条命令——脚本会检测已安装的版本，提示更新，停止守护进程，并替换二进制文件（备份保存在 `/usr/local/bin/citeck.bak`，可通过 `citeck install --rollback` 恢复）。
 
-### 离线安装（服务器）
-
-对于无法访问互联网的服务器，请预先下载二进制文件和工作区归档：
-
-1. **二进制文件：** 从[发布页面](https://github.com/Citeck/citeck-launcher/releases)下载。
-2. **工作区归档：** 从 [Citeck/launcher-workspace](https://github.com/Citeck/launcher-workspace)
-   下载（Releases 区域，或“Download ZIP”按钮）。该归档包含启动器通常会从 git 获取的 bundle
-   定义。
-
-然后在目标服务器上：
-
-```bash
-citeck install --workspace /path/to/launcher-workspace.zip --offline
-```
-
-`--workspace` 标志会在本地解压 bundle 仓库，从而在启动过程中无需联网。
-要在之后通过新归档更新工作区而无需重新安装：`citeck update -f <zip>`。
-
 ## 功能特性
 
 - **交互式安装器**，支持 TLS 自动检测（Let's Encrypt / 自签名 / 自定义证书）

@@ -63,24 +63,6 @@ curl -fsSL https://github.com/Citeck/citeck-launcher/releases/latest/download/in
 
 Для **обновления** уже установленной серверной версии выполните тот же one-liner — скрипт определит установленную версию, спросит подтверждение, остановит демон и заменит бинарник (бэкап сохраняется в `/usr/local/bin/citeck.bak` и восстанавливается через `citeck install --rollback`).
 
-### Офлайн-установка (сервер)
-
-Для серверов без доступа в интернет заранее скачайте и бинарник, и архив workspace:
-
-1. **Бинарник** — со [страницы релизов](https://github.com/Citeck/citeck-launcher/releases).
-2. **Архив workspace** — с [Citeck/launcher-workspace](https://github.com/Citeck/launcher-workspace)
-   (раздел Releases или кнопка «Download ZIP»). Этот архив содержит определения
-   бандлов, которые лаунчер обычно подтягивает из git.
-
-Затем на целевом сервере:
-
-```bash
-citeck install --workspace /path/to/launcher-workspace.zip --offline
-```
-
-Флаг `--workspace` распаковывает репозитории бандлов локально — интернет при запуске не нужен.
-Чтобы позже обновить workspace из нового архива без переустановки: `citeck update -f <zip>`.
-
 ## Возможности
 
 - **Интерактивный установщик** с авто-определением TLS (Let's Encrypt / самоподписанный / свой сертификат)

@@ -63,23 +63,6 @@ curl -fsSL https://github.com/Citeck/citeck-launcher/releases/latest/download/in
 
 既存のサーバーインストールを**アップグレード**するには、同じワンライナーを実行します。スクリプトはインストール済みのバージョンを検出し、更新を促し、デーモンを停止してバイナリを置き換えます（バックアップは `/usr/local/bin/citeck.bak` に保持され、`citeck install --rollback` で復元可能です）。
 
-### オフラインインストール（サーバー）
-
-インターネットにアクセスできないサーバーの場合は、バイナリとワークスペースアーカイブの両方を事前にダウンロードしてください:
-
-1. **バイナリ:** [リリースページ](https://github.com/Citeck/citeck-launcher/releases)から。
-2. **ワークスペースアーカイブ:** [Citeck/launcher-workspace](https://github.com/Citeck/launcher-workspace)
-   から（Releases セクション、または「Download ZIP」ボタン）。このアーカイブには、Launcher が通常 git から取得するバンドル定義が含まれています。
-
-次に、対象のサーバーで:
-
-```bash
-citeck install --workspace /path/to/launcher-workspace.zip --offline
-```
-
-`--workspace` フラグはバンドルリポジトリをローカルに展開するため、起動時にインターネットは不要です。
-後で再インストールせずに新しいアーカイブからワークスペースを更新するには: `citeck update -f <zip>`。
-
 ## 機能
 
 - TLS 自動検出（Let's Encrypt / 自己署名 / カスタム証明書）を備えた**対話型インストーラー**

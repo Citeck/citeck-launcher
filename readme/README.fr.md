@@ -63,24 +63,6 @@ Le script d'installation télécharge la dernière version pour votre plateforme
 
 Pour **mettre à niveau** une installation serveur existante, exécutez la même commande en une ligne — le script détecte la version installée, propose la mise à jour, arrête le démon et remplace le binaire (une sauvegarde est conservée dans `/usr/local/bin/citeck.bak`, restaurable via `citeck install --rollback`).
 
-### Installation hors ligne (serveur)
-
-Pour les serveurs sans accès à Internet, téléchargez au préalable à la fois le binaire et l'archive de l'espace de travail :
-
-1. **Binaire :** depuis la [page des versions](https://github.com/Citeck/citeck-launcher/releases).
-2. **Archive de l'espace de travail :** depuis [Citeck/launcher-workspace](https://github.com/Citeck/launcher-workspace)
-   (section Releases, ou bouton « Download ZIP »). Cette archive contient les définitions de bundles
-   que le launcher récupérerait normalement depuis git.
-
-Puis, sur le serveur cible :
-
-```bash
-citeck install --workspace /path/to/launcher-workspace.zip --offline
-```
-
-Le drapeau `--workspace` extrait les dépôts de bundles localement, de sorte qu'aucun accès à Internet n'est nécessaire au démarrage.
-Pour mettre à jour ultérieurement l'espace de travail depuis une nouvelle archive sans réinstaller : `citeck update -f <zip>`.
-
 ## Fonctionnalités
 
 - **Installateur interactif** avec détection automatique de TLS (Let's Encrypt / certificat auto-signé / certificat personnalisé)
