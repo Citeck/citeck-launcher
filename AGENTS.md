@@ -66,7 +66,7 @@ e2e with `./scripts/test/test-deb-upgrade.sh` (needs Docker + GTK3 dev libs).
 | `internal/tlsutil/` | TLS cert utilities (self-signed, client cert, CA pool loader) |
 | `internal/fsutil/` | Atomic file write (temp+fsync+rename), RotatingWriter (log rotation), CleanLogHandler (human-readable slog) |
 | `internal/acme/` | ACME/Let's Encrypt client + auto-renewal service |
-| `internal/i18n/` | Embedded JSON locale files (shared source-of-truth between CLI and web UI) |
+| `internal/i18n/` | Embedded JSON locale files for the **Go CLI/TUI only** (see Localization — the web UI uses its own separate TS locale files) |
 | `internal/desktop/` | Wails thin-wrapper: supervises the daemon as a child process (`supervisor.go`) chosen via the daemon-binary selection seam (`binselect.go`), drives it over the daemon↔wrapper native-verb control socket (`control.go` → `wrapper.sock`) with a capabilities feature-detection contract (`caps.go`); single-instance guard + orphan-daemon reap retained |
 | `internal/namespace/nsactions/` | Pull/start retry constants and auth-error helpers for `runtime_workers.go` |
 
@@ -124,6 +124,24 @@ React 19 + Vite + TypeScript + Tailwind CSS 4. Embedded into Go binary via `go:e
 ### Entry Point
 
 `cmd/citeck/main.go` — CLI entry point (cobra root command).
+
+## Localization (i18n)
+
+8 locales: **en** (source of truth), **ru, zh, es, de, fr, pt, ja**. There are **three independent localization assets** — they do NOT share strings:
+
+| Asset | Path | Consumed by | Format |
+|---|---|---|---|
+| CLI / TUI strings | `internal/i18n/locales/<loc>.json` | Go binary (`internal/i18n/i18n.go`, `//go:embed locales/*.json`) | flat JSON, **dotted keys** (`"setup.s3.access_key"`) |
+| Web UI strings | `web/src/locales/<loc>.ts` | React UI (`web/src/lib/i18n.ts`, static imports) | flat TS object (`'key': 'value'`), single-quoted |
+| Changelog notes | `changelog/<version>/<loc>.md` | in-app update dialog (fetched at runtime via `changelog/index.json`) | markdown |
+
+**The CLI JSON and Web TS sets are content-disjoint (0 shared keys).** Despite older docs, the web UI does **not** read `internal/i18n` — it has its own ~495-key TS files. A string shown in the web UI must be added to `web/src/locales/`, not the JSON.
+
+Rules when changing strings:
+- Add/rename/remove a key in **all 8 files** of the relevant asset. The web UI enforces key parity (`web/src/locales/locales.test.ts` — `missing keys` / `extra keys` tests); the CLI JSON has no automated parity test, so keep the 8 JSONs in sync by hand.
+- **Translate the VALUE, don't leave English.** `locales.test.ts` also has a value-completeness test that fails on any *multi-word* value left identical to `en` (the "key exists but never translated" gap) — single-word loanwords/cognates (Name, Status, Port, Bundle, Namespace…) are allowed; brand/format-string exceptions live in its `IDENTICAL_OK` allowlist.
+- Adding a changelog version: create all 8 `changelog/<ver>/<loc>.md` files **with real translations** (don't copy en into the others) and add the `index.json` entry. `changelog(...)` only fetches when `latest > current`.
+- To audit drift, evaluate each locale's key→value map and flag values identical to en (a script that strips the TS `import`/`export` and `eval`s the object literal works for both the JSON and TS assets).
 
 ## Code Style
 
