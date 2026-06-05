@@ -53,6 +53,7 @@ export function Select({
   const [open, setOpen] = useState(false)
   const [activeIdx, setActiveIdx] = useState(-1)
   const [popupPos, setPopupPos] = useState<PopupPos | null>(null)
+  const [portalEl, setPortalEl] = useState<HTMLElement | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popupRef = useRef<HTMLDivElement>(null)
@@ -89,6 +90,15 @@ export function Select({
 
   function openPopup() {
     if (!triggerRef.current) return
+    // Portal target: when the Select lives inside an open modal <dialog>
+    // (showModal), the dialog is promoted to the browser top layer and
+    // everything outside its subtree becomes inert + painted below the
+    // backdrop. A popup portaled into document.body would then be invisible
+    // and click-intercepted by the dialog. So portal into the nearest OPEN
+    // <dialog> ancestor when there is one; otherwise into <body> (the popup
+    // still escapes any overflow-clipping ancestor via position: fixed).
+    const dlg = triggerRef.current.closest('dialog')
+    setPortalEl(dlg && dlg.open ? dlg : document.body)
     const rect = triggerRef.current.getBoundingClientRect()
     const popupHeight = Math.min(popupOptions.length, MAX_VISIBLE_ITEMS) * ITEM_HEIGHT + 4
     const spaceBelow = window.innerHeight - rect.bottom
@@ -215,7 +225,7 @@ export function Select({
             )
           })}
         </div>,
-        document.body,
+        portalEl ?? document.body,
       )}
     </div>
   )
