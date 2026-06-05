@@ -20,6 +20,7 @@ type fakeVolumeOps struct {
 	createVolumeCalls []string
 	listVolumes       []docker.VolumeInfo
 	lastBinds         []string
+	lastCmd           []string
 }
 
 func (f *fakeVolumeOps) CreateVolume(_ context.Context, orig string) (string, error) {
@@ -32,7 +33,8 @@ func (f *fakeVolumeOps) CreateVolume(_ context.Context, orig string) (string, er
 func (f *fakeVolumeOps) ListVolumes(_ context.Context) ([]docker.VolumeInfo, error) {
 	return f.listVolumes, nil
 }
-func (f *fakeVolumeOps) RunUtilsContainer(_ context.Context, _, binds []string) (output string, exitCode int, err error) {
+func (f *fakeVolumeOps) RunUtilsContainer(_ context.Context, cmd, binds []string) (output string, exitCode int, err error) {
+	f.lastCmd = cmd
 	f.lastBinds = binds
 	return "", 0, nil
 }
@@ -60,6 +62,10 @@ func TestImportVolume_DesktopTargetsNamedVolume(t *testing.T) {
 	// restore INTO it (not a bind-mount dir nobody mounts).
 	require.Equal(t, []string{"postgres2"}, fake.createVolumeCalls)
 	require.Contains(t, fake.lastBinds, "citeck_volume_postgres2_ns_ws:/dest")
+	// The named volume persists across imports, so its stale contents must be
+	// cleared before the restore (prevents mongo-style file mixing/corruption).
+	require.Len(t, fake.lastCmd, 3)
+	require.Contains(t, fake.lastCmd[2], "find /dest -mindepth 1 -delete")
 }
 
 func TestExportSources_DesktopUsesNamedVolumes(t *testing.T) {
@@ -111,6 +117,33 @@ func TestImportVolume_ServerTargetsBindDir(t *testing.T) {
 
 	require.Empty(t, fake.createVolumeCalls, "server mode must not create named volumes")
 	require.Contains(t, fake.lastBinds, filepath.Join(volumesBase, "volumes", "postgres2")+":/dest")
+	// Server mode restores into a fresh dir (Import backs up the old volumes dir),
+	// so importVolume itself must NOT clear /dest.
+	require.Len(t, fake.lastCmd, 3)
+	require.NotContains(t, fake.lastCmd[2], "find /dest -mindepth 1 -delete")
+}
+
+func TestBackupServerVolumesDir(t *testing.T) {
+	// Non-empty volumes dir is moved aside to volumes.bak-<ts>, leaving room for
+	// a clean restore; the backup keeps the pre-import data.
+	base := t.TempDir()
+	volFile := filepath.Join(base, "volumes", "mongo2", "WiredTiger.wt")
+	require.NoError(t, os.MkdirAll(filepath.Dir(volFile), 0o755))
+	require.NoError(t, os.WriteFile(volFile, []byte("data"), 0o644))
+
+	require.NoError(t, backupServerVolumesDir(base))
+
+	_, err := os.Stat(filepath.Join(base, "volumes"))
+	require.True(t, os.IsNotExist(err), "volumes dir must be moved aside")
+
+	baks, _ := filepath.Glob(filepath.Join(base, "volumes.bak-*", "mongo2", "WiredTiger.wt"))
+	require.Len(t, baks, 1, "backup must preserve the original volume data")
+
+	// Empty/missing volumes dir is a no-op (no backup created).
+	empty := t.TempDir()
+	require.NoError(t, backupServerVolumesDir(empty))
+	none, _ := filepath.Glob(filepath.Join(empty, "volumes.bak-*"))
+	require.Empty(t, none)
 }
 
 func TestSanitizeFileName(t *testing.T) {

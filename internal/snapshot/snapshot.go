@@ -245,6 +245,16 @@ func Import(ctx context.Context, dc volumeOps, zipPath, volumesBase string, prog
 		return nil, utilsErr
 	}
 
+	// Restore onto a clean slate so leftover files can't mix with the snapshot
+	// and corrupt stateful stores (e.g. mongo WiredTiger). Server mode moves the
+	// whole existing volumes dir aside (kept as volumes.bak-<ts> for recovery);
+	// desktop clears each named volume inside importVolume.
+	if !config.IsDesktopMode() {
+		if err := backupServerVolumesDir(volumesBase); err != nil {
+			return nil, fmt.Errorf("back up existing volumes: %w", err)
+		}
+	}
+
 	// Import each volume
 	for idx, vol := range meta.Volumes {
 		tarPath := filepath.Join(tmpDir, vol.DataFile)
@@ -315,6 +325,31 @@ func exportVolume(ctx context.Context, dc volumeOps, sourceBind, outputPath stri
 	return rootStat, nil
 }
 
+// backupServerVolumesDir moves an existing, non-empty {volumesBase}/volumes
+// directory aside to volumes.bak-<UTC timestamp> so a server-mode import
+// restores onto a clean tree (mixing leftover files with the snapshot corrupts
+// stateful stores like mongo). A missing or empty dir is a no-op. The backup is
+// kept — not deleted — so an operator can recover the pre-import data.
+func backupServerVolumesDir(volumesBase string) error {
+	volsDir := filepath.Join(volumesBase, "volumes")
+	entries, err := os.ReadDir(volsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read volumes dir: %w", err)
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	bak := filepath.Join(volumesBase, "volumes.bak-"+time.Now().UTC().Format("2006-01-02T15-04-05Z"))
+	if err := os.Rename(volsDir, bak); err != nil {
+		return fmt.Errorf("rename %s to %s: %w", volsDir, bak, err)
+	}
+	slog.Info("Backed up existing volumes before import", "to", bak, "entries", len(entries))
+	return nil
+}
+
 // importVolume restores a single volume from a tar archive into a bind-mount directory.
 func importVolume(ctx context.Context, dc volumeOps, vol VolumeSnapshotMeta, tarPath, volumesBase string) error {
 	// Resolve the restore target. Desktop containers mount a per-(ns,ws)
@@ -324,12 +359,18 @@ func importVolume(ctx context.Context, dc volumeOps, vol VolumeSnapshotMeta, tar
 	// container mounts, and the imported data would be invisible. Server mode
 	// keeps the bind-mount dir.
 	var destBind string
+	clearCmd := ""
 	if config.IsDesktopMode() {
 		scopedName, err := dc.CreateVolume(ctx, vol.Name)
 		if err != nil {
 			return fmt.Errorf("create volume %s: %w", vol.Name, err)
 		}
 		destBind = scopedName + ":/dest"
+		// Desktop named volumes persist across imports, so clear any stale
+		// contents before restoring — otherwise leftover files (e.g. a diverged
+		// mongo WiredTiger set) mix with the snapshot and corrupt the store.
+		// Server mode gets a clean tree from Import's volumes-dir backup instead.
+		clearCmd = "find /dest -mindepth 1 -delete 2>/dev/null; "
 	} else {
 		hostDir := filepath.Join(volumesBase, "volumes", vol.Name)
 		if err := os.MkdirAll(hostDir, 0o755); err != nil { //nolint:gosec // G301: volume dirs need 0o755 for Docker access
@@ -360,8 +401,8 @@ func importVolume(ctx context.Context, dc volumeOps, vol VolumeSnapshotMeta, tar
 	tarFile := filepath.Base(tarPath)
 
 	cmd := []string{"sh", "-c", fmt.Sprintf(
-		`%s%star %s -xf "/source/%s" -C /dest`,
-		chownCmd, chmodCmd, tarFlag, tarFile,
+		`%s%s%star %s -xf "/source/%s" -C /dest`,
+		clearCmd, chownCmd, chmodCmd, tarFlag, tarFile,
 	)}
 
 	output, exitCode, err := dc.RunUtilsContainer(ctx, cmd, []string{
