@@ -31,7 +31,7 @@ Hay dos maneras de ejecutarlo — elige la que se ajuste a **dónde** quieres qu
 
 > **Aviso:** el inicio rápido con `curl … | bash` y la CLI `citeck` de este README son para **instalaciones en servidor**. En tu propio equipo, ejecuta Citeck a través de la **aplicación de escritorio** — allí todo se hace desde la interfaz.
 
-**Requisitos:** Docker, además de una máquina razonablemente potente — un stack completo ejecuta muchos contenedores (autenticación, bases de datos, un agente de mensajes y las aplicaciones web de Citeck). Prevé aproximadamente **16 GB de RAM** para la edición Community (24–32 GB para los ~24 servicios de Enterprise) y decenas de GB de disco para las imágenes. Esta es una plataforma completa, no una herramienta ligera.
+**Requisitos:** Docker y suficiente RAM para el stack: unos **16 GB** para la edición Community y **24–32 GB** para los ~24 servicios de Enterprise, más unas decenas de GB de disco para las imágenes. Para una plataforma ECM/BPM completa de este tipo, es poco.
 
 ## Aplicación de escritorio
 

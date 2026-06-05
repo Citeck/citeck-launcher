@@ -31,7 +31,7 @@ Es gibt zwei Möglichkeiten, den Launcher zu betreiben — wählen Sie diejenige
 
 > **Hinweis:** Der Schnellstart mit `curl … | bash` und die `citeck`-CLI in dieser README sind für **Server-Installationen** gedacht. Auf Ihrem eigenen Computer betreiben Sie Citeck über die **Desktop-App** — dort wird alles über die Benutzeroberfläche erledigt.
 
-**Voraussetzungen:** Docker sowie ein einigermaßen leistungsfähiger Rechner — ein vollständiger Stack führt viele Container aus (Authentifizierung, Datenbanken, einen Message-Broker und die Citeck-Webanwendungen). Rechnen Sie mit etwa **16 GB RAM** für die Community-Edition (24–32 GB für die rund 24 Dienste der Enterprise-Edition) und mehreren zehn GB Festplattenspeicher für Images. Dies ist eine vollständige Plattform, kein leichtgewichtiges Tool.
+**Anforderungen:** Docker und genügend RAM für den Stack — etwa **16 GB** für die Community-Edition und **24–32 GB** für die ~24 Dienste von Enterprise, plus einige zehn GB Plattenplatz für die Images. Für eine vollständige ECM/BPM-Plattform dieser Art ist das wenig.
 
 ## Desktop-App
 
