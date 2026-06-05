@@ -37,7 +37,12 @@ type loadNamespaceInput struct {
 // renewal, snapshot import, runtime.Start) — those side effects depend on
 // whether this is initial startup or a live switch.
 type loadedNamespace struct {
-	NsConfig        *namespace.Config
+	NsConfig *namespace.Config
+	// DockerClient is the client the runtime was built with — scoped to THIS
+	// (workspace, namespace). On a live switch/create it is freshly created
+	// here; installLoadedNamespace swaps it into d.dockerClient so daemon-level
+	// handlers (volumes, inspect, snapshots) also target the new namespace.
+	DockerClient    *docker.Client
 	BundleDef       *bundle.Def
 	WorkspaceConfig *bundle.WorkspaceConfig
 	Runtime         *namespace.Runtime
@@ -233,7 +238,25 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	slog.Info("Generated namespace", "apps", len(genResp.Applications), "files", len(genResp.Files))
 
 	appDefs := genResp.Applications
-	runtime := namespace.NewRuntime(nsCfg, in.DockerClient, volumesBase)
+	// Bind the runtime to a Docker client scoped to THIS namespace. The live
+	// switch/create paths pass a nil DockerClient so a fresh one is built here:
+	// reusing the previously-active namespace's client (the bug) made the new
+	// runtime adopt the OLD namespace's containers and emit its network name
+	// (header showed nsB while containers were nsA). Startup passes its
+	// already-built client. No error return follows, so no leak on the happy path.
+	dc := in.DockerClient
+	if dc == nil {
+		dockerWorkspace := ""
+		if config.IsDesktopMode() {
+			dockerWorkspace = wsID
+		}
+		var dcErr error
+		dc, dcErr = docker.NewClient(dockerWorkspace, nsID)
+		if dcErr != nil {
+			return nil, fmt.Errorf("create docker client for namespace %q: %w", nsID, dcErr)
+		}
+	}
+	runtime := namespace.NewRuntime(nsCfg, dc, volumesBase)
 	runtime.SetStatePersister(nsStatePersister{store: in.Store, wsID: wsID, nsID: nsID})
 
 	// Cache the successfully resolved bundle for fallback on future resolve failures
@@ -313,6 +336,7 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 
 	return &loadedNamespace{
 		NsConfig:        nsCfg,
+		DockerClient:    dc,
 		BundleDef:       bundleDef,
 		WorkspaceConfig: wsCfg,
 		Runtime:         runtime,
@@ -366,6 +390,14 @@ func (d *Daemon) installLoadedNamespace(loaded *loadedNamespace, wsID, nsID stri
 	oldRuntime := d.runtime
 	oldCloudCfgSrv := d.cloudCfgServer
 	oldACME := d.acmeRenewal
+	// Swap the daemon-level Docker client to the one the new runtime was built
+	// with (scoped to the new namespace). Without this, volumes/inspect/snapshot
+	// handlers keep querying the PREVIOUS namespace's containers/network.
+	var oldDocker *docker.Client
+	if loaded.DockerClient != nil && loaded.DockerClient != d.dockerClient {
+		oldDocker = d.dockerClient
+		d.dockerClient = loaded.DockerClient
+	}
 	d.runtime = loaded.Runtime
 	d.nsConfig = loaded.NsConfig
 	d.bundleDef = loaded.BundleDef
@@ -380,6 +412,9 @@ func (d *Daemon) installLoadedNamespace(loaded *loadedNamespace, wsID, nsID stri
 
 	if oldRuntime != nil {
 		oldRuntime.Shutdown()
+	}
+	if oldDocker != nil {
+		_ = oldDocker.Close()
 	}
 	if oldCloudCfgSrv != nil {
 		oldCloudCfgSrv.Stop()

@@ -416,7 +416,7 @@ func (d *Daemon) handleActivateNamespace(w http.ResponseWriter, r *http.Request)
 	loaded, err := loadNamespace(loadNamespaceInput{
 		Store:         d.store,
 		SecretService: d.secretService,
-		DockerClient:  d.dockerClient,
+		DockerClient:  nil, // build a fresh client scoped to this ns (loadNamespace)
 		DaemonCfg:     d.daemonCfg,
 		Licenses:      d.licenses,
 		WorkspaceID:   wsID,
@@ -751,12 +751,16 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 				loaded, loadErr := loadNamespace(loadNamespaceInput{
 					Store:         d.store,
 					SecretService: d.secretService,
-					DockerClient:  d.dockerClient,
-					DaemonCfg:     d.daemonCfg,
-					Licenses:      d.licenses,
-					WorkspaceID:   activeWsID,
-					NamespaceID:   nsCfg.ID,
-					Desktop:       d.desktop,
+					// Create reuses d.dockerClient on purpose: the snapshot import
+					// just above (downloadAndImportSnapshot) ran on the SAME client,
+					// so import-volume names and the runtime's mount names must stay
+					// on one client. (The switch path below passes nil to rebind.)
+					DockerClient: d.dockerClient,
+					DaemonCfg:    d.daemonCfg,
+					Licenses:     d.licenses,
+					WorkspaceID:  activeWsID,
+					NamespaceID:  nsCfg.ID,
+					Desktop:      d.desktop,
 				})
 				if loadErr != nil {
 					slog.Warn("Auto-activate after create failed (load)", "nsID", nsCfg.ID, "err", loadErr)
