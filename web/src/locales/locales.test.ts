@@ -33,3 +33,46 @@ describe('locale completeness', () => {
     })
   }
 })
+
+// Keys whose value is intentionally identical to en in one or more locales:
+// brand names ("Citeck Core") and "Word: {interpolation}" / loanword format
+// strings. Anything multi-word that is identical to en and NOT listed here is
+// an untranslated English phrase (the failure mode key-parity can't catch:
+// the key exists but its value was never translated).
+const IDENTICAL_OK = new Set<string>([
+  'appDetail.back', // "← Dashboard"
+  'common.error',
+  'dashboard.error',
+  'dashboard.docker.error',
+  'drawer.error',
+  'welcome.error',
+  'logs.title',
+  'logViewer.filter', // "Filter... (*)"
+  'snapshots.importFile', // "Import .zip…"
+  'table.group.core', // "Citeck Core"
+  'table.group.coreExt', // "Citeck Core Extensions"
+  'table.group.additional', // "Citeck Additional"
+])
+
+// Single-word values (Name, Status, Port, Bundle, Snapshot, Namespace, …) are
+// frequently legitimate loanwords/cognates across languages, so we only flag
+// MULTI-WORD English phrases left verbatim — that is the real regression class.
+describe('locale value completeness (no untranslated English phrases)', () => {
+  const isInterpOnly = (v: string) => /^[^A-Za-z]*\{[^}]+\}[^A-Za-z]*$/.test(v.trim())
+  for (const [name, t] of otherLocales) {
+    it(`${name} has no multi-word value left identical to en`, () => {
+      const stubs = enKeys.filter(
+        (k) =>
+          k in t &&
+          t[k] === en[k] &&
+          /\s/.test(en[k]) &&
+          !isInterpOnly(en[k]) &&
+          !IDENTICAL_OK.has(k),
+      )
+      expect(
+        stubs,
+        `${name} has ${stubs.length} untranslated English phrase(s):\n  ${stubs.join('\n  ')}`,
+      ).toEqual([])
+    })
+  }
+})
