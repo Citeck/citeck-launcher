@@ -6,3 +6,4 @@
 - Se corrigieron los errores de autenticación de RabbitMQ tras reiniciar el servidor («no se puede cargar el menú»): el contenedor de RabbitMQ tenía muy poca memoria para terminar de configurar su cuenta de servicio y obtenía una nueva identidad en cada reinicio. Ahora mantiene una identidad estable y dispone de suficiente memoria.
 - El archivo de diagnóstico (dump-system-info) ahora oculta contraseñas, tokens y otros secretos de las variables de entorno de los contenedores, los registros y los archivos de configuración.
 - La interfaz web ahora está completamente traducida al chino, español, alemán, francés, portugués y japonés: muchos textos que antes aparecían en inglés ahora están localizados.
+- Restaurar una instantánea del espacio de nombres ya no corrompe la base de datos: la restauración ahora parte de un volumen limpio en lugar de fusionarse sobre los datos existentes.

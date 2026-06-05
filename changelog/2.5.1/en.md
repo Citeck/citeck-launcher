@@ -6,3 +6,4 @@
 - Fixed RabbitMQ authentication errors after a server restart ("cannot load menu"): the RabbitMQ container had too little memory to finish setting up its service account and got a new identity on every restart. It now keeps a stable identity and enough memory.
 - The diagnostics archive (dump-system-info) now redacts passwords, tokens and other secrets from container environment variables, logs and config files.
 - The web UI is now fully translated in Chinese, Spanish, German, French, Portuguese and Japanese — many strings that previously appeared in English are now localized.
+- Restoring a namespace snapshot no longer corrupts the database — the restore now starts from a clean volume instead of merging over the existing data.
