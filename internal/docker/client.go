@@ -709,8 +709,15 @@ func (c *Client) GetContainerIP(ctx context.Context, containerID string) string 
 }
 
 // ContainerStats returns resource usage stats for a container.
+//
+// Uses the STREAMING stats endpoint (not one-shot): a one-shot read returns a
+// zeroed precpu_stats, so the CPU% delta would be computed against zero and
+// collapse to ~0.0% for every container. In streaming mode the second frame's
+// precpu_stats is the first frame's cpu_stats — the same ~1s delta `docker
+// stats` shows — so parseContainerStats reads the second frame. The 5s caller
+// timeout bounds the (~1s) read.
 func (c *Client) ContainerStats(ctx context.Context, containerID string) (*ContainerStat, error) {
-	resp, err := c.cli.ContainerStatsOneShot(ctx, containerID)
+	resp, err := c.cli.ContainerStats(ctx, containerID, true)
 	if err != nil {
 		return nil, err //nolint:wrapcheck // thin Docker SDK wrapper
 	}

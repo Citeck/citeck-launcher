@@ -196,3 +196,46 @@ func TestIsStaleNetworkError(t *testing.T) {
 		}
 	}
 }
+
+// TestParseContainerStats_StreamUsesSecondFrame is the regression for "CPU
+// always 0.0%": the one-shot stats endpoint returns a zeroed precpu_stats, so
+// the CPU% delta collapsed to ~0. Streaming sends two frames; the second's
+// precpu_stats is the first's cpu_stats. parseContainerStats must read the
+// SECOND frame and compute CPU% from that real ~1s delta.
+func TestParseContainerStats_StreamUsesSecondFrame(t *testing.T) {
+	frame1 := `{
+		"cpu_stats": {"cpu_usage": {"total_usage": 100000000}, "system_cpu_usage": 1000000000, "online_cpus": 2},
+		"precpu_stats": {"cpu_usage": {"total_usage": 0}, "system_cpu_usage": 0, "online_cpus": 0},
+		"memory_stats": {"usage": 0, "limit": 0}
+	}`
+	frame2 := `{
+		"cpu_stats": {"cpu_usage": {"total_usage": 120000000}, "system_cpu_usage": 1100000000, "online_cpus": 2},
+		"precpu_stats": {"cpu_usage": {"total_usage": 100000000}, "system_cpu_usage": 1000000000, "online_cpus": 2},
+		"memory_stats": {"usage": 0, "limit": 0}
+	}`
+	stat, err := parseContainerStats(strings.NewReader(frame1 + frame2))
+	if err != nil {
+		t.Fatalf("parseContainerStats: %v", err)
+	}
+	// frame2 delta: (120M-100M)/(1100M-1000M) * 2 * 100 = 0.2*2*100 = 40%
+	if diff := stat.CPUPercent - 40.0; diff > 0.1 || diff < -0.1 {
+		t.Errorf("CPUPercent = %.2f, want ~40.0 (second-frame delta)", stat.CPUPercent)
+	}
+}
+
+// A single frame (only one available) still parses, falling back to that frame.
+func TestParseContainerStats_SingleFrameFallback(t *testing.T) {
+	frame := `{
+		"cpu_stats": {"cpu_usage": {"total_usage": 200000000}, "system_cpu_usage": 1000000000, "online_cpus": 2},
+		"precpu_stats": {"cpu_usage": {"total_usage": 100000000}, "system_cpu_usage": 800000000, "online_cpus": 2},
+		"memory_stats": {"usage": 0, "limit": 0}
+	}`
+	stat, err := parseContainerStats(strings.NewReader(frame))
+	if err != nil {
+		t.Fatalf("parseContainerStats: %v", err)
+	}
+	// (200M-100M)/(1000M-800M) * 2 * 100 = 0.5*2*100 = 100%
+	if diff := stat.CPUPercent - 100.0; diff > 0.1 || diff < -0.1 {
+		t.Errorf("CPUPercent = %.2f, want ~100.0 (single-frame)", stat.CPUPercent)
+	}
+}

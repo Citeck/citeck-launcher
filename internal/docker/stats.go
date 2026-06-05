@@ -54,9 +54,20 @@ func effectiveMemoryUsage(m memoryStats) int64 {
 }
 
 func parseContainerStats(reader io.Reader) (*ContainerStat, error) {
+	dec := json.NewDecoder(reader)
 	var stats dockerStats
-	if err := json.NewDecoder(reader).Decode(&stats); err != nil {
+	if err := dec.Decode(&stats); err != nil {
 		return nil, err //nolint:wrapcheck // JSON decode in thin wrapper
+	}
+	// Streaming stats: the FIRST frame has a zeroed precpu_stats (no prior
+	// sample), so its CPU% is meaningless. The SECOND frame's precpu_stats is
+	// the first frame's cpu_stats — that ~1s delta is the real instantaneous
+	// CPU% (same method as `docker stats`). Fall back to the first frame when
+	// only one is available (a single one-shot frame, or the stream ended
+	// early because the container stopped).
+	var second dockerStats
+	if err := dec.Decode(&second); err == nil {
+		stats = second
 	}
 
 	cpuPercent := 0.0
