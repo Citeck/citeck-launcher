@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/config"
@@ -23,7 +24,7 @@ const applySwapSettleDelay = 300 * time.Millisecond
 // payload failed — so SelectDaemonBinary then returns the previous good / bundled
 // binary — and restarts into that (rollback). Either way it reloads the webview so
 // the UI reflects the now-running daemon and its /desktop/update/status.
-func applyDaemonSwap(ctx context.Context, version string, window *application.WebviewWindow) {
+func applyDaemonSwap(ctx context.Context, version string, window *application.WebviewWindow, socketClient *http.Client) {
 	time.Sleep(applySwapSettleDelay)
 	updatesDir := config.UpdatesDir()
 
@@ -42,4 +43,7 @@ func applyDaemonSwap(ctx context.Context, version string, window *application.We
 		slog.Info("Daemon update applied", "version", version)
 	}
 	window.Reload() // re-request assets through the proxy → the now-running daemon
+	// Whether the swap stuck or rolled back, sync the title to whatever daemon
+	// version is actually running now.
+	refreshWindowTitle(socketClient, window)
 }

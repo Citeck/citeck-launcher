@@ -342,7 +342,7 @@ func run() error {
 		}
 		// Async: the daemon that called this is about to be replaced. Returning
 		// immediately lets it flush its HTTP response before we stop it.
-		go applyDaemonSwap(ctx, args.Version, window)
+		go applyDaemonSwap(ctx, args.Version, window, socketClient)
 		return nil, nil
 	})
 	if startErr := controlServer.Start(); startErr != nil {
@@ -386,6 +386,9 @@ func run() error {
 		for {
 			if supervisor.Ready() {
 				slog.Info("Daemon ready", "socket", socketPath)
+				// Reflect the RUNNING daemon's version in the title — it may be
+				// newer than this wrapper after a daemon-only auto-update.
+				refreshWindowTitle(socketClient, window)
 				break
 			}
 			if time.Now().After(deadline) {
