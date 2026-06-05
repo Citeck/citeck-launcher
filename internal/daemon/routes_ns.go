@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/bundle"
@@ -47,7 +48,14 @@ func (d *Daemon) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
 				summary.Status = string(namespace.NsStatusStopped)
 			}
 			if cfg, cerr := d.loadNamespaceConfigFromStore(d.workspaceID, row.ID); cerr == nil {
-				summary.BundleRef = cfg.BundleRef.String()
+				// Display the resolved concrete version for a symbolic "LATEST"
+				// key (from the persisted cached bundle), so the list matches
+				// the dashboard header instead of showing "...:LATEST".
+				var cached *bundle.Def
+				if st := loadNsStateFromStore(d.store, d.workspaceID, row.ID); st != nil {
+					cached = st.CachedBundle
+				}
+				summary.BundleRef = namespace.ResolveDisplayBundleRef(cfg.BundleRef, cached)
 			}
 			if activeID == row.ID && rt != nil {
 				summary.Status = string(rt.Status())
@@ -65,12 +73,16 @@ func (d *Daemon) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
 			if rt != nil {
 				status = string(rt.Status())
 			}
+			var cached *bundle.Def
+			if st := loadNsStateFromStore(d.store, d.workspaceID, nsCfg.ID); st != nil {
+				cached = st.CachedBundle
+			}
 			result = append(result, api.NamespaceSummaryDto{
 				ID:          nsCfg.ID,
 				WorkspaceID: d.workspaceID,
 				Name:        nsCfg.Name,
 				Status:      status,
-				BundleRef:   nsCfg.BundleRef.String(),
+				BundleRef:   namespace.ResolveDisplayBundleRef(nsCfg.BundleRef, cached),
 			})
 		}
 	}
@@ -259,6 +271,32 @@ func resolveQuickStartBundleRef(wsCfg *bundle.WorkspaceConfig, qs bundle.QuickSt
 		return wsCfg.BundleRepos[0].ID + ":LATEST"
 	}
 	return ""
+}
+
+// resolveLatestBundleKey resolves a repo's symbolic "LATEST" to its concrete
+// latest version via the bundle resolver (Kotlin parity:
+// BundlesService.getLatestRepoBundle). Returns ("", false) on any failure
+// (empty repo, offline, repo not yet synced) so the caller keeps "LATEST".
+func (d *Daemon) resolveLatestBundleKey(wsID, repo string) (string, bool) {
+	if repo == "" {
+		return "", false
+	}
+	bundlesDataDir := config.DataDir()
+	if config.IsDesktopMode() {
+		bundlesDataDir = filepath.Join(config.HomeDir(), "ws", wsID)
+	}
+	resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(d.secretService)).
+		WithWorkspaceRepo(lookupWorkspaceRepoOpts(d.store, d.secretService, wsID))
+	// Server mode never auto-pulls git; desktop may pull to find the latest tag.
+	if !config.IsDesktopMode() {
+		resolver.SetOffline(true)
+	}
+	res, err := resolver.Resolve(bundle.Ref{Repo: repo, Key: "LATEST"})
+	if err != nil || res == nil || res.Bundle == nil || res.Bundle.Key.Version == "" {
+		slog.Debug("Resolve LATEST at create failed; keeping symbolic ref", "repo", repo, "err", err)
+		return "", false
+	}
+	return res.Bundle.Key.Version, true
 }
 
 // --- Forms ---
@@ -571,6 +609,25 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		nsCfg.BundleRef = bundle.Ref{Repo: req.BundleRepo, Key: req.BundleKey}
 	}
 
+	// Store the effective snapshot id in the config so the demo data is imported
+	// before start (below) and re-imported on later restarts only when absent
+	// (marker-guarded). req.Snapshot (Quick Start / create dialog) wins over a
+	// template-provided snapshot already unmarshalled into nsCfg.Snapshot
+	// (Kotlin parity: WelcomeScreen.kt:299 withSnapshot).
+	if req.Snapshot != "" {
+		nsCfg.Snapshot = req.Snapshot
+	}
+
+	// Resolve a symbolic "LATEST" bundle key to the concrete latest version and
+	// pin it (Kotlin parity: WelcomeScreen.kt:293). Best-effort — on failure
+	// (offline / repo not synced) keep "LATEST"; the runtime resolves it at load
+	// and the UI shows the resolved version via namespace.ResolveDisplayBundleRef.
+	if strings.EqualFold(nsCfg.BundleRef.Key, "LATEST") {
+		if resolved, ok := d.resolveLatestBundleKey(createWsID, nsCfg.BundleRef.Repo); ok {
+			nsCfg.BundleRef.Key = resolved
+		}
+	}
+
 	// Serialize to YAML
 	data, err := namespace.MarshalNamespaceConfig(&nsCfg)
 	if err != nil {
@@ -613,15 +670,16 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Trigger background snapshot download + import if specified
-	if req.Snapshot != "" {
-		wsID := req.WorkspaceID
-		if wsID == "" {
-			wsID = d.workspaceID
-		}
-		d.bgWg.Go(func() {
-			d.downloadAndImportSnapshot(req.Snapshot, wsID, nsCfg.ID)
-		})
+	// Import the snapshot synchronously BEFORE the namespace is activated and
+	// started, so volumes are populated before any container mounts them
+	// (Kotlin parity: NamespacesService.kt:131-143 imports in the create
+	// handler). Inline — not a background goroutine — to remove the race where
+	// Quick Start's immediate start brought containers up on empty volumes while
+	// the import was still running. downloadAndImportSnapshot writes the
+	// imported-<nsID> marker on success so a later restart's importSnapshotIfNeeded
+	// skips re-import and never overwrites user data.
+	if nsCfg.Snapshot != "" {
+		d.downloadAndImportSnapshot(nsCfg.Snapshot, wsID, nsCfg.ID)
 	}
 
 	// Auto-activate the newly-created namespace in desktop mode when the

@@ -3,9 +3,11 @@ package namespace
 import (
 	"fmt"
 	goruntime "runtime"
+	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/bundle"
 )
 
 // ToNamespaceDto converts the runtime state to an API DTO.
@@ -41,7 +43,7 @@ func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 		ID:        r.nsID,
 		Name:      r.config.Name,
 		Status:    string(r.status),
-		BundleRef: r.config.BundleRef.String(),
+		BundleRef: ResolveDisplayBundleRef(r.config.BundleRef, r.cachedBundle),
 		Apps:      apps,
 		Links:     r.generateLinks(),
 		// Host CPU count for the UI's aggregate CPU progress-bar cap. Pulled
@@ -50,6 +52,21 @@ func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 		// in every supported deployment.
 		HostCPUs: goruntime.NumCPU(),
 	}
+}
+
+// ResolveDisplayBundleRef returns the bundle ref string to show in the UI,
+// substituting the resolved concrete version for a symbolic "LATEST" key when a
+// cached (already-resolved) bundle is available. In Kotlin 1.x the stored ref
+// was concrete (LATEST resolved at create — WelcomeScreen.kt:293), so the
+// dashboard naturally showed the real version. Here a namespace config can
+// still carry "LATEST" (existing namespaces, workspace templates, manual YAML
+// edits), so we resolve it for display from the runtime's cached bundle. When
+// no cached version is available, the raw ref is returned unchanged.
+func ResolveDisplayBundleRef(ref bundle.Ref, cached *bundle.Def) string {
+	if strings.EqualFold(ref.Key, "LATEST") && cached != nil && cached.Key.Version != "" {
+		return ref.Repo + ":" + cached.Key.Version
+	}
+	return ref.String()
 }
 
 // displayAppStatus rewrites an app's runtime status into the user-facing

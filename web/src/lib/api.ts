@@ -456,11 +456,15 @@ export async function getQuickStarts(): Promise<QuickStartDto[]> {
 
 // Phase E3: Namespace creation
 export async function createNamespace(data: NamespaceCreateDto): Promise<ActionResultDto> {
+  // A snapshot triggers a synchronous server-side import (download + restore
+  // into volumes) before the namespace is started, so the create response can
+  // take much longer than a plain create — use a generous timeout in that case.
+  const timeoutMs = data.snapshot ? 600_000 : 30_000
   const res = await fetchWithTimeout(`${API_BASE}/namespaces`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
     body: JSON.stringify(data),
-  })
+  }, timeoutMs)
   if (!res.ok) throw new Error(await extractErrorMessage(res))
   return res.json()
 }

@@ -160,7 +160,11 @@ export function Welcome() {
       // name/template/snapshot. We do not send authType/host/port/TLS/pgAdmin
       // so the template defaults survive.
       await createNamespace({
-        name: (qs && qs.name) || 'Citeck Default',
+        // Fixed namespace name (Kotlin parity: WelcomeScreen.kt:283
+        // `.withName("Citeck Default")`). qs.name is the BUTTON label
+        // ("Quick Start With Demo Data") — it must not leak into the
+        // created namespace's name.
+        name: 'Citeck Default',
         template: (qs && qs.template) || '',
         snapshot: (qs && qs.snapshot) || '',
         bundleRepo: '',
