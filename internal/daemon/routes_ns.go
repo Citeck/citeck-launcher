@@ -157,6 +157,15 @@ func (d *Daemon) handleDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("Failed to remove namespace rtfiles dir", "dir", nsDir, "err", err) //nolint:gosec // G706: nsDir from config.NamespaceDir(validated ids)
 	}
 
+	// Best-effort: remove the namespace's Docker resources (named DATA volumes,
+	// network, any leftover containers) so a deleted namespace doesn't leak its
+	// postgres/mongo/… volumes. Selected by label, so a non-active namespace is
+	// cleaned too. Failures are logged inside PurgeNamespace and never block the
+	// delete (the source-of-truth row is already gone).
+	if d.dockerClient != nil {
+		d.dockerClient.PurgeNamespace(r.Context(), nsID, wsID)
+	}
+
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "namespace deleted"})
 }
 
