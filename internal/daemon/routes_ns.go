@@ -13,6 +13,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/form"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/storage"
@@ -719,6 +720,20 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	// snapshot is imported on namespace creation; there is no boot-time
 	// auto-import (a `snapshot:` config field never triggers a re-import).
 	if nsCfg.Snapshot != "" {
+		// The import creates volumes scoped to the NEW namespace, so it needs a
+		// client scoped to (wsID, nsCfg.ID) — NOT d.dockerClient, which is scoped
+		// to whatever namespace was last active. Server mode has a single
+		// namespace (d.dockerClient is correct); desktop builds a transient client
+		// just for the import (the runtime gets its own via loadNamespace below).
+		importClient := d.dockerClient
+		if config.IsDesktopMode() {
+			if fc, fcErr := docker.NewClient(wsID, nsCfg.ID); fcErr != nil {
+				slog.Warn("Create: failed to build docker client for snapshot import", "nsID", nsCfg.ID, "err", fcErr)
+			} else {
+				defer fc.Close()
+				importClient = fc
+			}
+		}
 		// The import (download + volume restore) can run for minutes, exceeding
 		// the server's WriteTimeout — lift the write deadline for this request so
 		// the response isn't cut off mid-import (same approach as the log-follow
@@ -726,7 +741,7 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		// timeout for snapshot-backed creates.
 		rc := http.NewResponseController(w)
 		_ = rc.SetWriteDeadline(time.Time{})
-		d.downloadAndImportSnapshot(nsCfg.Snapshot, wsID, nsCfg.ID)
+		d.downloadAndImportSnapshot(importClient, nsCfg.Snapshot, wsID, nsCfg.ID)
 	}
 
 	// Auto-activate the newly-created namespace in desktop mode when the
@@ -737,25 +752,20 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	// so a user creating a second namespace from an already-loaded workspace
 	// keeps the current one active (they switch explicitly via the picker).
 	if config.IsDesktopMode() {
-		targetWsID := req.WorkspaceID
-		if targetWsID == "" {
-			targetWsID = d.workspaceID
-		}
 		d.configMu.RLock()
 		hasCurrent := d.runtime != nil && d.nsConfig != nil
 		activeWsID := d.workspaceID
 		d.configMu.RUnlock()
-		if !hasCurrent && targetWsID == activeWsID {
+		if !hasCurrent && wsID == activeWsID {
 			if d.reloadMu.TryLock() {
 				defer d.reloadMu.Unlock()
 				loaded, loadErr := loadNamespace(loadNamespaceInput{
 					Store:         d.store,
 					SecretService: d.secretService,
-					// Create reuses d.dockerClient on purpose: the snapshot import
-					// just above (downloadAndImportSnapshot) ran on the SAME client,
-					// so import-volume names and the runtime's mount names must stay
-					// on one client. (The switch path below passes nil to rebind.)
-					DockerClient: d.dockerClient,
+					// nil → loadNamespace builds the runtime client scoped to
+					// nsCfg.ID. Never inject d.dockerClient: it is scoped to the
+					// previously-active namespace (the wrong-namespace bug).
+					DockerClient: nil,
 					DaemonCfg:    d.daemonCfg,
 					Licenses:     d.licenses,
 					WorkspaceID:  activeWsID,

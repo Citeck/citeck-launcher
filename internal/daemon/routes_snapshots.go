@@ -18,6 +18,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/snapshot"
 )
@@ -413,8 +414,13 @@ func safeSnapshotFileName(rawURL string) string {
 // matching Kotlin's WorkspaceSnapshots layout. This lets multiple
 // namespaces in the same workspace share one cached archive instead of re-downloading.
 //
+// dc MUST be a Docker client scoped to (wsID, nsID): the import creates volumes
+// via dc.CreateVolume, whose names derive from the client's namespace/workspace.
+// Passing the wrong-scoped client (e.g. a stale d.dockerClient from a previously
+// active namespace) would restore the snapshot into another namespace's volumes.
+//
 //nolint:nestif // download+import orchestration requires nested SHA256 verification and retry logic
-func (d *Daemon) downloadAndImportSnapshot(snapshotID, wsID, nsID string) {
+func (d *Daemon) downloadAndImportSnapshot(dc *docker.Client, snapshotID, wsID, nsID string) {
 	d.configMu.RLock()
 	wsCfg := d.workspaceConfig
 	d.configMu.RUnlock()
@@ -496,7 +502,7 @@ func (d *Daemon) downloadAndImportSnapshot(snapshotID, wsID, nsID string) {
 	}
 
 	// Import the snapshot
-	if d.dockerClient == nil {
+	if dc == nil {
 		slog.Error("Docker client not available for snapshot import")
 		return
 	}
@@ -513,7 +519,7 @@ func (d *Daemon) downloadAndImportSnapshot(snapshotID, wsID, nsID string) {
 			Current: current, Total: total,
 		})
 	}
-	meta, err := snapshot.Import(d.bgCtx, d.dockerClient, destPath, volumesBase, importProgress)
+	meta, err := snapshot.Import(d.bgCtx, dc, destPath, volumesBase, importProgress)
 	if err != nil {
 		slog.Error("Snapshot import failed", "err", err)
 		d.broadcastEvent(api.EventDto{

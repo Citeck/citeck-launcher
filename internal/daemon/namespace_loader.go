@@ -57,6 +57,14 @@ type loadedNamespace struct {
 	ShouldStart bool
 }
 
+// dockerClientScoped reports whether dc is non-nil and already scoped to exactly
+// (workspace, namespace). loadNamespace reuses an injected client only when this
+// holds; otherwise it rebuilds — which is what makes a mis-scoped client
+// impossible to install regardless of the caller.
+func dockerClientScoped(dc *docker.Client, workspace, ns string) bool {
+	return dc != nil && dc.Workspace() == workspace && dc.Namespace() == ns
+}
+
 // loadNamespace builds the full set of namespace-scoped state for a given
 // (workspace, namespace) pair: config + bundle resolution + secrets + generator
 // pass + Runtime construction + persisted-state restore + (desktop) cloud
@@ -244,11 +252,21 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	// runtime adopt the OLD namespace's containers and emit its network name
 	// (header showed nsB while containers were nsA). Startup passes its
 	// already-built client. No error return follows, so no leak on the happy path.
+	// Derive the Docker client from the namespace being loaded — never trust an
+	// injected one blindly. An injected client is REUSED only if it is already
+	// scoped to exactly (dockerWorkspace, nsID); otherwise it is rebuilt. This is
+	// the single choke-point that makes the whole "client scoped to a stale/other
+	// namespace" bug class structurally impossible, no matter which caller (start,
+	// create, namespace switch, workspace switch) hands us what.
+	dockerWorkspace := ""
+	if config.IsDesktopMode() {
+		dockerWorkspace = wsID
+	}
 	dc := in.DockerClient
-	if dc == nil {
-		dockerWorkspace := ""
-		if config.IsDesktopMode() {
-			dockerWorkspace = wsID
+	if !dockerClientScoped(dc, dockerWorkspace, nsID) {
+		if dc != nil {
+			slog.Error("loadNamespace: injected docker client scoped to wrong target; rebuilding",
+				"wantWs", dockerWorkspace, "wantNs", nsID, "gotWs", dc.Workspace(), "gotNs", dc.Namespace())
 		}
 		var dcErr error
 		dc, dcErr = docker.NewClient(dockerWorkspace, nsID)
@@ -408,6 +426,14 @@ func (d *Daemon) installLoadedNamespace(loaded *loadedNamespace, wsID, nsID stri
 	d.volumesBase = loaded.VolumesBase
 	d.bundleError = loaded.BundleError
 	d.acmeRenewal = nil
+	// Invariant guard at the single swap choke-point: the active client MUST be
+	// scoped to the active namespace. loadNamespace already guarantees this, so a
+	// trip here means a new code path bypassed it — fail loud rather than silently
+	// emit another namespace's container/network names.
+	if d.dockerClient != nil && d.nsConfig != nil && d.dockerClient.Namespace() != d.nsConfig.ID {
+		slog.Error("BUG: active docker client mis-scoped after namespace install",
+			"clientNs", d.dockerClient.Namespace(), "activeNs", d.nsConfig.ID)
+	}
 	d.configMu.Unlock()
 
 	if oldRuntime != nil {

@@ -85,6 +85,15 @@ func (c *Client) Close() error {
 	return c.cli.Close() //nolint:wrapcheck // transparent close
 }
 
+// Namespace returns the namespace this client is scoped to. Used to enforce the
+// invariant that the daemon's active client always matches the active namespace
+// (see loadNamespace / installLoadedNamespace) — a mismatch is the root of the
+// "containers carry the wrong namespace id" class of bugs.
+func (c *Client) Namespace() string { return c.namespace }
+
+// Workspace returns the workspace this client is scoped to ("" in server mode).
+func (c *Client) Workspace() string { return c.workspace }
+
 // Ping checks Docker connectivity.
 func (c *Client) Ping(ctx context.Context) error {
 	if _, err := c.cli.Ping(ctx); err != nil {

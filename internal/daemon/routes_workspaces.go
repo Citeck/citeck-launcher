@@ -546,12 +546,14 @@ func (d *Daemon) SwitchWorkspace(wsID string) error {
 	loaded, loadErr := loadNamespace(loadNamespaceInput{
 		Store:         d.store,
 		SecretService: d.secretService,
-		DockerClient:  d.dockerClient,
-		DaemonCfg:     d.daemonCfg,
-		Licenses:      d.licenses,
-		WorkspaceID:   wsID,
-		NamespaceID:   newNsID,
-		Desktop:       d.desktop,
+		// nil → loadNamespace builds a client scoped to (wsID, newNsID). Never
+		// pass d.dockerClient: it is scoped to the PREVIOUS workspace/namespace.
+		DockerClient: nil,
+		DaemonCfg:    d.daemonCfg,
+		Licenses:     d.licenses,
+		WorkspaceID:  wsID,
+		NamespaceID:  newNsID,
+		Desktop:      d.desktop,
 	})
 	if loadErr != nil {
 		slog.Warn("Workspace switch: auto-load namespace failed", "wsID", wsID, "nsID", newNsID, "err", loadErr) //nolint:gosec // G706: wsID/newNsID validated
