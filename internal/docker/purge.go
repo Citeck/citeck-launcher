@@ -73,3 +73,99 @@ func (c *Client) PurgeNamespace(ctx context.Context, nsID, wsID string) {
 		}
 	}
 }
+
+// orphanKey is the canonical (namespace, workspace) identity used by the
+// startup orphan-sweep. Namespace is matched exactly (it is the label value
+// written at creation); workspace is folded to lower case to mirror
+// PurgeNamespace's case-insensitive workspace match.
+func orphanKey(nsID, wsID string) string {
+	return nsID + "\x00" + strings.ToLower(wsID)
+}
+
+// collectOrphanTargets reduces a set of launcher-resource label maps to the
+// distinct (namespace, workspace) pairs that should be purged: those NOT in
+// keep. Resources with an empty namespace label are skipped — they cannot be
+// addressed by PurgeNamespace's exact-label filter and are too ambiguous to
+// remove safely. Pure (no Docker calls) so the keep/dedup logic is unit-tested
+// independently of the SDK.
+func collectOrphanTargets(labelSets []map[string]string, keep map[string]bool) []orphanTarget {
+	seen := map[string]bool{}
+	var targets []orphanTarget
+	for _, labels := range labelSets {
+		ns := labels[LabelNamespace]
+		ws := labels[LabelWorkspace]
+		if ns == "" {
+			continue
+		}
+		key := orphanKey(ns, ws)
+		if keep[key] || seen[key] {
+			continue
+		}
+		seen[key] = true
+		targets = append(targets, orphanTarget{ns: ns, ws: ws})
+	}
+	return targets
+}
+
+// orphanTarget is a (namespace, workspace) pair slated for purge.
+type orphanTarget struct {
+	ns string
+	ws string
+}
+
+// SweepOrphans removes every launcher Docker resource whose (namespace,
+// workspace) is NOT in keep — leftovers from namespaces that were deleted or
+// whose storage was wiped (the migration-test churn) while their containers
+// kept running (detach leaves them up). keep is built from storage via
+// OrphanKey for every (workspace, namespace) that still exists, so the active
+// namespace and every stored namespace are protected.
+//
+// Best-effort: enumeration failures are logged and skipped; each orphan pair is
+// removed via PurgeNamespace (containers → named volumes → network). Returns
+// the distinct namespace ids it purged, for the caller to log. Desktop-only by
+// convention (the caller gates on IsDesktopMode); server mode has a single
+// file-backed namespace and no orphan churn.
+func (c *Client) SweepOrphans(ctx context.Context, keep map[string]bool) []string {
+	launcherFilter := filters.NewArgs(filters.Arg("label", LabelLauncher+"=true"))
+	var labelSets []map[string]string
+
+	if cs, err := c.cli.ContainerList(ctx, container.ListOptions{All: true, Filters: launcherFilter}); err != nil {
+		slog.Warn("SweepOrphans: list containers failed", "err", err)
+	} else {
+		for _, ct := range cs {
+			labelSets = append(labelSets, ct.Labels)
+		}
+	}
+	if vl, err := c.cli.VolumeList(ctx, volume.ListOptions{Filters: launcherFilter}); err != nil {
+		slog.Warn("SweepOrphans: list volumes failed", "err", err)
+	} else {
+		for _, v := range vl.Volumes {
+			if v != nil {
+				labelSets = append(labelSets, v.Labels)
+			}
+		}
+	}
+	if nets, err := c.cli.NetworkList(ctx, network.ListOptions{Filters: launcherFilter}); err != nil {
+		slog.Warn("SweepOrphans: list networks failed", "err", err)
+	} else {
+		for _, n := range nets {
+			labelSets = append(labelSets, n.Labels)
+		}
+	}
+
+	targets := collectOrphanTargets(labelSets, keep)
+	purged := make([]string, 0, len(targets))
+	for _, t := range targets {
+		slog.Info("SweepOrphans: purging orphaned namespace resources", "ns", t.ns, "ws", t.ws)
+		c.PurgeNamespace(ctx, t.ns, t.ws)
+		purged = append(purged, t.ns)
+	}
+	return purged
+}
+
+// OrphanKey builds the keep-set key for a (namespace, workspace) that still
+// exists in storage, so SweepOrphans never removes its Docker resources. Must
+// use the same canonicalization as the resource side (orphanKey).
+func OrphanKey(nsID, wsID string) string {
+	return orphanKey(nsID, wsID)
+}

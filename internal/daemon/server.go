@@ -539,6 +539,19 @@ func Start(opts StartOptions) error {
 	volumesBase := loaded.VolumesBase
 	bundleError := loaded.BundleError
 
+	// Startup orphan-sweep (desktop only): remove Docker resources for
+	// namespaces that no longer exist in storage. These pile up from the
+	// migration-test churn — a deleted/wiped namespace whose containers keep
+	// running (detach leaves them up across restarts) squats the host ports the
+	// active namespace needs and its data volumes eat disk. Running it BEFORE
+	// the active namespace starts means start doesn't have to evict port
+	// squatters first. Bounded + fail-safe inside sweepOrphanDockerResources.
+	if config.IsDesktopMode() {
+		sweepCtx, sweepCancel := context.WithTimeout(context.Background(), 90*time.Second)
+		sweepOrphanDockerResources(sweepCtx, dockerClient, store, wsID, nsID)
+		sweepCancel()
+	}
+
 	if nsCfg != nil {
 		// Snapshot import is a USER action only — namespace creation with a
 		// selected snapshot (handleCreateNamespace) or an explicit import from the
@@ -795,6 +808,40 @@ func Start(opts StartOptions) error {
 	// context (desktop), SIGTERM, or the HTTP endpoint. The caller uses this to
 	// trigger os.Exit and avoid the process lingering on background goroutines.
 	return ErrShutdownRequested
+}
+
+// sweepOrphanDockerResources removes Docker resources for namespaces that no
+// longer exist in storage. Fail-safe: the keep set must be built completely
+// from storage; if any listing fails, it does nothing rather than risk
+// removing a live namespace's resources. The active namespace is always kept.
+func sweepOrphanDockerResources(ctx context.Context, dc *docker.Client, store storage.Store, activeWsID, activeNsID string) {
+	if dc == nil || store == nil {
+		return
+	}
+	keep := map[string]bool{}
+	if activeNsID != "" {
+		keep[docker.OrphanKey(activeNsID, activeWsID)] = true
+	}
+	wss, err := store.ListWorkspaces()
+	if err != nil {
+		slog.Warn("Orphan-sweep skipped: cannot list workspaces", "err", err)
+		return
+	}
+	for _, ws := range wss {
+		nss, nsErr := store.ListNamespaces(ws.ID)
+		if nsErr != nil {
+			// Incomplete keep set → bail out entirely; never purge on doubt.
+			slog.Warn("Orphan-sweep skipped: cannot list namespaces", "ws", ws.ID, "err", nsErr)
+			return
+		}
+		for _, ns := range nss {
+			keep[docker.OrphanKey(ns.ID, ws.ID)] = true
+		}
+	}
+	if purged := dc.SweepOrphans(ctx, keep); len(purged) > 0 {
+		slog.Info("Orphan-sweep removed leftover namespace resources",
+			"count", len(purged), "namespaces", purged)
+	}
 }
 
 func (d *Daemon) shutdown(leaveRunning bool) {
