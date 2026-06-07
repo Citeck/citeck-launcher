@@ -217,6 +217,27 @@ func (r *Runtime) stepAllAppsUnderLock() []dispatchPlan { //nolint:gocyclo // si
 				app.StatusText = ""
 				r.setAppStatus(app, AppStatusReadyToStart)
 			}
+		case AppStatusStoppingFailed:
+			// T31: a runtime-driven stop (liveness recreate T17a, or a reload /
+			// regenerate sweep) that timed out self-heals after the same
+			// exponential backoff as T24/T25. Operator detaches never reach here —
+			// they sit in manualStoppedApps and the loop above skips them, so a
+			// STOPPING_FAILED app seen here was always meant to come back up.
+			// Re-dispatch the stop (force-removing the stuck or already-gone
+			// container) and route through UPDATING → READY_TO_PULL so the app is
+			// recreated. The retry clock is stamped at the T23 timeout; a repeat
+			// timeout bumps the backoff, a success clears it (resetRetry on
+			// RUNNING in commitRunningUnderLock).
+			if r.retryDueFor(app.Name, now) {
+				app.desiredNext = AppStatusReadyToPull
+				app.initialSweep = false
+				app.stoppingStartedAt = now
+				app.StatusText = ""
+				r.setAppStatus(app, AppStatusUpdating)
+				containerName := r.docker.ContainerName(app.Name)
+				stopTimeout := r.resolveStopTimeout(app.Def.StopTimeout)
+				plans = append(plans, r.makeStopPlan(app.Name, containerName, stopTimeout))
+			}
 		default:
 			// Other states handled in later phases (T17–T33).
 		}
@@ -600,8 +621,9 @@ func (r *Runtime) handleStopResult(res workers.Result) {
 		return
 	}
 	if res.Err != nil {
-		// T22: STOPPING / UPDATING → STOPPING_FAILED. Drop desiredNext (restart intent
-		// discarded; stuck state requires manual intervention via T30).
+		// T22: STOPPING / UPDATING → STOPPING_FAILED. Drop desiredNext (the routing
+		// intent is re-derived on heal). A non-detached app self-heals via T31
+		// after the backoff; an operator detach is recovered via T30.
 		priorDesiredNext := app.desiredNext
 		app.desiredNext = ""
 		app.initialSweep = false
@@ -609,6 +631,10 @@ func (r *Runtime) handleStopResult(res workers.Result) {
 		slog.Warn("stop failed",
 			"app", app.Name, "priorDesiredNext", string(priorDesiredNext), "err", res.Err)
 		r.setAppStatus(app, AppStatusStoppingFailed)
+		// Stamp the retry clock so T31's self-heal backoff starts now (parity with
+		// the T23 timeout path). Detached apps are skipped by T31; the attempt is
+		// inert for them (cleared on re-attach / RUNNING).
+		r.recordRetryAttempt(app.Name)
 		return
 	}
 	// T21: stopContainer succeeded. Clear ContainerID + initialSweep. If
@@ -976,6 +1002,10 @@ func (r *Runtime) tickUnderLock() []dispatchPlan {
 		slog.Warn("stop timeout exceeded",
 			"app", app.Name, "budget", budget, "priorDesiredNext", string(priorDesiredNext))
 		r.setAppStatus(app, AppStatusStoppingFailed)
+		// Stamp the retry clock so T31's self-heal backoff starts now (1m → 10m).
+		// Detached apps (manualStoppedApps) also pass here, but T31 skips them, so
+		// the recorded attempt is inert for them (cleared on re-attach / RUNNING).
+		r.recordRetryAttempt(app.Name)
 		// Cancel the in-flight stop worker (best-effort; reason=ExternalStop
 		// doesn't drop the Result, the source-state guard does).
 		r.dispatcher.Cancel(workers.TaskID{App: app.Name, Op: workers.OpStop}, workers.CancelExternalStop)

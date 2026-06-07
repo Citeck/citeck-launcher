@@ -217,13 +217,15 @@ func TestStoppingFailedDiscardsDesiredNext(t *testing.T) {
 	assert.Equal(t, AppRuntimeStatus(""), gotDesiredNext,
 		"T22 must clear desiredNext (got %q)", gotDesiredNext)
 
-	// And the app must NOT auto-promote out of STOPPING_FAILED — T31 is
-	// no-auto-retry by design. Poll for 1500ms; any deviation fails fast.
+	// And the app must NOT auto-promote during the T31 backoff window: the T22
+	// path stamps the retry clock (lastAttempt=now), so the first self-heal is
+	// 1 minute out. Poll for 1500ms; any deviation inside the window fails fast.
+	// (The post-backoff self-heal itself is covered by TestStoppingFailedSelfHeal.)
 	assert.Never(t, func() bool {
 		a := r.FindApp(def.Name)
 		return a != nil && a.Status != AppStatusStoppingFailed
 	}, 1500*time.Millisecond, 50*time.Millisecond,
-		"STOPPING_FAILED must be sticky (no auto-retry per T31)")
+		"STOPPING_FAILED must be sticky within the T31 backoff window")
 }
 
 // TestCmdStartAppOnStoppingFailedRetriesStop exercises T30: an app stuck in
