@@ -604,6 +604,12 @@ func Start(opts StartOptions) error {
 		go d.updateSvc.RunPeriodic(bgCtx)
 	}
 
+	// Low-disk monitor: a full data root is what silently broke a running
+	// namespace (Docker ENOSPC → every container's stdout/health stalled →
+	// liveness storm). A periodic WARN surfaces the condition in the daemon log
+	// (and the dump) before it cascades. Best-effort, both modes.
+	go d.runDiskMonitor(bgCtx)
+
 	// Wire up event broadcasting
 	if d.runtime != nil {
 		d.runtime.SetEventCallback(func(evt api.EventDto) {
@@ -841,6 +847,49 @@ func sweepOrphanDockerResources(ctx context.Context, dc *docker.Client, store st
 	if purged := dc.SweepOrphans(ctx, keep); len(purged) > 0 {
 		slog.Info("Orphan-sweep removed leftover namespace resources",
 			"count", len(purged), "namespaces", purged)
+	}
+}
+
+// lowDiskWarnGB is the free-space floor (on the data-root filesystem) below
+// which runDiskMonitor warns. Matches the Diagnostics "warning" level so the
+// log and the on-demand check agree.
+const lowDiskWarnGB = 5.0
+
+// diskMonitorInterval is how often runDiskMonitor samples free space.
+const diskMonitorInterval = 10 * time.Minute
+
+// runDiskMonitor periodically samples free space on the data-root filesystem
+// and WARNs while it is below lowDiskWarnGB. A full data root is what silently
+// broke a running namespace (Docker can't write → containers stall → liveness
+// storm), so surfacing it early — even just in the daemon log and the dump —
+// gives an actionable signal before the cascade. Best-effort; exits on ctx.
+func (d *Daemon) runDiskMonitor(ctx context.Context) {
+	ticker := time.NewTicker(diskMonitorInterval)
+	defer ticker.Stop()
+	wasLow := false
+	check := func() {
+		freeGB, totalGB, err := diskSpace(config.HomeDir())
+		if err != nil {
+			return
+		}
+		if freeGB < lowDiskWarnGB {
+			slog.Warn("Low disk space on data root — containers may fail to start or run",
+				"freeGB", fmt.Sprintf("%.1f", freeGB), "totalGB", fmt.Sprintf("%.1f", totalGB))
+			wasLow = true
+		} else if wasLow {
+			slog.Info("Disk space recovered above the low-disk threshold",
+				"freeGB", fmt.Sprintf("%.1f", freeGB))
+			wasLow = false
+		}
+	}
+	check() // sample immediately so a boot-time low-disk condition is logged at once
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			check()
+		}
 	}
 }
 
