@@ -228,7 +228,7 @@ var cloneOrPullRunner = func(ctx context.Context, opts RepoOpts) error {
 	_, err, _ := cloneFlight.Do(opts.DestDir, func() (any, error) {
 		return nil, cloneOrPullInner(ctx, opts)
 	})
-	return err
+	return err //nolint:wrapcheck // wrapped by CloneOrPullWithAuth's done-branch
 }
 
 // CloneOrPullWithAuth clones or pulls with optional token authentication and sync throttling.
