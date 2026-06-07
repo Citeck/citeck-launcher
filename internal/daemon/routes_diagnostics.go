@@ -66,10 +66,10 @@ func (d *Daemon) handleGetDiagnostics(w http.ResponseWriter, _ *http.Request) {
 		}
 		msg := fmt.Sprintf("Disk: %.1f GB free of %.1f GB (%.0f%% used)", freeGB, totalGB, pctUsed)
 		status := "ok"
-		if freeGB < 1.0 {
+		if freeGB < diskCriticalGB {
 			status = "error"
 			msg = fmt.Sprintf("Disk critically low: %.1f GB free", freeGB)
-		} else if freeGB < 5.0 {
+		} else if freeGB < lowDiskWarnGB {
 			status = "warning"
 			msg = fmt.Sprintf("Disk space low: %.1f GB free of %.1f GB", freeGB, totalGB)
 		}

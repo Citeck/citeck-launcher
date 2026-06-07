@@ -229,21 +229,29 @@ func (r *Runtime) stepAllAppsUnderLock() []dispatchPlan { //nolint:gocyclo // si
 			}
 		case AppStatusStoppingFailed:
 			// T31: a runtime-driven stop (liveness recreate T17a, or a reload /
-			// regenerate sweep) that timed out self-heals after the same
+			// regenerate sweep) that timed out is retried after the same
 			// exponential backoff as T24/T25. Operator detaches never reach here —
-			// they sit in manualStoppedApps and the loop above skips them, so a
-			// STOPPING_FAILED app seen here was always meant to come back up.
+			// they sit in manualStoppedApps and the loop above skips them.
 			// Re-dispatch the stop (force-removing the stuck or already-gone
-			// container) and route through UPDATING → READY_TO_PULL, with
-			// reuseLocalImage so the recreate REUSES the local image instead of
-			// pulling — a self-heal must not pull (it would risk failing on the
-			// same unavailability that wedged the stop, or silently swapping a
-			// mutable :snapshot/:latest tag to a new version). The retry clock is
-			// stamped at the T22/T23 failure; a repeat timeout bumps the backoff,
-			// a success clears it (resetRetry on RUNNING in commitRunningUnderLock).
+			// container) through UPDATING, then:
+			//   - removed-from-desired (markedForRemoval): route to STOPPED
+			//     (desiredNext="") so T32 can GC it — do NOT recreate, or it would
+			//     come back as a zombie that survives the reload that removed it.
+			//   - otherwise: route to READY_TO_PULL with reuseLocalImage so the
+			//     recreate REUSES the local image instead of pulling — a self-heal
+			//     must not pull (it would risk failing on the same unavailability
+			//     that wedged the stop, or silently swap a mutable :snapshot/:latest
+			//     tag to a new version).
+			// The retry clock is stamped at the T22/T23 failure; a repeat timeout
+			// bumps the backoff, a success clears it (resetRetry on RUNNING in
+			// commitRunningUnderLock).
 			if r.retryDueFor(app.Name, now) {
-				app.desiredNext = AppStatusReadyToPull
-				app.reuseLocalImage = true
+				if app.markedForRemoval {
+					app.desiredNext = ""
+				} else {
+					app.desiredNext = AppStatusReadyToPull
+					app.reuseLocalImage = true
+				}
 				app.initialSweep = false
 				app.stoppingStartedAt = now
 				app.StatusText = ""

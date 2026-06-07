@@ -850,19 +850,25 @@ func sweepOrphanDockerResources(ctx context.Context, dc *docker.Client, store st
 	}
 }
 
-// lowDiskWarnGB is the free-space floor (on the data-root filesystem) below
-// which runDiskMonitor warns. Matches the Diagnostics "warning" level so the
-// log and the on-demand check agree.
-const lowDiskWarnGB = 5.0
+// lowDiskWarnGB / diskCriticalGB are the free-space thresholds (GB) shared by
+// runDiskMonitor and the on-demand Diagnostics disk check, so the background log
+// and the UI agree. Warn below lowDiskWarnGB; the Diagnostics check escalates to
+// "error" below diskCriticalGB.
+const (
+	lowDiskWarnGB  = 5.0
+	diskCriticalGB = 1.0
+)
 
 // diskMonitorInterval is how often runDiskMonitor samples free space.
 const diskMonitorInterval = 10 * time.Minute
 
-// runDiskMonitor periodically samples free space on the data-root filesystem
-// and WARNs while it is below lowDiskWarnGB. A full data root is what silently
-// broke a running namespace (Docker can't write → containers stall → liveness
-// storm), so surfacing it early — even just in the daemon log and the dump —
-// gives an actionable signal before the cascade. Best-effort; exits on ctx.
+// runDiskMonitor periodically samples free space on the launcher-home
+// filesystem and WARNs while it is below lowDiskWarnGB. On a single-user
+// desktop the home dir and Docker's (rootless) data root share this filesystem,
+// so it is a good proxy for the disk Docker writes to. A full data root is what
+// silently broke a running namespace (Docker can't write → containers stall →
+// liveness storm), so surfacing it early — even just in the daemon log and the
+// dump — gives an actionable signal before the cascade. Best-effort; exits on ctx.
 func (d *Daemon) runDiskMonitor(ctx context.Context) {
 	ticker := time.NewTicker(diskMonitorInterval)
 	defer ticker.Stop()
@@ -873,7 +879,7 @@ func (d *Daemon) runDiskMonitor(ctx context.Context) {
 			return
 		}
 		if freeGB < lowDiskWarnGB {
-			slog.Warn("Low disk space on data root — containers may fail to start or run",
+			slog.Warn("Low disk space on the launcher-home filesystem — containers may fail to start or run",
 				"freeGB", fmt.Sprintf("%.1f", freeGB), "totalGB", fmt.Sprintf("%.1f", totalGB))
 			wasLow = true
 		} else if wasLow {

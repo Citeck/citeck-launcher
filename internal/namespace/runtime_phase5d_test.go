@@ -133,6 +133,47 @@ func TestSelfHealReusesLocalImageNoPull(t *testing.T) {
 	assert.Zero(t, pulls, "self-heal must NOT pull — recreate reuses the local image")
 }
 
+// TestSelfHealRemovedAppNotRevived pins the markedForRemoval guard in T31: an
+// app removed from the desired set (by a reload/regenerate) whose stop timed out
+// into STOPPING_FAILED must be driven to STOPPED and GC'd — NOT recreated, which
+// would resurrect a zombie that survives the very reload that removed it.
+func TestSelfHealRemovedAppNotRevived(t *testing.T) {
+	md := newMockDocker()
+	r := NewRuntime(testConfig(), md, t.TempDir())
+	defer r.Shutdown()
+
+	def := simpleApp("postgres", "postgres:17")
+	r.Start([]appdef.ApplicationDef{def})
+	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
+		t.Fatalf("app did not reach RUNNING for setup")
+	}
+
+	// Removed-from-desired + STOPPING_FAILED + backoff elapsed.
+	r.mu.Lock()
+	app := r.apps[def.Name]
+	app.markedForRemoval = true
+	r.setAppStatus(app, AppStatusStoppingFailed)
+	r.retryState = map[string]retryInfo{
+		def.Name: {count: 1, lastAttempt: time.Now().Add(-20 * time.Minute)},
+	}
+	r.mu.Unlock()
+	r.signalCh.Flush()
+
+	// Must be removed (STOPPED → T32 GC), never revived to RUNNING.
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		a := r.FindApp(def.Name)
+		if a == nil {
+			return // GC'd — correct outcome
+		}
+		if a.Status == AppStatusRunning {
+			t.Fatalf("T31 revived a markedForRemoval app to RUNNING — must go STOPPED+GC")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("markedForRemoval app was not GC'd; final status=%s", r.FindApp(def.Name).Status)
+}
+
 // TestReleaseImagePresentNeverPulls pins the invariant for release images
 // (no "snapshot" in the tag): if the image is already present locally, no
 // scenario pulls it. shouldPullImage==false for a release tag, so runPullTask

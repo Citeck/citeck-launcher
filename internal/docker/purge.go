@@ -129,7 +129,7 @@ func (c *Client) SweepOrphans(ctx context.Context, keep map[string]bool) []strin
 	launcherFilter := filters.NewArgs(filters.Arg("label", LabelLauncher+"=true"))
 	var labelSets []map[string]string
 
-	if cs, err := c.cli.ContainerList(ctx, container.ListOptions{All: true, Filters: launcherFilter}); err != nil {
+	if cs, err := c.ListAllLauncherContainers(ctx); err != nil {
 		slog.Warn("SweepOrphans: list containers failed", "err", err)
 	} else {
 		for _, ct := range cs {
