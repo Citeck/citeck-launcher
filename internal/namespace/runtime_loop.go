@@ -177,6 +177,16 @@ func (r *Runtime) stepAllAppsUnderLock() []dispatchPlan { //nolint:gocyclo // si
 				continue
 			}
 			pullAlways := shouldPullImage(appDef.Kind, appDef.Image)
+			if app.reuseLocalImage {
+				// Liveness restart / self-heal: reuse the local image. Suppress
+				// the snapshot force-pull so runPullTask short-circuits when the
+				// image is present (and still pulls if it is somehow absent —
+				// matching Kotlin 1.x's pullIfPresent=false on restart). Avoids a
+				// health restart silently swapping a mutable tag to a new version,
+				// or failing on a registry/disk outage. One-shot: cleared here.
+				pullAlways = false
+				app.reuseLocalImage = false
+			}
 			// T2/T3 unified dispatch: transition PULLING under Lock and emit a
 			// pull plan. The worker's short-circuit path (runPullTask with
 			// pullAlways=false) handles the T3 "image local, skip pull, refresh
@@ -224,12 +234,16 @@ func (r *Runtime) stepAllAppsUnderLock() []dispatchPlan { //nolint:gocyclo // si
 			// they sit in manualStoppedApps and the loop above skips them, so a
 			// STOPPING_FAILED app seen here was always meant to come back up.
 			// Re-dispatch the stop (force-removing the stuck or already-gone
-			// container) and route through UPDATING → READY_TO_PULL so the app is
-			// recreated. The retry clock is stamped at the T23 timeout; a repeat
-			// timeout bumps the backoff, a success clears it (resetRetry on
-			// RUNNING in commitRunningUnderLock).
+			// container) and route through UPDATING → READY_TO_PULL, with
+			// reuseLocalImage so the recreate REUSES the local image instead of
+			// pulling — a self-heal must not pull (it would risk failing on the
+			// same unavailability that wedged the stop, or silently swapping a
+			// mutable :snapshot/:latest tag to a new version). The retry clock is
+			// stamped at the T22/T23 failure; a repeat timeout bumps the backoff,
+			// a success clears it (resetRetry on RUNNING in commitRunningUnderLock).
 			if r.retryDueFor(app.Name, now) {
 				app.desiredNext = AppStatusReadyToPull
+				app.reuseLocalImage = true
 				app.initialSweep = false
 				app.stoppingStartedAt = now
 				app.StatusText = ""
@@ -1274,10 +1288,18 @@ func (r *Runtime) handleLivenessProbeResult(res workers.Result) {
 		r.mu.Unlock()
 		return
 	}
-	// T17a: RUNNING → UPDATING; desiredNext=READY_TO_PULL so T21 routes
-	// through READY_TO_PULL → T2/T3 → start. UPDATING (not STOPPING) marks
-	// this as a runtime-driven liveness recreate, distinct from a user stop.
+	// T17a: RUNNING → UPDATING; desiredNext=READY_TO_PULL so T21 routes through
+	// the pull-side entry, but reuseLocalImage suppresses the actual pull so the
+	// restart REUSES the local image (pulls only if it is somehow absent —
+	// Kotlin 1.x pullIfPresent=false parity). A liveness restart must not pull:
+	// re-pulling would (a) fail the restart if the registry or disk is
+	// unavailable (the very conditions that often trip liveness), and (b)
+	// silently swap in a newer image for a mutable :snapshot/:latest tag, turning
+	// a health restart into an unintended version change. Image updates happen
+	// only on an explicit reload. UPDATING (not STOPPING) marks this as a
+	// runtime-driven liveness recreate, distinct from a user stop.
 	app.desiredNext = AppStatusReadyToPull
+	app.reuseLocalImage = true
 	app.stoppingStartedAt = r.nowFunc()
 	r.incrementRestartCount(appName)
 	r.emitRestartEvent(app, "liveness", reason, diag)

@@ -85,3 +85,95 @@ func TestStoppingFailedDetachedNotHealed(t *testing.T) {
 	}, 1500*time.Millisecond, 50*time.Millisecond,
 		"T31 recreated a detached app — operator stop intent must win")
 }
+
+// TestSelfHealReusesLocalImageNoPull pins that a T31 self-heal recreates from
+// the LOCAL image and does NOT pull. Uses a Citeck-kind :snapshot image
+// (shouldPullImage==true) so WITHOUT the reuseLocalImage suppression the
+// recreate WOULD pull — making the assertion discriminating. Guards against a
+// health restart silently swapping a mutable tag to a new version, and against
+// the restart failing on a registry/disk outage. Mirrors Kotlin 1.x
+// pullIfPresent=false: the pull action runs but short-circuits on a present
+// local image (mock ImageExists defaults to true).
+func TestSelfHealReusesLocalImageNoPull(t *testing.T) {
+	md := newMockDocker()
+	r := NewRuntime(testConfig(), md, t.TempDir())
+	defer r.Shutdown()
+
+	// Citeck-core + :snapshot ⇒ shouldPullImage==true ⇒ a normal recreate pulls.
+	def := simpleApp("eapps", "nexus.example.com/ecos-apps:1-snapshot")
+	def.Kind = appdef.KindCiteckCore
+
+	r.Start([]appdef.ApplicationDef{def})
+	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
+		t.Fatalf("app did not reach RUNNING for setup")
+	}
+
+	// Reset the pull counter AFTER the initial start (which legitimately pulls).
+	md.mu.Lock()
+	md.pullCalls = 0
+	md.mu.Unlock()
+
+	// Trigger T31 self-heal: STOPPING_FAILED with the backoff window elapsed.
+	r.mu.Lock()
+	app := r.apps[def.Name]
+	r.setAppStatus(app, AppStatusStoppingFailed)
+	r.retryState = map[string]retryInfo{
+		def.Name: {count: 1, lastAttempt: time.Now().Add(-20 * time.Minute)},
+	}
+	r.mu.Unlock()
+	r.signalCh.Flush()
+
+	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
+		t.Fatalf("T31 did not self-heal back to RUNNING")
+	}
+
+	md.mu.Lock()
+	pulls := md.pullCalls
+	md.mu.Unlock()
+	assert.Zero(t, pulls, "self-heal must NOT pull — recreate reuses the local image")
+}
+
+// TestReleaseImagePresentNeverPulls pins the invariant for release images
+// (no "snapshot" in the tag): if the image is already present locally, no
+// scenario pulls it. shouldPullImage==false for a release tag, so runPullTask
+// short-circuits on ImageExists (mock default true) — start and self-heal both
+// leave pullCalls at zero. Kotlin 1.x parity (AppImagePullAction: skip when
+// !pullIfPresent && image present).
+func TestReleaseImagePresentNeverPulls(t *testing.T) {
+	md := newMockDocker()
+	r := NewRuntime(testConfig(), md, t.TempDir())
+	defer r.Shutdown()
+
+	// Citeck-core but a RELEASE tag (no "snapshot") ⇒ shouldPullImage==false.
+	def := simpleApp("eapps", "nexus.example.com/ecos-apps:2.26.10")
+	def.Kind = appdef.KindCiteckCore
+
+	r.Start([]appdef.ApplicationDef{def})
+	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
+		t.Fatalf("app did not reach RUNNING for setup")
+	}
+
+	// Start must not have pulled a present release image.
+	md.mu.Lock()
+	startPulls := md.pullCalls
+	md.mu.Unlock()
+	assert.Zero(t, startPulls, "release image present locally must not pull on start")
+
+	// Self-heal must not pull either.
+	r.mu.Lock()
+	app := r.apps[def.Name]
+	r.setAppStatus(app, AppStatusStoppingFailed)
+	r.retryState = map[string]retryInfo{
+		def.Name: {count: 1, lastAttempt: time.Now().Add(-20 * time.Minute)},
+	}
+	r.mu.Unlock()
+	r.signalCh.Flush()
+
+	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
+		t.Fatalf("self-heal did not return release app to RUNNING")
+	}
+	md.mu.Lock()
+	totalPulls := md.pullCalls
+	md.mu.Unlock()
+	assert.Zero(t, totalPulls, "release image present locally must not pull in any scenario")
+}
