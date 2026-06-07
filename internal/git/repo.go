@@ -213,18 +213,59 @@ func CloneOrPull(repoURL, branch, destDir string) error {
 	return CloneOrPullWithAuth(context.Background(), RepoOpts{URL: repoURL, Branch: branch, DestDir: destDir})
 }
 
-// CloneOrPullWithAuth clones or pulls with optional token authentication and sync throttling.
-// If the repo URL or branch has changed since the last clone, the repo is re-cloned from scratch.
-// Accepts context for timeout/cancellation support.
-func CloneOrPullWithAuth(ctx context.Context, opts RepoOpts) error {
+// pullHardDeadlineDefault is the wall-clock backstop used when the caller's
+// context carries no deadline; pullHardDeadlineGrace is added on top of a
+// context deadline. A var (not const) so tests can shorten it.
+const pullHardDeadlineDefault = 3 * time.Minute
+
+var pullHardDeadlineGrace = 30 * time.Second
+
+// cloneOrPullRunner performs the actual (deduped) clone/pull. Indirected
+// through a var so the hard-deadline backstop in CloneOrPullWithAuth can be
+// unit-tested with a blocking stand-in.
+var cloneOrPullRunner = func(ctx context.Context, opts RepoOpts) error {
 	// 8b-12: dedup concurrent clone/pull on same directory
 	_, err, _ := cloneFlight.Do(opts.DestDir, func() (any, error) {
 		return nil, cloneOrPullInner(ctx, opts)
 	})
-	if err != nil {
-		return fmt.Errorf("clone or pull %s: %w", opts.DestDir, err)
+	return err
+}
+
+// CloneOrPullWithAuth clones or pulls with optional token authentication and sync throttling.
+// If the repo URL or branch has changed since the last clone, the repo is re-cloned from scratch.
+// Accepts context for timeout/cancellation support.
+func CloneOrPullWithAuth(ctx context.Context, opts RepoOpts) error {
+	// Hard wall-clock backstop: go-git's clone/pull do not reliably honor ctx
+	// cancellation — a stalled TLS read or a corrupt-pack loop (e.g. after an
+	// ENOSPC episode) can block well past the deadline. Without this, a hung pull
+	// holds the caller and any lock it owns (the daemon's reloadMu during a
+	// reload) indefinitely, wedging the daemon. Run in a goroutine and return on
+	// the deadline regardless; the caller falls back to the on-disk repo (resolve
+	// uses the cached bundle on error). The abandoned goroutine finishes or dies
+	// on its own; cloneFlight dedups so a later call shares its result.
+	hard := pullHardDeadlineDefault
+	if dl, ok := ctx.Deadline(); ok {
+		hard = time.Until(dl) + pullHardDeadlineGrace
 	}
-	return nil
+	if hard < pullHardDeadlineGrace {
+		hard = pullHardDeadlineGrace
+	}
+	// Capture the runner before launching the goroutine so an abandoned (timed
+	// out) goroutine never reads the package var concurrently with a test swap.
+	runner := cloneOrPullRunner
+	done := make(chan error, 1)
+	go func() { done <- runner(ctx, opts) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("clone or pull %s: %w", opts.DestDir, err)
+		}
+		return nil
+	case <-time.After(hard):
+		slog.Warn("git clone/pull exceeded hard deadline; abandoning and using on-disk repo",
+			"dir", opts.DestDir, "deadline", hard.String())
+		return fmt.Errorf("clone or pull %s: hard deadline %s exceeded", opts.DestDir, hard)
+	}
 }
 
 func cloneOrPullInner(ctx context.Context, opts RepoOpts) error {
