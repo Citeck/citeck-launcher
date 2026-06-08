@@ -962,16 +962,12 @@ func (d *Daemon) doShutdown(leaveRunning bool) {
 	}
 }
 
-// doReload performs the core reload logic: load config, resolve bundle, generate, write files,
-// update shared state, and regenerate runtime. Caller must hold reloadMu.
-//
-//nolint:nestif // reload orchestrates config read, git pull, bundle resolution, ACME cert obtainment, and runtime regeneration
 // doReload re-resolves the namespace config + bundle (respecting the per-repo
 // git pull throttle) and reconciles the already-running runtime, recreating
-// only changed apps. Thin wrapper over doReloadEx.
+// only changed apps. Thin wrapper over doReloadEx. Caller must hold reloadMu.
 func (d *Daemon) doReload() error { return d.doReloadEx(false, false) }
 
-// doReloadEx is the shared reload / force-update core.
+// doReloadEx is the shared reload / force-update core. Caller must hold reloadMu.
 //
 //   - forceGitPull bypasses the per-repo PullPeriod throttle so a "Force Update"
 //     pulls the workspace / bundle repos unconditionally and picks up new bundle
@@ -982,6 +978,8 @@ func (d *Daemon) doReload() error { return d.doReloadEx(false, false) }
 //     runtime — used by "Force Update And Start" on a STOPPED namespace, where
 //     there is nothing running to regenerate. When false the set is handed to
 //     Regenerate (recreate changed) on the running runtime.
+//
+//nolint:nestif // reload orchestrates config read, git pull, bundle resolution, ACME cert obtainment, and runtime regeneration
 func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate bool) error {
 	d.configMu.RLock()
 	if d.nsConfig == nil || d.runtime == nil {

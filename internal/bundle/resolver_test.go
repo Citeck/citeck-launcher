@@ -562,6 +562,33 @@ func TestWorkspaceRepoSettings_ForcePullZerosPeriod(t *testing.T) {
 	assert.Equal(t, time.Duration(0), periodDefault, "force pull must zero the default PullPeriod")
 }
 
+func TestBundleRepoPullPeriod(t *testing.T) {
+	cases := []struct {
+		name      string
+		repo      *BundlesRepo
+		forcePull bool
+		want      time.Duration
+	}{
+		{"nil repo → default", nil, false, defaultPullPeriod},
+		{"empty period → default", &BundlesRepo{}, false, defaultPullPeriod},
+		{"configured period honored", &BundlesRepo{PullPeriod: "30m"}, false, 30 * time.Minute},
+		{"invalid period → default", &BundlesRepo{PullPeriod: "nonsense"}, false, defaultPullPeriod},
+		// Force Update must zero the throttle regardless of configuration — the
+		// bundle repo holds new bundle versions, so this is the critical path.
+		{"force zeros a configured period", &BundlesRepo{PullPeriod: "30m"}, true, 0},
+		{"force zeros the default", nil, true, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := NewResolver(t.TempDir())
+			if tc.forcePull {
+				r = r.WithForcePull()
+			}
+			assert.Equal(t, tc.want, r.bundleRepoPullPeriod(tc.repo))
+		})
+	}
+}
+
 func TestBuildAliasMap_IncludesAlfrescoAliases(t *testing.T) {
 	cfg := &WorkspaceConfig{
 		Webapps: []WebappConfig{
