@@ -300,6 +300,7 @@ type Resolver struct {
 	tokenLookup TokenLookupFunc
 	wsRepoOpts  *WorkspaceRepoOpts
 	offline     bool         // skip all git operations, fail if local data missing
+	forcePull   bool         // bypass the per-repo PullPeriod throttle (PullPeriod=0) for "Force Update"
 	logger      *slog.Logger // nil → falls back to slog.Default()
 }
 
@@ -334,6 +335,15 @@ func (r *Resolver) WithLogger(logger *slog.Logger) *Resolver {
 // and the resolver returns an error if required data is not available locally.
 func (r *Resolver) SetOffline(offline bool) {
 	r.offline = offline
+}
+
+// WithForcePull makes every workspace / bundle git sync ignore the per-repo
+// PullPeriod throttle and pull unconditionally. Backs "Force Update [And
+// Start]" (Kotlin 1.x parity: forceUpdate flips the git policy to REQUIRED).
+// Chainable.
+func (r *Resolver) WithForcePull() *Resolver {
+	r.forcePull = true
+	return r
 }
 
 // log returns the configured logger, or slog.Default() when none is set.
@@ -405,19 +415,22 @@ func (r *Resolver) resolveWorkspace() (cfg *WorkspaceConfig, repoDir string) {
 // inherit the canonical Citeck workspace URL.
 func (r *Resolver) workspaceRepoSettings() (url, branch string, pullPeriod time.Duration, token string) {
 	url, branch, pullPeriod = DefaultBundlesRepo, DefaultBundlesBranch, defaultPullPeriod
-	if r.wsRepoOpts == nil {
-		return url, branch, pullPeriod, ""
+	if r.wsRepoOpts != nil {
+		if r.wsRepoOpts.URL != "" {
+			url = r.wsRepoOpts.URL
+		}
+		if r.wsRepoOpts.Branch != "" {
+			branch = r.wsRepoOpts.Branch
+		}
+		if r.wsRepoOpts.PullPeriod > 0 {
+			pullPeriod = r.wsRepoOpts.PullPeriod
+		}
+		token = r.wsRepoOpts.Token
 	}
-	if r.wsRepoOpts.URL != "" {
-		url = r.wsRepoOpts.URL
+	if r.forcePull {
+		pullPeriod = 0 // Force Update: bypass throttle, pull unconditionally
 	}
-	if r.wsRepoOpts.Branch != "" {
-		branch = r.wsRepoOpts.Branch
-	}
-	if r.wsRepoOpts.PullPeriod > 0 {
-		pullPeriod = r.wsRepoOpts.PullPeriod
-	}
-	return url, branch, pullPeriod, r.wsRepoOpts.Token
+	return url, branch, pullPeriod, token
 }
 
 // ResolveWorkspaceOnly loads workspace config without resolving a bundle.
@@ -517,16 +530,10 @@ func (r *Resolver) syncBundleRepo(repoID string, bundleRepo *BundlesRepo) string
 	}
 
 	if !r.offline {
-		pullPeriod := defaultPullPeriod
-		if bundleRepo != nil && bundleRepo.PullPeriod != "" {
-			if d, err := time.ParseDuration(bundleRepo.PullPeriod); err == nil && d > 0 {
-				pullPeriod = d
-			}
-		}
 		gitCtx, gitCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		err := git.CloneOrPullWithAuth(gitCtx, git.RepoOpts{
 			URL: repoURL, Branch: repoBranch, DestDir: repoDir,
-			Token: repoToken, PullPeriod: pullPeriod,
+			Token: repoToken, PullPeriod: r.bundleRepoPullPeriod(bundleRepo),
 		})
 		gitCancel()
 		if err != nil {
@@ -534,6 +541,21 @@ func (r *Resolver) syncBundleRepo(repoID string, bundleRepo *BundlesRepo) string
 		}
 	}
 	return repoDir
+}
+
+// bundleRepoPullPeriod resolves the git pull throttle for a bundle repo: the
+// repo's configured PullPeriod (falling back to the default), or zero when
+// forcePull is set ("Force Update" — bypass the throttle, pull unconditionally).
+func (r *Resolver) bundleRepoPullPeriod(bundleRepo *BundlesRepo) time.Duration {
+	if r.forcePull {
+		return 0
+	}
+	if bundleRepo != nil && bundleRepo.PullPeriod != "" {
+		if d, err := time.ParseDuration(bundleRepo.PullPeriod); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultPullPeriod
 }
 
 // lookupRepoToken returns an auth token for the given bundle repo using the token lookup func.

@@ -966,7 +966,23 @@ func (d *Daemon) doShutdown(leaveRunning bool) {
 // update shared state, and regenerate runtime. Caller must hold reloadMu.
 //
 //nolint:nestif // reload orchestrates config read, git pull, bundle resolution, ACME cert obtainment, and runtime regeneration
-func (d *Daemon) doReload() error {
+// doReload re-resolves the namespace config + bundle (respecting the per-repo
+// git pull throttle) and reconciles the already-running runtime, recreating
+// only changed apps. Thin wrapper over doReloadEx.
+func (d *Daemon) doReload() error { return d.doReloadEx(false, false) }
+
+// doReloadEx is the shared reload / force-update core.
+//
+//   - forceGitPull bypasses the per-repo PullPeriod throttle so a "Force Update"
+//     pulls the workspace / bundle repos unconditionally and picks up new bundle
+//     versions immediately. Kotlin 1.x parity: forceUpdate only flips the git
+//     policy to REQUIRED — image pulling stays normal (a present release tag is
+//     reused; only :snapshot tags refresh), so force never re-pulls release tags.
+//   - startNotRegenerate applies the freshly-resolved app set by STARTING the
+//     runtime — used by "Force Update And Start" on a STOPPED namespace, where
+//     there is nothing running to regenerate. When false the set is handed to
+//     Regenerate (recreate changed) on the running runtime.
+func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate bool) error {
 	d.configMu.RLock()
 	if d.nsConfig == nil || d.runtime == nil {
 		d.configMu.RUnlock()
@@ -987,6 +1003,9 @@ func (d *Daemon) doReload() error {
 	}
 	resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(d.secretReaderFunc())).
 		WithWorkspaceRepo(d.resolveActiveWorkspaceRepoOpts())
+	if forceGitPull {
+		resolver = resolver.WithForcePull()
+	}
 	resolveResult, err := resolver.Resolve(nsCfg.BundleRef)
 	bundleFallback := false
 	if err != nil {
@@ -1082,6 +1101,15 @@ func (d *Daemon) doReload() error {
 	// authoritative info to remove. Skip the regenerate in that case so the
 	// runtime keeps its current apps; the user fixes the bundle source and
 	// re-runs reload to get the real desired set applied.
+	// Force Update And Start on a STOPPED namespace: nothing is running, so the
+	// bundle-fallback "preserve current runtime" guard does not apply — just
+	// start the freshly-resolved set (Kotlin 1.x: forceUpdate ⇒ generate + start
+	// all apps). Images pull per the normal stage rules.
+	if startNotRegenerate {
+		d.runtime.Start(genResp.Applications)
+		return nil
+	}
+
 	currentAppCount := 0
 	if d.runtime != nil {
 		currentAppCount = d.runtime.AppCount()

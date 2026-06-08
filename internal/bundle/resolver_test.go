@@ -548,6 +548,20 @@ func TestWorkspaceRepoSettings_EmptyFieldsFallBackPerField(t *testing.T) {
 	assert.Empty(t, token)
 }
 
+func TestWorkspaceRepoSettings_ForcePullZerosPeriod(t *testing.T) {
+	// "Force Update" must bypass the throttle regardless of the configured
+	// PullPeriod — both with custom opts and with the bare default.
+	r := NewResolver(t.TempDir()).WithWorkspaceRepo(WorkspaceRepoOpts{
+		PullPeriod: 30 * time.Minute,
+	}).WithForcePull()
+	_, _, period, _ := r.workspaceRepoSettings()
+	assert.Equal(t, time.Duration(0), period, "force pull must zero a custom PullPeriod")
+
+	rDefault := NewResolver(t.TempDir()).WithForcePull()
+	_, _, periodDefault, _ := rDefault.workspaceRepoSettings()
+	assert.Equal(t, time.Duration(0), periodDefault, "force pull must zero the default PullPeriod")
+}
+
 func TestBuildAliasMap_IncludesAlfrescoAliases(t *testing.T) {
 	cfg := &WorkspaceConfig{
 		Webapps: []WebappConfig{

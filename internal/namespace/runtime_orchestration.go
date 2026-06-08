@@ -21,7 +21,7 @@ type staleSweepPlan struct {
 	stopTimeout   int
 }
 
-func (r *Runtime) doStart(apps []appdef.ApplicationDef, forcePull bool) { //nolint:gocyclo // orchestration with 3-phase lock pattern
+func (r *Runtime) doStart(apps []appdef.ApplicationDef) { //nolint:gocyclo // orchestration with 3-phase lock pattern
 	ctx, cancel := context.WithCancel(context.Background())
 
 	r.mu.Lock()
@@ -231,7 +231,6 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef, forcePull bool) { //noli
 					desiredNext:       AppStatusReadyToPull,
 					initialSweep:      true,
 					stoppingStartedAt: now,
-					forcePull:         forcePull, // "force update and start": pull fresh in T2
 				}
 				sweepPlans = append(sweepPlans, staleSweepPlan{
 					appName:       p.def.Name,
@@ -242,7 +241,6 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef, forcePull bool) { //noli
 				// Fresh app (no prior container): READY_TO_PULL direct.
 				newApps[p.def.Name] = &AppRuntime{
 					Name: p.def.Name, Status: AppStatusReadyToPull, Def: p.def,
-					forcePull: forcePull, // "force update and start": pull fresh in T2
 				}
 			}
 		}
@@ -711,10 +709,10 @@ func (r *Runtime) doDetach() {
 // (snapshot images are typically small; an initial community deploy would
 // be ~60s per app, so 2m is safely inside the budget).
 //
-// A "force update and start" does NOT pre-pull release tags here — it flags the
-// per-app PULLING stage instead (cmdStart.forcePull → AppRuntime.forcePull →
-// T2), keeping the runtime loop responsive and giving per-app pull progress
-// rather than one blocking pre-pull pass (Kotlin 1.x: a flag, not a stage).
+// A "force update and start" does NOT pre-pull release tags here. Kotlin 1.x
+// parity: forceUpdate flips only the git policy to REQUIRED (a fresh workspace /
+// bundle pull picks up new versions), never the image pull policy — a present
+// release tag is reused, only :snapshot tags are refreshed (this pass + T2).
 func (r *Runtime) refreshSnapshotDigests(ctx context.Context, apps []appdef.ApplicationDef) {
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 4)

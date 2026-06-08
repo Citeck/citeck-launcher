@@ -168,29 +168,16 @@ func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
 		return
 	}
-	// "Force Update And Start" (Kotlin RMB menu): refresh every image from the
-	// registry, even pinned release tags, and recreate. Implemented as a flag on
-	// the NORMAL pull stage (Kotlin 1.x parity), not a separate blocking pre-pull
-	// pass — so the namespace flips to STARTING immediately and each app reports
-	// live PULLING progress, instead of the UI sitting idle during a pre-pull.
+	// "Force Update And Start" (Kotlin RMB menu): force a git pull of the
+	// workspace / bundle repos so new bundle versions are picked up, then start
+	// (stopped) or recreate-changed (running). Kotlin 1.x parity: forceUpdate
+	// flips ONLY the git policy to REQUIRED — image pulling stays normal (a
+	// present release tag is reused; only :snapshot tags refresh), so force never
+	// re-pulls release tags. Runs off the request goroutine (slow git I/O).
 	if r.URL.Query().Get("force") == "true" {
 		st := runtime.Status()
-		if st == namespace.NsStatusRunning || st == namespace.NsStatusStalled {
-			// Already running → re-resolve + recreate changed apps (force git
-			// pull picks up new bundle versions). Runs off the request goroutine.
-			d.forceReloadAsync()
-		} else {
-			// Stopped → force-pull all images via the normal start stage. Clearing
-			// the cached digests also guarantees recreate of any stale adopted
-			// container. StartForceUpdate sets STARTING immediately; the
-			// force-pulls run off-loop (T2) with per-app progress.
-			forced := make([]appdef.ApplicationDef, len(appDefs))
-			copy(forced, appDefs)
-			for i := range forced {
-				forced[i].ImageDigest = ""
-			}
-			runtime.StartForceUpdate(forced)
-		}
+		wasRunning := st == namespace.NsStatusRunning || st == namespace.NsStatusStalled
+		d.forceUpdateAsync(wasRunning)
 		writeJSON(w, api.ActionResultDto{Success: true, Message: "Force update and start requested"})
 		return
 	}
@@ -198,19 +185,25 @@ func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "Namespace start requested"})
 }
 
-// forceReloadAsync runs a reload off the request goroutine for "force update and
-// start" on an already-running namespace: re-resolve the bundle (the git pull
-// picks up new versions) and recreate changed apps. doReload holds reloadMu and
-// does slow I/O, so it must not block the HTTP handler; a concurrent reload
-// already in progress (TryLock fails) is treated as satisfying the request.
-func (d *Daemon) forceReloadAsync() {
+// forceUpdateAsync runs "Force Update And Start" off the request goroutine: a
+// forced git pull (REQUIRED policy — bypasses the PullPeriod throttle) re-resolves
+// the bundle, then a running namespace recreates changed apps while a stopped one
+// is started with the fresh set. doReloadEx holds reloadMu and does slow I/O, so
+// it must not block the HTTP handler; a concurrent reload already in progress
+// (TryLock fails) is treated as satisfying the request.
+func (d *Daemon) forceUpdateAsync(wasRunning bool) {
 	go func() {
 		if !d.reloadMu.TryLock() {
+			// A reload is already running and will pick up the freshly-pulled
+			// bundle, so the force-update intent is satisfied. Log it so an
+			// operator wondering "why didn't my force-update do anything?" can
+			// see the request was coalesced rather than dropped.
+			slog.Info("Force update coalesced into in-progress reload")
 			return
 		}
 		defer d.reloadMu.Unlock()
-		if err := d.doReload(); err != nil {
-			slog.Warn("Force update (reload) failed", "err", err)
+		if err := d.doReloadEx(true, !wasRunning); err != nil {
+			slog.Warn("Force update failed", "err", err)
 		}
 	}()
 }

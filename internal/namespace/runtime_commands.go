@@ -15,16 +15,11 @@ import (
 
 // Start begins the namespace lifecycle with the given app definitions. Images
 // are pulled per the normal stage rules (snapshot tags pulled; present release
-// tags reused).
-func (r *Runtime) Start(apps []appdef.ApplicationDef) { r.startWithPull(apps, false) }
-
-// StartForceUpdate begins the lifecycle like Start but force-pulls EVERY image
-// in the normal PULLING stage, so even a present release tag is refreshed from
-// the registry ("force update and start"). Kotlin 1.x parity: a flag on the
-// normal pull stage, not a separate pre-pull pass.
-func (r *Runtime) StartForceUpdate(apps []appdef.ApplicationDef) { r.startWithPull(apps, true) }
-
-func (r *Runtime) startWithPull(apps []appdef.ApplicationDef, forcePull bool) {
+// tags reused). A "force update and start" forces a git pull of the workspace /
+// bundle repos (so new bundle versions are picked up) and then starts via this
+// same path — image pulling stays normal, matching Kotlin 1.x where forceUpdate
+// only flips the git policy to REQUIRED, never the image pull policy.
+func (r *Runtime) Start(apps []appdef.ApplicationDef) {
 	if r.testMode {
 		// testMode runtimes are driven exclusively via StepOnce. Spawning
 		// runtimeLoop here would race with the test driver. Catching this in
@@ -68,7 +63,7 @@ func (r *Runtime) startWithPull(apps []appdef.ApplicationDef, forcePull bool) {
 
 	r.wg.Add(1)
 	go r.runtimeLoop()
-	if err := r.cmdQueue.Enqueue(cmdStart{apps: apps, forcePull: forcePull}); err != nil {
+	if err := r.cmdQueue.Enqueue(cmdStart{apps: apps}); err != nil {
 		slog.Error("Failed to enqueue cmdStart", "err", err)
 	}
 }

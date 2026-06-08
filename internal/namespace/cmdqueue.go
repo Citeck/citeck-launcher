@@ -23,8 +23,7 @@ type runtimeCmd interface {
 
 // cmdStart starts the namespace with the given desired app set.
 type cmdStart struct {
-	apps      []appdef.ApplicationDef
-	forcePull bool
+	apps []appdef.ApplicationDef
 }
 
 func (cmdStart) cmdTag() string { return "start" }
