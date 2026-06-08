@@ -7,7 +7,7 @@ import { ConfirmModal } from './ConfirmModal'
 import { NamespaceEditDialog } from './NamespaceEditDialog'
 import { useDashboardStore } from '../lib/store'
 import { useTabsStore } from '../lib/tabs'
-import { usePanelStore } from '../lib/panels' // openBottomTab for ConfigEditor
+import { usePanelStore } from '../lib/panels' // resetPanels on namespace switch
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
 
@@ -32,9 +32,8 @@ interface NamespaceDialogProps {
  * (`NamespaceScreen.kt:99` → JournalSelectDialog for NamespaceConfig).
  *
  * Picking a row starts the namespace (if not running) and navigates to "/".
- * Per-row actions: Edit (opens NamespaceEditDialog mode=edit), edit-raw-YAML
- * (opens the ConfigEditor bottom tab), Delete (with confirm). Footer "Create"
- * opens NamespaceEditDialog mode=create.
+ * Per-row actions: Edit (opens NamespaceEditDialog mode=edit) and Delete (with
+ * confirm). Footer "Create" opens NamespaceEditDialog mode=create.
  */
 export function NamespaceDialog({ open, onClose, onOpened }: NamespaceDialogProps) {
   const { t } = useTranslation()

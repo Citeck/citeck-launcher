@@ -437,22 +437,6 @@ export async function putAppLock(name: string, locked: boolean): Promise<ActionR
   return res.json()
 }
 
-export async function getConfigContent(): Promise<string> {
-  const res = await fetchWithTimeout(`${API_BASE}/config`)
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.text()
-}
-
-export async function putConfigContent(content: string): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/config`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'text/yaml', ...CSRF_HEADER },
-    body: content,
-  })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
-}
-
 // Phase E1: Welcome Screen
 export async function getNamespaces(): Promise<NamespaceSummaryDto[]> {
   return fetchJSON('/namespaces')

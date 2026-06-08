@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { getHealth } from '../lib/api'
 import type { HealthDto } from '../lib/types'
-import { ConfigEditor } from '../components/ConfigEditor'
 import { useTranslation } from '../lib/i18n'
 
 export function Config() {
@@ -54,8 +53,6 @@ export function Config() {
           </div>
         </div>
       )}
-
-      <ConfigEditor />
     </div>
   )
 }

@@ -1,8 +1,8 @@
 import { create } from 'zustand'
 
 export interface BottomPanelTab {
-  id: string           // "logs:eapps" | "ns-config" | "daemon-logs" | "app-config:emodel"
-  type: 'logs' | 'ns-config' | 'daemon-logs' | 'app-config'
+  id: string           // "logs:eapps" | "daemon-logs" | "app-config:emodel"
+  type: 'logs' | 'daemon-logs' | 'app-config'
   title: string
   appName?: string     // for logs and app-config types
   /**

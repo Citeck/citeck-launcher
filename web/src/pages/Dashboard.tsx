@@ -23,7 +23,6 @@ import { BottomPanel } from '../components/BottomPanel'
 import { RightDrawer } from '../components/RightDrawer'
 import { AppDrawerContent } from '../components/AppDrawerContent'
 import { LogViewer } from '../components/LogViewer'
-import { ConfigEditor } from '../components/ConfigEditor'
 import { DaemonLogsViewer } from '../components/DaemonLogsViewer'
 import { AppConfigEditor } from '../components/AppConfigEditor'
 import type { BottomPanelTab } from '../lib/panels'
@@ -183,8 +182,6 @@ export function Dashboard() {
     switch (tab.type) {
       case 'logs':
         return <LogViewer appName={tab.appName!} compact active={active} />
-      case 'ns-config':
-        return <ConfigEditor compact />
       case 'daemon-logs':
         return <DaemonLogsViewer compact active={active} />
       case 'app-config':

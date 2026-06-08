@@ -64,8 +64,8 @@ export async function triggerSystemDump(): Promise<string | null> {
 
 /**
  * Tabs that map cleanly to a separate OS window when desktop mode is
- * available. Other tab types (ns-config, restart-events) stay in the bottom
- * panel because they share state with the main window UX.
+ * available. Other tab types (restart-events) stay in the bottom panel
+ * because they share state with the main window UX.
  */
 const WINDOWABLE_TYPES: BottomPanelTab['type'][] = ['logs', 'app-config', 'daemon-logs']
 
