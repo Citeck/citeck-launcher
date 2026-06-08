@@ -179,7 +179,9 @@ func (m *WindowManager) handleClose(w http.ResponseWriter, r *http.Request) {
 // handleCloseAll closes every tracked secondary window. The frontend calls it
 // when navigating back to the Welcome screen (Kotlin parity:
 // WorkspaceServices.setSelectedNamespace → CiteckWindow.closeAll), so logs /
-// editor windows tied to the previous namespace don't linger.
+// editor windows tied to the previous namespace don't linger. Idempotent: a
+// no-op when no windows are open, so the frontend can fire it unconditionally
+// on Welcome mount.
 func (m *WindowManager) handleCloseAll(w http.ResponseWriter, _ *http.Request) {
 	m.CloseAll()
 	w.WriteHeader(http.StatusNoContent)
