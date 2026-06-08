@@ -7,14 +7,11 @@ import { useTranslation, LOCALES, useI18nStore } from '../lib/i18n'
 import { useThemeStore } from '../lib/theme'
 import { X, Settings, Sun, Moon, ChevronDown } from 'lucide-react'
 import { useEffect, useState, useRef } from 'react'
-import { useContextMenu } from '../hooks/useContextMenu'
-import { ContextMenu } from './ContextMenu'
 import { WorkspaceSelector } from './WorkspaceSelector'
 import { UpdateNotification } from './UpdateNotification'
 
 export function TabBar() {
   const { tabs, activeTabId, setActiveTab, closeTab } = useTabsStore()
-  const openBottomTab = usePanelStore((s) => s.openBottomTab)
   const setNsEditOpen = usePanelStore((s) => s.setNsEditOpen)
   const setNsSwitcherOpen = usePanelStore((s) => s.setNsSwitcherOpen)
   const namespace = useDashboardStore((s) => s.namespace)
@@ -23,7 +20,6 @@ export function TabBar() {
   const navigate = useNavigate()
   const location = useLocation()
   const { t } = useTranslation()
-  const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu()
   const onDashboard = location.pathname === '/'
 
   // Sync active tab with current location
@@ -60,22 +56,12 @@ export function TabBar() {
             <span className="text-muted-foreground/60" aria-hidden="true">·</span>
             <span className="text-muted-foreground truncate">{namespace.bundleRef}</span>
           </button>
-          {/* Left-click → typed form; right-click → raw YAML / form choice. */}
+          {/* Click → typed namespace-edit form. */}
           <button
             type="button"
             className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted"
             title={t('dashboard.nsConfig')}
             onClick={() => setNsEditOpen(true)}
-            onContextMenu={(e) => showContextMenu(e, [
-              {
-                label: t('nsEdit.title'),
-                onClick: () => setNsEditOpen(true),
-              },
-              {
-                label: t('nsEdit.editRawYaml'),
-                onClick: () => openBottomTab({ id: 'ns-config', type: 'ns-config', title: t('configEditor.title') }),
-              },
-            ])}
           >
             <Settings size={14} />
           </button>
@@ -154,7 +140,6 @@ export function TabBar() {
           </button>
         )}
       </div>
-      {contextMenu && <ContextMenu items={contextMenu.items} position={contextMenu.position} onClose={hideContextMenu} />}
     </div>
   )
 }
