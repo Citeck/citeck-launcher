@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { activateNamespace, getNamespaces, getQuickStarts, deleteNamespace, postNamespaceStart, createNamespace } from '../lib/api'
+import { activateNamespace, getNamespaces, getQuickStarts, deleteNamespace, postNamespaceStart, createNamespace, closeAllDesktopWindows } from '../lib/api'
 import { useDaemonStatusStore, useActiveWorkspaceId } from '../lib/daemonStatus'
 import type { NamespaceSummaryDto, QuickStartDto } from '../lib/types'
 import { ConfirmModal } from '../components/ConfirmModal'
@@ -93,6 +93,15 @@ export function Welcome() {
   // silently — the screen still renders without it.
   useEffect(() => {
     void useDaemonStatusStore.getState().fetch()
+  }, [])
+
+  // Arriving at Welcome means we left the active namespace — close any secondary
+  // windows (logs / editor) that were tied to it. Kotlin parity:
+  // WorkspaceServices.setSelectedNamespace → CiteckWindow.closeAll(). Desktop
+  // only; no-ops in the browser. Runs once on mount (you can't open secondary
+  // windows from Welcome, so there's nothing to clobber).
+  useEffect(() => {
+    void closeAllDesktopWindows()
   }, [])
 
   async function handleOpenNamespace(ns: NamespaceSummaryDto) {

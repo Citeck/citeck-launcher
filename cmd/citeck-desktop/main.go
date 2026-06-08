@@ -179,7 +179,7 @@ func run() error {
 				controlServer.Close()
 			}
 			if windowManager != nil {
-				windowManager.Quit()
+				windowManager.CloseAll()
 			}
 			cancel()
 		},
@@ -410,8 +410,13 @@ func run() error {
 	// control socket's "window.focus" verb → dispatchVerb(raiseToFront). No
 	// process-global daemon callback is needed anymore.
 
-	// Hide on close instead of quitting (minimize to tray)
+	// Hide on close instead of quitting (minimize to tray). Close any secondary
+	// windows (logs / editor) first so they don't outlive the hidden main window
+	// — Kotlin parity: Main.kt onCloseRequest → CiteckWindow.closeAll() + hide.
 	window.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		if windowManager != nil {
+			windowManager.CloseAll()
+		}
 		window.Hide()
 		e.Cancel()
 	})

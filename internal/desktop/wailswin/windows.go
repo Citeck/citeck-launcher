@@ -70,6 +70,7 @@ func (m *WindowManager) HTTPHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /open", m.handleOpen)
 	mux.HandleFunc("POST /close", m.handleClose)
+	mux.HandleFunc("POST /close-all", m.handleCloseAll)
 	mux.HandleFunc("POST /focus", m.handleFocus)
 	mux.HandleFunc("GET /list", m.handleList)
 	return mux
@@ -172,6 +173,15 @@ func (m *WindowManager) handleClose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	application.InvokeAsync(func() { win.Close() })
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleCloseAll closes every tracked secondary window. The frontend calls it
+// when navigating back to the Welcome screen (Kotlin parity:
+// WorkspaceServices.setSelectedNamespace → CiteckWindow.closeAll), so logs /
+// editor windows tied to the previous namespace don't linger.
+func (m *WindowManager) handleCloseAll(w http.ResponseWriter, _ *http.Request) {
+	m.CloseAll()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -341,8 +351,9 @@ func defaultHeight(kind string) int {
 	}
 }
 
-// Quit closes every tracked secondary window. Useful from shutdown hooks.
-func (m *WindowManager) Quit() {
+// CloseAll closes every tracked secondary window. Shared by app shutdown, the
+// main-window close-to-tray hook, and the /close-all endpoint (back-to-Welcome).
+func (m *WindowManager) CloseAll() {
 	m.mu.Lock()
 	windows := make([]application.Window, 0, len(m.windows))
 	for _, win := range m.windows {

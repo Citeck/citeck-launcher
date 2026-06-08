@@ -817,6 +817,19 @@ export async function closeCurrentDesktopWindow(spec: { kind: 'logs' | 'editor' 
   window.close()
 }
 
+/**
+ * Closes every secondary Wails window (logs / editor). Called when navigating
+ * back to the Welcome screen so windows tied to the previous namespace don't
+ * linger. Kotlin parity: WorkspaceServices.setSelectedNamespace →
+ * CiteckWindow.closeAll(). Best-effort: silently no-ops in server mode (the
+ * endpoint is unreachable and browser tabs can't be closed programmatically).
+ */
+export async function closeAllDesktopWindows(): Promise<void> {
+  try {
+    await fetch('/desktop/windows/close-all', { method: 'POST' })
+  } catch { /* not in Wails desktop */ }
+}
+
 /** True if /desktop/windows/* is reachable (i.e. running inside Wails desktop). */
 export async function hasDesktopWindowManager(): Promise<boolean> {
   try {
