@@ -137,6 +137,7 @@ type AppRuntime struct {
 	stoppingStartedAt time.Time        // set on STOPPING transition; tick() T23 budget enforcement.
 	initStepIdx       int              // ephemeral: current init-container index during STARTING (init phase).
 	reuseLocalImage   bool             // set by liveness-restart (T17a) / self-heal (T31): suppress the snapshot force-pull on the next READY_TO_PULL so a restart reuses the local image (no silent version drift, no pull failure). Consumed + cleared in T2. Mirrors Kotlin 1.x pullIfPresent=false.
+	forcePull         bool             // set by "force update and start" (doStart with forcePull): force the next READY_TO_PULL to pull even a present release image. Consumed + cleared in T2. Mirrors Kotlin 1.x pullIfPresent=true — a flag on the normal pull stage, not a separate pre-pull pass.
 }
 
 // EventCallback is called when namespace or app state changes.

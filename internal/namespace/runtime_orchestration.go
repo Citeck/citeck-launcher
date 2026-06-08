@@ -21,7 +21,7 @@ type staleSweepPlan struct {
 	stopTimeout   int
 }
 
-func (r *Runtime) doStart(apps []appdef.ApplicationDef) { //nolint:gocyclo // orchestration with 3-phase lock pattern
+func (r *Runtime) doStart(apps []appdef.ApplicationDef, forcePull bool) { //nolint:gocyclo // orchestration with 3-phase lock pattern
 	ctx, cancel := context.WithCancel(context.Background())
 
 	r.mu.Lock()
@@ -231,6 +231,7 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) { //nolint:gocyclo // or
 					desiredNext:       AppStatusReadyToPull,
 					initialSweep:      true,
 					stoppingStartedAt: now,
+					forcePull:         forcePull, // "force update and start": pull fresh in T2
 				}
 				sweepPlans = append(sweepPlans, staleSweepPlan{
 					appName:       p.def.Name,
@@ -241,6 +242,7 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) { //nolint:gocyclo // or
 				// Fresh app (no prior container): READY_TO_PULL direct.
 				newApps[p.def.Name] = &AppRuntime{
 					Name: p.def.Name, Status: AppStatusReadyToPull, Def: p.def,
+					forcePull: forcePull, // "force update and start": pull fresh in T2
 				}
 			}
 		}
@@ -708,34 +710,19 @@ func (r *Runtime) doDetach() {
 // Concurrency: bounded to 4 parallel pulls; per-pull ctx timeout 2 minutes
 // (snapshot images are typically small; an initial community deploy would
 // be ~60s per app, so 2m is safely inside the budget).
-func (r *Runtime) refreshSnapshotDigests(ctx context.Context, apps []appdef.ApplicationDef) {
-	r.prePullImages(ctx, apps, false)
-}
-
-// ForcePrePull pulls every app's image from the registry regardless of tag.
-// Backs the "Force Update And Start" menu item (Kotlin parity): refreshed
-// digests cause doStart's hash computation to differ from running containers,
-// triggering recreate-on-start even for pinned release tags.
 //
-// Same failure policy as refreshSnapshotDigests — pull errors are logged at
-// WARN and the flow falls back to cached digests so a registry outage cannot
-// block start.
-func (r *Runtime) ForcePrePull(ctx context.Context, apps []appdef.ApplicationDef) {
-	r.prePullImages(ctx, apps, true)
-}
-
-// prePullImages is the shared worker that fans out parallel pulls (capped at
-// 4) with a per-pull 2-minute timeout. When forceAll is false it preserves
-// refreshSnapshotDigests semantics (only :snapshot images, ThirdParty
-// excluded); when true it pulls every app's image.
-func (r *Runtime) prePullImages(ctx context.Context, apps []appdef.ApplicationDef, forceAll bool) {
+// A "force update and start" does NOT pre-pull release tags here — it flags the
+// per-app PULLING stage instead (cmdStart.forcePull → AppRuntime.forcePull →
+// T2), keeping the runtime loop responsive and giving per-app pull progress
+// rather than one blocking pre-pull pass (Kotlin 1.x: a flag, not a stage).
+func (r *Runtime) refreshSnapshotDigests(ctx context.Context, apps []appdef.ApplicationDef) {
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 4)
 	for _, def := range apps {
 		if def.Image == "" {
 			continue
 		}
-		if !forceAll && !shouldPullImage(def.Kind, def.Image) {
+		if !shouldPullImage(def.Kind, def.Image) {
 			continue
 		}
 		wg.Add(1)

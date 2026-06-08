@@ -177,7 +177,14 @@ func (r *Runtime) stepAllAppsUnderLock() []dispatchPlan { //nolint:gocyclo // si
 				continue
 			}
 			pullAlways := shouldPullImage(appDef.Kind, appDef.Image)
-			if app.reuseLocalImage {
+			switch {
+			case app.forcePull:
+				// "Force update and start": pull every image fresh, even a present
+				// release tag (Kotlin 1.x pullIfPresent=true — a flag on the normal
+				// pull stage, not a separate pre-pull pass). One-shot: cleared here.
+				pullAlways = true
+				app.forcePull = false
+			case app.reuseLocalImage:
 				// Liveness restart / self-heal: reuse the local image. Suppress
 				// the snapshot force-pull so runPullTask short-circuits when the
 				// image is present (and still pulls if it is somehow absent —
@@ -416,7 +423,7 @@ func (r *Runtime) evaluateContinuations() {
 func (r *Runtime) applyCommand(cmd runtimeCmd) {
 	switch c := cmd.(type) {
 	case cmdStart:
-		r.doStart(c.apps)
+		r.doStart(c.apps, c.forcePull)
 	case cmdRegenerate:
 		if c.cfg != nil || (c.bundleDef != nil && !c.bundleDef.IsEmpty()) {
 			r.mu.Lock()

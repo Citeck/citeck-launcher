@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -169,27 +168,51 @@ func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
 		return
 	}
-	// "Force Update And Start" (Kotlin RMB menu): clear cached image digests
-	// so doStart re-resolves from the freshly-pulled image, then pre-pull all
-	// images so the next start computes a hash that differs from running
-	// containers — guaranteeing recreate even for pinned release tags.
+	// "Force Update And Start" (Kotlin RMB menu): refresh every image from the
+	// registry, even pinned release tags, and recreate. Implemented as a flag on
+	// the NORMAL pull stage (Kotlin 1.x parity), not a separate blocking pre-pull
+	// pass — so the namespace flips to STARTING immediately and each app reports
+	// live PULLING progress, instead of the UI sitting idle during a pre-pull.
 	if r.URL.Query().Get("force") == "true" {
-		forced := make([]appdef.ApplicationDef, len(appDefs))
-		copy(forced, appDefs)
-		for i := range forced {
-			forced[i].ImageDigest = ""
+		st := runtime.Status()
+		if st == namespace.NsStatusRunning || st == namespace.NsStatusStalled {
+			// Already running → re-resolve + recreate changed apps (force git
+			// pull picks up new bundle versions). Runs off the request goroutine.
+			d.forceReloadAsync()
+		} else {
+			// Stopped → force-pull all images via the normal start stage. Clearing
+			// the cached digests also guarantees recreate of any stale adopted
+			// container. StartForceUpdate sets STARTING immediately; the
+			// force-pulls run off-loop (T2) with per-app progress.
+			forced := make([]appdef.ApplicationDef, len(appDefs))
+			copy(forced, appDefs)
+			for i := range forced {
+				forced[i].ImageDigest = ""
+			}
+			runtime.StartForceUpdate(forced)
 		}
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-			defer cancel()
-			runtime.ForcePrePull(ctx, forced)
-			runtime.Start(forced)
-		}()
 		writeJSON(w, api.ActionResultDto{Success: true, Message: "Force update and start requested"})
 		return
 	}
 	runtime.Start(appDefs)
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "Namespace start requested"})
+}
+
+// forceReloadAsync runs a reload off the request goroutine for "force update and
+// start" on an already-running namespace: re-resolve the bundle (the git pull
+// picks up new versions) and recreate changed apps. doReload holds reloadMu and
+// does slow I/O, so it must not block the HTTP handler; a concurrent reload
+// already in progress (TryLock fails) is treated as satisfying the request.
+func (d *Daemon) forceReloadAsync() {
+	go func() {
+		if !d.reloadMu.TryLock() {
+			return
+		}
+		defer d.reloadMu.Unlock()
+		if err := d.doReload(); err != nil {
+			slog.Warn("Force update (reload) failed", "err", err)
+		}
+	}()
 }
 
 func (d *Daemon) handleStopNamespace(w http.ResponseWriter, r *http.Request) {

@@ -174,6 +174,32 @@ func TestSelfHealRemovedAppNotRevived(t *testing.T) {
 	t.Fatalf("markedForRemoval app was not GC'd; final status=%s", r.FindApp(def.Name).Status)
 }
 
+// TestForceUpdateStartPullsReleaseImage pins the "force update and start" flag:
+// StartForceUpdate must pull EVERY image fresh, even a present release tag that
+// the normal stage would reuse (shouldPullImage==false). This replaces the old
+// separate ForcePrePull pass with a flag on the normal pull stage (Kotlin 1.x).
+// Complements TestReleaseImagePresentNeverPulls (normal start does NOT pull).
+func TestForceUpdateStartPullsReleaseImage(t *testing.T) {
+	md := newMockDocker()
+	r := NewRuntime(testConfig(), md, t.TempDir())
+	defer r.Shutdown()
+
+	def := simpleApp("eapps", "nexus.example.com/ecos-apps:2.26.10") // release tag
+	def.Kind = appdef.KindCiteckCore
+
+	r.StartForceUpdate([]appdef.ApplicationDef{def})
+	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
+		t.Fatalf("force-start did not reach RUNNING")
+	}
+
+	md.mu.Lock()
+	pulls := md.pullCalls
+	md.mu.Unlock()
+	if pulls == 0 {
+		t.Fatalf("force update must pull even a present release image (pullCalls=0)")
+	}
+}
+
 // TestReleaseImagePresentNeverPulls pins the invariant for release images
 // (no "snapshot" in the tag): if the image is already present locally, no
 // scenario pulls it. shouldPullImage==false for a release tag, so runPullTask
