@@ -109,6 +109,29 @@ func TestCreateNamespace_HappyPathDesktop(t *testing.T) {
 	assert.True(t, d.secretService.IsEncrypted())
 }
 
+// TestCreateNamespace_LatestUnsyncedRepoRefused: requesting bundleKey "LATEST"
+// when the bundle repo has no synced versions must REFUSE (409
+// BUNDLE_NOT_SYNCED) rather than persist a raw "LATEST" — the launcher never
+// stores symbolic LATEST (it would auto-update between versions on reload).
+// Server mode forces an offline resolve, so the empty bundle dir fails fast.
+func TestCreateNamespace_LatestUnsyncedRepoRefused(t *testing.T) {
+	t.Setenv("CITECK_HOME", t.TempDir())
+	d, mux := newNsCrudTestDaemon(t)
+
+	body := `{"name":"X","authType":"BASIC","users":["admin"],` +
+		`"bundleRepo":"community","bundleKey":"LATEST","workspaceId":"ws-target"}`
+	req := httptest.NewRequest("POST", api.Namespaces, strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusConflict, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), api.ErrCodeBundleNotSynced)
+
+	rows, err := d.store.ListNamespaces("ws-target")
+	require.NoError(t, err)
+	assert.Empty(t, rows, "no namespace persisted with a raw LATEST bundle key")
+}
+
 // TestDeleteNamespace_Validation: bad id → 400, server mode → 400, desktop
 // non-active delete drops the store row.
 func TestDeleteNamespace_Validation(t *testing.T) {

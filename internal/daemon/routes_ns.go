@@ -699,13 +699,22 @@ func (d *Daemon) buildNamespaceConfigFromCreate(req api.NamespaceCreateDto, wsID
 	}
 
 	// Resolve a symbolic "LATEST" bundle key to the concrete latest version and
-	// pin it (Kotlin parity: WelcomeScreen.kt:293). Best-effort — on failure
-	// (offline / repo not synced) keep "LATEST"; the runtime resolves it at load
-	// and the UI shows the resolved version via namespace.ResolveDisplayBundleRef.
+	// PIN it. The launcher never persists a raw "LATEST" — that would silently
+	// auto-update the namespace between bundle versions on reload, which we
+	// don't want ("LATEST" is only a picker marker for the newest version). If
+	// it can't be resolved the bundle repo isn't synced, so refuse to create a
+	// broken namespace rather than store "LATEST" (Kotlin 1.x also never stored
+	// it).
 	if strings.EqualFold(nsCfg.BundleRef.Key, "LATEST") {
-		if resolved, ok := d.resolveLatestBundleKey(wsID, nsCfg.BundleRef.Repo, false /* create: pull to pin truly-latest */); ok {
-			nsCfg.BundleRef.Key = resolved
+		resolved, ok := d.resolveLatestBundleKey(wsID, nsCfg.BundleRef.Repo, false /* create: pull to pin truly-latest */)
+		if !ok {
+			return nil, &createNamespaceError{
+				status:  http.StatusConflict,
+				code:    api.ErrCodeBundleNotSynced,
+				message: fmt.Sprintf("bundle repo %q has no synced versions to pin — sync it (Force Update) before creating a namespace", nsCfg.BundleRef.Repo),
+			}
 		}
+		nsCfg.BundleRef.Key = resolved
 	}
 	return &nsCfg, nil
 }

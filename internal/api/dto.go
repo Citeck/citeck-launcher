@@ -294,6 +294,12 @@ const (
 	// ("authentication required", "repository not found", …) so the Web UI's
 	// GitPullErrorDialog heuristic also matches.
 	ErrCodeWsRepoSyncFailed = "WS_REPO_SYNC_FAILED"
+	// ErrCodeBundleNotSynced is returned (HTTP 409) when a namespace create
+	// requests a "LATEST" bundle key but the bundle repo has no synced
+	// versions to pin it to. The launcher never persists a symbolic "LATEST"
+	// (that would silently auto-update between versions on reload), so it
+	// refuses to create a namespace in that broken state — sync the repo first.
+	ErrCodeBundleNotSynced = "BUNDLE_NOT_SYNCED"
 )
 
 // UpgradeRequestDto is the request body for the namespace upgrade endpoint.
