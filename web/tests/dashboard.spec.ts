@@ -1,74 +1,72 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
+
+/**
+ * Root renders the Dashboard when a namespace is active and the Welcome
+ * screen otherwise (desktop mode with no selection). Namespace-dependent
+ * tests skip EXPLICITLY when Welcome is shown — no silent passes.
+ *
+ * Returns true when the namespace sidebar is present.
+ */
+async function gotoRoot(page: Page): Promise<boolean> {
+  await page.goto('/')
+  const sidebar = page.locator('aside')
+  const welcome = page.getByText('Welcome To Citeck Launcher!')
+  await expect(sidebar.or(welcome)).toBeVisible({ timeout: 15_000 })
+  return sidebar.isVisible()
+}
 
 test.describe('Dashboard', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto('/')
-    await page.waitForTimeout(3000)
-  })
-
   test('page loads with tab bar', async ({ page }) => {
-    // Home tab should be visible (either "Welcome" or "Dashboard")
+    await gotoRoot(page)
     const homeTab = page.locator('[class*="cursor-pointer"]').first()
     await expect(homeTab).toBeVisible()
   })
 
-  test('sidebar shows namespace info or loading state', async ({ page }) => {
-    // If namespace loaded: sidebar visible. If not: Welcome screen visible.
-    const sidebar = page.locator('.w-52')
-    const welcome = page.getByText('Welcome To Citeck Launcher!')
-    const hasSidebar = await sidebar.isVisible().catch(() => false)
-    const hasWelcome = await welcome.isVisible().catch(() => false)
-    expect(hasSidebar || hasWelcome).toBeTruthy()
+  test('shows dashboard sidebar or welcome screen', async ({ page }) => {
+    // gotoRoot asserts that exactly one of the two screens rendered.
+    await gotoRoot(page)
   })
 
-  test('sidebar nav buttons exist when namespace is loaded', async ({ page }) => {
-    // Only test if Dashboard (namespace loaded)
-    const sidebar = page.locator('.w-52')
-    if (await sidebar.isVisible().catch(() => false)) {
-      for (const label of ['Volumes', 'Secrets', 'Diagnostics', 'Launcher Logs']) {
-        await expect(page.getByRole('button', { name: label })).toBeVisible()
-      }
+  test('sidebar footer buttons exist when namespace is loaded', async ({ page }) => {
+    const hasNamespace = await gotoRoot(page)
+    test.skip(!hasNamespace, 'no active namespace — Welcome shown')
+    for (const label of ['Volumes', 'Secrets', 'Launcher Logs', 'System Dump']) {
+      await expect(page.getByRole('button', { name: label })).toBeVisible()
     }
   })
 
-  test('clicking Volumes opens Volumes page', async ({ page }) => {
-    const volBtn = page.getByRole('button', { name: 'Volumes' })
-    if (await volBtn.isVisible().catch(() => false)) {
-      await volBtn.click()
-      await expect(page).toHaveURL('/volumes')
-      await expect(page.getByText('Docker Volumes')).toBeVisible()
-    }
+  test('clicking Volumes opens the Volumes dialog', async ({ page }) => {
+    const hasNamespace = await gotoRoot(page)
+    test.skip(!hasNamespace, 'no active namespace — Welcome shown')
+    await page.getByRole('button', { name: 'Volumes' }).click()
+    await expect(page.getByRole('heading', { name: 'Volumes', exact: true })).toBeVisible()
+    // Dialog footer affordances
+    await expect(page.getByRole('button', { name: 'Snapshots' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Delete All' })).toBeVisible()
   })
 
-  test('clicking Secrets opens Secrets page', async ({ page }) => {
-    const btn = page.getByRole('button', { name: 'Secrets' })
-    if (await btn.isVisible().catch(() => false)) {
-      await btn.click()
-      await expect(page).toHaveURL('/secrets')
-    }
-  })
-
-  test('clicking Diagnostics opens Diagnostics page', async ({ page }) => {
-    const btn = page.getByRole('button', { name: 'Diagnostics' })
-    if (await btn.isVisible().catch(() => false)) {
-      await btn.click()
-      await expect(page).toHaveURL('/diagnostics')
-    }
+  test('clicking Secrets opens the Auth Secrets dialog', async ({ page }) => {
+    const hasNamespace = await gotoRoot(page)
+    test.skip(!hasNamespace, 'no active namespace — Welcome shown')
+    await page.getByRole('button', { name: 'Secrets' }).click()
+    await expect(page.getByRole('heading', { name: 'Auth Secrets' })).toBeVisible()
   })
 
   test('settings button opens config page', async ({ page }) => {
+    const hasNamespace = await gotoRoot(page)
+    test.skip(!hasNamespace, 'no active namespace — /config redirects to root')
     await page.getByRole('button', { name: 'Settings' }).click()
     await expect(page).toHaveURL('/config')
   })
 
   test('theme toggle works', async ({ page }) => {
+    await gotoRoot(page)
     const html = page.locator('html')
     const themeBtn = page.locator('button[title*="theme"]')
     await expect(themeBtn).toBeVisible()
 
     const before = await html.getAttribute('data-theme')
     await themeBtn.click()
-    const after = await html.getAttribute('data-theme')
-    expect(after).not.toBe(before)
+    await expect(html).not.toHaveAttribute('data-theme', before ?? '')
   })
 })

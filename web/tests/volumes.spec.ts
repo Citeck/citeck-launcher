@@ -1,34 +1,45 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 
-test.describe('Volumes', () => {
-  test('page shows Docker Volumes or redirects', async ({ page }) => {
-    // Navigate to root first to let namespace load, then go to volumes
-    await page.goto('/')
-    await page.waitForTimeout(3000)
-    await page.goto('/volumes')
-    await page.waitForTimeout(2000)
+/**
+ * Volume management lives in the VolumesDialog (opened from the Dashboard
+ * sidebar; the /volumes route renders the same dialog). The dialog requires
+ * an active namespace, so tests skip explicitly when Welcome is shown.
+ */
+async function openVolumesDialog(page: Page): Promise<boolean> {
+  await page.goto('/')
+  const sidebar = page.locator('aside')
+  const welcome = page.getByText('Welcome To Citeck Launcher!')
+  await expect(sidebar.or(welcome)).toBeVisible({ timeout: 15_000 })
+  if (!(await sidebar.isVisible())) return false
+  await page.getByRole('button', { name: 'Volumes' }).click()
+  await expect(page.getByRole('heading', { name: 'Volumes', exact: true })).toBeVisible()
+  return true
+}
 
-    // If namespace is loaded: shows Docker Volumes page
-    // If not: may show Welcome or Dashboard
-    const body = await page.textContent('body')
-    expect(body!.length).toBeGreaterThan(0)
+test.describe('Volumes dialog', () => {
+  test('shows the volumes table with Name/Size columns', async ({ page }) => {
+    const opened = await openVolumesDialog(page)
+    test.skip(!opened, 'no active namespace — Welcome shown')
+    const dialog = page.locator('dialog[open]')
+    await expect(dialog.locator('th', { hasText: 'Name' })).toBeVisible()
+    await expect(dialog.locator('th', { hasText: 'Size' })).toBeVisible()
   })
 
-  test('volumes table is visible when page loads', async ({ page }) => {
-    await page.goto('/volumes')
-    await page.waitForTimeout(2000)
-    if (await page.getByText('Docker Volumes').isVisible().catch(() => false)) {
-      const table = page.locator('table').first()
-      await expect(table).toBeVisible()
-    }
+  test('footer has Snapshots and Delete All buttons', async ({ page }) => {
+    const opened = await openVolumesDialog(page)
+    test.skip(!opened, 'no active namespace — Welcome shown')
+    await expect(page.getByRole('button', { name: 'Snapshots' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Delete All' })).toBeVisible()
   })
 
-  test('export and import buttons exist on volumes page', async ({ page }) => {
-    await page.goto('/volumes')
-    await page.waitForTimeout(2000)
-    if (await page.getByText('Docker Volumes').isVisible().catch(() => false)) {
-      await expect(page.getByRole('button', { name: /export/i })).toBeVisible()
-      await expect(page.getByRole('button', { name: /import/i })).toBeVisible()
-    }
+  test('Snapshots button opens the Snapshots dialog with export/import', async ({ page }) => {
+    const opened = await openVolumesDialog(page)
+    test.skip(!opened, 'no active namespace — Welcome shown')
+    await page.getByRole('button', { name: 'Snapshots' }).click()
+    await expect(page.getByRole('heading', { name: 'Snapshots', exact: true })).toBeVisible()
+    // Export ("Create Snapshot") and import affordances must exist; they are
+    // disabled unless the namespace is STOPPED, so only presence is asserted.
+    await expect(page.getByRole('button', { name: 'Create Snapshot' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /import/i }).first()).toBeVisible()
   })
 })

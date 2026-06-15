@@ -36,11 +36,24 @@ interface DashboardState {
    * SSE events; cleared on app_status transitions out of PULL_FAILED and after
    * the user dismisses/saves the RegistryCredentialsDialog. */
   pullAuthRequired: Record<string, string>
+  /** Latest low-disk condition from `disk_low` SSE events. Null when the disk
+   * is OK (`disk_ok`) or the user dismissed the banner. The daemon emits on
+   * state CHANGE only, so after a dismissal the banner reappears only on a
+   * fresh trip (recovery followed by dropping below the threshold again). */
+  diskLow: DiskLowInfo | null
 
   fetchData: () => Promise<void>
   startEventStream: () => void
   stopEventStream: () => void
   clearPullAuthRequired: (appName: string) => void
+  dismissDiskLow: () => void
+}
+
+/** Payload of the daemon's `disk_low` SSE event (low-disk monitor). */
+export interface DiskLowInfo {
+  path: string
+  freeBytes: number
+  thresholdBytes: number
 }
 
 /** Watchdog thresholds — chosen to stay quiet on normal LAN/Wi-Fi blips
@@ -90,6 +103,9 @@ return ({
   disconnectedAt: null,
   pullProgress: {},
   pullAuthRequired: {},
+  diskLow: null,
+
+  dismissDiskLow: () => set({ diskLow: null }),
 
   clearPullAuthRequired: (appName: string) => {
     const cur = get().pullAuthRequired
@@ -165,6 +181,24 @@ return ({
           return
         }
 
+        // Low-disk monitor — the daemon emits `disk_low` once per trip and
+        // `disk_ok` once on recovery (state change only). Drives the
+        // dismissible Dashboard banner; no namespace refetch needed.
+        if (event.type === 'disk_low') {
+          set({
+            diskLow: {
+              path: event.path ?? '',
+              freeBytes: event.freeBytes ?? 0,
+              thresholdBytes: event.thresholdBytes ?? 0,
+            },
+          })
+          return
+        }
+        if (event.type === 'disk_ok') {
+          set({ diskLow: null })
+          return
+        }
+
         // Snapshot lifecycle — drive the global LoadingOverlay so the user
         // cannot navigate away from a running export/import. Progress updates
         // come from `snapshot_progress`; the overlay clears on terminal
@@ -198,6 +232,24 @@ return ({
               [event.appName]: { percent: event.percent ?? 0, phase: event.phase ?? '' },
             },
           })
+          return
+        }
+
+        // Init-step progress — patch the matching app's init fields in place
+        // (same fast-path idea as app_stats). The backend emits only when the
+        // step index changes, so no coalescing is needed here. A phase-done
+        // event arrives with current/total/after omitted → the fields clear
+        // and the "init {step}/{total}" suffix disappears.
+        if (event.type === 'app_init_step' && event.appName) {
+          const ns = get().namespace
+          if (ns?.apps) {
+            const apps = ns.apps.map((a) =>
+              a.name === event.appName
+                ? { ...a, initStep: event.current, initTotal: event.total, initName: event.after || undefined }
+                : a,
+            )
+            set({ namespace: { ...ns, apps } })
+          }
           return
         }
 

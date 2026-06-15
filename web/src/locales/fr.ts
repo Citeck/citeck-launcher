@@ -1,6 +1,6 @@
 import type { Translations } from '../lib/i18n'
 
-const fr: Translations = {
+const fr = {
   // -- Dashboard --
   'dashboard.title': 'Tableau de bord',
   'dashboard.error': 'Erreur : {error}',
@@ -12,8 +12,6 @@ const fr: Translations = {
   'dashboard.openInBrowser.disabled': 'L\u2019application n\u2019est pas en cours d\u2019ex\u00e9cution. D\u00e9marrez-la pour l\u2019ouvrir dans le navigateur.',
   'dashboard.openInBrowser.starting': 'L\u2019application d\u00e9marre. Veuillez patienter...',
   'dashboard.openInBrowser.stalled': 'L\u2019application est bloqu\u00e9e. Veuillez essayer de la red\u00e9marrer.',
-  'dashboard.docker.error': 'Docker : {error}',
-  'dashboard.docker.retry': 'R\u00e9essayer',
 
   // -- Docker not available screen --
   'dockerUnavailable.title': 'Docker n\'est pas disponible',
@@ -28,6 +26,12 @@ const fr: Translations = {
   'gitPullError.cannotSkip': 'Vous ne pouvez pas ignorer cette étape car le dépôt n\'a jamais été cloné.',
   'gitPullError.skip': 'Ignorer le pull',
   'gitPullError.retry': 'Réessayer',
+  'gitPullError.saveAndRetry': 'Enregistrer et réessayer',
+  'gitPullError.authExplain': 'Impossible de se connecter au dépôt — le jeton d’accès ne fonctionne pas ou a expiré.',
+  'gitPullError.secretInUse': 'Secret utilisé : {name}.',
+  'gitPullError.secretInUseMissing': 'Secret utilisé : {id} (introuvable).',
+  'gitPullError.noSecret': 'Aucun jeton d’accès n’est encore configuré pour cet espace de travail.',
+  'gitPullError.editToken': 'Modifier le jeton',
   'registryCreds.title': 'Connexion à {host}',
   'registryCreds.host': 'Registry',
   'registryCreds.username': 'Nom d\'utilisateur',
@@ -39,7 +43,6 @@ const fr: Translations = {
   'dashboard.links': 'Liens',
   'dashboard.volumes': 'Volumes',
   'dashboard.secrets': 'Secrets',
-  'dashboard.diagnostics': 'Diagnostics',
   'dashboard.launcherLogs': 'Journaux du Launcher',
   'dashboard.restartEvents': 'Redemarrages',
   'dashboard.systemDump': 'Vidage syst\u00e8me',
@@ -47,6 +50,8 @@ const fr: Translations = {
   'dashboard.systemDump.saved': 'Vidage syst\u00e8me enregistr\u00e9 dans {path}',
   'dashboard.backToWelcome': 'Retour à l’accueil',
   'dashboard.backToWelcome.disabled': 'Arrêtez toutes les applications avant de revenir à l’accueil',
+  'dashboard.diskLow.message': 'Espace disque faible : {free} libres sur {path}',
+  'dashboard.diskLow.dismiss': 'Masquer',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'Chargement toujours en cours... Cela prend plus de temps que prévu.\nPour nous aider à diagnostiquer le problème, veuillez cliquer sur le bouton « Vidage système » et envoyer les données aux mainteneurs.',
@@ -61,7 +66,6 @@ const fr: Translations = {
   'welcome.startFailed': '\u00c9chec du d\u00e9marrage : {error}',
   'welcome.quickStart': 'D\u00e9marrage rapide',
   'welcome.quickStart.default': 'D\u00e9marrage rapide',
-  'welcome.quickStart.alreadyHasNamespaces': 'L\'espace de travail contient d\u00e9j\u00e0 des namespaces\nLe d\u00e9marrage rapide est d\u00e9sactiv\u00e9.',
   'welcome.workspace.empty': 'L\'espace de travail est vide',
   'welcome.more': 'Plus',
   'welcome.createNew': 'Cr\u00e9er un nouveau namespace',
@@ -73,7 +77,6 @@ const fr: Translations = {
   'welcome.workspace.label': 'Espace de travail',
   'welcome.workspace.forceUpdate': 'Forcer la mise à jour',
   'welcome.workspace.forceUpdate.inactive': 'Forcer la mise à jour n’est disponible que pour l’espace de travail actif',
-  'welcome.workspace.updating': 'Mise à jour de l’espace de travail...',
   'welcome.workspace.updateSuccess': 'Espace de travail mis à jour',
   'welcome.workspace.updateFailed': 'Échec de la mise à jour de l’espace de travail : {error}',
   'welcome.workspace.create': 'Créer un espace de travail...',
@@ -89,21 +92,17 @@ const fr: Translations = {
   'welcome.workspace.form.authType': 'Authentification',
   'welcome.workspace.form.authType.none': 'Aucune (dépôt public)',
   'welcome.workspace.form.authType.token': 'Jeton (dépôt privé)',
-  'welcome.workspace.form.authTypeTokenHint': 'Enregistrez le jeton git comme secret sous la clé "{key}".',
+  'welcome.workspace.form.tokenRequired': 'Sélectionnez ou créez un secret de jeton',
   'welcome.workspace.form.required': 'Le nom et l’URL du dépôt sont obligatoires',
 
   // -- Barre latérale du tableau de bord / répertoire du namespace --
-  'dashboard.openNsDir': 'Ouvrir le dossier NS',
   'dashboard.openNsDir.tooltip': 'Ouvrir le répertoire des volumes du namespace dans le gestionnaire de fichiers',
   'dashboard.openNsDir.success': '{path} ouvert',
   'dashboard.openNsDir.serverInfo': 'Chemin du daemon : {path}',
   'dashboard.openNsDir.failed': 'Échec de l’ouverture : {error}',
 
-
   // -- Volumes --
-  'volumes.title': 'Volumes Docker',
   'volumes.table.name': 'Nom',
-  'volumes.table.path': 'Chemin',
   'volumes.table.size': 'Taille',
   'volumes.size.compute': 'Calculer',
   'volumes.delete.tooltip': 'Supprimer le volume',
@@ -121,35 +120,14 @@ const fr: Translations = {
   'links.pgAdmin.tooltip': 'Outil de gestion et de conception de bases de données Postgres.\nUtilisateur : admin@admin.com\nMot de passe : admin\nMot de passe de la base de données : postgres',
   'links.documentation.tooltip': 'Documentation Citeck',
   'links.aiBot.tooltip': 'Bot Telegram pour l’assistance à la documentation par IA',
-  'volumes.empty': 'Aucun volume trouv\u00e9',
   'volumes.delete.title': 'Supprimer le volume {name} ?',
   'volumes.delete.message': 'Cette action supprimera d\u00e9finitivement le volume et toutes ses donn\u00e9es.',
   'volumes.delete.success': 'Volume supprim\u00e9',
-  'volumes.export.failed': '\u00c9chec de l\u2019exportation : {error}',
-  'volumes.import.failed': '\u00c9chec de l\u2019importation : {error}',
-  'volumes.rename.failed': '\u00c9chec du renommage : {error}',
-  'volumes.download.failed': '\u00c9chec du t\u00e9l\u00e9chargement : {error}',
   'volumes.snapshots': 'Snapshots',
-  'volumes.snapshots.export': 'Exporter',
   'volumes.snapshots.exporting': 'Exportation...',
-  'volumes.snapshots.export.tooltip': 'Exporter tous les volumes dans un snapshot ZIP',
-  'volumes.snapshots.import': 'Importer',
   'volumes.snapshots.importing': 'Importation...',
-  'volumes.snapshots.import.tooltip': 'Importer les volumes depuis un snapshot ZIP',
-  'volumes.snapshots.name': 'Nom',
-  'volumes.snapshots.size': 'Taille',
-  'volumes.snapshots.created': 'Cr\u00e9\u00e9',
-  'volumes.snapshots.empty': 'Aucun snapshot. Exportez les volumes pour en cr\u00e9er un.',
-  'volumes.snapshots.rename': 'Renommer',
-  'volumes.snapshots.rename.ok': 'OK',
-  'volumes.snapshots.rename.cancel': 'Annuler',
-  'volumes.workspace': 'Snapshots de l\u2019espace de travail',
-  'volumes.workspace.name': 'Nom',
-  'volumes.workspace.size': 'Taille',
-  'volumes.workspace.download': 'T\u00e9l\u00e9charger',
 
   // -- Secrets --
-  'secrets.title': 'Secrets',
   'secrets.type.gitToken': 'Token',
   'secrets.type.basicAuth': 'Basic (utilisateur/mot de passe)',
   'secrets.type.registryAuth': 'Basic (utilisateur/mot de passe) — Registre',
@@ -163,19 +141,34 @@ const fr: Translations = {
   'secrets.form.username.placeholder': 'registry-user',
   'secrets.form.value': 'Valeur',
   'secrets.form.value.placeholder': 'valeur secr\u00e8te',
-  'secrets.form.create': 'Cr\u00e9er',
-  'secrets.form.creating': 'Cr\u00e9ation...',
-  'secrets.form.cancel': 'Annuler',
+  'secrets.form.scope': 'Portée',
+  'secrets.form.scope.placeholder': 'images-repo:registry.example.com',
+  'secrets.form.scope.global': 'Globale (par défaut)',
+  'secrets.form.scope.custom': 'Personnalisée…',
+  'secrets.form.scope.customValue': 'Portée personnalisée',
   'secrets.table.name': 'Nom',
   'secrets.table.type': 'Type',
   'secrets.table.scope': 'Port\u00e9e',
-  'secrets.table.created': 'Cr\u00e9\u00e9',
   'secrets.test.tooltip': 'Tester le secret',
-  'secrets.empty': 'Aucun secret configur\u00e9',
   'secrets.create.success': 'Secret cr\u00e9\u00e9',
   'secrets.delete.success': 'Secret supprim\u00e9',
   'secrets.delete.title': 'Supprimer le secret ?',
   'secrets.delete.message': 'Cette action supprimera d\u00e9finitivement le secret \u00ab {name} \u00bb. Les namespaces qui l\u2019utilisent perdront l\u2019acc\u00e8s.',
+  'secrets.delete.usedByWorkspaces': 'Utilis\u00e9 par les espaces de travail : {names}. Ils perdront l\u2019acc\u00e8s au d\u00e9p\u00f4t.',
+  'secrets.edit.title': 'Modifier le secret',
+  'secrets.edit.tooltip': 'Modifier le secret',
+  'secrets.update.success': 'Secret mis \u00e0 jour',
+  'secrets.form.value.keepPlaceholder': 'laisser vide \u2014 la valeur ne changera pas',
+
+  // -- Secret picker (workspace token / git-pull-error dialogs) --
+  'secretPicker.secret': 'Secret de jeton',
+  'secretPicker.addNew': 'Ajouter…',
+  'secretPicker.placeholder': 'Sélectionnez un secret de jeton…',
+  'secretPicker.createTitle': 'Nouveau secret de jeton',
+  'secretPicker.notFound': '(introuvable)',
+  'secretPicker.name': 'Nom du secret',
+  'secretPicker.token': 'Jeton',
+  'secretPicker.required': 'Le nom du secret et le jeton sont obligatoires',
 
   // -- Diagnostics --
   'diagnostics.title': 'Diagnostics',
@@ -225,6 +218,10 @@ const fr: Translations = {
   'licenses.col.actions': 'Actions',
   'licenses.status.valid': 'Valide',
   'licenses.status.invalid': 'Invalide',
+  'license.badge.daysLeft': '{days}j',
+  'license.badge.expired': 'Expirée',
+  'license.tooltip.valid': 'Licence enterprise : {tenant} — valide jusqu\'au {date}',
+  'license.tooltip.expired': 'Licence enterprise : {tenant} — expirée le {date}',
 
   // -- AppDetail page --
   'appDetail.back': '\u2190 Tableau de bord',
@@ -248,12 +245,6 @@ const fr: Translations = {
   'table.action.stop': 'Arr\u00eater',
   'table.action.start': 'D\u00e9marrer',
   'table.action.restart': 'Red\u00e9marrer',
-  'table.confirm.stop.title': 'Arr\u00eater {name} ?',
-  'table.confirm.stop.message': 'Arr\u00eater le conteneur {name} ?',
-  'table.confirm.start.title': 'D\u00e9marrer {name} ?',
-  'table.confirm.start.message': 'D\u00e9marrer le conteneur {name} ?',
-  'table.confirm.restart.title': 'Red\u00e9marrer {name} ?',
-  'table.confirm.restart.message': 'Red\u00e9marrer {name} ?',
   'table.toast.success': '{action} demand\u00e9 pour {name}',
   'table.cpu.throttled': 'CPU brid\u00e9',
   'table.memory.warning': 'Utilisation m\u00e9moire \u00e9lev\u00e9e',
@@ -261,8 +252,11 @@ const fr: Translations = {
   'table.pullAuthRequired.label': 'Configurer les identifiants',
   'table.pullAuthRequired.tooltip': 'Authentification requise pour le registry — cliquez pour configurer',
   'table.pullAuthRetry.success': 'Identifiants enregistrés ; nouvelle tentative de pull',
+  'table.initStep': 'init. {step}/{total}',
+  'table.initStep.tooltip': 'Étape d\'initialisation en cours : {name}',
 
   // -- App Drawer --
+  'drawer.initStep': 'Initialisation {step}/{total} : {name}',
   'drawer.container': 'Conteneur',
   'drawer.image': 'Image',
   'drawer.state': '\u00c9tat',
@@ -283,10 +277,6 @@ const fr: Translations = {
   // -- App Config Editor --
   'appConfig.title': 'Config. application (YAML)',
   'appConfig.edited': '(modifi\u00e9{detail})',
-  'appConfig.lock.locked': 'Verrouill\u00e9',
-  'appConfig.lock.unlocked': 'D\u00e9verrouill\u00e9',
-  'appConfig.lock.lockTooltip': 'Verrouiller : les modifications survivent \u00e0 la reg\u00e9n\u00e9ration',
-  'appConfig.lock.unlockTooltip': 'D\u00e9verrouiller : les modifications NE survivront PAS \u00e0 la reg\u00e9n\u00e9ration',
   'appConfig.noConfig': 'Aucune configuration personnalis\u00e9e',
   'appConfig.files': 'Fichiers mont\u00e9s',
   'appConfig.confirm.title': 'Appliquer les modifications ?',
@@ -307,18 +297,8 @@ const fr: Translations = {
   'appConfig.loadError.cannotSave': 'Impossible d’enregistrer : la configuration source n’a pas été chargée.',
   'common.retry': 'Réessayer',
 
-  // -- Config Editor --
-  'configEditor.title': 'namespace.yml',
-  'configEditor.noConfig': 'Aucun fichier de configuration trouv\u00e9. Utilisez {cmd} pour en cr\u00e9er un.',
-  'configEditor.failedToLoad': '\u00c9chec du chargement de la configuration : {error}',
-  'configEditor.confirm.title': 'Appliquer la configuration',
-  'configEditor.confirm.message': 'Enregistrer la configuration et recharger le namespace ? Les applications en cours d\u2019ex\u00e9cution peuvent \u00eatre red\u00e9marr\u00e9es.',
-  'configEditor.saved': 'Configuration enregistr\u00e9e et rechargement demand\u00e9',
-
   // -- Daemon Logs --
   'daemonLogs.title': 'Journaux du daemon',
-  'daemonLogs.refresh': 'Actualiser',
-  'daemonLogs.empty': 'Aucun journal disponible',
 
   // -- Log Viewer --
   'logViewer.search': 'Rechercher... (Ctrl+F)',
@@ -334,11 +314,11 @@ const fr: Translations = {
   'logViewer.wrap.tooltip': 'Activer/d\u00e9sactiver le retour \u00e0 la ligne',
   'logViewer.copy': 'Copier',
   'logViewer.copy.tooltip': 'Tout copier dans le presse-papiers',
+  'clipboard.copyFailed': 'Échec de la copie dans le presse-papiers',
   'logViewer.download': 'T\u00e9l\u00e9charger',
   'logViewer.download.tooltip': 'T\u00e9l\u00e9charger en tant que fichier',
   'logViewer.clear': 'Effacer',
   'logViewer.clear.tooltip': 'Effacer les journaux (Ctrl+L)',
-  'logViewer.refresh': 'Actualiser',
   'logViewer.empty': 'Aucun journal disponible',
   'logViewer.lines': '{count} lignes',
   'logViewer.linesTotal': '{count} lignes ({total} au total)',
@@ -351,19 +331,13 @@ const fr: Translations = {
   'panel.closeTab': 'Fermer l\u2019onglet',
 
   // -- Namespace Controls --
-  'ns.start': 'D\u00e9marrer',
   'ns.updateAndStart': 'Mettre \u00e0 jour et d\u00e9marrer',
   'ns.forceStart': 'Forcer la mise \u00e0 jour et d\u00e9marrer',
   'ns.stop': 'Arr\u00eater',
-  'ns.reload': 'Recharger',
   'ns.confirm.start.title': 'D\u00e9marrer le namespace',
-  'ns.confirm.start.message': 'D\u00e9marrer toutes les applications de ce namespace ?',
   'ns.confirm.forceStart.title': 'Forcer la mise \u00e0 jour et d\u00e9marrer',
-  'ns.confirm.forceStart.message': 'Ret\u00e9l\u00e9charger toutes les images depuis le registre et d\u00e9marrer le namespace ? Les conteneurs en cours d\u2019ex\u00e9cution seront recr\u00e9\u00e9s.',
   'ns.confirm.stop.title': 'Arr\u00eater le namespace',
-  'ns.confirm.stop.message': 'Arr\u00eater toutes les applications en cours d\u2019ex\u00e9cution ?',
   'ns.confirm.reload.title': 'Recharger la configuration',
-  'ns.confirm.reload.message': 'Recharger la configuration du namespace ? Les applications en cours d\u2019ex\u00e9cution peuvent \u00eatre red\u00e9marr\u00e9es.',
   'ns.toast.success': '{action} du namespace demand\u00e9',
 
   // -- Status Badge --
@@ -383,12 +357,22 @@ const fr: Translations = {
   'status.STOPPED': 'Arr\u00eat\u00e9',
   'status.STALLED': 'Bloqu\u00e9',
 
+  // -- Start Progress Stepper (Welcome quick start) --
+  'startProgress.title': 'D\u00e9marrage de Citeck\u2026',
+  'startProgress.success': 'L\u2019espace de noms est op\u00e9rationnel',
+  'startProgress.failed': 'Probl\u00e8me d\u00e9tect\u00e9 au d\u00e9marrage',
+  'startProgress.stage.bundle': 'D\u00e9p\u00f4t et bundle',
+  'startProgress.stage.images': 'T\u00e9l\u00e9chargement des images',
+  'startProgress.stage.infra': 'D\u00e9marrage de l\u2019infrastructure',
+  'startProgress.stage.apps': 'D\u00e9marrage des applications',
+  'startProgress.stage.ready': 'Pr\u00eat',
+  'startProgress.detail.images': '{pulled}/{total} images pr\u00eates',
+  'startProgress.detail.apps': '{running}/{total} en cours',
+  'startProgress.openDashboard': 'Ouvrir le tableau de bord',
+  'startProgress.hide': 'Masquer',
+
   // -- Restart Events --
   'restartEvents.empty': 'Aucun evenement de redemarrage',
-  'restartEvents.time': 'Heure',
-  'restartEvents.app': 'App',
-  'restartEvents.reason': 'Raison',
-  'restartEvents.detail': 'Detail',
 
   // -- Common --
   'common.loading': 'Chargement...',
@@ -400,14 +384,12 @@ const fr: Translations = {
   'common.delete': 'Supprimer',
   'common.close': 'Fermer',
   'common.confirm': 'Confirmer',
-  'common.ok': 'OK',
   'common.confirm.defaultTitle': 'Êtes-vous sûr ?',
   'common.working': 'En cours...',
   'common.submit': 'Envoyer',
   'common.select': 'S\u00e9lectionner',
   'common.create': 'Créer',
   'common.settings': 'Param\u00e8tres',
-  'common.error': 'Erreur : {error}',
 
   // -- Journal dialog --
   'journal.filter': 'Filtrer...',
@@ -435,14 +417,12 @@ const fr: Translations = {
   // -- Migration --
   'migration.title': 'Saisir le mot de passe principal',
   'migration.description': 'Des secrets chiffr\u00e9s ont \u00e9t\u00e9 trouv\u00e9s. Saisissez votre mot de passe principal pour les d\u00e9chiffrer.',
-  'migration.passwordPlaceholder': 'Mot de passe principal',
   'migration.confirm': 'Confirmer',
   'migration.skip': 'Ignorer',
   'migration.wrongPassword': 'Mot de passe invalide',
   'migration.secretsImported': 'Secrets d\u00e9chiffr\u00e9s et import\u00e9s',
   'migration.setupPassword.title': 'Prot\u00e9gez vos secrets',
   'migration.setupPassword.description': 'Souhaitez-vous chiffrer vos secrets import\u00e9s avec un mot de passe principal ? Vous en aurez besoin \u00e0 chaque d\u00e9marrage du lanceur.',
-  'migration.setupPassword.success': 'Secrets chiffr\u00e9s avec succ\u00e8s',
   'migration.unlock.title': 'D\u00e9verrouiller les secrets',
   'migration.unlock.description': 'Vos secrets sont chiffr\u00e9s. Saisissez le mot de passe principal pour les d\u00e9verrouiller.',
   'migration.unlock.confirm': 'D\u00e9verrouiller',
@@ -457,11 +437,6 @@ const fr: Translations = {
   'migration.unlock.reset.success': 'Mot de passe principal réinitialisé ; tous les secrets supprimés',
 
   // -- Secrets (additional) --
-  'secrets.encrypted.badge': 'Chiffr\u00e9',
-  'secrets.encrypted.success': 'Secrets chiffr\u00e9s avec succ\u00e8s',
-  'secrets.locked': 'Les secrets sont verrouill\u00e9s \u2014 saisissez le mot de passe principal pour y acc\u00e9der',
-  'secrets.setPassword': 'D\u00e9finir le mot de passe',
-  'secrets.setPassword.description': 'Chiffrez vos secrets avec un mot de passe principal. Vous en aurez besoin \u00e0 chaque d\u00e9marrage du lanceur.',
 
   // -- Upgrade --
   'form.fieldRequired': '{label} est requis',
@@ -476,8 +451,6 @@ const fr: Translations = {
   'volumes.deleteAll.message': 'Toutes vos données de ce namespace seront perdues.',
   'volumes.deleteAll.success': 'Tous les volumes ont été supprimés',
   'snapshots.dialog.title': 'Snapshots',
-  'snapshots.scope.workspace': 'Workspace',
-  'snapshots.scope.namespace': 'Namespace',
   'snapshots.section.workspace': 'Snapshots de l’espace de travail',
   'snapshots.section.namespace': 'Snapshots du namespace',
   'snapshots.col.name': 'Nom',
@@ -490,11 +463,9 @@ const fr: Translations = {
   'snapshots.create.title': 'Créer un snapshot',
   'snapshots.importFile': 'Importer .zip…',
   'snapshots.openNsDir': 'Ouvrir le dossier NS',
-  'snapshots.import.local.hint': 'Utilisez le .zip stocké dans le dossier du namespace pour l\'importer localement.',
   'snapshots.rename.title': 'Renommer le snapshot',
   'snapshots.delete.title': 'Supprimer le snapshot « {name} » ?',
   'snapshots.delete.message': 'Cette action supprime définitivement le fichier du snapshot.',
-  'snapshots.delete.notSupported': 'La suppression de snapshot n\'est pas exposée via l\'API ; supprimez le .zip du dossier du namespace.',
   'snapshots.deleted': 'Snapshot supprimé',
   'snapshots.field.name': 'Nom du snapshot',
   'snapshots.field.name.invalid': 'Nom d\'instantané non valide.\nVeuillez utiliser des lettres, chiffres, points, tiret ou tiret bas.',
@@ -509,23 +480,14 @@ const fr: Translations = {
   'namespaces.col.status': 'Statut',
   'namespaces.action.edit': 'Modifier',
   'namespaces.switch': 'Changer de namespace',
+  'namespaces.switch.blocked': 'Arrêtez le namespace actuel avant de changer',
+  'namespaces.switch.success': 'Basculé vers le namespace « {name} »',
+  'namespaces.dialog.title.locked': 'Namespaces — changement verrouillé tant que le namespace actuel est {status}',
   'namespaces.deleted': 'Namespace supprimé',
   'store.connectionRestored': 'Connexion rétablie, état actualisé',
 
   // -- Namespace edit dialog --
-  'nsEdit.title': "Modifier l'espace de noms",
-  'nsEdit.field.name': 'Nom',
-  'nsEdit.field.bundleRepo': 'Dépôt de bundle',
-  'nsEdit.field.bundleKey': 'Version du bundle',
-  'nsEdit.field.authType': 'Authentification',
-  'nsEdit.field.users': 'Utilisateurs (séparés par des virgules)',
-  'nsEdit.field.host': 'Nom d\'hôte',
-  'nsEdit.field.port': 'Port',
-  'nsEdit.field.tlsEnabled': 'Activer TLS',
-  'nsEdit.field.pgAdminEnabled': 'Activer PgAdmin',
-  'nsEdit.save': 'Enregistrer',
   'nsEdit.saveSuccess': 'Espace de noms mis à jour',
-  'nsEdit.editRawYaml': 'Modifier le YAML brut…',
 
   // -- Namespace create/edit dialog (Kotlin parity: NamespaceEntityDef.formSpec) --
   'namespace.dialog.create': 'Créer un namespace',
@@ -539,7 +501,6 @@ const fr: Translations = {
   'namespace.form.snapshot.none': '(aucun)',
   'namespace.form.required': 'Champ requis',
   'namespace.form.nameTooLong': '50 caractères maximum',
-  'namespace.form.refreshBundles': 'Actualiser la liste des bundles',
   'namespace.form.cancel': 'Annuler',
   'namespace.form.submit': 'Créer',
   'namespace.form.save': 'Enregistrer',
@@ -577,6 +538,15 @@ const fr: Translations = {
   'update.install': 'Mettre à jour et redémarrer',
   'update.installing': 'Mise à jour…',
   'update.failed': 'Échec de la mise à jour : {error}',
-}
+  'update.manualNotice': 'Cette version ne peut pas installer les mises à jour automatiquement. Pour profiter des dernières fonctionnalités, téléchargez la nouvelle version manuellement depuis GitHub — cela ne prend que quelques minutes.',
+  'update.openReleases': 'Ouvrir la page des versions',
+
+  // -- Auth gate (daemon api_auth token) --
+  'authGate.title': 'Authentification requise',
+  'authGate.message': 'Ce démon exige un jeton d\'accès pour l\'interface web.\nExécutez {cmd} sur l\'hôte pour ouvrir une session authentifiée, ou collez le jeton ci-dessous.',
+  'authGate.placeholder': 'Collez le jeton d\'API',
+  'authGate.submit': 'S\'authentifier',
+  'authGate.error': 'Jeton invalide. Vérifiez-le et réessayez.',
+} satisfies Translations
 
 export default fr

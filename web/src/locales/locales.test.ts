@@ -41,9 +41,7 @@ describe('locale completeness', () => {
 // the key exists but its value was never translated).
 const IDENTICAL_OK = new Set<string>([
   'appDetail.back', // "← Dashboard"
-  'common.error',
   'dashboard.error',
-  'dashboard.docker.error',
   'drawer.error',
   'welcome.error',
   'logs.title',

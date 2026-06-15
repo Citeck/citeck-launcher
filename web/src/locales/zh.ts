@@ -1,6 +1,6 @@
 import type { Translations } from '../lib/i18n'
 
-const zh: Translations = {
+const zh = {
   // -- Dashboard --
   'dashboard.title': '仪表盘',
   'dashboard.error': '错误：{error}',
@@ -12,8 +12,6 @@ const zh: Translations = {
   'dashboard.openInBrowser.disabled': '应用程序未运行。请启动它以便在浏览器中打开。',
   'dashboard.openInBrowser.starting': '应用程序正在启动。请稍候...',
   'dashboard.openInBrowser.stalled': '应用程序已停止响应。请尝试重新启动。',
-  'dashboard.docker.error': 'Docker：{error}',
-  'dashboard.docker.retry': '重试',
 
   // -- Docker not available screen --
   'dockerUnavailable.title': 'Docker 不可用',
@@ -28,6 +26,12 @@ const zh: Translations = {
   'gitPullError.cannotSkip': '无法跳过此步骤，因为该仓库尚未克隆过。',
   'gitPullError.skip': '跳过拉取',
   'gitPullError.retry': '重试',
+  'gitPullError.saveAndRetry': '保存并重试',
+  'gitPullError.authExplain': '无法登录该仓库 — 访问令牌无效或已过期。',
+  'gitPullError.secretInUse': '当前使用的密钥：{name}。',
+  'gitPullError.secretInUseMissing': '当前使用的密钥：{id}（未找到）。',
+  'gitPullError.noSecret': '此工作区尚未配置访问令牌。',
+  'gitPullError.editToken': '修改令牌',
   'registryCreds.title': '登录 {host}',
   'registryCreds.host': '镜像仓库',
   'registryCreds.username': '用户名',
@@ -39,7 +43,6 @@ const zh: Translations = {
   'dashboard.links': '链接',
   'dashboard.volumes': '存储卷',
   'dashboard.secrets': '密钥',
-  'dashboard.diagnostics': '诊断',
   'dashboard.launcherLogs': '启动器日志',
   'dashboard.restartEvents': '重启事件',
   'dashboard.systemDump': '系统转储',
@@ -47,6 +50,8 @@ const zh: Translations = {
   'dashboard.systemDump.saved': '系统转储已保存到 {path}',
   'dashboard.backToWelcome': '返回欢迎页',
   'dashboard.backToWelcome.disabled': '请先停止所有正在运行的应用',
+  'dashboard.diskLow.message': '磁盘空间不足：{path} 仅剩 {free}',
+  'dashboard.diskLow.dismiss': '关闭',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': '仍在加载…耗时比预期更长。\n为帮助我们诊断问题，请点击“系统转储”按钮，并将数据发送给维护人员。',
@@ -61,7 +66,6 @@ const zh: Translations = {
   'welcome.startFailed': '启动失败：{error}',
   'welcome.quickStart': '快速开始',
   'welcome.quickStart.default': '快速开始',
-  'welcome.quickStart.alreadyHasNamespaces': '工作区已存在命名空间\n快速开始已禁用。',
   'welcome.workspace.empty': '工作区为空',
   'welcome.more': '更多',
   'welcome.createNew': '创建新 namespace',
@@ -73,7 +77,6 @@ const zh: Translations = {
   'welcome.workspace.label': '工作区',
   'welcome.workspace.forceUpdate': '强制更新',
   'welcome.workspace.forceUpdate.inactive': '强制更新仅适用于活动工作区',
-  'welcome.workspace.updating': '正在更新工作区...',
   'welcome.workspace.updateSuccess': '工作区已更新',
   'welcome.workspace.updateFailed': '工作区更新失败：{error}',
   'welcome.workspace.create': '创建工作区...',
@@ -89,21 +92,17 @@ const zh: Translations = {
   'welcome.workspace.form.authType': '认证方式',
   'welcome.workspace.form.authType.none': '无（公开仓库）',
   'welcome.workspace.form.authType.token': '令牌（私有仓库）',
-  'welcome.workspace.form.authTypeTokenHint': '将 git 令牌作为密钥保存在 "{key}" 下。',
+  'welcome.workspace.form.tokenRequired': '请选择或创建令牌密钥',
   'welcome.workspace.form.required': '名称和仓库 URL 是必填项',
 
   // -- 仪表盘侧边栏 / namespace 目录 --
-  'dashboard.openNsDir': '打开 NS 目录',
   'dashboard.openNsDir.tooltip': '在文件管理器中打开 namespace 的卷目录',
   'dashboard.openNsDir.success': '已打开 {path}',
   'dashboard.openNsDir.serverInfo': '守护进程路径：{path}',
   'dashboard.openNsDir.failed': '打开失败：{error}',
 
-
   // -- Volumes --
-  'volumes.title': 'Docker 存储卷',
   'volumes.table.name': '名称',
-  'volumes.table.path': '路径',
   'volumes.table.size': '大小',
   'volumes.size.compute': '计算',
   'volumes.delete.tooltip': '删除存储卷',
@@ -121,35 +120,14 @@ const zh: Translations = {
   'links.pgAdmin.tooltip': 'Postgres 数据库管理和设计工具。\n用户名：admin@admin.com\n密码：admin\n数据库密码：postgres',
   'links.documentation.tooltip': 'Citeck 文档',
   'links.aiBot.tooltip': '用于 AI 文档帮助的 Telegram 机器人',
-  'volumes.empty': '未找到存储卷',
   'volumes.delete.title': '删除存储卷 {name}？',
   'volumes.delete.message': '此操作将永久删除该存储卷及其所有数据。',
   'volumes.delete.success': '存储卷已删除',
-  'volumes.export.failed': '导出失败：{error}',
-  'volumes.import.failed': '导入失败：{error}',
-  'volumes.rename.failed': '重命名失败：{error}',
-  'volumes.download.failed': '下载失败：{error}',
   'volumes.snapshots': '快照',
-  'volumes.snapshots.export': '导出',
   'volumes.snapshots.exporting': '导出中...',
-  'volumes.snapshots.export.tooltip': '将所有存储卷导出为 ZIP 快照',
-  'volumes.snapshots.import': '导入',
   'volumes.snapshots.importing': '导入中...',
-  'volumes.snapshots.import.tooltip': '从 ZIP 快照导入存储卷',
-  'volumes.snapshots.name': '名称',
-  'volumes.snapshots.size': '大小',
-  'volumes.snapshots.created': '创建时间',
-  'volumes.snapshots.empty': '暂无快照。导出存储卷以创建快照。',
-  'volumes.snapshots.rename': '重命名',
-  'volumes.snapshots.rename.ok': '确定',
-  'volumes.snapshots.rename.cancel': '取消',
-  'volumes.workspace': '工作区快照',
-  'volumes.workspace.name': '名称',
-  'volumes.workspace.size': '大小',
-  'volumes.workspace.download': '下载',
 
   // -- Secrets --
-  'secrets.title': '密钥',
   'secrets.type.gitToken': '令牌',
   'secrets.type.basicAuth': 'Basic（用户名/密码）',
   'secrets.type.registryAuth': 'Basic（用户名/密码）— 镜像仓库',
@@ -163,19 +141,34 @@ const zh: Translations = {
   'secrets.form.username.placeholder': 'registry-user',
   'secrets.form.value': '值',
   'secrets.form.value.placeholder': '密钥值',
-  'secrets.form.create': '创建',
-  'secrets.form.creating': '创建中...',
-  'secrets.form.cancel': '取消',
+  'secrets.form.scope': '作用域',
+  'secrets.form.scope.placeholder': 'images-repo:registry.example.com',
+  'secrets.form.scope.global': '全局（默认）',
+  'secrets.form.scope.custom': '自定义…',
+  'secrets.form.scope.customValue': '自定义作用域',
   'secrets.table.name': '名称',
   'secrets.table.type': '类型',
   'secrets.table.scope': '作用域',
-  'secrets.table.created': '创建时间',
   'secrets.test.tooltip': '测试密钥',
-  'secrets.empty': '未配置密钥',
   'secrets.create.success': '密钥已创建',
   'secrets.delete.success': '密钥已删除',
   'secrets.delete.title': '删除密钥？',
   'secrets.delete.message': '密钥 "{name}" 将被永久删除。所有使用该密钥的 namespace 将失去访问权限。',
+  'secrets.delete.usedByWorkspaces': '正被以下工作区使用：{names}。它们将失去对仓库的访问权限。',
+  'secrets.edit.title': '编辑密钥',
+  'secrets.edit.tooltip': '编辑密钥',
+  'secrets.update.success': '密钥已更新',
+  'secrets.form.value.keepPlaceholder': '留空 — 值保持不变',
+
+  // -- Secret picker (workspace token / git-pull-error dialogs) --
+  'secretPicker.secret': '令牌密钥',
+  'secretPicker.addNew': '新增…',
+  'secretPicker.placeholder': '选择令牌密钥…',
+  'secretPicker.createTitle': '新建令牌密钥',
+  'secretPicker.notFound': '（未找到）',
+  'secretPicker.name': '密钥名称',
+  'secretPicker.token': '令牌',
+  'secretPicker.required': '密钥名称和令牌为必填项',
 
   // -- Diagnostics --
   'diagnostics.title': '诊断',
@@ -225,6 +218,10 @@ const zh: Translations = {
   'licenses.col.actions': '操作',
   'licenses.status.valid': '有效',
   'licenses.status.invalid': '无效',
+  'license.badge.daysLeft': '{days}天',
+  'license.badge.expired': '已过期',
+  'license.tooltip.valid': '企业许可证：{tenant} — 有效期至 {date}',
+  'license.tooltip.expired': '企业许可证：{tenant} — 已于 {date} 过期',
 
   // -- AppDetail page --
   'appDetail.back': '\u2190 仪表盘',
@@ -248,12 +245,6 @@ const zh: Translations = {
   'table.action.stop': '停止',
   'table.action.start': '启动',
   'table.action.restart': '重启',
-  'table.confirm.stop.title': '停止 {name}？',
-  'table.confirm.stop.message': '停止容器 {name}？',
-  'table.confirm.start.title': '启动 {name}？',
-  'table.confirm.start.message': '启动容器 {name}？',
-  'table.confirm.restart.title': '重启 {name}？',
-  'table.confirm.restart.message': '重启 {name}？',
   'table.toast.success': '已请求对 {name} 执行 {action}',
   'table.cpu.throttled': 'CPU 受限',
   'table.memory.warning': '内存使用率高',
@@ -261,8 +252,11 @@ const zh: Translations = {
   'table.pullAuthRequired.label': '配置凭据',
   'table.pullAuthRequired.tooltip': '镜像仓库需要身份验证 — 点击进行配置',
   'table.pullAuthRetry.success': '凭据已保存；正在重试拉取',
+  'table.initStep': '初始化 {step}/{total}',
+  'table.initStep.tooltip': '正在运行初始化步骤：{name}',
 
   // -- App Drawer --
+  'drawer.initStep': '初始化 {step}/{total}：{name}',
   'drawer.container': '容器',
   'drawer.image': '镜像',
   'drawer.state': '状态',
@@ -283,10 +277,6 @@ const zh: Translations = {
   // -- App Config Editor --
   'appConfig.title': '应用配置 (YAML)',
   'appConfig.edited': '（已修改{detail}）',
-  'appConfig.lock.locked': '已锁定',
-  'appConfig.lock.unlocked': '已解锁',
-  'appConfig.lock.lockTooltip': '锁定：修改在重新生成时保留',
-  'appConfig.lock.unlockTooltip': '解锁：修改在重新生成时不会保留',
   'appConfig.noConfig': '无自定义配置',
   'appConfig.files': '挂载文件',
   'appConfig.confirm.title': '应用配置更改？',
@@ -307,18 +297,8 @@ const zh: Translations = {
   'appConfig.loadError.cannotSave': '无法保存：未加载源配置。',
   'common.retry': '重试',
 
-  // -- Config Editor --
-  'configEditor.title': 'namespace.yml',
-  'configEditor.noConfig': '未找到配置文件。请使用 {cmd} 创建。',
-  'configEditor.failedToLoad': '加载配置失败：{error}',
-  'configEditor.confirm.title': '应用配置',
-  'configEditor.confirm.message': '保存配置并重新加载 namespace？运行中的应用可能会被重启。',
-  'configEditor.saved': '配置已保存，已请求重新加载',
-
   // -- Daemon Logs --
   'daemonLogs.title': '守护进程日志',
-  'daemonLogs.refresh': '刷新',
-  'daemonLogs.empty': '暂无日志',
 
   // -- Log Viewer --
   'logViewer.search': '搜索...（Ctrl+F）',
@@ -334,11 +314,11 @@ const zh: Translations = {
   'logViewer.wrap.tooltip': '切换自动换行',
   'logViewer.copy': '复制',
   'logViewer.copy.tooltip': '复制全部到剪贴板',
+  'clipboard.copyFailed': '复制到剪贴板失败',
   'logViewer.download': '下载',
   'logViewer.download.tooltip': '下载为文件',
   'logViewer.clear': '清空',
   'logViewer.clear.tooltip': '清空日志（Ctrl+L）',
-  'logViewer.refresh': '刷新',
   'logViewer.empty': '暂无日志',
   'logViewer.lines': '{count} 行',
   'logViewer.linesTotal': '{count} 行（共 {total} 行）',
@@ -351,19 +331,13 @@ const zh: Translations = {
   'panel.closeTab': '关闭标签页',
 
   // -- Namespace Controls --
-  'ns.start': '启动',
   'ns.updateAndStart': '更新并启动',
   'ns.forceStart': '强制更新并启动',
   'ns.stop': '停止',
-  'ns.reload': '重新加载',
   'ns.confirm.start.title': '启动 namespace',
-  'ns.confirm.start.message': '启动此 namespace 中的所有应用？',
   'ns.confirm.forceStart.title': '强制更新并启动',
-  'ns.confirm.forceStart.message': '从注册表重新拉取所有镜像并启动 namespace？正在运行的容器将被重新创建。',
   'ns.confirm.stop.title': '停止 namespace',
-  'ns.confirm.stop.message': '停止所有运行中的应用？',
   'ns.confirm.reload.title': '重新加载配置',
-  'ns.confirm.reload.message': '重新加载 namespace 配置？运行中的应用可能会被重启。',
   'ns.toast.success': '已请求 {action} namespace',
 
   // -- Status Badge --
@@ -383,12 +357,22 @@ const zh: Translations = {
   'status.STOPPED': '已停止',
   'status.STALLED': '已挂起',
 
+  // -- Start Progress Stepper (Welcome quick start) --
+  'startProgress.title': '正在启动 Citeck…',
+  'startProgress.success': '命名空间已启动并正常运行',
+  'startProgress.failed': '启动时检测到问题',
+  'startProgress.stage.bundle': '仓库与捆绑包',
+  'startProgress.stage.images': '拉取镜像',
+  'startProgress.stage.infra': '启动基础设施',
+  'startProgress.stage.apps': '启动应用',
+  'startProgress.stage.ready': '就绪',
+  'startProgress.detail.images': '{pulled}/{total} 个镜像已就绪',
+  'startProgress.detail.apps': '{running}/{total} 运行中',
+  'startProgress.openDashboard': '打开仪表盘',
+  'startProgress.hide': '隐藏',
+
   // -- Restart Events --
   'restartEvents.empty': '无重启事件',
-  'restartEvents.time': '时间',
-  'restartEvents.app': '应用',
-  'restartEvents.reason': '原因',
-  'restartEvents.detail': '详情',
 
   // -- Common --
   'common.loading': '加载中...',
@@ -400,14 +384,12 @@ const zh: Translations = {
   'common.delete': '删除',
   'common.close': '关闭',
   'common.confirm': '确认',
-  'common.ok': '确定',
   'common.confirm.defaultTitle': '确定吗？',
   'common.working': '处理中...',
   'common.submit': '提交',
   'common.select': '选择',
   'common.create': '创建',
   'common.settings': '设置',
-  'common.error': '错误：{error}',
 
   // -- Journal dialog --
   'journal.filter': '筛选...',
@@ -435,14 +417,12 @@ const zh: Translations = {
   // -- Migration --
   'migration.title': '输入主密码',
   'migration.description': '发现加密的密钥。请输入您的主密码进行解密。',
-  'migration.passwordPlaceholder': '主密码',
   'migration.confirm': '确认',
   'migration.skip': '跳过',
   'migration.wrongPassword': '密码错误',
   'migration.secretsImported': '密钥已解密并导入',
   'migration.setupPassword.title': '保护您的密钥',
   'migration.setupPassword.description': '是否要使用主密码加密导入的密钥？每次启动启动器时都需要输入该密码。',
-  'migration.setupPassword.success': '密钥加密成功',
   'migration.unlock.title': '解锁密钥',
   'migration.unlock.description': '您的密钥已加密。请输入主密码进行解锁。',
   'migration.unlock.confirm': '解锁',
@@ -457,11 +437,6 @@ const zh: Translations = {
   'migration.unlock.reset.success': '主密码已重置；所有密钥已删除',
 
   // -- Secrets (additional) --
-  'secrets.encrypted.badge': '已加密',
-  'secrets.encrypted.success': '密钥加密成功',
-  'secrets.locked': '密钥已锁定 — 请输入主密码以访问',
-  'secrets.setPassword': '设置密码',
-  'secrets.setPassword.description': '使用主密码加密您的密钥。每次启动启动器时都需要输入该密码。',
 
   // -- Upgrade --
   'form.fieldRequired': '{label} 是必填项',
@@ -476,8 +451,6 @@ const zh: Translations = {
   'volumes.deleteAll.message': '此 namespace 中的所有数据都将丢失。',
   'volumes.deleteAll.success': '所有存储卷已删除',
   'snapshots.dialog.title': '快照',
-  'snapshots.scope.workspace': '工作区',
-  'snapshots.scope.namespace': 'Namespace',
   'snapshots.section.workspace': '工作区快照',
   'snapshots.section.namespace': '命名空间快照',
   'snapshots.col.name': '名称',
@@ -490,11 +463,9 @@ const zh: Translations = {
   'snapshots.create.title': '创建快照',
   'snapshots.importFile': '导入 .zip…',
   'snapshots.openNsDir': '打开 NS 目录',
-  'snapshots.import.local.hint': '使用 namespace 目录中存储的 .zip 进行本地导入。',
   'snapshots.rename.title': '重命名快照',
   'snapshots.delete.title': '删除快照“{name}”？',
   'snapshots.delete.message': '此操作将永久删除该快照文件。',
-  'snapshots.delete.notSupported': 'API 未提供删除快照功能；请从 namespace 目录中移除该 .zip 文件。',
   'snapshots.deleted': '快照已删除',
   'snapshots.field.name': '快照名称',
   'snapshots.field.name.invalid': '快照名称无效。\n请使用字母、数字、点、连字符或下划线。',
@@ -509,23 +480,14 @@ const zh: Translations = {
   'namespaces.col.status': '状态',
   'namespaces.action.edit': '编辑',
   'namespaces.switch': '切换 namespace',
+  'namespaces.switch.blocked': '切换前请先停止当前 namespace',
+  'namespaces.switch.success': '已切换到 namespace“{name}”',
+  'namespaces.dialog.title.locked': 'Namespaces — 当前 namespace 处于 {status} 状态，无法切换',
   'namespaces.deleted': 'Namespace 已删除',
   'store.connectionRestored': '连接已恢复，状态已刷新',
 
   // -- Namespace edit dialog --
-  'nsEdit.title': '编辑命名空间',
-  'nsEdit.field.name': '名称',
-  'nsEdit.field.bundleRepo': '包仓库',
-  'nsEdit.field.bundleKey': '包版本',
-  'nsEdit.field.authType': '认证',
-  'nsEdit.field.users': '用户（逗号分隔）',
-  'nsEdit.field.host': '主机名',
-  'nsEdit.field.port': '端口',
-  'nsEdit.field.tlsEnabled': '启用 TLS',
-  'nsEdit.field.pgAdminEnabled': '启用 PgAdmin',
-  'nsEdit.save': '保存',
   'nsEdit.saveSuccess': '命名空间已更新',
-  'nsEdit.editRawYaml': '编辑原始 YAML…',
 
   // -- Namespace create/edit dialog (Kotlin parity: NamespaceEntityDef.formSpec) --
   'namespace.dialog.create': '创建命名空间',
@@ -539,7 +501,6 @@ const zh: Translations = {
   'namespace.form.snapshot.none': '(无)',
   'namespace.form.required': '此字段为必填项',
   'namespace.form.nameTooLong': '最多 50 个字符',
-  'namespace.form.refreshBundles': '刷新包列表',
   'namespace.form.cancel': '取消',
   'namespace.form.submit': '创建',
   'namespace.form.save': '保存',
@@ -577,6 +538,15 @@ const zh: Translations = {
   'update.install': '更新并重启',
   'update.installing': '正在更新…',
   'update.failed': '更新失败：{error}',
-}
+  'update.manualNotice': '此版本无法自动安装更新。要获取最新功能，请从 GitHub 手动下载新版本——只需几分钟。',
+  'update.openReleases': '打开发布页面',
+
+  // -- Auth gate (daemon api_auth token) --
+  'authGate.title': '需要身份验证',
+  'authGate.message': '该守护进程要求使用访问令牌才能打开 Web UI。\n在主机上运行 {cmd} 以打开已认证的会话，或在下方粘贴令牌。',
+  'authGate.placeholder': '粘贴 API 令牌',
+  'authGate.submit': '验证',
+  'authGate.error': '令牌无效。请检查后重试。',
+} satisfies Translations
 
 export default zh

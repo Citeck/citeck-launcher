@@ -1,6 +1,6 @@
 import type { Translations } from '../lib/i18n'
 
-const ja: Translations = {
+const ja = {
   // -- Dashboard --
   'dashboard.title': '\u30c0\u30c3\u30b7\u30e5\u30dc\u30fc\u30c9',
   'dashboard.error': '\u30a8\u30e9\u30fc: {error}',
@@ -12,8 +12,6 @@ const ja: Translations = {
   'dashboard.openInBrowser.disabled': '\u30a2\u30d7\u30ea\u30b1\u30fc\u30b7\u30e7\u30f3\u306f\u5b9f\u884c\u3055\u308c\u3066\u3044\u307e\u305b\u3093\u3002\u8d77\u52d5\u3057\u3066\u30d6\u30e9\u30a6\u30b6\u3067\u958b\u3044\u3066\u304f\u3060\u3055\u3044\u3002',
   'dashboard.openInBrowser.starting': '\u30a2\u30d7\u30ea\u30b1\u30fc\u30b7\u30e7\u30f3\u3092\u8d77\u52d5\u4e2d\u3067\u3059\u3002\u3057\u3070\u3089\u304f\u304a\u5f85\u3061\u304f\u3060\u3055\u3044...',
   'dashboard.openInBrowser.stalled': '\u30a2\u30d7\u30ea\u30b1\u30fc\u30b7\u30e7\u30f3\u304c\u505c\u6b62\u3057\u3066\u3044\u307e\u3059\u3002\u518d\u5ea6\u8d77\u52d5\u3092\u8a66\u307f\u3066\u304f\u3060\u3055\u3044\u3002',
-  'dashboard.docker.error': 'Docker: {error}',
-  'dashboard.docker.retry': '\u518d\u8a66\u884c',
 
   // -- Docker not available screen --
   'dockerUnavailable.title': 'Docker を利用できません',
@@ -28,6 +26,12 @@ const ja: Translations = {
   'gitPullError.cannotSkip': 'リポジトリがまだクローンされていないため、このステップはスキップできません。',
   'gitPullError.skip': '取得をスキップ',
   'gitPullError.retry': '再試行',
+  'gitPullError.saveAndRetry': '保存して再試行',
+  'gitPullError.authExplain': 'リポジトリにサインインできませんでした — アクセストークンが無効か、有効期限が切れています。',
+  'gitPullError.secretInUse': '使用中のシークレット: {name}。',
+  'gitPullError.secretInUseMissing': '使用中のシークレット: {id}（見つかりません）。',
+  'gitPullError.noSecret': 'このワークスペースにはアクセストークンがまだ設定されていません。',
+  'gitPullError.editToken': 'トークンを編集',
   'registryCreds.title': '{host} にサインイン',
   'registryCreds.host': 'Registry',
   'registryCreds.username': 'ユーザー名',
@@ -39,7 +43,6 @@ const ja: Translations = {
   'dashboard.links': '\u30ea\u30f3\u30af',
   'dashboard.volumes': '\u30dc\u30ea\u30e5\u30fc\u30e0',
   'dashboard.secrets': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8',
-  'dashboard.diagnostics': '\u8a3a\u65ad',
   'dashboard.launcherLogs': 'Launcher \u30ed\u30b0',
   'dashboard.restartEvents': '\u518d\u8d77\u52d5\u30a4\u30d9\u30f3\u30c8',
   'dashboard.systemDump': '\u30b7\u30b9\u30c6\u30e0\u30c0\u30f3\u30d7',
@@ -47,6 +50,8 @@ const ja: Translations = {
   'dashboard.systemDump.saved': '\u30b7\u30b9\u30c6\u30e0\u30c0\u30f3\u30d7\u3092 {path} \u306b\u4fdd\u5b58\u3057\u307e\u3057\u305f',
   'dashboard.backToWelcome': 'ウェルカムへ戻る',
   'dashboard.backToWelcome.disabled': 'ウェルカムへ戻る前に、実行中のアプリをすべて停止してください',
+  'dashboard.diskLow.message': 'ディスク容量不足：{path} の空きは {free} です',
+  'dashboard.diskLow.dismiss': '閉じる',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'まだ読み込み中です... 想定より時間がかかっています。\n問題の診断にご協力いただくため、「Dump System Info」ボタンをクリックして、データをメンテナーに送信してください。',
@@ -61,7 +66,6 @@ const ja: Translations = {
   'welcome.startFailed': '\u958b\u59cb\u306b\u5931\u6557: {error}',
   'welcome.quickStart': '\u30af\u30a4\u30c3\u30af\u30b9\u30bf\u30fc\u30c8',
   'welcome.quickStart.default': '\u30af\u30a4\u30c3\u30af\u30b9\u30bf\u30fc\u30c8',
-  'welcome.quickStart.alreadyHasNamespaces': '\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u306b\u306f\u65e2\u306b\u30cd\u30fc\u30e0\u30b9\u30da\u30fc\u30b9\u304c\u3042\u308a\u307e\u3059\n\u30af\u30a4\u30c3\u30af\u30b9\u30bf\u30fc\u30c8\u306f\u7121\u52b9\u3067\u3059\u3002',
   'welcome.workspace.empty': '\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u306f\u7a7a\u3067\u3059',
   'welcome.more': '\u305d\u306e\u4ed6',
   'welcome.createNew': '\u65b0\u898f namespace \u3092\u4f5c\u6210',
@@ -73,7 +77,6 @@ const ja: Translations = {
   'welcome.workspace.label': '\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9',
   'welcome.workspace.forceUpdate': '\u5f37\u5236\u66f4\u65b0',
   'welcome.workspace.forceUpdate.inactive': '強制更新はアクティブなワークスペースでのみ使用できます',
-  'welcome.workspace.updating': '\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u3092\u66f4\u65b0\u4e2d...',
   'welcome.workspace.updateSuccess': '\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u3092\u66f4\u65b0\u3057\u307e\u3057\u305f',
   'welcome.workspace.updateFailed': '\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u306e\u66f4\u65b0\u306b\u5931\u6557\u3057\u307e\u3057\u305f: {error}',
   'welcome.workspace.create': 'ワークスペースを作成...',
@@ -89,21 +92,17 @@ const ja: Translations = {
   'welcome.workspace.form.authType': '認証方式',
   'welcome.workspace.form.authType.none': 'なし (パブリックリポジトリ)',
   'welcome.workspace.form.authType.token': 'トークン (プライベートリポジトリ)',
-  'welcome.workspace.form.authTypeTokenHint': 'git トークンをキー "{key}" でシークレットとして保存します。',
+  'welcome.workspace.form.tokenRequired': 'トークンシークレットを選択または作成してください',
   'welcome.workspace.form.required': '名前とリポジトリURLは必須です',
 
   // -- \u30c0\u30c3\u30b7\u30e5\u30dc\u30fc\u30c9\u30b5\u30a4\u30c9\u30d0\u30fc / \u30cd\u30fc\u30e0\u30b9\u30da\u30fc\u30b9\u30c7\u30a3\u30ec\u30af\u30c8\u30ea --
-  'dashboard.openNsDir': 'NS \u30c7\u30a3\u30ec\u30af\u30c8\u30ea\u3092\u958b\u304f',
   'dashboard.openNsDir.tooltip': '\u30cd\u30fc\u30e0\u30b9\u30da\u30fc\u30b9\u306e\u30dc\u30ea\u30e5\u30fc\u30e0\u30c7\u30a3\u30ec\u30af\u30c8\u30ea\u3092\u30d5\u30a1\u30a4\u30eb\u30de\u30cd\u30fc\u30b8\u30e3\u30fc\u3067\u958b\u304d\u307e\u3059',
   'dashboard.openNsDir.success': '{path} \u3092\u958b\u304d\u307e\u3057\u305f',
   'dashboard.openNsDir.serverInfo': '\u30c7\u30fc\u30e2\u30f3\u30d1\u30b9: {path}',
   'dashboard.openNsDir.failed': '\u958b\u304f\u306e\u306b\u5931\u6557\u3057\u307e\u3057\u305f: {error}',
 
-
   // -- Volumes --
-  'volumes.title': 'Docker \u30dc\u30ea\u30e5\u30fc\u30e0',
   'volumes.table.name': '\u540d\u524d',
-  'volumes.table.path': '\u30d1\u30b9',
   'volumes.table.size': '\u30b5\u30a4\u30ba',
   'volumes.size.compute': '\u8a08\u7b97',
   'volumes.delete.tooltip': '\u30dc\u30ea\u30e5\u30fc\u30e0\u3092\u524a\u9664',
@@ -121,35 +120,14 @@ const ja: Translations = {
   'links.pgAdmin.tooltip': 'Postgres \u30c7\u30fc\u30bf\u30d9\u30fc\u30b9\u306e\u7ba1\u7406\u30fb\u8a2d\u8a08\u30c4\u30fc\u30eb\u3002\n\u30e6\u30fc\u30b6\u30fc\u540d: admin@admin.com\n\u30d1\u30b9\u30ef\u30fc\u30c9: admin\n\u30c7\u30fc\u30bf\u30d9\u30fc\u30b9\u306e\u30d1\u30b9\u30ef\u30fc\u30c9: postgres',
   'links.documentation.tooltip': 'Citeck \u30c9\u30ad\u30e5\u30e1\u30f3\u30c8',
   'links.aiBot.tooltip': 'AI \u30c9\u30ad\u30e5\u30e1\u30f3\u30c8\u652f\u63f4\u7528 Telegram \u30dc\u30c3\u30c8',
-  'volumes.empty': '\u30dc\u30ea\u30e5\u30fc\u30e0\u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093',
   'volumes.delete.title': '\u30dc\u30ea\u30e5\u30fc\u30e0 {name} \u3092\u524a\u9664\u3057\u307e\u3059\u304b\uff1f',
   'volumes.delete.message': '\u30dc\u30ea\u30e5\u30fc\u30e0\u3068\u305d\u306e\u3059\u3079\u3066\u306e\u30c7\u30fc\u30bf\u304c\u5b8c\u5168\u306b\u524a\u9664\u3055\u308c\u307e\u3059\u3002',
   'volumes.delete.success': '\u30dc\u30ea\u30e5\u30fc\u30e0\u3092\u524a\u9664\u3057\u307e\u3057\u305f',
-  'volumes.export.failed': '\u30a8\u30af\u30b9\u30dd\u30fc\u30c8\u306b\u5931\u6557: {error}',
-  'volumes.import.failed': '\u30a4\u30f3\u30dd\u30fc\u30c8\u306b\u5931\u6557: {error}',
-  'volumes.rename.failed': '\u540d\u524d\u5909\u66f4\u306b\u5931\u6557: {error}',
-  'volumes.download.failed': '\u30c0\u30a6\u30f3\u30ed\u30fc\u30c9\u306b\u5931\u6557: {error}',
   'volumes.snapshots': '\u30b9\u30ca\u30c3\u30d7\u30b7\u30e7\u30c3\u30c8',
-  'volumes.snapshots.export': '\u30a8\u30af\u30b9\u30dd\u30fc\u30c8',
   'volumes.snapshots.exporting': '\u30a8\u30af\u30b9\u30dd\u30fc\u30c8\u4e2d...',
-  'volumes.snapshots.export.tooltip': '\u3059\u3079\u3066\u306e\u30dc\u30ea\u30e5\u30fc\u30e0\u3092\u30b9\u30ca\u30c3\u30d7\u30b7\u30e7\u30c3\u30c8 ZIP \u306b\u30a8\u30af\u30b9\u30dd\u30fc\u30c8',
-  'volumes.snapshots.import': '\u30a4\u30f3\u30dd\u30fc\u30c8',
   'volumes.snapshots.importing': '\u30a4\u30f3\u30dd\u30fc\u30c8\u4e2d...',
-  'volumes.snapshots.import.tooltip': '\u30b9\u30ca\u30c3\u30d7\u30b7\u30e7\u30c3\u30c8 ZIP \u304b\u3089\u30dc\u30ea\u30e5\u30fc\u30e0\u3092\u30a4\u30f3\u30dd\u30fc\u30c8',
-  'volumes.snapshots.name': '\u540d\u524d',
-  'volumes.snapshots.size': '\u30b5\u30a4\u30ba',
-  'volumes.snapshots.created': '\u4f5c\u6210\u65e5',
-  'volumes.snapshots.empty': '\u30b9\u30ca\u30c3\u30d7\u30b7\u30e7\u30c3\u30c8\u304c\u3042\u308a\u307e\u305b\u3093\u3002\u30dc\u30ea\u30e5\u30fc\u30e0\u3092\u30a8\u30af\u30b9\u30dd\u30fc\u30c8\u3057\u3066\u4f5c\u6210\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
-  'volumes.snapshots.rename': '\u540d\u524d\u5909\u66f4',
-  'volumes.snapshots.rename.ok': 'OK',
-  'volumes.snapshots.rename.cancel': '\u30ad\u30e3\u30f3\u30bb\u30eb',
-  'volumes.workspace': '\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u30b9\u30ca\u30c3\u30d7\u30b7\u30e7\u30c3\u30c8',
-  'volumes.workspace.name': '\u540d\u524d',
-  'volumes.workspace.size': '\u30b5\u30a4\u30ba',
-  'volumes.workspace.download': '\u30c0\u30a6\u30f3\u30ed\u30fc\u30c9',
 
   // -- Secrets --
-  'secrets.title': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8',
   'secrets.type.gitToken': '\u30c8\u30fc\u30af\u30f3',
   'secrets.type.basicAuth': 'Basic\uff08\u30e6\u30fc\u30b6\u30fc\u540d\uff0f\u30d1\u30b9\u30ef\u30fc\u30c9\uff09',
   'secrets.type.registryAuth': 'Basic\uff08\u30e6\u30fc\u30b6\u30fc\u540d\uff0f\u30d1\u30b9\u30ef\u30fc\u30c9\uff09\u2014 \u30ec\u30b8\u30b9\u30c8\u30ea',
@@ -163,19 +141,34 @@ const ja: Translations = {
   'secrets.form.username.placeholder': 'registry-user',
   'secrets.form.value': '\u5024',
   'secrets.form.value.placeholder': '\u79d8\u5bc6\u306e\u5024',
-  'secrets.form.create': '\u4f5c\u6210',
-  'secrets.form.creating': '\u4f5c\u6210\u4e2d...',
-  'secrets.form.cancel': '\u30ad\u30e3\u30f3\u30bb\u30eb',
+  'secrets.form.scope': 'スコープ',
+  'secrets.form.scope.placeholder': 'images-repo:registry.example.com',
+  'secrets.form.scope.global': 'グローバル（デフォルト）',
+  'secrets.form.scope.custom': 'カスタム…',
+  'secrets.form.scope.customValue': 'カスタムスコープ',
   'secrets.table.name': '\u540d\u524d',
   'secrets.table.type': '\u30bf\u30a4\u30d7',
   'secrets.table.scope': '\u30b9\u30b3\u30fc\u30d7',
-  'secrets.table.created': '\u4f5c\u6210\u65e5',
   'secrets.test.tooltip': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u3092\u30c6\u30b9\u30c8',
-  'secrets.empty': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u304c\u8a2d\u5b9a\u3055\u308c\u3066\u3044\u307e\u305b\u3093',
   'secrets.create.success': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u3092\u4f5c\u6210\u3057\u307e\u3057\u305f',
   'secrets.delete.success': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u3092\u524a\u9664\u3057\u307e\u3057\u305f',
   'secrets.delete.title': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u3092\u524a\u9664\u3057\u307e\u3059\u304b\uff1f',
   'secrets.delete.message': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u300c{name}\u300d\u3092\u5b8c\u5168\u306b\u524a\u9664\u3057\u307e\u3059\u3002\u3053\u306e\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u3092\u4f7f\u7528\u3057\u3066\u3044\u308b namespace \u306f\u30a2\u30af\u30bb\u30b9\u3067\u304d\u306a\u304f\u306a\u308a\u307e\u3059\u3002',
+  'secrets.delete.usedByWorkspaces': '\u6b21\u306e\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u3067\u4f7f\u7528\u3055\u308c\u3066\u3044\u307e\u3059: {names}\u3002\u30ea\u30dd\u30b8\u30c8\u30ea\u306b\u30a2\u30af\u30bb\u30b9\u3067\u304d\u306a\u304f\u306a\u308a\u307e\u3059\u3002',
+  'secrets.edit.title': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u3092\u7de8\u96c6',
+  'secrets.edit.tooltip': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u3092\u7de8\u96c6',
+  'secrets.update.success': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u3092\u66f4\u65b0\u3057\u307e\u3057\u305f',
+  'secrets.form.value.keepPlaceholder': '\u7a7a\u306e\u307e\u307e\u306b\u3059\u308b\u3068\u5024\u306f\u5909\u66f4\u3055\u308c\u307e\u305b\u3093',
+
+  // -- Secret picker (workspace token / git-pull-error dialogs) --
+  'secretPicker.secret': '\u30c8\u30fc\u30af\u30f3\u30b7\u30fc\u30af\u30ec\u30c3\u30c8',
+  'secretPicker.addNew': '新規追加…',
+  'secretPicker.placeholder': 'トークンシークレットを選択…',
+  'secretPicker.createTitle': '新しいトークンシークレット',
+  'secretPicker.notFound': '（見つかりません）',
+  'secretPicker.name': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u540d',
+  'secretPicker.token': '\u30c8\u30fc\u30af\u30f3',
+  'secretPicker.required': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u540d\u3068\u30c8\u30fc\u30af\u30f3\u306f\u5fc5\u9808\u3067\u3059',
 
   // -- Diagnostics --
   'diagnostics.title': '\u8a3a\u65ad',
@@ -225,6 +218,10 @@ const ja: Translations = {
   'licenses.col.actions': '\u64cd\u4f5c',
   'licenses.status.valid': '\u6709\u52b9',
   'licenses.status.invalid': '\u7121\u52b9',
+  'license.badge.daysLeft': '{days}日',
+  'license.badge.expired': '期限切れ',
+  'license.tooltip.valid': 'エンタープライズライセンス：{tenant} — {date} まで有効',
+  'license.tooltip.expired': 'エンタープライズライセンス：{tenant} — {date} に期限切れ',
 
   // -- AppDetail page --
   'appDetail.back': '\u2190 \u30c0\u30c3\u30b7\u30e5\u30dc\u30fc\u30c9',
@@ -248,12 +245,6 @@ const ja: Translations = {
   'table.action.stop': '\u505c\u6b62',
   'table.action.start': '\u958b\u59cb',
   'table.action.restart': '\u518d\u8d77\u52d5',
-  'table.confirm.stop.title': '{name} \u3092\u505c\u6b62\u3057\u307e\u3059\u304b\uff1f',
-  'table.confirm.stop.message': '\u30b3\u30f3\u30c6\u30ca {name} \u3092\u505c\u6b62\u3057\u307e\u3059\u304b\uff1f',
-  'table.confirm.start.title': '{name} \u3092\u958b\u59cb\u3057\u307e\u3059\u304b\uff1f',
-  'table.confirm.start.message': '\u30b3\u30f3\u30c6\u30ca {name} \u3092\u958b\u59cb\u3057\u307e\u3059\u304b\uff1f',
-  'table.confirm.restart.title': '{name} \u3092\u518d\u8d77\u52d5\u3057\u307e\u3059\u304b\uff1f',
-  'table.confirm.restart.message': '{name} \u3092\u518d\u8d77\u52d5\u3057\u307e\u3059\u304b\uff1f',
   'table.toast.success': '{name} \u306e{action}\u3092\u30ea\u30af\u30a8\u30b9\u30c8\u3057\u307e\u3057\u305f',
   'table.cpu.throttled': 'CPU \u30b9\u30ed\u30c3\u30c8\u30eb\u4e2d',
   'table.memory.warning': '\u30e1\u30e2\u30ea\u4f7f\u7528\u7387\u304c\u9ad8\u3044',
@@ -261,8 +252,11 @@ const ja: Translations = {
   'table.pullAuthRequired.label': '\u8a8d\u8a3c\u60c5\u5831\u3092\u8a2d\u5b9a',
   'table.pullAuthRequired.tooltip': '\u30ec\u30b8\u30b9\u30c8\u30ea\u306e\u8a8d\u8a3c\u304c\u5fc5\u8981\u3067\u3059 \u2014 \u30af\u30ea\u30c3\u30af\u3057\u3066\u8a2d\u5b9a\u3057\u3066\u304f\u3060\u3055\u3044',
   'table.pullAuthRetry.success': '\u8a8d\u8a3c\u60c5\u5831\u3092\u4fdd\u5b58\u3057\u307e\u3057\u305f\u3002\u30d7\u30eb\u3092\u518d\u8a66\u884c\u3057\u307e\u3059',
+  'table.initStep': '\u521d\u671f\u5316 {step}/{total}',
+  'table.initStep.tooltip': '\u5b9f\u884c\u4e2d\u306e\u521d\u671f\u5316\u30b9\u30c6\u30c3\u30d7: {name}',
 
   // -- App Drawer --
+  'drawer.initStep': '\u521d\u671f\u5316 {step}/{total}: {name}',
   'drawer.container': '\u30b3\u30f3\u30c6\u30ca',
   'drawer.image': '\u30a4\u30e1\u30fc\u30b8',
   'drawer.state': '\u72b6\u614b',
@@ -283,10 +277,6 @@ const ja: Translations = {
   // -- App Config Editor --
   'appConfig.title': '\u30a2\u30d7\u30ea\u8a2d\u5b9a (YAML)',
   'appConfig.edited': '(\u7de8\u96c6\u6e08\u307f{detail})',
-  'appConfig.lock.locked': '\u30ed\u30c3\u30af\u6e08\u307f',
-  'appConfig.lock.unlocked': '\u30ed\u30c3\u30af\u89e3\u9664',
-  'appConfig.lock.lockTooltip': '\u30ed\u30c3\u30af: \u7de8\u96c6\u5185\u5bb9\u306f\u518d\u751f\u6210\u5f8c\u3082\u4fdd\u6301\u3055\u308c\u307e\u3059',
-  'appConfig.lock.unlockTooltip': '\u30ed\u30c3\u30af\u89e3\u9664: \u7de8\u96c6\u5185\u5bb9\u306f\u518d\u751f\u6210\u6642\u306b\u5931\u308f\u308c\u307e\u3059',
   'appConfig.noConfig': '\u30ab\u30b9\u30bf\u30e0\u8a2d\u5b9a\u306a\u3057',
   'appConfig.files': '\u30de\u30a6\u30f3\u30c8\u6e08\u307f\u30d5\u30a1\u30a4\u30eb',
   'appConfig.confirm.title': '\u8a2d\u5b9a\u5909\u66f4\u3092\u9069\u7528\u3057\u307e\u3059\u304b\uff1f',
@@ -307,18 +297,8 @@ const ja: Translations = {
   'appConfig.loadError.cannotSave': '保存できません: 元の設定が読み込まれていません。',
   'common.retry': '再試行',
 
-  // -- Config Editor --
-  'configEditor.title': 'namespace.yml',
-  'configEditor.noConfig': '\u8a2d\u5b9a\u30d5\u30a1\u30a4\u30eb\u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093\u3002{cmd} \u3067\u4f5c\u6210\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
-  'configEditor.failedToLoad': '\u8a2d\u5b9a\u306e\u8aad\u307f\u8fbc\u307f\u306b\u5931\u6557: {error}',
-  'configEditor.confirm.title': '\u8a2d\u5b9a\u3092\u9069\u7528',
-  'configEditor.confirm.message': '\u8a2d\u5b9a\u3092\u4fdd\u5b58\u3057\u3066 namespace \u3092\u30ea\u30ed\u30fc\u30c9\u3057\u307e\u3059\u304b\uff1f\u5b9f\u884c\u4e2d\u306e\u30a2\u30d7\u30ea\u304c\u518d\u8d77\u52d5\u3055\u308c\u308b\u5834\u5408\u304c\u3042\u308a\u307e\u3059\u3002',
-  'configEditor.saved': '\u8a2d\u5b9a\u3092\u4fdd\u5b58\u3057\u3001\u30ea\u30ed\u30fc\u30c9\u3092\u30ea\u30af\u30a8\u30b9\u30c8\u3057\u307e\u3057\u305f',
-
   // -- Daemon Logs --
   'daemonLogs.title': 'Daemon \u30ed\u30b0',
-  'daemonLogs.refresh': '\u66f4\u65b0',
-  'daemonLogs.empty': '\u30ed\u30b0\u304c\u3042\u308a\u307e\u305b\u3093',
 
   // -- Log Viewer --
   'logViewer.search': '\u691c\u7d22... (Ctrl+F)',
@@ -334,11 +314,11 @@ const ja: Translations = {
   'logViewer.wrap.tooltip': '\u884c\u306e\u6298\u308a\u8fd4\u3057\u3092\u5207\u308a\u66ff\u3048',
   'logViewer.copy': '\u30b3\u30d4\u30fc',
   'logViewer.copy.tooltip': '\u3059\u3079\u3066\u3092\u30af\u30ea\u30c3\u30d7\u30dc\u30fc\u30c9\u306b\u30b3\u30d4\u30fc',
+  'clipboard.copyFailed': 'クリップボードへのコピーに失敗しました',
   'logViewer.download': '\u30c0\u30a6\u30f3\u30ed\u30fc\u30c9',
   'logViewer.download.tooltip': '\u30d5\u30a1\u30a4\u30eb\u3068\u3057\u3066\u30c0\u30a6\u30f3\u30ed\u30fc\u30c9',
   'logViewer.clear': '\u30af\u30ea\u30a2',
   'logViewer.clear.tooltip': '\u30ed\u30b0\u3092\u30af\u30ea\u30a2 (Ctrl+L)',
-  'logViewer.refresh': '\u66f4\u65b0',
   'logViewer.empty': '\u30ed\u30b0\u304c\u3042\u308a\u307e\u305b\u3093',
   'logViewer.lines': '{count} \u884c',
   'logViewer.linesTotal': '{count} \u884c (\u5168 {total} \u884c)',
@@ -351,19 +331,13 @@ const ja: Translations = {
   'panel.closeTab': '\u30bf\u30d6\u3092\u9589\u3058\u308b',
 
   // -- Namespace Controls --
-  'ns.start': '\u958b\u59cb',
   'ns.updateAndStart': '\u66f4\u65b0\u3057\u3066\u958b\u59cb',
   'ns.forceStart': '\u5f37\u5236\u66f4\u65b0\u3057\u3066\u958b\u59cb',
   'ns.stop': '\u505c\u6b62',
-  'ns.reload': '\u30ea\u30ed\u30fc\u30c9',
   'ns.confirm.start.title': 'namespace \u3092\u958b\u59cb',
-  'ns.confirm.start.message': '\u3053\u306e namespace \u306e\u3059\u3079\u3066\u306e\u30a2\u30d7\u30ea\u3092\u958b\u59cb\u3057\u307e\u3059\u304b\uff1f',
   'ns.confirm.forceStart.title': '\u5f37\u5236\u66f4\u65b0\u3057\u3066\u958b\u59cb',
-  'ns.confirm.forceStart.message': '\u30ec\u30b8\u30b9\u30c8\u30ea\u304b\u3089\u3059\u3079\u3066\u306e\u30a4\u30e1\u30fc\u30b8\u3092\u518d\u53d6\u5f97\u3057\u3066 namespace \u3092\u958b\u59cb\u3057\u307e\u3059\u304b\uff1f \u5b9f\u884c\u4e2d\u306e\u30b3\u30f3\u30c6\u30ca\u306f\u518d\u4f5c\u6210\u3055\u308c\u307e\u3059\u3002',
   'ns.confirm.stop.title': 'namespace \u3092\u505c\u6b62',
-  'ns.confirm.stop.message': '\u3059\u3079\u3066\u306e\u5b9f\u884c\u4e2d\u30a2\u30d7\u30ea\u3092\u505c\u6b62\u3057\u307e\u3059\u304b\uff1f',
   'ns.confirm.reload.title': '\u8a2d\u5b9a\u3092\u30ea\u30ed\u30fc\u30c9',
-  'ns.confirm.reload.message': 'namespace \u306e\u8a2d\u5b9a\u3092\u30ea\u30ed\u30fc\u30c9\u3057\u307e\u3059\u304b\uff1f\u5b9f\u884c\u4e2d\u306e\u30a2\u30d7\u30ea\u304c\u518d\u8d77\u52d5\u3055\u308c\u308b\u5834\u5408\u304c\u3042\u308a\u307e\u3059\u3002',
   'ns.toast.success': 'namespace \u306e{action}\u3092\u30ea\u30af\u30a8\u30b9\u30c8\u3057\u307e\u3057\u305f',
 
   // -- Status Badge --
@@ -383,12 +357,22 @@ const ja: Translations = {
   'status.STOPPED': '\u505c\u6b62\u6e08\u307f',
   'status.STALLED': '\u30b9\u30c8\u30fc\u30eb',
 
+  // -- Start Progress Stepper (Welcome quick start) --
+  'startProgress.title': 'Citeck \u3092\u8d77\u52d5\u4e2d\u2026',
+  'startProgress.success': '\u540d\u524d\u7a7a\u9593\u304c\u8d77\u52d5\u3057\u3066\u7a3c\u50cd\u4e2d\u3067\u3059',
+  'startProgress.failed': '\u8d77\u52d5\u6642\u306b\u554f\u984c\u3092\u691c\u51fa\u3057\u307e\u3057\u305f',
+  'startProgress.stage.bundle': '\u30ea\u30dd\u30b8\u30c8\u30ea\u3068\u30d0\u30f3\u30c9\u30eb',
+  'startProgress.stage.images': '\u30a4\u30e1\u30fc\u30b8\u3092\u53d6\u5f97\u4e2d',
+  'startProgress.stage.infra': '\u30a4\u30f3\u30d5\u30e9\u3092\u8d77\u52d5\u4e2d',
+  'startProgress.stage.apps': '\u30a2\u30d7\u30ea\u30b1\u30fc\u30b7\u30e7\u30f3\u3092\u8d77\u52d5\u4e2d',
+  'startProgress.stage.ready': '\u5b8c\u4e86',
+  'startProgress.detail.images': '{pulled}/{total} \u30a4\u30e1\u30fc\u30b8\u6e96\u5099\u5b8c\u4e86',
+  'startProgress.detail.apps': '{running}/{total} \u7a3c\u50cd\u4e2d',
+  'startProgress.openDashboard': '\u30c0\u30c3\u30b7\u30e5\u30dc\u30fc\u30c9\u3092\u958b\u304f',
+  'startProgress.hide': '\u975e\u8868\u793a',
+
   // -- Restart Events --
   'restartEvents.empty': '\u518d\u8d77\u52d5\u30a4\u30d9\u30f3\u30c8\u306f\u3042\u308a\u307e\u305b\u3093',
-  'restartEvents.time': '\u6642\u523b',
-  'restartEvents.app': '\u30a2\u30d7\u30ea',
-  'restartEvents.reason': '\u539f\u56e0',
-  'restartEvents.detail': '\u8a73\u7d30',
 
   // -- Common --
   'common.loading': '\u8aad\u307f\u8fbc\u307f\u4e2d...',
@@ -400,14 +384,12 @@ const ja: Translations = {
   'common.delete': '\u524a\u9664',
   'common.close': '\u9589\u3058\u308b',
   'common.confirm': '\u78ba\u8a8d',
-  'common.ok': 'OK',
   'common.confirm.defaultTitle': '\u3088\u308d\u3057\u3044\u3067\u3059\u304b\uff1f',
   'common.working': '\u51e6\u7406\u4e2d...',
   'common.submit': '\u9001\u4fe1',
   'common.select': '\u9078\u629e',
   'common.create': '作成',
   'common.settings': '\u8a2d\u5b9a',
-  'common.error': '\u30a8\u30e9\u30fc: {error}',
 
   // -- Journal dialog --
   'journal.filter': '\u30d5\u30a3\u30eb\u30bf\u30fc...',
@@ -435,14 +417,12 @@ const ja: Translations = {
   // -- Migration --
   'migration.title': '\u30de\u30b9\u30bf\u30fc\u30d1\u30b9\u30ef\u30fc\u30c9\u3092\u5165\u529b',
   'migration.description': '\u6697\u53f7\u5316\u3055\u308c\u305f\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u304c\u898b\u3064\u304b\u308a\u307e\u3057\u305f\u3002\u30de\u30b9\u30bf\u30fc\u30d1\u30b9\u30ef\u30fc\u30c9\u3092\u5165\u529b\u3057\u3066\u5fa9\u53f7\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
-  'migration.passwordPlaceholder': '\u30de\u30b9\u30bf\u30fc\u30d1\u30b9\u30ef\u30fc\u30c9',
   'migration.confirm': '\u78ba\u8a8d',
   'migration.skip': '\u30b9\u30ad\u30c3\u30d7',
   'migration.wrongPassword': '\u30d1\u30b9\u30ef\u30fc\u30c9\u304c\u6b63\u3057\u304f\u3042\u308a\u307e\u305b\u3093',
   'migration.secretsImported': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u3092\u5fa9\u53f7\u3057\u3066\u30a4\u30f3\u30dd\u30fc\u30c8\u3057\u307e\u3057\u305f',
   'migration.setupPassword.title': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u3092\u4fdd\u8b77',
   'migration.setupPassword.description': '\u30a4\u30f3\u30dd\u30fc\u30c8\u3057\u305f\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u3092\u30de\u30b9\u30bf\u30fc\u30d1\u30b9\u30ef\u30fc\u30c9\u3067\u6697\u53f7\u5316\u3057\u307e\u3059\u304b\uff1f\u30e9\u30f3\u30c1\u30e3\u30fc\u3092\u8d77\u52d5\u3059\u308b\u305f\u3073\u306b\u30d1\u30b9\u30ef\u30fc\u30c9\u304c\u5fc5\u8981\u306b\u306a\u308a\u307e\u3059\u3002',
-  'migration.setupPassword.success': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u306e\u6697\u53f7\u5316\u306b\u6210\u529f\u3057\u307e\u3057\u305f',
   'migration.unlock.title': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u306e\u30ed\u30c3\u30af\u89e3\u9664',
   'migration.unlock.description': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u306f\u6697\u53f7\u5316\u3055\u308c\u3066\u3044\u307e\u3059\u3002\u30de\u30b9\u30bf\u30fc\u30d1\u30b9\u30ef\u30fc\u30c9\u3092\u5165\u529b\u3057\u3066\u30ed\u30c3\u30af\u3092\u89e3\u9664\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
   'migration.unlock.confirm': '\u30ed\u30c3\u30af\u89e3\u9664',
@@ -457,11 +437,6 @@ const ja: Translations = {
   'migration.unlock.reset.success': 'マスターパスワードをリセットし、すべてのシークレットを削除しました',
 
   // -- Secrets (additional) --
-  'secrets.encrypted.badge': '\u6697\u53f7\u5316\u6e08\u307f',
-  'secrets.encrypted.success': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u306e\u6697\u53f7\u5316\u306b\u6210\u529f\u3057\u307e\u3057\u305f',
-  'secrets.locked': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u306f\u30ed\u30c3\u30af\u3055\u308c\u3066\u3044\u307e\u3059 \u2014 \u30de\u30b9\u30bf\u30fc\u30d1\u30b9\u30ef\u30fc\u30c9\u3092\u5165\u529b\u3057\u3066\u30a2\u30af\u30bb\u30b9\u3057\u3066\u304f\u3060\u3055\u3044',
-  'secrets.setPassword': '\u30d1\u30b9\u30ef\u30fc\u30c9\u3092\u8a2d\u5b9a',
-  'secrets.setPassword.description': '\u30de\u30b9\u30bf\u30fc\u30d1\u30b9\u30ef\u30fc\u30c9\u3067\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u3092\u6697\u53f7\u5316\u3057\u307e\u3059\u3002\u30e9\u30f3\u30c1\u30e3\u30fc\u3092\u8d77\u52d5\u3059\u308b\u305f\u3073\u306b\u30d1\u30b9\u30ef\u30fc\u30c9\u304c\u5fc5\u8981\u306b\u306a\u308a\u307e\u3059\u3002',
 
   // -- Upgrade --
   'form.fieldRequired': '{label} は必須です',
@@ -476,8 +451,6 @@ const ja: Translations = {
   'volumes.deleteAll.message': 'この namespace のすべてのデータが失われます。',
   'volumes.deleteAll.success': 'すべてのボリュームを削除しました',
   'snapshots.dialog.title': 'スナップショット',
-  'snapshots.scope.workspace': 'Workspace',
-  'snapshots.scope.namespace': 'Namespace',
   'snapshots.section.workspace': 'ワークスペースのスナップショット',
   'snapshots.section.namespace': 'ネームスペースのスナップショット',
   'snapshots.col.name': '名前',
@@ -490,11 +463,9 @@ const ja: Translations = {
   'snapshots.create.title': 'スナップショットを作成',
   'snapshots.importFile': 'Import .zip…',
   'snapshots.openNsDir': 'NS ディレクトリを開く',
-  'snapshots.import.local.hint': 'ローカルにインポートするには、namespace ディレクトリに保存された .zip を使用してください。',
   'snapshots.rename.title': 'スナップショットの名前変更',
   'snapshots.delete.title': 'スナップショット「{name}」を削除しますか？',
   'snapshots.delete.message': 'この操作はスナップショットファイルを完全に削除します。',
-  'snapshots.delete.notSupported': 'スナップショットの削除は API で公開されていません。namespace ディレクトリから .zip を削除してください。',
   'snapshots.deleted': 'スナップショットを削除しました',
   'snapshots.field.name': 'スナップショット名',
   'snapshots.field.name.invalid': '無効なスナップショット名です。\n文字、数字、ドット、ハイフン、アンダースコアを使用してください。',
@@ -509,23 +480,14 @@ const ja: Translations = {
   'namespaces.col.status': 'ステータス',
   'namespaces.action.edit': '編集',
   'namespaces.switch': 'namespace を切り替え',
+  'namespaces.switch.blocked': '切り替える前に現在の namespace を停止してください',
+  'namespaces.switch.success': 'namespace「{name}」に切り替えました',
+  'namespaces.dialog.title.locked': 'Namespaces — 現在の namespace が {status} の間は切り替えできません',
   'namespaces.deleted': 'namespace を削除しました',
   'store.connectionRestored': '接続が復旧し、状態が更新されました',
 
   // -- Namespace edit dialog --
-  'nsEdit.title': '名前空間を編集',
-  'nsEdit.field.name': '名前',
-  'nsEdit.field.bundleRepo': 'バンドルリポジトリ',
-  'nsEdit.field.bundleKey': 'バンドルバージョン',
-  'nsEdit.field.authType': '認証',
-  'nsEdit.field.users': 'ユーザー（カンマ区切り）',
-  'nsEdit.field.host': 'ホスト名',
-  'nsEdit.field.port': 'ポート',
-  'nsEdit.field.tlsEnabled': 'TLSを有効化',
-  'nsEdit.field.pgAdminEnabled': 'PgAdminを有効化',
-  'nsEdit.save': '保存',
   'nsEdit.saveSuccess': '名前空間が更新されました',
-  'nsEdit.editRawYaml': 'YAMLを直接編集…',
 
   // -- Namespace create/edit dialog (Kotlin parity: NamespaceEntityDef.formSpec) --
   'namespace.dialog.create': 'ネームスペースを作成',
@@ -539,7 +501,6 @@ const ja: Translations = {
   'namespace.form.snapshot.none': '(なし)',
   'namespace.form.required': '必須項目です',
   'namespace.form.nameTooLong': '最大50文字',
-  'namespace.form.refreshBundles': 'バンドル一覧を更新',
   'namespace.form.cancel': 'キャンセル',
   'namespace.form.submit': '作成',
   'namespace.form.save': '保存',
@@ -577,6 +538,15 @@ const ja: Translations = {
   'update.install': '更新して再起動',
   'update.installing': '更新中…',
   'update.failed': '更新に失敗しました: {error}',
-}
+  'update.manualNotice': 'このバージョンでは更新を自動的にインストールできません。最新の機能を利用するには、GitHub から新しいバージョンを手動でダウンロードしてください。数分で完了します。',
+  'update.openReleases': 'リリースページを開く',
+
+  // -- Auth gate (daemon api_auth token) --
+  'authGate.title': '認証が必要です',
+  'authGate.message': 'このデーモンは Web UI へのアクセスにトークンを必要とします。\nホスト上で {cmd} を実行して認証済みセッションを開くか、下にトークンを貼り付けてください。',
+  'authGate.placeholder': 'API トークンを貼り付け',
+  'authGate.submit': '認証',
+  'authGate.error': 'トークンが無効です。確認してもう一度お試しください。',
+} satisfies Translations
 
 export default ja

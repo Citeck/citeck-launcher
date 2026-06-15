@@ -200,11 +200,7 @@ export function NamespaceDialog({ open, onClose, onOpened }: NamespaceDialogProp
       <NamespaceEditDialog
         open={!!editTarget}
         mode="edit"
-        initial={editTarget ? {
-          name: editTarget.name,
-          bundleRepo: editTarget.bundleRef?.split(':')[0] || '',
-          bundleKey: editTarget.bundleRef?.split(':').slice(1).join(':') || '',
-        } : undefined}
+        nsId={editTarget?.id}
         onClose={() => setEditTarget(null)}
         onSaved={() => { setEditTarget(null); reload() }}
       />

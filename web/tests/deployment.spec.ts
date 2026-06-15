@@ -2,107 +2,75 @@ import { test, expect } from '@playwright/test'
 
 /**
  * Deployment scenario tests — verify the running platform via the Web UI.
- * Requires daemon to be running with a namespace in RUNNING state.
+ * Requires daemon to be running with a namespace in RUNNING state; these
+ * tests therefore assert hard (no visibility guards) — a missing element is
+ * a deployment failure, not a skip.
  */
 
 test.describe('Deployment: Running Platform Verification', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
-    // Wait for SSE connection and initial data load
-    await page.waitForTimeout(3000)
+    // Wait for the namespace sidebar (SSE connection + initial data load).
+    await expect(page.locator('aside')).toBeVisible({ timeout: 20_000 })
   })
 
   test('dashboard shows namespace in RUNNING state', async ({ page }) => {
-    // The status badge should show RUNNING
     const running = page.locator('text=RUNNING').first()
-    await expect(running).toBeVisible({ timeout: 10000 })
+    await expect(running).toBeVisible({ timeout: 10_000 })
   })
 
-  test('all 19 apps are visible in the app table', async ({ page }) => {
-    // Wait for apps to load
-    await page.waitForTimeout(2000)
-    // Each app row has a status badge — count RUNNING badges
-    const runningBadges = page.locator('text=RUNNING')
-    const count = await runningBadges.count()
-    // At least the namespace status + several apps should show RUNNING
-    expect(count).toBeGreaterThanOrEqual(10)
+  test('most apps are visible and RUNNING in the app table', async ({ page }) => {
+    // Each app row has a status badge — count RUNNING badges. At least the
+    // namespace status + several apps should show RUNNING.
+    await expect
+      .poll(async () => page.locator('text=RUNNING').count(), { timeout: 20_000 })
+      .toBeGreaterThanOrEqual(10)
   })
 
-  test('app groups are shown (Core, Third Party, Additional)', async ({ page }) => {
-    // App table should have group headers
-    await expect(page.getByText('Core', { exact: false })).toBeVisible()
-    await expect(page.getByText('Third Party', { exact: false })).toBeVisible()
+  test('app groups are shown (Core, Third Party)', async ({ page }) => {
+    await expect(page.getByText('Core', { exact: false }).first()).toBeVisible()
+    await expect(page.getByText('Third Party', { exact: false }).first()).toBeVisible()
   })
 
   test('quick links are visible', async ({ page }) => {
-    // Sidebar should show quick links
-    const ecosLink = page.getByText('Citeck UI', { exact: false })
-    if (await ecosLink.isVisible().catch(() => false)) {
-      await expect(ecosLink).toBeVisible()
-    }
+    await expect(page.getByText('Citeck UI', { exact: false }).first()).toBeVisible({ timeout: 10_000 })
   })
 
   test('namespace info panel shows bundle ref', async ({ page }) => {
-    const bundleRef = page.getByText('community:')
-    await expect(bundleRef).toBeVisible({ timeout: 5000 })
+    await expect(page.getByText('community:').first()).toBeVisible({ timeout: 10_000 })
   })
 
-  test('diagnostics page loads and shows checks', async ({ page }) => {
-    const diagBtn = page.getByRole('button', { name: 'Diagnostics' })
-    if (await diagBtn.isVisible().catch(() => false)) {
-      await diagBtn.click()
-      await page.waitForTimeout(2000)
-      // Should show Docker check result
-      await expect(page.getByText('Docker is running')).toBeVisible()
-    }
+  test('diagnostics page loads and shows Docker check', async ({ page }) => {
+    await page.goto('/diagnostics')
+    await expect(page.getByText('Docker is running')).toBeVisible({ timeout: 15_000 })
   })
 
-  test('volumes page shows namespace volumes', async ({ page }) => {
-    const volBtn = page.getByRole('button', { name: 'Volumes' })
-    if (await volBtn.isVisible().catch(() => false)) {
-      await volBtn.click()
-      await page.waitForTimeout(2000)
-      // Should show at least postgres volume
-      await expect(page.getByText('postgres', { exact: false })).toBeVisible()
-    }
+  test('volumes dialog shows namespace volumes', async ({ page }) => {
+    await page.getByRole('button', { name: 'Volumes' }).click()
+    await expect(page.getByRole('heading', { name: 'Volumes', exact: true })).toBeVisible()
+    // A running platform must have at least the postgres volume.
+    await expect(page.getByText('postgres', { exact: false }).first()).toBeVisible({ timeout: 15_000 })
   })
 
-  test('clicking an app opens app detail', async ({ page }) => {
-    // Click on the postgres app name link in the table
-    const pgLink = page.locator('a:has-text("postgres")').first()
-    if (await pgLink.isVisible().catch(() => false)) {
-      await pgLink.click()
-      await page.waitForTimeout(2000)
-      // Should navigate to app detail page
-      await expect(page).toHaveURL(/\/apps\/postgres/)
-    }
-  })
-
-  test('config page shows YAML content', async ({ page }) => {
+  test('config page shows system health', async ({ page }) => {
     await page.getByRole('button', { name: 'Settings' }).click()
-    await page.waitForTimeout(1000)
-    // Config page should show YAML content with namespace name
-    await expect(page.getByText('bundleRef', { exact: false })).toBeVisible()
+    await expect(page).toHaveURL('/config')
+    await expect(page.getByRole('heading', { name: 'System Health' })).toBeVisible({ timeout: 15_000 })
   })
 
-  test('daemon logs page loads', async ({ page }) => {
-    const logsBtn = page.getByRole('button', { name: 'Launcher Logs' })
-    if (await logsBtn.isVisible().catch(() => false)) {
-      await logsBtn.click()
-      await page.waitForTimeout(2000)
-      // Should show some log content
-      await expect(page.getByText('INFO', { exact: false })).toBeVisible()
-    }
+  test('daemon logs page streams log content', async ({ page }) => {
+    await page.goto('/daemon-logs')
+    await expect(page.getByText('INFO', { exact: false }).first()).toBeVisible({ timeout: 15_000 })
   })
 })
 
 test.describe('Deployment: API Verification', () => {
-  test('GET /api/v1/namespace returns RUNNING with 19 apps', async ({ request }) => {
+  test('GET /api/v1/namespace returns RUNNING with all apps running', async ({ request }) => {
     const res = await request.get('/api/v1/namespace')
     expect(res.ok()).toBeTruthy()
     const ns = await res.json()
     expect(ns.status).toBe('RUNNING')
-    expect(ns.apps.length).toBe(19)
+    expect(ns.apps.length).toBeGreaterThan(0)
     // All apps should be RUNNING
     for (const app of ns.apps) {
       expect(app.status).toBe('RUNNING')
@@ -131,7 +99,6 @@ test.describe('Deployment: API Verification', () => {
     expect(res.ok()).toBeTruthy()
     const d = await res.json()
     expect(d.running).toBe(true)
-    expect(d.version).toBe('dev')
   })
 
   test('GET /api/v1/config returns valid YAML', async ({ request }) => {

@@ -19,6 +19,7 @@ import { DockerNotAvailable } from './pages/DockerNotAvailable'
 import { WindowLogs } from './pages/WindowLogs'
 import { WindowEditor } from './pages/WindowEditor'
 import { TabBar } from './components/TabBar'
+import { AuthRequired } from './components/AuthRequired'
 import { ToastContainer } from './components/Toast'
 import { ErrorModalHost } from './components/ErrorModal'
 import { LoadingOverlayHost } from './components/LoadingOverlay'
@@ -139,6 +140,9 @@ function App() {
       <BrowserRouter>
         <Layout />
       </BrowserRouter>
+      {/* Daemon api_auth token prompt — overlays everything when the API
+          answers 401 AUTH_REQUIRED (server-mode opt-in token auth). */}
+      <AuthRequired />
       <ToastContainer />
       <ErrorModalHost />
       <LoadingOverlayHost />

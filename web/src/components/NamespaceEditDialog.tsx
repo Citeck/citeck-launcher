@@ -17,18 +17,17 @@ import { Select } from './Select'
 import { Modal, ModalField } from './Modal'
 import { LoadingLabel } from './LoadingLabel'
 
-export interface NamespaceEditInitial {
-  name?: string
-  bundleRepo?: string
-  bundleKey?: string
-  authType?: string
-  users?: string[]
-}
-
 interface NamespaceEditDialogProps {
   open: boolean
   mode: 'create' | 'edit'
-  initial?: NamespaceEditInitial
+  /**
+   * ID of the namespace being edited — REQUIRED in edit mode. The dialog
+   * always loads authoritative values via GET /namespaces/{id}/edit (raw
+   * bundleKey: a stored "LATEST" comes back as "LATEST", not the resolved
+   * version) and saves via PUT /namespaces/{id}/edit, so editing any listed
+   * namespace never patches the active one by accident.
+   */
+  nsId?: string
   workspaceId?: string
   onClose: () => void
   onSaved?: () => void
@@ -49,7 +48,7 @@ interface WsSnapshotOpt {
 export function NamespaceEditDialog({
   open,
   mode,
-  initial,
+  nsId,
   workspaceId,
   onClose,
   onSaved,
@@ -93,15 +92,18 @@ export function NamespaceEditDialog({
     }
 
     if (mode === 'edit') {
-      const init = initial
-      if (init && init.name !== undefined) {
-        setName(init.name ?? '')
-        setBundleRepo(init.bundleRepo ?? '')
-        setBundleKey(init.bundleKey ?? '')
-        setAuthType(init.authType || 'KEYCLOAK')
-        setAuthUsers((init.users ?? []).join(', '))
-      } else {
-        getNamespaceEdit()
+      // Always load authoritative values from the daemon — never seed from a
+      // partial caller-supplied object (a partial seed wiped auth back to
+      // KEYCLOAK/[] and pinned "LATEST" to the display-resolved version).
+      // Blank the form first so a previously edited namespace's values never
+      // flash (or get saved) for the newly opened one.
+      setName('')
+      setBundleRepo('')
+      setBundleKey('')
+      setAuthType('KEYCLOAK')
+      setAuthUsers('')
+      if (nsId) {
+        getNamespaceEdit(nsId)
           .then((n: NamespaceEditDto) => {
             setName(n.name)
             setBundleRepo(n.bundleRepo)
@@ -135,7 +137,7 @@ export function NamespaceEditDialog({
           setAuthType('KEYCLOAK')
         })
     }
-  }, [open, mode, initial])
+  }, [open, mode, nsId])
 
   const bundleRepoOptions = useMemo(() => {
     // Only offer repos that have at least one release — an empty repo (e.g.
@@ -165,11 +167,14 @@ export function NamespaceEditDialog({
 
   // Reset bundleKey when the user picks a different repo so the dependent
   // select doesn't end up with a value that doesn't exist in the new list.
+  // Symbolic "LATEST" is exempt: it is never in the concrete versions list
+  // (GET /namespaces/{id}/edit returns it RAW) and resetting it here would
+  // silently pin the namespace to a concrete version on save.
   useEffect(() => {
     if (!bundleRepo) return
     const repo = bundles.find((b) => b.repo === bundleRepo)
     const versions = repo?.versions ?? []
-    if (bundleKey && !versions.includes(bundleKey) && versions.length > 0) {
+    if (bundleKey && !/^latest$/i.test(bundleKey) && !versions.includes(bundleKey) && versions.length > 0) {
       // Intentional: reset the dependent select to a valid value when the repo
       // changes so it never holds a stale version; not a cascading render.
       // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -231,20 +236,23 @@ export function NamespaceEditDialog({
         await createNamespace(payload)
         toast(t('namespace.form.createSuccess'), 'success')
       } else {
+        if (!nsId) throw new Error('namespace id is missing')
         const payload: NamespaceEditDto = {
           name: name.trim(),
           bundleRepo,
           bundleKey,
           authType,
-          users: users ?? [],
-          // PUT preserves on-disk values for fields outside the form; pass
-          // zero/false placeholders so they don't overwrite anything.
+          // Server contract: absent users = leave stored users unchanged
+          // (only BASIC edits the list; KEYCLOAK doesn't use it).
+          users,
+          // PUT preserves on-disk values for fields outside the form: empty
+          // host / zero port mean "leave unchanged", and tlsEnabled /
+          // pgAdminEnabled are omitted entirely (absent = leave unchanged —
+          // sending false here used to silently disable TLS on save).
           host: '',
           port: 0,
-          tlsEnabled: false,
-          pgAdminEnabled: false,
         }
-        await putNamespaceEdit(payload)
+        await putNamespaceEdit(nsId, payload)
         toast(t('nsEdit.saveSuccess'), 'success')
       }
       onSaved?.()

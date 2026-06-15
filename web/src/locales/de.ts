@@ -1,6 +1,6 @@
 import type { Translations } from '../lib/i18n'
 
-const de: Translations = {
+const de = {
   // -- Dashboard --
   'dashboard.title': 'Dashboard',
   'dashboard.error': 'Fehler: {error}',
@@ -12,8 +12,6 @@ const de: Translations = {
   'dashboard.openInBrowser.disabled': 'Die Anwendung läuft nicht. Starten Sie sie, um im Browser zu öffnen.',
   'dashboard.openInBrowser.starting': 'Die Anwendung startet. Bitte warten...',
   'dashboard.openInBrowser.stalled': 'Die Anwendung hängt. Bitte versuchen Sie, sie erneut zu starten.',
-  'dashboard.docker.error': 'Docker: {error}',
-  'dashboard.docker.retry': 'Erneut versuchen',
 
   // -- Docker not available screen --
   'dockerUnavailable.title': 'Docker ist nicht verfügbar',
@@ -28,6 +26,12 @@ const de: Translations = {
   'gitPullError.cannotSkip': 'Sie können diesen Schritt nicht überspringen, da das Repository noch nicht geklont wurde.',
   'gitPullError.skip': 'Pull überspringen',
   'gitPullError.retry': 'Erneut versuchen',
+  'gitPullError.saveAndRetry': 'Speichern und erneut versuchen',
+  'gitPullError.authExplain': 'Anmeldung am Repository fehlgeschlagen — das Zugriffstoken funktioniert nicht oder ist abgelaufen.',
+  'gitPullError.secretInUse': 'Verwendetes Geheimnis: {name}.',
+  'gitPullError.secretInUseMissing': 'Verwendetes Geheimnis: {id} (nicht gefunden).',
+  'gitPullError.noSecret': 'Für diesen Arbeitsbereich ist noch kein Zugriffstoken konfiguriert.',
+  'gitPullError.editToken': 'Token bearbeiten',
   'registryCreds.title': 'Bei {host} anmelden',
   'registryCreds.host': 'Registry',
   'registryCreds.username': 'Benutzername',
@@ -39,7 +43,6 @@ const de: Translations = {
   'dashboard.links': 'Links',
   'dashboard.volumes': 'Volumes',
   'dashboard.secrets': 'Geheimnisse',
-  'dashboard.diagnostics': 'Diagnose',
   'dashboard.launcherLogs': 'Launcher-Protokolle',
   'dashboard.restartEvents': 'Neustarts',
   'dashboard.systemDump': 'Systemabbild',
@@ -47,6 +50,8 @@ const de: Translations = {
   'dashboard.systemDump.saved': 'Systemabbild gespeichert unter {path}',
   'dashboard.backToWelcome': 'Zurück zur Startseite',
   'dashboard.backToWelcome.disabled': 'Stoppen Sie alle laufenden Anwendungen, bevor Sie zur Startseite zurückkehren',
+  'dashboard.diskLow.message': 'Wenig Speicherplatz: {free} frei unter {path}',
+  'dashboard.diskLow.dismiss': 'Ausblenden',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'Lädt noch... Dies dauert länger als erwartet.\nUm uns bei der Diagnose des Problems zu helfen, klicken Sie bitte auf „Systeminfo ausgeben“ und senden Sie die Daten an die Betreuer.',
@@ -61,7 +66,6 @@ const de: Translations = {
   'welcome.startFailed': 'Start fehlgeschlagen: {error}',
   'welcome.quickStart': 'Schnellstart',
   'welcome.quickStart.default': 'Schnellstart',
-  'welcome.quickStart.alreadyHasNamespaces': 'Der Arbeitsbereich enthält bereits Namespaces\nSchnellstart ist deaktiviert.',
   'welcome.workspace.empty': 'Arbeitsbereich ist leer',
   'welcome.more': 'Mehr',
   'welcome.createNew': 'Neuen Namespace erstellen',
@@ -73,7 +77,6 @@ const de: Translations = {
   'welcome.workspace.label': 'Arbeitsbereich',
   'welcome.workspace.forceUpdate': 'Aktualisierung erzwingen',
   'welcome.workspace.forceUpdate.inactive': 'Aktualisierung erzwingen ist nur für den aktiven Arbeitsbereich verfügbar',
-  'welcome.workspace.updating': 'Arbeitsbereich wird aktualisiert...',
   'welcome.workspace.updateSuccess': 'Arbeitsbereich aktualisiert',
   'welcome.workspace.updateFailed': 'Arbeitsbereich-Aktualisierung fehlgeschlagen: {error}',
   'welcome.workspace.create': 'Arbeitsbereich erstellen...',
@@ -89,21 +92,17 @@ const de: Translations = {
   'welcome.workspace.form.authType': 'Authentifizierung',
   'welcome.workspace.form.authType.none': 'Keine (öffentliches Repository)',
   'welcome.workspace.form.authType.token': 'Token (privates Repository)',
-  'welcome.workspace.form.authTypeTokenHint': 'Speichere das Git-Token als Geheimnis unter dem Schlüssel "{key}".',
+  'welcome.workspace.form.tokenRequired': 'Wählen oder erstellen Sie ein Token-Geheimnis',
   'welcome.workspace.form.required': 'Name und Repository-URL sind erforderlich',
 
   // -- Dashboard-Seitenleiste / Namespace-Verzeichnis --
-  'dashboard.openNsDir': 'NS-Verzeichnis öffnen',
   'dashboard.openNsDir.tooltip': 'Namespace-Volumes-Verzeichnis im Dateimanager öffnen',
   'dashboard.openNsDir.success': '{path} geöffnet',
   'dashboard.openNsDir.serverInfo': 'Daemon-Pfad: {path}',
   'dashboard.openNsDir.failed': 'Öffnen fehlgeschlagen: {error}',
 
-
   // -- Volumes --
-  'volumes.title': 'Docker-Volumes',
   'volumes.table.name': 'Name',
-  'volumes.table.path': 'Pfad',
   'volumes.table.size': 'Größe',
   'volumes.size.compute': 'Berechnen',
   'volumes.delete.tooltip': 'Volume löschen',
@@ -121,35 +120,14 @@ const de: Translations = {
   'links.pgAdmin.tooltip': 'Verwaltungs- und Design-Tool für Postgres-Datenbanken.\nBenutzername: admin@admin.com\nPasswort: admin\nDatenbank-Passwort: postgres',
   'links.documentation.tooltip': 'Citeck-Dokumentation',
   'links.aiBot.tooltip': 'Telegram-Bot für KI-Dokumentationshilfe',
-  'volumes.empty': 'Keine Volumes gefunden',
   'volumes.delete.title': 'Volume {name} löschen?',
   'volumes.delete.message': 'Das Volume und alle zugehörigen Daten werden unwiderruflich gelöscht.',
   'volumes.delete.success': 'Volume gelöscht',
-  'volumes.export.failed': 'Export fehlgeschlagen: {error}',
-  'volumes.import.failed': 'Import fehlgeschlagen: {error}',
-  'volumes.rename.failed': 'Umbenennung fehlgeschlagen: {error}',
-  'volumes.download.failed': 'Download fehlgeschlagen: {error}',
   'volumes.snapshots': 'Snapshots',
-  'volumes.snapshots.export': 'Exportieren',
   'volumes.snapshots.exporting': 'Wird exportiert...',
-  'volumes.snapshots.export.tooltip': 'Alle Volumes als ZIP-Snapshot exportieren',
-  'volumes.snapshots.import': 'Importieren',
   'volumes.snapshots.importing': 'Wird importiert...',
-  'volumes.snapshots.import.tooltip': 'Volumes aus einem ZIP-Snapshot importieren',
-  'volumes.snapshots.name': 'Name',
-  'volumes.snapshots.size': 'Größe',
-  'volumes.snapshots.created': 'Erstellt',
-  'volumes.snapshots.empty': 'Noch keine Snapshots vorhanden. Exportieren Sie Volumes, um einen zu erstellen.',
-  'volumes.snapshots.rename': 'Umbenennen',
-  'volumes.snapshots.rename.ok': 'OK',
-  'volumes.snapshots.rename.cancel': 'Abbrechen',
-  'volumes.workspace': 'Arbeitsbereich-Snapshots',
-  'volumes.workspace.name': 'Name',
-  'volumes.workspace.size': 'Größe',
-  'volumes.workspace.download': 'Herunterladen',
 
   // -- Secrets --
-  'secrets.title': 'Geheimnisse',
   'secrets.type.gitToken': 'Token',
   'secrets.type.basicAuth': 'Basic (Benutzername/Passwort)',
   'secrets.type.registryAuth': 'Basic (Benutzername/Passwort) — Registry',
@@ -163,19 +141,34 @@ const de: Translations = {
   'secrets.form.username.placeholder': 'registry-user',
   'secrets.form.value': 'Wert',
   'secrets.form.value.placeholder': 'Geheimer Wert',
-  'secrets.form.create': 'Erstellen',
-  'secrets.form.creating': 'Wird erstellt...',
-  'secrets.form.cancel': 'Abbrechen',
+  'secrets.form.scope': 'Geltungsbereich',
+  'secrets.form.scope.placeholder': 'images-repo:registry.example.com',
+  'secrets.form.scope.global': 'Global (Standard)',
+  'secrets.form.scope.custom': 'Benutzerdefiniert…',
+  'secrets.form.scope.customValue': 'Benutzerdefinierter Geltungsbereich',
   'secrets.table.name': 'Name',
   'secrets.table.type': 'Typ',
   'secrets.table.scope': 'Geltungsbereich',
-  'secrets.table.created': 'Erstellt',
   'secrets.test.tooltip': 'Geheimnis testen',
-  'secrets.empty': 'Keine Geheimnisse konfiguriert',
   'secrets.create.success': 'Geheimnis erstellt',
   'secrets.delete.success': 'Geheimnis gelöscht',
   'secrets.delete.title': 'Geheimnis löschen?',
   'secrets.delete.message': 'Das Geheimnis "{name}" wird unwiderruflich gelöscht. Alle Namespaces, die es verwenden, verlieren den Zugriff.',
+  'secrets.delete.usedByWorkspaces': 'Wird von Arbeitsbereichen verwendet: {names}. Sie verlieren den Zugriff auf das Repository.',
+  'secrets.edit.title': 'Geheimnis bearbeiten',
+  'secrets.edit.tooltip': 'Geheimnis bearbeiten',
+  'secrets.update.success': 'Geheimnis aktualisiert',
+  'secrets.form.value.keepPlaceholder': 'leer lassen — der Wert bleibt unverändert',
+
+  // -- Secret picker (workspace token / git-pull-error dialogs) --
+  'secretPicker.secret': 'Token-Geheimnis',
+  'secretPicker.addNew': 'Neu hinzufügen…',
+  'secretPicker.placeholder': 'Token-Geheimnis auswählen…',
+  'secretPicker.createTitle': 'Neues Token-Geheimnis',
+  'secretPicker.notFound': '(nicht gefunden)',
+  'secretPicker.name': 'Name des Geheimnisses',
+  'secretPicker.token': 'Token',
+  'secretPicker.required': 'Name des Geheimnisses und Token sind erforderlich',
 
   // -- Diagnostics --
   'diagnostics.title': 'Diagnose',
@@ -225,6 +218,10 @@ const de: Translations = {
   'licenses.col.actions': 'Aktionen',
   'licenses.status.valid': 'Gültig',
   'licenses.status.invalid': 'Ungültig',
+  'license.badge.daysLeft': '{days}T',
+  'license.badge.expired': 'Abgelaufen',
+  'license.tooltip.valid': 'Enterprise-Lizenz: {tenant} — gültig bis {date}',
+  'license.tooltip.expired': 'Enterprise-Lizenz: {tenant} — abgelaufen am {date}',
 
   // -- AppDetail page --
   'appDetail.back': '\u2190 Dashboard',
@@ -248,12 +245,6 @@ const de: Translations = {
   'table.action.stop': 'Stoppen',
   'table.action.start': 'Starten',
   'table.action.restart': 'Neustarten',
-  'table.confirm.stop.title': '{name} stoppen?',
-  'table.confirm.stop.message': 'Container {name} stoppen?',
-  'table.confirm.start.title': '{name} starten?',
-  'table.confirm.start.message': 'Container {name} starten?',
-  'table.confirm.restart.title': '{name} neustarten?',
-  'table.confirm.restart.message': '{name} neustarten?',
   'table.toast.success': '{action} für {name} angefordert',
   'table.cpu.throttled': 'CPU gedrosselt',
   'table.memory.warning': 'Hohe Speicherauslastung',
@@ -261,8 +252,11 @@ const de: Translations = {
   'table.pullAuthRequired.label': 'Anmeldedaten konfigurieren',
   'table.pullAuthRequired.tooltip': 'Authentifizierung für die Registry erforderlich — zum Konfigurieren klicken',
   'table.pullAuthRetry.success': 'Anmeldedaten gespeichert; Pull wird wiederholt',
+  'table.initStep': 'Init {step}/{total}',
+  'table.initStep.tooltip': 'Laufender Init-Schritt: {name}',
 
   // -- App Drawer --
+  'drawer.initStep': 'Initialisierung {step}/{total}: {name}',
   'drawer.container': 'Container',
   'drawer.image': 'Image',
   'drawer.state': 'Zustand',
@@ -283,10 +277,6 @@ const de: Translations = {
   // -- App Config Editor --
   'appConfig.title': 'App-Konfiguration (YAML)',
   'appConfig.edited': '(bearbeitet{detail})',
-  'appConfig.lock.locked': 'Gesperrt',
-  'appConfig.lock.unlocked': 'Entsperrt',
-  'appConfig.lock.lockTooltip': 'Sperren: Änderungen bleiben bei Neugenerierung erhalten',
-  'appConfig.lock.unlockTooltip': 'Entsperren: Änderungen gehen bei Neugenerierung verloren',
   'appConfig.noConfig': 'Keine benutzerdefinierte Konfiguration',
   'appConfig.files': 'Eingebundene Dateien',
   'appConfig.confirm.title': 'Konfigurationsänderungen anwenden?',
@@ -307,18 +297,8 @@ const de: Translations = {
   'appConfig.loadError.cannotSave': 'Speichern nicht möglich: Die Quellkonfiguration wurde nicht geladen.',
   'common.retry': 'Wiederholen',
 
-  // -- Config Editor --
-  'configEditor.title': 'namespace.yml',
-  'configEditor.noConfig': 'Keine Konfigurationsdatei gefunden. Verwenden Sie {cmd} um eine zu erstellen.',
-  'configEditor.failedToLoad': 'Konfiguration konnte nicht geladen werden: {error}',
-  'configEditor.confirm.title': 'Konfiguration anwenden',
-  'configEditor.confirm.message': 'Konfiguration speichern und Namespace neu laden? Laufende Apps werden möglicherweise neugestartet.',
-  'configEditor.saved': 'Konfiguration gespeichert und Neuladen angefordert',
-
   // -- Daemon Logs --
   'daemonLogs.title': 'Daemon-Protokolle',
-  'daemonLogs.refresh': 'Aktualisieren',
-  'daemonLogs.empty': 'Keine Protokolle verfügbar',
 
   // -- Log Viewer --
   'logViewer.search': 'Suchen... (Strg+F)',
@@ -334,11 +314,11 @@ const de: Translations = {
   'logViewer.wrap.tooltip': 'Zeilenumbruch umschalten',
   'logViewer.copy': 'Kopieren',
   'logViewer.copy.tooltip': 'Alles in die Zwischenablage kopieren',
+  'clipboard.copyFailed': 'Kopieren in die Zwischenablage fehlgeschlagen',
   'logViewer.download': 'Herunterladen',
   'logViewer.download.tooltip': 'Als Datei herunterladen',
   'logViewer.clear': 'Leeren',
   'logViewer.clear.tooltip': 'Protokolle leeren (Strg+L)',
-  'logViewer.refresh': 'Aktualisieren',
   'logViewer.empty': 'Keine Protokolle verfügbar',
   'logViewer.lines': '{count} Zeilen',
   'logViewer.linesTotal': '{count} Zeilen ({total} gesamt)',
@@ -351,19 +331,13 @@ const de: Translations = {
   'panel.closeTab': 'Tab schließen',
 
   // -- Namespace Controls --
-  'ns.start': 'Starten',
   'ns.updateAndStart': 'Aktualisieren & Starten',
   'ns.forceStart': 'Aktualisieren erzwingen und starten',
   'ns.stop': 'Stoppen',
-  'ns.reload': 'Neu laden',
   'ns.confirm.start.title': 'Namespace starten',
-  'ns.confirm.start.message': 'Alle Anwendungen in diesem Namespace starten?',
   'ns.confirm.forceStart.title': 'Aktualisieren erzwingen und starten',
-  'ns.confirm.forceStart.message': 'Alle Images aus der Registry erneut herunterladen und Namespace starten? Laufende Container werden neu erstellt.',
   'ns.confirm.stop.title': 'Namespace stoppen',
-  'ns.confirm.stop.message': 'Alle laufenden Anwendungen stoppen?',
   'ns.confirm.reload.title': 'Konfiguration neu laden',
-  'ns.confirm.reload.message': 'Namespace-Konfiguration neu laden? Laufende Apps werden möglicherweise neugestartet.',
   'ns.toast.success': 'Namespace {action} angefordert',
 
   // -- Status Badge --
@@ -383,12 +357,22 @@ const de: Translations = {
   'status.STOPPED': 'Gestoppt',
   'status.STALLED': 'Blockiert',
 
+  // -- Start Progress Stepper (Welcome quick start) --
+  'startProgress.title': 'Citeck wird gestartet…',
+  'startProgress.success': 'Namespace läuft',
+  'startProgress.failed': 'Problem beim Start erkannt',
+  'startProgress.stage.bundle': 'Repository und Bundle',
+  'startProgress.stage.images': 'Images werden geladen',
+  'startProgress.stage.infra': 'Infrastruktur wird gestartet',
+  'startProgress.stage.apps': 'Anwendungen werden gestartet',
+  'startProgress.stage.ready': 'Fertig',
+  'startProgress.detail.images': '{pulled}/{total} Images bereit',
+  'startProgress.detail.apps': '{running}/{total} laufen',
+  'startProgress.openDashboard': 'Dashboard öffnen',
+  'startProgress.hide': 'Ausblenden',
+
   // -- Restart Events --
   'restartEvents.empty': 'Keine Neustart-Ereignisse',
-  'restartEvents.time': 'Zeit',
-  'restartEvents.app': 'App',
-  'restartEvents.reason': 'Grund',
-  'restartEvents.detail': 'Detail',
 
   // -- Common --
   'common.loading': 'Laden...',
@@ -400,14 +384,12 @@ const de: Translations = {
   'common.delete': 'Löschen',
   'common.close': 'Schließen',
   'common.confirm': 'Bestätigen',
-  'common.ok': 'OK',
   'common.confirm.defaultTitle': 'Sind Sie sicher?',
   'common.working': 'Arbeitet...',
   'common.submit': 'Absenden',
   'common.select': 'Auswählen',
   'common.create': 'Erstellen',
   'common.settings': 'Einstellungen',
-  'common.error': 'Fehler: {error}',
 
   // -- Journal dialog --
   'journal.filter': 'Filter...',
@@ -435,14 +417,12 @@ const de: Translations = {
   // -- Migration --
   'migration.title': 'Master-Passwort eingeben',
   'migration.description': 'Verschlüsselte Geheimnisse wurden gefunden. Geben Sie Ihr Master-Passwort ein, um sie zu entschlüsseln.',
-  'migration.passwordPlaceholder': 'Master-Passwort',
   'migration.confirm': 'Bestätigen',
   'migration.skip': 'Überspringen',
   'migration.wrongPassword': 'Ungültiges Passwort',
   'migration.secretsImported': 'Geheimnisse entschlüsselt und importiert',
   'migration.setupPassword.title': 'Ihre Geheimnisse schützen',
   'migration.setupPassword.description': 'Möchten Sie Ihre importierten Geheimnisse mit einem Master-Passwort verschlüsseln? Sie benötigen es bei jedem Start des Launchers.',
-  'migration.setupPassword.success': 'Geheimnisse erfolgreich verschlüsselt',
   'migration.unlock.title': 'Geheimnisse entsperren',
   'migration.unlock.description': 'Ihre Geheimnisse sind verschlüsselt. Geben Sie das Master-Passwort ein, um sie zu entsperren.',
   'migration.unlock.confirm': 'Entsperren',
@@ -457,11 +437,6 @@ const de: Translations = {
   'migration.unlock.reset.success': 'Master-Passwort zurückgesetzt; alle Geheimnisse gelöscht',
 
   // -- Secrets (additional) --
-  'secrets.encrypted.badge': 'Verschlüsselt',
-  'secrets.encrypted.success': 'Geheimnisse erfolgreich verschlüsselt',
-  'secrets.locked': 'Geheimnisse sind gesperrt — geben Sie das Master-Passwort ein, um darauf zuzugreifen',
-  'secrets.setPassword': 'Passwort festlegen',
-  'secrets.setPassword.description': 'Verschlüsseln Sie Ihre Geheimnisse mit einem Master-Passwort. Sie benötigen es bei jedem Start des Launchers.',
 
   // -- Upgrade --
   'form.fieldRequired': '{label} ist erforderlich',
@@ -476,8 +451,6 @@ const de: Translations = {
   'volumes.deleteAll.message': 'Alle Ihre Daten in diesem Namespace gehen verloren.',
   'volumes.deleteAll.success': 'Alle Volumes gelöscht',
   'snapshots.dialog.title': 'Snapshots',
-  'snapshots.scope.workspace': 'Workspace',
-  'snapshots.scope.namespace': 'Namespace',
   'snapshots.section.workspace': 'Workspace-Snapshots',
   'snapshots.section.namespace': 'Namespace-Snapshots',
   'snapshots.col.name': 'Name',
@@ -490,11 +463,9 @@ const de: Translations = {
   'snapshots.create.title': 'Snapshot erstellen',
   'snapshots.importFile': 'Importieren .zip…',
   'snapshots.openNsDir': 'NS-Verzeichnis öffnen',
-  'snapshots.import.local.hint': 'Verwenden Sie die im Namespace-Verzeichnis gespeicherte .zip für den lokalen Import.',
   'snapshots.rename.title': 'Snapshot umbenennen',
   'snapshots.delete.title': 'Snapshot „{name}“ löschen?',
   'snapshots.delete.message': 'Diese Aktion löscht die Snapshot-Datei unwiderruflich.',
-  'snapshots.delete.notSupported': 'Das Löschen von Snapshots wird nicht über die API bereitgestellt; entfernen Sie die .zip aus dem Namespace-Verzeichnis.',
   'snapshots.deleted': 'Snapshot gelöscht',
   'snapshots.field.name': 'Snapshot-Name',
   'snapshots.field.name.invalid': 'Ungültiger Snapshot-Name.\nBitte verwenden Sie Buchstaben, Ziffern, Punkte, Bindestrich oder Unterstrich.',
@@ -509,23 +480,14 @@ const de: Translations = {
   'namespaces.col.status': 'Status',
   'namespaces.action.edit': 'Bearbeiten',
   'namespaces.switch': 'Namespace wechseln',
+  'namespaces.switch.blocked': 'Stoppen Sie den aktuellen Namespace vor dem Wechsel',
+  'namespaces.switch.success': 'Zum Namespace „{name}“ gewechselt',
+  'namespaces.dialog.title.locked': 'Namespaces — Wechsel gesperrt, solange der aktuelle Namespace {status} ist',
   'namespaces.deleted': 'Namespace gelöscht',
   'store.connectionRestored': 'Verbindung wiederhergestellt, Status aktualisiert',
 
   // -- Namespace edit dialog --
-  'nsEdit.title': 'Namespace bearbeiten',
-  'nsEdit.field.name': 'Name',
-  'nsEdit.field.bundleRepo': 'Bundle-Repository',
-  'nsEdit.field.bundleKey': 'Bundle-Version',
-  'nsEdit.field.authType': 'Authentifizierung',
-  'nsEdit.field.users': 'Benutzer (kommagetrennt)',
-  'nsEdit.field.host': 'Hostname',
-  'nsEdit.field.port': 'Port',
-  'nsEdit.field.tlsEnabled': 'TLS aktivieren',
-  'nsEdit.field.pgAdminEnabled': 'PgAdmin aktivieren',
-  'nsEdit.save': 'Speichern',
   'nsEdit.saveSuccess': 'Namespace aktualisiert',
-  'nsEdit.editRawYaml': 'Rohes YAML bearbeiten…',
 
   // -- Namespace create/edit dialog (Kotlin parity: NamespaceEntityDef.formSpec) --
   'namespace.dialog.create': 'Namespace erstellen',
@@ -539,7 +501,6 @@ const de: Translations = {
   'namespace.form.snapshot.none': '(keine)',
   'namespace.form.required': 'Pflichtfeld',
   'namespace.form.nameTooLong': 'Maximal 50 Zeichen',
-  'namespace.form.refreshBundles': 'Bundle-Liste aktualisieren',
   'namespace.form.cancel': 'Abbrechen',
   'namespace.form.submit': 'Erstellen',
   'namespace.form.save': 'Speichern',
@@ -577,6 +538,15 @@ const de: Translations = {
   'update.install': 'Aktualisieren & neu starten',
   'update.installing': 'Wird aktualisiert…',
   'update.failed': 'Aktualisierung fehlgeschlagen: {error}',
-}
+  'update.manualNotice': 'Diese Version kann Updates nicht automatisch installieren. Um die neuesten Funktionen zu erhalten, laden Sie die neue Version einfach manuell von GitHub herunter — das dauert nur ein paar Minuten.',
+  'update.openReleases': 'Release-Seite öffnen',
+
+  // -- Auth gate (daemon api_auth token) --
+  'authGate.title': 'Authentifizierung erforderlich',
+  'authGate.message': 'Dieser Daemon verlangt ein Zugriffstoken für die Web-UI.\nFühren Sie {cmd} auf dem Host aus, um eine authentifizierte Sitzung zu öffnen, oder fügen Sie das Token unten ein.',
+  'authGate.placeholder': 'API-Token einfügen',
+  'authGate.submit': 'Authentifizieren',
+  'authGate.error': 'Ungültiges Token. Bitte prüfen und erneut versuchen.',
+} satisfies Translations
 
 export default de

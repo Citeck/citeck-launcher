@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { activateNamespace, getNamespaces, getQuickStarts, deleteNamespace, postNamespaceStart, createNamespace, closeAllDesktopWindows } from '../lib/api'
+import { ApiError, activateNamespace, getNamespaces, getQuickStarts, deleteNamespace, postNamespaceStart, createNamespace, closeAllDesktopWindows } from '../lib/api'
 import { useDaemonStatusStore, useActiveWorkspaceId } from '../lib/daemonStatus'
 import type { NamespaceSummaryDto, QuickStartDto } from '../lib/types'
 import { ConfirmModal } from '../components/ConfirmModal'
@@ -13,6 +13,8 @@ import type { ContextMenuItem } from '../components/ContextMenu'
 import { useContextMenu } from '../hooks/useContextMenu'
 import { useTabsStore } from '../lib/tabs'
 import { useDashboardStore } from '../lib/store'
+import { useQuickStartStore } from '../lib/quickstart'
+import { StartProgressStepper } from '../components/StartProgressStepper'
 import { usePanelStore } from '../lib/panels'
 import { useTranslation } from '../lib/i18n'
 import { showError } from '../lib/errorModal'
@@ -34,7 +36,14 @@ export function Welcome() {
   // every open via its [open, mode, initial] effect, so a single instance is
   // enough — no separate create/edit dialogs). null = closed.
   const [nsForm, setNsForm] = useState<{ mode: 'create' | 'edit'; target?: NamespaceSummaryDto } | null>(null)
-  const [gitErrorOpen, setGitErrorOpen] = useState(false)
+  // The git-pull-error dialog derives its `open` from loadError/startError.
+  // Cancel/Skip must actually close it, so we remember the exact message the
+  // user dismissed — a NEW error (different message) re-opens the dialog.
+  const [dismissedGitError, setDismissedGitError] = useState<string | null>(null)
+  // Machine-readable code of the most recent loadError/startError (ApiError
+  // .code) — lets the git-pull dialog open on the explicit
+  // WS_REPO_SYNC_FAILED contract code, not just the message heuristic.
+  const [errorCode, setErrorCode] = useState('')
   // Active workspace ID (used for filtering namespaces + scoping the create
   // request explicitly). Sourced from the daemon-status store so a workspace
   // switch from the top-panel picker re-renders + reloads this screen.
@@ -47,6 +56,16 @@ export function Welcome() {
   const fetchData = useDashboardStore((s) => s.fetchData)
   const startEventStream = useDashboardStore((s) => s.startEventStream)
   const resetPanels = usePanelStore((s) => s.resetPanels)
+  // Quick-start bootstrap phase — module-level store so the progress stepper
+  // survives the Welcome remount caused by navigate('/welcome') below and any
+  // user navigation during the ~10-minute bootstrap.
+  const qsActive = useQuickStartStore((s) => s.active)
+  // Quick-start create/start failure — kept in the store (not component
+  // state) because handleQuickStart's navigate('/welcome') remounts Welcome
+  // and would lose a plain setStartError. Feeds the same GitPullErrorDialog
+  // gate as loadError/startError below.
+  const qsError = useQuickStartStore((s) => s.error)
+  const qsErrorCode = useQuickStartStore((s) => s.errorCode)
   const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu()
 
   // Holds the latest loadData so the silent-retry timeout can call it without
@@ -61,14 +80,18 @@ export function Welcome() {
       setNamespaces(ns)
       setQuickStarts(qs)
       setLoadError(null)
+      setErrorCode('')
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      // Daemon still starting — retry silently
+      // Daemon still starting — retry silently. WS_REPO_SYNC_FAILED (502) is
+      // a real failure (workspace repo unsyncable, no cache) and must surface
+      // — it intentionally does NOT match these transient patterns.
       if (msg.includes('Service Unavailable') || msg.includes('503') || msg.includes('Failed to fetch')) {
         setTimeout(() => loadDataRef.current?.(), 1000)
         return
       }
       setLoadError(msg)
+      setErrorCode(e instanceof ApiError ? e.code : '')
     } finally {
       setLoading(false)
     }
@@ -122,6 +145,7 @@ export function Welcome() {
       navigate('/')
     } catch (err) {
       setStartError(err instanceof Error ? err.message : String(err))
+      setErrorCode(err instanceof ApiError ? err.code : '')
     } finally {
       setStarting(false)
     }
@@ -159,12 +183,28 @@ export function Welcome() {
   // variant maps to a NamespaceConfig pre-filled from the template; the daemon
   // already overlays template fields on top of NamespaceCreateDto, so we only
   // need to pass {name, template, snapshot} and the form defaults handle the rest.
+  /** Leave the stepper for the Dashboard — dismisses the quick-start state. */
+  function openDashboardFromStepper() {
+    useQuickStartStore.getState().dismiss()
+    resetPanels()
+    openTab({ id: 'home', title: t('dashboard.title'), path: '/' })
+    navigate('/')
+  }
+
   async function handleQuickStart(qs: QuickStartDto | null) {
     // QS buttons are only rendered when the workspace has no namespaces yet
     // (see the render gate below) so this handler runs only for the empty-
     // workspace bootstrap path.
-    setStarting(true)
+    const qsStore = useQuickStartStore.getState()
+    qsStore.begin()
     setStartError(null)
+    // Pin Welcome to its explicit route: the index route flips to Dashboard
+    // as soon as the dashboard store sees the new namespace, which would
+    // unmount the stepper mid-bootstrap. /welcome keeps it visible while
+    // still letting the user navigate away (no blocking overlay).
+    navigate('/welcome', { replace: true })
+    // SSE stream feeds the stepper (app/namespace statuses + pull progress).
+    startEventStream()
     try {
       // Kotlin parity (WelcomeScreen.prepareNsDataToCreate): the server
       // copies the namespaceTemplate into the new config and overrides only
@@ -188,22 +228,25 @@ export function Welcome() {
         workspaceId: activeWorkspaceId || undefined,
         useDefaultPassword: true,
       })
+      // Repo clone + bundle resolution + generation finished — the stepper's
+      // "bundle" stage completes once the namespace lands in the store.
+      useQuickStartStore.getState().created()
       await postNamespaceStart()
+      // Pull the fresh namespace into the dashboard store; from here the SSE
+      // events keep it updated and the stepper tracks the bootstrap. The user
+      // stays on Welcome (stepper) and can open the Dashboard at any time.
       await fetchData()
-      startEventStream()
-      resetPanels()
-      openTab({ id: 'home', title: t('dashboard.title'), path: '/' })
-      navigate('/')
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e))
+      // The code rides along in the store (not component state) for the same
+      // remount reason as the message itself — see qsError above.
+      useQuickStartStore.getState().fail(err.message, e instanceof ApiError ? e.code : '')
       setStartError(err.message)
       showError({
         title: t('welcome.quickStart'),
         message: t('welcome.startFailed', { error: err.message }),
         details: err.stack,
       })
-    } finally {
-      setStarting(false)
     }
   }
 
@@ -222,7 +265,12 @@ export function Welcome() {
 
       {/* Namespace buttons */}
       <div className="w-full max-w-md flex flex-col gap-3">
-        {loading ? (
+        {qsActive ? (
+          // Quick-start bootstrap in progress — compact progress stepper fed
+          // by the SSE-driven dashboard store replaces the namespace/QS
+          // buttons (clicking them mid-bootstrap makes no sense).
+          <StartProgressStepper onOpenDashboard={openDashboardFromStepper} />
+        ) : loading ? (
           <>
             <div className="text-center text-muted-foreground text-sm py-4">{t('welcome.loading')}</div>
             <div className="flex justify-center"><LoadingHint active={loading} /></div>
@@ -393,11 +441,7 @@ export function Welcome() {
         open={!!nsForm}
         mode={nsForm?.mode ?? 'create'}
         workspaceId={activeWorkspaceId}
-        initial={nsForm?.mode === 'edit' && nsForm.target ? {
-          name: nsForm.target.name || nsForm.target.id,
-          bundleRepo: nsForm.target.bundleRef?.split(':')[0] || '',
-          bundleKey: nsForm.target.bundleRef?.split(':').slice(1).join(':') || '',
-        } : undefined}
+        nsId={nsForm?.mode === 'edit' ? nsForm.target?.id : undefined}
         onClose={() => setNsForm(null)}
         onSaved={() => {
           const isCreate = nsForm?.mode === 'create'
@@ -418,21 +462,46 @@ export function Welcome() {
       </footer>
 
       {/* Surface git pull failures with the dedicated dialog (Kotlin parity) */}
-      <GitPullErrorDialog
-        open={gitErrorOpen || isGitPullError(loadError || startError)}
-        repoUrl={extractRepoUrl(loadError || startError)}
-        errorMessage={loadError || startError || ''}
-        skipAvailable={false}
-        cancelAvailable={true}
-        onDecide={(d: GitPullDecision) => {
-          setGitErrorOpen(false)
-          if (d === 'retry') {
-            setStartError(null); loadData()
-          }
-          // 'skip' fires postGitSkipPull inside the dialog itself; 'cancel'
-          // and 'skip' both clear the local dialog state here.
-        }}
-      />
+      {(() => {
+        const gitError = loadError || startError || qsError
+        // Explicit contract code (WS_REPO_SYNC_FAILED: workspace repo can't
+        // sync and no cache exists) opens the dialog even if the message
+        // wording drifts; the heuristic stays as a fallback for non-coded
+        // errors (e.g. namespace bundle repos).
+        const gitCode = errorCode || qsErrorCode
+        const gitErrorOpen = !!gitError
+          && (gitCode === 'WS_REPO_SYNC_FAILED' || isGitPullError(gitError))
+          && gitError !== dismissedGitError
+        return (
+          <GitPullErrorDialog
+            open={gitErrorOpen}
+            repoUrl={extractRepoUrl(gitError)}
+            errorMessage={gitError || ''}
+            skipAvailable={false}
+            cancelAvailable={true}
+            // Auth-shaped failures get an inline token section that saves a
+            // GIT_TOKEN secret onto the active workspace before retrying.
+            workspaceId={activeWorkspaceId || undefined}
+            onDecide={(d: GitPullDecision) => {
+              if (d === 'retry') {
+                setDismissedGitError(null)
+                setLoadError(null)
+                setStartError(null)
+                setErrorCode('')
+                // A failed quick start cannot be "retried" in place — dismiss
+                // the stepper so the Quick Start buttons come back.
+                if (qsError) useQuickStartStore.getState().dismiss()
+                loadData()
+                return
+              }
+              // 'skip' fires postGitSkipPull inside the dialog itself; both
+              // 'skip' and 'cancel' close the dialog by remembering the
+              // dismissed message (the inline error text stays visible).
+              setDismissedGitError(gitError)
+            }}
+          />
+        )
+      })()}
     </div>
   )
 }

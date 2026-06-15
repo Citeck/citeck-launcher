@@ -3,35 +3,29 @@ import { test, expect } from '@playwright/test'
 test.describe('Welcome Screen', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/welcome')
-    await page.waitForTimeout(2000)
   })
 
   test('shows Welcome heading', async ({ page }) => {
     await expect(page.getByText('Welcome To Citeck Launcher!')).toBeVisible()
   })
 
-  test('shows namespace buttons or loading', async ({ page }) => {
-    // Either namespace buttons or "Loading..." or "Create New Namespace"
-    const createBtn = page.getByText('Create New Namespace')
-    const loading = page.getByText('Loading...')
-    const hasCreate = await createBtn.isVisible().catch(() => false)
-    const hasLoading = await loading.isVisible().catch(() => false)
-    expect(hasCreate || hasLoading).toBeTruthy()
+  test('shows Create New Namespace once loading settles', async ({ page }) => {
+    // The list resolves from "Loading..." into the namespace buttons; the
+    // Create New Namespace button is always rendered on a successful load.
+    await expect(page.getByText('Create New Namespace')).toBeVisible({ timeout: 15_000 })
   })
 
-  test('Create New Namespace button opens dialog', async ({ page }) => {
+  test('Create New Namespace button opens the create dialog', async ({ page }) => {
     const btn = page.getByText('Create New Namespace')
-    if (await btn.isVisible().catch(() => false)) {
-      await btn.click()
-      await expect(page.getByText('Create Namespace')).toBeVisible()
-    }
+    await expect(btn).toBeVisible({ timeout: 15_000 })
+    await btn.click()
+    await expect(page.getByRole('heading', { name: 'Create Namespace' })).toBeVisible()
   })
 
-  test('namespace button is clickable', async ({ page }) => {
-    // If namespaces loaded, there should be clickable buttons
+  test('namespace button list renders at least one button', async ({ page }) => {
+    await expect(page.getByText('Create New Namespace')).toBeVisible({ timeout: 15_000 })
+    // At minimum the "Create New Namespace" button itself uses this style.
     const nsButtons = page.locator('.rounded-lg.bg-muted')
-    const count = await nsButtons.count()
-    // At least the "Create New Namespace" button should be there
-    expect(count).toBeGreaterThanOrEqual(1)
+    expect(await nsButtons.count()).toBeGreaterThanOrEqual(1)
   })
 })

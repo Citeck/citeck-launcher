@@ -13,13 +13,15 @@ import { NamespaceDialog } from '../components/NamespaceDialog'
 import { NamespaceEditDialog } from '../components/NamespaceEditDialog'
 import { ContextMenu } from '../components/ContextMenu'
 import { useContextMenu } from '../hooks/useContextMenu'
-import { openExternal, deactivateNamespace } from '../lib/api'
-import { useTranslation } from '../lib/i18n'
+import { openExternal, deactivateNamespace, getLicenseStatus, type LicenseStatusDto } from '../lib/api'
+import { licenseBadgeVariant, showLicenseIndicator } from '../lib/license'
+import { useTranslation, type LocaleKey } from '../lib/i18n'
 import { StatusBadge } from '../components/StatusBadge'
 import { AppTable } from '../components/AppTable'
 import { CompactResourceRow } from '../components/CompactResourceRow'
 import { NamespaceControls } from '../components/NamespaceControls'
 import { BottomPanel } from '../components/BottomPanel'
+import { DiskLowBanner } from '../components/DiskLowBanner'
 import { RightDrawer } from '../components/RightDrawer'
 import { AppDrawerContent } from '../components/AppDrawerContent'
 import { LogViewer } from '../components/LogViewer'
@@ -27,7 +29,7 @@ import { DaemonLogsViewer } from '../components/DaemonLogsViewer'
 import { AppConfigEditor } from '../components/AppConfigEditor'
 import type { BottomPanelTab } from '../lib/panels'
 import { toast } from '../lib/toast'
-import { ExternalLink, FolderOpen, Globe, AlertTriangle, HardDrive, Key, FileText, ArrowLeft } from 'lucide-react'
+import { ExternalLink, FolderOpen, Globe, AlertTriangle, HardDrive, Key, FileText, ArrowLeft, ShieldCheck } from 'lucide-react'
 import { LoadingHint } from '../components/LoadingHint'
 import { postOpenDir } from '../lib/api'
 
@@ -46,7 +48,7 @@ export function Dashboard() {
   const drawerAppName = usePanelStore((s) => s.drawerAppName)
   const closeDrawer = usePanelStore((s) => s.closeDrawer)
   const bottomTabs = usePanelStore((s) => s.bottomTabs)
-  const { t } = useTranslation()
+  const { t, tDynamic } = useTranslation()
 
   // Master-password / secrets-unlock flow is handled by SecretsUnlockGuard at
   // the App layout level — runs once before any namespace start so registry
@@ -125,6 +127,24 @@ export function Dashboard() {
 
   const navigate = useNavigate()
 
+  // Enterprise-license indicator (sidebar): one-shot best-effort fetch on
+  // mount. Older daemons 404 the endpoint and a locked secret store 500s —
+  // any failure keeps the indicator hidden (community installs show nothing).
+  const [licStatus, setLicStatus] = useState<LicenseStatusDto | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    getLicenseStatus()
+      .then((st) => { if (!cancelled) setLicStatus(st) })
+      .catch(() => { /* no license info — indicator stays hidden */ })
+    return () => { cancelled = true }
+  }, [])
+
+  const openTab = useTabsStore((s) => s.openTab)
+  const openLicensesPage = useCallback(() => {
+    openTab({ id: 'licenses', title: t('licenses.title'), path: '/licenses' })
+    navigate('/licenses')
+  }, [openTab, navigate, t])
+
   if (loading && !namespace) {
     return (
       <div className="flex flex-col items-center justify-center h-full w-full">
@@ -193,6 +213,8 @@ export function Dashboard() {
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+      {/* Low-disk warning from the daemon disk monitor (disk_low SSE event) */}
+      <DiskLowBanner />
       {/* Top: sidebar + table + drawer overlay */}
       <div className="flex flex-1 min-h-0 relative">
         {/* Left info panel */}
@@ -261,7 +283,8 @@ export function Dashboard() {
                         <div className="text-[11px] text-muted-foreground/80 mt-2 mb-0.5">{l.category}</div>
                       )}
                       <a href={l.url} target="_blank" rel="noopener noreferrer"
-                        title={l.descriptionKey ? t(l.descriptionKey) : (l.description ?? l.name)}
+                        title={/* Go-sourced links.* key — tDynamic escape hatch */
+                          l.descriptionKey ? tDynamic(l.descriptionKey) : (l.description ?? l.name)}
                         className={`flex items-center gap-2.5 text-[13px] rounded px-1.5 py-1 -mx-1.5 ${
                           enabled ? 'text-primary hover:bg-muted/70' : 'text-muted-foreground cursor-not-allowed'
                         }`}
@@ -280,6 +303,15 @@ export function Dashboard() {
                 })}
               </div>
             </div>
+          )}
+
+          {/* Enterprise-license indicator — pinned to the bottom of the
+              scrollable area (mt-auto), shown only when a license record
+              exists. Click opens the Licenses page. Community installs see
+              nothing here (least-intrusive placement, Kotlin had no
+              equivalent surface). */}
+          {showLicenseIndicator(licStatus) && (
+            <LicenseIndicator status={licStatus} onClick={openLicensesPage} />
           )}
 
           </div>
@@ -375,6 +407,7 @@ export function Dashboard() {
       <NamespaceEditDialog
         open={nsEditOpen}
         mode="edit"
+        nsId={namespace.id}
         onClose={() => setNsEditOpen(false)}
       />
       {contextMenu && (
@@ -385,6 +418,40 @@ export function Dashboard() {
         />
       )}
     </div>
+  )
+}
+
+/**
+ * Compact enterprise-license pill for the sidebar: tenant + a days-left
+ * badge. Badge color tracks the server-computed state — amber when the
+ * license expires within 14 days, red when no stored license validates
+ * anymore. Clicking opens the Licenses management page.
+ */
+function LicenseIndicator({ status, onClick }: { status: LicenseStatusDto; onClick: () => void }) {
+  const { t } = useTranslation()
+  const variant = licenseBadgeVariant(status)
+  const badgeClass = variant === 'expired'
+    ? 'bg-destructive/15 text-destructive'
+    : variant === 'expiring'
+      ? 'bg-amber-500/15 text-amber-500'
+      : 'bg-success/15 text-success'
+  const badgeText = variant === 'expired'
+    ? t('license.badge.expired')
+    : t('license.badge.daysLeft', { days: status.daysLeft })
+  const tooltip = variant === 'expired'
+    ? t('license.tooltip.expired', { tenant: status.tenant ?? '', date: status.validUntil ?? '' })
+    : t('license.tooltip.valid', { tenant: status.tenant ?? '', date: status.validUntil ?? '' })
+  return (
+    <button
+      type="button"
+      className="mt-auto flex w-full items-center gap-1.5 rounded border border-border px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted/70 hover:text-foreground cursor-pointer"
+      title={tooltip}
+      onClick={onClick}
+    >
+      <ShieldCheck size={13} className="shrink-0" />
+      <span className="truncate">{status.tenant}</span>
+      <span className={`ml-auto shrink-0 rounded px-1 py-px text-[10px] font-medium ${badgeClass}`}>{badgeText}</span>
+    </button>
   )
 }
 
@@ -419,7 +486,7 @@ function isLinkAlwaysEnabled(l: { alwaysEnabled?: boolean; order: number; name: 
 }
 
 // Kotlin parity (NamespaceScreen.kt) — per-status tooltip on Open In Browser.
-function openInBrowserTooltip(status: string, t: (key: string) => string): string {
+function openInBrowserTooltip(status: string, t: (key: LocaleKey) => string): string {
   switch (status) {
     case 'STARTING':
       return t('dashboard.openInBrowser.starting')

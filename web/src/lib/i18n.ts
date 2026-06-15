@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { create } from 'zustand'
 import { putUIPrefs } from './api'
 import en from '../locales/en'
@@ -11,7 +12,20 @@ import ja from '../locales/ja'
 
 export type Locale = 'en' | 'ru' | 'zh' | 'es' | 'de' | 'fr' | 'pt' | 'ja'
 
-export type Translations = Record<string, string>
+/**
+ * The full key set is derived from the English locale (source of truth).
+ * t() only accepts these keys, so a typo or a removed key is a compile error
+ * at every static call site.
+ */
+export type LocaleKey = keyof typeof en
+
+/**
+ * A complete translation map. The 7 non-en locales declare
+ * `satisfies Translations` so a missing or extra key is ALSO a compile error
+ * (the runtime parity test in locales.test.ts stays as a second line of
+ * defense for tooling that bypasses tsc).
+ */
+export type Translations = Record<LocaleKey, string>
 
 export interface LocaleMeta {
   code: Locale
@@ -70,13 +84,12 @@ export const useI18nStore = create<I18nState>((set, get) => ({
   },
 }))
 
-/**
- * Translation function. Supports simple interpolation: t('key', { name: 'value' })
- * Replaces {name} placeholders in the translated string.
- */
-export function t(key: string, params?: Record<string, string | number>): string {
-  const { translations } = useI18nStore.getState()
-  let text = translations[key] ?? en[key] ?? key
+function translate(translations: Translations, key: LocaleKey, params?: Record<string, string | number>): string {
+  // Indexed as a partial record: tDynamic() funnels runtime-assembled keys
+  // through here, and those may be absent — fall back to en, then to the
+  // raw key (the pre-typing behavior).
+  const lookup = translations as Partial<Record<string, string>>
+  let text = lookup[key] ?? (en as Partial<Record<string, string>>)[key] ?? key
   if (params) {
     for (const [k, v] of Object.entries(params)) {
       text = text.replace(`{${k}}`, String(v))
@@ -86,19 +99,46 @@ export function t(key: string, params?: Record<string, string | number>): string
 }
 
 /**
+ * Translation function. Supports simple interpolation: t('key', { name: 'value' })
+ * Replaces {name} placeholders in the translated string.
+ */
+export function t(key: LocaleKey, params?: Record<string, string | number>): string {
+  return translate(useI18nStore.getState().translations, key, params)
+}
+
+/**
+ * Sanctioned escape hatch for keys assembled at RUNTIME, where the key set
+ * cannot be proven at compile time:
+ *   - 'status.' + status        (app/namespace status strings from the daemon)
+ *   - link descriptionKey       (Go-sourced 'links.*' keys in NamespaceDto)
+ *   - KIND_I18N[kind] ?? kind   (unknown app kinds fall back to the raw kind)
+ * Unknown keys render as the key itself — same fallback t() always had.
+ * Do NOT use this for keys known at compile time; use t() so typos are
+ * caught by tsc.
+ */
+export function tDynamic(key: string, params?: Record<string, string | number>): string {
+  return translate(useI18nStore.getState().translations, key as LocaleKey, params)
+}
+
+/**
  * React hook version — triggers re-render when locale changes.
- * Returns a t() function bound to the current translations.
+ * Returns t()/tDynamic() functions bound to the current translations.
  */
 export function useTranslation() {
   const { translations, locale } = useI18nStore()
-  const tf = (key: string, params?: Record<string, string | number>): string => {
-    let text = translations[key] ?? en[key] ?? key
-    if (params) {
-      for (const [k, v] of Object.entries(params)) {
-        text = text.replace(`{${k}}`, String(v))
-      }
-    }
-    return text
-  }
-  return { t: tf, locale }
+  // Stable identities per locale so t/tDynamic can appear in hook dependency
+  // arrays (useMemo'd form specs etc.) without re-firing on every render.
+  const tf = useMemo(
+    () => (key: LocaleKey, params?: Record<string, string | number>): string =>
+      translate(translations, key, params),
+    [translations],
+  )
+  // Same escape hatch as the module-level tDynamic (see its doc comment),
+  // bound to the hook's translations so locale changes re-render.
+  const tDyn = useMemo(
+    () => (key: string, params?: Record<string, string | number>): string =>
+      translate(translations, key as LocaleKey, params),
+    [translations],
+  )
+  return { t: tf, tDynamic: tDyn, locale }
 }

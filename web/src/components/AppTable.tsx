@@ -6,12 +6,14 @@ import { usePanelStore } from '../lib/panels'
 import { openSecondaryView } from '../lib/desktop'
 import { ContextMenu, type ContextMenuItem } from './ContextMenu'
 import { useContextMenu } from '../hooks/useContextMenu'
-import { useTranslation } from '../lib/i18n'
+import { useTranslation, type LocaleKey } from '../lib/i18n'
 import { toast } from '../lib/toast'
+import { copyText } from '../lib/clipboard'
 import { useDashboardStore } from '../lib/store'
 import { RegistryCredentialsDialog } from './RegistryCredentialsDialog'
 import { KeyRound } from 'lucide-react'
 import { isEditableFile } from '../lib/files'
+import { initProgressOf } from '../lib/initProgress'
 import { StatusBadge } from './StatusBadge'
 import { StatsCell } from './StatsCell'
 import { Square, Play, RotateCw, FileText, Settings, Circle, Lock } from 'lucide-react'
@@ -35,7 +37,9 @@ const STOPPED = ['STOPPED', 'START_FAILED', 'PULL_FAILED', 'FAILED', 'STOPPING_F
 const TRANSITIONAL = ['STARTING', 'PULLING', 'DEPS_WAITING', 'READY_TO_PULL', 'READY_TO_START', 'STOPPING']
 
 const KIND_ORDER: Record<string, number> = { CITECK_CORE: 0, CITECK_CORE_EXTENSION: 1, CITECK_ADDITIONAL: 2, THIRD_PARTY: 3 }
-const KIND_I18N: Record<string, string> = { CITECK_CORE: 'table.group.core', CITECK_CORE_EXTENSION: 'table.group.coreExt', CITECK_ADDITIONAL: 'table.group.additional', THIRD_PARTY: 'table.group.thirdParty' }
+// Values are checked against the locale key set; labelKey itself stays a
+// plain string because unknown kinds fall back to the raw kind name.
+const KIND_I18N: Record<string, LocaleKey> = { CITECK_CORE: 'table.group.core', CITECK_CORE_EXTENSION: 'table.group.coreExt', CITECK_ADDITIONAL: 'table.group.additional', THIRD_PARTY: 'table.group.thirdParty' }
 
 function groupByKind(apps: AppDto[]) {
   const groups = new Map<string, AppDto[]>()
@@ -108,7 +112,7 @@ export function AppTable({ apps, highlightedApp }: AppTableProps) {
             disappear under the scrolling body). */}
         <thead>
           <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-            {[
+            {([
               { k: 'table.name', c: 'pr-4' },
               { k: 'table.status', c: 'pr-4' },
               { k: 'table.cpu', c: 'pr-2 text-right' },
@@ -116,7 +120,7 @@ export function AppTable({ apps, highlightedApp }: AppTableProps) {
               { k: 'table.ports', c: 'pr-4' },
               { k: 'table.tag', c: 'pr-4' },
               { k: 'table.actions', c: 'text-right' },
-            ].map((col) => (
+            ] as const).map((col) => (
               <th
                 key={col.k}
                 className={`sticky top-0 z-10 bg-background py-1.5 font-medium shadow-[inset_0_-1px_0_var(--color-border)] ${col.c}`}
@@ -138,7 +142,7 @@ export function AppTable({ apps, highlightedApp }: AppTableProps) {
 
 function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: string; apps: AppDto[]; onAction: (a: NonNullable<AppAction>) => void; highlightedApp?: string | null }) {
   const { openDrawer } = usePanelStore()
-  const { t } = useTranslation()
+  const { t, tDynamic } = useTranslation()
   const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu()
   const pullProgress = useDashboardStore((s) => s.pullProgress)
   const pullAuthRequired = useDashboardStore((s) => s.pullAuthRequired)
@@ -212,7 +216,8 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
         <td colSpan={7} className="pt-3.5 pb-1">
           <div className="flex items-center gap-2.5">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-foreground/65">
-              {t(labelKey)}
+              {/* labelKey may be a raw unknown kind (KIND_I18N fallback) — tDynamic. */}
+              {tDynamic(labelKey)}
             </span>
             <span className="h-px flex-1 bg-border/70" aria-hidden="true" />
           </div>
@@ -223,6 +228,7 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
         const isStop = STOPPED.includes(app.status)
         const isTransitional = TRANSITIONAL.includes(app.status)
         const isHighlighted = highlightedApp === app.name
+        const initProg = initProgressOf(app)
         return (
           // Whole row opens the inspect drawer; the actions cell and the
           // tag-copy cell stop propagation so their own clicks still win.
@@ -235,6 +241,16 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
             <td className="py-[2px] pr-4 overflow-hidden">
               <span className="flex items-center gap-1.5 min-w-0">
                 <StatusBadge status={app.status} />
+                {/* Init-container progress while STARTING — compact "· init 2/5"
+                    suffix; the tooltip carries the running init step's name. */}
+                {initProg && (
+                  <span
+                    className="shrink-0 text-muted-foreground text-[10px]"
+                    title={initProg.name ? t('table.initStep.tooltip', { name: initProg.name }) : undefined}
+                  >
+                    {'· '}{t('table.initStep', { step: initProg.step, total: initProg.total })}
+                  </span>
+                )}
                 {(app.restartCount ?? 0) > 0 && (
                   <span className="ml-1 inline-flex shrink-0 items-center rounded bg-destructive/10 px-1 py-0 text-[10px] font-medium text-destructive leading-4"
                     title={t('table.restartCount')}>
@@ -296,7 +312,7 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
             </td>
             <td className="py-[2px] pr-4 font-mono text-muted-foreground whitespace-nowrap cursor-pointer hover:text-foreground"
               title={t('table.copy', { image: app.image })}
-              onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(app.image) }}>
+              onClick={(e) => { e.stopPropagation(); void copyText(app.image) }}>
               {tag(app.image)}
             </td>
             <td className="py-[2px] text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>

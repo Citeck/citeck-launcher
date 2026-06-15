@@ -1,6 +1,6 @@
 import type { Translations } from '../lib/i18n'
 
-const ru: Translations = {
+const ru = {
   // -- Dashboard --
   'dashboard.title': 'Панель управления',
   'dashboard.error': 'Ошибка: {error}',
@@ -12,8 +12,6 @@ const ru: Translations = {
   'dashboard.openInBrowser.disabled': 'Приложение не запущено. Запустите его, чтобы открыть в браузере.',
   'dashboard.openInBrowser.starting': 'Приложение запускается. Пожалуйста, подождите...',
   'dashboard.openInBrowser.stalled': 'Приложение зависло. Пожалуйста, попробуйте запустить его снова.',
-  'dashboard.docker.error': 'Docker: {error}',
-  'dashboard.docker.retry': 'Повторить',
 
   // -- Docker not available screen --
   'dockerUnavailable.title': 'Docker недоступен',
@@ -28,6 +26,12 @@ const ru: Translations = {
   'gitPullError.cannotSkip': 'Пропустить нельзя — репозиторий ещё не клонировался.',
   'gitPullError.skip': 'Пропустить',
   'gitPullError.retry': 'Повторить',
+  'gitPullError.saveAndRetry': 'Сохранить и повторить',
+  'gitPullError.authExplain': 'Не удалось войти в репозиторий — токен не подходит или истёк.',
+  'gitPullError.secretInUse': 'Используется секрет: {name}.',
+  'gitPullError.secretInUseMissing': 'Используется секрет: {id} (не найден).',
+  'gitPullError.noSecret': 'Для этого рабочего пространства токен доступа ещё не настроен.',
+  'gitPullError.editToken': 'Изменить токен',
   'registryCreds.title': 'Вход в {host}',
   'registryCreds.host': 'Реестр',
   'registryCreds.username': 'Имя пользователя',
@@ -39,7 +43,6 @@ const ru: Translations = {
   'dashboard.links': 'Ссылки',
   'dashboard.volumes': 'Тома',
   'dashboard.secrets': 'Секреты',
-  'dashboard.diagnostics': 'Диагностика',
   'dashboard.launcherLogs': 'Логи лаунчера',
   'dashboard.restartEvents': 'Перезапуски',
   'dashboard.systemDump': 'Дамп системы',
@@ -47,6 +50,8 @@ const ru: Translations = {
   'dashboard.systemDump.saved': 'Дамп системы сохранён: {path}',
   'dashboard.backToWelcome': 'Назад к выбору',
   'dashboard.backToWelcome.disabled': 'Остановите все запущенные приложения, прежде чем вернуться',
+  'dashboard.diskLow.message': 'Мало места на диске: свободно {free} в {path}',
+  'dashboard.diskLow.dismiss': 'Скрыть',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'Загрузка занимает больше времени, чем обычно.\nЧтобы мы помогли разобраться, нажмите «Dump System Info» и отправьте дамп нам.',
@@ -61,7 +66,6 @@ const ru: Translations = {
   'welcome.startFailed': 'Запуск не удался: {error}',
   'welcome.quickStart': 'Быстрый старт',
   'welcome.quickStart.default': 'Быстрый старт',
-  'welcome.quickStart.alreadyHasNamespaces': 'В рабочем пространстве уже есть пространства имён\nБыстрый старт отключён.',
   'welcome.workspace.empty': 'Рабочее пространство пусто',
   'welcome.more': 'Ещё',
   'welcome.createNew': 'Создать новый namespace',
@@ -73,7 +77,6 @@ const ru: Translations = {
   'welcome.workspace.label': 'Рабочее пространство',
   'welcome.workspace.forceUpdate': 'Принудительное обновление',
   'welcome.workspace.forceUpdate.inactive': 'Force Update доступен только для активного рабочего пространства',
-  'welcome.workspace.updating': 'Обновление рабочего пространства...',
   'welcome.workspace.updateSuccess': 'Рабочее пространство обновлено',
   'welcome.workspace.updateFailed': 'Не удалось обновить рабочее пространство: {error}',
   'welcome.workspace.create': 'Создать рабочее пространство...',
@@ -89,21 +92,17 @@ const ru: Translations = {
   'welcome.workspace.form.authType': 'Аутентификация',
   'welcome.workspace.form.authType.none': 'Нет (публичный репозиторий)',
   'welcome.workspace.form.authType.token': 'Токен (приватный репозиторий)',
-  'welcome.workspace.form.authTypeTokenHint': 'Сохрани git-токен как секрет с ключом "{key}".',
+  'welcome.workspace.form.tokenRequired': 'Выберите или создайте секрет с токеном',
   'welcome.workspace.form.required': 'Имя и URL репозитория обязательны',
 
-  // -- Боковая панель дашборда / каталог namespace --
-  'dashboard.openNsDir': 'Открыть каталог NS',
+  // -- Dashboard sidebar / namespace dir --
   'dashboard.openNsDir.tooltip': 'Открыть каталог томов namespace в файловом менеджере',
   'dashboard.openNsDir.success': 'Открыто: {path}',
   'dashboard.openNsDir.serverInfo': 'Путь на демоне: {path}',
   'dashboard.openNsDir.failed': 'Не удалось открыть: {error}',
 
-
   // -- Volumes --
-  'volumes.title': 'Тома Docker',
   'volumes.table.name': 'Имя',
-  'volumes.table.path': 'Путь',
   'volumes.table.size': 'Размер',
   'volumes.size.compute': 'Вычислить',
   'volumes.delete.tooltip': 'Удалить том',
@@ -121,35 +120,14 @@ const ru: Translations = {
   'links.pgAdmin.tooltip': 'Инструмент управления и проектирования БД Postgres.\nЛогин: admin@admin.com\nПароль: admin\nПароль БД: postgres',
   'links.documentation.tooltip': 'Документация Citeck',
   'links.aiBot.tooltip': 'Telegram-бот для помощи с документацией (AI)',
-  'volumes.empty': 'Тома не найдены',
   'volumes.delete.title': 'Удалить том {name}?',
   'volumes.delete.message': 'Том и все его данные будут безвозвратно удалены.',
   'volumes.delete.success': 'Том удалён',
-  'volumes.export.failed': 'Ошибка экспорта: {error}',
-  'volumes.import.failed': 'Ошибка импорта: {error}',
-  'volumes.rename.failed': 'Ошибка переименования: {error}',
-  'volumes.download.failed': 'Ошибка скачивания: {error}',
   'volumes.snapshots': 'Снапшоты',
-  'volumes.snapshots.export': 'Экспорт',
   'volumes.snapshots.exporting': 'Экспорт...',
-  'volumes.snapshots.export.tooltip': 'Экспортировать все тома в ZIP-снапшот',
-  'volumes.snapshots.import': 'Импорт',
   'volumes.snapshots.importing': 'Импорт...',
-  'volumes.snapshots.import.tooltip': 'Импортировать тома из ZIP-снапшота',
-  'volumes.snapshots.name': 'Имя',
-  'volumes.snapshots.size': 'Размер',
-  'volumes.snapshots.created': 'Создан',
-  'volumes.snapshots.empty': 'Снапшотов пока нет. Экспортируйте тома, чтобы создать снапшот.',
-  'volumes.snapshots.rename': 'Переименовать',
-  'volumes.snapshots.rename.ok': 'OK',
-  'volumes.snapshots.rename.cancel': 'Отмена',
-  'volumes.workspace': 'Снапшоты рабочего пространства',
-  'volumes.workspace.name': 'Имя',
-  'volumes.workspace.size': 'Размер',
-  'volumes.workspace.download': 'Скачать',
 
   // -- Secrets --
-  'secrets.title': 'Секреты',
   'secrets.type.gitToken': 'Токен',
   'secrets.type.basicAuth': 'Basic (логин/пароль)',
   'secrets.type.registryAuth': 'Basic (логин/пароль) — реестр',
@@ -163,19 +141,34 @@ const ru: Translations = {
   'secrets.form.username.placeholder': 'registry-user',
   'secrets.form.value': 'Значение',
   'secrets.form.value.placeholder': 'секретное значение',
-  'secrets.form.create': 'Создать',
-  'secrets.form.creating': 'Создание...',
-  'secrets.form.cancel': 'Отмена',
+  'secrets.form.scope': 'Область действия',
+  'secrets.form.scope.placeholder': 'images-repo:registry.example.com',
+  'secrets.form.scope.global': 'Глобальная (по умолчанию)',
+  'secrets.form.scope.custom': 'Указать вручную…',
+  'secrets.form.scope.customValue': 'Своя область действия',
   'secrets.table.name': 'Имя',
   'secrets.table.type': 'Тип',
   'secrets.table.scope': 'Область',
-  'secrets.table.created': 'Создан',
   'secrets.test.tooltip': 'Проверить секрет',
-  'secrets.empty': 'Секреты не настроены',
   'secrets.create.success': 'Секрет создан',
   'secrets.delete.success': 'Секрет удалён',
   'secrets.delete.title': 'Удалить секрет?',
   'secrets.delete.message': 'Секрет "{name}" будет безвозвратно удалён. Все namespace, использующие его, потеряют к нему доступ.',
+  'secrets.delete.usedByWorkspaces': 'Используется рабочими пространствами: {names}. Они потеряют доступ к репозиторию.',
+  'secrets.edit.title': 'Изменить секрет',
+  'secrets.edit.tooltip': 'Изменить секрет',
+  'secrets.update.success': 'Секрет обновлён',
+  'secrets.form.value.keepPlaceholder': 'оставьте пустым — значение не изменится',
+
+  // -- Secret picker (workspace token / git-pull-error dialogs) --
+  'secretPicker.secret': 'Секрет с токеном',
+  'secretPicker.addNew': 'Добавить новый…',
+  'secretPicker.placeholder': 'Выберите секрет с токеном…',
+  'secretPicker.createTitle': 'Новый секрет с токеном',
+  'secretPicker.notFound': '(не найден)',
+  'secretPicker.name': 'Название секрета',
+  'secretPicker.token': 'Токен',
+  'secretPicker.required': 'Название секрета и токен обязательны',
 
   // -- Diagnostics --
   'diagnostics.title': 'Диагностика',
@@ -225,6 +218,10 @@ const ru: Translations = {
   'licenses.col.actions': 'Действия',
   'licenses.status.valid': 'Действующая',
   'licenses.status.invalid': 'Недействительна',
+  'license.badge.daysLeft': '{days}д',
+  'license.badge.expired': 'Истекла',
+  'license.tooltip.valid': 'Корпоративная лицензия: {tenant} — действует до {date}',
+  'license.tooltip.expired': 'Корпоративная лицензия: {tenant} — истекла {date}',
 
   // -- AppDetail page --
   'appDetail.back': '\u2190 Панель управления',
@@ -248,12 +245,6 @@ const ru: Translations = {
   'table.action.stop': 'Остановить',
   'table.action.start': 'Запустить',
   'table.action.restart': 'Перезапустить',
-  'table.confirm.stop.title': 'Остановить {name}?',
-  'table.confirm.stop.message': 'Остановить контейнер {name}?',
-  'table.confirm.start.title': 'Запустить {name}?',
-  'table.confirm.start.message': 'Запустить контейнер {name}?',
-  'table.confirm.restart.title': 'Перезапустить {name}?',
-  'table.confirm.restart.message': 'Перезапустить {name}?',
   'table.toast.success': 'Запрошено {action} для {name}',
   'table.cpu.throttled': 'CPU throttling',
   'table.memory.warning': 'Высокий расход памяти',
@@ -261,8 +252,11 @@ const ru: Translations = {
   'table.pullAuthRequired.label': 'Указать креды',
   'table.pullAuthRequired.tooltip': 'Для реестра требуется аутентификация — нажмите, чтобы настроить',
   'table.pullAuthRetry.success': 'Креды сохранены; повторяем pull',
+  'table.initStep': 'иниц. {step}/{total}',
+  'table.initStep.tooltip': 'Выполняется шаг инициализации: {name}',
 
   // -- App Drawer --
+  'drawer.initStep': 'Инициализация {step}/{total}: {name}',
   'drawer.container': 'Контейнер',
   'drawer.image': 'Образ',
   'drawer.state': 'Состояние',
@@ -283,15 +277,7 @@ const ru: Translations = {
   // -- App Config Editor --
   'appConfig.title': 'Конфигурация приложения (YAML)',
   'appConfig.edited': '(изменено{detail})',
-  'appConfig.lock.locked': 'Заблокировано',
-  'appConfig.lock.unlocked': 'Разблокировано',
-  'appConfig.lock.lockTooltip': 'Заблокировать: изменения сохранятся при перегенерации',
-  'appConfig.lock.unlockTooltip': 'Разблокировать: изменения НЕ сохранятся при перегенерации',
   'appConfig.noConfig': 'Пользовательская конфигурация отсутствует',
-  'appConfig.loadError.title': 'Не удалось загрузить конфигурацию',
-  'appConfig.loadError.hint': 'Сохранение заблокировано до успешной загрузки, иначе можно перезаписать текущий конфиг пустым.',
-  'appConfig.loadError.cannotSave': 'Сохранение недоступно: исходная конфигурация не загружена.',
-  'common.retry': 'Повторить',
   'appConfig.files': 'Подключённые файлы',
   'appConfig.confirm.title': 'Применить изменения конфигурации?',
   'appConfig.confirm.message': 'Сохранить конфигурацию и перезапустить приложение?',
@@ -306,19 +292,13 @@ const ru: Translations = {
   'appConfig.fileReset.success': 'Файл сброшен к значению по умолчанию',
   'appConfig.fileEdited.badge': 'изменён',
   'appConfig.tabTitle': 'Конфигурация: {name}',
-
-  // -- Config Editor --
-  'configEditor.title': 'namespace.yml',
-  'configEditor.noConfig': 'Файл конфигурации не найден. Используйте {cmd} для создания.',
-  'configEditor.failedToLoad': 'Не удалось загрузить конфигурацию: {error}',
-  'configEditor.confirm.title': 'Применить конфигурацию',
-  'configEditor.confirm.message': 'Сохранить конфигурацию и перезагрузить namespace? Запущенные приложения могут быть перезапущены.',
-  'configEditor.saved': 'Конфигурация сохранена, перезагрузка запрошена',
+  'appConfig.loadError.title': 'Не удалось загрузить конфигурацию',
+  'appConfig.loadError.hint': 'Сохранение заблокировано до успешной загрузки, иначе можно перезаписать текущий конфиг пустым.',
+  'appConfig.loadError.cannotSave': 'Сохранение недоступно: исходная конфигурация не загружена.',
+  'common.retry': 'Повторить',
 
   // -- Daemon Logs --
   'daemonLogs.title': 'Логи демона',
-  'daemonLogs.refresh': 'Обновить',
-  'daemonLogs.empty': 'Логи недоступны',
 
   // -- Log Viewer --
   'logViewer.search': 'Поиск... (Ctrl+F)',
@@ -334,11 +314,11 @@ const ru: Translations = {
   'logViewer.wrap.tooltip': 'Переключить перенос строк',
   'logViewer.copy': 'Копировать',
   'logViewer.copy.tooltip': 'Копировать всё в буфер обмена',
+  'clipboard.copyFailed': 'Не удалось скопировать в буфер обмена',
   'logViewer.download': 'Скачать',
   'logViewer.download.tooltip': 'Скачать как файл',
   'logViewer.clear': 'Очистить',
   'logViewer.clear.tooltip': 'Очистить логи (Ctrl+L)',
-  'logViewer.refresh': 'Обновить',
   'logViewer.empty': 'Логи недоступны',
   'logViewer.lines': '{count} строк',
   'logViewer.linesTotal': '{count} строк ({total} всего)',
@@ -351,19 +331,13 @@ const ru: Translations = {
   'panel.closeTab': 'Закрыть вкладку',
 
   // -- Namespace Controls --
-  'ns.start': 'Запустить',
   'ns.updateAndStart': 'Обновить и запустить',
   'ns.forceStart': 'Принудительно обновить и запустить',
   'ns.stop': 'Остановить',
-  'ns.reload': 'Перезагрузить',
   'ns.confirm.start.title': 'Запустить namespace',
-  'ns.confirm.start.message': 'Запустить все приложения в этом namespace?',
   'ns.confirm.forceStart.title': 'Принудительно обновить и запустить',
-  'ns.confirm.forceStart.message': 'Заново загрузить все образы из реестра и запустить namespace? Работающие контейнеры будут пересозданы.',
   'ns.confirm.stop.title': 'Остановить namespace',
-  'ns.confirm.stop.message': 'Остановить все запущенные приложения?',
   'ns.confirm.reload.title': 'Перезагрузить конфигурацию',
-  'ns.confirm.reload.message': 'Перезагрузить конфигурацию namespace? Запущенные приложения могут быть перезапущены.',
   'ns.toast.success': 'Запрос на {action} namespace отправлен',
 
   // -- Status Badge --
@@ -383,12 +357,22 @@ const ru: Translations = {
   'status.STOPPED': 'Остановлен',
   'status.STALLED': 'Зависло',
 
+  // -- Start Progress Stepper (Welcome quick start) --
+  'startProgress.title': 'Запуск Citeck…',
+  'startProgress.success': 'Пространство имён запущено и работает',
+  'startProgress.failed': 'Обнаружена проблема при запуске',
+  'startProgress.stage.bundle': 'Репозиторий и бандл',
+  'startProgress.stage.images': 'Загрузка образов',
+  'startProgress.stage.infra': 'Старт инфраструктуры',
+  'startProgress.stage.apps': 'Старт приложений',
+  'startProgress.stage.ready': 'Готово',
+  'startProgress.detail.images': '{pulled}/{total} образов готово',
+  'startProgress.detail.apps': '{running}/{total} запущено',
+  'startProgress.openDashboard': 'Открыть панель',
+  'startProgress.hide': 'Скрыть',
+
   // -- Restart Events --
   'restartEvents.empty': 'Нет событий перезапуска',
-  'restartEvents.time': 'Время',
-  'restartEvents.app': 'Приложение',
-  'restartEvents.reason': 'Причина',
-  'restartEvents.detail': 'Описание',
 
   // -- Common --
   'common.loading': 'Загрузка...',
@@ -400,14 +384,12 @@ const ru: Translations = {
   'common.delete': 'Удалить',
   'common.close': 'Закрыть',
   'common.confirm': 'Подтвердить',
-  'common.ok': 'ОК',
   'common.confirm.defaultTitle': 'Вы уверены?',
   'common.working': 'Выполнение...',
   'common.submit': 'Отправить',
   'common.select': 'Выбрать',
   'common.create': 'Создать',
   'common.settings': 'Настройки',
-  'common.error': 'Ошибка: {error}',
 
   // -- Journal dialog --
   'journal.filter': 'Фильтр...',
@@ -422,25 +404,25 @@ const ru: Translations = {
   'error.title': 'Что-то пошло не так',
   'error.unexpected': 'Произошла непредвиденная ошибка',
   'error.reload': 'Перезагрузить',
-  'error.retry': 'Повторить',
 
   // -- Theme --
   'theme.toDark': 'Переключить на тёмную тему',
   'theme.toLight': 'Переключить на светлую тему',
 
+  // -- Common (additional) --
+
+  // -- Error (additional) --
+  'error.retry': 'Повторить',
+
   // -- Migration --
   'migration.title': 'Введите мастер-пароль',
   'migration.description': 'Обнаружены зашифрованные секреты. Введите мастер-пароль для их расшифровки.',
-  'migration.passwordPlaceholder': 'Мастер-пароль',
   'migration.confirm': 'Подтвердить',
   'migration.skip': 'Пропустить',
   'migration.wrongPassword': 'Неверный пароль',
   'migration.secretsImported': 'Секреты расшифрованы и импортированы',
-
   'migration.setupPassword.title': 'Защитите ваши секреты',
   'migration.setupPassword.description': 'Зашифровать импортированные секреты мастер-паролем? Он потребуется при каждом запуске лончера.',
-  'migration.setupPassword.success': 'Секреты зашифрованы',
-
   'migration.unlock.title': 'Разблокировка секретов',
   'migration.unlock.description': 'Ваши секреты зашифрованы. Введите мастер-пароль для разблокировки.',
   'migration.unlock.confirm': 'Разблокировать',
@@ -454,11 +436,7 @@ const ru: Translations = {
   'migration.unlock.reset.confirmLabel': 'Сбросить и удалить',
   'migration.unlock.reset.success': 'Мастер-пароль сброшен, все секреты удалены',
 
-  'secrets.encrypted.badge': 'Зашифровано',
-  'secrets.encrypted.success': 'Секреты зашифрованы',
-  'secrets.locked': 'Секреты заблокированы — введите мастер-пароль',
-  'secrets.setPassword': 'Задать пароль',
-  'secrets.setPassword.description': 'Зашифруйте секреты мастер-паролем. Он потребуется при каждом запуске лончера.',
+  // -- Secrets (additional) --
 
   // -- Upgrade --
   'form.fieldRequired': '{label} обязательно',
@@ -473,8 +451,6 @@ const ru: Translations = {
   'volumes.deleteAll.message': 'Все данные этого namespace будут потеряны.',
   'volumes.deleteAll.success': 'Все тома удалены',
   'snapshots.dialog.title': 'Снапшоты',
-  'snapshots.scope.workspace': 'Рабочая область',
-  'snapshots.scope.namespace': 'Неймспейс',
   'snapshots.section.workspace': 'Снапшоты воркспейса',
   'snapshots.section.namespace': 'Снапшоты namespace',
   'snapshots.col.name': 'Имя',
@@ -487,11 +463,9 @@ const ru: Translations = {
   'snapshots.create.title': 'Создать снапшот',
   'snapshots.importFile': 'Импорт .zip…',
   'snapshots.openNsDir': 'Открыть каталог NS',
-  'snapshots.import.local.hint': 'Для локального импорта используйте .zip из директории namespace.',
   'snapshots.rename.title': 'Переименовать снапшот',
   'snapshots.delete.title': 'Удалить снапшот «{name}»?',
   'snapshots.delete.message': 'Это действие безвозвратно удалит файл снапшота.',
-  'snapshots.delete.notSupported': 'Удаление снапшота не реализовано в API; удалите .zip из директории namespace.',
   'snapshots.deleted': 'Снапшот удалён',
   'snapshots.field.name': 'Имя снапшота',
   'snapshots.field.name.invalid': 'Недопустимое имя снимка.\nПожалуйста, используйте буквы, цифры, точки, дефис или подчёркивание.',
@@ -506,30 +480,20 @@ const ru: Translations = {
   'namespaces.col.status': 'Статус',
   'namespaces.action.edit': 'Изменить',
   'namespaces.switch': 'Переключить namespace',
+  'namespaces.switch.blocked': 'Остановите текущий namespace перед переключением',
+  'namespaces.switch.success': 'Переключено на namespace «{name}»',
+  'namespaces.dialog.title.locked': 'Неймспейсы — переключение заблокировано, пока текущий namespace в статусе {status}',
   'namespaces.deleted': 'Namespace удалён',
   'store.connectionRestored': 'Соединение восстановлено, состояние обновлено',
 
   // -- Namespace edit dialog --
-  'nsEdit.title': 'Изменить namespace',
-  'nsEdit.field.name': 'Имя',
-  'nsEdit.field.bundleRepo': 'Репозиторий сборок',
-  'nsEdit.field.bundleKey': 'Версия сборки',
-  'nsEdit.field.authType': 'Аутентификация',
-  'nsEdit.field.users': 'Пользователи (через запятую)',
-  'nsEdit.field.host': 'Хост',
-  'nsEdit.field.port': 'Порт',
-  'nsEdit.field.tlsEnabled': 'Включить TLS',
-  'nsEdit.field.pgAdminEnabled': 'Включить PgAdmin',
-  'nsEdit.save': 'Сохранить',
   'nsEdit.saveSuccess': 'Namespace обновлён',
-  'nsEdit.editRawYaml': 'Редактировать YAML…',
 
   // -- Namespace create/edit dialog (Kotlin parity: NamespaceEntityDef.formSpec) --
   'namespace.dialog.create': 'Создать namespace',
   'namespace.dialog.edit': 'Редактировать namespace',
   'namespace.form.name': 'Имя',
   'namespace.form.bundlesRepo': 'Репозиторий бандлов',
-  'namespace.form.bundles.refresh': 'Обновить список бандлов (git pull)',
   'namespace.form.bundleKey': 'Бандл',
   'namespace.form.snapshot': 'Снэпшот',
   'namespace.form.authType': 'Тип аутентификации',
@@ -537,7 +501,6 @@ const ru: Translations = {
   'namespace.form.snapshot.none': '(нет)',
   'namespace.form.required': 'Поле обязательно',
   'namespace.form.nameTooLong': 'Не более 50 символов',
-  'namespace.form.refreshBundles': 'Обновить список бандлов',
   'namespace.form.cancel': 'Отмена',
   'namespace.form.submit': 'Создать',
   'namespace.form.save': 'Сохранить',
@@ -552,7 +515,7 @@ const ru: Translations = {
   'errorModal.details': 'Подробности',
   'errorModal.downloadDump': 'Скачать дамп системы',
 
-  // -- Блокирующий оверлей загрузки (паритет с LoadingDialog Kotlin) --
+  // -- Blocking loading overlay (Kotlin parity: LoadingDialog) --
   'longOp.pleaseWait': 'Пожалуйста, подождите…',
   'longOp.stalled': 'Соединение потеряно. Операция может всё ещё выполняться на сервере — обновите страницу для проверки.',
   'longOp.dismiss': 'Закрыть',
@@ -563,6 +526,7 @@ const ru: Translations = {
   'longOp.snapshot.rename': 'Переименование снимка…',
   'longOp.snapshot.delete': 'Удаление снимка…',
   'longOp.snapshot.download': 'Загрузка снимка…',
+  'namespace.form.bundles.refresh': 'Обновить список бандлов (git pull)',
   // -- Auto-update --
   'update.newVersion': 'Доступна новая версия {version}',
   'update.upToDate': 'У вас последняя версия ({version}).',
@@ -574,6 +538,15 @@ const ru: Translations = {
   'update.install': 'Обновить и перезапустить',
   'update.installing': 'Обновление…',
   'update.failed': 'Не удалось обновить: {error}',
-}
+  'update.manualNotice': 'Эта версия не может установить обновление автоматически. Чтобы получить свежие функции, скачайте новую версию вручную с GitHub — это займёт пару минут.',
+  'update.openReleases': 'Открыть страницу релизов',
+
+  // -- Auth gate (daemon api_auth token) --
+  'authGate.title': 'Требуется аутентификация',
+  'authGate.message': 'Этому демону нужен токен доступа для Web UI.\nВыполните {cmd} на хосте, чтобы открыть аутентифицированную сессию, или вставьте токен ниже.',
+  'authGate.placeholder': 'Вставьте API-токен',
+  'authGate.submit': 'Войти',
+  'authGate.error': 'Неверный токен. Проверьте его и попробуйте снова.',
+} satisfies Translations
 
 export default ru

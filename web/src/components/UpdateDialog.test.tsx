@@ -1,7 +1,8 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useUpdateStore } from '../lib/updateStore'
 import { UpdateDialog } from './UpdateDialog'
+import { openExternal } from '../lib/api'
 
 vi.mock('../lib/api', () => ({
   getUpdateChangelog: vi.fn().mockResolvedValue([
@@ -10,6 +11,7 @@ vi.mock('../lib/api', () => ({
   applyUpdate: vi.fn().mockResolvedValue({ applying: true, version: '2.5.0' }),
   getUpdateStatus: vi.fn(),
   checkUpdate: vi.fn(),
+  openExternal: vi.fn().mockResolvedValue(undefined),
 }))
 
 describe('UpdateDialog', () => {
@@ -38,5 +40,36 @@ describe('UpdateDialog', () => {
     await waitFor(() => expect(screen.getByText(/2\.6\.0/)).toBeInTheDocument())
     // Install (the primary button) is gated on `available` → absent after rollback.
     expect(container.querySelector('.bg-primary')).toBeNull()
+  })
+
+  it('shows the calm manual-update notice instead of Install when manualUpdateRequired', async () => {
+    const releasesUrl = 'https://github.com/Citeck/citeck-launcher/releases'
+    useUpdateStore.setState({
+      status: {
+        currentVersion: '2.4.0',
+        latestVersion: '2.6.0',
+        available: true,
+        applying: false,
+        manualUpdateRequired: true,
+        manualUpdateReason: 'signature_mismatch',
+        releasesUrl,
+      },
+    })
+    const { container } = render(<UpdateDialog open onClose={() => {}} />)
+
+    // Calm notice (info-styled, no destructive coloring) + releases button.
+    await waitFor(() =>
+      expect(screen.getByText(/download the new version from GitHub/)).toBeInTheDocument(),
+    )
+    expect(container.querySelector('.text-destructive')).toBeNull()
+    // The auto-install action is hidden — it would just fail again.
+    expect(screen.queryByText('Update & restart')).toBeNull()
+    // The changelog ("what's new") still renders so the user sees what they're missing.
+    expect(screen.getByText('a changelog entry')).toBeInTheDocument()
+
+    // The releases button opens the URL from the status DTO (system browser
+    // in desktop mode via openExternal).
+    fireEvent.click(screen.getByText('Open releases page'))
+    expect(vi.mocked(openExternal)).toHaveBeenCalledWith(releasesUrl)
   })
 })

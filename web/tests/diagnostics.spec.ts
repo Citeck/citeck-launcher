@@ -6,41 +6,28 @@ test.describe('Diagnostics', () => {
   })
 
   test('page shows heading and Run Checks button', async ({ page }) => {
-    await expect(page.getByText('Diagnostics')).toBeVisible()
+    await expect(page.getByText('Diagnostics').first()).toBeVisible()
     await expect(page.getByRole('button', { name: /run checks/i })).toBeVisible()
   })
 
   test('checks load automatically on mount', async ({ page }) => {
-    // Wait for checks to load
-    await page.waitForTimeout(2000)
-
-    // Should see at least one check row (Docker, Socket, Config, etc.)
-    const rows = page.locator('tbody tr')
-    const count = await rows.count()
-    expect(count).toBeGreaterThan(0)
+    // At least one check row (Docker, Socket, Config, …) must appear.
+    await expect(page.locator('tbody tr').first()).toBeVisible({ timeout: 15_000 })
+    expect(await page.locator('tbody tr').count()).toBeGreaterThan(0)
   })
 
   test('Run Checks button refreshes the check list', async ({ page }) => {
-    await page.waitForTimeout(1000)
+    await expect(page.locator('tbody tr').first()).toBeVisible({ timeout: 15_000 })
     await page.click('button:has-text("Run Checks")')
-    await page.waitForTimeout(2000)
-
-    // Should still see checks
-    const rows = page.locator('tbody tr')
-    const count = await rows.count()
-    expect(count).toBeGreaterThan(0)
+    await expect(page.locator('tbody tr').first()).toBeVisible({ timeout: 15_000 })
+    expect(await page.locator('tbody tr').count()).toBeGreaterThan(0)
   })
 
-  test('check status badges have correct colors', async ({ page }) => {
-    await page.waitForTimeout(2000)
-
-    // Status badges should exist (ok, warn, or error)
+  test('check status badges show a known status', async ({ page }) => {
+    await expect(page.locator('tbody tr').first()).toBeVisible({ timeout: 15_000 })
     const badges = page.locator('span.inline-block.rounded')
-    const count = await badges.count()
-    if (count > 0) {
-      const firstBadge = badges.first()
-      const text = await firstBadge.textContent()
-      expect(['ok', 'warn', 'error']).toContain(text?.trim())
-    }
+    await expect(badges.first()).toBeVisible()
+    const text = await badges.first().textContent()
+    expect(['ok', 'warn', 'warning', 'error']).toContain(text?.trim())
   })
 })

@@ -24,6 +24,12 @@ export interface AppDto {
   locked?: boolean
   restartCount?: number
   editedFilesCount?: number
+  /** 1-based init-container step currently running; only set while STARTING with an active init phase. */
+  initStep?: number
+  /** Total init containers; only set while the init phase is active. */
+  initTotal?: number
+  /** Short name of the running init step (init image basename without registry/tag). */
+  initName?: string
 }
 
 export interface AppFileDto {
@@ -100,10 +106,16 @@ export interface EventDto {
   percent?: number
   /** Human-readable progress phase ("Pulling: 234mb 50%"). Only present on `pull_progress`. */
   phase?: string
-  /** Per-volume index (1-based). Present on `snapshot_progress`. */
+  /** 1-based progress index. Present on `snapshot_progress` (volume) and `app_init_step` (init step; absent = phase done). */
   current?: number
-  /** Total volume count. Present on `snapshot_progress`. */
+  /** Progress total. Present on `snapshot_progress` (volumes) and `app_init_step` (init containers). */
   total?: number
+  /** Monitored filesystem path. Present on `disk_low` / `disk_ok` only. */
+  path?: string
+  /** Free bytes on the monitored filesystem. Present on `disk_low` / `disk_ok` only. */
+  freeBytes?: number
+  /** Low-disk threshold in bytes. Present on `disk_low` / `disk_ok` only. */
+  thresholdBytes?: number
 }
 
 export interface AppInspectDto {
@@ -140,11 +152,6 @@ export interface QuickStartDto {
   bundleRef?: string
 }
 
-export interface TemplateDto {
-  id: string
-  name: string
-}
-
 // Phase E3: Namespace creation
 export interface NamespaceCreateDto {
   name: string
@@ -176,6 +183,9 @@ export interface SecretMetaDto {
   type: string
   scope: string
   createdAt: string
+  // For BASIC_AUTH / REGISTRY_AUTH; surfaced so the write-only edit form can
+  // prefill it. Optional — older daemons omit it.
+  username?: string
 }
 
 export interface SecretCreateDto {
@@ -187,6 +197,16 @@ export interface SecretCreateDto {
   username?: string
   value: string
   scope?: string
+}
+
+// Write-only partial update (PUT /secrets/{id}). Empty/absent field = keep
+// the existing value — in particular an empty `value` keeps the old secret
+// value, so the edit form never needs to (and never does) display it.
+export interface SecretUpdateDto {
+  name?: string
+  scope?: string
+  username?: string
+  value?: string
 }
 
 // Phase F2: Diagnostics
@@ -219,9 +239,11 @@ export interface SnapshotDto {
 // Multi-workspace (desktop-only). Endpoints return 404 in server mode.
 //
 // `repoPullPeriod` is an ISO 8601 duration string (e.g. "PT2H" = 2 hours).
-// `authType` is "NONE" (default) or "TOKEN" (TOKEN resolves a secret stored
-// under key "ws:{id}:repo"). Both fields are optional on create/update — the
-// daemon applies Kotlin-parity defaults when omitted.
+// `authType` is "NONE" (default) or "TOKEN". With TOKEN the daemon resolves
+// the repo token from `secretId` (a reusable GIT_TOKEN secret shared across
+// workspaces) and falls back to the legacy per-workspace "ws:{id}:repo"
+// secret when no secretId is linked. Optional fields on create/update get
+// Kotlin-parity defaults when omitted.
 export interface WorkspaceDto {
   id: string
   name: string
@@ -229,6 +251,8 @@ export interface WorkspaceDto {
   repoBranch: string
   repoPullPeriod?: string
   authType?: string
+  /** Id of the linked GIT_TOKEN secret ('' / absent = none, legacy lookup). */
+  secretId?: string
   active: boolean
   namespaces: number
 }
@@ -240,14 +264,18 @@ export interface WorkspaceCreateDto {
   repoBranch?: string
   repoPullPeriod?: string
   authType?: string
+  secretId?: string
 }
 
+// Partial-update semantics: absent field = unchanged. `secretId` keeps that
+// rule and adds an explicit unlink sentinel: '' = unlink the secret.
 export interface WorkspaceUpdateDto {
   name?: string
   repoUrl?: string
   repoBranch?: string
   repoPullPeriod?: string
   authType?: string
+  secretId?: string
 }
 
 export interface UpdateStatusDto {
@@ -258,6 +286,15 @@ export interface UpdateStatusDto {
   error?: string
   applyError?: string
   applying: boolean
+  /**
+   * The last staging attempt hit a signature classification (the release has
+   * no .sig, or it does not verify under the key this binary embeds — e.g.
+   * after a signing-key rotation). Auto-install would keep failing; the UI
+   * offers a calm manual-download path via releasesUrl instead.
+   */
+  manualUpdateRequired?: boolean
+  manualUpdateReason?: 'signature_missing' | 'signature_mismatch' | string
+  releasesUrl?: string
 }
 
 export interface ReleaseNoteDto {

@@ -18,9 +18,12 @@ vi.mock('./toast', () => ({
 }))
 
 import { getNamespace, getHealth } from './api'
+import { connectEvents } from './websocket'
+import type { EventDto } from './types'
 
 const mockedGetNamespace = vi.mocked(getNamespace)
 const mockedGetHealth = vi.mocked(getHealth)
+const mockedConnectEvents = vi.mocked(connectEvents)
 
 describe('useDashboardStore', () => {
   beforeEach(() => {
@@ -35,6 +38,7 @@ describe('useDashboardStore', () => {
       reconnectDelay: 1000,
       lastSeq: 0,
       reconnectGen: 0,
+      diskLow: null,
     })
     vi.clearAllMocks()
   })
@@ -170,5 +174,36 @@ describe('useDashboardStore', () => {
     expect(state.namespace).toBeNull()
     expect(state.error).toBeNull()
     expect(state.loading).toBe(false)
+  })
+
+  it('disk_low sets diskLow, dismissal clears it, a new event re-shows it, disk_ok clears it', () => {
+    useDashboardStore.getState().startEventStream()
+    expect(mockedConnectEvents).toHaveBeenCalledTimes(1)
+    const onEvent = mockedConnectEvents.mock.calls[0][0]
+
+    const base: EventDto = { type: '', seq: 0, timestamp: 0, namespaceId: '', appName: '', before: '', after: '' }
+
+    // Trip: disk_low carries path + freeBytes + thresholdBytes
+    onEvent({ ...base, type: 'disk_low', seq: 1, path: '/var/lib/citeck', freeBytes: 3.2 * 2 ** 30, thresholdBytes: 5 * 2 ** 30 })
+    expect(useDashboardStore.getState().diskLow).toEqual({
+      path: '/var/lib/citeck',
+      freeBytes: 3.2 * 2 ** 30,
+      thresholdBytes: 5 * 2 ** 30,
+    })
+
+    // User dismisses the banner — state clears without a daemon event
+    useDashboardStore.getState().dismissDiskLow()
+    expect(useDashboardStore.getState().diskLow).toBeNull()
+
+    // A NEW disk_low event (the daemon emits on state change only, so this
+    // means recovery + a fresh trip) re-shows the banner after dismissal
+    onEvent({ ...base, type: 'disk_low', seq: 2, path: '/var/lib/citeck', freeBytes: 2 ** 30, thresholdBytes: 5 * 2 ** 30 })
+    expect(useDashboardStore.getState().diskLow?.freeBytes).toBe(2 ** 30)
+
+    // Recovery clears it
+    onEvent({ ...base, type: 'disk_ok', seq: 3, path: '/var/lib/citeck', freeBytes: 50 * 2 ** 30 })
+    expect(useDashboardStore.getState().diskLow).toBeNull()
+
+    useDashboardStore.getState().stopEventStream()
   })
 })

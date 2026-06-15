@@ -23,9 +23,13 @@ interface RegistryCredentialsDialogProps {
  * BASIC auth credentials for the registry.
  *
  * On save:
- *  1. Creates a secret with id `images-repo:{host}` and type `REGISTRY_AUTH`.
- *     This is the convention the daemon's pull worker uses to look up creds
- *     (Kotlin's `SecretDef(authId="images-repo:<host>", type=AuthType.BASIC)`).
+ *  1. Creates a secret with id AND scope `images-repo:{host}`, type
+ *     `REGISTRY_AUTH`. The daemon resolves registry credentials by SCOPE only
+ *     (see resolveRegistryAuth in internal/daemon/server.go: it matches
+ *     `scope == "images-repo:<host>"`; an empty scope defaults to "global" in
+ *     the store and never matches). Username and password are sent as
+ *     separate fields (SecretCreateDto.username / .value) so passwords
+ *     containing ':' round-trip untouched.
  *  2. Optionally restarts `retryApp` so the next pull attempt picks up the
  *     newly-stored secret without waiting for the reconciler tick.
  */
@@ -61,14 +65,18 @@ export function RegistryCredentialsDialog({ open, host, retryApp, onSaved, onClo
     try {
       const username = String(values.username || '').trim()
       const password = String(values.password || '')
-      // Daemon-side convention for registry auth secrets: id = images-repo:<host>.
-      // The Docker pull worker resolves this on every retry, so saving the
-      // secret is sufficient to unblock a stuck PULL_FAILED app.
+      // Daemon-side convention for registry auth secrets: the lookup key is
+      // the SCOPE `images-repo:<host>` (the id is set to the same value for
+      // readability, but only scope is matched). The Docker pull worker
+      // resolves this on every retry, so saving the secret is sufficient to
+      // unblock a stuck PULL_FAILED app.
       await createSecret({
         id: `images-repo:${host}`,
         name: `Registry ${host}`,
         type: 'REGISTRY_AUTH',
-        value: `${username}:${password}`,
+        scope: `images-repo:${host}`,
+        username,
+        value: password,
       })
       toast(t('registryCreds.saved'), 'success')
       if (retryApp) {

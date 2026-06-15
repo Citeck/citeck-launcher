@@ -7,11 +7,11 @@ import type {
   AppFileDto,
   NamespaceSummaryDto,
   QuickStartDto,
-  TemplateDto,
   NamespaceCreateDto,
   BundleInfoDto,
   SecretMetaDto,
   SecretCreateDto,
+  SecretUpdateDto,
   DiagnosticsDto,
   DiagFixResultDto,
   SnapshotDto,
@@ -22,16 +22,19 @@ import type {
   UpdateStatusDto,
   ReleaseNoteDto,
 } from './types'
+import { notifyAuthRequired } from './authGate'
 
 export const API_BASE = '/api/v1'
 
 const CSRF_HEADER = { 'X-Citeck-CSRF': '1' }
 
 /**
- * ApiError preserves the machine-readable `code` field that the daemon sends
- * in JSON error bodies alongside `message`. Callers can branch on `code` to
- * trigger UI flows (e.g. `ENCRYPTION_NOT_SET_UP` → run CreateMasterPwd before
- * retrying the request) without parsing error message strings.
+ * ApiError is the single error shape thrown by every API helper in this
+ * module. It preserves the machine-readable `code` field that the daemon
+ * sends in JSON error bodies alongside `message`, plus the HTTP `status`.
+ * Callers can branch on `code` to trigger UI flows (e.g.
+ * `ENCRYPTION_NOT_SET_UP` → run CreateMasterPwd before retrying the request)
+ * without parsing error message strings.
  */
 export class ApiError extends Error {
   readonly status: number
@@ -55,10 +58,6 @@ async function extractApiError(res: Response): Promise<ApiError> {
   return new ApiError(message, res.status, code)
 }
 
-async function extractErrorMessage(res: Response): Promise<string> {
-  return (await extractApiError(res)).message
-}
-
 function fetchWithTimeout(url: string, opts?: RequestInit, timeoutMs = 30_000): Promise<Response> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -69,42 +68,93 @@ function fetchWithTimeout(url: string, opts?: RequestInit, timeoutMs = 30_000): 
   return fetch(url, { ...opts, signal: controller.signal }).finally(() => clearTimeout(timer))
 }
 
-async function fetchJSON<T>(path: string): Promise<T> {
-  const res = await fetchWithTimeout(`${API_BASE}${path}`, {
-    headers: { Accept: 'application/json' },
-  })
-  if (!res.ok) {
-    throw new Error(await extractErrorMessage(res))
+/** Shorthand for path-parameter encoding so endpoint one-liners stay legible. */
+const enc = encodeURIComponent
+
+/**
+ * Encodes a multi-segment path (e.g. a mounted-file path containing '/')
+ * while preserving the '/' separators, so the daemon's `{path...}` wildcard
+ * route still sees individual segments but special characters round-trip.
+ */
+function encPath(p: string): string {
+  return p.split('/').map(enc).join('/')
+}
+
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE'
+
+interface RequestOpts {
+  /**
+   * Request body: FormData is sent as-is (browser sets the multipart
+   * boundary), strings are sent raw with `contentType` (default text/plain),
+   * anything else is JSON-serialized as application/json.
+   */
+  body?: unknown
+  /** Content-Type override for string bodies. */
+  contentType?: string
+  /** Per-request timeout in ms (default 30s). */
+  timeout?: number
+  signal?: AbortSignal
+}
+
+/**
+ * Single transport for all daemon API calls: prefixes API_BASE, attaches the
+ * CSRF header on mutating methods, serializes the body, and converts every
+ * non-2xx response into an ApiError. Returns the raw Response so callers can
+ * pick json()/text()/blob().
+ */
+async function rawRequest(method: HttpMethod, path: string, opts: RequestOpts = {}): Promise<Response> {
+  const headers: Record<string, string> = {}
+  if (method === 'GET') headers.Accept = 'application/json'
+  else Object.assign(headers, CSRF_HEADER)
+  let body: BodyInit | undefined
+  if (opts.body instanceof FormData) {
+    body = opts.body
+  } else if (typeof opts.body === 'string') {
+    headers['Content-Type'] = opts.contentType ?? 'text/plain'
+    body = opts.body
+  } else if (opts.body !== undefined) {
+    headers['Content-Type'] = 'application/json'
+    body = JSON.stringify(opts.body)
   }
+  const res = await fetchWithTimeout(`${API_BASE}${path}`, { method, headers, body, signal: opts.signal }, opts.timeout)
+  if (!res.ok) {
+    const err = await extractApiError(res)
+    // Daemon api_auth (opt-in token auth) rejected the request — raise the
+    // full-screen token prompt. The error still propagates to the caller.
+    if (err.status === 401 && err.code === 'AUTH_REQUIRED') notifyAuthRequired()
+    throw err
+  }
+  return res
+}
+
+async function request<T>(method: HttpMethod, path: string, opts?: RequestOpts): Promise<T> {
+  const res = await rawRequest(method, path, opts)
   return res.json()
 }
 
-export async function getNamespace(): Promise<NamespaceDto> {
-  return fetchJSON('/namespace')
-}
-
-export async function getHealth(): Promise<HealthDto> {
-  return fetchJSON('/health')
-}
-
-export async function getDaemonStatus(): Promise<DaemonStatusDto> {
-  return fetchJSON('/daemon/status')
-}
-
-export async function getAppLogs(name: string, tail = 100): Promise<string> {
-  const res = await fetchWithTimeout(`${API_BASE}/apps/${name}/logs?tail=${tail}`)
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
+async function requestText(method: HttpMethod, path: string, opts?: RequestOpts): Promise<string> {
+  const res = await rawRequest(method, path, opts)
   return res.text()
 }
 
+export async function getNamespace(): Promise<NamespaceDto> {
+  return request('GET', '/namespace')
+}
+
+export async function getHealth(): Promise<HealthDto> {
+  return request('GET', '/health')
+}
+
+export async function getDaemonStatus(): Promise<DaemonStatusDto> {
+  return request('GET', '/daemon/status')
+}
+
 export async function getAppInspect(name: string): Promise<AppInspectDto> {
-  return fetchJSON(`/apps/${name}/inspect`)
+  return request('GET', `/apps/${enc(name)}/inspect`)
 }
 
 export async function postAppRestart(name: string): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/apps/${name}/restart`, { method: 'POST', headers: CSRF_HEADER })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', `/apps/${enc(name)}/restart`)
 }
 
 /**
@@ -113,57 +163,40 @@ export async function postAppRestart(name: string): Promise<ActionResultDto> {
  * pick up the secret without waiting for the auto-retry backoff window.
  */
 export async function postAppsRetryPullFailed(): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/apps/retry-pull-failed`, { method: 'POST', headers: CSRF_HEADER })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', '/apps/retry-pull-failed')
 }
 
 export async function postAppStop(name: string): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/apps/${name}/stop`, { method: 'POST', headers: CSRF_HEADER })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', `/apps/${enc(name)}/stop`)
 }
 
 export async function postAppStart(name: string): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/apps/${name}/start`, { method: 'POST', headers: CSRF_HEADER })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', `/apps/${enc(name)}/start`)
 }
 
 export async function postNamespaceStart(force = false): Promise<ActionResultDto> {
-  const qs = force ? '?force=true' : ''
-  const res = await fetchWithTimeout(`${API_BASE}/namespace/start${qs}`, { method: 'POST', headers: CSRF_HEADER })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', `/namespace/start${force ? '?force=true' : ''}`)
 }
 
 export async function postNamespaceStop(): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/namespace/stop`, { method: 'POST', headers: CSRF_HEADER })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', '/namespace/stop')
 }
 
 export async function postNamespaceReload(): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/namespace/reload`, { method: 'POST', headers: CSRF_HEADER })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', '/namespace/reload')
 }
 
 // activateNamespace switches the active namespace within the current workspace.
 // Daemon rejects with 409 if the current namespace is not STOPPED.
 export async function activateNamespace(id: string): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/namespaces/${id}/activate`, { method: 'POST', headers: CSRF_HEADER })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', `/namespaces/${enc(id)}/activate`)
 }
 
 // deactivateNamespace clears the workspace's namespace selection so the next
 // daemon start lands on Welcome instead of re-loading the previous namespace.
 // Daemon rejects with 409 if the current namespace is not STOPPED.
 export async function deactivateNamespace(): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/namespaces/deactivate`, { method: 'POST', headers: CSRF_HEADER })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', '/namespaces/deactivate')
 }
 
 /**
@@ -176,16 +209,7 @@ export async function deactivateNamespace(): Promise<ActionResultDto> {
  * durationSeconds <= 0 clears the existing skip for that host.
  */
 export async function postGitSkipPull(host: string, durationSeconds = 3600): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(
-    `${API_BASE}/git/skip-pull`,
-    {
-      method: 'POST',
-      headers: { ...CSRF_HEADER, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ host, durationSeconds }),
-    },
-  )
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', '/git/skip-pull', { body: { host, durationSeconds } })
 }
 
 /**
@@ -196,13 +220,7 @@ export async function postGitSkipPull(host: string, durationSeconds = 3600): Pro
  * Uses a longer timeout because the git pull can be slow on cold network.
  */
 export async function postWorkspaceUpdate(): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(
-    `${API_BASE}/workspace/update`,
-    { method: 'POST', headers: CSRF_HEADER },
-    180_000,
-  )
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', '/workspace/update', { timeout: 180_000 })
 }
 
 /**
@@ -213,11 +231,7 @@ export async function postWorkspaceUpdate(): Promise<ActionResultDto> {
  */
 export async function putUIPrefs(prefs: { theme?: string; locale?: string }): Promise<void> {
   try {
-    await fetchWithTimeout(`${API_BASE}/ui-prefs`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
-      body: JSON.stringify(prefs),
-    })
+    await rawRequest('PUT', '/ui-prefs', { body: prefs })
   } catch {
     /* best-effort: prefs also live in localStorage as the fast path */
   }
@@ -227,48 +241,28 @@ export async function putUIPrefs(prefs: { theme?: string; locale?: string }): Pr
 // listWorkspaces swallows 404 and returns [] so callers in server mode can
 // transparently render "no workspaces" instead of branching on mode.
 export async function listWorkspaces(): Promise<WorkspaceDto[]> {
-  const res = await fetchWithTimeout(`${API_BASE}/workspaces`)
-  if (res.status === 404) return []
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  try {
+    return await request('GET', '/workspaces')
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) return []
+    throw e
+  }
 }
 
 export async function createWorkspace(data: WorkspaceCreateDto): Promise<WorkspaceDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/workspaces`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
-    body: JSON.stringify(data),
-  })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', '/workspaces', { body: data })
 }
 
 export async function updateWorkspace(id: string, data: WorkspaceUpdateDto): Promise<WorkspaceDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/workspaces/${encodeURIComponent(id)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
-    body: JSON.stringify(data),
-  })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('PUT', `/workspaces/${enc(id)}`, { body: data })
 }
 
 export async function deleteWorkspace(id: string): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/workspaces/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-    headers: CSRF_HEADER,
-  })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('DELETE', `/workspaces/${enc(id)}`)
 }
 
 export async function activateWorkspace(id: string): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/workspaces/${encodeURIComponent(id)}/activate`, {
-    method: 'POST',
-    headers: CSRF_HEADER,
-  })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', `/workspaces/${enc(id)}/activate`)
 }
 
 /**
@@ -286,36 +280,25 @@ export interface OpenDirResponse {
 }
 
 export async function postOpenDir(kind: 'volumes' | 'snapshots'): Promise<OpenDirResponse> {
-  const res = await fetchWithTimeout(`${API_BASE}/system/open-dir`, {
-    method: 'POST',
-    headers: { ...CSRF_HEADER, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ kind }),
-  })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', '/system/open-dir', { body: { kind } })
 }
 
 export async function fetchRestartEvents(): Promise<RestartEventDto[]> {
-  const resp = await fetchWithTimeout(`${API_BASE}/namespace/restart-events`)
-  if (!resp.ok) return []
-  return resp.json()
+  try {
+    return await request('GET', '/namespace/restart-events')
+  } catch (e) {
+    if (e instanceof ApiError) return []
+    throw e
+  }
 }
 
 export async function clearAppRestartEvents(name: string): Promise<void> {
-  const res = await fetchWithTimeout(`${API_BASE}/apps/${name}/restart-events`, { method: 'DELETE', headers: CSRF_HEADER })
-  if (!res.ok) throw await extractApiError(res)
-}
-
-export async function getDaemonLogs(tail = 200): Promise<string> {
-  const res = await fetchWithTimeout(`${API_BASE}/daemon/logs?tail=${tail}`)
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.text()
+  await rawRequest('DELETE', `/apps/${enc(name)}/restart-events`)
 }
 
 export async function getSystemDump(format: 'json' | 'zip' = 'json'): Promise<void> {
   const query = format === 'zip' ? '?format=zip' : ''
-  const res = await fetchWithTimeout(`${API_BASE}/system/dump${query}`, undefined, 60_000)
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  const res = await rawRequest('GET', `/system/dump${query}`, { timeout: 60_000 })
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -333,45 +316,37 @@ export async function getSystemDump(format: 'json' | 'zip' = 'json'): Promise<vo
  * is silently dropped by the WebKitGTK webview (no download handler), so the
  * desktop UI POSTs here instead: the Wails layer writes the ZIP to disk and
  * opens the containing folder (Kotlin 1.x parity), returning the saved path.
+ *
+ * Lives outside API_BASE (Wails asset-server route), hence the bespoke fetch.
  */
 export async function saveSystemDumpNative(): Promise<string> {
   const res = await fetchWithTimeout('/desktop/system-dump', { method: 'POST', headers: CSRF_HEADER }, 60_000)
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  if (!res.ok) throw await extractApiError(res)
   const data = await res.json() as { path?: string }
   return data.path ?? ''
 }
 
 export async function getVolumes(): Promise<{ name: string; path: string; size?: number }[]> {
-  return fetchJSON('/volumes')
+  return request('GET', '/volumes')
 }
 
 // Lazily compute the size of a single volume on demand (the list loads without
 // sizes because Docker /system/df is slow). Measures only this volume via `du`
 // in a utils container. Returns size in bytes (-1 if unavailable).
 export async function getVolumeSize(name: string): Promise<{ size: number }> {
-  return fetchJSON(`/volumes/${encodeURIComponent(name)}/size`)
+  return request('GET', `/volumes/${enc(name)}/size`)
 }
 
 export async function deleteVolume(name: string): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/volumes/${name}`, { method: 'DELETE', headers: CSRF_HEADER })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('DELETE', `/volumes/${enc(name)}`)
 }
 
 export async function getAppConfig(name: string): Promise<string> {
-  const res = await fetchWithTimeout(`${API_BASE}/apps/${name}/config`)
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.text()
+  return requestText('GET', `/apps/${enc(name)}/config`)
 }
 
 export async function putAppConfig(name: string, content: string): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/apps/${name}/config`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'text/yaml', ...CSRF_HEADER },
-    body: content,
-  })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('PUT', `/apps/${enc(name)}/config`, { body: content, contentType: 'text/yaml' })
 }
 
 /**
@@ -380,16 +355,11 @@ export async function putAppConfig(name: string, content: string): Promise<Actio
  * Reset button.
  */
 export async function resetAppConfig(name: string): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/apps/${name}/config/reset`, {
-    method: 'POST',
-    headers: CSRF_HEADER,
-  })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', `/apps/${enc(name)}/config/reset`)
 }
 
 export async function getAppFiles(name: string): Promise<AppFileDto[]> {
-  return fetchJSON<AppFileDto[]>(`/apps/${name}/files`)
+  return request('GET', `/apps/${enc(name)}/files`)
 }
 
 /**
@@ -400,60 +370,30 @@ export async function getAppFiles(name: string): Promise<AppFileDto[]> {
  */
 export async function resetAppFile(name: string, path: string): Promise<ActionResultDto> {
   const cleanPath = path.startsWith('./') ? path.slice(2) : path
-  const url = `${API_BASE}/apps/${name}/files/reset?path=${encodeURIComponent(cleanPath)}`
-  const res = await fetchWithTimeout(url, {
-    method: 'POST',
-    headers: CSRF_HEADER,
-  })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', `/apps/${enc(name)}/files/reset?path=${enc(cleanPath)}`)
 }
 
 export async function getAppFile(name: string, path: string): Promise<string> {
   const cleanPath = path.startsWith('./') ? path.slice(2) : path
-  const res = await fetchWithTimeout(`${API_BASE}/apps/${name}/files/${cleanPath}`)
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.text()
+  return requestText('GET', `/apps/${enc(name)}/files/${encPath(cleanPath)}`)
 }
 
 export async function putAppFile(name: string, path: string, content: string): Promise<ActionResultDto> {
   const cleanPath = path.startsWith('./') ? path.slice(2) : path
-  const res = await fetchWithTimeout(`${API_BASE}/apps/${name}/files/${cleanPath}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'text/plain', ...CSRF_HEADER },
-    body: content,
-  })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
-}
-
-export async function putAppLock(name: string, locked: boolean): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/apps/${name}/lock`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
-    body: JSON.stringify({ locked }),
-  })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('PUT', `/apps/${enc(name)}/files/${encPath(cleanPath)}`, { body: content })
 }
 
 // Phase E1: Welcome Screen
 export async function getNamespaces(): Promise<NamespaceSummaryDto[]> {
-  return fetchJSON('/namespaces')
+  return request('GET', '/namespaces')
 }
 
 export async function deleteNamespace(id: string): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/namespaces/${id}`, { method: 'DELETE', headers: CSRF_HEADER })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
-}
-
-export async function getTemplates(): Promise<TemplateDto[]> {
-  return fetchJSON('/templates')
+  return request('DELETE', `/namespaces/${enc(id)}`)
 }
 
 export async function getQuickStarts(): Promise<QuickStartDto[]> {
-  return fetchJSON('/quick-starts')
+  return request('GET', '/quick-starts')
 }
 
 // Phase E3: Namespace creation
@@ -461,23 +401,18 @@ export async function createNamespace(data: NamespaceCreateDto): Promise<ActionR
   // A snapshot triggers a synchronous server-side import (download + restore
   // into volumes) before the namespace is started, so the create response can
   // take much longer than a plain create — use a generous timeout in that case.
-  const timeoutMs = data.snapshot ? 600_000 : 30_000
-  const res = await fetchWithTimeout(`${API_BASE}/namespaces`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
-    body: JSON.stringify(data),
-  }, timeoutMs)
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', '/namespaces', { body: data, timeout: data.snapshot ? 600_000 : 30_000 })
 }
 
 export async function getBundles(): Promise<BundleInfoDto[]> {
-  return fetchJSON('/bundles')
+  return request('GET', '/bundles')
 }
 
 /**
  * Typed namespace edit form payload. Mirrors `api.NamespaceEditDto` on the
- * daemon — see internal/api/dto.go.
+ * daemon — see internal/api/dto.go. tlsEnabled / pgAdminEnabled are optional
+ * (*bool on the daemon): omitting them on PUT means "leave unchanged", only
+ * an explicit true/false applies. GET always fills both.
  */
 export interface NamespaceEditDto {
   name: string
@@ -487,12 +422,18 @@ export interface NamespaceEditDto {
   users?: string[]
   host: string
   port: number
-  tlsEnabled: boolean
-  pgAdminEnabled: boolean
+  tlsEnabled?: boolean
+  pgAdminEnabled?: boolean
 }
 
-export async function getNamespaceEdit(): Promise<NamespaceEditDto> {
-  return fetchJSON('/namespace/edit')
+/**
+ * Authoritative editable values for ONE namespace (scoped by id — works for
+ * any listed namespace, not just the active one). The bundle repo/key come
+ * back RAW: a stored "LATEST" stays "LATEST", never the display-resolved
+ * concrete version, so saving doesn't silently pin a floating ref.
+ */
+export async function getNamespaceEdit(id: string): Promise<NamespaceEditDto> {
+  return request('GET', `/namespaces/${enc(id)}/edit`)
 }
 
 /**
@@ -510,34 +451,36 @@ export interface NamespaceCreateDefaultsDto {
 }
 
 export async function getNamespaceCreateDefaults(): Promise<NamespaceCreateDefaultsDto> {
-  return fetchJSON('/namespace/create-defaults')
+  return request('GET', '/namespace/create-defaults')
 }
 
-export async function putNamespaceEdit(data: NamespaceEditDto): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/namespace/edit`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
-    body: JSON.stringify(data),
-  })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+/**
+ * Saves the edit form for ONE namespace (scoped by id). Server contract:
+ * empty authType / absent users = leave the stored value unchanged.
+ */
+export async function putNamespaceEdit(id: string, data: NamespaceEditDto): Promise<ActionResultDto> {
+  return request('PUT', `/namespaces/${enc(id)}/edit`, { body: data })
 }
 
 // Phase F1: Secrets
 export async function getSecrets(): Promise<SecretMetaDto[]> {
-  return fetchJSON('/secrets')
+  return request('GET', '/secrets')
 }
 
+// Throws ApiError so the SecretsDialog can branch on
+// `code === 'ENCRYPTION_NOT_SET_UP'` and run CreateMasterPwd before retrying.
 export async function createSecret(data: SecretCreateDto): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/secrets`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
-    body: JSON.stringify(data),
-  })
-  // Use ApiError so the SecretsDialog can branch on `code === 'ENCRYPTION_NOT_SET_UP'`
-  // and run CreateMasterPwd before retrying the save.
-  if (!res.ok) throw await extractApiError(res)
-  return res.json()
+  return request('POST', '/secrets', { body: data })
+}
+
+/**
+ * Write-only partial edit (PUT /secrets/{id}): empty/absent fields keep their
+ * stored values — an empty `value` keeps the old secret value, so the UI can
+ * edit name/scope/username without ever fetching the value. Returns the
+ * updated meta (never the value); 404 → ApiError code SECRET_NOT_FOUND.
+ */
+export async function updateSecret(id: string, data: SecretUpdateDto): Promise<SecretMetaDto> {
+  return request('PUT', `/secrets/${enc(id)}`, { body: data })
 }
 
 export interface LicenseDto {
@@ -553,72 +496,71 @@ export interface LicenseDto {
 }
 
 export async function getLicenses(): Promise<LicenseDto[]> {
-  return fetchJSON('/licenses')
+  return request('GET', '/licenses')
+}
+
+/**
+ * Effective enterprise-license summary (GET /licenses/status).
+ * `tenant` empty/absent = no license records at all (community install);
+ * `enterprise: false` with a tenant = records exist but none validates
+ * (expired) — the dashboard indicator renders that state in red/grey.
+ */
+export interface LicenseStatusDto {
+  enterprise: boolean
+  tenant?: string
+  issuedTo?: string
+  validUntil?: string
+  daysLeft: number
+  expiringSoon: boolean
+}
+
+// 404s on daemons that predate the endpoint — callers treat any failure as
+// "no license info" and hide the indicator.
+export async function getLicenseStatus(): Promise<LicenseStatusDto> {
+  return request('GET', '/licenses/status')
 }
 
 export async function createLicense(licenseJSON: string): Promise<LicenseDto> {
   // The body is raw license JSON (signed payload). We POST it through as
   // application/json so the daemon's json.Decoder consumes it directly.
-  const res = await fetchWithTimeout(`${API_BASE}/licenses`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
-    body: licenseJSON,
-  })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', '/licenses', { body: licenseJSON, contentType: 'application/json' })
 }
 
 export async function deleteLicense(id: string): Promise<void> {
-  const res = await fetchWithTimeout(`${API_BASE}/licenses/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-    headers: CSRF_HEADER,
-  })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
+  await rawRequest('DELETE', `/licenses/${enc(id)}`)
 }
 
 export async function deleteSecret(id: string): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/secrets/${id}`, { method: 'DELETE', headers: CSRF_HEADER })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('DELETE', `/secrets/${enc(id)}`)
 }
 
 export async function testSecret(id: string): Promise<ActionResultDto> {
-  return fetchJSON(`/secrets/${id}/test`)
+  return request('GET', `/secrets/${enc(id)}/test`)
 }
 
 // Phase F2: Diagnostics
 export async function getDiagnostics(): Promise<DiagnosticsDto> {
-  return fetchJSON('/diagnostics')
+  return request('GET', '/diagnostics')
 }
 
 export async function postDiagnosticsFix(): Promise<DiagFixResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/diagnostics/fix`, { method: 'POST', headers: CSRF_HEADER })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', '/diagnostics/fix')
 }
 
 // Phase F3: Snapshots
 export async function getSnapshots(): Promise<SnapshotDto[]> {
-  return fetchJSON('/snapshots')
+  return request('GET', '/snapshots')
 }
 
 export async function postExportSnapshot(name?: string): Promise<ActionResultDto> {
-  const qs = name ? `?name=${encodeURIComponent(name)}` : ''
-  const res = await fetchWithTimeout(`${API_BASE}/snapshots/export${qs}`, { method: 'POST', headers: CSRF_HEADER }, 300_000)
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  const qs = name ? `?name=${enc(name)}` : ''
+  return request('POST', `/snapshots/export${qs}`, { timeout: 300_000 })
 }
 
 export async function postImportSnapshot(file: File): Promise<ActionResultDto> {
   const formData = new FormData()
   formData.append('file', file)
-  const res = await fetchWithTimeout(`${API_BASE}/snapshots/import`, {
-    method: 'POST',
-    headers: CSRF_HEADER,
-    body: formData,
-  }, 300_000)
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', '/snapshots/import', { body: formData, timeout: 300_000 })
 }
 
 /**
@@ -629,90 +571,50 @@ export async function postImportSnapshot(file: File): Promise<ActionResultDto> {
  */
 export async function postImportSnapshotByName(name: string): Promise<ActionResultDto> {
   const filename = name.endsWith('.zip') ? name : `${name}.zip`
-  const res = await fetchWithTimeout(
-    `${API_BASE}/snapshots/import?name=${encodeURIComponent(filename)}`,
-    { method: 'POST', headers: CSRF_HEADER },
-    300_000,
-  )
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', `/snapshots/import?name=${enc(filename)}`, { timeout: 300_000 })
 }
 
 export async function getWorkspaceSnapshots(): Promise<{ id: string; name: string; url: string; size?: string }[]> {
-  return fetchJSON('/workspace/snapshots')
+  return request('GET', '/workspace/snapshots')
 }
 
 export async function postSnapshotDownload(url: string, name?: string): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/snapshots/download`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
-    body: JSON.stringify({ url, name }),
-  })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', '/snapshots/download', { body: { url, name } })
 }
 
 export async function renameSnapshot(oldName: string, newName: string): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/snapshots/${encodeURIComponent(oldName)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
-    body: JSON.stringify({ name: newName }),
-  })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('PUT', `/snapshots/${enc(oldName)}`, { body: { name: newName } })
 }
 
 export async function deleteSnapshot(name: string): Promise<ActionResultDto> {
   // Daemon expects the .zip suffix; ensure it's present (caller may pass either).
   const filename = name.endsWith('.zip') ? name : `${name}.zip`
-  const res = await fetchWithTimeout(`${API_BASE}/snapshots/${encodeURIComponent(filename)}`, {
-    method: 'DELETE',
-    headers: CSRF_HEADER,
-  })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('DELETE', `/snapshots/${enc(filename)}`)
 }
 
 // Migration
 export async function getMigrationStatus(): Promise<{ hasPendingSecrets: boolean; encrypted: boolean; locked: boolean; hasSecrets: boolean }> {
-  const res = await fetchWithTimeout(`${API_BASE}/migration/status`)
-  if (!res.ok) return { hasPendingSecrets: false, encrypted: false, locked: false, hasSecrets: false }
-  return res.json()
+  try {
+    return await request('GET', '/migration/status')
+  } catch (e) {
+    if (e instanceof ApiError) {
+      return { hasPendingSecrets: false, encrypted: false, locked: false, hasSecrets: false }
+    }
+    throw e
+  }
 }
 
 export async function submitMasterPassword(password: string): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/migration/master-password`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
-    body: JSON.stringify({ password }),
-  })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', '/migration/master-password', { body: { password } })
 }
 
 // Secrets encryption
-export async function getSecretsStatus(): Promise<{ encrypted: boolean; locked: boolean }> {
-  return fetchJSON('/secrets/status')
-}
-
 export async function unlockSecrets(password: string): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/secrets/unlock`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
-    body: JSON.stringify({ password }),
-  })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', '/secrets/unlock', { body: { password } })
 }
 
 export async function setupSecretsPassword(password: string): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/secrets/setup-password`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
-    body: JSON.stringify({ password }),
-  })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', '/secrets/setup-password', { body: { password } })
 }
 
 /**
@@ -720,12 +622,7 @@ export async function setupSecretsPassword(password: string): Promise<ActionResu
  * AskMasterPassword "Reset Master Password and Drop All Secrets" flow.
  */
 export async function resetSecrets(): Promise<ActionResultDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/secrets/reset`, {
-    method: 'POST',
-    headers: CSRF_HEADER,
-  })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', '/secrets/reset')
 }
 
 export async function openExternal(url: string): Promise<void> {
@@ -827,25 +724,17 @@ export async function hasDesktopWindowManager(): Promise<boolean> {
 // --- Desktop auto-update (desktop-only — 404 in server mode) ---
 
 export async function getUpdateStatus(): Promise<UpdateStatusDto> {
-  return fetchJSON('/desktop/update/status')
+  return request('GET', '/desktop/update/status')
 }
 
 export async function checkUpdate(): Promise<UpdateStatusDto> {
-  const res = await fetchWithTimeout(`${API_BASE}/desktop/update/check`, { method: 'POST', headers: CSRF_HEADER })
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', '/desktop/update/check')
 }
 
 export async function getUpdateChangelog(locale: string): Promise<ReleaseNoteDto[]> {
-  return fetchJSON(`/desktop/update/changelog?locale=${encodeURIComponent(locale)}`)
+  return request('GET', `/desktop/update/changelog?locale=${enc(locale)}`)
 }
 
 export async function applyUpdate(): Promise<{ applying: boolean; version: string }> {
-  const res = await fetchWithTimeout(
-    `${API_BASE}/desktop/update/apply`,
-    { method: 'POST', headers: CSRF_HEADER },
-    120_000,
-  )
-  if (!res.ok) throw new Error(await extractErrorMessage(res))
-  return res.json()
+  return request('POST', '/desktop/update/apply', { timeout: 120_000 })
 }

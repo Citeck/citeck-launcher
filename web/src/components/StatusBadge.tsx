@@ -1,4 +1,4 @@
-import { t } from '../lib/i18n'
+import { tDynamic } from '../lib/i18n'
 
 interface StatusBadgeProps {
   status: string
@@ -37,7 +37,9 @@ const PULSE_DOT = new Set(['STARTING', 'PULLING', 'DEPS_WAITING', 'STOPPING', 'U
 
 export function StatusBadge({ status, variant = 'pill' }: StatusBadgeProps) {
   const color = statusColor[status] ?? C_STOPPED
-  const label = t('status.' + status)
+  // Runtime-assembled key from the daemon's status string — sanctioned
+  // tDynamic escape hatch (unknown statuses render as the raw key).
+  const label = tDynamic('status.' + status)
   const pulse = PULSE_DOT.has(status) ? 'animate-pulse' : ''
   if (variant === 'indicator') {
     return (

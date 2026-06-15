@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { getAppInspect, postAppRestart } from '../lib/api'
 import type { AppInspectDto } from '../lib/types'
 import { useDashboardStore } from '../lib/store'
+import { initProgressOf } from '../lib/initProgress'
 import { openSecondaryView } from '../lib/desktop'
 import { formatDateTime } from '../lib/datetime'
 import { RegistryCredentialsDialog } from './RegistryCredentialsDialog'
@@ -30,6 +31,7 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
   const [credsDialogOpen, setCredsDialogOpen] = useState(false)
   const nsApps = useDashboardStore((s) => s.namespace?.apps)
   const appMeta = nsApps?.find((a) => a.name === appName)
+  const initProg = appMeta ? initProgressOf(appMeta) : null
   const { t } = useTranslation()
 
   const load = useCallback(() => {
@@ -75,6 +77,14 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
 
   return (
     <div className="space-y-3">
+      {/* Init-container progress while STARTING — long eapps starts run a chain
+          of init steps; "Init 2/5: ecos-app-x" tells the user which one is live. */}
+      {initProg && (
+        <div className="text-[11px] text-muted-foreground">
+          {t('drawer.initStep', { step: initProg.step, total: initProg.total, name: initProg.name })}
+        </div>
+      )}
+
       {/* Status badge already shown in the drawer header (subtitle); here we
           only surface statusText (e.g. failure detail), when present. */}
       {appMeta?.statusText && (

@@ -3,6 +3,7 @@ import { ChevronDown, Loader2, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-re
 import { Modal, ModalField } from './Modal'
 import { Select } from './Select'
 import {
+  ApiError,
   activateWorkspace,
   createWorkspace,
   deleteWorkspace,
@@ -11,6 +12,9 @@ import {
   updateWorkspace,
 } from '../lib/api'
 import type { WorkspaceCreateDto, WorkspaceDto, WorkspaceUpdateDto } from '../lib/types'
+import { SecretPicker } from './SecretPicker'
+import { GitPullErrorDialog } from './GitPullErrorDialog'
+import { extractHost, isAuthShapedGitError } from '../lib/giturl'
 import { useTranslation } from '../lib/i18n'
 import { useIsDesktop } from '../lib/daemonStatus'
 import { toast } from '../lib/toast'
@@ -45,6 +49,11 @@ export function WorkspaceSelector({ activeId, onChanged }: WorkspaceSelectorProp
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [deleteError, setDeleteError] = useState('')
   const [forceUpdating, setForceUpdating] = useState(false)
+  // Workspace-switch git failure (WS_REPO_SYNC_FAILED / auth-shaped): the
+  // daemon stays on the previous workspace, so surface the actionable
+  // GitPullErrorDialog targeting the FAILED workspace — its token section
+  // lets the user fix/replace the secret and retry the switch in place.
+  const [gitError, setGitError] = useState<{ ws: WorkspaceDto; message: string } | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
   const refresh = useCallback(async () => {
@@ -101,11 +110,19 @@ export function WorkspaceSelector({ activeId, onChanged }: WorkspaceSelectorProp
       await refresh()
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e))
-      showError({
-        title: t('welcome.workspace.label'),
-        message: t('welcome.workspace.switchFailed', { error: err.message }),
-        details: err.stack,
-      })
+      const code = e instanceof ApiError ? e.code : ''
+      // Repo-sync / auth failures get the actionable git dialog (fix the
+      // token and retry); anything else keeps the generic error modal.
+      if (code === 'WS_REPO_SYNC_FAILED' || isAuthShapedGitError(err.message)) {
+        setOpen(false)
+        setGitError({ ws, message: err.message })
+      } else {
+        showError({
+          title: t('welcome.workspace.label'),
+          message: t('welcome.workspace.switchFailed', { error: err.message }),
+          details: err.stack,
+        })
+      }
     } finally {
       setLoading(false)
     }
@@ -255,6 +272,25 @@ export function WorkspaceSelector({ activeId, onChanged }: WorkspaceSelectorProp
         onConfirm={handleDelete}
         onCancel={() => { setDeleteTarget(null); setDeleteError('') }}
       />
+
+      {/* Workspace-switch repo failure: actionable git dialog bound to the
+          TARGET workspace (the daemon reverted to the previous one). Retry
+          re-attempts the activation after the token section's fixes. */}
+      {gitError && (
+        <GitPullErrorDialog
+          open
+          repoUrl={gitError.ws.repoUrl}
+          errorMessage={gitError.message}
+          skipAvailable={false}
+          cancelAvailable
+          workspaceId={gitError.ws.id}
+          onDecide={(d) => {
+            const target = gitError.ws
+            setGitError(null)
+            if (d === 'retry') void handleActivate(target)
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -277,6 +313,11 @@ function WorkspaceFormDialog({ mode, onClose, onSaved }: WorkspaceFormDialogProp
   const [repoBranch, setRepoBranch] = useState(existing?.repoBranch ?? 'main')
   const [repoPullPeriod, setRepoPullPeriod] = useState(existing?.repoPullPeriod ?? 'PT2H')
   const [authType, setAuthType] = useState<'NONE' | 'TOKEN'>((existing?.authType as 'NONE' | 'TOKEN') ?? 'NONE')
+  // Token-secret picker (authType=TOKEN). Edit mode preselects the currently
+  // linked secret; the token value itself is write-only and never shown.
+  // Create-new happens inside the picker's own modal — by submit time the
+  // secret already exists and `secretId` is its id.
+  const [secretId, setSecretId] = useState(existing?.secretId ?? '')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -284,6 +325,13 @@ function WorkspaceFormDialog({ mode, onClose, onSaved }: WorkspaceFormDialogProp
     e.preventDefault()
     if (!name.trim() || !repoUrl.trim()) {
       setError(t('welcome.workspace.form.required'))
+      return
+    }
+    // A NEW workspace with TOKEN auth needs a secret up front. Edit mode
+    // tolerates no selection — absent secretId means "unchanged", which
+    // keeps the legacy ws:<id>:repo secret lookup working.
+    if (authType === 'TOKEN' && !isEdit && !secretId) {
+      setError(t('welcome.workspace.form.tokenRequired'))
       return
     }
     setBusy(true)
@@ -297,6 +345,14 @@ function WorkspaceFormDialog({ mode, onClose, onSaved }: WorkspaceFormDialogProp
           repoPullPeriod: repoPullPeriod.trim() || undefined,
           authType,
         }
+        if (authType === 'TOKEN') {
+          // Absent field = unchanged (legacy ws:<id>:repo secrets keep
+          // working when the user didn't touch the picker).
+          if (secretId) update.secretId = secretId
+        } else {
+          // Switching to NONE unlinks the secret ('' = explicit unlink).
+          update.secretId = ''
+        }
         await updateWorkspace(existing!.id, update)
       } else {
         const create: WorkspaceCreateDto = {
@@ -306,6 +362,7 @@ function WorkspaceFormDialog({ mode, onClose, onSaved }: WorkspaceFormDialogProp
           repoPullPeriod: repoPullPeriod.trim() || undefined,
           authType,
         }
+        if (authType === 'TOKEN' && secretId) create.secretId = secretId
         await createWorkspace(create)
       }
       onSaved()
@@ -394,9 +451,12 @@ function WorkspaceFormDialog({ mode, onClose, onSaved }: WorkspaceFormDialogProp
         />
       </ModalField>
       {authType === 'TOKEN' && (
-        <p className="text-xs text-muted-foreground">
-          {t('welcome.workspace.form.authTypeTokenHint', { key: `ws:${existing?.id ?? '{id}'}:repo` })}
-        </p>
+        <SecretPicker
+          value={secretId}
+          onChange={setSecretId}
+          defaultNewName={extractHost(repoUrl)}
+          disabled={busy}
+        />
       )}
       {error && (
         <div className="rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">
