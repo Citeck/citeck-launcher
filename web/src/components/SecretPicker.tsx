@@ -117,6 +117,9 @@ export function SecretPicker({
   }, [])
 
   useEffect(() => {
+    // reload() only sets state AFTER an awaited fetch — not a synchronous
+    // set-in-effect, so the cascading-render heuristic is a false positive.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void reload()
     // Best-effort: 404 in server mode resolves to []; ignore other failures.
     listWorkspaces().then(setWorkspaces).catch(() => {})
