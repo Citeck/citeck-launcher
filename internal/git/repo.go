@@ -526,13 +526,13 @@ func reclone(ctx context.Context, opts RepoOpts, cause error) error {
 	return nil
 }
 
-// IsAuthError reports whether an error is caused by a git authentication /
-// authorization failure (401/403). Exported so callers outside this package
-// (bundle resolver, daemon workspace handlers) classify workspace-repo sync
-// failures consistently with the pull/reclone logic here — the same
-// "authentication required" / "unauthorized" wording the Web UI's
-// isGitPullError heuristic matches on.
-func IsAuthError(err error) bool {
+// isAuthError reports whether an error is caused by a git authentication /
+// authorization failure (401/403). Used by the pull/reclone retry logic to
+// stop retrying on bad credentials. Workspace-repo sync failures propagate
+// their go-git wording verbatim (%w) instead — the bundle resolver and daemon
+// workspace handlers keep the "authentication required" / "unauthorized" text
+// so the Web UI's isGitPullError heuristic can match on it.
+func isAuthError(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -543,7 +543,3 @@ func IsAuthError(err error) bool {
 	errStr := strings.ToLower(err.Error())
 	return strings.Contains(errStr, "unauthorized") || strings.Contains(errStr, "authentication")
 }
-
-// isAuthError is the internal alias kept so the pull/reclone call sites read
-// unchanged; new code should use the exported IsAuthError.
-func isAuthError(err error) bool { return IsAuthError(err) }

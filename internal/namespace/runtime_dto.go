@@ -148,6 +148,9 @@ func (r *Runtime) StartableAppImages() []string {
 		if r.manualStoppedApps[app.Name] {
 			continue // detached — not pulled/started
 		}
+		if app.markedForRemoval {
+			continue // being GC'd — won't be pulled/started
+		}
 		img := app.Def.Image
 		if img == "" {
 			continue

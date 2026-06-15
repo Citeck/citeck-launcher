@@ -380,10 +380,14 @@ func (s *SQLiteStore) SaveWorkspace(ws WorkspaceDto) error {
 	return nil
 }
 
-// DeleteWorkspace removes a workspace by ID.
+// DeleteWorkspace removes a workspace by ID, along with its workspace-owned
+// registry bindings (the junction table has no FK cascade).
 func (s *SQLiteStore) DeleteWorkspace(id string) error {
 	if _, err := s.db.Exec("DELETE FROM workspaces WHERE id = ?", id); err != nil {
 		return fmt.Errorf("delete workspace %s: %w", id, err)
+	}
+	if _, err := s.db.Exec("DELETE FROM registry_bindings WHERE ws_id = ?", id); err != nil {
+		return fmt.Errorf("delete workspace %s registry bindings: %w", id, err)
 	}
 	return nil
 }

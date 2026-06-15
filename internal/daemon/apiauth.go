@@ -182,5 +182,8 @@ func (d *Daemon) handleAuthSession(w http.ResponseWriter, r *http.Request) {
 		Secure:   r.TLS != nil,
 		MaxAge:   int(sessionTTL.Seconds()),
 	})
+	// The request URL carries the raw token; keep it out of the browser cache
+	// (and thus history/Referer) so only the revocable session cookie persists.
+	w.Header().Set("Cache-Control", "no-store")
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

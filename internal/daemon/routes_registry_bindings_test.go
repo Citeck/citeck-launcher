@@ -91,6 +91,11 @@ func TestMissingRegistryAuthEndpoint(t *testing.T) {
 	}))
 	require.NoError(t, store.SetRegistryBinding("ws1", "enterprise-registry.citeck.ru", "reg"))
 	assert.Empty(t, missing())
+
+	// Remove the binding → the host re-appears (discriminates a handler that
+	// always returns empty from one that actually re-checks resolvability).
+	require.NoError(t, store.SetRegistryBinding("ws1", "enterprise-registry.citeck.ru", ""))
+	assert.Equal(t, []string{"enterprise-registry.citeck.ru"}, missing())
 }
 
 func TestImageRegistryHost(t *testing.T) {
