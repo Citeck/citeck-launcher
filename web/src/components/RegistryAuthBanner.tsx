@@ -12,10 +12,16 @@ import { RegistryCredentialsDialog } from './RegistryCredentialsDialog'
  * credentials dialog once per host — so the failure is never silent (the old
  * behaviour just stalled the namespace with a tiny inline table button).
  *
- * Anti-nag: the reconciler keeps retrying and re-emitting the event, so a host
- * the user dismissed is remembered and not re-opened until its apps recover
- * (the host drops out of pullAuthRequired), at which point a fresh failure
- * auto-opens again.
+ * Anti-nag / stability: `pullAuthRequired` is noisy — every reconciler retry
+ * (and the server-side retry triggered when a secret is created) briefly clears
+ * a host's marker as its app leaves PULL_FAILED, then re-adds it when the pull
+ * fails again. So:
+ *   - The DIALOG's lifetime is driven by `openHost` (component state), NOT by
+ *     the current host set — otherwise it (and the nested "create secret"
+ *     modal) would unmount mid-edit whenever the marker blinks. This was the
+ *     cause of the dialog closing on focus-switch / on secret create.
+ *   - Each host AUTO-opens at most once (handledRef); re-access after that is
+ *     via the persistent banner, so a blinking marker never re-pops the dialog.
  */
 export function RegistryAuthBanner() {
   const pullAuthRequired = useDashboardStore((s) => s.pullAuthRequired)
@@ -29,31 +35,21 @@ export function RegistryAuthBanner() {
   )
 
   const [openHost, setOpenHost] = useState<string | null>(null)
-  // Hosts the user dismissed without saving — don't auto-reopen for them.
-  const dismissedRef = useRef<Set<string>>(new Set())
+  // Hosts already auto-opened — never auto-open the same host twice (the marker
+  // blinks on every retry; re-access is via the banner button).
+  const handledRef = useRef<Set<string>>(new Set())
 
-  // Forget dismissals for hosts that no longer need credentials, so a later
-  // failure on the same host auto-opens again.
-  useEffect(() => {
-    const active = new Set(hosts)
-    for (const h of dismissedRef.current) {
-      if (!active.has(h)) dismissedRef.current.delete(h)
-    }
-  }, [hosts])
-
-  // Auto-open the dialog for the first not-yet-dismissed host.
+  // Auto-open the dialog once for the first not-yet-handled host.
   useEffect(() => {
     if (openHost) return
-    const next = hosts.find((h) => !dismissedRef.current.has(h))
+    const next = hosts.find((h) => !handledRef.current.has(h))
     if (next) {
+      handledRef.current.add(next)
       setOpenHost(next)
     }
   }, [hosts, openHost])
 
-  if (hosts.length === 0) return null
-
   function dismiss() {
-    if (openHost) dismissedRef.current.add(openHost)
     setOpenHost(null)
   }
 
@@ -61,13 +57,11 @@ export function RegistryAuthBanner() {
     const host = openHost
     setOpenHost(null)
     if (host) {
-      // The daemon already retried pull-failed apps when the binding was
-      // saved; clear the per-app markers for this host and forget the
-      // dismissal so the banner reflects the new state.
+      // The daemon already retried pull-failed apps when the binding was saved;
+      // clear the per-app markers for this host so the banner reflects it.
       for (const [app, h] of Object.entries(pullAuthRequired)) {
         if (h === host) clearPullAuthRequired(app)
       }
-      dismissedRef.current.delete(host)
     }
     try {
       await postAppsRetryPullFailed()
@@ -78,22 +72,26 @@ export function RegistryAuthBanner() {
 
   return (
     <>
-      <div
-        role="alert"
-        className="flex shrink-0 items-center gap-2 border-b border-amber-500/40 bg-amber-500/15 px-3 py-1.5 text-xs text-amber-600 dark:text-amber-400"
-      >
-        <KeyRound size={14} className="shrink-0" />
-        <span className="min-w-0 flex-1 truncate" title={hosts.join(', ')}>
-          {t('dashboard.registryAuth.message', { hosts: hosts.join(', ') })}
-        </span>
-        <button
-          type="button"
-          className="shrink-0 rounded border border-amber-500/40 px-2 py-0.5 font-medium hover:bg-amber-500/20"
-          onClick={() => setOpenHost(hosts[0])}
+      {hosts.length > 0 && (
+        <div
+          role="alert"
+          className="flex shrink-0 items-center gap-2 border-b border-amber-500/40 bg-amber-500/15 px-3 py-1.5 text-xs text-amber-600 dark:text-amber-400"
         >
-          {t('dashboard.registryAuth.action')}
-        </button>
-      </div>
+          <KeyRound size={14} className="shrink-0" />
+          <span className="min-w-0 flex-1 truncate" title={hosts.join(', ')}>
+            {t('dashboard.registryAuth.message', { hosts: hosts.join(', ') })}
+          </span>
+          <button
+            type="button"
+            className="shrink-0 rounded border border-amber-500/40 px-2 py-0.5 font-medium hover:bg-amber-500/20"
+            onClick={() => setOpenHost(hosts[0])}
+          >
+            {t('dashboard.registryAuth.action')}
+          </button>
+        </div>
+      )}
+      {/* Driven by openHost (not hosts) so a blinking marker can't unmount the
+          dialog or its nested create-secret modal while the user is editing. */}
       <RegistryCredentialsDialog
         open={!!openHost}
         host={openHost ?? ''}
