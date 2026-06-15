@@ -206,4 +206,25 @@ describe('useDashboardStore', () => {
 
     useDashboardStore.getState().stopEventStream()
   })
+
+  it('pull_auth_required records the host; leaving PULL_FAILED clears the marker', () => {
+    useDashboardStore.setState({ pullAuthRequired: {} })
+    useDashboardStore.getState().startEventStream()
+    const onEvent = mockedConnectEvents.mock.calls[0][0]
+    const base: EventDto = { type: '', seq: 0, timestamp: 0, namespaceId: '', appName: '', before: '', after: '' }
+
+    // Pull auth failure carries the registry host in `after`.
+    onEvent({ ...base, type: 'pull_auth_required', seq: 1, appName: 'emodel', after: 'harbor.citeck.ru' })
+    expect(useDashboardStore.getState().pullAuthRequired).toEqual({ emodel: 'harbor.citeck.ru' })
+
+    // An event without a host is ignored (no empty marker).
+    onEvent({ ...base, type: 'pull_auth_required', seq: 2, appName: 'gateway', after: '' })
+    expect(useDashboardStore.getState().pullAuthRequired).toEqual({ emodel: 'harbor.citeck.ru' })
+
+    // Leaving PULL_FAILED drops only that app's marker.
+    onEvent({ ...base, type: 'app_status', seq: 3, appName: 'emodel', before: 'PULL_FAILED', after: 'PULLING' })
+    expect(useDashboardStore.getState().pullAuthRequired).toEqual({})
+
+    useDashboardStore.getState().stopEventStream()
+  })
 })

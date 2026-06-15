@@ -11,6 +11,7 @@ import {
   deleteSecret,
   type NamespaceEditDto,
 } from './api'
+import { useAuthGateStore } from './authGate'
 
 /** Minimal Response stand-in for the fetch stub. */
 function jsonResponse(body: unknown, status = 200, statusText = 'OK'): Response {
@@ -148,6 +149,25 @@ describe('api request core (rawRequest/request via public helpers)', () => {
     expect(apiErr.message).toBe('Bad Gateway')
     expect(apiErr.code).toBe('')
     expect(apiErr.status).toBe(502)
+  })
+
+  it('401 AUTH_REQUIRED raises the auth gate and still throws to the caller', async () => {
+    useAuthGateStore.setState({ required: false })
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ message: 'auth required', code: 'AUTH_REQUIRED' }, 401, 'Unauthorized'),
+    )
+    const err = await getNamespace().catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).status).toBe(401)
+    expect((err as ApiError).code).toBe('AUTH_REQUIRED')
+    expect(useAuthGateStore.getState().required).toBe(true)
+  })
+
+  it('a non-AUTH_REQUIRED 401 does not raise the auth gate', async () => {
+    useAuthGateStore.setState({ required: false })
+    fetchMock.mockResolvedValueOnce(jsonResponse({ message: 'nope', code: 'OTHER' }, 401, 'Unauthorized'))
+    await getNamespace().catch(() => undefined)
+    expect(useAuthGateStore.getState().required).toBe(false)
   })
 
   it('namespace edit endpoints are scoped by namespace id', async () => {
