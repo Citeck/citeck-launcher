@@ -56,12 +56,18 @@ export function useRegistryPreflight() {
   function handleSaved() {
     // Re-check: the just-bound host should drop out. Continue with whatever is
     // still missing, or run the pending action when nothing remains.
+    const action = pendingAction.current
     getMissingRegistryAuth()
       .then((missing) => {
+        // Bail if the flow was cancelled (or superseded) while the re-check was
+        // in flight — otherwise setQueue would re-open the dismissed dialog.
+        if (pendingAction.current !== action) return
         if (missing.length === 0) runPending()
         else setQueue(missing)
       })
-      .catch(() => runPending()) // can't re-check — don't trap the user
+      .catch(() => {
+        if (pendingAction.current === action) runPending()
+      }) // can't re-check — don't trap the user
   }
 
   function handleCancel() {

@@ -9,9 +9,6 @@ interface RegistryCredentialsDialogProps {
   open: boolean
   /** Docker registry hostname (the part before the first '/' in the image URL). */
   host: string
-  /** App that prompted the dialog — retained for API compatibility; the daemon
-   *  retries all pull-failed apps when the binding is saved, so it is unused. */
-  retryApp?: string
   /** Called only on a successful save (never on cancel). The parent is
    *  responsible for closing the dialog — this lets a save be told apart from
    *  a cancel (onClose). */

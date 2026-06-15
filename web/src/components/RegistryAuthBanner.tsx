@@ -38,6 +38,9 @@ export function RegistryAuthBanner() {
   // Hosts already auto-opened — never auto-open the same host twice (the marker
   // blinks on every retry; re-access is via the banner button).
   const handledRef = useRef<Set<string>>(new Set())
+  // Rotates through the failing hosts on repeated banner-button clicks so every
+  // host is reachable (auto-open fires once per host).
+  const cursorRef = useRef(0)
 
   // Auto-open the dialog once for the first not-yet-handled host.
   useEffect(() => {
@@ -84,7 +87,16 @@ export function RegistryAuthBanner() {
           <button
             type="button"
             className="shrink-0 rounded border border-amber-500/40 px-2 py-0.5 font-medium hover:bg-amber-500/20"
-            onClick={() => setOpenHost(hosts[0])}
+            // Step through all failing hosts on repeated clicks (auto-open only
+            // fires once per host, so pinning to hosts[0] would strand the
+            // rest). Mark the chosen host handled so dismissing it doesn't
+            // immediately re-pop via the auto-open effect (anti-nag).
+            onClick={() => {
+              const host = hosts[cursorRef.current % hosts.length]
+              cursorRef.current += 1
+              handledRef.current.add(host)
+              setOpenHost(host)
+            }}
           >
             {t('dashboard.registryAuth.action')}
           </button>

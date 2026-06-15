@@ -181,7 +181,6 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
       <RegistryCredentialsDialog
         open={credsDialogOpen}
         host={registryHostOf(appMeta?.image) || ''}
-        retryApp={appName}
         onClose={() => setCredsDialogOpen(false)}
       />
     </div>

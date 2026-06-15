@@ -107,6 +107,16 @@ export function SecretPicker({
   // When a host filter is active, show only secrets tagged with it; this
   // toggle reveals the rest so a credential from another host can be reused.
   const [showAllHosts, setShowAllHosts] = useState(false)
+  // Reset the escape when the host changes: the picker stays mounted across
+  // dialog opens (Modal keeps children in the DOM), so without this a "show
+  // all" from a previous host would silently bypass the next host's filter.
+  // Adjusting state during render is React's recommended alternative to a
+  // reset effect (https://react.dev/learn/you-might-not-need-an-effect).
+  const [prevHost, setPrevHost] = useState(host)
+  if (host !== prevHost) {
+    setPrevHost(host)
+    setShowAllHosts(false)
+  }
 
   // Internal edit/delete dialogs (edit is delegated via onEditRequest when set).
   const [editTarget, setEditTarget] = useState<SecretMetaDto | null>(null)
