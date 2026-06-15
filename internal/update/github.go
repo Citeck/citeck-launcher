@@ -116,6 +116,11 @@ func (c *client) downloadFile(ctx context.Context, srcURL, dst string) error {
 		return fmt.Errorf("download %s: %w", srcURL, err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		// errNotFound lets callers distinguish a genuinely-absent asset (e.g. a
+		// release published without its ".sig" sidecar) from transport errors.
+		return fmt.Errorf("download %s: %w", srcURL, errNotFound)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("download %s: status %d", srcURL, resp.StatusCode)
 	}

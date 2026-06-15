@@ -12,7 +12,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/docker"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
 )
 
 func (r *Runtime) waitForStartup(ctx context.Context, _, containerID string, conditions []appdef.StartupCondition) error {

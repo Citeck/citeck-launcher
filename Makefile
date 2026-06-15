@@ -26,7 +26,7 @@ endif
 GOLANGCI_LINT=$(GOBIN)/golangci-lint
 
 .PHONY: all build build-fast build-web build-desktop run test test-unit test-race test-coverage \
-        lint fmt tidy tools clean help dev-daemon dev-desktop web-deps \
+        test-e2e lint fmt tidy tools clean help dev-daemon dev-desktop web-deps deadcode \
         release-server release-desktop-linux release-desktop-windows release-desktop-macos
 
 all: test build
@@ -41,7 +41,9 @@ help:
 	@echo "  make test-unit      - Go unit tests only (./internal/...)"
 	@echo "  make test-race      - Go tests with race detector + timeout"
 	@echo "  make test-coverage  - Go tests with coverage report"
+	@echo "  make test-e2e       - Web UI Playwright e2e (needs a running daemon, see target)"
 	@echo "  make lint           - Run Go + Web linters"
+	@echo "  make deadcode       - Dead-code analysis vs scripts/ci/deadcode-allowlist.txt"
 	@echo "  make fmt            - Format Go code"
 	@echo "  make tidy           - Tidy Go modules"
 	@echo "  make tools          - Install dev tools (golangci-lint)"
@@ -107,9 +109,23 @@ test-coverage:
 test-integration:
 	go test -tags=integration ./tests/...
 
+# Web UI end-to-end tests (Playwright, web/tests/). PREREQUISITE: a daemon
+# serving the web UI at http://127.0.0.1:7088 must already be running (see
+# web/playwright.config.ts baseURL), e.g.:
+#   dist/bin/citeck-server start --foreground   # with daemon.yml port 7088
+# Browser binaries: cd web && pnpm exec playwright install chromium
+# CI does not run this target yet (no daemon harness — backlog).
+test-e2e: web-deps
+	cd web && pnpm run test:e2e
+
 lint:
 	$(GOLANGCI_LINT) run ./...
 	cd web && pnpm lint
+
+# Same gate CI runs (see .github/workflows/test.yml): fails on any unreachable
+# function not in scripts/ci/deadcode-allowlist.txt.
+deadcode:
+	bash scripts/ci/deadcode.sh
 
 fmt:
 	go fmt ./...

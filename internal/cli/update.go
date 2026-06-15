@@ -9,6 +9,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -106,7 +107,7 @@ func runUpdateFromFile(zipPath string) error {
 		return fmt.Errorf("create directory: %w", err)
 	}
 
-	count, err := extractZip(zipPath, destDir)
+	count, err := fsutil.ExtractZip(zipPath, destDir, fsutil.WithStripSingleRootDir())
 	if err != nil {
 		return fmt.Errorf("extract zip: %w", err)
 	}

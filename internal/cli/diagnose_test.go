@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/citeck/citeck-launcher/internal/api"
-	dockercontainer "github.com/docker/docker/api/types/container"
+	dockercontainer "github.com/moby/moby/api/types/container"
 )
 
 func TestIsFailedAppStatus(t *testing.T) {
@@ -101,8 +101,11 @@ func TestHasHint(t *testing.T) {
 	if hasHint([]diagnoseCheck{{Status: "error"}}) {
 		t.Error("empty hints should return false")
 	}
-	if !hasHint([]diagnoseCheck{{Status: "error"}, {Status: "warning", FixHint: "x"}}) {
-		t.Error("expected true when at least one hint present")
+	if !hasHint([]diagnoseCheck{{Status: "error"}, {Status: "warning", FixHint: troubleshootingRef}}) {
+		t.Error("expected true when at least one troubleshooting-doc hint present")
+	}
+	if hasHint([]diagnoseCheck{{Status: "error", FixHint: "self-contained recommendation"}}) {
+		t.Error("non-troubleshooting hints (e.g. --secrets cleanup advice) must not trigger the doc pointer")
 	}
 	if hasHint([]diagnoseCheck{{FixHint: "   "}}) {
 		t.Error("whitespace-only hint should not count")
@@ -154,21 +157,21 @@ func TestMatchPortOwners(t *testing.T) {
 	containers := []dockercontainer.Summary{
 		{
 			Names: []string{"/citeck_proxy_default"},
-			Ports: []dockercontainer.Port{
+			Ports: []dockercontainer.PortSummary{
 				{PublicPort: 443, PrivatePort: 443, Type: "tcp"},
 				{PublicPort: 80, PrivatePort: 80, Type: "tcp"},
 			},
 		},
 		{
 			Names: []string{"/citeck_rabbitmq_default"},
-			Ports: []dockercontainer.Port{
+			Ports: []dockercontainer.PortSummary{
 				{PublicPort: 15672, PrivatePort: 15672, Type: "tcp"},
 			},
 		},
 		{
 			// Container exposes port internally but does not publish to host.
 			Names: []string{"/citeck_gateway_default"},
-			Ports: []dockercontainer.Port{
+			Ports: []dockercontainer.PortSummary{
 				{PublicPort: 0, PrivatePort: 8094, Type: "tcp"},
 			},
 		},
@@ -202,7 +205,7 @@ func TestMatchPortOwners_IgnoresUnpublished(t *testing.T) {
 	containers := []dockercontainer.Summary{
 		{
 			Names: []string{"/citeck_eapps_default"},
-			Ports: []dockercontainer.Port{
+			Ports: []dockercontainer.PortSummary{
 				{PublicPort: 0, PrivatePort: 443, Type: "tcp"},
 			},
 		},

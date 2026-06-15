@@ -195,6 +195,73 @@ func TestInitContainerSequence(t *testing.T) {
 		"main container must be created after last init (T12), got order=%v", order)
 }
 
+// TestInitStepEvents pins the `app_init_step` SSE contract: the runtime emits
+// one event per init-step-index change — a T11 advance (Current=2, Total=2,
+// After=short name of the now-running init image) and a T12 phase-done clear
+// (all progress fields zeroed) — and nothing else. Step 1/N intentionally has
+// no dedicated event (the STARTING app_status transition already refreshes
+// the UI, and the AppDto carries init 1/N from that moment).
+func TestInitStepEvents(t *testing.T) {
+	md := newMockDocker()
+	r := NewRuntime(testConfig(), md, t.TempDir())
+	defer r.Shutdown()
+
+	var (
+		mu     sync.Mutex
+		events []api.EventDto
+	)
+	r.SetEventCallback(func(evt api.EventDto) {
+		if evt.Type != "app_init_step" {
+			return
+		}
+		mu.Lock()
+		events = append(events, evt)
+		mu.Unlock()
+	})
+
+	def := simpleApp("web", "web:1")
+	def.InitContainers = []appdef.InitContainerDef{
+		{Image: "registry.citeck.ru/citeck/init-a:1"},
+		{Image: "init-b:1"},
+	}
+	r.Start([]appdef.ApplicationDef{def})
+
+	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
+		t.Fatalf("app did not reach RUNNING")
+	}
+
+	// Events flow eventBuffer → eventCh → dispatchLoop callback; give the
+	// async drain a moment after RUNNING was observed.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(events)
+		mu.Unlock()
+		if n >= 2 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	mu.Lock()
+	got := append([]api.EventDto(nil), events...)
+	mu.Unlock()
+
+	require.Len(t, got, 2, "exactly one event per step-index change (T11 advance + T12 clear), got %+v", got)
+
+	// T11: advanced to init step 2 of 2 — After names the now-running step.
+	assert.Equal(t, "web", got[0].AppName)
+	assert.Equal(t, 2, got[0].Current)
+	assert.Equal(t, 2, got[0].Total)
+	assert.Equal(t, "init-b", got[0].After)
+
+	// T12: init phase done — zeroed fields tell the UI to clear the suffix.
+	assert.Equal(t, "web", got[1].AppName)
+	assert.Zero(t, got[1].Current)
+	assert.Zero(t, got[1].Total)
+	assert.Empty(t, got[1].After)
+}
+
 // TestDepsWaitThenStart pins the T7→T8→T9 path: an app B that depends on A
 // must transition through DEPS_WAITING when started before A is RUNNING, and
 // then advance to RUNNING after A becomes RUNNING. Captures app_status events

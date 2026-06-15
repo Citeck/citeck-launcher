@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/license"
 )
 
@@ -64,6 +65,47 @@ func (d *Daemon) handleListLicenses(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, out)
 }
 
+// expiringSoonDays is the window within which a still-valid license is
+// flagged ExpiringSoon (amber badge in the UI, hint in the CLI).
+const expiringSoonDays = 14
+
+// handleLicenseStatus implements GET /api/v1/licenses/status — the compact
+// effective-license summary for status surfaces (CLI `citeck status` line,
+// dashboard indicator).
+//
+// A dedicated endpoint (rather than extending the namespace or daemon-status
+// DTOs) is deliberate: licenses are workspace-global, not namespace state,
+// and daemon-status is polled by the desktop wrapper on a hot path where a
+// locked secret store must not inject errors. A read-only sibling of the
+// existing /licenses collection keeps the blast radius zero for existing
+// clients — older CLIs never call it, newer CLIs treat a 404 from older
+// daemons as "no license info" and omit the line.
+func (d *Daemon) handleLicenseStatus(w http.ResponseWriter, _ *http.Request) {
+	if d.licenses == nil {
+		writeJSON(w, api.LicenseStatusDto{})
+		return
+	}
+	st, err := d.licenses.Status()
+	if err != nil {
+		// Locked secret store and the like — same surfacing rule as
+		// handleListLicenses (don't silently pretend "community").
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, licenseStatusToDTO(st))
+}
+
+func licenseStatusToDTO(st license.StatusSummary) api.LicenseStatusDto {
+	return api.LicenseStatusDto{
+		Enterprise:   st.Enterprise,
+		Tenant:       st.Tenant,
+		IssuedTo:     st.IssuedTo,
+		ValidUntil:   formatLicenseDate(st.ValidUntil),
+		DaysLeft:     st.DaysLeft,
+		ExpiringSoon: st.Enterprise && st.DaysLeft <= expiringSoonDays,
+	}
+}
+
 func (d *Daemon) handleCreateLicense(w http.ResponseWriter, r *http.Request) {
 	var lic license.Instance
 	if err := json.NewDecoder(r.Body).Decode(&lic); err != nil {
@@ -96,4 +138,3 @@ func (d *Daemon) handleDeleteLicense(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-

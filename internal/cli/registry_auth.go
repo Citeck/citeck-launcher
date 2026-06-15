@@ -53,18 +53,10 @@ func checkRegistryAuthForBundle(ref bundle.Ref) error {
 			states = append(states, repoState{repo: repo, reason: "missing"})
 			continue
 		}
-		user, pass := sec.Username, sec.Value
-		if user == "" {
-			// Legacy "user:pass" fallback for secrets saved before BASIC_AUTH
-			// gained a typed Username field.
-			cutUser, cutPass, ok := strings.Cut(sec.Value, ":")
-			if !ok {
-				states = append(states, repoState{repo: repo, reason: "malformed"})
-				continue
-			}
-			user, pass = cutUser, cutPass
-		}
-		if user == "" || pass == "" {
+		// Typed Username wins; the legacy "user:pass" packed Value (pre-Username
+		// secrets) is split inside Credentials as a last-resort fallback.
+		user, pass, ok := sec.Credentials()
+		if !ok {
 			states = append(states, repoState{repo: repo, reason: "malformed"})
 			continue
 		}

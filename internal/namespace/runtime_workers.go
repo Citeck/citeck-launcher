@@ -24,7 +24,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/namespace/nsactions"
 	"github.com/citeck/citeck-launcher/internal/namespace/workers"
-	dockerpkg "github.com/docker/docker/client"
+	dockerpkg "github.com/moby/moby/client"
 )
 
 // pullStallTimeout bounds the no-progress window for a single

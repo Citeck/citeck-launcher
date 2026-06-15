@@ -110,8 +110,23 @@ func buildDumpRedactor(ctx context.Context) *secretRedactor {
 	r := newSecretRedactor()
 	harvestContainerEnvSecrets(ctx, r)
 	harvestStoreSecrets(r)
+	harvestAPIToken(r)
 	r.finalize()
 	return r
+}
+
+// harvestAPIToken records the api_auth token (daemon.yml api_auth.token or
+// the daemon-generated conf/api-token file) so the verbatim daemon.yml copy
+// in the dump — and any other artifact echoing the token — gets it masked.
+// Best-effort: silently skipped when neither source is readable.
+func harvestAPIToken(r *secretRedactor) {
+	cfg, err := config.LoadDaemonConfig()
+	if err != nil {
+		return
+	}
+	if token, tokenErr := config.LoadAPIToken(cfg); tokenErr == nil {
+		r.addValue(token)
+	}
 }
 
 // harvestContainerEnvSecrets records secret-looking env values from every

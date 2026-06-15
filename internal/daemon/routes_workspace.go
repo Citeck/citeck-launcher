@@ -28,6 +28,40 @@ func workspaceRepoSecretKey(wsID string) string {
 	return "ws:" + wsID + ":repo"
 }
 
+// migrateWorkspaceSecretLinks back-fills WorkspaceDto.SecretID for workspaces
+// created before the secret-reference model (incl. Kotlin 1.x H2-migrated
+// ones, whose tokens land as GIT_TOKEN secrets keyed "ws:<id>:repo"): an
+// AuthType=TOKEN workspace with no explicit link but an existing legacy
+// secret gets SecretID persisted so the UI picker shows the association.
+// Idempotent and best-effort: a locked SecretService makes GetSecret fail and
+// simply defers the back-fill to the next unlock (rebuildAuthCaches), and
+// runtime token resolution falls back to the legacy key regardless — this
+// migration is UI continuity, not a correctness requirement.
+func migrateWorkspaceSecretLinks(store storage.Store, secretSvc secretValueReader) {
+	if store == nil || secretSvc == nil {
+		return
+	}
+	wss, err := store.ListWorkspaces()
+	if err != nil {
+		return
+	}
+	for _, ws := range wss {
+		if ws.AuthType != "TOKEN" || ws.SecretID != "" {
+			continue
+		}
+		legacyID := workspaceRepoSecretKey(ws.ID)
+		if sec, secErr := secretSvc.GetSecret(legacyID); secErr != nil || sec == nil {
+			continue // locked store or no legacy secret — nothing to link yet
+		}
+		ws.SecretID = legacyID
+		if saveErr := store.SaveWorkspace(ws); saveErr != nil {
+			slog.Warn("Failed to back-fill workspace secret link", "ws", ws.ID, "err", saveErr)
+			continue
+		}
+		slog.Info("Linked legacy workspace repo secret", "ws", ws.ID, "secret", legacyID)
+	}
+}
+
 // resolveActiveRepoOpts returns the URL/branch/token to use when force-pulling
 // the workspace repo. Falls back to the hardcoded defaults when no store entry
 // or the active workspace ID isn't set. The PullPeriod is ignored by callers
@@ -53,10 +87,11 @@ func (d *Daemon) resolveActiveRepoOpts() (url, branch, token string) {
 // repo options. Empty fields are left zero so the resolver can layer them on
 // top of its hardcoded defaults.
 func (d *Daemon) resolveActiveWorkspaceRepoOpts() bundle.WorkspaceRepoOpts {
-	if d.store == nil || d.workspaceID == "" {
+	wsID := d.activeWorkspaceID()
+	if d.store == nil || wsID == "" {
 		return bundle.WorkspaceRepoOpts{}
 	}
-	ws, _ := d.store.GetWorkspace(d.workspaceID)
+	ws, _ := d.store.GetWorkspace(wsID)
 	if ws == nil {
 		return bundle.WorkspaceRepoOpts{}
 	}
@@ -65,7 +100,7 @@ func (d *Daemon) resolveActiveWorkspaceRepoOpts() bundle.WorkspaceRepoOpts {
 
 // workspaceRepoOptsFromDto translates a stored WorkspaceDto into bundle opts,
 // resolving the TOKEN secret when present. Exposed for the SwitchWorkspace
-// path which needs to honor the *target* workspace, not d.workspaceID.
+// path which needs to honor the *target* workspace, not the active one.
 func (d *Daemon) workspaceRepoOptsFromDto(ws storage.WorkspaceDto) bundle.WorkspaceRepoOpts {
 	return buildWorkspaceRepoOpts(ws, d.secretService)
 }
@@ -83,6 +118,18 @@ type secretValueReader interface {
 // Pass nil for secretSvc when the caller cannot resolve secrets yet — the
 // returned struct then has no Token and the resolver falls through to
 // unauthenticated clone, matching the pre-2.1 behavior.
+//
+// Token resolution priority:
+//  1. ws.SecretID — an explicit reference to a REUSABLE secret (one token
+//     shared by several workspaces). An explicit link is authoritative: it is
+//     resolved regardless of AuthType, so a workspace whose dialog linked a
+//     secret but left AuthType stale still authenticates.
+//  2. Legacy per-workspace secret "ws:{id}:repo" (Kotlin getRepoAuthId
+//     convention) — only when AuthType == "TOKEN" (back-compat).
+//
+// BASIC-style secrets (Username set) are supported gracefully: git token auth
+// sends BasicAuth("x-token-auth", token), so only the secret's Value (the
+// password/token half) is used — the stored Username is intentionally ignored.
 func buildWorkspaceRepoOpts(ws storage.WorkspaceDto, secretSvc secretValueReader) bundle.WorkspaceRepoOpts {
 	opts := bundle.WorkspaceRepoOpts{
 		URL:    ws.RepoURL,
@@ -91,7 +138,15 @@ func buildWorkspaceRepoOpts(ws storage.WorkspaceDto, secretSvc secretValueReader
 	if dur, err := storage.ParseISO8601Duration(ws.RepoPullPeriod); err == nil {
 		opts.PullPeriod = dur
 	}
-	if ws.AuthType == "TOKEN" && secretSvc != nil {
+	if secretSvc == nil {
+		return opts
+	}
+	switch {
+	case ws.SecretID != "":
+		if sec, err := secretSvc.GetSecret(ws.SecretID); err == nil && sec != nil {
+			opts.Token = sec.Value
+		}
+	case ws.AuthType == "TOKEN":
 		if sec, err := secretSvc.GetSecret(workspaceRepoSecretKey(ws.ID)); err == nil && sec != nil {
 			opts.Token = sec.Value
 		}
@@ -116,11 +171,7 @@ func lookupWorkspaceRepoOpts(store storage.Store, secretSvc secretValueReader, w
 // workspaceRepoLocalDir returns the on-disk location of the cloned default
 // workspace repo. Mirrors the layout used by bundle.resolveWorkspace().
 func (d *Daemon) workspaceRepoLocalDir() string {
-	bundlesDataDir := config.DataDir()
-	if config.IsDesktopMode() {
-		bundlesDataDir = filepath.Join(config.HomeDir(), "ws", d.workspaceID)
-	}
-	return filepath.Join(bundlesDataDir, "bundles", "workspace")
+	return filepath.Join(config.BundlesDataDir(d.activeWorkspaceID()), "bundles", "workspace")
 }
 
 // handleWorkspaceUpdate force-pulls the default workspace repo (bypassing the
@@ -154,9 +205,8 @@ func (d *Daemon) handleWorkspaceUpdate(w http.ResponseWriter, _ *http.Request) {
 	// Only trigger a reload if a namespace is configured; otherwise the pull
 	// alone is enough — the welcome screen will pick up new workspace data on
 	// its next refresh.
-	d.configMu.RLock()
-	hasNamespace := d.runtime != nil && d.nsConfig != nil
-	d.configMu.RUnlock()
+	act := d.active()
+	hasNamespace := act.runtime != nil && act.nsConfig != nil
 
 	if hasNamespace {
 		if err := d.doReload(); err != nil {
@@ -219,9 +269,7 @@ func (d *Daemon) handleSystemOpenDir(w http.ResponseWriter, r *http.Request) {
 func (d *Daemon) resolveOpenDirPath(kind string) (string, error) {
 	switch kind {
 	case "volumes":
-		d.configMu.RLock()
-		base := d.volumesBase
-		d.configMu.RUnlock()
+		base := d.activeVolumesBase()
 		if base == "" {
 			return "", fmt.Errorf("no namespace configured")
 		}

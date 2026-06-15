@@ -115,8 +115,8 @@ func testStoreSecrets(t *testing.T, store Store) {
 			Name:  "Registry creds",
 			Type:  SecretRegistryAuth,
 			Scope: "registry.example.com",
+			Username: "alice",
 		},
-		Username: "alice",
 		Value:    "pa:ss:wo:rd",
 	}
 	err = store.SaveSecret(basic)

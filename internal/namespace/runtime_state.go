@@ -15,7 +15,7 @@ import (
 //
 // Most state mutators set r.dirty.Store(true); runtimeLoop invokes persistState
 // once per iteration via the dirty-flag tail. Direct callers (StopApp /
-// StartApp / UpdateAppDef / SetAppLocked / doDetach / RestartApp) persist
+// StartApp / UpdateAppDef / doDetach / RestartApp) persist
 // inline because they record durable user intent that must survive a crash
 // between loop iterations. After an inline persist, the caller clears
 // r.dirty.Store(false) so the loop tail does not redundantly re-persist.
@@ -265,6 +265,13 @@ func (r *Runtime) setAppStatus(app *AppRuntime, s AppRuntimeStatus) {
 		Type: "app_status", Timestamp: time.Now().UnixMilli(),
 		NamespaceID: r.nsID, AppName: app.Name, Before: string(old), After: string(s),
 	})
+	// Leaving STARTING by any route (RUNNING, START_FAILED, STOPPING race…)
+	// ends the init-container phase — clear the flag so the AppDto init
+	// progress fields don't linger on a stale state. Entering STARTING is
+	// untouched: beginStartingUnderLock sets initActive BEFORE calling here.
+	if old == AppStatusStarting && s != AppStatusStarting {
+		app.initActive = false
+	}
 	// Clear liveness failure counter and stale stats when app leaves RUNNING state.
 	// Also clear the per-app liveness schedule so a future RUNNING transition
 	// starts with a fresh InitialDelaySeconds offset rather than firing
@@ -281,4 +288,24 @@ func (r *Runtime) setAppStatus(app *AppRuntime, s AppRuntimeStatus) {
 	if s == AppStatusRunning && old != AppStatusRunning && app.Def.LivenessProbe != nil {
 		r.livenessNextAt[app.Name] = r.nowFunc().Add(initialDelayForProbe(app.Def.LivenessProbe))
 	}
+}
+
+// emitInitStepEventUnderLock buffers an `app_init_step` SSE event carrying the
+// app's current init-container progress: Current = 1-based step index,
+// Total = init container count, After = short step name (derived from the init
+// image). All three are zero/empty once the init phase is over (T12) — the UI
+// treats that as "clear the init suffix". Must be called with r.mu held
+// (emitEvent appends to eventBuffer); callers emit only when the step index
+// actually changed, so rapid init chains produce at most one event per step.
+func (r *Runtime) emitInitStepEventUnderLock(app *AppRuntime) {
+	step, total, name := appInitProgress(app)
+	r.emitEvent(api.EventDto{
+		Type:        "app_init_step",
+		Timestamp:   time.Now().UnixMilli(),
+		NamespaceID: r.nsID,
+		AppName:     app.Name,
+		After:       name,
+		Current:     step,
+		Total:       total,
+	})
 }

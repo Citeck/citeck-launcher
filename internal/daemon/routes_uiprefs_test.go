@@ -20,7 +20,7 @@ func newUIPrefsDaemon(t *testing.T) *Daemon {
 	s, err := storage.NewSQLiteStore(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { s.Close() })
-	return &Daemon{store: s, workspaceID: "ws1", daemonCfg: config.DaemonConfig{Locale: "de"}}
+	return &Daemon{store: s, activeNs: &activeNamespace{workspaceID: "ws1"}, daemonCfg: config.DaemonConfig{Locale: "de"}}
 }
 
 func putPrefs(t *testing.T, d *Daemon, body string) *httptest.ResponseRecorder {

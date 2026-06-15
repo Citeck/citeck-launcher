@@ -32,7 +32,7 @@ func healthBanner(exitCode int) (label, color string) {
 func newHealthCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "health",
-		Short: "System health check (exit 0=healthy, 1=daemon down, 8=unhealthy)",
+		Short: "System health check (exit 0=healthy, 3=daemon down, 8=unhealthy)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client.New(clientOpts())
 			if err != nil {
@@ -57,7 +57,7 @@ func newHealthCmd() *cobra.Command {
 
 			// Decide the authoritative exit code first, then derive the banner
 			// from it. This keeps the text output in lockstep with the exit
-			// contract (0=healthy, 1=daemon down, 8=unhealthy) — fixes B7-03
+			// contract (0=healthy, 3=daemon down, 8=unhealthy) — fixes B7-03
 			// where a green connection could produce a mismatched banner.
 			exitCode := ExitOK
 			if !health.Healthy {

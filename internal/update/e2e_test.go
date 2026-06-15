@@ -24,7 +24,10 @@ func TestAutoUpdateE2E_DiscoverChangelogStageSelect(t *testing.T) {
 	)
 
 	dir := t.TempDir()
-	svc := update.NewService("2.4.0", dir, fake.Options()...)
+	svc := update.NewService("2.4.0", dir,
+		// Staging-logic tests: disable the embedded production signing key
+		// (signature behavior is covered by signature_e2e_test.go).
+		append(fake.Options(), update.WithSigningPublicKeyHex(""))...)
 	ctx := t.Context()
 
 	// 1. Discovery — nothing offered before the first check.
@@ -86,7 +89,10 @@ func TestAutoUpdateE2E_RejectsCorruptChecksum(t *testing.T) {
 			Notes: map[string]string{"en": "# 2.6.0"}},
 	)
 	dir := t.TempDir()
-	svc := update.NewService("2.4.0", dir, fake.Options()...)
+	svc := update.NewService("2.4.0", dir,
+		// Staging-logic tests: disable the embedded production signing key
+		// (signature behavior is covered by signature_e2e_test.go).
+		append(fake.Options(), update.WithSigningPublicKeyHex(""))...)
 
 	if _, err := svc.Stage(t.Context()); err == nil {
 		t.Fatal("Stage must reject a corrupt sha256 sidecar")
@@ -105,7 +111,10 @@ func TestAutoUpdateE2E_SuppressesFailedRelease(t *testing.T) {
 			Notes: map[string]string{"en": "# 2.6.0"}},
 	)
 	dir := t.TempDir()
-	svc := update.NewService("2.4.0", dir, fake.Options()...)
+	svc := update.NewService("2.4.0", dir,
+		// Staging-logic tests: disable the embedded production signing key
+		// (signature behavior is covered by signature_e2e_test.go).
+		append(fake.Options(), update.WithSigningPublicKeyHex(""))...)
 	ctx := t.Context()
 
 	if _, err := svc.Stage(ctx); err != nil {

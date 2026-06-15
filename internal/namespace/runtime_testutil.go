@@ -121,6 +121,20 @@ func (r *Runtime) InjectCmd(cmd runtimeCmd) {
 	r.cmdQueue.ch <- cmd
 }
 
+// InjectAppsForTest replaces the runtime's app map with the given entries.
+// Out-of-package handler tests (internal/daemon) use it to seed the "current
+// state" that read-only planning APIs (PlanRegenerate) diff against, without
+// driving the full state machine. Test wiring only — production code must
+// never call it (r.apps is owned by the runtimeLoop).
+func (r *Runtime) InjectAppsForTest(apps ...*AppRuntime) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.apps = make(map[string]*AppRuntime, len(apps))
+	for _, app := range apps {
+		r.apps[app.Name] = app
+	}
+}
+
 // AdvanceClock moves the runtime's FakeClock forward by d. Panics if the
 // runtime was not built with WithTestClock(NewFakeClock(...)).
 func (r *Runtime) AdvanceClock(d time.Duration) {

@@ -13,7 +13,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/output"
-	dockercontainer "github.com/docker/docker/api/types/container"
+	dockercontainer "github.com/moby/moby/api/types/container"
 	"github.com/spf13/cobra"
 )
 
@@ -45,11 +45,17 @@ var failedAppStatuses = map[string]struct{}{
 func newDiagnoseCmd() *cobra.Command {
 	var fix bool
 	var dryRun bool
+	var secrets bool
 
 	cmd := &cobra.Command{
 		Use:   "diagnose",
 		Short: "Find and optionally fix problems",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// --secrets is its own one-shot audit (read-only by contract —
+			// --fix is deliberately ignored so this path can never mutate).
+			if secrets {
+				return renderDiagnose(runSecretsAudit(), false)
+			}
 			checks := runDiagnoseChecks(fix, dryRun)
 			return renderDiagnose(checks, fix)
 		},
@@ -57,6 +63,7 @@ func newDiagnoseCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&fix, "fix", false, "Auto-fix fixable problems")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview fixes without applying")
+	cmd.Flags().BoolVar(&secrets, "secrets", false, "Audit system-secret storage consistency (read-only)")
 
 	return cmd
 }
@@ -268,10 +275,13 @@ func collectFailedApps() []api.AppDto {
 	return failed
 }
 
-// hasHint reports whether any check carries a manual fix pointer.
+// hasHint reports whether any check points at the troubleshooting doc —
+// only those warrant the "For manual remediation steps …" summary line.
+// Other FixHints (e.g. the --secrets stale-copy recommendation) are
+// self-contained and already printed inline.
 func hasHint(checks []diagnoseCheck) bool {
 	for _, c := range checks {
-		if c.FixHint != "" && strings.TrimSpace(c.FixHint) != "" {
+		if strings.TrimSpace(c.FixHint) == troubleshootingRef {
 			return true
 		}
 	}

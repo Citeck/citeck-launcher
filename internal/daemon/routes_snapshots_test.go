@@ -46,16 +46,18 @@ func newSnapshotsTestDaemon(t *testing.T) (*Daemon, *http.ServeMux, string) {
 	t.Cleanup(cancel)
 
 	d := &Daemon{
-		store:       store,
-		workspaceID: "ws-test",
-		nsConfig:    &namespace.Config{ID: "ns-test", Name: "Test NS"},
-		bgCtx:       ctx,
-		bgCancel:    cancel,
+		store: store,
+		activeNs: &activeNamespace{
+			workspaceID: "ws-test",
+			nsConfig:    &namespace.Config{ID: "ns-test", Name: "Test NS"},
+		},
+		bgCtx:    ctx,
+		bgCancel: cancel,
 	}
 
 	// Pre-create the snapshots directory so handlers that read it (list, delete)
 	// don't trip on missing-dir paths we'd rather not test here.
-	snapDir := filepath.Join(config.ResolveVolumesBase(d.workspaceID, d.nsConfig.ID), "snapshots")
+	snapDir := filepath.Join(config.ResolveVolumesBase(d.activeNs.workspaceID, d.activeNs.nsConfig.ID), "snapshots")
 	require.NoError(t, os.MkdirAll(snapDir, 0o755))
 
 	mux := http.NewServeMux()
@@ -137,7 +139,7 @@ func TestSnapshotExport_InvalidName_Rejected(t *testing.T) {
 	// Non-nil docker client so we reach the name-validation branch (the
 	// handler guards on dockerClient first; we never invoke any method on it
 	// because validation fails before the export goroutine is dispatched).
-	d.dockerClient = &docker.Client{}
+	d.activeNs.dockerClient = &docker.Client{}
 
 	cases := []string{
 		"bad name with spaces",
@@ -161,7 +163,7 @@ func TestSnapshotExport_InvalidName_Rejected(t *testing.T) {
 
 func TestSnapshotExport_NonAbsOutput_Rejected(t *testing.T) {
 	d, mux, _ := newSnapshotsTestDaemon(t)
-	d.dockerClient = &docker.Client{}
+	d.activeNs.dockerClient = &docker.Client{}
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", api.SnapshotsExport+"?output=relative/path", http.NoBody)
@@ -173,7 +175,7 @@ func TestSnapshotExport_NonAbsOutput_Rejected(t *testing.T) {
 
 func TestSnapshotExport_DuplicateName_Rejected(t *testing.T) {
 	d, mux, snapDir := newSnapshotsTestDaemon(t)
-	d.dockerClient = &docker.Client{}
+	d.activeNs.dockerClient = &docker.Client{}
 
 	// Pre-seed a file the export would try to create.
 	require.NoError(t, os.WriteFile(filepath.Join(snapDir, "dup.zip"), []byte("x"), 0o644))
@@ -281,7 +283,7 @@ func TestSnapshotImport_ConcurrentInProgress(t *testing.T) {
 
 func TestSnapshotImport_UploadMissingFile(t *testing.T) {
 	d, mux, _ := newSnapshotsTestDaemon(t)
-	d.dockerClient = &docker.Client{}
+	d.activeNs.dockerClient = &docker.Client{}
 
 	// Empty multipart body — ParseMultipartForm will reject.
 	rec := httptest.NewRecorder()
@@ -433,7 +435,7 @@ func TestWorkspaceSnapshots_EmptyConfig(t *testing.T) {
 func TestWorkspaceSnapshots_PopulatedConfig(t *testing.T) {
 	d, mux, _ := newSnapshotsTestDaemon(t)
 
-	d.workspaceConfig = &bundle.WorkspaceConfig{
+	d.activeNs.workspaceConfig = &bundle.WorkspaceConfig{
 		Snapshots: []bundle.SnapshotDef{
 			{ID: "demo", Name: "Demo snapshot", URL: "https://example.com/demo.zip"},
 			{ID: "qa", Name: "QA snapshot", URL: "https://example.com/qa.zip"},

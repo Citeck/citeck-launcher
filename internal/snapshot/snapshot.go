@@ -214,7 +214,7 @@ func Import(ctx context.Context, dc volumeOps, zipPath, volumesBase string, prog
 	}
 	defer os.RemoveAll(tmpDir)
 
-	if extractErr := extractZip(zipPath, tmpDir); extractErr != nil {
+	if _, extractErr := fsutil.ExtractZip(zipPath, tmpDir); extractErr != nil {
 		return nil, fmt.Errorf("extract zip: %w", extractErr)
 	}
 
@@ -477,66 +477,6 @@ func createZip(zipPath, srcDir string) error {
 	if walkErr != nil {
 		return fmt.Errorf("walk %s: %w", srcDir, walkErr)
 	}
-	return nil
-}
-
-// maxExtractSize is the aggregate extraction size limit (50 GB) to prevent zip bombs.
-const maxExtractSize int64 = 50 << 30
-
-// extractZip extracts a ZIP archive to destDir.
-func extractZip(zipPath, destDir string) error {
-	r, err := zip.OpenReader(zipPath)
-	if err != nil {
-		return fmt.Errorf("open zip %s: %w", zipPath, err)
-	}
-	defer r.Close()
-
-	var totalWritten int64
-
-	for _, f := range r.File {
-		// Security: prevent zip slip
-		destPath := filepath.Join(destDir, f.Name) //nolint:gosec // zip slip prevented by prefix check below
-		if !strings.HasPrefix(filepath.Clean(destPath)+string(os.PathSeparator), filepath.Clean(destDir)+string(os.PathSeparator)) {
-			return fmt.Errorf("zip slip detected: %s", f.Name)
-		}
-
-		if f.FileInfo().IsDir() {
-			os.MkdirAll(destPath, 0o755) //nolint:gosec // G301: extraction dirs need 0o755
-			continue
-		}
-
-		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil { //nolint:gosec // G301: extraction dirs need 0o755
-			return fmt.Errorf("mkdir for %s: %w", f.Name, err)
-		}
-
-		outFile, err := os.Create(destPath) //nolint:gosec // G304: destPath is validated against zip slip above
-		if err != nil {
-			return fmt.Errorf("create %s: %w", destPath, err)
-		}
-
-		rc, err := f.Open()
-		if err != nil {
-			_ = outFile.Close()
-			return fmt.Errorf("open zip entry %s: %w", f.Name, err)
-		}
-
-		// Limit per-file (10 GB) and aggregate (50 GB)
-		remaining := maxExtractSize - totalWritten
-		if remaining <= 0 {
-			_ = rc.Close()
-			_ = outFile.Close()
-			return fmt.Errorf("zip extraction aborted: aggregate size exceeds %d GB", maxExtractSize>>30)
-		}
-		perFileLimit := min(remaining, int64(10<<30))
-		n, err := io.Copy(outFile, io.LimitReader(rc, perFileLimit))
-		totalWritten += n
-		_ = rc.Close()
-		_ = outFile.Close()
-		if err != nil {
-			return fmt.Errorf("extract %s: %w", f.Name, err)
-		}
-	}
-
 	return nil
 }
 

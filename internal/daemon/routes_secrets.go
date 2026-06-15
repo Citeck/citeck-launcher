@@ -35,6 +35,7 @@ func (d *Daemon) handleListSecrets(w http.ResponseWriter, _ *http.Request) {
 			Name:      s.Name,
 			Type:      string(s.Type),
 			Scope:     s.Scope,
+			Username:  s.Username,
 			CreatedAt: s.CreatedAt.Format(time.RFC3339),
 		}
 	}
@@ -63,13 +64,13 @@ func (d *Daemon) handleCreateSecret(w http.ResponseWriter, r *http.Request) {
 
 	secret := storage.Secret{
 		SecretMeta: storage.SecretMeta{
-			ID:    req.ID,
-			Name:  req.Name,
-			Type:  storage.SecretType(req.Type),
-			Scope: req.Scope,
+			ID:       req.ID,
+			Name:     req.Name,
+			Type:     storage.SecretType(req.Type),
+			Scope:    req.Scope,
+			Username: req.Username,
 		},
-		Username: req.Username,
-		Value:    req.Value,
+		Value: req.Value,
 	}
 
 	if err := d.secretWriterFunc().SaveSecret(secret); err != nil {
@@ -89,6 +90,79 @@ func (d *Daemon) handleCreateSecret(w http.ResponseWriter, r *http.Request) {
 	d.rebuildAuthCaches()
 
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "secret saved"})
+}
+
+// handleUpdateSecret is the WRITE-ONLY partial edit: PUT /api/v1/secrets/{id}
+// with body {name?, scope?, username?, value?}. Every empty/absent field keeps
+// the stored one — value especially, so the UI can rename/re-scope a secret
+// without ever seeing or re-entering its value. The secret's Type is immutable
+// here. Responds with the updated SecretMetaDto; the value is NEVER returned
+// (the API returns secret values nowhere).
+func (d *Daemon) handleUpdateSecret(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !validateSecretID(id) {
+		writeError(w, http.StatusBadRequest, "invalid secret id")
+		return
+	}
+	if d.store == nil {
+		writeError(w, http.StatusServiceUnavailable, "storage not available")
+		return
+	}
+	var req api.SecretUpdateDto
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Read-modify-write: the existing record (including its decrypted value)
+	// is the base; only non-empty request fields overwrite.
+	existing, err := d.secretReaderFunc().GetSecret(id)
+	if err != nil {
+		if errors.Is(err, storage.ErrSecretsLocked) {
+			writeError(w, http.StatusLocked, "secrets are locked")
+			return
+		}
+		writeErrorCode(w, http.StatusNotFound, api.ErrCodeSecretNotFound,
+			fmt.Sprintf("secret %q not found", id))
+		return
+	}
+	if req.Name != "" {
+		existing.Name = req.Name
+	}
+	if req.Scope != "" {
+		existing.Scope = req.Scope
+	}
+	if req.Username != "" {
+		existing.Username = req.Username
+	}
+	if req.Value != "" {
+		existing.Value = req.Value
+	}
+
+	if err := d.secretWriterFunc().SaveSecret(*existing); err != nil {
+		if errors.Is(err, storage.ErrSecretsLocked) {
+			writeError(w, http.StatusLocked, "secrets are locked")
+			return
+		}
+		if errors.Is(err, storage.ErrEncryptionNotSetUp) {
+			writeErrorCode(w, http.StatusPreconditionRequired, api.ErrCodeEncryptionNotSetUp,
+				"master password not set: create one before saving user secrets")
+			return
+		}
+		writeInternalError(w, err)
+		return
+	}
+
+	d.rebuildAuthCaches()
+
+	writeJSON(w, api.SecretMetaDto{
+		ID:        existing.ID,
+		Name:      existing.Name,
+		Type:      string(existing.Type),
+		Scope:     existing.Scope,
+		Username:  existing.Username,
+		CreatedAt: existing.CreatedAt.Format(time.RFC3339),
+	})
 }
 
 func (d *Daemon) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
@@ -138,9 +212,7 @@ func (d *Daemon) handleTestSecret(w http.ResponseWriter, r *http.Request) {
 	case storage.SecretGitToken:
 		// Resolve the repo URL for this secret's scope from workspace config
 		var repoURL string
-		d.configMu.RLock()
-		wsCfg := d.workspaceConfig
-		d.configMu.RUnlock()
+		wsCfg := d.active().workspaceConfig
 		if wsCfg != nil && secret.Scope != "" {
 			for _, repo := range wsCfg.BundleRepos {
 				if repo.AuthType == secret.Scope && repo.URL != "" {
@@ -258,14 +330,6 @@ func (d *Daemon) handleSubmitMasterPassword(w http.ResponseWriter, r *http.Reque
 }
 
 // --- Secrets Encryption ---
-
-// handleGetSecretsStatus returns the encryption and lock state of secrets.
-func (d *Daemon) handleGetSecretsStatus(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, map[string]any{
-		"encrypted": d.secretService.IsEncrypted(),
-		"locked":    d.secretService.IsLocked(),
-	})
-}
 
 // handleUnlockSecrets derives the key from the password and unlocks encrypted secrets.
 func (d *Daemon) handleUnlockSecrets(w http.ResponseWriter, r *http.Request) {

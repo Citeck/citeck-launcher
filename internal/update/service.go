@@ -32,6 +32,16 @@ type Status struct {
 	Error          string `json:"error,omitempty"`      // last check error (offline etc.)
 	ApplyError     string `json:"applyError,omitempty"` // last failed apply, rolled back
 	Applying       bool   `json:"applying"`
+	// ManualUpdateRequired is set when the last staging attempt hit a
+	// signature classification (missing .sig or a mismatch under the embedded
+	// key — e.g. after a signing-key rotation). Auto-install would keep
+	// failing for this release, so the UI hides it and offers a one-time
+	// manual download from ReleasesURL instead. Transient failures (network)
+	// never raise it; it clears when a later Stage verifies fine or a
+	// different release appears.
+	ManualUpdateRequired bool   `json:"manualUpdateRequired"`
+	ManualUpdateReason   string `json:"manualUpdateReason,omitempty"` // ReasonSignatureMissing | ReasonSignatureMismatch
+	ReleasesURL          string `json:"releasesUrl,omitempty"`        // human releases page, derived from the repo slug
 }
 
 // Service orchestrates discovery, changelog, and staging. It holds no Wails or
@@ -47,12 +57,20 @@ type Service struct {
 	http           *http.Client // raw + download (follows redirects)
 	noRedirectHTTP *http.Client // latest resolution (no redirect)
 
+	// signingPubKeyHex enables the dormant ed25519 release-signature seam
+	// (see signature.go). Empty = sha256-sidecar-only verification.
+	signingPubKeyHex string
+
 	applying atomic.Bool
 
 	mu        sync.Mutex
 	latest    Latest
 	lastCheck time.Time
 	lastErr   string
+	// manualReason / manualVersion classify the last signature failure (see
+	// Status.ManualUpdateRequired). Empty reason = no manual update needed.
+	manualReason  string
+	manualVersion string
 }
 
 // Option overrides Service defaults. Production callers use NewService with no
@@ -74,16 +92,24 @@ func WithRepo(repo string) Option {
 	return func(s *Service) { s.repo = repo }
 }
 
+// WithSigningPublicKeyHex overrides the embedded release-signing public key
+// (hex-encoded raw 32-byte ed25519 key). Tests use this to exercise the
+// signature seam; production relies on embeddedSigningPubKeyHex.
+func WithSigningPublicKeyHex(pubHex string) Option {
+	return func(s *Service) { s.signingPubKeyHex = pubHex }
+}
+
 // NewService builds a Service for the given running version and updates dir.
 func NewService(current, updatesDir string, opts ...Option) *Service {
 	s := &Service{
-		current:        current,
-		updatesDir:     updatesDir,
-		repo:           defaultRepo,
-		githubBase:     defaultGitHubBase,
-		rawBase:        defaultRawBase,
-		http:           &http.Client{Timeout: httpTimeout},
-		noRedirectHTTP: noRedirect(),
+		current:          current,
+		updatesDir:       updatesDir,
+		repo:             defaultRepo,
+		githubBase:       defaultGitHubBase,
+		rawBase:          defaultRawBase,
+		http:             &http.Client{Timeout: httpTimeout},
+		noRedirectHTTP:   noRedirect(),
+		signingPubKeyHex: embeddedSigningPubKeyHex,
 	}
 	for _, o := range opts {
 		o(s)
@@ -112,6 +138,12 @@ func (s *Service) CheckLatest(ctx context.Context) (Latest, error) {
 	}
 	s.lastErr = ""
 	s.latest = Latest{Tag: tag, Version: strings.TrimPrefix(tag, "v")}
+	// A release different from the one that failed its signature check
+	// deserves a fresh auto-update attempt — the publisher may have fixed the
+	// signing. A failed attempt simply re-raises the classification.
+	if s.manualVersion != "" && s.latest.Version != s.manualVersion {
+		s.manualReason, s.manualVersion = "", ""
+	}
 	return s.latest, nil
 }
 
@@ -122,10 +154,36 @@ func (s *Service) cachedLatest() Latest {
 	return s.latest
 }
 
+// releasesURL is the human-facing releases page for manual downloads, derived
+// from the configured repo slug (never hardcoded).
+func (s *Service) releasesURL() string {
+	return fmt.Sprintf("%s/%s/releases", s.githubBase, s.repo)
+}
+
+// recordSignatureOutcome updates the manual-update classification after a
+// signature-verification attempt in Stage. Only classified signature failures
+// raise the flag — a transient error (e.g. network while fetching the .sig)
+// leaves it untouched — and a successful verification clears it (the release
+// was re-signed, or there was nothing wrong to begin with).
+func (s *Service) recordSignatureOutcome(err error, version string) {
+	reason := ManualUpdateReason(err)
+	if err != nil && reason == "" {
+		return // transient — neither raise nor clear
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if reason == "" {
+		s.manualReason, s.manualVersion = "", ""
+		return
+	}
+	s.manualReason, s.manualVersion = reason, version
+}
+
 // Status builds the UI snapshot from the cache + the manifest.
 func (s *Service) Status() Status {
 	s.mu.Lock()
 	latest, lastCheck, lastErr := s.latest, s.lastCheck, s.lastErr
+	manualReason := s.manualReason
 	s.mu.Unlock()
 
 	// A release that already failed its health-gate is not offered again (until a
@@ -135,12 +193,15 @@ func (s *Service) Status() Status {
 		Greater(latest.Version, s.current) &&
 		!IsVersionFailed(s.updatesDir, latest.Version)
 	st := Status{
-		CurrentVersion: s.current,
-		LatestVersion:  latest.Version,
-		Available:      available,
-		Error:          lastErr,
-		Applying:       s.applying.Load(),
-		ApplyError:     FailedNewerThan(s.updatesDir, s.current),
+		CurrentVersion:       s.current,
+		LatestVersion:        latest.Version,
+		Available:            available,
+		Error:                lastErr,
+		Applying:             s.applying.Load(),
+		ApplyError:           FailedNewerThan(s.updatesDir, s.current),
+		ManualUpdateRequired: manualReason != "",
+		ManualUpdateReason:   manualReason,
+		ReleasesURL:          s.releasesURL(),
 	}
 	if !lastCheck.IsZero() {
 		st.LastCheckAt = lastCheck.UTC().Format(time.RFC3339)
@@ -214,6 +275,16 @@ func (s *Service) Stage(ctx context.Context) (string, error) {
 		_ = os.Remove(targz)
 		return "", err
 	}
+	// Dormant ed25519 authenticity seam (signature.go): no-op until a release
+	// signing public key is embedded; then the .sig asset becomes mandatory.
+	// Classified signature failures (missing / mismatch) raise the
+	// manual-update flag in Status; transient ones don't; success clears it.
+	if err := s.verifyReleaseSignature(ctx, c, latest.Tag, asset, targz); err != nil {
+		_ = os.Remove(targz)
+		s.recordSignatureOutcome(err, latest.Version)
+		return "", err
+	}
+	s.recordSignatureOutcome(nil, latest.Version)
 	if err := extractDaemonBinary(targz, binPath); err != nil {
 		_ = os.Remove(targz)
 		return "", err

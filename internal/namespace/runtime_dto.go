@@ -20,6 +20,7 @@ func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 		// Memory thresholds match the Kotlin per-app StatsCell tooltip
 		// boundaries (80% warning / 95% critical) — see ContainerStatViews.kt.
 		memPct := app.MemoryPercent
+		initStep, initTotal, initName := appInitProgress(app)
 		apps = append(apps, api.AppDto{
 			Name:             app.Name,
 			Status:           displayAppStatus(app),
@@ -37,6 +38,9 @@ func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 			Locked:           r.editedLockedApps[app.Name],
 			RestartCount:     app.RestartCount,
 			EditedFilesCount: len(r.editedFilesForAppLocked(app.Name)),
+			InitStep:         initStep,
+			InitTotal:        initTotal,
+			InitName:         initName,
 		})
 	}
 	return api.NamespaceDto{
@@ -78,6 +82,47 @@ func ResolveDisplayBundleRef(ref bundle.Ref, cached *bundle.Def) string {
 // actually behaves.
 func displayAppStatus(app *AppRuntime) string {
 	return string(app.Status)
+}
+
+// appInitProgress maps the runtime's ephemeral init-phase state onto the
+// AppDto init fields: 1-based current step, total init containers, and a short
+// step name. Returns zeros unless the app is STARTING with the init phase
+// active (initActive is set in beginStartingUnderLock and cleared at T12 /
+// on leaving STARTING — see setAppStatus). Caller must hold r.mu (read or
+// write); the fields read here are only mutated on runtimeLoop under r.mu.
+func appInitProgress(app *AppRuntime) (step, total int, name string) {
+	if !app.initActive || app.Status != AppStatusStarting {
+		return 0, 0, ""
+	}
+	total = len(app.Def.InitContainers)
+	idx := app.initStepIdx
+	if total == 0 || idx < 0 || idx >= total {
+		// Defensive: stale flag or out-of-range index — report "no init phase"
+		// rather than panicking on InitContainers[idx].
+		return 0, 0, ""
+	}
+	return idx + 1, total, initStepDisplayName(app.Def.InitContainers[idx].Image)
+}
+
+// initStepDisplayName derives a short human-readable init step name from the
+// init container image reference. InitContainerDef has no name field, so the
+// image's last path segment without tag/digest is the best stable label:
+// "registry.citeck.ru/citeck/ecos-app-x:1.2.3" → "ecos-app-x".
+func initStepDisplayName(image string) string {
+	name := image
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	if i := strings.Index(name, "@"); i >= 0 {
+		name = name[:i]
+	}
+	if i := strings.LastIndex(name, ":"); i >= 0 {
+		name = name[:i]
+	}
+	if name == "" {
+		return image
+	}
+	return name
 }
 
 // AppliedConfig returns the config currently driving this runtime (the "applied" config).

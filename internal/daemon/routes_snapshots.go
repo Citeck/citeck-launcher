@@ -56,11 +56,9 @@ func (d *Daemon) resolveSnapshotFileName(dir, customName string) (string, *snaps
 	// user-facing Name. Name is reference/display info only and may contain
 	// arbitrary characters (#, /, …) that don't belong in a zip filename.
 	nsID := "namespace"
-	d.configMu.RLock()
-	if d.nsConfig != nil && d.nsConfig.ID != "" {
-		nsID = d.nsConfig.ID
+	if cfg := d.active().nsConfig; cfg != nil && cfg.ID != "" {
+		nsID = cfg.ID
 	}
-	d.configMu.RUnlock()
 	return fmt.Sprintf("%s_%s.zip", nsID, time.Now().Format("2006-01-02_15-04-05")), nil
 }
 
@@ -69,7 +67,7 @@ func (d *Daemon) snapshotsDir() (string, error) {
 	if nsID == "" {
 		return "", fmt.Errorf("no namespace configured")
 	}
-	return filepath.Join(config.ResolveVolumesBase(d.workspaceID, nsID), "snapshots"), nil
+	return filepath.Join(config.ResolveVolumesBase(d.activeWorkspaceID(), nsID), "snapshots"), nil
 }
 
 func (d *Daemon) handleListSnapshots(w http.ResponseWriter, _ *http.Request) {
@@ -107,16 +105,18 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeSnapshotInProgress, "another snapshot operation is in progress")
 		return
 	}
-	// Validation under lock — unlock on early return
-	d.configMu.RLock()
-	rt := d.runtime
-	d.configMu.RUnlock()
-	if rt != nil && rt.Status() != namespace.NsStatusStopped {
+	// Validation + capture from ONE snapshot: the background export keeps
+	// operating on the namespace that was active at validation time even if a
+	// workspace/namespace switch happens mid-export.
+	act := d.active()
+	if act.runtime != nil && act.runtime.Status() != namespace.NsStatusStopped {
 		d.snapshotMu.Unlock()
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeNamespaceRunning, "namespace must be stopped before export")
 		return
 	}
-	if d.dockerClient == nil {
+	dc := act.dockerClient
+	volumesBase := act.volumesBase
+	if dc == nil {
 		d.snapshotMu.Unlock()
 		writeError(w, http.StatusServiceUnavailable, "docker client not available")
 		return
@@ -172,7 +172,7 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 				Current: current, Total: total,
 			})
 		}
-		meta, err := snapshot.Export(d.bgCtx, d.dockerClient, outputPath, d.volumesBase, progress)
+		meta, err := snapshot.Export(d.bgCtx, dc, outputPath, volumesBase, progress)
 		if err != nil {
 			slog.Error("Snapshot export failed", "err", err)
 			d.broadcastEvent(api.EventDto{
@@ -226,16 +226,18 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeSnapshotInProgress, "another snapshot operation is in progress")
 		return
 	}
-	// Validation under lock — unlock on early return
-	d.configMu.RLock()
-	rt := d.runtime
-	d.configMu.RUnlock()
-	if rt != nil && rt.Status() != namespace.NsStatusStopped {
+	// Validation + capture from ONE snapshot: the background import keeps
+	// operating on the namespace that was active at validation time even if a
+	// workspace/namespace switch happens mid-import.
+	act := d.active()
+	if act.runtime != nil && act.runtime.Status() != namespace.NsStatusStopped {
 		d.snapshotMu.Unlock()
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeNamespaceRunning, "namespace must be stopped before import")
 		return
 	}
-	if d.dockerClient == nil {
+	dc := act.dockerClient
+	volumesBase := act.volumesBase
+	if dc == nil {
 		d.snapshotMu.Unlock()
 		writeError(w, http.StatusServiceUnavailable, "docker client not available")
 		return
@@ -291,7 +293,7 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 				Current: current, Total: total,
 			})
 		}
-		meta, err := snapshot.Import(d.bgCtx, d.dockerClient, importPath, d.volumesBase, progress)
+		meta, err := snapshot.Import(d.bgCtx, dc, importPath, volumesBase, progress)
 		if err != nil {
 			slog.Error("Snapshot import failed", "err", err)
 			d.broadcastEvent(api.EventDto{
@@ -416,14 +418,12 @@ func safeSnapshotFileName(rawURL string) string {
 //
 // dc MUST be a Docker client scoped to (wsID, nsID): the import creates volumes
 // via dc.CreateVolume, whose names derive from the client's namespace/workspace.
-// Passing the wrong-scoped client (e.g. a stale d.dockerClient from a previously
+// Passing the wrong-scoped client (e.g. a stale active dockerClient from a previously
 // active namespace) would restore the snapshot into another namespace's volumes.
 //
 //nolint:nestif // download+import orchestration requires nested SHA256 verification and retry logic
 func (d *Daemon) downloadAndImportSnapshot(dc *docker.Client, snapshotID, wsID, nsID string) {
-	d.configMu.RLock()
-	wsCfg := d.workspaceConfig
-	d.configMu.RUnlock()
+	wsCfg := d.active().workspaceConfig
 
 	snapDef := bundle.FindSnapshot(wsCfg, snapshotID)
 	if snapDef == nil {
@@ -538,9 +538,15 @@ func (d *Daemon) downloadAndImportSnapshot(dc *docker.Client, snapshotID, wsID, 
 }
 
 func (d *Daemon) handleWorkspaceSnapshots(w http.ResponseWriter, _ *http.Request) {
-	d.configMu.RLock()
-	wsCfg := d.workspaceConfig
-	d.configMu.RUnlock()
+	act := d.active()
+	// Same no-silent-fallback gate as handleGetQuickStarts: a custom workspace
+	// repo that can't sync (and has no cached config) must not masquerade as a
+	// workspace with no snapshots. See api.ErrCodeWsRepoSyncFailed.
+	if act.wsSyncError != "" {
+		writeErrorCode(w, http.StatusBadGateway, api.ErrCodeWsRepoSyncFailed, act.wsSyncError)
+		return
+	}
+	wsCfg := act.workspaceConfig
 
 	if wsCfg == nil || len(wsCfg.Snapshots) == 0 {
 		writeJSON(w, []bundle.SnapshotDef{})

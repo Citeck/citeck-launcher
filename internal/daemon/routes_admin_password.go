@@ -12,16 +12,54 @@ import (
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/namespace"
-	"github.com/citeck/citeck-launcher/internal/storage"
+	"github.com/citeck/citeck-launcher/internal/systemsecrets"
 )
+
+// containerExecer is the minimal Docker surface the admin-password rotation
+// drives (kcadm.sh / rabbitmqctl / setup.py inside running containers).
+// *docker.Client satisfies it; tests substitute a recorder so the rotation
+// call order and error branching are assertable without a live engine.
+type containerExecer interface {
+	ExecInContainer(ctx context.Context, containerID string, cmd []string) (output string, exitCode int, err error)
+}
+
+// appFinder is the slice of *namespace.Runtime the admin-password handler
+// needs to locate target containers; tests substitute a stub.
+type appFinder interface {
+	FindApp(name string) *namespace.AppRuntime
+}
+
+// dockerExec returns the container-exec surface for handlers that drive CLI
+// tools inside containers. Production leaves d.execClient nil and the
+// daemon's docker client is used.
+func (d *Daemon) dockerExec() containerExecer {
+	if d.execClient != nil {
+		return d.execClient
+	}
+	return d.activeDockerClient()
+}
+
+// adminRotationApps returns the app-lookup surface for the rotation handler,
+// or nil when no namespace runtime is loaded. The explicit nil-interface
+// return (instead of returning the runtime directly) avoids the typed-nil trap.
+func (d *Daemon) adminRotationApps() appFinder {
+	if d.rotationApps != nil {
+		return d.rotationApps
+	}
+	if rt := d.active().runtime; rt != nil {
+		return rt
+	}
+	return nil
+}
 
 // handleSetAdminPassword rotates the human-administrator password across
 // every admin-facing UI on the platform: the Keycloak `master` realm admin
 // (Keycloak admin console), the Keycloak `ecos-app` realm admin (platform
 // login), the RabbitMQ management admin, and the PgAdmin admin. It drives
 // kcadm.sh / rabbitmqctl / setup.py inside the running containers and then
-// persists the new value to the `_admin_password` system secret so
-// in-memory state and future daemon restarts stay consistent.
+// persists the new value via systemsecrets.Set (the plain
+// `_sys_admin_password` launcher_state key systemsecrets.Get reads first)
+// so in-memory state and future daemon restarts stay consistent.
 //
 // The `citeck` service account password is deliberately NOT rotated here —
 // it is generated once and kept stable so the launcher retains access to
@@ -43,15 +81,13 @@ func (d *Daemon) handleSetAdminPassword(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	d.configMu.RLock()
-	runtime := d.runtime
-	d.configMu.RUnlock()
-	if runtime == nil {
+	apps := d.adminRotationApps()
+	if apps == nil {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
 		return
 	}
 
-	kcApp := runtime.FindApp(appdef.AppKeycloak)
+	kcApp := apps.FindApp(appdef.AppKeycloak)
 	if kcApp == nil || kcApp.ContainerID == "" {
 		writeError(w, http.StatusBadRequest, "keycloak container is not running")
 		return
@@ -93,10 +129,10 @@ func (d *Daemon) handleSetAdminPassword(w http.ResponseWriter, r *http.Request) 
 	// (RABBITMQ_DEFAULT_PASS) only applies on first start with an empty
 	// volume — for an existing RabbitMQ instance the password lives in
 	// Mnesia and must be changed via rabbitmqctl.
-	rmqApp := runtime.FindApp(appdef.AppRabbitmq)
+	rmqApp := apps.FindApp(appdef.AppRabbitmq)
 	if rmqApp != nil && rmqApp.ContainerID != "" {
 		rmqCmd := []string{"rabbitmqctl", "change_password", "admin", req.Password}
-		if out, exitCode, execErr := d.dockerClient.ExecInContainer(ctx, rmqApp.ContainerID, rmqCmd); execErr != nil || exitCode != 0 {
+		if out, exitCode, execErr := d.dockerExec().ExecInContainer(ctx, rmqApp.ContainerID, rmqCmd); execErr != nil || exitCode != 0 {
 			slog.Warn("RabbitMQ password change failed (will be updated on next container recreate)",
 				"err", execErr, "exitCode", exitCode, "output", out)
 		}
@@ -105,29 +141,32 @@ func (d *Daemon) handleSetAdminPassword(w http.ResponseWriter, r *http.Request) 
 	// Change PgAdmin password at runtime via setup.py update-user. The env
 	// var (PGADMIN_DEFAULT_PASSWORD) only applies on first start — for an
 	// existing instance the credential is in PgAdmin's internal SQLite DB.
-	pgApp := runtime.FindApp(appdef.AppPgadmin)
+	pgApp := apps.FindApp(appdef.AppPgadmin)
 	if pgApp != nil && pgApp.ContainerID != "" {
 		pgCmd := []string{"/venv/bin/python3", "/pgadmin4/setup.py", "update-user",
 			"admin@admin.com", "--password", req.Password, "--no-console"}
-		if out, exitCode, execErr := d.dockerClient.ExecInContainer(ctx, pgApp.ContainerID, pgCmd); execErr != nil || exitCode != 0 {
+		if out, exitCode, execErr := d.dockerExec().ExecInContainer(ctx, pgApp.ContainerID, pgCmd); execErr != nil || exitCode != 0 {
 			slog.Warn("PgAdmin password change failed (will be updated on next container recreate)",
 				"err", execErr, "exitCode", exitCode, "output", out)
 		}
 	}
 
-	// Persist the new password to the system secret store so on daemon
-	// restart resolveOneSystemSecret reads the updated value, and update
-	// the in-memory copy so subsequent kcadm.sh invocations in this same
-	// daemon lifetime (e.g. a second `citeck setup admin-password`) can
-	// authenticate with the new password.
-	if err := d.secretService.SaveSecret(storage.Secret{
-		SecretMeta: storage.SecretMeta{ID: "_admin_password", Name: "_admin_password", Type: storage.SecretSystem},
-		Value:      req.Password,
-	}); err != nil {
-		slog.Warn("Admin password reset OK in keycloak, but failed to persist to secret store", "err", err)
+	// Persist via systemsecrets.Set — the one writer matching what
+	// systemsecrets.Get reads FIRST on daemon restart (the plain
+	// `_sys_admin_password` launcher_state key) plus the legacy
+	// SecretService-row cleanup. Hand-rolling this block here is exactly how
+	// the silently-reverting-rotation bug happened; see the Set doc for the
+	// full rationale. Then update the in-memory copy so subsequent kcadm.sh
+	// invocations in this same daemon lifetime (e.g. a second
+	// `citeck setup admin-password`) authenticate with the new value.
+	if err := systemsecrets.Set(d.store, d.secretService, systemsecrets.IDAdminPassword, req.Password); err != nil {
+		slog.Warn("Admin password reset OK in keycloak, but failed to persist to launcher state", "err", err)
 	}
+	// In-place rotation on the LIVE activeNamespace (under configMu, without
+	// reloadMu) — see the activeNamespace doc for why this must be in-place
+	// and not a rebuild-and-swap.
 	d.configMu.Lock()
-	d.systemSecrets.AdminPassword = req.Password
+	d.activeLocked().systemSecrets.AdminPassword = req.Password
 	d.configMu.Unlock()
 
 	slog.Info("Admin password reset (keycloak master + ecos-app, rabbitmq, pgadmin)")
@@ -151,9 +190,7 @@ func (d *Daemon) handleSetAdminPassword(w http.ResponseWriter, r *http.Request) 
 // the two lets the caller craft a specific error message pointing the
 // user at `citeck setup admin-password` for retry.
 func (d *Daemon) resetKeycloakAdminPassword(ctx context.Context, containerID, newPassword string) error {
-	d.configMu.RLock()
-	saPassword := d.systemSecrets.CiteckSA
-	d.configMu.RUnlock()
+	saPassword := d.active().systemSecrets.CiteckSA
 
 	if saPassword == "" {
 		return fmt.Errorf("citeck SA not configured — restart namespace to run keycloak init")
@@ -260,7 +297,7 @@ func (d *Daemon) bootstrapKeycloakRecovery(ctx context.Context, containerID stri
 			"--username \"$5\" --password:env RECOVERY_PASS_ENV --no-prompt",
 		"sh", recoveryPass, dbURL, dbUser, dbPass, recoveryUser,
 	}
-	out, exitCode, execErr := d.dockerClient.ExecInContainer(ctx, containerID, cmd)
+	out, exitCode, execErr := d.dockerExec().ExecInContainer(ctx, containerID, cmd)
 	if execErr != nil {
 		return "", "", fmt.Errorf("exec kc.sh bootstrap-admin: %w (output: %s)", execErr, out)
 	}
@@ -292,7 +329,7 @@ func (d *Daemon) kcadmEnsureUser(ctx context.Context, containerID, realm, userna
 			"cut -d',' -f2 | grep -Fxq \"$2\"",
 		"sh", realm, username,
 	}
-	_, exitCode, _ := d.dockerClient.ExecInContainer(ctx, containerID, checkCmd)
+	_, exitCode, _ := d.dockerExec().ExecInContainer(ctx, containerID, checkCmd)
 	if exitCode == 0 {
 		return nil // user already exists
 	}
@@ -303,7 +340,7 @@ func (d *Daemon) kcadmEnsureUser(ctx context.Context, containerID, realm, userna
 		"-s", "username=" + username,
 		"-s", "enabled=true",
 	}
-	out, exitCode, execErr := d.dockerClient.ExecInContainer(ctx, containerID, createCmd)
+	out, exitCode, execErr := d.dockerExec().ExecInContainer(ctx, containerID, createCmd)
 	if execErr != nil {
 		return fmt.Errorf("create user %s: %w (output: %s)", username, execErr, out)
 	}
@@ -324,7 +361,7 @@ func (d *Daemon) kcadmAddRole(ctx context.Context, containerID, realm, username,
 		"--uusername", username,
 		"--rolename", role,
 	}
-	out, exitCode, err := d.dockerClient.ExecInContainer(ctx, containerID, cmd)
+	out, exitCode, err := d.dockerExec().ExecInContainer(ctx, containerID, cmd)
 	if err != nil {
 		// Docker exec itself failed (vs kcadm returning non-zero) — log so a
 		// downstream "role not granted" failure is traceable to its root cause.
@@ -344,7 +381,7 @@ func (d *Daemon) kcadmSetUserPassword(ctx context.Context, containerID, realm, u
 		"--username", username,
 		"--new-password", newPassword,
 	}
-	out, exitCode, err := d.dockerClient.ExecInContainer(ctx, containerID, cmd)
+	out, exitCode, err := d.dockerExec().ExecInContainer(ctx, containerID, cmd)
 	if err != nil {
 		return fmt.Errorf("kcadm set-password %s/%s: %w (output: %s)", realm, username, err, out)
 	}
@@ -367,7 +404,7 @@ func (d *Daemon) kcadmDeleteUser(ctx context.Context, containerID, realm, userna
 			"if [ -n \"$UID_\" ]; then /opt/keycloak/bin/kcadm.sh delete \"users/$UID_\" -r \"$1\"; fi",
 		"sh", realm, username,
 	}
-	out, exitCode, err := d.dockerClient.ExecInContainer(ctx, containerID, cmd)
+	out, exitCode, err := d.dockerExec().ExecInContainer(ctx, containerID, cmd)
 	if err != nil {
 		return fmt.Errorf("delete user %s: %w (output: %s)", username, err, out)
 	}
@@ -387,7 +424,7 @@ func (d *Daemon) kcadmLogin(ctx context.Context, containerID, user, password str
 		"--user", user,
 		"--password", password,
 	}
-	out, exitCode, err := d.dockerClient.ExecInContainer(ctx, containerID, cmd)
+	out, exitCode, err := d.dockerExec().ExecInContainer(ctx, containerID, cmd)
 	if err != nil {
 		return fmt.Errorf("exec: %w (output: %s)", err, out)
 	}
@@ -406,7 +443,7 @@ func (d *Daemon) kcadmSetPassword(ctx context.Context, containerID, realm, newPa
 		"--username", "admin",
 		"--new-password", newPassword,
 	}
-	out, exitCode, err := d.dockerClient.ExecInContainer(ctx, containerID, cmd)
+	out, exitCode, err := d.dockerExec().ExecInContainer(ctx, containerID, cmd)
 	if err != nil {
 		return fmt.Errorf("kcadm set-password %s: %w (output: %s)", realm, err, out)
 	}

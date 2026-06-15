@@ -484,9 +484,9 @@ func doPull(ctx context.Context, opts RepoOpts) error {
 	}
 
 	if err := wt.PullContext(ctx, pullOpts); err != nil && !errors.Is(err, gogit.NoErrAlreadyUpToDate) {
-		// 8b-13: auth errors should not trigger reclone
-		errStr := strings.ToLower(err.Error())
-		if strings.Contains(errStr, "authentication") || strings.Contains(errStr, "unauthorized") {
+		// 8b-13: auth errors (401/403) should not trigger reclone — a fresh
+		// clone would hit the same credential problem and just waste bandwidth.
+		if isAuthError(err) {
 			return fmt.Errorf("git auth failed for %s: %w", opts.URL, err)
 		}
 		return reclone(ctx, opts, fmt.Errorf("pull: %w", err))
@@ -526,8 +526,13 @@ func reclone(ctx context.Context, opts RepoOpts, cause error) error {
 	return nil
 }
 
-// isAuthError checks if an error is caused by authentication failure.
-func isAuthError(err error) bool {
+// IsAuthError reports whether an error is caused by a git authentication /
+// authorization failure (401/403). Exported so callers outside this package
+// (bundle resolver, daemon workspace handlers) classify workspace-repo sync
+// failures consistently with the pull/reclone logic here — the same
+// "authentication required" / "unauthorized" wording the Web UI's
+// isGitPullError heuristic matches on.
+func IsAuthError(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -536,5 +541,9 @@ func isAuthError(err error) bool {
 	}
 	// Fallback: some transports wrap auth errors without using sentinel values
 	errStr := strings.ToLower(err.Error())
-	return strings.Contains(errStr, "unauthorized")
+	return strings.Contains(errStr, "unauthorized") || strings.Contains(errStr, "authentication")
 }
+
+// isAuthError is the internal alias kept so the pull/reclone call sites read
+// unchanged; new code should use the exported IsAuthError.
+func isAuthError(err error) bool { return IsAuthError(err) }

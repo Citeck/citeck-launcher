@@ -54,6 +54,9 @@ func TestServiceCheckAndStage(t *testing.T) {
 
 	dir := t.TempDir()
 	svc := NewService("2.4.0", dir)
+	// These tests cover staging/state logic, not release signing (which has
+	// its own suite) — disable the embedded production key explicitly.
+	svc.signingPubKeyHex = ""
 	svc.repo = "Citeck/citeck-launcher"
 	svc.githubBase = srv.URL
 	svc.rawBase = srv.URL
@@ -110,6 +113,9 @@ func TestServiceStageRejectsBadChecksum(t *testing.T) {
 
 	dir := t.TempDir()
 	svc := NewService("2.4.0", dir)
+	// These tests cover staging/state logic, not release signing (which has
+	// its own suite) — disable the embedded production key explicitly.
+	svc.signingPubKeyHex = ""
 	svc.repo = "Citeck/citeck-launcher"
 	svc.githubBase = srv.URL
 	svc.rawBase = srv.URL
@@ -145,6 +151,9 @@ func TestServiceStageRefusesFailedVersion(t *testing.T) {
 	}
 
 	svc := NewService("2.4.0", dir)
+	// These tests cover staging/state logic, not release signing (which has
+	// its own suite) — disable the embedded production key explicitly.
+	svc.signingPubKeyHex = ""
 	svc.repo = "Citeck/citeck-launcher"
 	svc.githubBase = srv.URL
 	svc.rawBase = srv.URL

@@ -174,6 +174,14 @@ func DaemonConfigPath() string {
 	return filepath.Join(ConfDir(), "daemon.yml")
 }
 
+// APITokenPath returns the path of the persisted API auth token file
+// (created 0600 by the daemon when api_auth is enabled without an explicit
+// token in daemon.yml). File permissions are the access-control mechanism:
+// only users who can read it can drive the token-gated TCP API.
+func APITokenPath() string {
+	return filepath.Join(ConfDir(), "api-token")
+}
+
 // --- Desktop mode workspace paths (matching Kotlin structure) ---
 
 // WorkspacesDir returns the root dir for all workspaces: {home}/ws/
@@ -184,6 +192,18 @@ func WorkspacesDir() string {
 // WorkspaceDir returns the dir for a specific workspace: {home}/ws/{wsID}/
 func WorkspaceDir(wsID string) string {
 	return filepath.Join(WorkspacesDir(), wsID)
+}
+
+// BundlesDataDir returns the base directory the bundle resolver works under
+// (git clones, bundle caches, offline imports). Server mode uses the shared
+// DataDir; desktop mode scopes it per workspace ({home}/ws/{wsID}, Kotlin
+// layout parity). Single source of truth — the daemon previously copy-pasted
+// this branch at every resolver construction site.
+func BundlesDataDir(wsID string) string {
+	if IsDesktopMode() {
+		return WorkspaceDir(wsID)
+	}
+	return DataDir()
 }
 
 // WorkspaceRepoDir returns the workspace repo dir: {home}/ws/{wsID}/repo/

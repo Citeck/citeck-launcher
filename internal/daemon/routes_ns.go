@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -27,34 +28,34 @@ func (d *Daemon) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
 	var result []api.NamespaceSummaryDto
 
 	if config.IsDesktopMode() {
-		rows, err := d.store.ListNamespaces(d.workspaceID)
+		act := d.active()
+		wsID := act.workspaceID
+		activeID := ""
+		if act.nsConfig != nil {
+			activeID = act.nsConfig.ID
+		}
+		rt := act.runtime
+		rows, err := d.store.ListNamespaces(wsID)
 		if err != nil {
 			writeInternalError(w, err)
 			return
 		}
-		d.configMu.RLock()
-		activeID := ""
-		if d.nsConfig != nil {
-			activeID = d.nsConfig.ID
-		}
-		rt := d.runtime
-		d.configMu.RUnlock()
 		for _, row := range rows {
 			summary := api.NamespaceSummaryDto{
 				ID:          row.ID,
-				WorkspaceID: d.workspaceID,
+				WorkspaceID: wsID,
 				Name:        row.Name,
 				Status:      row.Status,
 			}
 			if summary.Status == "" {
 				summary.Status = string(namespace.NsStatusStopped)
 			}
-			if cfg, cerr := d.loadNamespaceConfigFromStore(d.workspaceID, row.ID); cerr == nil {
+			if cfg, cerr := d.loadNamespaceConfigFromStore(wsID, row.ID); cerr == nil {
 				// Display the resolved concrete version for a symbolic "LATEST"
 				// key (from the persisted cached bundle), so the list matches
 				// the dashboard header instead of showing "...:LATEST".
 				var cached *bundle.Def
-				if st := loadNsStateFromStore(d.store, d.workspaceID, row.ID); st != nil {
+				if st := loadNsStateFromStore(d.store, wsID, row.ID); st != nil {
 					cached = st.CachedBundle
 				}
 				summary.BundleRef = namespace.ResolveDisplayBundleRef(cfg.BundleRef, cached)
@@ -66,22 +67,22 @@ func (d *Daemon) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		// Server mode: single namespace
-		d.configMu.RLock()
-		nsCfg := d.nsConfig
-		rt := d.runtime
-		d.configMu.RUnlock()
+		act := d.active()
+		wsID := act.workspaceID
+		nsCfg := act.nsConfig
+		rt := act.runtime
 		if nsCfg != nil {
 			status := string(namespace.NsStatusStopped)
 			if rt != nil {
 				status = string(rt.Status())
 			}
 			var cached *bundle.Def
-			if st := loadNsStateFromStore(d.store, d.workspaceID, nsCfg.ID); st != nil {
+			if st := loadNsStateFromStore(d.store, wsID, nsCfg.ID); st != nil {
 				cached = st.CachedBundle
 			}
 			result = append(result, api.NamespaceSummaryDto{
 				ID:          nsCfg.ID,
-				WorkspaceID: d.workspaceID,
+				WorkspaceID: wsID,
 				Name:        nsCfg.Name,
 				Status:      status,
 				BundleRef:   namespace.ResolveDisplayBundleRef(nsCfg.BundleRef, cached),
@@ -107,14 +108,13 @@ func (d *Daemon) handleDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	d.configMu.RLock()
+	act := d.active()
 	activeID := ""
-	if d.nsConfig != nil {
-		activeID = d.nsConfig.ID
+	if act.nsConfig != nil {
+		activeID = act.nsConfig.ID
 	}
-	rt := d.runtime
-	wsID := d.workspaceID
-	d.configMu.RUnlock()
+	rt := act.runtime
+	wsID := act.workspaceID
 
 	// Don't allow deleting the active namespace while it is running.
 	if activeID == nsID && rt != nil && rt.Status() != namespace.NsStatusStopped {
@@ -137,23 +137,22 @@ func (d *Daemon) handleDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 		// may have changed the active namespace since the snapshot above. Only
 		// tear down if THIS namespace is still active, so we never shut down a
 		// different, now-current runtime.
-		d.configMu.RLock()
-		stillActive := d.nsConfig != nil && d.nsConfig.ID == nsID
-		d.configMu.RUnlock()
+		cur := d.active().nsConfig
+		stillActive := cur != nil && cur.ID == nsID
 		if stillActive {
 			d.teardownActiveNamespaceForDelete(wsID, nsID)
 		}
 	}
 
 	// Source of truth: drop the config + state row.
-	if err := d.store.DeleteNamespace(d.workspaceID, nsID); err != nil {
+	if err := d.store.DeleteNamespace(wsID, nsID); err != nil {
 		writeInternalError(w, err)
 		return
 	}
 	// Best-effort: remove the on-disk rtfiles dir so generated bind-mount
 	// files don't leak. Enumeration is row-based now, so a failure here
 	// cannot resurrect a ghost entry.
-	nsDir := config.NamespaceDir(d.workspaceID, nsID)
+	nsDir := config.NamespaceDir(wsID, nsID)
 	if err := os.RemoveAll(nsDir); err != nil { //nolint:gosec // path from config.NamespaceDir
 		slog.Warn("Failed to remove namespace rtfiles dir", "dir", nsDir, "err", err) //nolint:gosec // G706: nsDir from config.NamespaceDir(validated ids)
 	}
@@ -163,8 +162,8 @@ func (d *Daemon) handleDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 	// postgres/mongo/… volumes. Selected by label, so a non-active namespace is
 	// cleaned too. Failures are logged inside PurgeNamespace and never block the
 	// delete (the source-of-truth row is already gone).
-	if d.dockerClient != nil {
-		d.dockerClient.PurgeNamespace(r.Context(), nsID, wsID)
+	if dc := act.dockerClient; dc != nil {
+		dc.PurgeNamespace(r.Context(), nsID, wsID)
 	}
 
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "namespace deleted"})
@@ -186,56 +185,32 @@ func (d *Daemon) teardownActiveNamespaceForDelete(wsID, nsID string) {
 	}
 
 	d.configMu.Lock()
-	oldRuntime := d.runtime
-	oldCloudCfgSrv := d.cloudCfgServer
-	oldACME := d.acmeRenewal
-	d.runtime = nil
-	d.nsConfig = nil
-	d.bundleDef = nil
-	d.appDefs = nil
-	d.cloudCfgServer = nil
-	d.systemSecrets = namespace.SystemSecrets{}
-	d.volumesBase = ""
-	d.acmeRenewal = nil
-	d.bundleError = ""
+	old := d.clearActiveNamespaceLocked()
 	d.configMu.Unlock()
 
-	if oldRuntime != nil {
-		oldRuntime.Shutdown() // drains the loop → no further persistState
+	if old.runtime != nil {
+		old.runtime.Shutdown() // drains the loop → no further persistState
 	}
-	if oldCloudCfgSrv != nil {
-		oldCloudCfgSrv.Stop()
+	if old.cloudCfgServer != nil {
+		old.cloudCfgServer.Stop()
 	}
-	if oldACME != nil {
-		oldACME.Stop()
+	if old.acmeRenewal != nil {
+		old.acmeRenewal.Stop()
 	}
-}
-
-func (d *Daemon) handleGetTemplates(w http.ResponseWriter, _ *http.Request) {
-	d.configMu.RLock()
-	wsCfg := d.workspaceConfig
-	d.configMu.RUnlock()
-
-	var templates []api.TemplateDto
-	if wsCfg != nil {
-		for _, t := range wsCfg.NamespaceTemplates {
-			name := t.Name
-			if name == "" {
-				name = t.ID
-			}
-			templates = append(templates, api.TemplateDto{ID: t.ID, Name: name})
-		}
-	}
-	if templates == nil {
-		templates = []api.TemplateDto{}
-	}
-	writeJSON(w, templates)
 }
 
 func (d *Daemon) handleGetQuickStarts(w http.ResponseWriter, _ *http.Request) {
-	d.configMu.RLock()
-	wsCfg := d.workspaceConfig
-	d.configMu.RUnlock()
+	act := d.active()
+	// No silent fallback (Kotlin 1.x parity): when the active workspace's
+	// CUSTOM repo failed to sync and no cached config exists, Welcome must
+	// surface the failure — not render the built-in fallback quick start that
+	// leads to an infra-only namespace. The message carries the repo URL and
+	// the git error text ("authentication required", …) for the UI heuristic.
+	if act.wsSyncError != "" {
+		writeErrorCode(w, http.StatusBadGateway, api.ErrCodeWsRepoSyncFailed, act.wsSyncError)
+		return
+	}
+	wsCfg := act.workspaceConfig
 
 	var quickStarts []api.QuickStartDto
 	if wsCfg != nil {
@@ -303,7 +278,7 @@ func (d *Daemon) resolveDisplayQuickStartRef(ref string, latestCache map[string]
 		}
 		return repo + ":" + cached
 	}
-	resolved, ok := d.resolveLatestBundleKey(d.workspaceID, repo, true /* display: no pull */)
+	resolved, ok := d.resolveLatestBundleKey(d.activeWorkspaceID(), repo, true /* display: no pull */)
 	if !ok {
 		latestCache[repo] = ""
 		return ref
@@ -320,11 +295,7 @@ func (d *Daemon) resolveLatestBundleKey(wsID, repo string, offline bool) (string
 	if repo == "" {
 		return "", false
 	}
-	bundlesDataDir := config.DataDir()
-	if config.IsDesktopMode() {
-		bundlesDataDir = filepath.Join(config.HomeDir(), "ws", wsID)
-	}
-	resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(d.secretService)).
+	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(wsID), makeTokenLookup(d.secretService)).
 		WithWorkspaceRepo(lookupWorkspaceRepoOpts(d.store, d.secretService, wsID))
 	// Server mode never auto-pulls git; desktop may pull to find the latest tag.
 	// Callers that resolve only for DISPLAY pass offline=true to avoid a git
@@ -338,18 +309,6 @@ func (d *Daemon) resolveLatestBundleKey(wsID, repo string, offline bool) (string
 		return "", false
 	}
 	return res.Bundle.Key.Version, true
-}
-
-// --- Forms ---
-
-func (d *Daemon) handleGetForm(w http.ResponseWriter, r *http.Request) {
-	formID := r.PathValue("formId")
-	spec := form.GetSpec(formID)
-	if spec == nil {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("form %q not found", formID))
-		return
-	}
-	writeJSON(w, spec)
 }
 
 // --- Namespace activation ---
@@ -382,14 +341,13 @@ func (d *Daemon) handleActivateNamespace(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	d.configMu.RLock()
-	rt := d.runtime
-	wsID := d.workspaceID
+	act := d.active()
+	rt := act.runtime
+	wsID := act.workspaceID
 	curNs := ""
-	if d.nsConfig != nil {
-		curNs = d.nsConfig.ID
+	if act.nsConfig != nil {
+		curNs = act.nsConfig.ID
 	}
-	d.configMu.RUnlock()
 
 	if curNs == nsID {
 		writeJSON(w, api.ActionResultDto{Success: true, Message: "namespace already active"})
@@ -466,10 +424,9 @@ func (d *Daemon) handleDeactivateNamespace(w http.ResponseWriter, r *http.Reques
 	}
 	defer d.reloadMu.Unlock()
 
-	d.configMu.RLock()
-	rt := d.runtime
-	wsID := d.workspaceID
-	d.configMu.RUnlock()
+	act := d.active()
+	rt := act.runtime
+	wsID := act.workspaceID
 
 	if rt != nil && rt.Status() != namespace.NsStatusStopped {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeNamespaceRunning,
@@ -494,31 +451,20 @@ func (d *Daemon) handleDeactivateNamespace(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Tear down the current runtime under configMu. Subsequent API calls see
-	// d.runtime == nil and treat the daemon as "no namespace loaded" — the
-	// UI's Welcome screen path already handles that state.
+	// a nil active runtime and treat the daemon as "no namespace loaded" —
+	// the UI's Welcome screen path already handles that state.
 	d.configMu.Lock()
-	oldRuntime := d.runtime
-	oldCloudCfgSrv := d.cloudCfgServer
-	oldACME := d.acmeRenewal
-	d.runtime = nil
-	d.nsConfig = nil
-	d.bundleDef = nil
-	d.appDefs = nil
-	d.cloudCfgServer = nil
-	d.systemSecrets = namespace.SystemSecrets{}
-	d.volumesBase = ""
-	d.acmeRenewal = nil
-	d.bundleError = ""
+	old := d.clearActiveNamespaceLocked()
 	d.configMu.Unlock()
 
-	if oldRuntime != nil {
-		oldRuntime.Shutdown()
+	if old.runtime != nil {
+		old.runtime.Shutdown()
 	}
-	if oldCloudCfgSrv != nil {
-		oldCloudCfgSrv.Stop()
+	if old.cloudCfgServer != nil {
+		old.cloudCfgServer.Stop()
 	}
-	if oldACME != nil {
-		oldACME.Stop()
+	if old.acmeRenewal != nil {
+		old.acmeRenewal.Stop()
 	}
 
 	writeJSON(w, api.ActionResultDto{
@@ -529,7 +475,19 @@ func (d *Daemon) handleDeactivateNamespace(w http.ResponseWriter, r *http.Reques
 
 // --- Namespace creation + Bundles ---
 
-//nolint:gocyclo,nestif // namespace creation orchestrates validation, template resolution, config generation, and async snapshot import
+// createNamespaceError carries the HTTP mapping for a failed namespace create
+// so handleCreateNamespace stays decode/validate/respond glue. An empty code
+// renders via writeError (plain message), a non-empty one via writeErrorCode.
+type createNamespaceError struct {
+	status  int
+	code    string
+	message string
+}
+
+func (e *createNamespaceError) Error() string { return e.message }
+
+// handleCreateNamespace is thin HTTP glue: decode → form-validate → delegate
+// to the createNamespace service function → map typed errors to responses.
 func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	var req api.NamespaceCreateDto
 	if err := readJSON(r, &req); err != nil {
@@ -537,37 +495,126 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Server-side validation. Host/port aren't exposed by the create dialog —
-	// the user edits them via raw YAML — so only feed them to the validator
-	// when the request actually carries a non-empty/non-zero value. Otherwise
-	// the form spec's required-range check rejects the implicit port=0.
+	if fields := validateNamespaceCreateForm(req); len(fields) > 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(api.ValidationErrorDto{
+			Error:  "validation failed",
+			Fields: fields,
+		})
+		return
+	}
+
+	// A snapshot-backed create (download + volume restore) can run for
+	// minutes, exceeding the server's WriteTimeout — lift the write deadline
+	// for this request so the response isn't cut off mid-import (same
+	// approach as the log-follow handler in routes_config.go). The Web UI
+	// applies its own longer client timeout for snapshot-backed creates.
+	// Lifted unconditionally: whether a snapshot applies is only known after
+	// template resolution inside the service, and a deadline-free response
+	// write is harmless for the fast no-snapshot path.
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Time{})
+
+	nsCfg, err := d.createNamespace(req)
+	if err != nil {
+		var ce *createNamespaceError
+		switch {
+		case errors.As(err, &ce) && ce.code != "":
+			writeErrorCode(w, ce.status, ce.code, ce.message)
+		case errors.As(err, &ce):
+			writeError(w, ce.status, ce.message)
+		default:
+			writeInternalError(w, err)
+		}
+		return
+	}
+
+	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("namespace %q created", nsCfg.Name)})
+}
+
+// validateNamespaceCreateForm runs the namespace-create form spec against the
+// request. Host/port aren't exposed by the create dialog — the user edits
+// them via raw YAML — so they only feed the validator when the request
+// actually carries a non-empty/non-zero value. Otherwise the form spec's
+// required-range check rejects the implicit port=0.
+func validateNamespaceCreateForm(req api.NamespaceCreateDto) []api.FieldErrorDto {
 	spec := form.GetSpec(form.NamespaceCreateFormID)
-	if spec != nil {
-		data := map[string]any{
-			"name":     req.Name,
-			"authType": req.AuthType,
-		}
-		if req.Host != "" {
-			data["host"] = req.Host
-		}
-		if req.Port > 0 {
-			data["port"] = float64(req.Port)
-		}
-		if fieldErrs := form.Validate(spec, data); len(fieldErrs) > 0 {
-			fields := make([]api.FieldErrorDto, len(fieldErrs))
-			for i, fe := range fieldErrs {
-				fields[i] = api.FieldErrorDto{Key: fe.Key, Message: fe.Message}
-			}
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(api.ValidationErrorDto{
-				Error:  "validation failed",
-				Fields: fields,
-			})
-			return
+	if spec == nil {
+		return nil
+	}
+	data := map[string]any{
+		"name":     req.Name,
+		"authType": req.AuthType,
+	}
+	if req.Host != "" {
+		data["host"] = req.Host
+	}
+	if req.Port > 0 {
+		data["port"] = float64(req.Port)
+	}
+	fieldErrs := form.Validate(spec, data)
+	if len(fieldErrs) == 0 {
+		return nil
+	}
+	fields := make([]api.FieldErrorDto, len(fieldErrs))
+	for i, fe := range fieldErrs {
+		fields[i] = api.FieldErrorDto{Key: fe.Key, Message: fe.Message}
+	}
+	return fields
+}
+
+// createNamespace is the create-namespace service function: template merge,
+// ID generation, persistence, create-time snapshot import, and desktop
+// auto-activation. Field-level form validation is the handler's job; errors
+// that map to specific HTTP responses come back as *createNamespaceError.
+func (d *Daemon) createNamespace(req api.NamespaceCreateDto) (*namespace.Config, error) {
+	// Resolve the target workspace.
+	wsID := req.WorkspaceID
+	if wsID == "" {
+		wsID = d.activeWorkspaceID()
+	}
+	if !validateID(wsID) {
+		return nil, &createNamespaceError{status: http.StatusBadRequest, message: "invalid workspace id"}
+	}
+
+	nsCfg, err := d.buildNamespaceConfigFromCreate(req, wsID)
+	if err != nil {
+		return nil, err
+	}
+	if err := d.persistNewNamespace(wsID, nsCfg); err != nil {
+		return nil, err
+	}
+
+	// Server mode: bootstrap pre-initializes default-password encryption at
+	// daemon startup (initSecretService), so this is a belt-and-braces retry
+	// for the rare degraded case where that initialization failed. Desktop
+	// mode must NOT initialize here: encryption is deliberately deferred
+	// until the user adds their first user secret, at which point the UI
+	// prompts for a real master password (ErrEncryptionNotSetUp flow) —
+	// silently encrypting with the well-known default would bypass that.
+	if !config.IsDesktopMode() && !d.secretService.IsEncrypted() {
+		if encErr := d.secretService.SetMasterPassword(storage.DefaultMasterPassword, true); encErr != nil {
+			slog.Error("Failed to set up secrets encryption during namespace creation", "err", encErr)
+		} else {
+			slog.Info("Secrets encrypted with default password during namespace creation")
 		}
 	}
 
+	if nsCfg.Snapshot != "" {
+		d.importCreateSnapshot(wsID, nsCfg)
+	}
+	d.autoActivateAfterCreate(wsID, nsCfg.ID)
+	return nsCfg, nil
+}
+
+// buildNamespaceConfigFromCreate translates the create request into a full
+// namespace.Config: template merge (default or explicit QuickStart variant),
+// request-field overlay, opaque-ID generation with collision retry, and
+// symbolic-LATEST pinning.
+//
+//nolint:nestif // template selection mirrors the Kotlin create flow's branching
+func (d *Daemon) buildNamespaceConfigFromCreate(req api.NamespaceCreateDto, wsID string) (*namespace.Config, error) {
 	// Generate namespace config — start from template if specified
 	nsCfg := namespace.DefaultNamespaceConfig()
 
@@ -575,9 +622,7 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	if templateID == "" {
 		templateID = "default" // use default template if none specified
 	}
-	d.configMu.RLock()
-	wsCfg := d.workspaceConfig
-	d.configMu.RUnlock()
+	wsCfg := d.active().workspaceConfig
 	if templateID == "default" {
 		// Shared helper — keeps this path in lockstep with
 		// handleNamespaceCreateDefaults so the form preview matches what
@@ -605,26 +650,20 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	nsCfg.Name = req.Name
 	// Opaque random ID — the human Name and the on-disk ID are decoupled
 	// (Kotlin parity: IdUtils.createStrId). Retry a few times to dodge an
-	// extremely unlikely collision with an existing on-disk slug. wsID
-	// resolves the same way the create-config-path block below resolves it.
-	createWsID := req.WorkspaceID
-	if createWsID == "" {
-		createWsID = d.workspaceID
-	}
+	// extremely unlikely collision with an existing on-disk slug.
 	for range 10 {
 		candidate := generateEntityID()
 		if candidate == "" {
 			continue
 		}
-		if _, taken, _ := d.store.LoadNamespaceConfig(createWsID, candidate); taken {
+		if _, taken, _ := d.store.LoadNamespaceConfig(wsID, candidate); taken {
 			continue // taken
 		}
 		nsCfg.ID = candidate
 		break
 	}
 	if nsCfg.ID == "" {
-		writeInternalError(w, fmt.Errorf("failed to generate namespace id"))
-		return
+		return nil, fmt.Errorf("failed to generate namespace id")
 	}
 	if req.AuthType != "" {
 		nsCfg.Authentication.Type = namespace.AuthenticationType(req.AuthType)
@@ -651,9 +690,9 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Store the effective snapshot id in the config so the demo data is imported
-	// before start (below) and re-imported on later restarts only when absent
-	// (marker-guarded). req.Snapshot (Quick Start / create dialog) wins over a
-	// template-provided snapshot already unmarshalled into nsCfg.Snapshot
+	// before start (createNamespace) and re-imported on later restarts only when
+	// absent (marker-guarded). req.Snapshot (Quick Start / create dialog) wins
+	// over a template-provided snapshot already unmarshalled into nsCfg.Snapshot
 	// (Kotlin parity: WelcomeScreen.kt:299 withSnapshot).
 	if req.Snapshot != "" {
 		nsCfg.Snapshot = req.Snapshot
@@ -664,147 +703,143 @@ func (d *Daemon) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	// (offline / repo not synced) keep "LATEST"; the runtime resolves it at load
 	// and the UI shows the resolved version via namespace.ResolveDisplayBundleRef.
 	if strings.EqualFold(nsCfg.BundleRef.Key, "LATEST") {
-		if resolved, ok := d.resolveLatestBundleKey(createWsID, nsCfg.BundleRef.Repo, false /* create: pull to pin truly-latest */); ok {
+		if resolved, ok := d.resolveLatestBundleKey(wsID, nsCfg.BundleRef.Repo, false /* create: pull to pin truly-latest */); ok {
 			nsCfg.BundleRef.Key = resolved
 		}
 	}
+	return &nsCfg, nil
+}
 
-	// Serialize to YAML
-	data, err := namespace.MarshalNamespaceConfig(&nsCfg)
+// persistNewNamespace serializes the config, re-checks the ID for a collision
+// via the store (replaces the historical O_EXCL file create), and writes
+// through the persistNamespaceConfig validation choke-point.
+func (d *Daemon) persistNewNamespace(wsID string, nsCfg *namespace.Config) error {
+	data, err := namespace.MarshalNamespaceConfig(nsCfg)
 	if err != nil {
-		writeInternalError(w, err)
-		return
+		return fmt.Errorf("marshal namespace config: %w", err)
 	}
-
-	// Resolve the target workspace.
-	wsID := req.WorkspaceID
-	if wsID == "" {
-		wsID = d.workspaceID
-	}
-	if !validateID(wsID) {
-		writeError(w, http.StatusBadRequest, "invalid workspace id")
-		return
-	}
-
-	// Collision check via the store (replaces the O_EXCL file create).
 	if _, exists, lerr := d.store.LoadNamespaceConfig(wsID, nsCfg.ID); lerr != nil {
-		writeInternalError(w, lerr)
-		return
+		return fmt.Errorf("check namespace id collision: %w", lerr)
 	} else if exists {
-		writeErrorCode(w, http.StatusConflict, api.ErrCodeNamespaceExists,
-			fmt.Sprintf("namespace %q already exists", nsCfg.ID))
-		return
+		return &createNamespaceError{status: http.StatusConflict, code: api.ErrCodeNamespaceExists,
+			message: fmt.Sprintf("namespace %q already exists", nsCfg.ID)}
 	}
-
-	// Validate + persist via the single choke-point.
-	if err := d.persistNamespaceConfig(wsID, nsCfg.ID, data); err != nil {
-		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeInvalidConfig, err.Error())
-		return
+	if persistErr := d.persistNamespaceConfig(wsID, nsCfg.ID, data); persistErr != nil {
+		return &createNamespaceError{status: http.StatusBadRequest, code: api.ErrCodeInvalidConfig,
+			message: persistErr.Error()}
 	}
+	return nil
+}
 
-	// Always encrypt secrets with the default password on namespace creation
-	if !d.secretService.IsEncrypted() {
-		if encErr := d.secretService.SetMasterPassword(storage.DefaultMasterPassword, true); encErr != nil {
-			slog.Error("Failed to set up secrets encryption during namespace creation", "err", encErr)
-		} else {
-			slog.Info("Secrets encrypted with default password during namespace creation")
-		}
-	}
-
-	// Import the snapshot synchronously BEFORE the namespace is activated and
-	// started, so volumes are populated before any container mounts them
-	// (Kotlin parity: NamespacesService.kt:131-143 imports in the create
-	// handler). Inline — not a background goroutine — to remove the race where
-	// Quick Start's immediate start brought containers up on empty volumes while
-	// the import was still running. This create-time path is the ONLY place a
-	// snapshot is imported on namespace creation; there is no boot-time
-	// auto-import (a `snapshot:` config field never triggers a re-import).
-	if nsCfg.Snapshot != "" {
-		// The import creates volumes scoped to the NEW namespace, so it needs a
-		// client scoped to (wsID, nsCfg.ID) — NOT d.dockerClient, which is scoped
-		// to whatever namespace was last active. Server mode has a single
-		// namespace (d.dockerClient is correct); desktop builds a transient client
-		// just for the import (the runtime gets its own via loadNamespace below).
-		importClient := d.dockerClient
-		if config.IsDesktopMode() {
-			if fc, fcErr := docker.NewClient(wsID, nsCfg.ID); fcErr != nil {
-				slog.Warn("Create: failed to build docker client for snapshot import", "nsID", nsCfg.ID, "err", fcErr)
-			} else {
-				defer fc.Close()
-				importClient = fc
-			}
-		}
-		// The import (download + volume restore) can run for minutes, exceeding
-		// the server's WriteTimeout — lift the write deadline for this request so
-		// the response isn't cut off mid-import (same approach as the log-follow
-		// handler in routes_config.go). The Web UI applies its own longer client
-		// timeout for snapshot-backed creates.
-		rc := http.NewResponseController(w)
-		_ = rc.SetWriteDeadline(time.Time{})
-		d.downloadAndImportSnapshot(importClient, nsCfg.Snapshot, wsID, nsCfg.ID)
-	}
-
-	// Auto-activate the newly-created namespace in desktop mode when the
-	// daemon has no current namespace loaded (Welcome / quick-start flow).
-	// Without this, the UI's immediate postNamespaceStart() after createNamespace
-	// fails with "no namespace configured" because the on-disk config was
-	// written but never wired into d.runtime. We narrowly guard on no-current-ns
-	// so a user creating a second namespace from an already-loaded workspace
-	// keeps the current one active (they switch explicitly via the picker).
+// importCreateSnapshot imports the configured snapshot synchronously BEFORE
+// the namespace is activated and started, so volumes are populated before any
+// container mounts them (Kotlin parity: NamespacesService.kt:131-143 imports
+// in the create handler). Inline — not a background goroutine — to remove the
+// race where Quick Start's immediate start brought containers up on empty
+// volumes while the import was still running. This create-time path is the
+// ONLY place a snapshot is imported on namespace creation; there is no
+// boot-time auto-import (a `snapshot:` config field is just a record of which
+// snapshot the namespace was created from, not a trigger).
+func (d *Daemon) importCreateSnapshot(wsID string, nsCfg *namespace.Config) {
+	// The import creates volumes scoped to the NEW namespace, so it needs a
+	// client scoped to (wsID, nsCfg.ID) — NOT the active dockerClient, which is scoped
+	// to whatever namespace was last active. Server mode has a single
+	// namespace (the active client is correct); desktop builds a transient client
+	// just for the import (the runtime gets its own via loadNamespace in the
+	// auto-activate step).
+	importClient := d.activeDockerClient()
 	if config.IsDesktopMode() {
-		d.configMu.RLock()
-		hasCurrent := d.runtime != nil && d.nsConfig != nil
-		activeWsID := d.workspaceID
-		d.configMu.RUnlock()
-		if !hasCurrent && wsID == activeWsID {
-			if d.reloadMu.TryLock() {
-				defer d.reloadMu.Unlock()
-				loaded, loadErr := loadNamespace(loadNamespaceInput{
-					Store:         d.store,
-					SecretService: d.secretService,
-					// nil → loadNamespace builds the runtime client scoped to
-					// nsCfg.ID. Never inject d.dockerClient: it is scoped to the
-					// previously-active namespace (the wrong-namespace bug).
-					DockerClient: nil,
-					DaemonCfg:    d.daemonCfg,
-					Licenses:     d.licenses,
-					WorkspaceID:  activeWsID,
-					NamespaceID:  nsCfg.ID,
-					Desktop:      d.desktop,
-				})
-				if loadErr != nil {
-					slog.Warn("Auto-activate after create failed (load)", "nsID", nsCfg.ID, "err", loadErr)
-				} else if loaded.NsConfig != nil {
-					if err := d.installLoadedNamespace(loaded, activeWsID, nsCfg.ID); err != nil {
-						slog.Warn("Auto-activate after create failed (install)", "nsID", nsCfg.ID, "err", err)
-					} else {
-						slog.Info("Auto-activated newly-created namespace", "nsID", nsCfg.ID)
-					}
-				}
-			}
+		if fc, fcErr := docker.NewClient(wsID, nsCfg.ID); fcErr != nil {
+			slog.Warn("Create: failed to build docker client for snapshot import", "nsID", nsCfg.ID, "err", fcErr)
+		} else {
+			defer fc.Close()
+			importClient = fc
 		}
 	}
+	d.downloadAndImportSnapshot(importClient, nsCfg.Snapshot, wsID, nsCfg.ID)
+}
 
-	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("namespace %q created", nsCfg.Name)})
+// autoActivateAfterCreate activates the newly-created namespace in desktop
+// mode when the daemon has no current namespace loaded (Welcome / quick-start
+// flow). Without this, the UI's immediate postNamespaceStart() after
+// createNamespace fails with "no namespace configured" because the on-disk
+// config was written but never wired into the active runtime. Narrowly guarded on
+// no-current-ns so a user creating a second namespace from an already-loaded
+// workspace keeps the current one active (they switch explicitly via the
+// picker). Best-effort: failures are logged, never surfaced as create errors.
+func (d *Daemon) autoActivateAfterCreate(wsID, nsID string) {
+	if !config.IsDesktopMode() {
+		return
+	}
+	act := d.active()
+	hasCurrent := act.runtime != nil && act.nsConfig != nil
+	activeWsID := act.workspaceID
+	if hasCurrent || wsID != activeWsID {
+		return
+	}
+	if !d.reloadMu.TryLock() {
+		return
+	}
+	defer d.reloadMu.Unlock()
+	loaded, loadErr := loadNamespace(loadNamespaceInput{
+		Store:         d.store,
+		SecretService: d.secretService,
+		// nil → loadNamespace builds the runtime client scoped to
+		// nsID. Never inject the active dockerClient: it is scoped to the
+		// previously-active namespace (the wrong-namespace bug).
+		DockerClient: nil,
+		DaemonCfg:    d.daemonCfg,
+		Licenses:     d.licenses,
+		WorkspaceID:  activeWsID,
+		NamespaceID:  nsID,
+		Desktop:      d.desktop,
+	})
+	if loadErr != nil {
+		slog.Warn("Auto-activate after create failed (load)", "nsID", nsID, "err", loadErr)
+		return
+	}
+	if loaded.NsConfig == nil {
+		return
+	}
+	if err := d.installLoadedNamespace(loaded, activeWsID, nsID); err != nil {
+		slog.Warn("Auto-activate after create failed (install)", "nsID", nsID, "err", err)
+		return
+	}
+	slog.Info("Auto-activated newly-created namespace", "nsID", nsID)
 }
 
 // handleGetNamespaceEdit returns the typed subset of namespace.yml consumed
-// by the Web UI's "edit namespace" form. The form drives a focused field set
+// by the Web UI's "edit namespace" form, for the namespace addressed by the
+// {id} path segment (NOT necessarily the active one — Welcome edits rows
+// without activating them). Values are the AUTHORITATIVE stored ones, loaded
+// from the namespace's persisted namespace.yml: in particular the bundle key
+// comes back RAW (a stored "LATEST" is returned as "LATEST", never the
+// display-resolved concrete version). The form drives a focused field set
 // (name, bundle, auth, host, port, TLS, pgAdmin); fields outside the DTO are
 // preserved on PUT so power users editing the raw YAML are not surprised by
 // silent rewrites.
-func (d *Daemon) handleGetNamespaceEdit(w http.ResponseWriter, _ *http.Request) {
-	d.configMu.RLock()
-	nsCfg := d.nsConfig
-	d.configMu.RUnlock()
-	if nsCfg == nil {
-		writeErrorCode(w, http.StatusNotFound, api.ErrCodeNotConfigured, "no namespace configured")
+func (d *Daemon) handleGetNamespaceEdit(w http.ResponseWriter, r *http.Request) {
+	nsID := r.PathValue("id")
+	if !validateID(nsID) {
+		writeError(w, http.StatusBadRequest, "invalid namespace id")
+		return
+	}
+	nsCfg, err := d.loadNamespaceConfigFromStore(d.activeWorkspaceID(), nsID)
+	if err != nil {
+		if errors.Is(err, errNamespaceNotFound) {
+			writeErrorCode(w, http.StatusNotFound, api.ErrCodeNamespaceNotFound,
+				fmt.Sprintf("namespace %q not found", nsID))
+			return
+		}
+		writeInternalError(w, fmt.Errorf("load namespace config: %w", err))
 		return
 	}
 	users := nsCfg.Authentication.Users
 	if users == nil {
 		users = []string{}
 	}
+	tlsEnabled := nsCfg.Proxy.TLS.Enabled
+	pgAdminEnabled := nsCfg.PgAdmin.Enabled
 	dto := api.NamespaceEditDto{
 		Name:           nsCfg.Name,
 		BundleRepo:     nsCfg.BundleRef.Repo,
@@ -813,8 +848,8 @@ func (d *Daemon) handleGetNamespaceEdit(w http.ResponseWriter, _ *http.Request) 
 		Users:          users,
 		Host:           nsCfg.Proxy.Host,
 		Port:           nsCfg.Proxy.Port,
-		TLSEnabled:     nsCfg.Proxy.TLS.Enabled,
-		PgAdminEnabled: nsCfg.PgAdmin.Enabled,
+		TLSEnabled:     &tlsEnabled,
+		PgAdminEnabled: &pgAdminEnabled,
 	}
 	writeJSON(w, dto)
 }
@@ -833,10 +868,9 @@ func (d *Daemon) handleGetNamespaceEdit(w http.ResponseWriter, _ *http.Request) 
 // Desktop-only — the create dialog isn't reachable in server mode. We still
 // answer with sane fallbacks so the endpoint never 404s the frontend.
 func (d *Daemon) handleNamespaceCreateDefaults(w http.ResponseWriter, _ *http.Request) {
-	d.configMu.RLock()
-	wsCfg := d.workspaceConfig
-	wsID := d.workspaceID
-	d.configMu.RUnlock()
+	act := d.active()
+	wsCfg := act.workspaceConfig
+	wsID := act.workspaceID
 
 	nsCfg := namespace.DefaultNamespaceConfig()
 	applyDefaultTemplate(&nsCfg, wsCfg)
@@ -911,11 +945,22 @@ func applyDefaultTemplate(cfg *namespace.Config, wsCfg *bundle.WorkspaceConfig) 
 	}
 }
 
-// handlePutNamespaceEdit applies the typed edit form back onto namespace.yml.
-// Loads the on-disk config (so non-form fields like webapps, snapshot, email,
-// S3 etc. survive), patches the form fields, validates, atomically writes,
-// then triggers a doReload() so the change takes effect immediately.
+// handlePutNamespaceEdit applies the typed edit form back onto the
+// namespace.yml of the namespace addressed by the {id} path segment. Loads
+// the on-disk config (so non-form fields like webapps, snapshot, email, S3
+// etc. survive), patches the form fields (empty AuthType / nil Users mean
+// "leave unchanged" — a partial payload never wipes stored values),
+// validates, atomically writes, then triggers a doReload() ONLY when {id} is
+// the active namespace; edits to non-active namespaces just persist. The
+// historical handler always patched the ACTIVE namespace's config — editing
+// a non-active row from Welcome corrupted the active one, and with no active
+// namespace the edit 400'd.
 func (d *Daemon) handlePutNamespaceEdit(w http.ResponseWriter, r *http.Request) {
+	nsID := r.PathValue("id")
+	if !validateID(nsID) {
+		writeError(w, http.StatusBadRequest, "invalid namespace id")
+		return
+	}
 	var req api.NamespaceEditDto
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -928,17 +973,14 @@ func (d *Daemon) handlePutNamespaceEdit(w http.ResponseWriter, r *http.Request) 
 	}
 	defer d.reloadMu.Unlock()
 
-	d.configMu.RLock()
-	nsCfg := d.nsConfig
-	d.configMu.RUnlock()
-	if nsCfg == nil {
-		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
-		return
-	}
-	nsID := nsCfg.ID
-
-	current, err := d.loadNamespaceConfigFromStore(d.workspaceID, nsID)
+	wsID := d.activeWorkspaceID()
+	current, err := d.loadNamespaceConfigFromStore(wsID, nsID)
 	if err != nil {
+		if errors.Is(err, errNamespaceNotFound) {
+			writeErrorCode(w, http.StatusNotFound, api.ErrCodeNamespaceNotFound,
+				fmt.Sprintf("namespace %q not found", nsID))
+			return
+		}
 		writeInternalError(w, fmt.Errorf("load namespace config: %w", err))
 		return
 	}
@@ -963,8 +1005,12 @@ func (d *Daemon) handlePutNamespaceEdit(w http.ResponseWriter, r *http.Request) 
 	if req.Port > 0 {
 		current.Proxy.Port = req.Port
 	}
-	current.Proxy.TLS.Enabled = req.TLSEnabled
-	current.PgAdmin.Enabled = req.PgAdminEnabled
+	if req.TLSEnabled != nil {
+		current.Proxy.TLS.Enabled = *req.TLSEnabled
+	}
+	if req.PgAdminEnabled != nil {
+		current.PgAdmin.Enabled = *req.PgAdminEnabled
+	}
 
 	if valErr := namespace.ValidateNamespaceConfig(current); valErr != nil {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeInvalidConfig, valErr.Error())
@@ -976,25 +1022,28 @@ func (d *Daemon) handlePutNamespaceEdit(w http.ResponseWriter, r *http.Request) 
 		writeInternalError(w, fmt.Errorf("marshal namespace config: %w", err))
 		return
 	}
-	if err := d.persistNamespaceConfig(d.workspaceID, nsID, data); err != nil {
+	if err := d.persistNamespaceConfig(wsID, nsID, data); err != nil {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeInvalidConfig, err.Error())
 		return
 	}
 
-	// Reload so the change is picked up live. Failure to reload is reported
-	// but the YAML is already on disk — the user can retry via UI.
-	if err := d.doReload(); err != nil {
-		writeInternalError(w, fmt.Errorf("reload after edit: %w", err))
-		return
+	// Reload only when the edited namespace is the active one, so the change
+	// is picked up live. Non-active namespaces have nothing running — the
+	// persisted YAML is authoritative and applies on next activation/start.
+	// Reload failure is reported but the YAML is already on disk — the user
+	// can retry via UI.
+	if nsID == d.activeNsID() {
+		if err := d.doReload(); err != nil {
+			writeInternalError(w, fmt.Errorf("reload after edit: %w", err))
+			return
+		}
 	}
 
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "namespace updated"})
 }
 
 func (d *Daemon) handleListBundles(w http.ResponseWriter, _ *http.Request) {
-	d.configMu.RLock()
-	wsCfg := d.workspaceConfig
-	d.configMu.RUnlock()
+	wsCfg := d.active().workspaceConfig
 
 	var result []api.BundleInfoDto
 	if wsCfg != nil {
@@ -1020,8 +1069,8 @@ func (d *Daemon) handleListBundles(w http.ResponseWriter, _ *http.Request) {
 // selected key as a stale fallback.
 func (d *Daemon) resolveBundleDir(repo bundle.BundlesRepo) string {
 	dataDir := config.DataDir()
-	if config.IsDesktopMode() && d.workspaceID != "" {
-		dataDir = config.WorkspaceDir(d.workspaceID)
+	if wsID := d.activeWorkspaceID(); config.IsDesktopMode() && wsID != "" {
+		dataDir = config.WorkspaceDir(wsID)
 	}
 	wsRepoDir := filepath.Join(dataDir, "bundles", "workspace")
 	return bundle.ResolveBundleRepoDir(dataDir, wsRepoDir, repo)

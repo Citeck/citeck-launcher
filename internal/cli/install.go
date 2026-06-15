@@ -22,9 +22,9 @@ import (
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/output"
 	"github.com/citeck/citeck-launcher/internal/storage"
+	"github.com/citeck/citeck-launcher/internal/systemsecrets"
 	"github.com/citeck/citeck-launcher/internal/tlsutil"
-	"github.com/docker/docker/api/types/registry"
-	dockerclient "github.com/docker/docker/client"
+	dockerclient "github.com/moby/moby/client"
 	"github.com/spf13/cobra"
 )
 
@@ -111,7 +111,7 @@ func runInstall(info BuildInfo, workspaceZip string, offline bool) (retErr error
 		if err := os.MkdirAll(destDir, 0o750); err != nil {
 			return fmt.Errorf("create repo dir: %w", err)
 		}
-		count, err := extractZip(workspaceZip, destDir)
+		count, err := fsutil.ExtractZip(workspaceZip, destDir, fsutil.WithStripSingleRootDir())
 		if err != nil {
 			return fmt.Errorf("extract workspace: %w", err)
 		}
@@ -680,7 +680,7 @@ func configureRegistryAuth(wsCfg *bundle.WorkspaceConfig, usedPrefixes map[strin
 
 // dockerRegistryLogin validates credentials against a Docker registry.
 func dockerRegistryLogin(registryURL, username, password string) error {
-	cli, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
+	cli, err := dockerclient.New(dockerclient.FromEnv)
 	if err != nil {
 		return fmt.Errorf("docker client: %w", err)
 	}
@@ -689,7 +689,7 @@ func dockerRegistryLogin(registryURL, username, password string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	_, loginErr := cli.RegistryLogin(ctx, registry.AuthConfig{
+	_, loginErr := cli.RegistryLogin(ctx, dockerclient.RegistryLoginOptions{
 		Username:      username,
 		Password:      password,
 		ServerAddress: "https://" + registryURL,
@@ -701,23 +701,37 @@ func dockerRegistryLogin(registryURL, username, password string) error {
 }
 
 // readAdminPasswordFromStore looks up the generated ecos-app realm admin
-// password from the encrypted secret store. Returns "" on any error so the
-// install wizard can fall back to the hardcoded default. Best-effort —
-// the wizard must not hard-fail if the daemon is still initializing the
-// store on its first startup.
+// password through systemsecrets.Lookup — the read-only twin of the
+// daemon's resolver, so the wizard can never drift from where the daemon
+// actually stores the value (the second HIGH bug the systemsecrets package
+// exists to prevent: this function used to hand-roll the location and
+// printed a stale default). Returns "" on any error so the install wizard
+// can fall back to the hardcoded default. Best-effort — the wizard must
+// not hard-fail if the daemon is still initializing the store on its
+// first startup.
 func readAdminPasswordFromStore() string {
-	svc, err := openSecretService()
+	store, err := storage.NewFileStore(config.ConfDir(), filepath.Join(config.DataDir(), "runtime"))
 	if err != nil {
 		return ""
 	}
-	if svc.IsLocked() {
-		return ""
+	return readAdminPasswordFromOpenStore(store)
+}
+
+// readAdminPasswordFromOpenStore reads the admin password from an already
+// opened store via the systemsecrets priority chain (plain launcher_state
+// key first, then the legacy SecretService row, then the pre-Store plain
+// file) without mutating anything. A custom (non-default) master password
+// leaves the SecretService locked — its rows are then simply invisible,
+// matching the wizard's historic behavior.
+func readAdminPasswordFromOpenStore(store storage.Store) string {
+	svc, err := systemsecrets.OpenDefaultUnlocked(store)
+	if err != nil {
+		svc = nil // degrade to state + plain-file inspection only
 	}
-	sec, err := svc.GetSecret("_admin_password")
-	if err != nil || sec == nil {
-		return ""
+	if loc, ok := systemsecrets.Lookup(store, svc, systemsecrets.IDAdminPassword); ok {
+		return loc.Value
 	}
-	return sec.Value
+	return ""
 }
 
 // openSecretService creates a FileStore + SecretService and unlocks with default password.
@@ -773,13 +787,13 @@ func saveRegistrySecret(svc *storage.SecretService, repo bundle.ImageRepo, usern
 	host := registryHost(repo.URL)
 	if err := svc.SaveSecret(storage.Secret{
 		SecretMeta: storage.SecretMeta{
-			ID:    "registry-" + repo.ID,
-			Name:  host + " credentials",
-			Type:  storage.SecretRegistryAuth,
-			Scope: host,
+			ID:       "registry-" + repo.ID,
+			Name:     host + " credentials",
+			Type:     storage.SecretRegistryAuth,
+			Scope:    host,
+			Username: username,
 		},
-		Username: username,
-		Value:    password,
+		Value: password,
 	}); err != nil {
 		return fmt.Errorf("save secret: %w", err)
 	}

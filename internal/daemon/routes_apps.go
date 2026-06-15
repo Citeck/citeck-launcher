@@ -16,7 +16,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/namespace"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"gopkg.in/yaml.v3"
 )
 
@@ -50,7 +50,7 @@ func (d *Daemon) handleAppLogs(w http.ResponseWriter, r *http.Request) {
 
 	logCtx, logCancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer logCancel()
-	rawLogs, err := d.dockerClient.ContainerLogs(logCtx, app.ContainerID, tail)
+	rawLogs, err := d.activeDockerClient().ContainerLogs(logCtx, app.ContainerID, tail)
 	if err != nil {
 		writeInternalError(w, err)
 		return
@@ -88,9 +88,13 @@ func (d *Daemon) handleAppLogsFollow(w http.ResponseWriter, r *http.Request, con
 	w.Header().Set("Transfer-Encoding", "chunked")
 	w.Header().Set("Cache-Control", "no-cache")
 
+	// Captured once so the backlog and the live follow talk to the same
+	// engine even if a workspace switch swaps the active client mid-request.
+	dc := d.activeDockerClient()
+
 	// Backlog (last `tail` lines) via the robust non-follow demux.
 	if tail != 0 {
-		if backlog, err := d.dockerClient.ContainerLogs(ctx, containerID, tail); err == nil && backlog != "" {
+		if backlog, err := dc.ContainerLogs(ctx, containerID, tail); err == nil && backlog != "" {
 			_, _ = w.Write([]byte(stripAnsi(backlog))) //nolint:gosec // G705 XSS taint: Content-Type is text/plain, not HTML
 			flusher.Flush()
 		}
@@ -101,7 +105,7 @@ func (d *Daemon) handleAppLogsFollow(w http.ResponseWriter, r *http.Request, con
 	// A line emitted in the gap between the backlog read and this call is a rare
 	// single-line seam — acceptable for a log viewer, and far better than the
 	// silent truncation it replaces.
-	reader, err := d.dockerClient.ContainerLogsFollow(ctx, containerID, 0)
+	reader, err := dc.ContainerLogsFollow(ctx, containerID, 0)
 	if err != nil {
 		// Backlog already written; we can't change the status code now.
 		return
@@ -196,10 +200,11 @@ func stripAnsiBytes(b, carry []byte) (cleaned, leftover []byte) {
 // for the auto-retry backoff window. The underlying RetryPullFailedApps call
 // is a no-op when no apps are in PULL_FAILED — safe to invoke unconditionally.
 func (d *Daemon) handleAppsRetryPullFailed(w http.ResponseWriter, _ *http.Request) {
-	if !d.requireRuntime(w) {
+	rt := d.requireRuntime(w)
+	if rt == nil {
 		return
 	}
-	count := d.runtime.RetryPullFailedApps()
+	count := rt.RetryPullFailedApps()
 	writeJSON(w, api.ActionResultDto{
 		Success: true,
 		Message: fmt.Sprintf("Retry requested for %d pull-failed app(s)", count),
@@ -211,7 +216,8 @@ func (d *Daemon) handleAppRestart(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	if !d.requireRuntime(w) {
+	rt := d.requireRuntime(w)
+	if rt == nil {
 		return
 	}
 	app := d.findApp(name)
@@ -220,7 +226,7 @@ func (d *Daemon) handleAppRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := d.runtime.RestartApp(name); err != nil {
+	if err := rt.RestartApp(name); err != nil {
 		writeInternalError(w, err)
 		return
 	}
@@ -232,7 +238,8 @@ func (d *Daemon) handleAppStop(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	if !d.requireRuntime(w) {
+	rt := d.requireRuntime(w)
+	if rt == nil {
 		return
 	}
 	if d.findApp(name) == nil {
@@ -240,7 +247,7 @@ func (d *Daemon) handleAppStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := d.runtime.StopApp(name); err != nil {
+	if err := rt.StopApp(name); err != nil {
 		writeInternalError(w, err)
 		return
 	}
@@ -252,7 +259,8 @@ func (d *Daemon) handleAppStart(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	if !d.requireRuntime(w) {
+	rt := d.requireRuntime(w)
+	if rt == nil {
 		return
 	}
 	app := d.findApp(name)
@@ -265,7 +273,7 @@ func (d *Daemon) handleAppStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := d.runtime.StartApp(name); err != nil {
+	if err := rt.StartApp(name); err != nil {
 		writeInternalError(w, err)
 		return
 	}
@@ -279,14 +287,15 @@ func (d *Daemon) handleClearAppRestartEvents(w http.ResponseWriter, r *http.Requ
 	if !validateAppName(w, name) {
 		return
 	}
-	if !d.requireRuntime(w) {
+	rt := d.requireRuntime(w)
+	if rt == nil {
 		return
 	}
 	if d.findApp(name) == nil {
 		writeAppNotFound(w, name)
 		return
 	}
-	d.runtime.ClearRestartEvents(name)
+	rt.ClearRestartEvents(name)
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("Restart events cleared for %s", name)})
 }
 
@@ -310,9 +319,12 @@ func (d *Daemon) handleAppInspect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Captured once: inspect + NetworkName below must come from the same
+	// client even if a workspace switch swaps the active one mid-request.
+	dc := d.activeDockerClient()
 	inspCtx, inspCancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer inspCancel()
-	inspect, err := d.dockerClient.InspectContainer(inspCtx, app.ContainerID)
+	inspect, err := dc.InspectContainer(inspCtx, app.ContainerID)
 	if err != nil {
 		writeInternalError(w, err)
 		return
@@ -340,12 +352,12 @@ func (d *Daemon) handleAppInspect(w http.ResponseWriter, r *http.Request) {
 		ContainerID:  app.ContainerID,
 		Image:        inspect.Config.Image,
 		Status:       string(app.Status),
-		State:        inspect.State.Status,
+		State:        string(inspect.State.Status),
 		Ports:        ports,
 		Volumes:      volumes,
 		Env:          envVars,
 		Labels:       inspect.Config.Labels,
-		Network:      d.dockerClient.NetworkName(),
+		Network:      dc.NetworkName(),
 		RestartCount: inspect.RestartCount,
 		StartedAt:    inspect.State.StartedAt,
 	}
@@ -380,7 +392,7 @@ func (d *Daemon) handleAppExec(w http.ResponseWriter, r *http.Request) {
 
 	execCtx, execCancel := context.WithTimeout(r.Context(), 120*time.Second)
 	defer execCancel()
-	output, exitCode, err := d.dockerClient.ExecInContainer(execCtx, app.ContainerID, req.Command)
+	output, exitCode, err := d.activeDockerClient().ExecInContainer(execCtx, app.ContainerID, req.Command)
 	if err != nil {
 		writeInternalError(w, err)
 		return
@@ -442,7 +454,8 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	if !d.requireRuntime(w) {
+	rt := d.requireRuntime(w)
+	if rt == nil {
 		return
 	}
 	app := d.findApp(name)
@@ -482,7 +495,7 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 	newDef.ImageDigest = ""
 	newDef.VolumesContentHash = ""
 
-	if err := d.runtime.UpdateAppDef(name, newDef, true); err != nil {
+	if err := rt.UpdateAppDef(name, newDef, true); err != nil {
 		writeInternalError(w, err)
 		return
 	}
@@ -491,9 +504,9 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 	// error with "runtime not started" and surface a spurious failure for a
 	// save that actually succeeded. When running, restart to apply immediately.
 	msg := fmt.Sprintf("App %s config updated and restart requested", name)
-	if d.runtime.Status() == namespace.NsStatusStopped {
+	if rt.Status() == namespace.NsStatusStopped {
 		msg = fmt.Sprintf("App %s config saved; applies on next start", name)
-	} else if err := d.runtime.RestartApp(name); err != nil {
+	} else if err := rt.RestartApp(name); err != nil {
 		writeInternalError(w, err)
 		return
 	}
@@ -508,11 +521,15 @@ func (d *Daemon) handleResetAppConfig(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	if d.findApp(name) == nil {
+	// One snapshot for both the lookup and the mutation. NOTE: deliberately no
+	// requireRuntime here (pinned by tests) — a nil runtime surfaces as
+	// app-not-found, mirroring the historical findApp-first behavior.
+	rt := d.active().runtime
+	if rt == nil || rt.FindApp(name) == nil {
 		writeAppNotFound(w, name)
 		return
 	}
-	if err := d.runtime.ResetAppDef(name); err != nil {
+	if err := rt.ResetAppDef(name); err != nil {
 		writeInternalError(w, err)
 		return
 	}
@@ -524,7 +541,13 @@ func (d *Daemon) handleListAppFiles(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	app := d.findApp(name)
+	// One snapshot: app lookup, volumesBase, and edited-flag queries must all
+	// reflect the same active namespace.
+	act := d.active()
+	var app *namespace.AppRuntime
+	if act.runtime != nil {
+		app = act.runtime.FindApp(name)
+	}
 	if app == nil {
 		writeAppNotFound(w, name)
 		return
@@ -540,6 +563,7 @@ func (d *Daemon) handleListAppFiles(w http.ResponseWriter, r *http.Request) {
 	// walk the directory and emit each regular file inside — Kotlin 1.x
 	// behavior the COG RMB menu relied on to surface application.yml etc.
 	files := make([]api.AppFileDto, 0)
+	volumesBase := act.volumesBase
 	for _, v := range app.Def.Volumes {
 		parts := strings.SplitN(v, ":", 2)
 		if len(parts) != 2 {
@@ -549,13 +573,13 @@ func (d *Daemon) handleListAppFiles(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(hostPath, "./") {
 			continue
 		}
-		absPath := filepath.Join(d.volumesBase, hostPath[2:])
+		absPath := filepath.Join(volumesBase, hostPath[2:])
 		info, statErr := os.Stat(absPath) //nolint:gosec // G304: absPath derived from validated bind mount + volumesBase
 		if statErr != nil {
 			continue
 		}
 		if !info.IsDir() {
-			edited := d.runtime != nil && d.runtime.IsFileEdited(hostPath[2:])
+			edited := act.runtime != nil && act.runtime.IsFileEdited(hostPath[2:])
 			files = append(files, api.AppFileDto{Path: hostPath, Edited: edited})
 			continue
 		}
@@ -569,19 +593,19 @@ func (d *Daemon) handleListAppFiles(w http.ResponseWriter, r *http.Request) {
 		// data dirs reach a few dozen) and well below the worst-case noise.
 		const dirMountFileCap = 500
 		walkedHere := 0
-		_ = filepath.WalkDir(absPath, func(child string, d2 os.DirEntry, walkErr error) error {
+		_ = filepath.WalkDir(absPath, func(child string, d2 os.DirEntry, walkErr error) error { //nolint:gosec // G703: absPath derived from validated bind mount + volumesBase (same path os.Stat above already vetted)
 			if walkErr != nil || d2.IsDir() {
 				return nil
 			}
 			if walkedHere >= dirMountFileCap {
 				return filepath.SkipAll
 			}
-			rel, relErr := filepath.Rel(d.volumesBase, child)
+			rel, relErr := filepath.Rel(volumesBase, child)
 			if relErr != nil {
 				return nil
 			}
 			relSlash := filepath.ToSlash(rel)
-			edited := d.runtime != nil && d.runtime.IsFileEdited(relSlash)
+			edited := act.runtime != nil && act.runtime.IsFileEdited(relSlash)
 			files = append(files, api.AppFileDto{Path: "./" + relSlash, Edited: edited})
 			walkedHere++
 			return nil
@@ -596,7 +620,13 @@ func (d *Daemon) handleGetAppFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	filePath := r.PathValue("path")
-	app := d.findApp(name)
+	// One snapshot: the app lookup and volumesBase must describe the same
+	// active namespace.
+	act := d.active()
+	var app *namespace.AppRuntime
+	if act.runtime != nil {
+		app = act.runtime.FindApp(name)
+	}
 	if app == nil {
 		writeAppNotFound(w, name)
 		return
@@ -609,8 +639,9 @@ func (d *Daemon) handleGetAppFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	absPath := filepath.Join(d.volumesBase, filePath)
-	if !isPathUnder(absPath, d.volumesBase) {
+	volumesBase := act.volumesBase
+	absPath := filepath.Join(volumesBase, filePath)
+	if !isPathUnder(absPath, volumesBase) {
 		writeError(w, http.StatusForbidden, "path outside workspace")
 		return
 	}
@@ -629,7 +660,13 @@ func (d *Daemon) handlePutAppFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	filePath := r.PathValue("path")
-	app := d.findApp(name)
+	// One snapshot: app lookup, volumesBase, and the edited-file write below
+	// must all target the same active namespace.
+	act := d.active()
+	var app *namespace.AppRuntime
+	if act.runtime != nil {
+		app = act.runtime.FindApp(name)
+	}
 	if app == nil {
 		writeAppNotFound(w, name)
 		return
@@ -647,18 +684,19 @@ func (d *Daemon) handlePutAppFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	absPath := filepath.Join(d.volumesBase, filePath)
-	if !isPathUnder(absPath, d.volumesBase) {
+	volumesBase := act.volumesBase
+	absPath := filepath.Join(volumesBase, filePath)
+	if !isPathUnder(absPath, volumesBase) {
 		writeError(w, http.StatusForbidden, "path outside workspace")
 		return
 	}
 	// Atomic: write the file AND mark it as edited under the same runtime
 	// lock so a regenerate already in-flight can't read a stale edited map
 	// and overwrite the user's content with the bundle template right after
-	// the write. Falling back to the legacy two-step write+SetFileEdited if
-	// the runtime is not available (server-mode test stubs).
-	if d.runtime != nil {
-		if err := d.runtime.WriteEditedFile(filePath, absPath, body); err != nil {
+	// the write. Falling back to a plain atomic write (no edited-flag
+	// bookkeeping) when the runtime is not available (server-mode test stubs).
+	if act.runtime != nil {
+		if err := act.runtime.WriteEditedFile(filePath, absPath, body); err != nil {
 			writeInternalError(w, err)
 			return
 		}
@@ -683,10 +721,11 @@ func (d *Daemon) handleResetAppFile(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	if !d.requireRuntime(w) {
+	rt := d.requireRuntime(w)
+	if rt == nil {
 		return
 	}
-	app := d.findApp(name)
+	app := rt.FindApp(name)
 	if app == nil {
 		writeAppNotFound(w, name)
 		return
@@ -714,7 +753,7 @@ func (d *Daemon) handleResetAppFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer d.reloadMu.Unlock()
-	if err := d.runtime.ResetEditedFile(name, cleanPath); err != nil {
+	if err := rt.ResetEditedFile(name, cleanPath); err != nil {
 		writeInternalError(w, err)
 		return
 	}
@@ -728,36 +767,12 @@ func (d *Daemon) handleResetAppFile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("File %s reset to default", cleanPath)})
 }
 
-func (d *Daemon) handleAppLockToggle(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	if !validateAppName(w, name) {
-		return
-	}
-	if !d.requireRuntime(w) {
-		return
-	}
-	if d.findApp(name) == nil {
-		writeAppNotFound(w, name)
-		return
-	}
-
-	var body struct {
-		Locked bool `json:"locked"`
-	}
-	if err := readJSON(r, &body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-
-	d.runtime.SetAppLocked(name, body.Locked)
-	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("App %s lock=%v", name, body.Locked)})
-}
-
 func (d *Daemon) findApp(name string) *namespace.AppRuntime {
-	if d.runtime == nil {
+	rt := d.active().runtime
+	if rt == nil {
 		return nil
 	}
-	return d.runtime.FindApp(name)
+	return rt.FindApp(name)
 }
 
 func writeAppNotFound(w http.ResponseWriter, name string) {

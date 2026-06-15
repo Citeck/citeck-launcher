@@ -88,7 +88,7 @@ func (r *Runtime) runtimeLoop() {
 		// Coalesce per-iteration state mutations into a single persistState.
 		// Mutators flip r.dirty under Lock; the tail below drains once per
 		// iteration. Mutators that record durable user intent (StopApp /
-		// StartApp / UpdateAppDef / SetAppLocked / doDetach / RestartApp)
+		// StartApp / UpdateAppDef / doDetach / RestartApp)
 		// persist inline AND clear dirty to skip this redundant write.
 		if r.dirty.Load() {
 			r.mu.Lock()
@@ -272,6 +272,10 @@ func (r *Runtime) stepAllAppsUnderLock() []dispatchPlan { //nolint:gocyclo // si
 // start plan (T7/T9 no-init shortcut). Caller must hold r.mu.Lock.
 func (r *Runtime) beginStartingUnderLock(app *AppRuntime, plans []dispatchPlan) []dispatchPlan {
 	app.initStepIdx = 0
+	// initActive gates the AppDto init-progress fields (initStep/initTotal/
+	// initName). The STARTING app_status event below already triggers a UI
+	// refetch, so step 1/N needs no dedicated init-step event.
+	app.initActive = len(app.Def.InitContainers) > 0
 	r.setAppStatus(app, AppStatusStarting)
 	appDef := app.Def
 	if len(appDef.InitContainers) == 0 {
@@ -738,8 +742,15 @@ func (r *Runtime) handleInitResult(res workers.Result) {
 	} else {
 		// T12: last init succeeded — dispatch startContainer; status stays STARTING.
 		app.initStepIdx = 0
+		app.initActive = false
 		plan = r.makeStartPlan(app.Name, appDef, r.volumesBase)
 	}
+	// Surface init progress to the UI. The status stays STARTING across the
+	// whole init chain, so setAppStatus never fires here — emit a dedicated
+	// `app_init_step` event instead. Emitted ONLY on a step-index change
+	// (T11 advance / T12 phase-done with zeroed fields), which is the natural
+	// throttle: at most len(InitContainers) events per start.
+	r.emitInitStepEventUnderLock(app)
 	r.mu.Unlock()
 	r.dispatcher.Dispatch(plan.taskID, plan.fn, r.resultCh, r.signalCh)
 }

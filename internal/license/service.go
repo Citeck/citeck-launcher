@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -97,6 +98,75 @@ func (s *Service) HasValidEnterprise() bool {
 		}
 	}
 	return false
+}
+
+// StatusSummary is the effective enterprise-license state at one instant,
+// shaped for status surfaces (CLI `citeck status` line, dashboard indicator).
+//
+// Selection rule: the first VALID license in priority order wins (List() is
+// sorted by descending priority — the same "best license first" order the
+// Kotlin callers relied on). When no license validates but records exist,
+// the one with the latest ValidUntil is reported so the UI can show
+// "expired" with real tenant/date context instead of pretending the install
+// is community.
+type StatusSummary struct {
+	Enterprise bool      // a valid (signed, in-window) license exists
+	Tenant     string    // tenant of the effective license ("" → no licenses stored)
+	IssuedTo   string    // issued-to of the effective license
+	ValidUntil time.Time // zero when no licenses stored
+	DaysLeft   int       // whole days until ValidUntil (ceil); <= 0 once expired
+}
+
+// Status returns the effective license summary against the current clock.
+func (s *Service) Status() (StatusSummary, error) {
+	return s.StatusAt(time.Now())
+}
+
+// StatusAt is the testable form of Status that takes the clock as a parameter.
+func (s *Service) StatusAt(now time.Time) (StatusSummary, error) {
+	licenses, err := s.List()
+	if err != nil {
+		return StatusSummary{}, err
+	}
+	// First valid license in priority order (List() sorts descending).
+	for _, lic := range licenses {
+		if lic.ValidAt(now) {
+			return newStatusSummary(lic, now, true), nil
+		}
+	}
+	// No valid license: report the record expiring last — the most relevant
+	// one for an "expired" indicator. Enterprise stays false.
+	var latest *Instance
+	for i := range licenses {
+		if latest == nil || licenses[i].ValidUntil.After(latest.ValidUntil.Time) {
+			latest = &licenses[i]
+		}
+	}
+	if latest == nil {
+		return StatusSummary{}, nil // community — nothing stored
+	}
+	return newStatusSummary(*latest, now, false), nil
+}
+
+func newStatusSummary(lic Instance, now time.Time, valid bool) StatusSummary {
+	return StatusSummary{
+		Enterprise: valid,
+		Tenant:     lic.Tenant,
+		IssuedTo:   lic.IssuedTo,
+		ValidUntil: lic.ValidUntil.Time,
+		DaysLeft:   daysLeft(lic.ValidUntil.Time, now),
+	}
+}
+
+// daysLeft returns the number of whole days from now until `until`, rounding
+// up (a license valid through tomorrow morning reads as "1 day left"). Zero
+// or negative means expired. A zero `until` (license without a ValidUntil)
+// reports 0 — such records never validate anyway (ValidAt fails them).
+func daysLeft(until, now time.Time) int {
+	if until.IsZero() {
+		return 0
+	}
+	return int(math.Ceil(until.Sub(now).Hours() / 24))
 }
 
 // Add stores a license. The caller is responsible for validation (the daemon

@@ -5,10 +5,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
+	"github.com/moby/moby/client"
 )
 
 // PurgeNamespace removes every Docker resource belonging to (nsID, wsID) —
@@ -26,48 +23,50 @@ func (c *Client) PurgeNamespace(ctx context.Context, nsID, wsID string) {
 	// Labels carry the raw namespace id (= c.namespace at creation time), not
 	// the lowercased volume-name form, so filter on the raw id. Workspace is
 	// matched case-insensitively, mirroring ListVolumes / Kotlin equals(...,true).
-	nsFilter := filters.NewArgs(filters.Arg("label", LabelNamespace+"="+nsID))
+	nsFilter := func() client.Filters {
+		return make(client.Filters).Add("label", LabelNamespace+"="+nsID)
+	}
 	wsMatch := func(labels map[string]string) bool {
 		return strings.EqualFold(labels[LabelWorkspace], wsID)
 	}
 
 	// Containers (running or stopped) — force-remove with their anonymous volumes.
-	if cs, err := c.cli.ContainerList(ctx, container.ListOptions{All: true, Filters: nsFilter}); err != nil {
+	if cs, err := c.cli.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: nsFilter()}); err != nil {
 		slog.Warn("PurgeNamespace: list containers failed", "ns", nsID, "err", err)
 	} else {
-		for _, ct := range cs {
+		for _, ct := range cs.Items {
 			if !wsMatch(ct.Labels) {
 				continue
 			}
-			if rmErr := c.cli.ContainerRemove(ctx, ct.ID, container.RemoveOptions{Force: true, RemoveVolumes: true}); rmErr != nil {
+			if _, rmErr := c.cli.ContainerRemove(ctx, ct.ID, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true}); rmErr != nil {
 				slog.Warn("PurgeNamespace: remove container failed", "ns", nsID, "container", ct.ID, "err", rmErr)
 			}
 		}
 	}
 
 	// Named volumes — the actual namespace data.
-	if vl, err := c.cli.VolumeList(ctx, volume.ListOptions{Filters: nsFilter}); err != nil {
+	if vl, err := c.cli.VolumeList(ctx, client.VolumeListOptions{Filters: nsFilter()}); err != nil {
 		slog.Warn("PurgeNamespace: list volumes failed", "ns", nsID, "err", err)
 	} else {
-		for _, v := range vl.Volumes {
-			if v == nil || !wsMatch(v.Labels) {
+		for _, v := range vl.Items {
+			if !wsMatch(v.Labels) {
 				continue
 			}
-			if rmErr := c.cli.VolumeRemove(ctx, v.Name, true); rmErr != nil {
+			if _, rmErr := c.cli.VolumeRemove(ctx, v.Name, client.VolumeRemoveOptions{Force: true}); rmErr != nil {
 				slog.Warn("PurgeNamespace: remove volume failed", "ns", nsID, "volume", v.Name, "err", rmErr)
 			}
 		}
 	}
 
 	// Network.
-	if nets, err := c.cli.NetworkList(ctx, network.ListOptions{Filters: nsFilter}); err != nil {
+	if nets, err := c.cli.NetworkList(ctx, client.NetworkListOptions{Filters: nsFilter()}); err != nil {
 		slog.Warn("PurgeNamespace: list networks failed", "ns", nsID, "err", err)
 	} else {
-		for _, n := range nets {
+		for _, n := range nets.Items {
 			if !wsMatch(n.Labels) {
 				continue
 			}
-			if rmErr := c.cli.NetworkRemove(ctx, n.ID); rmErr != nil {
+			if _, rmErr := c.cli.NetworkRemove(ctx, n.ID, client.NetworkRemoveOptions{}); rmErr != nil {
 				slog.Warn("PurgeNamespace: remove network failed", "ns", nsID, "network", n.Name, "err", rmErr)
 			}
 		}
@@ -126,7 +125,7 @@ type orphanTarget struct {
 // convention (the caller gates on IsDesktopMode); server mode has a single
 // file-backed namespace and no orphan churn.
 func (c *Client) SweepOrphans(ctx context.Context, keep map[string]bool) []string {
-	launcherFilter := filters.NewArgs(filters.Arg("label", LabelLauncher+"=true"))
+	launcherFilter := make(client.Filters).Add("label", LabelLauncher+"=true")
 	var labelSets []map[string]string
 
 	if cs, err := c.ListAllLauncherContainers(ctx); err != nil {
@@ -136,19 +135,17 @@ func (c *Client) SweepOrphans(ctx context.Context, keep map[string]bool) []strin
 			labelSets = append(labelSets, ct.Labels)
 		}
 	}
-	if vl, err := c.cli.VolumeList(ctx, volume.ListOptions{Filters: launcherFilter}); err != nil {
+	if vl, err := c.cli.VolumeList(ctx, client.VolumeListOptions{Filters: launcherFilter}); err != nil {
 		slog.Warn("SweepOrphans: list volumes failed", "err", err)
 	} else {
-		for _, v := range vl.Volumes {
-			if v != nil {
-				labelSets = append(labelSets, v.Labels)
-			}
+		for _, v := range vl.Items {
+			labelSets = append(labelSets, v.Labels)
 		}
 	}
-	if nets, err := c.cli.NetworkList(ctx, network.ListOptions{Filters: launcherFilter}); err != nil {
+	if nets, err := c.cli.NetworkList(ctx, client.NetworkListOptions{Filters: launcherFilter}); err != nil {
 		slog.Warn("SweepOrphans: list networks failed", "err", err)
 	} else {
-		for _, n := range nets {
+		for _, n := range nets.Items {
 			labelSets = append(labelSets, n.Labels)
 		}
 	}

@@ -26,23 +26,24 @@ func (d *Daemon) buildDumpData(ctx context.Context) map[string]any {
 		"version": d.version,
 		"socket":  d.socketPath,
 	}
-	d.configMu.RLock()
-	nsCfg := d.nsConfig
-	d.configMu.RUnlock()
-	if nsCfg != nil {
+	act := d.active()
+	if nsCfg := act.nsConfig; nsCfg != nil {
 		dump["namespace"] = map[string]any{
 			"id":     nsCfg.ID,
 			"name":   nsCfg.Name,
 			"bundle": nsCfg.BundleRef.String(),
 		}
 	}
-	if err := d.dockerClient.Ping(ctx); err != nil {
+	if act.dockerClient == nil {
+		// Zero-value Daemon (tests) — production always sets the client.
+		dump["docker"] = map[string]any{"available": false, "error": "no docker client"}
+	} else if err := act.dockerClient.Ping(ctx); err != nil {
 		dump["docker"] = map[string]any{"available": false, "error": err.Error()}
 	} else {
 		dump["docker"] = map[string]any{"available": true}
 	}
-	if d.runtime != nil {
-		apps := d.runtime.Apps()
+	if act.runtime != nil {
+		apps := act.runtime.Apps()
 		appList := make([]map[string]string, 0, len(apps))
 		for _, app := range apps {
 			appList = append(appList, map[string]string{
@@ -62,15 +63,28 @@ func (d *Daemon) handleSystemDump(w http.ResponseWriter, r *http.Request) {
 	dump := d.buildDumpData(ctx)
 
 	if r.URL.Query().Get("format") == "zip" {
-		// Marshal configs under lock to avoid data races (slices/maps are reference types)
-		d.configMu.RLock()
+		// nsConfig is replaced wholesale on reload/activate (never mutated in
+		// place), so marshaling from the snapshot copy is race-free.
 		var nsCfgYAML []byte
-		if d.nsConfig != nil {
-			masked := maskNamespaceConfigSecrets(d.nsConfig)
+		if nsCfg := d.active().nsConfig; nsCfg != nil {
+			masked := maskNamespaceConfigSecrets(nsCfg)
 			nsCfgYAML, _ = namespace.MarshalNamespaceConfig(masked)
 		}
-		daemonCfgYAML, _ := yaml.Marshal(d.daemonCfg)
-		d.configMu.RUnlock()
+		// daemon.yml goes into the ZIP only when the file actually exists on
+		// disk: marshaling the in-memory config would fabricate a synthetic
+		// daemon.yml out of pure defaults (typical on desktop, which never
+		// writes one), misleading whoever reads the dump. When present, emit
+		// the EFFECTIVE (loaded) config rather than raw file bytes — but mask
+		// an explicit api_auth.token so the ZIP can be shared without leaking
+		// API access.
+		var daemonCfgYAML []byte
+		if _, statErr := os.Stat(config.DaemonConfigPath()); statErr == nil {
+			cfgCopy := d.daemonCfg
+			if cfgCopy.APIAuth.Token != "" {
+				cfgCopy.APIAuth.Token = "***REDACTED***"
+			}
+			daemonCfgYAML, _ = yaml.Marshal(cfgCopy)
+		}
 		d.writeSystemDumpZip(ctx, w, dump, nsCfgYAML, daemonCfgYAML)
 		return
 	}
@@ -136,13 +150,14 @@ func (d *Daemon) writeSystemDumpZip(ctx context.Context, w http.ResponseWriter, 
 		}
 	}
 
-	// Per-app logs
-	if d.runtime != nil {
-		for _, app := range d.runtime.Apps() {
+	// Per-app logs — one snapshot so runtime and docker client agree.
+	if act := d.active(); act.runtime != nil && act.dockerClient != nil {
+		dc := act.dockerClient
+		for _, app := range act.runtime.Apps() {
 			if app.ContainerID == "" {
 				continue
 			}
-			logs, err := d.dockerClient.ContainerLogs(ctx, app.ContainerID, 500)
+			logs, err := dc.ContainerLogs(ctx, app.ContainerID, 500)
 			if err != nil {
 				continue
 			}
@@ -163,16 +178,16 @@ func (d *Daemon) handleHealth(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	var checks []api.HealthCheckDto
 
+	// One snapshot for bundleError + dockerClient + runtime.
+	act := d.active()
+
 	// Bundle check
-	d.configMu.RLock()
-	bundleErr := d.bundleError
-	d.configMu.RUnlock()
-	if bundleErr != "" {
-		checks = append(checks, api.HealthCheckDto{Name: "bundle", Status: "error", Message: "Bundle resolution failed: " + bundleErr})
+	if act.bundleError != "" {
+		checks = append(checks, api.HealthCheckDto{Name: "bundle", Status: "error", Message: "Bundle resolution failed: " + act.bundleError})
 	}
 
 	// Docker check
-	if err := d.dockerClient.Ping(ctx); err != nil {
+	if err := act.dockerClient.Ping(ctx); err != nil {
 		checks = append(checks, api.HealthCheckDto{Name: "docker", Status: "error", Message: err.Error()})
 	} else {
 		checks = append(checks, api.HealthCheckDto{Name: "docker", Status: "ok", Message: "Docker daemon is reachable"})
@@ -181,8 +196,8 @@ func (d *Daemon) handleHealth(w http.ResponseWriter, r *http.Request) {
 	// Determine overall status: healthy / degraded / unhealthy
 	overallStatus := "healthy"
 
-	if d.runtime != nil {
-		apps := d.runtime.Apps()
+	if act.runtime != nil {
+		apps := act.runtime.Apps()
 		running, failed := 0, 0
 		for _, app := range apps {
 			switch app.Status {
@@ -193,7 +208,7 @@ func (d *Daemon) handleHealth(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		nsStatus := d.runtime.Status()
+		nsStatus := act.runtime.Status()
 
 		// Determine container-level check status
 		containerStatus := "ok"
@@ -250,15 +265,38 @@ func (d *Daemon) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(&b, "# TYPE citeck_uptime_seconds gauge\n")
 	fmt.Fprintf(&b, "citeck_uptime_seconds %.1f\n", uptimeSeconds)
 
-	d.eventMu.Lock()
-	sseCount := len(d.eventSubs)
-	d.eventMu.Unlock()
+	// SSE pipeline health — one consistent snapshot for all SSE gauges.
+	sse := d.sseStatsSnapshot()
 	fmt.Fprintf(&b, "# HELP citeck_sse_subscribers Current SSE subscriber count.\n")
 	fmt.Fprintf(&b, "# TYPE citeck_sse_subscribers gauge\n")
-	fmt.Fprintf(&b, "citeck_sse_subscribers %d\n", sseCount)
+	fmt.Fprintf(&b, "citeck_sse_subscribers %d\n", sse.Subscribers)
+	fmt.Fprintf(&b, "# HELP citeck_sse_event_seq Last assigned SSE event sequence number (total events published).\n")
+	fmt.Fprintf(&b, "# TYPE citeck_sse_event_seq counter\n")
+	fmt.Fprintf(&b, "citeck_sse_event_seq %d\n", sse.EventSeq)
+	fmt.Fprintf(&b, "# HELP citeck_sse_ring_events Events currently held in the SSE replay ring.\n")
+	fmt.Fprintf(&b, "# TYPE citeck_sse_ring_events gauge\n")
+	fmt.Fprintf(&b, "citeck_sse_ring_events %d\n", sse.RingLen)
+	fmt.Fprintf(&b, "# HELP citeck_sse_ring_capacity SSE replay ring capacity.\n")
+	fmt.Fprintf(&b, "# TYPE citeck_sse_ring_capacity gauge\n")
+	fmt.Fprintf(&b, "citeck_sse_ring_capacity %d\n", sse.RingCap)
+	if len(sse.QueueLens) > 0 {
+		fmt.Fprintf(&b, "# HELP citeck_sse_subscriber_pending Undelivered events queued per SSE subscriber (high values precede drops).\n")
+		fmt.Fprintf(&b, "# TYPE citeck_sse_subscriber_pending gauge\n")
+		for i, qlen := range sse.QueueLens {
+			fmt.Fprintf(&b, "citeck_sse_subscriber_pending{subscriber=\"%d\"} %d\n", i, qlen)
+		}
+	}
 
-	if d.runtime != nil {
-		apps := d.runtime.Apps()
+	// One d.active() snapshot for namespace identity + runtime roll-ups.
+	act := d.active()
+	if nsCfg := act.nsConfig; nsCfg != nil {
+		fmt.Fprintf(&b, "# HELP citeck_namespace_info Active namespace identity (value is always 1).\n")
+		fmt.Fprintf(&b, "# TYPE citeck_namespace_info gauge\n")
+		fmt.Fprintf(&b, "citeck_namespace_info{id=\"%s\",name=\"%s\"} 1\n", promEscape(nsCfg.ID), promEscape(nsCfg.Name))
+	}
+
+	if rt := act.runtime; rt != nil {
+		apps := rt.Apps()
 		running, failed, total := 0, 0, len(apps)
 		for _, app := range apps {
 			switch app.Status {
@@ -269,7 +307,7 @@ func (d *Daemon) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		nsStatus := string(d.runtime.Status())
+		nsStatus := string(rt.Status())
 		fmt.Fprintf(&b, "# HELP citeck_namespace_status Current namespace status (1=active).\n")
 		fmt.Fprintf(&b, "# TYPE citeck_namespace_status gauge\n")
 		for _, s := range []string{api.NsStatusStopped, api.NsStatusStarting, api.NsStatusRunning, api.NsStatusStopping, api.NsStatusStalled} {
@@ -310,10 +348,10 @@ func (d *Daemon) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	// HTTP request metrics
 	httpMetrics.writePrometheus(&b)
 
-	// SSE dropped events
+	// SSE dropped events (from the same snapshot as the gauges above)
 	fmt.Fprintf(&b, "# HELP citeck_sse_events_dropped_total Total SSE events dropped due to slow consumers.\n")
 	fmt.Fprintf(&b, "# TYPE citeck_sse_events_dropped_total counter\n")
-	fmt.Fprintf(&b, "citeck_sse_events_dropped_total %d\n", d.sseDropped.Load())
+	fmt.Fprintf(&b, "citeck_sse_events_dropped_total %d\n", sse.Dropped)
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	_, _ = w.Write([]byte(b.String()))
@@ -329,9 +367,7 @@ func promEscape(s string) string {
 }
 
 func (d *Daemon) handleRestartEvents(w http.ResponseWriter, r *http.Request) {
-	d.configMu.RLock()
-	runtime := d.runtime
-	d.configMu.RUnlock()
+	runtime := d.active().runtime
 	if runtime == nil {
 		writeErrorCode(w, http.StatusNotFound, api.ErrCodeNotConfigured, "no namespace configured")
 		return
@@ -356,7 +392,7 @@ func (d *Daemon) handleDiagnosticsFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing path parameter")
 		return
 	}
-	diagDir := filepath.Join(d.volumesBase, "diagnostics") + string(os.PathSeparator)
+	diagDir := filepath.Join(d.activeVolumesBase(), "diagnostics") + string(os.PathSeparator)
 	absPath, err := filepath.Abs(filePath)
 	if err != nil || !strings.HasPrefix(absPath, diagDir) {
 		writeErrorCode(w, http.StatusForbidden, api.ErrCodeInvalidRequest, "path outside diagnostics directory")

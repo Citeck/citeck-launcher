@@ -22,6 +22,12 @@ import (
 )
 
 // NewSetupCmd creates the `citeck setup` command with history and rollback subcommands.
+//
+// The admin password is shown exactly once, at change time: the install wizard
+// prints the generated value (printAccessInfo), and a rotation via
+// `citeck setup admin-password` is operator-typed. There is deliberately no
+// "reveal stored password" verb — a forgotten password is recovered by
+// rotating it, not by reading it back off the machine.
 func NewSetupCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "setup [setting]",
@@ -37,15 +43,24 @@ func NewSetupCmd() *cobra.Command {
 }
 
 func newHistoryCmd() *cobra.Command {
-	return &cobra.Command{
+	var undoID string
+	cmd := &cobra.Command{
 		Use:   "history",
 		Short: "Show configuration change history",
 		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			i18n.EnsureI18n()
+			if undoID != "" {
+				// --yes is a root persistent flag; tolerate its absence
+				// when the command is constructed standalone (tests).
+				yes, _ := cmd.Flags().GetBool("yes")
+				return runHistoryUndo(undoID, yes)
+			}
 			return runHistory()
 		},
 	}
+	cmd.Flags().StringVar(&undoID, "undo", "", "Undo the history entry with the given ID")
+	return cmd
 }
 
 // runSetup is the main entry point for `citeck setup`.
@@ -535,32 +550,73 @@ type indexedPatch struct {
 
 // runHistory lists all configuration change patches sorted by date.
 func runHistory() error {
-	patches, err := collectAllPatches()
-	if err != nil {
-		return err
-	}
-
-	if len(patches) == 0 {
-		fmt.Println(i18n.T("setup.history.empty"))
+	if output.IsJSON() {
+		patches, err := collectAllPatches()
+		if err != nil {
+			return err
+		}
+		entries := make([]historyEntryJSON, 0, len(patches))
+		for _, p := range patches {
+			entries = append(entries, historyEntryJSON{
+				ID:          p.FileName,
+				Date:        p.Record.Date,
+				Setting:     p.Record.Setting,
+				File:        targetFileName(p.Target),
+				Description: patchDescription(p.Record.Forward),
+			})
+		}
+		output.PrintJSON(entries)
 		return nil
 	}
 
-	headers := []string{"DATE", "SETTING", "FILE", "DESCRIPTION"}
+	text, err := historyTableText()
+	if err != nil {
+		return err
+	}
+	fmt.Println(text)
+	return nil
+}
+
+// historyEntryJSON is one row of `citeck setup history --format json`.
+type historyEntryJSON struct {
+	ID          string    `json:"id"`
+	Date        time.Time `json:"date"`
+	Setting     string    `json:"setting"`
+	File        string    `json:"file"`
+	Description string    `json:"description"`
+}
+
+// historyTableText renders the history table (or the "empty" message).
+// Shared by runHistory and HistoryText.
+func historyTableText() (string, error) {
+	patches, err := collectAllPatches()
+	if err != nil {
+		return "", err
+	}
+
+	if len(patches) == 0 {
+		return i18n.T("setup.history.empty"), nil
+	}
+
+	headers := []string{"ID", "DATE", "SETTING", "FILE", "DESCRIPTION"}
 	rows := make([][]string, 0, len(patches))
 
 	for _, p := range patches {
 		date := p.Record.Date.Format("2006-01-02 15:04:05")
-		file := "namespace.yml"
-		if p.Target == DaemonFile {
-			file = "daemon.yml"
-		}
-
 		desc := patchDescription(p.Record.Forward)
-		rows = append(rows, []string{date, p.Record.Setting, file, desc})
+		rows = append(rows, []string{p.FileName, date, p.Record.Setting, targetFileName(p.Target), desc})
 	}
 
-	fmt.Println(output.FormatTable(headers, rows))
-	return nil
+	table := output.FormatTable(headers, rows)
+	return table + "\n" + i18n.T("setup.history.undo_hint"), nil
+}
+
+// targetFileName returns the display file name for a target config file.
+func targetFileName(t TargetFile) string {
+	if t == DaemonFile {
+		return "daemon.yml"
+	}
+	return "namespace.yml"
 }
 
 // patchDescription generates a brief text description from patch operations.
@@ -591,31 +647,11 @@ func patchDescription(ops []PatchOp) string {
 // history without spawning a subprocess.
 func HistoryText(w io.Writer) error {
 	i18n.EnsureI18n()
-	patches, err := collectAllPatches()
+	text, err := historyTableText()
 	if err != nil {
 		return err
 	}
-
-	if len(patches) == 0 {
-		fmt.Fprintln(w, i18n.T("setup.history.empty"))
-		return nil
-	}
-
-	headers := []string{"DATE", "SETTING", "FILE", "DESCRIPTION"}
-	rows := make([][]string, 0, len(patches))
-
-	for _, p := range patches {
-		date := p.Record.Date.Format("2006-01-02 15:04:05")
-		file := "namespace.yml"
-		if p.Target == DaemonFile {
-			file = "daemon.yml"
-		}
-
-		desc := patchDescription(p.Record.Forward)
-		rows = append(rows, []string{date, p.Record.Setting, file, desc})
-	}
-
-	fmt.Fprintln(w, output.FormatTable(headers, rows))
+	fmt.Fprintln(w, text)
 	return nil
 }
 
@@ -627,14 +663,14 @@ func collectAllPatches() ([]indexedPatch, error) {
 	for _, t := range targets {
 		cfgPath := configFilePath(t)
 		hDir := historyDir(cfgPath)
-		patches, err := listPatches(hDir)
+		patches, err := listPatchEntries(hDir)
 		if err != nil {
 			return nil, fmt.Errorf("list patches for %s: %w", cfgPath, err)
 		}
 		for _, p := range patches {
 			all = append(all, indexedPatch{
-				Record:   p,
-				FileName: patchFileName(p.Date, p.Setting),
+				Record:   p.Record,
+				FileName: p.Name,
 				Target:   t,
 			})
 		}

@@ -43,8 +43,8 @@ func TestBuildRegistryAuthCache_TypedBasic(t *testing.T) {
 				ID:    "registry-private",
 				Type:  storage.SecretRegistryAuth,
 				Scope: host,
+				Username: "alice",
 			},
-			Username: "alice",
 			Value:    "pa:ss:wo:rd",
 		},
 	}}
@@ -105,8 +105,8 @@ func TestBuildRegistryAuthCache_KotlinMigrationScope(t *testing.T) {
 				ID:    "images-repo:" + host,
 				Type:  storage.SecretRegistryAuth,
 				Scope: "images-repo:" + host,
+				Username: "harbor-user",
 			},
-			Username: "harbor-user",
 			Value:    "harbor:p:w",
 		},
 	}}

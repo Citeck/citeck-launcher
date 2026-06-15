@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/citeck/citeck-launcher/internal/api"
+	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/namespace"
@@ -19,6 +20,11 @@ import (
 var (
 	errWorkspaceNotFound = errors.New("workspace not found")
 	errWorkspaceBusy     = errors.New("namespace is running; stop it before switching workspaces")
+	// errWorkspaceRepoSyncFailed marks a switch refused because the target
+	// workspace's CUSTOM repo could not be synced and no cached clone exists
+	// (1.x parity: workspace selection failed hard instead of silently landing
+	// on the built-in fallback Welcome). Mapped to 502 WS_REPO_SYNC_FAILED.
+	errWorkspaceRepoSyncFailed = errors.New("workspace repo sync failed")
 )
 
 // Multi-workspace endpoints (desktop only).
@@ -128,6 +134,23 @@ func (d *Daemon) requireDesktop(w http.ResponseWriter) bool {
 	return true
 }
 
+// workspaceDtoToAPI maps a stored workspace to its API response shape. Single
+// mapping site for list/get/create/update so a new field (e.g. SecretID)
+// cannot be exposed by one handler and forgotten by another.
+func workspaceDtoToAPI(ws storage.WorkspaceDto, active bool, nsCount int) api.WorkspaceDto {
+	return api.WorkspaceDto{
+		ID:             ws.ID,
+		Name:           ws.Name,
+		RepoURL:        ws.RepoURL,
+		RepoBranch:     ws.RepoBranch,
+		RepoPullPeriod: ws.RepoPullPeriod,
+		AuthType:       ws.AuthType,
+		SecretID:       ws.SecretID,
+		Active:         active,
+		Namespaces:     nsCount,
+	}
+}
+
 func (d *Daemon) handleListWorkspaces(w http.ResponseWriter, _ *http.Request) {
 	if !d.requireDesktop(w) {
 		return
@@ -140,22 +163,14 @@ func (d *Daemon) handleListWorkspaces(w http.ResponseWriter, _ *http.Request) {
 	// Namespace counts come from the store (the source of truth) so the picker
 	// reflects created-but-never-started namespaces too (they have a row but no
 	// on-disk dir yet).
+	activeWsID := d.activeWorkspaceID()
 	out := make([]api.WorkspaceDto, 0, len(list))
 	for _, ws := range list {
 		nsCount := 0
 		if rows, lerr := d.store.ListNamespaces(ws.ID); lerr == nil {
 			nsCount = len(rows)
 		}
-		out = append(out, api.WorkspaceDto{
-			ID:             ws.ID,
-			Name:           ws.Name,
-			RepoURL:        ws.RepoURL,
-			RepoBranch:     ws.RepoBranch,
-			RepoPullPeriod: ws.RepoPullPeriod,
-			AuthType:       ws.AuthType,
-			Active:         ws.ID == d.workspaceID,
-			Namespaces:     nsCount,
-		})
+		out = append(out, workspaceDtoToAPI(ws, ws.ID == activeWsID, nsCount))
 	}
 	writeJSON(w, out)
 }
@@ -182,16 +197,7 @@ func (d *Daemon) handleGetWorkspace(w http.ResponseWriter, r *http.Request) {
 	if rows, lerr := d.store.ListNamespaces(id); lerr == nil {
 		nsCount = len(rows)
 	}
-	writeJSON(w, api.WorkspaceDto{
-		ID:             ws.ID,
-		Name:           ws.Name,
-		RepoURL:        ws.RepoURL,
-		RepoBranch:     ws.RepoBranch,
-		RepoPullPeriod: ws.RepoPullPeriod,
-		AuthType:       ws.AuthType,
-		Active:         ws.ID == d.workspaceID,
-		Namespaces:     nsCount,
-	})
+	writeJSON(w, workspaceDtoToAPI(*ws, ws.ID == d.activeWorkspaceID(), nsCount))
 }
 
 func (d *Daemon) handleCreateWorkspace(w http.ResponseWriter, r *http.Request) {
@@ -248,6 +254,10 @@ func (d *Daemon) handleCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if req.SecretID != "" && !validateSecretID(req.SecretID) {
+		writeError(w, http.StatusBadRequest, "invalid secretId")
+		return
+	}
 	authType := req.AuthType
 	if authType == "" {
 		authType = defaultWorkspaceAuthType
@@ -280,6 +290,7 @@ func (d *Daemon) handleCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		RepoBranch:     branch,
 		RepoPullPeriod: pullPeriod,
 		AuthType:       authType,
+		SecretID:       req.SecretID,
 	}
 	if err := d.store.SaveWorkspace(ws); err != nil {
 		writeInternalError(w, err)
@@ -291,11 +302,7 @@ func (d *Daemon) handleCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w, err)
 		return
 	}
-	writeJSON(w, api.WorkspaceDto{
-		ID: ws.ID, Name: ws.Name, RepoURL: ws.RepoURL, RepoBranch: ws.RepoBranch,
-		RepoPullPeriod: ws.RepoPullPeriod, AuthType: ws.AuthType,
-		Active: ws.ID == d.workspaceID,
-	})
+	writeJSON(w, workspaceDtoToAPI(ws, ws.ID == d.activeWorkspaceID(), 0))
 }
 
 func (d *Daemon) handleUpdateWorkspace(w http.ResponseWriter, r *http.Request) {
@@ -349,15 +356,25 @@ func (d *Daemon) handleUpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 	if req.AuthType != "" {
 		existing.AuthType = req.AuthType
 	}
+	// SecretID uses the pointer-sentinel convention (TestNamespaceEdit_
+	// IDScopedContract precedent): absent (nil) = unchanged, "" = unlink the
+	// shared secret reference, non-empty = relink.
+	if req.SecretID != nil {
+		if *req.SecretID != "" && !validateSecretID(*req.SecretID) {
+			writeError(w, http.StatusBadRequest, "invalid secretId")
+			return
+		}
+		existing.SecretID = *req.SecretID
+	}
 	if err := d.store.SaveWorkspace(*existing); err != nil {
 		writeInternalError(w, err)
 		return
 	}
-	writeJSON(w, api.WorkspaceDto{
-		ID: existing.ID, Name: existing.Name, RepoURL: existing.RepoURL,
-		RepoBranch: existing.RepoBranch, RepoPullPeriod: existing.RepoPullPeriod,
-		AuthType: existing.AuthType, Active: existing.ID == d.workspaceID,
-	})
+	nsCount := 0
+	if rows, lerr := d.store.ListNamespaces(existing.ID); lerr == nil {
+		nsCount = len(rows)
+	}
+	writeJSON(w, workspaceDtoToAPI(*existing, existing.ID == d.activeWorkspaceID(), nsCount))
 }
 
 func (d *Daemon) handleDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
@@ -385,7 +402,7 @@ func (d *Daemon) handleDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	// Refuse to delete the active workspace. The user must switch first so the
 	// daemon state stays consistent (docker client, runtime, configs).
-	if d.workspaceID == id {
+	if d.activeWorkspaceID() == id {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeWorkspaceInUse,
 			"cannot delete the active workspace; switch first")
 		return
@@ -394,6 +411,11 @@ func (d *Daemon) handleDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w, err)
 		return
 	}
+	// Secrets are deliberately NOT touched here. A secret referenced via
+	// ws.SecretID is SHARED (other workspaces may use the same token) and must
+	// never be auto-deleted with a workspace; the legacy per-workspace
+	// "ws:{id}:repo" secret is likewise left alone (harmless orphan, and the
+	// user may recreate the workspace expecting the token to survive).
 	// Best-effort filesystem cleanup. Errors are logged but not surfaced — the
 	// DB record is gone, so the workspace effectively doesn't exist anymore.
 	wsDir := config.WorkspaceDir(id)
@@ -410,19 +432,27 @@ func (d *Daemon) handleDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 // containers (the docker client is workspace-scoped, so swapping it would
 // hide the running containers from subsequent state queries).
 //
+// A target workspace with a CUSTOM repo URL is resolved BEFORE committing the
+// switch: when its repo cannot be synced (e.g. TOKEN auth without a usable
+// token → 401) and no cached clone exists, the switch fails with
+// errWorkspaceRepoSyncFailed (1.x parity: workspace selection failed hard
+// instead of silently landing on the built-in fallback Welcome). The default
+// Citeck repo keeps the historical graceful path.
+//
 // Side effects on success:
 //   - Persist new wsID in launcher_state. The previous workspace's namespace
 //     selection is preserved in SelectedNs[oldWsID] (Kotlin parity:
 //     workspace-state/{wsId} → SELECTED_NS_PROP) so re-activating the old
 //     workspace restores its namespace instead of dropping to Welcome.
-//   - Update d.workspaceID and d.dockerClient.
+//   - Update the active workspaceID, dockerClient and workspaceConfig (in
+//     activeNamespace).
 //   - Auto-load the new workspace's last-selected namespace via loadNamespace
 //     (Kotlin parity — switching workspace lands the user on their previously
 //     active namespace, not Welcome). When no namespace was ever selected,
 //     or the load fails, daemon falls back to a clean "no namespace" state
 //     and the UI shows Welcome with the namespace picker.
 func (d *Daemon) SwitchWorkspace(wsID string) error {
-	if wsID == d.workspaceID {
+	if wsID == d.activeWorkspaceID() {
 		return nil // no-op
 	}
 	// getWorkspaceWithDefault so switching to the built-in "default" works
@@ -435,17 +465,25 @@ func (d *Daemon) SwitchWorkspace(wsID string) error {
 		return errWorkspaceNotFound
 	}
 
+	// Strict workspace-repo resolve for custom-URL targets — slow git I/O runs
+	// BEFORE any state is locked or torn down, so a failed switch leaves the
+	// daemon exactly where it was. wsCfg is nil for default-repo workspaces
+	// (config then loads lazily via the namespace auto-load, as before).
+	wsCfg, syncErr := d.resolveWorkspaceConfigForSwitch(*ws)
+	if syncErr != nil {
+		return fmt.Errorf("%w: %w", errWorkspaceRepoSyncFailed, syncErr)
+	}
+
 	d.reloadMu.Lock()
 	defer d.reloadMu.Unlock()
 
-	d.configMu.Lock()
-	rt := d.runtime
-	oldWsID := d.workspaceID
+	act := d.active()
+	rt := act.runtime
+	oldWsID := act.workspaceID
 	var oldNsID string
-	if d.nsConfig != nil {
-		oldNsID = d.nsConfig.ID
+	if act.nsConfig != nil {
+		oldNsID = act.nsConfig.ID
 	}
-	d.configMu.Unlock()
 	if rt != nil && rt.Status() != namespace.NsStatusStopped {
 		return errWorkspaceBusy
 	}
@@ -487,14 +525,12 @@ func (d *Daemon) SwitchWorkspace(wsID string) error {
 		}
 	}
 
-	// Tear down the previous runtime + docker client. Shutdown is a no-op when
-	// the runtime is already stopped; we still call it to drain dispatcher
-	// workers and prevent goroutine leaks.
+	// Tear down the previous runtime. Shutdown is a no-op when the runtime is
+	// already stopped; we still call it to drain dispatcher workers and
+	// prevent goroutine leaks. (The previous docker client is closed after
+	// the swap below, once it has been captured under configMu.)
 	if rt != nil {
 		rt.Shutdown()
-	}
-	if d.dockerClient != nil {
-		_ = d.dockerClient.Close()
 	}
 
 	// Recreate the docker client scoped to the new (workspace, namespace) pair
@@ -506,28 +542,33 @@ func (d *Daemon) SwitchWorkspace(wsID string) error {
 		return fmt.Errorf("create docker client for workspace %q: %w", wsID, err)
 	}
 
-	// Tear down any ACME renewal from the previous workspace's namespace
-	// before swapping in the new docker client + state.
+	// Clear the active-namespace state (incl. any stale bundleError) and swap
+	// in the new workspace identity + docker client atomically; old services
+	// stop outside the lock. rt was already shut down above — Shutdown is
+	// idempotent (one-shot teardownOnce), so the returned oldRuntime needs no
+	// second call.
 	d.configMu.Lock()
-	oldACME := d.acmeRenewal
-	oldCloudCfg := d.cloudCfgServer
-	d.workspaceID = wsID
-	d.dockerClient = newClient
-	d.runtime = nil
-	d.nsConfig = nil
-	d.bundleDef = nil
-	d.appDefs = nil
-	d.workspaceConfig = nil
-	d.cloudCfgServer = nil
-	d.systemSecrets = namespace.SystemSecrets{}
-	d.volumesBase = ""
-	d.acmeRenewal = nil
+	old := d.clearActiveNamespaceLocked()
+	a := d.activeLocked()
+	a.workspaceID = wsID
+	a.dockerClient = newClient
+	// wsCfg is non-nil only for custom-URL workspaces (resolved strictly
+	// above); the Welcome surfaces (quick starts, snapshots) work right after
+	// the switch even when the workspace has no namespaces yet. Default-repo
+	// workspaces keep the historical lazy load (nil until namespace load).
+	a.workspaceConfig = wsCfg
+	// The strict resolve either succeeded or failed the switch — no stale
+	// workspace-repo sync error can survive into the new workspace.
+	a.wsSyncError = ""
 	d.configMu.Unlock()
-	if oldACME != nil {
-		oldACME.Stop()
+	if old.dockerClient != nil {
+		_ = old.dockerClient.Close()
 	}
-	if oldCloudCfg != nil {
-		oldCloudCfg.Stop()
+	if old.acmeRenewal != nil {
+		old.acmeRenewal.Stop()
+	}
+	if old.cloudCfgServer != nil {
+		old.cloudCfgServer.Stop()
 	}
 
 	slog.Info("Workspace switched", "wsID", wsID) //nolint:gosec // G706: wsID validated by caller
@@ -547,7 +588,7 @@ func (d *Daemon) SwitchWorkspace(wsID string) error {
 		Store:         d.store,
 		SecretService: d.secretService,
 		// nil → loadNamespace builds a client scoped to (wsID, newNsID). Never
-		// pass d.dockerClient: it is scoped to the PREVIOUS workspace/namespace.
+		// pass the active dockerClient: it is scoped to the PREVIOUS workspace/namespace.
 		DockerClient: nil,
 		DaemonCfg:    d.daemonCfg,
 		Licenses:     d.licenses,
@@ -570,6 +611,40 @@ func (d *Daemon) SwitchWorkspace(wsID string) error {
 	return nil
 }
 
+// resolveWorkspaceConfigForSwitch loads the target workspace's config for a
+// workspace switch. Default-repo workspaces (RepoURL == "") return (nil, nil)
+// — the historical lazy path where the config is resolved by the namespace
+// auto-load and failures stay graceful. Custom-URL workspaces resolve
+// strictly: a git sync failure with no usable cached clone is returned as an
+// error (the resolver's WorkspaceSyncError contract), which SwitchWorkspace
+// maps to errWorkspaceRepoSyncFailed. The wsCfgResolveFn seam exists because
+// the production path performs a real git clone/pull (unreachable from unit
+// tests — planInputsFn precedent).
+func (d *Daemon) resolveWorkspaceConfigForSwitch(ws storage.WorkspaceDto) (*bundle.WorkspaceConfig, error) {
+	if d.wsCfgResolveFn != nil {
+		return d.wsCfgResolveFn(ws)
+	}
+	if ws.RepoURL == "" {
+		return nil, nil
+	}
+	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(ws.ID), makeTokenLookup(d.secretReaderFunc())).
+		WithWorkspaceRepo(buildWorkspaceRepoOpts(ws, d.secretService))
+	// Server mode never auto-pulls git (SwitchWorkspace is desktop-only via
+	// requireDesktop, but keep the guard for symmetry with other resolvers).
+	if !config.IsDesktopMode() {
+		resolver.SetOffline(true)
+	}
+	wsCfg := resolver.ResolveWorkspaceOnly()
+	if err := resolver.WorkspaceSyncError(); err != nil {
+		// Returned unwrapped on purpose: SwitchWorkspace wraps it with the
+		// errWorkspaceRepoSyncFailed sentinel, and the message must stay the
+		// resolver's "sync workspace repo <url>: … authentication required"
+		// text the Web UI heuristic matches on.
+		return nil, err //nolint:wrapcheck // caller wraps with the sentinel
+	}
+	return wsCfg, nil
+}
+
 func (d *Daemon) handleActivateWorkspace(w http.ResponseWriter, r *http.Request) {
 	if !d.requireDesktop(w) {
 		return
@@ -586,6 +661,13 @@ func (d *Daemon) handleActivateWorkspace(w http.ResponseWriter, r *http.Request)
 		}
 		if errors.Is(err, errWorkspaceBusy) {
 			writeErrorCode(w, http.StatusConflict, api.ErrCodeNamespaceRunning, err.Error())
+			return
+		}
+		if errors.Is(err, errWorkspaceRepoSyncFailed) {
+			// 502: the upstream workspace repo is unreachable/unauthorized.
+			// err.Error() carries the repo URL + git error text ("authentication
+			// required", …) so the Web UI's GitPullErrorDialog heuristic matches.
+			writeErrorCode(w, http.StatusBadGateway, api.ErrCodeWsRepoSyncFailed, err.Error())
 			return
 		}
 		writeInternalError(w, err)

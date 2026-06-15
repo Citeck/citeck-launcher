@@ -39,29 +39,15 @@ const (
 	retryDelay                  = 3 * time.Second
 )
 
-// ErrSHA256Mismatch is returned by Download/DownloadWithRetry when the
-// downloaded file's hash does not match the expected SHA-256 digest.
-// Callers (notably the snapshot import paths) use errors.Is to skip the
-// retry loop on this error — a hash mismatch is deterministic, not transient.
+// ErrSHA256Mismatch is returned by DownloadWithRetry when the downloaded
+// file's hash does not match the expected SHA-256 digest. Callers (notably
+// the snapshot import paths) use errors.Is to skip the retry loop on this
+// error — a hash mismatch is deterministic, not transient.
 var ErrSHA256Mismatch = errors.New("sha256 mismatch")
 
 // ProgressFunc is called periodically during download with bytes received and total size.
 // Total may be -1 if the server does not send Content-Length.
 type ProgressFunc func(received, total int64)
-
-// DownloadWithClient fetches a snapshot ZIP using the provided HTTP client.
-// Use this with a SSRF-safe client when the URL comes from user input.
-// Single-shot; for the Kotlin-parity retry policy use DownloadWithRetry.
-func DownloadWithClient(ctx context.Context, client *http.Client, rawURL, destPath, expectedSHA256 string, progress ProgressFunc) error {
-	return download(ctx, client, rawURL, destPath, expectedSHA256, progress)
-}
-
-// Download fetches a snapshot ZIP from rawURL, saves it to destPath, and verifies SHA256 if provided.
-// Supports resumable downloads via HTTP Range header. Only http/https URLs are accepted.
-// Single-shot; for the Kotlin-parity retry policy use DownloadWithRetry.
-func Download(ctx context.Context, rawURL, destPath, expectedSHA256 string, progress ProgressFunc) error {
-	return download(ctx, httpClient, rawURL, destPath, expectedSHA256, progress)
-}
 
 // DownloadWithRetry wraps a resumable download in the Kotlin-parity retry
 // loop. Two independent counters protect against runaway attempts:

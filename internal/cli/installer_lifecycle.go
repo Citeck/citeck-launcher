@@ -25,10 +25,15 @@ import (
 // The script only needs to fetch the latest release and exec `<binary>
 // install` — this file takes over from there.
 
+// installTarget and systemdUnitPath are effectively constants; they are vars
+// only so unit tests can redirect the lifecycle helpers into a temp dir.
+var (
+	installTarget   = "/usr/local/bin/citeck"
+	systemdUnitPath = "/etc/systemd/system/citeck.service"
+)
+
 const (
-	installTarget       = "/usr/local/bin/citeck"
 	installBackupSuffix = ".bak"
-	systemdUnitPath     = "/etc/systemd/system/citeck.service"
 	daemonStopTimeout   = 30 * time.Second
 	versionProbeTimeout = 5 * time.Second
 

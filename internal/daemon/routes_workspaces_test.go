@@ -24,7 +24,7 @@ func newWorkspaceTestDaemon(t *testing.T) (*Daemon, *http.ServeMux) {
 	store, err := storage.NewSQLiteStore(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
-	d := &Daemon{store: store}
+	d := &Daemon{store: store, activeNs: &activeNamespace{}}
 	mux := http.NewServeMux()
 	d.registerRoutes(mux)
 	return d, mux
@@ -156,7 +156,7 @@ func TestWorkspaceDelete_RefusesActive(t *testing.T) {
 	require.NoError(t, d.store.SaveWorkspace(storage.WorkspaceDto{
 		ID: "current", Name: "Current", RepoURL: "https://example.test/x.git", RepoBranch: "main",
 	}))
-	d.workspaceID = "current"
+	d.activeNs.workspaceID = "current"
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("DELETE", "/api/v1/workspaces/current", http.NoBody)
@@ -165,6 +165,97 @@ func TestWorkspaceDelete_RefusesActive(t *testing.T) {
 	var body api.ErrorDto
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Equal(t, api.ErrCodeWorkspaceInUse, body.Code)
+}
+
+// TestWorkspaceSecretID_CRUDContract pins the secretId wire contract the web
+// dialog codes against: create stores + echoes it, GET returns it, update with
+// the field ABSENT leaves it unchanged, update with "" unlinks it.
+func TestWorkspaceSecretID_CRUDContract(t *testing.T) {
+	config.SetDesktopMode(true)
+	t.Cleanup(config.ResetDesktopMode)
+	t.Setenv("CITECK_HOME", t.TempDir())
+
+	_, mux := newWorkspaceTestDaemon(t)
+
+	do := func(method, path, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		var rdr = http.NoBody
+		req := httptest.NewRequest(method, path, rdr)
+		if body != "" {
+			req = httptest.NewRequest(method, path, strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+		}
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// Create with secretId.
+	rec := do("POST", api.Workspaces,
+		`{"name":"Acme","repoUrl":"https://gitlab.example.com/x.git","authType":"TOKEN","secretId":"shared-token"}`)
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var created api.WorkspaceDto
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+	assert.Equal(t, "shared-token", created.SecretID, "create must echo the linked secret")
+
+	// GET returns it (the edit dialog preselects the current link).
+	rec = do("GET", "/api/v1/workspaces/"+created.ID, "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got api.WorkspaceDto
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.Equal(t, "shared-token", got.SecretID)
+
+	// Update with secretId ABSENT → unchanged (pointer sentinel).
+	rec = do("PUT", "/api/v1/workspaces/"+created.ID, `{"name":"Renamed"}`)
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var updated api.WorkspaceDto
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &updated))
+	assert.Equal(t, "shared-token", updated.SecretID, "absent secretId must keep the link")
+
+	// Update with secretId "" → unlink.
+	rec = do("PUT", "/api/v1/workspaces/"+created.ID, `{"secretId":""}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var unlinked api.WorkspaceDto
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &unlinked))
+	assert.Empty(t, unlinked.SecretID, `"" must unlink the secret reference`)
+
+	// Invalid secretId rejected.
+	rec = do("PUT", "/api/v1/workspaces/"+created.ID, `{"secretId":"../etc/passwd"}`)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// TestWorkspaceDelete_NeverDeletesSharedSecret pins the reusable-secrets
+// invariant: deleting a workspace must NOT delete the secret it references via
+// SecretID — other workspaces may share the same token. (Workspace delete has
+// never deleted secrets, including the legacy ws:{id}:repo one; this test
+// keeps it that way now that secrets are explicitly shared.)
+func TestWorkspaceDelete_NeverDeletesSharedSecret(t *testing.T) {
+	config.SetDesktopMode(true)
+	t.Cleanup(config.ResetDesktopMode)
+	t.Setenv("CITECK_HOME", t.TempDir())
+
+	d, mux := newWorkspaceTestDaemon(t)
+	svc, err := storage.NewSecretService(d.store)
+	require.NoError(t, err)
+	d.secretService = svc
+	require.NoError(t, svc.SetMasterPassword("test-master", false))
+	require.NoError(t, svc.SaveSecret(storage.Secret{
+		SecretMeta: storage.SecretMeta{ID: "shared-gitlab-token", Name: "GitLab", Type: storage.SecretGitToken},
+		Value:      "glpat-shared",
+	}))
+	require.NoError(t, d.store.SaveWorkspace(storage.WorkspaceDto{
+		ID: "ws-del", Name: "Doomed", RepoURL: "https://gitlab.example.com/x.git",
+		AuthType: "TOKEN", SecretID: "shared-gitlab-token",
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("DELETE", "/api/v1/workspaces/ws-del", http.NoBody)
+	mux.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	got, err := svc.GetSecret("shared-gitlab-token")
+	require.NoError(t, err, "shared secret must survive workspace delete")
+	assert.Equal(t, "glpat-shared", got.Value)
 }
 
 // TestWorkspaceCreate_ValidationErrors covers the input-validation surface

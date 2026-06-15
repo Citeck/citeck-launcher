@@ -17,7 +17,7 @@ func TestDeleteRemovesFromListEvenIfRtfilesRemain(t *testing.T) {
 	s, err := storage.NewSQLiteStore(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { s.Close() })
-	d := &Daemon{store: s, workspaceID: "ws1"}
+	d := &Daemon{store: s, activeNs: &activeNamespace{workspaceID: "ws1"}}
 
 	require.NoError(t, d.persistNamespaceConfig("ws1", "nsA", []byte("id: nsA\nname: Alpha\nproxy:\n  port: 80\n")))
 

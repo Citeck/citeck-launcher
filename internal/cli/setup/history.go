@@ -121,9 +121,17 @@ func readSnapshot(histDir string) ([]byte, error) {
 	return data, nil
 }
 
-// listPatches returns all patch records in histDir sorted by date (oldest first).
-// Returns nil (not an error) when histDir does not exist.
-func listPatches(histDir string) ([]*PatchRecord, error) {
+// patchEntry pairs a patch record with the name of the file it was read from
+// (without the ".json" suffix). The name doubles as the user-facing entry ID
+// for `citeck setup history --undo <id>`.
+type patchEntry struct {
+	Name   string
+	Record *PatchRecord
+}
+
+// listPatchEntries returns all patch entries in histDir sorted by date (oldest
+// first). Returns nil (not an error) when histDir does not exist.
+func listPatchEntries(histDir string) ([]patchEntry, error) {
 	entries, err := os.ReadDir(histDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -132,7 +140,7 @@ func listPatches(histDir string) ([]*PatchRecord, error) {
 		return nil, fmt.Errorf("read history dir: %w", err)
 	}
 
-	records := make([]*PatchRecord, 0, len(entries))
+	records := make([]patchEntry, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") || e.Name() == snapshotFileName {
 			continue
@@ -141,12 +149,32 @@ func listPatches(histDir string) ([]*PatchRecord, error) {
 		if err != nil {
 			return nil, err
 		}
-		records = append(records, rec)
+		records = append(records, patchEntry{
+			Name:   strings.TrimSuffix(e.Name(), ".json"),
+			Record: rec,
+		})
 	}
 
 	sort.Slice(records, func(i, j int) bool {
-		return records[i].Date.Before(records[j].Date)
+		return records[i].Record.Date.Before(records[j].Record.Date)
 	})
+	return records, nil
+}
+
+// listPatches returns all patch records in histDir sorted by date (oldest first).
+// Returns nil (not an error) when histDir does not exist.
+func listPatches(histDir string) ([]*PatchRecord, error) {
+	entries, err := listPatchEntries(histDir)
+	if err != nil {
+		return nil, err
+	}
+	if entries == nil {
+		return nil, nil
+	}
+	records := make([]*PatchRecord, 0, len(entries))
+	for _, e := range entries {
+		records = append(records, e.Record)
+	}
 	return records, nil
 }
 

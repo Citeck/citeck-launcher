@@ -6,7 +6,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/docker"
-	dcontainer "github.com/docker/docker/api/types/container"
+	dcontainer "github.com/moby/moby/api/types/container"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -40,26 +40,26 @@ func TestDetectHostPortConflicts(t *testing.T) {
 			Names:  []string{"/citeck_mailhog_nwkzgya_default"},
 			State:  "running",
 			Labels: map[string]string{docker.LabelLauncher: "true", docker.LabelNamespace: "nwkzgya"},
-			Ports:  []dcontainer.Port{{PublicPort: 1025, PrivatePort: 1025}},
+			Ports:  []dcontainer.PortSummary{{PublicPort: 1025, PrivatePort: 1025}},
 		},
 		{ // foreign ns holds 8070 — our launcher container
 			ID:     "id-onlyoffice-nwkzgya",
 			Names:  []string{"/citeck_onlyoffice_nwkzgya_default"},
 			State:  "running",
 			Labels: map[string]string{docker.LabelLauncher: "true", docker.LabelNamespace: "nwkzgya"},
-			Ports:  []dcontainer.Port{{PublicPort: 8070, PrivatePort: 80}},
+			Ports:  []dcontainer.PortSummary{{PublicPort: 8070, PrivatePort: 80}},
 		},
 		{ // OUR namespace — handled by regenerate/adopt, must be ignored
 			Names:  []string{"/citeck_mailhog_3v3ithq_tbxzxxa"},
 			State:  "running",
 			Labels: map[string]string{docker.LabelLauncher: "true", docker.LabelNamespace: "3v3ithq"},
-			Ports:  []dcontainer.Port{{PublicPort: 1025}},
+			Ports:  []dcontainer.PortSummary{{PublicPort: 1025}},
 		},
 		{ // foreign but not running — must be ignored
 			Names:  []string{"/citeck_pgadmin_nwkzgya_default"},
 			State:  "exited",
 			Labels: map[string]string{docker.LabelLauncher: "true", docker.LabelNamespace: "nwkzgya"},
-			Ports:  []dcontainer.Port{{PublicPort: 8070}},
+			Ports:  []dcontainer.PortSummary{{PublicPort: 8070}},
 		},
 	}
 
@@ -90,14 +90,14 @@ func TestResolveHostPortConflictsStopsOnlyOurForeignContainer(t *testing.T) {
 			Names:  []string{"/citeck_mailhog_nwkzgya_default"},
 			State:  "running",
 			Labels: map[string]string{docker.LabelLauncher: "true", docker.LabelNamespace: "nwkzgya"},
-			Ports:  []dcontainer.Port{{PublicPort: 1025}},
+			Ports:  []dcontainer.PortSummary{{PublicPort: 1025}},
 		},
 		{ // NOT ours — must never be stopped, even though it holds the port
 			ID:     "id-thirdparty",
 			Names:  []string{"/someones-smtp"},
 			State:  "running",
 			Labels: map[string]string{},
-			Ports:  []dcontainer.Port{{PublicPort: 1025}},
+			Ports:  []dcontainer.PortSummary{{PublicPort: 1025}},
 		},
 	}
 	r := NewRuntime(testConfig(), md, t.TempDir())
@@ -124,7 +124,7 @@ func TestDetectHostPortConflictsIgnoresNonLauncherContainer(t *testing.T) {
 		Names:  []string{"/someones-smtp-server"},
 		State:  "running",
 		Labels: map[string]string{}, // no citeck.launcher label
-		Ports:  []dcontainer.Port{{PublicPort: 1025}},
+		Ports:  []dcontainer.PortSummary{{PublicPort: 1025}},
 	}}
 	assert.Empty(t, detectHostPortConflicts(apps, foreign, "3v3ithq"))
 }
@@ -139,7 +139,7 @@ func TestDetectHostPortConflictsIgnoresOwnNamespace(t *testing.T) {
 		Names:  []string{"/citeck_mailhog_3v3ithq_tbxzxxa"},
 		State:  "running",
 		Labels: map[string]string{docker.LabelLauncher: "true", docker.LabelNamespace: "3v3ithq"},
-		Ports:  []dcontainer.Port{{PublicPort: 1025}},
+		Ports:  []dcontainer.PortSummary{{PublicPort: 1025}},
 	}}
 	assert.Empty(t, detectHostPortConflicts(apps, foreign, "3v3ithq"))
 }

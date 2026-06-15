@@ -1,6 +1,9 @@
 package storage
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // SecretType identifies the kind of secret.
 type SecretType string
@@ -21,8 +24,14 @@ const (
 // RepoPullPeriod is an ISO 8601 duration string (e.g. "PT2H" for 2 hours) — same
 // wire format as Kotlin's WorkspaceDto for round-trip compatibility with v1.x
 // data; parsed via ParseISO8601Duration when applied to git.RepoOpts. AuthType
-// is one of "NONE" or "TOKEN"; TOKEN means the daemon should resolve the
-// secret stored under key "ws:{ID}:repo" (Kotlin getRepoAuthId convention).
+// is one of "NONE" or "TOKEN".
+//
+// SecretID references a REUSABLE secret by its id (e.g. one GitLab token
+// shared across several customer workspaces). When set, the daemon resolves
+// the repo auth token from that secret; when empty, TOKEN auth falls back to
+// the legacy per-workspace secret under key "ws:{ID}:repo" (Kotlin
+// getRepoAuthId convention). Shared secrets are never auto-deleted when a
+// referencing workspace is deleted.
 type WorkspaceDto struct {
 	ID             string `json:"id"`
 	Name           string `json:"name"`
@@ -30,27 +39,53 @@ type WorkspaceDto struct {
 	RepoBranch     string `json:"repoBranch"`
 	RepoPullPeriod string `json:"repoPullPeriod,omitempty"`
 	AuthType       string `json:"authType,omitempty"`
+	SecretID       string `json:"secretId,omitempty"`
 }
 
 // SecretMeta holds non-sensitive secret metadata.
+//
+// Username (BASIC_AUTH / REGISTRY_AUTH only) lives here — not on Secret —
+// because it is metadata, not a credential: the write-only secret-edit form
+// prefills it from the meta listing without ever decrypting the value.
 type SecretMeta struct {
 	ID        string     `json:"id"`
 	Name      string     `json:"name"`
 	Type      SecretType `json:"type"`
 	Scope     string     `json:"scope"`
+	Username  string     `json:"username,omitempty"`
 	CreatedAt time.Time  `json:"createdAt"`
 }
 
 // Secret holds a full secret including its value.
 //
-// For BASIC_AUTH / REGISTRY_AUTH, Username carries the user part and Value
-// carries the password verbatim — passwords containing ':' must round-trip
-// untouched (PATs, generated creds). The legacy "user:pass" packing is
-// auto-split on load (FileStore.readSecret, SQLite migration v3).
+// For BASIC_AUTH / REGISTRY_AUTH, the (promoted) Username carries the user
+// part and Value carries the password verbatim — passwords containing ':'
+// must round-trip untouched (PATs, generated creds). The legacy "user:pass"
+// packing is auto-split on load (FileStore.readSecret, SQLite migration v3).
 type Secret struct {
 	SecretMeta
-	Username string `json:"username,omitempty"`
-	Value    string `json:"-"` // never serialized in API responses
+	Value string `json:"-"` // never serialized in API responses
+}
+
+// Credentials returns the (user, pass) pair carried by an auth secret.
+// The typed Username field wins; when it is empty, a legacy "user:pass"
+// packed Value is split as a last-resort fallback — for any secret that
+// somehow survived the FileStore / SQLite-v3 migration paths without a
+// Username column populated. ok is false when no usable pair can be derived
+// (no colon to split on, or an empty user/password half).
+func (s *Secret) Credentials() (user, pass string, ok bool) {
+	user, pass = s.Username, s.Value
+	if user == "" {
+		var cut bool
+		user, pass, cut = strings.Cut(s.Value, ":")
+		if !cut {
+			return "", "", false
+		}
+	}
+	if user == "" || pass == "" {
+		return "", "", false
+	}
+	return user, pass, true
 }
 
 // GitRepoState holds per-repo sync metadata persisted across launcher restarts.

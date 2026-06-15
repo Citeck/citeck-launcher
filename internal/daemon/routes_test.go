@@ -136,7 +136,6 @@ func TestAllRoutesRegistered(t *testing.T) {
 		{"POST", "/api/v1/apps/test/exec"},
 		{"GET", "/api/v1/apps/test/config"},
 		{"PUT", "/api/v1/apps/test/config"},
-		{"PUT", "/api/v1/apps/test/lock"},
 		{"GET", "/api/v1/apps/test/files"},
 		{"POST", "/api/v1/apps/test/files/reset?path=foo/bar"},
 		{"GET", "/api/v1/apps/test/files/some/path"},
@@ -166,23 +165,25 @@ func TestAllRoutesRegistered(t *testing.T) {
 		{"DELETE", "/api/v1/namespaces/test-ns"},
 		{"POST", "/api/v1/namespaces/test-ns/activate"},
 		{"POST", "/api/v1/namespaces/deactivate"},
-		{"GET", api.Templates},
+		{"GET", api.NamespaceEditPath("test-ns")},
+		{"PUT", api.NamespaceEditPath("test-ns")},
 		{"GET", api.QuickStarts},
 		// Bundles
 		{"GET", api.Bundles},
 		// Secrets
 		{"GET", api.Secrets},
 		{"POST", api.Secrets},
+		{"PUT", "/api/v1/secrets/test-id"},
 		{"DELETE", "/api/v1/secrets/test-id"},
 		{"GET", "/api/v1/secrets/test-id/test"},
-		{"GET", api.SecretsStatus},
 		{"POST", api.SecretsUnlock},
 		{"POST", api.SecretsSetupPassword},
+		// Licenses
+		{"GET", api.Licenses},
+		{"GET", api.LicensesStatus},
 		// Migration
 		{"GET", api.MigrationStatus},
 		{"POST", api.MigrationMasterPassword},
-		// Forms
-		{"GET", "/api/v1/forms/test-form"},
 		// Diagnostics
 		{"GET", api.Diagnostics},
 		{"POST", api.DiagnosticsFix},

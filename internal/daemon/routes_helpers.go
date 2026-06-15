@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/api"
+	"github.com/citeck/citeck-launcher/internal/docker"
+	"github.com/citeck/citeck-launcher/internal/namespace"
 )
 
 // generateEntityID mirrors Kotlin's IdUtils.createStrId: 4 random bytes →
@@ -51,13 +53,37 @@ func validateSecretID(id string) bool {
 		!strings.Contains(id, "..") && !strings.ContainsAny(id, "/\\")
 }
 
+// Single-field convenience accessors over the d.active() snapshot. Fine for
+// handlers that need exactly ONE per-namespace field; a handler reading 2+
+// fields should take one d.active() snapshot itself so all fields come from
+// the same lock acquisition (consistent view).
+
 func (d *Daemon) activeNsID() string {
-	d.configMu.RLock()
-	defer d.configMu.RUnlock()
-	if d.nsConfig != nil {
-		return d.nsConfig.ID
+	if cfg := d.active().nsConfig; cfg != nil {
+		return cfg.ID
 	}
 	return ""
+}
+
+// activeWorkspaceID returns the active workspace ID. workspaceID is swapped
+// by SwitchWorkspace under configMu — read it via the snapshot, never lock-free.
+func (d *Daemon) activeWorkspaceID() string {
+	return d.active().workspaceID
+}
+
+// activeDockerClient returns the Docker client scoped to the active
+// (workspace, namespace) pair. Read-only accessor: the invariant "active
+// client always matches the active namespace" is derived and validated at
+// the loadNamespace choke-point and asserted by installLoadedNamespace —
+// never re-derive or swap the client here.
+func (d *Daemon) activeDockerClient() *docker.Client {
+	return d.active().dockerClient
+}
+
+// activeVolumesBase returns the active namespace's rtfiles/volumes base dir
+// ("" when no namespace is loaded).
+func (d *Daemon) activeVolumesBase() string {
+	return d.active().volumesBase
 }
 
 // parseTailParam reads the "tail" query parameter with a default and max cap.
@@ -78,16 +104,18 @@ func parseTailParam(r *http.Request, defaultVal, maxVal int) int {
 	return tail
 }
 
-// requireRuntime checks that a namespace runtime exists. Returns false and writes
-// an error response if not configured. Callers should return immediately when false.
-func (d *Daemon) requireRuntime(w http.ResponseWriter) bool {
-	if d.runtime == nil {
+// requireRuntime returns the active namespace runtime, or nil after writing
+// an error response when no namespace is configured. Callers must return
+// immediately on nil and use the RETURNED runtime (one consistent snapshot)
+// rather than re-reading the active state.
+func (d *Daemon) requireRuntime(w http.ResponseWriter) *namespace.Runtime {
+	rt := d.active().runtime
+	if rt == nil {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
-		return false
 	}
-	return true
+	return rt
 }
 
 func (d *Daemon) volumesDir() string {
-	return filepath.Join(d.volumesBase, "volumes")
+	return filepath.Join(d.activeVolumesBase(), "volumes")
 }

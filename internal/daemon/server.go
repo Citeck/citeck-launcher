@@ -1,26 +1,17 @@
 package daemon
 
 import (
-	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/tls"
-	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
-	goruntime "runtime"
-	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/acme"
@@ -30,36 +21,12 @@ import (
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
-	"github.com/citeck/citeck-launcher/internal/git"
-	"github.com/citeck/citeck-launcher/internal/h2migrate"
 	"github.com/citeck/citeck-launcher/internal/license"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/storage"
 	"github.com/citeck/citeck-launcher/internal/tlsutil"
 	"github.com/citeck/citeck-launcher/internal/update"
 )
-
-// ErrShutdownRequested is returned by Start when an external context is canceled.
-var ErrShutdownRequested = errors.New("shutdown requested")
-
-var (
-	logInitOnce     sync.Once
-	globalLogLevel  slog.LevelVar
-	globalLogWriter *fsutil.RotatingWriter
-)
-
-// StartOptions controls daemon startup behavior.
-type StartOptions struct {
-	Foreground     bool
-	Desktop        bool            // desktop mode: file-only logging, no signal handler
-	NoUI           bool            // disable web UI (TCP listener)
-	Offline        bool            // skip all git operations, fail if local data missing
-	Version        string          // build version injected via ldflags
-	MasterPassword string          // master password for secrets decryption (server mode)
-	Ctx            context.Context // external context (desktop provides; nil = CLI uses signals)
-	ReadyCh        chan<- string   // receives Web UI URL when ready (empty string if no UI); nil = ignored
-	LogWriter      io.Writer       // additional log destination (desktop captures startup logs); nil = ignored
-}
 
 // secretReader is the minimal interface for reading secrets.
 // Satisfied by both storage.Store (server mode) and *storage.SecretService (desktop mode).
@@ -74,50 +41,152 @@ type secretWriter interface {
 	SaveSecret(secret storage.Secret) error
 }
 
-// Daemon is the main daemon server.
-type Daemon struct {
-	dockerClient    *docker.Client
-	runtime         *namespace.Runtime
+// activeNamespace groups EVERY per-namespace (and per-workspace) field that is
+// swapped when the active namespace or workspace changes. Keeping them in ONE
+// struct behind one pointer makes field-by-field tearing structurally
+// impossible: historically these lived as ~12 loose fields on Daemon, which
+// produced teardown drift (bundleError missed in one of three teardown sites)
+// and a systemSecrets read race.
+//
+// Concurrency model: mutex-guarded MUTABLE struct with value-copy snapshots
+// (not an immutable atomic.Pointer swap).
+//   - Daemon.activeNs is guarded by configMu. It is nil only in zero-value
+//     test Daemons; production allocates it at construction and it is never
+//     set back to nil (teardown swaps in a fresh struct).
+//   - Readers call d.active(), which copies the whole struct under RLock —
+//     one consistent view of all 12 fields per call.
+//   - Writers hold configMu for WRITING and either mutate fields in place
+//     (doReloadEx Phase-2 commit, admin-password rotation, ACME re-arm) or
+//     swap the pointer (installLoadedNamespace, clearActiveNamespaceLocked,
+//     SwitchWorkspace).
+//
+// In-place mutation (rather than immutable rebuild-and-swap) is deliberate:
+// handleSetAdminPassword rotates systemSecrets.AdminPassword under configMu
+// WITHOUT holding reloadMu, so a rotation can interleave with a doReloadEx
+// that is between its Phase-1 snapshot and Phase-2 commit. The reload commit
+// does not write systemSecrets, so with in-place mutation the rotation always
+// lands on the live struct — an immutable swap rebuilt from the reload's
+// Phase-1 snapshot would silently revert the rotation.
+//
+// Field membership = everything clearActiveNamespaceLocked resets plus the
+// workspace-scoped trio (workspaceID, dockerClient, workspaceConfig) that
+// only SwitchWorkspace replaces. Invariant (see loadNamespace /
+// installLoadedNamespace): dockerClient is ALWAYS scoped to the active
+// (workspaceID, nsConfig.ID) pair — derived/validated at the loadNamespace
+// choke-point, asserted at the install swap.
+type activeNamespace struct {
+	workspaceID     string
 	nsConfig        *namespace.Config
 	bundleDef       *bundle.Def
 	workspaceConfig *bundle.WorkspaceConfig
 	appDefs         []appdef.ApplicationDef
-	server          *http.Server
-	tcpServer       *http.Server
-	cloudCfgServer  *CloudConfigServer
-	store           storage.Store
-	secretService   *storage.SecretService // always non-nil; wraps store with transparent encryption
-	socketPath      string
+	systemSecrets   namespace.SystemSecrets // resolved JWT/OIDC/admin secrets
 	volumesBase     string
-	workspaceID     string
-	startTime       time.Time
-	eventSubs       []chan api.EventDto
-	eventMu         sync.Mutex
-	eventRing       *eventRing   // bounded replay buffer for SSE reconnects (Last-Event-ID)
-	configMu        sync.RWMutex // protects nsConfig, bundleDef, appDefs, workspaceConfig, systemSecrets
-	version         string
 	bundleError     string // non-empty if bundle resolution failed
-	acmeRenewal     *acme.RenewalService
-	shutdownOnce    sync.Once
-	bgCtx           context.Context // canceled on daemon shutdown
-	bgCancel        context.CancelFunc
-	bgWg            sync.WaitGroup // tracks background goroutines (snapshot, downloads)
-	snapshotMu      sync.Mutex     // guards concurrent snapshot import/export
-	daemonCfg       config.DaemonConfig
+	// wsSyncError is non-empty when the ACTIVE workspace points at a CUSTOM
+	// repo URL whose git sync failed AND no cached workspace config was usable
+	// (bundle.Resolver.WorkspaceSyncError contract). Welcome-data endpoints
+	// (quick starts, workspace snapshots) surface it as 502 WS_REPO_SYNC_FAILED
+	// instead of silently serving the built-in fallback workspace. Workspace-
+	// scoped like workspaceConfig: carried over by clearActiveNamespaceLocked,
+	// replaced by SwitchWorkspace / namespace load / reload.
+	wsSyncError    string
+	cloudCfgServer *CloudConfigServer
+	acmeRenewal    *acme.RenewalService
+	runtime        *namespace.Runtime
+	dockerClient   *docker.Client
+}
+
+// Daemon is the main daemon server.
+type Daemon struct {
+	server        *http.Server
+	tcpServer     *http.Server
+	store         storage.Store
+	secretService *storage.SecretService // always non-nil; wraps store with transparent encryption
+	socketPath    string
+	startTime     time.Time
+	eventSubs     []chan api.EventDto
+	eventMu       sync.Mutex
+	eventRing     *eventRing // bounded replay buffer for SSE reconnects (Last-Event-ID)
+	// configMu guards activeNs (the pointer AND the pointee's fields). Read
+	// per-namespace state via ONE d.active() snapshot per handler — never
+	// lock-free, never field-by-field across separate lock acquisitions.
+	// Mutations happen under the write lock: pointer swaps via
+	// installLoadedNamespace / clearActiveNamespaceLocked / SwitchWorkspace,
+	// in-place field writes via d.activeLocked(). See the activeNamespace doc
+	// for the full contract, including why in-place mutation is kept.
+	configMu sync.RWMutex
+	// activeNs holds ALL swap-on-activate per-namespace state. Guarded by
+	// configMu; nil only in zero-value test Daemons (d.active() tolerates it).
+	activeNs     *activeNamespace
+	version      string
+	shutdownOnce sync.Once
+	bgCtx        context.Context // canceled on daemon shutdown
+	bgCancel     context.CancelFunc
+	bgWg         sync.WaitGroup // tracks background goroutines (snapshot, downloads)
+	snapshotMu   sync.Mutex     // guards concurrent snapshot import/export
+	daemonCfg    config.DaemonConfig
 	// eventSeq is the monotonic SSE event counter. All mutations (.Add) and
 	// the cutoff Load happen under eventMu — the atomic type is retained
 	// purely for Load() ergonomics from addSubscriber's lock holder and the
 	// rare read from diagnostics; treat the field as logically protected by
 	// eventMu, not as concurrent-safe by itself.
-	eventSeq      atomic.Int64
-	sseDropped    atomic.Int64 // SSE events dropped due to slow consumers
-	logWriter     *fsutil.RotatingWriter
-	logLevel      *slog.LevelVar
-	systemSecrets namespace.SystemSecrets // resolved JWT/OIDC secrets
-	desktop       bool                    // desktop mode: log writer shared across restarts
-	reloadMu      sync.Mutex              // guards concurrent reload requests
-	licenses      *license.Service        // user-added enterprise licenses
-	updateSvc     *update.Service         // desktop auto-update service (nil in server mode)
+	eventSeq   atomic.Int64
+	sseDropped atomic.Int64 // SSE events dropped due to slow consumers
+	logWriter  *fsutil.RotatingWriter
+	logLevel   *slog.LevelVar
+	desktop    bool             // desktop mode: log writer shared across restarts
+	reloadMu   sync.Mutex       // guards concurrent reload requests
+	licenses   *license.Service // user-added enterprise licenses
+	updateSvc  *update.Service  // desktop auto-update service (nil in server mode)
+	// execClient is a test seam for handlers that drive CLI tools inside
+	// containers (kcadm.sh / rabbitmqctl / setup.py). nil in production —
+	// dockerExec() falls back to dockerClient.
+	execClient containerExecer
+	// rotationApps is a test seam for the admin-password handler's container
+	// lookup. nil in production — adminRotationApps() falls back to runtime.
+	rotationApps appFinder
+	// planInputsFn is a test seam for handleReloadPlan's resolve+generate
+	// phase (git pull + bundle resolution + generator — unreachable from unit
+	// tests). nil in production — reloadPlanInputs() falls back to
+	// resolveReloadPlanInputs.
+	planInputsFn func(act activeNamespace) (*reloadPlanInputs, error)
+	// wsCfgResolveFn is a test seam for SwitchWorkspace's strict workspace-repo
+	// resolve (real git clone/pull — unreachable from unit tests). nil in
+	// production — resolveWorkspaceConfigForSwitch falls back to the bundle
+	// resolver. Same pattern as planInputsFn.
+	wsCfgResolveFn func(ws storage.WorkspaceDto) (*bundle.WorkspaceConfig, error)
+	// apiAuth enforces the opt-in bearer-token/session auth on the
+	// server-mode TCP transport (daemon.yml api_auth). nil when disabled
+	// (default) — TCP then behaves exactly as before (CSRF gate only).
+	// See apiauth.go for the contract and bypass matrix.
+	apiAuth *apiAuth
+}
+
+// active returns ONE consistent value-copy snapshot of the active-namespace
+// state under configMu. All fields in the returned struct come from the same
+// lock acquisition, so a handler that reads 2+ per-namespace fields gets a
+// torn-free view (e.g. dockerClient is guaranteed to match nsConfig). The
+// copy is a stale-but-consistent snapshot: a concurrent swap/mutation is not
+// reflected in it, exactly like the per-field copies handlers took before.
+// Zero-value Daemons (tests) with a nil activeNs get an all-zero snapshot.
+func (d *Daemon) active() activeNamespace {
+	d.configMu.RLock()
+	defer d.configMu.RUnlock()
+	if d.activeNs == nil {
+		return activeNamespace{}
+	}
+	return *d.activeNs
+}
+
+// activeLocked returns the MUTABLE active-namespace struct for in-place field
+// writes, allocating the empty value on first use (zero-value test Daemons).
+// Caller MUST hold configMu for writing.
+func (d *Daemon) activeLocked() *activeNamespace {
+	if d.activeNs == nil {
+		d.activeNs = &activeNamespace{}
+	}
+	return d.activeNs
 }
 
 // secretReaderFunc returns the SecretService as a secretReader (transparent decryption).
@@ -198,655 +267,48 @@ func collectExtraLicensesFrom(svc *license.Service) []bundle.LicenseInstance {
 // a renewal service is already running. Shared between initial daemon Start
 // and the live namespace-switch path.
 func (d *Daemon) startACMERenewalIfConfigured() {
-	d.configMu.RLock()
-	nsCfg := d.nsConfig
-	existing := d.acmeRenewal
-	d.configMu.RUnlock()
-	if existing != nil {
+	act := d.active()
+	if act.acmeRenewal != nil {
 		return
 	}
+	nsCfg := act.nsConfig
 	if nsCfg == nil || !nsCfg.Proxy.TLS.Enabled || !nsCfg.Proxy.TLS.LetsEncrypt || nsCfg.Proxy.Host == "" {
 		return
 	}
 	acmeClient := acme.NewClient(config.DataDir(), config.ConfDir(), nsCfg.Proxy.Host)
 	svc := acme.NewRenewalService(acmeClient, func() {
-		if d.runtime != nil {
-			if restartErr := d.runtime.RestartApp("proxy"); restartErr != nil {
+		if rt := d.active().runtime; rt != nil {
+			if restartErr := rt.RestartApp("proxy"); restartErr != nil {
 				slog.Error("ACME: restart proxy after renewal failed", "err", restartErr)
 			}
 		}
 	})
 	d.configMu.Lock()
-	d.acmeRenewal = svc
+	d.activeLocked().acmeRenewal = svc
 	d.configMu.Unlock()
 	svc.Start()
 }
 
 // rebuildAuthCaches rebuilds token lookup and registry auth caches from current secrets,
-// then retries any pull-failed apps.
+// then retries any pull-failed apps. It also invalidates the license cache —
+// a locked SecretService caches a "no licenses" List() result, and this method
+// runs exactly when secret visibility changes (unlock, secret CRUD,
+// master-password setup/reset), so the next List() re-reads the real store.
 func (d *Daemon) rebuildAuthCaches() {
-	if d.runtime == nil {
+	if d.licenses != nil {
+		d.licenses.Refresh()
+	}
+	// Secret visibility just changed — back-fill legacy workspace→secret links
+	// that a locked store deferred at bootstrap (no-op once linked).
+	migrateWorkspaceSecretLinks(d.store, d.secretService)
+	act := d.active()
+	if act.runtime == nil {
 		return
 	}
-	d.configMu.RLock()
-	wsCfg := d.workspaceConfig
-	d.configMu.RUnlock()
-	d.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(wsCfg, d.secretReaderFunc()))
-	retried := d.runtime.RetryPullFailedApps()
+	act.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(act.workspaceConfig, d.secretReaderFunc()))
+	retried := act.runtime.RetryPullFailedApps()
 	if retried > 0 {
 		slog.Info("Retrying pull-failed apps after secrets change", "count", retried)
-	}
-}
-
-// Start runs the daemon.
-//
-// setupDaemonLogging applies desktop mode and initializes the process-global
-// rotating log writer + slog default. ORDER MATTERS: desktop mode MUST be
-// applied before any filesystem path is resolved, because config.LogDir() /
-// DaemonLogPath() (and every other path) branch on IsDesktopMode(). In the
-// desktop thin-wrapper the daemon is a separate child of the SERVER binary
-// launched with --desktop, so IsDesktopMode() is false on entry. If the log
-// writer were initialized first it would target the SERVER log path
-// (/opt/citeck/log), the open would fail for an unprivileged desktop user,
-// RotatingWriter would swallow the error, and the desktop daemon would write
-// no daemon.log at all.
-func setupDaemonLogging(opts StartOptions) {
-	if opts.Desktop {
-		config.SetDesktopMode(true)
-	}
-
-	// Set up log rotation once — survives daemon restarts in desktop mode.
-	// The RotatingWriter and slog default are process-global; re-creating them
-	// on every Start() would close the previous writer while the new logger
-	// references a fresh one, leaving a gap where slog writes to a closed writer.
-	logInitOnce.Do(func() {
-		logDir := config.LogDir()
-		_ = os.MkdirAll(logDir, 0o755) //nolint:gosec // G301: log dir needs 0o755
-		logPath := config.DaemonLogPath()
-		globalLogWriter = fsutil.NewRotatingWriter(logPath, 50*1024*1024, 3)
-	})
-	// Rebuild slog handler on every Start — the optional LogWriter may change between retries.
-	logDest := io.MultiWriter(os.Stderr, globalLogWriter)
-	if opts.LogWriter != nil {
-		logDest = io.MultiWriter(os.Stderr, globalLogWriter, opts.LogWriter)
-	}
-	logHandler := fsutil.NewCleanLogHandler(logDest, &globalLogLevel)
-	slog.SetDefault(slog.New(logHandler))
-}
-
-// Start runs the full daemon lifecycle — logging, storage, Docker, config,
-// TLS, ACME, runtime, and the HTTP/Unix-socket servers — and blocks until
-// shutdown is requested.
-//
-//nolint:gocyclo,nestif // Start orchestrates the full daemon lifecycle
-func Start(opts StartOptions) error {
-	setupDaemonLogging(opts)
-
-	slog.Info("Starting daemon",
-		"foreground", opts.Foreground,
-		"desktop", opts.Desktop,
-		"noUI", opts.NoUI,
-		"home", config.HomeDir(),
-	)
-
-	socketPath := config.SocketPath()
-
-	// Ensure directories exist
-	dirs := []string{config.ConfDir(), config.DataDir(), config.LogDir(), config.RunDir()}
-	if config.IsDesktopMode() {
-		dirs = append(dirs, config.WorkspacesDir())
-	}
-	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // G301: daemon dirs need 0o755 for Docker and service access
-			return fmt.Errorf("create directory %s: %w", dir, err)
-		}
-	}
-
-	// Load daemon config
-	daemonCfg, err := config.LoadDaemonConfig()
-	if err != nil {
-		slog.Warn("Failed to load daemon config, using defaults", "err", err)
-		daemonCfg = config.DefaultDaemonConfig()
-	}
-
-	// Override web UI with --no-ui flag
-	if opts.NoUI {
-		daemonCfg.Server.WebUI.Enabled = false
-	}
-
-	// Check if another daemon is already running via socket lock
-	if conn, dialErr := net.DialTimeout("unix", socketPath, 2*time.Second); dialErr == nil {
-		_ = conn.Close()
-		return fmt.Errorf("another daemon is already running (socket %s is active)", socketPath)
-	}
-	// Socket exists but nobody listening — stale, safe to remove
-	_ = os.Remove(socketPath)
-
-	// Determine workspace and namespace IDs
-	wsID := "daemon"
-	nsID := "default"
-	if config.IsDesktopMode() {
-		wsID = "default"
-
-		// Auto-migrate H2 → SQLite BEFORE any SQLite access (transparent upgrade from Kotlin).
-		// Pure-Go MVStore reader — no JAR, no JRE. Falls back internally to a
-		// filesystem-only reconstruction if storage.db is unreadable.
-		if needed, _ := h2migrate.NeedsMigration(config.HomeDir()); needed {
-			migStore, migErr := storage.NewSQLiteStore(config.HomeDir())
-			if migErr != nil {
-				return fmt.Errorf("open store for migration: %w", migErr)
-			}
-			result, migRunErr := h2migrate.Migrate(config.HomeDir(), migStore)
-			_ = migStore.Close()
-			if migRunErr != nil {
-				// Option B: a failed/invalid migration is a blocker — do not
-				// proceed into normal operation with partial/garbage data.
-				// Remove the half-built launcher.db so the migration re-runs
-				// cleanly on the next start (NeedsMigration keys off launcher.db
-				// absence). storage.db is opened read-only and already backed
-				// up to storage.db.kotlin-bak, so the source is intact and the
-				// run is retryable once the defect is fixed.
-				dbPath := filepath.Join(config.HomeDir(), "launcher.db")
-				for _, p := range []string{dbPath, dbPath + "-wal", dbPath + "-shm"} {
-					if rmErr := os.Remove(p); rmErr != nil && !os.IsNotExist(rmErr) {
-						slog.Error("CRITICAL: failed to remove partial launcher.db after aborted migration — manual cleanup required before retry", "path", p, "err", rmErr)
-					}
-				}
-				slog.Error("CRITICAL: H2 → SQLite migration failed — refusing to start", "err", migRunErr)
-				return fmt.Errorf("namespace migration failed: %w", migRunErr)
-			}
-			if result != nil {
-				slog.Info("H2 migration complete",
-					"workspaces", result.Workspaces,
-					"secrets", result.Secrets,
-					"namespaces", result.Namespaces,
-					"gitRepos", result.GitRepos,
-				)
-			}
-		}
-
-		// Resolve previously-selected workspace + namespace from launcher_state.
-		// Entry into a namespace is always explicit (Welcome → Quick Start /
-		// Create / pick existing), so an absent / empty SelectedNs entry
-		// simply lands on Welcome — there is no first-namespace auto-pick.
-		nsID = ""
-		if sqlStore, sqlErr := storage.NewSQLiteStore(config.HomeDir()); sqlErr == nil {
-			if state, stateErr := sqlStore.GetState(); stateErr == nil && state != nil {
-				if state.WorkspaceID != "" {
-					wsID = state.WorkspaceID
-				}
-				if state.SelectedNs != nil {
-					nsID = state.SelectedNs[wsID]
-				}
-				slog.Debug("Startup: loaded launcher_state",
-					"persistedWorkspaceID", state.WorkspaceID,
-					"selectedNs", state.SelectedNs,
-					"resolvedWsID", wsID,
-					"resolvedNsID", nsID,
-				)
-			} else {
-				slog.Debug("Startup: no launcher_state record", "err", stateErr)
-			}
-			_ = sqlStore.Close()
-		}
-
-		// Validate wsID against the on-disk workspace list (handles a stored
-		// wsID that no longer exists, e.g. after a workspace delete).
-		if workspaces, listErr := config.ListWorkspaces(); listErr == nil && len(workspaces) > 0 {
-			wsExists := false
-			for _, ws := range workspaces {
-				if ws.ID == wsID {
-					wsExists = true
-					break
-				}
-			}
-			if !wsExists {
-				nsID = "" // stored ns belongs to a workspace that's gone
-				found := false
-				for _, ws := range workspaces {
-					if ws.ID == "default" || ws.ID == "DEFAULT" {
-						wsID = ws.ID
-						found = true
-						break
-					}
-				}
-				if !found {
-					wsID = workspaces[0].ID
-				}
-			}
-		}
-		slog.Info("Desktop mode workspace", "wsID", wsID, "nsID", nsID)
-	}
-
-	// Create Docker client
-	// Server mode: no workspace in container names. Desktop: include workspace for Kotlin compat.
-	dockerWorkspace := ""
-	if config.IsDesktopMode() {
-		dockerWorkspace = wsID
-	}
-	dockerClient, err := docker.NewClient(dockerWorkspace, nsID)
-	if err != nil {
-		return fmt.Errorf("create docker client: %w", err)
-	}
-	startupFailed := true
-	defer func() {
-		if startupFailed {
-			_ = dockerClient.Close()
-		}
-	}()
-
-	// Initialize storage backend
-	var store storage.Store
-	if config.IsDesktopMode() {
-		store, err = storage.NewSQLiteStore(config.HomeDir())
-		if err != nil {
-			return fmt.Errorf("create sqlite store: %w", err)
-		}
-	} else {
-		store, err = storage.NewFileStore(config.ConfDir(), filepath.Join(config.DataDir(), "runtime"))
-		if err != nil {
-			return fmt.Errorf("create file store: %w", err)
-		}
-	}
-	defer func() {
-		if startupFailed {
-			_ = store.Close()
-		}
-	}()
-
-	// Wire git package's persistent sync-state hook so the throttle window
-	// (Kotlin parity: git-repo!instances) survives daemon restart. Without
-	// this every workspace/bundle repo would re-pull on cold start.
-	git.SetSyncStateStore(gitSyncStoreAdapter{store: store}, config.HomeDir())
-
-	// Initialize SecretService (transparent encryption layer for all modes)
-	secretSvc, err := storage.NewSecretService(store)
-	if err != nil {
-		return fmt.Errorf("create secret service: %w", err)
-	}
-	if secretSvc.IsEncrypted() {
-		if secretSvc.IsDefaultPassword() {
-			// Default password — auto-unlock. In server mode this is the
-			// expected steady state. In desktop mode it's a legacy artifact
-			// from older builds that auto-initialized encryption with "citeck";
-			// the SYSTEM-secrets refactor leaves user-secret encryption alone,
-			// so a desktop install staying on the default password is harmless
-			// until the user adds a real user secret (Harbor / nexus / git)
-			// — at that point the UI prompts for a real master password.
-			if unlockErr := secretSvc.Unlock(storage.DefaultMasterPassword); unlockErr != nil {
-				slog.Warn("Auto-unlock with default password failed", "err", unlockErr)
-			} else {
-				slog.Info("Secrets auto-unlocked with default password")
-			}
-		} else if config.IsDesktopMode() {
-			// Desktop mode: Web UI unlock flow — don't block startup. System
-			// secrets are plain in launcher_state so the daemon can keep
-			// running even with a locked user-secret store.
-			slog.Info("User secrets are encrypted with custom password, waiting for unlock via Web UI")
-		} else {
-			// Server mode: unlock now with password from CLI.
-			if opts.MasterPassword == "" {
-				return fmt.Errorf("secrets are encrypted but no master password provided")
-			}
-			if unlockErr := secretSvc.Unlock(opts.MasterPassword); unlockErr != nil {
-				return fmt.Errorf("unlock secrets: %w", unlockErr)
-			}
-			slog.Info("Secrets unlocked successfully")
-		}
-	} else if !config.IsDesktopMode() {
-		// Server mode first start: pre-initialize encryption with the default
-		// password so secrets generated later in this session are encrypted
-		// immediately. Avoids the historical install-CLI / daemon race where
-		// the daemon had encrypted=false in memory while files on disk were
-		// already encrypted.
-		if setupErr := secretSvc.SetMasterPassword(storage.DefaultMasterPassword, true); setupErr != nil {
-			slog.Warn("Failed to set up default encryption", "err", setupErr)
-		} else {
-			slog.Info("Secrets encryption initialized with default password")
-		}
-	} else {
-		// Desktop mode first start: SecretService stays unencrypted and empty
-		// (Kotlin v1.x parity — master password is set only when the user adds
-		// their first user secret via the UI). SYSTEM secrets live in plain
-		// launcher_state and are unaffected.
-		slog.Info("Desktop mode: user-secret encryption deferred until first user secret is added")
-	}
-
-	// Load namespace state (config + bundle + secrets + generator + runtime).
-	// loadNamespace returns a non-nil result with a nil NsConfig when there's
-	// no namespace.yml on disk — the daemon still boots into the wizard.
-	loaded, err := loadNamespace(loadNamespaceInput{
-		Store:         store,
-		SecretService: secretSvc,
-		DockerClient:  dockerClient,
-		DaemonCfg:     daemonCfg,
-		Licenses:      license.NewService(secretSvc),
-		WorkspaceID:   wsID,
-		NamespaceID:   nsID,
-		Offline:       opts.Offline,
-		Desktop:       opts.Desktop,
-	})
-	if err != nil {
-		return err
-	}
-	nsCfg := loaded.NsConfig
-	bundleDef := loaded.BundleDef
-	wsCfg := loaded.WorkspaceConfig
-	runtime := loaded.Runtime
-	appDefs := loaded.AppDefs
-	cloudCfgSrv := loaded.CloudCfgServer
-	systemSecrets := loaded.SystemSecrets
-	volumesBase := loaded.VolumesBase
-	bundleError := loaded.BundleError
-
-	// Startup orphan-sweep (desktop only): remove Docker resources for
-	// namespaces that no longer exist in storage. These pile up from the
-	// migration-test churn — a deleted/wiped namespace whose containers keep
-	// running (detach leaves them up across restarts) squats the host ports the
-	// active namespace needs and its data volumes eat disk. Running it BEFORE
-	// the active namespace starts means start doesn't have to evict port
-	// squatters first. Bounded + fail-safe inside sweepOrphanDockerResources.
-	if config.IsDesktopMode() {
-		sweepCtx, sweepCancel := context.WithTimeout(context.Background(), 90*time.Second)
-		sweepOrphanDockerResources(sweepCtx, dockerClient, store, wsID, nsID)
-		sweepCancel()
-	}
-
-	if nsCfg != nil {
-		// Snapshot import is a USER action only — namespace creation with a
-		// selected snapshot (handleCreateNamespace) or an explicit import from the
-		// snapshots list. There is deliberately NO auto-import on daemon start: a
-		// `snapshot:` field in the config is just a record of which snapshot the
-		// namespace was created from, not a trigger. Re-importing it on boot would
-		// clobber the namespace's live volumes — e.g. it restored a stale demo
-		// snapshot over a 1.x→2.x migrated namespace and corrupted its postgres.
-		if loaded.ShouldStart {
-			runtime.Start(appDefs)
-		}
-	}
-
-	bgCtx, bgCancel := context.WithCancel(context.Background()) //nolint:gosec // G118: bgCancel stored in Daemon struct, called in shutdown
-
-	d := &Daemon{
-		dockerClient:    dockerClient,
-		runtime:         runtime,
-		nsConfig:        nsCfg,
-		bundleDef:       bundleDef,
-		workspaceConfig: wsCfg,
-		appDefs:         appDefs,
-		cloudCfgServer:  cloudCfgSrv,
-		store:           store,
-		secretService:   secretSvc,
-		socketPath:      socketPath,
-		volumesBase:     volumesBase,
-		workspaceID:     wsID,
-		version:         opts.Version,
-		bundleError:     bundleError,
-		systemSecrets:   systemSecrets,
-		startTime:       time.Now(),
-		bgCtx:           bgCtx,
-		bgCancel:        bgCancel,
-		daemonCfg:       daemonCfg,
-		logWriter:       globalLogWriter,
-		logLevel:        &globalLogLevel,
-		desktop:         opts.Desktop,
-		licenses:        license.NewService(secretSvc),
-		eventRing:       newEventRing(eventReplayBufferSize),
-	}
-
-	// Desktop auto-update service: discovers the GitHub `latest`
-	// release and stages payloads. Server mode has no wrapper to apply a swap, so
-	// the routes + service are desktop-only. Scope is linux-first: only linux
-	// publishes the bare-binary payload, so gating here keeps the macOS/Windows
-	// UI from showing an update it cannot install (the routes 404 when nil).
-	if config.IsDesktopMode() && goruntime.GOOS == "linux" {
-		d.updateSvc = update.NewService(opts.Version, config.UpdatesDir())
-		go d.updateSvc.RunPeriodic(bgCtx)
-	}
-
-	// Low-disk monitor: a full data root is what silently broke a running
-	// namespace (Docker ENOSPC → every container's stdout/health stalled →
-	// liveness storm). A periodic WARN surfaces the condition in the daemon log
-	// (and the dump) before it cascades. Best-effort, both modes.
-	go d.runDiskMonitor(bgCtx)
-
-	// Wire up event broadcasting
-	if d.runtime != nil {
-		d.runtime.SetEventCallback(func(evt api.EventDto) {
-			d.broadcastEvent(evt)
-		})
-	}
-
-	// Start ACME renewal service if Let's Encrypt is enabled
-	d.startACMERenewalIfConfigured()
-
-	// Create HTTP server — single mux for all routes.
-	// Localhost TCP is trusted (desktop thin client), non-localhost requires mTLS.
-	// Both paths get full access to socketMux.
-	socketMux := http.NewServeMux()
-	d.registerRoutes(socketMux)
-	d.server = &http.Server{
-		Handler:        RecoveryMiddleware(LoggingMiddleware(socketMux)),
-		ReadTimeout:    30 * time.Second,
-		WriteTimeout:   120 * time.Second, // kcadm.sh exec can take 30-60s on slow hardware
-		MaxHeaderBytes: 1 << 20,           // 1MB
-	}
-
-	// Listen on Unix socket (for local CLI)
-	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		return fmt.Errorf("listen on %s: %w", socketPath, err)
-	}
-	socketPerm := os.FileMode(0o600)
-	if err := os.Chmod(socketPath, socketPerm); err != nil {
-		slog.Warn("Failed to chmod socket", "path", socketPath, "err", err)
-	}
-
-	// TCP listener for Web UI (controlled by daemon.yml and --no-ui flag).
-	// Desktop mode: Wails proxies through the Unix socket directly — no TCP needed.
-	// E2E-testing escape hatch: CITECK_DESKTOP_TCP=1 also binds TCP in desktop
-	// mode so Playwright can drive the same UI the user sees in the Wails window.
-	tcpAddr := daemonCfg.Server.WebUI.Listen
-	allowDesktopTCP := os.Getenv("CITECK_DESKTOP_TCP") == "1"
-	if daemonCfg.Server.WebUI.Enabled && (!config.IsDesktopMode() || allowDesktopTCP) {
-		tcpListener, err := net.Listen("tcp", tcpAddr)
-		if err != nil {
-			slog.Warn("TCP listener failed, Web UI unavailable", "addr", tcpAddr, "err", err)
-		} else {
-			localhost := isLocalhostAddr(tcpAddr)
-			mtlsActive := false
-			// Localhost TCP is trusted — give full access (socketMux), same as Unix socket.
-			// Non-localhost requires mTLS for full access.
-			var tcpBaseMux http.Handler = socketMux
-			if !localhost {
-				var mtlsErr error
-				tcpListener, tcpBaseMux, mtlsActive, mtlsErr = d.setupMTLS(tcpListener, socketMux, nsCfg, tcpAddr)
-				if mtlsErr != nil {
-					slog.Error("mTLS setup failed — Web UI not started", "err", mtlsErr)
-				}
-			}
-
-			tcpHandler := tcpBaseMux
-			if config.IsDesktopMode() {
-				// Desktop: requests come from Wails reverse proxy (trusted).
-				// Skip CSRF/CORS — Wails AssetServer is the real origin.
-				tcpHandler = RateLimitMiddleware(100, tcpHandler)
-				tcpHandler = LoggingMiddleware(tcpHandler)
-				tcpHandler = RecoveryMiddleware(tcpHandler)
-			} else {
-				// Server mode: direct browser access needs CSRF + CORS
-				if !mtlsActive {
-					tcpHandler = CSRFMiddleware(tcpHandler)
-				}
-				tcpHandler = RateLimitMiddleware(100, tcpHandler)
-				tcpHandler = SecurityHeadersMiddleware(mtlsActive, tcpHandler)
-				tcpHandler = LoggingMiddleware(tcpHandler)
-				tcpHandler = RecoveryMiddleware(tcpHandler)
-			}
-
-			if tcpListener != nil {
-				if !config.IsDesktopMode() {
-					tcpHandler = CORSMiddleware(tcpHandler, tcpAddr)
-				}
-				scheme := "http"
-				if mtlsActive {
-					scheme = "https"
-				}
-				d.tcpServer = &http.Server{
-					Handler:        tcpHandler,
-					ReadTimeout:    30 * time.Second,
-					WriteTimeout:   30 * time.Second,
-					IdleTimeout:    120 * time.Second,
-					MaxHeaderBytes: 1 << 20,
-				}
-				go func() {
-					host, port, _ := net.SplitHostPort(tcpAddr)
-					displayHost := host
-					if host == "" || host == "0.0.0.0" || host == "::" {
-						displayHost = config.DetectDisplayIP()
-					}
-					slog.Info("Web UI available", "url", scheme+"://"+displayHost+":"+port, "listen", tcpAddr)
-					if err := d.tcpServer.Serve(tcpListener); err != nil && err != http.ErrServerClosed {
-						slog.Error("TCP server error", "err", err)
-					}
-				}()
-			}
-		}
-	} else if !config.IsDesktopMode() {
-		slog.Info("Web UI disabled")
-	}
-
-	// Notify ready URL
-	readyURL := ""
-	if daemonCfg.Server.WebUI.Enabled && d.tcpServer != nil {
-		scheme := "http"
-		if !isLocalhostAddr(tcpAddr) {
-			scheme = "https"
-		}
-		host, port, _ := net.SplitHostPort(tcpAddr)
-		if host == "" || host == "0.0.0.0" || host == "::" {
-			host = config.DetectDisplayIP()
-		}
-		readyURL = scheme + "://" + host + ":" + port
-	}
-
-	slog.Info("Citeck Daemon started",
-		"socket", socketPath,
-		"webui", daemonCfg.Server.WebUI.Enabled,
-		"tcp", tcpAddr,
-		"pid", os.Getpid(),
-	)
-
-	// Handle shutdown: external context (desktop) or signal-based (CLI).
-	// Desktop quit DETACHES — containers are left running and re-adopted on the
-	// next launch via doStart's hash match — so the launcher and the Docker apps
-	// live independently (the kubelet principle). CLI/server signal shutdown
-	// (systemd is server-only) performs a full stop. Detach is also triggered
-	// explicitly via the HTTP endpoint for binary upgrades.
-	if opts.Desktop && opts.Ctx != nil {
-		// Desktop in-process mode (legacy): the Wails runner provides opts.Ctx,
-		// canceled on quit. Closing the launcher is not a request to tear the
-		// namespace down; explicit teardown stays available via the UI Stop
-		// button. (The thin-wrapper desktop runs the daemon as a SEPARATE process
-		// via runDaemonMode, which passes no Ctx — that path is handled below.)
-		go func() {
-			<-opts.Ctx.Done()
-			slog.Info("External context canceled, detaching (containers left running)")
-			d.shutdown(true)
-		}()
-	} else if opts.Desktop {
-		// Thin-wrapper desktop mode: the daemon is a standalone child process
-		// supervised by the Wails wrapper. It has no in-process parent context;
-		// the wrapper drives a graceful exit by POSTing the shutdown endpoint
-		// (with leave_running=true → detach) on quit, and SIGKILLs as a fallback.
-		// A direct SIGTERM/SIGINT (supervisor fallback, or a stray signal) must
-		// still DETACH, not full-stop — preserving the kubelet principle that
-		// closing the launcher leaves the platform containers running.
-		sigCh := make(chan os.Signal, 2)
-		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-		go func() {
-			<-sigCh
-			slog.Info("Shutdown signal received (desktop child), detaching (containers left running)")
-			go func() {
-				<-sigCh
-				slog.Warn("Second signal received, forcing exit")
-				os.Exit(1)
-			}()
-			d.shutdown(true)
-		}()
-	} else {
-		// CLI mode: first SIGINT/SIGTERM → graceful, second → force exit
-		sigCh := make(chan os.Signal, 2)
-		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-		go func() {
-			<-sigCh
-			slog.Info("Shutdown signal received")
-			go func() {
-				<-sigCh
-				slog.Warn("Second signal received, forcing exit")
-				os.Exit(1)
-			}()
-			d.shutdown(false)
-		}()
-	}
-
-	// Startup complete — disable cleanup defers
-	startupFailed = false
-
-	// Notify caller that the daemon is ready as soon as the HTTP listener
-	// is up — do NOT wait for the namespace to finish reconciling. On a
-	// cold start the namespace stays in STARTING for the full 5–10 minute
-	// webapp boot, and an earlier WaitForInitialReconcile(15s) here meant
-	// the desktop spinner blocked for a hard 15 seconds before the
-	// dashboard appeared. The dashboard already renders STOPPED / STARTING
-	// / PULLING fine and updates live via SSE — a brief STOPPED flicker is
-	// vastly better UX than a 15 s blank wait.
-	if opts.ReadyCh != nil {
-		opts.ReadyCh <- readyURL
-	}
-
-	// Serve (blocks until shutdown)
-	if err := d.server.Serve(listener); err != nil && err != http.ErrServerClosed {
-		return fmt.Errorf("server error: %w", err)
-	}
-
-	// Always return ErrShutdownRequested — whether shutdown came from an external
-	// context (desktop), SIGTERM, or the HTTP endpoint. The caller uses this to
-	// trigger os.Exit and avoid the process lingering on background goroutines.
-	return ErrShutdownRequested
-}
-
-// sweepOrphanDockerResources removes Docker resources for namespaces that no
-// longer exist in storage. Fail-safe: the keep set must be built completely
-// from storage; if any listing fails, it does nothing rather than risk
-// removing a live namespace's resources. The active namespace is always kept.
-func sweepOrphanDockerResources(ctx context.Context, dc *docker.Client, store storage.Store, activeWsID, activeNsID string) {
-	if dc == nil || store == nil {
-		return
-	}
-	keep := map[string]bool{}
-	if activeNsID != "" {
-		keep[docker.OrphanKey(activeNsID, activeWsID)] = true
-	}
-	wss, err := store.ListWorkspaces()
-	if err != nil {
-		slog.Warn("Orphan-sweep skipped: cannot list workspaces", "err", err)
-		return
-	}
-	for _, ws := range wss {
-		nss, nsErr := store.ListNamespaces(ws.ID)
-		if nsErr != nil {
-			// Incomplete keep set → bail out entirely; never purge on doubt.
-			slog.Warn("Orphan-sweep skipped: cannot list namespaces", "ws", ws.ID, "err", nsErr)
-			return
-		}
-		for _, ns := range nss {
-			keep[docker.OrphanKey(ns.ID, ws.ID)] = true
-		}
-	}
-	if purged := dc.SweepOrphans(ctx, keep); len(purged) > 0 {
-		slog.Info("Orphan-sweep removed leftover namespace resources",
-			"count", len(purged), "namespaces", purged)
 	}
 }
 
@@ -867,26 +329,20 @@ const diskMonitorInterval = 10 * time.Minute
 // desktop the home dir and Docker's (rootless) data root share this filesystem,
 // so it is a good proxy for the disk Docker writes to. A full data root is what
 // silently broke a running namespace (Docker can't write → containers stall →
-// liveness storm), so surfacing it early — even just in the daemon log and the
-// dump — gives an actionable signal before the cascade. Best-effort; exits on ctx.
+// liveness storm), so surfacing it early — in the daemon log, the dump, and a
+// `disk_low` SSE event driving the web banner — gives an actionable signal
+// before the cascade. Best-effort; exits on ctx.
 func (d *Daemon) runDiskMonitor(ctx context.Context) {
 	ticker := time.NewTicker(diskMonitorInterval)
 	defer ticker.Stop()
 	wasLow := false
 	check := func() {
-		freeGB, totalGB, err := diskSpace(config.HomeDir())
+		path := config.HomeDir()
+		freeGB, totalGB, err := diskSpace(path)
 		if err != nil {
 			return
 		}
-		if freeGB < lowDiskWarnGB {
-			slog.Warn("Low disk space on the launcher-home filesystem — containers may fail to start or run",
-				"freeGB", fmt.Sprintf("%.1f", freeGB), "totalGB", fmt.Sprintf("%.1f", totalGB))
-			wasLow = true
-		} else if wasLow {
-			slog.Info("Disk space recovered above the low-disk threshold",
-				"freeGB", fmt.Sprintf("%.1f", freeGB))
-			wasLow = false
-		}
+		wasLow = d.processDiskSample(path, freeGB, totalGB, wasLow)
 	}
 	check() // sample immediately so a boot-time low-disk condition is logged at once
 	for {
@@ -896,6 +352,42 @@ func (d *Daemon) runDiskMonitor(ctx context.Context) {
 		case <-ticker.C:
 			check()
 		}
+	}
+}
+
+// processDiskSample applies one disk-space sample: it logs the low/recovered
+// condition (WARN repeats every tick while low — daemon-log behavior is
+// unchanged) and broadcasts a `disk_low` / `disk_ok` SSE event on state
+// CHANGE only, so the web banner appears once per crossing and clears on
+// recovery instead of re-firing every 10 minutes. Returns the new low-state
+// for the caller to carry across ticks.
+func (d *Daemon) processDiskSample(path string, freeGB, totalGB float64, wasLow bool) (isLow bool) {
+	isLow = freeGB < lowDiskWarnGB
+	switch {
+	case isLow:
+		slog.Warn("Low disk space on the launcher-home filesystem — containers may fail to start or run",
+			"freeGB", fmt.Sprintf("%.1f", freeGB), "totalGB", fmt.Sprintf("%.1f", totalGB))
+		if !wasLow {
+			d.broadcastEvent(diskEvent("disk_low", path, freeGB))
+		}
+	case wasLow:
+		slog.Info("Disk space recovered above the low-disk threshold",
+			"freeGB", fmt.Sprintf("%.1f", freeGB))
+		d.broadcastEvent(diskEvent("disk_ok", path, freeGB))
+	}
+	return isLow
+}
+
+// diskEvent builds the SSE payload for disk_low / disk_ok. Free space is
+// converted from the monitor's GB float back to bytes — sub-byte precision is
+// irrelevant for the banner ("3.2 GB free").
+func diskEvent(evtType, path string, freeGB float64) api.EventDto {
+	return api.EventDto{
+		Type:           evtType,
+		Timestamp:      time.Now().UnixMilli(),
+		Path:           path,
+		FreeBytes:      int64(freeGB * (1 << 30)),
+		ThresholdBytes: int64(lowDiskWarnGB * (1 << 30)),
 	}
 }
 
@@ -920,24 +412,24 @@ func (d *Daemon) doShutdown(leaveRunning bool) {
 	// fires during runtime.ShutdownDetached() it would tear down the proxy
 	// container that detach mode is supposed to leave running. Stopping the
 	// renewal first guarantees no late callbacks racing the runtime teardown.
-	if d.cloudCfgServer != nil {
-		d.cloudCfgServer.Stop()
+	// One snapshot up front: shutdown tears down the namespace that is active
+	// NOW; a torn per-field view here is exactly what activeNamespace prevents.
+	act := d.active()
+	if act.cloudCfgServer != nil {
+		act.cloudCfgServer.Stop()
 	}
-	d.configMu.RLock()
-	renewal := d.acmeRenewal
-	d.configMu.RUnlock()
-	if renewal != nil {
-		renewal.Stop()
+	if act.acmeRenewal != nil {
+		act.acmeRenewal.Stop()
 	}
 
 	// Phase 3: Shutdown runtime. When leaveRunning is set, the runtime exits
 	// without stopping containers — the next daemon will adopt them via
 	// doStart's hash-matching path. Used for binary upgrades.
-	if d.runtime != nil {
+	if act.runtime != nil {
 		if leaveRunning {
-			d.runtime.ShutdownDetached()
+			act.runtime.ShutdownDetached()
 		} else {
-			d.runtime.Shutdown()
+			act.runtime.Shutdown()
 		}
 	}
 
@@ -951,7 +443,9 @@ func (d *Daemon) doShutdown(leaveRunning bool) {
 	if d.store != nil {
 		_ = d.store.Close()
 	}
-	_ = d.dockerClient.Close()
+	if act.dockerClient != nil {
+		_ = act.dockerClient.Close()
+	}
 	_ = os.Remove(d.socketPath)
 
 	slog.Info("Daemon stopped")
@@ -978,62 +472,60 @@ func (d *Daemon) doReload() error { return d.doReloadEx(false, false) }
 //     runtime — used by "Force Update And Start" on a STOPPED namespace, where
 //     there is nothing running to regenerate. When false the set is handed to
 //     Regenerate (recreate changed) on the running runtime.
-//
-//nolint:nestif // reload orchestrates config read, git pull, bundle resolution, ACME cert obtainment, and runtime regeneration
 func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate bool) error {
-	d.configMu.RLock()
-	if d.nsConfig == nil || d.runtime == nil {
-		d.configMu.RUnlock()
+	// One consistent snapshot: nsConfig/runtime/workspaceConfig/systemSecrets/
+	// workspaceID/volumesBase all come from the same lock acquisition.
+	// (systemSecrets in particular: handleSetAdminPassword mutates it under
+	// configMu but not reloadMu, so lock-free reads raced with a rotation.)
+	// reloadMu (held by our caller) excludes every pointer-swap path
+	// (install/clear/switch), so the snapshot's identity fields stay current
+	// for the whole reload.
+	act := d.active()
+	if act.nsConfig == nil || act.runtime == nil {
 		return fmt.Errorf("no namespace configured")
 	}
-	nsID := d.nsConfig.ID
-	d.configMu.RUnlock()
+	nsID := act.nsConfig.ID
+	fallbackWS := act.workspaceConfig
+	sysSecrets := act.systemSecrets
 
 	// Phase 1: slow I/O outside lock (config read, git pull, bundle resolution)
-	nsCfg, err := d.loadNamespaceConfigFromStore(d.workspaceID, nsID)
+	nsCfg, err := d.loadNamespaceConfigFromStore(act.workspaceID, nsID)
 	if err != nil {
 		return fmt.Errorf("reload config: %w", err)
 	}
 
-	bundlesDataDir := config.DataDir()
-	if config.IsDesktopMode() {
-		bundlesDataDir = filepath.Join(config.HomeDir(), "ws", d.workspaceID)
-	}
-	resolver := bundle.NewResolverWithAuth(bundlesDataDir, makeTokenLookup(d.secretReaderFunc())).
+	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(act.workspaceID), makeTokenLookup(d.secretReaderFunc())).
 		WithWorkspaceRepo(d.resolveActiveWorkspaceRepoOpts())
 	if forceGitPull {
 		resolver = resolver.WithForcePull()
 	}
-	resolveResult, err := resolver.Resolve(nsCfg.BundleRef)
-	bundleFallback := false
-	if err != nil {
-		// Fallback to cached bundle from persisted state
-		cachedState := loadNsStateFromStore(d.store, d.workspaceID, nsID)
-		if cachedState != nil && cachedState.CachedBundle != nil && !cachedState.CachedBundle.IsEmpty() {
-			slog.Warn("Bundle resolution failed on reload, using cached bundle", "ref", nsCfg.BundleRef, "err", err,
-				"cachedVersion", cachedState.CachedBundle.Key.Version)
-			resolveResult = &bundle.ResolveResult{Bundle: cachedState.CachedBundle, Workspace: d.workspaceConfig}
-			bundleFallback = true
-		} else {
-			return fmt.Errorf("resolve bundle: %w", err)
-		}
+	resolveResult, bundleFallback, resolveErr := resolveBundleWithCacheFallback(
+		resolver, nsCfg.BundleRef, d.store, act.workspaceID, nsID, fallbackWS, "on reload", true)
+	if resolveErr != nil {
+		return fmt.Errorf("resolve bundle: %w", resolveErr)
+	}
+	// Refresh the workspace-repo sync error from this reload's resolver pass so
+	// the Welcome 502 gate (quick starts / snapshots) tracks reality: a custom
+	// repo that recovered clears it; one that broke (and has no cached config)
+	// sets it. Recording only — the cached-bundle fallback above is unchanged.
+	wsSyncError := ""
+	if syncErr := resolver.WorkspaceSyncError(); syncErr != nil {
+		wsSyncError = syncErr.Error()
 	}
 
 	// Appfiles are intentionally NOT extracted here — same rule as Start().
-	// writeRuntimeFiles(genResp.Files) below is the single source of truth
-	// for bind-mount contents, avoiding a double-write that would revert a
-	// generator-customized file (proxy lua with rendered secrets, realm JSON,
-	// keycloak init script) back to its embedded template default.
+	// writeRuntimeFiles (inside generateAndWriteRuntimeFiles below) is the
+	// single source of truth for bind-mount contents, avoiding a double-write
+	// that would revert a generator-customized file (proxy lua with rendered
+	// secrets, realm JSON, keycloak init script) back to its embedded
+	// template default.
 
-	// Self-signed cert: generate if TLS enabled + no cert paths + no LE
-	ensureSelfSignedCert(nsCfg)
-
-	// Let's Encrypt: obtain certificate if needed; prepare renewal service for Phase 2
+	// Certs (self-signed / Let's Encrypt); prepare renewal service for Phase 2.
 	var newRenewal *acme.RenewalService
-	if acmeClient := ensureACMECert(nsCfg, "on reload"); acmeClient != nil {
+	if acmeClient := ensureProxyTLSCerts(nsCfg, "on reload"); acmeClient != nil {
 		newRenewal = acme.NewRenewalService(acmeClient, func() {
-			if d.runtime != nil {
-				if err := d.runtime.RestartApp("proxy"); err != nil {
+			if rt := d.active().runtime; rt != nil {
+				if err := rt.RestartApp("proxy"); err != nil {
 					slog.Error("ACME: restart proxy after renewal failed", "err", err)
 				}
 			}
@@ -1042,54 +534,53 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate bool) error {
 
 	var genOpts namespace.GenerateOpts
 	genOpts.SecretReader = d.nsSecretReader()
-	if d.runtime != nil {
-		genOpts.DetachedApps = d.runtime.ManualStoppedApps()
-		// Overlay user-edited disk content into the hash input so a UI-edited
-		// bind-mount file forces container recreate on this regenerate.
-		genOpts.EditedFileOverlay = d.runtime.EditedFileOverlay(d.volumesBase)
-	}
+	// EditedFilesSnapshot tells writeRuntimeFiles to skip user-edited
+	// bind-mount files so Web-UI edits survive reload/regenerate.
+	var editedFiles map[string]bool
+	genOpts.DetachedApps = act.runtime.ManualStoppedApps()
+	// Overlay user-edited disk content into the hash input so a UI-edited
+	// bind-mount file forces container recreate on this regenerate.
+	genOpts.EditedFileOverlay = act.runtime.EditedFileOverlay(act.volumesBase)
+	editedFiles = act.runtime.EditedFilesSnapshot()
 	// User-added licenses (encrypted store) merge with workspace-declared ones
 	// in the eapps cloud-config. Locked SecretService yields nil and we fall
 	// back to workspace-only licenses — reload never aborts on a locked store.
 	genOpts.ExtraLicenses = collectExtraLicensesFrom(d.licenses)
-	genResp, genErr := namespace.Generate(nsCfg, resolveResult.Bundle, resolveResult.Workspace, d.systemSecrets, genOpts)
+	genResp, genErr := generateAndWriteRuntimeFiles(nsCfg, resolveResult, sysSecrets, genOpts, act.volumesBase, editedFiles)
 	if genErr != nil {
-		return fmt.Errorf("generate namespace: %w", genErr)
+		return genErr
 	}
 
-	// Apply the full runtime file set. The generator owns everything —
-	// embedded defaults it copied and mutated, plus files it built from
-	// scratch. writeRuntimeFiles handles dir-in-place-of-file recovery
-	// (a Docker quirk when a bind-mount source was wiped out-of-band).
-	// EditedFilesSnapshot tells writeRuntimeFiles to skip user-edited
-	// bind-mount files so Web-UI edits survive reload/regenerate.
-	var editedFiles map[string]bool
-	if d.runtime != nil {
-		editedFiles = d.runtime.EditedFilesSnapshot()
-	}
-	writeRuntimeFiles(d.volumesBase, genResp.Files, editedFiles)
-
-	// Phase 2: update shared state briefly under write lock
+	// Phase 2: update shared state briefly under write lock. In-place
+	// mutation of the live activeNamespace (not a rebuild-and-swap) so a
+	// concurrent admin-password rotation that landed on systemSecrets during
+	// Phase 1 is preserved — see the activeNamespace doc.
 	d.configMu.Lock()
-	d.nsConfig = nsCfg
-	d.bundleDef = resolveResult.Bundle
-	d.workspaceConfig = resolveResult.Workspace
-	d.appDefs = genResp.Applications
+	a := d.activeLocked()
+	a.nsConfig = nsCfg
+	a.bundleDef = resolveResult.Bundle
+	a.workspaceConfig = resolveResult.Workspace
+	a.wsSyncError = wsSyncError
+	a.appDefs = genResp.Applications
+	// Reload succeeded with a freshly-resolved bundle — clear any boot-time
+	// bundle resolution error so the UI banner doesn't survive a successful
+	// reload until the next namespace activation.
+	a.bundleError = ""
 	// Update ACME renewal service under lock to prevent data race with shutdown
-	if d.acmeRenewal != nil {
-		d.acmeRenewal.Stop()
+	if a.acmeRenewal != nil {
+		a.acmeRenewal.Stop()
 	}
-	d.acmeRenewal = newRenewal
+	a.acmeRenewal = newRenewal
 	d.configMu.Unlock()
 	if newRenewal != nil {
 		newRenewal.Start()
 	}
 
-	if d.cloudCfgServer != nil {
-		d.cloudCfgServer.UpdateConfig(genResp.CloudConfig, d.systemSecrets.JWT)
+	if act.cloudCfgServer != nil {
+		act.cloudCfgServer.UpdateConfig(genResp.CloudConfig, sysSecrets.JWT)
 	}
-	d.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(resolveResult.Workspace, d.secretReaderFunc()))
-	d.runtime.SetDependsOnDetachedApps(genResp.DependsOnDetachedApps)
+	act.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(resolveResult.Workspace, d.secretReaderFunc()))
+	act.runtime.SetDependsOnDetachedApps(genResp.DependsOnDetachedApps)
 
 	// Phase 3: regenerate runtime with updated config (async stop + start).
 	// When the bundle had to fall back to the cached on-disk copy (e.g. git
@@ -1104,20 +595,17 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate bool) error {
 	// start the freshly-resolved set (Kotlin 1.x: forceUpdate ⇒ generate + start
 	// all apps). Images pull per the normal stage rules.
 	if startNotRegenerate {
-		d.runtime.Start(genResp.Applications)
+		act.runtime.Start(genResp.Applications)
 		return nil
 	}
 
-	currentAppCount := 0
-	if d.runtime != nil {
-		currentAppCount = d.runtime.AppCount()
-	}
+	currentAppCount := act.runtime.AppCount()
 	if bundleFallback && len(genResp.Applications) < currentAppCount {
 		slog.Warn("Bundle fallback produced a smaller app set; preserving current runtime",
 			"current", currentAppCount, "fallback", len(genResp.Applications))
 		return nil
 	}
-	d.runtime.Regenerate(genResp.Applications, nsCfg, resolveResult.Bundle)
+	act.runtime.Regenerate(genResp.Applications, nsCfg, resolveResult.Bundle)
 	return nil
 }
 
@@ -1221,63 +709,6 @@ func resolveServerCertHost(tcpAddr string, nsCfg *namespace.Config) string {
 	return host
 }
 
-func (d *Daemon) broadcastEvent(evt api.EventDto) {
-	// Seq assignment, ring push, and fanout all happen under eventMu so a
-	// subscriber added between Add and fanout cannot observe a published seq
-	// before the event reaches its channel. Paired with addSubscriber, which
-	// snapshots eventSeq under the same lock — that snapshot is the cutoff
-	// the replay path uses to avoid duplicating live deliveries.
-	d.eventMu.Lock()
-	defer d.eventMu.Unlock()
-	evt.Seq = d.eventSeq.Add(1)
-	if d.eventRing != nil {
-		d.eventRing.push(evt)
-	}
-	for _, ch := range d.eventSubs {
-		select {
-		case ch <- evt:
-		default:
-			d.sseDropped.Add(1)
-			slog.Warn("Event dropped for slow subscriber", "type", evt.Type)
-		}
-	}
-}
-
-const maxSSESubscribers = 100
-
-// eventReplayBufferSize caps the ring buffer used by SSE reconnects. ~500 events
-// covers typical disconnect windows even under pull-progress bursts; older
-// events force the client to do a full resync via the existing gap-detection.
-const eventReplayBufferSize = 500
-
-// addSubscriber registers a new SSE channel and returns the cutoff Seq for
-// replay filtering. Events with Seq <= cutoff were broadcast before the
-// channel joined the subscriber list and will NOT arrive on `ch`; events with
-// Seq > cutoff are guaranteed to arrive live. Both pieces of state are read
-// under eventMu so broadcastEvent cannot interleave between them.
-func (d *Daemon) addSubscriber() (ch chan api.EventDto, cutoffSeq int64, ok bool) {
-	d.eventMu.Lock()
-	defer d.eventMu.Unlock()
-	if len(d.eventSubs) >= maxSSESubscribers {
-		return nil, 0, false
-	}
-	ch = make(chan api.EventDto, 256)
-	d.eventSubs = append(d.eventSubs, ch)
-	return ch, d.eventSeq.Load(), true
-}
-
-func (d *Daemon) removeSubscriber(ch chan api.EventDto) {
-	d.eventMu.Lock()
-	defer d.eventMu.Unlock()
-	for i, sub := range d.eventSubs {
-		if sub == ch {
-			d.eventSubs = append(d.eventSubs[:i], d.eventSubs[i+1:]...)
-			break
-		}
-	}
-	close(ch)
-}
-
 // registerRoutes registers all API routes on the shared mux.
 // Both Unix socket and TCP listeners use the same mux — localhost TCP is trusted
 // (desktop thin client), non-localhost requires mTLS (which is also fully authenticated).
@@ -1294,9 +725,8 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+api.NamespaceStart, d.handleStartNamespace)
 	mux.HandleFunc("POST "+api.NamespaceStop, d.handleStopNamespace)
 	mux.HandleFunc("POST "+api.NamespaceReload, d.handleReloadNamespace)
+	mux.HandleFunc("GET "+api.NamespaceReloadPlan, d.handleReloadPlan)
 	mux.HandleFunc("POST "+api.NamespaceUpgrade, d.handleUpgradeNamespace)
-	mux.HandleFunc("GET "+api.NamespaceEdit, d.handleGetNamespaceEdit)
-	mux.HandleFunc("PUT "+api.NamespaceEdit, d.handlePutNamespaceEdit)
 	mux.HandleFunc("GET "+api.NamespaceCreateDefaults, d.handleNamespaceCreateDefaults)
 	mux.HandleFunc("POST "+api.NamespaceAdminPassword, d.handleSetAdminPassword)
 	mux.HandleFunc("GET "+api.RestartEvents, d.handleRestartEvents)
@@ -1322,7 +752,6 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/apps/{name}/config", d.handleGetAppConfig)
 	mux.HandleFunc("PUT /api/v1/apps/{name}/config", d.handlePutAppConfig)
 	mux.HandleFunc("POST /api/v1/apps/{name}/config/reset", d.handleResetAppConfig)
-	mux.HandleFunc("PUT /api/v1/apps/{name}/lock", d.handleAppLockToggle)
 	mux.HandleFunc("DELETE /api/v1/apps/{name}/restart-events", d.handleClearAppRestartEvents)
 	mux.HandleFunc("GET /api/v1/apps/{name}/files", d.handleListAppFiles)
 	mux.HandleFunc("POST /api/v1/apps/{name}/files/reset", d.handleResetAppFile)
@@ -1368,7 +797,8 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/namespaces/{id}", d.handleDeleteNamespace)
 	mux.HandleFunc("POST /api/v1/namespaces/{id}/activate", d.handleActivateNamespace)
 	mux.HandleFunc("POST /api/v1/namespaces/deactivate", d.handleDeactivateNamespace)
-	mux.HandleFunc("GET "+api.Templates, d.handleGetTemplates)
+	mux.HandleFunc("GET "+api.NamespaceEdit, d.handleGetNamespaceEdit)
+	mux.HandleFunc("PUT "+api.NamespaceEdit, d.handlePutNamespaceEdit)
 	mux.HandleFunc("GET "+api.QuickStarts, d.handleGetQuickStarts)
 
 	// Bundles
@@ -1377,11 +807,11 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	// Secrets
 	mux.HandleFunc("GET "+api.Secrets, d.handleListSecrets)
 	mux.HandleFunc("POST "+api.Secrets, d.handleCreateSecret)
+	mux.HandleFunc("PUT /api/v1/secrets/{id}", d.handleUpdateSecret)
 	mux.HandleFunc("DELETE /api/v1/secrets/{id}", d.handleDeleteSecret)
 	mux.HandleFunc("GET /api/v1/secrets/{id}/test", d.handleTestSecret)
 
 	// Secrets encryption management
-	mux.HandleFunc("GET "+api.SecretsStatus, d.handleGetSecretsStatus)
 	mux.HandleFunc("POST "+api.SecretsUnlock, d.handleUnlockSecrets)
 	mux.HandleFunc("POST "+api.SecretsSetupPassword, d.handleSetupPassword)
 	mux.HandleFunc("POST "+api.SecretsReset, d.handleResetSecrets)
@@ -1390,13 +820,11 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/licenses", d.handleListLicenses)
 	mux.HandleFunc("POST /api/v1/licenses", d.handleCreateLicense)
 	mux.HandleFunc("DELETE /api/v1/licenses/{id}", d.handleDeleteLicense)
+	mux.HandleFunc("GET "+api.LicensesStatus, d.handleLicenseStatus)
 
 	// Migration (master password for Kotlin encrypted secrets)
 	mux.HandleFunc("GET "+api.MigrationStatus, d.handleGetMigrationStatus)
 	mux.HandleFunc("POST "+api.MigrationMasterPassword, d.handleSubmitMasterPassword)
-
-	// Forms
-	mux.HandleFunc("GET /api/v1/forms/{formId}", d.handleGetForm)
 
 	// Diagnostics
 	mux.HandleFunc("GET "+api.Diagnostics, d.handleGetDiagnostics)
@@ -1424,6 +852,11 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("GET "+api.DesktopUpdateChangelog, d.handleUpdateChangelog)
 		mux.HandleFunc("POST "+api.DesktopUpdateApply, d.handleUpdateApply)
 	}
+
+	// Browser auth handshake (token → session cookie) for the opt-in API
+	// token auth. Public by design — it is the door into the token-protected
+	// API; with api_auth disabled it just redirects to /. See apiauth.go.
+	mux.HandleFunc("GET "+api.AuthSession, d.handleAuthSession)
 
 	// Web UI (fallback)
 	mux.Handle("/", WebUIHandler())
@@ -1469,13 +902,12 @@ func writeInternalError(w http.ResponseWriter, err error) {
 
 // activeNsKey returns the (workspaceID, namespaceID) of the active namespace.
 func (d *Daemon) activeNsKey() (wsID, nsID string) {
-	d.configMu.RLock()
-	defer d.configMu.RUnlock()
+	act := d.active()
 	nsID = "default"
-	if d.nsConfig != nil {
-		nsID = d.nsConfig.ID
+	if act.nsConfig != nil {
+		nsID = act.nsConfig.ID
 	}
-	return d.workspaceID, nsID
+	return act.workspaceID, nsID
 }
 
 // readJSON decodes a JSON request body with a 1 MiB hard ceiling. MaxBytesReader
@@ -1488,546 +920,4 @@ func readJSON(r *http.Request, v any) error {
 		return fmt.Errorf("decode JSON body: %w", err)
 	}
 	return nil
-}
-
-// makeTokenLookup creates a function that looks up auth tokens from the secret store.
-// Tokens are pre-fetched at creation time into an immutable map for efficiency.
-// Rebuilt on each reload to reflect secret mutations.
-func makeTokenLookup(reader secretReader) bundle.TokenLookupFunc {
-	if reader == nil {
-		return func(string) string { return "" }
-	}
-	// Pre-fetch all secrets into a lookup map
-	tokensByScope := make(map[string]string)
-	secrets, err := reader.ListSecrets()
-	if err == nil {
-		for _, s := range secrets {
-			sec, err := reader.GetSecret(s.ID)
-			if err != nil {
-				continue // ErrSecretsLocked → skip gracefully
-			}
-			if string(s.Type) != "" {
-				tokensByScope[string(s.Type)] = sec.Value
-			}
-			if s.Scope != "" {
-				tokensByScope[s.Scope] = sec.Value
-			}
-		}
-	}
-	return func(authType string) string {
-		return tokensByScope[authType]
-	}
-}
-
-// makeRegistryAuthFunc creates a function that returns Docker registry credentials
-// by matching image host against workspace config's imageReposByHost.
-// Registry secrets are pre-fetched into a map at creation time for efficiency.
-// The function is rebuilt on namespace reload to reflect secret mutations.
-func makeRegistryAuthFunc(wsCfg *bundle.WorkspaceConfig, reader secretReader) namespace.RegistryAuthFunc {
-	if wsCfg == nil || reader == nil {
-		return nil
-	}
-	reposByHost := wsCfg.ImageReposByHost()
-
-	// Pre-fetch all registry credentials into an immutable map
-	authByHost := buildRegistryAuthCache(reposByHost, reader)
-	if len(authByHost) == 0 {
-		return nil
-	}
-
-	return func(img string) *docker.RegistryAuth {
-		host := img
-		if idx := strings.Index(host, "/"); idx > 0 {
-			host = host[:idx]
-		}
-		auth, ok := authByHost[host]
-		if !ok {
-			return nil
-		}
-		return auth
-	}
-}
-
-// buildRegistryAuthCache pre-fetches all registry secrets into a map keyed by host.
-//
-// Username and password are read from the typed Secret fields (BASIC_AUTH parity
-// with Kotlin AuthSecret.Basic). A legacy "user:pass" packed Value is split
-// here as a last-resort fallback for any secret that somehow survived the
-// FileStore / SQLite-v3 migration paths without a Username column populated.
-func buildRegistryAuthCache(reposByHost map[string]bundle.ImageRepo, reader secretReader) map[string]*docker.RegistryAuth {
-	result := make(map[string]*docker.RegistryAuth)
-	secrets, err := reader.ListSecrets()
-	if err != nil {
-		return result
-	}
-	scopeSecrets := make(map[string]*storage.Secret)
-	for _, s := range secrets {
-		if s.Scope != "" {
-			sec, err := reader.GetSecret(s.ID)
-			if err != nil {
-				continue // ErrSecretsLocked → skip gracefully
-			}
-			scopeSecrets[s.Scope] = sec
-		}
-	}
-	addAuth := func(host string, sec *storage.Secret) {
-		username, password := sec.Username, sec.Value
-		if username == "" {
-			parts := strings.SplitN(sec.Value, ":", 2)
-			if len(parts) != 2 {
-				return
-			}
-			username, password = parts[0], parts[1]
-		}
-		if username == "" || password == "" {
-			return
-		}
-		result[host] = &docker.RegistryAuth{
-			Username: username,
-			Password: password,
-			Registry: "https://" + host,
-		}
-	}
-	for host, repo := range reposByHost {
-		if repo.AuthType == "" {
-			continue
-		}
-		sec := scopeSecrets[repo.AuthType]
-		if sec == nil {
-			sec = scopeSecrets[host]
-		}
-		if sec == nil {
-			// Kotlin migration compat: scope = "images-repo:{host}"
-			sec = scopeSecrets["images-repo:"+host]
-		}
-		if sec == nil {
-			continue
-		}
-		addAuth(host, sec)
-	}
-	// Kotlin v1.x parity: a secret with scope "images-repo:<host>" should
-	// authenticate pulls from <host> even when workspace-v1.yml doesn't
-	// declare that host under imageRepos. Kotlin built the secret ID from
-	// the image host directly. Skipping this fallback strands migrated
-	// secrets for any registry the current workspace config no longer lists
-	// (e.g. enterprise-registry.citeck.ru when only harbor.citeck.ru is
-	// declared) — pulls silently degrade to anonymous → 401.
-	const scopePrefix = "images-repo:"
-	for scope, sec := range scopeSecrets {
-		host, ok := strings.CutPrefix(scope, scopePrefix)
-		if !ok || host == "" {
-			continue
-		}
-		if _, already := result[host]; already {
-			continue
-		}
-		addAuth(host, sec)
-	}
-	return result
-}
-
-// resolveSystemSecrets reads or generates JWT, OIDC, admin, and citeck-SA values.
-//
-// System secrets are plain (unencrypted) in launcher_state — they only protect
-// the local machine itself (Kotlin v1.x parity: JWT was a hardcoded constant,
-// OIDC was hardcoded in realm.json, KK admin password was "admin"). Their
-// secrecy adds nothing on a developer workstation, and on a server they're
-// already constrained by the binary's own filesystem permissions. The
-// SecretService keeps holding USER-added auth secrets (Harbor / nexus / git
-// tokens) where encryption matters — those reach external resources.
-//
-// Migration paths supported:
-//   - Read from launcher_state plain (new home).
-//   - Read from SecretService (older installs where SYSTEM rows were stored
-//     encrypted alongside user secrets); migrated to plain on first read.
-//   - Read from conf/secrets/<id>-secret plain file (pre-Store launcher);
-//     migrated to plain on first read.
-//   - Generate fresh.
-//
-// In desktop mode the admin password is always "admin" and citeck SA defaults
-// to "citeck" — the Kotlin v1.x developer-tool convention.
-func resolveSystemSecrets(store storage.Store, svc *storage.SecretService, desktop bool) (namespace.SystemSecrets, error) {
-	var secrets namespace.SystemSecrets
-
-	// JWT
-	jwt, err := resolveOneSystemSecret(store, svc, "_jwt", func() string {
-		b := make([]byte, 64)
-		if _, err := rand.Read(b); err != nil {
-			slog.Error("Failed to generate JWT secret", "err", err)
-			return ""
-		}
-		return base64.StdEncoding.EncodeToString(b)
-	})
-	if err != nil {
-		return secrets, fmt.Errorf("resolve JWT secret: %w", err)
-	}
-	secrets.JWT = jwt
-
-	// OIDC
-	oidc, err := resolveOneSystemSecret(store, svc, "_oidc", func() string {
-		b := make([]byte, 32)
-		if _, randErr := rand.Read(b); randErr != nil {
-			slog.Error("Failed to generate OIDC secret", "err", randErr)
-			return ""
-		}
-		return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
-	})
-	if err != nil {
-		return secrets, fmt.Errorf("resolve OIDC secret: %w", err)
-	}
-	secrets.OIDC = oidc
-
-	// ecos-app realm admin password.
-	if desktop {
-		secrets.AdminPassword = "admin"
-	} else {
-		adminPass, adminErr := resolveOneSystemSecret(store, svc, "_admin_password", func() string {
-			p, genErr := namespace.GenerateSimpleAdminPassword()
-			if genErr != nil {
-				slog.Error("Failed to generate admin password", "err", genErr)
-				return ""
-			}
-			return p
-		})
-		if adminErr != nil {
-			return secrets, fmt.Errorf("resolve admin password: %w", adminErr)
-		}
-		secrets.AdminPassword = adminPass
-	}
-
-	// citeck SA password. Desktop default is "citeck" (username = password
-	// convenience on a dev workstation), server keeps a 32-char random.
-	citeckSA, saErr := resolveOneSystemSecret(store, svc, "_citeck_sa", func() string {
-		if legacy, err := svc.GetSecret("_launcher_sa"); err == nil && legacy.Value != "" {
-			slog.Info("Migrating legacy _launcher_sa secret to _citeck_sa")
-			return legacy.Value
-		}
-		if desktop {
-			return "citeck"
-		}
-		p, genErr := namespace.GenerateCiteckSAPassword()
-		if genErr != nil {
-			slog.Error("Failed to generate citeck SA password", "err", genErr)
-			return ""
-		}
-		return p
-	})
-	if saErr != nil {
-		return secrets, fmt.Errorf("resolve citeck SA: %w", saErr)
-	}
-	if citeckSA == "" {
-		return secrets, fmt.Errorf("citeck SA password is empty (generation failed)")
-	}
-	secrets.CiteckSA = citeckSA
-
-	// Legacy cleanup: delete _launcher_sa from BOTH the new plain state and
-	// the SecretService once migration produced a fresh _citeck_sa. Errors
-	// non-fatal — migration already succeeded.
-	_ = store.SetStateValue(sysSecretKey("_launcher_sa"), "")
-	if legacy, err := svc.GetSecret("_launcher_sa"); err == nil && legacy.Value != "" {
-		if delErr := svc.DeleteSecret("_launcher_sa"); delErr != nil {
-			slog.Warn("Failed to delete legacy _launcher_sa secret after migration", "err", delErr)
-		} else {
-			slog.Info("Deleted legacy _launcher_sa secret after migration to _citeck_sa")
-		}
-	}
-
-	return secrets, nil
-}
-
-// sysSecretKey returns the launcher_state key for a system secret id.
-// Keeps the `_sys_` prefix as the source-of-truth namespace for plain
-// system values so they never collide with SecretService-managed user secrets.
-func sysSecretKey(id string) string {
-	return "_sys" + id // e.g. "_jwt" → "_sys_jwt"
-}
-
-// resolveOneSystemSecret returns a system secret value, sourcing it in this
-// priority order and migrating older locations into the new plain state:
-//  1. launcher_state plain (new home — `_sys<id>`).
-//  2. SecretService SYSTEM row (older installs); migrate to plain + delete.
-//  3. conf/secrets/<id-without-underscore>-secret plain file (pre-Store
-//     launcher); migrate to plain + delete.
-//  4. Generate fresh.
-func resolveOneSystemSecret(store storage.Store, svc *storage.SecretService, id string, generate func() string) (string, error) {
-	stateKey := sysSecretKey(id)
-
-	// 1. Try launcher_state plain
-	if v, err := store.GetStateValue(stateKey); err == nil && v != "" {
-		return v, nil
-	}
-
-	// 2. Fallback: SecretService SYSTEM row — migrate to plain + delete.
-	if sec, err := svc.GetSecret(id); err == nil && sec.Value != "" {
-		value := sec.Value
-		if id == "_jwt" {
-			value = migrateJWTSecretToStdBase64(value)
-		}
-		if saveErr := store.SetStateValue(stateKey, value); saveErr != nil {
-			return "", fmt.Errorf("save migrated secret %s: %w", id, saveErr)
-		}
-		slog.Info("Migrated SYSTEM secret out of SecretService into plain state", "id", id)
-		if delErr := svc.DeleteSecret(id); delErr != nil {
-			slog.Warn("Failed to delete migrated SYSTEM secret from SecretService", "id", id, "err", delErr)
-		}
-		return value, nil
-	}
-
-	// 3. Fallback: read plain file (pre-Store launcher migration).
-	plainFile := filepath.Join(config.ConfDir(), strings.TrimPrefix(id, "_")+"-secret")
-	if data, readErr := os.ReadFile(plainFile); readErr == nil && len(data) > 0 { //nolint:gosec // path from trusted confDir
-		value := string(data)
-		if id == "_jwt" {
-			value = migrateJWTSecretToStdBase64(value)
-		}
-		slog.Info("Migrating system secret from plain file to launcher_state", "id", id)
-		if saveErr := store.SetStateValue(stateKey, value); saveErr != nil {
-			return "", fmt.Errorf("save migrated secret %s: %w", id, saveErr)
-		}
-		_ = os.Remove(plainFile)
-		return value, nil
-	}
-
-	// 4. Generate new.
-	value := generate()
-	if value == "" {
-		return "", fmt.Errorf("failed to generate secret %s", id)
-	}
-	slog.Info("Generated new system secret", "id", id)
-	if saveErr := store.SetStateValue(stateKey, value); saveErr != nil {
-		return "", fmt.Errorf("save generated secret %s: %w", id, saveErr)
-	}
-	return value, nil
-}
-
-// migrateJWTSecretToStdBase64 ensures the JWT secret uses standard base64 encoding.
-// Old launcher versions used RawURLEncoding (no padding, URL-safe alphabet). If detected,
-// the secret is re-encoded to StdEncoding. The caller persists the corrected value.
-func migrateJWTSecretToStdBase64(stored string) string {
-	if _, err := base64.StdEncoding.DecodeString(stored); err == nil {
-		return stored // already standard base64
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(stored)
-	if err != nil {
-		slog.Warn("JWT secret is not valid base64, keeping as-is", "err", err)
-		return stored
-	}
-	slog.Info("Migrated JWT secret from RawURLEncoding to StdEncoding")
-	return base64.StdEncoding.EncodeToString(raw)
-}
-
-// isRegularFile returns true if path exists and is a regular file.
-func isRegularFile(path string) bool {
-	fi, err := os.Stat(path)
-	return err == nil && fi.Mode().IsRegular()
-}
-
-// prepareDestPath handles the pre-write checks for a single runtime file:
-//   - If the path is a directory (Docker auto-created it), remove it so we can
-//     write a regular file in its place.
-//   - If the path is an existing regular file with the same size and identical
-//     contents, return skip=true so the caller can skip the write (avoids
-//     touching the mtime and keeps the container deployment hash stable).
-//
-// destPath is always filepath.Join(baseDir, relPath) where baseDir is the
-// trusted namespace runtime directory — the path is not user-supplied.
-func prepareDestPath(destPath string, content []byte) (skip bool, err error) {
-	fi, statErr := os.Stat(destPath)
-	if statErr != nil {
-		return false, nil // path does not exist yet — proceed with write
-	}
-	if fi.IsDir() {
-		// Case 1: Docker auto-created a dir instead of a file; remove it.
-		if err := os.RemoveAll(destPath); err != nil {
-			return false, fmt.Errorf("remove dir at runtime file path: %w", err)
-		}
-		return false, nil
-	}
-	// Case 2: same size — compare bytes, skip if unchanged.
-	if !fi.Mode().IsRegular() || int64(len(content)) != fi.Size() {
-		return false, nil
-	}
-	existing, readErr := os.ReadFile(destPath) //nolint:gosec // G304: destPath is filepath.Join(trusted baseDir, relPath)
-	if readErr != nil || !bytes.Equal(existing, content) {
-		return false, nil
-	}
-	// Before skipping, make sure the mode still matches what we'd write —
-	// a .sh that somehow lost its executable bit (umask change, prior
-	// launcher version bug, manual edit) would otherwise never recover,
-	// since we'd never rewrite the file.
-	wantPerm := os.FileMode(0o644)
-	if strings.HasSuffix(destPath, ".sh") {
-		wantPerm = 0o755
-	}
-	if fi.Mode().Perm() != wantPerm {
-		_ = os.Chmod(destPath, wantPerm)
-	}
-	return true, nil
-}
-
-// writeRuntimeFiles applies the generator's file map (the full set of
-// files any app can bind-mount) to disk under baseDir. Single source of
-// truth — nothing else writes into this directory tree. Handles three
-// edge cases that the naïve loop-and-WriteFile version did not:
-//
-//  1. A host path exists as an EMPTY DIRECTORY where the container
-//     expects a file. Docker auto-creates a directory whenever it needs
-//     to bind-mount a path that doesn't exist on the host; if postgres
-//     was recreated while its config was missing, we end up with
-//     /opt/citeck/data/runtime/.../postgres/postgresql.conf as a dir
-//     and postgres chokes with "configuration file contains errors".
-//  2. Content is identical — skip the atomic-rename dance entirely, so
-//     unchanged files don't get a new mtime each regenerate (preserves
-//     the container deployment hash so Docker doesn't pointlessly
-//     recreate containers whose files didn't really change).
-//  3. Parent directory doesn't exist yet — MkdirAll first.
-//
-// Shell scripts (.sh) are written 0755, everything else 0644. The optional
-// `edited` map (keys: "<app>/<rel-path>", no leading "./") flags files whose
-// on-disk content was modified by the user through the Web UI; those entries
-// are skipped so user edits survive reload/regenerate. Passing nil disables
-// the skip behavior (initial materialization paths where the user-edit
-// set has not yet been restored use nil).
-func writeRuntimeFiles(baseDir string, files map[string][]byte, edited map[string]bool) {
-	for filePath, content := range files {
-		if edited[filePath] {
-			slog.Debug("Skipping user-edited file", "path", filePath)
-			continue
-		}
-		destPath := filepath.Join(baseDir, filePath)
-		skip, prepErr := prepareDestPath(destPath, content)
-		if prepErr != nil {
-			slog.Error("Failed to remove stale dir at file path", "path", destPath, "err", prepErr)
-			continue
-		}
-		if skip {
-			continue
-		}
-		if mkdirErr := os.MkdirAll(filepath.Dir(destPath), 0o755); mkdirErr != nil { //nolint:gosec // G301: dirs need 0o755 for Docker bind-mount access
-			slog.Error("Failed to create dir for generated file", "path", destPath, "err", mkdirErr)
-			continue
-		}
-		perm := os.FileMode(0o644)
-		if strings.HasSuffix(filePath, ".sh") {
-			perm = 0o755
-		}
-		if writeErr := fsutil.AtomicWriteFile(destPath, content, perm); writeErr != nil {
-			slog.Error("Failed to write generated file", "path", destPath, "err", writeErr)
-			continue
-		}
-		// fsutil.AtomicWriteFile respects umask for the temp file; re-chmod
-		// to the exact perm we want (matters for .sh which need 0755).
-		if chmodErr := os.Chmod(destPath, perm); chmodErr != nil {
-			slog.Warn("Failed to chmod generated file", "path", destPath, "err", chmodErr)
-		}
-	}
-}
-
-// readEditedFileOverlay reads on-disk content for every persisted user-edit
-// key under volumesBase. Used at daemon startup before the runtime exists, so
-// the first Generate call sees the user's edits in its VolumesContentHash
-// input and recreates containers whose mounted files were changed in a prior
-// session. Missing/unreadable files are skipped — writeRuntimeFiles will
-// rematerialize the default the next time that key falls out of editedFiles.
-func readEditedFileOverlay(volumesBase string, keys []string) map[string][]byte {
-	if len(keys) == 0 {
-		return nil
-	}
-	out := make(map[string][]byte, len(keys))
-	for _, k := range keys {
-		abs := filepath.Join(volumesBase, k)
-		data, err := os.ReadFile(abs) //nolint:gosec // G304: key is constrained to volumesBase by the original write
-		if err != nil {
-			continue
-		}
-		out[k] = data
-	}
-	return out
-}
-
-// ensureACMECert obtains or refreshes the Let's Encrypt certificate for the
-// proxy when TLS + LE are enabled, then wires nsCfg.Proxy.TLS.{CertPath,KeyPath}
-// to the resulting cert. Falls back to generating a self-signed cert if LE
-// fails and no usable cert is present. Returns the acme.Client when LE was
-// attempted (so the caller can build a renewal service), or nil otherwise.
-//
-// contextLabel is appended to log messages to distinguish Start vs reload flows
-// (e.g. "on reload"); pass "" to suppress.
-func ensureACMECert(nsCfg *namespace.Config, contextLabel string) *acme.Client {
-	if !nsCfg.Proxy.TLS.Enabled || !nsCfg.Proxy.TLS.LetsEncrypt {
-		return nil
-	}
-	host := nsCfg.Proxy.Host
-	if host == "" || host == "localhost" {
-		slog.Warn("Let's Encrypt requires a public hostname, skipping", "host", host, "context", contextLabel)
-		return nil
-	}
-	acmeClient := acme.NewClient(config.DataDir(), config.ConfDir(), host)
-	acmeErr := obtainACMECertIfNeeded(acmeClient, host, contextLabel)
-	if acmeClient.CertMatchesHost() {
-		nsCfg.Proxy.TLS.CertPath = acmeClient.CertPath()
-		nsCfg.Proxy.TLS.KeyPath = acmeClient.KeyPath()
-	}
-	if nsCfg.Proxy.TLS.CertPath == "" {
-		slog.Warn("Let's Encrypt cert not available, falling back to self-signed", "reason", acmeErr, "context", contextLabel)
-		generateSelfSignedCertForConfig(nsCfg)
-	}
-	return acmeClient
-}
-
-// obtainACMECertIfNeeded drives a single LE obtain attempt for `acmeClient`
-// when the on-disk cert doesn't match the host. Honors the persisted rate-limit
-// marker (written by RenewalService on LE 429 / "too many" errors). Returns
-// any obtain error (or nil if the cert is already good or rate-limit was the
-// reason to skip).
-func obtainACMECertIfNeeded(acmeClient *acme.Client, host, contextLabel string) error {
-	if acmeClient.CertMatchesHost() {
-		return nil
-	}
-	if limited, retryAfter, rlErr := acme.IsRateLimited(config.DataDir(), host); rlErr == nil && limited {
-		slog.Warn("Let's Encrypt rate-limit marker active, skipping obtain", "host", host, "retryAfter", retryAfter, "context", contextLabel)
-		return fmt.Errorf("rate-limited until %s", retryAfter.Format(time.RFC3339))
-	}
-	label := "Obtaining Let's Encrypt certificate"
-	if contextLabel != "" {
-		label += " " + contextLabel
-	}
-	slog.Info(label, "host", host)
-	acmeCtx, acmeCancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer acmeCancel()
-	if err := acmeClient.ObtainCertificate(acmeCtx); err != nil {
-		slog.Error("Let's Encrypt certificate obtainment failed", "err", err, "context", contextLabel)
-		return fmt.Errorf("obtain LE certificate: %w", err)
-	}
-	slog.Info("Let's Encrypt certificate obtained", "cert", acmeClient.CertPath())
-	return nil
-}
-
-// ensureSelfSignedCert generates a self-signed cert if TLS is enabled without LE and no cert is configured.
-func ensureSelfSignedCert(nsCfg *namespace.Config) {
-	if !nsCfg.Proxy.TLS.Enabled || nsCfg.Proxy.TLS.LetsEncrypt || nsCfg.Proxy.TLS.CertPath != "" {
-		return
-	}
-	generateSelfSignedCertForConfig(nsCfg)
-}
-
-// generateSelfSignedCertForConfig generates a self-signed cert and updates the config paths.
-// Called directly as LE fallback (bypassing the LetsEncrypt guard in ensureSelfSignedCert).
-func generateSelfSignedCertForConfig(nsCfg *namespace.Config) {
-	host := nsCfg.Proxy.Host
-	if host == "" {
-		host = "localhost"
-	}
-	tlsDir := filepath.Join(config.ConfDir(), "tls")
-	os.MkdirAll(tlsDir, 0o755) //nolint:gosec // G301: TLS dir needs 0o755
-	certPath := filepath.Join(tlsDir, "server.crt")
-	keyPath := filepath.Join(tlsDir, "server.key")
-	if !isRegularFile(certPath) {
-		slog.Info("Generating self-signed certificate", "host", host)
-		if err := tlsutil.GenerateSelfSignedCert(certPath, keyPath, []string{host}, 365); err != nil {
-			slog.Error("Failed to generate self-signed cert", "err", err)
-		}
-	}
-	nsCfg.Proxy.TLS.CertPath = certPath
-	nsCfg.Proxy.TLS.KeyPath = keyPath
 }

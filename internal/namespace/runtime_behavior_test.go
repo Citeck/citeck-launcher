@@ -11,7 +11,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/docker"
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
 )
 
 // mockContainer tracks a mock container's ID and labels.
@@ -161,9 +161,7 @@ func (m *mockDocker) ListAllLauncherContainers(ctx context.Context) ([]container
 
 func (m *mockDocker) InspectContainer(ctx context.Context, id string) (container.InspectResponse, error) {
 	return container.InspectResponse{
-		ContainerJSONBase: &container.ContainerJSONBase{
-			State: &container.State{Status: "running", Running: true, StartedAt: time.Now().Format(time.RFC3339)},
-		},
+		State:  &container.State{Status: "running", Running: true, StartedAt: time.Now().Format(time.RFC3339)},
 		Config: &container.Config{Labels: map[string]string{}},
 	}, nil
 }

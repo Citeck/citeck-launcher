@@ -25,7 +25,7 @@ func newAppsTestDaemon(t *testing.T) *http.ServeMux {
 	store, err := storage.NewSQLiteStore(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
-	d := &Daemon{store: store, volumesBase: t.TempDir()}
+	d := &Daemon{store: store, activeNs: &activeNamespace{volumesBase: t.TempDir()}}
 	mux := http.NewServeMux()
 	d.registerRoutes(mux)
 	return mux
@@ -71,7 +71,6 @@ func TestAppRoutes_InvalidNameReturns400(t *testing.T) {
 		{"GET", "/api/v1/apps/" + bad + "/config"},
 		{"PUT", "/api/v1/apps/" + bad + "/config"},
 		{"POST", "/api/v1/apps/" + bad + "/config/reset"},
-		{"PUT", "/api/v1/apps/" + bad + "/lock"},
 		{"GET", "/api/v1/apps/" + bad + "/files"},
 		{"POST", "/api/v1/apps/" + bad + "/files/reset"},
 		{"GET", "/api/v1/apps/" + bad + "/files/foo.yml"},
@@ -151,7 +150,6 @@ func TestAppRoutes_NoRuntimeReturnsNotConfigured(t *testing.T) {
 		{"POST", "/api/v1/apps/eapps/stop", ""},
 		{"POST", "/api/v1/apps/eapps/start", ""},
 		{"PUT", "/api/v1/apps/eapps/config", "name: eapps\n"},
-		{"PUT", "/api/v1/apps/eapps/lock", `{"locked":true}`},
 		{"POST", "/api/v1/apps/eapps/files/reset?path=foo.yml", ""},
 		{"POST", api.AppsRetryPullFailed, ""},
 	}
@@ -202,23 +200,6 @@ func TestAppExec_InvalidBody_DocumentsHandlerOrder(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusNotFound, rec.Code)
 	assert.Equal(t, api.ErrCodeAppNotFound, decodeErr(t, rec).Code)
-}
-
-// TestAppLockToggle_InvalidJSON pins the body-validation gate on
-// handleAppLockToggle. Like the other mutating endpoints, requireRuntime
-// runs FIRST, so this test only exercises the no-runtime branch — the actual
-// "invalid JSON" 400 cannot be reached without a configured runtime + app.
-func TestAppLockToggle_NoRuntimeRejectsBeforeJSONParse(t *testing.T) {
-	mux := newAppsTestDaemon(t)
-
-	req := httptest.NewRequest("PUT", "/api/v1/apps/eapps/lock",
-		strings.NewReader(`{not-json}`))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	// requireRuntime runs first → NOT_CONFIGURED, never reaches JSON parser.
-	require.Equal(t, http.StatusBadRequest, rec.Code)
-	assert.Equal(t, api.ErrCodeNotConfigured, decodeErr(t, rec).Code)
 }
 
 // TestResetAppFile_MissingPathQuery covers the explicit "path is required"
@@ -286,8 +267,8 @@ func TestAppsRetryPullFailed_RoutesToStaticHandler(t *testing.T) {
 	assert.Equal(t, api.ErrCodeNotConfigured, decodeErr(t, rec).Code)
 }
 
-// TestPutAppConfig_NoRuntimeRejectsBeforeYAMLParse mirrors the lock-toggle
-// test: requireRuntime sits in front of the YAML decode, so even a body that
+// TestPutAppConfig_NoRuntimeRejectsBeforeYAMLParse pins the gate order:
+// requireRuntime sits in front of the YAML decode, so even a body that
 // would otherwise be rejected as "invalid YAML" surfaces NOT_CONFIGURED.
 // Pinning this prevents an accidental reorder from silently changing the
 // error code the UI relies on.

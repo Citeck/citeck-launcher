@@ -10,6 +10,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/docker"
+	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -239,9 +240,9 @@ func TestExtractZip_ZipSlipPrevention(t *testing.T) {
 	f.Close()
 
 	destDir := t.TempDir()
-	err = extractZip(zipPath, destDir)
+	_, err = fsutil.ExtractZip(zipPath, destDir)
 	if err == nil {
-		t.Fatal("extractZip should reject zip-slip path traversal")
+		t.Fatal("ExtractZip should reject zip-slip path traversal")
 	}
 	if !strings.Contains(err.Error(), "zip slip") {
 		t.Errorf("error should mention 'zip slip', got: %v", err)
@@ -263,8 +264,8 @@ func TestCreateZipAndExtractZip_RoundTrip(t *testing.T) {
 
 	// Extract ZIP
 	destDir := t.TempDir()
-	if err := extractZip(zipPath, destDir); err != nil {
-		t.Fatalf("extractZip failed: %v", err)
+	if _, err := fsutil.ExtractZip(zipPath, destDir); err != nil {
+		t.Fatalf("ExtractZip failed: %v", err)
 	}
 
 	// Verify contents

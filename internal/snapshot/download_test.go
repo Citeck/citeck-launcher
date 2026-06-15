@@ -17,6 +17,13 @@ import (
 	"time"
 )
 
+// testDownload is the former exported single-shot Download API, folded into
+// the tests as a thin wrapper around the unexported download(). Production
+// callers use DownloadWithRetry; the single-shot behavior is still covered here.
+func testDownload(ctx context.Context, rawURL, destPath, expectedSHA256 string, progress ProgressFunc) error {
+	return download(ctx, httpClient, rawURL, destPath, expectedSHA256, progress)
+}
+
 func TestDownload_Success(t *testing.T) {
 	content := []byte("fake-snapshot-zip-content")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -25,7 +32,7 @@ func TestDownload_Success(t *testing.T) {
 	defer srv.Close()
 
 	dest := filepath.Join(t.TempDir(), "test.zip")
-	err := Download(context.Background(), srv.URL+"/snapshot.zip", dest, "", nil)
+	err := testDownload(context.Background(), srv.URL+"/snapshot.zip", dest, "", nil)
 	if err != nil {
 		t.Fatalf("Download failed: %v", err)
 	}
@@ -50,7 +57,7 @@ func TestDownload_SHA256Verify(t *testing.T) {
 	defer srv.Close()
 
 	dest := filepath.Join(t.TempDir(), "verified.zip")
-	err := Download(context.Background(), srv.URL+"/s.zip", dest, expectedHash, nil)
+	err := testDownload(context.Background(), srv.URL+"/s.zip", dest, expectedHash, nil)
 	if err != nil {
 		t.Fatalf("Download with valid SHA256 failed: %v", err)
 	}
@@ -61,7 +68,7 @@ func TestDownload_SHA256Verify(t *testing.T) {
 	// disappear so the next attempt can re-download from scratch.
 	dir := t.TempDir()
 	dest2 := filepath.Join(dir, "bad.zip")
-	err = Download(context.Background(), srv.URL+"/s.zip", dest2, "0000000000000000000000000000000000000000000000000000000000000000", nil)
+	err = testDownload(context.Background(), srv.URL+"/s.zip", dest2, "0000000000000000000000000000000000000000000000000000000000000000", nil)
 	if err == nil {
 		t.Fatal("Download with wrong SHA256 should fail")
 	}
@@ -106,7 +113,7 @@ func TestDownload_Progress(t *testing.T) {
 	}
 
 	dest := filepath.Join(t.TempDir(), "progress.zip")
-	err := Download(context.Background(), srv.URL+"/s.zip", dest, "", progress)
+	err := testDownload(context.Background(), srv.URL+"/s.zip", dest, "", progress)
 	if err != nil {
 		t.Fatalf("Download failed: %v", err)
 	}
@@ -142,7 +149,7 @@ func TestDownload_Resume(t *testing.T) {
 	partPath := dest + ".part"
 	os.WriteFile(partPath, fullContent[:5], 0o644)
 
-	err := Download(context.Background(), srv.URL+"/resume.zip", dest, "", nil)
+	err := testDownload(context.Background(), srv.URL+"/resume.zip", dest, "", nil)
 	if err != nil {
 		t.Fatalf("Resume download failed: %v", err)
 	}
@@ -170,7 +177,7 @@ func TestDownload_ContextCancellation(t *testing.T) {
 	defer cancel()
 
 	dest := filepath.Join(t.TempDir(), "canceled.zip")
-	err := Download(ctx, srv.URL+"/slow.zip", dest, "", nil)
+	err := testDownload(ctx, srv.URL+"/slow.zip", dest, "", nil)
 	if err == nil {
 		t.Fatal("Download should fail when context is canceled")
 	}
@@ -190,9 +197,9 @@ func TestDownload_InvalidURL(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := Download(context.Background(), tt.url, dest, "", nil)
+			err := testDownload(context.Background(), tt.url, dest, "", nil)
 			if err == nil {
-				t.Errorf("Download(%q) should fail", tt.url)
+				t.Errorf("testDownload(%q) should fail", tt.url)
 			}
 		})
 	}
@@ -205,7 +212,7 @@ func TestDownload_HTTP404(t *testing.T) {
 	defer srv.Close()
 
 	dest := filepath.Join(t.TempDir(), "notfound.zip")
-	err := Download(context.Background(), srv.URL+"/missing.zip", dest, "", nil)
+	err := testDownload(context.Background(), srv.URL+"/missing.zip", dest, "", nil)
 	if err == nil {
 		t.Fatal("Download of 404 should fail")
 	}

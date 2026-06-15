@@ -21,6 +21,106 @@ func testDaemon(t *testing.T, store storage.Store) *Daemon {
 	return &Daemon{store: store, secretService: svc}
 }
 
+// secretsTestMux stands up a daemon with an unlocked (master-password-set)
+// SecretService over SQLite and mounts the routes, so the {id}-templated
+// secrets endpoints are exercised through real mux path matching.
+func secretsTestMux(t *testing.T) (*Daemon, *http.ServeMux) {
+	t.Helper()
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	d := testDaemon(t, store)
+	require.NoError(t, d.secretService.SetMasterPassword("test-master", false))
+	mux := http.NewServeMux()
+	d.registerRoutes(mux)
+	return d, mux
+}
+
+func putSecret(t *testing.T, mux *http.ServeMux, id, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("PUT", "/api/v1/secrets/"+id, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// TestHandleUpdateSecret_PartialKeepsValue: the write-only contract — an
+// empty/absent value keeps the stored one while name/scope/username update.
+func TestHandleUpdateSecret_PartialKeepsValue(t *testing.T) {
+	d, mux := secretsTestMux(t)
+	require.NoError(t, d.secretService.SaveSecret(storage.Secret{
+		SecretMeta: storage.SecretMeta{ID: "git-token-1", Name: "Old name", Type: storage.SecretGitToken, Scope: "global"},
+		Value:      "glpat-original",
+	}))
+
+	rec := putSecret(t, mux, "git-token-1", `{"name":"Renamed","scope":"team-a"}`)
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	var meta api.SecretMetaDto
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &meta))
+	assert.Equal(t, "git-token-1", meta.ID)
+	assert.Equal(t, "Renamed", meta.Name)
+	assert.Equal(t, "team-a", meta.Scope)
+	assert.Equal(t, string(storage.SecretGitToken), meta.Type, "type is immutable through the edit endpoint")
+
+	got, err := d.secretService.GetSecret("git-token-1")
+	require.NoError(t, err)
+	assert.Equal(t, "glpat-original", got.Value, "empty value in PUT must keep the stored value (write-only edit)")
+	assert.Equal(t, "Renamed", got.Name)
+}
+
+// TestHandleUpdateSecret_UpdatesValueWhenProvided: a non-empty value replaces
+// the stored one.
+func TestHandleUpdateSecret_UpdatesValueWhenProvided(t *testing.T) {
+	d, mux := secretsTestMux(t)
+	require.NoError(t, d.secretService.SaveSecret(storage.Secret{
+		SecretMeta: storage.SecretMeta{ID: "git-token-2", Name: "Token", Type: storage.SecretGitToken},
+		Value:      "glpat-old",
+	}))
+
+	rec := putSecret(t, mux, "git-token-2", `{"value":"glpat-new"}`)
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	got, err := d.secretService.GetSecret("git-token-2")
+	require.NoError(t, err)
+	assert.Equal(t, "glpat-new", got.Value)
+	assert.Equal(t, "Token", got.Name, "fields absent from the PUT stay unchanged")
+}
+
+// TestHandleUpdateSecret_NotFound: editing a missing secret → 404 with the
+// machine-readable SECRET_NOT_FOUND code.
+func TestHandleUpdateSecret_NotFound(t *testing.T) {
+	_, mux := secretsTestMux(t)
+
+	rec := putSecret(t, mux, "no-such-secret", `{"name":"X"}`)
+	require.Equal(t, http.StatusNotFound, rec.Code)
+
+	var errResp api.ErrorDto
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &errResp))
+	assert.Equal(t, api.ErrCodeSecretNotFound, errResp.Code)
+}
+
+// TestHandleUpdateSecret_NeverReturnsValue: the response body must not leak
+// the secret value — neither the old one nor a freshly submitted one.
+func TestHandleUpdateSecret_NeverReturnsValue(t *testing.T) {
+	d, mux := secretsTestMux(t)
+	require.NoError(t, d.secretService.SaveSecret(storage.Secret{
+		SecretMeta: storage.SecretMeta{ID: "git-token-3", Name: "Token", Type: storage.SecretGitToken},
+		Value:      "glpat-old-value",
+	}))
+
+	rec := putSecret(t, mux, "git-token-3", `{"value":"glpat-new-value"}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.NotContains(t, rec.Body.String(), "glpat-old-value")
+	assert.NotContains(t, rec.Body.String(), "glpat-new-value")
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &raw))
+	_, hasValue := raw["value"]
+	assert.False(t, hasValue, "SecretMetaDto must not carry a value field")
+}
+
 func TestHandleGetMigrationStatus_HasPendingSecrets(t *testing.T) {
 	store, err := storage.NewSQLiteStore(t.TempDir())
 	require.NoError(t, err)

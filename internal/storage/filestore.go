@@ -496,9 +496,9 @@ func (s *FileStore) readSecret(path string) (*Secret, error) {
 			Name:      sf.Name,
 			Type:      sf.Type,
 			Scope:     sf.Scope,
+			Username:  username,
 			CreatedAt: sf.CreatedAt,
 		},
-		Username: username,
-		Value:    value,
+		Value: value,
 	}, nil
 }

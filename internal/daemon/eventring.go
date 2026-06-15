@@ -44,6 +44,18 @@ func (r *eventRing) push(evt api.EventDto) {
 	r.mu.Unlock()
 }
 
+// len returns the number of events currently held in the ring (== size once
+// the buffer has wrapped). Used by the SSE health snapshot (metrics +
+// diagnostics) to report ring occupancy.
+func (r *eventRing) len() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.full {
+		return r.size
+	}
+	return r.head
+}
+
 // since returns events with Seq > lastSeq in publish order. If the buffer's
 // oldest stored Seq is already > lastSeq+1 (we've wrapped past the gap)
 // ok=false signals the caller to advise a full resync. An empty slice with

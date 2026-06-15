@@ -1,4 +1,4 @@
-package cli
+package fsutil
 
 import (
 	"archive/zip"
@@ -10,6 +10,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func createTestZip(t *testing.T, path string, files map[string]string) {
+	t.Helper()
+	f, err := os.Create(path)
+	require.NoError(t, err)
+	defer f.Close()
+
+	w := zip.NewWriter(f)
+	for name, content := range files {
+		fw, err := w.Create(name)
+		require.NoError(t, err)
+		_, err = fw.Write([]byte(content))
+		require.NoError(t, err)
+	}
+	require.NoError(t, w.Close())
+}
+
 func TestExtractZip_StripsSingleRootDir(t *testing.T) {
 	// Create a zip with a single root dir (GitHub pattern: repo-main/...)
 	zipPath := filepath.Join(t.TempDir(), "test.zip")
@@ -20,7 +36,7 @@ func TestExtractZip_StripsSingleRootDir(t *testing.T) {
 	})
 
 	destDir := filepath.Join(t.TempDir(), "repo")
-	count, err := extractZip(zipPath, destDir)
+	count, err := ExtractZip(zipPath, destDir, WithStripSingleRootDir())
 	require.NoError(t, err)
 	assert.Equal(t, 3, count)
 
@@ -39,7 +55,7 @@ func TestExtractZip_NoRootDir(t *testing.T) {
 	})
 
 	destDir := filepath.Join(t.TempDir(), "repo")
-	count, err := extractZip(zipPath, destDir)
+	count, err := ExtractZip(zipPath, destDir, WithStripSingleRootDir())
 	require.NoError(t, err)
 	assert.Equal(t, 2, count)
 
@@ -47,18 +63,58 @@ func TestExtractZip_NoRootDir(t *testing.T) {
 	assert.FileExists(t, filepath.Join(destDir, "community", "2025.12.yml"))
 }
 
-func TestExtractZip_ZipSlipBlocked(t *testing.T) {
+func TestExtractZip_WithoutStripOption_KeepsRootDir(t *testing.T) {
+	zipPath := filepath.Join(t.TempDir(), "test.zip")
+	createTestZip(t, zipPath, map[string]string{
+		"repo-main/a.txt": "a\n",
+	})
+
+	destDir := filepath.Join(t.TempDir(), "out")
+	count, err := ExtractZip(zipPath, destDir)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+	assert.FileExists(t, filepath.Join(destDir, "repo-main", "a.txt"))
+}
+
+func TestExtractZip_ZipSlipRejected(t *testing.T) {
 	zipPath := filepath.Join(t.TempDir(), "evil.zip")
 	createTestZip(t, zipPath, map[string]string{
 		"../../../etc/passwd": "root:x:0:0\n",
-		"normal.txt":          "ok\n",
 	})
 
 	destDir := filepath.Join(t.TempDir(), "repo")
-	count, err := extractZip(zipPath, destDir)
+	_, err := ExtractZip(zipPath, destDir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "zip slip")
+
+	// Nothing must have escaped destDir.
+	assert.NoFileExists(t, filepath.Join(filepath.Dir(destDir), "etc", "passwd"))
+}
+
+func TestExtractZip_PreservesContent(t *testing.T) {
+	zipPath := filepath.Join(t.TempDir(), "test.zip")
+	createTestZip(t, zipPath, map[string]string{
+		"file1.txt":        "hello",
+		"subdir/file2.txt": "world",
+	})
+
+	destDir := t.TempDir()
+	count, err := ExtractZip(zipPath, destDir)
 	require.NoError(t, err)
-	assert.Equal(t, 1, count) // only normal.txt extracted
-	assert.FileExists(t, filepath.Join(destDir, "normal.txt"))
+	assert.Equal(t, 2, count)
+
+	got1, err := os.ReadFile(filepath.Join(destDir, "file1.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "hello", string(got1))
+
+	got2, err := os.ReadFile(filepath.Join(destDir, "subdir", "file2.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "world", string(got2))
+}
+
+func TestExtractZip_MissingArchive(t *testing.T) {
+	_, err := ExtractZip(filepath.Join(t.TempDir(), "nope.zip"), t.TempDir())
+	require.Error(t, err)
 }
 
 func TestDetectSingleRootDir(t *testing.T) {
@@ -81,20 +137,4 @@ func TestDetectSingleRootDir(t *testing.T) {
 			assert.Equal(t, tt.expect, detectSingleRootDir(files))
 		})
 	}
-}
-
-func createTestZip(t *testing.T, path string, files map[string]string) {
-	t.Helper()
-	f, err := os.Create(path)
-	require.NoError(t, err)
-	defer f.Close()
-
-	w := zip.NewWriter(f)
-	for name, content := range files {
-		fw, err := w.Create(name)
-		require.NoError(t, err)
-		_, err = fw.Write([]byte(content))
-		require.NoError(t, err)
-	}
-	require.NoError(t, w.Close())
 }

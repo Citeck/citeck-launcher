@@ -56,11 +56,12 @@ func (d *Daemon) handleListVolumes(w http.ResponseWriter, r *http.Request) {
 // container engine's Mountpoint (informational only; the user cannot navigate
 // there outside Docker tooling).
 func (d *Daemon) handleListVolumesDesktop(w http.ResponseWriter, r *http.Request) {
-	if d.dockerClient == nil {
+	dc := d.activeDockerClient()
+	if dc == nil {
 		writeJSON(w, []any{})
 		return
 	}
-	vols, err := d.dockerClient.ListVolumes(r.Context())
+	vols, err := dc.ListVolumes(r.Context())
 	if err != nil {
 		writeInternalError(w, err)
 		return
@@ -90,13 +91,14 @@ func (d *Daemon) handleVolumeSize(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	if !config.IsDesktopMode() || d.dockerClient == nil {
+	dc := d.activeDockerClient()
+	if !config.IsDesktopMode() || dc == nil {
 		writeJSON(w, map[string]int64{"size": -1})
 		return
 	}
 	volSizeMu.Lock()
 	defer volSizeMu.Unlock()
-	size, err := d.dockerClient.VolumeSize(r.Context(), name)
+	size, err := dc.VolumeSize(r.Context(), name)
 	if err != nil {
 		writeInternalError(w, err)
 		return
@@ -109,19 +111,22 @@ func (d *Daemon) handleDeleteVolume(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	if d.runtime != nil {
-		status := d.runtime.Status()
+	// One snapshot: the running-check and the volume delete must describe the
+	// same active namespace.
+	act := d.active()
+	if act.runtime != nil {
+		status := act.runtime.Status()
 		if status != namespace.NsStatusStopped {
 			writeErrorCode(w, http.StatusConflict, api.ErrCodeNamespaceRunning, "cannot delete volume while namespace is running — stop the namespace first")
 			return
 		}
 	}
 	if config.IsDesktopMode() {
-		if d.dockerClient == nil {
+		if act.dockerClient == nil {
 			writeError(w, http.StatusNotFound, "volume not found")
 			return
 		}
-		if err := d.dockerClient.RemoveVolume(r.Context(), name); err != nil {
+		if err := act.dockerClient.RemoveVolume(r.Context(), name); err != nil {
 			// Idempotent delete: if the volume is already gone, the desired end
 			// state is reached, so report success. The volume list (GET
 			// /volumes) is slow on some engines (/system/df), so a deleted row

@@ -250,44 +250,6 @@ func (r *Runtime) ResetAppDef(appName string) error {
 	return nil
 }
 
-// SetFileEdited records (or clears) the user-edited flag for a mounted
-// bind-mount file. relPath MUST be the canonical "<app>/<rel-path>" key with
-// NO leading "./" — the same form that writeRuntimeFiles iterates over.
-//
-// When edited=true, writeRuntimeFiles will skip overwriting this file during
-// reload / regenerate so user edits made via the Web UI persist. When
-// edited=false, the flag is cleared (used by ResetEditedFile).
-//
-// State is persisted inline (durable user intent) and r.dirty is cleared so
-// the loop tail does not redundantly re-persist. On edited=true we enqueue a
-// cmdRegenerate so the next generation overlays the new disk content into
-// VolumesContentHash and the state machine recreates the container — without
-// this, the user's edit would only take effect on the next reload (Kotlin
-// parity: NamespaceRuntime.pushEditedFile updates the per-app hash inline).
-func (r *Runtime) SetFileEdited(appName, relPath string, edited bool) {
-	_ = appName // included for symmetry with ResetEditedFile; relPath already encodes the app prefix
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if edited {
-		r.editedFiles[relPath] = true
-	} else {
-		delete(r.editedFiles, relPath)
-	}
-	r.persistState()
-	r.dirty.Store(false)
-	if edited && len(r.lastApps) > 0 {
-		// MUST pass the current desired set. cmdRegenerate{} with apps=nil
-		// makes doRegenerate treat every existing app as "removed from the
-		// desired set" and wipe r.apps, breaking subsequent findApp calls.
-		// When the runtime hasn't started yet (lastApps empty), there's
-		// nothing to recreate — the on-disk file alone is enough; the next
-		// Start will pick the new content up via VolumesContentHash.
-		if err := r.cmdQueue.Enqueue(cmdRegenerate{apps: r.lastApps}); err != nil {
-			slog.Warn("Failed to enqueue regenerate after SetFileEdited", "path", relPath, "err", err)
-		}
-	}
-}
-
 // WriteEditedFile atomically writes user-edited content for a mounted file
 // AND marks it as edited under a single r.mu hold. Without the atomic
 // combination, a regenerate that is already in-flight or already in the
@@ -307,10 +269,10 @@ func (r *Runtime) WriteEditedFile(relPath, absPath string, content []byte) error
 	r.editedFiles[relPath] = true
 	r.persistState()
 	r.dirty.Store(false)
-	// MUST pass the current desired set — see SetFileEdited for the same
-	// gotcha: an empty cmdRegenerate{} wipes r.apps because doRegenerate
-	// treats apps=nil as "every app removed from the desired set". Skip the
-	// regenerate when the runtime hasn't started yet (the on-disk file is
+	// MUST pass the current desired set: an empty cmdRegenerate{} wipes
+	// r.apps because doRegenerate treats apps=nil as "every app removed from
+	// the desired set" (same gotcha as ResetAppDef / ResetEditedFile). Skip
+	// the regenerate when the runtime hasn't started yet (the on-disk file is
 	// enough; the next Start picks it up via VolumesContentHash).
 	if len(r.lastApps) > 0 {
 		if err := r.cmdQueue.Enqueue(cmdRegenerate{apps: r.lastApps}); err != nil {
@@ -328,18 +290,11 @@ func (r *Runtime) IsFileEdited(relPath string) bool {
 	return r.editedFiles[relPath]
 }
 
-// EditedFilesForApp returns the user-edited mounted-file paths whose first
-// segment is appName. Result is a fresh slice; safe to mutate by the caller.
-func (r *Runtime) EditedFilesForApp(appName string) []string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.editedFilesForAppLocked(appName)
-}
-
-// editedFilesForAppLocked is the lock-free implementation of EditedFilesForApp.
-// Callers MUST hold r.mu (read or write). Used by ToNamespaceDto under RLock
-// where re-entering RLock via the public method would be safe but the helper
-// avoids the lock-acquire churn for every app DTO.
+// editedFilesForAppLocked returns the user-edited mounted-file paths whose
+// first segment is appName. Result is a fresh slice; safe to mutate by the
+// caller. Callers MUST hold r.mu (read or write) — used by ToNamespaceDto
+// under RLock for every app DTO, so the helper deliberately skips its own
+// lock acquisition to avoid per-app RLock churn.
 func (r *Runtime) editedFilesForAppLocked(appName string) []string {
 	if len(r.editedFiles) == 0 {
 		return nil
@@ -375,7 +330,7 @@ func (r *Runtime) ResetEditedFile(appName, relPath string) error {
 	// Trigger a regeneration so the original file content is written back to
 	// disk on the next writeRuntimeFiles. MUST pass r.lastApps — an empty
 	// cmdRegenerate{} makes doRegenerate treat every existing app as
-	// removed-from-desired-set and wipe r.apps (same gotcha as SetFileEdited /
+	// removed-from-desired-set and wipe r.apps (same gotcha as
 	// WriteEditedFile / ResetAppDef).
 	if len(r.lastApps) > 0 {
 		if err := r.cmdQueue.Enqueue(cmdRegenerate{apps: r.lastApps}); err != nil {

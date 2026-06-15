@@ -18,8 +18,8 @@ const (
 	NamespaceStart          = APIV1 + "/namespace/start"
 	NamespaceStop           = APIV1 + "/namespace/stop"
 	NamespaceReload         = APIV1 + "/namespace/reload"
+	NamespaceReloadPlan     = APIV1 + "/namespace/reload-plan"
 	NamespaceUpgrade        = APIV1 + "/namespace/upgrade"
-	NamespaceEdit           = APIV1 + "/namespace/edit"
 	NamespaceCreateDefaults = APIV1 + "/namespace/create-defaults"
 	NamespaceAdminPassword  = APIV1 + "/namespace/admin-password"
 	RestartEvents           = APIV1 + "/namespace/restart-events"
@@ -35,16 +35,29 @@ const (
 	AppsRetryPullFailed = APIV1 + "/apps/retry-pull-failed"
 
 	Namespaces  = APIV1 + "/namespaces"
-	Templates   = APIV1 + "/templates"
 	QuickStarts = APIV1 + "/quick-starts"
+
+	// NamespaceEdit is the id-scoped namespace-edit endpoint, expressed as a
+	// Go 1.22 mux routing pattern. GET returns the authoritative editable
+	// values stored in namespace {id}'s namespace.yml (bundle key RAW — a
+	// stored "LATEST" stays "LATEST"); PUT patches and persists them, and
+	// triggers a live reload only when {id} is the active namespace. Clients
+	// build concrete URLs via NamespaceEditPath.
+	NamespaceEdit = Namespaces + "/{id}/edit"
 
 	Bundles = APIV1 + "/bundles"
 
 	Secrets              = APIV1 + "/secrets"
-	SecretsStatus        = Secrets + "/status"
 	SecretsUnlock        = Secrets + "/unlock"
 	SecretsSetupPassword = Secrets + "/setup-password"
 	SecretsReset         = Secrets + "/reset"
+
+	// Licenses is the enterprise-license CRUD collection; LicensesStatus is
+	// the read-only effective-license summary consumed by `citeck status`
+	// and the dashboard indicator (absent on pre-2.6 daemons — clients must
+	// treat a 404 as "no license info").
+	Licenses       = APIV1 + "/licenses"
+	LicensesStatus = Licenses + "/status"
 
 	MigrationStatus         = APIV1 + "/migration/status"
 	MigrationMasterPassword = APIV1 + "/migration/master-password"
@@ -78,7 +91,20 @@ const (
 	// subsequent pulls against the same host no-op for the suppression window
 	// (Kotlin parity — 1 hour default).
 	GitSkipPull = APIV1 + "/git/skip-pull"
+
+	// AuthSession is the browser token→cookie handshake for the opt-in API
+	// token auth (daemon.yml api_auth). Deliberately OUTSIDE /api/v1: the
+	// auth middleware protects /api/* and this route must stay reachable to
+	// establish a session. GET /auth/session?token=<token> sets an HttpOnly
+	// session cookie and redirects to /.
+	AuthSession = "/auth/session"
 )
+
+// NamespaceEditPath returns the concrete edit endpoint for a namespace id
+// (the client-side counterpart of the NamespaceEdit routing pattern).
+func NamespaceEditPath(id string) string {
+	return fmt.Sprintf("%s/%s/edit", Namespaces, id)
+}
 
 // AppLogs returns the API path for streaming an app's container logs.
 func AppLogs(name string) string {

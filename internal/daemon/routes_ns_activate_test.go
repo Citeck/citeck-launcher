@@ -69,7 +69,7 @@ func TestNamespaceActivate_NotFound(t *testing.T) {
 	t.Setenv("CITECK_HOME", t.TempDir())
 
 	d, mux := newWorkspaceTestDaemon(t)
-	d.workspaceID = "default"
+	d.activeNs.workspaceID = "default"
 	// Different ID than the active one — bypasses the "already active" short-
 	// circuit and falls through to the os.Stat 404 branch.
 

@@ -291,7 +291,7 @@ func findOrphanContainers(ctx context.Context, dc *docker.Client, knownNS map[st
 			Namespace: ns,
 			Workspace: ctr.Labels[docker.LabelWorkspace],
 			Image:     ctr.Image,
-			State:     ctr.State,
+			State:     string(ctr.State),
 		})
 	}
 	return orphans, nil

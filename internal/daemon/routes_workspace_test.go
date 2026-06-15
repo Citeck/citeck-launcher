@@ -20,19 +20,21 @@ func TestResolveOpenDirPath(t *testing.T) {
 	t.Setenv("CITECK_HOME", home)
 
 	d := &Daemon{
-		workspaceID: "ws-test",
-		nsConfig:    &namespace.Config{ID: "ns-test", Name: "Test NS"},
-		volumesBase: filepath.Join(home, "vols"),
+		activeNs: &activeNamespace{
+			workspaceID: "ws-test",
+			nsConfig:    &namespace.Config{ID: "ns-test", Name: "Test NS"},
+			volumesBase: filepath.Join(home, "vols"),
+		},
 	}
 
 	t.Run("volumes returns the volumes base", func(t *testing.T) {
 		got, err := d.resolveOpenDirPath("volumes")
 		require.NoError(t, err)
-		assert.Equal(t, d.volumesBase, got)
+		assert.Equal(t, d.activeNs.volumesBase, got)
 	})
 
 	t.Run("snapshots returns and creates the snapshots dir", func(t *testing.T) {
-		want := filepath.Join(config.ResolveVolumesBase(d.workspaceID, d.nsConfig.ID), "snapshots")
+		want := filepath.Join(config.ResolveVolumesBase(d.activeNs.workspaceID, d.activeNs.nsConfig.ID), "snapshots")
 		require.NoError(t, os.RemoveAll(want)) // ensure absent so we test creation
 
 		got, err := d.resolveOpenDirPath("snapshots")

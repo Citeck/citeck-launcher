@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
 )
 
 // RuntimeClient defines the Docker operations required by the namespace runtime

@@ -235,6 +235,15 @@ func (s *SQLiteStore) migrate() error {
 				)`,
 			},
 		},
+		{
+			// v7 — reusable workspace repo-auth secrets: secret_id references a
+			// shared secret row (one GitLab token for N workspaces). Empty keeps
+			// the legacy per-workspace "ws:{id}:repo" secret-key convention.
+			version: 7,
+			stmts: []string{
+				`ALTER TABLE workspaces ADD COLUMN secret_id TEXT NOT NULL DEFAULT ''`,
+			},
+		},
 	}
 
 	for _, m := range migrations {
@@ -274,7 +283,7 @@ func (s *SQLiteStore) applyMigration(version int, stmts []string) error {
 
 // ListWorkspaces returns all workspaces ordered by ID.
 func (s *SQLiteStore) ListWorkspaces() ([]WorkspaceDto, error) {
-	rows, err := s.db.Query(`SELECT id, name, repo_url, repo_branch, repo_pull_period, auth_type
+	rows, err := s.db.Query(`SELECT id, name, repo_url, repo_branch, repo_pull_period, auth_type, secret_id
 		FROM workspaces ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("query workspaces: %w", err)
@@ -284,7 +293,7 @@ func (s *SQLiteStore) ListWorkspaces() ([]WorkspaceDto, error) {
 	var result []WorkspaceDto
 	for rows.Next() {
 		var ws WorkspaceDto
-		if err := rows.Scan(&ws.ID, &ws.Name, &ws.RepoURL, &ws.RepoBranch, &ws.RepoPullPeriod, &ws.AuthType); err != nil {
+		if err := rows.Scan(&ws.ID, &ws.Name, &ws.RepoURL, &ws.RepoBranch, &ws.RepoPullPeriod, &ws.AuthType, &ws.SecretID); err != nil {
 			return nil, fmt.Errorf("scan workspace row: %w", err)
 		}
 		result = append(result, ws)
@@ -302,9 +311,9 @@ func (s *SQLiteStore) ListWorkspaces() ([]WorkspaceDto, error) {
 func (s *SQLiteStore) GetWorkspace(id string) (*WorkspaceDto, error) {
 	var ws WorkspaceDto
 	err := s.db.QueryRow(
-		`SELECT id, name, repo_url, repo_branch, repo_pull_period, auth_type
+		`SELECT id, name, repo_url, repo_branch, repo_pull_period, auth_type, secret_id
 		 FROM workspaces WHERE id = ?`, id,
-	).Scan(&ws.ID, &ws.Name, &ws.RepoURL, &ws.RepoBranch, &ws.RepoPullPeriod, &ws.AuthType)
+	).Scan(&ws.ID, &ws.Name, &ws.RepoURL, &ws.RepoBranch, &ws.RepoPullPeriod, &ws.AuthType, &ws.SecretID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -326,15 +335,16 @@ func (s *SQLiteStore) SaveWorkspace(ws WorkspaceDto) error {
 		ws.AuthType = "NONE"
 	}
 	_, err := s.db.Exec(`
-		INSERT INTO workspaces (id, name, repo_url, repo_branch, repo_pull_period, auth_type)
-			VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO workspaces (id, name, repo_url, repo_branch, repo_pull_period, auth_type, secret_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name=excluded.name,
 			repo_url=excluded.repo_url,
 			repo_branch=excluded.repo_branch,
 			repo_pull_period=excluded.repo_pull_period,
-			auth_type=excluded.auth_type
-	`, ws.ID, ws.Name, ws.RepoURL, ws.RepoBranch, ws.RepoPullPeriod, ws.AuthType)
+			auth_type=excluded.auth_type,
+			secret_id=excluded.secret_id
+	`, ws.ID, ws.Name, ws.RepoURL, ws.RepoBranch, ws.RepoPullPeriod, ws.AuthType, ws.SecretID)
 	if err != nil {
 		return fmt.Errorf("save workspace %s: %w", ws.ID, err)
 	}
@@ -351,9 +361,11 @@ func (s *SQLiteStore) DeleteWorkspace(id string) error {
 
 // --- Secrets ---
 
-// ListSecrets returns metadata for all secrets (without values).
+// ListSecrets returns metadata for all secrets (without values). Username is
+// included — it is stored plaintext (only Value is encrypted) and the
+// write-only edit form prefills it from this listing.
 func (s *SQLiteStore) ListSecrets() ([]SecretMeta, error) {
-	rows, err := s.db.Query("SELECT id, name, type, scope, created_at FROM secrets ORDER BY id")
+	rows, err := s.db.Query("SELECT id, name, type, scope, username, created_at FROM secrets ORDER BY id")
 	if err != nil {
 		return nil, fmt.Errorf("query secrets: %w", err)
 	}
@@ -363,7 +375,7 @@ func (s *SQLiteStore) ListSecrets() ([]SecretMeta, error) {
 	for rows.Next() {
 		var sm SecretMeta
 		var createdStr string
-		if err := rows.Scan(&sm.ID, &sm.Name, &sm.Type, &sm.Scope, &createdStr); err != nil {
+		if err := rows.Scan(&sm.ID, &sm.Name, &sm.Type, &sm.Scope, &sm.Username, &createdStr); err != nil {
 			return nil, fmt.Errorf("scan secret row: %w", err)
 		}
 		sm.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)

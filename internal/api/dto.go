@@ -32,6 +32,15 @@ type AppDto struct {
 	Locked           bool     `json:"locked,omitempty"`
 	RestartCount     int      `json:"restartCount,omitempty"`
 	EditedFilesCount int      `json:"editedFilesCount,omitempty"`
+	// InitStep is the 1-based index of the init container currently running
+	// while the app is STARTING (0 / absent outside the init phase).
+	InitStep int `json:"initStep,omitempty"`
+	// InitTotal is the app's init container count, set only while the init
+	// phase is active so the UI can render "init {step}/{total}".
+	InitTotal int `json:"initTotal,omitempty"`
+	// InitName is a short human-readable name of the running init step,
+	// derived from the init container image's last path segment.
+	InitName string `json:"initName,omitempty"`
 }
 
 // AppFileDto describes a single bind-mounted file exposed via the per-app
@@ -62,6 +71,23 @@ type DaemonStatusDto struct {
 	Desktop    bool   `json:"desktop"`
 	Locale     string `json:"locale,omitempty"`
 	Theme      string `json:"theme,omitempty"` // "dark" | "light" — persisted UI theme
+}
+
+// LicenseStatusDto summarizes the effective enterprise license for status
+// surfaces (the `citeck status` license line and the dashboard indicator).
+// Served by GET /api/v1/licenses/status.
+//
+// Tenant == "" means no license records exist at all (community install).
+// Enterprise == false with a non-empty Tenant means license records exist
+// but none currently validates (expired / not yet valid / bad signature) —
+// the UI renders that as "expired" with real tenant context.
+type LicenseStatusDto struct {
+	Enterprise   bool   `json:"enterprise"`
+	Tenant       string `json:"tenant,omitempty"`
+	IssuedTo     string `json:"issuedTo,omitempty"`
+	ValidUntil   string `json:"validUntil,omitempty"` // ISO-8601; date-only for midnight-UTC values
+	DaysLeft     int    `json:"daysLeft"`             // whole days until ValidUntil (ceil); <= 0 once expired
+	ExpiringSoon bool   `json:"expiringSoon"`         // valid but expiring within 14 days
 }
 
 // UIPrefsDto is the body of PUT /ui-prefs: user UI preferences persisted
@@ -110,6 +136,14 @@ type LinkDto struct {
 //   - "snapshot_progress": Current (1-based volume index), Total (volume count),
 //     After (volume name). Emitted once per volume during export/import so the
 //     UI can render a determinate progress bar inside the blocking overlay.
+//   - "app_init_step": Current (1-based init step), Total (init container
+//     count), After (short step name). Emitted only when the init step index
+//     changes during STARTING; all fields zero/empty once the init phase ends
+//     (the UI clears its "init {step}/{total}" suffix).
+//   - "disk_low" / "disk_ok": Path (monitored filesystem path), FreeBytes,
+//     ThresholdBytes (low-disk threshold). Emitted by the daemon's disk
+//     monitor on state CHANGE only — once when free space drops below the
+//     threshold and once on recovery, never re-emitted while the state holds.
 type EventDto struct {
 	Type        string  `json:"type"`
 	Seq         int64   `json:"seq"`
@@ -122,6 +156,11 @@ type EventDto struct {
 	Phase       string  `json:"phase,omitempty"`
 	Current     int     `json:"current,omitempty"`
 	Total       int     `json:"total,omitempty"`
+	// Path / FreeBytes / ThresholdBytes are present on "disk_low" / "disk_ok"
+	// events only (omitempty keeps every other event unchanged on the wire).
+	Path           string `json:"path,omitempty"`
+	FreeBytes      int64  `json:"freeBytes,omitempty"`
+	ThresholdBytes int64  `json:"thresholdBytes,omitempty"`
 }
 
 // HealthDto reports the overall daemon health status.
@@ -232,16 +271,81 @@ const (
 	ErrCodeWorkspaceNotFound  = "WORKSPACE_NOT_FOUND"
 	ErrCodeNamespaceNotFound  = "NAMESPACE_NOT_FOUND"
 	ErrCodeWorkspaceInUse     = "WORKSPACE_IN_USE"
+	// ErrCodeAuthRequired is returned (HTTP 401) by the TCP transport when
+	// daemon.yml api_auth is enabled and the request carries neither a valid
+	// `Authorization: Bearer <token>` header nor the session cookie minted by
+	// GET /auth/session. The Web UI shows its token prompt on this code.
+	ErrCodeAuthRequired = "AUTH_REQUIRED"
 	// ErrCodeEncryptionNotSetUp is returned by secret-write endpoints when the
 	// SecretService has no master password yet (Kotlin parity — desktop never
 	// auto-initializes encryption). The UI catches this and runs the
 	// CreateMasterPwd flow before retrying the original save.
 	ErrCodeEncryptionNotSetUp = "ENCRYPTION_NOT_SET_UP" //nolint:gosec // G101: error code constant, not a credential
+	// ErrCodeSecretNotFound is returned (HTTP 404) by PUT /api/v1/secrets/{id}
+	// when no secret with the given id exists.
+	ErrCodeSecretNotFound = "SECRET_NOT_FOUND" //nolint:gosec // G101: error code constant, not a credential
+	// ErrCodeWsRepoSyncFailed is returned (HTTP 502) when the ACTIVE workspace
+	// points at a CUSTOM git repo that cannot be synced (typically a 401 on a
+	// TOKEN-auth workspace with a missing/bad token) AND no cached clone is
+	// usable. Welcome-data endpoints (quick starts, workspace snapshots) and
+	// workspace activation surface it instead of silently serving the built-in
+	// fallback workspace (Kotlin 1.x parity: workspace load failed hard). The
+	// message carries the repo URL plus the underlying git error text
+	// ("authentication required", "repository not found", …) so the Web UI's
+	// GitPullErrorDialog heuristic also matches.
+	ErrCodeWsRepoSyncFailed = "WS_REPO_SYNC_FAILED"
 )
 
 // UpgradeRequestDto is the request body for the namespace upgrade endpoint.
 type UpgradeRequestDto struct {
 	BundleRef string `json:"bundleRef"`
+}
+
+// --- Reload plan (dry-run) ---
+
+// ReloadPlanAppDto is one app's predicted outcome of a reload, as computed by
+// GET /namespace/reload-plan without applying anything.
+type ReloadPlanAppDto struct {
+	Name string `json:"name"`
+	// Verdict is one of: create | recreate | keep | remove | detached
+	// (namespace.PlanVerdict* constants).
+	Verdict string `json:"verdict"`
+	// DiffAdded / DiffRemoved are deployment-hash-input lines present only in
+	// the new / only in the current definition (recreate verdicts only). The
+	// lines are human-readable ("env:KEY=value", "imageDigest=sha256:…").
+	DiffAdded   []string `json:"diffAdded,omitempty"`
+	DiffRemoved []string `json:"diffRemoved,omitempty"`
+	// SnapshotTag marks a kept app with a :snapshot image. A real reload
+	// re-pulls such images from the registry before the hash diff, so "keep"
+	// can become "recreate" if a new image was pushed under the same tag.
+	SnapshotTag bool `json:"snapshotTag,omitempty"`
+}
+
+// ReloadPlanSummaryDto counts plan entries per verdict.
+type ReloadPlanSummaryDto struct {
+	Create   int `json:"create"`
+	Recreate int `json:"recreate"`
+	Keep     int `json:"keep"`
+	Remove   int `json:"remove"`
+	Detached int `json:"detached"`
+}
+
+// ReloadPlanDto is the response of GET /namespace/reload-plan: the per-app
+// plan of what a reload would do right now, plus bundle-version context.
+type ReloadPlanDto struct {
+	Apps    []ReloadPlanAppDto   `json:"apps"`
+	Summary ReloadPlanSummaryDto `json:"summary"`
+	// BundleBefore / BundleAfter are the resolved bundle versions currently
+	// active vs. freshly resolved for this plan (equal when nothing changed).
+	BundleBefore string `json:"bundleBefore,omitempty"`
+	BundleAfter  string `json:"bundleAfter,omitempty"`
+	// BundleFallback is true when bundle resolution failed and the plan was
+	// computed from the cached bundle (same fallback a real reload uses).
+	BundleFallback bool `json:"bundleFallback,omitempty"`
+	// WouldSkip is true when an actual reload would refuse to apply this set:
+	// the cached-bundle fallback produced fewer apps than are currently
+	// running, and doReloadEx preserves the current runtime in that case.
+	WouldSkip bool `json:"wouldSkip,omitempty"`
 }
 
 // --- Welcome Screen ---
@@ -258,7 +362,9 @@ type NamespaceSummaryDto struct {
 // WorkspaceDto describes a workspace for API consumers (desktop-only multi-workspace).
 //
 // RepoPullPeriod is an ISO 8601 duration string (e.g. "PT2H"); AuthType is
-// "NONE" or "TOKEN" (TOKEN resolves a secret under key "ws:{id}:repo").
+// "NONE" or "TOKEN". SecretID references a reusable secret (one GitLab token
+// shared by several workspaces); when empty, TOKEN auth falls back to the
+// legacy per-workspace secret under key "ws:{id}:repo".
 // Defaults applied at the storage layer when fields are empty.
 type WorkspaceDto struct {
 	ID             string `json:"id"`
@@ -267,12 +373,14 @@ type WorkspaceDto struct {
 	RepoBranch     string `json:"repoBranch"`
 	RepoPullPeriod string `json:"repoPullPeriod,omitempty"`
 	AuthType       string `json:"authType,omitempty"`
+	SecretID       string `json:"secretId,omitempty"`
 	Active         bool   `json:"active"`
 	Namespaces     int    `json:"namespaces"`
 }
 
 // WorkspaceCreateDto is the request body for POST /api/v1/workspaces.
 // ID may be empty — the daemon derives a safe slug from Name.
+// SecretID optionally links a reusable git-token secret for repo auth.
 type WorkspaceCreateDto struct {
 	ID             string `json:"id,omitempty"`
 	Name           string `json:"name"`
@@ -280,16 +388,20 @@ type WorkspaceCreateDto struct {
 	RepoBranch     string `json:"repoBranch,omitempty"`
 	RepoPullPeriod string `json:"repoPullPeriod,omitempty"`
 	AuthType       string `json:"authType,omitempty"`
+	SecretID       string `json:"secretId,omitempty"`
 }
 
 // WorkspaceUpdateDto is the request body for PUT /api/v1/workspaces/{id}.
 // Name + repo fields are optional — only non-empty fields are applied.
+// SecretID uses the pointer sentinel convention (see NamespaceEditDto):
+// absent (nil) = unchanged, empty string = unlink the secret reference.
 type WorkspaceUpdateDto struct {
-	Name           string `json:"name,omitempty"`
-	RepoURL        string `json:"repoUrl,omitempty"`
-	RepoBranch     string `json:"repoBranch,omitempty"`
-	RepoPullPeriod string `json:"repoPullPeriod,omitempty"`
-	AuthType       string `json:"authType,omitempty"`
+	Name           string  `json:"name,omitempty"`
+	RepoURL        string  `json:"repoUrl,omitempty"`
+	RepoBranch     string  `json:"repoBranch,omitempty"`
+	RepoPullPeriod string  `json:"repoPullPeriod,omitempty"`
+	AuthType       string  `json:"authType,omitempty"`
+	SecretID       *string `json:"secretId,omitempty"`
 }
 
 // QuickStartDto represents a quick-start template entry. BundleRef is the
@@ -302,20 +414,18 @@ type QuickStartDto struct {
 	BundleRef string `json:"bundleRef,omitempty"`
 }
 
-// TemplateDto represents a namespace template.
-type TemplateDto struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-}
-
 // --- Secrets ---
 
 // SecretMetaDto contains non-sensitive secret metadata for API responses.
+// Username (BASIC_AUTH / REGISTRY_AUTH) is metadata, not a credential — the
+// write-only edit form prefills it from here. The VALUE is never returned by
+// any endpoint.
 type SecretMetaDto struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	Type      string `json:"type"`
 	Scope     string `json:"scope"`
+	Username  string `json:"username,omitempty"`
 	CreatedAt string `json:"createdAt"`
 }
 
@@ -331,6 +441,18 @@ type SecretCreateDto struct {
 	Username string `json:"username,omitempty"`
 	Value    string `json:"value"`
 	Scope    string `json:"scope,omitempty"`
+}
+
+// SecretUpdateDto is the request body for PUT /api/v1/secrets/{id} — a
+// WRITE-ONLY partial edit. Every field is optional: an empty/absent field
+// keeps the stored one. Value especially: empty means "value unchanged",
+// so the UI can edit name/scope without ever seeing (or re-entering) the
+// secret value. The secret's Type is immutable through this endpoint.
+type SecretUpdateDto struct {
+	Name     string `json:"name,omitempty"`
+	Scope    string `json:"scope,omitempty"`
+	Username string `json:"username,omitempty"`
+	Value    string `json:"value,omitempty"`
 }
 
 // --- Diagnostics ---
@@ -409,18 +531,25 @@ type NamespaceCreateDefaultsDto struct {
 // UI's "edit namespace" form drives. Mirrors the field set the Kotlin
 // EditNamespaceDialog exposed (name, bundleRef, authType, users, proxy host
 // + port, TLS toggle, pgAdmin toggle). Round-trip safe: GET returns the
-// current values; PUT applies them on top of the existing on-disk YAML so
-// fields outside this DTO are preserved.
+// values stored in the target namespace's namespace.yml (bundle key RAW —
+// a stored "LATEST" is returned as "LATEST", never display-resolved); PUT
+// applies them on top of the existing on-disk YAML so fields outside this
+// DTO are preserved. Partial-payload semantics on PUT: empty Name/AuthType/
+// Host, nil Users and nil TLSEnabled/PgAdminEnabled mean "leave unchanged" —
+// a partial payload never wipes the stored values.
 type NamespaceEditDto struct {
-	Name           string   `json:"name"`
-	BundleRepo     string   `json:"bundleRepo"`
-	BundleKey      string   `json:"bundleKey"`
-	AuthType       string   `json:"authType"`
-	Users          []string `json:"users,omitempty"`
-	Host           string   `json:"host"`
-	Port           int      `json:"port"`
-	TLSEnabled     bool     `json:"tlsEnabled"`
-	PgAdminEnabled bool     `json:"pgAdminEnabled"`
+	Name       string   `json:"name"`
+	BundleRepo string   `json:"bundleRepo"`
+	BundleKey  string   `json:"bundleKey"`
+	AuthType   string   `json:"authType"`
+	Users      []string `json:"users,omitempty"`
+	Host       string   `json:"host"`
+	Port       int      `json:"port"`
+	// TLSEnabled / PgAdminEnabled use pointers so an absent field on PUT
+	// means "leave unchanged" (mirrors the AuthType/Users semantics above);
+	// only an explicit true/false applies. GET always fills both.
+	TLSEnabled     *bool `json:"tlsEnabled,omitempty"`
+	PgAdminEnabled *bool `json:"pgAdminEnabled,omitempty"`
 }
 
 // BundleInfoDto describes a bundle repository and its available versions.

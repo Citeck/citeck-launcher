@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/config"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/volume"
+	"github.com/moby/moby/api/types/volume"
+	"github.com/moby/moby/client"
 )
 
 // VolumeInfo is the daemon-facing view of a Docker named volume scoped to a
@@ -30,16 +30,14 @@ type VolumeInfo struct {
 // the list loads instantly and callers fetch a single volume's size lazily, on
 // demand, via VolumeSize.
 func (c *Client) ListVolumes(ctx context.Context) ([]VolumeInfo, error) {
-	resp, err := c.cli.VolumeList(ctx, volume.ListOptions{
-		Filters: filters.NewArgs(
-			filters.Arg("label", LabelNamespace+"="+c.namespace),
-		),
+	resp, err := c.cli.VolumeList(ctx, client.VolumeListOptions{
+		Filters: make(client.Filters).Add("label", LabelNamespace+"="+c.namespace),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list volumes: %w", err)
 	}
-	out := make([]VolumeInfo, 0, len(resp.Volumes))
-	for _, v := range resp.Volumes {
+	out := make([]VolumeInfo, 0, len(resp.Items))
+	for _, v := range resp.Items {
 		if !strings.EqualFold(v.Labels[LabelWorkspace], c.workspace) {
 			continue
 		}
@@ -91,7 +89,7 @@ func (c *Client) VolumeSize(ctx context.Context, name string) (int64, error) {
 // DockerApi.deleteVolume. Force=false so volumes still in use surface an error
 // to the caller — the daemon route refuses deletion while the namespace runs.
 func (c *Client) RemoveVolume(ctx context.Context, name string) error {
-	if err := c.cli.VolumeRemove(ctx, name, false); err != nil {
+	if _, err := c.cli.VolumeRemove(ctx, name, client.VolumeRemoveOptions{Force: false}); err != nil {
 		return fmt.Errorf("remove volume %s: %w", name, err)
 	}
 	return nil
@@ -121,7 +119,7 @@ func (c *Client) CreateVolume(ctx context.Context, originalName string) (string,
 	}
 
 	name := VolumeName(originalName, c.namespace, c.workspace)
-	vol, err := c.cli.VolumeCreate(ctx, volume.CreateOptions{
+	vol, err := c.cli.VolumeCreate(ctx, client.VolumeCreateOptions{
 		Name: name,
 		Labels: map[string]string{
 			LabelLauncher:    "true",
@@ -134,25 +132,24 @@ func (c *Client) CreateVolume(ctx context.Context, originalName string) (string,
 	if err != nil {
 		return "", fmt.Errorf("create volume %s: %w", name, err)
 	}
-	return vol.Name, nil
+	return vol.Volume.Name, nil
 }
 
 // GetVolumeByOriginalName returns the volume matching (originalName, namespace,
 // workspace) by label, or nil if none. Workspace match is case-insensitive to
 // mirror Kotlin DockerApi.getVolumeByOriginalNameOrNull.
 func (c *Client) GetVolumeByOriginalName(ctx context.Context, originalName string) (*volume.Volume, error) {
-	resp, err := c.cli.VolumeList(ctx, volume.ListOptions{
-		Filters: filters.NewArgs(
-			filters.Arg("label", LabelNamespace+"="+c.namespace),
-			filters.Arg("label", LabelOrigName+"="+originalName),
-		),
+	resp, err := c.cli.VolumeList(ctx, client.VolumeListOptions{
+		Filters: make(client.Filters).
+			Add("label", LabelNamespace+"="+c.namespace).
+			Add("label", LabelOrigName+"="+originalName),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list volumes: %w", err)
 	}
-	for _, v := range resp.Volumes {
+	for _, v := range resp.Items {
 		if strings.EqualFold(v.Labels[LabelWorkspace], c.workspace) {
-			return v, nil
+			return &v, nil
 		}
 	}
 	return nil, nil

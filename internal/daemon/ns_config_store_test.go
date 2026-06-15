@@ -12,7 +12,7 @@ func TestPersistNamespaceConfigValidates(t *testing.T) {
 	s, err := storage.NewSQLiteStore(t.TempDir())
 	require.NoError(t, err)
 	defer s.Close()
-	d := &Daemon{store: s, workspaceID: "ws1"}
+	d := &Daemon{store: s, activeNs: &activeNamespace{workspaceID: "ws1"}}
 
 	// invalid bytes are rejected and nothing is stored
 	err = d.persistNamespaceConfig("ws1", "nsA", []byte("id: nsA\nproxy:\n  port: 70000\n"))
@@ -49,7 +49,7 @@ func TestStoreRoundTripPreservesConfig(t *testing.T) {
 	s, err := storage.NewSQLiteStore(t.TempDir())
 	require.NoError(t, err)
 	defer s.Close()
-	d := &Daemon{store: s, workspaceID: "ws1"}
+	d := &Daemon{store: s, activeNs: &activeNamespace{workspaceID: "ws1"}}
 
 	raw := []byte("id: nsA\nname: Alpha\nproxy:\n  port: 80\n")
 	want, err := namespace.ParseNamespaceConfig(raw)

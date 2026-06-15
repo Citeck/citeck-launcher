@@ -136,6 +136,7 @@ type AppRuntime struct {
 	markedForRemoval  bool             // set by cmdRegenerate for apps removed from the desired set; stepAllApps T32 deletes the entry once STOPPED.
 	stoppingStartedAt time.Time        // set on STOPPING transition; tick() T23 budget enforcement.
 	initStepIdx       int              // ephemeral: current init-container index during STARTING (init phase).
+	initActive        bool             // ephemeral: true while the init-container phase of STARTING is in flight. Set in beginStartingUnderLock, cleared at T12 (last init done) and by setAppStatus when the app leaves STARTING. Gates the AppDto init-progress fields.
 	reuseLocalImage   bool             // set by liveness-restart (T17a) / self-heal (T31): suppress the snapshot force-pull on the next READY_TO_PULL so a restart reuses the local image (no silent version drift, no pull failure). Consumed + cleared in T2. Mirrors Kotlin 1.x pullIfPresent=false.
 }
 
@@ -491,21 +492,6 @@ func (r *Runtime) EditedFileOverlay(volumesBase string) map[string][]byte {
 		out[k] = data
 	}
 	return out
-}
-
-// SetAppLocked sets or clears the lock flag for an edited app.
-func (r *Runtime) SetAppLocked(appName string, locked bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if locked {
-		r.editedLockedApps[appName] = true
-	} else {
-		delete(r.editedLockedApps, appName)
-	}
-	// editedLockedApps is durable user intent. Persist inline + clear r.dirty
-	// so the loop tail does not redundantly re-persist.
-	r.persistState()
-	r.dirty.Store(false)
 }
 
 // ClearRestartEvents removes the restart-event log AND resets the restart

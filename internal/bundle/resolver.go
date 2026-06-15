@@ -302,6 +302,12 @@ type Resolver struct {
 	offline     bool         // skip all git operations, fail if local data missing
 	forcePull   bool         // bypass the per-repo PullPeriod throttle (PullPeriod=0) for "Force Update"
 	logger      *slog.Logger // nil → falls back to slog.Default()
+	// wsSyncErr records the LAST resolveWorkspace outcome when the workspace
+	// repo git sync failed AND no usable workspace config could be loaded from
+	// disk (the resolver fell back to an empty config). nil whenever any
+	// config was loaded — a stale-but-present clone keeps things graceful.
+	// Surfaced to callers via WorkspaceSyncError.
+	wsSyncErr error
 }
 
 // NewResolver creates a resolver without auth support.
@@ -366,6 +372,10 @@ func (r *Resolver) resolveWorkspace() (cfg *WorkspaceConfig, repoDir string) {
 	localRepoDir := filepath.Join(r.dataDir, "repo")
 	defaultRepoDir := filepath.Join(r.dataDir, "bundles", "workspace")
 
+	// Reset the recorded sync error — each resolveWorkspace call reflects only
+	// its own outcome (a later successful pull clears an earlier failure).
+	r.wsSyncErr = nil
+
 	// A repo/ that is itself a git clone (has .git) is a STALE managed clone
 	// left behind by an older launcher — current code only ever extracts a
 	// workspace ZIP here (no .git). It must not shadow the git-pulled
@@ -382,6 +392,7 @@ func (r *Resolver) resolveWorkspace() (cfg *WorkspaceConfig, repoDir string) {
 	}
 
 	// Priority 2: cloned workspace repo (git pull if online)
+	var syncErr error
 	if !r.offline {
 		repoURL, repoBranch, pullPeriod, token := r.workspaceRepoSettings()
 		gitCtx, gitCancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -392,6 +403,10 @@ func (r *Resolver) resolveWorkspace() (cfg *WorkspaceConfig, repoDir string) {
 		gitCancel()
 		if err != nil {
 			r.log().Warn("Failed to sync workspace repo", "err", err)
+			// Keep the underlying git error text intact (%w) — callers and the
+			// Web UI heuristic match on "authentication required" /
+			// "repository not found" wording from go-git.
+			syncErr = fmt.Errorf("sync workspace repo %s: %w", repoURL, err)
 		}
 	}
 	if wsCfg := loadWorkspaceConfig(defaultRepoDir, r.log()); wsCfg != nil {
@@ -405,7 +420,31 @@ func (r *Resolver) resolveWorkspace() (cfg *WorkspaceConfig, repoDir string) {
 			return wsCfg, localRepoDir
 		}
 	}
+	// Nothing loaded: record the sync failure (if any) so callers can surface
+	// it instead of silently treating the empty fallback as a real workspace.
+	r.wsSyncErr = syncErr
 	return &WorkspaceConfig{}, ""
+}
+
+// WorkspaceSyncError returns the workspace-repo git sync error recorded by the
+// most recent resolveWorkspace pass, but only when ALL of the following hold:
+//
+//   - the resolver targets a CUSTOM workspace repo URL (WithWorkspaceRepo with
+//     a non-empty URL) — failures of the default Citeck repo keep the historical
+//     graceful empty-config fallback;
+//   - the git sync (clone/pull) failed;
+//   - no usable workspace config could be loaded from disk afterwards (no ZIP
+//     import, no previously-cloned copy, no stale managed clone).
+//
+// Callers (daemon Welcome-data endpoints, workspace switch) use this to fail
+// loudly with the repo URL + underlying git error instead of silently serving
+// the built-in fallback workspace (Kotlin 1.x parity: workspace load failed
+// hard with a retryable auth prompt — never a silent empty workspace).
+func (r *Resolver) WorkspaceSyncError() error {
+	if r.wsRepoOpts == nil || r.wsRepoOpts.URL == "" {
+		return nil
+	}
+	return r.wsSyncErr
 }
 
 // workspaceRepoSettings resolves the URL/branch/pullPeriod/token to use for

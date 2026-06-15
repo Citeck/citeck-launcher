@@ -203,6 +203,15 @@ func (c *DaemonClient) ReloadNamespace() (*api.ActionResultDto, error) {
 	return &dto, err
 }
 
+// ReloadPlan returns the per-app plan of what a reload would do right now
+// (dry-run): create / recreate / keep / remove / detached verdicts plus
+// hash-input line diffs for recreated apps.
+func (c *DaemonClient) ReloadPlan() (*api.ReloadPlanDto, error) {
+	var dto api.ReloadPlanDto
+	err := c.get(api.NamespaceReloadPlan, &dto)
+	return &dto, err
+}
+
 // SetAdminPassword resets the ecos-app realm admin password by driving
 // kcadm.sh inside the running keycloak container via the daemon.
 // The new password is also stored in the encrypted secret store so the
@@ -354,6 +363,25 @@ func (c *DaemonClient) GetHealth() (*api.HealthDto, error) {
 	var dto api.HealthDto
 	err := c.get(api.Health, &dto)
 	return &dto, err
+}
+
+// GetLicenseStatus fetches the effective enterprise-license summary.
+// Returns (nil, nil) when the daemon predates the endpoint (404) so callers
+// can silently omit license info when talking to an older daemon.
+func (c *DaemonClient) GetLicenseStatus() (*api.LicenseStatusDto, error) {
+	resp, err := c.doRequest(http.MethodGet, api.LicensesStatus, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	var dto api.LicenseStatusDto
+	if err := decodeResponse(resp, &dto); err != nil {
+		return nil, err
+	}
+	return &dto, nil
 }
 
 // GetAppliedConfig returns the config currently driving the running namespace

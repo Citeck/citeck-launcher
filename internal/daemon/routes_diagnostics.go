@@ -18,10 +18,13 @@ import (
 func (d *Daemon) handleGetDiagnostics(w http.ResponseWriter, _ *http.Request) {
 	var checks []api.DiagnosticCheckDto
 
+	// One snapshot for docker client, namespace identity, and runtime checks.
+	act := d.active()
+
 	// Check 1: Docker reachable
-	if d.dockerClient != nil {
+	if dc := act.dockerClient; dc != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		pingErr := d.dockerClient.Ping(ctx)
+		pingErr := dc.Ping(ctx)
 		cancel()
 		if pingErr != nil {
 			checks = append(checks, api.DiagnosticCheckDto{
@@ -47,8 +50,11 @@ func (d *Daemon) handleGetDiagnostics(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	// Check 3: Namespace config valid
-	nsID := d.activeNsID()
-	if _, err := d.loadNamespaceConfigFromStore(d.workspaceID, nsID); err != nil {
+	nsID := ""
+	if act.nsConfig != nil {
+		nsID = act.nsConfig.ID
+	}
+	if _, err := d.loadNamespaceConfigFromStore(act.workspaceID, nsID); err != nil {
 		checks = append(checks, api.DiagnosticCheckDto{
 			Name: "Config", Status: "warning", Message: "Namespace config: " + err.Error(), Fixable: false,
 		})
@@ -82,9 +88,30 @@ func (d *Daemon) handleGetDiagnostics(w http.ResponseWriter, _ *http.Request) {
 		})
 	}
 
-	// Check 5: Runtime status
-	if d.runtime != nil {
-		status := d.runtime.Status()
+	// Check 5: SSE event stream health. Dropped events mean a slow consumer
+	// (e.g. a backgrounded tab) missed updates — the gap-detection in the web
+	// store resyncs on reconnect, but a stuck client may need a page reload.
+	sse := d.sseStatsSnapshot()
+	sseDetail := fmt.Sprintf("ring %d/%d, %d subscriber(s), seq %d", sse.RingLen, sse.RingCap, sse.Subscribers, sse.EventSeq)
+	if sse.Dropped > 0 {
+		checks = append(checks, api.DiagnosticCheckDto{
+			Name:    "Event stream",
+			Status:  "warning",
+			Message: fmt.Sprintf("%d event(s) dropped for slow subscribers — a slow client may show stale state until the UI is reloaded (%s)", sse.Dropped, sseDetail),
+			Fixable: false,
+		})
+	} else {
+		checks = append(checks, api.DiagnosticCheckDto{
+			Name:    "Event stream",
+			Status:  "ok",
+			Message: "No dropped events (" + sseDetail + ")",
+			Fixable: false,
+		})
+	}
+
+	// Check 6: Runtime status
+	if act.runtime != nil {
+		status := act.runtime.Status()
 		if status == namespace.NsStatusRunning {
 			checks = append(checks, api.DiagnosticCheckDto{
 				Name: "Runtime", Status: "ok", Message: "Namespace is running", Fixable: false,

@@ -1,10 +1,13 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net"
 	"os"
+	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"gopkg.in/yaml.v3"
@@ -14,6 +17,7 @@ import (
 type DaemonConfig struct {
 	Locale     string           `yaml:"locale,omitempty" json:"locale,omitempty"` // UI language (en, ru, zh, es, de, fr, pt, ja)
 	Server     ServerConfig     `yaml:"server" json:"server"`
+	APIAuth    APIAuthConfig    `yaml:"api_auth,omitempty" json:"apiAuth,omitzero"`
 	Reconciler ReconcilerConfig `yaml:"reconciler,omitempty" json:"reconciler,omitzero"`
 	Docker     DockerConfig     `yaml:"docker,omitempty" json:"docker,omitzero"`
 }
@@ -27,6 +31,17 @@ type ServerConfig struct {
 type WebUIConfig struct {
 	Enabled bool   `yaml:"enabled" json:"enabled"`
 	Listen  string `yaml:"listen" json:"listen"`
+}
+
+// APIAuthConfig controls the opt-in bearer-token authentication on the TCP
+// Web UI/API transport (server mode). Default OFF — existing localhost flows
+// keep working unchanged. When Enabled and Token is empty, the daemon
+// generates a random 32-byte token on startup and persists it to
+// conf/api-token (0600); see EnsureAPIToken. The Unix socket, the desktop
+// wrapper path, and mTLS-authenticated clients are never token-gated.
+type APIAuthConfig struct {
+	Enabled bool   `yaml:"enabled" json:"enabled"`
+	Token   string `yaml:"token,omitempty" json:"token,omitempty"`
 }
 
 // ReconcilerConfig holds reconciler tuning.
@@ -43,11 +58,19 @@ type DockerConfig struct {
 }
 
 // DefaultDaemonConfig returns the default daemon configuration.
+//
+// The Web UI defaults to DISABLED: it is not released for server use yet (the
+// CLI/TUI is the supported server interface), and the TCP listener serves the
+// full privileged API, so exposing it must be a deliberate opt-in
+// (`server.webui.enabled: true` in daemon.yml) — ideally together with
+// `api_auth.enabled: true`. Desktop mode is unaffected by this default: the
+// webview talks to the daemon over the Unix socket and the TCP listener is
+// force-disabled in desktop regardless (bootstrap startWebUI).
 func DefaultDaemonConfig() DaemonConfig {
 	return DaemonConfig{
 		Server: ServerConfig{
 			WebUI: WebUIConfig{
-				Enabled: true,
+				Enabled: false,
 				Listen:  "127.0.0.1:7088",
 			},
 		},
@@ -95,6 +118,59 @@ func LoadDaemonConfig() (DaemonConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+// LoadAPIToken returns the effective API auth token without generating one:
+// an explicit api_auth.token in daemon.yml wins, otherwise the persisted
+// token file (conf/api-token) is read. Used by the CLI (`citeck ui`), which
+// must never mint a token of its own — the daemon owns generation.
+func LoadAPIToken(cfg DaemonConfig) (string, error) {
+	if cfg.APIAuth.Token != "" {
+		return cfg.APIAuth.Token, nil
+	}
+	data, err := os.ReadFile(APITokenPath()) //nolint:gosec // G304: path is derived from internal config, not user input
+	if err != nil {
+		return "", fmt.Errorf("read api token file: %w", err)
+	}
+	token := strings.TrimSpace(string(data))
+	if token == "" {
+		return "", fmt.Errorf("api token file %s is empty", APITokenPath())
+	}
+	return token, nil
+}
+
+// EnsureAPIToken returns the effective API auth token, generating a random
+// 32-byte one and persisting it to conf/api-token with 0600 permissions when
+// neither daemon.yml api_auth.token nor the file provides one. `generated`
+// reports whether a new token was minted on this call (the daemon logs the
+// file path in that case). A read error other than not-exist is fatal rather
+// than silently overwritten — the file may hold a token browsers already use.
+func EnsureAPIToken(cfg DaemonConfig) (token string, generated bool, err error) {
+	if cfg.APIAuth.Token != "" {
+		return cfg.APIAuth.Token, false, nil
+	}
+	data, readErr := os.ReadFile(APITokenPath()) //nolint:gosec // G304: path is derived from internal config, not user input
+	switch {
+	case readErr == nil:
+		if existing := strings.TrimSpace(string(data)); existing != "" {
+			return existing, false, nil
+		}
+		// Empty file → fall through and regenerate.
+	case !os.IsNotExist(readErr):
+		return "", false, fmt.Errorf("read api token file: %w", readErr)
+	}
+	var b [32]byte
+	if _, randErr := rand.Read(b[:]); randErr != nil {
+		return "", false, fmt.Errorf("generate api token: %w", randErr)
+	}
+	token = hex.EncodeToString(b[:])
+	if mkErr := os.MkdirAll(ConfDir(), 0o755); mkErr != nil { //nolint:gosec // conf dir needs 0o755 for readability
+		return "", false, fmt.Errorf("create conf dir: %w", mkErr)
+	}
+	if writeErr := fsutil.AtomicWriteFile(APITokenPath(), []byte(token+"\n"), 0o600); writeErr != nil {
+		return "", false, fmt.Errorf("persist api token: %w", writeErr)
+	}
+	return token, true, nil
 }
 
 // SaveDaemonConfig writes daemon.yml to the conf dir.

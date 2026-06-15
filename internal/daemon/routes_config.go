@@ -43,7 +43,7 @@ func (d *Daemon) handleDaemonStatus(w http.ResponseWriter, r *http.Request) {
 		PID:        int64(os.Getpid()),
 		Uptime:     time.Since(d.startTime).Milliseconds(),
 		Version:    d.version,
-		Workspace:  d.workspaceID,
+		Workspace:  d.activeWorkspaceID(),
 		SocketPath: d.socketPath,
 		Desktop:    config.IsDesktopMode(),
 		Locale:     locale,
@@ -120,11 +120,10 @@ func (d *Daemon) handleDaemonShutdown(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
-	d.configMu.RLock()
-	runtime := d.runtime
-	bundleErr := d.bundleError
-	appDefs := d.appDefs
-	d.configMu.RUnlock()
+	act := d.active()
+	runtime := act.runtime
+	bundleErr := act.bundleError
+	appDefs := act.appDefs
 	if runtime == nil {
 		writeErrorCode(w, http.StatusNotFound, api.ErrCodeNotConfigured, "no namespace configured")
 		return
@@ -161,9 +160,8 @@ func appDefsToStoppedApps(defs []appdef.ApplicationDef) []api.AppDto {
 }
 
 func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
-	d.configMu.RLock()
-	runtime, appDefs := d.runtime, d.appDefs
-	d.configMu.RUnlock()
+	act := d.active()
+	runtime, appDefs := act.runtime, act.appDefs
 	if runtime == nil || appDefs == nil {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
 		return
@@ -209,9 +207,7 @@ func (d *Daemon) forceUpdateAsync(wasRunning bool) {
 }
 
 func (d *Daemon) handleStopNamespace(w http.ResponseWriter, r *http.Request) {
-	d.configMu.RLock()
-	runtime := d.runtime
-	d.configMu.RUnlock()
+	runtime := d.active().runtime
 	if runtime == nil {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
 		return
@@ -227,13 +223,10 @@ func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 	defer d.reloadMu.Unlock()
 
-	d.configMu.RLock()
-	if d.runtime == nil || d.nsConfig == nil || d.bundleDef == nil {
-		d.configMu.RUnlock()
+	if act := d.active(); act.runtime == nil || act.nsConfig == nil || act.bundleDef == nil {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
 		return
 	}
-	d.configMu.RUnlock()
 
 	if err := d.doReload(); err != nil {
 		writeInternalError(w, err)
@@ -260,15 +253,13 @@ func (d *Daemon) handleUpgradeNamespace(w http.ResponseWriter, r *http.Request) 
 	}
 	defer d.reloadMu.Unlock()
 
-	d.configMu.RLock()
-	if d.runtime == nil || d.nsConfig == nil || d.bundleDef == nil {
-		d.configMu.RUnlock()
+	act := d.active()
+	if act.runtime == nil || act.nsConfig == nil || act.bundleDef == nil {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
 		return
 	}
-	nsID := d.nsConfig.ID
-	currentRef := d.nsConfig.BundleRef
-	d.configMu.RUnlock()
+	nsID := act.nsConfig.ID
+	currentRef := act.nsConfig.BundleRef
 
 	if ref == currentRef {
 		writeJSON(w, api.ActionResultDto{Success: true, Message: "already on " + req.BundleRef})
@@ -276,7 +267,7 @@ func (d *Daemon) handleUpgradeNamespace(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Update the stored config with the new bundleRef (via the choke-point).
-	nsCfg, err := d.loadNamespaceConfigFromStore(d.workspaceID, nsID)
+	nsCfg, err := d.loadNamespaceConfigFromStore(act.workspaceID, nsID)
 	if err != nil {
 		writeInternalError(w, fmt.Errorf("load config: %w", err))
 		return
@@ -287,7 +278,7 @@ func (d *Daemon) handleUpgradeNamespace(w http.ResponseWriter, r *http.Request) 
 		writeInternalError(w, fmt.Errorf("marshal config: %w", err))
 		return
 	}
-	if err := d.persistNamespaceConfig(d.workspaceID, nsID, data); err != nil {
+	if err := d.persistNamespaceConfig(act.workspaceID, nsID, data); err != nil {
 		writeInternalError(w, fmt.Errorf("write config: %w", err))
 		return
 	}
@@ -307,11 +298,12 @@ func (d *Daemon) handleUpgradeNamespace(w http.ResponseWriter, r *http.Request) 
 }
 
 func (d *Daemon) handleGetAppliedConfig(w http.ResponseWriter, _ *http.Request) {
-	if d.runtime == nil {
+	rt := d.active().runtime
+	if rt == nil {
 		writeError(w, http.StatusServiceUnavailable, "runtime not started")
 		return
 	}
-	cfg := d.runtime.AppliedConfig()
+	cfg := rt.AppliedConfig()
 	if cfg == nil {
 		writeError(w, http.StatusServiceUnavailable, "no applied config")
 		return
