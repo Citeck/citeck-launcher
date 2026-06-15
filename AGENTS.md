@@ -14,6 +14,7 @@ The repo also keeps the legacy Kotlin/JVM launcher under git tags `v1.0.0`–`v1
 ### Go + Web UI (primary)
 
 ```bash
+make check                    # FULL local gate (CI superset + eslint) — run before committing/tagging
 make build                    # Build Go binary + embed React web UI → dist/bin/citeck-server
 make build-fast               # Build Go only (skip web rebuild) → dist/bin/citeck-server
 make build-desktop            # Build desktop (Wails) binary → dist/bin/citeck-launcher
@@ -342,8 +343,18 @@ at each step and reacting programmatically.
 
 ## CI/CD
 
+> **Before every release (and ideally before any push to master): run `make check`.**
+> It is a local superset of the test.yml gate below (same steps + web eslint),
+> so green locally means green in the release pipeline. This is not optional for
+> releases — because plain pushes to master skip CI (see below), the `v*.*.*`
+> release tag is otherwise the *first* time linters/gates run, and a failure
+> there fails the release after the tag is already public. `gofmt` + `go vet` +
+> `go test` alone are NOT sufficient (they pass while golangci-lint / coverage /
+> govulncheck / deadcode / audit can fail). Prereqs: `make tools` once, plus
+> CGO + GTK3 dev headers for the deadcode gate.
+
 GitHub Actions (three workflows):
-- **Test suite** (`.github/workflows/test.yml`, reusable `workflow_call` — never triggered on its own): `go vet`, `golangci-lint v2.11.4`, `go test -race ./internal/...`, `pnpm vitest run`, full server build, linux/arm64 cross-compile check, plus the contract gates added in 2.5.x: per-package coverage floors (`scripts/ci/coverage-floor.sh`), reachable-vuln scan (`scripts/ci/govulncheck.sh`, triaged via `scripts/ci/govulncheck-allowlist.txt`), dead-code check (`scripts/ci/deadcode.sh`, built with `-tags desktop,gtk3`), and `pnpm audit --prod --audit-level high` (triage advisories via `web/package.json` → `pnpm.auditConfig.ignoreCves` / `ignoreGhsas`). Single source of truth for "is this commit good?".
+- **Test suite** (`.github/workflows/test.yml`, reusable `workflow_call` — never triggered on its own): `go vet`, `golangci-lint v2.11.4`, `go test -race ./internal/...`, `pnpm vitest run`, full server build, linux/arm64 cross-compile check, plus the contract gates added in 2.5.x: per-package coverage floors (`scripts/ci/coverage-floor.sh`), reachable-vuln scan (`scripts/ci/govulncheck.sh`, triaged via `scripts/ci/govulncheck-allowlist.txt`), dead-code check (`scripts/ci/deadcode.sh`, built with `-tags desktop,gtk3`), and `pnpm audit --prod --audit-level high` (triage advisories via `web/package.json` → `pnpm.auditConfig.ignoreCves` / `ignoreGhsas`). Single source of truth for "is this commit good?". **`make check` mirrors this job step-for-step** (plus eslint) for local runs.
 - **CI workflow** (`.github/workflows/ci.yml`): a thin trigger shim that just calls test.yml. Runs ONLY on `pull_request` → master and `push` → `release/**` branches — **plain pushes to master do NOT run CI** (the tag-time run in release-go.yml is the gate for what gets published).
 - **Release workflow** (`.github/workflows/release-go.yml`): triggered by `v*.*.*` tags; runs test.yml as a gate, then builds `linux/{amd64,arm64}` server binaries (matrix build) + desktop installers and publishes the GitHub release directly (`draft: false`). Uses `go-version-file: go.mod`. Contains a MANDATORY release-signing step: signature verification is active (`internal/update/signature.go` embeds a real key), so the step fails the build if `RELEASE_SIGNING_KEY` is not configured rather than shipping an unsigned release that bricks auto-update.
 - **Linting**: `.golangci.yml` v2 format, 21 linters, G104 excluded (cleanup errors), test files relaxed for dupl/gosec/unparam.
