@@ -7,16 +7,6 @@
 # as the underlying dependency is fixed/replaced (the script prints a warning
 # for stale entries that no longer show up in the scan).
 #
-# --- github.com/docker/docker v28 (Moby) ---
-# GO-2026-4883: "Off-by-one error in plugin privilege validation"
-# GO-2026-4887: "AuthZ plugin bypass when provided oversized request bodies"
-# Both are bugs in the Moby *daemon* code paths (plugin privilege checks /
-# AuthZ middleware). This repo only consumes the Docker *client SDK*
-# (github.com/docker/docker/client + api types) to talk to a local Docker
-# Engine over its socket — we never run the Moby daemon code, plugins, or
-# AuthZ middleware in-process. govulncheck flags them because the client
-# package shares the module; no fixed v28 client release exists. A migration
-# off docker/docker v28 (to github.com/moby/moby client) is in flight —
-# drop these two entries once it lands and the scan comes back clean.
-GO-2026-4883
-GO-2026-4887
+# (No entries. The previous GO-2026-4883 / GO-2026-4887 docker/docker v28
+# advisories were dropped once the client migrated to github.com/moby/moby —
+# those OSV IDs no longer appear in the scan.)

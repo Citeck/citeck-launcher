@@ -50,19 +50,24 @@ jobs:
           cd web && pnpm install --frozen-lockfile && cd ..
           make release-server
 
-      # --- Optional release signing (dormant) ---
-      # Runs only when the RELEASE_SIGNING_KEY secret (ed25519 private key, PEM)
-      # is configured. Produces a detached "<asset>.sig" (raw 64-byte ed25519
-      # signature over the tarball bytes) next to each server tarball. The
-      # auto-updater verifies it only when the matching public key is embedded
-      # in internal/update/signature.go (embeddedSigningPubKeyHex) — key
-      # generation and enabling steps are documented there. NOTE: the `secrets`
-      # context is available in step-level `if:` (not job-level).
-      - name: Sign release tarballs (optional)
-        if: ${{ secrets.RELEASE_SIGNING_KEY != '' }}
+      # --- Release signing (ACTIVE) ---
+      # internal/update/signature.go embeds a real public key
+      # (embeddedSigningPubKeyHex), so the auto-updater REQUIRES a detached
+      # "<asset>.sig" (raw 64-byte ed25519 signature over the tarball bytes)
+      # next to each server tarball it downloads — a release without .sig
+      # fails closed on every installed desktop. The step is therefore
+      # MANDATORY and fails the build if RELEASE_SIGNING_KEY (ed25519 private
+      # key, PEM) is not configured, rather than silently shipping an unsigned
+      # release that bricks auto-update. To disable signing, clear
+      # embeddedSigningPubKeyHex back to "" in signature.go first.
+      - name: Sign release tarballs
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
         run: |
+          if [ -z "$RELEASE_SIGNING_KEY" ]; then
+            echo "::error::RELEASE_SIGNING_KEY is not set, but signature verification is active (embeddedSigningPubKeyHex is non-empty). An unsigned release would brick auto-update. Configure the secret or clear the embedded key." >&2
+            exit 1
+          fi
           umask 077
           printf '%s\n' "$RELEASE_SIGNING_KEY" > "$RUNNER_TEMP/release-signing.pem"
           for f in dist/citeck_*.tar.gz; do
@@ -260,6 +265,10 @@ jobs:
           prerelease: false
           name: ${{ github.ref_name }}
           body: ${{ steps.changelog.outputs.body }}
+          # Fail rather than publish a release missing an expected asset — a
+          # missing .sig (signature verification is active) would brick
+          # auto-update for every installed desktop.
+          fail_on_unmatched_files: true
           files: |
             citeck_*.tar.gz
             citeck_*.tar.gz.sha256

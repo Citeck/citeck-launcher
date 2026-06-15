@@ -10,16 +10,18 @@ import (
 	"os"
 )
 
-// Release-signature verification seam — DORMANT by default.
+// Release-signature verification seam — ACTIVE (embeddedSigningPubKeyHex is set
+// below; see "Key activated 2026-06-10").
 //
-// Today the auto-updater verifies a downloaded tarball only against its
-// `.sha256` sidecar, which comes from the same origin (GitHub release assets).
-// That gives integrity, not authenticity: whoever can serve the tarball can
-// serve a matching checksum. When embeddedSigningPubKeyHex is non-empty,
-// Stage additionally REQUIRES a detached ed25519 signature asset
-// "<asset>.sig" next to each release tarball and verifies it over the raw
-// tarball bytes before extraction. While the constant is empty (current
-// state), behavior is completely unchanged.
+// The auto-updater verifies a downloaded tarball against its `.sha256` sidecar,
+// which comes from the same origin (GitHub release assets). That gives
+// integrity, not authenticity: whoever can serve the tarball can serve a
+// matching checksum. Because embeddedSigningPubKeyHex is non-empty, Stage
+// additionally REQUIRES a detached ed25519 signature asset "<asset>.sig" next
+// to each release tarball and verifies it over the raw tarball bytes before
+// extraction — so every release MUST ship .sig assets (CI signs when the
+// RELEASE_SIGNING_KEY secret is set) or auto-update fails closed. Clearing the
+// constant back to "" disables the seam (sha256-only, prior behavior).
 //
 // Enabling the seam:
 //

@@ -7,6 +7,12 @@
   "engines": {
     "node": ">=22"
   },
+  "pnpm": {
+    "auditConfig": {
+      "ignoreCves": [],
+      "ignoreGhsas": []
+    }
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

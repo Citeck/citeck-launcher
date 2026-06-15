@@ -18,6 +18,15 @@ cd "$(dirname "$0")/../.."
 GOVULNCHECK_VERSION=v1.3.0 # golang.org/x/vuln — keep in sync with the triage notes
 ALLOWLIST=scripts/ci/govulncheck-allowlist.txt
 
+# govulncheck builds the module, which needs internal/daemon/webdist to exist
+# (the `go:embed all:webdist` directive in webui.go). On a clean checkout the web
+# UI hasn't been built yet, so stub it — but only when absent, so a real build is
+# never clobbered. The CI workflows create the same stub inline before this runs.
+if [[ ! -f internal/daemon/webdist/index.html ]]; then
+  mkdir -p internal/daemon/webdist
+  echo '<html></html>' >internal/daemon/webdist/index.html
+fi
+
 echo "Running govulncheck@${GOVULNCHECK_VERSION} (symbol mode)..."
 scan_json=$(go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" -json ./...)
 
