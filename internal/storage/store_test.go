@@ -111,13 +111,13 @@ func testStoreSecrets(t *testing.T, store Store) {
 	// password; the storage layer must preserve both fields verbatim.
 	basic := Secret{
 		SecretMeta: SecretMeta{
-			ID:    "basic-1",
-			Name:  "Registry creds",
-			Type:  SecretRegistryAuth,
-			Scope: "registry.example.com",
+			ID:       "basic-1",
+			Name:     "Registry creds",
+			Type:     SecretRegistryAuth,
+			Scope:    "registry.example.com",
 			Username: "alice",
 		},
-		Value:    "pa:ss:wo:rd",
+		Value: "pa:ss:wo:rd",
 	}
 	err = store.SaveSecret(basic)
 	if err != nil {
