@@ -96,6 +96,53 @@ func TestPullFailedBackoff(t *testing.T) {
 	t.Fatalf("T24 did not fire within 5s — app stuck at PULL_FAILED")
 }
 
+// TestPullAuthBlockedNoAutoRetry: a PULL_FAILED app flagged as awaiting
+// registry credentials must NOT auto-retry via T24 even after the backoff
+// window elapses — re-pulling without new credentials only churns the
+// registry. RetryPullFailedApps (called when the user supplies credentials)
+// clears the block and resumes the pull.
+func TestPullAuthBlockedNoAutoRetry(t *testing.T) {
+	md := newMockDocker()
+	r := NewRuntime(testConfig(), md, t.TempDir())
+	defer r.Shutdown()
+
+	def := simpleApp("postgres", "postgres:17")
+	r.Start([]appdef.ApplicationDef{def})
+	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
+		t.Fatalf("app did not reach RUNNING for setup")
+	}
+
+	// Force PULL_FAILED + auth-blocked, with the backoff window ALREADY elapsed
+	// (lastAttempt 20 min ago). Without the block T24 would fire immediately;
+	// the auth block must keep the app paused.
+	r.mu.Lock()
+	app := r.apps[def.Name]
+	r.setAppStatus(app, AppStatusPullFailed)
+	r.pullAuthBlockedApps[def.Name] = true
+	r.retryState = map[string]retryInfo{
+		def.Name: {count: 1, lastAttempt: time.Now().Add(-20 * time.Minute)},
+	}
+	r.mu.Unlock()
+	r.signalCh.Flush()
+
+	assert.Never(t, func() bool {
+		return r.FindApp(def.Name).Status != AppStatusPullFailed
+	}, 1500*time.Millisecond, 50*time.Millisecond,
+		"auth-blocked pull auto-retried despite the block (should wait for credentials)")
+
+	// User supplied credentials → RetryPullFailedApps unblocks and re-pulls.
+	r.RetryPullFailedApps()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if r.FindApp(def.Name).Status != AppStatusPullFailed {
+			return // unblocked + retried
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("RetryPullFailedApps did not unblock the auth-paused app")
+}
+
 // TestStartFailedBackoff exercises T25: the symmetric path for START_FAILED.
 // Same pattern as TestPullFailedBackoff but with START_FAILED → READY_TO_START.
 func TestStartFailedBackoff(t *testing.T) {

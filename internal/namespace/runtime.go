@@ -171,6 +171,7 @@ type Runtime struct {
 	lastApps              []appdef.ApplicationDef          // last app defs passed to doStart
 	cachedBundle          *bundle.Def                      // last successfully resolved bundle (persisted)
 	retryState            map[string]retryInfo             // retry tracking for failed apps
+	pullAuthBlockedApps   map[string]bool                  // PULL_FAILED apps awaiting registry credentials — T24 backoff retry is paused for them until creds change (RetryPullFailedApps clears it)
 	livenessFailures      map[string]int                   // consecutive liveness probe failure counts
 	restartCounts         map[string]int                   // total restart counts per app
 	restartEvents         []RestartEvent                   // ring buffer of restart events
@@ -534,19 +535,20 @@ func (r *Runtime) SetDependsOnDetachedApps(apps map[string]bool) {
 // NewRuntime creates a new namespace runtime.
 func NewRuntime(cfg *Config, dockerClient docker.RuntimeClient, volumesBase string) *Runtime {
 	r := &Runtime{
-		status:            NsStatusStopped,
-		config:            cfg,
-		apps:              make(map[string]*AppRuntime),
-		docker:            dockerClient,
-		nsID:              cfg.ID,
-		volumesBase:       volumesBase,
-		manualStoppedApps: make(map[string]bool),
-		editedApps:        make(map[string]appdef.ApplicationDef),
-		editedLockedApps:  make(map[string]bool),
-		editedFiles:       make(map[string]bool),
-		livenessFailures:  make(map[string]int),
-		restartCounts:     make(map[string]int),
-		eventCh:           make(chan api.EventDto, 256),
+		status:              NsStatusStopped,
+		config:              cfg,
+		apps:                make(map[string]*AppRuntime),
+		docker:              dockerClient,
+		nsID:                cfg.ID,
+		volumesBase:         volumesBase,
+		manualStoppedApps:   make(map[string]bool),
+		pullAuthBlockedApps: make(map[string]bool),
+		editedApps:          make(map[string]appdef.ApplicationDef),
+		editedLockedApps:    make(map[string]bool),
+		editedFiles:         make(map[string]bool),
+		livenessFailures:    make(map[string]int),
+		restartCounts:       make(map[string]int),
+		eventCh:             make(chan api.EventDto, 256),
 
 		signalCh:           NewSignalQueue(),
 		cmdQueue:           NewCmdQueue(),

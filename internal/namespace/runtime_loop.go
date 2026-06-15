@@ -213,6 +213,12 @@ func (r *Runtime) stepAllAppsUnderLock() []dispatchPlan { //nolint:gocyclo // si
 			}
 			plans = r.beginStartingUnderLock(app, plans)
 		case AppStatusPullFailed:
+			// Auth failures pause auto-retry: re-pulling without new credentials
+			// just churns the registry. The app waits in PULL_FAILED until the
+			// user supplies credentials (RetryPullFailedApps unblocks + retries).
+			if r.pullAuthBlockedApps[app.Name] {
+				continue
+			}
 			// T24: backoff window elapsed → READY_TO_PULL. Counter is left
 			// alone — a subsequent failure bumps it via recordRetryAttempt;
 			// a success clears it via resetRetry (handlePullResult on T5).
@@ -869,12 +875,17 @@ func (r *Runtime) handlePullResult(res workers.Result) {
 		r.recordRetryAttempt(app.Name)
 		app.StatusText = res.Err.Error()
 		r.setAppStatus(app, AppStatusPullFailed)
-		// Surface a dedicated `pull_auth_required` SSE event so the Web UI can
-		// offer the "Configure credentials" affordance without parsing the
-		// human-readable statusText. The After field carries the registry host
-		// extracted from the image reference — same heuristic used by the
-		// "docker login <host>" hint inside the wrapped error.
 		if nsactions.IsAuthError(res.Err) {
+			// Auth failure: pause the T24 backoff retry — retrying the pull
+			// without new credentials only churns the registry (and blinks the
+			// UI prompt). The app stays PULL_FAILED until the user supplies
+			// credentials, which calls RetryPullFailedApps to unblock + retry.
+			r.pullAuthBlockedApps[app.Name] = true
+			// Surface a dedicated `pull_auth_required` SSE event so the Web UI can
+			// offer the "Configure credentials" affordance without parsing the
+			// human-readable statusText. The After field carries the registry host
+			// extracted from the image reference — same heuristic used by the
+			// "docker login <host>" hint inside the wrapped error.
 			host := nsactions.RegistryHost(app.Def.Image)
 			r.emitEvent(api.EventDto{
 				Type:        "pull_auth_required",
@@ -883,9 +894,15 @@ func (r *Runtime) handlePullResult(res workers.Result) {
 				AppName:     app.Name,
 				After:       host,
 			})
+		} else {
+			// Non-auth failure: ensure a stale auth block from a previous
+			// attempt doesn't keep the backoff retry paused.
+			delete(r.pullAuthBlockedApps, app.Name)
 		}
 		return
 	}
+	// Pull succeeded — clear any auth block.
+	delete(r.pullAuthBlockedApps, app.Name)
 	// T5: PULLING → READY_TO_START. Update ImageDigest from payload so the
 	// deployment hash reflects what was actually pulled.
 	if payload, pok := res.Payload.(workers.PullPayload); pok && payload.Digest != "" {

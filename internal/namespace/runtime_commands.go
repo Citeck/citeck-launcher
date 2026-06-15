@@ -534,6 +534,9 @@ func (r *Runtime) RetryPullFailedApps() int {
 		if app.Status != AppStatusPullFailed {
 			continue
 		}
+		// Explicit retry (e.g. after the user saved registry credentials):
+		// clear the auth block so the paused pull is attempted again.
+		delete(r.pullAuthBlockedApps, app.Name)
 		r.resetRetry(app.Name)
 		app.StatusText = ""
 		r.setAppStatus(app, AppStatusReadyToPull)
