@@ -31,8 +31,19 @@ jobs:
           version: v2.11.4
           args: ./...
 
-      - name: Go tests (race detector)
-        run: go test -race ./internal/...
+      - name: Go tests (race detector + coverage)
+        run: |
+          set -o pipefail
+          go test -race -cover ./internal/... | tee /tmp/go-test-cover.txt
+
+      - name: Coverage floors (contract-critical packages)
+        run: bash scripts/ci/coverage-floor.sh /tmp/go-test-cover.txt
+
+      - name: govulncheck (allowlist in scripts/ci/govulncheck-allowlist.txt)
+        run: bash scripts/ci/govulncheck.sh
+
+      - name: deadcode (allowlist in scripts/ci/deadcode-allowlist.txt)
+        run: bash scripts/ci/deadcode.sh
 
       - uses: actions/setup-node@v4
         with:
@@ -44,6 +55,9 @@ jobs:
 
       - name: Web UI tests
         run: cd web && pnpm install --frozen-lockfile && pnpm vitest run
+
+      - name: Web UI dependency audit (prod, high+)
+        run: cd web && pnpm audit --prod --audit-level high
 
       - name: Build server binary
         run: make build

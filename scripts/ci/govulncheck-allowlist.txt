@@ -1,0 +1,22 @@
+# govulncheck allowlist — triaged OSV IDs whose findings are accepted.
+#
+# scripts/ci/govulncheck.sh fails CI on any *reachable* finding (vulnerable
+# symbol called from our code) whose OSV ID is NOT listed here. One ID per
+# line; '#' comments and blank lines are ignored. Every entry MUST carry a
+# triage note explaining why it is acceptable, and should be removed as soon
+# as the underlying dependency is fixed/replaced (the script prints a warning
+# for stale entries that no longer show up in the scan).
+#
+# --- github.com/docker/docker v28 (Moby) ---
+# GO-2026-4883: "Off-by-one error in plugin privilege validation"
+# GO-2026-4887: "AuthZ plugin bypass when provided oversized request bodies"
+# Both are bugs in the Moby *daemon* code paths (plugin privilege checks /
+# AuthZ middleware). This repo only consumes the Docker *client SDK*
+# (github.com/docker/docker/client + api types) to talk to a local Docker
+# Engine over its socket — we never run the Moby daemon code, plugins, or
+# AuthZ middleware in-process. govulncheck flags them because the client
+# package shares the module; no fixed v28 client release exists. A migration
+# off docker/docker v28 (to github.com/moby/moby client) is in flight —
+# drop these two entries once it lands and the scan comes back clean.
+GO-2026-4883
+GO-2026-4887

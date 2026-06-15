@@ -1,0 +1,23 @@
+# deadcode allowlist — known-acceptable unreachable functions.
+#
+# scripts/ci/deadcode.sh (and `make deadcode`) fails on any deadcode output
+# line not listed here. Lines are compared with the :LINE:COL position
+# stripped (positions shift on unrelated edits), i.e. the format is:
+#   <file>: unreachable func: <func>
+# '#' comments and blank lines are ignored. Every entry MUST carry a note
+# explaining why the dead code is intentionally kept; stale entries (no
+# longer reported) produce a warning so the list only ever shrinks.
+
+# Platform-hint helper for WindowManager debug logging; kept as part of the
+# wailswin package's small public surface for ad-hoc diagnostics.
+internal/desktop/wailswin/windows.go: unreachable func: OSDescription
+
+# Functional option kept for API symmetry: NewClient falls back to
+# config.IsDesktopMode() when the option is absent, so no call site injects
+# it explicitly yet (see the option's doc comment).
+internal/docker/client.go: unreachable func: WithDesktopVolumeNaming
+
+# Test-fixture accessor (base URL of the fake GitHub server); part of the
+# updatetest helper's complete API even though current tests reach the URL
+# via Options() instead.
+internal/update/updatetest/fakegithub.go: unreachable func: FakeGitHub.URL

@@ -1,0 +1,42 @@
+name: vuln-scan
+
+# Weekly dependency vulnerability scan of the default branch — catches new
+# vulnerability-DB entries between releases (CI runs the same gates only on
+# PRs / release branches / tags). Same allowlisted govulncheck gate as
+# test.yml plus the Web UI prod-dependency audit.
+on:
+  schedule:
+    - cron: "17 5 * * 1" # Mondays 05:17 UTC
+  workflow_dispatch:
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: govulncheck (allowlist in scripts/ci/govulncheck-allowlist.txt)
+        run: |
+          mkdir -p internal/daemon/webdist
+          echo '<html></html>' > internal/daemon/webdist/index.html
+          bash scripts/ci/govulncheck.sh
+
+  web-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Web UI dependency audit (prod, high+)
+        run: cd web && pnpm audit --prod --audit-level high
