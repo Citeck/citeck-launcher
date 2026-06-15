@@ -84,15 +84,16 @@ citeck stop [app...] [-d|--detach]        Stop namespace or app(s) (--detach = d
 citeck restart [app] [-d|--detach]        Restart an app or the entire namespace (waits by default)
 citeck reload [--dry-run] [-d|--detach]   Reload config and regenerate changed containers
 citeck status [-w|--watch]                Show namespace status
+citeck ui [--no-open]                     Open/print the Web UI URL (authenticated link with token auth)
 citeck describe <app>                     Show container details (image, ports, env, volumes)
-citeck health                             Health check (exit 0=healthy, 1=daemon down, 8=unhealthy)
+citeck health                             Health check (exit 0=healthy, 3=daemon down, 8=unhealthy; 1=generic error)
 citeck diagnose [--fix] [--dry-run]       Run diagnostics (with optional auto-fix)
 citeck logs [app] [-f|--follow]           Stream logs (daemon if no app)
 citeck exec <app> -- <command>            Execute command in container
 citeck update [-f|--file <zip>]           Pull workspace/bundle defs (or import from ZIP)
 citeck upgrade [bundle:version] [--yes]   Switch to a different bundle version
-citeck snapshot list|export|import|delete Manage volume snapshots (auto stop/start)
-citeck config view|validate|edit          Show, check, or edit namespace.yml
+citeck snapshot list|export|import        Manage volume snapshots (auto stop/start)
+citeck config view|validate               Show or check namespace.yml
 citeck setup [setting]                    Configure settings (TUI menu or by ID)
 citeck setup history                      Show config change history
 citeck clean [--force] [--volumes] [--images]  Clean orphaned resources / prune images
@@ -103,6 +104,12 @@ citeck uninstall [--delete-data]          Remove systemd service, binary, and (o
 ```
 
 グローバルフラグ: `--format (text|json)`、`--yes/-y`。
+
+## セキュリティモデル
+
+サーバーモードのデーモンは Docker コンテナを管理するため、その API はホスト上で実質的に **root 相当の権限**を持ちます（例えば `citeck exec` はコンテナ内でコマンドを実行します）。CLI はデーモンのユーザーのみがアクセスできる Unix ソケット（パーミッション 0600）経由でデーモンと通信します。Web UI を有効にすると、デーモンは TCP ポートでも待ち受けます。localhost にバインドした場合、完全な API はブラウザー CSRF 対策のみで保護されます — これは認証では**ありません**。そのポートに到達できるローカルユーザーやプロセスは誰でも完全な制御権を得ます。localhost 以外へのバインドには mTLS クライアント証明書が必要です。**サーバーモードでは Web UI はデフォルトで無効です**（サポートされるサーバーインターフェースは CLI/TUI です）。有効化する場合は `daemon.yml` で `server.webui.enabled: true` を明示的に設定し、すべてのローカルユーザーが Docker/root 相当のアクセスを信頼されている**シングルテナントのホスト**でのみ使用してください。
+
+この localhost のギャップを埋めるには、オプションの **API トークン認証**を有効にします。`daemon.yml` で `api_auth.enabled: true` を設定すると、デーモンは TCP 経由のすべての `/api` リクエストに `Authorization: Bearer <トークン>`（または `GET /auth/session?token=…` で発行されるブラウザーのセッション Cookie）を要求します。トークンは `api_auth.token` から取得されるか、起動時に `conf/api-token`（パーミッション 0600）へ自動生成されます。`citeck ui` を実行すると、認証済みのブラウザーリンクを表示して開きます。静的な UI アセットは公開のままで、保護されるのは API のみです。Unix ソケット（CLI）、デスクトップアプリ、mTLS クライアントには影響しません。
 
 ## ドキュメント
 

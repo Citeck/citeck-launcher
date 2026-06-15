@@ -84,15 +84,16 @@ citeck stop [app...] [-d|--detach]        Stop namespace or app(s) (--detach = d
 citeck restart [app] [-d|--detach]        Restart an app or the entire namespace (waits by default)
 citeck reload [--dry-run] [-d|--detach]   Reload config and regenerate changed containers
 citeck status [-w|--watch]                Show namespace status
+citeck ui [--no-open]                     Open/print the Web UI URL (authenticated link with token auth)
 citeck describe <app>                     Show container details (image, ports, env, volumes)
-citeck health                             Health check (exit 0=healthy, 1=daemon down, 8=unhealthy)
+citeck health                             Health check (exit 0=healthy, 3=daemon down, 8=unhealthy; 1=generic error)
 citeck diagnose [--fix] [--dry-run]       Run diagnostics (with optional auto-fix)
 citeck logs [app] [-f|--follow]           Stream logs (daemon if no app)
 citeck exec <app> -- <command>            Execute command in container
 citeck update [-f|--file <zip>]           Pull workspace/bundle defs (or import from ZIP)
 citeck upgrade [bundle:version] [--yes]   Switch to a different bundle version
-citeck snapshot list|export|import|delete Manage volume snapshots (auto stop/start)
-citeck config view|validate|edit          Show, check, or edit namespace.yml
+citeck snapshot list|export|import        Manage volume snapshots (auto stop/start)
+citeck config view|validate               Show or check namespace.yml
 citeck setup [setting]                    Configure settings (TUI menu or by ID)
 citeck setup history                      Show config change history
 citeck clean [--force] [--volumes] [--images]  Clean orphaned resources / prune images
@@ -103,6 +104,12 @@ citeck uninstall [--delete-data]          Remove systemd service, binary, and (o
 ```
 
 Drapeaux globaux : `--format (text|json)`, `--yes/-y`.
+
+## Modèle de sécurité
+
+Le démon en mode serveur gère des conteneurs Docker : son API équivaut donc en pratique à des **privilèges root** sur l'hôte (par exemple, `citeck exec` exécute des commandes à l'intérieur des conteneurs). La CLI communique avec le démon via un socket Unix réservé à l'utilisateur du démon (mode 0600). Lorsque la Web UI est activée, le démon écoute aussi sur un port TCP : un bind sur localhost expose l'API complète avec pour seule protection l'anti-CSRF navigateur — ce **n'est pas** de l'authentification : tout utilisateur ou processus local pouvant atteindre le port obtient le contrôle total ; les binds hors localhost exigent des certificats clients mTLS. **En mode serveur, la Web UI est désactivée par défaut** (l'interface serveur prise en charge est la CLI/TUI). Activez-la délibérément via `server.webui.enabled: true` dans `daemon.yml` — et uniquement sur un **hôte mono-locataire (single-tenant)** dont tous les utilisateurs locaux disposent déjà d'un accès de confiance de niveau Docker/root.
+
+Pour combler cette lacune sur localhost, activez l'**authentification par jeton d'API** optionnelle : définissez `api_auth.enabled: true` dans `daemon.yml`. Le démon exige alors `Authorization: Bearer <jeton>` (ou le cookie de session de navigateur délivré via `GET /auth/session?token=…`) pour chaque requête `/api` en TCP ; le jeton provient de `api_auth.token` ou est généré automatiquement dans `conf/api-token` (mode 0600) au démarrage. Exécutez `citeck ui` pour afficher — et ouvrir — un lien de navigateur authentifié. Les ressources statiques de l'interface restent publiques ; seule l'API est protégée. Le socket Unix (CLI), l'application de bureau et les clients mTLS ne sont pas concernés.
 
 ## Documentation
 

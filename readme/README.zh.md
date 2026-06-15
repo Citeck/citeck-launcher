@@ -84,15 +84,16 @@ citeck stop [app...] [-d|--detach]        Stop namespace or app(s) (--detach = d
 citeck restart [app] [-d|--detach]        Restart an app or the entire namespace (waits by default)
 citeck reload [--dry-run] [-d|--detach]   Reload config and regenerate changed containers
 citeck status [-w|--watch]                Show namespace status
+citeck ui [--no-open]                     Open/print the Web UI URL (authenticated link with token auth)
 citeck describe <app>                     Show container details (image, ports, env, volumes)
-citeck health                             Health check (exit 0=healthy, 1=daemon down, 8=unhealthy)
+citeck health                             Health check (exit 0=healthy, 3=daemon down, 8=unhealthy; 1=generic error)
 citeck diagnose [--fix] [--dry-run]       Run diagnostics (with optional auto-fix)
 citeck logs [app] [-f|--follow]           Stream logs (daemon if no app)
 citeck exec <app> -- <command>            Execute command in container
 citeck update [-f|--file <zip>]           Pull workspace/bundle defs (or import from ZIP)
 citeck upgrade [bundle:version] [--yes]   Switch to a different bundle version
-citeck snapshot list|export|import|delete Manage volume snapshots (auto stop/start)
-citeck config view|validate|edit          Show, check, or edit namespace.yml
+citeck snapshot list|export|import        Manage volume snapshots (auto stop/start)
+citeck config view|validate               Show or check namespace.yml
 citeck setup [setting]                    Configure settings (TUI menu or by ID)
 citeck setup history                      Show config change history
 citeck clean [--force] [--volumes] [--images]  Clean orphaned resources / prune images
@@ -103,6 +104,12 @@ citeck uninstall [--delete-data]          Remove systemd service, binary, and (o
 ```
 
 全局标志：`--format (text|json)`、`--yes/-y`。
+
+## 安全模型
+
+服务器模式的守护进程管理 Docker 容器，因此其 API 实际上等同于主机上的 **root 权限**（例如 `citeck exec` 会在容器内执行命令）。CLI 通过仅限守护进程用户访问的 Unix 套接字（权限 0600）与守护进程通信。启用 Web UI 后，守护进程还会监听一个 TCP 端口：绑定到 localhost 时，完整 API 仅受浏览器 CSRF 防护——这**不是**身份认证，任何能访问该端口的本地用户或进程都会获得完全控制权；绑定到非 localhost 地址则要求 mTLS 客户端证书。**服务器模式下 Web UI 默认处于禁用状态**（受支持的服务器界面是 CLI/TUI）。如需启用，请在 `daemon.yml` 中显式设置 `server.webui.enabled: true` —— 且仅在**单租户主机**（所有本地用户都已被信任拥有 Docker/root 级访问权限）上启用。
+
+要弥补 localhost 上的这一缺口，可启用可选的 **API 令牌认证**：在 `daemon.yml` 中设置 `api_auth.enabled: true`。此后守护进程要求 TCP 上的每个 `/api` 请求携带 `Authorization: Bearer <token>`（或通过 `GET /auth/session?token=…` 颁发的浏览器会话 Cookie）；令牌取自 `api_auth.token`，或在启动时自动生成到 `conf/api-token`（权限 0600）。运行 `citeck ui` 即可打印并打开已认证的浏览器链接。静态 UI 资源保持公开，仅 API 受保护。Unix 套接字（CLI）、桌面应用和 mTLS 客户端不受影响。
 
 ## 文档
 

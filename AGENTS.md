@@ -5,7 +5,7 @@ the `CLAUDE.md` symlink (which points here); other agents read `AGENTS.md` direc
 
 ## Project Overview
 
-Citeck Launcher manages Citeck namespaces and Docker containers. It is a single Go binary (~24 MB) that serves as both CLI and daemon. The embedded React Web UI is served over TCP by the server-mode daemon (port configurable via `daemon.yml`; disabled with `--no-ui`); desktop mode renders the same Web UI through a Wails webview that talks to the daemon over the Unix socket.
+Citeck Launcher manages Citeck namespaces and Docker containers. It is a single Go binary (~24 MB) that serves as both CLI and daemon. The embedded React Web UI can be served over TCP by the server-mode daemon, but is **disabled by default** — the CLI/TUI is the supported server interface until the web UI is released for servers; opt in via `daemon.yml` `server.webui.enabled: true` (port configurable there; `--no-ui` force-disables). Desktop mode renders the same Web UI through a Wails webview that talks to the daemon over the Unix socket (the TCP listener is force-off in desktop).
 
 The repo also keeps the legacy Kotlin/JVM launcher under git tags `v1.0.0`–`v1.3.9` for reference and rollback (`git show v1.3.8:path/to/file`). The desktop migrator opens its H2 `storage.db` read-only on first start.
 
@@ -64,8 +64,10 @@ e2e with `./scripts/test/test-deb-upgrade.sh` (needs Docker + GTK3 dev libs).
 | `internal/form/` | Form field specs, built-in field definitions, validation |
 | `internal/snapshot/` | Volume snapshot export/import (ZIP + tar.xz) |
 | `internal/tlsutil/` | TLS cert utilities (self-signed, client cert, CA pool loader) |
-| `internal/fsutil/` | Atomic file write (temp+fsync+rename), RotatingWriter (log rotation), CleanLogHandler (human-readable slog) |
+| `internal/fsutil/` | Atomic file write (temp+fsync+rename), RotatingWriter (log rotation), CleanLogHandler (human-readable slog), shared zip extraction helper (`ExtractZip`, `zip.go`) |
 | `internal/acme/` | ACME/Let's Encrypt client + auto-renewal service |
+| `internal/license/` | Byte-exact Go port of the Kotlin license-signature verification (canonical signing-form serialization is a hard compat contract — licenses signed by the Kotlin 1.x infrastructure must verify unchanged) |
+| `internal/update/` | Desktop auto-update service: GitHub latest-release discovery, changelog fetch (`changelog/` repo files), tarball staging with sha256 verify + dormant ed25519 release-signature seam (`signature.go`), staged-payload manifest with health-gate states (staged/pending/good/failed); `updatetest/` fake GitHub for tests |
 | `internal/i18n/` | Embedded JSON locale files for the **Go CLI/TUI only** (see Localization — the web UI uses its own separate TS locale files) |
 | `internal/desktop/` | Wails thin-wrapper: supervises the daemon as a child process (`supervisor.go`) chosen via the daemon-binary selection seam (`binselect.go`), drives it over the daemon↔wrapper native-verb control socket (`control.go` → `wrapper.sock`) with a capabilities feature-detection contract (`caps.go`); single-instance guard + orphan-daemon reap retained |
 | `internal/namespace/nsactions/` | Pull/start retry constants and auth-error helpers for `runtime_workers.go` |
@@ -74,52 +76,33 @@ e2e with `./scripts/test/test-deb-upgrade.sh` (needs Docker + GTK3 dev libs).
 
 React 19 + Vite + TypeScript + Tailwind CSS 4. Embedded into Go binary via `go:embed`. Darcula/Lens dark theme.
 
-**Pages:**
+The lists below are **load-bearing highlights, not a full inventory** — `web/src/components/` alone has ~40 files. Always `ls web/src/{pages,components,lib,hooks}` before assuming a file does or doesn't exist.
+
+**Pages (`web/src/pages/`)** — Dashboard, Welcome, AppDetail, Logs, DaemonLogs, Config, Volumes, Secrets, Diagnostics, Licenses, WindowEditor, WindowLogs, DockerNotAvailable. Notable:
 - `Dashboard.tsx` — sidebar + app table + right drawer overlay + bottom panel
-- `AppDetail.tsx` — full-page fallback (composes AppDrawerContent + AppConfigEditor)
-- `Logs.tsx` — thin wrapper for LogViewer
-- `Config.tsx` — health checks + ConfigEditor
-- `Volumes.tsx` — Docker volume management (namespace-scoped, list/delete)
-- `DaemonLogs.tsx` — thin wrapper for DaemonLogsViewer
-- `Welcome.tsx` — namespace list, quick start buttons, create/delete
-- `Wizard.tsx` — multi-step namespace creation (8 steps, language-aware)
-- `Secrets.tsx` — secret CRUD with type selector, test button, encryption status, inline unlock
-- `Diagnostics.tsx` — system health checks with fix actions
+- `Config.tsx` — daemon health checks only (the raw namespace.yml editor was removed; per-app YAML editing lives in AppConfigEditor / WindowEditor)
+- `WindowEditor.tsx` / `WindowLogs.tsx` — standalone pages for desktop multi-window mode (`/window/...` routes, no app shell, theme via `useInheritedTheme`)
+- `Licenses.tsx` — enterprise license management (paste signed-license JSON; stored as encrypted secrets)
+- `DockerNotAvailable.tsx` — full-screen "Docker is not available" screen (Kotlin parity)
 
-**Components:**
-- `AppTable.tsx` — grouped table with panel actions (openDrawer, openBottomTab)
-- `BottomPanel.tsx` — IDE-style bottom panel (lazy mount, drag-resize, collapse)
-- `RightDrawer.tsx` — overlay drawer with slide animation
-- `LogViewer.tsx` — log viewer (virtual list, regex search, level filter, streaming, active prop)
-- `ConfigEditor.tsx` — namespace.yml viewer/editor with YAML highlighting
-- `DaemonLogsViewer.tsx` — daemon logs streaming (fetch-based, replaces polling)
-- `AppDrawerContent.tsx` — app inspect details + action buttons (logs, config, restart)
-- `AppConfigEditor.tsx` — per-app YAML config + mounted files editor
-- `YamlViewer.tsx` — shared YAML syntax highlighter
-- `TabBar.tsx` — IDE-style tab navigation + language selector + theme toggle
-- `StatusBadge.tsx` — color-coded status with dot indicator and i18n display names
-- `NamespaceControls.tsx` — Start/Stop/Reload with confirm
-- `ConfirmModal.tsx` — reusable confirm dialog (always mounted, showModal/close)
-- `Toast.tsx` — toast notifications (theme-aware colors)
-- `ErrorBoundary.tsx` — React error boundary with reload button
-- `ContextMenu.tsx` — right-click context menu with items/dividers
-- `FormDialog.tsx` — spec-driven form dialog (text/number/password/select/checkbox)
-- `JournalDialog.tsx` — data table dialog with search, selection, custom buttons
-- `RestartEvents.tsx` — restart-event log rendered in a bottom-panel tab
+**Components (`web/src/components/`)** — notable:
+- `CodeEditor.tsx` — the shared CodeMirror-based code editor (YAML/JSON/JS/shell/dockerfile highlighting, in-editor search) used by WindowEditor and AppConfigEditor
+- `AppTable.tsx`, `BottomPanel.tsx`, `RightDrawer.tsx`, `LogViewer.tsx`, `DaemonLogsViewer.tsx`, `AppDrawerContent.tsx`, `AppConfigEditor.tsx`, `RestartEvents.tsx` — dashboard surfaces
+- `FormDialog.tsx` (spec-driven forms), `JournalDialog.tsx` (data-table dialog), `ConfirmModal.tsx`, `Modal.tsx`, `Toast.tsx`, `ContextMenu.tsx`, `Select.tsx`, `StatusBadge.tsx`, `ErrorBoundary.tsx` — reusable primitives
+- Domain dialogs: `NamespaceDialog`/`NamespaceEditDialog`, `SecretsDialog` + `SecretsUnlockGuard` + `MasterPasswordDialog`, `SnapshotsDialog`, `VolumesDialog`, `RegistryCredentialsDialog`, `GitPullErrorDialog`, `UpdateDialog`/`UpdateNotification`
 
-**Lib:**
+**Lib (`web/src/lib/`)** — notable:
 - `api.ts` — REST API client (fetchWithTimeout, CSRF, exported API_BASE)
 - `store.ts` — Zustand dashboard store (SSE events, exponential backoff reconnect)
-- `panels.ts` — Zustand panel store (drawer, bottom tabs, height persistence)
 - `i18n.ts` — i18n store (8 locales bundled synchronously, t() + useTranslation())
 - `websocket.ts` — SSE EventSource wrapper (not WebSocket despite filename)
-- `tabs.ts` — Tab state management (zustand)
-- `toast.ts` — Toast notification store (zustand, auto-dismiss)
 - `types.ts` — TypeScript interfaces matching Go DTOs
+- plus smaller zustand stores/helpers: `panels`, `tabs`, `toast`, `theme`, `desktop`, `updateStore`, `windowBus`, `errorModal`, `longOp`, `daemonStatus`, `files`, `datetime`
 
-**Hooks:**
+**Hooks (`web/src/hooks/`):**
 - `useResizeHandle.ts` — pointer-capture drag hook for bottom panel resize
 - `useContextMenu.ts` — context menu state management
+- `useInheritedTheme.ts` — desktop child windows inherit the main window's theme
 
 ### Entry Point
 
@@ -138,7 +121,7 @@ React 19 + Vite + TypeScript + Tailwind CSS 4. Embedded into Go binary via `go:e
 **The CLI JSON and Web TS sets are content-disjoint (0 shared keys).** Despite older docs, the web UI does **not** read `internal/i18n` — it has its own ~495-key TS files. A string shown in the web UI must be added to `web/src/locales/`, not the JSON.
 
 Rules when changing strings:
-- Add/rename/remove a key in **all 8 files** of the relevant asset. The web UI enforces key parity (`web/src/locales/locales.test.ts` — `missing keys` / `extra keys` tests); the CLI JSON has no automated parity test, so keep the 8 JSONs in sync by hand.
+- Add/rename/remove a key in **all 8 files** of the relevant asset. Key parity is enforced for both assets: the web UI via `web/src/locales/locales.test.ts` (`missing keys` / `extra keys` tests), the CLI JSON via `internal/cli/i18n_test.go` (`TestLocaleCompleteness`). Note: *value*-completeness (English left untranslated in non-en files) is only tested for the web TS files — for the CLI JSONs, keep values translated by hand.
 - **Translate the VALUE, don't leave English.** `locales.test.ts` also has a value-completeness test that fails on any *multi-word* value left identical to `en` (the "key exists but never translated" gap) — single-word loanwords/cognates (Name, Status, Port, Bundle, Namespace…) are allowed; brand/format-string exceptions live in its `IDENTICAL_OK` allowlist.
 - Adding a changelog version: create all 8 `changelog/<ver>/<loc>.md` files **with real translations** (don't copy en into the others) and add the `index.json` entry. `changelog(...)` only fetches when `latest > current`.
 - To audit drift, evaluate each locale's key→value map and flag values identical to en (a script that strips the TS `import`/`export` and `eval`s the object literal works for both the JSON and TS assets).
@@ -181,24 +164,25 @@ Rules when changing strings:
 ## Key Technical Decisions
 
 - **SSE** (not WebSocket) for real-time events
-- **Unix socket only** for daemon communication in server mode; mTLS TCP reserved for future Web UI
+- **Daemon transports**: Unix socket (chmod 0600) for the local CLI; Web UI over TCP is **opt-in, default OFF** (`daemon.yml` `server.webui.enabled: true` + `server.webui.listen`; `--no-ui` force-disables) — localhost binds get the full API gated by the `X-Citeck-CSRF` header (plus bearer-token auth when `api_auth` is enabled), non-localhost binds require mTLS (`setupMTLS`)
+- **Security model — single-tenant host requirement (server mode)**: the localhost Web UI TCP port serves the **full privileged API** (incl. `citeck exec` into containers ⇒ effectively root on the host). The `X-Citeck-CSRF` header defeats browser-based CSRF but is **not authentication** — any local OS user/process that can reach the port has full control. The Web UI is therefore **disabled by default in server mode**; when deliberately enabled (`server.webui.enabled: true`), run only on single-tenant hosts where every local user is already trusted with Docker/root-level access. **Opt-in mitigation — API token auth** (`daemon.yml` `api_auth.enabled: true`, default off): every `/api/*` request on the TCP transport then requires `Authorization: Bearer <token>` or the session cookie from the `GET /auth/session?token=…` handshake (constant-time compare, HttpOnly SameSite=Strict cookie, 24h TTL), else 401 `AUTH_REQUIRED`. Token = `api_auth.token` or auto-generated 32-byte `conf/api-token` (0600); `citeck ui` prints/opens the authenticated link, the Web UI shows a token prompt on 401. Unix socket, desktop wrapper, and mTLS-authenticated requests bypass; static UI assets stay public (only the API is privileged). See `internal/daemon/apiauth.go`.
 - **Smart regenerate** via deployment hash comparison (like `docker-compose up`) — unchanged containers keep running
 - **Namespace runtime is a single-threaded state machine with signal-queue wake-ups.** One `runtimeLoop` goroutine owns every mutation to `r.apps`, per-app status, namespace status, and persistence. External commands enqueue via `cmdQueue` (typed, coalescing, 500ms back-pressure); workers (pull / start / stop / probe / stats / reconcile / liveness) run off-loop on the dispatcher, post typed Results back on `resultCh`; `applyWorkerResult` applies state-machine transitions under lock. Per-iteration `stepAllApps` walks all non-detached apps driving transitions T1–T33. See the `internal/namespace/runtime.go` package header for the concurrency rules and architecture diagram.
 - **3-phase doStart**: I/O outside lock → prepare plans → atomic state commit under lock. Detached apps get STOPPED status in the commit phase (not pulled/started). Stale containers (existing && !reuse) enter as STOPPING+initialSweep+desiredNext=READY_TO_PULL so the state machine drives the recreate; no parallel inline Docker stops.
 - **`:snapshot` pre-pull on reload/start**: images whose tag contains "snapshot" are pulled from the registry before the hash diff. Without this, a dev push under the same tag would be silently missed (hash computed from stale local digest matches running container → adoption).
 - **Graceful shutdown**: phased stop groups (proxy → webapps → keycloak → infra)
 - **Detach mode** (binary upgrade): `Runtime.Detach()` exits without stopping containers for zero-downtime binary upgrades; Docker owns containers, not the launcher (same principle as kubelet restarts)
-- **Per-app detach**: `citeck stop <app>` marks app as `manualStoppedApps` (desired-state-first, like k8s) and stops container. Detached apps are excluded from start/reload/regenerate, skipped by reconciler and liveness probes, and treated as satisfied in `waitForDeps`. `citeck start <app>` re-attaches. State persisted in `state-{nsID}.json`.
+- **Per-app detach**: `citeck stop <app>` marks app as `manualStoppedApps` (desired-state-first, like k8s) and stops container. Detached apps are excluded from start/reload/regenerate, skipped by reconciler and liveness probes, and treated as satisfied in `waitForDeps`. `citeck start <app>` re-attaches. State persisted in `state-{nsID}.json` (server mode; desktop mirrors it in the SQLite `namespaces.state_json` column).
 - **Template detachedApps**: workspace `namespaceTemplates[].detachedApps` applied on first start (no persisted state). Install wizard sets `template: "default"` in namespace.yml.
 - **`GetHashInput` stability** is a hard compatibility contract across versions — changes require migration
 - **Secrets**: AES-256-GCM per-secret encryption via `SecretService`; system secrets (JWT, OIDC, admin password, citeck SA) via `resolveOneSystemSecret` pattern
 - **citeck service account**: single shared SA named `citeck` used in two systems: (1) Keycloak master realm (admin role) for kcadm ops, (2) RabbitMQ (monitoring tag, vhost `/` full perms) for webapp AMQP auth and observer management-API monitoring. One 32-char random password stored as `_citeck_sa` system secret. Used by init script (kcadm.sh), admin password change handler, and webapp→Keycloak integration (`${KK_ADMIN_USER}/${KK_ADMIN_PASSWORD}` template vars + `ECOS_WEBAPP_RABBITMQ_USERNAME/_PASSWORD`). Survives snapshot import because Keycloak and RabbitMQ init actions create/sync the SA on every container start.
 - **Admin password**: generated on first server-mode start; seeded into both Keycloak realms (`master` via `KC_BOOTSTRAP_ADMIN_PASSWORD` on empty DB + `ecos-app` realm via init script) and shared with RabbitMQ / PgAdmin admin-UI users. Webapps do NOT use the admin user to connect to RabbitMQ — they use the stable `citeck` SA, so admin-password rotation never requires webapp recreation. Desktop mode always uses "admin". The Keycloak init script never touches the master realm `admin` password on re-run, so rotations done via `citeck setup admin-password` are preserved across container restarts.
-- **Admin password change** via `citeck setup admin-password`: rotates Keycloak `master` + `ecos-app` realms, RabbitMQ, and PgAdmin. The SA `citeck` password is stable (launcher uses it for internal Keycloak/RabbitMQ auth and must not lose access). Authenticates as the citeck SA → kcadm.sh set-password for `ecos-app` (fatal on failure), then `master` (best-effort — logged but non-fatal since the SA can still manage Keycloak), then rabbitmqctl change_password for the RabbitMQ admin user (UI only), then setup.py for PgAdmin. All runtime, no container restart; **no webapp reload** — webapps use the citeck SA for RabbitMQ and are unaffected by the admin-password change.
+- **Admin password change** via `citeck setup admin-password`: rotates Keycloak `master` + `ecos-app` realms, RabbitMQ, and PgAdmin. The SA `citeck` password is stable (launcher uses it for internal Keycloak/RabbitMQ auth and must not lose access). Authenticates as the citeck SA → kcadm.sh set-password for `ecos-app` (fatal on failure), then `master` (also fatal — 2.1.0 policy: leaving the old master-console password live is a security hole; the error tells the user to retry `citeck setup admin-password`), then rabbitmqctl change_password for the RabbitMQ admin user (UI only, best-effort), then setup.py for PgAdmin (best-effort). All runtime, no container restart; **no webapp reload** — webapps use the citeck SA for RabbitMQ and are unaffected by the admin-password change.
 - **Email config**: via env vars (`SPRING_MAIL_HOST/PORT/PROTOCOL`, `ECOS_NOTIFICATIONS_EMAIL_FROM_DEFAULT/FIXED`), NOT CloudConfig (disabled in server mode). When email configured, mailhog container is not generated and proxy skips `MAILHOG_TARGET` env.
 - **Two storage backends**: flat files (server) / SQLite (desktop); desktop mode via explicit `--desktop` flag (hidden from server binary help)
 - **Desktop thin-wrapper**: Wails wrapper supervises the daemon as a child process; daemon→wrapper native verbs over `wrapper.sock`; backend-defined tray (`GET /api/v1/desktop/tray-menu`); capabilities advertised via `CITECK_WRAPPER_CAPS` for forward-compatible feature detection; daemon child detaches on quit (containers keep running — kubelet principle)
-- **Kotlin 1.x → Go 2.x migration**: pure-Go H2 MVStore reader (no JAR, no JRE download). `internal/h2migrate/mvstore.go` walks chunk headers → layout map → meta map → user-data maps, strips H2 `TransactionStore` `VersionedValue` wrapper (`varLong(operationId) || value`) on user maps, decompresses LZF pages (with extended back-ref byte-order fix). `internal/h2migrate/applicationdef_compat.go` + `bundledef_compat.go` translate Kotlin entity JSON into Go shapes. A one-shot atomic `storage.db → storage.db.kotlin-bak` backup runs before the first migration; `storage.db` itself is opened read-only so Kotlin 1.x can be reinstalled at any time. When the H2 reader cannot open the file at all, a filesystem-fallback safety net emits Kotlin-parity default authentication (BASIC + admin/fet). SQLite schema versions v3 (`Secret.Username`), v4 (per-workspace `SelectedNs` map), v5 (`git_repo_state` table) are applied after import.
+- **Kotlin 1.x → Go 2.x migration**: pure-Go H2 MVStore reader (no JAR, no JRE download). `internal/h2migrate/mvstore.go` walks chunk headers → layout map → meta map → user-data maps, strips H2 `TransactionStore` `VersionedValue` wrapper (`varLong(operationId) || value`) on user maps, decompresses LZF pages (with extended back-ref byte-order fix). `internal/h2migrate/applicationdef_compat.go` + `bundledef_compat.go` translate Kotlin entity JSON into Go shapes. A one-shot atomic `storage.db → storage.db.kotlin-bak` backup runs before the first migration; `storage.db` itself is opened read-only so Kotlin 1.x can be reinstalled at any time. When the H2 reader cannot open the file at all, a filesystem-fallback safety net emits Kotlin-parity default authentication (BASIC + admin/fet). SQLite schema versions v3 (`Secret.Username`), v4 (per-workspace `SelectedNs` map), v5 (`git_repo_state` table), v6 (`namespaces` table: `config_yaml` + `state_json` on desktop) are applied after import.
 - **go-git** (pure Go) for git operations — no external git binary required
 - **ACME** profiles via custom JWS; LE works with IPs via shortlived profile (~6 day certs)
 - **Reconciler**: exponential backoff retry for failed apps (1m → 10m max); liveness probes with 3-failure threshold. Does NOT touch detached (STOPPED + manualStoppedApps) apps.
@@ -256,9 +240,9 @@ Don't poll more frequently than 30s. Use `sleep 120 && check` in background task
 
 ### Keycloak and auth
 
-- **citeck SA** is the service account used for all launcher→Keycloak ops and webapp→RabbitMQ AMQP auth. Password in `/opt/citeck/conf/secrets/_citeck_sa.json` (encrypted). Survives snapshot import. In Keycloak it has the master `admin` role; in RabbitMQ it has `monitoring` tag + vhost `/` full permissions.
+- **citeck SA** is the service account used for all launcher→Keycloak ops and webapp→RabbitMQ AMQP auth. Password in the launcher_state plain key `_sys_citeck_sa` (see `internal/daemon/system_secrets.go`). Survives snapshot import. In Keycloak it has the master `admin` role; in RabbitMQ it has `monitoring` tag + vhost `/` full permissions.
 - **Admin bootstrap password**: `docker exec citeck_keycloak_default printenv KC_BOOTSTRAP_ADMIN_PASSWORD` — one-time bootstrap for master admin, not the current password after snapshot restore.
-- **OIDC client secret**: `docker exec citeck_keycloak_default /opt/keycloak/bin/kcadm.sh ...` to fetch (see `internal/namespace/generator.go` init script).
+- **OIDC client secret**: `docker exec citeck_keycloak_default /opt/keycloak/bin/kcadm.sh ...` to fetch (see `internal/namespace/generator_keycloak.go`, which renders the init script from `internal/appfiles/embedded/keycloak/init.sh.tmpl`).
 - **Gateway access**: OIDC token via `/realms/ecos-app/protocol/openid-connect/token` + `Authorization: Bearer <token>`.
 - **Webapp direct access**: JWT HMAC-SHA256 with `ECOS_WEBAPP_WEB_AUTHENTICATORS_JWT_SECRET`. Not straightforward — prefer gateway API when possible.
 
@@ -358,7 +342,8 @@ at each step and reacting programmatically.
 
 ## CI/CD
 
-GitHub Actions:
-- **Release workflow** (`.github/workflows/release-go.yml`): triggered by `v*.*.*` tags, builds `linux/{amd64,arm64}` server binaries (matrix build), publishes the GitHub release directly (`draft: false`). Uses `go-version-file: go.mod`.
-- **CI workflow** (`.github/workflows/ci.yml`): triggered on push/PR to master and `release/**` branches. Runs `go vet`, `golangci-lint v2.11.4`, `go test -race`, `pnpm vitest run`, full server build.
+GitHub Actions (three workflows):
+- **Test suite** (`.github/workflows/test.yml`, reusable `workflow_call` — never triggered on its own): `go vet`, `golangci-lint v2.11.4`, `go test -race ./internal/...`, `pnpm vitest run`, full server build, linux/arm64 cross-compile check. Single source of truth for "is this commit good?".
+- **CI workflow** (`.github/workflows/ci.yml`): a thin trigger shim that just calls test.yml. Runs ONLY on `pull_request` → master and `push` → `release/**` branches — **plain pushes to master do NOT run CI** (the tag-time run in release-go.yml is the gate for what gets published).
+- **Release workflow** (`.github/workflows/release-go.yml`): triggered by `v*.*.*` tags; runs test.yml as a gate, then builds `linux/{amd64,arm64}` server binaries (matrix build) + desktop installers and publishes the GitHub release directly (`draft: false`). Uses `go-version-file: go.mod`. Contains a dormant release-signing step (runs only when the `RELEASE_SIGNING_KEY` secret is configured — see `internal/update/signature.go`).
 - **Linting**: `.golangci.yml` v2 format, 21 linters, G104 excluded (cleanup errors), test files relaxed for dupl/gosec/unparam.
