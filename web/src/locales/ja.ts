@@ -494,6 +494,7 @@ const ja = {
   'namespace.form.name': '名前',
   'namespace.form.bundlesRepo': 'バンドルリポジトリ',
   'namespace.form.bundleKey': 'バンドル',
+  'namespace.form.bundleKey.latest': 'LATEST',
   'namespace.form.snapshot': 'スナップショット',
   'namespace.form.authType': '認証タイプ',
   'namespace.form.authUsers': 'Basic 認証ユーザー',

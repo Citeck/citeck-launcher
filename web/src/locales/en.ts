@@ -501,6 +501,7 @@ const en = {
   'namespace.form.bundlesRepo': 'Bundles Repo',
   'namespace.form.bundles.refresh': 'Refresh bundles (git pull)',
   'namespace.form.bundleKey': 'Bundle',
+  'namespace.form.bundleKey.latest': 'LATEST',
   'namespace.form.snapshot': 'Snapshot',
   'namespace.form.authType': 'Authentication Type',
   'namespace.form.authUsers': 'Basic Auth Users',

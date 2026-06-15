@@ -494,6 +494,7 @@ const es = {
   'namespace.form.name': 'Nombre',
   'namespace.form.bundlesRepo': 'Repositorio de bundles',
   'namespace.form.bundleKey': 'Bundle',
+  'namespace.form.bundleKey.latest': 'LATEST',
   'namespace.form.snapshot': 'Snapshot',
   'namespace.form.authType': 'Tipo de autenticación',
   'namespace.form.authUsers': 'Usuarios de Basic Auth',

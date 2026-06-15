@@ -494,6 +494,7 @@ const ru = {
   'namespace.form.name': 'Имя',
   'namespace.form.bundlesRepo': 'Репозиторий бандлов',
   'namespace.form.bundleKey': 'Бандл',
+  'namespace.form.bundleKey.latest': 'LATEST',
   'namespace.form.snapshot': 'Снэпшот',
   'namespace.form.authType': 'Тип аутентификации',
   'namespace.form.authUsers': 'Пользователи Basic Auth',

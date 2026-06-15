@@ -494,6 +494,7 @@ const pt = {
   'namespace.form.name': 'Nome',
   'namespace.form.bundlesRepo': 'Repositório de bundles',
   'namespace.form.bundleKey': 'Bundle',
+  'namespace.form.bundleKey.latest': 'LATEST',
   'namespace.form.snapshot': 'Snapshot',
   'namespace.form.authType': 'Tipo de autenticação',
   'namespace.form.authUsers': 'Usuários do Basic Auth',

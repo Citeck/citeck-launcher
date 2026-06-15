@@ -494,6 +494,7 @@ const zh = {
   'namespace.form.name': '名称',
   'namespace.form.bundlesRepo': '包仓库',
   'namespace.form.bundleKey': '包',
+  'namespace.form.bundleKey.latest': 'LATEST',
   'namespace.form.snapshot': '快照',
   'namespace.form.authType': '认证类型',
   'namespace.form.authUsers': 'Basic 认证用户',

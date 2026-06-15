@@ -158,25 +158,35 @@ export function NamespaceEditDialog({
   const bundleKeyOptions = useMemo(() => {
     const repo = bundles.find((b) => b.repo === bundleRepo)
     const versions = repo?.versions ?? []
-    const opts = versions.map((v) => ({ value: v, label: v }))
-    if (bundleKey && !opts.some((o) => o.value === bundleKey)) {
+    // Versions are newest-first — mark the newest with "(LATEST)" instead of
+    // offering a separate symbolic "LATEST" entry.
+    const latest = versions[0]
+    const opts = versions.map((v) => ({
+      value: v,
+      label: v === latest ? `${v} (${t('namespace.form.bundleKey.latest')})` : v,
+    }))
+    // Preserve a current CONCRETE pin missing from the list (e.g. an unsynced
+    // repo). Symbolic LATEST is normalized to the concrete newest by the effect
+    // below, so it never needs an option of its own.
+    if (bundleKey && !/^latest$/i.test(bundleKey) && !opts.some((o) => o.value === bundleKey)) {
       opts.unshift({ value: bundleKey, label: bundleKey })
     }
     return opts
-  }, [bundles, bundleRepo, bundleKey])
+  }, [bundles, bundleRepo, bundleKey, t])
 
-  // Reset bundleKey when the user picks a different repo so the dependent
-  // select doesn't end up with a value that doesn't exist in the new list.
-  // Symbolic "LATEST" is exempt: it is never in the concrete versions list
-  // (GET /namespaces/{id}/edit returns it RAW) and resetting it here would
-  // silently pin the namespace to a concrete version on save.
+  // Keep bundleKey valid + concrete. The UI no longer offers a symbolic
+  // "LATEST": normalize it (and any stale pin not in the current repo's list)
+  // to the concrete newest version (versions[0]), which the dropdown marks
+  // "(LATEST)". This also pins a namespace that was stored as "LATEST" to the
+  // concrete latest on the next save — intentional, the symbolic option is gone.
   useEffect(() => {
     if (!bundleRepo) return
     const repo = bundles.find((b) => b.repo === bundleRepo)
     const versions = repo?.versions ?? []
-    if (bundleKey && !/^latest$/i.test(bundleKey) && !versions.includes(bundleKey) && versions.length > 0) {
-      // Intentional: reset the dependent select to a valid value when the repo
-      // changes so it never holds a stale version; not a cascading render.
+    if (versions.length === 0) return
+    if (/^latest$/i.test(bundleKey) || (bundleKey && !versions.includes(bundleKey))) {
+      // Intentional: normalize the dependent select to a concrete version; not
+      // a cascading render.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setBundleKey(versions[0])
     }
