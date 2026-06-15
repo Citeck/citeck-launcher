@@ -25,14 +25,48 @@ endif
 
 GOLANGCI_LINT=$(GOBIN)/golangci-lint
 
-.PHONY: all build build-fast build-web build-desktop run test test-unit test-race test-coverage \
+.PHONY: all check build build-fast build-web build-desktop run test test-unit test-race test-coverage \
         test-e2e lint fmt tidy tools clean help dev-daemon dev-desktop web-deps deadcode \
         release-server release-desktop-linux release-desktop-windows release-desktop-macos
 
 all: test build
 
+# ===== Full local gate — run THIS before committing/tagging =====
+# One command that runs every linter, compiler, and test the release pipeline
+# gates on (mirrors .github/workflows/test.yml step-for-step) PLUS web eslint,
+# so "green here" means "green in CI". Fail-fast: stops at the first failure.
+# NOTE: plain pushes to master DO NOT run CI — the v*.*.* release tag is the
+# first gate — so run `make check` locally before pushing a release.
+# Prereqs: `make tools` once (pinned golangci-lint); the deadcode gate needs
+# CGO + GTK3 dev headers (libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev),
+# the same packages the CI test job installs.
+check:
+	@command -v $(GOLANGCI_LINT) >/dev/null 2>&1 || { echo "ERROR: $(GOLANGCI_LINT) not found — run 'make tools' first"; exit 1; }
+	@mkdir -p $(WEBDIST)
+	@test -f $(WEBDIST)/index.html || echo '<html></html>' > $(WEBDIST)/index.html
+	@echo "==> [1/10] go vet"
+	go vet ./...
+	@echo "==> [2/10] golangci-lint (v2.11.4 pinned)"
+	$(GOLANGCI_LINT) run ./...
+	@echo "==> [3/10] go test -race -cover ./internal/... (slow: namespace ~160s)"
+	set -o pipefail; go test -race -cover ./internal/... | tee /tmp/citeck-cover.txt
+	@echo "==> [4/10] coverage floors"
+	bash scripts/ci/coverage-floor.sh /tmp/citeck-cover.txt
+	@echo "==> [5/10] govulncheck (reachable-vuln gate)"
+	bash scripts/ci/govulncheck.sh
+	@echo "==> [6/10] deadcode (needs CGO + GTK3 headers)"
+	bash scripts/ci/deadcode.sh
+	@echo "==> [7/10] web: install (frozen) + vitest + prod audit + eslint"
+	cd web && pnpm install --frozen-lockfile && pnpm vitest run && pnpm audit --prod --audit-level high && pnpm lint
+	@echo "==> [8/10] build server binary (tsc + vite + go build via 'make build')"
+	$(MAKE) build
+	@echo "==> [9/10] cross-compile check (linux/arm64)"
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o /tmp/citeck-check-arm64 ./cmd/citeck && rm -f /tmp/citeck-check-arm64
+	@echo "==> [10/10] PASS — full local gate green (superset of CI)"
+
 help:
 	@echo "Usage:"
+	@echo "  make check          - FULL local gate (CI superset + eslint); run before committing/tagging"
 	@echo "  make build          - Build Go binary + embed React web UI"
 	@echo "  make build-fast     - Build Go only (skip web rebuild)"
 	@echo "  make build-desktop  - Build desktop (Wails) binary"
