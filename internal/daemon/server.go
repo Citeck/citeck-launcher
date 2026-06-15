@@ -813,6 +813,10 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/secrets/{id}", d.handleDeleteSecret)
 	mux.HandleFunc("GET /api/v1/secrets/{id}/test", d.handleTestSecret)
 
+	// Registry auth bindings (host → secret) for reusable registry credentials
+	mux.HandleFunc("GET "+api.RegistryBindings, d.handleListRegistryBindings)
+	mux.HandleFunc("POST "+api.RegistryBindings, d.handleSetRegistryBinding)
+
 	// Secrets encryption management
 	mux.HandleFunc("POST "+api.SecretsUnlock, d.handleUnlockSecrets)
 	mux.HandleFunc("POST "+api.SecretsSetupPassword, d.handleSetupPassword)

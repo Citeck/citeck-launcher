@@ -52,6 +52,10 @@ const (
 	SecretsSetupPassword = Secrets + "/setup-password"
 	SecretsReset         = Secrets + "/reset"
 
+	// RegistryBindings maps image-registry hosts to stored REGISTRY_AUTH
+	// secrets for the active workspace (GET lists, POST sets/removes).
+	RegistryBindings = APIV1 + "/registry-bindings"
+
 	// Licenses is the enterprise-license CRUD collection; LicensesStatus is
 	// the read-only effective-license summary consumed by `citeck status`
 	// and the dashboard indicator (absent on pre-2.6 daemons — clients must

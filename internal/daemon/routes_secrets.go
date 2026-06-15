@@ -35,6 +35,7 @@ func (d *Daemon) handleListSecrets(w http.ResponseWriter, _ *http.Request) {
 			Name:      s.Name,
 			Type:      string(s.Type),
 			Scope:     s.Scope,
+			Host:      s.Host,
 			Username:  s.Username,
 			CreatedAt: s.CreatedAt.Format(time.RFC3339),
 		}
@@ -68,6 +69,7 @@ func (d *Daemon) handleCreateSecret(w http.ResponseWriter, r *http.Request) {
 			Name:     req.Name,
 			Type:     storage.SecretType(req.Type),
 			Scope:    req.Scope,
+			Host:     req.Host,
 			Username: req.Username,
 		},
 		Value: req.Value,
@@ -132,6 +134,9 @@ func (d *Daemon) handleUpdateSecret(w http.ResponseWriter, r *http.Request) {
 	if req.Scope != "" {
 		existing.Scope = req.Scope
 	}
+	if req.Host != "" {
+		existing.Host = req.Host
+	}
 	if req.Username != "" {
 		existing.Username = req.Username
 	}
@@ -160,6 +165,7 @@ func (d *Daemon) handleUpdateSecret(w http.ResponseWriter, r *http.Request) {
 		Name:      existing.Name,
 		Type:      string(existing.Type),
 		Scope:     existing.Scope,
+		Host:      existing.Host,
 		Username:  existing.Username,
 		CreatedAt: existing.CreatedAt.Format(time.RFC3339),
 	})

@@ -182,6 +182,10 @@ export interface SecretMetaDto {
   name: string
   type: string
   scope: string
+  // The registry/git host this secret authenticates against; the host-filtered
+  // picker uses it so a credential is reused per host. Optional — older daemons
+  // and host-agnostic secrets omit it.
+  host?: string
   createdAt: string
   // For BASIC_AUTH / REGISTRY_AUTH; surfaced so the write-only edit form can
   // prefill it. Optional — older daemons omit it.
@@ -197,6 +201,7 @@ export interface SecretCreateDto {
   username?: string
   value: string
   scope?: string
+  host?: string
 }
 
 // Write-only partial update (PUT /secrets/{id}). Empty/absent field = keep
@@ -207,6 +212,14 @@ export interface SecretUpdateDto {
   scope?: string
   username?: string
   value?: string
+  host?: string
+}
+
+// Maps an image-registry host to a stored REGISTRY_AUTH secret for the active
+// workspace (POST /registry-bindings). An empty secretId removes the binding.
+export interface RegistryBindingDto {
+  host: string
+  secretId: string
 }
 
 // Phase F2: Diagnostics

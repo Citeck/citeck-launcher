@@ -421,10 +421,14 @@ type QuickStartDto struct {
 // write-only edit form prefills it from here. The VALUE is never returned by
 // any endpoint.
 type SecretMetaDto struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Type      string `json:"type"`
-	Scope     string `json:"scope"`
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Scope string `json:"scope"`
+	// Host is the registry/git host this secret authenticates against; the
+	// host-filtered secret picker uses it so a credential is reused per host
+	// instead of re-entered. Empty for host-agnostic secrets.
+	Host      string `json:"host,omitempty"`
 	Username  string `json:"username,omitempty"`
 	CreatedAt string `json:"createdAt"`
 }
@@ -441,6 +445,7 @@ type SecretCreateDto struct {
 	Username string `json:"username,omitempty"`
 	Value    string `json:"value"`
 	Scope    string `json:"scope,omitempty"`
+	Host     string `json:"host,omitempty"`
 }
 
 // SecretUpdateDto is the request body for PUT /api/v1/secrets/{id} — a
@@ -453,6 +458,14 @@ type SecretUpdateDto struct {
 	Scope    string `json:"scope,omitempty"`
 	Username string `json:"username,omitempty"`
 	Value    string `json:"value,omitempty"`
+	Host     string `json:"host,omitempty"`
+}
+
+// RegistryBindingDto binds an image-registry host to a stored REGISTRY_AUTH
+// secret for the active workspace. An empty SecretID removes the binding.
+type RegistryBindingDto struct {
+	Host     string `json:"host"`
+	SecretID string `json:"secretId"`
 }
 
 // --- Diagnostics ---
