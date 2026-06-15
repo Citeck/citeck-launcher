@@ -153,6 +153,62 @@ func (s *FileStore) DeleteSecret(id string) error {
 	return nil
 }
 
+// --- Registry auth bindings ---
+//
+// Server mode has a single implicit workspace, so bindings are stored flat
+// (host → secret id) in one JSON file and wsID is ignored.
+
+func (s *FileStore) registryBindingsPath() string {
+	return filepath.Join(s.baseDir, "registry-bindings.json")
+}
+
+func (s *FileStore) readRegistryBindings() (map[string]string, error) {
+	data, err := os.ReadFile(s.registryBindingsPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]string{}, nil
+		}
+		return nil, fmt.Errorf("read registry bindings: %w", err)
+	}
+	out := map[string]string{}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("parse registry bindings: %w", err)
+	}
+	return out, nil
+}
+
+// ListRegistryBindings returns the host → secret-id registry auth bindings.
+func (s *FileStore) ListRegistryBindings(_ string) (map[string]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.readRegistryBindings()
+}
+
+// SetRegistryBinding upserts a host → secret-id binding; an empty secretID
+// removes it.
+func (s *FileStore) SetRegistryBinding(_, host, secretID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	bindings, err := s.readRegistryBindings()
+	if err != nil {
+		return err
+	}
+	if secretID == "" {
+		delete(bindings, host)
+	} else {
+		bindings[host] = secretID
+	}
+	data, err := json.MarshalIndent(bindings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal registry bindings: %w", err)
+	}
+	if err := fsutil.AtomicWriteFile(s.registryBindingsPath(), data, 0o600); err != nil {
+		return fmt.Errorf("write registry bindings: %w", err)
+	}
+	return nil
+}
+
 // --- Launcher State ---
 
 func (s *FileStore) statePath() string {

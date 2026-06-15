@@ -171,7 +171,11 @@ func (m *mockStore) GetSecret(id string) (*storage.Secret, error) {
 	}
 	return &s, nil
 }
-func (m *mockStore) DeleteSecret(string) error                          { return nil }
+func (m *mockStore) DeleteSecret(string) error { return nil }
+func (m *mockStore) ListRegistryBindings(string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+func (m *mockStore) SetRegistryBinding(string, string, string) error    { return nil }
 func (m *mockStore) ListWorkspaces() ([]storage.WorkspaceDto, error)    { return nil, nil }
 func (m *mockStore) GetWorkspace(string) (*storage.WorkspaceDto, error) { return nil, nil }
 func (m *mockStore) SaveWorkspace(storage.WorkspaceDto) error           { return nil }
@@ -197,9 +201,9 @@ func (m *mockStore) SaveNamespaceConfig(_, _, _, _ string) error { return nil }
 func (m *mockStore) LoadNamespaceState(_, _ string) (stateJSON string, ok bool, err error) {
 	return "", false, nil
 }
-func (m *mockStore) SaveNamespaceState(_, _, _, _ string) error            { return nil }
-func (m *mockStore) DeleteNamespace(_, _ string) error                     { return nil }
-func (m *mockStore) Close() error                                          { return nil }
+func (m *mockStore) SaveNamespaceState(_, _, _, _ string) error { return nil }
+func (m *mockStore) DeleteNamespace(_, _ string) error          { return nil }
+func (m *mockStore) Close() error                               { return nil }
 
 func TestImportDecryptedSecrets_TokenAndBasic(t *testing.T) {
 	secretsMap := map[string]AuthSecret{

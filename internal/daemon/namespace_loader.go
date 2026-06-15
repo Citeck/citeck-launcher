@@ -346,8 +346,12 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		runtime.SetCachedBundle(bundleDef)
 	}
 
-	// Wire registry auth and operation history into runtime
-	runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(wsCfg, in.SecretService))
+	// Wire registry auth and operation history into runtime. Registry bindings
+	// (host → secret id) take precedence over the legacy scope heuristics so a
+	// reused credential resolves without re-entry; a locked/missing store
+	// degrades to no bindings (scope fallback still applies).
+	registryBindings, _ := in.Store.ListRegistryBindings(wsID)
+	runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(wsCfg, in.SecretService, registryBindings))
 	runtime.SetHistory(namespace.NewOperationHistory(config.LogDir()))
 
 	// Apply daemon.yml overrides for reconciler and pull concurrency

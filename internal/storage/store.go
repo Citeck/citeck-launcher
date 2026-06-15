@@ -157,6 +157,14 @@ type Store interface {
 	SaveSecret(secret Secret) error
 	DeleteSecret(id string) error
 
+	// Registry auth bindings: per-workspace map of image-registry host →
+	// secret id, so one stored REGISTRY_AUTH credential is reused across
+	// namespaces (and, in desktop mode, workspaces) instead of being
+	// re-entered per host. SetRegistryBinding with an empty secretID removes
+	// the binding. Server mode has a single implicit workspace (wsID ignored).
+	ListRegistryBindings(wsID string) (map[string]string, error)
+	SetRegistryBinding(wsID, host, secretID string) error
+
 	// Encrypted secrets blob (migrated from Kotlin launcher)
 	PutSecretBlob(base64Data string) error
 	GetSecretBlob() (string, error)

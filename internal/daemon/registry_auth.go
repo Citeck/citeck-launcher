@@ -46,14 +46,14 @@ func makeTokenLookup(reader secretReader) bundle.TokenLookupFunc {
 // by matching image host against workspace config's imageReposByHost.
 // Registry secrets are pre-fetched into a map at creation time for efficiency.
 // The function is rebuilt on namespace reload to reflect secret mutations.
-func makeRegistryAuthFunc(wsCfg *bundle.WorkspaceConfig, reader secretReader) namespace.RegistryAuthFunc {
+func makeRegistryAuthFunc(wsCfg *bundle.WorkspaceConfig, reader secretReader, bindings map[string]string) namespace.RegistryAuthFunc {
 	if wsCfg == nil || reader == nil {
 		return nil
 	}
 	reposByHost := wsCfg.ImageReposByHost()
 
 	// Pre-fetch all registry credentials into an immutable map
-	authByHost := buildRegistryAuthCache(reposByHost, reader)
+	authByHost := buildRegistryAuthCache(reposByHost, reader, bindings)
 	if len(authByHost) == 0 {
 		return nil
 	}
@@ -78,7 +78,7 @@ func makeRegistryAuthFunc(wsCfg *bundle.WorkspaceConfig, reader secretReader) na
 // "user:pass" packed Value is split as a last-resort fallback for any secret
 // that somehow survived the FileStore / SQLite-v3 migration paths without a
 // Username column populated.
-func buildRegistryAuthCache(reposByHost map[string]bundle.ImageRepo, reader secretReader) map[string]*docker.RegistryAuth {
+func buildRegistryAuthCache(reposByHost map[string]bundle.ImageRepo, reader secretReader, bindings map[string]string) map[string]*docker.RegistryAuth {
 	result := make(map[string]*docker.RegistryAuth)
 	secrets, err := reader.ListSecrets()
 	if err != nil {
@@ -105,7 +105,26 @@ func buildRegistryAuthCache(reposByHost map[string]bundle.ImageRepo, reader secr
 			Registry: "https://" + host,
 		}
 	}
+	// bindSecret resolves the explicit host → secret-id binding (the new
+	// reusable model). Returns false when no binding exists or the bound
+	// secret is gone/locked, so the caller falls back to scope heuristics.
+	bindSecret := func(host string) bool {
+		id := bindings[host]
+		if id == "" {
+			return false
+		}
+		sec, err := reader.GetSecret(id)
+		if err != nil || sec == nil {
+			return false
+		}
+		addAuth(host, sec)
+		return result[host] != nil
+	}
 	for host, repo := range reposByHost {
+		// Explicit binding wins over the legacy scope heuristics.
+		if bindSecret(host) {
+			continue
+		}
 		if repo.AuthType == "" {
 			continue
 		}
@@ -121,6 +140,14 @@ func buildRegistryAuthCache(reposByHost map[string]bundle.ImageRepo, reader secr
 			continue
 		}
 		addAuth(host, sec)
+	}
+	// Bindings for hosts the workspace config doesn't list under imageRepos
+	// still take effect (e.g. a registry referenced only by a deployment def).
+	for host := range bindings {
+		if _, already := result[host]; already {
+			continue
+		}
+		bindSecret(host)
 	}
 	// Kotlin v1.x parity: a secret with scope "images-repo:<host>" should
 	// authenticate pulls from <host> even when workspace-v1.yml doesn't

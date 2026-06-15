@@ -305,7 +305,8 @@ func (d *Daemon) rebuildAuthCaches() {
 	if act.runtime == nil {
 		return
 	}
-	act.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(act.workspaceConfig, d.secretReaderFunc()))
+	regBindings, _ := d.store.ListRegistryBindings(act.workspaceID)
+	act.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(act.workspaceConfig, d.secretReaderFunc(), regBindings))
 	retried := act.runtime.RetryPullFailedApps()
 	if retried > 0 {
 		slog.Info("Retrying pull-failed apps after secrets change", "count", retried)
@@ -579,7 +580,8 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate bool) error {
 	if act.cloudCfgServer != nil {
 		act.cloudCfgServer.UpdateConfig(genResp.CloudConfig, sysSecrets.JWT)
 	}
-	act.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(resolveResult.Workspace, d.secretReaderFunc()))
+	regBindings, _ := d.store.ListRegistryBindings(act.workspaceID)
+	act.runtime.SetRegistryAuthFunc(makeRegistryAuthFunc(resolveResult.Workspace, d.secretReaderFunc(), regBindings))
 	act.runtime.SetDependsOnDetachedApps(genResp.DependsOnDetachedApps)
 
 	// Phase 3: regenerate runtime with updated config (async stop + start).

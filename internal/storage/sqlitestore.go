@@ -259,6 +259,20 @@ func (s *SQLiteStore) migrate() error {
 				   AND scope LIKE 'images-repo:%'`,
 			},
 		},
+		{
+			// v9 — per-workspace registry auth bindings: host → secret id, so a
+			// stored REGISTRY_AUTH credential is reused across namespaces/
+			// workspaces instead of being re-entered for every registry host.
+			version: 9,
+			stmts: []string{
+				`CREATE TABLE IF NOT EXISTS registry_bindings (
+					ws_id     TEXT NOT NULL,
+					host      TEXT NOT NULL,
+					secret_id TEXT NOT NULL,
+					PRIMARY KEY (ws_id, host)
+				)`,
+			},
+		},
 	}
 
 	for _, m := range migrations {
@@ -441,6 +455,47 @@ func (s *SQLiteStore) SaveSecret(secret Secret) error {
 func (s *SQLiteStore) DeleteSecret(id string) error {
 	if _, err := s.db.Exec("DELETE FROM secrets WHERE id = ?", id); err != nil {
 		return fmt.Errorf("delete secret %s: %w", id, err)
+	}
+	return nil
+}
+
+// ListRegistryBindings returns the workspace's host → secret-id registry auth
+// bindings.
+func (s *SQLiteStore) ListRegistryBindings(wsID string) (map[string]string, error) {
+	rows, err := s.db.Query("SELECT host, secret_id FROM registry_bindings WHERE ws_id = ?", wsID)
+	if err != nil {
+		return nil, fmt.Errorf("query registry bindings: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var host, secretID string
+		if err := rows.Scan(&host, &secretID); err != nil {
+			return nil, fmt.Errorf("scan registry binding: %w", err)
+		}
+		out[host] = secretID
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate registry bindings: %w", err)
+	}
+	return out, nil
+}
+
+// SetRegistryBinding upserts a host → secret-id binding for the workspace; an
+// empty secretID removes the binding.
+func (s *SQLiteStore) SetRegistryBinding(wsID, host, secretID string) error {
+	if secretID == "" {
+		if _, err := s.db.Exec("DELETE FROM registry_bindings WHERE ws_id = ? AND host = ?", wsID, host); err != nil {
+			return fmt.Errorf("delete registry binding: %w", err)
+		}
+		return nil
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO registry_bindings (ws_id, host, secret_id) VALUES (?, ?, ?)
+		ON CONFLICT(ws_id, host) DO UPDATE SET secret_id = excluded.secret_id
+	`, wsID, host, secretID)
+	if err != nil {
+		return fmt.Errorf("set registry binding: %w", err)
 	}
 	return nil
 }
