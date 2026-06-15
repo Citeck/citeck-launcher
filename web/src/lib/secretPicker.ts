@@ -21,11 +21,12 @@ export function slugFromName(name: string): string {
 
 /**
  * Generates a collision-tolerant secret id from a display name:
- * `git-token-<slug>`, suffixed `-2`, `-3`, … while the id is taken.
+ * `<prefix>-<slug>`, suffixed `-2`, `-3`, … while the id is taken. The prefix
+ * defaults to `git-token`; registry credentials pass `registry`.
  */
-export function generateSecretId(name: string, existingIds: Iterable<string>): string {
+export function generateSecretId(name: string, existingIds: Iterable<string>, prefix = 'git-token'): string {
   const taken = new Set(existingIds)
-  const base = `git-token-${slugFromName(name)}`
+  const base = `${prefix}-${slugFromName(name)}`
   if (!taken.has(base)) return base
   for (let i = 2; ; i++) {
     const candidate = `${base}-${i}`
@@ -60,6 +61,38 @@ export async function createGitTokenSecret(name: string, token: string): Promise
   const existing = await getSecrets().catch(() => [] as SecretMetaDto[])
   const payload = buildGitTokenCreate(name, token, existing.map((s) => s.id))
   if (!payload) throw new Error('secret name and token are required')
+  await createSecret(payload)
+  return payload.id
+}
+
+/**
+ * Pure mapping from the registry "Add new…" fields to a REGISTRY_AUTH create
+ * payload tagged with the host (so the host-filtered picker surfaces it).
+ * Returns null when name, username or password is missing.
+ */
+export function buildRegistrySecretCreate(
+  name: string,
+  username: string,
+  password: string,
+  host: string,
+  existingIds: Iterable<string>,
+): SecretCreateDto | null {
+  const trimmedName = name.trim()
+  const trimmedUser = username.trim()
+  if (!trimmedName || !trimmedUser || !password) return null
+  const id = generateSecretId(trimmedName, existingIds, 'registry')
+  return { id, name: trimmedName, type: 'REGISTRY_AUTH', username: trimmedUser, value: password, host }
+}
+
+/**
+ * Creates a REGISTRY_AUTH secret from the add-new fields and returns its
+ * generated id. The list is fetched fresh at save time so the id avoids
+ * collisions with secrets created since the picker mounted.
+ */
+export async function createRegistrySecret(name: string, username: string, password: string, host: string): Promise<string> {
+  const existing = await getSecrets().catch(() => [] as SecretMetaDto[])
+  const payload = buildRegistrySecretCreate(name, username, password, host, existing.map((s) => s.id))
+  if (!payload) throw new Error('secret name, username and password are required')
   await createSecret(payload)
   return payload.id
 }

@@ -34,6 +34,7 @@ const zh = {
   'gitPullError.editToken': '修改令牌',
   'gitPullError.chooseAnother': '选择其他',
   'registryCreds.title': '登录 {host}',
+  'registryCreds.explain': '从 {host} 拉取镜像需要凭据。选择现有凭据或添加新凭据，然后保存。',
   'registryCreds.host': '镜像仓库',
   'registryCreds.username': '用户名',
   'registryCreds.password': '密码',
@@ -163,6 +164,11 @@ const zh = {
   'secretPicker.notFound': '（未找到）',
   'secretPicker.name': '密钥名称',
   'secretPicker.token': '令牌',
+  'secretPicker.host': '镜像仓库主机',
+  'secretPicker.username': '用户名',
+  'secretPicker.password': '密码',
+  'secretPicker.showAllHosts': '显示其他主机的密钥（{count}）',
+  'secretPicker.createTitleRegistry': '新建镜像仓库凭据',
   'secretPicker.required': '密钥名称和令牌为必填项',
 
   // -- Diagnostics --

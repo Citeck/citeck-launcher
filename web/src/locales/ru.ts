@@ -34,6 +34,7 @@ const ru = {
   'gitPullError.editToken': 'Изменить токен',
   'gitPullError.chooseAnother': 'Выбрать другой',
   'registryCreds.title': 'Вход в {host}',
+  'registryCreds.explain': 'Для загрузки образов с {host} нужны учётные данные. Выберите существующие или добавьте новые, затем сохраните.',
   'registryCreds.host': 'Реестр',
   'registryCreds.username': 'Имя пользователя',
   'registryCreds.password': 'Пароль',
@@ -163,6 +164,11 @@ const ru = {
   'secretPicker.notFound': '(не найден)',
   'secretPicker.name': 'Название секрета',
   'secretPicker.token': 'Токен',
+  'secretPicker.host': 'Хост реестра',
+  'secretPicker.username': 'Логин',
+  'secretPicker.password': 'Пароль',
+  'secretPicker.showAllHosts': 'Показать секреты других хостов ({count})',
+  'secretPicker.createTitleRegistry': 'Новые учётные данные реестра',
   'secretPicker.required': 'Название секрета и токен обязательны',
 
   // -- Diagnostics --

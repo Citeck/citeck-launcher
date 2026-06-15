@@ -534,6 +534,18 @@ export async function deleteSecret(id: string): Promise<ActionResultDto> {
   return request('DELETE', `/secrets/${enc(id)}`)
 }
 
+// Registry auth bindings (host → secret id) for the active workspace. Lets one
+// stored REGISTRY_AUTH credential be reused per host instead of re-entered.
+export async function getRegistryBindings(): Promise<Record<string, string>> {
+  return request('GET', '/registry-bindings')
+}
+
+// Bind a registry host to a stored secret (empty secretId removes the binding).
+// The daemon rebuilds the auth cache and retries pull-failed apps on success.
+export async function setRegistryBinding(host: string, secretId: string): Promise<ActionResultDto> {
+  return request('POST', '/registry-bindings', { body: { host, secretId } })
+}
+
 export async function testSecret(id: string): Promise<ActionResultDto> {
   return request('GET', `/secrets/${enc(id)}/test`)
 }

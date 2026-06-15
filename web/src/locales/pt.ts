@@ -34,6 +34,7 @@ const pt = {
   'gitPullError.editToken': 'Editar token',
   'gitPullError.chooseAnother': 'Escolher outro',
   'registryCreds.title': 'Entrar em {host}',
+  'registryCreds.explain': 'Baixar imagens de {host} requer credenciais. Escolha uma existente ou adicione uma nova e salve.',
   'registryCreds.host': 'Registry',
   'registryCreds.username': 'Usuário',
   'registryCreds.password': 'Senha',
@@ -163,6 +164,11 @@ const pt = {
   'secretPicker.notFound': '(não encontrado)',
   'secretPicker.name': 'Nome do secret',
   'secretPicker.token': 'Token',
+  'secretPicker.host': 'Host do registry',
+  'secretPicker.username': 'Usuário',
+  'secretPicker.password': 'Senha',
+  'secretPicker.showAllHosts': 'Mostrar secrets de outros hosts ({count})',
+  'secretPicker.createTitleRegistry': 'Nova credencial de registry',
   'secretPicker.required': 'O nome do secret e o token s\u00e3o obrigat\u00f3rios',
 
   // -- Diagnostics --

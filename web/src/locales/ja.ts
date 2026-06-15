@@ -34,6 +34,7 @@ const ja = {
   'gitPullError.editToken': 'トークンを編集',
   'gitPullError.chooseAnother': '別を選択',
   'registryCreds.title': '{host} にサインイン',
+  'registryCreds.explain': '{host} からのイメージ取得には認証情報が必要です。既存のものを選ぶか新規に追加して保存してください。',
   'registryCreds.host': 'Registry',
   'registryCreds.username': 'ユーザー名',
   'registryCreds.password': 'パスワード',
@@ -163,6 +164,11 @@ const ja = {
   'secretPicker.notFound': '（見つかりません）',
   'secretPicker.name': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u540d',
   'secretPicker.token': '\u30c8\u30fc\u30af\u30f3',
+  'secretPicker.host': 'レジストリホスト',
+  'secretPicker.username': 'ユーザー名',
+  'secretPicker.password': 'パスワード',
+  'secretPicker.showAllHosts': '他のホストのシークレットを表示（{count}）',
+  'secretPicker.createTitleRegistry': '新しいレジストリ認証情報',
   'secretPicker.required': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8\u540d\u3068\u30c8\u30fc\u30af\u30f3\u306f\u5fc5\u9808\u3067\u3059',
 
   // -- Diagnostics --

@@ -34,6 +34,7 @@ const es = {
   'gitPullError.editToken': 'Editar token',
   'gitPullError.chooseAnother': 'Elegir otro',
   'registryCreds.title': 'Iniciar sesión en {host}',
+  'registryCreds.explain': 'Descargar imágenes de {host} requiere credenciales. Elija una existente o añada una nueva y guarde.',
   'registryCreds.host': 'Registry',
   'registryCreds.username': 'Usuario',
   'registryCreds.password': 'Contraseña',
@@ -163,6 +164,11 @@ const es = {
   'secretPicker.notFound': '(no encontrado)',
   'secretPicker.name': 'Nombre del secreto',
   'secretPicker.token': 'Token',
+  'secretPicker.host': 'Host del registro',
+  'secretPicker.username': 'Usuario',
+  'secretPicker.password': 'Contraseña',
+  'secretPicker.showAllHosts': 'Mostrar secretos de otros hosts ({count})',
+  'secretPicker.createTitleRegistry': 'Nueva credencial de registro',
   'secretPicker.required': 'El nombre del secreto y el token son obligatorios',
 
   // -- Diagnostics --

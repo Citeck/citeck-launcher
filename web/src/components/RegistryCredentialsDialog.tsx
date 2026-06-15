@@ -1,6 +1,7 @@
-import { useState } from 'react'
-import { createSecret, postAppRestart } from '../lib/api'
-import { FormDialog, type FormFieldSpec } from './FormDialog'
+import { useEffect, useState } from 'react'
+import { getRegistryBindings, setRegistryBinding } from '../lib/api'
+import { Modal } from './Modal'
+import { SecretPicker } from './SecretPicker'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
 
@@ -8,99 +9,101 @@ interface RegistryCredentialsDialogProps {
   open: boolean
   /** Docker registry hostname (the part before the first '/' in the image URL). */
   host: string
-  /** Optional app to restart after creds are saved (so pull retries immediately). */
+  /** App that prompted the dialog — retained for API compatibility; the daemon
+   *  retries all pull-failed apps when the binding is saved, so it is unused. */
   retryApp?: string
-  /** Called only on successful save (not on cancel). Invoked AFTER onClose so
-   * callers can fire a namespace-wide retry-pull-failed without parsing the
-   * dialog's internal state. */
+  /** Called only on a successful save (not on cancel), after onClose. */
   onSaved?: () => void
   onClose: () => void
 }
 
 /**
- * Port of Kotlin's registry-credentials prompt (`AppImagePullAction.kt:155-178`).
- * Fires when a Docker pull returns 401/403 and the user needs to provide
- * BASIC auth credentials for the registry.
+ * Registry-credentials prompt, unified with the git auth flow: it reuses the
+ * shared SecretPicker (filtered to REGISTRY_AUTH secrets tagged with this host)
+ * so the user PICKS an existing credential — entered once, reused across
+ * namespaces/workspaces — or adds a new one, instead of re-typing it per host.
  *
- * On save:
- *  1. Creates a secret with id AND scope `images-repo:{host}`, type
- *     `REGISTRY_AUTH`. The daemon resolves registry credentials by SCOPE only
- *     (see resolveRegistryAuth in internal/daemon/server.go: it matches
- *     `scope == "images-repo:<host>"`; an empty scope defaults to "global" in
- *     the store and never matches). Username and password are sent as
- *     separate fields (SecretCreateDto.username / .value) so passwords
- *     containing ':' round-trip untouched.
- *  2. Optionally restarts `retryApp` so the next pull attempt picks up the
- *     newly-stored secret without waiting for the reconciler tick.
+ * On save it binds the host to the chosen secret (POST /registry-bindings);
+ * the daemon then rebuilds the registry auth cache and retries every
+ * pull-failed app, so the stuck pull recovers without a restart.
  */
-export function RegistryCredentialsDialog({ open, host, retryApp, onSaved, onClose }: RegistryCredentialsDialogProps) {
+export function RegistryCredentialsDialog({ open, host, onSaved, onClose }: RegistryCredentialsDialogProps) {
   const { t } = useTranslation()
-  const [loading, setLoading] = useState(false)
+  const [selection, setSelection] = useState('')
+  const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const fields: FormFieldSpec[] = [
-    {
-      key: 'host',
-      label: t('registryCreds.host'),
-      type: 'display',
-      defaultValue: host,
-    },
-    {
-      key: 'username',
-      label: t('registryCreds.username'),
-      type: 'text',
-      required: true,
-    },
-    {
-      key: 'password',
-      label: t('registryCreds.password'),
-      type: 'password',
-      required: true,
-    },
-  ]
+  // Preselect the secret currently bound to this host so re-opening the dialog
+  // shows the active choice. Reset on each open so a stale selection from a
+  // previous host can't leak in.
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSelection('')
+    setError(null)
+    getRegistryBindings()
+      .then((b) => { if (!cancelled) setSelection(b[host] ?? '') })
+      .catch(() => { /* no daemon bindings yet — leave unselected */ })
+    return () => { cancelled = true }
+  }, [open, host])
 
-  async function handleSubmit(values: Record<string, unknown>) {
-    setLoading(true)
+  async function handleSave() {
+    if (!selection) return
+    setSaving(true)
     setError(null)
     try {
-      const username = String(values.username || '').trim()
-      const password = String(values.password || '')
-      // Daemon-side convention for registry auth secrets: the lookup key is
-      // the SCOPE `images-repo:<host>` (the id is set to the same value for
-      // readability, but only scope is matched). The Docker pull worker
-      // resolves this on every retry, so saving the secret is sufficient to
-      // unblock a stuck PULL_FAILED app.
-      await createSecret({
-        id: `images-repo:${host}`,
-        name: `Registry ${host}`,
-        type: 'REGISTRY_AUTH',
-        scope: `images-repo:${host}`,
-        username,
-        value: password,
-      })
+      await setRegistryBinding(host, selection)
       toast(t('registryCreds.saved'), 'success')
-      if (retryApp) {
-        try { await postAppRestart(retryApp) } catch { /* user can retry manually */ }
-      }
       onClose()
       onSaved?.()
     } catch (e) {
       setError((e as Error).message)
     } finally {
-      setLoading(false)
+      setSaving(false)
     }
   }
 
   return (
-    <FormDialog
+    <Modal
       open={open}
       title={t('registryCreds.title', { host })}
-      fields={fields}
-      loading={loading}
-      error={error}
-      submitLabel={t('registryCreds.save')}
-      onSubmit={handleSubmit}
-      onCancel={() => { setError(null); onClose() }}
-    />
+      onClose={onClose}
+      footer={
+        <>
+          <button
+            type="button"
+            className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
+            onClick={onClose}
+            disabled={saving}
+          >
+            {t('common.cancel')}
+          </button>
+          <button
+            type="button"
+            className="rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
+            onClick={handleSave}
+            disabled={saving || !selection}
+          >
+            {t('registryCreds.save')}
+          </button>
+        </>
+      }
+    >
+      <p className="text-xs text-muted-foreground">{t('registryCreds.explain', { host })}</p>
+      <SecretPicker
+        secretType="REGISTRY_AUTH"
+        host={host}
+        value={selection}
+        onChange={setSelection}
+        defaultNewName={host}
+        disabled={saving}
+      />
+      {error && (
+        <div className="rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">
+          {error}
+        </div>
+      )}
+    </Modal>
   )
 }

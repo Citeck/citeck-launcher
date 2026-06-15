@@ -8,6 +8,7 @@ import { getSecrets, deleteSecret, listWorkspaces } from '../lib/api'
 import type { SecretMetaDto, WorkspaceDto } from '../lib/types'
 import {
   createGitTokenSecret,
+  createRegistrySecret,
   secretDeleteMessage,
   workspacesUsingSecret,
 } from '../lib/secretPicker'
@@ -15,10 +16,17 @@ import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
 
 interface SecretPickerProps {
-  /** Selected GIT_TOKEN secret id ('' = nothing selected). */
+  /** Selected secret id ('' = nothing selected). */
   value: string
   onChange: (secretId: string) => void
-  /** Suggested name for the create-new modal, e.g. the repo host. */
+  /** Secret type the picker lists and creates. Defaults to GIT_TOKEN (one
+   *  token field); REGISTRY_AUTH adds username + password. */
+  secretType?: 'GIT_TOKEN' | 'REGISTRY_AUTH'
+  /** When set, the list is filtered to secrets tagged with this exact host
+   *  (with a "show all" escape), and the create form binds the new secret to
+   *  it. Used by the registry-credentials flow so creds are reused per host. */
+  host?: string
+  /** Suggested name for the create-new modal, e.g. the repo/registry host. */
   defaultNewName?: string
   disabled?: boolean
   /** Delegate row-edit clicks to the parent (one shared SecretEditDialog
@@ -65,12 +73,15 @@ interface PopupPos {
 export function SecretPicker({
   value,
   onChange,
+  secretType = 'GIT_TOKEN',
+  host,
   defaultNewName = '',
   disabled = false,
   onEditRequest,
   onSecretsChange,
   reloadKey = 0,
 }: SecretPickerProps) {
+  const isRegistry = secretType === 'REGISTRY_AUTH'
   const { t } = useTranslation()
   const [secrets, setSecrets] = useState<SecretMetaDto[]>([])
   // Workspace references power the delete-confirm warning (desktop only —
@@ -90,8 +101,12 @@ export function SecretPicker({
   const [createOpen, setCreateOpen] = useState(false)
   const [newName, setNewName] = useState('')
   const [newToken, setNewToken] = useState('')
+  const [newUser, setNewUser] = useState('') // REGISTRY_AUTH only
   const [createBusy, setCreateBusy] = useState(false)
   const [createError, setCreateError] = useState('')
+  // When a host filter is active, show only secrets tagged with it; this
+  // toggle reveals the rest so a credential from another host can be reused.
+  const [showAllHosts, setShowAllHosts] = useState(false)
 
   // Internal edit/delete dialogs (edit is delegated via onEditRequest when set).
   const [editTarget, setEditTarget] = useState<SecretMetaDto | null>(null)
@@ -106,7 +121,7 @@ export function SecretPicker({
 
   const reload = useCallback(async () => {
     try {
-      const list = (await getSecrets()).filter((s) => s.type === 'GIT_TOKEN')
+      const list = (await getSecrets()).filter((s) => s.type === secretType)
       setSecrets(list)
       onSecretsChangeRef.current?.(list)
     } catch (e) {
@@ -114,7 +129,7 @@ export function SecretPicker({
       // create-new path still works, so don't block the picker on this.
       console.warn('SecretPicker: failed to load secrets', e)
     }
-  }, [])
+  }, [secretType])
 
   useEffect(() => {
     // reload() only sets state AFTER an awaited fetch — not a synchronous
@@ -151,8 +166,14 @@ export function SecretPicker({
 
   const selected = secrets.find((s) => s.id === value)
   const missing = !!value && !selected
-  // Rows: one per secret + the trailing "Add new…" entry.
-  const rowCount = secrets.length + 1
+  // When a host filter is active (and not overridden), show only secrets tagged
+  // with that host; `selected` still resolves against the full list so the
+  // trigger label is correct even for an out-of-filter selection.
+  const filteringByHost = !!host && !showAllHosts
+  const visible = filteringByHost ? secrets.filter((s) => s.host === host) : secrets
+  const hiddenCount = secrets.length - visible.length
+  // Rows: one per visible secret + the trailing "Add new…" entry.
+  const rowCount = visible.length + 1
 
   function openPopup() {
     if (!triggerRef.current) return
@@ -183,6 +204,7 @@ export function SecretPicker({
     setOpen(false)
     setNewName(defaultNewName)
     setNewToken('')
+    setNewUser('')
     setCreateError('')
     setCreateOpen(true)
   }
@@ -206,7 +228,7 @@ export function SecretPicker({
         e.preventDefault()
         openPopup()
         setOpen(true)
-        const selIdx = secrets.findIndex((s) => s.id === value)
+        const selIdx = visible.findIndex((s) => s.id === value)
         setActiveIdx(selIdx >= 0 ? selIdx : 0)
       }
       return
@@ -225,24 +247,27 @@ export function SecretPicker({
       setActiveIdx((i) => Math.max(i - 1, 0))
     } else if (e.key === 'Enter') {
       e.preventDefault()
-      if (activeIdx >= 0 && activeIdx < secrets.length) pick(secrets[activeIdx].id)
-      else if (activeIdx === secrets.length) openCreate()
+      if (activeIdx >= 0 && activeIdx < visible.length) pick(visible[activeIdx].id)
+      else if (activeIdx === visible.length) openCreate()
     }
   }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
     const name = newName.trim()
-    if (!name || !newToken) {
+    if (!name || !newToken || (isRegistry && !newUser.trim())) {
       setCreateError(t('secretPicker.required'))
       return
     }
     setCreateBusy(true)
     setCreateError('')
     try {
-      const id = await createGitTokenSecret(name, newToken)
+      const id = isRegistry
+        ? await createRegistrySecret(name, newUser, newToken, host ?? '')
+        : await createGitTokenSecret(name, newToken)
       setCreateOpen(false)
       setNewToken('')
+      setNewUser('')
       await reload()
       // The fresh secret becomes the selected dropdown value.
       onChange(id)
@@ -314,7 +339,7 @@ export function SecretPicker({
               }}
               role="listbox"
             >
-              {secrets.map((s, idx) => {
+              {visible.map((s, idx) => {
                 const isSelected = s.id === value
                 return (
                   <div
@@ -358,18 +383,33 @@ export function SecretPicker({
                   </div>
                 )
               })}
-              <div className={secrets.length > 0 ? 'border-t border-border' : ''}>
+              <div className={visible.length > 0 ? 'border-t border-border' : ''}>
                 <button
                   type="button"
                   tabIndex={-1}
-                  className={`flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-sm hover:bg-muted ${activeIdx === secrets.length ? 'bg-muted' : ''}`}
-                  onMouseEnter={() => setActiveIdx(secrets.length)}
+                  className={`flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-sm hover:bg-muted ${activeIdx === visible.length ? 'bg-muted' : ''}`}
+                  onMouseEnter={() => setActiveIdx(visible.length)}
                   onClick={openCreate}
                 >
                   <Plus size={12} />
                   {t('secretPicker.addNew')}
                 </button>
               </div>
+              {/* Host filter escape: reveal secrets bound to other hosts so one
+                  can be reused here (creds differ per host, but the choice is
+                  the user's). */}
+              {filteringByHost && hiddenCount > 0 && (
+                <div className="border-t border-border">
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    className="flex w-full items-center px-2.5 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted"
+                    onClick={() => setShowAllHosts(true)}
+                  >
+                    {t('secretPicker.showAllHosts', { count: hiddenCount })}
+                  </button>
+                </div>
+              )}
             </div>,
             portalEl ?? document.body,
           )}
@@ -381,7 +421,7 @@ export function SecretPicker({
           (the selection only changes after a successful create). */}
       <Modal
         open={createOpen}
-        title={t('secretPicker.createTitle')}
+        title={isRegistry ? t('secretPicker.createTitleRegistry') : t('secretPicker.createTitle')}
         onClose={() => setCreateOpen(false)}
         onSubmit={handleCreate}
         footer={
@@ -404,6 +444,11 @@ export function SecretPicker({
           </>
         }
       >
+        {isRegistry && host && (
+          <ModalField label={t('secretPicker.host')}>
+            <input type="text" value={host} className={inputCls} disabled readOnly />
+          </ModalField>
+        )}
         <ModalField label={t('secretPicker.name')} required>
           <input
             type="text"
@@ -414,7 +459,19 @@ export function SecretPicker({
             disabled={createBusy}
           />
         </ModalField>
-        <ModalField label={t('secretPicker.token')} required>
+        {isRegistry && (
+          <ModalField label={t('secretPicker.username')} required>
+            <input
+              type="text"
+              value={newUser}
+              onChange={(e) => setNewUser(e.target.value)}
+              className={inputCls}
+              disabled={createBusy}
+              autoComplete="username"
+            />
+          </ModalField>
+        )}
+        <ModalField label={isRegistry ? t('secretPicker.password') : t('secretPicker.token')} required>
           <input
             type="password"
             value={newToken}

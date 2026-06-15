@@ -34,6 +34,7 @@ const fr = {
   'gitPullError.editToken': 'Modifier le jeton',
   'gitPullError.chooseAnother': 'En choisir un autre',
   'registryCreds.title': 'Connexion à {host}',
+  'registryCreds.explain': 'Le téléchargement d’images depuis {host} nécessite des identifiants. Choisissez-en un existant ou ajoutez-en un, puis enregistrez.',
   'registryCreds.host': 'Registry',
   'registryCreds.username': 'Nom d\'utilisateur',
   'registryCreds.password': 'Mot de passe',
@@ -163,6 +164,11 @@ const fr = {
   'secretPicker.notFound': '(introuvable)',
   'secretPicker.name': 'Nom du secret',
   'secretPicker.token': 'Jeton',
+  'secretPicker.host': 'Hôte du registre',
+  'secretPicker.username': 'Identifiant',
+  'secretPicker.password': 'Mot de passe',
+  'secretPicker.showAllHosts': 'Afficher les secrets des autres hôtes ({count})',
+  'secretPicker.createTitleRegistry': 'Nouvelles informations d’identification du registre',
   'secretPicker.required': 'Le nom du secret et le jeton sont obligatoires',
 
   // -- Diagnostics --
