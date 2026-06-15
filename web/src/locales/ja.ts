@@ -80,7 +80,6 @@ const ja = {
   'welcome.namespace.edit': '編集',
   'welcome.workspace.label': '\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9',
   'welcome.workspace.forceUpdate': '\u5f37\u5236\u66f4\u65b0',
-  'welcome.workspace.forceUpdate.inactive': '強制更新はアクティブなワークスペースでのみ使用できます',
   'welcome.workspace.updateSuccess': '\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u3092\u66f4\u65b0\u3057\u307e\u3057\u305f',
   'welcome.workspace.updateFailed': '\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u306e\u66f4\u65b0\u306b\u5931\u6557\u3057\u307e\u3057\u305f: {error}',
   'welcome.workspace.create': 'ワークスペースを作成...',

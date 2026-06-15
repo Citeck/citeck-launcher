@@ -80,7 +80,6 @@ const zh = {
   'welcome.namespace.edit': '编辑',
   'welcome.workspace.label': '工作区',
   'welcome.workspace.forceUpdate': '强制更新',
-  'welcome.workspace.forceUpdate.inactive': '强制更新仅适用于活动工作区',
   'welcome.workspace.updateSuccess': '工作区已更新',
   'welcome.workspace.updateFailed': '工作区更新失败：{error}',
   'welcome.workspace.create': '创建工作区...',

@@ -168,15 +168,16 @@ export function WorkspaceSelector({ activeId, onChanged }: WorkspaceSelectorProp
   }
 
   return (
-    <div className="relative" ref={containerRef}>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted/40 hover:text-foreground"
-      >
-        <span>{t('welcome.workspace.label')}: {activeName}</span>
-        {(loading || forceUpdating) ? <Loader2 size={12} className="animate-spin" /> : <ChevronDown size={12} />}
-      </button>
+    <div className="flex items-center gap-0.5" ref={containerRef}>
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+        >
+          <span>{t('welcome.workspace.label')}: {activeName}</span>
+          {loading ? <Loader2 size={12} className="animate-spin" /> : <ChevronDown size={12} />}
+        </button>
 
       {open && (
         <div className="absolute left-0 top-full z-50 mt-1 w-72 rounded-md border border-border bg-popover shadow-lg">
@@ -201,18 +202,6 @@ export function WorkspaceSelector({ activeId, onChanged }: WorkspaceSelectorProp
                   </span>
                 </button>
                 <div className="flex gap-1 opacity-0 group-hover:opacity-100">
-                  <button
-                    type="button"
-                    aria-label={t('welcome.workspace.forceUpdate')}
-                    title={ws.id === activeId
-                      ? t('welcome.workspace.forceUpdate')
-                      : t('welcome.workspace.forceUpdate.inactive')}
-                    disabled={ws.id !== activeId || forceUpdating}
-                    className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-background/60 disabled:opacity-40 disabled:hover:text-muted-foreground"
-                    onClick={() => handleForceUpdate(ws)}
-                  >
-                    <RefreshCw size={11} />
-                  </button>
                   <button
                     type="button"
                     aria-label={t('welcome.workspace.edit')}
@@ -248,6 +237,21 @@ export function WorkspaceSelector({ activeId, onChanged }: WorkspaceSelectorProp
           </div>
         </div>
       )}
+      </div>
+
+      {/* Force-update the ACTIVE workspace — moved out of the dropdown rows to
+          sit right of the selector on the top panel (Kotlin parity: active-
+          workspace Force Update). */}
+      <button
+        type="button"
+        aria-label={t('welcome.workspace.forceUpdate')}
+        title={t('welcome.workspace.forceUpdate')}
+        disabled={!active || forceUpdating}
+        className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted/40 disabled:opacity-40 disabled:hover:text-muted-foreground"
+        onClick={() => { if (active) void handleForceUpdate(active) }}
+      >
+        {forceUpdating ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+      </button>
 
       {formMode && (
         <WorkspaceFormDialog

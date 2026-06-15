@@ -82,7 +82,6 @@ const en = {
   'welcome.namespace.edit': 'Edit',
   'welcome.workspace.label': 'Workspace',
   'welcome.workspace.forceUpdate': 'Force Update',
-  'welcome.workspace.forceUpdate.inactive': 'Force Update is available for the active workspace only',
   'welcome.workspace.updateSuccess': 'Workspace updated',
   'welcome.workspace.updateFailed': 'Workspace update failed: {error}',
   'welcome.workspace.create': 'Create workspace...',

@@ -80,7 +80,6 @@ const de = {
   'welcome.namespace.edit': 'Bearbeiten',
   'welcome.workspace.label': 'Arbeitsbereich',
   'welcome.workspace.forceUpdate': 'Aktualisierung erzwingen',
-  'welcome.workspace.forceUpdate.inactive': 'Aktualisierung erzwingen ist nur für den aktiven Arbeitsbereich verfügbar',
   'welcome.workspace.updateSuccess': 'Arbeitsbereich aktualisiert',
   'welcome.workspace.updateFailed': 'Arbeitsbereich-Aktualisierung fehlgeschlagen: {error}',
   'welcome.workspace.create': 'Arbeitsbereich erstellen...',

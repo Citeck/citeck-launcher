@@ -80,7 +80,6 @@ const ru = {
   'welcome.namespace.edit': 'Редактировать',
   'welcome.workspace.label': 'Рабочее пространство',
   'welcome.workspace.forceUpdate': 'Принудительное обновление',
-  'welcome.workspace.forceUpdate.inactive': 'Force Update доступен только для активного рабочего пространства',
   'welcome.workspace.updateSuccess': 'Рабочее пространство обновлено',
   'welcome.workspace.updateFailed': 'Не удалось обновить рабочее пространство: {error}',
   'welcome.workspace.create': 'Создать рабочее пространство...',

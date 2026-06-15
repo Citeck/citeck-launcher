@@ -80,7 +80,6 @@ const pt = {
   'welcome.namespace.edit': 'Editar',
   'welcome.workspace.label': 'Espaço de trabalho',
   'welcome.workspace.forceUpdate': 'Forçar atualização',
-  'welcome.workspace.forceUpdate.inactive': 'Forçar atualização está disponível apenas para o espaço de trabalho ativo',
   'welcome.workspace.updateSuccess': 'Espaço de trabalho atualizado',
   'welcome.workspace.updateFailed': 'Falha ao atualizar o espaço de trabalho: {error}',
   'welcome.workspace.create': 'Criar espaço de trabalho...',

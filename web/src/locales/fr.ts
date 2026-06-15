@@ -80,7 +80,6 @@ const fr = {
   'welcome.namespace.edit': 'Modifier',
   'welcome.workspace.label': 'Espace de travail',
   'welcome.workspace.forceUpdate': 'Forcer la mise à jour',
-  'welcome.workspace.forceUpdate.inactive': 'Forcer la mise à jour n’est disponible que pour l’espace de travail actif',
   'welcome.workspace.updateSuccess': 'Espace de travail mis à jour',
   'welcome.workspace.updateFailed': 'Échec de la mise à jour de l’espace de travail : {error}',
   'welcome.workspace.create': 'Créer un espace de travail...',
