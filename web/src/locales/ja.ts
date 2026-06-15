@@ -54,6 +54,8 @@ const ja = {
   'dashboard.backToWelcome.disabled': 'ウェルカムへ戻る前に、実行中のアプリをすべて停止してください',
   'dashboard.diskLow.message': 'ディスク容量不足：{path} の空きは {free} です',
   'dashboard.diskLow.dismiss': '閉じる',
+  'dashboard.registryAuth.message': '次のレジストリの認証情報が必要です: {hosts}',
+  'dashboard.registryAuth.action': '認証情報を設定',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'まだ読み込み中です... 想定より時間がかかっています。\n問題の診断にご協力いただくため、「Dump System Info」ボタンをクリックして、データをメンテナーに送信してください。',
@@ -250,9 +252,6 @@ const ja = {
   'table.cpu.throttled': 'CPU \u30b9\u30ed\u30c3\u30c8\u30eb\u4e2d',
   'table.memory.warning': '\u30e1\u30e2\u30ea\u4f7f\u7528\u7387\u304c\u9ad8\u3044',
   'table.memory.critical': 'OOM \u4e0a\u9650\u306b\u8fd1\u3044',
-  'table.pullAuthRequired.label': '\u8a8d\u8a3c\u60c5\u5831\u3092\u8a2d\u5b9a',
-  'table.pullAuthRequired.tooltip': '\u30ec\u30b8\u30b9\u30c8\u30ea\u306e\u8a8d\u8a3c\u304c\u5fc5\u8981\u3067\u3059 \u2014 \u30af\u30ea\u30c3\u30af\u3057\u3066\u8a2d\u5b9a\u3057\u3066\u304f\u3060\u3055\u3044',
-  'table.pullAuthRetry.success': '\u8a8d\u8a3c\u60c5\u5831\u3092\u4fdd\u5b58\u3057\u307e\u3057\u305f\u3002\u30d7\u30eb\u3092\u518d\u8a66\u884c\u3057\u307e\u3059',
   'table.initStep': '\u521d\u671f\u5316 {step}/{total}',
   'table.initStep.tooltip': '\u5b9f\u884c\u4e2d\u306e\u521d\u671f\u5316\u30b9\u30c6\u30c3\u30d7: {name}',
 

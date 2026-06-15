@@ -54,6 +54,8 @@ const es = {
   'dashboard.backToWelcome.disabled': 'Detenga todas las aplicaciones en ejecución antes de volver al Inicio',
   'dashboard.diskLow.message': 'Poco espacio en disco: {free} libres en {path}',
   'dashboard.diskLow.dismiss': 'Descartar',
+  'dashboard.registryAuth.message': 'Se necesitan credenciales del registro para: {hosts}',
+  'dashboard.registryAuth.action': 'Configurar credenciales',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'Aún cargando... Esto está tardando más de lo esperado.\nPara ayudarnos a diagnosticar el problema, haga clic en el botón «Dump System Info» y envíe los datos a los mantenedores.',
@@ -250,9 +252,6 @@ const es = {
   'table.cpu.throttled': 'CPU limitada',
   'table.memory.warning': 'Uso elevado de memoria',
   'table.memory.critical': 'Cerca del límite OOM',
-  'table.pullAuthRequired.label': 'Configurar credenciales',
-  'table.pullAuthRequired.tooltip': 'Se requiere autenticación para el registry — haz clic para configurar',
-  'table.pullAuthRetry.success': 'Credenciales guardadas; reintentando descarga',
   'table.initStep': 'inic. {step}/{total}',
   'table.initStep.tooltip': 'Paso de inicialización en ejecución: {name}',
 

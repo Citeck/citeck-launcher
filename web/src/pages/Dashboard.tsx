@@ -22,6 +22,7 @@ import { CompactResourceRow } from '../components/CompactResourceRow'
 import { NamespaceControls } from '../components/NamespaceControls'
 import { BottomPanel } from '../components/BottomPanel'
 import { DiskLowBanner } from '../components/DiskLowBanner'
+import { RegistryAuthBanner } from '../components/RegistryAuthBanner'
 import { RightDrawer } from '../components/RightDrawer'
 import { AppDrawerContent } from '../components/AppDrawerContent'
 import { LogViewer } from '../components/LogViewer'
@@ -215,6 +216,9 @@ export function Dashboard() {
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
       {/* Low-disk warning from the daemon disk monitor (disk_low SSE event) */}
       <DiskLowBanner />
+      {/* Registry auth prompt — auto-opens the credentials dialog on a pull
+          auth failure and persists as a banner until resolved. */}
+      <RegistryAuthBanner />
       {/* Top: sidebar + table + drawer overlay */}
       <div className="flex flex-1 min-h-0 relative">
         {/* Left info panel */}

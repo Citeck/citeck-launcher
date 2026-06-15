@@ -54,6 +54,8 @@ const zh = {
   'dashboard.backToWelcome.disabled': '请先停止所有正在运行的应用',
   'dashboard.diskLow.message': '磁盘空间不足：{path} 仅剩 {free}',
   'dashboard.diskLow.dismiss': '关闭',
+  'dashboard.registryAuth.message': '需要以下镜像仓库的凭据：{hosts}',
+  'dashboard.registryAuth.action': '设置凭据',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': '仍在加载…耗时比预期更长。\n为帮助我们诊断问题，请点击“系统转储”按钮，并将数据发送给维护人员。',
@@ -250,9 +252,6 @@ const zh = {
   'table.cpu.throttled': 'CPU 受限',
   'table.memory.warning': '内存使用率高',
   'table.memory.critical': '接近 OOM 上限',
-  'table.pullAuthRequired.label': '配置凭据',
-  'table.pullAuthRequired.tooltip': '镜像仓库需要身份验证 — 点击进行配置',
-  'table.pullAuthRetry.success': '凭据已保存；正在重试拉取',
   'table.initStep': '初始化 {step}/{total}',
   'table.initStep.tooltip': '正在运行初始化步骤：{name}',
 

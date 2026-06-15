@@ -54,6 +54,8 @@ const pt = {
   'dashboard.backToWelcome.disabled': 'Pare todos os aplicativos em execução antes de voltar à tela inicial',
   'dashboard.diskLow.message': 'Pouco espaço em disco: {free} livres em {path}',
   'dashboard.diskLow.dismiss': 'Dispensar',
+  'dashboard.registryAuth.message': 'Credenciais do registry necessárias para: {hosts}',
+  'dashboard.registryAuth.action': 'Definir credenciais',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'Ainda carregando... Isso está demorando mais do que o esperado.\nPara nos ajudar a diagnosticar o problema, clique no botão \'Despejo do sistema\' e envie os dados aos mantenedores.',
@@ -250,9 +252,6 @@ const pt = {
   'table.cpu.throttled': 'CPU limitada',
   'table.memory.warning': 'Uso elevado de memória',
   'table.memory.critical': 'Próximo do limite OOM',
-  'table.pullAuthRequired.label': 'Configurar credenciais',
-  'table.pullAuthRequired.tooltip': 'Autenticação requerida para o registry — clique para configurar',
-  'table.pullAuthRetry.success': 'Credenciais salvas; tentando baixar novamente',
   'table.initStep': 'inic. {step}/{total}',
   'table.initStep.tooltip': 'Etapa de inicialização em execução: {name}',
 

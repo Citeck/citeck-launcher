@@ -54,6 +54,8 @@ const de = {
   'dashboard.backToWelcome.disabled': 'Stoppen Sie alle laufenden Anwendungen, bevor Sie zur Startseite zurückkehren',
   'dashboard.diskLow.message': 'Wenig Speicherplatz: {free} frei unter {path}',
   'dashboard.diskLow.dismiss': 'Ausblenden',
+  'dashboard.registryAuth.message': 'Registry-Zugangsdaten erforderlich für: {hosts}',
+  'dashboard.registryAuth.action': 'Zugangsdaten festlegen',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'Lädt noch... Dies dauert länger als erwartet.\nUm uns bei der Diagnose des Problems zu helfen, klicken Sie bitte auf „Systeminfo ausgeben“ und senden Sie die Daten an die Betreuer.',
@@ -250,9 +252,6 @@ const de = {
   'table.cpu.throttled': 'CPU gedrosselt',
   'table.memory.warning': 'Hohe Speicherauslastung',
   'table.memory.critical': 'Nahe am OOM-Limit',
-  'table.pullAuthRequired.label': 'Anmeldedaten konfigurieren',
-  'table.pullAuthRequired.tooltip': 'Authentifizierung für die Registry erforderlich — zum Konfigurieren klicken',
-  'table.pullAuthRetry.success': 'Anmeldedaten gespeichert; Pull wird wiederholt',
   'table.initStep': 'Init {step}/{total}',
   'table.initStep.tooltip': 'Laufender Init-Schritt: {name}',
 

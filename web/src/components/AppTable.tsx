@@ -1,7 +1,5 @@
-import { useState } from 'react'
-import { createPortal } from 'react-dom'
 import type { AppDto } from '../lib/types'
-import { postAppStop, postAppStart, postAppRestart, getAppFiles, postAppsRetryPullFailed } from '../lib/api'
+import { postAppStop, postAppStart, postAppRestart, getAppFiles } from '../lib/api'
 import { usePanelStore } from '../lib/panels'
 import { openSecondaryView } from '../lib/desktop'
 import { ContextMenu, type ContextMenuItem } from './ContextMenu'
@@ -10,8 +8,6 @@ import { useTranslation, type LocaleKey } from '../lib/i18n'
 import { toast } from '../lib/toast'
 import { copyText } from '../lib/clipboard'
 import { useDashboardStore } from '../lib/store'
-import { RegistryCredentialsDialog } from './RegistryCredentialsDialog'
-import { KeyRound } from 'lucide-react'
 import { isEditableFile } from '../lib/files'
 import { initProgressOf } from '../lib/initProgress'
 import { StatusBadge } from './StatusBadge'
@@ -145,26 +141,8 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
   const { t, tDynamic } = useTranslation()
   const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu()
   const pullProgress = useDashboardStore((s) => s.pullProgress)
-  const pullAuthRequired = useDashboardStore((s) => s.pullAuthRequired)
-  const clearPullAuthRequired = useDashboardStore((s) => s.clearPullAuthRequired)
-  // Single dialog instance per group; opened with the active app's host so the
-  // creds form is pre-filled. Closing also clears the per-app auth marker.
-  const [credsFor, setCredsFor] = useState<{ app: string; host: string } | null>(null)
-
-  function handleCredsClose() {
-    setCredsFor(null)
-  }
-
-  async function handleCredsSaved() {
-    const target = credsFor
-    if (target) clearPullAuthRequired(target.app)
-    try {
-      await postAppsRetryPullFailed()
-      toast(t('table.pullAuthRetry.success'), 'success')
-    } catch (e) {
-      toast((e as Error).message, 'error')
-    }
-  }
+  // Registry pull-auth prompting lives in the namespace-level RegistryAuthBanner
+  // (auto-opens the credentials dialog), not as a per-row button here.
 
   async function buildCogMenu(appName: string): Promise<ContextMenuItem[]> {
     try {
@@ -272,20 +250,6 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
                     </span>
                   )
                 )}
-                {app.status === 'PULL_FAILED' && pullAuthRequired[app.name] && (
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-1 rounded border border-warning/40 bg-warning/10 px-1.5 py-0 text-[10px] font-medium text-warning hover:bg-warning/20 leading-4"
-                    title={t('table.pullAuthRequired.tooltip')}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setCredsFor({ app: app.name, host: pullAuthRequired[app.name] })
-                    }}
-                  >
-                    <KeyRound size={10} />
-                    {t('table.pullAuthRequired.label')}
-                  </button>
-                )}
               </span>
             </td>
             <td className="py-[2px] pr-2 text-right">
@@ -365,20 +329,6 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
             <ContextMenu items={contextMenu.items} position={contextMenu.position} onClose={hideContextMenu} />
           </td>
         </tr>
-      )}
-      {/* Portaled to <body>: GroupRows renders inside <tbody>, and a <dialog>
-          is not a valid child of <tbody>. The portal keeps the modal in the
-          component tree (state/props intact) while moving its DOM out of the
-          table. */}
-      {createPortal(
-        <RegistryCredentialsDialog
-          open={credsFor !== null}
-          host={credsFor?.host ?? ''}
-          retryApp={credsFor?.app}
-          onClose={handleCredsClose}
-          onSaved={handleCredsSaved}
-        />,
-        document.body,
       )}
     </>
   )

@@ -54,6 +54,8 @@ const fr = {
   'dashboard.backToWelcome.disabled': 'Arrêtez toutes les applications avant de revenir à l’accueil',
   'dashboard.diskLow.message': 'Espace disque faible : {free} libres sur {path}',
   'dashboard.diskLow.dismiss': 'Masquer',
+  'dashboard.registryAuth.message': 'Identifiants du registre requis pour : {hosts}',
+  'dashboard.registryAuth.action': 'Définir les identifiants',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'Chargement toujours en cours... Cela prend plus de temps que prévu.\nPour nous aider à diagnostiquer le problème, veuillez cliquer sur le bouton « Vidage système » et envoyer les données aux mainteneurs.',
@@ -250,9 +252,6 @@ const fr = {
   'table.cpu.throttled': 'CPU brid\u00e9',
   'table.memory.warning': 'Utilisation m\u00e9moire \u00e9lev\u00e9e',
   'table.memory.critical': 'Proche de la limite OOM',
-  'table.pullAuthRequired.label': 'Configurer les identifiants',
-  'table.pullAuthRequired.tooltip': 'Authentification requise pour le registry — cliquez pour configurer',
-  'table.pullAuthRetry.success': 'Identifiants enregistrés ; nouvelle tentative de pull',
   'table.initStep': 'init. {step}/{total}',
   'table.initStep.tooltip': 'Étape d\'initialisation en cours : {name}',
 

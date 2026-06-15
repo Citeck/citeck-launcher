@@ -56,6 +56,8 @@ const en = {
   'dashboard.backToWelcome.disabled': 'Stop all running apps before returning to Welcome',
   'dashboard.diskLow.message': 'Low disk space: {free} free at {path}',
   'dashboard.diskLow.dismiss': 'Dismiss',
+  'dashboard.registryAuth.message': 'Registry credentials needed for: {hosts}',
+  'dashboard.registryAuth.action': 'Set credentials',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'Still loading... This is taking longer than expected.\nTo help us diagnose the issue, please click the \'Dump System Info\' button and send the data to the maintainers.',
@@ -252,9 +254,6 @@ const en = {
   'table.cpu.throttled': 'CPU throttled',
   'table.memory.warning': 'High memory usage',
   'table.memory.critical': 'Near OOM limit',
-  'table.pullAuthRequired.label': 'Configure credentials',
-  'table.pullAuthRequired.tooltip': 'Authentication required for registry — click to configure',
-  'table.pullAuthRetry.success': 'Credentials saved; retrying pull',
   'table.initStep': 'init {step}/{total}',
   'table.initStep.tooltip': 'Running init step: {name}',
 

@@ -54,6 +54,8 @@ const ru = {
   'dashboard.backToWelcome.disabled': 'Остановите все запущенные приложения, прежде чем вернуться',
   'dashboard.diskLow.message': 'Мало места на диске: свободно {free} в {path}',
   'dashboard.diskLow.dismiss': 'Скрыть',
+  'dashboard.registryAuth.message': 'Нужны учётные данные реестра для: {hosts}',
+  'dashboard.registryAuth.action': 'Указать креды',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'Загрузка занимает больше времени, чем обычно.\nЧтобы мы помогли разобраться, нажмите «Dump System Info» и отправьте дамп нам.',
@@ -250,9 +252,6 @@ const ru = {
   'table.cpu.throttled': 'CPU throttling',
   'table.memory.warning': 'Высокий расход памяти',
   'table.memory.critical': 'Близко к лимиту OOM',
-  'table.pullAuthRequired.label': 'Указать креды',
-  'table.pullAuthRequired.tooltip': 'Для реестра требуется аутентификация — нажмите, чтобы настроить',
-  'table.pullAuthRetry.success': 'Креды сохранены; повторяем pull',
   'table.initStep': 'иниц. {step}/{total}',
   'table.initStep.tooltip': 'Выполняется шаг инициализации: {name}',
 
