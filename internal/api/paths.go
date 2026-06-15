@@ -55,6 +55,10 @@ const (
 	// RegistryBindings maps image-registry hosts to stored REGISTRY_AUTH
 	// secrets for the active workspace (GET lists, POST sets/removes).
 	RegistryBindings = APIV1 + "/registry-bindings"
+	// RegistryBindingsMissing lists auth-required registry hosts that have no
+	// resolvable credential yet — the pre-start check that blocks a doomed
+	// start until the user provides them.
+	RegistryBindingsMissing = RegistryBindings + "/missing"
 
 	// Licenses is the enterprise-license CRUD collection; LicensesStatus is
 	// the read-only effective-license summary consumed by `citeck status`

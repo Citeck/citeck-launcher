@@ -12,8 +12,11 @@ interface RegistryCredentialsDialogProps {
   /** App that prompted the dialog — retained for API compatibility; the daemon
    *  retries all pull-failed apps when the binding is saved, so it is unused. */
   retryApp?: string
-  /** Called only on a successful save (not on cancel), after onClose. */
+  /** Called only on a successful save (never on cancel). The parent is
+   *  responsible for closing the dialog — this lets a save be told apart from
+   *  a cancel (onClose). */
   onSaved?: () => void
+  /** Called when the dialog is dismissed without saving (cancel / backdrop). */
   onClose: () => void
 }
 
@@ -55,7 +58,10 @@ export function RegistryCredentialsDialog({ open, host, onSaved, onClose }: Regi
     try {
       await setRegistryBinding(host, selection)
       toast(t('registryCreds.saved'), 'success')
-      onClose()
+      // onSaved is the success signal; the parent closes (and, for the
+      // pre-flight gate, advances to the next host or runs the pending start).
+      // We deliberately do NOT call onClose here so callers can tell a save
+      // apart from a cancel.
       onSaved?.()
     } catch (e) {
       setError((e as Error).message)

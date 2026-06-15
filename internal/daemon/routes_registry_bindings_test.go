@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/citeck/citeck-launcher/internal/api"
+	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/storage"
 )
 
@@ -51,4 +52,43 @@ func TestRegistryBindingEndpoint(t *testing.T) {
 	// Empty secret id unbinds.
 	require.Equal(t, http.StatusOK, post(`{"host":"harbor.citeck.ru","secretId":""}`).Code)
 	assert.Empty(t, list())
+}
+
+func TestMissingRegistryAuthEndpoint(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	svc, err := storage.NewSecretService(store)
+	require.NoError(t, err)
+	require.NoError(t, svc.SetMasterPassword("test-master", false))
+	d := &Daemon{store: store, secretService: svc, activeNs: &activeNamespace{
+		workspaceID: "ws1",
+		workspaceConfig: &bundle.WorkspaceConfig{ImageRepos: []bundle.ImageRepo{
+			{ID: "core", URL: "nexus.citeck.ru"},                                        // public, no auth
+			{ID: "enterprise", URL: "enterprise-registry.citeck.ru", AuthType: "BASIC"}, // needs auth
+		}},
+	}}
+	mux := http.NewServeMux()
+	d.registerRoutes(mux)
+
+	missing := func() []string {
+		req := httptest.NewRequest("GET", api.RegistryBindingsMissing, nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+		var out []string
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+		return out
+	}
+
+	// The auth-required registry with no credential is reported; the public one is not.
+	assert.Equal(t, []string{"enterprise-registry.citeck.ru"}, missing())
+
+	// Provide a credential and bind it → no longer missing.
+	require.NoError(t, svc.SaveSecret(storage.Secret{
+		SecretMeta: storage.SecretMeta{ID: "reg", Type: storage.SecretRegistryAuth, Username: "u"},
+		Value:      "p",
+	}))
+	require.NoError(t, store.SetRegistryBinding("ws1", "enterprise-registry.citeck.ru", "reg"))
+	assert.Empty(t, missing())
 }

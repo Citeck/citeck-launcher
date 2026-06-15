@@ -3,10 +3,39 @@ package daemon
 import (
 	"errors"
 	"net/http"
+	"sort"
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/storage"
 )
+
+// handleMissingRegistryAuth lists auth-required registry hosts (from the active
+// workspace's imageRepos) that have no resolvable credential yet — neither an
+// explicit host binding nor a scope-matched secret. The Web UI calls this
+// before starting a namespace and blocks the start until the user provides
+// them, so a missing credential surfaces up front instead of stalling the
+// namespace mid-pull.
+func (d *Daemon) handleMissingRegistryAuth(w http.ResponseWriter, _ *http.Request) {
+	missing := []string{}
+	wsCfg := d.active().workspaceConfig
+	if wsCfg == nil {
+		writeJSON(w, missing)
+		return
+	}
+	reposByHost := wsCfg.ImageReposByHost()
+	bindings, _ := d.store.ListRegistryBindings(d.activeWorkspaceID())
+	authByHost := buildRegistryAuthCache(reposByHost, d.secretReaderFunc(), bindings)
+	for host, repo := range reposByHost {
+		if repo.AuthType == "" {
+			continue // registry needs no authentication
+		}
+		if _, ok := authByHost[host]; !ok {
+			missing = append(missing, host)
+		}
+	}
+	sort.Strings(missing)
+	writeJSON(w, missing)
+}
 
 // handleListRegistryBindings returns the active workspace's image-registry
 // host → secret-id bindings, so the credential picker can show (and preselect)

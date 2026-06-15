@@ -546,6 +546,12 @@ export async function setRegistryBinding(host: string, secretId: string): Promis
   return request('POST', '/registry-bindings', { body: { host, secretId } })
 }
 
+// Auth-required registry hosts with no resolvable credential yet. The Web UI
+// checks this before starting a namespace and blocks the start until resolved.
+export async function getMissingRegistryAuth(): Promise<string[]> {
+  return request('GET', '/registry-bindings/missing')
+}
+
 export async function testSecret(id: string): Promise<ActionResultDto> {
   return request('GET', `/secrets/${enc(id)}/test`)
 }

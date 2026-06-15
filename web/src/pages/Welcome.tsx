@@ -8,6 +8,7 @@ import { NamespaceDialog } from '../components/NamespaceDialog'
 import { NamespaceEditDialog } from '../components/NamespaceEditDialog'
 import { LoadingHint } from '../components/LoadingHint'
 import { GitPullErrorDialog, type GitPullDecision } from '../components/GitPullErrorDialog'
+import { useRegistryPreflight } from '../components/RegistryPreflight'
 import { ContextMenu } from '../components/ContextMenu'
 import type { ContextMenuItem } from '../components/ContextMenu'
 import { useContextMenu } from '../hooks/useContextMenu'
@@ -49,6 +50,8 @@ export function Welcome() {
   // switch from the top-panel picker re-renders + reloads this screen.
   const activeWorkspaceId = useActiveWorkspaceId()
   const workspaceLoaded = useDaemonStatusStore((s) => s.status !== null)
+  // Pre-start registry-credentials gate (hard block — see useRegistryPreflight).
+  const { preflight, dialog: registryPreflightDialog } = useRegistryPreflight()
   // Kotlin parity (WelcomeScreen.kt:281) — guard MessageDialog when QS clicked
   // but the workspace already has namespaces. Tracked as a transient flag.
   const navigate = useNavigate()
@@ -191,7 +194,13 @@ export function Welcome() {
     navigate('/')
   }
 
-  async function handleQuickStart(qs: QuickStartDto | null) {
+  // Block the quick start until every auth-required registry has a credential,
+  // so a fresh namespace never starts only to stall mid-pull on a 401.
+  function handleQuickStart(qs: QuickStartDto | null) {
+    void preflight(() => doQuickStart(qs))
+  }
+
+  async function doQuickStart(qs: QuickStartDto | null) {
     // QS buttons are only rendered when the workspace has no namespaces yet
     // (see the render gate below) so this handler runs only for the empty-
     // workspace bootstrap path.
@@ -502,6 +511,7 @@ export function Welcome() {
           />
         )
       })()}
+      {registryPreflightDialog}
     </div>
   )
 }

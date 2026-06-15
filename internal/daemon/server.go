@@ -814,6 +814,7 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/secrets/{id}/test", d.handleTestSecret)
 
 	// Registry auth bindings (host → secret) for reusable registry credentials
+	mux.HandleFunc("GET "+api.RegistryBindingsMissing, d.handleMissingRegistryAuth)
 	mux.HandleFunc("GET "+api.RegistryBindings, d.handleListRegistryBindings)
 	mux.HandleFunc("POST "+api.RegistryBindings, d.handleSetRegistryBinding)
 

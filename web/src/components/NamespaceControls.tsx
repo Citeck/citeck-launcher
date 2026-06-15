@@ -5,6 +5,7 @@ import { toast } from '../lib/toast'
 import { showError } from '../lib/errorModal'
 import { ContextMenu, type ContextMenuItem } from './ContextMenu'
 import { useContextMenu } from '../hooks/useContextMenu'
+import { useRegistryPreflight } from './RegistryPreflight'
 import { Play, Square } from 'lucide-react'
 
 interface NamespaceControlsProps {
@@ -24,6 +25,8 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
   const fetchData = useDashboardStore((s) => s.fetchData)
   const { t } = useTranslation()
   const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu()
+  // Pre-start registry-credentials gate (hard block) for pull-capable actions.
+  const { preflight, dialog: registryPreflightDialog } = useRegistryPreflight()
 
   const isStopped = status === 'STOPPED'
   const isRunning = status === 'RUNNING' || status === 'STALLED'
@@ -36,10 +39,7 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
   // Kotlin used reload semantics when running, start when stopped.
   const primaryAction: Action = isRunning ? 'reload' : 'start'
 
-  // Fire start / stop / reload immediately. The ConfirmModal that used to
-  // gate every click was double-bookkeeping for actions the user had already
-  // explicitly clicked; errors go to the global error modal as before.
-  async function run(a: Action) {
+  async function exec(a: Action) {
     try {
       await actionFns[a]()
       const toastAction = a === 'forceStart' ? 'start' : a
@@ -53,6 +53,19 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
         details: e.stack,
       })
     }
+  }
+
+  // Fire start / stop / reload immediately. The ConfirmModal that used to
+  // gate every click was double-bookkeeping for actions the user had already
+  // explicitly clicked; errors go to the global error modal as before.
+  // Pull-capable actions first clear the registry-credentials pre-flight gate
+  // so they don't start only to stall mid-pull; stop never pulls.
+  async function run(a: Action) {
+    if (a === 'stop') {
+      await exec(a)
+      return
+    }
+    await preflight(() => exec(a))
   }
 
   function primaryContextItems(): ContextMenuItem[] {
@@ -101,6 +114,7 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
       {contextMenu && (
         <ContextMenu items={contextMenu.items} position={contextMenu.position} onClose={hideContextMenu} />
       )}
+      {registryPreflightDialog}
     </>
   )
 }
