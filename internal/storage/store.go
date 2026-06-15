@@ -48,12 +48,18 @@ type WorkspaceDto struct {
 // because it is metadata, not a credential: the write-only secret-edit form
 // prefills it from the meta listing without ever decrypting the value.
 type SecretMeta struct {
-	ID        string     `json:"id"`
-	Name      string     `json:"name"`
-	Type      SecretType `json:"type"`
-	Scope     string     `json:"scope"`
-	Username  string     `json:"username,omitempty"`
-	CreatedAt time.Time  `json:"createdAt"`
+	ID    string     `json:"id"`
+	Name  string     `json:"name"`
+	Type  SecretType `json:"type"`
+	Scope string     `json:"scope"`
+	// Host is the registry/git host this secret authenticates against (e.g.
+	// "enterprise-registry.citeck.ru"). Used by the host-filtered secret
+	// picker so the user reuses an existing credential instead of re-entering
+	// it per workspace/namespace. Backfilled for legacy REGISTRY_AUTH secrets
+	// from their "images-repo:<host>" scope. Empty for host-agnostic secrets.
+	Host      string    `json:"host,omitempty"`
+	Username  string    `json:"username,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 // Secret holds a full secret including its value.

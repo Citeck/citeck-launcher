@@ -128,6 +128,7 @@ func (s *FileStore) SaveSecret(secret Secret) error {
 		Username:  secret.Username,
 		Value:     secret.Value,
 		Scope:     secret.Scope,
+		Host:      secret.Host,
 		CreatedAt: secret.CreatedAt,
 	}, "", "  ")
 	if err != nil {
@@ -469,6 +470,7 @@ type secretFile struct {
 	Username  string     `json:"username,omitempty"`
 	Value     string     `json:"value"`
 	Scope     string     `json:"scope"`
+	Host      string     `json:"host,omitempty"`
 	CreatedAt time.Time  `json:"createdAt"`
 }
 
@@ -490,12 +492,22 @@ func (s *FileStore) readSecret(path string) (*Secret, error) {
 			username, value = u, v
 		}
 	}
+	host := sf.Host
+	if host == "" && sf.Type == SecretRegistryAuth {
+		// Backfill the host tag for legacy registry secrets written before the
+		// host-filtered picker (SQLite gets this via migration v8); derive it
+		// from the "images-repo:<host>" scope so they surface in the picker.
+		if h, ok := strings.CutPrefix(sf.Scope, "images-repo:"); ok && h != "" {
+			host = h
+		}
+	}
 	return &Secret{
 		SecretMeta: SecretMeta{
 			ID:        sf.ID,
 			Name:      sf.Name,
 			Type:      sf.Type,
 			Scope:     sf.Scope,
+			Host:      host,
 			Username:  username,
 			CreatedAt: sf.CreatedAt,
 		},

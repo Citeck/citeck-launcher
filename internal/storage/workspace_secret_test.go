@@ -39,6 +39,17 @@ func TestSQLiteMigrationV7_AddsWorkspaceSecretID(t *testing.T) {
 	mustExec(`INSERT INTO workspaces (id, name, repo_url, repo_branch, repo_pull_period, auth_type)
 		VALUES ('ws-old', 'Old', 'https://gitlab.example.com/old.git', 'main', 'PT2H', 'TOKEN')`)
 	mustExec(`CREATE TABLE launcher_state (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')`)
+	// A real v6 DB always has the secrets table (created at v1, username added
+	// at v3); seed it so the later v8 migration (ADD COLUMN host) can run.
+	mustExec(`CREATE TABLE secrets (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL DEFAULT '',
+		type TEXT NOT NULL DEFAULT '',
+		value TEXT NOT NULL DEFAULT '',
+		scope TEXT NOT NULL DEFAULT 'global',
+		username TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL DEFAULT ''
+	)`)
 	require.NoError(t, db.Close())
 
 	store, err := NewSQLiteStore(dir)

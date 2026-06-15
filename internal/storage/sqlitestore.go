@@ -244,6 +244,21 @@ func (s *SQLiteStore) migrate() error {
 				`ALTER TABLE workspaces ADD COLUMN secret_id TEXT NOT NULL DEFAULT ''`,
 			},
 		},
+		{
+			// v8 — host-tagged secrets for the host-filtered registry/git secret
+			// picker. Backfill legacy REGISTRY_AUTH secrets from their
+			// "images-repo:<host>" scope so they show up (and stay editable) in
+			// the standard picker filtered by that host.
+			version: 8,
+			stmts: []string{
+				`ALTER TABLE secrets ADD COLUMN host TEXT NOT NULL DEFAULT ''`,
+				`UPDATE secrets
+				 SET host = substr(scope, length('images-repo:') + 1)
+				 WHERE host = ''
+				   AND type = 'REGISTRY_AUTH'
+				   AND scope LIKE 'images-repo:%'`,
+			},
+		},
 	}
 
 	for _, m := range migrations {
@@ -365,7 +380,7 @@ func (s *SQLiteStore) DeleteWorkspace(id string) error {
 // included — it is stored plaintext (only Value is encrypted) and the
 // write-only edit form prefills it from this listing.
 func (s *SQLiteStore) ListSecrets() ([]SecretMeta, error) {
-	rows, err := s.db.Query("SELECT id, name, type, scope, username, created_at FROM secrets ORDER BY id")
+	rows, err := s.db.Query("SELECT id, name, type, scope, host, username, created_at FROM secrets ORDER BY id")
 	if err != nil {
 		return nil, fmt.Errorf("query secrets: %w", err)
 	}
@@ -375,7 +390,7 @@ func (s *SQLiteStore) ListSecrets() ([]SecretMeta, error) {
 	for rows.Next() {
 		var sm SecretMeta
 		var createdStr string
-		if err := rows.Scan(&sm.ID, &sm.Name, &sm.Type, &sm.Scope, &sm.Username, &createdStr); err != nil {
+		if err := rows.Scan(&sm.ID, &sm.Name, &sm.Type, &sm.Scope, &sm.Host, &sm.Username, &createdStr); err != nil {
 			return nil, fmt.Errorf("scan secret row: %w", err)
 		}
 		sm.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
@@ -392,8 +407,8 @@ func (s *SQLiteStore) GetSecret(id string) (*Secret, error) {
 	var sec Secret
 	var createdStr string
 	err := s.db.QueryRow(
-		"SELECT id, name, type, value, username, scope, created_at FROM secrets WHERE id = ?", id,
-	).Scan(&sec.ID, &sec.Name, &sec.Type, &sec.Value, &sec.Username, &sec.Scope, &createdStr)
+		"SELECT id, name, type, value, username, scope, host, created_at FROM secrets WHERE id = ?", id,
+	).Scan(&sec.ID, &sec.Name, &sec.Type, &sec.Value, &sec.Username, &sec.Scope, &sec.Host, &createdStr)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("secret %q not found", id)
 	}
@@ -413,9 +428,9 @@ func (s *SQLiteStore) SaveSecret(secret Secret) error {
 		secret.CreatedAt = time.Now()
 	}
 	_, err := s.db.Exec(`
-		INSERT INTO secrets (id, name, type, value, username, scope, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET name=excluded.name, type=excluded.type, value=excluded.value, username=excluded.username, scope=excluded.scope
-	`, secret.ID, secret.Name, secret.Type, secret.Value, secret.Username, secret.Scope, secret.CreatedAt.Format(time.RFC3339))
+		INSERT INTO secrets (id, name, type, value, username, scope, host, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET name=excluded.name, type=excluded.type, value=excluded.value, username=excluded.username, scope=excluded.scope, host=excluded.host
+	`, secret.ID, secret.Name, secret.Type, secret.Value, secret.Username, secret.Scope, secret.Host, secret.CreatedAt.Format(time.RFC3339))
 	if err != nil {
 		return fmt.Errorf("save secret %s: %w", secret.ID, err)
 	}
