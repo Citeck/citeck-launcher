@@ -92,3 +92,18 @@ func TestMissingRegistryAuthEndpoint(t *testing.T) {
 	require.NoError(t, store.SetRegistryBinding("ws1", "enterprise-registry.citeck.ru", "reg"))
 	assert.Empty(t, missing())
 }
+
+func TestImageRegistryHost(t *testing.T) {
+	cases := map[string]string{
+		"enterprise-registry.citeck.ru/ecos/app:1.2.3": "enterprise-registry.citeck.ru",
+		"nexus.citeck.ru/img":                          "nexus.citeck.ru",
+		"localhost:5000/img":                           "localhost:5000",
+		"postgres:15":                                  "", // no registry, tag only
+		"library/postgres":                             "", // Docker Hub library ref
+		"postgres":                                     "", // bare image
+		"":                                             "",
+	}
+	for img, want := range cases {
+		assert.Equal(t, want, imageRegistryHost(img), "imageRegistryHost(%q)", img)
+	}
+}

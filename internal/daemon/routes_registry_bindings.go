@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/storage"
@@ -17,7 +18,8 @@ import (
 // namespace mid-pull.
 func (d *Daemon) handleMissingRegistryAuth(w http.ResponseWriter, _ *http.Request) {
 	missing := []string{}
-	wsCfg := d.active().workspaceConfig
+	act := d.active()
+	wsCfg := act.workspaceConfig
 	if wsCfg == nil {
 		writeJSON(w, missing)
 		return
@@ -25,16 +27,59 @@ func (d *Daemon) handleMissingRegistryAuth(w http.ResponseWriter, _ *http.Reques
 	reposByHost := wsCfg.ImageReposByHost()
 	bindings, _ := d.store.ListRegistryBindings(d.activeWorkspaceID())
 	authByHost := buildRegistryAuthCache(reposByHost, d.secretReaderFunc(), bindings)
-	for host, repo := range reposByHost {
-		if repo.AuthType == "" {
-			continue // registry needs no authentication
+
+	// authRequiredHost reports whether a host is a declared auth-required
+	// registry that currently has no resolvable credential.
+	authRequiredHost := func(host string) bool {
+		repo, declared := reposByHost[host]
+		if !declared || repo.AuthType == "" {
+			return false
 		}
-		if _, ok := authByHost[host]; !ok {
-			missing = append(missing, host)
+		_, hasCred := authByHost[host]
+		return !hasCred
+	}
+
+	if act.runtime != nil {
+		// Namespace is loaded — check only the hosts its app images actually
+		// pull from, so a declared-but-unused auth registry never prompts.
+		seen := map[string]bool{}
+		for _, img := range act.runtime.AppImages() {
+			host := imageRegistryHost(img)
+			if host == "" || seen[host] {
+				continue
+			}
+			seen[host] = true
+			if authRequiredHost(host) {
+				missing = append(missing, host)
+			}
+		}
+	} else {
+		// No namespace loaded yet (e.g. before a fresh create) — fall back to
+		// every declared auth-required registry.
+		for host := range reposByHost {
+			if authRequiredHost(host) {
+				missing = append(missing, host)
+			}
 		}
 	}
 	sort.Strings(missing)
 	writeJSON(w, missing)
+}
+
+// imageRegistryHost extracts the registry host from an image reference: the
+// part before the first '/', but only when it looks like a host (contains '.'
+// or ':' or is "localhost") — otherwise the image is a Docker Hub library
+// reference with no explicit registry.
+func imageRegistryHost(image string) string {
+	slash := strings.Index(image, "/")
+	if slash <= 0 {
+		return ""
+	}
+	first := image[:slash]
+	if strings.ContainsAny(first, ".:") || first == "localhost" {
+		return first
+	}
+	return ""
 }
 
 // handleListRegistryBindings returns the active workspace's image-registry

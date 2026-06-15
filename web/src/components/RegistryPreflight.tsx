@@ -19,8 +19,13 @@ export function useRegistryPreflight() {
   const [queue, setQueue] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const pendingAction = useRef<(() => void | Promise<void>) | null>(null)
+  const onCancelRef = useRef<(() => void) | null>(null)
 
-  async function preflight(action: () => void | Promise<void>) {
+  // preflight(action, onCancel?): runs `action` once every auth-required
+  // registry has a credential; otherwise prompts per missing host and runs
+  // `action` only when all are resolved. Cancelling invokes `onCancel` (if
+  // given) and never runs `action` (hard block).
+  async function preflight(action: () => void | Promise<void>, onCancel?: () => void) {
     setBusy(true)
     // Default []: a failed check must not block the start on the check itself.
     let missing: string[] = []
@@ -36,12 +41,14 @@ export function useRegistryPreflight() {
       return
     }
     pendingAction.current = action
+    onCancelRef.current = onCancel ?? null
     setQueue(missing)
   }
 
   function runPending() {
     const action = pendingAction.current
     pendingAction.current = null
+    onCancelRef.current = null
     setQueue([])
     void action?.()
   }
@@ -59,8 +66,11 @@ export function useRegistryPreflight() {
 
   function handleCancel() {
     // Hard block: cancelling aborts the whole start.
+    const cb = onCancelRef.current
     pendingAction.current = null
+    onCancelRef.current = null
     setQueue([])
+    cb?.()
   }
 
   const dialog = (

@@ -133,6 +133,28 @@ func (r *Runtime) AppliedConfig() *Config {
 	return r.config
 }
 
+// AppImages returns the distinct container images of the namespace's apps.
+// Used by the registry pre-start check so it prompts only for registries the
+// namespace's images actually pull from (not every auth-declared workspace repo).
+func (r *Runtime) AppImages() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	seen := make(map[string]struct{}, len(r.apps))
+	out := make([]string, 0, len(r.apps))
+	for _, app := range r.apps {
+		img := app.Def.Image
+		if img == "" {
+			continue
+		}
+		if _, ok := seen[img]; ok {
+			continue
+		}
+		seen[img] = struct{}{}
+		out = append(out, img)
+	}
+	return out
+}
+
 // KindToString converts an ApplicationKind to its API string representation.
 func KindToString(k appdef.ApplicationKind) string {
 	switch k {

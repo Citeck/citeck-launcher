@@ -194,10 +194,8 @@ export function Welcome() {
     navigate('/')
   }
 
-  // Block the quick start until every auth-required registry has a credential,
-  // so a fresh namespace never starts only to stall mid-pull on a 401.
   function handleQuickStart(qs: QuickStartDto | null) {
-    void preflight(() => doQuickStart(qs))
+    void doQuickStart(qs)
   }
 
   async function doQuickStart(qs: QuickStartDto | null) {
@@ -240,23 +238,47 @@ export function Welcome() {
       // Repo clone + bundle resolution + generation finished — the stepper's
       // "bundle" stage completes once the namespace lands in the store.
       useQuickStartStore.getState().created()
+    } catch (e) {
+      reportQuickStartError(e)
+      return
+    }
+    // The namespace (and its app images) now exists — gate the START on its
+    // ACTUAL image registries so we don't start only to stall mid-pull on a
+    // 401. Cancelling leaves it created-but-stopped and drops the stepper.
+    await preflight(finishQuickStart, abortQuickStart)
+  }
+
+  async function finishQuickStart() {
+    try {
       await postNamespaceStart()
       // Pull the fresh namespace into the dashboard store; from here the SSE
       // events keep it updated and the stepper tracks the bootstrap. The user
       // stays on Welcome (stepper) and can open the Dashboard at any time.
       await fetchData()
     } catch (e) {
-      const err = e instanceof Error ? e : new Error(String(e))
-      // The code rides along in the store (not component state) for the same
-      // remount reason as the message itself — see qsError above.
-      useQuickStartStore.getState().fail(err.message, e instanceof ApiError ? e.code : '')
-      setStartError(err.message)
-      showError({
-        title: t('welcome.quickStart'),
-        message: t('welcome.startFailed', { error: err.message }),
-        details: err.stack,
-      })
+      reportQuickStartError(e)
     }
+  }
+
+  function abortQuickStart() {
+    // User cancelled the credential prompt: the namespace is created but not
+    // started. Drop the stepper and refresh so Welcome shows it (stopped) —
+    // the user can set credentials and start it from the dashboard.
+    useQuickStartStore.getState().dismiss()
+    loadData()
+  }
+
+  function reportQuickStartError(e: unknown) {
+    const err = e instanceof Error ? e : new Error(String(e))
+    // The code rides along in the store (not component state) for the same
+    // remount reason as the message itself — see qsError above.
+    useQuickStartStore.getState().fail(err.message, e instanceof ApiError ? e.code : '')
+    setStartError(err.message)
+    showError({
+      title: t('welcome.quickStart'),
+      message: t('welcome.startFailed', { error: err.message }),
+      details: err.stack,
+    })
   }
 
   function nsContextItems(ns: NamespaceSummaryDto): ContextMenuItem[] {
