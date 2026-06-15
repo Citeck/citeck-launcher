@@ -133,15 +133,21 @@ func (r *Runtime) AppliedConfig() *Config {
 	return r.config
 }
 
-// AppImages returns the distinct container images of the namespace's apps.
-// Used by the registry pre-start check so it prompts only for registries the
-// namespace's images actually pull from (not every auth-declared workspace repo).
-func (r *Runtime) AppImages() []string {
+// StartableAppImages returns the distinct container images of the apps that
+// will actually be pulled/started — i.e. the active bundle's apps minus
+// detached (manually stopped / template-detached) ones. Used by the registry
+// pre-start check so it prompts only for registries those images pull from,
+// not every auth-declared workspace repo, and never for a registry used solely
+// by a detached app that won't start.
+func (r *Runtime) StartableAppImages() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	seen := make(map[string]struct{}, len(r.apps))
 	out := make([]string, 0, len(r.apps))
 	for _, app := range r.apps {
+		if r.manualStoppedApps[app.Name] {
+			continue // detached — not pulled/started
+		}
 		img := app.Def.Image
 		if img == "" {
 			continue

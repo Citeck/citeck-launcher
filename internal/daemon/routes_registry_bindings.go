@@ -40,10 +40,11 @@ func (d *Daemon) handleMissingRegistryAuth(w http.ResponseWriter, _ *http.Reques
 	}
 
 	if act.runtime != nil {
-		// Namespace is loaded — check only the hosts its app images actually
-		// pull from, so a declared-but-unused auth registry never prompts.
+		// Namespace is loaded — check only the hosts the apps that will
+		// actually start pull from (active bundle minus detached apps), so a
+		// declared-but-unused (or detached-only) auth registry never prompts.
 		seen := map[string]bool{}
-		for _, img := range act.runtime.AppImages() {
+		for _, img := range act.runtime.StartableAppImages() {
 			host := imageRegistryHost(img)
 			if host == "" || seen[host] {
 				continue
