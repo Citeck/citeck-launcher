@@ -9,13 +9,6 @@ import type { LocaleKey } from './i18n'
  * unit-testable without a DOM.
  */
 
-/**
- * Sentinel for the "Custom…" entry in the secret scope select. Never sent to
- * the API — the edit/create forms swap it for the free-text scopeCustom
- * value. Shared by SecretsDialog (create form) and SecretEditDialog.
- */
-export const CUSTOM_SCOPE = '__custom__'
-
 /** Slug for secret ids: lowercase, [a-z0-9-], no leading/trailing dashes. */
 export function slugFromName(name: string): string {
   const slug = name

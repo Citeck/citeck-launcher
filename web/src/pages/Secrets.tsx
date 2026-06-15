@@ -6,10 +6,9 @@ import { SecretsDialog } from '../components/SecretsDialog'
  * resolving for power users / old bookmarks.
  *
  * The dialog is the single source of truth for secret CRUD: it carries the
- * username field (BASIC_AUTH / REGISTRY_AUTH), the scope field (how the
- * daemon binds a secret to a repo / registry) and the ENCRYPTION_NOT_SET_UP →
+ * username field (BASIC_AUTH / REGISTRY_AUTH) and the ENCRYPTION_NOT_SET_UP →
  * MasterPasswordDialog recovery flow. The previous standalone page was a
- * divergent re-implementation missing all three.
+ * divergent re-implementation missing both.
  */
 export function Secrets() {
   const navigate = useNavigate()

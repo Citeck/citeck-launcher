@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { listWorkspaces, postGitSkipPull, updateWorkspace } from '../lib/api'
+import { getSecrets, listWorkspaces, postGitSkipPull, updateWorkspace } from '../lib/api'
 import { extractHost, isAuthShapedGitError } from '../lib/giturl'
 import { useTranslation } from '../lib/i18n'
 import type { SecretMetaDto, WorkspaceDto } from '../lib/types'
@@ -55,6 +55,10 @@ export function GitPullErrorDialog({ open, repoUrl, errorMessage, skipAvailable,
   const [editTarget, setEditTarget] = useState<SecretMetaDto | null>(null)
   // Bumped after an edit-save so the picker refetches (names may change).
   const [reloadKey, setReloadKey] = useState(0)
+  // The default view is a compact "secret in use + Edit / Choose another"
+  // row; the full picker dropdown is revealed only once the user opts to
+  // switch secrets (or when there's no usable secret in use to begin with).
+  const [picking, setPicking] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
   // Preselect the workspace's current secret only once per open — list
@@ -77,6 +81,7 @@ export function GitPullErrorDialog({ open, repoUrl, errorMessage, skipAvailable,
     setSelection('')
     setSaveError('')
     setEditTarget(null)
+    setPicking(false)
     preselectedRef.current = false
   }, [open])
 
@@ -93,6 +98,20 @@ export function GitPullErrorDialog({ open, repoUrl, errorMessage, skipAvailable,
     return () => { cancelled = true }
   }, [open, showTokenSection])
 
+  // Fetch the GIT_TOKEN secrets directly so the compact "secret in use" row
+  // can resolve and preselect the in-use secret WITHOUT the picker dropdown
+  // being mounted. Re-runs after an edit-save (reloadKey) to pick up a
+  // renamed secret. The picker, when revealed, keeps the list fresh too via
+  // onSecretsChange.
+  useEffect(() => {
+    if (!open || !showTokenSection) return
+    let cancelled = false
+    getSecrets()
+      .then((list) => { if (!cancelled) setSecrets(list.filter((s) => s.type === 'GIT_TOKEN')) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [open, showTokenSection, reloadKey])
+
   const handleSecretsChange = useCallback((list: SecretMetaDto[]) => setSecrets(list), [])
 
   // Secret in use: the workspace's linked secretId, or the legacy
@@ -108,7 +127,6 @@ export function GitPullErrorDialog({ open, repoUrl, errorMessage, skipAvailable,
     if (!open || preselectedRef.current || !currentSecret) return
     preselectedRef.current = true
     // Intentional: one-shot preselect after async loads; not a cascade.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelection(currentSecret.id)
   }, [open, currentSecret])
 
@@ -155,57 +173,72 @@ export function GitPullErrorDialog({ open, repoUrl, errorMessage, skipAvailable,
     >
       <div className="p-6">
         <h2 className="text-lg font-semibold mb-3">{t('gitPullError.title')}</h2>
-        <p className="text-xs text-destructive whitespace-pre-wrap mb-3">{errorMessage}</p>
-        <p className="text-sm font-mono text-muted-foreground break-all mb-3">{repoUrl}</p>
-        <p className="text-xs text-muted-foreground mb-4">
-          {skipAvailable ? t('gitPullError.canSkip') : t('gitPullError.cannotSkip')}
-        </p>
+        {/* When we've recognised the failure as an auth problem, the token
+            section below explains it in plain words — showing the raw git
+            error in alarming red on top is redundant noise. Keep the raw
+            message only for failures we can't otherwise explain. */}
+        {!showTokenSection && (
+          <p className="text-xs text-destructive whitespace-pre-wrap mb-3">{errorMessage}</p>
+        )}
+        <p className="text-sm font-mono text-muted-foreground break-all mb-4">{repoUrl}</p>
         {showTokenSection && (
           <div className="mb-4 rounded-md border border-border bg-background/40 p-3 space-y-3">
             {/* Plain-language explanation + WHICH secret is in use, so a
                 non-expert knows what to fix. */}
             <p className="text-xs text-muted-foreground">{t('gitPullError.authExplain')}</p>
-            <p className="text-xs text-foreground">
-              {!currentSecretId
-                ? t('gitPullError.noSecret')
-                : currentSecret
-                  ? t('gitPullError.secretInUse', { name: currentSecret.name || currentSecret.id })
-                  : t('gitPullError.secretInUseMissing', { id: currentSecretId })}
-            </p>
-            <SecretPicker
-              value={selection}
-              onChange={setSelection}
-              defaultNewName={extractHost(repoUrl)}
-              disabled={saving}
-              onEditRequest={setEditTarget}
-              onSecretsChange={handleSecretsChange}
-              reloadKey={reloadKey}
-            />
+            {!picking && currentSecret ? (
+              // Compact default: name the secret in use and offer the two
+              // actions that actually fix an auth failure — edit its token
+              // value, or switch to a different secret (which reveals the
+              // picker). "Retry" lives in the single footer button row. The
+              // name gets its own full-width line so it isn't truncated by the
+              // (locale-variable, sometimes long) action button labels.
+              <div className="space-y-2">
+                <p className="text-xs text-foreground break-all">
+                  {t('gitPullError.secretInUse', { name: currentSecret.name || currentSecret.id })}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
+                    disabled={saving}
+                    onClick={() => setEditTarget(currentSecret)}
+                  >
+                    {t('gitPullError.editToken')}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
+                    disabled={saving}
+                    onClick={() => setPicking(true)}
+                  >
+                    {t('gitPullError.chooseAnother')}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {!currentSecretId ? (
+                  <p className="text-xs text-foreground">{t('gitPullError.noSecret')}</p>
+                ) : !currentSecret ? (
+                  <p className="text-xs text-foreground">{t('gitPullError.secretInUseMissing', { id: currentSecretId })}</p>
+                ) : null}
+                <SecretPicker
+                  value={selection}
+                  onChange={setSelection}
+                  defaultNewName={extractHost(repoUrl)}
+                  disabled={saving}
+                  onEditRequest={setEditTarget}
+                  onSecretsChange={handleSecretsChange}
+                  reloadKey={reloadKey}
+                />
+              </>
+            )}
             {saveError && (
               <div className="rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">
                 {saveError}
               </div>
             )}
-            <div className="flex justify-end gap-2">
-              {currentSecret && (
-                <button
-                  type="button"
-                  className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
-                  disabled={saving}
-                  onClick={() => setEditTarget(currentSecret)}
-                >
-                  {t('gitPullError.editToken')}
-                </button>
-              )}
-              <button
-                type="button"
-                className="rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
-                disabled={saving || !selection}
-                onClick={handleSaveAndRetry}
-              >
-                {t('gitPullError.saveAndRetry')}
-              </button>
-            </div>
           </div>
         )}
         <div className="flex justify-end gap-2">
@@ -219,24 +252,41 @@ export function GitPullErrorDialog({ open, repoUrl, errorMessage, skipAvailable,
               {t('common.cancel')}
             </button>
           )}
-          {skipAvailable && (
-            <button
-              type="button"
-              className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted"
-              onClick={handleSkip}
-              disabled={saving}
-            >
-              {t('gitPullError.skip')}
-            </button>
-          )}
+          {/* Skip is always shown; when the repo was never cloned it can't be
+              skipped, so the button is disabled and the reason moves into its
+              tooltip (no separate explanatory line above). */}
           <button
             type="button"
-            className="rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
-            onClick={() => onDecide('retry')}
-            disabled={saving}
+            className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={handleSkip}
+            disabled={saving || !skipAvailable}
+            title={skipAvailable ? t('gitPullError.canSkip') : t('gitPullError.cannotSkip')}
           >
-            {t('gitPullError.retry')}
+            {t('gitPullError.skip')}
           </button>
+          {showTokenSection ? (
+            // Single primary action for the auth flow: relink + retry when the
+            // user switched secrets, otherwise a plain retry (e.g. after just
+            // editing the in-use token's value). Disabled until a secret is
+            // selected so a retry can't fire with nothing to authenticate with.
+            <button
+              type="button"
+              className="rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
+              onClick={handleSaveAndRetry}
+              disabled={saving || !selection}
+            >
+              {needsWorkspaceRelink(currentSecretId, selection) ? t('gitPullError.saveAndRetry') : t('gitPullError.retry')}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
+              onClick={() => onDecide('retry')}
+              disabled={saving}
+            >
+              {t('gitPullError.retry')}
+            </button>
+          )}
         </div>
       </div>
 

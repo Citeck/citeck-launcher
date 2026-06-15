@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { Trash2, FlaskConical, Pencil } from 'lucide-react'
-import { ApiError, getSecrets, createSecret, deleteSecret, testSecret, setupSecretsPassword, getNamespace, listWorkspaces } from '../lib/api'
+import { ApiError, getSecrets, createSecret, deleteSecret, testSecret, setupSecretsPassword, listWorkspaces } from '../lib/api'
 import type { SecretMetaDto, SecretCreateDto, WorkspaceDto } from '../lib/types'
 import { JournalDialog, type JournalAction, type JournalColumn } from './JournalDialog'
 import { ConfirmModal } from './ConfirmModal'
@@ -9,14 +9,13 @@ import { SecretEditDialog } from './SecretEditDialog'
 import { MasterPasswordDialog } from './MasterPasswordDialog'
 import { formatDateTime } from '../lib/datetime'
 import { useTranslation, type LocaleKey } from '../lib/i18n'
-import { CUSTOM_SCOPE, secretDeleteMessage, workspacesUsingSecret } from '../lib/secretPicker'
+import { secretDeleteMessage, workspacesUsingSecret } from '../lib/secretPicker'
 import { toast } from '../lib/toast'
 
 interface SecretRow extends Record<string, unknown> {
   id: string
   name: string
   type: string
-  scope: string
   username: string
   created: string
 }
@@ -24,16 +23,6 @@ interface SecretRow extends Record<string, unknown> {
 interface SecretsDialogProps {
   open: boolean
   onClose: () => void
-}
-
-// Docker reference rule: the first path segment of an image ref is a registry
-// host only when it contains '.' or ':' or is exactly "localhost" — otherwise
-// the image lives on Docker Hub and needs no images-repo secret scope.
-function registryHost(image: string): string | null {
-  if (!image.includes('/')) return null
-  const first = image.split('/')[0]
-  if (first.includes('.') || first.includes(':') || first === 'localhost') return first
-  return null
 }
 
 // Kotlin parity (AuthType.kt:3-7): displayed names mirror the JVM launcher's
@@ -81,46 +70,19 @@ export function SecretsDialog({ open, onClose }: SecretsDialogProps) {
   const [createMasterLoading, setCreateMasterLoading] = useState(false)
   const [createMasterError, setCreateMasterError] = useState('')
   const [loading, setLoading] = useState(false)
-  // Known scope suggestions for the create form's scope select. The daemon
-  // doesn't expose workspace-config imageRepos / bundle-repo auth scopes via
-  // the API, so the best UI-side sources are: registry hosts derived from the
-  // active namespace's app images ("images-repo:<host>") plus the scopes of
-  // already-stored secrets. A "Custom…" free-text option covers the rest.
-  const [knownScopes, setKnownScopes] = useState<string[]>([])
 
   const reload = useCallback(() => {
     void Promise.resolve().then(() => {
       setLoading(true)
-      const secretsP = getSecrets()
+      // Best-effort: workspace secretId references power the delete warning;
+      // any failure (older daemon, server mode) degrades to no warning.
+      void listWorkspaces().catch(() => [] as WorkspaceDto[]).then(setWorkspaces)
+      return getSecrets()
         // SYSTEM secrets (_jwt, _oidc, _citeck_sa) are daemon-managed and have
         // sensible defaults — the user shouldn't see them in the Secrets UI
         // (they neither edit them nor reason about them). Only user-added
         // GIT_TOKEN / BASIC_AUTH / REGISTRY_AUTH entries belong here.
-        .then((s) => {
-          const rows = s.filter((sec) => sec.type !== 'SYSTEM').map(toRow)
-          setSecrets(rows)
-          return rows
-        })
-      // No namespace configured (e.g. opened from a fresh workspace) is a
-      // normal state — registry-host suggestions are simply unavailable then.
-      const nsP = getNamespace().catch(() => null)
-      // Best-effort: workspace secretId references power the delete warning;
-      // any failure (older daemon, server mode) degrades to no warning.
-      void listWorkspaces().catch(() => [] as WorkspaceDto[]).then(setWorkspaces)
-      return Promise.all([secretsP, nsP])
-        .then(([rows, ns]) => {
-          const scopes = new Set<string>()
-          for (const app of ns?.apps ?? []) {
-            const host = registryHost(app.image)
-            if (host) scopes.add(`images-repo:${host}`)
-          }
-          // "global" is the store's marker for an unscoped secret, not a real
-          // binding — it is covered by the dedicated "Global" select option.
-          for (const row of rows) {
-            if (row.scope && row.scope !== 'global') scopes.add(row.scope)
-          }
-          setKnownScopes(Array.from(scopes).sort())
-        })
+        .then((s) => setSecrets(s.filter((sec) => sec.type !== 'SYSTEM').map(toRow)))
         .catch((e) => toast((e as Error).message, 'error'))
         .finally(() => setLoading(false))
     })
@@ -131,9 +93,8 @@ export function SecretsDialog({ open, onClose }: SecretsDialogProps) {
   }, [open, reload])
 
   const columns: JournalColumn<SecretRow>[] = [
-    { label: t('secrets.table.name'), key: 'name', width: '40%' },
-    { label: t('secrets.table.type'), key: 'type', width: '25%' },
-    { label: t('secrets.table.scope'), key: 'scope' },
+    { label: t('secrets.table.name'), key: 'name', width: '60%' },
+    { label: t('secrets.table.type'), key: 'type' },
   ]
 
   const rowActions: JournalAction<SecretRow>[] = [
@@ -177,24 +138,19 @@ export function SecretsDialog({ open, onClose }: SecretsDialogProps) {
     try {
       const type = String(values.type || 'GIT_TOKEN')
       const id = String(values.id || '').trim()
-      // The daemon binds secrets to git repos / Docker registries solely via
-      // Scope (e.g. "images-repo:<host>" for registry pulls, "ws:<wsID>:repo"
-      // for workspace repos) — an empty scope is stored as "global" and never
-      // matches a registry lookup. When the user leaves scope blank but the
-      // id follows the registry convention, derive scope from the id so the
-      // secret actually takes effect (Kotlin 1.x built the key from the id).
-      let scope = String(values.scope || '').trim()
-      if (scope === CUSTOM_SCOPE) scope = String(values.scopeCustom || '').trim()
-      if (!scope && type === 'REGISTRY_AUTH' && id.startsWith('images-repo:')) {
-        scope = id
-      }
       const payload: SecretCreateDto = {
         id,
         name: String(values.name || '').trim(),
         type,
         value: String(values.value || ''),
       }
-      if (scope) payload.scope = scope
+      // Secrets created here are global. Registry credentials are managed
+      // through the dedicated RegistryCredentialsDialog (which sets the
+      // "images-repo:<host>" scope the daemon matches on); a power user who
+      // hand-types that id convention still gets it bound to the registry.
+      if (type === 'REGISTRY_AUTH' && id.startsWith('images-repo:')) {
+        payload.scope = id
+      }
       if (type === 'BASIC_AUTH' || type === 'REGISTRY_AUTH') {
         payload.username = String(values.username || '').trim()
       }
@@ -254,14 +210,6 @@ export function SecretsDialog({ open, onClose }: SecretsDialogProps) {
     }
   }
 
-  // Scope select options shared by the create and edit forms: "Global"
-  // (empty), the known scopes, and a "Custom…" free-text escape.
-  const scopeOptions = useMemo(() => [
-    { label: t('secrets.form.scope.global'), value: '' },
-    ...knownScopes.map((s) => ({ label: s, value: s })),
-    { label: t('secrets.form.scope.custom'), value: CUSTOM_SCOPE },
-  ], [t, knownScopes])
-
   // Memoized so the spec keeps a stable identity across re-renders (e.g. the
   // `creating` flag flipping during submit) — FormDialog resets its values
   // whenever the fields prop identity changes, which would wipe the user's
@@ -298,27 +246,7 @@ export function SecretsDialog({ open, onClose }: SecretsDialogProps) {
       required: true,
       placeholder: t('secrets.form.value.placeholder'),
     },
-    // Scope is how the daemon binds the secret to a repo / registry
-    // ("images-repo:<host>" for Docker registries). A select over the known
-    // scopes (registry hosts of the active namespace's images + scopes of
-    // existing secrets), with "Global" (empty — registry secrets then fall
-    // back to the id-derivation above) and a "Custom…" free-text escape.
-    {
-      key: 'scope',
-      label: t('secrets.form.scope'),
-      type: 'select',
-      defaultValue: '',
-      options: scopeOptions,
-    },
-    {
-      key: 'scopeCustom',
-      label: t('secrets.form.scope.customValue'),
-      type: 'text',
-      placeholder: t('secrets.form.scope.placeholder'),
-      visibleWhen: (ctx) => ctx.scope === CUSTOM_SCOPE,
-      dependsOn: ['scope'],
-    },
-  ], [t, scopeOptions])
+  ], [t])
 
   return (
     <>
@@ -346,7 +274,6 @@ export function SecretsDialog({ open, onClose }: SecretsDialogProps) {
       <SecretEditDialog
         open={!!editTarget}
         secret={editTarget}
-        scopeOptions={scopeOptions}
         onClose={() => setEditTarget(null)}
         onSaved={() => {
           setEditTarget(null)
@@ -387,7 +314,6 @@ function toRow(s: SecretMetaDto): SecretRow {
     id: s.id,
     name: s.name,
     type: s.type,
-    scope: s.scope ?? '',
     username: s.username ?? '',
     created: s.createdAt ? formatDateTime(s.createdAt) : '',
   }
