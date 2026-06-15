@@ -30,7 +30,7 @@ func TestRegistryBindingEndpoint(t *testing.T) {
 		return rec
 	}
 	list := func() map[string]string {
-		req := httptest.NewRequest("GET", api.RegistryBindings, nil)
+		req := httptest.NewRequest("GET", api.RegistryBindings, http.NoBody)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
@@ -72,7 +72,7 @@ func TestMissingRegistryAuthEndpoint(t *testing.T) {
 	d.registerRoutes(mux)
 
 	missing := func() []string {
-		req := httptest.NewRequest("GET", api.RegistryBindingsMissing, nil)
+		req := httptest.NewRequest("GET", api.RegistryBindingsMissing, http.NoBody)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
