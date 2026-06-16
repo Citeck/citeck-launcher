@@ -38,7 +38,7 @@ type DecryptedSecrets struct {
 // AuthSecret represents a Kotlin auth secret (token or basic).
 type AuthSecret struct {
 	ID       string `json:"id"`
-	Type     string `json:"type"` // "token" or "basic"
+	Type     string `json:"type"` // Kotlin AuthType name: "TOKEN" or "BASIC"
 	Token    string `json:"token,omitempty"`
 	Username string `json:"username,omitempty"`
 	Password string `json:"password,omitempty"`
