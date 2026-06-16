@@ -266,8 +266,16 @@ func resolveQuickStartBundleRef(wsCfg *bundle.WorkspaceConfig, qs bundle.QuickSt
 // quick-start ref so the Welcome button subtitle shows e.g. "community:2026.2"
 // instead of "community:LATEST" (Kotlin parity: renderQuickStartButtons resolves
 // via prepareNsDataToCreate → getLatestRepoBundle BEFORE rendering the label).
-// Best-effort: keeps the symbolic ref when LATEST can't be resolved (repo not
-// synced / offline). latestCache memoizes one resolve per repo per request.
+// latestCache memoizes one resolve per repo per request.
+//
+// On desktop this resolves ONLINE so a never-synced bundle repo (fresh
+// workspace — Welcome renders before any namespace create) is cloned with the
+// workspace git token, and a stale clone is refreshed. The freshness window is
+// the repo's pullPeriod (default 1h): git.CloneOrPullWithAuth skips the pull and
+// reads the local clone when it was synced within the period, so steady-state
+// Welcome loads do no network I/O — matching the Kotlin 1.x GitRepoService
+// pullPeriod model. Server mode never auto-pulls (resolveLatestBundleKey forces
+// offline off-desktop) and keeps the symbolic ref until the repo is synced.
 func (d *Daemon) resolveDisplayQuickStartRef(ref string, latestCache map[string]string) string {
 	repo, key, ok := strings.Cut(ref, ":")
 	if !ok || !strings.EqualFold(key, "LATEST") {
@@ -279,7 +287,7 @@ func (d *Daemon) resolveDisplayQuickStartRef(ref string, latestCache map[string]
 		}
 		return repo + ":" + cached
 	}
-	resolved, ok := d.resolveLatestBundleKey(d.activeWorkspaceID(), repo, true /* display: no pull */)
+	resolved, ok := d.resolveLatestBundleKey(d.activeWorkspaceID(), repo, false /* honor pullPeriod freshness */)
 	if !ok {
 		latestCache[repo] = ""
 		return ref
@@ -298,9 +306,9 @@ func (d *Daemon) resolveLatestBundleKey(wsID, repo string, offline bool) (string
 	}
 	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(wsID), makeTokenLookup(d.secretService)).
 		WithWorkspaceRepo(lookupWorkspaceRepoOpts(d.store, d.secretService, wsID))
-	// Server mode never auto-pulls git; desktop may pull to find the latest tag.
-	// Callers that resolve only for DISPLAY pass offline=true to avoid a git
-	// pull on the request path (the synced repo is read as-is).
+	// Server mode never auto-pulls git; desktop may pull to find the latest tag,
+	// throttled by the repo's pullPeriod (a clone synced within the period is read
+	// without network). offline=true forces a no-pull read even on desktop.
 	if offline || !config.IsDesktopMode() {
 		resolver.SetOffline(true)
 	}
