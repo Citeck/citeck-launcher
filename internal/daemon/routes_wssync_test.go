@@ -88,6 +88,82 @@ func TestWorkspaceSnapshots_WsRepoSyncFailedReturns502(t *testing.T) {
 	assert.JSONEq(t, "[]", okRec.Body.String())
 }
 
+// --- Read-path self-heal: a cached auth error clears once the token is added ---
+
+// TestQuickStarts_SelfHealClearsCachedAuthError: a workspace activated before
+// its git token existed carries a cached wsSyncError. Once the token is added,
+// the read-path self-heal (activeWorkspaceConfigForRead → re-resolve) must
+// re-run the resolution against the current store, clear the error, and serve
+// 200 — no daemon restart. The wsCfgResolveFn seam stands in for the real git
+// clone the production path performs.
+func TestQuickStarts_SelfHealClearsCachedAuthError(t *testing.T) {
+	config.SetDesktopMode(true)
+	t.Cleanup(config.ResetDesktopMode)
+	t.Setenv("CITECK_HOME", t.TempDir())
+
+	d, mux := newWorkspaceTestDaemon(t)
+	require.NoError(t, d.store.SaveWorkspace(storage.WorkspaceDto{
+		ID: "ws-x", Name: "Customer", RepoURL: "https://gitlab.example.com/citeck/ws.git",
+		RepoBranch: "main", AuthType: "TOKEN",
+	}))
+	d.activeNs.workspaceID = "ws-x"
+	d.activeNs.wsSyncError = testWsSyncErrMsg // cached at activation (token absent)
+
+	// Token added since → the re-resolve now succeeds.
+	resolved := &bundle.WorkspaceConfig{
+		QuickStartVariants: []bundle.QuickStartVariant{{Name: "Community"}},
+	}
+	calls := 0
+	d.wsCfgResolveFn = func(ws storage.WorkspaceDto) (*bundle.WorkspaceConfig, error) {
+		calls++
+		assert.Equal(t, "ws-x", ws.ID, "seam must receive the ACTIVE workspace")
+		return resolved, nil
+	}
+
+	rec := getJSON(t, mux, api.QuickStarts)
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	var qs []api.QuickStartDto
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &qs))
+	require.Len(t, qs, 1)
+	assert.Equal(t, "Community", qs[0].Name)
+	assert.Empty(t, d.active().wsSyncError, "cached error must clear after a successful re-resolve")
+
+	// A second read is served from the now-clean cache without re-resolving.
+	rec2 := getJSON(t, mux, api.QuickStarts)
+	require.Equal(t, http.StatusOK, rec2.Code)
+	assert.Equal(t, 1, calls, "second read must not re-resolve once the error cleared")
+}
+
+// TestQuickStarts_SelfHealStillFailingStays502: if the re-resolve still fails
+// (token still wrong/missing), the cached error is refreshed to the latest
+// failure and the surface keeps returning 502 — no silent fallback.
+func TestQuickStarts_SelfHealStillFailingStays502(t *testing.T) {
+	config.SetDesktopMode(true)
+	t.Cleanup(config.ResetDesktopMode)
+	t.Setenv("CITECK_HOME", t.TempDir())
+
+	d, mux := newWorkspaceTestDaemon(t)
+	require.NoError(t, d.store.SaveWorkspace(storage.WorkspaceDto{
+		ID: "ws-x", Name: "Customer", RepoURL: "https://gitlab.example.com/citeck/ws.git",
+		RepoBranch: "main", AuthType: "TOKEN",
+	}))
+	d.activeNs.workspaceID = "ws-x"
+	d.activeNs.wsSyncError = "stale activation-time error"
+	d.wsCfgResolveFn = func(ws storage.WorkspaceDto) (*bundle.WorkspaceConfig, error) {
+		return nil, errors.New(testWsSyncErrMsg)
+	}
+
+	rec := getJSON(t, mux, api.QuickStarts)
+	require.Equal(t, http.StatusBadGateway, rec.Code, "body=%s", rec.Body.String())
+
+	var errResp api.ErrorDto
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &errResp))
+	assert.Equal(t, api.ErrCodeWsRepoSyncFailed, errResp.Code)
+	assert.Contains(t, errResp.Message, "authentication required")
+	assert.Equal(t, testWsSyncErrMsg, d.active().wsSyncError, "cached error refreshed to the latest failure")
+}
+
 // --- SwitchWorkspace: custom repo that can't sync fails the switch ---
 
 // TestWorkspaceActivate_RepoSyncFailedReturns502: switching TO a workspace

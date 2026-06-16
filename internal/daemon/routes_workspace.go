@@ -195,20 +195,12 @@ func (d *Daemon) reresolveActiveWorkspace() error {
 		return nil
 	}
 
-	opts := buildWorkspaceRepoOpts(*ws, d.secretService)
-	opts.PullPeriod = 0 // force a fresh clone/pull with the current token
-	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(wsID), makeTokenLookup(d.secretReaderFunc())).
-		WithWorkspaceRepo(opts)
-	if !config.IsDesktopMode() {
-		resolver.SetOffline(true)
-	}
-	wsCfg := resolver.ResolveWorkspaceOnly()
-	syncErr := resolver.WorkspaceSyncError()
+	wsCfg, syncErr := d.resolveActiveWorkspaceConfig(*ws)
 
 	d.configMu.Lock()
 	if a := d.activeLocked(); a.workspaceID == wsID {
 		if syncErr != nil {
-			a.wsSyncError = workspaceSyncErrorString(resolver)
+			a.wsSyncError = syncErr.Error()
 		} else {
 			a.workspaceConfig = wsCfg
 			a.wsSyncError = ""
@@ -222,6 +214,29 @@ func (d *Daemon) reresolveActiveWorkspace() error {
 	return nil
 }
 
+// resolveActiveWorkspaceConfig force-pulls (PullPeriod=0, bypassing the
+// throttle) and re-resolves the workspace repo config with the current git
+// token. Routed through the wsCfgResolveFn test seam (nil in production) so the
+// self-heal read path and the Force-Update button are unit-testable without a
+// real git clone — same pattern as resolveWorkspaceConfigForSwitch.
+func (d *Daemon) resolveActiveWorkspaceConfig(ws storage.WorkspaceDto) (*bundle.WorkspaceConfig, error) {
+	if d.wsCfgResolveFn != nil {
+		return d.wsCfgResolveFn(ws)
+	}
+	opts := buildWorkspaceRepoOpts(ws, d.secretService)
+	opts.PullPeriod = 0 // force a fresh clone/pull with the current token
+	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(ws.ID), makeTokenLookup(d.secretReaderFunc())).
+		WithWorkspaceRepo(opts)
+	if !config.IsDesktopMode() {
+		resolver.SetOffline(true)
+	}
+	wsCfg := resolver.ResolveWorkspaceOnly()
+	if err := resolver.WorkspaceSyncError(); err != nil {
+		return nil, err //nolint:wrapcheck // caller formats the cached string / wraps
+	}
+	return wsCfg, nil
+}
+
 // activeWorkspaceConfigForRead returns the active workspace config for the
 // read-only Welcome surfaces (quick starts, namespace list, snapshots). When a
 // sync error is cached it re-resolves once against the CURRENT secret store —
@@ -229,6 +244,14 @@ func (d *Daemon) reresolveActiveWorkspace() error {
 // read reflects current reality instead of a stale snapshot from activation
 // time. A cached success returns as-is with no git I/O. Returns (config,
 // wsSyncErrorString).
+//
+// The retry pull is UNthrottled (resolveActiveWorkspaceConfig forces
+// PullPeriod=0) — it only fires when an error is cached, and a failed pull
+// records no lastSync, so it always re-attempts git against the current token.
+// On desktop a single GET that hits this path can therefore do two pulls in one
+// request: this workspace-repo retry, then the throttled bundle-repo pull in
+// resolveLatestBundleKey for the quick-start LATEST display. Steady state (no
+// error cached, bundle repo fresh) does zero git I/O.
 func (d *Daemon) activeWorkspaceConfigForRead() (cfg *bundle.WorkspaceConfig, syncErr string) {
 	if act := d.active(); act.wsSyncError == "" {
 		return act.workspaceConfig, ""

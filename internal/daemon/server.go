@@ -151,10 +151,12 @@ type Daemon struct {
 	// tests). nil in production — reloadPlanInputs() falls back to
 	// resolveReloadPlanInputs.
 	planInputsFn func(act activeNamespace) (*reloadPlanInputs, error)
-	// wsCfgResolveFn is a test seam for SwitchWorkspace's strict workspace-repo
-	// resolve (real git clone/pull — unreachable from unit tests). nil in
-	// production — resolveWorkspaceConfigForSwitch falls back to the bundle
-	// resolver. Same pattern as planInputsFn.
+	// wsCfgResolveFn is a test seam for the workspace-repo config resolve (real
+	// git clone/pull — unreachable from unit tests). Shared by both
+	// resolveWorkspaceConfigForSwitch (SwitchWorkspace) and
+	// resolveActiveWorkspaceConfig (read-path self-heal / Force Update). nil in
+	// production — both fall back to the bundle resolver. Same pattern as
+	// planInputsFn.
 	wsCfgResolveFn func(ws storage.WorkspaceDto) (*bundle.WorkspaceConfig, error)
 	// apiAuth enforces the opt-in bearer-token/session auth on the
 	// server-mode TCP transport (daemon.yml api_auth). nil when disabled
