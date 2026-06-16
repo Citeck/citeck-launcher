@@ -186,8 +186,10 @@ export function Welcome() {
   // variant maps to a NamespaceConfig pre-filled from the template; the daemon
   // already overlays template fields on top of NamespaceCreateDto, so we only
   // need to pass {name, template, snapshot} and the form defaults handle the rest.
-  /** Leave the stepper for the Dashboard — dismisses the quick-start state. */
-  function openDashboardFromStepper() {
+  /** Open the namespace dashboard (same outcome as "Open panel" /
+   *  handleOpenNamespace) and dismiss the quick-start stepper. Used both by the
+   *  stepper's button and automatically once the start has been issued. */
+  function openDashboard() {
     useQuickStartStore.getState().dismiss()
     resetPanels()
     openTab({ id: 'home', title: t('dashboard.title'), path: '/' })
@@ -250,11 +252,16 @@ export function Welcome() {
 
   async function finishQuickStart() {
     try {
+      // Same start as the dashboard's "Update & Start" (NamespaceControls →
+      // postNamespaceStart(false)); the view must not change how it loads.
       await postNamespaceStart()
-      // Pull the fresh namespace into the dashboard store; from here the SSE
-      // events keep it updated and the stepper tracks the bootstrap. The user
-      // stays on Welcome (stepper) and can open the Dashboard at any time.
+      // Pull the fresh namespace into the dashboard store, then open its panel
+      // — identical outcome to "Open panel" (handleOpenNamespace). The panel
+      // shows the start progress via the same SSE stream; no Welcome stepper to
+      // get stranded on (its "back" landed on a Welcome that didn't list the
+      // new namespace).
       await fetchData()
+      openDashboard()
     } catch (e) {
       reportQuickStartError(e)
     }
@@ -300,7 +307,7 @@ export function Welcome() {
           // Quick-start bootstrap in progress — compact progress stepper fed
           // by the SSE-driven dashboard store replaces the namespace/QS
           // buttons (clicking them mid-bootstrap makes no sense).
-          <StartProgressStepper onOpenDashboard={openDashboardFromStepper} />
+          <StartProgressStepper onOpenDashboard={openDashboard} />
         ) : loading ? (
           <>
             <div className="text-center text-muted-foreground text-sm py-4">{t('welcome.loading')}</div>
