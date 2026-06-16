@@ -128,8 +128,9 @@ type Config struct {
 func DefaultNamespaceConfig() Config {
 	return Config{
 		Authentication: AuthenticationProps{
-			Type:  AuthBasic,
-			Users: []string{"admin"},
+			Type: AuthBasic,
+			// Kotlin AuthenticationProps.DEFAULT = setOf("admin", "fet").
+			Users: []string{"admin", "fet"},
 		},
 		PgAdmin: PgAdminProps{Enabled: true},
 		Proxy:   ProxyProps{Port: 80},

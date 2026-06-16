@@ -340,5 +340,6 @@ func TestNamespaceCreateDefaults_Fallbacks(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dto))
 	assert.Equal(t, "Citeck #1", dto.Name)
 	assert.Equal(t, "BASIC", dto.AuthType)
-	assert.Equal(t, []string{"admin"}, dto.Users)
+	// Kotlin AuthenticationProps.DEFAULT = setOf("admin", "fet").
+	assert.Equal(t, []string{"admin", "fet"}, dto.Users)
 }
