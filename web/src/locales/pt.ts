@@ -143,6 +143,8 @@ const pt = {
   'secrets.form.username': 'Usuário',
   'secrets.form.username.placeholder': 'registry-user',
   'secrets.form.value': 'Valor',
+  'secrets.form.token': 'Token',
+  'secrets.form.password': 'Senha',
   'secrets.form.value.placeholder': 'valor secreto',
   'secrets.table.name': 'Nome',
   'secrets.table.type': 'Tipo',

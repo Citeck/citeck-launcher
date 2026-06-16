@@ -9,7 +9,7 @@ import { SecretEditDialog } from './SecretEditDialog'
 import { MasterPasswordDialog } from './MasterPasswordDialog'
 import { formatDateTime } from '../lib/datetime'
 import { useTranslation, type LocaleKey } from '../lib/i18n'
-import { secretDeleteMessage, workspacesUsingSecret } from '../lib/secretPicker'
+import { secretDeleteMessage, workspacesUsingSecret, secretValueLabelKey } from '../lib/secretPicker'
 import { toast } from '../lib/toast'
 
 interface SecretRow extends Record<string, unknown> {
@@ -27,13 +27,16 @@ interface SecretsDialogProps {
 
 // Kotlin parity (AuthType.kt:3-7): displayed names mirror the JVM launcher's
 // AuthType.displayName — "Token" / "Basic (Username/Password)". REGISTRY_AUTH
-// is Go-only (the JVM launcher had no separate registry auth secret), so it
-// reuses the Basic display name with a registry suffix to disambiguate.
+// is intentionally NOT offered here: registry credentials are created through
+// the dedicated host-scoped RegistryCredentialsDialog (which sets the
+// "images-repo:<host>" scope the daemon matches on). A bare REGISTRY_AUTH made
+// in this generic dialog binds to no registry and only confused users, so the
+// two near-identical "Basic" entries collapse to one. Existing REGISTRY_AUTH
+// secrets still list / edit / delete here.
 function buildSecretTypes(t: (key: LocaleKey, params?: Record<string, string | number>) => string) {
   return [
     { label: t('secrets.type.gitToken'), value: 'GIT_TOKEN' },
     { label: t('secrets.type.basicAuth'), value: 'BASIC_AUTH' },
-    { label: t('secrets.type.registryAuth'), value: 'REGISTRY_AUTH' },
   ]
 }
 
@@ -242,6 +245,9 @@ export function SecretsDialog({ open, onClose }: SecretsDialogProps) {
     {
       key: 'value',
       label: t('secrets.form.value'),
+      // "Token" for a GIT_TOKEN, "Password" for Basic — "Value" was too vague.
+      labelWhen: (ctx) => t(secretValueLabelKey(String(ctx.type || 'GIT_TOKEN'))),
+      dependsOn: ['type'],
       type: 'password',
       required: true,
       placeholder: t('secrets.form.value.placeholder'),

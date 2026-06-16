@@ -4,6 +4,7 @@ import type { SecretUpdateDto } from '../lib/types'
 import { FormDialog, type FormFieldSpec } from './FormDialog'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
+import { secretValueLabelKey } from '../lib/secretPicker'
 
 /** Minimal meta of the secret being edited (the value itself is never read). */
 export interface SecretEditTarget {
@@ -51,7 +52,7 @@ export function SecretEditDialog({ open, secret, onClose, onSaved }: SecretEditD
       },
       {
         key: 'value',
-        label: t('secrets.form.value'),
+        label: t(secretValueLabelKey(secret.type)),
         type: 'password',
         placeholder: t('secrets.form.value.keepPlaceholder'),
       },

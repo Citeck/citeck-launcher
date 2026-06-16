@@ -143,6 +143,8 @@ const de = {
   'secrets.form.username': 'Benutzername',
   'secrets.form.username.placeholder': 'registry-user',
   'secrets.form.value': 'Wert',
+  'secrets.form.token': 'Token',
+  'secrets.form.password': 'Passwort',
   'secrets.form.value.placeholder': 'Geheimer Wert',
   'secrets.table.name': 'Name',
   'secrets.table.type': 'Typ',

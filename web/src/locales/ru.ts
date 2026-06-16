@@ -143,6 +143,8 @@ const ru = {
   'secrets.form.username': 'Имя пользователя',
   'secrets.form.username.placeholder': 'registry-user',
   'secrets.form.value': 'Значение',
+  'secrets.form.token': 'Токен',
+  'secrets.form.password': 'Пароль',
   'secrets.form.value.placeholder': 'секретное значение',
   'secrets.table.name': 'Имя',
   'secrets.table.type': 'Тип',

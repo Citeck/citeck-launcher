@@ -36,6 +36,10 @@ export interface SelectOption {
 export interface FormFieldSpec {
   key: string
   label: string
+  /** Reactive label that depends on other field values (e.g. a value field
+   *  labelled "Token" or "Password" by the selected secret type). Falls back
+   *  to `label` when absent. Add the driving keys to `dependsOn`. */
+  labelWhen?: (ctx: FormValues) => string
   type: 'text' | 'number' | 'password' | 'select' | 'checkbox' | 'display' | 'textarea'
   placeholder?: string
   defaultValue?: unknown
@@ -68,6 +72,11 @@ interface FormDialogProps {
   submitLabel?: string
   /** Initial values; merged over each field's defaultValue. */
   initialValues?: FormValues
+}
+
+/** Resolve a field's display label, honouring a reactive `labelWhen`. */
+function fieldLabel(field: FormFieldSpec, values: FormValues): string {
+  return field.labelWhen ? field.labelWhen(values) : field.label
 }
 
 /**
@@ -200,7 +209,7 @@ export function FormDialog({
       if (field.required) {
         const empty = val === undefined || val === null || val === ''
         if (empty) {
-          errors[field.key] = t('form.fieldRequired', { label: field.label })
+          errors[field.key] = t('form.fieldRequired', { label: fieldLabel(field, values) })
           continue
         }
       }
@@ -236,7 +245,7 @@ export function FormDialog({
             return (
               <div key={field.key}>
                 <label className="block text-xs font-medium text-muted-foreground mb-0.5">
-                  {field.label}
+                  {fieldLabel(field, values)}
                   {field.required && <span className="text-destructive ml-0.5">*</span>}
                 </label>
 

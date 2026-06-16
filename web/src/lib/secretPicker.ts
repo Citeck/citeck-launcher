@@ -9,6 +9,13 @@ import type { LocaleKey } from './i18n'
  * unit-testable without a DOM.
  */
 
+/** Locale key for a secret's value-field label: a GIT_TOKEN holds a token,
+ *  everything else (BASIC_AUTH / REGISTRY_AUTH) holds a password. "Value" was
+ *  too abstract for users — the field now reads "Token" or "Password". */
+export function secretValueLabelKey(type: string): LocaleKey {
+  return type === 'GIT_TOKEN' ? 'secrets.form.token' : 'secrets.form.password'
+}
+
 /** Slug for secret ids: lowercase, [a-z0-9-], no leading/trailing dashes. */
 export function slugFromName(name: string): string {
   const slug = name

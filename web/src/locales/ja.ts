@@ -143,6 +143,8 @@ const ja = {
   'secrets.form.username': 'ユーザー名',
   'secrets.form.username.placeholder': 'registry-user',
   'secrets.form.value': '\u5024',
+  'secrets.form.token': '\u30c8\u30fc\u30af\u30f3',
+  'secrets.form.password': '\u30d1\u30b9\u30ef\u30fc\u30c9',
   'secrets.form.value.placeholder': '\u79d8\u5bc6\u306e\u5024',
   'secrets.table.name': '\u540d\u524d',
   'secrets.table.type': '\u30bf\u30a4\u30d7',

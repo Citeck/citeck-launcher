@@ -143,6 +143,8 @@ const zh = {
   'secrets.form.username': '用户名',
   'secrets.form.username.placeholder': 'registry-user',
   'secrets.form.value': '值',
+  'secrets.form.token': '令牌',
+  'secrets.form.password': '密码',
   'secrets.form.value.placeholder': '密钥值',
   'secrets.table.name': '名称',
   'secrets.table.type': '类型',

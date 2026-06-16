@@ -145,6 +145,8 @@ const en = {
   'secrets.form.username': 'Username',
   'secrets.form.username.placeholder': 'registry-user',
   'secrets.form.value': 'Value',
+  'secrets.form.token': 'Token',
+  'secrets.form.password': 'Password',
   'secrets.form.value.placeholder': 'secret value',
   'secrets.table.name': 'Name',
   'secrets.table.type': 'Type',
