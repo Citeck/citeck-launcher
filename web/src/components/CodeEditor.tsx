@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import CodeMirror, { type Extension, EditorState, EditorView } from '@uiw/react-codemirror'
 import { Search, ChevronUp, ChevronDown, X, CaseSensitive, Regex } from 'lucide-react'
 import { useTranslation } from '../lib/i18n'
+import { useThemeStore } from '../lib/theme'
 import { searchHighlighter, computeMatches, setSearchMatches, type Match } from './editorSearch'
 import { yaml } from '@codemirror/lang-yaml'
 import { json } from '@codemirror/lang-json'
@@ -40,6 +41,11 @@ interface CodeEditorProps {
  */
 export function CodeEditor({ value, onChange, readOnly = false, filename = '', height, autoFocus = false }: CodeEditorProps) {
   const { t } = useTranslation()
+  // Follow the app theme — a hardcoded dark editor looked wrong inside the
+  // light-theme config dialog. Reactive in the main app; in a secondary
+  // editor window the store seeds from the same persisted localStorage value
+  // useInheritedTheme reads, so it opens with the right theme.
+  const isDark = useThemeStore((s) => s.isDark)
   const viewRef = useRef<EditorView | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -249,7 +255,7 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
         onCreateEditor={(view) => { viewRef.current = view }}
         editable={!readOnly}
         autoFocus={autoFocus}
-        theme="dark"
+        theme={isDark ? 'dark' : 'light'}
         basicSetup={{
           lineNumbers: true,
           highlightActiveLine: !readOnly,
