@@ -23,15 +23,22 @@ export interface LongOp {
 
 interface LongOpState {
   current: LongOp | null
+  /** Bumped on every terminal snapshot event (complete/error). Surfaces to the
+   *  SnapshotsDialog so it can reload its list once the backend finishes — an
+   *  async export/import returns 202 before the file exists, so reloading right
+   *  after the HTTP call shows a stale list. */
+  completed: number
   start: (kind: LongOpKind, title: string) => void
   update: (progress: LongOpProgress) => void
   markProgress: () => void
   markStalled: () => void
+  markCompleted: () => void
   end: () => void
 }
 
 export const useLongOpStore = create<LongOpState>((set) => ({
   current: null,
+  completed: 0,
   start: (kind, title) => {
     const now = Date.now()
     set({ current: { kind, title, startedAt: now, lastProgressAt: now, stalled: false } })
@@ -44,6 +51,7 @@ export const useLongOpStore = create<LongOpState>((set) => ({
     set((s) => (s.current ? { current: { ...s.current, lastProgressAt: Date.now(), stalled: false } } : s)),
   markStalled: () =>
     set((s) => (s.current && !s.current.stalled ? { current: { ...s.current, stalled: true } } : s)),
+  markCompleted: () => set((s) => ({ completed: s.completed + 1 })),
   end: () => set({ current: null }),
 }))
 

@@ -215,6 +215,9 @@ return ({
         }
         if (event.type === 'snapshot_complete' || event.type === 'snapshot_error') {
           useLongOpStore.getState().end()
+          // Async export/import returned 202 before the file existed; signal the
+          // SnapshotsDialog (if open) to reload now that the backend is done.
+          useLongOpStore.getState().markCompleted()
         }
         // Any non-stats event counts as "activity" — keeps the watchdog
         // quiet during quiet periods of a long-running op (e.g. between

@@ -1,5 +1,5 @@
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
-import { Download, Loader2, Pencil, Trash2, Search, X } from 'lucide-react'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import { Download, Loader2, Pencil, Trash2, X } from 'lucide-react'
 import { getSnapshots, postExportSnapshot, postImportSnapshot, postImportSnapshotByName, getWorkspaceSnapshots, getVolumes, postSnapshotDownload, renameSnapshot, deleteSnapshot, postOpenDir } from '../lib/api'
 import type { SnapshotDto } from '../lib/types'
 import { ConfirmModal } from './ConfirmModal'
@@ -8,7 +8,7 @@ import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
 import { formatDateTime } from '../lib/datetime'
 import { showError } from '../lib/errorModal'
-import { startLongOp, endLongOp } from '../lib/longOp'
+import { startLongOp, endLongOp, useLongOpStore } from '../lib/longOp'
 
 interface SnapshotRow {
   name: string
@@ -52,8 +52,11 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
   const [renameTarget, setRenameTarget] = useState<SnapshotRow | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<SnapshotRow | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
-  const [search, setSearch] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
+  // Bumped by the dashboard store on every terminal snapshot SSE event so the
+  // list reloads once an async export/import actually finishes (the HTTP call
+  // returns 202 before the file exists).
+  const snapshotCompleted = useLongOpStore((s) => s.completed)
   // Pending import: when set, the import-confirm modal is shown. Confirming
   // runs the import; cancelling clears the state.
   const [pendingImport, setPendingImport] = useState<
@@ -101,12 +104,12 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
     })
   }, [])
 
+  // Reload on open and whenever a snapshot op completes on the backend (the
+  // create/import 202 returns before the file is written — reloading only then
+  // is why a freshly created snapshot used to appear only after reopening).
   useEffect(() => {
     if (open) reload()
-  }, [open, reload])
-
-  const filteredWs = useMemo(() => filterRows(wsRows, search), [wsRows, search])
-  const filteredNs = useMemo(() => filterRows(nsRows, search), [nsRows, search])
+  }, [open, reload, snapshotCompleted])
 
   async function runWith(key: string, fn: () => Promise<void>) {
     setBusy(key)
@@ -311,52 +314,64 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
             </button>
           </div>
 
-          <div className="px-4 py-2 border-b border-border shrink-0">
-            <div className="relative">
-              <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <input
-                type="text"
-                className="w-full rounded border border-border bg-background pl-7 pr-2 py-1 text-xs focus:outline-none focus:border-primary"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder={t('journal.filter')}
-              />
-            </div>
-          </div>
-
-          <div className="overflow-auto px-4 py-2 space-y-4" style={{ maxHeight: 'calc(min(80vh, 720px) - 140px)' }}>
-            {loading && filteredWs.length === 0 && filteredNs.length === 0 && (
+          <div className="overflow-auto px-4 py-2" style={{ maxHeight: 'calc(min(80vh, 720px) - 110px)' }}>
+            {loading && wsRows.length === 0 && nsRows.length === 0 ? (
               <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
                 <Loader2 size={14} className="animate-spin" />
                 {t('common.loading')}
               </div>
-            )}
-            {filteredWs.length > 0 && (
-              <Section title={t('snapshots.section.workspace')}>
-                <SnapshotsTable
-                  rows={filteredWs}
-                  showCreated={false}
-                  busy={busy}
-                  namespaceStopped={namespaceStopped}
-                  onImport={importRow}
-                  onRename={(r) => setRenameTarget(r)}
-                  onDelete={(r) => setDeleteTarget(r)}
-                />
-              </Section>
-            )}
-
-            {!(loading && filteredWs.length === 0 && filteredNs.length === 0) && (
-            <Section title={t('snapshots.section.namespace')}>
-              <SnapshotsTable
-                rows={filteredNs}
-                showCreated
-                busy={busy}
-                namespaceStopped={namespaceStopped}
-                onImport={importRow}
-                onRename={(r) => setRenameTarget(r)}
-                onDelete={(r) => setDeleteTarget(r)}
-              />
-            </Section>
+            ) : (
+              // One shared header over both sections (workspace + namespace),
+              // with the section titles as in-table group rows — mirrors the
+              // single-header app table on the main namespace screen.
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr className="text-left text-muted-foreground border-b border-border">
+                    <th className="py-1.5 pr-4 font-medium">{t('snapshots.col.name')}</th>
+                    <th className="py-1.5 pr-4 font-medium w-[15%]">{t('snapshots.col.size')}</th>
+                    <th className="py-1.5 pr-4 font-medium w-[25%]">{t('snapshots.col.created')}</th>
+                    <th className="py-1.5 pr-0 text-right font-medium w-24">{t('journal.actions')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {wsRows.length > 0 && (
+                    <>
+                      <GroupRow title={t('snapshots.section.workspace')} />
+                      {wsRows.map((row, i) => (
+                        <SnapshotRowView
+                          key={`ws:${row.name}:${i}`}
+                          row={row}
+                          busy={busy}
+                          namespaceStopped={namespaceStopped}
+                          onImport={importRow}
+                          onRename={setRenameTarget}
+                          onDelete={setDeleteTarget}
+                        />
+                      ))}
+                    </>
+                  )}
+                  <GroupRow title={t('snapshots.section.namespace')} />
+                  {nsRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="text-center text-muted-foreground" style={{ height: 80 }}>
+                        {t('journal.noData')}
+                      </td>
+                    </tr>
+                  ) : (
+                    nsRows.map((row, i) => (
+                      <SnapshotRowView
+                        key={`ns:${row.name}:${i}`}
+                        row={row}
+                        busy={busy}
+                        namespaceStopped={namespaceStopped}
+                        onImport={importRow}
+                        onRename={setRenameTarget}
+                        onDelete={setDeleteTarget}
+                      />
+                    ))
+                  )}
+                </tbody>
+              </table>
             )}
           </div>
 
@@ -455,28 +470,20 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
   )
 }
 
-function filterRows(rows: SnapshotRow[], search: string): SnapshotRow[] {
-  if (!search.trim()) return rows
-  const lower = search.toLowerCase()
-  return rows.filter((r) =>
-    r.name.toLowerCase().includes(lower) ||
-    r.size.toLowerCase().includes(lower) ||
-    r.created.toLowerCase().includes(lower),
-  )
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+// In-table section divider (workspace vs namespace) under the single shared
+// header row.
+function GroupRow({ title }: { title: string }) {
   return (
-    <section>
-      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">{title}</h3>
-      {children}
-    </section>
+    <tr>
+      <td colSpan={4} className="pt-3 pb-1 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
+        {title}
+      </td>
+    </tr>
   )
 }
 
-interface SnapshotsTableProps {
-  rows: SnapshotRow[]
-  showCreated: boolean
+interface SnapshotRowProps {
+  row: SnapshotRow
   busy: string | null
   namespaceStopped: boolean
   onImport: (row: SnapshotRow) => void
@@ -484,60 +491,39 @@ interface SnapshotsTableProps {
   onDelete: (row: SnapshotRow) => void
 }
 
-function SnapshotsTable({ rows, showCreated, busy, namespaceStopped, onImport, onRename, onDelete }: SnapshotsTableProps) {
+function SnapshotRowView({ row, busy, namespaceStopped, onImport, onRename, onDelete }: SnapshotRowProps) {
   const { t } = useTranslation()
   return (
-    <table className="w-full text-xs border-collapse">
-      <thead>
-        <tr className="text-left text-muted-foreground border-b border-border">
-          <th className="py-1.5 pr-4 font-medium">{t('snapshots.col.name')}</th>
-          <th className="py-1.5 pr-4 font-medium w-[15%]">{t('snapshots.col.size')}</th>
-          {showCreated && <th className="py-1.5 pr-4 font-medium w-[25%]">{t('snapshots.col.created')}</th>}
-          <th className="py-1.5 pr-0 text-right font-medium w-24">{t('journal.actions')}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((row, i) => (
-          <tr key={`${row.scope}:${row.name}:${i}`} className="border-b border-border/20 hover:bg-muted/30">
-            <td className="py-[3px] pr-4 font-mono">{row.name}</td>
-            <td className="py-[3px] pr-4 text-muted-foreground">{row.size}</td>
-            {showCreated && <td className="py-[3px] pr-4 text-muted-foreground">{row.created}</td>}
-            <td className="py-[3px] pr-0 text-right whitespace-nowrap">
-              <RowButton
-                icon={Download}
-                title={t('snapshots.action.import')}
-                disabled={!namespaceStopped || busy !== null}
-                onClick={() => onImport(row)}
-              />
-              {row.scope === 'namespace' && (
-                <>
-                  <RowButton
-                    icon={Pencil}
-                    title={t('snapshots.action.rename')}
-                    disabled={busy !== null}
-                    onClick={() => onRename(row)}
-                  />
-                  <RowButton
-                    icon={Trash2}
-                    title={t('snapshots.action.delete')}
-                    disabled={busy !== null}
-                    variant="danger"
-                    onClick={() => onDelete(row)}
-                  />
-                </>
-              )}
-            </td>
-          </tr>
-        ))}
-        {rows.length === 0 && (
-          <tr>
-            <td colSpan={showCreated ? 4 : 3} className="text-center text-muted-foreground" style={{ height: 80 }}>
-              {t('journal.noData')}
-            </td>
-          </tr>
+    <tr className="border-b border-border/20 hover:bg-muted/30">
+      <td className="py-[3px] pr-4 font-mono">{row.name}</td>
+      <td className="py-[3px] pr-4 text-muted-foreground">{row.size}</td>
+      <td className="py-[3px] pr-4 text-muted-foreground">{row.created}</td>
+      <td className="py-[3px] pr-0 text-right whitespace-nowrap">
+        <RowButton
+          icon={Download}
+          title={t('snapshots.action.import')}
+          disabled={!namespaceStopped || busy !== null}
+          onClick={() => onImport(row)}
+        />
+        {row.scope === 'namespace' && (
+          <>
+            <RowButton
+              icon={Pencil}
+              title={t('snapshots.action.rename')}
+              disabled={busy !== null}
+              onClick={() => onRename(row)}
+            />
+            <RowButton
+              icon={Trash2}
+              title={t('snapshots.action.delete')}
+              disabled={busy !== null}
+              variant="danger"
+              onClick={() => onDelete(row)}
+            />
+          </>
         )}
-      </tbody>
-    </table>
+      </td>
+    </tr>
   )
 }
 
