@@ -249,6 +249,7 @@ const de = {
   'table.action.stop': 'Stoppen',
   'table.action.start': 'Starten',
   'table.action.restart': 'Neustarten',
+  'table.action.stop.rmbRestart': 'Stopp (Rechtsklick: Neustart)',
   'table.toast.success': '{action} für {name} angefordert',
   'table.cpu.throttled': 'CPU gedrosselt',
   'table.memory.warning': 'Hohe Speicherauslastung',

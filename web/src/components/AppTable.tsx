@@ -282,10 +282,23 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
             <td className="py-[2px] text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
               <div className="inline-flex items-center gap-0.5">
                 {isRun && (
-                  <>
-                    <IconBtn icon={Square} filled title={t('table.action.stop')} color="hover:text-destructive" onClick={() => onAction({ type: 'stop', appName: app.name })} />
-                    <IconBtn icon={RotateCw} title={t('table.action.restart')} onClick={() => onAction({ type: 'restart', appName: app.name })} />
-                  </>
+                  // Restart is tucked into a right-click menu on Stop (the
+                  // inline restart button was removed to declutter the row).
+                  <IconBtn
+                    icon={Square}
+                    filled
+                    title={t('table.action.stop.rmbRestart')}
+                    color="hover:text-destructive"
+                    onClick={() => onAction({ type: 'stop', appName: app.name })}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      showContextMenu(e, [{
+                        label: t('table.action.restart'),
+                        icon: <RotateCw size={14} />,
+                        onClick: () => onAction({ type: 'restart', appName: app.name }),
+                      }])
+                    }}
+                  />
                 )}
                 {isStop && (
                   <IconBtn icon={Play} filled title={t('table.action.start')} color="hover:text-success" onClick={() => onAction({ type: 'start', appName: app.name })} />
@@ -353,12 +366,13 @@ function PullProgressBar({ percent, phase }: { percent: number; phase: string })
   )
 }
 
-function IconBtn({ icon: Icon, title, color, onClick, filled }: { icon: React.ElementType; title: string; color?: string; onClick: () => void; filled?: boolean }) {
+function IconBtn({ icon: Icon, title, color, onClick, onContextMenu, filled }: { icon: React.ElementType; title: string; color?: string; onClick: () => void; onContextMenu?: (e: React.MouseEvent) => void; filled?: boolean }) {
   return (
     <button
       type="button"
       className={`px-1 py-0.5 rounded text-muted-foreground ${color ?? 'hover:text-foreground'} hover:bg-muted`}
       onClick={onClick}
+      onContextMenu={onContextMenu}
       title={title}
     >
       {/* Transport-style controls (stop/play) render filled so the stop button

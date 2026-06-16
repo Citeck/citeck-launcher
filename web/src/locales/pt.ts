@@ -249,6 +249,7 @@ const pt = {
   'table.action.stop': 'Parar',
   'table.action.start': 'Iniciar',
   'table.action.restart': 'Reiniciar',
+  'table.action.stop.rmbRestart': 'Parar (clique direito: reiniciar)',
   'table.toast.success': '{action} solicitado para {name}',
   'table.cpu.throttled': 'CPU limitada',
   'table.memory.warning': 'Uso elevado de memória',

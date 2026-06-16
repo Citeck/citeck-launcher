@@ -249,6 +249,7 @@ const ja = {
   'table.action.stop': '\u505c\u6b62',
   'table.action.start': '\u958b\u59cb',
   'table.action.restart': '\u518d\u8d77\u52d5',
+  'table.action.stop.rmbRestart': '\u505c\u6b62\uff08\u53f3\u30af\u30ea\u30c3\u30af\uff1a\u518d\u8d77\u52d5\uff09',
   'table.toast.success': '{name} \u306e{action}\u3092\u30ea\u30af\u30a8\u30b9\u30c8\u3057\u307e\u3057\u305f',
   'table.cpu.throttled': 'CPU \u30b9\u30ed\u30c3\u30c8\u30eb\u4e2d',
   'table.memory.warning': '\u30e1\u30e2\u30ea\u4f7f\u7528\u7387\u304c\u9ad8\u3044',

@@ -249,6 +249,7 @@ const fr = {
   'table.action.stop': 'Arr\u00eater',
   'table.action.start': 'D\u00e9marrer',
   'table.action.restart': 'Red\u00e9marrer',
+  'table.action.stop.rmbRestart': 'Arr\u00eater (clic droit : red\u00e9marrer)',
   'table.toast.success': '{action} demand\u00e9 pour {name}',
   'table.cpu.throttled': 'CPU brid\u00e9',
   'table.memory.warning': 'Utilisation m\u00e9moire \u00e9lev\u00e9e',

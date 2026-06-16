@@ -249,6 +249,7 @@ const ru = {
   'table.action.stop': 'Остановить',
   'table.action.start': 'Запустить',
   'table.action.restart': 'Перезапустить',
+  'table.action.stop.rmbRestart': 'Стоп (ПКМ: перезапуск)',
   'table.toast.success': 'Запрошено {action} для {name}',
   'table.cpu.throttled': 'CPU throttling',
   'table.memory.warning': 'Высокий расход памяти',

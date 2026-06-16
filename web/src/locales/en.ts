@@ -251,6 +251,7 @@ const en = {
   'table.action.stop': 'Stop',
   'table.action.start': 'Start',
   'table.action.restart': 'Restart',
+  'table.action.stop.rmbRestart': 'Stop (right-click: restart)',
   'table.toast.success': '{action} requested for {name}',
   'table.cpu.throttled': 'CPU throttled',
   'table.memory.warning': 'High memory usage',

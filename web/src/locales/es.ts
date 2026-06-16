@@ -249,6 +249,7 @@ const es = {
   'table.action.stop': 'Detener',
   'table.action.start': 'Iniciar',
   'table.action.restart': 'Reiniciar',
+  'table.action.stop.rmbRestart': 'Detener (clic derecho: reiniciar)',
   'table.toast.success': '{action} solicitado para {name}',
   'table.cpu.throttled': 'CPU limitada',
   'table.memory.warning': 'Uso elevado de memoria',

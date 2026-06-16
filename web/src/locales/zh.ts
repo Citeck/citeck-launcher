@@ -249,6 +249,7 @@ const zh = {
   'table.action.stop': '停止',
   'table.action.start': '启动',
   'table.action.restart': '重启',
+  'table.action.stop.rmbRestart': '停止（右键：重启）',
   'table.toast.success': '已请求对 {name} 执行 {action}',
   'table.cpu.throttled': 'CPU 受限',
   'table.memory.warning': '内存使用率高',
