@@ -1,20 +1,16 @@
 package daemon
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
-	"time"
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
-	"github.com/citeck/citeck-launcher/internal/git"
 	"github.com/citeck/citeck-launcher/internal/storage"
 )
 
@@ -60,26 +56,6 @@ func migrateWorkspaceSecretLinks(store storage.Store, secretSvc secretValueReade
 		}
 		slog.Info("Linked legacy workspace repo secret", "ws", ws.ID, "secret", legacyID)
 	}
-}
-
-// resolveActiveRepoOpts returns the URL/branch/token to use when force-pulling
-// the workspace repo. Falls back to the hardcoded defaults when no store entry
-// or the active workspace ID isn't set. The PullPeriod is ignored by callers
-// that bypass throttling (force-pull); other callers should prefer
-// resolveActiveWorkspaceRepoOpts.
-func (d *Daemon) resolveActiveRepoOpts() (url, branch, token string) {
-	opts := d.resolveActiveWorkspaceRepoOpts()
-	if opts.URL != "" {
-		url = opts.URL
-	} else {
-		url = bundle.DefaultBundlesRepo
-	}
-	if opts.Branch != "" {
-		branch = opts.Branch
-	} else {
-		branch = bundle.DefaultBundlesBranch
-	}
-	return url, branch, opts.Token
 }
 
 // resolveActiveWorkspaceRepoOpts is the canonical entry point that maps the
@@ -128,7 +104,7 @@ type secretValueReader interface {
 //     convention) — only when AuthType == "TOKEN" (back-compat).
 //
 // BASIC-style secrets (Username set) are supported gracefully: git token auth
-// sends BasicAuth("x-token-auth", token), so only the secret's Value (the
+// sends BasicAuth("oauth2", token), so only the secret's Value (the
 // password/token half) is used — the stored Username is intentionally ignored.
 func buildWorkspaceRepoOpts(ws storage.WorkspaceDto, secretSvc secretValueReader) bundle.WorkspaceRepoOpts {
 	opts := bundle.WorkspaceRepoOpts{
@@ -168,16 +144,10 @@ func lookupWorkspaceRepoOpts(store storage.Store, secretSvc secretValueReader, w
 	return buildWorkspaceRepoOpts(*ws, secretSvc)
 }
 
-// workspaceRepoLocalDir returns the on-disk location of the cloned default
-// workspace repo. Mirrors the layout used by bundle.resolveWorkspace().
-func (d *Daemon) workspaceRepoLocalDir() string {
-	return filepath.Join(config.BundlesDataDir(d.activeWorkspaceID()), "bundles", "workspace")
-}
-
-// handleWorkspaceUpdate force-pulls the default workspace repo (bypassing the
-// PullPeriod throttle) and triggers a runtime reload so config changes are
-// picked up immediately. Kotlin parity: "Force Update" RMB menu on the
-// Welcome screen (WelcomeScreen.kt).
+// handleWorkspaceUpdate force-pulls the active workspace repo (bypassing the
+// PullPeriod throttle), re-resolves its config, and triggers a runtime reload so
+// config changes are picked up immediately. Kotlin parity: "Force Update" RMB
+// menu on the Welcome screen (WelcomeScreen.kt).
 func (d *Daemon) handleWorkspaceUpdate(w http.ResponseWriter, _ *http.Request) {
 	if !d.reloadMu.TryLock() {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeReloadInProgress, "reload already in progress")
@@ -185,38 +155,97 @@ func (d *Daemon) handleWorkspaceUpdate(w http.ResponseWriter, _ *http.Request) {
 	}
 	defer d.reloadMu.Unlock()
 
-	// Force-pull the workspace repo with PullPeriod=0 to bypass the throttle.
-	// resolveActiveRepoOpts shares the same source-of-truth as the bundle
-	// resolver's workspace clone path, so a private repo configured for
-	// startup auto-pull stays consistent with this manual force-pull.
-	repoURL, repoBranch, repoToken := d.resolveActiveRepoOpts()
-	repoDir := d.workspaceRepoLocalDir()
-	gitCtx, gitCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer gitCancel()
-	if err := git.CloneOrPullWithAuth(gitCtx, git.RepoOpts{
-		URL: repoURL, Branch: repoBranch, Token: repoToken,
-		DestDir: repoDir, PullPeriod: 0,
-	}); err != nil {
-		slog.Warn("Force workspace update: git pull failed", "err", err)
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("workspace pull failed: %v", err))
+	if err := d.reresolveActiveWorkspace(); err != nil {
+		slog.Warn("Force workspace update failed", "err", err)
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	// Only trigger a reload if a namespace is configured; otherwise the pull
-	// alone is enough — the welcome screen will pick up new workspace data on
-	// its next refresh.
-	act := d.active()
-	hasNamespace := act.runtime != nil && act.nsConfig != nil
-
-	if hasNamespace {
+	// Apply pulled config changes to a running namespace (no-op on Welcome).
+	if act := d.active(); act.runtime != nil && act.nsConfig != nil {
 		if err := d.doReload(); err != nil {
-			slog.Warn("Force workspace update: reload after pull failed", "err", err)
+			slog.Warn("Force workspace update: reload failed", "err", err)
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("reload after pull failed: %v", err))
 			return
 		}
 	}
 
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "Workspace updated"})
+}
+
+// reresolveActiveWorkspace force-pulls (PullPeriod=0, bypassing the throttle)
+// and re-resolves the active workspace's repo with the CURRENT git token, then
+// updates the cached active-state workspaceConfig / wsSyncError. The caller MUST
+// hold d.reloadMu. No-op for default-repo (lazy) or missing workspaces. Does NOT
+// reload — callers needing a namespace reload (the Force Update button) do it
+// separately.
+//
+// This is the single point that re-runs the workspace-repo resolution against
+// the current secret store, so a repo first resolved before its token existed
+// (or while the store was locked) is no longer stuck on a stale auth error.
+func (d *Daemon) reresolveActiveWorkspace() error {
+	wsID := d.activeWorkspaceID()
+	if wsID == "" {
+		return nil
+	}
+	ws, err := d.getWorkspaceWithDefault(wsID)
+	if err != nil {
+		return fmt.Errorf("lookup workspace: %w", err)
+	}
+	if ws == nil || ws.RepoURL == "" {
+		return nil
+	}
+
+	opts := buildWorkspaceRepoOpts(*ws, d.secretService)
+	opts.PullPeriod = 0 // force a fresh clone/pull with the current token
+	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(wsID), makeTokenLookup(d.secretReaderFunc())).
+		WithWorkspaceRepo(opts)
+	if !config.IsDesktopMode() {
+		resolver.SetOffline(true)
+	}
+	wsCfg := resolver.ResolveWorkspaceOnly()
+	syncErr := resolver.WorkspaceSyncError()
+
+	d.configMu.Lock()
+	if a := d.activeLocked(); a.workspaceID == wsID {
+		if syncErr != nil {
+			a.wsSyncError = workspaceSyncErrorString(resolver)
+		} else {
+			a.workspaceConfig = wsCfg
+			a.wsSyncError = ""
+		}
+	}
+	d.configMu.Unlock()
+
+	if syncErr != nil {
+		return fmt.Errorf("workspace repo sync failed: %w", syncErr)
+	}
+	return nil
+}
+
+// activeWorkspaceConfigForRead returns the active workspace config for the
+// read-only Welcome surfaces (quick starts, namespace list, snapshots). When a
+// sync error is cached it re-resolves once against the CURRENT secret store —
+// the git token may have been added since the workspace was activated — so the
+// read reflects current reality instead of a stale snapshot from activation
+// time. A cached success returns as-is with no git I/O. Returns (config,
+// wsSyncErrorString).
+func (d *Daemon) activeWorkspaceConfigForRead() (cfg *bundle.WorkspaceConfig, syncErr string) {
+	if act := d.active(); act.wsSyncError == "" {
+		return act.workspaceConfig, ""
+	}
+	// A failure is cached — retry under the reload lock. If it's held (a reload
+	// or another retry is in flight) return the cached value rather than block.
+	if !d.reloadMu.TryLock() {
+		act := d.active()
+		return act.workspaceConfig, act.wsSyncError
+	}
+	defer d.reloadMu.Unlock()
+	if act := d.active(); act.wsSyncError == "" { // fixed by a concurrent retry
+		return act.workspaceConfig, ""
+	}
+	_ = d.reresolveActiveWorkspace() // updates the cached state; result read below
+	act := d.active()
+	return act.workspaceConfig, act.wsSyncError
 }
 
 // handleSystemOpenDir opens an allowlisted directory in the OS file manager.

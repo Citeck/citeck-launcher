@@ -115,7 +115,7 @@ func TestBuildWorkspaceRepoOpts_MissingSecretLeavesTokenEmpty(t *testing.T) {
 // TestBuildWorkspaceRepoOpts_BasicSecretUsesValue: a BASIC-style secret
 // (Username set) still works for git token auth — only Value (the
 // password/token half) is sent; git's BasicAuth username is fixed
-// ("x-token-auth"), so the stored Username is ignored by design.
+// ("oauth2"), so the stored Username is ignored by design.
 func TestBuildWorkspaceRepoOpts_BasicSecretUsesValue(t *testing.T) {
 	ws := storage.WorkspaceDto{
 		ID:       "ws-5",

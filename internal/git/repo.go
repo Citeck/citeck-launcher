@@ -395,11 +395,13 @@ func tokenAuth(token string) *http.BasicAuth {
 	if token == "" {
 		return nil
 	}
-	// "x-token-auth" is the GitLab convention for token auth over BasicAuth;
-	// GitHub accepts any non-empty username with a PAT, so this same username
-	// works for both providers and for self-hosted Gitea / Forgejo.
+	// "oauth2" is the canonical username for token auth over HTTP BasicAuth on
+	// GitLab (a Personal/Project/Group access token goes in the password; the
+	// username only needs to be non-empty and GitLab authenticates by the
+	// token). GitHub and self-hosted Gitea / Forgejo also accept any non-empty
+	// username with a PAT, so this one value works across providers.
 	return &http.BasicAuth{
-		Username: "x-token-auth",
+		Username: "oauth2",
 		Password: token,
 	}
 }

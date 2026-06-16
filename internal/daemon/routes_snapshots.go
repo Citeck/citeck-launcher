@@ -538,15 +538,16 @@ func (d *Daemon) downloadAndImportSnapshot(dc *docker.Client, snapshotID, wsID, 
 }
 
 func (d *Daemon) handleWorkspaceSnapshots(w http.ResponseWriter, _ *http.Request) {
-	act := d.active()
 	// Same no-silent-fallback gate as handleGetQuickStarts: a custom workspace
 	// repo that can't sync (and has no cached config) must not masquerade as a
 	// workspace with no snapshots. See api.ErrCodeWsRepoSyncFailed.
-	if act.wsSyncError != "" {
-		writeErrorCode(w, http.StatusBadGateway, api.ErrCodeWsRepoSyncFailed, act.wsSyncError)
+	// activeWorkspaceConfigForRead re-resolves on a cached error so a freshly
+	// added repo token clears it without a restart.
+	wsCfg, syncErr := d.activeWorkspaceConfigForRead()
+	if syncErr != "" {
+		writeErrorCode(w, http.StatusBadGateway, api.ErrCodeWsRepoSyncFailed, syncErr)
 		return
 	}
-	wsCfg := act.workspaceConfig
 
 	if wsCfg == nil || len(wsCfg.Snapshots) == 0 {
 		writeJSON(w, []bundle.SnapshotDef{})

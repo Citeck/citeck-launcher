@@ -200,17 +200,18 @@ func (d *Daemon) teardownActiveNamespaceForDelete(wsID, nsID string) {
 }
 
 func (d *Daemon) handleGetQuickStarts(w http.ResponseWriter, _ *http.Request) {
-	act := d.active()
 	// No silent fallback (Kotlin 1.x parity): when the active workspace's
 	// CUSTOM repo failed to sync and no cached config exists, Welcome must
 	// surface the failure — not render the built-in fallback quick start that
 	// leads to an infra-only namespace. The message carries the repo URL and
 	// the git error text ("authentication required", …) for the UI heuristic.
-	if act.wsSyncError != "" {
-		writeErrorCode(w, http.StatusBadGateway, api.ErrCodeWsRepoSyncFailed, act.wsSyncError)
+	// activeWorkspaceConfigForRead re-resolves on a cached error, so adding the
+	// repo token clears this on the next refresh without a restart.
+	wsCfg, syncErr := d.activeWorkspaceConfigForRead()
+	if syncErr != "" {
+		writeErrorCode(w, http.StatusBadGateway, api.ErrCodeWsRepoSyncFailed, syncErr)
 		return
 	}
-	wsCfg := act.workspaceConfig
 
 	var quickStarts []api.QuickStartDto
 	if wsCfg != nil {
