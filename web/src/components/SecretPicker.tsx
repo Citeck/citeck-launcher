@@ -37,6 +37,12 @@ interface SecretPickerProps {
   /** Fires whenever the picker (re)loads the GIT_TOKEN secret list, so the
    *  parent can resolve names against the same single fetch. */
   onSecretsChange?: (secrets: SecretMetaDto[]) => void
+  /** Fires right after a NEW secret is created (distinct from onChange, which
+   *  also fires on picking an existing one). The registry-credentials flow uses
+   *  it to bind the fresh secret to its host immediately, so creating a
+   *  credential applies it without a separate confirm step — and survives the
+   *  dialog churn that an SSE retry burst can trigger on create. */
+  onCreated?: (secretId: string) => void
   /** Bump to force a list reload (e.g. after the parent edited a secret). */
   reloadKey?: number
 }
@@ -80,6 +86,7 @@ export function SecretPicker({
   disabled = false,
   onEditRequest,
   onSecretsChange,
+  onCreated,
   reloadKey = 0,
 }: SecretPickerProps) {
   const isRegistry = secretType === 'REGISTRY_AUTH'
@@ -296,9 +303,14 @@ export function SecretPicker({
     setCreateOpen(false)
     setNewToken('')
     setNewUser('')
-    await reload()
-    // The fresh secret becomes the selected dropdown value.
+    // Propagate the new secret BEFORE the awaited reload. The parent dialog can
+    // unmount during the await (a host-scoped registry dialog binds and closes
+    // on create), and a post-await callback would be lost on the unmounted
+    // parent. onChange selects it; onCreated lets the parent act on the brand-new
+    // secret (the registry flow binds it to the host) while we're still mounted.
     onChange(id)
+    onCreated?.(id)
+    await reload()
   }
 
   async function handleCreate(e: React.FormEvent) {

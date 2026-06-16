@@ -1,7 +1,8 @@
-import { render, screen, act, waitFor } from '@testing-library/react'
+import { render, screen, act, waitFor, fireEvent } from '@testing-library/react'
 import { describe, it, expect, beforeEach, beforeAll, vi } from 'vitest'
 import { RegistryAuthBanner } from './RegistryAuthBanner'
 import { useDashboardStore } from '../lib/store'
+import { setRegistryBinding, createSecret } from '../lib/api'
 
 // The dialog/picker fire API calls on mount; stub the module so tests stay
 // offline and deterministic.
@@ -10,6 +11,7 @@ vi.mock('../lib/api', () => ({
   setRegistryBinding: vi.fn().mockResolvedValue({ success: true }),
   postAppsRetryPullFailed: vi.fn().mockResolvedValue({ success: true }),
   getSecrets: vi.fn().mockResolvedValue([]),
+  getMigrationStatus: vi.fn().mockResolvedValue({ encrypted: true, locked: false, hasPendingSecrets: false }),
   listWorkspaces: vi.fn().mockResolvedValue([]),
   deleteSecret: vi.fn().mockResolvedValue({ success: true }),
   createSecret: vi.fn().mockResolvedValue({ success: true }),
@@ -60,5 +62,33 @@ describe('RegistryAuthBanner', () => {
 
     // Still exactly one dialog explanation present.
     expect(screen.getAllByText(/Pick an existing one/)).toHaveLength(1)
+  })
+
+  it('binds the host immediately when a new credential is created (no separate Save)', async () => {
+    useDashboardStore.setState({ pullAuthRequired: { emodel: HOST } })
+    const { container } = render(<RegistryAuthBanner />)
+    await screen.findByText(/Pick an existing one/)
+
+    // Open the secret picker dropdown, then choose "Add new…".
+    fireEvent.click(screen.getByText('Select a token secret…'))
+    fireEvent.click(await screen.findByText('Add new…'))
+
+    // The create form opens (Username/Password are registry-only fields).
+    await screen.findByText('Username')
+    const username = container.querySelector('input[autocomplete="username"]') as HTMLInputElement
+    const password = container.querySelector('input[type="password"]') as HTMLInputElement
+    fireEvent.change(username, { target: { value: 'robot' } })
+    fireEvent.change(password, { target: { value: 'secret' } })
+
+    // Submit the create form (name defaults to the host).
+    fireEvent.click(screen.getByText('Create'))
+
+    // Regression: creating a credential for the prompted host binds it straight
+    // away — the user does NOT have to also click "Save & Retry", and the bind
+    // survives the dialog churn an SSE retry burst can trigger on create.
+    await waitFor(() => {
+      expect(createSecret).toHaveBeenCalled()
+      expect(setRegistryBinding).toHaveBeenCalledWith(HOST, expect.stringMatching(/^registry-/))
+    })
   })
 })

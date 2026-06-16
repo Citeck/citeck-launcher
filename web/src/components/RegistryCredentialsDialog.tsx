@@ -48,23 +48,31 @@ export function RegistryCredentialsDialog({ open, host, onSaved, onClose }: Regi
     return () => { cancelled = true }
   }, [open, host])
 
-  async function handleSave() {
-    if (!selection) return
+  // Bind the host to a secret, then signal success. onSaved is the success
+  // signal; the parent closes (and, for the pre-flight gate, advances to the
+  // next host or runs the pending start). We deliberately do NOT call onClose
+  // here so callers can tell a save apart from a cancel.
+  async function bindAndFinish(secretId: string) {
+    if (!secretId) return
     setSaving(true)
     setError(null)
     try {
-      await setRegistryBinding(host, selection)
+      await setRegistryBinding(host, secretId)
       toast(t('registryCreds.saved'), 'success')
-      // onSaved is the success signal; the parent closes (and, for the
-      // pre-flight gate, advances to the next host or runs the pending start).
-      // We deliberately do NOT call onClose here so callers can tell a save
-      // apart from a cancel.
       onSaved?.()
     } catch (e) {
       setError((e as Error).message)
     } finally {
       setSaving(false)
     }
+  }
+
+  // Creating a credential for the host we're prompting about means "use this
+  // here": bind it immediately, so the user doesn't have to also click Save —
+  // and the binding persists even if the dialog churns on create.
+  function handleCreated(secretId: string) {
+    setSelection(secretId)
+    void bindAndFinish(secretId)
   }
 
   return (
@@ -85,7 +93,7 @@ export function RegistryCredentialsDialog({ open, host, onSaved, onClose }: Regi
           <button
             type="button"
             className="rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
-            onClick={handleSave}
+            onClick={() => void bindAndFinish(selection)}
             disabled={saving || !selection}
           >
             {t('registryCreds.save')}
@@ -99,6 +107,7 @@ export function RegistryCredentialsDialog({ open, host, onSaved, onClose }: Regi
         host={host}
         value={selection}
         onChange={setSelection}
+        onCreated={handleCreated}
         defaultNewName={host}
         disabled={saving}
       />
