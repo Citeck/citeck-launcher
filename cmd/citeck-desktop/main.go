@@ -217,6 +217,7 @@ func run() error {
 		Name:            "main",
 		Title:           fmt.Sprintf("Citeck Launcher v%s", titleVersion),
 		DevToolsEnabled: true,
+		Zoom:            wailswin.UIZoom,
 		Width:           1200,
 		Height:          800,
 		MinWidth:        300,
@@ -228,6 +229,14 @@ func run() error {
 		Windows: application.WindowsWindow{
 			HiddenOnTaskbar: false,
 		},
+	})
+
+	// Re-apply the UI zoom once the webview is ready. On macOS the init path
+	// skips options.Zoom (setMagnification is only wired at runtime), so without
+	// this the main window would render at 1.0 there; harmless re-apply on
+	// Linux/Windows where options.Zoom already took effect.
+	window.RegisterHook(events.Common.WindowRuntimeReady, func(_ *application.WindowEvent) {
+		window.SetZoom(wailswin.UIZoom)
 	})
 
 	// raiseToFront shows the window and brings it above other windows with

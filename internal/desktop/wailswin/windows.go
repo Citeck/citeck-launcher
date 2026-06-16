@@ -21,8 +21,18 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
-// WindowSpec is the JSON payload accepted by the open-window endpoint.
-// Names match the equivalent fields of [application.WebviewWindowOptions]
+// UIZoom is the desktop webview zoom applied to every window. It uses the
+// webview's NATIVE zoom (WebKitGTK set_zoom_level / WebView2 PutZoomFactor /
+// WKWebView setMagnification), which scales the whole UI uniformly (text +
+// icons + everything) and composes on top of the OS DPI scaling — so a Windows
+// install at 125% and this zoom multiply correctly. The 2.x web UI read
+// noticeably smaller than the 1.x launcher; this restores a comparable size.
+// It's native (not a CSS hack), so it stays transparent to JS layout
+// (getBoundingClientRect / pointer coords keep their CSS-px values), which
+// keeps the virtualized app table and the bottom-panel drag working. Tune here.
+const UIZoom = 1.1
+
+// WindowSpec fields match the equivalent fields of [application.WebviewWindowOptions]
 // so the frontend can stay close to the Wails vocabulary.
 type WindowSpec struct {
 	// Kind groups windows by purpose: "logs", "editor", etc.
@@ -135,12 +145,16 @@ func (m *WindowManager) handleOpen(w http.ResponseWriter, r *http.Request) {
 			InitialPosition: application.WindowCentered,
 			Screen:          targetScreen,
 			DevToolsEnabled: true,
+			Zoom:            UIZoom,
 			// F12 opens DevTools per-window (logs / editor windows are full
 			// webviews, so the shortcut has to be registered on each).
 			KeyBindings: map[string]func(application.Window){
 				"F12": func(w application.Window) { w.OpenDevTools() },
 			},
 		})
+		// Re-apply on macOS, where the init path skips options.Zoom (the
+		// no-op elsewhere is harmless). Runs on the UI thread inside InvokeAsync.
+		win.SetZoom(UIZoom)
 		win.RegisterHook(events.Common.WindowClosing, func(_ *application.WindowEvent) {
 			m.mu.Lock()
 			delete(m.windows, name)
