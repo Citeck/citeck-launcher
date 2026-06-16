@@ -9,6 +9,7 @@ import {
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
 import { useDashboardStore } from '../lib/store'
+import { useSecretsLockStore } from '../lib/secretsLock'
 
 type Step = 'kotlin-decrypt' | 'unlock' | null
 
@@ -55,6 +56,7 @@ export function SecretsUnlockGuard() {
       await submitMasterPassword(pwd)
       toast(t('migration.secretsImported'), 'success')
       setStep(null)
+      useSecretsLockStore.getState().markUnlocked()
       fetchData()
     } catch {
       setError(t('migration.wrongPassword'))
@@ -71,6 +73,7 @@ export function SecretsUnlockGuard() {
       await unlockSecrets(pwd)
       toast(t('migration.unlock.success'), 'success')
       setStep(null)
+      useSecretsLockStore.getState().markUnlocked()
       fetchData()
     } catch {
       setError(t('migration.wrongPassword'))

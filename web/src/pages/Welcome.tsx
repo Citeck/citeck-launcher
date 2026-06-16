@@ -15,6 +15,7 @@ import { useContextMenu } from '../hooks/useContextMenu'
 import { useTabsStore } from '../lib/tabs'
 import { useDashboardStore } from '../lib/store'
 import { useQuickStartStore } from '../lib/quickstart'
+import { useSecretsLockStore } from '../lib/secretsLock'
 import { StartProgressStepper } from '../components/StartProgressStepper'
 import { usePanelStore } from '../lib/panels'
 import { useTranslation } from '../lib/i18n'
@@ -50,6 +51,11 @@ export function Welcome() {
   // switch from the top-panel picker re-renders + reloads this screen.
   const activeWorkspaceId = useActiveWorkspaceId()
   const workspaceLoaded = useDaemonStatusStore((s) => s.status !== null)
+  // Re-fetch quick-starts when secrets are unlocked: their bundle refs resolve
+  // a git "LATEST" via the workspace token, which is unavailable on a locked
+  // start — the first fetch returns the symbolic ref, this brings the concrete
+  // version once the token becomes usable.
+  const secretsEpoch = useSecretsLockStore((s) => s.epoch)
   // Pre-start registry-credentials gate (hard block — see useRegistryPreflight).
   const { preflight, dialog: registryPreflightDialog } = useRegistryPreflight()
   // Kotlin parity (WelcomeScreen.kt:281) — guard MessageDialog when QS clicked
@@ -113,7 +119,7 @@ export function Welcome() {
     // flag then awaits; not a cascading render.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadData()
-  }, [loadData, activeWorkspaceId])
+  }, [loadData, activeWorkspaceId, secretsEpoch])
 
   // Ensure daemon status is loaded so the active workspace id resolves. Fails
   // silently — the screen still renders without it.
