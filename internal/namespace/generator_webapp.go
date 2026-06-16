@@ -36,8 +36,11 @@ func webappKind(name string) appdef.ApplicationKind {
 }
 
 func generateWebapp(name string, ctx *NsGenContext) {
-	// Check if explicitly disabled
-	if wp, ok := ctx.Config.Webapps[name]; ok && wp.Enabled != nil && !*wp.Enabled {
+	// Effective enabled: a per-app workspace defaultProps.enabled is the base,
+	// a namespace config webapps[name].enabled overrides it. (Global
+	// DefaultWebappProps.enabled is intentionally NOT honored — a single global
+	// flag disabling every webapp would be a surprising footgun.)
+	if !webappEnabled(name, ctx) {
 		return
 	}
 
@@ -51,6 +54,12 @@ func generateWebapp(name string, ctx *NsGenContext) {
 	app.Image = bundleApp.Image
 	app.Kind = webappKind(name)
 
+	// Computed locals seeded from the workspace layers, then overridden by the
+	// namespace config below. Everything is guarded on a set value, so a layer
+	// that omits a field changes nothing.
+	var javaOpts, springProfiles string
+	var debugPort int
+
 	// Apply workspace default props: three-layer merge
 	// Level 1: workspace-level DefaultWebappProps (global defaults for all webapps)
 	// Level 2: per-app DefaultProps from workspace config
@@ -58,20 +67,19 @@ func generateWebapp(name string, ctx *NsGenContext) {
 	if ctx.WorkspaceConfig != nil {
 		// Level 1: global workspace defaults
 		applyWebappDefaults(app, &ctx.WorkspaceConfig.DefaultWebappProps, ctx)
+		seedWebappLocals(&port, &springProfiles, &debugPort, &ctx.WorkspaceConfig.DefaultWebappProps)
 
 		// Level 2: per-app workspace defaults
 		for _, wsCfg := range ctx.WorkspaceConfig.Webapps {
 			if wsCfg.ID == name {
 				applyWebappDefaults(app, &wsCfg.DefaultProps, ctx)
+				seedWebappLocals(&port, &springProfiles, &debugPort, &wsCfg.DefaultProps)
 				break
 			}
 		}
 	}
 
 	// Java opts from namespace config (overrides workspace defaults)
-	var javaOpts string
-	var springProfiles string
-	var debugPort int
 	if wp, ok := ctx.Config.Webapps[name]; ok { //nolint:nestif // config override logic is inherently nested
 		if wp.HeapSize != "" {
 			javaOpts = fmt.Sprintf("-Xmx%s -Xms%s", wp.HeapSize, wp.HeapSize)
@@ -91,8 +99,12 @@ func generateWebapp(name string, ctx *NsGenContext) {
 		for k, v := range wp.Environments {
 			app.AddEnv(k, v)
 		}
-		springProfiles = wp.SpringProfiles
-		debugPort = wp.DebugPort
+		if wp.SpringProfiles != "" {
+			springProfiles = wp.SpringProfiles
+		}
+		if wp.DebugPort > 0 {
+			debugPort = wp.DebugPort
+		}
 	}
 
 	// debugPort: add JDWP agent to JAVA_OPTS (preserve workspace-set JAVA_OPTS if namespace didn't set heapSize)
@@ -302,7 +314,8 @@ func addWebappInfraEnv(app *AppBuilder, ctx *NsGenContext) {
 	}
 }
 
-// applyWebappDefaults applies a WebappDefaultProps layer to an app builder.
+// applyWebappDefaults applies a WebappDefaultProps layer to an app builder
+// (image, environments, JAVA_OPTS from heapSize/javaOpts, memory limit).
 func applyWebappDefaults(app *AppBuilder, props *bundle.WebappDefaultProps, ctx *NsGenContext) {
 	if props == nil {
 		return
@@ -313,11 +326,54 @@ func applyWebappDefaults(app *AppBuilder, props *bundle.WebappDefaultProps, ctx 
 	for k, v := range props.Environments {
 		app.AddEnv(k, resolveTemplateVarsWithContext(v, ctx))
 	}
-	if props.HeapSize != "" {
-		app.AddEnv("JAVA_OPTS", fmt.Sprintf("-Xmx%s -Xms%s", props.HeapSize, props.HeapSize))
+	if props.HeapSize != "" || props.JavaOpts != "" {
+		javaOpts := ""
+		if props.HeapSize != "" {
+			javaOpts = fmt.Sprintf("-Xmx%s -Xms%s", props.HeapSize, props.HeapSize)
+		}
+		if props.JavaOpts != "" {
+			javaOpts = strings.TrimSpace(javaOpts + " " + props.JavaOpts)
+		}
+		app.AddEnv("JAVA_OPTS", javaOpts)
 	}
 	if props.MemoryLimit != "" {
 		app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: props.MemoryLimit}}
+	}
+}
+
+// webappEnabled resolves whether a webapp should be generated: enabled unless a
+// per-app workspace defaultProps.enabled is false, which a namespace
+// webapps[name].enabled then overrides.
+func webappEnabled(name string, ctx *NsGenContext) bool {
+	enabled := true
+	if ctx.WorkspaceConfig != nil {
+		for _, wsCfg := range ctx.WorkspaceConfig.Webapps {
+			if wsCfg.ID == name && wsCfg.DefaultProps.Enabled != nil {
+				enabled = *wsCfg.DefaultProps.Enabled
+				break
+			}
+		}
+	}
+	if wp, ok := ctx.Config.Webapps[name]; ok && wp.Enabled != nil {
+		enabled = *wp.Enabled
+	}
+	return enabled
+}
+
+// seedWebappLocals folds a workspace defaultProps layer into the computed locals
+// (guarded — an unset field changes nothing). Namespace config overrides these.
+func seedWebappLocals(port *int, springProfiles *string, debugPort *int, props *bundle.WebappDefaultProps) {
+	if props == nil {
+		return
+	}
+	if props.ServerPort > 0 {
+		*port = props.ServerPort
+	}
+	if props.SpringProfiles != "" {
+		*springProfiles = props.SpringProfiles
+	}
+	if props.DebugPort > 0 {
+		*debugPort = props.DebugPort
 	}
 }
 

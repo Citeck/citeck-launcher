@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/git"
 	"gopkg.in/yaml.v3"
 )
@@ -50,12 +51,21 @@ type DataSourceConfig struct {
 }
 
 // WebappDefaultProps holds default properties for a webapp from workspace config.
+// Field set mirrors the Kotlin 1.x WebappProps so a workspace.defaultProps block
+// authored against the 1.x schema isn't silently dropped (yaml.v3 ignores unknown
+// keys). The generator's 3-layer merge applies these under the namespace-level
+// overrides.
 type WebappDefaultProps struct {
-	Image        string                      `yaml:"image"`
-	HeapSize     string                      `yaml:"heapSize"`
-	MemoryLimit  string                      `yaml:"memoryLimit"`
-	Environments map[string]string           `yaml:"environments"`
-	DataSources  map[string]DataSourceConfig `yaml:"dataSources"`
+	Image          string                      `yaml:"image"`
+	HeapSize       string                      `yaml:"heapSize"`
+	MemoryLimit    string                      `yaml:"memoryLimit"`
+	Environments   map[string]string           `yaml:"environments"`
+	DataSources    map[string]DataSourceConfig `yaml:"dataSources"`
+	Enabled        *bool                       `yaml:"enabled,omitempty"`
+	ServerPort     int                         `yaml:"serverPort,omitempty"`
+	JavaOpts       string                      `yaml:"javaOpts,omitempty"`
+	SpringProfiles string                      `yaml:"springProfiles,omitempty"`
+	DebugPort      int                         `yaml:"debugPort,omitempty"`
 	// CloudConfig holds Spring-style arbitrary per-webapp config keys merged
 	// into the eapps/<app>/props/application-launcher.yml. The generator
 	// deep-merges three layers in priority order: workspace.defaultWebappProps
@@ -590,7 +600,7 @@ func (r *Resolver) bundleRepoPullPeriod(bundleRepo *BundlesRepo) time.Duration {
 		return 0
 	}
 	if bundleRepo != nil && bundleRepo.PullPeriod != "" {
-		if d, err := time.ParseDuration(bundleRepo.PullPeriod); err == nil && d > 0 {
+		if d, ok := parsePullPeriod(bundleRepo.PullPeriod); ok {
 			return d
 		}
 	}
@@ -742,8 +752,13 @@ func parseBundleFile(path, version string, aliasMap, imageRepoMap map[string]str
 		}
 		applications[canonical] = AppDef{Image: image}
 
-		// Collect citeck apps (ecos-apps init containers)
-		citeckApps = collectCiteckApps(value, imageRepoMap, citeckApps)
+		// Collect citeck apps (ecos-apps init containers). Kotlin gates this on
+		// the eapps app (+ aliases) only — ecosAppsImages on any other app is
+		// ignored — so match that to avoid leaking unrelated init images into
+		// eapps' init containers.
+		if canonical == appdef.AppEapps {
+			citeckApps = collectCiteckApps(value, imageRepoMap, citeckApps)
+		}
 	}
 
 	for appName, value := range raw {
