@@ -112,7 +112,16 @@ export function VolumesDialog({ open, onClose, onOpenSnapshots, namespaceStopped
       key: 'size',
       render: (row) => {
         const st = rowSizes[row.name]
-        if (st?.status === 'done') return <span>{st.bytes != null ? formatBytes(st.bytes) : '—'}</span>
+        // Mirror the Compute button's box model (transparent border + same
+        // padding + text size) so a computed value lines up exactly with the
+        // button text in the rows that still show "Compute".
+        if (st?.status === 'done') {
+          return (
+            <span className="inline-block border border-transparent px-1.5 py-0.5 text-[11px]">
+              {st.bytes != null ? formatBytes(st.bytes) : '—'}
+            </span>
+          )
+        }
         const isLoading = st?.status === 'loading'
         return (
           <button
