@@ -6,7 +6,6 @@ import { ContextMenu, type ContextMenuItem } from './ContextMenu'
 import { useContextMenu } from '../hooks/useContextMenu'
 import { useTranslation, type LocaleKey } from '../lib/i18n'
 import { toast } from '../lib/toast'
-import { copyText } from '../lib/clipboard'
 import { useDashboardStore } from '../lib/store'
 import { isEditableFile } from '../lib/files'
 import { initProgressOf } from '../lib/initProgress'
@@ -184,6 +183,20 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
     }
   }
 
+  // Right-click on the transport button opens the restart menu in every state,
+  // so a non-running app gets the same menu (not the browser default) with
+  // Restart disabled + a hint, instead of an inline restart button.
+  function openRestartMenu(e: React.MouseEvent, appName: string, running: boolean) {
+    e.preventDefault()
+    showContextMenu(e, [{
+      label: t('table.action.restart'),
+      icon: <RotateCw size={14} />,
+      disabled: !running,
+      title: running ? undefined : t('table.action.restart.disabledHint'),
+      onClick: () => onAction({ type: 'restart', appName }),
+    }])
+  }
+
   return (
     <>
       <tr>
@@ -274,9 +287,9 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
             <td className="py-[2px] pr-4 font-mono text-muted-foreground whitespace-nowrap" title={app.ports?.join(', ')}>
               {portsShort(app.ports)}
             </td>
-            <td className="py-[2px] pr-4 font-mono text-muted-foreground whitespace-nowrap cursor-pointer hover:text-foreground"
-              title={t('table.copy', { image: app.image })}
-              onClick={(e) => { e.stopPropagation(); void copyText(app.image) }}>
+            {/* Tag is display-only here — copying the full image+tag lives in
+                the right panel (hover copy button) and the app detail view. */}
+            <td className="py-[2px] pr-4 font-mono text-muted-foreground whitespace-nowrap" title={app.image}>
               {tag(app.image)}
             </td>
             <td className="py-[2px] text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
@@ -290,21 +303,28 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
                     title={t('table.action.stop.rmbRestart')}
                     color="hover:text-destructive"
                     onClick={() => onAction({ type: 'stop', appName: app.name })}
-                    onContextMenu={(e) => {
-                      e.preventDefault()
-                      showContextMenu(e, [{
-                        label: t('table.action.restart'),
-                        icon: <RotateCw size={14} />,
-                        onClick: () => onAction({ type: 'restart', appName: app.name }),
-                      }])
-                    }}
+                    onContextMenu={(e) => openRestartMenu(e, app.name, true)}
                   />
                 )}
                 {isStop && (
-                  <IconBtn icon={Play} filled title={t('table.action.start')} color="hover:text-success" onClick={() => onAction({ type: 'start', appName: app.name })} />
+                  <IconBtn
+                    icon={Play}
+                    filled
+                    title={t('table.action.start')}
+                    color="hover:text-success"
+                    onClick={() => onAction({ type: 'start', appName: app.name })}
+                    onContextMenu={(e) => openRestartMenu(e, app.name, false)}
+                  />
                 )}
                 {isTransitional && (
-                  <IconBtn icon={Square} filled title={t('table.action.stop')} color="hover:text-destructive" onClick={() => onAction({ type: 'stop', appName: app.name })} />
+                  <IconBtn
+                    icon={Square}
+                    filled
+                    title={t('table.action.stop')}
+                    color="hover:text-destructive"
+                    onClick={() => onAction({ type: 'stop', appName: app.name })}
+                    onContextMenu={(e) => openRestartMenu(e, app.name, false)}
+                  />
                 )}
                 <button type="button"
                   className="px-1 py-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted disabled:hover:bg-transparent disabled:hover:text-muted-foreground disabled:opacity-40 disabled:cursor-not-allowed"

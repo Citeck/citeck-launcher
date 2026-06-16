@@ -8,6 +8,8 @@ export interface ContextMenuItem {
   decoration?: React.ReactNode
   onClick: () => void
   disabled?: boolean
+  /** Native tooltip — set it to explain WHY a disabled item can't be used. */
+  title?: string
   variant?: 'default' | 'danger'
   divider?: boolean
 }
@@ -69,28 +71,35 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
         item.divider ? (
           <div key={`divider-${i}`} className="border-t border-border my-1" />
         ) : (
-          <button
-            key={item.label}
-            type="button"
-            disabled={item.disabled}
-            className={`flex items-center gap-2 w-full text-left px-3 py-1.5 text-xs transition-colors ${
-              item.disabled
-                ? 'text-muted-foreground cursor-not-allowed'
-                : item.variant === 'danger'
-                  ? 'text-destructive hover:bg-destructive/10'
-                  : 'text-foreground hover:bg-muted'
-            }`}
-            onClick={() => {
-              if (!item.disabled) {
-                item.onClick()
-                onClose()
-              }
-            }}
-          >
-            {item.icon && <span className="w-4 h-4 flex items-center justify-center">{item.icon}</span>}
-            {item.decoration}
-            {item.label}
-          </button>
+          // Wrap in a span carrying the title: a native tooltip on a disabled
+          // <button> never shows (pointer events suppressed), and the disabled
+          // restart item needs its "why" hint to appear.
+          <span key={item.label} title={item.title} className="block">
+            <button
+              type="button"
+              disabled={item.disabled}
+              // card and muted are the same colour in this theme, so a
+              // hover:bg-muted highlight was invisible — use accent (a step
+              // lighter) so the hovered item actually reads as selected.
+              className={`flex items-center gap-2 w-full text-left px-3 py-1.5 text-xs transition-colors ${
+                item.disabled
+                  ? 'text-muted-foreground cursor-not-allowed'
+                  : item.variant === 'danger'
+                    ? 'text-destructive hover:bg-destructive/15'
+                    : 'text-foreground hover:bg-accent'
+              }`}
+              onClick={() => {
+                if (!item.disabled) {
+                  item.onClick()
+                  onClose()
+                }
+              }}
+            >
+              {item.icon && <span className="w-4 h-4 flex items-center justify-center">{item.icon}</span>}
+              {item.decoration}
+              {item.label}
+            </button>
+          </span>
         ),
       )}
     </div>

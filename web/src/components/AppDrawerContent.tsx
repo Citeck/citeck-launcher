@@ -9,7 +9,8 @@ import { RegistryCredentialsDialog } from './RegistryCredentialsDialog'
 import { RestartEvents } from './RestartEvents'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
-import { RotateCw, FileText, Settings, KeyRound } from 'lucide-react'
+import { copyText } from '../lib/clipboard'
+import { RotateCw, FileText, Settings, KeyRound, Copy } from 'lucide-react'
 
 interface AppDrawerContentProps {
   appName: string
@@ -94,7 +95,7 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
       {/* Details grid */}
       <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
         <D l={t('drawer.container')} v={inspect.containerId?.slice(0, 12) || '—'} dim={isStopped} />
-        <D l={t('drawer.image')} v={inspect.image} />
+        <D l={t('drawer.image')} v={inspect.image} copy={inspect.image} />
         <D l={t('drawer.state')} v={inspect.state} dim={isStopped} />
         <D l={t('drawer.network')} v={inspect.network} />
         <D l={t('drawer.started')} v={inspect.startedAt ? formatDateTime(inspect.startedAt) : '—'} dim={isStopped} />
@@ -205,9 +206,33 @@ function isAuthErrorText(text: string | undefined): boolean {
   return t.includes('authentication') || t.includes('unauthorized') || t.includes('401') || t.includes('denied')
 }
 
-function D({ l, v, dim }: { l: string; v: string; dim?: boolean }) {
+function D({ l, v, dim, copy }: { l: string; v: string; dim?: boolean; copy?: string }) {
   return <>
     <span className="text-muted-foreground">{l}</span>
-    <span className={`font-mono truncate ${dim ? 'text-muted-foreground/50' : ''}`} title={v}>{v}</span>
+    {copy != null ? (
+      <span className="group flex items-center gap-1 min-w-0">
+        <span className={`font-mono truncate ${dim ? 'text-muted-foreground/50' : ''}`} title={v}>{v}</span>
+        <CopyButton text={copy} />
+      </span>
+    ) : (
+      <span className={`font-mono truncate ${dim ? 'text-muted-foreground/50' : ''}`} title={v}>{v}</span>
+    )}
   </>
+}
+
+// Copy button revealed on hover of its row (the image+tag value), so the full
+// image reference can be copied from the right panel — the apps-table tag cell
+// no longer copies on click.
+function CopyButton({ text }: { text: string }) {
+  const { t } = useTranslation()
+  return (
+    <button
+      type="button"
+      className="shrink-0 p-0.5 rounded text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground hover:bg-muted transition-opacity"
+      title={t('table.copy', { image: text })}
+      onClick={async () => { if (await copyText(text)) toast(t('clipboard.copied'), 'success') }}
+    >
+      <Copy size={12} />
+    </button>
+  )
 }
