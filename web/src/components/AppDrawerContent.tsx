@@ -110,7 +110,7 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
           <div className="text-xs font-medium mb-0.5">{t('drawer.volumes')}</div>
           <div className="max-h-24 overflow-y-auto">
             {inspect.volumes!.map((v, i) => (
-              <div key={i} className="text-[11px] font-mono text-muted-foreground break-all">{v}</div>
+              <div key={i} className="text-[11px] font-mono text-foreground break-all">{v}</div>
             ))}
           </div>
         </div>
@@ -124,11 +124,11 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
             {inspect.env!.map((e, i) => {
               const isMasked = e.endsWith('=***')
               return (
-                <div key={i} className="text-[11px] font-mono overflow-hidden text-ellipsis whitespace-nowrap" title={e}>
+                <div key={i} className="text-[11px] font-mono overflow-hidden text-ellipsis whitespace-nowrap text-foreground" title={e}>
                   {isMasked ? (
-                    <><span className="text-muted-foreground">{e.slice(0, e.length - 3)}</span><span className="text-muted-foreground/50">***</span></>
+                    <><span>{e.slice(0, e.length - 3)}</span><span className="text-muted-foreground">***</span></>
                   ) : (
-                    <span className="text-muted-foreground">{e}</span>
+                    <span>{e}</span>
                   )}
                 </div>
               )
@@ -146,21 +146,21 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
       <div className="flex gap-2 pt-2 border-t border-border flex-wrap">
         <button
           type="button"
-          className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted"
+          className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-muted"
           onClick={() => openSecondaryView({ id: `logs:${appName}`, type: 'logs', title: t('logs.title', { name: appName }), appName })}
         >
           <FileText size={12} /> {t('drawer.viewLogs')}
         </button>
         <button
           type="button"
-          className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted"
+          className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-muted"
           onClick={() => openSecondaryView({ id: `app-config:${appName}`, type: 'app-config', title: t('appConfig.tabTitle', { name: appName }), appName })}
         >
           <Settings size={12} /> {t('drawer.editConfig')}
         </button>
         <button
           type="button"
-          className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-50"
+          className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-muted disabled:opacity-50"
           onClick={handleRestart}
           disabled={restarting}
         >
@@ -211,11 +211,11 @@ function D({ l, v, dim, copy }: { l: string; v: string; dim?: boolean; copy?: st
     <span className="text-muted-foreground">{l}</span>
     {copy != null ? (
       <span className="group flex items-center gap-1 min-w-0">
-        <span className={`font-mono truncate ${dim ? 'text-muted-foreground/50' : ''}`} title={v}>{v}</span>
+        <span className={`font-mono truncate ${dim ? 'text-muted-foreground/50' : 'text-foreground'}`} title={v}>{v}</span>
         <CopyButton text={copy} />
       </span>
     ) : (
-      <span className={`font-mono truncate ${dim ? 'text-muted-foreground/50' : ''}`} title={v}>{v}</span>
+      <span className={`font-mono truncate ${dim ? 'text-muted-foreground/50' : 'text-foreground'}`} title={v}>{v}</span>
     )}
   </>
 }
