@@ -381,13 +381,24 @@ func (s *SQLiteStore) SaveWorkspace(ws WorkspaceDto) error {
 }
 
 // DeleteWorkspace removes a workspace by ID, along with its workspace-owned
-// registry bindings (the junction table has no FK cascade).
+// registry bindings (the junction table has no FK cascade). Both deletes run in
+// one transaction so a failure on the second can't orphan the bindings under a
+// dead ws_id.
 func (s *SQLiteStore) DeleteWorkspace(id string) error {
-	if _, err := s.db.Exec("DELETE FROM workspaces WHERE id = ?", id); err != nil {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("delete workspace %s: begin: %w", id, err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec("DELETE FROM workspaces WHERE id = ?", id); err != nil {
 		return fmt.Errorf("delete workspace %s: %w", id, err)
 	}
-	if _, err := s.db.Exec("DELETE FROM registry_bindings WHERE ws_id = ?", id); err != nil {
+	if _, err := tx.Exec("DELETE FROM registry_bindings WHERE ws_id = ?", id); err != nil {
 		return fmt.Errorf("delete workspace %s registry bindings: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("delete workspace %s: commit: %w", id, err)
 	}
 	return nil
 }
