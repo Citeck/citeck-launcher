@@ -746,12 +746,29 @@ func openSecretService() (*storage.SecretService, error) {
 	if err != nil {
 		return nil, fmt.Errorf("secret service: %w", err)
 	}
-	if svc.IsEncrypted() && svc.IsDefaultPassword() {
+	switch {
+	case svc.IsEncrypted() && svc.IsDefaultPassword():
 		if unlockErr := svc.Unlock(storage.DefaultMasterPassword); unlockErr != nil {
 			return nil, fmt.Errorf("unlock: %w", unlockErr)
 		}
+	case !svc.IsEncrypted() && !config.IsDesktopMode():
+		// Fresh SERVER install: the daemon hasn't started yet, so secret
+		// encryption isn't set up — but the install needs to persist registry
+		// credentials NOW. Server mode always uses the default master password
+		// (the daemon's createNamespace/bootstrap would set the same one later,
+		// guarded on !IsEncrypted, so this is a no-op for them). Without this,
+		// saveRegistrySecret fails with ErrEncryptionNotSetUp and the entered
+		// credentials are silently lost — the pull then relies on ambient docker
+		// login creds, which a clean host doesn't have.
+		//
+		// Desktop is deliberately excluded: it forces a user-chosen master
+		// password (the UI prompts on first secret), never the default.
+		if encErr := svc.SetMasterPassword(storage.DefaultMasterPassword, true); encErr != nil {
+			return nil, fmt.Errorf("init default encryption: %w", encErr)
+		}
 	}
-	// Not encrypted yet (daemon hasn't started) or custom password: svc stays locked
+	// Encrypted with a custom password (rare in server install): svc stays
+	// locked; saveRegistrySecret will surface the error to the user.
 	return svc, nil
 }
 
