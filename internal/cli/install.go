@@ -18,9 +18,11 @@ import (
 	"github.com/citeck/citeck-launcher/internal/cli/bundlepicker"
 	"github.com/citeck/citeck-launcher/internal/cli/prompt"
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/output"
+	"github.com/citeck/citeck-launcher/internal/snapshot"
 	"github.com/citeck/citeck-launcher/internal/storage"
 	"github.com/citeck/citeck-launcher/internal/systemsecrets"
 	"github.com/citeck/citeck-launcher/internal/tlsutil"
@@ -309,6 +311,22 @@ hostStep:
 	// --- Step 8: System service ---
 	printDoneTitle(t("install.systemd.label"))
 	installSystemdAndFirewall(port)
+
+	// --- Demo data import (optional) ---
+	// The server install path writes namespace.yml + starts the daemon via
+	// systemd; it never hits the daemon's createNamespace handler, which is the
+	// only place the create-time snapshot import lives (importCreateSnapshot in
+	// routes_ns.go). Without importing here the `snapshot:` field is recorded
+	// but the demo data never lands, and the platform would come up on empty
+	// volumes. Import BEFORE start so containers mount populated volumes.
+	if nsCfg.Snapshot != "" {
+		printDoneTitle(t("install.snapshot.label"))
+		if impErr := importInstallSnapshot(context.Background(), nsCfg.Snapshot); impErr != nil {
+			// Non-fatal: surface clearly but keep the install going so the
+			// operator can still start a (demo-less) platform and retry.
+			output.Errf("%s", t("install.snapshot.failed", "err", impErr.Error()))
+		}
+	}
 
 	// --- Step 9: Start ---
 	startNow := promptConfirm(t("install.start.label"), true)
@@ -853,6 +871,74 @@ func bundleImageRepoIDs(ref bundle.Ref, wsCfg *bundle.WorkspaceConfig) map[strin
 		addImage(app.Image)
 	}
 	return ids
+}
+
+// importInstallSnapshot downloads and imports the demo-data snapshot referenced
+// in namespace.yml into the namespace volumes, before the daemon starts. This is
+// the server-install equivalent of the daemon's create-time importCreateSnapshot
+// (routes_ns.go): it resolves the SnapshotDef from the workspace config, caches
+// the archive at workspace scope (shared with the daemon's own download path),
+// and restores it via snapshot.Import.
+//
+// The (wsID, nsID) pair is fixed to ("daemon", "default") — the same identity
+// resolveStartupTarget hands the daemon in server mode — so the import lands in
+// exactly the runtime volumes the booting daemon will mount
+// (config.ResolveVolumesBase ignores wsID in server mode and keys volumes by nsID).
+func importInstallSnapshot(ctx context.Context, snapshotID string) error {
+	// Server-mode startup identity (see daemon resolveStartupTarget).
+	const wsID, nsID = "daemon", "default"
+
+	resolver := bundle.NewResolver(config.DataDir())
+	resolver.SetOffline(true)
+	snapDef := bundle.FindSnapshot(resolver.ResolveWorkspaceOnly(), snapshotID)
+	if snapDef == nil {
+		return fmt.Errorf("snapshot %q not found in workspace config", snapshotID)
+	}
+
+	// Workspace-scope cache (Kotlin parity, shared with downloadAndImportSnapshot).
+	cacheDir := config.WorkspaceSnapshotsDir(wsID)
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil { //nolint:gosec // snapshot cache dir needs 0o755 for container access
+		return fmt.Errorf("create snapshot cache dir: %w", err)
+	}
+	destPath := filepath.Join(cacheDir, snapshotID+".zip")
+
+	// Reuse a cached archive whose SHA-256 already matches; otherwise download.
+	needsDownload := true
+	if snapDef.SHA256 != "" {
+		if actual, hashErr := snapshot.FileSHA256(destPath); hashErr == nil && strings.EqualFold(actual, snapDef.SHA256) {
+			needsDownload = false
+		}
+	}
+	if needsDownload {
+		output.PrintText("   %s", t("install.snapshot.downloading", "name", snapDef.Name))
+		lastPct := int64(-1)
+		progress := func(received, total int64) {
+			if total <= 0 {
+				return
+			}
+			if pct := received * 100 / total; pct >= lastPct+10 {
+				lastPct = pct - pct%10
+				output.PrintText("   %s", t("install.snapshot.downloadProgress", "pct", strconv.FormatInt(lastPct, 10)))
+			}
+		}
+		if err := snapshot.DownloadWithRetry(ctx, nil, snapDef.URL, destPath, snapDef.SHA256, progress); err != nil {
+			return fmt.Errorf("download snapshot: %w", err)
+		}
+	}
+
+	dc, err := docker.NewClient(wsID, nsID)
+	if err != nil {
+		return fmt.Errorf("docker client: %w", err)
+	}
+	defer dc.Close()
+
+	output.PrintText("   %s", t("install.snapshot.importing"))
+	meta, err := snapshot.Import(ctx, dc, destPath, config.ResolveVolumesBase(wsID, nsID), nil)
+	if err != nil {
+		return fmt.Errorf("import snapshot: %w", err)
+	}
+	output.PrintText("   %s", t("install.snapshot.imported", "count", strconv.Itoa(len(meta.Volumes))))
+	return nil
 }
 
 // selectSnapshot shows an optional snapshot picker. Returns selected snapshot ID or "".
