@@ -152,7 +152,7 @@ type ApplicationDef struct {
 	Volumes            []string           `json:"volumes,omitempty" yaml:"volumes,omitempty"`
 	VolumesContentHash string             `json:"volumesContentHash,omitempty" yaml:"volumesContentHash,omitempty"`
 	InitActions        []AppInitAction    `json:"initActions,omitempty" yaml:"initActions,omitempty"`
-	DependsOn          map[string]bool    `json:"dependsOn,omitempty" yaml:"dependsOn,omitempty"`
+	DependsOn          StringSet          `json:"dependsOn,omitempty" yaml:"dependsOn,omitempty"`
 	StartupConditions  []StartupCondition `json:"startupConditions,omitempty" yaml:"startupConditions,omitempty"`
 	LivenessProbe      *AppProbeDef       `json:"livenessProbe,omitempty" yaml:"livenessProbe,omitempty"`
 	Resources          *AppResourcesDef   `json:"resources,omitempty" yaml:"resources,omitempty"`
@@ -190,10 +190,10 @@ func (d *ApplicationDef) GetHashInput() string {
 	for _, v := range d.Volumes {
 		fmt.Fprintf(&b, "vol=%s\n", v)
 	}
-	depKeys := make([]string, 0, len(d.DependsOn))
-	for k := range d.DependsOn {
-		depKeys = append(depKeys, k)
-	}
+	// Sorted so the hash is independent of dependsOn ordering — a reorder is not
+	// a deployment change. (StringSet preserves insertion order on the wire, but
+	// the hash deliberately ignores it.)
+	depKeys := append([]string(nil), d.DependsOn...)
 	sort.Strings(depKeys)
 	for _, k := range depKeys {
 		fmt.Fprintf(&b, "dep=%s\n", k)

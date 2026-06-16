@@ -144,7 +144,7 @@ func (c *NsGenContext) GetOrCreateApp(name string) *AppBuilder {
 	b := &AppBuilder{
 		Name:         name,
 		Environments: make(map[string]string),
-		DependsOn:    make(map[string]bool),
+		// DependsOn is a nil StringSet; AddDependsOn appends (and dedups).
 	}
 	c.Applications[name] = b
 	return b
@@ -246,7 +246,7 @@ type AppBuilder struct {
 	Volumes            []string
 	VolumesContentHash string
 	InitActions        []appdef.AppInitAction
-	DependsOn          map[string]bool
+	DependsOn          appdef.StringSet
 	StartupConditions  []appdef.StartupCondition
 	LivenessProbe      *appdef.AppProbeDef
 	Resources          *appdef.AppResourcesDef
@@ -275,7 +275,7 @@ func (b *AppBuilder) AddVolume(volume string) *AppBuilder {
 
 // AddDependsOn adds a dependency on another app.
 func (b *AppBuilder) AddDependsOn(name string) *AppBuilder {
-	b.DependsOn[name] = true
+	b.DependsOn.Add(name)
 	return b
 }
 

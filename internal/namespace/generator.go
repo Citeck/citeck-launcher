@@ -155,7 +155,7 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 			if ctx.DetachedApps[a.Name] {
 				continue
 			}
-			for dep := range a.DependsOn {
+			for _, dep := range a.DependsOn {
 				if ctx.DetachedApps[dep] {
 					dependsOnDetached[dep] = true
 				}

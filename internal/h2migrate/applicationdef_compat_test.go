@@ -36,8 +36,8 @@ func TestApplicationDefCompat_KotlinFixture(t *testing.T) {
 	// kind enum: CITECK_CORE -> KindCiteckCore (0)
 	assert.Equal(t, appdef.KindCiteckCore, got.Kind)
 
-	// dependsOn: array -> map[string]bool
-	assert.Equal(t, map[string]bool{"postgres": true, "rabbitmq": true}, got.DependsOn)
+	// dependsOn: array -> ordered StringSet (insertion order preserved)
+	assert.Equal(t, appdef.StringSet{"postgres", "rabbitmq"}, got.DependsOn)
 
 	// initActions: {type, command} -> Exec list wrapped with sh -c
 	require.Len(t, got.InitActions, 1)

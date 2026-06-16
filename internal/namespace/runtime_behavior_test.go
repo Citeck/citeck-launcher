@@ -262,10 +262,6 @@ func testConfig() *Config {
 }
 
 func simpleApp(name, image string, deps ...string) appdef.ApplicationDef {
-	depMap := make(map[string]bool)
-	for _, d := range deps {
-		depMap[d] = true
-	}
 	return appdef.ApplicationDef{
 		Name:  name,
 		Image: image,
@@ -273,7 +269,7 @@ func simpleApp(name, image string, deps ...string) appdef.ApplicationDef {
 		Resources: &appdef.AppResourcesDef{
 			Limits: appdef.LimitsDef{Memory: "256m"},
 		},
-		DependsOn: depMap,
+		DependsOn: appdef.NewStringSet(deps...),
 	}
 }
 

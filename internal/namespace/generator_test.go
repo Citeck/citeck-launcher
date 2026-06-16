@@ -358,7 +358,7 @@ func TestProcessWebappDataSources_JDBC(t *testing.T) {
 		}
 	}
 	require.NotNil(t, emodelApp, "expected emodel app")
-	if !emodelApp.DependsOn["postgres"] {
+	if !emodelApp.DependsOn.Has("postgres") {
 		t.Error("expected emodel to depend on postgres")
 	}
 }
@@ -580,7 +580,7 @@ func TestProxyTarget_AlfrescoEnabled(t *testing.T) {
 	require.NotNil(t, proxy, "expected proxy app")
 	assert.Equal(t, "alfresco:8080", proxy.Environments["PROXY_TARGET"])
 	assert.Equal(t, "true", proxy.Environments["ALFRESCO_ENABLED"])
-	_, dependsOnAlfresco := proxy.DependsOn[appdef.AppAlfresco]
+	dependsOnAlfresco := proxy.DependsOn.Has(appdef.AppAlfresco)
 	assert.True(t, dependsOnAlfresco, "proxy should depend on alfresco when enabled")
 }
 
@@ -606,7 +606,7 @@ func TestProxyTarget_AlfrescoDetached(t *testing.T) {
 		"proxy target should fall back to gateway when alfresco is detached, got %q",
 		proxy.Environments["PROXY_TARGET"])
 	assert.Equal(t, "false", proxy.Environments["ALFRESCO_ENABLED"])
-	_, dependsOnAlfresco := proxy.DependsOn[appdef.AppAlfresco]
+	dependsOnAlfresco := proxy.DependsOn.Has(appdef.AppAlfresco)
 	assert.False(t, dependsOnAlfresco, "proxy must not depend on detached alfresco")
 }
 

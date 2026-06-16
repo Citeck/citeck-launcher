@@ -310,7 +310,7 @@ func buildInitContainerDef(appName string, initC appdef.InitContainerDef) appdef
 // (a) absent from r.apps (different mode/generation), (b) RUNNING, or
 // (c) detached (manualStoppedApps). Caller must hold r.mu (read or write).
 func (r *Runtime) appsDepsSatisfied(app *AppRuntime) bool {
-	for dep := range app.Def.DependsOn {
+	for _, dep := range app.Def.DependsOn {
 		depApp, ok := r.apps[dep]
 		if !ok {
 			// Dep is not part of the current generation — treated as

@@ -39,12 +39,10 @@ func TestGetHashInput_Golden(t *testing.T) {
 			{Exec: []string{"sh", "-c", "/init_db_and_user.sh emodel"}},
 			{Exec: []string{"rabbitmqctl", "add_user", "citeck", "pass"}},
 		},
-		DependsOn: map[string]bool{
-			// Deliberately includes a false value — GetHashInput hashes keys only.
-			"zookeeper": true,
-			"postgres":  true,
-			"rabbitmq":  false,
-		},
+		// Deliberately NOT in sorted order — GetHashInput sorts dependsOn, so the
+		// insertion order a StringSet preserves on the wire must leave no trace
+		// in the hash (the golden below lists them sorted).
+		DependsOn: NewStringSet("zookeeper", "postgres", "rabbitmq"),
 		StartupConditions: []StartupCondition{ // not hashed
 			{Probe: &AppProbeDef{HTTP: &HTTPProbeDef{Path: "/management/health", Port: 17022}}},
 		},

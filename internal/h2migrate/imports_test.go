@@ -381,9 +381,11 @@ func TestImportRuntimeStatePreservesDetachAndEdits(t *testing.T) {
 	assert.ElementsMatch(t, []string{"eapps"}, state.EditedLockedApps)
 	require.Contains(t, state.EditedApps, "eapps")
 	assert.Equal(t, "citeck/ecos-apps:edited", state.EditedApps["eapps"]["image"])
-	deps, ok := state.EditedApps["eapps"]["dependsOn"].(map[string]any)
-	require.True(t, ok, "dependsOn must be an object")
-	assert.True(t, deps["postgres"].(bool))
+	// dependsOn now serializes as an ordered list (1.x Set<String> parity), not
+	// the legacy {name: true} object.
+	deps, ok := state.EditedApps["eapps"]["dependsOn"].([]any)
+	require.True(t, ok, "dependsOn must be a list")
+	assert.Contains(t, deps, "postgres")
 
 	require.NotNil(t, state.CachedBundle)
 	keyMap, ok := state.CachedBundle["key"].(map[string]any)

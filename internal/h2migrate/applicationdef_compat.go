@@ -12,8 +12,9 @@ import (
 // import:
 //   - `kind` is a string enum in Kotlin (CITECK_CORE / THIRD_PARTY / ...) but
 //     an int constant in Go.
-//   - `dependsOn` is a JSON array in Kotlin (Set<String>) but a JSON object in
-//     Go (map[string]bool).
+//   - `dependsOn` is a JSON array in both Kotlin (Set<String>) and Go
+//     (appdef.StringSet, which marshals as a sorted list); we still translate
+//     element-by-element to drop empties and re-key into the Go set.
 //   - `initActions` uses Jackson polymorphic typing in Kotlin
 //     (`{"type":"exec-shell","command":"..."}`) but a flat exec-list shape in
 //     Go (`{"exec":["sh","-c","..."]}`).
@@ -98,10 +99,10 @@ func decodeKotlinApplicationDef(data []byte) (appdef.ApplicationDef, error) {
 		ShmSize:            k.ShmSize,
 	}
 	if len(k.DependsOn) > 0 {
-		out.DependsOn = make(map[string]bool, len(k.DependsOn))
+		out.DependsOn = make(appdef.StringSet, 0, len(k.DependsOn))
 		for _, dep := range k.DependsOn {
 			if dep != "" {
-				out.DependsOn[dep] = true
+				out.DependsOn.Add(dep)
 			}
 		}
 	}
