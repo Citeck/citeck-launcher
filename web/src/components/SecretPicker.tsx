@@ -4,7 +4,8 @@ import { ChevronDown, Loader2, Pencil, Plus, Trash2 } from 'lucide-react'
 import { Modal, ModalField } from './Modal'
 import { ConfirmModal } from './ConfirmModal'
 import { SecretEditDialog } from './SecretEditDialog'
-import { getSecrets, deleteSecret, listWorkspaces } from '../lib/api'
+import { MasterPasswordDialog } from './MasterPasswordDialog'
+import { ApiError, getSecrets, deleteSecret, listWorkspaces, setupSecretsPassword, getMigrationStatus } from '../lib/api'
 import type { SecretMetaDto, WorkspaceDto } from '../lib/types'
 import {
   createGitTokenSecret,
@@ -104,6 +105,13 @@ export function SecretPicker({
   const [newUser, setNewUser] = useState('') // REGISTRY_AUTH only
   const [createBusy, setCreateBusy] = useState(false)
   const [createError, setCreateError] = useState('')
+  // First user secret on a desktop install with no master password yet: the
+  // save returns ENCRYPTION_NOT_SET_UP and we prompt to create one (which
+  // encrypts all secrets) before retrying. The pending create's inputs stay in
+  // state (cleared only on success), so the retry reuses them.
+  const [createMasterOpen, setCreateMasterOpen] = useState(false)
+  const [createMasterLoading, setCreateMasterLoading] = useState(false)
+  const [createMasterError, setCreateMasterError] = useState('')
   // When a host filter is active, show only secrets tagged with it; this
   // toggle reveals the rest so a credential from another host can be reused.
   const [showAllHosts, setShowAllHosts] = useState(false)
@@ -210,12 +218,25 @@ export function SecretPicker({
     triggerRef.current?.focus()
   }
 
-  function openCreate() {
+  async function openCreate() {
     setOpen(false)
     setNewName(defaultNewName)
     setNewToken('')
     setNewUser('')
     setCreateError('')
+    // Proactive master-password gate: if the secret store has no master
+    // password yet, ask for one BEFORE showing the form, so the extra step has
+    // zero sunk cost (cancelling loses nothing — better than being interrupted
+    // after filling the form). If the status check fails, fall through to the
+    // form; the save still enforces it server-side.
+    try {
+      const st = await getMigrationStatus()
+      if (!st.encrypted) {
+        setCreateMasterError('')
+        setCreateMasterOpen(true)
+        return
+      }
+    } catch { /* status unknown — don't block; save enforces it */ }
     setCreateOpen(true)
   }
 
@@ -258,8 +279,26 @@ export function SecretPicker({
     } else if (e.key === 'Enter') {
       e.preventDefault()
       if (activeIdx >= 0 && activeIdx < visible.length) pick(visible[activeIdx].id)
-      else if (activeIdx === visible.length) openCreate()
+      else if (activeIdx === visible.length) void openCreate()
     }
+  }
+
+  // Persist the new secret from the current modal inputs; returns its id.
+  async function persistNewSecret(): Promise<string> {
+    const name = newName.trim()
+    return isRegistry
+      ? createRegistrySecret(name, newUser.trim(), newToken, host ?? '')
+      : createGitTokenSecret(name, newToken)
+  }
+
+  // Close the modal and select the freshly-created secret.
+  async function finishCreate(id: string) {
+    setCreateOpen(false)
+    setNewToken('')
+    setNewUser('')
+    await reload()
+    // The fresh secret becomes the selected dropdown value.
+    onChange(id)
   }
 
   async function handleCreate(e: React.FormEvent) {
@@ -272,19 +311,36 @@ export function SecretPicker({
     setCreateBusy(true)
     setCreateError('')
     try {
-      const id = isRegistry
-        ? await createRegistrySecret(name, newUser, newToken, host ?? '')
-        : await createGitTokenSecret(name, newToken)
-      setCreateOpen(false)
-      setNewToken('')
-      setNewUser('')
-      await reload()
-      // The fresh secret becomes the selected dropdown value.
-      onChange(id)
+      await finishCreate(await persistNewSecret())
     } catch (err) {
+      // Desktop first-time secret: no master password yet. Prompt to create one
+      // (it encrypts all secrets) and retry the save afterwards.
+      if (err instanceof ApiError && err.code === 'ENCRYPTION_NOT_SET_UP') {
+        setCreateMasterError('')
+        setCreateMasterOpen(true)
+        return
+      }
       setCreateError(err instanceof Error ? err.message : String(err))
     } finally {
       setCreateBusy(false)
+    }
+  }
+
+  async function handleCreateMaster(pwd: string) {
+    if (!pwd) return
+    setCreateMasterLoading(true)
+    setCreateMasterError('')
+    try {
+      await setupSecretsPassword(pwd)
+      setCreateMasterOpen(false)
+      // Encryption is now set up — show the create form (proactive gate). In the
+      // rare case the form was already open (reactive fallback), this is a no-op
+      // and the user just re-submits.
+      setCreateOpen(true)
+    } catch (e) {
+      setCreateMasterError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setCreateMasterLoading(false)
     }
   }
 
@@ -399,7 +455,7 @@ export function SecretPicker({
                   tabIndex={-1}
                   className={`flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-sm hover:bg-muted ${activeIdx === visible.length ? 'bg-muted' : ''}`}
                   onMouseEnter={() => setActiveIdx(visible.length)}
-                  onClick={openCreate}
+                  onClick={() => void openCreate()}
                 >
                   <Plus size={12} />
                   {t('secretPicker.addNew')}
@@ -526,6 +582,16 @@ export function SecretPicker({
         error={deleteError}
         onConfirm={handleDelete}
         onCancel={() => { setDeleteTarget(null); setDeleteError('') }}
+      />
+
+      {/* First-secret master-password setup (encrypts all secrets), shown when
+          the daemon reports ENCRYPTION_NOT_SET_UP on save. */}
+      <MasterPasswordDialog
+        mode="create"
+        open={createMasterOpen}
+        loading={createMasterLoading}
+        error={createMasterError}
+        onSubmit={handleCreateMaster}
       />
     </>
   )

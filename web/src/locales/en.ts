@@ -420,8 +420,8 @@ const en = {
   'migration.secretsImported': 'Secrets decrypted and imported',
 
   // -- Migration: setup password --
-  'migration.setupPassword.title': 'Protect Your Secrets',
-  'migration.setupPassword.description': 'Would you like to encrypt your imported secrets with a master password? You will need it each time you start the launcher.',
+  'migration.setupPassword.title': 'Create a master password',
+  'migration.setupPassword.description': 'To work with secrets you need to create a master password. It encrypts all your secret data and is required each time you start the launcher.',
 
   // -- Migration: unlock --
   'migration.unlock.title': 'Unlock Secrets',
