@@ -159,6 +159,10 @@ export function VolumesDialog({ open, onClose, onOpenSnapshots, namespaceStopped
       label: t('volumes.deleteAll'),
       variant: 'danger',
       enabledIf: () => namespaceStopped && volumes.length > 0,
+      // Explain the disable: same reason as the per-row delete (volumes can't be
+      // removed while a live container holds them). Empty list disables too, but
+      // that's self-evident, so only hint the running-namespace case.
+      title: !namespaceStopped ? t('volumes.delete.disabledHint') : undefined,
       loading: true,
       onClick: () => { setDeleteAllOpen(true) },
     },

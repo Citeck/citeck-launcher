@@ -48,6 +48,9 @@ export interface JournalCustomButton<T = Record<string, unknown>> {
   enabledIf?: (selected: T[]) => boolean
   loading?: boolean
   variant?: 'default' | 'primary' | 'danger'
+  /** Native tooltip — set it to explain WHY the button is disabled (a disabled
+   *  button gives the user no other clue). */
+  title?: string
 }
 
 interface JournalDialogProps<T extends Record<string, unknown>> {
@@ -299,7 +302,7 @@ export function JournalDialog<T extends Record<string, unknown>>({
                       </td>
                     )}
                     {columns.map((col) => (
-                      <td key={col.key} className="py-[3px] pr-4 text-muted-foreground">
+                      <td key={col.key} className="py-[3px] pr-4 text-foreground">
                         {col.render ? col.render(row) : (row[col.key] != null ? String(row[col.key]) : '')}
                       </td>
                     ))}
@@ -389,9 +392,8 @@ export function JournalDialog<T extends Record<string, unknown>>({
                 btn.variant === 'primary' ? `bg-primary text-primary-foreground ${isDisabled ? '' : 'hover:bg-primary/90'}`
                 : btn.variant === 'danger' ? `border border-destructive/40 text-destructive ${isDisabled ? '' : 'hover:bg-destructive/10'}`
                 : `border border-border ${isDisabled ? '' : 'hover:bg-muted'}`
-              return (
+              const button = (
                 <button
-                  key={btn.label}
                   type="button"
                   className={`rounded-md px-3 py-1.5 text-xs disabled:opacity-50 ${isDisabled ? 'cursor-not-allowed' : ''} ${variant}`}
                   disabled={isDisabled}
@@ -399,6 +401,13 @@ export function JournalDialog<T extends Record<string, unknown>>({
                 >
                   <LoadingLabel loading={buttonLoading === btn.label}>{btn.label}</LoadingLabel>
                 </button>
+              )
+              // A native `title` on a disabled <button> never shows (the browser
+              // suppresses pointer events on disabled controls). Carry it on a
+              // wrapping span — which still receives hover — so the "why is this
+              // disabled" hint actually appears.
+              return (
+                <span key={btn.label} title={btn.title} className="inline-flex">{button}</span>
               )
             })}
             {selectable && onSelect && (
