@@ -104,7 +104,7 @@ func ApplyFileEdit(filename string, edit FileEdit, template, current []byte) ([]
 func decodeStructural(data []byte) (map[string]any, error) {
 	var v any
 	if err := yaml.Unmarshal(data, &v); err != nil { // yaml.v3 parses JSON too
-		return nil, err
+		return nil, fmt.Errorf("parse structural file: %w", err)
 	}
 	n := normalizeYaml(v)
 	m, ok := n.(map[string]any)

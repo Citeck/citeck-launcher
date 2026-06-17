@@ -1,6 +1,7 @@
 package namespace
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 )
@@ -71,7 +72,7 @@ func TestTextualMergeConflictFallsBackToCurrent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != string(current) {
+	if !bytes.Equal(got, current) {
 		t.Errorf("conflict must fall back to current on-disk content, got:\n%s", got)
 	}
 }

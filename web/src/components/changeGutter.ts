@@ -35,7 +35,11 @@ const baselineField = StateField.define<string>({
 })
 
 class ChangeMarker extends GutterMarker {
-  constructor(readonly kind: LineKind) { super() }
+  readonly kind: LineKind
+  constructor(kind: LineKind) {
+    super()
+    this.kind = kind
+  }
   override toDOM() {
     const el = document.createElement('div')
     el.className = `cm-change-marker cm-change-${this.kind}`

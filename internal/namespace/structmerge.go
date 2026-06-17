@@ -1,5 +1,7 @@
 package namespace
 
+import "maps"
+
 // structmerge.go — generic JSON-merge-patch (RFC 7386 semantics) over decoded
 // data trees (map[string]any / []any / scalars). Used by appdefpatch.go (apply)
 // and filemerge.go (compute the file delta). Semantics: objects merge key-by-
@@ -50,9 +52,7 @@ func ApplyTree(base, patch any) any {
 	baseObj, baseIsObj := base.(map[string]any)
 	out := map[string]any{}
 	if baseIsObj {
-		for k, v := range baseObj {
-			out[k] = v
-		}
+		maps.Copy(out, baseObj)
 	}
 	for k, pv := range patchObj {
 		if pv == nil {

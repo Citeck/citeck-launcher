@@ -14,7 +14,8 @@ func TestApplyPatchToNodePreservesOrderAndMergesNewKeys(t *testing.T) {
 	if !strings.Contains(got, `a: "9"`) && !strings.Contains(got, "a: 9") {
 		t.Errorf("edit not applied:\n%s", got)
 	}
-	if !(strings.Index(got, "a:") < strings.Index(got, "b:") && strings.Index(got, "b:") < strings.Index(got, "c:")) {
+	ai, bi, ci := strings.Index(got, "a:"), strings.Index(got, "b:"), strings.Index(got, "c:")
+	if ai >= bi || bi >= ci {
 		t.Errorf("order not preserved:\n%s", got)
 	}
 }

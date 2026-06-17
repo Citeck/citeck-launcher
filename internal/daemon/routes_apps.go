@@ -421,10 +421,10 @@ func encodeDefYAML(d appdef.ApplicationDef) (string, error) {
 	enc.SetIndent(2)
 	if err := enc.Encode(d); err != nil {
 		_ = enc.Close()
-		return "", err
+		return "", fmt.Errorf("encode app def yaml: %w", err)
 	}
 	if err := enc.Close(); err != nil {
-		return "", err
+		return "", fmt.Errorf("close yaml encoder: %w", err)
 	}
 	return "---\n" + buf.String(), nil
 }

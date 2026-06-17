@@ -61,7 +61,7 @@ func ApplyAppDefPatch(base appdef.ApplicationDef, patch json.RawMessage) (appdef
 		return base, err
 	}
 	var pt any
-	if err := json.Unmarshal(patch, &pt); err != nil {
+	if err = json.Unmarshal(patch, &pt); err != nil {
 		return base, fmt.Errorf("unmarshal patch: %w", err)
 	}
 	merged := ApplyTree(bt, pt)
@@ -72,7 +72,7 @@ func ApplyAppDefPatch(base appdef.ApplicationDef, patch json.RawMessage) (appdef
 	out := base
 	out.ImageDigest = ""
 	out.VolumesContentHash = ""
-	if err := json.Unmarshal(raw, &out); err != nil {
+	if err = json.Unmarshal(raw, &out); err != nil {
 		return base, fmt.Errorf("unmarshal merged appdef: %w", err)
 	}
 	// ImageDigest is a per-image runtime cache: the patch may have changed the
