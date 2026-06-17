@@ -8,13 +8,16 @@ export const LOG_LEVELS: LogLevel[] = ['ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE'
 // Shared by the toolbar level toggles (LogViewer) and the line rendering
 // (LogViewport). Lives here — not in a component file — so react-refresh's
 // only-export-components rule stays happy.
+// Theme-aware via CSS vars (defined in index.css): the dark defaults match the
+// original hex; the [data-theme="light"] overrides darken INFO/DEBUG/TRACE so
+// they don't wash out on the near-white log viewport.
 export const LEVEL_COLORS: Record<LogLevel, string> = {
-  ERROR: 'text-[#ef5350]',
-  WARN: 'text-[#ffa726]',
-  INFO: 'text-[#66bb6a]',
-  DEBUG: 'text-[#9e9e9e]',
-  TRACE: 'text-[#bdbdbd]',
-  UNKNOWN: 'text-[#7c7c7c]',
+  ERROR: 'text-[var(--color-log-error)]',
+  WARN: 'text-[var(--color-log-warn)]',
+  INFO: 'text-[var(--color-log-info)]',
+  DEBUG: 'text-[var(--color-log-debug)]',
+  TRACE: 'text-[var(--color-log-trace)]',
+  UNKNOWN: 'text-[var(--color-log-unknown)]',
 }
 
 const LEVEL_PATTERNS: [RegExp, number][] = [
