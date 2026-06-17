@@ -736,6 +736,11 @@ func (d *Daemon) wireShutdownSignals(opts StartOptions) {
 			}()
 			d.shutdown(true)
 		}()
+		// Bind lifecycle to the wrapper: if it dies WITHOUT a graceful quit
+		// (SIGKILL/crash), neither the shutdown POST nor a signal arrives, so a
+		// pure signal handler would leave the daemon orphaned on macOS/Windows
+		// (Linux has Pdeathsig). The watchdog polls the wrapper pid and detaches.
+		d.watchWrapperLifecycle()
 	default:
 		// CLI mode: first SIGINT/SIGTERM → graceful, second → force exit
 		sigCh := make(chan os.Signal, 2)
