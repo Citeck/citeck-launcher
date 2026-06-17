@@ -81,14 +81,22 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
     // Left change gutter: mark lines changed/added vs the generated baseline,
     // click a marker to revert that line.
     if (hasBaseline) exts.push(...changeGutterExtension(revertLabel))
-    // Undo/redo as a CM-native keydown handler keyed on the PHYSICAL key
-    // (event.code) so it works on non-Latin layouts (Russian Ctrl+Z emits "я").
-    // CM's own historyKeymap is disabled (basicSetup) to avoid a double-undo.
+    // Non-Latin-layout undo/redo. CM's historyKeymap (kept on) matches by the
+    // produced character, so on a Russian layout Ctrl+Z emits "я" and never
+    // matches "Mod-z". This supplements it by PHYSICAL key (event.code) ONLY
+    // when the produced key is not the Latin z/y — so Latin layouts keep going
+    // through CM (which also correctly intercepts the browser's native
+    // contenteditable undo), and there is no double-undo.
     exts.push(EditorView.domEventHandlers({
       keydown: (event, view) => {
         if (!(event.ctrlKey || event.metaKey)) return false
-        if (event.code === 'KeyZ' && !event.shiftKey) { undo(view); return true }
-        if ((event.code === 'KeyZ' && event.shiftKey) || event.code === 'KeyY') { redo(view); return true }
+        const k = event.key.toLowerCase()
+        if (event.code === 'KeyZ' && k !== 'z') {
+          if (event.shiftKey) redo(view)
+          else undo(view)
+          return true
+        }
+        if (event.code === 'KeyY' && k !== 'y') { redo(view); return true }
         return false
       },
     }))
@@ -306,10 +314,6 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
           // Our own Ctrl+F drives the toolbar above; disable CM's stock search
           // keymap so it doesn't also mount its (laggy, bottom-anchored) panel.
           searchKeymap: false,
-          // Undo/redo handled by onWrapperKeyDown (by physical key, so it works
-          // on non-Latin layouts); disable CM's key-based historyKeymap to avoid
-          // a double-undo. The history STATE (basicSetup `history`) stays on.
-          historyKeymap: false,
           foldGutter: true,
           autocompletion: false, // Kotlin EditorWindow has no autocomplete
         }}
