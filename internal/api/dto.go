@@ -51,6 +51,19 @@ type AppFileDto struct {
 	Edited bool   `json:"edited,omitempty"`
 }
 
+// AppConfigDto carries the effective app YAML plus the generated baseline so the
+// editor can render a per-line change gutter (desktop diff/overlay feature).
+type AppConfigDto struct {
+	Content  string `json:"content"`
+	Baseline string `json:"baseline"`
+}
+
+// AppFileContentDto is the file equivalent of AppConfigDto.
+type AppFileContentDto struct {
+	Content  string `json:"content"`
+	Baseline string `json:"baseline"`
+}
+
 // RestartEventDto represents a restart event for the API.
 type RestartEventDto struct {
 	Timestamp   string `json:"ts"`

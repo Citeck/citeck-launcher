@@ -201,24 +201,50 @@ func (r *Runtime) Regenerate(apps []appdef.ApplicationDef, cfg *Config, bundleDe
 	}
 }
 
-// UpdateAppDef updates the ApplicationDef for a running app and marks it as edited.
-// Edited apps are persisted and optionally locked to survive regeneration.
+// generatedDefForApp returns the last freshly-generated def for appName (the
+// baseline a patch is computed against). Must be called with r.mu held.
+func (r *Runtime) generatedDefForApp(appName string) (appdef.ApplicationDef, bool) {
+	for _, d := range r.lastApps {
+		if d.Name == appName {
+			return d, true
+		}
+	}
+	return appdef.ApplicationDef{}, false
+}
+
+// UpdateAppDef stores the user-edited def as a delta over the generated
+// baseline. `lock` is retained for API compatibility (a stored patch is
+// inherently sticky — always re-applied on regen).
 func (r *Runtime) UpdateAppDef(appName string, def appdef.ApplicationDef, lock bool) error {
+	_ = lock
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	app, ok := r.apps[appName]
 	if !ok {
 		return fmt.Errorf("app %q not found", appName)
 	}
-	app.Def = def
-	r.editedApps[appName] = def
-	if lock {
-		r.editedLockedApps[appName] = true
+	base, ok := r.generatedDefForApp(appName)
+	if !ok {
+		base = app.Def
 	}
-	// editedApps / editedLockedApps are durable user edits. Persist inline +
-	// clear r.dirty.
+	patch, err := DiffAppDef(base, def)
+	if err != nil {
+		return fmt.Errorf("compute app patch: %w", err)
+	}
+	if patch == nil {
+		delete(r.editedAppPatches, appName)
+	} else {
+		r.editedAppPatches[appName] = patch
+	}
+	app.Def = def
+	// editedAppPatches is a durable user edit. Persist inline + clear r.dirty.
 	r.persistState()
 	r.dirty.Store(false)
+	if len(r.lastApps) > 0 {
+		if err := r.cmdQueue.Enqueue(cmdRegenerate{apps: r.lastApps}); err != nil {
+			slog.Warn("Failed to enqueue regenerate after UpdateAppDef", "app", appName, "err", err)
+		}
+	}
 	return nil
 }
 
@@ -233,8 +259,7 @@ func (r *Runtime) ResetAppDef(appName string) error {
 	if _, ok := r.apps[appName]; !ok {
 		return fmt.Errorf("app %q not found", appName)
 	}
-	delete(r.editedApps, appName)
-	delete(r.editedLockedApps, appName)
+	delete(r.editedAppPatches, appName)
 	r.persistState()
 	r.dirty.Store(false)
 	// Trigger a regeneration so the original ApplicationDef is re-installed
@@ -250,23 +275,26 @@ func (r *Runtime) ResetAppDef(appName string) error {
 	return nil
 }
 
-// WriteEditedFile atomically writes user-edited content for a mounted file
-// AND marks it as edited under a single r.mu hold. Without the atomic
-// combination, a regenerate that is already in-flight or already in the
-// queue can call writeRuntimeFiles with an editedFiles snapshot that
-// pre-dates the flag — and overwrite the just-written content with the
-// generator's template, leaving the user staring at "old value" on reopen.
+// WriteEditedFile records a user file edit as a delta over `template` (the
+// generated content for this key) and atomically writes the edited content to
+// disk under a single r.mu hold. Computing the delta before locking keeps the
+// (parse-heavy) merge work out of the critical section.
 //
 // absPath MUST resolve under volumesBase (the caller validates this); we
 // re-use the existing fsutil.AtomicWriteFile here so a crash mid-write
 // leaves the previous file intact.
-func (r *Runtime) WriteEditedFile(relPath, absPath string, content []byte) error {
+func (r *Runtime) WriteEditedFile(relPath, absPath string, content, template []byte) error {
+	base := relPath[strings.LastIndex(relPath, "/")+1:]
+	edit, err := MakeFileEdit(base, template, content)
+	if err != nil {
+		return fmt.Errorf("compute file edit: %w", err)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err := fsutil.AtomicWriteFile(absPath, content, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", absPath, err)
 	}
-	r.editedFiles[relPath] = true
+	r.editedFileEdits[relPath] = edit
 	r.persistState()
 	r.dirty.Store(false)
 	// MUST pass the current desired set: an empty cmdRegenerate{} wipes
@@ -287,7 +315,8 @@ func (r *Runtime) WriteEditedFile(relPath, absPath string, content []byte) error
 func (r *Runtime) IsFileEdited(relPath string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.editedFiles[relPath]
+	_, ok := r.editedFileEdits[relPath]
+	return ok
 }
 
 // editedFilesForAppLocked returns the user-edited mounted-file paths whose
@@ -296,12 +325,12 @@ func (r *Runtime) IsFileEdited(relPath string) bool {
 // under RLock for every app DTO, so the helper deliberately skips its own
 // lock acquisition to avoid per-app RLock churn.
 func (r *Runtime) editedFilesForAppLocked(appName string) []string {
-	if len(r.editedFiles) == 0 {
+	if len(r.editedFileEdits) == 0 {
 		return nil
 	}
 	prefix := appName + "/"
 	var out []string
-	for path := range r.editedFiles {
+	for path := range r.editedFileEdits {
 		if strings.HasPrefix(path, prefix) {
 			out = append(out, path)
 		}
@@ -324,7 +353,7 @@ func (r *Runtime) ResetEditedFile(appName, relPath string) error {
 	if _, ok := r.apps[appName]; !ok {
 		return fmt.Errorf("app %q not found", appName)
 	}
-	delete(r.editedFiles, relPath)
+	delete(r.editedFileEdits, relPath)
 	r.persistState()
 	r.dirty.Store(false)
 	// Trigger a regeneration so the original file content is written back to

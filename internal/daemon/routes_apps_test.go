@@ -365,3 +365,16 @@ func TestGetAppFile_PathTraversalNeutralizedByMux(t *testing.T) {
 		"got %d body=%s — expected redirect/404/400, NOT a file read",
 		rec.Code, rec.Body.String())
 }
+
+func TestEncodeDefYAML_StripsCachesAndLeadsWithMarker(t *testing.T) {
+	out, err := encodeDefYAML(appdef.ApplicationDef{
+		Name:               "eapps",
+		Image:              "eapps:1",
+		ImageDigest:        "sha256:should-not-appear",
+		VolumesContentHash: "vch-should-not-appear",
+	})
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(out, "---\n"), "must lead with YAML document marker")
+	assert.Contains(t, out, "image: eapps:1")
+	assert.NotContains(t, out, "should-not-appear", "runtime caches must be stripped")
+}

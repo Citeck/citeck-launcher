@@ -410,43 +410,56 @@ func (d *Daemon) handleAppExec(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// encodeDefYAML serializes an ApplicationDef to the editor's YAML form: runtime
+// caches stripped, 2-space indent, ApplicationKind as its enum name, led by a
+// "---" document marker (Kotlin AppCfgEditWindow parity).
+func encodeDefYAML(d appdef.ApplicationDef) (string, error) {
+	d.ImageDigest = ""
+	d.VolumesContentHash = ""
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(d); err != nil {
+		_ = enc.Close()
+		return "", err
+	}
+	if err := enc.Close(); err != nil {
+		return "", err
+	}
+	return "---\n" + buf.String(), nil
+}
+
 func (d *Daemon) handleGetAppConfig(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !validateAppName(w, name) {
 		return
 	}
+	rt := d.active().runtime
 	app := d.findApp(name)
 	if app == nil {
 		writeAppNotFound(w, name)
 		return
 	}
-	// Hide the runtime-internal cache fields from the editor view: the digest
-	// is re-resolved from the image at every container start, and the volume
-	// content hash is recomputed by the generator. Showing them suggests the
-	// operator should manage them; ignoring them on PUT is the matching half.
-	clean := app.Def
-	clean.ImageDigest = ""
-	clean.VolumesContentHash = ""
-	// yaml.v3's package Marshal hardcodes a 4-space indent; drive an Encoder
-	// directly for the 2-space indent the editor expects. ApplicationKind now
-	// renders as its enum name (kind: CITECK_CORE) instead of an integer.
-	var buf bytes.Buffer
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(clean); err != nil {
-		_ = enc.Close()
+	// Effective config = the running (merged) def; baseline = the generated def
+	// without the user patch, so the editor can mark changed lines. Falls back to
+	// the effective def when no baseline is available (never-started edge case).
+	content, err := encodeDefYAML(app.Def)
+	if err != nil {
 		writeInternalError(w, err)
 		return
 	}
-	if err := enc.Close(); err != nil {
+	baselineDef := app.Def
+	if rt != nil {
+		if gen, ok := rt.GeneratedDef(name); ok {
+			baselineDef = gen
+		}
+	}
+	baseline, err := encodeDefYAML(baselineDef)
+	if err != nil {
 		writeInternalError(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "text/yaml")
-	// Lead with the YAML document marker (Kotlin AppCfgEditWindow parity) so the
-	// gear/config editor opens on a clear "---" start.
-	_, _ = io.WriteString(w, "---\n")
-	_, _ = w.Write(buf.Bytes())
+	writeJSON(w, api.AppConfigDto{Content: content, Baseline: baseline})
 }
 
 func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
@@ -650,8 +663,15 @@ func (d *Daemon) handleGetAppFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	_, _ = w.Write(data) //nolint:gosec // G705 XSS taint: Content-Type is text/plain, not HTML
+	// Baseline = the generated (pre-merge) template for this file, so the editor
+	// can mark lines changed vs the launcher default. Empty when unavailable.
+	var baseline []byte
+	if act.runtime != nil {
+		if tmpl, ok := act.runtime.GeneratedFile(filePath); ok {
+			baseline = tmpl
+		}
+	}
+	writeJSON(w, api.AppFileContentDto{Content: string(data), Baseline: string(baseline)})
 }
 
 func (d *Daemon) handlePutAppFile(w http.ResponseWriter, r *http.Request) {
@@ -696,7 +716,11 @@ func (d *Daemon) handlePutAppFile(w http.ResponseWriter, r *http.Request) {
 	// the write. Falling back to a plain atomic write (no edited-flag
 	// bookkeeping) when the runtime is not available (server-mode test stubs).
 	if act.runtime != nil {
-		if err := act.runtime.WriteEditedFile(filePath, absPath, body); err != nil {
+		// Pass the generated (pre-merge) template so the runtime stores a delta,
+		// not the whole file. Missing template → empty, MakeFileEdit then stores
+		// a full-content delta which still applies cleanly.
+		template, _ := act.runtime.GeneratedFile(filePath)
+		if err := act.runtime.WriteEditedFile(filePath, absPath, body, template); err != nil {
 			writeInternalError(w, err)
 			return
 		}

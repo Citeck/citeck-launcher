@@ -226,17 +226,22 @@ func TestGenerate_EditedFileOverlayChangesHash(t *testing.T) {
 	require.NotNil(t, pgBaseline)
 	require.NotEmpty(t, pgBaseline.VolumesContentHash)
 
-	overlay := map[string][]byte{
-		"postgres/postgresql.conf": []byte("# user edit via Web UI\nshared_buffers = 512MB\n"),
-	}
+	tmpl := baseline.Files["postgres/postgresql.conf"]
+	require.NotEmpty(t, tmpl)
+	editedContent := []byte("# user edit via Web UI\nshared_buffers = 512MB\n")
+	fe, err := MakeFileEdit("postgresql.conf", tmpl, editedContent)
+	require.NoError(t, err)
 	edited, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "j", OIDC: "o"}, GenerateOpts{
-		EditedFileOverlay: overlay,
+		EditedFileEdits: map[string]FileEdit{"postgres/postgresql.conf": fe},
+		DiskContent:     map[string][]byte{"postgres/postgresql.conf": editedContent},
 	})
 	require.NoError(t, err)
 	pgEdited := pickPostgres(edited)
 	require.NotNil(t, pgEdited)
 	require.NotEqual(t, pgBaseline.VolumesContentHash, pgEdited.VolumesContentHash,
-		"EditedFileOverlay did not change VolumesContentHash — UI edits won't trigger container recreate")
+		"file edit did not change VolumesContentHash — UI edits won't trigger container recreate")
+	require.Contains(t, string(edited.Files["postgres/postgresql.conf"]), "512MB",
+		"merged file content must reach ctx.Files")
 }
 
 func TestProxyBaseURL_Port0(t *testing.T) {

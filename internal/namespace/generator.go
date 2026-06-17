@@ -9,8 +9,10 @@ package namespace
 
 import (
 	"fmt"
+	"log/slog"
 	"maps"
 	"sort"
+	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
@@ -21,6 +23,7 @@ import (
 type GenResp struct {
 	Applications          []appdef.ApplicationDef
 	Files                 map[string][]byte
+	BaselineFiles         map[string][]byte         // generated file content BEFORE user-edit merge (baseline source for the editor + WriteEditedFile template)
 	CloudConfig           map[string]map[string]any // per-app ext cloud config for CloudConfigServer
 	DependsOnDetachedApps map[string]bool           // apps whose reattachment triggers regeneration
 }
@@ -35,14 +38,13 @@ type GenerateOpts struct {
 	// take precedence over workspace entries with the same ID; after dedupe the
 	// merged list is sorted by descending Priority (mirrors Service.List()).
 	ExtraLicenses []bundle.LicenseInstance
-	// EditedFileOverlay maps canonical ctx.Files keys ("<app>/<rel>", no leading
-	// "./") to the on-disk content the user authored via the Web UI. The
-	// generator overlays these onto ctx.Files BEFORE computing per-app
-	// VolumesContentHash so a UI-edit forces a container recreate. Without this
-	// overlay, the hash is computed against the embedded defaults and a user
-	// edit silently does nothing on the next reload — matching Kotlin's
-	// NsRuntimeFiles which re-hashes from the on-disk volumeFiles snapshot.
-	EditedFileOverlay map[string][]byte
+	// EditedFileEdits maps canonical ctx.Files keys ("<app>/<rel>", no leading
+	// "./") to per-file edit deltas. After generation, each delta is merged onto
+	// its template so both the on-disk materialized file AND VolumesContentHash
+	// reflect the merged result. DiskContent supplies the YAML comment source /
+	// textual conflict fallback.
+	EditedFileEdits map[string]FileEdit
+	DiskContent     map[string][]byte
 }
 
 // Generate creates container definitions from a namespace config, bundle, and workspace config.
@@ -61,7 +63,8 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 			ctx.SecretReader = opts[0].SecretReader
 		}
 		ctx.ExtraLicenses = opts[0].ExtraLicenses
-		ctx.EditedFileOverlay = opts[0].EditedFileOverlay
+		ctx.EditedFileEdits = opts[0].EditedFileEdits
+		ctx.DiskContent = opts[0].DiskContent
 	}
 
 	// Load embedded appfiles
@@ -127,16 +130,14 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 		apps = append(apps, b.Build())
 	}
 
-	// Overlay user-edited file content into a hash-only view of ctx.Files so
-	// the deployment hash reflects on-disk content. ctx.Files itself is left
-	// untouched — writeRuntimeFiles already skips edited keys via its own
-	// snapshot, and re-running the generator must remain deterministic w.r.t.
-	// the embedded defaults regardless of disk state.
-	hashFiles := ctx.Files
-	if len(ctx.EditedFileOverlay) > 0 {
-		hashFiles = make(map[string][]byte, len(ctx.Files)+len(ctx.EditedFileOverlay))
-		maps.Copy(hashFiles, ctx.Files)
-		maps.Copy(hashFiles, ctx.EditedFileOverlay)
+	// Snapshot the generated (pre-merge) file set as the baseline — the editor
+	// serves it as the change-gutter baseline and WriteEditedFile diffs against
+	// it. Then merge each user file edit onto its template so BOTH the on-disk
+	// file (ctx.Files) and the deployment hash reflect the merged result.
+	baselineFiles := make(map[string][]byte, len(ctx.Files))
+	maps.Copy(baselineFiles, ctx.Files)
+	if len(ctx.EditedFileEdits) > 0 {
+		applyFileEditsToFiles(ctx.Files, ctx.EditedFileEdits, ctx.DiskContent)
 	}
 
 	// Fill VolumesContentHash for each app so the deployment hash changes
@@ -144,7 +145,7 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 	// container recreate. Mirrors Kotlin's NsRuntimeFiles.getPathsContentHash
 	// hooked into ApplicationDef.hashField.
 	for i := range apps {
-		apps[i].VolumesContentHash = computeVolumesContentHash(&apps[i], hashFiles)
+		apps[i].VolumesContentHash = computeVolumesContentHash(&apps[i], ctx.Files)
 	}
 
 	// Compute DependsOnDetachedApps: detached apps that are referenced as dependencies
@@ -166,7 +167,28 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 	return &GenResp{
 		Applications:          apps,
 		Files:                 ctx.Files,
+		BaselineFiles:         baselineFiles,
 		CloudConfig:           ctx.CloudConfig,
 		DependsOnDetachedApps: dependsOnDetached,
 	}, nil
+}
+
+// applyFileEditsToFiles merges each persisted file edit onto its generated
+// template in `files`, in place. `disk` supplies the on-disk content used as the
+// YAML comment source and textual conflict fallback. Keys absent from `files`
+// (the template no longer emits that path) are skipped.
+func applyFileEditsToFiles(files map[string][]byte, edits map[string]FileEdit, disk map[string][]byte) {
+	for key, edit := range edits {
+		template, ok := files[key]
+		if !ok {
+			continue
+		}
+		base := key[strings.LastIndex(key, "/")+1:]
+		merged, err := ApplyFileEdit(base, edit, template, disk[key])
+		if err != nil {
+			slog.Warn("Failed to apply file edit; keeping template", "key", key, "err", err)
+			continue
+		}
+		files[key] = merged
+	}
 }

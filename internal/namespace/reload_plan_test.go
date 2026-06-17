@@ -2,6 +2,7 @@ package namespace
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -132,13 +133,21 @@ func TestPlanRegenerate_EditedLockedOverrideKeeps(t *testing.T) {
 	// Edited+locked apps substitute the edited definition exactly like
 	// doRegenerate — a bundle-side change must NOT produce a recreate verdict
 	// when the lock pins the running (edited) definition.
-	r := newRuntimeForTest(testConfig(), newMockDocker(), t.TempDir())
+	// The applied def carries no ImageDigest (a patch can change the image, so
+	// ApplyAppDefPatch clears the cache); PlanRegenerate re-resolves it. Pin the
+	// resolver so the resolved digest matches the running def's planDef digest.
+	md := newMockDocker()
+	md.imageDigests = map[string]string{"img:edited": "sha256:img:edited", "img:bundle": "sha256:img:bundle"}
+	r := newRuntimeForTest(testConfig(), md, t.TempDir())
 	editedDef := planDef("app", "img:edited", map[string]string{"E": "1"})
 	bundleDef := planDef("app", "img:bundle", nil)
 
+	// The patch is the delta from the generated (bundle) baseline to the edited
+	// def; applying it onto bundleDef reproduces editedDef exactly → Keep.
+	patch, err := DiffAppDef(bundleDef, editedDef)
+	require.NoError(t, err)
 	r.apps = map[string]*AppRuntime{"app": {Name: "app", Status: AppStatusRunning, Def: editedDef}}
-	r.editedApps = map[string]appdef.ApplicationDef{"app": editedDef}
-	r.editedLockedApps = map[string]bool{"app": true}
+	r.editedAppPatches = map[string]json.RawMessage{"app": patch}
 
 	entries := r.PlanRegenerate(context.Background(), []appdef.ApplicationDef{bundleDef})
 	require.Len(t, entries, 1)

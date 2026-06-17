@@ -1,49 +1,43 @@
 package namespace
 
 import (
-	"os"
-	"path/filepath"
+	"encoding/json"
 	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
-func TestRuntime_EditedFileOverlay_ReadsDiskContent(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, "postgres"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "postgres", "postgresql.conf"), []byte("shared_buffers=256MB"), 0o644))
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, "proxy", "lua"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "proxy", "lua", "auth.lua"), []byte("-- custom"), 0o644))
-
+func TestRuntime_RestoreEditedState_RoundTrip(t *testing.T) {
 	md := newMockDocker()
-	r := NewRuntime(testConfig(), md, dir)
+	r := NewRuntime(testConfig(), md, t.TempDir())
 	defer r.Shutdown()
 
-	r.RestoreEditedFiles([]string{
-		"postgres/postgresql.conf",
-		"proxy/lua/auth.lua",
-		"missing/file.txt", // file does not exist on disk — must be skipped silently
-	})
+	edits := map[string]FileEdit{
+		"postgres/postgresql.conf": {Format: "textual", Payload: json.RawMessage(`"@@ -1 +1 @@"`)},
+		"proxy/lua/auth.lua":       {Format: "textual", Payload: json.RawMessage(`"@@ -1 +1 @@"`)},
+	}
+	patches := map[string]json.RawMessage{"eapps": json.RawMessage(`{"image":"x:2"}`)}
+	r.RestoreEditedState(patches, edits)
 
-	overlay := r.EditedFileOverlay(dir)
-	require.Len(t, overlay, 2, "missing file must be skipped")
-	require.Equal(t, []byte("shared_buffers=256MB"), overlay["postgres/postgresql.conf"])
-	require.Equal(t, []byte("-- custom"), overlay["proxy/lua/auth.lua"])
+	require.True(t, r.IsFileEdited("postgres/postgresql.conf"))
+	require.True(t, r.IsFileEdited("proxy/lua/auth.lua"))
+	require.False(t, r.IsFileEdited("missing/file.txt"))
+	require.NotNil(t, r.AppPatch("eapps"))
 
-	keys := make([]string, 0, len(overlay))
-	for k := range overlay {
+	snap := r.FileEditsSnapshot()
+	keys := make([]string, 0, len(snap))
+	for k := range snap {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	require.Equal(t, []string{"postgres/postgresql.conf", "proxy/lua/auth.lua"}, keys)
 }
 
-func TestRuntime_EditedFileOverlay_EmptyWhenNoEdits(t *testing.T) {
+func TestRuntime_FileEditsSnapshot_EmptyWhenNoEdits(t *testing.T) {
 	md := newMockDocker()
 	r := NewRuntime(testConfig(), md, t.TempDir())
 	defer r.Shutdown()
 
-	overlay := r.EditedFileOverlay(t.TempDir())
-	require.Nil(t, overlay, "expected nil overlay when editedFiles is empty")
+	require.Nil(t, r.FileEditsSnapshot(), "expected nil snapshot when no edits")
 }

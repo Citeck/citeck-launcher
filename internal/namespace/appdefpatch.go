@@ -75,7 +75,12 @@ func ApplyAppDefPatch(base appdef.ApplicationDef, patch json.RawMessage) (appdef
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return base, fmt.Errorf("unmarshal merged appdef: %w", err)
 	}
-	out.ImageDigest = base.ImageDigest
+	// ImageDigest is a per-image runtime cache: the patch may have changed the
+	// image, so the base digest is potentially stale — leave it empty and let
+	// the caller (doStart/doRegenerate/PlanRegenerate) re-resolve it. The
+	// VolumesContentHash is generator-computed for the effective bind-mount
+	// content and is preserved from the generated base.
+	out.ImageDigest = ""
 	out.VolumesContentHash = base.VolumesContentHash
 	return out, nil
 }

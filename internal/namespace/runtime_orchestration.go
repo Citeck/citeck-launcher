@@ -2,6 +2,7 @@ package namespace
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"maps"
 	"sync"
@@ -10,6 +11,31 @@ import (
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/namespace/workers"
 )
+
+// applyEditPatch overlays the stored per-app edit delta onto a generated def
+// (lock-taking; for tests/convenience). Hot paths use applyEditPatchFrom with a
+// pre-cloned snapshot taken in the no-lock phase.
+func (r *Runtime) applyEditPatch(gen appdef.ApplicationDef) appdef.ApplicationDef {
+	r.mu.RLock()
+	patch := r.editedAppPatches[gen.Name]
+	r.mu.RUnlock()
+	return applyEditPatchFrom(gen, patch)
+}
+
+// applyEditPatchFrom overlays a per-app edit delta onto a freshly generated def.
+// A nil/empty patch (or a failed apply) returns gen unchanged so the generated
+// image/values flow through untouched.
+func applyEditPatchFrom(gen appdef.ApplicationDef, patch json.RawMessage) appdef.ApplicationDef {
+	if len(patch) == 0 {
+		return gen
+	}
+	merged, err := ApplyAppDefPatch(gen, patch)
+	if err != nil {
+		slog.Warn("Failed to apply app edit patch; using generated def", "app", gen.Name, "err", err)
+		return gen
+	}
+	return merged
+}
 
 // staleSweepPlan is an accumulator emitted during doStart for each app whose
 // existing container must be stopped+removed before the state machine can
@@ -50,11 +76,9 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) { //nolint:gocyclo // or
 	// No-lock phase: resolve image digests and compute hashes.
 	// This avoids holding the mutex during Docker API calls.
 	r.mu.RLock()
-	editedLocked := make(map[string]bool, len(r.editedLockedApps))
-	editedApps := make(map[string]appdef.ApplicationDef, len(r.editedApps))
+	editPatches := make(map[string]json.RawMessage, len(r.editedAppPatches))
+	maps.Copy(editPatches, r.editedAppPatches)
 	detached := make(map[string]bool, len(r.manualStoppedApps))
-	maps.Copy(editedLocked, r.editedLockedApps)
-	maps.Copy(editedApps, r.editedApps)
 	maps.Copy(detached, r.manualStoppedApps)
 	r.mu.RUnlock()
 
@@ -74,12 +98,7 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) { //nolint:gocyclo // or
 	plans := make([]appPlan, 0, len(apps))
 
 	for _, appDef := range apps {
-		if editedLocked[appDef.Name] {
-			if edited, ok := editedApps[appDef.Name]; ok {
-				slog.Info("Applying locked edit override", "app", appDef.Name)
-				appDef = edited
-			}
-		}
+		appDef = applyEditPatchFrom(appDef, editPatches[appDef.Name])
 		// For :snapshot images, drop any cached digest so we pick up the
 		// just-refreshed local value (see refreshSnapshotDigests above).
 		if shouldPullImage(appDef.Kind, appDef.Image) {
@@ -313,8 +332,7 @@ func (r *Runtime) doRegenerate(apps []appdef.ApplicationDef) { //nolint:gocyclo 
 
 	// No-lock phase: clone snapshot maps + resolve image digests.
 	r.mu.RLock()
-	editedLocked := maps.Clone(r.editedLockedApps)
-	editedApps := maps.Clone(r.editedApps)
+	editPatches := maps.Clone(r.editedAppPatches)
 	detached := maps.Clone(r.manualStoppedApps)
 	r.mu.RUnlock()
 
@@ -330,12 +348,7 @@ func (r *Runtime) doRegenerate(apps []appdef.ApplicationDef) { //nolint:gocyclo 
 	}
 	resolved := make([]resolvedApp, 0, len(apps))
 	for _, appDef := range apps {
-		if editedLocked[appDef.Name] {
-			if edited, ok := editedApps[appDef.Name]; ok {
-				slog.Info("Applying locked edit override", "app", appDef.Name)
-				appDef = edited
-			}
-		}
+		appDef = applyEditPatchFrom(appDef, editPatches[appDef.Name])
 		// For :snapshot images, drop any cached digest so we pick up the
 		// just-refreshed local value (see refreshSnapshotDigests above).
 		if shouldPullImage(appDef.Kind, appDef.Image) {

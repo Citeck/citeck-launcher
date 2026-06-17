@@ -16,7 +16,7 @@ func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 	defer r.mu.RUnlock()
 	apps := make([]api.AppDto, 0, len(r.apps))
 	for _, app := range r.apps {
-		_, edited := r.editedApps[app.Name]
+		_, edited := r.editedAppPatches[app.Name]
 		// Memory thresholds match the Kotlin per-app StatsCell tooltip
 		// boundaries (80% warning / 95% critical) — see ContainerStatViews.kt.
 		memPct := app.MemoryPercent
@@ -35,7 +35,7 @@ func (r *Runtime) ToNamespaceDto() api.NamespaceDto {
 			Kind:             KindToString(app.Def.Kind),
 			Ports:            app.Def.Ports,
 			Edited:           edited,
-			Locked:           r.editedLockedApps[app.Name],
+			Locked:           edited, // a stored patch IS the lock; survives regen
 			RestartCount:     app.RestartCount,
 			EditedFilesCount: len(r.editedFilesForAppLocked(app.Name)),
 			InitStep:         initStep,
