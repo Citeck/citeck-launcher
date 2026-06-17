@@ -360,8 +360,10 @@ func (r *Runtime) editedFilesForAppLocked(appName string) []string {
 func (r *Runtime) ResetEditedFile(appName, relPath string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, ok := r.apps[appName]; !ok {
-		return fmt.Errorf("app %q not found", appName)
+	if _, live := r.apps[appName]; !live {
+		if _, hasBase := r.generatedDefForApp(appName); !hasBase {
+			return fmt.Errorf("app %q not found", appName)
+		}
 	}
 	delete(r.editedFileEdits, relPath)
 	r.persistState()

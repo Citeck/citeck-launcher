@@ -583,11 +583,8 @@ func (d *Daemon) handleListAppFiles(w http.ResponseWriter, r *http.Request) {
 	// One snapshot: app lookup, volumesBase, and edited-flag queries must all
 	// reflect the same active namespace.
 	act := d.active()
-	var app *namespace.AppRuntime
-	if act.runtime != nil {
-		app = act.runtime.FindApp(name)
-	}
-	if app == nil {
+	appDef, ok := runtimeAppDef(act.runtime, name)
+	if !ok {
 		writeAppNotFound(w, name)
 		return
 	}
@@ -603,7 +600,7 @@ func (d *Daemon) handleListAppFiles(w http.ResponseWriter, r *http.Request) {
 	// behavior the COG RMB menu relied on to surface application.yml etc.
 	files := make([]api.AppFileDto, 0)
 	volumesBase := act.volumesBase
-	for _, v := range app.Def.Volumes {
+	for _, v := range appDef.Volumes {
 		parts := strings.SplitN(v, ":", 2)
 		if len(parts) != 2 {
 			continue
@@ -662,18 +659,15 @@ func (d *Daemon) handleGetAppFile(w http.ResponseWriter, r *http.Request) {
 	// One snapshot: the app lookup and volumesBase must describe the same
 	// active namespace.
 	act := d.active()
-	var app *namespace.AppRuntime
-	if act.runtime != nil {
-		app = act.runtime.FindApp(name)
-	}
-	if app == nil {
+	appDef, ok := runtimeAppDef(act.runtime, name)
+	if !ok {
 		writeAppNotFound(w, name)
 		return
 	}
 
 	// Validate path is a known bind mount
 	relPath := "./" + filePath
-	if !isAppBindMount(app, relPath) {
+	if !isAppBindMount(appDef, relPath) {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("file %q is not a bind mount of app %q", filePath, name))
 		return
 	}
@@ -709,17 +703,14 @@ func (d *Daemon) handlePutAppFile(w http.ResponseWriter, r *http.Request) {
 	// One snapshot: app lookup, volumesBase, and the edited-file write below
 	// must all target the same active namespace.
 	act := d.active()
-	var app *namespace.AppRuntime
-	if act.runtime != nil {
-		app = act.runtime.FindApp(name)
-	}
-	if app == nil {
+	appDef, ok := runtimeAppDef(act.runtime, name)
+	if !ok {
 		writeAppNotFound(w, name)
 		return
 	}
 
 	relPath := "./" + filePath
-	if !isAppBindMount(app, relPath) {
+	if !isAppBindMount(appDef, relPath) {
 		writeError(w, http.StatusForbidden, fmt.Sprintf("file %q is not a bind mount of app %q", filePath, name))
 		return
 	}
@@ -775,8 +766,8 @@ func (d *Daemon) handleResetAppFile(w http.ResponseWriter, r *http.Request) {
 	if rt == nil {
 		return
 	}
-	app := rt.FindApp(name)
-	if app == nil {
+	appDef, ok := runtimeAppDef(rt, name)
+	if !ok {
 		writeAppNotFound(w, name)
 		return
 	}
@@ -789,7 +780,7 @@ func (d *Daemon) handleResetAppFile(w http.ResponseWriter, r *http.Request) {
 	// derive the canonical runtime key (no leading "./") for ResetEditedFile.
 	cleanPath := strings.TrimPrefix(path, "./")
 	relPath := "./" + cleanPath
-	if !isAppBindMount(app, relPath) {
+	if !isAppBindMount(appDef, relPath) {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("file %q is not a bind mount of app %q", cleanPath, name))
 		return
 	}
@@ -867,9 +858,23 @@ func isPathUnder(path, base string) bool {
 // Paths are normalised via filepath.Clean and the directory-mount check is
 // performed via filepath.Rel so a payload like "./app/eapps/props/../../etc/passwd"
 // (which lexically starts with the host prefix but escapes it) is rejected.
-func isAppBindMount(app *namespace.AppRuntime, relPath string) bool {
+// runtimeAppDef resolves an app's definition for file operations: the live
+// runtime def when started, else the generated def (so file listing/edit works
+// while the namespace is stopped / never started). Returns false when neither
+// exists or the runtime is nil.
+func runtimeAppDef(rt *namespace.Runtime, name string) (appdef.ApplicationDef, bool) {
+	if rt == nil {
+		return appdef.ApplicationDef{}, false
+	}
+	if a := rt.FindApp(name); a != nil {
+		return a.Def, true
+	}
+	return rt.GeneratedDef(name)
+}
+
+func isAppBindMount(def appdef.ApplicationDef, relPath string) bool {
 	cleanRel := filepath.Clean(relPath)
-	for _, v := range app.Def.Volumes {
+	for _, v := range def.Volumes {
 		parts := strings.SplitN(v, ":", 2)
 		if len(parts) < 2 {
 			continue

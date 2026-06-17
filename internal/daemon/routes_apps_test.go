@@ -333,7 +333,7 @@ func TestIsAppBindMount(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := isAppBindMount(app, tc.relPath)
+			got := isAppBindMount(app.Def, tc.relPath)
 			assert.Equal(t, tc.want, got, "relPath=%q", tc.relPath)
 		})
 	}
