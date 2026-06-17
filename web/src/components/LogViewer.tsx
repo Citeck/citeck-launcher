@@ -4,6 +4,9 @@ import { useLogFilter } from '../hooks/useLogFilter'
 import { LogViewport } from './LogViewport'
 import { useTranslation } from '../lib/i18n'
 import { copyText } from '../lib/clipboard'
+import { isDesktopModeSync } from '../lib/desktop'
+import { saveDownload, openDownloadsFolder } from '../lib/api'
+import { toast } from '../lib/toast'
 
 interface LogViewerProps {
   appName: string
@@ -154,15 +157,31 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
   }
 
   function downloadLogs() {
-    const blob = new Blob([filteredLines.join('\n')], { type: 'text/plain' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
     // Kotlin's default filename pattern: "<windowTitle>_<yyyyMMdd_HHmmss>.log"
     const d = new Date()
     const pad = (n: number) => String(n).padStart(2, '0')
     const ts = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
-    a.download = source === 'daemon' ? `daemon_${ts}.log` : `${appName}_${ts}.log`
+    const filename = source === 'daemon' ? `daemon_${ts}.log` : `${appName}_${ts}.log`
+    const content = filteredLines.join('\n')
+
+    // Desktop: the WebKitGTK webview has no download manager, so <a download> is
+    // a no-op. Save server-side into Downloads, then offer to open the folder.
+    if (isDesktopModeSync()) {
+      saveDownload(filename, content)
+        .then(() => toast(t('logViewer.download.saved'), 'success', {
+          label: t('logViewer.download.openFolder'),
+          onClick: () => { void openDownloadsFolder() },
+        }))
+        .catch((e) => toast(`${t('logViewer.download.failed')}: ${(e as Error).message}`, 'error'))
+      return
+    }
+
+    // Browser/server mode: the standard blob download works.
+    const blob = new Blob([content], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
     a.click()
     setTimeout(() => URL.revokeObjectURL(url), 5000)
   }

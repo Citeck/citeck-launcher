@@ -852,6 +852,8 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	// Server mode has no native window to raise; route is not registered there.
 	if config.IsDesktopMode() {
 		mux.HandleFunc("POST /desktop/focus", d.handleDesktopFocus)
+		mux.HandleFunc("POST /desktop/save-download", d.handleDesktopSaveDownload)
+		mux.HandleFunc("POST /desktop/open-downloads", d.handleDesktopOpenDownloads)
 	}
 	// Update routes only when the service exists (desktop + linux); otherwise the
 	// paths are unregistered and the Web UI's update check 404s and stays quiet.

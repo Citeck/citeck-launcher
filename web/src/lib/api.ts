@@ -323,6 +323,28 @@ export async function saveSystemDumpNative(): Promise<string> {
   return data.path ?? ''
 }
 
+/**
+ * Desktop-only: write a text payload into the user's Downloads folder. The
+ * WebKitGTK webview has no download manager, so the browser <a download> path
+ * is a no-op there; callers fall back to it in server/browser mode.
+ * Lives outside API_BASE (Wails asset-server route).
+ */
+export async function saveDownload(filename: string, content: string): Promise<{ path: string; dir: string }> {
+  const res = await fetchWithTimeout('/desktop/save-download', {
+    method: 'POST',
+    headers: { ...CSRF_HEADER, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename, content }),
+  }, 30_000)
+  if (!res.ok) throw await extractApiError(res)
+  return res.json() as Promise<{ path: string; dir: string }>
+}
+
+/** Desktop-only: reveal the Downloads folder in the OS file manager. */
+export async function openDownloadsFolder(): Promise<void> {
+  const res = await fetchWithTimeout('/desktop/open-downloads', { method: 'POST', headers: CSRF_HEADER }, 5_000)
+  if (!res.ok) throw await extractApiError(res)
+}
+
 export async function getVolumes(): Promise<{ name: string; path: string; size?: number }[]> {
   return request('GET', '/volumes')
 }
