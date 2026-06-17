@@ -173,6 +173,19 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 	}, nil
 }
 
+// sortedKeys returns a plain map's keys in sorted order — used at env-build
+// sites that source from an unordered map so the generated baseline order is
+// deterministic (operator-arranged order is preserved separately via the
+// per-app config edit, which uses appdef.OrderedMap).
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // applyFileEditsToFiles merges each persisted file edit onto its generated
 // template in `files`, in place. `disk` supplies the on-disk content used as the
 // YAML comment source and textual conflict fallback. Keys absent from `files`

@@ -237,9 +237,9 @@ func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef,
 	networkName := c.NetworkName()
 
 	// Environment
-	env := make([]string, 0, len(app.Environments))
-	for k, v := range app.Environments {
-		env = append(env, k+"="+v)
+	env := make([]string, 0, app.Environments.Len())
+	for _, e := range app.Environments {
+		env = append(env, e.Key+"="+e.Value)
 	}
 
 	// Port bindings

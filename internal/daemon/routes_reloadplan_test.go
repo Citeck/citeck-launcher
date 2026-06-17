@@ -59,7 +59,7 @@ func newReloadPlanTestDaemon(t *testing.T, current []*namespace.AppRuntime,
 // stubAppDef builds a definition with a fixed digest so the stub docker is
 // not consulted for it.
 func stubAppDef(name, image string, env map[string]string) appdef.ApplicationDef {
-	return appdef.ApplicationDef{Name: name, Image: image, ImageDigest: "sha256:stub-" + image, Environments: env}
+	return appdef.ApplicationDef{Name: name, Image: image, ImageDigest: "sha256:stub-" + image, Environments: appdef.OrderedMapFromMap(env)}
 }
 
 func getReloadPlan(t *testing.T, mux *http.ServeMux) (*httptest.ResponseRecorder, api.ReloadPlanDto) {

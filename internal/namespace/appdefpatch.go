@@ -1,45 +1,72 @@
 package namespace
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 )
 
-// appdefpatch.go — diff/apply for ApplicationDef edits as a JSON merge patch
-// over the def's canonical JSON. AppDef has no comments and its YAML field order
-// comes from the struct encoder, so the plain data engine (structmerge) is used
-// directly — no yaml.Node needed here. Runtime caches (ImageDigest,
-// VolumesContentHash) are stripped on both sides so they never enter the patch.
+// appdefpatch.go — diff/apply for ApplicationDef edits, expressed as a SHALLOW
+// (top-level-field) JSON merge: the patch maps each changed top-level field name
+// to its whole new value (or null to delete). On apply, untouched fields flow
+// from the freshly generated def (so an auto-generated image bump reaches an app
+// whose resources/env the operator edited), while a touched field is taken
+// wholesale.
+//
+// Shallow (not deep) is deliberate: it lets map-valued fields like Environments
+// keep the operator's exact KEY ORDER. A deep/JSON-merge-patch would route the
+// map through an unordered Go map and alphabetize it; storing the whole field as
+// a raw JSON fragment preserves the OrderedMap's order byte-for-byte. The only
+// trade-off vs a deep merge — if generation and the operator both change the
+// same top-level object field, the operator's whole field wins (no sub-field
+// merge) — matches the sticky-override policy.
+//
+// Runtime caches (ImageDigest, VolumesContentHash) are stripped before diffing
+// so they never enter the patch.
 
-func toTree(d appdef.ApplicationDef) (map[string]any, error) {
+// defFields marshals a def to its top-level fields as raw JSON fragments. Each
+// fragment's bytes are deterministic (struct marshal), and for Environments the
+// bytes reflect the OrderedMap's order — so byte equality means "same value AND
+// same order".
+func defFields(d appdef.ApplicationDef) (map[string]json.RawMessage, error) {
 	d.ImageDigest = ""
 	d.VolumesContentHash = ""
 	raw, err := json.Marshal(d)
 	if err != nil {
 		return nil, fmt.Errorf("marshal appdef: %w", err)
 	}
-	var m map[string]any
+	var m map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil, fmt.Errorf("unmarshal appdef tree: %w", err)
+		return nil, fmt.Errorf("split appdef fields: %w", err)
 	}
 	return m, nil
 }
 
-// DiffAppDef returns a sparse merge patch turning base into edited, or nil if
-// they are equal once runtime caches are ignored.
+// DiffAppDef returns a shallow patch turning base into edited, or nil if equal.
 func DiffAppDef(base, edited appdef.ApplicationDef) (json.RawMessage, error) {
-	bt, err := toTree(base)
+	bf, err := defFields(base)
 	if err != nil {
 		return nil, err
 	}
-	et, err := toTree(edited)
+	ef, err := defFields(edited)
 	if err != nil {
 		return nil, err
 	}
-	patch := DiffTree(bt, et)
-	if patch == nil {
+	patch := map[string]json.RawMessage{}
+	for k, ev := range ef {
+		bv, ok := bf[k]
+		if !ok || !bytes.Equal(bv, ev) {
+			patch[k] = ev
+		}
+	}
+	for k := range bf {
+		if _, ok := ef[k]; !ok {
+			patch[k] = json.RawMessage("null")
+		}
+	}
+	if len(patch) == 0 {
 		return nil, nil
 	}
 	raw, err := json.Marshal(patch)
@@ -49,37 +76,40 @@ func DiffAppDef(base, edited appdef.ApplicationDef) (json.RawMessage, error) {
 	return raw, nil
 }
 
-// ApplyAppDefPatch overlays patch onto base (a freshly generated def) and
-// returns the merged ApplicationDef. A nil/empty patch returns base unchanged.
-// Runtime caches are taken from base (the patch never touches them).
+// ApplyAppDefPatch overlays a shallow patch onto base (a freshly generated def)
+// and returns the merged ApplicationDef. A nil/empty patch returns base
+// unchanged. ImageDigest is left empty (a changed image makes the base digest
+// stale — the caller re-resolves it); VolumesContentHash is kept from base
+// (generator-computed for the effective bind-mount content).
 func ApplyAppDefPatch(base appdef.ApplicationDef, patch json.RawMessage) (appdef.ApplicationDef, error) {
 	if len(patch) == 0 {
 		return base, nil
 	}
-	bt, err := toTree(base)
+	bf, err := defFields(base)
 	if err != nil {
 		return base, err
 	}
-	var pt any
-	if err = json.Unmarshal(patch, &pt); err != nil {
+	var pf map[string]json.RawMessage
+	if err = json.Unmarshal(patch, &pf); err != nil {
 		return base, fmt.Errorf("unmarshal patch: %w", err)
 	}
-	merged := ApplyTree(bt, pt)
-	raw, err := json.Marshal(merged)
+	for k, v := range pf {
+		if len(v) == 0 || string(bytes.TrimSpace(v)) == "null" {
+			delete(bf, k)
+			continue
+		}
+		bf[k] = v
+	}
+	merged, err := json.Marshal(bf)
 	if err != nil {
 		return base, fmt.Errorf("marshal merged: %w", err)
 	}
 	out := base
 	out.ImageDigest = ""
 	out.VolumesContentHash = ""
-	if err = json.Unmarshal(raw, &out); err != nil {
+	if err := json.Unmarshal(merged, &out); err != nil {
 		return base, fmt.Errorf("unmarshal merged appdef: %w", err)
 	}
-	// ImageDigest is a per-image runtime cache: the patch may have changed the
-	// image, so the base digest is potentially stale — leave it empty and let
-	// the caller (doStart/doRegenerate/PlanRegenerate) re-resolve it. The
-	// VolumesContentHash is generator-computed for the effective bind-mount
-	// content and is preserved from the generated base.
 	out.ImageDigest = ""
 	out.VolumesContentHash = base.VolumesContentHash
 	return out, nil

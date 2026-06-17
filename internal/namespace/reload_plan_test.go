@@ -62,7 +62,7 @@ func planDef(name, image string, env map[string]string) appdef.ApplicationDef {
 		Name:         name,
 		Image:        image,
 		ImageDigest:  "sha256:" + image,
-		Environments: env,
+		Environments: appdef.OrderedMapFromMap(env),
 	}
 }
 

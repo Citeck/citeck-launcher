@@ -143,8 +143,8 @@ func (c *NsGenContext) GetOrCreateApp(name string) *AppBuilder {
 		return b
 	}
 	b := &AppBuilder{
-		Name:         name,
-		Environments: make(map[string]string),
+		Name: name,
+		// Environments is a nil OrderedMap; AddEnv appends (preserving order).
 		// DependsOn is a nil StringSet; AddDependsOn appends (and dedups).
 	}
 	c.Applications[name] = b
@@ -241,7 +241,7 @@ type AppBuilder struct {
 	Name               string
 	NetworkAliases     []string
 	Image              string
-	Environments       map[string]string
+	Environments       appdef.OrderedMap
 	Cmd                []string
 	Ports              []string
 	Volumes            []string
@@ -258,7 +258,7 @@ type AppBuilder struct {
 
 // AddEnv sets an environment variable for the app.
 func (b *AppBuilder) AddEnv(key, value string) *AppBuilder {
-	b.Environments[key] = value
+	b.Environments.Set(key, value)
 	return b
 }
 

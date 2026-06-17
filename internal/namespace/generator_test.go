@@ -259,10 +259,7 @@ func TestGetHash_Deterministic(t *testing.T) {
 	def := appdef.ApplicationDef{
 		Name:  "test",
 		Image: "test:1.0",
-		Environments: map[string]string{
-			"A": "1",
-			"B": "2",
-		},
+		Environments: appdef.OrderedMap{{Key: "A", Value: "1"}, {Key: "B", Value: "2"}},
 		Ports:   []string{"8080:8080"},
 		Volumes: []string{"/data:/data"},
 	}
@@ -533,8 +530,8 @@ func TestAlfrescoContainerDefs(t *testing.T) {
 	// Alfresco postgres — should have PGDATA
 	alfPg := findApp("alf-postgres")
 	require.NotNil(t, alfPg, "expected alf-postgres app")
-	if alfPg.Environments["PGDATA"] != "/var/lib/postgresql/data" {
-		t.Errorf("expected PGDATA on alf-postgres, got %q", alfPg.Environments["PGDATA"])
+	if envGet(alfPg.Environments, "PGDATA") != "/var/lib/postgresql/data" {
+		t.Errorf("expected PGDATA on alf-postgres, got %q", envGet(alfPg.Environments, "PGDATA"))
 	}
 
 	// Alfresco solr
@@ -543,8 +540,8 @@ func TestAlfrescoContainerDefs(t *testing.T) {
 	if alfSolr.Kind != appdef.KindCiteckAdditional {
 		t.Errorf("expected alf-solr kind=KindCiteckAdditional, got %d", alfSolr.Kind)
 	}
-	if alfSolr.Environments["JAVA_OPTS"] != "-Xms1G -Xmx1G" {
-		t.Errorf("expected solr JAVA_OPTS=-Xms1G -Xmx1G, got %q", alfSolr.Environments["JAVA_OPTS"])
+	if envGet(alfSolr.Environments, "JAVA_OPTS") != "-Xms1G -Xmx1G" {
+		t.Errorf("expected solr JAVA_OPTS=-Xms1G -Xmx1G, got %q", envGet(alfSolr.Environments, "JAVA_OPTS"))
 	}
 }
 
@@ -583,8 +580,8 @@ func TestProxyTarget_AlfrescoEnabled(t *testing.T) {
 		}
 	}
 	require.NotNil(t, proxy, "expected proxy app")
-	assert.Equal(t, "alfresco:8080", proxy.Environments["PROXY_TARGET"])
-	assert.Equal(t, "true", proxy.Environments["ALFRESCO_ENABLED"])
+	assert.Equal(t, "alfresco:8080", envGet(proxy.Environments, "PROXY_TARGET"))
+	assert.Equal(t, "true", envGet(proxy.Environments, "ALFRESCO_ENABLED"))
 	dependsOnAlfresco := proxy.DependsOn.Has(appdef.AppAlfresco)
 	assert.True(t, dependsOnAlfresco, "proxy should depend on alfresco when enabled")
 }
@@ -605,12 +602,12 @@ func TestProxyTarget_AlfrescoDetached(t *testing.T) {
 		}
 	}
 	require.NotNil(t, proxy, "expected proxy app")
-	assert.NotEqual(t, "alfresco:8080", proxy.Environments["PROXY_TARGET"],
+	assert.NotEqual(t, "alfresco:8080", envGet(proxy.Environments, "PROXY_TARGET"),
 		"detached alfresco must not be set as proxy target")
-	assert.True(t, strings.HasPrefix(proxy.Environments["PROXY_TARGET"], appdef.AppGateway+":"),
+	assert.True(t, strings.HasPrefix(envGet(proxy.Environments, "PROXY_TARGET"), appdef.AppGateway+":"),
 		"proxy target should fall back to gateway when alfresco is detached, got %q",
-		proxy.Environments["PROXY_TARGET"])
-	assert.Equal(t, "false", proxy.Environments["ALFRESCO_ENABLED"])
+		envGet(proxy.Environments, "PROXY_TARGET"))
+	assert.Equal(t, "false", envGet(proxy.Environments, "ALFRESCO_ENABLED"))
 	dependsOnAlfresco := proxy.DependsOn.Has(appdef.AppAlfresco)
 	assert.False(t, dependsOnAlfresco, "proxy must not depend on detached alfresco")
 }
@@ -1052,18 +1049,18 @@ func TestCiteckSAWiring(t *testing.T) {
 	// password (NOT the user-facing admin password).
 	emodel := findApp("emodel")
 	require.NotNil(t, emodel)
-	assert.Equal(t, "citeck", emodel.Environments["ECOS_WEBAPP_RABBITMQ_USERNAME"],
+	assert.Equal(t, "citeck", envGet(emodel.Environments, "ECOS_WEBAPP_RABBITMQ_USERNAME"),
 		"webapp must authenticate to RabbitMQ as the citeck SA")
-	assert.Equal(t, saPass, emodel.Environments["ECOS_WEBAPP_RABBITMQ_PASSWORD"],
+	assert.Equal(t, saPass, envGet(emodel.Environments, "ECOS_WEBAPP_RABBITMQ_PASSWORD"),
 		"webapp RMQ password must be the SA password, not the admin password")
-	assert.NotEqual(t, "user-admin-pass", emodel.Environments["ECOS_WEBAPP_RABBITMQ_PASSWORD"],
+	assert.NotEqual(t, "user-admin-pass", envGet(emodel.Environments, "ECOS_WEBAPP_RABBITMQ_PASSWORD"),
 		"webapp RMQ password must NOT leak the user-facing admin password")
 
 	// 3. Observer's management API monitor uses the citeck SA too.
 	obs := findApp(appdef.AppObserver)
 	require.NotNil(t, obs)
-	assert.Equal(t, "citeck", obs.Environments["RMQ_MONITOR_USER"])
-	assert.Equal(t, saPass, obs.Environments["RMQ_MONITOR_PASSWORD"])
+	assert.Equal(t, "citeck", envGet(obs.Environments, "RMQ_MONITOR_USER"))
+	assert.Equal(t, saPass, envGet(obs.Environments, "RMQ_MONITOR_PASSWORD"))
 }
 
 // TestApplyEmailConfig_SetsSpringRelaxedBindingEnvVars pins the env-var keys
@@ -1102,18 +1099,18 @@ func TestApplyEmailConfig_SetsSpringRelaxedBindingEnvVars(t *testing.T) {
 
 			applyEmailConfig(app, ctx)
 
-			assert.Equal(t, "smtp.mail.ru", app.Environments["SPRING_MAIL_HOST"])
-			assert.Equal(t, "587", app.Environments["SPRING_MAIL_PORT"])
-			assert.Equal(t, c.protocol, app.Environments["SPRING_MAIL_PROTOCOL"])
-			assert.Equal(t, "user@mail.ru", app.Environments["SPRING_MAIL_USERNAME"])
-			assert.Equal(t, "plain-password", app.Environments["SPRING_MAIL_PASSWORD"])
-			assert.Equal(t, "noreply@example.com", app.Environments["ECOS_NOTIFICATIONS_EMAIL_FROM_DEFAULT"])
-			assert.Equal(t, "noreply@example.com", app.Environments["ECOS_NOTIFICATIONS_EMAIL_FROM_FIXED"])
+			assert.Equal(t, "smtp.mail.ru", envGet(app.Environments, "SPRING_MAIL_HOST"))
+			assert.Equal(t, "587", envGet(app.Environments, "SPRING_MAIL_PORT"))
+			assert.Equal(t, c.protocol, envGet(app.Environments, "SPRING_MAIL_PROTOCOL"))
+			assert.Equal(t, "user@mail.ru", envGet(app.Environments, "SPRING_MAIL_USERNAME"))
+			assert.Equal(t, "plain-password", envGet(app.Environments, "SPRING_MAIL_PASSWORD"))
+			assert.Equal(t, "noreply@example.com", envGet(app.Environments, "ECOS_NOTIFICATIONS_EMAIL_FROM_DEFAULT"))
+			assert.Equal(t, "noreply@example.com", envGet(app.Environments, "ECOS_NOTIFICATIONS_EMAIL_FROM_FIXED"))
 			// Relaxed-binding keys for spring.mail.properties.mail.smtp.{auth,starttls.enable}.
 			// Renaming either key breaks SMTP authentication silently.
-			assert.Equal(t, "true", app.Environments["SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH"])
+			assert.Equal(t, "true", envGet(app.Environments, "SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH"))
 			if c.starttlsPresent {
-				assert.Equal(t, "true", app.Environments["SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE"])
+				assert.Equal(t, "true", envGet(app.Environments, "SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE"))
 			} else {
 				assert.NotContains(t, app.Environments, "SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE",
 					"STARTTLS must not be forced on a plain-text SMTP session")
@@ -1122,7 +1119,7 @@ func TestApplyEmailConfig_SetsSpringRelaxedBindingEnvVars(t *testing.T) {
 			// opt in — matches the applyEmailConfig "else" branch that pins
 			// ENABLED=false rather than leaving it unset (the microservice's
 			// bundled application.yml has ENABLED=true as its built-in default).
-			assert.Equal(t, "false", app.Environments["ECOS_NOTIFICATIONS_STARTUP_NOTIFICATION_ENABLED"])
+			assert.Equal(t, "false", envGet(app.Environments, "ECOS_NOTIFICATIONS_STARTUP_NOTIFICATION_ENABLED"))
 			assert.NotContains(t, app.Environments, "ECOS_NOTIFICATIONS_STARTUP_NOTIFICATION_RECIPIENT")
 		})
 	}
@@ -1148,8 +1145,8 @@ func TestApplyEmailConfig_StartupNotificationEnabled(t *testing.T) {
 
 	applyEmailConfig(app, ctx)
 
-	assert.Equal(t, "true", app.Environments["ECOS_NOTIFICATIONS_STARTUP_NOTIFICATION_ENABLED"])
-	assert.Equal(t, "qa@example.com", app.Environments["ECOS_NOTIFICATIONS_STARTUP_NOTIFICATION_RECIPIENT"])
+	assert.Equal(t, "true", envGet(app.Environments, "ECOS_NOTIFICATIONS_STARTUP_NOTIFICATION_ENABLED"))
+	assert.Equal(t, "qa@example.com", envGet(app.Environments, "ECOS_NOTIFICATIONS_STARTUP_NOTIFICATION_RECIPIENT"))
 }
 
 // TestGenerateWebapp_SetsWebUrl pins that every generated Citeck webapp
@@ -1197,7 +1194,7 @@ func TestGenerateWebapp_SetsWebUrl(t *testing.T) {
 				if _, want := checked[app.Name]; !want {
 					continue
 				}
-				assert.Equal(t, tc.wantURL, app.Environments["ECOS_WEBAPP_PROPERTIES_WEB_URL"],
+				assert.Equal(t, tc.wantURL, envGet(app.Environments, "ECOS_WEBAPP_PROPERTIES_WEB_URL"),
 					"webapp %q must have ECOS_WEBAPP_PROPERTIES_WEB_URL=%s", app.Name, tc.wantURL)
 				checked[app.Name] = true
 			}
@@ -1207,3 +1204,6 @@ func TestGenerateWebapp_SetsWebUrl(t *testing.T) {
 		})
 	}
 }
+
+// envGet is a test helper: read a value from an OrderedMap env by key.
+func envGet(m appdef.OrderedMap, k string) string { v, _ := m.Get(k); return v }

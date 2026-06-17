@@ -96,8 +96,11 @@ func generateWebapp(name string, ctx *NsGenContext) {
 		if wp.MemoryLimit != "" {
 			app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: wp.MemoryLimit}}
 		}
-		for k, v := range wp.Environments {
-			app.AddEnv(k, v)
+		// Sort keys so generated env order is deterministic (wp.Environments is
+		// a plain map). Operator-arranged order is preserved separately via the
+		// per-app config edit (OrderedMap).
+		for _, k := range sortedKeys(wp.Environments) {
+			app.AddEnv(k, wp.Environments[k])
 		}
 		if wp.SpringProfiles != "" {
 			springProfiles = wp.SpringProfiles
@@ -110,7 +113,7 @@ func generateWebapp(name string, ctx *NsGenContext) {
 	// debugPort: add JDWP agent to JAVA_OPTS (preserve workspace-set JAVA_OPTS if namespace didn't set heapSize)
 	if debugPort > 0 {
 		if javaOpts == "" {
-			javaOpts = app.Environments["JAVA_OPTS"] // keep workspace defaults
+			javaOpts, _ = app.Environments.Get("JAVA_OPTS") // keep workspace defaults
 		}
 		javaOpts += fmt.Sprintf(" -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:%d", debugPort)
 		app.AddPort(fmt.Sprintf("%d:%d", debugPort, debugPort))
@@ -287,11 +290,9 @@ func applyEappsInitContainers(name string, app *AppBuilder, ctx *NsGenContext) {
 	}
 	for _, citeckApp := range ctx.Bundle.CiteckApps {
 		app.InitContainers = append(app.InitContainers, appdef.InitContainerDef{
-			Image: citeckApp.Image,
-			Environments: map[string]string{
-				"ECOS_APPS_TARGET_DIR": "/run/ecos-apps",
-			},
-			Volumes: []string{fmt.Sprintf("./app/%s/ecos-apps:/run/ecos-apps", name)},
+			Image:        citeckApp.Image,
+			Environments: appdef.OrderedMap{{Key: "ECOS_APPS_TARGET_DIR", Value: "/run/ecos-apps"}},
+			Volumes:      []string{fmt.Sprintf("./app/%s/ecos-apps:/run/ecos-apps", name)},
 		})
 	}
 	app.AddEnv("ECOS_WEBAPP_EAPPS_ADDITIONAL_ARTIFACTS_LOCATIONS", "/run/ecos-artifacts")
@@ -323,8 +324,8 @@ func applyWebappDefaults(app *AppBuilder, props *bundle.WebappDefaultProps, ctx 
 	if props.Image != "" {
 		app.Image = props.Image
 	}
-	for k, v := range props.Environments {
-		app.AddEnv(k, resolveTemplateVarsWithContext(v, ctx))
+	for _, k := range sortedKeys(props.Environments) {
+		app.AddEnv(k, resolveTemplateVarsWithContext(props.Environments[k], ctx))
 	}
 	if props.HeapSize != "" || props.JavaOpts != "" {
 		javaOpts := ""
