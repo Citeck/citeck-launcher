@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -123,6 +124,18 @@ func (d *Daemon) handleAppImagePull(w http.ResponseWriter, r *http.Request) {
 			errMsg = err.Error()
 		}
 		d.imagePulls.Store(ref, &imagePullState{done: true, err: errMsg})
+		if errMsg == "" {
+			// The pull may have replaced the local image (new digest under the
+			// same tag). Regenerate so the hash-diff recreates any running app
+			// using it — auto-update after an explicit pull. Best-effort: skip
+			// if a reload is already running (it will pick up the new image).
+			if d.reloadMu.TryLock() {
+				defer d.reloadMu.Unlock()
+				if err := d.doReload(); err != nil {
+					slog.Warn("Reload after image pull failed", "err", err)
+				}
+			}
+		}
 	})
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "pull started"})
 }
