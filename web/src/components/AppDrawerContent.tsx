@@ -86,8 +86,9 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
         </div>
       )}
 
-      {/* The "Состояние" detail row already shows the running state; here we
-          only surface statusText (e.g. failure detail), when present. */}
+      {/* The launcher status badge is in the drawer header (subtitle) and the
+          Docker container state is the "Состояние" row; here we only surface
+          statusText (e.g. failure detail), when present. */}
       {appMeta?.statusText && (
         <div className="text-[11px] text-muted-foreground">{appMeta.statusText}</div>
       )}

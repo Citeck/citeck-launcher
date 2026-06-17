@@ -162,6 +162,9 @@ export function Dashboard() {
   if (!namespace) return null
 
   const apps = namespace.apps ?? []
+  // Drawer header badge shows the launcher's own status (state machine), which
+  // differs from the Docker container state shown in the "Состояние" row.
+  const drawerApp = drawerAppName ? apps.find((a) => a.name === drawerAppName) : null
   const runningCount = apps.filter((a) => a.status === 'RUNNING').length
   const isRunning = namespace.status === 'RUNNING'
   const links = namespace.links ? [...namespace.links].sort((a, b) => a.order - b.order) : []
@@ -374,6 +377,7 @@ export function Dashboard() {
         {drawerAppName && (
           <RightDrawer
             title={drawerAppName}
+            subtitle={drawerApp && <StatusBadge status={drawerApp.status} />}
             onClose={closeDrawer}
           >
             <AppDrawerContent appName={drawerAppName} />

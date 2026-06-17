@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import type { AppDto } from '../lib/types'
 import { postAppStop, postAppStart, postAppRestart, getAppFiles } from '../lib/api'
 import { usePanelStore } from '../lib/panels'
@@ -137,6 +138,9 @@ export function AppTable({ apps, highlightedApp }: AppTableProps) {
 
 function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: string; apps: AppDto[]; onAction: (a: NonNullable<AppAction>) => void; highlightedApp?: string | null }) {
   const { openDrawer } = usePanelStore()
+  // Where the press started — a row click only counts when mouseup lands near
+  // mousedown, so a press-here / release-there drag doesn't open the drawer.
+  const downPos = useRef<{ x: number; y: number } | null>(null)
   const { t, tDynamic } = useTranslation()
   const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu()
   const pullProgress = useDashboardStore((s) => s.pullProgress)
@@ -225,7 +229,13 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
           // tag-copy cell stop propagation so their own clicks still win.
           <tr key={app.name}
             className={`group cursor-pointer border-b border-border/20 ${isHighlighted ? 'bg-primary/8' : 'hover:bg-accent'}`}
-            onClick={() => openDrawer(app.name)}>
+            onMouseDown={(e) => { downPos.current = { x: e.clientX, y: e.clientY } }}
+            onClick={(e) => {
+              const d = downPos.current
+              // Treat a >6px move between press and release as a drag, not a click.
+              if (d && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 6) return
+              openDrawer(app.name)
+            }}>
             <td className="py-[2px] pr-4 font-mono whitespace-nowrap">
               <span className="text-primary group-hover:underline">{app.name}</span>
             </td>
