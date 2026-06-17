@@ -17,14 +17,6 @@ interface AppDrawerContentProps {
   appName: string
 }
 
-function formatBytes(bytes?: number): string {
-  if (!bytes || bytes <= 0) return '—'
-  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`
-  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(0)} MB`
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`
-  return `${bytes} B`
-}
-
 function formatUptime(ms: number): string {
   if (ms <= 0) return '—'
   const s = Math.floor(ms / 1000), m = Math.floor(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24)
@@ -109,7 +101,7 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
         <D l={t('drawer.image')} v={inspect.image} copy={inspect.image} action={
           <button
             type="button"
-            className="shrink-0 text-muted-foreground hover:text-foreground"
+            className="shrink-0 p-0.5 rounded text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground hover:bg-muted transition-opacity"
             title={t('imageDetails.tooltip')}
             onClick={() => setImageModalOpen(true)}
           >
@@ -120,13 +112,9 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
         <D l={t('drawer.network')} v={inspect.network} />
         <D l={t('drawer.started')} v={inspect.startedAt ? formatDateTime(inspect.startedAt) : '—'} dim={isStopped} />
         <D l={t('drawer.uptime')} v={formatUptime(inspect.uptime)} dim={isStopped} />
-        {/* Live usage (appMeta.memory, from stats) over the container limit
-            (inspect.memoryLimit). Limit omitted when unlimited/unknown. */}
-        <D
-          l={t('drawer.memory')}
-          v={`${(!isStopped && appMeta?.memory) || '—'}${inspect.memoryLimit > 0 ? ` / ${formatBytes(inspect.memoryLimit)}` : ''}`}
-          dim={isStopped}
-        />
+        {/* appMeta.memory is already "usage / limit" (formatMemory from stats);
+            don't append the limit again. */}
+        <D l={t('drawer.memory')} v={(!isStopped && appMeta?.memory) || '—'} dim={isStopped} />
         {/* Single source of truth with the app-table "↻N" badge: the launcher's
             own restart count (appMeta), NOT Docker's container RestartCount —
             we don't use Docker restart policies, so inspect.restartCount is

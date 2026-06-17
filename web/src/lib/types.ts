@@ -132,7 +132,6 @@ export interface AppInspectDto {
   restartCount: number
   startedAt: string
   uptime: number
-  memoryLimit: number
 }
 
 export interface AppImageDto {
