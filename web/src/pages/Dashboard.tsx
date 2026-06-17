@@ -196,9 +196,6 @@ export function Dashboard() {
   const memPercent = maxMem > 0 ? (totalMem / maxMem) * 100 : 0
   const fmtMB = (mb: number) => mb >= 1024 ? `${(mb / 1024).toFixed(1)}G` : `${Math.round(mb)}M`
 
-  // Drawer title info
-  const drawerApp = drawerAppName ? apps.find((a) => a.name === drawerAppName) : null
-
   function renderBottomTab(tab: BottomPanelTab, active: boolean) {
     switch (tab.type) {
       case 'logs':
@@ -377,7 +374,6 @@ export function Dashboard() {
         {drawerAppName && (
           <RightDrawer
             title={drawerAppName}
-            subtitle={drawerApp && <StatusBadge status={drawerApp.status} />}
             onClose={closeDrawer}
           >
             <AppDrawerContent appName={drawerAppName} />

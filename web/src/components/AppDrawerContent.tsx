@@ -86,7 +86,7 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
         </div>
       )}
 
-      {/* Status badge already shown in the drawer header (subtitle); here we
+      {/* The "Состояние" detail row already shows the running state; here we
           only surface statusText (e.g. failure detail), when present. */}
       {appMeta?.statusText && (
         <div className="text-[11px] text-muted-foreground">{appMeta.statusText}</div>
