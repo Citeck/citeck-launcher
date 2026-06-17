@@ -182,7 +182,10 @@ export function NamespaceEditDialog({
     const repo = bundles.find((b) => b.repo === bundleRepo)
     const versions = repo?.versions ?? []
     if (versions.length === 0) return
-    if (/^latest$/i.test(bundleKey) || (bundleKey && !versions.includes(bundleKey))) {
+    // Pick the newest (versions are newest-first) when nothing concrete is
+    // selected yet — empty (e.g. right after a pull surfaced this repo's
+    // versions), the symbolic "LATEST", or a stale pin not in the list.
+    if (!versions.includes(bundleKey) || /^latest$/i.test(bundleKey)) {
       // Intentional: normalize the dependent select to a concrete version; not
       // a cascading render.
       // eslint-disable-next-line react-hooks/set-state-in-effect
