@@ -204,10 +204,15 @@ func (r *Runtime) Regenerate(apps []appdef.ApplicationDef, cfg *Config, bundleDe
 // generatedDefForApp returns the last freshly-generated def for appName (the
 // baseline a patch is computed against). Must be called with r.mu held.
 func (r *Runtime) generatedDefForApp(appName string) (appdef.ApplicationDef, bool) {
+	// Prefer the running desired set (post-start, authoritative); fall back to
+	// the load-time generated set so config view/edit works while stopped.
 	for _, d := range r.lastApps {
 		if d.Name == appName {
 			return d, true
 		}
+	}
+	if d, ok := r.generatedDefs[appName]; ok {
+		return d, true
 	}
 	return appdef.ApplicationDef{}, false
 }
@@ -219,12 +224,13 @@ func (r *Runtime) UpdateAppDef(appName string, def appdef.ApplicationDef, lock b
 	_ = lock
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	app, ok := r.apps[appName]
-	if !ok {
+	app, appLive := r.apps[appName]
+	base, hasBase := r.generatedDefForApp(appName)
+	if !appLive && !hasBase {
+		// Neither a live app nor a generated baseline → unknown app.
 		return fmt.Errorf("app %q not found", appName)
 	}
-	base, ok := r.generatedDefForApp(appName)
-	if !ok {
+	if !hasBase {
 		base = app.Def
 	}
 	patch, err := DiffAppDef(base, def)
@@ -236,7 +242,9 @@ func (r *Runtime) UpdateAppDef(appName string, def appdef.ApplicationDef, lock b
 	} else {
 		r.editedAppPatches[appName] = patch
 	}
-	app.Def = def
+	if appLive {
+		app.Def = def
+	}
 	// editedAppPatches is a durable user edit. Persist inline + clear r.dirty.
 	r.persistState()
 	r.dirty.Store(false)
@@ -256,8 +264,10 @@ func (r *Runtime) UpdateAppDef(appName string, def appdef.ApplicationDef, lock b
 func (r *Runtime) ResetAppDef(appName string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, ok := r.apps[appName]; !ok {
-		return fmt.Errorf("app %q not found", appName)
+	if _, live := r.apps[appName]; !live {
+		if _, hasBase := r.generatedDefForApp(appName); !hasBase {
+			return fmt.Errorf("app %q not found", appName)
+		}
 	}
 	delete(r.editedAppPatches, appName)
 	r.persistState()

@@ -408,6 +408,7 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	runtime := namespace.NewRuntime(nsCfg, dc, volumesBase)
 	runtime.SetStatePersister(nsStatePersister{store: in.Store, wsID: wsID, nsID: nsID})
 	runtime.SetLastGenFiles(genResp.BaselineFiles)
+	runtime.SetGeneratedDefs(genResp.Applications)
 
 	// Cache the successfully resolved bundle for fallback on future resolve failures
 	if !bundleDef.IsEmpty() {

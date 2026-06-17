@@ -166,6 +166,7 @@ type Runtime struct {
 	editedAppPatches      map[string]json.RawMessage // user-edit deltas over generated app defs (JSON merge patch)
 	editedFileEdits       map[string]FileEdit        // user-edit deltas for mounted files (key: "<app>/<rel-path>", no leading "./")
 	lastGenFiles          map[string][]byte          // last generated (pre-merge) file set; baseline source for the editor + WriteEditedFile template
+	generatedDefs         map[string]appdef.ApplicationDef // last generated (pre-patch) app defs; baseline for config view/edit when the ns is stopped/never-started
 	dependsOnDetachedApps map[string]bool            // detached apps that trigger regen on restart
 	lastApps              []appdef.ApplicationDef     // last app defs passed to doStart
 	cachedBundle          *bundle.Def                      // last successfully resolved bundle (persisted)
@@ -464,6 +465,19 @@ func (r *Runtime) SetLastGenFiles(files map[string][]byte) {
 	r.lastGenFiles = files
 }
 
+// SetGeneratedDefs caches the generated (pre-patch) app defs so config view/edit
+// works even when the namespace is stopped or has never been started this
+// session (r.apps / r.lastApps are empty in that state).
+func (r *Runtime) SetGeneratedDefs(defs []appdef.ApplicationDef) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	m := make(map[string]appdef.ApplicationDef, len(defs))
+	for _, d := range defs {
+		m[d.Name] = d
+	}
+	r.generatedDefs = m
+}
+
 // GeneratedFile returns the last generated (pre-merge) content for a canonical
 // "<app>/<rel>" key.
 func (r *Runtime) GeneratedFile(key string) ([]byte, bool) {
@@ -531,6 +545,7 @@ func NewRuntime(cfg *Config, dockerClient docker.RuntimeClient, volumesBase stri
 		pullAuthBlockedApps: make(map[string]bool),
 		editedAppPatches:    make(map[string]json.RawMessage),
 		editedFileEdits:     make(map[string]FileEdit),
+		generatedDefs:       make(map[string]appdef.ApplicationDef),
 		livenessFailures:    make(map[string]int),
 		restartCounts:       make(map[string]int),
 		eventCh:             make(chan api.EventDto, 256),

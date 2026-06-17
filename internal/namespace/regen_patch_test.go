@@ -29,3 +29,24 @@ func TestApplyEditPatchNoPatchReturnsGen(t *testing.T) {
 		t.Errorf("no patch → unchanged def, got %q", got.Image)
 	}
 }
+
+func TestUpdateAppDefWorksWhenStopped(t *testing.T) {
+	// No live app in r.apps (namespace stopped/never started), only generated
+	// defs available — editing must still store a patch.
+	r := &Runtime{
+		apps:             map[string]*AppRuntime{},
+		editedAppPatches: map[string]json.RawMessage{},
+	}
+	r.SetGeneratedDefs([]appdef.ApplicationDef{{Name: "proxy", Image: "proxy:1"}})
+
+	edited := appdef.ApplicationDef{Name: "proxy", Image: "proxy:1", ShmSize: "256m"}
+	if err := r.UpdateAppDef("proxy", edited, true); err != nil {
+		t.Fatalf("edit while stopped must succeed: %v", err)
+	}
+	if r.AppPatch("proxy") == nil {
+		t.Fatal("expected a stored patch after stopped-namespace edit")
+	}
+	if err := r.UpdateAppDef("unknown", edited, true); err == nil {
+		t.Fatal("editing an unknown app must fail")
+	}
+}

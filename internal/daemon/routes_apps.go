@@ -435,24 +435,39 @@ func (d *Daemon) handleGetAppConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rt := d.active().runtime
-	app := d.findApp(name)
-	if app == nil {
+	if rt == nil {
 		writeAppNotFound(w, name)
 		return
 	}
-	// Effective config = the running (merged) def; baseline = the generated def
-	// without the user patch, so the editor can mark changed lines. Falls back to
-	// the effective def when no baseline is available (never-started edge case).
-	content, err := encodeDefYAML(app.Def)
+	app := rt.FindApp(name)
+	gen, genOK := rt.GeneratedDef(name)
+	if app == nil && !genOK {
+		writeAppNotFound(w, name)
+		return
+	}
+	// Effective config = the running (merged) def when live; otherwise the
+	// generated def with the stored patch applied (so editing works while the
+	// namespace is stopped / never started). Baseline = the generated def
+	// (patch-free) so the editor can mark changed lines.
+	var effectiveDef appdef.ApplicationDef
+	if app != nil {
+		effectiveDef = app.Def
+	} else {
+		merged, err := namespace.ApplyAppDefPatch(gen, rt.AppPatch(name))
+		if err != nil {
+			writeInternalError(w, err)
+			return
+		}
+		effectiveDef = merged
+	}
+	content, err := encodeDefYAML(effectiveDef)
 	if err != nil {
 		writeInternalError(w, err)
 		return
 	}
-	baselineDef := app.Def
-	if rt != nil {
-		if gen, ok := rt.GeneratedDef(name); ok {
-			baselineDef = gen
-		}
+	baselineDef := effectiveDef
+	if genOK {
+		baselineDef = gen
 	}
 	baseline, err := encodeDefYAML(baselineDef)
 	if err != nil {
@@ -471,10 +486,15 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 	if rt == nil {
 		return
 	}
-	app := d.findApp(name)
-	if app == nil {
-		writeAppNotFound(w, name)
-		return
+	// Accept edits whether the app is live (r.apps) or only known via the
+	// generated defs (namespace stopped / never started this session). The app
+	// table is fed from the generated defs in that state, so the editor can be
+	// opened before the first Start. UpdateAppDef validates the name.
+	if rt.FindApp(name) == nil {
+		if _, ok := rt.GeneratedDef(name); !ok {
+			writeAppNotFound(w, name)
+			return
+		}
 	}
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, 512*1024))
@@ -503,7 +523,6 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 	// resolves the correct digest for whatever image the user chose.
 	// VolumesContentHash is recomputed by the generator on the next
 	// regenerate — also a runtime cache, also always cleared.
-	_ = app.Def // oldDef no longer needed — every formerly-pinned field is now editable.
 	newDef.Name = name
 	newDef.ImageDigest = ""
 	newDef.VolumesContentHash = ""
@@ -538,9 +557,16 @@ func (d *Daemon) handleResetAppConfig(w http.ResponseWriter, r *http.Request) {
 	// requireRuntime here (pinned by tests) — a nil runtime surfaces as
 	// app-not-found, mirroring the historical findApp-first behavior.
 	rt := d.active().runtime
-	if rt == nil || rt.FindApp(name) == nil {
+	if rt == nil {
 		writeAppNotFound(w, name)
 		return
+	}
+	// Accept a live app OR one known only via generated defs (stopped namespace).
+	if rt.FindApp(name) == nil {
+		if _, ok := rt.GeneratedDef(name); !ok {
+			writeAppNotFound(w, name)
+			return
+		}
 	}
 	if err := rt.ResetAppDef(name); err != nil {
 		writeInternalError(w, err)
