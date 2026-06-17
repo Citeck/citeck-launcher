@@ -137,8 +137,11 @@ func TestRestartAppGoesThroughStoppingThenReadyToPull(t *testing.T) {
 	assert.False(t, slices.Contains(seen, string(AppStatusStopping)),
 		"RestartApp must NOT route through STOPPING — that label is reserved for user-initiated stops; sequence: %v", seen)
 
-	// No restart_event for explicit user actions (UI policy). The restart
-	// counter is still bumped so the App table badge reflects the recreate.
+	// A user restart is deliberate, not an abnormal/unscheduled restart: it
+	// emits NO restart_event AND must NOT bump the restart counter (the red
+	// "↻N" badge tracks crash/oom/liveness restarts only). Applying edited
+	// config to a running app goes through this same path, so a settings save
+	// must not inflate the badge.
 	r.mu.RLock()
 	var userRestarts int
 	for _, evt := range r.restartEvents {
@@ -149,8 +152,8 @@ func TestRestartAppGoesThroughStoppingThenReadyToPull(t *testing.T) {
 	postRestartCount := r.apps[def.Name].RestartCount
 	r.mu.RUnlock()
 	assert.Equal(t, 0, userRestarts, "expected no user_restart events (UI policy)")
-	assert.Equal(t, preRestartCount+1, postRestartCount,
-		"restart count must be bumped by exactly one (pre=%d post=%d)",
+	assert.Equal(t, preRestartCount, postRestartCount,
+		"a user restart must NOT bump the restart counter (pre=%d post=%d)",
 		preRestartCount, postRestartCount)
 }
 

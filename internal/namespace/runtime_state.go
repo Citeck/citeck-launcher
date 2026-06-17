@@ -151,11 +151,15 @@ func (r *Runtime) RestartEvents() []RestartEvent {
 
 // emitRestartEvent is the SOLE write path for restart_event. It appends to
 // r.restartEvents (with trim to maxRestartEvents) and buffers an SSE event.
-// Callers:
+// Callers (abnormal/unscheduled restarts only — these also bump the restart
+// counter shown as the red "↻N" badge):
 //   - T17a (liveness threshold) via handleLivenessProbeResult.
 //   - T18 (crash / oom) via handleReconcileDiffResult.
 //   - T33 (readopted_failing) via doStart adoption branch.
-//   - RestartApp (user_restart).
+//
+// A user-initiated RestartApp (incl. applying edited config to a running app) is
+// deliberate, NOT abnormal: it emits no restart_event and does not bump the
+// counter.
 //
 // Must be called with r.mu held. detail / diagnostics may be empty — they
 // live on the persisted RestartEvent only, not in the EventDto payload.

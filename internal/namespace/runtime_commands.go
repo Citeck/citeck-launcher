@@ -689,11 +689,13 @@ func (r *Runtime) RestartApp(appName string) error { //nolint:gocyclo // single-
 		app.desiredNext = AppStatusReadyToPull
 		app.initialSweep = false
 		app.stoppingStartedAt = r.nowFunc()
-		r.incrementRestartCount(appName)
 		containerID := app.ContainerID
 		r.setAppStatus(app, AppStatusUpdating)
 		// RestartApp clears manualStoppedApps (re-attach) — durable intent.
-		// Persist inline + clear r.dirty. No restart_event emitted (UI policy).
+		// Persist inline + clear r.dirty. A user restart (incl. applying edited
+		// config to a running app) is deliberate, not an abnormal/unscheduled
+		// restart, so it emits NO restart_event AND does NOT bump the restart
+		// counter (the red "↻N" badge tracks crash/oom/liveness restarts only).
 		r.persistState()
 		r.dirty.Store(false)
 		r.mu.Unlock()
@@ -717,9 +719,8 @@ func (r *Runtime) RestartApp(appName string) error { //nolint:gocyclo // single-
 			r.mu.Unlock()
 		}
 	case AppStatusStopped, AppStatusReadyToPull, AppStatusPullFailed:
-		// Direct re-entry to READY_TO_PULL — no container in flight. No
-		// restart_event for explicit user actions (UI policy).
-		r.incrementRestartCount(appName)
+		// Direct re-entry to READY_TO_PULL — no container in flight. A user
+		// restart is deliberate: no restart_event and no restart-counter bump.
 		r.setAppStatus(app, AppStatusReadyToPull)
 		// Durable detach-clear. Persist inline + clear r.dirty.
 		r.persistState()
@@ -734,9 +735,8 @@ func (r *Runtime) RestartApp(appName string) error { //nolint:gocyclo // single-
 		// READY_TO_PULL on completion. STOPPING came from a user stop the
 		// caller now wants to flip into a restart — promote the status to
 		// UPDATING so the daemon log reflects the new intent. UPDATING was
-		// already on a recreate path; leave it alone. No restart_event for
-		// explicit user actions (UI policy).
-		r.incrementRestartCount(appName)
+		// already on a recreate path; leave it alone. A user restart is
+		// deliberate: no restart_event and no restart-counter bump.
 		app.desiredNext = AppStatusReadyToPull
 		if app.Status == AppStatusStopping {
 			r.setAppStatus(app, AppStatusUpdating)
