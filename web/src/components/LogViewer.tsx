@@ -4,7 +4,7 @@ import { useLogFilter } from '../hooks/useLogFilter'
 import { LogViewport } from './LogViewport'
 import { useTranslation } from '../lib/i18n'
 import { copyText } from '../lib/clipboard'
-import { isDesktopModeSync } from '../lib/desktop'
+import { primeDesktopModeCache } from '../lib/desktop'
 import { saveDownload, openDownloadsFolder } from '../lib/api'
 import { toast } from '../lib/toast'
 
@@ -156,7 +156,7 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
     void copyText(filteredLines.join('\n'))
   }
 
-  function downloadLogs() {
+  async function downloadLogs() {
     // Kotlin's default filename pattern: "<windowTitle>_<yyyyMMdd_HHmmss>.log"
     const d = new Date()
     const pad = (n: number) => String(n).padStart(2, '0')
@@ -166,13 +166,19 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
 
     // Desktop: the WebKitGTK webview has no download manager, so <a download> is
     // a no-op. Save server-side into Downloads, then offer to open the folder.
-    if (isDesktopModeSync()) {
-      saveDownload(filename, content)
-        .then(() => toast(t('logViewer.download.saved'), 'success', {
+    // AWAIT the probe (not the sync cache): a standalone logs window may not have
+    // primed it yet, and a stale `false` would silently fall back to the no-op
+    // blob path — exactly the "Download does nothing" bug.
+    if (await primeDesktopModeCache()) {
+      try {
+        await saveDownload(filename, content)
+        toast(t('logViewer.download.saved'), 'success', {
           label: t('logViewer.download.openFolder'),
           onClick: () => { void openDownloadsFolder() },
-        }))
-        .catch((e) => toast(`${t('logViewer.download.failed')}: ${(e as Error).message}`, 'error'))
+        })
+      } catch (e) {
+        toast(`${t('logViewer.download.failed')}: ${(e as Error).message}`, 'error')
+      }
       return
     }
 
