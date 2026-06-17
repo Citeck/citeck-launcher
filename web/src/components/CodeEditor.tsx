@@ -274,7 +274,13 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
         className="h-full"
         extensions={extensions}
         onChange={(v) => onChange?.(v)}
-        onCreateEditor={(view) => { viewRef.current = view }}
+        onCreateEditor={(view) => {
+          viewRef.current = view
+          // Seed the baseline immediately on (re)creation so the change gutter
+          // never diffs against an empty baseline (the [baseline] effect only
+          // fires on prop change, not on editor recreation).
+          if (baseline !== undefined && baseline !== '') view.dispatch({ effects: setBaseline.of(baseline) })
+        }}
         editable={!readOnly}
         autoFocus={autoFocus}
         theme={isDark ? 'dark' : 'light'}

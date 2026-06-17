@@ -88,6 +88,9 @@ const changedMarker = new ChangeMarker('changed')
 
 function markersFor(state: EditorState): RangeSet<GutterMarker> {
   const baseline = state.field(baselineField, false) ?? ''
+  // No baseline yet (not loaded / not applicable) → don't paint the whole file
+  // as "added". Markers appear once a real baseline is set.
+  if (baseline === '') return RangeSet.empty
   const kinds = diffLineKinds(baseline, state.doc.toString())
   const ranges = []
   for (let ln = 1; ln <= state.doc.lines; ln++) {
@@ -114,6 +117,7 @@ const changedLineDeco = Decoration.line({ class: 'cm-changed-line cm-changed-lin
 
 function lineDecosFor(state: EditorState): DecorationSet {
   const baseline = state.field(baselineField, false) ?? ''
+  if (baseline === '') return Decoration.none
   const kinds = diffLineKinds(baseline, state.doc.toString())
   const ranges: Range<Decoration>[] = []
   for (let ln = 1; ln <= state.doc.lines; ln++) {

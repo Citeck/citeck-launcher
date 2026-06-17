@@ -445,29 +445,28 @@ func (d *Daemon) handleGetAppConfig(w http.ResponseWriter, r *http.Request) {
 		writeAppNotFound(w, name)
 		return
 	}
-	// Effective config = the running (merged) def when live; otherwise the
-	// generated def with the stored patch applied (so editing works while the
-	// namespace is stopped / never started). Baseline = the generated def
-	// (patch-free) so the editor can mark changed lines.
-	var effectiveDef appdef.ApplicationDef
-	if app != nil {
-		effectiveDef = app.Def
-	} else {
+	// Derive BOTH content and baseline from the same generated def so an
+	// unedited app yields content == baseline exactly (no diff markers): content
+	// = generated + stored patch, baseline = generated (patch-free). Only when
+	// no generated def exists (shouldn't happen for a known app) fall back to
+	// the live def for both.
+	var effectiveDef, baselineDef appdef.ApplicationDef
+	if genOK {
+		baselineDef = gen
 		merged, err := namespace.ApplyAppDefPatch(gen, rt.AppPatch(name))
 		if err != nil {
 			writeInternalError(w, err)
 			return
 		}
 		effectiveDef = merged
+	} else {
+		effectiveDef = app.Def
+		baselineDef = app.Def
 	}
 	content, err := encodeDefYAML(effectiveDef)
 	if err != nil {
 		writeInternalError(w, err)
 		return
-	}
-	baselineDef := effectiveDef
-	if genOK {
-		baselineDef = gen
 	}
 	baseline, err := encodeDefYAML(baselineDef)
 	if err != nil {
