@@ -81,6 +81,17 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
     // Left change gutter: mark lines changed/added vs the generated baseline,
     // click a marker to revert that line.
     if (hasBaseline) exts.push(...changeGutterExtension(revertLabel))
+    // Undo/redo as a CM-native keydown handler keyed on the PHYSICAL key
+    // (event.code) so it works on non-Latin layouts (Russian Ctrl+Z emits "я").
+    // CM's own historyKeymap is disabled (basicSetup) to avoid a double-undo.
+    exts.push(EditorView.domEventHandlers({
+      keydown: (event, view) => {
+        if (!(event.ctrlKey || event.metaKey)) return false
+        if (event.code === 'KeyZ' && !event.shiftKey) { undo(view); return true }
+        if ((event.code === 'KeyZ' && event.shiftKey) || event.code === 'KeyY') { redo(view); return true }
+        return false
+      },
+    }))
     // Paint the editor surface on the full parent rectangle even when the
     // file is short. @uiw/react-codemirror's outer wrapper takes the `height`
     // prop, but the inner cm-editor / cm-scroller / cm-content default to
@@ -187,31 +198,20 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
     }
   }, [])
 
-  // Keyboard shortcuts are matched by PHYSICAL key (event.code), not the
-  // produced character — so they work on non-Latin layouts too (on a Russian
-  // layout Ctrl+Z emits "я", Ctrl+F emits "а"; matching e.key would silently
-  // break undo/search there). Undo/redo are handled here (CM's historyKeymap is
-  // disabled below to avoid a double-undo) so they fire regardless of which part
-  // of the editor wrapper holds focus — e.g. right after a gutter click-revert.
+  // Ctrl+F / Escape matched by PHYSICAL key (event.code) so search works on
+  // non-Latin layouts too (a Russian layout emits "а" for the F key). Undo/redo
+  // live in a CM-native keydown handler (see extensions) for reliable focus
+  // handling.
   const onWrapperKeyDown = useCallback((e: React.KeyboardEvent) => {
-    const mod = e.ctrlKey || e.metaKey
-    if (mod && e.code === 'KeyF') {
+    if ((e.ctrlKey || e.metaKey) && e.code === 'KeyF') {
       e.preventDefault()
       e.stopPropagation()
       openSearch()
     } else if (e.key === 'Escape' && searchOpen) {
       e.preventDefault()
       closeSearch()
-    } else if (mod && !readOnly && viewRef.current) {
-      if (e.code === 'KeyZ' && !e.shiftKey) {
-        e.preventDefault()
-        undo(viewRef.current)
-      } else if ((e.code === 'KeyZ' && e.shiftKey) || e.code === 'KeyY') {
-        e.preventDefault()
-        redo(viewRef.current)
-      }
     }
-  }, [searchOpen, openSearch, closeSearch, readOnly])
+  }, [searchOpen, openSearch, closeSearch])
 
   return (
     <div className="relative h-full" onKeyDownCapture={onWrapperKeyDown}>
