@@ -15,6 +15,7 @@ import { clike } from '@codemirror/legacy-modes/mode/clike'
 // from the canonical `@codemirror/language` package. The lock-file already
 // pins this via the legacy-modes peer chain.
 import { indentUnit, StreamLanguage } from '@codemirror/language'
+import { changeGutterExtension, setBaseline } from './changeGutter'
 
 interface CodeEditorProps {
   value: string
@@ -27,6 +28,11 @@ interface CodeEditorProps {
   height?: string
   /** Auto-focus on mount — useful for editor windows. */
   autoFocus?: boolean
+  /**
+   * Generated baseline to diff against for the left change gutter. When set
+   * (even ""), a git-style gutter marks lines changed/added vs the baseline.
+   */
+  baseline?: string
 }
 
 /**
@@ -39,7 +45,7 @@ interface CodeEditorProps {
  * prev/next, case-sensitive and regex toggles — replacing CodeMirror's stock
  * bottom panel, which mounted with a visible delay and looked out of place.
  */
-export function CodeEditor({ value, onChange, readOnly = false, filename = '', height, autoFocus = false }: CodeEditorProps) {
+export function CodeEditor({ value, onChange, readOnly = false, filename = '', height, autoFocus = false, baseline }: CodeEditorProps) {
   const { t } = useTranslation()
   // Follow the app theme — a hardcoded dark editor looked wrong inside the
   // light-theme config dialog. Reactive in the main app; in a secondary
@@ -54,6 +60,10 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
   const [regexp, setRegexp] = useState(false)
   const [matches, setMatches] = useState<Match[]>([])
   const [current, setCurrent] = useState(-1)
+  // Presence (not value) of baseline gates the gutter extension; the baseline
+  // text itself is pushed reactively via setBaseline so it must NOT rebuild the
+  // editor on every change.
+  const hasBaseline = baseline !== undefined
 
   const extensions = useMemo<Extension[]>(() => {
     const lang = detectLanguage(filename)
@@ -66,6 +76,8 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
     exts.push(indentUnit.of('  '))
     // Our custom search-match highlighting (driven by the toolbar below).
     exts.push(searchHighlighter())
+    // Left change gutter: mark lines changed/added vs the generated baseline.
+    if (hasBaseline) exts.push(...changeGutterExtension())
     // Paint the editor surface on the full parent rectangle even when the
     // file is short. @uiw/react-codemirror's outer wrapper takes the `height`
     // prop, but the inner cm-editor / cm-scroller / cm-content default to
@@ -86,7 +98,15 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
       '.cm-gutters': { minHeight: '100%' },
     }))
     return exts
-  }, [filename])
+  }, [filename, hasBaseline])
+
+  // Push baseline updates into the live editor without rebuilding it.
+  useEffect(() => {
+    const view = viewRef.current
+    if (view && baseline !== undefined) {
+      view.dispatch({ effects: setBaseline.of(baseline) })
+    }
+  }, [baseline])
 
   // Jump the editor selection + viewport to a given match and repaint the
   // active-match decoration. Used both on query change and prev/next nav.

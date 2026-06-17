@@ -5,6 +5,8 @@ import type {
   AppInspectDto,
   ActionResultDto,
   AppFileDto,
+  AppConfigDto,
+  AppFileContentDto,
   NamespaceSummaryDto,
   QuickStartDto,
   NamespaceCreateDto,
@@ -130,11 +132,6 @@ async function rawRequest(method: HttpMethod, path: string, opts: RequestOpts = 
 async function request<T>(method: HttpMethod, path: string, opts?: RequestOpts): Promise<T> {
   const res = await rawRequest(method, path, opts)
   return res.json()
-}
-
-async function requestText(method: HttpMethod, path: string, opts?: RequestOpts): Promise<string> {
-  const res = await rawRequest(method, path, opts)
-  return res.text()
 }
 
 export async function getNamespace(): Promise<NamespaceDto> {
@@ -341,8 +338,8 @@ export async function deleteVolume(name: string): Promise<ActionResultDto> {
   return request('DELETE', `/volumes/${enc(name)}`)
 }
 
-export async function getAppConfig(name: string): Promise<string> {
-  return requestText('GET', `/apps/${enc(name)}/config`)
+export async function getAppConfig(name: string): Promise<AppConfigDto> {
+  return request('GET', `/apps/${enc(name)}/config`)
 }
 
 export async function putAppConfig(name: string, content: string): Promise<ActionResultDto> {
@@ -373,9 +370,9 @@ export async function resetAppFile(name: string, path: string): Promise<ActionRe
   return request('POST', `/apps/${enc(name)}/files/reset?path=${enc(cleanPath)}`)
 }
 
-export async function getAppFile(name: string, path: string): Promise<string> {
+export async function getAppFile(name: string, path: string): Promise<AppFileContentDto> {
   const cleanPath = path.startsWith('./') ? path.slice(2) : path
-  return requestText('GET', `/apps/${enc(name)}/files/${encPath(cleanPath)}`)
+  return request('GET', `/apps/${enc(name)}/files/${encPath(cleanPath)}`)
 }
 
 export async function putAppFile(name: string, path: string, content: string): Promise<ActionResultDto> {

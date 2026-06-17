@@ -315,3 +315,13 @@ export interface ReleaseNoteDto {
   date: string
   markdown: string
 }
+
+export interface AppConfigDto {
+  content: string
+  baseline: string
+}
+
+export interface AppFileContentDto {
+  content: string
+  baseline: string
+}

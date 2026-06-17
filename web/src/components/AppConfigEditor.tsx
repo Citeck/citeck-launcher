@@ -19,6 +19,8 @@ export function AppConfigEditor({ appName }: AppConfigEditorProps) {
   const { t } = useTranslation()
   const [configYaml, setConfigYaml] = useState<string | null>(null)
   const [editYaml, setEditYaml] = useState<string | null>(null)
+  // Generated baseline (no user patch) for the editor's change gutter.
+  const [baseline, setBaselineYaml] = useState('')
   const [configEditing, setConfigEditing] = useState(false)
   const [configSaving, setConfigSaving] = useState(false)
   const [configError, setConfigError] = useState<string | null>(null)
@@ -28,6 +30,7 @@ export function AppConfigEditor({ appName }: AppConfigEditorProps) {
   const [files, setFiles] = useState<AppFileDto[]>([])
   const [editingFile, setEditingFile] = useState<string | null>(null)
   const [fileContent, setFileContent] = useState('')
+  const [fileBaseline, setFileBaseline] = useState('')
   const [fileSaving, setFileSaving] = useState(false)
   const [fileResetting, setFileResetting] = useState(false)
   const [fileError, setFileError] = useState<string | null>(null)
@@ -52,12 +55,13 @@ export function AppConfigEditor({ appName }: AppConfigEditorProps) {
     setLoadError(null)
     setLoadOK(false)
     getAppConfig(appName)
-      .then((y) => {
+      .then((dto) => {
         if (signal.aborted) return
         // Empty string is a legitimate result (app has no overrides yet) —
         // show the editor with empty content so the user can start typing.
-        setConfigYaml(y ?? '')
-        setEditYaml(y ?? '')
+        setConfigYaml(dto.content ?? '')
+        setEditYaml(dto.content ?? '')
+        setBaselineYaml(dto.baseline ?? '')
         setLoadOK(true)
       })
       .catch((e) => {
@@ -110,8 +114,9 @@ export function AppConfigEditor({ appName }: AppConfigEditorProps) {
       // for safety, so the submitted YAML and the stored YAML can differ).
       try {
         const stored = await getAppConfig(appName)
-        setConfigYaml(stored ?? '')
-        setEditYaml(stored ?? '')
+        setConfigYaml(stored.content ?? '')
+        setEditYaml(stored.content ?? '')
+        setBaselineYaml(stored.baseline ?? '')
       } catch {
         // Daemon accepted the write but the post-save read failed — keep the
         // in-memory buffer the user submitted so they don't see stale data.
@@ -223,6 +228,7 @@ export function AppConfigEditor({ appName }: AppConfigEditorProps) {
                 value={editYaml ?? ''}
                 onChange={setEditYaml}
                 filename="app-config.yml"
+                baseline={baseline}
                 height="350px"
                 autoFocus
               />
@@ -254,8 +260,8 @@ export function AppConfigEditor({ appName }: AppConfigEditorProps) {
               <button type="button" className="text-primary hover:underline text-[10px] shrink-0"
                 onClick={async () => {
                   try {
-                    const content = await getAppFile(appName, f.path)
-                    setEditingFile(f.path); setFileContent(content); setFileError(null)
+                    const dto = await getAppFile(appName, f.path)
+                    setEditingFile(f.path); setFileContent(dto.content); setFileBaseline(dto.baseline ?? ''); setFileError(null)
                   } catch (e) { setFileError((e as Error).message) }
                 }}>{t('common.edit')}</button>
             </div>
@@ -324,6 +330,7 @@ export function AppConfigEditor({ appName }: AppConfigEditorProps) {
                     value={fileContent}
                     onChange={setFileContent}
                     filename={editingFile}
+                    baseline={fileBaseline}
                     height="300px"
                     autoFocus
                   />
