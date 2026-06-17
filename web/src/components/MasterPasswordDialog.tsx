@@ -27,9 +27,9 @@ interface MasterPasswordDialogProps {
   error: string | null
   /** Called with the entered password when user confirms. */
   onSubmit: (password: string) => void | Promise<void>
-  /** "Skip" button — only shown for kotlin-decrypt + ask modes. Pass undefined to hide. */
+  /** "Cancel" button — only shown in create mode (abort the new-password flow). */
   onSkip?: () => void
-  /** "Reset Master Password and Drop All Secrets" — only meaningful in ask mode. */
+  /** "Reset Master Password and Drop All Secrets" — shown in ask + kotlin-decrypt modes. */
   onReset?: () => void | Promise<void>
 }
 
@@ -144,7 +144,7 @@ function MasterPasswordForm({ mode, loading, error, onSubmit, onSkip, onReset }:
         {showError && <p className="text-destructive text-sm mt-2">{showError}</p>}
 
         <div className="mt-4 flex items-center justify-between gap-2 flex-wrap">
-          {mode === 'ask' && onReset && (
+          {(mode === 'ask' || mode === 'kotlin-decrypt') && onReset && (
             <button
               type="button"
               className="text-xs text-destructive/80 hover:text-destructive"
@@ -155,14 +155,14 @@ function MasterPasswordForm({ mode, loading, error, onSubmit, onSkip, onReset }:
             </button>
           )}
           <div className="flex items-center gap-2 ml-auto">
-            {onSkip && (mode === 'kotlin-decrypt' || mode === 'ask') && (
+            {mode === 'create' && onSkip && (
               <button
                 type="button"
                 className="text-sm text-muted-foreground hover:text-foreground"
                 onClick={onSkip}
                 disabled={loading}
               >
-                {t('migration.skip')}
+                {t('common.cancel')}
               </button>
             )}
             <button
