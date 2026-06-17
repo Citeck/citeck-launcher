@@ -110,7 +110,7 @@ export function SecretsUnlockGuard() {
         if (step === 'kotlin-decrypt') await handleKotlinDecrypt(pwd)
         else if (step === 'unlock') await handleUnlock(pwd)
       }}
-      onSkip={handleSkip}
+      onSkip={step === 'kotlin-decrypt' ? handleSkip : undefined}
       onReset={step === 'unlock' ? handleReset : undefined}
     />
   )
