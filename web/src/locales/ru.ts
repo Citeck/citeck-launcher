@@ -289,7 +289,7 @@ const ru = {
   'appConfig.reset': 'Сбросить',
   'appConfig.reset.tooltip': 'Отменить изменения и восстановить значение по умолчанию',
   'appConfig.revertLine': 'Вернуть строку к сгенерированному значению',
-  'appConfig.lineReverted': 'Строка откачена',
+  'appConfig.lineReverted': 'Строка возвращена к исходному значению',
   'appConfig.undo': 'Отменить',
   'appConfig.reset.confirmTitle': 'Сбросить конфигурацию приложения?',
   'appConfig.reset.confirmMessage': 'Ваши изменения будут отменены, восстановится значение, сгенерированное лаунчером.',
