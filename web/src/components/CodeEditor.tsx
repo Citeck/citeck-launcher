@@ -81,23 +81,6 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
     // Left change gutter: mark lines changed/added vs the generated baseline,
     // click a marker to revert that line.
     if (hasBaseline) exts.push(...changeGutterExtension(revertLabel))
-    // Undo/redo by PHYSICAL key (event.code) so it works on every layout
-    // (Russian Ctrl+Z emits "я"). CM's key-based historyKeymap is disabled
-    // (basicSetup) to avoid a double-undo. The beforeinput handler suppresses
-    // the browser's NATIVE contenteditable history (historyUndo/historyRedo):
-    // for a programmatic change (e.g. a gutter click-revert) on a Latin layout
-    // the native undo competed with ours and won, so Ctrl+Z appeared to do
-    // nothing. Non-Latin layouts don't emit those inputTypes, which is why only
-    // Latin was affected.
-    exts.push(EditorView.domEventHandlers({
-      keydown: (event, view) => {
-        if (!(event.ctrlKey || event.metaKey)) return false
-        if (event.code === 'KeyZ' && !event.shiftKey) { undo(view); return true }
-        if ((event.code === 'KeyZ' && event.shiftKey) || event.code === 'KeyY') { redo(view); return true }
-        return false
-      },
-      beforeinput: (event) => event.inputType === 'historyUndo' || event.inputType === 'historyRedo',
-    }))
     // Paint the editor surface on the full parent rectangle even when the
     // file is short. @uiw/react-codemirror's outer wrapper takes the `height`
     // prop, but the inner cm-editor / cm-scroller / cm-content default to
@@ -193,6 +176,32 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
     requestAnimationFrame(() => inputRef.current?.select())
   }, [])
 
+  // Undo/redo by PHYSICAL key (event.code) at the DOCUMENT level so it works on
+  // non-Latin layouts (a Russian layout's Ctrl+Z emits "я", which CM's keymap
+  // never matches). On the desktop webview Latin Ctrl+Z is handled by the
+  // webview's NATIVE contenteditable undo and never reaches JS at all — that
+  // path keeps working for typed edits and is left untouched; for a programmatic
+  // gutter revert (not in native history) the toast's Undo button is the
+  // reliable affordance. We only supplement here for the layouts that DO deliver
+  // the event to JS.
+  useEffect(() => {
+    if (readOnly) return
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      const view = viewRef.current
+      if (!view) return
+      const isZ = e.code === 'KeyZ'
+      const isY = e.code === 'KeyY'
+      if (!isZ && !isY) return
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      if (isZ && !e.shiftKey) undo(view)
+      else redo(view)
+    }
+    document.addEventListener('keydown', handler, true)
+    return () => document.removeEventListener('keydown', handler, true)
+  }, [readOnly])
+
   const closeSearch = useCallback(() => {
     setSearchOpen(false)
     setMatches([])
@@ -205,9 +214,7 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
   }, [])
 
   // Ctrl+F / Escape matched by PHYSICAL key (event.code) so search works on
-  // non-Latin layouts too (a Russian layout emits "а" for the F key). Undo/redo
-  // live in a CM-native keydown handler (see extensions) for reliable focus
-  // handling.
+  // non-Latin layouts too (a Russian layout emits "а" for the F key).
   const onWrapperKeyDown = useCallback((e: React.KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && e.code === 'KeyF') {
       e.preventDefault()
@@ -312,9 +319,11 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
           // Our own Ctrl+F drives the toolbar above; disable CM's stock search
           // keymap so it doesn't also mount its (laggy, bottom-anchored) panel.
           searchKeymap: false,
-          // Undo/redo handled by our event.code keydown handler (layout-agnostic)
-          // + beforeinput native-history suppression; disable CM's key-based
-          // historyKeymap to avoid a double-undo. History STATE stays on.
+          // Undo/redo: a document-level event.code handler covers layouts that
+          // deliver Ctrl+Z to JS (incl. non-Latin); on the desktop webview Latin
+          // Ctrl+Z is handled by the native contenteditable undo. CM's key-based
+          // historyKeymap is off to avoid a double-undo with our handler. History
+          // STATE stays on (basicSetup `history`).
           historyKeymap: false,
           foldGutter: true,
           autocompletion: false, // Kotlin EditorWindow has no autocomplete

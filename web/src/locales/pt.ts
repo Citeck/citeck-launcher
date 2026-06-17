@@ -289,6 +289,8 @@ const pt = {
   'appConfig.reset': 'Restaurar',
   'appConfig.reset.tooltip': 'Descartar edições e restaurar o padrão gerado',
   'appConfig.revertLine': 'Reverter esta linha para o padrão gerado',
+  'appConfig.lineReverted': 'Linha revertida',
+  'appConfig.undo': 'Desfazer',
   'appConfig.reset.confirmTitle': 'Restaurar configuração do aplicativo?',
   'appConfig.reset.confirmMessage': 'Isso descartará suas edições e restaurará o padrão gerado pelo launcher.',
   'appConfig.reset.success': 'Configuração do aplicativo restaurada para o padrão',

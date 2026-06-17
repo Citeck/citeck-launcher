@@ -289,6 +289,8 @@ const ja = {
   'appConfig.reset': 'リセット',
   'appConfig.reset.tooltip': '変更を破棄し、生成されたデフォルトを復元します',
   'appConfig.revertLine': 'この行を生成されたデフォルトに戻す',
+  'appConfig.lineReverted': '行を元に戻しました',
+  'appConfig.undo': '元に戻す',
   'appConfig.reset.confirmTitle': 'アプリ設定をリセットしますか？',
   'appConfig.reset.confirmMessage': '変更を破棄し、ランチャーが生成したデフォルトを復元します。',
   'appConfig.reset.success': 'アプリ設定をデフォルトにリセットしました',

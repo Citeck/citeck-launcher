@@ -30,6 +30,13 @@ export function ToastContainer() {
         <div key={t.id}
           className={`flex items-start gap-2 rounded-md border border-l-[3px] bg-card text-card-foreground px-3 py-2 text-xs shadow-lg ${typeStyles[t.type]}`}>
           <span className="flex-1 break-words">{t.message}</span>
+          {t.action && (
+            <button
+              onClick={() => { t.action?.onClick(); removeToast(t.id) }}
+              className={`shrink-0 font-medium underline-offset-2 hover:underline ${accentText[t.type]}`}>
+              {t.action.label}
+            </button>
+          )}
           <button onClick={() => removeToast(t.id)} className={`shrink-0 opacity-60 hover:opacity-100 ${accentText[t.type]}`}>
             <X size={12} />
           </button>

@@ -1,5 +1,8 @@
 import { gutter, GutterMarker, EditorView, Decoration, type DecorationSet, type BlockInfo } from '@codemirror/view'
 import { StateField, StateEffect, RangeSet, type EditorState, type Range } from '@codemirror/state'
+import { undo } from '@codemirror/commands'
+import { toast } from '../lib/toast'
+import { t } from '../lib/i18n'
 
 export type LineKind = 'unchanged' | 'added' | 'changed'
 
@@ -151,14 +154,27 @@ function revertLineAt(view: EditorView, block: BlockInfo): boolean {
     // Delete the whole line plus one adjoining newline (prefer the preceding one).
     const from = line.from > 0 ? line.from - 1 : line.from
     const to = line.from > 0 ? line.to : Math.min(line.to + 1, view.state.doc.length)
-    view.dispatch({ changes: { from, to, insert: '' } })
+    // Place the caret where the line was so the contenteditable has a real
+    // selection (helps the webview route a subsequent Ctrl+Z to the editor).
+    view.dispatch({ changes: { from, to, insert: '' }, selection: { anchor: from } })
   } else {
-    view.dispatch({ changes: { from: line.from, to: line.to, insert: op.base ?? '' } })
+    view.dispatch({
+      changes: { from: line.from, to: line.to, insert: op.base ?? '' },
+      selection: { anchor: line.from },
+    })
   }
-  // The gutter mousedown preventDefault()s (to suppress text selection), which
-  // also stops the click from focusing the editor — so a following Ctrl+Z would
-  // go nowhere. Focus the editor so the revert is immediately undoable.
   view.focus()
+  // Offer an explicit Undo. Ctrl+Z works for this on Latin layouts only when
+  // the change is in the WEBVIEW's native history — a programmatic revert is
+  // not, and the desktop webview grabs Ctrl+Z before JS can see it. A toast
+  // button is reliable on every layout and webview.
+  toast(t('appConfig.lineReverted'), 'info', {
+    label: t('appConfig.undo'),
+    onClick: () => {
+      undo(view)
+      view.focus()
+    },
+  })
   return true
 }
 
