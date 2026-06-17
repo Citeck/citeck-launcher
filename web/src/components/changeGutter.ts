@@ -155,6 +155,10 @@ function revertLineAt(view: EditorView, block: BlockInfo): boolean {
   } else {
     view.dispatch({ changes: { from: line.from, to: line.to, insert: op.base ?? '' } })
   }
+  // The gutter mousedown preventDefault()s (to suppress text selection), which
+  // also stops the click from focusing the editor — so a following Ctrl+Z would
+  // go nowhere. Focus the editor so the revert is immediately undoable.
+  view.focus()
   return true
 }
 
