@@ -150,24 +150,42 @@ function revertLineAt(view: EditorView, block: BlockInfo): boolean {
   const op = alignLines(baseline, view.state.doc.toString())[num - 1]
   if (!op || op.kind === 'unchanged') return false
   const line = view.state.doc.line(num)
+  const doc = view.state.doc.toString()
+  // Range to replace and the resulting text — used both to compute the expected
+  // document (to verify the native edit) and for the programmatic fallback.
+  let from: number, to: number, insert: string
   if (op.kind === 'added') {
     // Delete the whole line plus one adjoining newline (prefer the preceding one).
-    const from = line.from > 0 ? line.from - 1 : line.from
-    const to = line.from > 0 ? line.to : Math.min(line.to + 1, view.state.doc.length)
-    // Place the caret where the line was so the contenteditable has a real
-    // selection (helps the webview route a subsequent Ctrl+Z to the editor).
-    view.dispatch({ changes: { from, to, insert: '' }, selection: { anchor: from } })
+    from = line.from > 0 ? line.from - 1 : line.from
+    to = line.from > 0 ? line.to : Math.min(line.to + 1, doc.length)
+    insert = ''
   } else {
-    view.dispatch({
-      changes: { from: line.from, to: line.to, insert: op.base ?? '' },
-      selection: { anchor: line.from },
-    })
+    from = line.from
+    to = line.to
+    insert = op.base ?? ''
+  }
+  const expected = doc.slice(0, from) + insert + doc.slice(to)
+
+  // Prefer a NATIVE edit (execCommand): the contenteditable records it in the
+  // webview's native undo history, so the native Ctrl+Z — which JS can't
+  // intercept on this webview for Latin layouts — undoes it for free. CM's DOM
+  // observer syncs the change into its own state. If the webview/CM don't apply
+  // it cleanly, fall back to a programmatic dispatch (still undoable via the
+  // toast button / the document-level Ctrl+Z handler on layouts that reach JS).
+  view.focus()
+  view.dispatch({ selection: { anchor: from, head: to } })
+  let nativeOK: boolean
+  try {
+    nativeOK = insert === '' ? document.execCommand('delete') : document.execCommand('insertText', false, insert)
+  } catch {
+    nativeOK = false
+  }
+  if (!nativeOK || view.state.doc.toString() !== expected) {
+    view.dispatch({ changes: { from, to, insert }, selection: { anchor: from } })
   }
   view.focus()
-  // Offer an explicit Undo. Ctrl+Z works for this on Latin layouts only when
-  // the change is in the WEBVIEW's native history — a programmatic revert is
-  // not, and the desktop webview grabs Ctrl+Z before JS can see it. A toast
-  // button is reliable on every layout and webview.
+  // Reliable Undo affordance regardless of whether the native edit above stuck:
+  // a button click is never intercepted by the webview the way Ctrl+Z is.
   toast(t('appConfig.lineReverted'), 'info', {
     label: t('appConfig.undo'),
     onClick: () => {
