@@ -221,7 +221,7 @@ export function AppConfigEditor({ appName }: AppConfigEditorProps) {
               )}
             </div>
           </div>
-          {configError && <div className="text-[11px] text-destructive mb-1">{configError}</div>}
+          {configError && <div className="text-[11px] text-destructive mb-1 font-mono whitespace-pre overflow-auto max-h-40">{configError}</div>}
           {configEditing ? (
             <div className="rounded border border-border overflow-hidden">
               <CodeEditor
@@ -324,7 +324,7 @@ export function AppConfigEditor({ appName }: AppConfigEditorProps) {
                       }}>{fileSaving ? t('common.saving') : t('common.save')}</button>
                   </div>
                 </div>
-                {fileError && <div className="text-[10px] text-destructive mb-1">{fileError}</div>}
+                {fileError && <div className="text-[10px] text-destructive mb-1 font-mono whitespace-pre overflow-auto max-h-40">{fileError}</div>}
                 <div className="rounded border border-border overflow-hidden">
                   <CodeEditor
                     value={fileContent}

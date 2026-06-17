@@ -268,7 +268,10 @@ export function WindowEditor() {
     <div className="h-screen bg-background text-foreground flex flex-col">
       <main className="flex-1 min-h-0 flex flex-col">
         {error && (
-          <div className="px-3 py-1.5 text-[11px] text-destructive border-b border-border shrink-0">{error}</div>
+          // font-mono + whitespace-pre keeps js-yaml's multi-line snippet (line
+          // gutter + the "^" caret under the offending column) aligned instead
+          // of collapsing it into one run-on line; scroll if it's tall/wide.
+          <div className="px-3 py-1.5 text-[11px] text-destructive border-b border-border shrink-0 font-mono whitespace-pre overflow-auto max-h-40">{error}</div>
         )}
         <div className="flex-1 min-h-0 overflow-hidden">
           <CodeEditor
