@@ -117,7 +117,10 @@ func (d *Daemon) handleAppImagePull(w http.ResponseWriter, r *http.Request) {
 
 	auth := d.resolveRegistryAuth(ref)
 	d.bgWg.Go(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		// Derive from d.bgCtx (canceled on shutdown) so a long pull is
+		// interrupted at quit — otherwise bgWg.Wait times out and a pull that
+		// finishes mid-shutdown would call doReload against a closing store.
+		ctx, cancel := context.WithTimeout(d.bgCtx, 30*time.Minute)
 		defer cancel()
 		errMsg := ""
 		if err := dc.PullImage(ctx, ref, auth); err != nil {

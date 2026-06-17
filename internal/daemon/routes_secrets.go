@@ -418,10 +418,8 @@ func (d *Daemon) handleResetSecrets(w http.ResponseWriter, _ *http.Request) {
 	}
 	// Drop the not-yet-migrated Kotlin blob too, so "drop all secrets" is honest
 	// and the migration prompt never returns. H2 storage.db is untouched.
-	if d.store != nil {
-		if err := d.store.PutSecretBlob(""); err != nil {
-			slog.Error("Failed to clear pending secret blob on reset", "err", err)
-		}
+	if err := d.store.PutSecretBlob(""); err != nil {
+		slog.Error("Failed to clear pending secret blob on reset", "err", err)
 	}
 	d.rebuildAuthCaches()
 	slog.Warn("Secrets reset by user — all stored secrets wiped")

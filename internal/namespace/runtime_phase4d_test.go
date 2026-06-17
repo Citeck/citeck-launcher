@@ -152,6 +152,10 @@ func TestRestartAppGoesThroughStoppingThenReadyToPull(t *testing.T) {
 	postRestartCount := r.apps[def.Name].RestartCount
 	r.mu.RUnlock()
 	assert.Equal(t, 0, userRestarts, "expected no user_restart events (UI policy)")
+	// The UPDATING assertion above proves the RUNNING→UPDATING restart branch
+	// actually executed (a no-op RestartApp would not emit UPDATING), so an
+	// unchanged counter here genuinely proves that branch does not bump it —
+	// not just that RestartApp was skipped.
 	assert.Equal(t, preRestartCount, postRestartCount,
 		"a user restart must NOT bump the restart counter (pre=%d post=%d)",
 		preRestartCount, postRestartCount)
