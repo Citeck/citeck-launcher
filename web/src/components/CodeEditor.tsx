@@ -92,6 +92,13 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
         height: '100%',
         display: 'flex',
         flexDirection: 'column',
+        // Theme-agnostic surface: paint with the app's CSS theme variables,
+        // which index.html's anti-FOUC script sets on <html> synchronously
+        // BEFORE first paint. Without this, the editor surface flashes the
+        // @uiw default (dark) for a frame on open in light theme until @uiw's
+        // light theme mounts. The vars track data-theme, so both themes match.
+        backgroundColor: 'var(--color-background)',
+        color: 'var(--color-foreground)',
       },
       '.cm-scroller': {
         flex: '1 1 auto',
