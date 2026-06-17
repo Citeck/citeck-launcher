@@ -101,7 +101,11 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
         <D l={t('drawer.network')} v={inspect.network} />
         <D l={t('drawer.started')} v={inspect.startedAt ? formatDateTime(inspect.startedAt) : '—'} dim={isStopped} />
         <D l={t('drawer.uptime')} v={formatUptime(inspect.uptime)} dim={isStopped} />
-        <D l={t('drawer.restarts')} v={String(inspect.restartCount)} />
+        {/* Single source of truth with the app-table "↻N" badge: the launcher's
+            own restart count (appMeta), NOT Docker's container RestartCount —
+            we don't use Docker restart policies, so inspect.restartCount is
+            always 0 and would diverge from the badge. */}
+        <D l={t('drawer.restarts')} v={String(appMeta?.restartCount ?? 0)} />
         <D l={t('drawer.ports')} v={inspect.ports?.join(', ') || '—'} />
       </div>
 
