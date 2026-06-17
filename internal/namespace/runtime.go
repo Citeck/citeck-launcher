@@ -457,6 +457,17 @@ func (r *Runtime) AppPatch(appName string) json.RawMessage {
 	return r.editedAppPatches[appName]
 }
 
+// EditedFilesCountForApp returns how many mounted files of appName have a stored
+// edit. Safe on a nil receiver (returns 0).
+func (r *Runtime) EditedFilesCountForApp(appName string) int {
+	if r == nil {
+		return 0
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.editedFilesForAppLocked(appName))
+}
+
 // SetLastGenFiles caches the generated (pre-merge) file set so the editor can
 // serve a file baseline and WriteEditedFile can diff against the template.
 func (r *Runtime) SetLastGenFiles(files map[string][]byte) {

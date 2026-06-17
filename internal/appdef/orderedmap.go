@@ -28,10 +28,6 @@ type OrderedEntry struct {
 	Value string
 }
 
-// NewOrderedMap builds an OrderedMap from pairs (later sets of the same key
-// update in place, preserving first-seen position).
-func NewOrderedMap() OrderedMap { return OrderedMap{} }
-
 // OrderedMapFromMap builds an OrderedMap from a plain map, keys sorted (the map
 // carries no order to preserve). Handy at generation sites that source env from
 // a Go map and want deterministic output.

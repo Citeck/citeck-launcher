@@ -135,25 +135,31 @@ func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 	// When namespace is stopped, runtime clears the app list. Populate from
 	// the resolved config so the UI always shows the full service catalog.
 	if len(dto.Apps) == 0 && len(appDefs) > 0 {
-		dto.Apps = appDefsToStoppedApps(appDefs)
+		dto.Apps = appDefsToStoppedApps(appDefs, runtime)
 	}
 	writeJSON(w, dto)
 }
 
 // appDefsToStoppedApps converts resolved app definitions into AppDto entries
 // with STOPPED status. Used to populate the UI when namespace is not running.
-func appDefsToStoppedApps(defs []appdef.ApplicationDef) []api.AppDto {
+// The Edited/Locked flags reflect any stored per-app config override so the
+// editor's Reset button stays visible on a stopped namespace.
+func appDefsToStoppedApps(defs []appdef.ApplicationDef, runtime *namespace.Runtime) []api.AppDto {
 	apps := make([]api.AppDto, 0, len(defs))
 	for _, def := range defs {
 		if def.IsInit {
 			continue // skip init containers
 		}
+		edited := runtime != nil && runtime.AppPatch(def.Name) != nil
 		apps = append(apps, api.AppDto{
-			Name:   def.Name,
-			Status: api.AppStatusStopped,
-			Image:  def.Image,
-			Kind:   namespace.KindToString(def.Kind),
-			Ports:  def.Ports,
+			Name:             def.Name,
+			Status:           api.AppStatusStopped,
+			Image:            def.Image,
+			Kind:             namespace.KindToString(def.Kind),
+			Ports:            def.Ports,
+			Edited:           edited,
+			Locked:           edited,
+			EditedFilesCount: runtime.EditedFilesCountForApp(def.Name),
 		})
 	}
 	return apps

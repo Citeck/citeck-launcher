@@ -1,5 +1,5 @@
-import { gutter, GutterMarker, EditorView } from '@codemirror/view'
-import { StateField, StateEffect, RangeSet, type EditorState } from '@codemirror/state'
+import { gutter, GutterMarker, EditorView, Decoration, type DecorationSet } from '@codemirror/view'
+import { StateField, StateEffect, RangeSet, type EditorState, type Range } from '@codemirror/state'
 
 export type LineKind = 'unchanged' | 'added' | 'changed'
 
@@ -69,20 +69,53 @@ const changeMarkers = StateField.define<RangeSet<GutterMarker>>({
   },
 })
 
-const gutterTheme = EditorView.baseTheme({
-  '.cm-change-gutter': { width: '3px', paddingLeft: '2px' },
-  '.cm-change-marker': { width: '3px', height: '100%', borderRadius: '1px' },
-  '.cm-change-added': { background: '#3fb950' }, // green
-  '.cm-change-changed': { background: '#d29922' }, // amber
+// Line-background decorations for changed/added lines. A bg tint is far more
+// visible than a 3px gutter bar — used together so the operator can't miss an
+// edited line.
+const addedLineDeco = Decoration.line({ class: 'cm-changed-line cm-changed-line-added' })
+const changedLineDeco = Decoration.line({ class: 'cm-changed-line cm-changed-line-changed' })
+
+function lineDecosFor(state: EditorState): DecorationSet {
+  const baseline = state.field(baselineField, false) ?? ''
+  const kinds = diffLineKinds(baseline, state.doc.toString())
+  const ranges: Range<Decoration>[] = []
+  for (let ln = 1; ln <= state.doc.lines; ln++) {
+    const kind = kinds[ln - 1]
+    const from = state.doc.line(ln).from
+    if (kind === 'added') ranges.push(addedLineDeco.range(from))
+    else if (kind === 'changed') ranges.push(changedLineDeco.range(from))
+  }
+  return Decoration.set(ranges, true)
+}
+
+const changedLines = StateField.define<DecorationSet>({
+  create: lineDecosFor,
+  update(value, tr) {
+    if (tr.docChanged || tr.effects.some((e) => e.is(setBaseline))) return lineDecosFor(tr.state)
+    return value
+  },
+  provide: (f) => EditorView.decorations.from(f),
 })
 
-// changeGutterExtension builds the editor extension: a baseline holder + a
-// gutter that paints a colored bar on added/changed lines (git-style). Update
-// the baseline at runtime by dispatching setBaseline.of(text).
+const gutterTheme = EditorView.baseTheme({
+  '.cm-change-gutter': { width: '4px', padding: '0' },
+  '.cm-change-gutter .cm-gutterElement': { padding: '0' },
+  '.cm-change-marker': { width: '4px', height: '100%', minHeight: '1em' },
+  '.cm-change-added': { background: '#3fb950' }, // green
+  '.cm-change-changed': { background: '#d29922' }, // amber
+  '.cm-changed-line-added': { background: 'rgba(63, 185, 80, 0.13)' },
+  '.cm-changed-line-changed': { background: 'rgba(210, 153, 34, 0.13)' },
+})
+
+// changeGutterExtension builds the editor extension: a baseline holder, a
+// git-style colored gutter bar AND a line-background tint on added/changed lines
+// (vs the generated baseline). Update the baseline at runtime by dispatching
+// setBaseline.of(text).
 export function changeGutterExtension() {
   return [
     baselineField,
     changeMarkers,
+    changedLines,
     gutter({
       class: 'cm-change-gutter',
       markers: (view) => view.state.field(changeMarkers),
