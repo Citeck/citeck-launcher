@@ -48,6 +48,18 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
     function handleClick(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) {
         onClose()
+        // A left-button mousedown outside closes the menu, but the matching
+        // `click` would still reach whatever is underneath (e.g. an app row,
+        // opening the drawer). Swallow exactly that one click in the capture
+        // phase — before React's handlers — so the first click only dismisses.
+        if (e.button === 0) {
+          const swallow = (ev: MouseEvent) => {
+            ev.stopPropagation()
+            ev.preventDefault()
+            document.removeEventListener('click', swallow, true)
+          }
+          document.addEventListener('click', swallow, true)
+        }
       }
     }
     function handleKey(e: KeyboardEvent) {
