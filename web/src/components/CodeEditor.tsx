@@ -15,6 +15,7 @@ import { clike } from '@codemirror/legacy-modes/mode/clike'
 // from the canonical `@codemirror/language` package. The lock-file already
 // pins this via the legacy-modes peer chain.
 import { indentUnit, StreamLanguage } from '@codemirror/language'
+import { undo, redo } from '@codemirror/commands'
 import { changeGutterExtension, setBaseline } from './changeGutter'
 
 interface CodeEditorProps {
@@ -186,16 +187,31 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
     }
   }, [])
 
+  // Keyboard shortcuts are matched by PHYSICAL key (event.code), not the
+  // produced character — so they work on non-Latin layouts too (on a Russian
+  // layout Ctrl+Z emits "я", Ctrl+F emits "а"; matching e.key would silently
+  // break undo/search there). Undo/redo are handled here (CM's historyKeymap is
+  // disabled below to avoid a double-undo) so they fire regardless of which part
+  // of the editor wrapper holds focus — e.g. right after a gutter click-revert.
   const onWrapperKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+    const mod = e.ctrlKey || e.metaKey
+    if (mod && e.code === 'KeyF') {
       e.preventDefault()
       e.stopPropagation()
       openSearch()
     } else if (e.key === 'Escape' && searchOpen) {
       e.preventDefault()
       closeSearch()
+    } else if (mod && !readOnly && viewRef.current) {
+      if (e.code === 'KeyZ' && !e.shiftKey) {
+        e.preventDefault()
+        undo(viewRef.current)
+      } else if ((e.code === 'KeyZ' && e.shiftKey) || e.code === 'KeyY') {
+        e.preventDefault()
+        redo(viewRef.current)
+      }
     }
-  }, [searchOpen, openSearch, closeSearch])
+  }, [searchOpen, openSearch, closeSearch, readOnly])
 
   return (
     <div className="relative h-full" onKeyDownCapture={onWrapperKeyDown}>
@@ -290,6 +306,10 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
           // Our own Ctrl+F drives the toolbar above; disable CM's stock search
           // keymap so it doesn't also mount its (laggy, bottom-anchored) panel.
           searchKeymap: false,
+          // Undo/redo handled by onWrapperKeyDown (by physical key, so it works
+          // on non-Latin layouts); disable CM's key-based historyKeymap to avoid
+          // a double-undo. The history STATE (basicSetup `history`) stays on.
+          historyKeymap: false,
           foldGutter: true,
           autocompletion: false, // Kotlin EditorWindow has no autocomplete
         }}
