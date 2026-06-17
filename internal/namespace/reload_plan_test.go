@@ -129,6 +129,25 @@ func TestPlanRegenerate_DetachedWinsOverHashChange(t *testing.T) {
 	assert.Equal(t, PlanVerdictDetached, entries[0].Verdict)
 }
 
+func TestDoRegenerate_DetachedStaysStoppedOnHashChange(t *testing.T) {
+	// Regression: a force-update bumps a detached app's version (hash changes).
+	// doRegenerate must keep it STOPPED — routing it through READY_TO_PULL would
+	// hang forever as "В очереди" because stepAllApps skips manualStoppedApps.
+	r := newRuntimeForTest(testConfig(), newMockDocker(), t.TempDir())
+	oldDef := planDef("det", "img:1", nil)
+	newDef := planDef("det", "img:2", nil)
+	r.apps = map[string]*AppRuntime{"det": {Name: "det", Status: AppStatusStopped, Def: oldDef}}
+	r.manualStoppedApps = map[string]bool{"det": true}
+
+	r.doRegenerate([]appdef.ApplicationDef{newDef})
+
+	app := r.apps["det"]
+	require.NotNil(t, app)
+	assert.Equal(t, AppStatusStopped, app.Status, "detached app must stay STOPPED, not queue READY_TO_PULL")
+	assert.Equal(t, "img:2", app.Def.Image, "def refreshed to the new version for re-attach")
+	assert.Empty(t, app.desiredNext, "no pending transition should be queued for a detached app")
+}
+
 func TestPlanRegenerate_EditedLockedOverrideKeeps(t *testing.T) {
 	// Edited+locked apps substitute the edited definition exactly like
 	// doRegenerate — a bundle-side change must NOT produce a recreate verdict

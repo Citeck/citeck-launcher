@@ -380,17 +380,33 @@ func (r *Runtime) doRegenerate(apps []appdef.ApplicationDef) { //nolint:gocyclo 
 
 	for _, ra := range resolved {
 		existing, inApps := r.apps[ra.def.Name]
-		if !inApps {
-			// Fresh app: READY_TO_PULL (or STOPPED if detached). State
-			// machine drives from there.
-			if detached[ra.def.Name] {
+
+		// Detached (manually stopped) apps stay STOPPED regardless of any hash
+		// change. A force-update bumps their version (hash changes), but
+		// stepAllApps skips manualStoppedApps, so routing one through
+		// UPDATING/READY_TO_PULL here would hang it forever as "В очереди".
+		// Refresh the def so the new version is used when the user re-attaches.
+		if detached[ra.def.Name] {
+			if !inApps {
 				r.apps[ra.def.Name] = &AppRuntime{
 					Name: ra.def.Name, Status: AppStatusStopped, Def: ra.def,
 				}
-			} else {
-				r.apps[ra.def.Name] = &AppRuntime{
-					Name: ra.def.Name, Status: AppStatusReadyToPull, Def: ra.def,
-				}
+				continue
+			}
+			existing.Def = ra.def
+			existing.StatusText = ""
+			existing.desiredNext = ""
+			existing.initialSweep = false
+			if existing.Status != AppStatusStopped {
+				r.setAppStatus(existing, AppStatusStopped)
+			}
+			continue
+		}
+
+		if !inApps {
+			// Fresh app: READY_TO_PULL. State machine drives from there.
+			r.apps[ra.def.Name] = &AppRuntime{
+				Name: ra.def.Name, Status: AppStatusReadyToPull, Def: ra.def,
 			}
 			continue
 		}
