@@ -46,6 +46,16 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
   }, [position])
 
   useEffect(() => {
+    // Tracked at effect scope so cleanup can remove a pending swallow listener
+    // that never fired (e.g. the dismissing mousedown was dragged away with no
+    // matching click) — otherwise it would linger and eat the next global click.
+    let swallow: ((ev: MouseEvent) => void) | null = null
+    const clearSwallow = () => {
+      if (swallow) {
+        document.removeEventListener('click', swallow, true)
+        swallow = null
+      }
+    }
     function handleClick(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) {
         onClose()
@@ -54,10 +64,11 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
         // opening the drawer). Swallow exactly that one click in the capture
         // phase — before React's handlers — so the first click only dismisses.
         if (e.button === 0) {
-          const swallow = (ev: MouseEvent) => {
+          clearSwallow() // drop any stale pending swallow first
+          swallow = (ev: MouseEvent) => {
             ev.stopPropagation()
             ev.preventDefault()
-            document.removeEventListener('click', swallow, true)
+            clearSwallow()
           }
           document.addEventListener('click', swallow, true)
         }
@@ -71,6 +82,7 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
     return () => {
       document.removeEventListener('mousedown', handleClick)
       document.removeEventListener('keydown', handleKey)
+      clearSwallow()
     }
   }, [onClose])
 

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -40,7 +41,11 @@ func (d *Daemon) handleDesktopSaveDownload(w http.ResponseWriter, r *http.Reques
 		Filename string `json:"filename"`
 		Content  string `json:"content"`
 	}
-	if err := readJSON(r, &req); err != nil {
+	// Decode with a larger ceiling than readJSON's shared 1 MiB: a saved log dump
+	// (up to 5000 lines of Java stack traces) routinely exceeds 1 MiB and must
+	// not be silently truncated/rejected. 32 MiB is a generous local-only bound.
+	r.Body = http.MaxBytesReader(w, r.Body, 32<<20)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}

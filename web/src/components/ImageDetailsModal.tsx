@@ -7,14 +7,7 @@ import { useTranslation } from '../lib/i18n'
 import { copyText } from '../lib/clipboard'
 import { toast } from '../lib/toast'
 import { formatDateTime } from '../lib/datetime'
-
-function formatBytes(bytes?: number): string {
-  if (!bytes || bytes <= 0) return '—'
-  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`
-  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`
-  return `${bytes} B`
-}
+import { formatBytes } from '../lib/format'
 
 /** Label + value row; value is monospace and optionally copyable. */
 function Row({ label, value, copyable }: { label: string; value: string; copyable?: boolean }) {

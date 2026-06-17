@@ -6,22 +6,13 @@ import { JournalDialog, type JournalAction, type JournalColumn, type JournalCust
 import { ConfirmModal } from './ConfirmModal'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
+import { formatBytes } from '../lib/format'
 
 interface VolumeRow extends Record<string, unknown> {
   name: string
 }
 
 type SizeState = { status: 'idle' | 'loading' | 'done'; bytes?: number }
-
-// Mirrors SnapshotsDialog.formatBytes; kept inline to avoid pulling a shared
-// formatter just for two dialogs (Kotlin used ContainerStats.formatBytes).
-function formatBytes(bytes?: number): string {
-  if (!bytes || bytes <= 0) return '—'
-  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`
-  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`
-  return `${bytes} B`
-}
 
 interface VolumesDialogProps {
   open: boolean
