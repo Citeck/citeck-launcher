@@ -813,6 +813,7 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 
 	// Bundles
 	mux.HandleFunc("GET "+api.Bundles, d.handleListBundles)
+	mux.HandleFunc("POST /api/v1/bundles/{repoId}/pull", d.handleBundleRepoPull)
 
 	// Secrets
 	mux.HandleFunc("GET "+api.Secrets, d.handleListSecrets)

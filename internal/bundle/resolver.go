@@ -657,6 +657,21 @@ func FindSnapshot(cfg *WorkspaceConfig, snapshotID string) *SnapshotDef {
 	return nil
 }
 
+// SyncBundleRepo clones or pulls a single bundle repo (by ID) declared in cfg,
+// returning its local bundles directory. Honors WithForcePull — used by the
+// namespace edit dialog's per-repo refresh to fetch a repo whose versions
+// aren't on disk yet (e.g. release/alf-develop when only develop was resolved).
+func (r *Resolver) SyncBundleRepo(cfg *WorkspaceConfig, repoID string) (string, error) {
+	if cfg == nil {
+		return "", fmt.Errorf("no workspace config")
+	}
+	repo := findBundleRepo(cfg, repoID)
+	if repo == nil {
+		return "", fmt.Errorf("bundle repo %q not found in workspace config", repoID)
+	}
+	return r.syncBundleRepo(repoID, repo), nil
+}
+
 // findBundleRepo finds a BundlesRepo entry by ID in the workspace config.
 func findBundleRepo(cfg *WorkspaceConfig, repoID string) *BundlesRepo {
 	for i := range cfg.BundleRepos {

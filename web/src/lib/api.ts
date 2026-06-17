@@ -436,6 +436,11 @@ export async function getBundles(): Promise<BundleInfoDto[]> {
   return request('GET', '/bundles')
 }
 
+/** Force-pull a single bundle repo (by id) so its versions sync to disk. */
+export async function pullBundleRepo(repoId: string): Promise<ActionResultDto> {
+  return request('POST', `/bundles/${enc(repoId)}/pull`, { timeout: 180_000 })
+}
+
 /**
  * Typed namespace edit form payload. Mirrors `api.NamespaceEditDto` on the
  * daemon — see internal/api/dto.go. tlsEnabled / pgAdminEnabled are optional

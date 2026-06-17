@@ -6,7 +6,7 @@ import {
   getNamespaceCreateDefaults,
   getNamespaceEdit,
   getWorkspaceSnapshots,
-  postWorkspaceUpdate,
+  pullBundleRepo,
   putNamespaceEdit,
   type NamespaceEditDto,
 } from '../lib/api'
@@ -140,12 +140,10 @@ export function NamespaceEditDialog({
   }, [open, mode, nsId])
 
   const bundleRepoOptions = useMemo(() => {
-    // Only offer repos that have at least one release — an empty repo (e.g.
-    // community-rc with no tags yet, which the backend returns with
-    // versions: null) can't yield a valid bundle version to pick.
-    const opts = bundles
-      .filter((b) => (b.versions?.length ?? 0) > 0)
-      .map((b) => ({ value: b.repo, label: b.repo }))
+    // Offer every configured repo, even one with no versions on disk yet (e.g.
+    // release / alf-develop, which were never cloned by the active ref). The
+    // user selects it and hits the refresh button to force-pull its versions.
+    const opts = bundles.map((b) => ({ value: b.repo, label: b.repo }))
     // Preserve a current value not present in the dropdown (e.g. a repo that
     // was later removed from workspace-v1.yml, or whose releases aren't synced
     // yet) so edits don't silently drop it.
@@ -342,12 +340,14 @@ export function NamespaceEditDialog({
           <button
             type="button"
             className="shrink-0 rounded border border-border p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
-            disabled={bundlesLoading}
+            disabled={bundlesLoading || !bundleRepo}
             title={t('namespace.form.bundles.refresh')}
             aria-label={t('namespace.form.bundles.refresh')}
             onClick={() => {
+              if (!bundleRepo) return
               setBundlesLoading(true)
-              postWorkspaceUpdate()
+              // Force-pull the SELECTED repo so its versions sync, then re-list.
+              pullBundleRepo(bundleRepo)
                 .then(() => getBundles())
                 .then((bs) => setBundles(bs))
                 .catch((e) => toast((e as Error).message, 'error'))
