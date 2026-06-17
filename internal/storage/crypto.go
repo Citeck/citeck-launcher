@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"sync"
 
+	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/pbkdf2"
 )
 
@@ -38,18 +39,42 @@ const DefaultMasterPassword = "citeck" //nolint:gosec // G101: well-known defaul
 
 const (
 	verifyPlaintext      = "citeck-secrets-v1"
-	defaultIterations    = 1_000_000
+	defaultIterations    = 1_000_000 // legacy PBKDF2-HMAC-SHA256 (read-only, for envelopes written before Argon2id)
 	stateEncrypted       = "secrets_encrypted"
 	stateKeyParams       = "secrets_key_params"
 	stateVerify          = "secrets_verify"
 	stateDefaultPassword = "secrets_default_password"
 )
 
-// CryptoKeyParams holds the PBKDF2 parameters used to derive the encryption key.
+// KDF identifiers stored in CryptoKeyParams.KDF. An empty KDF means a legacy
+// envelope written before this field existed — always PBKDF2-HMAC-SHA256.
+const (
+	kdfPBKDF2   = "pbkdf2"
+	kdfArgon2id = "argon2id"
+)
+
+// Argon2id parameters for newly created envelopes (OWASP-recommended profile).
+// Memory-hardness is the point — m dominates the brute-force cost. These are
+// persisted per-envelope in CryptoKeyParams so they can be tuned later without
+// breaking existing keystores.
+const (
+	argon2Memory  uint32 = 64 * 1024 // 64 MiB, in KiB
+	argon2Time    uint32 = 3
+	argon2Threads uint8  = 4
+	argon2KeyLen  uint32 = 32 // AES-256
+)
+
+// CryptoKeyParams holds the parameters used to derive the encryption key.
+// PBKDF2 fields (Iterations) and Argon2id fields (Memory/Time/Threads) are
+// mutually exclusive, selected by KDF; both share Salt + KeySize.
 type CryptoKeyParams struct {
-	Salt       string `json:"salt"`       // base64-encoded 16-byte random salt
-	Iterations int    `json:"iterations"` // PBKDF2 iteration count
-	KeySize    int    `json:"keySize"`    // key size in bits (256)
+	KDF        string `json:"kdf,omitempty"`        // "argon2id" (new) or "pbkdf2"/"" (legacy)
+	Salt       string `json:"salt"`                // base64-encoded 16-byte random salt
+	Iterations int    `json:"iterations,omitempty"` // PBKDF2 iteration count (legacy KDF only)
+	Memory     uint32 `json:"memoryKiB,omitempty"`  // Argon2id memory cost in KiB
+	Time       uint32 `json:"time,omitempty"`       // Argon2id time cost (passes)
+	Threads    uint8  `json:"threads,omitempty"`    // Argon2id parallelism
+	KeySize    int    `json:"keySize"`             // key size in bits (256)
 }
 
 // SecretService wraps a Store and adds transparent AES-256-GCM
@@ -105,7 +130,7 @@ func (ss *SecretService) SetMasterPassword(password string, isDefault bool) erro
 		return fmt.Errorf("generate salt: %w", err)
 	}
 
-	key := deriveKey(password, salt, defaultIterations)
+	key := deriveArgon2id(password, salt)
 
 	// Create verify token
 	verifyEncrypted, err := encryptValue(key, []byte(verifyPlaintext))
@@ -136,9 +161,12 @@ func (ss *SecretService) SetMasterPassword(password string, isDefault bool) erro
 	// Store metadata via key-value state.
 	// Set secrets_encrypted LAST — if we crash before this, retry will re-encrypt.
 	keyParams := CryptoKeyParams{
-		Salt:       base64.StdEncoding.EncodeToString(salt),
-		Iterations: defaultIterations,
-		KeySize:    256,
+		KDF:     kdfArgon2id,
+		Salt:    base64.StdEncoding.EncodeToString(salt),
+		Memory:  argon2Memory,
+		Time:    argon2Time,
+		Threads: argon2Threads,
+		KeySize: 256,
 	}
 	paramsJSON, err := json.Marshal(keyParams)
 	if err != nil {
@@ -192,7 +220,10 @@ func (ss *SecretService) Unlock(password string) error {
 		return fmt.Errorf("%w: decode salt", ErrCorruptedKeystore)
 	}
 
-	key := deriveKey(password, salt, params.Iterations)
+	key, err := deriveKeyFromParams(password, salt, params)
+	if err != nil {
+		return err
+	}
 
 	verifyEnc, err := ss.store.GetStateValue(stateVerify)
 	if err != nil || verifyEnc == "" {
@@ -317,7 +348,28 @@ func (ss *SecretService) ResetSecrets() error {
 
 // --- Crypto primitives ---
 
+// deriveKeyFromParams derives the AES key for the KDF recorded in params.
+// An empty KDF denotes a legacy envelope (PBKDF2-HMAC-SHA256); newer envelopes
+// use Argon2id. This is the single read-path that keeps old keystores openable.
+func deriveKeyFromParams(password string, salt []byte, params CryptoKeyParams) ([]byte, error) {
+	switch params.KDF {
+	case "", kdfPBKDF2:
+		return deriveKey(password, salt, params.Iterations), nil
+	case kdfArgon2id:
+		return argon2.IDKey([]byte(password), salt, params.Time, params.Memory, params.Threads, argon2KeyLen), nil
+	default:
+		return nil, fmt.Errorf("%w: unknown KDF %q", ErrCorruptedKeystore, params.KDF)
+	}
+}
+
+// deriveArgon2id derives a 32-byte AES-256 key using Argon2id with the current
+// default parameters. Used for all newly created envelopes.
+func deriveArgon2id(password string, salt []byte) []byte {
+	return argon2.IDKey([]byte(password), salt, argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
+}
+
 // deriveKey derives a 32-byte AES-256 key from a password using PBKDF2-HMAC-SHA256.
+// Retained for reading legacy envelopes written before the Argon2id switch.
 func deriveKey(password string, salt []byte, iterations int) []byte {
 	return pbkdf2.Key([]byte(password), salt, iterations, 32, sha256.New)
 }
