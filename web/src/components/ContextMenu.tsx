@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 
 export interface ContextMenuItem {
   label: string
@@ -73,7 +74,10 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
     }
   }, [onClose])
 
-  return (
+  // Portal to <body>: a fixed-position overlay must not live inside the table
+  // (a caller renders it among <tr>s) — an extra row there perturbs the
+  // border-collapse layout and nudges row heights by ~1px when the menu opens.
+  return createPortal(
     <div
       ref={ref}
       className="fixed z-50 bg-card border border-border rounded shadow-lg py-1 min-w-[160px]"
@@ -114,6 +118,7 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
           </span>
         ),
       )}
-    </div>
+    </div>,
+    document.body,
   )
 }

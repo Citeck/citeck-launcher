@@ -357,11 +357,7 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
         )
       })}
       {contextMenu && (
-        <tr>
-          <td colSpan={7}>
-            <ContextMenu items={contextMenu.items} position={contextMenu.position} onClose={hideContextMenu} />
-          </td>
-        </tr>
+        <ContextMenu items={contextMenu.items} position={contextMenu.position} onClose={hideContextMenu} />
       )}
     </>
   )
