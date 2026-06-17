@@ -10,7 +10,8 @@ import { RestartEvents } from './RestartEvents'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
 import { copyText } from '../lib/clipboard'
-import { RotateCw, FileText, Settings, KeyRound, Copy } from 'lucide-react'
+import { RotateCw, FileText, Settings, KeyRound, Copy, Eye } from 'lucide-react'
+import { ImageDetailsModal } from './ImageDetailsModal'
 
 interface AppDrawerContentProps {
   appName: string
@@ -30,6 +31,7 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
   const [error, setError] = useState<string | null>(null)
   const [restarting, setRestarting] = useState(false)
   const [credsDialogOpen, setCredsDialogOpen] = useState(false)
+  const [imageModalOpen, setImageModalOpen] = useState(false)
   const nsApps = useDashboardStore((s) => s.namespace?.apps)
   const appMeta = nsApps?.find((a) => a.name === appName)
   const initProg = appMeta ? initProgressOf(appMeta) : null
@@ -86,8 +88,9 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
         </div>
       )}
 
-      {/* Status badge already shown in the drawer header (subtitle); here we
-          only surface statusText (e.g. failure detail), when present. */}
+      {/* The launcher status badge is in the drawer header (subtitle) and the
+          Docker container state is the "Состояние" row; here we only surface
+          statusText (e.g. failure detail), when present. */}
       {appMeta?.statusText && (
         <div className="text-[11px] text-muted-foreground">{appMeta.statusText}</div>
       )}
@@ -95,12 +98,28 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
       {/* Details grid */}
       <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
         <D l={t('drawer.container')} v={inspect.containerId?.slice(0, 12) || '—'} dim={isStopped} />
-        <D l={t('drawer.image')} v={inspect.image} copy={inspect.image} />
+        <D l={t('drawer.image')} v={inspect.image} copy={inspect.image} action={
+          <button
+            type="button"
+            className="shrink-0 p-0.5 rounded text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground hover:bg-muted transition-opacity"
+            title={t('imageDetails.tooltip')}
+            onClick={() => setImageModalOpen(true)}
+          >
+            <Eye size={13} />
+          </button>
+        } />
         <D l={t('drawer.state')} v={inspect.state} dim={isStopped} />
         <D l={t('drawer.network')} v={inspect.network} />
         <D l={t('drawer.started')} v={inspect.startedAt ? formatDateTime(inspect.startedAt) : '—'} dim={isStopped} />
         <D l={t('drawer.uptime')} v={formatUptime(inspect.uptime)} dim={isStopped} />
-        <D l={t('drawer.restarts')} v={String(inspect.restartCount)} />
+        {/* appMeta.memory is already "usage / limit" (formatMemory from stats);
+            don't append the limit again. */}
+        <D l={t('drawer.memory')} v={(!isStopped && appMeta?.memory) || '—'} dim={isStopped} />
+        {/* Single source of truth with the app-table "↻N" badge: the launcher's
+            own restart count (appMeta), NOT Docker's container RestartCount —
+            we don't use Docker restart policies, so inspect.restartCount is
+            always 0 and would diverge from the badge. */}
+        <D l={t('drawer.restarts')} v={String(appMeta?.restartCount ?? 0)} />
         <D l={t('drawer.ports')} v={inspect.ports?.join(', ') || '—'} />
       </div>
 
@@ -184,6 +203,7 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
         host={registryHostOf(appMeta?.image) || ''}
         onClose={() => setCredsDialogOpen(false)}
       />
+      <ImageDetailsModal appName={appName} open={imageModalOpen} onClose={() => setImageModalOpen(false)} />
     </div>
   )
 }
@@ -206,13 +226,14 @@ function isAuthErrorText(text: string | undefined): boolean {
   return t.includes('authentication') || t.includes('unauthorized') || t.includes('401') || t.includes('denied')
 }
 
-function D({ l, v, dim, copy }: { l: string; v: string; dim?: boolean; copy?: string }) {
+function D({ l, v, dim, copy, action }: { l: string; v: string; dim?: boolean; copy?: string; action?: React.ReactNode }) {
   return <>
     <span className="text-muted-foreground">{l}</span>
-    {copy != null ? (
+    {copy != null || action ? (
       <span className="group flex items-center gap-1 min-w-0">
         <span className={`font-mono truncate ${dim ? 'text-muted-foreground/50' : 'text-foreground'}`} title={v}>{v}</span>
-        <CopyButton text={copy} />
+        {copy != null && <CopyButton text={copy} />}
+        {action}
       </span>
     ) : (
       <span className={`font-mono truncate ${dim ? 'text-muted-foreground/50' : 'text-foreground'}`} title={v}>{v}</span>

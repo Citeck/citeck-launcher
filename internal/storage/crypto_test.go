@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
@@ -51,6 +53,53 @@ func TestDecryptWithWrongKey(t *testing.T) {
 	_, err = decryptValue(key2, encrypted)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "decrypt")
+}
+
+// TestNewEnvelopeUsesArgon2id: SetMasterPassword must record an Argon2id
+// envelope (not the legacy PBKDF2 one) so new keystores get memory-hard KDF.
+func TestNewEnvelopeUsesArgon2id(t *testing.T) {
+	store := newTestSQLiteStore(t)
+	svc, err := NewSecretService(store)
+	require.NoError(t, err)
+	require.NoError(t, svc.SetMasterPassword("pwd", false))
+
+	paramsStr, err := store.GetStateValue(stateKeyParams)
+	require.NoError(t, err)
+	var params CryptoKeyParams
+	require.NoError(t, json.Unmarshal([]byte(paramsStr), &params))
+
+	assert.Equal(t, kdfArgon2id, params.KDF)
+	assert.Equal(t, argon2Memory, params.Memory)
+	assert.Equal(t, argon2Time, params.Time)
+	assert.Equal(t, argon2Threads, params.Threads)
+	assert.Zero(t, params.Iterations, "Argon2id envelope must not carry a PBKDF2 iteration count")
+}
+
+// TestUnlockLegacyPBKDF2Envelope: a keystore written before the Argon2id switch
+// (no KDF field, PBKDF2 iterations) must still unlock — the back-compat contract.
+func TestUnlockLegacyPBKDF2Envelope(t *testing.T) {
+	store := newTestSQLiteStore(t)
+
+	salt := []byte("legacy-salt-16by")
+	const iters = 1000
+	key := deriveKey("legacy-pwd", salt, iters)
+	verifyEnc, err := encryptValue(key, []byte(verifyPlaintext))
+	require.NoError(t, err)
+
+	// Hand-craft a pre-Argon2id envelope: KDF field absent entirely.
+	legacyParams := `{"salt":"` + base64.StdEncoding.EncodeToString(salt) +
+		`","iterations":1000,"keySize":256}`
+	require.NoError(t, store.SetStateValue(stateKeyParams, legacyParams))
+	require.NoError(t, store.SetStateValue(stateVerify, verifyEnc))
+	require.NoError(t, store.SetStateValue(stateEncrypted, "true"))
+
+	svc, err := NewSecretService(store)
+	require.NoError(t, err)
+	require.True(t, svc.IsLocked())
+
+	require.Error(t, svc.Unlock("wrong"), "legacy envelope must reject wrong password")
+	require.NoError(t, svc.Unlock("legacy-pwd"), "legacy PBKDF2 envelope must still unlock")
+	assert.False(t, svc.IsLocked())
 }
 
 // --- SQLite-specific: raw DB query verification (cannot be done via Store interface) ---

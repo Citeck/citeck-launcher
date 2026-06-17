@@ -163,6 +163,10 @@ type Daemon struct {
 	// (default) — TCP then behaves exactly as before (CSRF gate only).
 	// See apiauth.go for the contract and bypass matrix.
 	apiAuth *apiAuth
+	// imagePulls tracks explicit image pulls triggered from the drawer's image
+	// popup, keyed by image ref → *imagePullState. Decoupled from the runtime
+	// state machine: the UI polls the inspect endpoint for pulling/error state.
+	imagePulls sync.Map
 }
 
 // active returns ONE consistent value-copy snapshot of the active-namespace
@@ -537,22 +541,22 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate bool) error {
 
 	var genOpts namespace.GenerateOpts
 	genOpts.SecretReader = d.nsSecretReader()
-	// EditedFilesSnapshot tells writeRuntimeFiles to skip user-edited
-	// bind-mount files so Web-UI edits survive reload/regenerate.
-	var editedFiles map[string]bool
 	genOpts.DetachedApps = act.runtime.ManualStoppedApps()
-	// Overlay user-edited disk content into the hash input so a UI-edited
-	// bind-mount file forces container recreate on this regenerate.
-	genOpts.EditedFileOverlay = act.runtime.EditedFileOverlay(act.volumesBase)
-	editedFiles = act.runtime.EditedFilesSnapshot()
+	// File edits are merged onto their templates inside Generate (both disk and
+	// VolumesContentHash reflect the merged result) — no separate skip set.
+	fileEdits := act.runtime.FileEditsSnapshot()
+	genOpts.EditedFileEdits = fileEdits
+	genOpts.DiskContent = readDiskContent(act.volumesBase, fileEdits)
 	// User-added licenses (encrypted store) merge with workspace-declared ones
 	// in the eapps cloud-config. Locked SecretService yields nil and we fall
 	// back to workspace-only licenses — reload never aborts on a locked store.
 	genOpts.ExtraLicenses = collectExtraLicensesFrom(d.licenses)
-	genResp, genErr := generateAndWriteRuntimeFiles(nsCfg, resolveResult, sysSecrets, genOpts, act.volumesBase, editedFiles)
+	genResp, genErr := generateAndWriteRuntimeFiles(nsCfg, resolveResult, sysSecrets, genOpts, act.volumesBase, nil)
 	if genErr != nil {
 		return genErr
 	}
+	act.runtime.SetLastGenFiles(genResp.BaselineFiles)
+	act.runtime.SetGeneratedDefs(genResp.Applications)
 
 	// Phase 2: update shared state briefly under write lock. In-place
 	// mutation of the live activeNamespace (not a rebuild-and-swap) so a
@@ -749,6 +753,8 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+api.AppsRetryPullFailed, d.handleAppsRetryPullFailed)
 	mux.HandleFunc("GET /api/v1/apps/{name}/logs", d.handleAppLogs)
 	mux.HandleFunc("GET /api/v1/apps/{name}/inspect", d.handleAppInspect)
+	mux.HandleFunc("GET /api/v1/apps/{name}/image", d.handleAppImageInspect)
+	mux.HandleFunc("POST /api/v1/apps/{name}/image/pull", d.handleAppImagePull)
 	mux.HandleFunc("POST /api/v1/apps/{name}/restart", d.handleAppRestart)
 	mux.HandleFunc("POST /api/v1/apps/{name}/stop", d.handleAppStop)
 	mux.HandleFunc("POST /api/v1/apps/{name}/start", d.handleAppStart)
@@ -807,6 +813,7 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 
 	// Bundles
 	mux.HandleFunc("GET "+api.Bundles, d.handleListBundles)
+	mux.HandleFunc("POST /api/v1/bundles/{repoId}/pull", d.handleBundleRepoPull)
 
 	// Secrets
 	mux.HandleFunc("GET "+api.Secrets, d.handleListSecrets)
@@ -852,6 +859,8 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	// Server mode has no native window to raise; route is not registered there.
 	if config.IsDesktopMode() {
 		mux.HandleFunc("POST /desktop/focus", d.handleDesktopFocus)
+		mux.HandleFunc("POST /desktop/save-download", d.handleDesktopSaveDownload)
+		mux.HandleFunc("POST /desktop/open-downloads", d.handleDesktopOpenDownloads)
 	}
 	// Update routes only when the service exists (desktop + linux); otherwise the
 	// paths are unregistered and the Web UI's update check 404s and stays quiet.

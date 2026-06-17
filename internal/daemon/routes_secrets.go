@@ -400,6 +400,14 @@ func (d *Daemon) handleSetupPassword(w http.ResponseWriter, r *http.Request) {
 // stored secret. Mirrors Kotlin's `AskMasterPasswordDialog` reset flow:
 // when the user forgets the master password they can wipe and start over.
 //
+// It also drops the pending Kotlin migration blob (`secret_blob`). From the
+// user's perspective this is "drop all secrets"; in practice, for a fresh
+// 1.x→2.x install where the old master password is unknown, it means "don't
+// migrate the legacy secrets" so the unlock dialog stops re-appearing and the
+// new launcher slots seamlessly into the old one's place. The blob we clear is
+// only our own copy: the source secrets stay intact in the read-only H2
+// storage.db, so reinstalling Kotlin 1.x still recovers them.
+//
 // The reset is irreversible. Server mode never reaches this endpoint via UI
 // (default password handles all secrets transparently), but desktop UIs and
 // power users can hit it explicitly.
@@ -407,6 +415,11 @@ func (d *Daemon) handleResetSecrets(w http.ResponseWriter, _ *http.Request) {
 	if err := d.secretService.ResetSecrets(); err != nil {
 		writeInternalError(w, err)
 		return
+	}
+	// Drop the not-yet-migrated Kotlin blob too, so "drop all secrets" is honest
+	// and the migration prompt never returns. H2 storage.db is untouched.
+	if err := d.store.PutSecretBlob(""); err != nil {
+		slog.Error("Failed to clear pending secret blob on reset", "err", err)
 	}
 	d.rebuildAuthCaches()
 	slog.Warn("Secrets reset by user — all stored secrets wiped")

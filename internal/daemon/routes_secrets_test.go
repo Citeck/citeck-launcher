@@ -261,3 +261,40 @@ func TestHandleSubmitMasterPassword_InvalidJSON(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
+
+// TestHandleResetSecrets_ClearsPendingBlob: "drop all secrets" must also drop
+// the not-yet-migrated Kotlin blob, so the migration unlock dialog stops
+// re-appearing. The source H2 store is untouched (read-only) — this only
+// clears our own copy.
+func TestHandleResetSecrets_ClearsPendingBlob(t *testing.T) {
+	d, mux := secretsTestMux(t)
+
+	require.NoError(t, d.secretService.SaveSecret(storage.Secret{
+		SecretMeta: storage.SecretMeta{ID: "git-token-1", Name: "tok", Type: storage.SecretGitToken, Scope: "global"},
+		Value:      "glpat-x",
+	}))
+	require.NoError(t, d.store.PutSecretBlob("pending-kotlin-blob"))
+
+	req := httptest.NewRequest("POST", api.SecretsReset, http.NoBody)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	blob, err := d.store.GetSecretBlob()
+	require.NoError(t, err)
+	assert.Empty(t, blob, "reset must clear the pending Kotlin blob")
+
+	secrets, err := d.store.ListSecrets()
+	require.NoError(t, err)
+	assert.Empty(t, secrets, "reset must wipe stored secrets")
+
+	statusReq := httptest.NewRequest("GET", api.MigrationStatus, http.NoBody)
+	statusRec := httptest.NewRecorder()
+	mux.ServeHTTP(statusRec, statusReq)
+	require.Equal(t, http.StatusOK, statusRec.Code)
+	var status struct {
+		HasPendingSecrets bool `json:"hasPendingSecrets"`
+	}
+	require.NoError(t, json.NewDecoder(statusRec.Body).Decode(&status))
+	assert.False(t, status.HasPendingSecrets, "migration prompt must not return after reset")
+}

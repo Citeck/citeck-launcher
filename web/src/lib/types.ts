@@ -134,6 +134,19 @@ export interface AppInspectDto {
   uptime: number
 }
 
+export interface AppImageDto {
+  ref: string
+  present: boolean
+  pulling?: boolean
+  pullError?: string
+  id?: string
+  repoDigests?: string[]
+  size?: number
+  os?: string
+  architecture?: string
+  created?: string
+}
+
 // Phase E1: Welcome Screen
 export interface NamespaceSummaryDto {
   id: string
@@ -314,4 +327,14 @@ export interface ReleaseNoteDto {
   version: string
   date: string
   markdown: string
+}
+
+export interface AppConfigDto {
+  content: string
+  baseline: string
+}
+
+export interface AppFileContentDto {
+  content: string
+  baseline: string
 }

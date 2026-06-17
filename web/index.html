@@ -5,6 +5,25 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Citeck</title>
+    <!-- Anti-FOUC: resolve the persisted theme and paint the window background
+         BEFORE the bundle loads. Desktop opens editors as separate webview
+         windows (window.open '/window/editor/...'); without this the first
+         frame is the webview's default white until React's useInheritedTheme
+         runs in an effect, producing a dark→white→dark flash. localStorage is
+         shared across the app's webview windows, so this matches the main UI. -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('theme')
+          var dark = t ? t === 'dark' : !window.matchMedia('(prefers-color-scheme: light)').matches
+          document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light')
+          document.documentElement.style.backgroundColor = dark ? '#1e1f22' : '#f0f1f3'
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'dark')
+          document.documentElement.style.backgroundColor = '#1e1f22'
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

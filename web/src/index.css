@@ -25,6 +25,15 @@
   --color-status-stalled: #e08740;   /* *_FAILED / STALLED */
   --color-status-stopped: #7c7f87;   /* STOPPED — lifted off near-black so the dot is actually visible */
 
+  /* Log-level colors — theme-aware (dark defaults here). The light overrides
+     are darkened so INFO/DEBUG/TRACE don't wash out on the near-white viewport. */
+  --color-log-error: #ef5350;
+  --color-log-warn: #ffa726;
+  --color-log-info: #66bb6a;
+  --color-log-debug: #9e9e9e;
+  --color-log-trace: #bdbdbd;
+  --color-log-unknown: #7c7c7c;
+
   /* IDE-grade monospace stack — prefers real developer fonts when present on
      the host, falling back through OS defaults. No bundled/CDN assets, so it
      never breaks the offline daemon; data cells just get sharper glyphs when
@@ -122,6 +131,13 @@ button:not(:disabled):active,
   --color-status-transient: #a9761a;
   --color-status-stalled: #c2410c;
   --color-status-stopped: #6b7280;
+  /* Darkened log-level colors for AA-ish contrast on the near-white viewport. */
+  --color-log-error: #c62828;
+  --color-log-warn: #b45309;
+  --color-log-info: #2e7d32;
+  --color-log-debug: #5b5f66;
+  --color-log-trace: #757a82;
+  --color-log-unknown: #44474d;
 }
 
 /* Respect OS preference on first visit */
@@ -144,6 +160,12 @@ button:not(:disabled):active,
     --color-status-transient: #a9761a;
     --color-status-stalled: #c2410c;
     --color-status-stopped: #6b7280;
+    --color-log-error: #c62828;
+    --color-log-warn: #b45309;
+    --color-log-info: #2e7d32;
+    --color-log-debug: #5b5f66;
+    --color-log-trace: #757a82;
+    --color-log-unknown: #44474d;
   }
 }
 

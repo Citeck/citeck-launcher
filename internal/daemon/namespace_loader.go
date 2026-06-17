@@ -1,8 +1,12 @@
 package daemon
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/api"
@@ -124,6 +128,64 @@ func generateAndWriteRuntimeFiles(
 	}
 	writeRuntimeFiles(volumesBase, genResp.Files, edited)
 	return genResp, nil
+}
+
+// migrateLegacyAppPatches converts legacy full-def edits (≤2.6) into patches
+// against the freshly generated defs. Returns nil when there is nothing to
+// migrate.
+func migrateLegacyAppPatches(st *namespace.NsPersistedState, gen []appdef.ApplicationDef) map[string]json.RawMessage {
+	if st == nil || len(st.EditedApps) == 0 {
+		return nil
+	}
+	genByName := make(map[string]appdef.ApplicationDef, len(gen))
+	for _, d := range gen {
+		genByName[d.Name] = d
+	}
+	out := map[string]json.RawMessage{}
+	for name, full := range st.EditedApps {
+		base, ok := genByName[name]
+		if !ok {
+			continue
+		}
+		patch, err := namespace.DiffAppDef(base, full)
+		if err != nil || patch == nil {
+			continue
+		}
+		out[name] = patch
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// migrateLegacyFileEdits converts legacy edited-file flags (≤2.6) into per-file
+// deltas using the generated template and the on-disk content.
+func migrateLegacyFileEdits(st *namespace.NsPersistedState, genFiles map[string][]byte, volumesBase string) map[string]namespace.FileEdit {
+	if st == nil || len(st.EditedFiles) == 0 {
+		return nil
+	}
+	out := map[string]namespace.FileEdit{}
+	for _, key := range st.EditedFiles {
+		template, ok := genFiles[key]
+		if !ok {
+			continue
+		}
+		disk, err := os.ReadFile(filepath.Join(volumesBase, key)) //nolint:gosec // key validated when recorded
+		if err != nil {
+			continue
+		}
+		base := key[strings.LastIndex(key, "/")+1:]
+		edit, err := namespace.MakeFileEdit(base, template, disk)
+		if err != nil {
+			continue
+		}
+		out[key] = edit
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // dockerClientScoped reports whether dc is non-nil and already scoped to exactly
@@ -280,33 +342,38 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		}
 	}
 
-	// Overlay user-edited disk content into the hash input so a UI-edited
-	// file from a prior session forces container recreate on the first
-	// regenerate after daemon restart. Without this, VolumesContentHash is
-	// computed against embedded defaults and existing edits are never
-	// reflected in the running container.
-	if persistedState != nil && len(persistedState.EditedFiles) > 0 {
-		genOpts.EditedFileOverlay = readEditedFileOverlay(volumesBase, persistedState.EditedFiles)
+	// File-edit deltas (2.7+) are merged onto their templates inside Generate.
+	var fileEdits map[string]namespace.FileEdit
+	if persistedState != nil && len(persistedState.EditedFileEdits) > 0 {
+		fileEdits = persistedState.EditedFileEdits
+		genOpts.EditedFileEdits = fileEdits
+		genOpts.DiskContent = readDiskContent(volumesBase, fileEdits)
 	}
 
-	// Build the edited-file skip set from persisted state BEFORE the
-	// initial writeRuntimeFiles so user edits made in a previous session
-	// are not overwritten by the freshly generated defaults.
-	var editedFilesSkip map[string]bool
-	if persistedState != nil && len(persistedState.EditedFiles) > 0 {
-		editedFilesSkip = make(map[string]bool, len(persistedState.EditedFiles))
+	// LegacySkip preserves the ≤2.6 "keep on-disk, don't overwrite" behavior for
+	// the FIRST write of a pre-migration state, so legacy edits are never lost
+	// before they are migrated below. Only set when no new-model edits exist but
+	// legacy flags do.
+	var legacySkip map[string]bool
+	if len(fileEdits) == 0 && persistedState != nil && len(persistedState.EditedFiles) > 0 {
+		legacySkip = make(map[string]bool, len(persistedState.EditedFiles))
 		for _, p := range persistedState.EditedFiles {
-			editedFilesSkip[p] = true
+			legacySkip[p] = true
 		}
 	}
 
 	// Generate the namespace and write the full runtime file set (embedded
-	// defaults + generator modifications) to disk. Single source of truth;
-	// never overwritten by a separate embed re-extract.
-	genResp, genErr := generateAndWriteRuntimeFiles(nsCfg, resolveResult, systemSecrets, genOpts, volumesBase, editedFilesSkip)
+	// defaults + generator modifications + merged user edits) to disk. Single
+	// source of truth; never overwritten by a separate embed re-extract.
+	genResp, genErr := generateAndWriteRuntimeFiles(nsCfg, resolveResult, systemSecrets, genOpts, volumesBase, legacySkip)
 	if genErr != nil {
 		return nil, genErr
 	}
+
+	// One-shot migration of legacy edit state (≤2.6) → patches, using the defs
+	// and baseline files we just generated.
+	migratedAppPatches := migrateLegacyAppPatches(persistedState, genResp.Applications)
+	migratedFileEdits := migrateLegacyFileEdits(persistedState, genResp.BaselineFiles, volumesBase)
 	slog.Info("Generated namespace", "apps", len(genResp.Applications), "files", len(genResp.Files))
 
 	appDefs := genResp.Applications
@@ -340,6 +407,8 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	}
 	runtime := namespace.NewRuntime(nsCfg, dc, volumesBase)
 	runtime.SetStatePersister(nsStatePersister{store: in.Store, wsID: wsID, nsID: nsID})
+	runtime.SetLastGenFiles(genResp.BaselineFiles)
+	runtime.SetGeneratedDefs(genResp.Applications)
 
 	// Cache the successfully resolved bundle for fallback on future resolve failures
 	if !bundleDef.IsEmpty() {
@@ -384,8 +453,15 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 			}
 			runtime.SetManualStoppedApps(stopped)
 		}
-		runtime.RestoreEditedApps(persistedState.EditedApps, persistedState.EditedLockedApps)
-		runtime.RestoreEditedFiles(persistedState.EditedFiles)
+		appPatches := persistedState.EditedAppPatches
+		if appPatches == nil {
+			appPatches = migratedAppPatches
+		}
+		fEdits := persistedState.EditedFileEdits
+		if fEdits == nil {
+			fEdits = migratedFileEdits
+		}
+		runtime.RestoreEditedState(appPatches, fEdits)
 		runtime.RestoreRestartState(persistedState.RestartEvents, persistedState.RestartCounts)
 	} else if len(genOpts.DetachedApps) > 0 {
 		// First start with template detached apps — apply to runtime

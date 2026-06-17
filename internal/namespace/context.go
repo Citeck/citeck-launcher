@@ -108,12 +108,13 @@ type NsGenContext struct {
 	// license.Service. Merged with WorkspaceConfig.Licenses in the eapps cloud
 	// config so UI-added licenses actually reach the running webapps.
 	ExtraLicenses []bundle.LicenseInstance
-	// EditedFileOverlay is the user-edited disk content keyed by canonical
-	// ctx.Files key. The generator overlays it into the hash input only (not
-	// into ctx.Files itself) so deployment-hash recompute drives container
-	// recreate after a Web UI file edit.
-	EditedFileOverlay map[string][]byte
-	portsCounter      atomic.Int32
+	// EditedFileEdits / DiskContent drive file-edit merging in Generate: each
+	// delta is applied onto its generated template so both the on-disk file and
+	// VolumesContentHash reflect the merged result. DiskContent supplies the
+	// YAML comment source and textual conflict fallback.
+	EditedFileEdits map[string]FileEdit
+	DiskContent     map[string][]byte
+	portsCounter    atomic.Int32
 }
 
 // NewNsGenContext creates a new generation context for the given config and bundle.
@@ -142,8 +143,8 @@ func (c *NsGenContext) GetOrCreateApp(name string) *AppBuilder {
 		return b
 	}
 	b := &AppBuilder{
-		Name:         name,
-		Environments: make(map[string]string),
+		Name: name,
+		// Environments is a nil OrderedMap; AddEnv appends (preserving order).
 		// DependsOn is a nil StringSet; AddDependsOn appends (and dedups).
 	}
 	c.Applications[name] = b
@@ -240,7 +241,7 @@ type AppBuilder struct {
 	Name               string
 	NetworkAliases     []string
 	Image              string
-	Environments       map[string]string
+	Environments       appdef.OrderedMap
 	Cmd                []string
 	Ports              []string
 	Volumes            []string
@@ -257,7 +258,7 @@ type AppBuilder struct {
 
 // AddEnv sets an environment variable for the app.
 func (b *AppBuilder) AddEnv(key, value string) *AppBuilder {
-	b.Environments[key] = value
+	b.Environments.Set(key, value)
 	return b
 }
 

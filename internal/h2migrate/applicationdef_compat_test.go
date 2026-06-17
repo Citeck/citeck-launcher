@@ -26,8 +26,10 @@ func TestApplicationDefCompat_KotlinFixture(t *testing.T) {
 
 	assert.Equal(t, "eapps", got.Name)
 	assert.Equal(t, "citeck/ecos-apps:1.0.0", got.Image)
-	assert.Equal(t, "-Xms256m -Xmx1024m", got.Environments["JAVA_OPTS"])
-	assert.Equal(t, "prod", got.Environments["SPRING_PROFILES_ACTIVE"])
+	javaOpts, _ := got.Environments.Get("JAVA_OPTS")
+	assert.Equal(t, "-Xms256m -Xmx1024m", javaOpts)
+	springProfiles, _ := got.Environments.Get("SPRING_PROFILES_ACTIVE")
+	assert.Equal(t, "prod", springProfiles)
 	assert.Equal(t, []string{"sh", "-c", "exec /entrypoint.sh"}, got.Cmd)
 	assert.Equal(t, []string{"8080:8080"}, got.Ports)
 	assert.Equal(t, []string{"./eapps/conf:/opt/citeck/conf:ro"}, got.Volumes)

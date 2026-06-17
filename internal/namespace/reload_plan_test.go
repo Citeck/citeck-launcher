@@ -2,6 +2,7 @@ package namespace
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -61,7 +62,7 @@ func planDef(name, image string, env map[string]string) appdef.ApplicationDef {
 		Name:         name,
 		Image:        image,
 		ImageDigest:  "sha256:" + image,
-		Environments: env,
+		Environments: appdef.OrderedMapFromMap(env),
 	}
 }
 
@@ -128,17 +129,44 @@ func TestPlanRegenerate_DetachedWinsOverHashChange(t *testing.T) {
 	assert.Equal(t, PlanVerdictDetached, entries[0].Verdict)
 }
 
+func TestDoRegenerate_DetachedStaysStoppedOnHashChange(t *testing.T) {
+	// Regression: a force-update bumps a detached app's version (hash changes).
+	// doRegenerate must keep it STOPPED — routing it through READY_TO_PULL would
+	// hang forever as "В очереди" because stepAllApps skips manualStoppedApps.
+	r := newRuntimeForTest(testConfig(), newMockDocker(), t.TempDir())
+	oldDef := planDef("det", "img:1", nil)
+	newDef := planDef("det", "img:2", nil)
+	r.apps = map[string]*AppRuntime{"det": {Name: "det", Status: AppStatusStopped, Def: oldDef}}
+	r.manualStoppedApps = map[string]bool{"det": true}
+
+	r.doRegenerate([]appdef.ApplicationDef{newDef})
+
+	app := r.apps["det"]
+	require.NotNil(t, app)
+	assert.Equal(t, AppStatusStopped, app.Status, "detached app must stay STOPPED, not queue READY_TO_PULL")
+	assert.Equal(t, "img:2", app.Def.Image, "def refreshed to the new version for re-attach")
+	assert.Empty(t, app.desiredNext, "no pending transition should be queued for a detached app")
+}
+
 func TestPlanRegenerate_EditedLockedOverrideKeeps(t *testing.T) {
 	// Edited+locked apps substitute the edited definition exactly like
 	// doRegenerate — a bundle-side change must NOT produce a recreate verdict
 	// when the lock pins the running (edited) definition.
-	r := newRuntimeForTest(testConfig(), newMockDocker(), t.TempDir())
+	// The applied def carries no ImageDigest (a patch can change the image, so
+	// ApplyAppDefPatch clears the cache); PlanRegenerate re-resolves it. Pin the
+	// resolver so the resolved digest matches the running def's planDef digest.
+	md := newMockDocker()
+	md.imageDigests = map[string]string{"img:edited": "sha256:img:edited", "img:bundle": "sha256:img:bundle"}
+	r := newRuntimeForTest(testConfig(), md, t.TempDir())
 	editedDef := planDef("app", "img:edited", map[string]string{"E": "1"})
 	bundleDef := planDef("app", "img:bundle", nil)
 
+	// The patch is the delta from the generated (bundle) baseline to the edited
+	// def; applying it onto bundleDef reproduces editedDef exactly → Keep.
+	patch, err := DiffAppDef(bundleDef, editedDef)
+	require.NoError(t, err)
 	r.apps = map[string]*AppRuntime{"app": {Name: "app", Status: AppStatusRunning, Def: editedDef}}
-	r.editedApps = map[string]appdef.ApplicationDef{"app": editedDef}
-	r.editedLockedApps = map[string]bool{"app": true}
+	r.editedAppPatches = map[string]json.RawMessage{"app": patch}
 
 	entries := r.PlanRegenerate(context.Background(), []appdef.ApplicationDef{bundleDef})
 	require.Len(t, entries, 1)

@@ -133,11 +133,11 @@ type AppInitAction struct {
 
 // InitContainerDef defines an init container.
 type InitContainerDef struct {
-	Image        string            `json:"image" yaml:"image"`
-	Environments map[string]string `json:"environments,omitempty" yaml:"environments,omitempty"`
-	Volumes      []string          `json:"volumes,omitempty" yaml:"volumes,omitempty"`
-	Kind         ApplicationKind   `json:"kind" yaml:"kind"`
-	Cmd          []string          `json:"cmd,omitempty" yaml:"cmd,omitempty"`
+	Image        string          `json:"image" yaml:"image"`
+	Environments OrderedMap      `json:"environments,omitempty" yaml:"environments,omitempty"`
+	Volumes      []string        `json:"volumes,omitempty" yaml:"volumes,omitempty"`
+	Kind         ApplicationKind `json:"kind" yaml:"kind"`
+	Cmd          []string        `json:"cmd,omitempty" yaml:"cmd,omitempty"`
 }
 
 // ApplicationDef is a fully resolved container definition.
@@ -146,7 +146,7 @@ type ApplicationDef struct {
 	NetworkAliases     []string           `json:"networkAliases,omitempty" yaml:"networkAliases,omitempty"`
 	Image              string             `json:"image" yaml:"image"`
 	ImageDigest        string             `json:"imageDigest,omitempty" yaml:"imageDigest,omitempty"` // Docker image digest for change detection
-	Environments       map[string]string  `json:"environments,omitempty" yaml:"environments,omitempty"`
+	Environments       OrderedMap         `json:"environments,omitempty" yaml:"environments,omitempty"`
 	Cmd                []string           `json:"cmd,omitempty" yaml:"cmd,omitempty"`
 	Ports              []string           `json:"ports,omitempty" yaml:"ports,omitempty"`
 	Volumes            []string           `json:"volumes,omitempty" yaml:"volumes,omitempty"`
@@ -174,13 +174,16 @@ func (d *ApplicationDef) GetHashInput() string {
 	fmt.Fprintf(&b, "cmd=%s\n", strings.Join(d.Cmd, " "))
 	fmt.Fprintf(&b, "shmSize=%s\n", d.ShmSize)
 	fmt.Fprintf(&b, "vch=%s\n", d.VolumesContentHash)
-	envKeys := make([]string, 0, len(d.Environments))
-	for k := range d.Environments {
-		envKeys = append(envKeys, k)
+	// Hash is intentionally order-independent for env (Docker env is a set):
+	// reordering keys in the editor must NOT trigger a container recreate.
+	envKeys := make([]string, 0, d.Environments.Len())
+	for _, e := range d.Environments {
+		envKeys = append(envKeys, e.Key)
 	}
 	sort.Strings(envKeys)
 	for _, k := range envKeys {
-		fmt.Fprintf(&b, "env:%s=%s\n", k, d.Environments[k])
+		v, _ := d.Environments.Get(k)
+		fmt.Fprintf(&b, "env:%s=%s\n", k, v)
 	}
 	ports := append([]string(nil), d.Ports...)
 	sort.Strings(ports)

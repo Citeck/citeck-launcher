@@ -162,6 +162,9 @@ export function Dashboard() {
   if (!namespace) return null
 
   const apps = namespace.apps ?? []
+  // Drawer header badge shows the launcher's own status (state machine), which
+  // differs from the Docker container state shown in the "Состояние" row.
+  const drawerApp = drawerAppName ? apps.find((a) => a.name === drawerAppName) : null
   const runningCount = apps.filter((a) => a.status === 'RUNNING').length
   const isRunning = namespace.status === 'RUNNING'
   const links = namespace.links ? [...namespace.links].sort((a, b) => a.order - b.order) : []
@@ -195,9 +198,6 @@ export function Dashboard() {
   const cpuPercent = maxCpu > 0 ? (totalCpu / maxCpu) * 100 : 0
   const memPercent = maxMem > 0 ? (totalMem / maxMem) * 100 : 0
   const fmtMB = (mb: number) => mb >= 1024 ? `${(mb / 1024).toFixed(1)}G` : `${Math.round(mb)}M`
-
-  // Drawer title info
-  const drawerApp = drawerAppName ? apps.find((a) => a.name === drawerAppName) : null
 
   function renderBottomTab(tab: BottomPanelTab, active: boolean) {
     switch (tab.type) {
@@ -368,8 +368,10 @@ export function Dashboard() {
           </div>
         </aside>
 
-        {/* Main table area */}
-        <div className="flex-1 min-w-0 p-2 overflow-auto">
+        {/* Main table area. No top padding: the table header is `sticky top-0`
+            and sticks at the scroll container's content edge — a pt would leave
+            a gap above it that rows scroll into ("not pinned to the ceiling"). */}
+        <div className="flex-1 min-w-0 px-2 pb-2 overflow-auto">
           <AppTable apps={apps} highlightedApp={drawerAppName} />
         </div>
 

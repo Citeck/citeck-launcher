@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/fsutil"
+	"github.com/citeck/citeck-launcher/internal/namespace"
 )
 
 // Runtime bind-mount file materialization. writeRuntimeFiles is the single
@@ -116,18 +117,16 @@ func writeRuntimeFiles(baseDir string, files map[string][]byte, edited map[strin
 	}
 }
 
-// readEditedFileOverlay reads on-disk content for every persisted user-edit
-// key under volumesBase. Used at daemon startup before the runtime exists, so
-// the first Generate call sees the user's edits in its VolumesContentHash
-// input and recreates containers whose mounted files were changed in a prior
-// session. Missing/unreadable files are skipped — writeRuntimeFiles will
-// rematerialize the default the next time that key falls out of editedFiles.
-func readEditedFileOverlay(volumesBase string, keys []string) map[string][]byte {
-	if len(keys) == 0 {
+// readDiskContent reads on-disk content for the given file-edit keys. Supplies
+// the generator's file-merge step with the YAML comment source / textual
+// conflict fallback. Missing/unreadable files are skipped — the generator then
+// merges against the template only.
+func readDiskContent(volumesBase string, edits map[string]namespace.FileEdit) map[string][]byte {
+	if len(edits) == 0 {
 		return nil
 	}
-	out := make(map[string][]byte, len(keys))
-	for _, k := range keys {
+	out := make(map[string][]byte, len(edits))
+	for k := range edits {
 		abs := filepath.Join(volumesBase, k)
 		data, err := os.ReadFile(abs) //nolint:gosec // G304: key is constrained to volumesBase by the original write
 		if err != nil {

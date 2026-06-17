@@ -82,11 +82,6 @@ export function SecretsUnlockGuard() {
     }
   }, [fetchData, t])
 
-  const handleSkip = useCallback(() => {
-    setStep(null)
-    setError('')
-  }, [])
-
   const handleReset = useCallback(async () => {
     setLoading(true)
     try {
@@ -110,8 +105,7 @@ export function SecretsUnlockGuard() {
         if (step === 'kotlin-decrypt') await handleKotlinDecrypt(pwd)
         else if (step === 'unlock') await handleUnlock(pwd)
       }}
-      onSkip={handleSkip}
-      onReset={step === 'unlock' ? handleReset : undefined}
+      onReset={handleReset}
     />
   )
 }

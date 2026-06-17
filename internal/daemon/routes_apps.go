@@ -410,43 +410,70 @@ func (d *Daemon) handleAppExec(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// encodeDefYAML serializes an ApplicationDef to the editor's YAML form: runtime
+// caches stripped, 2-space indent, ApplicationKind as its enum name, led by a
+// "---" document marker (Kotlin AppCfgEditWindow parity).
+func encodeDefYAML(d appdef.ApplicationDef) (string, error) {
+	d.ImageDigest = ""
+	d.VolumesContentHash = ""
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(d); err != nil {
+		_ = enc.Close()
+		return "", fmt.Errorf("encode app def yaml: %w", err)
+	}
+	if err := enc.Close(); err != nil {
+		return "", fmt.Errorf("close yaml encoder: %w", err)
+	}
+	return "---\n" + buf.String(), nil
+}
+
 func (d *Daemon) handleGetAppConfig(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !validateAppName(w, name) {
 		return
 	}
-	app := d.findApp(name)
-	if app == nil {
+	rt := d.active().runtime
+	if rt == nil {
 		writeAppNotFound(w, name)
 		return
 	}
-	// Hide the runtime-internal cache fields from the editor view: the digest
-	// is re-resolved from the image at every container start, and the volume
-	// content hash is recomputed by the generator. Showing them suggests the
-	// operator should manage them; ignoring them on PUT is the matching half.
-	clean := app.Def
-	clean.ImageDigest = ""
-	clean.VolumesContentHash = ""
-	// yaml.v3's package Marshal hardcodes a 4-space indent; drive an Encoder
-	// directly for the 2-space indent the editor expects. ApplicationKind now
-	// renders as its enum name (kind: CITECK_CORE) instead of an integer.
-	var buf bytes.Buffer
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(clean); err != nil {
-		_ = enc.Close()
+	app := rt.FindApp(name)
+	gen, genOK := rt.GeneratedDef(name)
+	if app == nil && !genOK {
+		writeAppNotFound(w, name)
+		return
+	}
+	// Derive BOTH content and baseline from the same generated def so an
+	// unedited app yields content == baseline exactly (no diff markers): content
+	// = generated + stored patch, baseline = generated (patch-free). Only when
+	// no generated def exists (shouldn't happen for a known app) fall back to
+	// the live def for both.
+	var effectiveDef, baselineDef appdef.ApplicationDef
+	if genOK {
+		baselineDef = gen
+		merged, err := namespace.ApplyAppDefPatch(gen, rt.AppPatch(name))
+		if err != nil {
+			writeInternalError(w, err)
+			return
+		}
+		effectiveDef = merged
+	} else {
+		effectiveDef = app.Def
+		baselineDef = app.Def
+	}
+	content, err := encodeDefYAML(effectiveDef)
+	if err != nil {
 		writeInternalError(w, err)
 		return
 	}
-	if err := enc.Close(); err != nil {
+	baseline, err := encodeDefYAML(baselineDef)
+	if err != nil {
 		writeInternalError(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "text/yaml")
-	// Lead with the YAML document marker (Kotlin AppCfgEditWindow parity) so the
-	// gear/config editor opens on a clear "---" start.
-	_, _ = io.WriteString(w, "---\n")
-	_, _ = w.Write(buf.Bytes())
+	writeJSON(w, api.AppConfigDto{Content: content, Baseline: baseline})
 }
 
 func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
@@ -458,10 +485,15 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 	if rt == nil {
 		return
 	}
-	app := d.findApp(name)
-	if app == nil {
-		writeAppNotFound(w, name)
-		return
+	// Accept edits whether the app is live (r.apps) or only known via the
+	// generated defs (namespace stopped / never started this session). The app
+	// table is fed from the generated defs in that state, so the editor can be
+	// opened before the first Start. UpdateAppDef validates the name.
+	if rt.FindApp(name) == nil {
+		if _, ok := rt.GeneratedDef(name); !ok {
+			writeAppNotFound(w, name)
+			return
+		}
 	}
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, 512*1024))
@@ -490,7 +522,6 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 	// resolves the correct digest for whatever image the user chose.
 	// VolumesContentHash is recomputed by the generator on the next
 	// regenerate — also a runtime cache, also always cleared.
-	_ = app.Def // oldDef no longer needed — every formerly-pinned field is now editable.
 	newDef.Name = name
 	newDef.ImageDigest = ""
 	newDef.VolumesContentHash = ""
@@ -525,9 +556,16 @@ func (d *Daemon) handleResetAppConfig(w http.ResponseWriter, r *http.Request) {
 	// requireRuntime here (pinned by tests) — a nil runtime surfaces as
 	// app-not-found, mirroring the historical findApp-first behavior.
 	rt := d.active().runtime
-	if rt == nil || rt.FindApp(name) == nil {
+	if rt == nil {
 		writeAppNotFound(w, name)
 		return
+	}
+	// Accept a live app OR one known only via generated defs (stopped namespace).
+	if rt.FindApp(name) == nil {
+		if _, ok := rt.GeneratedDef(name); !ok {
+			writeAppNotFound(w, name)
+			return
+		}
 	}
 	if err := rt.ResetAppDef(name); err != nil {
 		writeInternalError(w, err)
@@ -544,11 +582,8 @@ func (d *Daemon) handleListAppFiles(w http.ResponseWriter, r *http.Request) {
 	// One snapshot: app lookup, volumesBase, and edited-flag queries must all
 	// reflect the same active namespace.
 	act := d.active()
-	var app *namespace.AppRuntime
-	if act.runtime != nil {
-		app = act.runtime.FindApp(name)
-	}
-	if app == nil {
+	appDef, ok := runtimeAppDef(act.runtime, name)
+	if !ok {
 		writeAppNotFound(w, name)
 		return
 	}
@@ -564,7 +599,7 @@ func (d *Daemon) handleListAppFiles(w http.ResponseWriter, r *http.Request) {
 	// behavior the COG RMB menu relied on to surface application.yml etc.
 	files := make([]api.AppFileDto, 0)
 	volumesBase := act.volumesBase
-	for _, v := range app.Def.Volumes {
+	for _, v := range appDef.Volumes {
 		parts := strings.SplitN(v, ":", 2)
 		if len(parts) != 2 {
 			continue
@@ -623,18 +658,15 @@ func (d *Daemon) handleGetAppFile(w http.ResponseWriter, r *http.Request) {
 	// One snapshot: the app lookup and volumesBase must describe the same
 	// active namespace.
 	act := d.active()
-	var app *namespace.AppRuntime
-	if act.runtime != nil {
-		app = act.runtime.FindApp(name)
-	}
-	if app == nil {
+	appDef, ok := runtimeAppDef(act.runtime, name)
+	if !ok {
 		writeAppNotFound(w, name)
 		return
 	}
 
 	// Validate path is a known bind mount
 	relPath := "./" + filePath
-	if !isAppBindMount(app, relPath) {
+	if !isAppBindMount(appDef, relPath) {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("file %q is not a bind mount of app %q", filePath, name))
 		return
 	}
@@ -650,8 +682,15 @@ func (d *Daemon) handleGetAppFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	_, _ = w.Write(data) //nolint:gosec // G705 XSS taint: Content-Type is text/plain, not HTML
+	// Baseline = the generated (pre-merge) template for this file, so the editor
+	// can mark lines changed vs the launcher default. Empty when unavailable.
+	var baseline []byte
+	if act.runtime != nil {
+		if tmpl, ok := act.runtime.GeneratedFile(filePath); ok {
+			baseline = tmpl
+		}
+	}
+	writeJSON(w, api.AppFileContentDto{Content: string(data), Baseline: string(baseline)})
 }
 
 func (d *Daemon) handlePutAppFile(w http.ResponseWriter, r *http.Request) {
@@ -663,17 +702,14 @@ func (d *Daemon) handlePutAppFile(w http.ResponseWriter, r *http.Request) {
 	// One snapshot: app lookup, volumesBase, and the edited-file write below
 	// must all target the same active namespace.
 	act := d.active()
-	var app *namespace.AppRuntime
-	if act.runtime != nil {
-		app = act.runtime.FindApp(name)
-	}
-	if app == nil {
+	appDef, ok := runtimeAppDef(act.runtime, name)
+	if !ok {
 		writeAppNotFound(w, name)
 		return
 	}
 
 	relPath := "./" + filePath
-	if !isAppBindMount(app, relPath) {
+	if !isAppBindMount(appDef, relPath) {
 		writeError(w, http.StatusForbidden, fmt.Sprintf("file %q is not a bind mount of app %q", filePath, name))
 		return
 	}
@@ -696,7 +732,11 @@ func (d *Daemon) handlePutAppFile(w http.ResponseWriter, r *http.Request) {
 	// the write. Falling back to a plain atomic write (no edited-flag
 	// bookkeeping) when the runtime is not available (server-mode test stubs).
 	if act.runtime != nil {
-		if err := act.runtime.WriteEditedFile(filePath, absPath, body); err != nil {
+		// Pass the generated (pre-merge) template so the runtime stores a delta,
+		// not the whole file. Missing template → empty, MakeFileEdit then stores
+		// a full-content delta which still applies cleanly.
+		template, _ := act.runtime.GeneratedFile(filePath)
+		if err := act.runtime.WriteEditedFile(filePath, absPath, body, template); err != nil {
 			writeInternalError(w, err)
 			return
 		}
@@ -725,8 +765,8 @@ func (d *Daemon) handleResetAppFile(w http.ResponseWriter, r *http.Request) {
 	if rt == nil {
 		return
 	}
-	app := rt.FindApp(name)
-	if app == nil {
+	appDef, ok := runtimeAppDef(rt, name)
+	if !ok {
 		writeAppNotFound(w, name)
 		return
 	}
@@ -739,7 +779,7 @@ func (d *Daemon) handleResetAppFile(w http.ResponseWriter, r *http.Request) {
 	// derive the canonical runtime key (no leading "./") for ResetEditedFile.
 	cleanPath := strings.TrimPrefix(path, "./")
 	relPath := "./" + cleanPath
-	if !isAppBindMount(app, relPath) {
+	if !isAppBindMount(appDef, relPath) {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("file %q is not a bind mount of app %q", cleanPath, name))
 		return
 	}
@@ -817,9 +857,23 @@ func isPathUnder(path, base string) bool {
 // Paths are normalised via filepath.Clean and the directory-mount check is
 // performed via filepath.Rel so a payload like "./app/eapps/props/../../etc/passwd"
 // (which lexically starts with the host prefix but escapes it) is rejected.
-func isAppBindMount(app *namespace.AppRuntime, relPath string) bool {
+// runtimeAppDef resolves an app's definition for file operations: the live
+// runtime def when started, else the generated def (so file listing/edit works
+// while the namespace is stopped / never started). Returns false when neither
+// exists or the runtime is nil.
+func runtimeAppDef(rt *namespace.Runtime, name string) (appdef.ApplicationDef, bool) {
+	if rt == nil {
+		return appdef.ApplicationDef{}, false
+	}
+	if a := rt.FindApp(name); a != nil {
+		return a.Def, true
+	}
+	return rt.GeneratedDef(name)
+}
+
+func isAppBindMount(def appdef.ApplicationDef, relPath string) bool {
 	cleanRel := filepath.Clean(relPath)
-	for _, v := range app.Def.Volumes {
+	for _, v := range def.Volumes {
 		parts := strings.SplitN(v, ":", 2)
 		if len(parts) < 2 {
 			continue

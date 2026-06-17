@@ -62,9 +62,8 @@ package namespace
 
 import (
 	"context"
+	"encoding/json"
 	"maps"
-	"os"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -164,11 +163,12 @@ type Runtime struct {
 	registryAuthFn        atomic.Pointer[RegistryAuthFunc]
 	history               *OperationHistory
 	manualStoppedApps     map[string]bool
-	editedApps            map[string]appdef.ApplicationDef // user-edited app defs
-	editedLockedApps      map[string]bool                  // locked edits survive regeneration
-	editedFiles           map[string]bool                  // user-edited mounted files (key: "<app>/<rel-path>", no leading "./"); writeRuntimeFiles skips these so user edits survive reload/regenerate
-	dependsOnDetachedApps map[string]bool                  // detached apps that trigger regen on restart
-	lastApps              []appdef.ApplicationDef          // last app defs passed to doStart
+	editedAppPatches      map[string]json.RawMessage // user-edit deltas over generated app defs (JSON merge patch)
+	editedFileEdits       map[string]FileEdit        // user-edit deltas for mounted files (key: "<app>/<rel-path>", no leading "./")
+	lastGenFiles          map[string][]byte          // last generated (pre-merge) file set; baseline source for the editor + WriteEditedFile template
+	generatedDefs         map[string]appdef.ApplicationDef // last generated (pre-patch) app defs; baseline for config view/edit when the ns is stopped/never-started
+	dependsOnDetachedApps map[string]bool            // detached apps that trigger regen on restart
+	lastApps              []appdef.ApplicationDef     // last app defs passed to doStart
 	cachedBundle          *bundle.Def                      // last successfully resolved bundle (persisted)
 	retryState            map[string]retryInfo             // retry tracking for failed apps
 	pullAuthBlockedApps   map[string]bool                  // PULL_FAILED apps awaiting registry credentials — T24 backoff retry is paused for them until creds change (RetryPullFailedApps clears it)
@@ -426,73 +426,84 @@ func (r *Runtime) SetManualStoppedApps(apps map[string]bool) {
 	}
 }
 
-// RestoreEditedApps restores persisted edited app definitions and lock flags.
-func (r *Runtime) RestoreEditedApps(edited map[string]appdef.ApplicationDef, locked []string) {
+// RestoreEditedState installs persisted edit deltas (called before first start).
+func (r *Runtime) RestoreEditedState(appPatches map[string]json.RawMessage, fileEdits map[string]FileEdit) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if len(edited) > 0 {
-		r.editedApps = edited
+	if len(appPatches) > 0 {
+		r.editedAppPatches = appPatches
 	}
-	for _, name := range locked {
-		r.editedLockedApps[name] = true
+	if len(fileEdits) > 0 {
+		r.editedFileEdits = fileEdits
 	}
 }
 
-// RestoreEditedFiles restores the per-file user-edit flags loaded from persisted
-// state. Keys MUST be in canonical form ("<app>/<rel-path>", no leading "./").
-// Called BEFORE the first writeRuntimeFiles call so user-edited files survive
-// the initial materialization.
-func (r *Runtime) RestoreEditedFiles(files []string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, path := range files {
-		r.editedFiles[path] = true
-	}
-}
-
-// EditedFilesSnapshot returns a shallow copy of the user-edited file flag map.
-// Used by writeRuntimeFiles to skip files that the user has edited via the
-// Web UI so user edits survive reload/regenerate. Safe to call when the
-// runtime is nil — callers handle the nil-map case naturally.
-func (r *Runtime) EditedFilesSnapshot() map[string]bool {
+// FileEditsSnapshot returns a copy of the per-file edit map (key → FileEdit).
+func (r *Runtime) FileEditsSnapshot() map[string]FileEdit {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if len(r.editedFiles) == 0 {
+	if len(r.editedFileEdits) == 0 {
 		return nil
 	}
-	out := make(map[string]bool, len(r.editedFiles))
-	maps.Copy(out, r.editedFiles)
+	out := make(map[string]FileEdit, len(r.editedFileEdits))
+	maps.Copy(out, r.editedFileEdits)
 	return out
 }
 
-// EditedFileOverlay reads the on-disk content of every user-edited bind-mount
-// file under volumesBase and returns it keyed by canonical ctx.Files key.
-// Fed into namespace.GenerateOpts so VolumesContentHash reflects user edits
-// and the next regenerate recreates the container with the new content.
-//
-// Files that cannot be read (deleted out-of-band, permission error) are
-// skipped silently — writeRuntimeFiles will rematerialize the default on the
-// next reload when the missing key is no longer in the editedFiles set.
-func (r *Runtime) EditedFileOverlay(volumesBase string) map[string][]byte {
+// AppPatch returns the stored merge patch for an app (nil if none).
+func (r *Runtime) AppPatch(appName string) json.RawMessage {
 	r.mu.RLock()
-	keys := make([]string, 0, len(r.editedFiles))
-	for k := range r.editedFiles {
-		keys = append(keys, k)
+	defer r.mu.RUnlock()
+	return r.editedAppPatches[appName]
+}
+
+// EditedFilesCountForApp returns how many mounted files of appName have a stored
+// edit. Safe on a nil receiver (returns 0).
+func (r *Runtime) EditedFilesCountForApp(appName string) int {
+	if r == nil {
+		return 0
 	}
-	r.mu.RUnlock()
-	if len(keys) == 0 {
-		return nil
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.editedFilesForAppLocked(appName))
+}
+
+// SetLastGenFiles caches the generated (pre-merge) file set so the editor can
+// serve a file baseline and WriteEditedFile can diff against the template.
+func (r *Runtime) SetLastGenFiles(files map[string][]byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastGenFiles = files
+}
+
+// SetGeneratedDefs caches the generated (pre-patch) app defs so config view/edit
+// works even when the namespace is stopped or has never been started this
+// session (r.apps / r.lastApps are empty in that state).
+func (r *Runtime) SetGeneratedDefs(defs []appdef.ApplicationDef) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	m := make(map[string]appdef.ApplicationDef, len(defs))
+	for _, d := range defs {
+		m[d.Name] = d
 	}
-	out := make(map[string][]byte, len(keys))
-	for _, k := range keys {
-		abs := filepath.Join(volumesBase, k)
-		data, err := os.ReadFile(abs) //nolint:gosec // G304: key is constrained to volumesBase, validated when the edit was recorded
-		if err != nil {
-			continue
-		}
-		out[k] = data
-	}
-	return out
+	r.generatedDefs = m
+}
+
+// GeneratedFile returns the last generated (pre-merge) content for a canonical
+// "<app>/<rel>" key.
+func (r *Runtime) GeneratedFile(key string) ([]byte, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	v, ok := r.lastGenFiles[key]
+	return v, ok
+}
+
+// GeneratedDef returns the last freshly-generated def for appName (patch-free
+// baseline). Used by the editor's change gutter + PUT patch computation.
+func (r *Runtime) GeneratedDef(appName string) (appdef.ApplicationDef, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.generatedDefForApp(appName)
 }
 
 // ClearRestartEvents removes the restart-event log AND resets the restart
@@ -543,9 +554,9 @@ func NewRuntime(cfg *Config, dockerClient docker.RuntimeClient, volumesBase stri
 		volumesBase:         volumesBase,
 		manualStoppedApps:   make(map[string]bool),
 		pullAuthBlockedApps: make(map[string]bool),
-		editedApps:          make(map[string]appdef.ApplicationDef),
-		editedLockedApps:    make(map[string]bool),
-		editedFiles:         make(map[string]bool),
+		editedAppPatches:    make(map[string]json.RawMessage),
+		editedFileEdits:     make(map[string]FileEdit),
+		generatedDefs:       make(map[string]appdef.ApplicationDef),
 		livenessFailures:    make(map[string]int),
 		restartCounts:       make(map[string]int),
 		eventCh:             make(chan api.EventDto, 256),

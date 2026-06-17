@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/api"
-	"github.com/citeck/citeck-launcher/internal/appdef"
 )
 
 // persistState saves the current runtime state to disk. Must be called with r.mu held.
@@ -29,15 +28,13 @@ func (r *Runtime) persistState() {
 	for name := range r.manualStoppedApps {
 		state.ManualStoppedApps = append(state.ManualStoppedApps, name)
 	}
-	if len(r.editedApps) > 0 {
-		state.EditedApps = make(map[string]appdef.ApplicationDef, len(r.editedApps))
-		maps.Copy(state.EditedApps, r.editedApps)
+	if len(r.editedAppPatches) > 0 {
+		state.EditedAppPatches = make(map[string]json.RawMessage, len(r.editedAppPatches))
+		maps.Copy(state.EditedAppPatches, r.editedAppPatches)
 	}
-	for name := range r.editedLockedApps {
-		state.EditedLockedApps = append(state.EditedLockedApps, name)
-	}
-	for path := range r.editedFiles {
-		state.EditedFiles = append(state.EditedFiles, path)
+	if len(r.editedFileEdits) > 0 {
+		state.EditedFileEdits = make(map[string]FileEdit, len(r.editedFileEdits))
+		maps.Copy(state.EditedFileEdits, r.editedFileEdits)
 	}
 	if r.cachedBundle != nil && !r.cachedBundle.IsEmpty() {
 		state.CachedBundle = r.cachedBundle
@@ -154,11 +151,15 @@ func (r *Runtime) RestartEvents() []RestartEvent {
 
 // emitRestartEvent is the SOLE write path for restart_event. It appends to
 // r.restartEvents (with trim to maxRestartEvents) and buffers an SSE event.
-// Callers:
+// Callers (abnormal/unscheduled restarts only — these also bump the restart
+// counter shown as the red "↻N" badge):
 //   - T17a (liveness threshold) via handleLivenessProbeResult.
 //   - T18 (crash / oom) via handleReconcileDiffResult.
 //   - T33 (readopted_failing) via doStart adoption branch.
-//   - RestartApp (user_restart).
+//
+// A user-initiated RestartApp (incl. applying edited config to a running app) is
+// deliberate, NOT abnormal: it emits no restart_event and does not bump the
+// counter.
 //
 // Must be called with r.mu held. detail / diagnostics may be empty — they
 // live on the persisted RestartEvent only, not in the EventDto payload.

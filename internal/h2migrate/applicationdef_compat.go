@@ -87,7 +87,7 @@ func decodeKotlinApplicationDef(data []byte) (appdef.ApplicationDef, error) {
 	out := appdef.ApplicationDef{
 		Name:               k.Name,
 		Image:              k.Image,
-		Environments:       k.Environments,
+		Environments:       appdef.OrderedMapFromMap(k.Environments),
 		Cmd:                k.Cmd,
 		Ports:              k.Ports,
 		Volumes:            k.Volumes,
@@ -126,7 +126,7 @@ func decodeKotlinApplicationDef(data []byte) (appdef.ApplicationDef, error) {
 		for _, ic := range k.InitContainers {
 			out.InitContainers = append(out.InitContainers, appdef.InitContainerDef{
 				Image:        ic.Image,
-				Environments: ic.Environments,
+				Environments: appdef.OrderedMapFromMap(ic.Environments),
 				Volumes:      ic.Volumes,
 				Kind:         kotlinKindToGo(ic.Kind),
 				Cmd:          ic.Cmd,

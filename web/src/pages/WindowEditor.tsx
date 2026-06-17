@@ -53,6 +53,8 @@ export function WindowEditor() {
 
   const [content, setContent] = useState<string | null>(null)
   const [editContent, setEditContent] = useState('')
+  // Generated baseline (no user patch) for the editor's change gutter.
+  const [baseline, setBaseline] = useState('')
   const [loaded, setLoaded] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -86,8 +88,11 @@ export function WindowEditor() {
     setError(null)
     try {
       let text: string
+      let base = ''
       if (isFile && filePath) {
-        text = await getAppFile(name, filePath)
+        const dto = await getAppFile(name, filePath)
+        text = dto.content
+        base = dto.baseline ?? ''
         // edited-flag is a per-file fact maintained by the daemon's
         // /apps/<name>/files endpoint — read it back so Reset visibility
         // matches the COG RMB menu's badge.
@@ -97,10 +102,13 @@ export function WindowEditor() {
           setFileEdited(entry?.edited ?? false)
         } catch { /* edited flag is non-essential; default false on error */ }
       } else {
-        text = await getAppConfig(name)
+        const dto = await getAppConfig(name)
+        text = dto.content
+        base = dto.baseline ?? ''
       }
       setContent(text ?? '')
       setEditContent(text ?? '')
+      setBaseline(base)
     } catch (e) {
       setLoadError((e as Error).message || String(e))
       setContent(null)
@@ -222,8 +230,9 @@ export function WindowEditor() {
         const stored = isFile && filePath
           ? await getAppFile(name, filePath)
           : await getAppConfig(name)
-        setContent(stored ?? '')
-        setEditContent(stored ?? '')
+        setContent(stored.content ?? '')
+        setEditContent(stored.content ?? '')
+        setBaseline(stored.baseline ?? '')
       } catch {
         setContent(editContent)
       }
@@ -259,13 +268,17 @@ export function WindowEditor() {
     <div className="h-screen bg-background text-foreground flex flex-col">
       <main className="flex-1 min-h-0 flex flex-col">
         {error && (
-          <div className="px-3 py-1.5 text-[11px] text-destructive border-b border-border shrink-0">{error}</div>
+          // font-mono + whitespace-pre keeps js-yaml's multi-line snippet (line
+          // gutter + the "^" caret under the offending column) aligned instead
+          // of collapsing it into one run-on line; scroll if it's tall/wide.
+          <div className="px-3 py-1.5 text-[11px] text-destructive border-b border-border shrink-0 font-mono whitespace-pre overflow-auto max-h-40">{error}</div>
         )}
         <div className="flex-1 min-h-0 overflow-hidden">
           <CodeEditor
             value={editContent}
             onChange={setEditContent}
             filename={editorFilename}
+            baseline={baseline}
             height="100%"
             autoFocus
           />

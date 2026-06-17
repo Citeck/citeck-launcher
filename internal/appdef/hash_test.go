@@ -25,11 +25,11 @@ func TestGetHashInput_Golden(t *testing.T) {
 		NetworkAliases: []string{"emodel-alias"}, // not hashed
 		Image:          "nexus.citeck.ru/ecos-model:2.5.0",
 		ImageDigest:    "sha256:0123456789abcdef",
-		Environments: map[string]string{
+		Environments: OrderedMap{
 			// Deliberately out of order — GetHashInput must sort by key.
-			"SERVER_PORT":            "17022",
-			"ECOS_INIT_DELAY":        "0",
-			"SPRING_PROFILES_ACTIVE": "dev,launcher",
+			{Key: "SERVER_PORT", Value: "17022"},
+			{Key: "ECOS_INIT_DELAY", Value: "0"},
+			{Key: "SPRING_PROFILES_ACTIVE", Value: "dev,launcher"},
 		},
 		Cmd:                []string{"start", "--http-enabled=true"},
 		Ports:              []string{"8080:80", "17022:17022"}, // out of order — must sort

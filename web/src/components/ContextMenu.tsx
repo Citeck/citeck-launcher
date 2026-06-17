@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 
 export interface ContextMenuItem {
   label: string
@@ -45,9 +46,32 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
   }, [position])
 
   useEffect(() => {
+    // Tracked at effect scope so cleanup can remove a pending swallow listener
+    // that never fired (e.g. the dismissing mousedown was dragged away with no
+    // matching click) — otherwise it would linger and eat the next global click.
+    let swallow: ((ev: MouseEvent) => void) | null = null
+    const clearSwallow = () => {
+      if (swallow) {
+        document.removeEventListener('click', swallow, true)
+        swallow = null
+      }
+    }
     function handleClick(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) {
         onClose()
+        // A left-button mousedown outside closes the menu, but the matching
+        // `click` would still reach whatever is underneath (e.g. an app row,
+        // opening the drawer). Swallow exactly that one click in the capture
+        // phase — before React's handlers — so the first click only dismisses.
+        if (e.button === 0) {
+          clearSwallow() // drop any stale pending swallow first
+          swallow = (ev: MouseEvent) => {
+            ev.stopPropagation()
+            ev.preventDefault()
+            clearSwallow()
+          }
+          document.addEventListener('click', swallow, true)
+        }
       }
     }
     function handleKey(e: KeyboardEvent) {
@@ -58,10 +82,14 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
     return () => {
       document.removeEventListener('mousedown', handleClick)
       document.removeEventListener('keydown', handleKey)
+      clearSwallow()
     }
   }, [onClose])
 
-  return (
+  // Portal to <body>: a fixed-position overlay must not live inside the table
+  // (a caller renders it among <tr>s) — an extra row there perturbs the
+  // border-collapse layout and nudges row heights by ~1px when the menu opens.
+  return createPortal(
     <div
       ref={ref}
       className="fixed z-50 bg-card border border-border rounded shadow-lg py-1 min-w-[160px]"
@@ -102,6 +130,7 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
           </span>
         ),
       )}
-    </div>
+    </div>,
+    document.body,
   )
 }

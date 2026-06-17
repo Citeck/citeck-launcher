@@ -14,7 +14,7 @@ func generateProxy(ctx *NsGenContext) {
 	// Get gateway port
 	gatewayPort := "8094"
 	if gw, ok := ctx.Applications[appdef.AppGateway]; ok {
-		if p, ok := gw.Environments["SERVER_PORT"]; ok {
+		if p, ok := gw.Environments.Get("SERVER_PORT"); ok {
 			gatewayPort = p
 		}
 	}

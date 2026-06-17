@@ -154,6 +154,10 @@ func (s *Supervisor) spawn(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, bin, args...) //nolint:gosec // G204: bin is our own daemon binary
 	cmd.Stdin = strings.NewReader(s.Stdin)
 	cmd.Env = append(os.Environ(), s.ExtraEnv...)
+	// Bind the daemon's lifecycle to ours: the child polls this pid and exits
+	// (detaching, containers left running) if we vanish without a graceful quit
+	// — the cross-platform backstop where Linux's Pdeathsig isn't available.
+	cmd.Env = append(cmd.Env, fmt.Sprintf("CITECK_WRAPPER_PID=%d", os.Getpid()))
 	if s.LogWriter != nil {
 		cmd.Stdout = s.LogWriter
 		cmd.Stderr = s.LogWriter

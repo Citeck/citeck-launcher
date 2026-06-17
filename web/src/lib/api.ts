@@ -3,8 +3,11 @@ import type {
   HealthDto,
   DaemonStatusDto,
   AppInspectDto,
+  AppImageDto,
   ActionResultDto,
   AppFileDto,
+  AppConfigDto,
+  AppFileContentDto,
   NamespaceSummaryDto,
   QuickStartDto,
   NamespaceCreateDto,
@@ -132,11 +135,6 @@ async function request<T>(method: HttpMethod, path: string, opts?: RequestOpts):
   return res.json()
 }
 
-async function requestText(method: HttpMethod, path: string, opts?: RequestOpts): Promise<string> {
-  const res = await rawRequest(method, path, opts)
-  return res.text()
-}
-
 export async function getNamespace(): Promise<NamespaceDto> {
   return request('GET', '/namespace')
 }
@@ -151,6 +149,14 @@ export async function getDaemonStatus(): Promise<DaemonStatusDto> {
 
 export async function getAppInspect(name: string): Promise<AppInspectDto> {
   return request('GET', `/apps/${enc(name)}/inspect`)
+}
+
+export async function getAppImage(name: string): Promise<AppImageDto> {
+  return request('GET', `/apps/${enc(name)}/image`)
+}
+
+export async function pullAppImage(name: string): Promise<ActionResultDto> {
+  return request('POST', `/apps/${enc(name)}/image/pull`)
 }
 
 export async function postAppRestart(name: string): Promise<ActionResultDto> {
@@ -326,6 +332,28 @@ export async function saveSystemDumpNative(): Promise<string> {
   return data.path ?? ''
 }
 
+/**
+ * Desktop-only: write a text payload into the user's Downloads folder. The
+ * WebKitGTK webview has no download manager, so the browser <a download> path
+ * is a no-op there; callers fall back to it in server/browser mode.
+ * Lives outside API_BASE (Wails asset-server route).
+ */
+export async function saveDownload(filename: string, content: string): Promise<{ path: string; dir: string }> {
+  const res = await fetchWithTimeout('/desktop/save-download', {
+    method: 'POST',
+    headers: { ...CSRF_HEADER, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename, content }),
+  }, 30_000)
+  if (!res.ok) throw await extractApiError(res)
+  return res.json() as Promise<{ path: string; dir: string }>
+}
+
+/** Desktop-only: reveal the Downloads folder in the OS file manager. */
+export async function openDownloadsFolder(): Promise<void> {
+  const res = await fetchWithTimeout('/desktop/open-downloads', { method: 'POST', headers: CSRF_HEADER }, 5_000)
+  if (!res.ok) throw await extractApiError(res)
+}
+
 export async function getVolumes(): Promise<{ name: string; path: string; size?: number }[]> {
   return request('GET', '/volumes')
 }
@@ -341,8 +369,8 @@ export async function deleteVolume(name: string): Promise<ActionResultDto> {
   return request('DELETE', `/volumes/${enc(name)}`)
 }
 
-export async function getAppConfig(name: string): Promise<string> {
-  return requestText('GET', `/apps/${enc(name)}/config`)
+export async function getAppConfig(name: string): Promise<AppConfigDto> {
+  return request('GET', `/apps/${enc(name)}/config`)
 }
 
 export async function putAppConfig(name: string, content: string): Promise<ActionResultDto> {
@@ -373,9 +401,9 @@ export async function resetAppFile(name: string, path: string): Promise<ActionRe
   return request('POST', `/apps/${enc(name)}/files/reset?path=${enc(cleanPath)}`)
 }
 
-export async function getAppFile(name: string, path: string): Promise<string> {
+export async function getAppFile(name: string, path: string): Promise<AppFileContentDto> {
   const cleanPath = path.startsWith('./') ? path.slice(2) : path
-  return requestText('GET', `/apps/${enc(name)}/files/${encPath(cleanPath)}`)
+  return request('GET', `/apps/${enc(name)}/files/${encPath(cleanPath)}`)
 }
 
 export async function putAppFile(name: string, path: string, content: string): Promise<ActionResultDto> {
@@ -406,6 +434,15 @@ export async function createNamespace(data: NamespaceCreateDto): Promise<ActionR
 
 export async function getBundles(): Promise<BundleInfoDto[]> {
   return request('GET', '/bundles')
+}
+
+/**
+ * Sync a single bundle repo (by id) so its versions land on disk. force=true
+ * (explicit refresh) bypasses the per-repo PullPeriod throttle; force=false
+ * (on selection) respects it — re-pull only after the period, clone if absent.
+ */
+export async function pullBundleRepo(repoId: string, force = false): Promise<ActionResultDto> {
+  return request('POST', `/bundles/${enc(repoId)}/pull${force ? '?force=true' : ''}`, { timeout: 180_000 })
 }
 
 /**

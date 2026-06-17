@@ -5,6 +5,7 @@ package namespace
 // orchestrating Generate stays in generator.go.
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
@@ -154,8 +155,17 @@ func flatMapToYAML(m map[string]any) string {
 			}
 		}
 	}
-	data, _ := yaml.Marshal(root)
-	return string(data)
+	// yaml.Marshal hardcodes a 4-space indent; drive an encoder for the 2-space
+	// indent the editor (and the rest of our generated YAML) uses.
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(root); err != nil {
+		_ = enc.Close()
+		return ""
+	}
+	_ = enc.Close()
+	return buf.String()
 }
 
 // resolveTemplateVars replaces ${VAR} placeholders in datasource URLs.

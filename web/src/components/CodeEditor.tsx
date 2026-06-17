@@ -15,6 +15,8 @@ import { clike } from '@codemirror/legacy-modes/mode/clike'
 // from the canonical `@codemirror/language` package. The lock-file already
 // pins this via the legacy-modes peer chain.
 import { indentUnit, StreamLanguage } from '@codemirror/language'
+import { undo, redo } from '@codemirror/commands'
+import { changeGutterExtension, setBaseline } from './changeGutter'
 
 interface CodeEditorProps {
   value: string
@@ -27,6 +29,11 @@ interface CodeEditorProps {
   height?: string
   /** Auto-focus on mount — useful for editor windows. */
   autoFocus?: boolean
+  /**
+   * Generated baseline to diff against for the left change gutter. When set
+   * (even ""), a git-style gutter marks lines changed/added vs the baseline.
+   */
+  baseline?: string
 }
 
 /**
@@ -39,7 +46,7 @@ interface CodeEditorProps {
  * prev/next, case-sensitive and regex toggles — replacing CodeMirror's stock
  * bottom panel, which mounted with a visible delay and looked out of place.
  */
-export function CodeEditor({ value, onChange, readOnly = false, filename = '', height, autoFocus = false }: CodeEditorProps) {
+export function CodeEditor({ value, onChange, readOnly = false, filename = '', height, autoFocus = false, baseline }: CodeEditorProps) {
   const { t } = useTranslation()
   // Follow the app theme — a hardcoded dark editor looked wrong inside the
   // light-theme config dialog. Reactive in the main app; in a secondary
@@ -54,6 +61,11 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
   const [regexp, setRegexp] = useState(false)
   const [matches, setMatches] = useState<Match[]>([])
   const [current, setCurrent] = useState(-1)
+  // Presence (not value) of baseline gates the gutter extension; the baseline
+  // text itself is pushed reactively via setBaseline so it must NOT rebuild the
+  // editor on every change.
+  const hasBaseline = baseline !== undefined
+  const revertLabel = t('appConfig.revertLine')
 
   const extensions = useMemo<Extension[]>(() => {
     const lang = detectLanguage(filename)
@@ -66,6 +78,9 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
     exts.push(indentUnit.of('  '))
     // Our custom search-match highlighting (driven by the toolbar below).
     exts.push(searchHighlighter())
+    // Left change gutter: mark lines changed/added vs the generated baseline,
+    // click a marker to revert that line.
+    if (hasBaseline) exts.push(...changeGutterExtension(revertLabel))
     // Paint the editor surface on the full parent rectangle even when the
     // file is short. @uiw/react-codemirror's outer wrapper takes the `height`
     // prop, but the inner cm-editor / cm-scroller / cm-content default to
@@ -77,6 +92,13 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
         height: '100%',
         display: 'flex',
         flexDirection: 'column',
+        // Theme-agnostic surface: paint with the app's CSS theme variables,
+        // which index.html's anti-FOUC script sets on <html> synchronously
+        // BEFORE first paint. Without this, the editor surface flashes the
+        // @uiw default (dark) for a frame on open in light theme until @uiw's
+        // light theme mounts. The vars track data-theme, so both themes match.
+        backgroundColor: 'var(--color-background)',
+        color: 'var(--color-foreground)',
       },
       '.cm-scroller': {
         flex: '1 1 auto',
@@ -86,7 +108,15 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
       '.cm-gutters': { minHeight: '100%' },
     }))
     return exts
-  }, [filename])
+  }, [filename, hasBaseline, revertLabel])
+
+  // Push baseline updates into the live editor without rebuilding it.
+  useEffect(() => {
+    const view = viewRef.current
+    if (view && baseline !== undefined) {
+      view.dispatch({ effects: setBaseline.of(baseline) })
+    }
+  }, [baseline])
 
   // Jump the editor selection + viewport to a given match and repaint the
   // active-match decoration. Used both on query change and prev/next nav.
@@ -153,6 +183,32 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
     requestAnimationFrame(() => inputRef.current?.select())
   }, [])
 
+  // Undo/redo by PHYSICAL key (event.code) at the DOCUMENT level so it works on
+  // non-Latin layouts (a Russian layout's Ctrl+Z emits "я", which CM's keymap
+  // never matches). On the desktop webview Latin Ctrl+Z is handled by the
+  // webview's NATIVE contenteditable undo and never reaches JS at all — that
+  // path keeps working for typed edits and is left untouched; for a programmatic
+  // gutter revert (not in native history) the toast's Undo button is the
+  // reliable affordance. We only supplement here for the layouts that DO deliver
+  // the event to JS.
+  useEffect(() => {
+    if (readOnly) return
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      const view = viewRef.current
+      if (!view) return
+      const isZ = e.code === 'KeyZ'
+      const isY = e.code === 'KeyY'
+      if (!isZ && !isY) return
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      if (isZ && !e.shiftKey) undo(view)
+      else redo(view)
+    }
+    document.addEventListener('keydown', handler, true)
+    return () => document.removeEventListener('keydown', handler, true)
+  }, [readOnly])
+
   const closeSearch = useCallback(() => {
     setSearchOpen(false)
     setMatches([])
@@ -164,8 +220,10 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
     }
   }, [])
 
+  // Ctrl+F / Escape matched by PHYSICAL key (event.code) so search works on
+  // non-Latin layouts too (a Russian layout emits "а" for the F key).
   const onWrapperKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+    if ((e.ctrlKey || e.metaKey) && e.code === 'KeyF') {
       e.preventDefault()
       e.stopPropagation()
       openSearch()
@@ -252,7 +310,13 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
         className="h-full"
         extensions={extensions}
         onChange={(v) => onChange?.(v)}
-        onCreateEditor={(view) => { viewRef.current = view }}
+        onCreateEditor={(view) => {
+          viewRef.current = view
+          // Seed the baseline immediately on (re)creation so the change gutter
+          // never diffs against an empty baseline (the [baseline] effect only
+          // fires on prop change, not on editor recreation).
+          if (baseline !== undefined && baseline !== '') view.dispatch({ effects: setBaseline.of(baseline) })
+        }}
         editable={!readOnly}
         autoFocus={autoFocus}
         theme={isDark ? 'dark' : 'light'}
@@ -262,6 +326,12 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
           // Our own Ctrl+F drives the toolbar above; disable CM's stock search
           // keymap so it doesn't also mount its (laggy, bottom-anchored) panel.
           searchKeymap: false,
+          // Undo/redo: a document-level event.code handler covers layouts that
+          // deliver Ctrl+Z to JS (incl. non-Latin); on the desktop webview Latin
+          // Ctrl+Z is handled by the native contenteditable undo. CM's key-based
+          // historyKeymap is off to avoid a double-undo with our handler. History
+          // STATE stays on (basicSetup `history`).
+          historyKeymap: false,
           foldGutter: true,
           autocompletion: false, // Kotlin EditorWindow has no autocomplete
         }}

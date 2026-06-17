@@ -113,8 +113,7 @@ func splitHashInputLines(s string) []string {
 // (the hash is sha256 of the input) and additionally yields the line diff.
 func (r *Runtime) PlanRegenerate(ctx context.Context, desired []appdef.ApplicationDef) []ReloadPlanEntry {
 	r.mu.RLock()
-	editedLocked := maps.Clone(r.editedLockedApps)
-	editedApps := maps.Clone(r.editedApps)
+	editPatches := maps.Clone(r.editedAppPatches)
 	detached := maps.Clone(r.manualStoppedApps)
 	currentInputs := make(map[string]string, len(r.apps))
 	for name, app := range r.apps {
@@ -125,11 +124,7 @@ func (r *Runtime) PlanRegenerate(ctx context.Context, desired []appdef.Applicati
 	entries := make([]ReloadPlanEntry, 0, len(desired)+4)
 	seen := make(map[string]bool, len(desired))
 	for _, def := range desired {
-		if editedLocked[def.Name] {
-			if edited, ok := editedApps[def.Name]; ok {
-				def = edited
-			}
-		}
+		def = applyEditPatchFrom(def, editPatches[def.Name])
 		snapshotTag := shouldPullImage(def.Kind, def.Image)
 		if snapshotTag {
 			def.ImageDigest = ""

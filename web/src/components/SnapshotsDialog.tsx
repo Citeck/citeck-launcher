@@ -9,6 +9,7 @@ import { toast } from '../lib/toast'
 import { formatDateTime } from '../lib/datetime'
 import { showError } from '../lib/errorModal'
 import { startLongOp, endLongOp, useLongOpStore } from '../lib/longOp'
+import { formatBytes } from '../lib/format'
 
 interface SnapshotRow {
   name: string
@@ -548,13 +549,6 @@ function RowButton({ icon: Icon, title, disabled, variant = 'default', onClick }
       <Icon size={14} />
     </button>
   )
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`
-  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`
-  return `${bytes} B`
 }
 
 function defaultSnapshotName(): string {

@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import type { AppDto } from '../lib/types'
 import { postAppStop, postAppStart, postAppRestart, getAppFiles } from '../lib/api'
 import { usePanelStore } from '../lib/panels'
@@ -29,7 +30,7 @@ type AppAction = { type: 'stop' | 'start' | 'restart'; appName: string } | null
 
 const RUNNING = ['RUNNING']
 const STOPPED = ['STOPPED', 'START_FAILED', 'PULL_FAILED', 'FAILED', 'STOPPING_FAILED']
-const TRANSITIONAL = ['STARTING', 'PULLING', 'DEPS_WAITING', 'READY_TO_PULL', 'READY_TO_START', 'STOPPING']
+const TRANSITIONAL = ['STARTING', 'PULLING', 'DEPS_WAITING', 'READY_TO_PULL', 'READY_TO_START', 'STOPPING', 'UPDATING']
 
 const KIND_ORDER: Record<string, number> = { CITECK_CORE: 0, CITECK_CORE_EXTENSION: 1, CITECK_ADDITIONAL: 2, THIRD_PARTY: 3 }
 // Values are checked against the locale key set; labelKey itself stays a
@@ -137,6 +138,9 @@ export function AppTable({ apps, highlightedApp }: AppTableProps) {
 
 function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: string; apps: AppDto[]; onAction: (a: NonNullable<AppAction>) => void; highlightedApp?: string | null }) {
   const { openDrawer } = usePanelStore()
+  // Where the press started — a row click only counts when mouseup lands near
+  // mousedown, so a press-here / release-there drag doesn't open the drawer.
+  const downPos = useRef<{ x: number; y: number } | null>(null)
   const { t, tDynamic } = useTranslation()
   const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu()
   const pullProgress = useDashboardStore((s) => s.pullProgress)
@@ -225,7 +229,13 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
           // tag-copy cell stop propagation so their own clicks still win.
           <tr key={app.name}
             className={`group cursor-pointer border-b border-border/20 ${isHighlighted ? 'bg-primary/8' : 'hover:bg-accent'}`}
-            onClick={() => openDrawer(app.name)}>
+            onMouseDown={(e) => { downPos.current = { x: e.clientX, y: e.clientY } }}
+            onClick={(e) => {
+              const d = downPos.current
+              // Treat a >6px move between press and release as a drag, not a click.
+              if (d && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 6) return
+              openDrawer(app.name)
+            }}>
             <td className="py-[2px] pr-4 font-mono whitespace-nowrap">
               <span className="text-primary group-hover:underline">{app.name}</span>
             </td>
@@ -322,6 +332,8 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
                     filled
                     title={t('table.action.stop')}
                     color="hover:text-destructive"
+                    // Already stopping → the Stop button is a no-op; disable it.
+                    disabled={app.status === 'STOPPING'}
                     onClick={() => onAction({ type: 'stop', appName: app.name })}
                     onContextMenu={(e) => openRestartMenu(e, app.name, false)}
                   />
@@ -357,11 +369,7 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
         )
       })}
       {contextMenu && (
-        <tr>
-          <td colSpan={7}>
-            <ContextMenu items={contextMenu.items} position={contextMenu.position} onClose={hideContextMenu} />
-          </td>
-        </tr>
+        <ContextMenu items={contextMenu.items} position={contextMenu.position} onClose={hideContextMenu} />
       )}
     </>
   )
@@ -386,13 +394,14 @@ function PullProgressBar({ percent, phase }: { percent: number; phase: string })
   )
 }
 
-function IconBtn({ icon: Icon, title, color, onClick, onContextMenu, filled }: { icon: React.ElementType; title: string; color?: string; onClick: () => void; onContextMenu?: (e: React.MouseEvent) => void; filled?: boolean }) {
+function IconBtn({ icon: Icon, title, color, onClick, onContextMenu, filled, disabled }: { icon: React.ElementType; title: string; color?: string; onClick: () => void; onContextMenu?: (e: React.MouseEvent) => void; filled?: boolean; disabled?: boolean }) {
   return (
     <button
       type="button"
-      className={`px-1 py-0.5 rounded text-muted-foreground ${color ?? 'hover:text-foreground'} hover:bg-muted`}
+      disabled={disabled}
+      className={`px-1 py-0.5 rounded text-muted-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent ${disabled ? '' : color ?? 'hover:text-foreground'}`}
       onClick={onClick}
-      onContextMenu={onContextMenu}
+      onContextMenu={disabled ? undefined : onContextMenu}
       title={title}
     >
       {/* Transport-style controls (stop/play) render filled so the stop button

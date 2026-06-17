@@ -1077,6 +1077,33 @@ func (d *Daemon) handleListBundles(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, result)
 }
 
+// handleBundleRepoPull force-pulls a single configured bundle repo (by ID) so
+// its versions appear without resolving a namespace against it. Backs the
+// namespace edit dialog's per-repo refresh button (e.g. selecting "release" or
+// "alf-develop" then refreshing, which were never cloned by the active ref).
+func (d *Daemon) handleBundleRepoPull(w http.ResponseWriter, r *http.Request) {
+	repoID := r.PathValue("repoId")
+	act := d.active()
+	if act.workspaceConfig == nil {
+		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no workspace config")
+		return
+	}
+	// force=true (explicit ↻) bypasses the PullPeriod throttle; otherwise the
+	// pull (triggered on repo selection) honors the throttle — re-pull only
+	// after the period elapses, and clone unconditionally when nothing is on
+	// disk yet. No background pulling either way.
+	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(act.workspaceID), makeTokenLookup(d.secretReaderFunc())).
+		WithWorkspaceRepo(d.resolveActiveWorkspaceRepoOpts())
+	if r.URL.Query().Get("force") == "true" {
+		resolver = resolver.WithForcePull()
+	}
+	if _, err := resolver.SyncBundleRepo(act.workspaceConfig, repoID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, api.ActionResultDto{Success: true, Message: "bundle repo synced"})
+}
+
 // resolveBundleDir returns the on-disk directory for a bundle repo.
 // Delegates to the shared ResolveBundleRepoDir which handles offline import,
 // workspace repo, and cloned repo priorities. In desktop mode bundles live
