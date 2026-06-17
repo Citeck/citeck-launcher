@@ -266,6 +266,7 @@ const fr = {
   'drawer.network': 'R\u00e9seau',
   'drawer.started': 'D\u00e9marr\u00e9',
   'drawer.uptime': 'Temps de fonctionnement',
+  'drawer.memory': 'Mémoire',
   'drawer.restarts': 'Red\u00e9marrages',
   'drawer.ports': 'Ports',
   'drawer.volumes': 'Volumes',

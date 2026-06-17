@@ -216,6 +216,9 @@ type AppInspectDto struct {
 	RestartCount int               `json:"restartCount"`
 	StartedAt    string            `json:"startedAt"`
 	Uptime       int64             `json:"uptime"`
+	// MemoryLimit is the container's memory limit in bytes (HostConfig.Memory),
+	// 0 when unlimited / unknown. The live usage is the AppDto.Memory string.
+	MemoryLimit int64 `json:"memoryLimit"`
 }
 
 // AppImageDto is the image-details view shown in the drawer's image popup.

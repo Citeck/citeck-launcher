@@ -268,6 +268,7 @@ const en = {
   'drawer.network': 'Network',
   'drawer.started': 'Started',
   'drawer.uptime': 'Uptime',
+  'drawer.memory': 'Memory',
   'drawer.restarts': 'Restarts',
   'drawer.ports': 'Ports',
   'drawer.volumes': 'Volumes',

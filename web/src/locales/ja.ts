@@ -266,6 +266,7 @@ const ja = {
   'drawer.network': '\u30cd\u30c3\u30c8\u30ef\u30fc\u30af',
   'drawer.started': '\u958b\u59cb\u65e5\u6642',
   'drawer.uptime': '\u7a3c\u50cd\u6642\u9593',
+  'drawer.memory': '\u30e1\u30e2\u30ea',
   'drawer.restarts': '\u518d\u8d77\u52d5\u56de\u6570',
   'drawer.ports': '\u30dd\u30fc\u30c8',
   'drawer.volumes': '\u30dc\u30ea\u30e5\u30fc\u30e0',

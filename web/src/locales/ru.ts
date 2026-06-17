@@ -266,6 +266,7 @@ const ru = {
   'drawer.network': 'Сеть',
   'drawer.started': 'Запущен',
   'drawer.uptime': 'Время работы',
+  'drawer.memory': 'Память',
   'drawer.restarts': 'Перезапуски',
   'drawer.ports': 'Порты',
   'drawer.volumes': 'Тома',

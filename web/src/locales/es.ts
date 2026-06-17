@@ -266,6 +266,7 @@ const es = {
   'drawer.network': 'Red',
   'drawer.started': 'Iniciado',
   'drawer.uptime': 'Tiempo de actividad',
+  'drawer.memory': 'Memoria',
   'drawer.restarts': 'Reinicios',
   'drawer.ports': 'Puertos',
   'drawer.volumes': 'Volúmenes',

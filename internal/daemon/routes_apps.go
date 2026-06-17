@@ -361,6 +361,9 @@ func (d *Daemon) handleAppInspect(w http.ResponseWriter, r *http.Request) {
 		RestartCount: inspect.RestartCount,
 		StartedAt:    inspect.State.StartedAt,
 	}
+	if inspect.HostConfig != nil {
+		dto.MemoryLimit = inspect.HostConfig.Memory
+	}
 
 	if inspect.State.StartedAt != "" {
 		if startedAt, err := time.Parse(time.RFC3339Nano, inspect.State.StartedAt); err == nil {

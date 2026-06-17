@@ -266,6 +266,7 @@ const de = {
   'drawer.network': 'Netzwerk',
   'drawer.started': 'Gestartet',
   'drawer.uptime': 'Betriebszeit',
+  'drawer.memory': 'Speicher',
   'drawer.restarts': 'Neustarts',
   'drawer.ports': 'Ports',
   'drawer.volumes': 'Volumes',

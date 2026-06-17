@@ -266,6 +266,7 @@ const pt = {
   'drawer.network': 'Rede',
   'drawer.started': 'Iniciado',
   'drawer.uptime': 'Tempo ativo',
+  'drawer.memory': 'Memória',
   'drawer.restarts': 'Reinicializa\u00e7\u00f5es',
   'drawer.ports': 'Portas',
   'drawer.volumes': 'Volumes',

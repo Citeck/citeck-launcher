@@ -266,6 +266,7 @@ const zh = {
   'drawer.network': '网络',
   'drawer.started': '启动时间',
   'drawer.uptime': '运行时间',
+  'drawer.memory': '内存',
   'drawer.restarts': '重启次数',
   'drawer.ports': '端口',
   'drawer.volumes': '存储卷',
