@@ -368,8 +368,10 @@ export function Dashboard() {
           </div>
         </aside>
 
-        {/* Main table area */}
-        <div className="flex-1 min-w-0 p-2 overflow-auto">
+        {/* Main table area. No top padding: the table header is `sticky top-0`
+            and sticks at the scroll container's content edge — a pt would leave
+            a gap above it that rows scroll into ("not pinned to the ceiling"). */}
+        <div className="flex-1 min-w-0 px-2 pb-2 overflow-auto">
           <AppTable apps={apps} highlightedApp={drawerAppName} />
         </div>
 
