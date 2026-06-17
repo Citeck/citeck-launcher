@@ -172,42 +172,45 @@ func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
 		return
 	}
-	// "Force Update And Start" (Kotlin RMB menu): force a git pull of the
-	// workspace / bundle repos so new bundle versions are picked up, then start
-	// (stopped) or recreate-changed (running). Kotlin 1.x parity: forceUpdate
-	// flips ONLY the git policy to REQUIRED — image pulling stays normal (a
-	// present release tag is reused; only :snapshot tags refresh), so force never
-	// re-pulls release tags. Runs off the request goroutine (slow git I/O).
-	if r.URL.Query().Get("force") == "true" {
-		st := runtime.Status()
-		wasRunning := st == namespace.NsStatusRunning || st == namespace.NsStatusStalled
-		d.forceUpdateAsync(wasRunning)
-		writeJSON(w, api.ActionResultDto{Success: true, Message: "Force update and start requested"})
-		return
+	// Both "Update And Start" (primary) and "Force Update And Start" (RMB menu)
+	// pull the workspace / bundle repos before starting, so a stopped namespace
+	// picks up new bundle versions instead of starting a stale set. The only
+	// difference is timing: non-force respects the per-repo PullPeriod throttle
+	// (skips the pull if the last sync is recent), force bypasses it and pulls
+	// immediately. Kotlin 1.x parity: forceUpdate flips ONLY the git policy to
+	// REQUIRED — image pulling stays normal (a present release tag is reused;
+	// only :snapshot tags refresh), so force never re-pulls release tags. Runs
+	// off the request goroutine (slow git I/O).
+	force := r.URL.Query().Get("force") == "true"
+	st := runtime.Status()
+	wasRunning := st == namespace.NsStatusRunning || st == namespace.NsStatusStalled
+	d.updateAndStartAsync(force, wasRunning)
+	msg := "Namespace start requested"
+	if force {
+		msg = "Force update and start requested"
 	}
-	runtime.Start(appDefs)
-	writeJSON(w, api.ActionResultDto{Success: true, Message: "Namespace start requested"})
+	writeJSON(w, api.ActionResultDto{Success: true, Message: msg})
 }
 
-// forceUpdateAsync runs "Force Update And Start" off the request goroutine: a
-// forced git pull (REQUIRED policy — bypasses the PullPeriod throttle) re-resolves
-// the bundle, then a running namespace recreates changed apps while a stopped one
-// is started with the fresh set. doReloadEx holds reloadMu and does slow I/O, so
-// it must not block the HTTP handler; a concurrent reload already in progress
-// (TryLock fails) is treated as satisfying the request.
-func (d *Daemon) forceUpdateAsync(wasRunning bool) {
+// updateAndStartAsync runs "Update And Start" / "Force Update And Start" off the
+// request goroutine: a git pull (throttled by PullPeriod unless forceGitPull
+// bypasses it) re-resolves the bundle, then a running namespace recreates changed
+// apps while a stopped one is started with the fresh set. doReloadEx holds
+// reloadMu and does slow I/O, so it must not block the HTTP handler; a concurrent
+// reload already in progress (TryLock fails) is treated as satisfying the request.
+func (d *Daemon) updateAndStartAsync(forceGitPull, wasRunning bool) {
 	go func() {
 		if !d.reloadMu.TryLock() {
 			// A reload is already running and will pick up the freshly-pulled
-			// bundle, so the force-update intent is satisfied. Log it so an
-			// operator wondering "why didn't my force-update do anything?" can
-			// see the request was coalesced rather than dropped.
-			slog.Info("Force update coalesced into in-progress reload")
+			// bundle, so the update-and-start intent is satisfied. Log it so an
+			// operator wondering "why didn't my start do anything?" can see the
+			// request was coalesced rather than dropped.
+			slog.Info("Update-and-start coalesced into in-progress reload")
 			return
 		}
 		defer d.reloadMu.Unlock()
-		if err := d.doReloadEx(true, !wasRunning); err != nil {
-			slog.Warn("Force update failed", "err", err)
+		if err := d.doReloadEx(forceGitPull, !wasRunning); err != nil {
+			slog.Warn("Update and start failed", "err", err)
 		}
 	}()
 }
