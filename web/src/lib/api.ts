@@ -3,6 +3,7 @@ import type {
   HealthDto,
   DaemonStatusDto,
   AppInspectDto,
+  AppImageDto,
   ActionResultDto,
   AppFileDto,
   AppConfigDto,
@@ -148,6 +149,14 @@ export async function getDaemonStatus(): Promise<DaemonStatusDto> {
 
 export async function getAppInspect(name: string): Promise<AppInspectDto> {
   return request('GET', `/apps/${enc(name)}/inspect`)
+}
+
+export async function getAppImage(name: string): Promise<AppImageDto> {
+  return request('GET', `/apps/${enc(name)}/image`)
+}
+
+export async function pullAppImage(name: string): Promise<ActionResultDto> {
+  return request('POST', `/apps/${enc(name)}/image/pull`)
 }
 
 export async function postAppRestart(name: string): Promise<ActionResultDto> {

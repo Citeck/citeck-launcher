@@ -163,6 +163,10 @@ type Daemon struct {
 	// (default) — TCP then behaves exactly as before (CSRF gate only).
 	// See apiauth.go for the contract and bypass matrix.
 	apiAuth *apiAuth
+	// imagePulls tracks explicit image pulls triggered from the drawer's image
+	// popup, keyed by image ref → *imagePullState. Decoupled from the runtime
+	// state machine: the UI polls the inspect endpoint for pulling/error state.
+	imagePulls sync.Map
 }
 
 // active returns ONE consistent value-copy snapshot of the active-namespace
@@ -749,6 +753,8 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+api.AppsRetryPullFailed, d.handleAppsRetryPullFailed)
 	mux.HandleFunc("GET /api/v1/apps/{name}/logs", d.handleAppLogs)
 	mux.HandleFunc("GET /api/v1/apps/{name}/inspect", d.handleAppInspect)
+	mux.HandleFunc("GET /api/v1/apps/{name}/image", d.handleAppImageInspect)
+	mux.HandleFunc("POST /api/v1/apps/{name}/image/pull", d.handleAppImagePull)
 	mux.HandleFunc("POST /api/v1/apps/{name}/restart", d.handleAppRestart)
 	mux.HandleFunc("POST /api/v1/apps/{name}/stop", d.handleAppStop)
 	mux.HandleFunc("POST /api/v1/apps/{name}/start", d.handleAppStart)

@@ -218,6 +218,22 @@ type AppInspectDto struct {
 	Uptime       int64             `json:"uptime"`
 }
 
+// AppImageDto is the image-details view shown in the drawer's image popup.
+// When Present is false the image isn't pulled locally; the UI offers a Pull.
+// Pulling/PullError reflect an in-flight or failed explicit pull.
+type AppImageDto struct {
+	Ref          string   `json:"ref"`
+	Present      bool     `json:"present"`
+	Pulling      bool     `json:"pulling,omitempty"`
+	PullError    string   `json:"pullError,omitempty"`
+	ID           string   `json:"id,omitempty"`
+	RepoDigests  []string `json:"repoDigests,omitempty"`
+	Size         int64    `json:"size,omitempty"`
+	OS           string   `json:"os,omitempty"`
+	Architecture string   `json:"architecture,omitempty"`
+	Created      string   `json:"created,omitempty"`
+}
+
 // ErrorDto is the standard error response format.
 type ErrorDto struct {
 	Error   string `json:"error"`

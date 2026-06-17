@@ -585,6 +585,38 @@ func (c *Client) GetImageDigest(ctx context.Context, img string) string {
 	return ""
 }
 
+// ImageInfo is a trimmed, UI-facing view of a local image's inspect data.
+type ImageInfo struct {
+	Present      bool     `json:"present"`
+	ID           string   `json:"id"` // "sha256:..."
+	RepoTags     []string `json:"repoTags,omitempty"`
+	RepoDigests  []string `json:"repoDigests,omitempty"`
+	Size         int64    `json:"size"`
+	OS           string   `json:"os,omitempty"`
+	Architecture string   `json:"architecture,omitempty"`
+	Created      string   `json:"created,omitempty"`
+}
+
+// InspectImageInfo inspects a local image. A missing image (or any inspect
+// error) yields ImageInfo{Present: false} with a nil error — the caller treats
+// "not present" and "couldn't read" identically (offer a Pull either way).
+func (c *Client) InspectImageInfo(ctx context.Context, img string) ImageInfo {
+	insp, err := c.cli.ImageInspect(ctx, img)
+	if err != nil {
+		return ImageInfo{Present: false}
+	}
+	return ImageInfo{
+		Present:      true,
+		ID:           insp.ID,
+		RepoTags:     insp.RepoTags,
+		RepoDigests:  insp.RepoDigests,
+		Size:         insp.Size,
+		OS:           insp.Os,
+		Architecture: insp.Architecture,
+		Created:      insp.Created,
+	}
+}
+
 // PruneUnusedImages removes dangling images and returns space reclaimed in bytes.
 func (c *Client) PruneUnusedImages(ctx context.Context) (uint64, error) {
 	report, err := c.cli.ImagePrune(ctx, client.ImagePruneOptions{
