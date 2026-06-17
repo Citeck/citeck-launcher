@@ -261,7 +261,7 @@ export function LogViewport({
           type="button"
           onClick={resumeFollow}
           title={t('logViewer.follow.tooltip')}
-          className="absolute bottom-3 right-4 z-10 flex items-center gap-1 rounded-full border border-border bg-card/95 px-3 py-1.5 text-xs text-foreground shadow-lg backdrop-blur hover:bg-muted"
+          className="absolute bottom-3 right-4 z-10 flex items-center gap-1 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow-md hover:bg-primary/90"
         >
           <ArrowDown size={14} />
           {t('logViewer.follow')}
