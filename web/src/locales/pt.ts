@@ -329,7 +329,7 @@ const pt = {
   'logViewer.download.failed': 'Falha ao salvar o log',
   'logViewer.clear': 'Limpar',
   'logViewer.clear.tooltip': 'Limpar logs (Ctrl+L)',
-  'logViewer.empty': 'Nenhum log dispon\u00edvel',
+  'logViewer.empty': 'Nenhuma entrada de log',
   'logViewer.lines': '{count} linhas',
   'logViewer.linesTotal': '{count} linhas ({total} no total)',
   'logViewer.streaming': 'Transmitindo',

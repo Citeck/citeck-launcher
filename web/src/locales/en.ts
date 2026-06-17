@@ -331,7 +331,7 @@ const en = {
   'logViewer.download.failed': 'Failed to save log',
   'logViewer.clear': 'Clear',
   'logViewer.clear.tooltip': 'Clear logs (Ctrl+L)',
-  'logViewer.empty': 'No logs available',
+  'logViewer.empty': 'No log entries',
   'logViewer.lines': '{count} lines',
   'logViewer.linesTotal': '{count} lines ({total} total)',
   'logViewer.streaming': 'Streaming',

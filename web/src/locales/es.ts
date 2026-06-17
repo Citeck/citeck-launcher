@@ -329,7 +329,7 @@ const es = {
   'logViewer.download.failed': 'No se pudo guardar el registro',
   'logViewer.clear': 'Limpiar',
   'logViewer.clear.tooltip': 'Limpiar registros (Ctrl+L)',
-  'logViewer.empty': 'No hay registros disponibles',
+  'logViewer.empty': 'No hay entradas de registro',
   'logViewer.lines': '{count} líneas',
   'logViewer.linesTotal': '{count} líneas ({total} en total)',
   'logViewer.streaming': 'Transmitiendo',

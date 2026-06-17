@@ -329,7 +329,7 @@ const ru = {
   'logViewer.download.failed': 'Не удалось сохранить лог',
   'logViewer.clear': 'Очистить',
   'logViewer.clear.tooltip': 'Очистить логи (Ctrl+L)',
-  'logViewer.empty': 'Логи недоступны',
+  'logViewer.empty': 'Нет записей в журнале',
   'logViewer.lines': '{count} строк',
   'logViewer.linesTotal': '{count} строк ({total} всего)',
   'logViewer.streaming': 'Трансляция',

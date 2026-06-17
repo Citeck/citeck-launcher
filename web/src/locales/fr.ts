@@ -329,7 +329,7 @@ const fr = {
   'logViewer.download.failed': '\u00c9chec de l\u2019enregistrement du journal',
   'logViewer.clear': 'Effacer',
   'logViewer.clear.tooltip': 'Effacer les journaux (Ctrl+L)',
-  'logViewer.empty': 'Aucun journal disponible',
+  'logViewer.empty': 'Aucune entrée de journal',
   'logViewer.lines': '{count} lignes',
   'logViewer.linesTotal': '{count} lignes ({total} au total)',
   'logViewer.streaming': 'Diffusion en cours',

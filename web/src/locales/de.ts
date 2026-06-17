@@ -329,7 +329,7 @@ const de = {
   'logViewer.download.failed': 'Protokoll konnte nicht gespeichert werden',
   'logViewer.clear': 'Leeren',
   'logViewer.clear.tooltip': 'Protokolle leeren (Strg+L)',
-  'logViewer.empty': 'Keine Protokolle verfügbar',
+  'logViewer.empty': 'Keine Protokolleinträge',
   'logViewer.lines': '{count} Zeilen',
   'logViewer.linesTotal': '{count} Zeilen ({total} gesamt)',
   'logViewer.streaming': 'Live-Übertragung',
