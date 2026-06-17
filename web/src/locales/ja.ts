@@ -288,6 +288,7 @@ const ja = {
   'appConfig.fileSaved': '\u30d5\u30a1\u30a4\u30eb\u3092\u4fdd\u5b58\u3057\u307e\u3057\u305f',
   'appConfig.reset': 'リセット',
   'appConfig.reset.tooltip': '変更を破棄し、生成されたデフォルトを復元します',
+  'appConfig.revertLine': 'この行を生成されたデフォルトに戻す',
   'appConfig.reset.confirmTitle': 'アプリ設定をリセットしますか？',
   'appConfig.reset.confirmMessage': '変更を破棄し、ランチャーが生成したデフォルトを復元します。',
   'appConfig.reset.success': 'アプリ設定をデフォルトにリセットしました',

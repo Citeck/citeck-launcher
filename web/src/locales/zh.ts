@@ -288,6 +288,7 @@ const zh = {
   'appConfig.fileSaved': '文件已保存',
   'appConfig.reset': '重置',
   'appConfig.reset.tooltip': '放弃修改并恢复生成的默认值',
+  'appConfig.revertLine': '将此行恢复为生成的默认值',
   'appConfig.reset.confirmTitle': '重置应用配置？',
   'appConfig.reset.confirmMessage': '这将放弃您的修改，并恢复由启动器生成的默认值。',
   'appConfig.reset.success': '应用配置已重置为默认值',

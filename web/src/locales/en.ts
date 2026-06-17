@@ -294,6 +294,7 @@ const en = {
   'appConfig.fileSaved': 'File saved',
   'appConfig.reset': 'Reset',
   'appConfig.reset.tooltip': 'Discard edits and restore the generated default',
+  'appConfig.revertLine': 'Revert this line to the generated default',
   'appConfig.reset.confirmTitle': 'Reset app config?',
   'appConfig.reset.confirmMessage': 'This will discard your edits and restore the launcher-generated default.',
   'appConfig.reset.success': 'App config reset to default',

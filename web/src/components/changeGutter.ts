@@ -1,27 +1,60 @@
-import { gutter, GutterMarker, EditorView, Decoration, type DecorationSet } from '@codemirror/view'
+import { gutter, GutterMarker, EditorView, Decoration, type DecorationSet, type BlockInfo } from '@codemirror/view'
 import { StateField, StateEffect, RangeSet, type EditorState, type Range } from '@codemirror/state'
 
 export type LineKind = 'unchanged' | 'added' | 'changed'
 
-// diffLineKinds returns, for each line of `current`, whether it is unchanged,
-// changed, or added relative to `baseline`, via a line-level LCS. Baseline-only
-// lines (deletions) have no current line to mark and are skipped.
-export function diffLineKinds(baseline: string, current: string): LineKind[] {
-  const a = baseline.replace(/\n$/, '').split('\n')
-  const b = current.replace(/\n$/, '').split('\n')
+// LineOp describes, for one CURRENT line, how it relates to the baseline:
+//   - unchanged: identical baseline line exists (base = that text).
+//   - changed:   replaces a baseline line (base = the baseline text to restore).
+//   - added:     no baseline counterpart (base = null; revert ⇒ delete the line).
+export interface LineOp {
+  kind: LineKind
+  base: string | null
+}
+
+function splitLines(s: string): string[] {
+  if (s === '') return []
+  return s.replace(/\n$/, '').split('\n')
+}
+
+// alignLines aligns current lines to baseline lines via a line-level LCS, then
+// classifies each current line. Deleted baseline lines (no current counterpart)
+// are paired FIFO with inserted current lines as "changed" so a value edit reads
+// as a change (with the baseline text to restore), while genuinely new lines
+// read as "added".
+export function alignLines(baseline: string, current: string): LineOp[] {
+  const a = splitLines(baseline)
+  const b = splitLines(current)
   const n = a.length, m = b.length
   const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0))
   for (let i = n - 1; i >= 0; i--)
     for (let j = m - 1; j >= 0; j--)
       dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1])
-  const kinds: LineKind[] = []
+
+  const ops: LineOp[] = new Array(m)
+  const pendingDeleted: string[] = [] // baseline lines with no match yet
   let i = 0, j = 0
-  while (j < m) {
-    if (i < n && a[i] === b[j]) { kinds.push('unchanged'); i++; j++ }
-    else if (i < n && dp[i + 1][j] >= dp[i][j + 1]) { i++ }
-    else { kinds.push(i < n ? 'changed' : 'added'); j++ }
+  while (j < m || i < n) {
+    if (i < n && j < m && a[i] === b[j]) {
+      pendingDeleted.length = 0 // genuine deletions; nothing to attach them to
+      ops[j] = { kind: 'unchanged', base: a[i] }
+      i++; j++
+    } else if (i < n && (j >= m || dp[i + 1][j] >= dp[i][j + 1])) {
+      pendingDeleted.push(a[i]) // baseline-only line
+      i++
+    } else {
+      // current-only line: pair with a pending deleted baseline line if any.
+      const base = pendingDeleted.length > 0 ? pendingDeleted.shift()! : null
+      ops[j] = { kind: base !== null ? 'changed' : 'added', base }
+      j++
+    }
   }
-  return kinds
+  return ops
+}
+
+// diffLineKinds returns just the per-current-line kind (used for markers/decos).
+export function diffLineKinds(baseline: string, current: string): LineKind[] {
+  return alignLines(baseline, current).map((o) => o.kind)
 }
 
 export const setBaseline = StateEffect.define<string>()
@@ -34,6 +67,9 @@ const baselineField = StateField.define<string>({
   },
 })
 
+// Tooltip shown on clickable revert markers; set per-editor by the factory.
+let revertTitle = ''
+
 class ChangeMarker extends GutterMarker {
   readonly kind: LineKind
   constructor(kind: LineKind) {
@@ -43,6 +79,7 @@ class ChangeMarker extends GutterMarker {
   override toDOM() {
     const el = document.createElement('div')
     el.className = `cm-change-marker cm-change-${this.kind}`
+    if (revertTitle) el.title = revertTitle
     return el
   }
 }
@@ -70,8 +107,8 @@ const changeMarkers = StateField.define<RangeSet<GutterMarker>>({
 })
 
 // Line-background decorations for changed/added lines. A bg tint is far more
-// visible than a 3px gutter bar — used together so the operator can't miss an
-// edited line.
+// visible than a thin gutter bar — used together so an edited line can't be
+// missed.
 const addedLineDeco = Decoration.line({ class: 'cm-changed-line cm-changed-line-added' })
 const changedLineDeco = Decoration.line({ class: 'cm-changed-line cm-changed-line-changed' })
 
@@ -97,8 +134,28 @@ const changedLines = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 })
 
+// revertLineAt reverts the clicked line to its baseline: a changed line is
+// replaced with the baseline text, an added line is deleted. Returns true when
+// it acted (so the gutter swallows the click).
+function revertLineAt(view: EditorView, block: BlockInfo): boolean {
+  const baseline = view.state.field(baselineField, false) ?? ''
+  const num = view.state.doc.lineAt(block.from).number
+  const op = alignLines(baseline, view.state.doc.toString())[num - 1]
+  if (!op || op.kind === 'unchanged') return false
+  const line = view.state.doc.line(num)
+  if (op.kind === 'added') {
+    // Delete the whole line plus one adjoining newline (prefer the preceding one).
+    const from = line.from > 0 ? line.from - 1 : line.from
+    const to = line.from > 0 ? line.to : Math.min(line.to + 1, view.state.doc.length)
+    view.dispatch({ changes: { from, to, insert: '' } })
+  } else {
+    view.dispatch({ changes: { from: line.from, to: line.to, insert: op.base ?? '' } })
+  }
+  return true
+}
+
 const gutterTheme = EditorView.baseTheme({
-  '.cm-change-gutter': { width: '4px', padding: '0' },
+  '.cm-change-gutter': { width: '4px', padding: '0', cursor: 'pointer' },
   '.cm-change-gutter .cm-gutterElement': { padding: '0' },
   '.cm-change-marker': { width: '4px', height: '100%', minHeight: '1em' },
   '.cm-change-added': { background: '#3fb950' }, // green
@@ -109,9 +166,11 @@ const gutterTheme = EditorView.baseTheme({
 
 // changeGutterExtension builds the editor extension: a baseline holder, a
 // git-style colored gutter bar AND a line-background tint on added/changed lines
-// (vs the generated baseline). Update the baseline at runtime by dispatching
-// setBaseline.of(text).
-export function changeGutterExtension() {
+// (vs the generated baseline), plus click-to-revert on the gutter marker.
+// `revertLabel` is the marker tooltip. Update the baseline at runtime by
+// dispatching setBaseline.of(text).
+export function changeGutterExtension(revertLabel = '') {
+  revertTitle = revertLabel
   return [
     baselineField,
     changeMarkers,
@@ -120,6 +179,12 @@ export function changeGutterExtension() {
       class: 'cm-change-gutter',
       markers: (view) => view.state.field(changeMarkers),
       initialSpacer: () => addedMarker,
+      domEventHandlers: {
+        mousedown: (view, block, event) => {
+          if ((event as MouseEvent).button !== 0) return false
+          return revertLineAt(view, block)
+        },
+      },
     }),
     gutterTheme,
   ]

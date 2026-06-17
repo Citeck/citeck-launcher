@@ -288,6 +288,7 @@ const fr = {
   'appConfig.fileSaved': 'Fichier enregistr\u00e9',
   'appConfig.reset': 'Réinitialiser',
   'appConfig.reset.tooltip': 'Annuler les modifications et restaurer la valeur par défaut générée',
+  'appConfig.revertLine': 'Rétablir cette ligne à la valeur générée par défaut',
   'appConfig.reset.confirmTitle': 'Réinitialiser la configuration de l\'application ?',
   'appConfig.reset.confirmMessage': 'Cela annulera vos modifications et restaurera la valeur par défaut générée par le launcher.',
   'appConfig.reset.success': 'Configuration de l\'application réinitialisée',

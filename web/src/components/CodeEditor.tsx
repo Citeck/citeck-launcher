@@ -64,6 +64,7 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
   // text itself is pushed reactively via setBaseline so it must NOT rebuild the
   // editor on every change.
   const hasBaseline = baseline !== undefined
+  const revertLabel = t('appConfig.revertLine')
 
   const extensions = useMemo<Extension[]>(() => {
     const lang = detectLanguage(filename)
@@ -76,8 +77,9 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
     exts.push(indentUnit.of('  '))
     // Our custom search-match highlighting (driven by the toolbar below).
     exts.push(searchHighlighter())
-    // Left change gutter: mark lines changed/added vs the generated baseline.
-    if (hasBaseline) exts.push(...changeGutterExtension())
+    // Left change gutter: mark lines changed/added vs the generated baseline,
+    // click a marker to revert that line.
+    if (hasBaseline) exts.push(...changeGutterExtension(revertLabel))
     // Paint the editor surface on the full parent rectangle even when the
     // file is short. @uiw/react-codemirror's outer wrapper takes the `height`
     // prop, but the inner cm-editor / cm-scroller / cm-content default to
@@ -98,7 +100,7 @@ export function CodeEditor({ value, onChange, readOnly = false, filename = '', h
       '.cm-gutters': { minHeight: '100%' },
     }))
     return exts
-  }, [filename, hasBaseline])
+  }, [filename, hasBaseline, revertLabel])
 
   // Push baseline updates into the live editor without rebuilding it.
   useEffect(() => {

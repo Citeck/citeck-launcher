@@ -288,6 +288,7 @@ const de = {
   'appConfig.fileSaved': 'Datei gespeichert',
   'appConfig.reset': 'Zurücksetzen',
   'appConfig.reset.tooltip': 'Änderungen verwerfen und generierten Standard wiederherstellen',
+  'appConfig.revertLine': 'Diese Zeile auf den generierten Standard zurücksetzen',
   'appConfig.reset.confirmTitle': 'App-Konfiguration zurücksetzen?',
   'appConfig.reset.confirmMessage': 'Dadurch werden Ihre Änderungen verworfen und der vom Launcher generierte Standard wiederhergestellt.',
   'appConfig.reset.success': 'App-Konfiguration auf Standard zurückgesetzt',

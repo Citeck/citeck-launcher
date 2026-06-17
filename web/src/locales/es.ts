@@ -288,6 +288,7 @@ const es = {
   'appConfig.fileSaved': 'Archivo guardado',
   'appConfig.reset': 'Restablecer',
   'appConfig.reset.tooltip': 'Descartar los cambios y restaurar el valor predeterminado generado',
+  'appConfig.revertLine': 'Revertir esta línea al valor generado por defecto',
   'appConfig.reset.confirmTitle': '¿Restablecer la configuración de la app?',
   'appConfig.reset.confirmMessage': 'Esto descartará sus cambios y restaurará el valor predeterminado generado por el lanzador.',
   'appConfig.reset.success': 'Configuración de la app restablecida al valor predeterminado',
