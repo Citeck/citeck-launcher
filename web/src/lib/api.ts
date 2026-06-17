@@ -436,9 +436,13 @@ export async function getBundles(): Promise<BundleInfoDto[]> {
   return request('GET', '/bundles')
 }
 
-/** Force-pull a single bundle repo (by id) so its versions sync to disk. */
-export async function pullBundleRepo(repoId: string): Promise<ActionResultDto> {
-  return request('POST', `/bundles/${enc(repoId)}/pull`, { timeout: 180_000 })
+/**
+ * Sync a single bundle repo (by id) so its versions land on disk. force=true
+ * (explicit refresh) bypasses the per-repo PullPeriod throttle; force=false
+ * (on selection) respects it — re-pull only after the period, clone if absent.
+ */
+export async function pullBundleRepo(repoId: string, force = false): Promise<ActionResultDto> {
+  return request('POST', `/bundles/${enc(repoId)}/pull${force ? '?force=true' : ''}`, { timeout: 180_000 })
 }
 
 /**

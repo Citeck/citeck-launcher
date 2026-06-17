@@ -198,6 +198,17 @@ export function NamespaceEditDialog({
     setBundleRepo(repo)
     const r = bundles.find((b) => b.repo === repo)
     setBundleKey(r?.versions?.[0] ?? '')
+    // Sync this repo on selection (throttled server-side — no background
+    // pulling): clones if never fetched, re-pulls once the period elapses,
+    // otherwise a no-op. Explicit refresh (↻) forces past the throttle.
+    if (repo) {
+      setBundlesLoading(true)
+      pullBundleRepo(repo)
+        .then(() => getBundles())
+        .then((bs) => setBundles(bs))
+        .catch((e) => toast((e as Error).message, 'error'))
+        .finally(() => setBundlesLoading(false))
+    }
   }
 
   function validate(): boolean {
@@ -346,8 +357,8 @@ export function NamespaceEditDialog({
             onClick={() => {
               if (!bundleRepo) return
               setBundlesLoading(true)
-              // Force-pull the SELECTED repo so its versions sync, then re-list.
-              pullBundleRepo(bundleRepo)
+              // Explicit refresh: force-pull the SELECTED repo (bypass throttle).
+              pullBundleRepo(bundleRepo, true)
                 .then(() => getBundles())
                 .then((bs) => setBundles(bs))
                 .catch((e) => toast((e as Error).message, 'error'))

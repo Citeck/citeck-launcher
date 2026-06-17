@@ -1088,9 +1088,15 @@ func (d *Daemon) handleBundleRepoPull(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no workspace config")
 		return
 	}
+	// force=true (explicit ↻) bypasses the PullPeriod throttle; otherwise the
+	// pull (triggered on repo selection) honors the throttle — re-pull only
+	// after the period elapses, and clone unconditionally when nothing is on
+	// disk yet. No background pulling either way.
 	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(act.workspaceID), makeTokenLookup(d.secretReaderFunc())).
-		WithWorkspaceRepo(d.resolveActiveWorkspaceRepoOpts()).
-		WithForcePull()
+		WithWorkspaceRepo(d.resolveActiveWorkspaceRepoOpts())
+	if r.URL.Query().Get("force") == "true" {
+		resolver = resolver.WithForcePull()
+	}
 	if _, err := resolver.SyncBundleRepo(act.workspaceConfig, repoID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
