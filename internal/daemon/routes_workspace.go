@@ -321,6 +321,19 @@ func (d *Daemon) handleSystemOpenDir(w http.ResponseWriter, r *http.Request) {
 func (d *Daemon) resolveOpenDirPath(kind string) (string, error) {
 	switch kind {
 	case "volumes":
+		// Desktop: open the namespace ROOT ({home}/ws/{wsID}/ns/{nsID}), not the
+		// rtfiles subfolder. The button is "Open namespace directory" — landing
+		// the user inside the internal rtfiles/ folder (which is where the bind
+		// mounts live) is confusing; the ns root exposes rtfiles + snapshots +
+		// config together. Server mode has no ws/ns dir layout, so fall back to
+		// the runtime/volumes base.
+		if config.IsDesktopMode() {
+			nsID := d.activeNsID()
+			if nsID == "" {
+				return "", fmt.Errorf("no namespace configured")
+			}
+			return config.NamespaceDir(d.activeWorkspaceID(), nsID), nil
+		}
 		base := d.activeVolumesBase()
 		if base == "" {
 			return "", fmt.Errorf("no namespace configured")

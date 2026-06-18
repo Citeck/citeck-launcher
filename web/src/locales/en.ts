@@ -101,7 +101,7 @@ const en = {
   'welcome.workspace.form.required': 'Name and Repository URL are required',
 
   // -- Dashboard sidebar / namespace dir --
-  'dashboard.openNsDir.tooltip': 'Open namespace volumes directory in file manager',
+  'dashboard.openNsDir.tooltip': 'Open namespace directory in file manager',
   'dashboard.openNsDir.success': 'Opened {path}',
   'dashboard.openNsDir.serverInfo': 'Daemon path: {path}',
   'dashboard.openNsDir.failed': 'Open failed: {error}',
@@ -484,6 +484,7 @@ const en = {
   'snapshots.create': 'Create Snapshot',
   'snapshots.create.title': 'Create snapshot',
   'snapshots.importFile': 'Import .zip…',
+  'snapshots.requireStopped': 'Stop the namespace to create or import snapshots.',
   'snapshots.openNsDir': 'Open NS Directory',
   'snapshots.rename.title': 'Rename snapshot',
   'snapshots.delete.title': 'Delete snapshot "{name}"?',

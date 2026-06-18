@@ -377,22 +377,30 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
           </div>
 
           <div className="flex items-center justify-end px-4 py-3 border-t border-border shrink-0 gap-2 flex-wrap">
-            <button
-              type="button"
-              className="rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-xs font-medium hover:bg-primary/90 disabled:opacity-50"
-              disabled={!namespaceStopped || busy === 'export'}
-              onClick={() => setCreateOpen(true)}
-            >
-              {busy === 'export' ? t('volumes.snapshots.exporting') : t('snapshots.create')}
-            </button>
-            <button
-              type="button"
-              className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted disabled:opacity-50"
-              disabled={!namespaceStopped || busy === 'import'}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              {busy === 'import' ? t('volumes.snapshots.importing') : t('snapshots.importFile')}
-            </button>
+            {/* Wrap the disabled-capable buttons in a span carrying the title:
+                a native tooltip on a disabled <button> never shows (pointer
+                events are suppressed), so the "stop the namespace first" hint
+                would be invisible exactly when it's needed. */}
+            <span title={!namespaceStopped ? t('snapshots.requireStopped') : undefined}>
+              <button
+                type="button"
+                className="rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-xs font-medium hover:bg-primary/90 disabled:opacity-50"
+                disabled={!namespaceStopped || busy === 'export'}
+                onClick={() => setCreateOpen(true)}
+              >
+                {busy === 'export' ? t('volumes.snapshots.exporting') : t('snapshots.create')}
+              </button>
+            </span>
+            <span title={!namespaceStopped ? t('snapshots.requireStopped') : undefined}>
+              <button
+                type="button"
+                className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted disabled:opacity-50"
+                disabled={!namespaceStopped || busy === 'import'}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                {busy === 'import' ? t('volumes.snapshots.importing') : t('snapshots.importFile')}
+              </button>
+            </span>
             <button
               type="button"
               className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted"
@@ -502,7 +510,7 @@ function SnapshotRowView({ row, busy, namespaceStopped, onImport, onRename, onDe
       <td className="py-[3px] pr-0 text-right whitespace-nowrap">
         <RowButton
           icon={Download}
-          title={t('snapshots.action.import')}
+          title={!namespaceStopped ? t('snapshots.requireStopped') : t('snapshots.action.import')}
           disabled={!namespaceStopped || busy !== null}
           onClick={() => onImport(row)}
         />
@@ -538,16 +546,20 @@ interface RowButtonProps {
 
 function RowButton({ icon: Icon, title, disabled, variant = 'default', onClick }: RowButtonProps) {
   const hover = variant === 'danger' ? 'hover:text-destructive' : 'hover:text-foreground'
+  // Title lives on the wrapping span: a native tooltip on a disabled <button>
+  // never shows (pointer events suppressed), so the disabled-reason hint would
+  // be invisible exactly when it matters.
   return (
-    <button
-      type="button"
-      className={`inline-flex items-center justify-center p-1 rounded text-muted-foreground ${hover} hover:bg-muted disabled:opacity-40 disabled:hover:bg-transparent`}
-      title={title}
-      disabled={disabled}
-      onClick={(e) => { e.stopPropagation(); onClick() }}
-    >
-      <Icon size={14} />
-    </button>
+    <span title={title} className="inline-block">
+      <button
+        type="button"
+        className={`inline-flex items-center justify-center p-1 rounded text-muted-foreground ${hover} hover:bg-muted disabled:opacity-40 disabled:hover:bg-transparent`}
+        disabled={disabled}
+        onClick={(e) => { e.stopPropagation(); onClick() }}
+      >
+        <Icon size={14} />
+      </button>
+    </span>
   )
 }
 

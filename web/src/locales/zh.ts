@@ -99,7 +99,7 @@ const zh = {
   'welcome.workspace.form.required': '名称和仓库 URL 是必填项',
 
   // -- 仪表盘侧边栏 / namespace 目录 --
-  'dashboard.openNsDir.tooltip': '在文件管理器中打开 namespace 的卷目录',
+  'dashboard.openNsDir.tooltip': '在文件管理器中打开 namespace 目录',
   'dashboard.openNsDir.success': '已打开 {path}',
   'dashboard.openNsDir.serverInfo': '守护进程路径：{path}',
   'dashboard.openNsDir.failed': '打开失败：{error}',
@@ -483,6 +483,7 @@ const zh = {
   'snapshots.create': '创建快照',
   'snapshots.create.title': '创建快照',
   'snapshots.importFile': '导入 .zip…',
+  'snapshots.requireStopped': '停止 namespace 以创建或导入快照。',
   'snapshots.openNsDir': '打开 NS 目录',
   'snapshots.rename.title': '重命名快照',
   'snapshots.delete.title': '删除快照“{name}”？',

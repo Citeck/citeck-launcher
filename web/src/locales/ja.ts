@@ -99,7 +99,7 @@ const ja = {
   'welcome.workspace.form.required': '名前とリポジトリURLは必須です',
 
   // -- \u30c0\u30c3\u30b7\u30e5\u30dc\u30fc\u30c9\u30b5\u30a4\u30c9\u30d0\u30fc / \u30cd\u30fc\u30e0\u30b9\u30da\u30fc\u30b9\u30c7\u30a3\u30ec\u30af\u30c8\u30ea --
-  'dashboard.openNsDir.tooltip': '\u30cd\u30fc\u30e0\u30b9\u30da\u30fc\u30b9\u306e\u30dc\u30ea\u30e5\u30fc\u30e0\u30c7\u30a3\u30ec\u30af\u30c8\u30ea\u3092\u30d5\u30a1\u30a4\u30eb\u30de\u30cd\u30fc\u30b8\u30e3\u30fc\u3067\u958b\u304d\u307e\u3059',
+  'dashboard.openNsDir.tooltip': 'ネームスペースのディレクトリをファイルマネージャーで開く',
   'dashboard.openNsDir.success': '{path} \u3092\u958b\u304d\u307e\u3057\u305f',
   'dashboard.openNsDir.serverInfo': '\u30c7\u30fc\u30e2\u30f3\u30d1\u30b9: {path}',
   'dashboard.openNsDir.failed': '\u958b\u304f\u306e\u306b\u5931\u6557\u3057\u307e\u3057\u305f: {error}',
@@ -483,6 +483,7 @@ const ja = {
   'snapshots.create': 'スナップショットを作成',
   'snapshots.create.title': 'スナップショットを作成',
   'snapshots.importFile': 'Import .zip…',
+  'snapshots.requireStopped': 'スナップショットを作成またはインポートするには namespace を停止してください。',
   'snapshots.openNsDir': 'NS ディレクトリを開く',
   'snapshots.rename.title': 'スナップショットの名前変更',
   'snapshots.delete.title': 'スナップショット「{name}」を削除しますか？',

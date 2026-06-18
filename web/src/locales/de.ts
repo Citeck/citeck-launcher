@@ -99,7 +99,7 @@ const de = {
   'welcome.workspace.form.required': 'Name und Repository-URL sind erforderlich',
 
   // -- Dashboard-Seitenleiste / Namespace-Verzeichnis --
-  'dashboard.openNsDir.tooltip': 'Namespace-Volumes-Verzeichnis im Dateimanager öffnen',
+  'dashboard.openNsDir.tooltip': 'Namespace-Verzeichnis im Dateimanager öffnen',
   'dashboard.openNsDir.success': '{path} geöffnet',
   'dashboard.openNsDir.serverInfo': 'Daemon-Pfad: {path}',
   'dashboard.openNsDir.failed': 'Öffnen fehlgeschlagen: {error}',
@@ -483,6 +483,7 @@ const de = {
   'snapshots.create': 'Snapshot erstellen',
   'snapshots.create.title': 'Snapshot erstellen',
   'snapshots.importFile': 'Importieren .zip…',
+  'snapshots.requireStopped': 'Stoppen Sie den Namespace, um Snapshots zu erstellen oder zu importieren.',
   'snapshots.openNsDir': 'NS-Verzeichnis öffnen',
   'snapshots.rename.title': 'Snapshot umbenennen',
   'snapshots.delete.title': 'Snapshot „{name}“ löschen?',

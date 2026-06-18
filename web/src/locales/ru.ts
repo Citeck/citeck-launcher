@@ -99,7 +99,7 @@ const ru = {
   'welcome.workspace.form.required': 'Имя и URL репозитория обязательны',
 
   // -- Dashboard sidebar / namespace dir --
-  'dashboard.openNsDir.tooltip': 'Открыть каталог томов namespace в файловом менеджере',
+  'dashboard.openNsDir.tooltip': 'Открыть каталог namespace в файловом менеджере',
   'dashboard.openNsDir.success': 'Открыто: {path}',
   'dashboard.openNsDir.serverInfo': 'Путь на демоне: {path}',
   'dashboard.openNsDir.failed': 'Не удалось открыть: {error}',
@@ -483,6 +483,7 @@ const ru = {
   'snapshots.create': 'Создать снапшот',
   'snapshots.create.title': 'Создать снапшот',
   'snapshots.importFile': 'Импорт .zip…',
+  'snapshots.requireStopped': 'Остановите namespace, чтобы создавать или импортировать снапшоты.',
   'snapshots.openNsDir': 'Открыть каталог NS',
   'snapshots.rename.title': 'Переименовать снапшот',
   'snapshots.delete.title': 'Удалить снапшот «{name}»?',
