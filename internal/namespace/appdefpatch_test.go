@@ -34,6 +34,49 @@ func TestAppDefPatchImageFlowsThrough(t *testing.T) {
 	}
 }
 
+// ApplyAppDefPatch must NOT mutate its base argument. handleGetAppConfig uses
+// the generated def as BOTH the change-gutter baseline and the patch input; an
+// in-place mutation (json.Unmarshal aliasing base's nested pointers/slices)
+// rewrote the baseline to equal the patched content, so the diff vanished for
+// any field reached through a pointer or slice (probe, startupConditions, …).
+func TestApplyAppDefPatchDoesNotMutateBase(t *testing.T) {
+	base := appdef.ApplicationDef{
+		Name: "eapps", Image: "eapps:2",
+		StartupConditions: []appdef.StartupCondition{
+			{Probe: &appdef.AppProbeDef{
+				HTTP: &appdef.HTTPProbeDef{Path: "/management/health", Port: 17023}, FailureThreshold: 90,
+			}},
+		},
+		LivenessProbe: &appdef.AppProbeDef{FailureThreshold: 3},
+		Resources:     &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "1g"}},
+	}
+	edited := base
+	sc := *base.StartupConditions[0].Probe
+	sc.FailureThreshold = 100001
+	edited.StartupConditions = []appdef.StartupCondition{{Probe: &sc}}
+
+	patch, err := DiffAppDef(base, edited)
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged, err := ApplyAppDefPatch(base, patch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// base stays pristine (the baseline the diff compares against).
+	if got := base.StartupConditions[0].Probe.FailureThreshold; got != 90 {
+		t.Errorf("base mutated: failureThreshold = %d, want 90", got)
+	}
+	// merged carries the edit.
+	if got := merged.StartupConditions[0].Probe.FailureThreshold; got != 100001 {
+		t.Errorf("merged lost the edit: failureThreshold = %d, want 100001", got)
+	}
+	// merged must not share the nested pointer with base (else later edits alias).
+	if merged.StartupConditions[0].Probe == base.StartupConditions[0].Probe {
+		t.Error("merged aliases base's probe pointer")
+	}
+}
+
 func TestDiffAppDefEqualReturnsNil(t *testing.T) {
 	d := appdef.ApplicationDef{Name: "a", Image: "i:1"}
 	patch, err := DiffAppDef(d, d)

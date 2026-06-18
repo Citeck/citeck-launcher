@@ -104,12 +104,22 @@ func ApplyAppDefPatch(base appdef.ApplicationDef, patch json.RawMessage) (appdef
 	if err != nil {
 		return base, fmt.Errorf("marshal merged: %w", err)
 	}
-	out := base
-	out.ImageDigest = ""
-	out.VolumesContentHash = ""
+	// Decode into a FRESH struct, never `out := base`: json.Unmarshal reuses any
+	// non-nil pointer/slice already present in the decode target, so unmarshaling
+	// into a copy of base writes the patched values straight INTO base's own
+	// nested pointers (probe pointers, startupConditions/initContainers elements,
+	// environments, …) — mutating the caller's base in place. handleGetAppConfig
+	// passes the generated def as BOTH the baseline and the ApplyAppDefPatch
+	// input, so that aliasing silently rewrote the baseline to equal the patched
+	// content, killing the change-gutter diff for every field reached through a
+	// pointer or slice (top-level scalars copied by value still diffed). `merged`
+	// already carries every json-tagged field of base, so a zero-value target
+	// reconstructs the full def; only json:"-" fields must be restored by hand.
+	var out appdef.ApplicationDef
 	if err := json.Unmarshal(merged, &out); err != nil {
 		return base, fmt.Errorf("unmarshal merged appdef: %w", err)
 	}
+	out.IsInit = base.IsInit // json:"-" — absent from the marshaled form
 	out.ImageDigest = ""
 	out.VolumesContentHash = base.VolumesContentHash
 	return out, nil
