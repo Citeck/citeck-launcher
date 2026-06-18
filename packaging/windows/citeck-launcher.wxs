@@ -52,5 +52,26 @@
       <ComponentRef Id="MainExe" />
       <ComponentRef Id="StartMenuShortcut" />
     </Feature>
+
+    <!--
+      Launch the app right after a fresh install / upgrade so the user does not
+      have to hunt for the Start-menu shortcut (the installed exe was otherwise
+      left un-started). Type-18 custom action: run the installed file directly
+      (FileRef), no Util extension needed. Impersonate="yes" launches it in the
+      installing USER's session (the MSI is perUser, so that is the right
+      context for a GUI app); Return="ignore" keeps a launch failure from
+      failing the install. Sequenced after InstallFinalize (the exe is on disk
+      by then). Condition "NOT Installed" fires on first install and on the
+      install half of a MajorUpgrade, but NOT on uninstall (Installed is true).
+    -->
+    <CustomAction Id="LaunchApplication"
+                  FileRef="CiteckLauncherExe"
+                  ExeCommand=""
+                  Execute="immediate"
+                  Impersonate="yes"
+                  Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="LaunchApplication" After="InstallFinalize" Condition="NOT Installed" />
+    </InstallExecuteSequence>
   </Package>
 </Wix>
