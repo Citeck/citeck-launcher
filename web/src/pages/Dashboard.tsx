@@ -414,6 +414,11 @@ export function Dashboard() {
         open={nsEditOpen}
         mode="edit"
         nsId={namespace.id}
+        // Re-fetch after an edit so the header reflects the change immediately.
+        // A name-only edit changes no app state and emits no SSE event, so
+        // without this the store never refreshes and the header keeps the old
+        // name (the daemon updates the active config synchronously on save).
+        onSaved={() => fetchData()}
         onClose={() => setNsEditOpen(false)}
       />
       {contextMenu && (

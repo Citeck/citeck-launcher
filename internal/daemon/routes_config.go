@@ -129,6 +129,14 @@ func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dto := runtime.ToNamespaceDto()
+	// Name comes from the active config, which doReload updates SYNCHRONOUSLY on
+	// edit; the runtime's own copy (ToNamespaceDto's r.config.Name) is refreshed
+	// only by the ASYNC cmdRegenerate, so a name-only edit — which changes no app
+	// state and emits no events — would otherwise leave the header showing the
+	// previous name until something else happened to re-resolve the runtime.
+	if act.nsConfig != nil {
+		dto.Name = act.nsConfig.Name
+	}
 	if bundleErr != "" {
 		dto.BundleError = bundleErr
 	}
