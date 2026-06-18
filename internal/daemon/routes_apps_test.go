@@ -391,12 +391,12 @@ func TestAppConfigDiffSymmetry(t *testing.T) {
 		Name: "eapps", Image: "eapps:2",
 		StartupConditions: []appdef.StartupCondition{
 			{Probe: &appdef.AppProbeDef{
-				HTTP: &appdef.HTTPProbeDef{Path: "/management/health", Port: 17023},
+				HTTP:          &appdef.HTTPProbeDef{Path: "/management/health", Port: 17023},
 				PeriodSeconds: 10, FailureThreshold: 10000, TimeoutSeconds: 5,
 			}},
 		},
 		LivenessProbe: &appdef.AppProbeDef{
-			HTTP: &appdef.HTTPProbeDef{Path: "/management/health", Port: 17023},
+			HTTP:             &appdef.HTTPProbeDef{Path: "/management/health", Port: 17023},
 			FailureThreshold: 3, TimeoutSeconds: 5,
 		},
 		Kind: appdef.KindCiteckCore,

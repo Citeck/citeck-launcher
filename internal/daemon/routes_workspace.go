@@ -328,11 +328,14 @@ func (d *Daemon) resolveOpenDirPath(kind string) (string, error) {
 		// config together. Server mode has no ws/ns dir layout, so fall back to
 		// the runtime/volumes base.
 		if config.IsDesktopMode() {
-			nsID := d.activeNsID()
-			if nsID == "" {
+			// One snapshot: wsID and nsID must describe the SAME active namespace
+			// (a concurrent workspace switch between two active() reads could
+			// otherwise pair a new nsID with the old wsID). See routes_helpers.go.
+			snap := d.active()
+			if snap.nsConfig == nil || snap.nsConfig.ID == "" {
 				return "", fmt.Errorf("no namespace configured")
 			}
-			return config.NamespaceDir(d.activeWorkspaceID(), nsID), nil
+			return config.NamespaceDir(snap.workspaceID, snap.nsConfig.ID), nil
 		}
 		base := d.activeVolumesBase()
 		if base == "" {
