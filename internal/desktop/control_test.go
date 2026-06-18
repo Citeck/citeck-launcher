@@ -11,6 +11,22 @@ import (
 	"time"
 )
 
+// The wrapper binds its control socket before the daemon (which normally
+// creates the run dir) launches, so on a fresh install Start() must create the
+// socket's parent dir itself — otherwise net.Listen("unix", …) fails (on
+// Windows opaquely, as WSAENETDOWN), bricking a clean install.
+func TestControlServerStartCreatesMissingSockDir(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "run", "wrapper.sock") // "run" does not exist yet
+	cs := NewControlServer(sock)
+	if err := cs.Start(); err != nil {
+		t.Fatalf("Start with missing dir: %v", err)
+	}
+	defer cs.Close()
+	if _, err := net.Dial("unix", sock); err != nil {
+		t.Fatalf("dial after Start: %v", err)
+	}
+}
+
 func TestControlServerDispatchesVerb(t *testing.T) {
 	sock := filepath.Join(t.TempDir(), "wrapper.sock")
 	cs := NewControlServer(sock)

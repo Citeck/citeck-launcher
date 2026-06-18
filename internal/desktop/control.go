@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -55,6 +56,17 @@ func (c *ControlServer) Verbs() []string {
 
 // Start binds the unix socket and serves in a background goroutine.
 func (c *ControlServer) Start() error {
+	// Ensure the socket's parent dir exists. The wrapper binds this control
+	// socket BEFORE it launches the daemon (which is what normally creates the
+	// run dir), so on a fresh install the wrapper is the first to touch it. A
+	// missing dir makes net.Listen("unix", …) fail — on Windows it surfaces as
+	// the opaque "bind: A socket operation encountered a dead network"
+	// (WSAENETDOWN), which is why a clean Windows install would not start.
+	if dir := filepath.Dir(c.sockPath); dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // run dir needs 0o755 for the daemon child
+			return fmt.Errorf("create wrapper socket dir: %w", err)
+		}
+	}
 	_ = os.Remove(c.sockPath) // stale socket from a previous run
 	ln, err := net.Listen("unix", c.sockPath)
 	if err != nil {
