@@ -36,7 +36,7 @@ interface NamespaceDialogProps {
  * confirm). Footer "Create" opens NamespaceEditDialog mode=create.
  */
 export function NamespaceDialog({ open, onClose, onOpened }: NamespaceDialogProps) {
-  const { t } = useTranslation()
+  const { t, tDynamic } = useTranslation()
   const navigate = useNavigate()
   const namespace = useDashboardStore((s) => s.namespace)
   const fetchData = useDashboardStore((s) => s.fetchData)
@@ -92,7 +92,9 @@ export function NamespaceDialog({ open, onClose, onOpened }: NamespaceDialogProp
       label: t('namespaces.col.status'),
       key: 'status',
       width: '15%',
-      render: (row) => <span className="text-[10px] uppercase">{row.status}</span>,
+      // Localized via the shared `status.<STATE>` keys (same map StatusBadge
+      // uses); raw enum names like "STOPPED" must never reach the UI.
+      render: (row) => <span className="text-xs text-muted-foreground">{tDynamic('status.' + row.status)}</span>,
     },
   ]
 
