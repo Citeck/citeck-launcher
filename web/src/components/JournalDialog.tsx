@@ -262,7 +262,7 @@ export function JournalDialog<T extends Record<string, unknown>>({
                     {multiple && (
                       <input
                         type="checkbox"
-                        className="rounded border-border"
+                        className="rounded border-border align-middle m-0"
                         checked={filteredData.length > 0 && selected.size === filteredData.length}
                         onChange={toggleAll}
                       />
@@ -294,7 +294,7 @@ export function JournalDialog<T extends Record<string, unknown>>({
                       <td className="py-[3px] pr-2">
                         <input
                           type="checkbox"
-                          className="rounded border-border"
+                          className="rounded border-border align-middle m-0"
                           checked={isSelected}
                           onChange={() => toggleRow(row)}
                           onClick={(e) => e.stopPropagation()}

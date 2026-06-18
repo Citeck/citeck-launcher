@@ -72,6 +72,11 @@ body {
 
 html {
   scroll-behavior: smooth;
+  /* Tell the browser the default surface is dark so native form controls
+     (checkboxes, radios, scrollbars, date pickers) render in dark mode instead
+     of as white boxes that break the theme. [data-theme="light"] overrides it
+     below; the attribute selector outranks this element selector. */
+  color-scheme: dark;
 }
 
 /* Smooth transitions on interactive elements */
@@ -113,6 +118,7 @@ button:not(:disabled):active,
 
 /* Light theme */
 [data-theme="light"] {
+  color-scheme: light;
   --color-background: #f0f1f3;
   --color-foreground: #1e1e1e;
   --color-muted: #e4e5e8;
@@ -143,6 +149,7 @@ button:not(:disabled):active,
 /* Respect OS preference on first visit */
 @media (prefers-color-scheme: light) {
   :root:not([data-theme]) {
+    color-scheme: light;
     --color-background: #f0f1f3;
     --color-foreground: #1e1e1e;
     --color-muted: #e4e5e8;
