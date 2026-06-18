@@ -153,7 +153,10 @@ export function Select({
       <button
         ref={triggerRef}
         type="button"
-        className="flex w-full items-center rounded border border-border bg-background px-2.5 py-1.5 text-left text-sm focus:outline-none focus:border-primary disabled:opacity-50"
+        // Fixed height (= a py-1.5 text-sm input: 20px line + 12px padding +
+        // 2px border) so picking a value — which adds the 20px clear (×) button
+        // — can't nudge the row height by a sub-pixel and shift the layout.
+        className="flex h-[34px] w-full items-center rounded border border-border bg-background px-2.5 text-left text-sm focus:outline-none focus:border-primary disabled:opacity-50"
         disabled={disabled}
         onClick={() => {
           if (popupOptions.length === 0) return
