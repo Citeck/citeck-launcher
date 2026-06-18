@@ -340,7 +340,7 @@ export function Welcome() {
                   type="button"
                   disabled={starting}
                   onClick={() => handleOpenNamespace(ns)}
-                  className="w-full rounded-lg bg-muted hover:bg-muted/70 px-6 py-3.5 text-center transition-colors disabled:opacity-50"
+                  className="w-full rounded-lg bg-card border border-border hover:bg-muted/70 px-6 py-3.5 text-center transition-colors disabled:opacity-50"
                 >
                   <div className="text-sm font-semibold text-foreground">{ns.name || ns.id}</div>
                   {ns.bundleRef && (
@@ -386,7 +386,7 @@ export function Welcome() {
                     type="button"
                     disabled={starting}
                     onClick={() => handleQuickStart(quickStarts.length === 0 ? null : primary)}
-                    className="w-full rounded-lg bg-muted hover:bg-muted/70 px-6 py-3.5 text-center transition-colors disabled:opacity-50"
+                    className="w-full rounded-lg bg-card border border-border hover:bg-muted/70 px-6 py-3.5 text-center transition-colors disabled:opacity-50"
                   >
                     <div className="text-sm font-semibold text-foreground">{primary.name || t('welcome.quickStart')}</div>
                     {(primary.bundleRef || primary.template) && (
@@ -401,7 +401,7 @@ export function Welcome() {
                           type="button"
                           disabled={starting}
                           onClick={() => handleQuickStart(qs)}
-                          className="flex-1 min-w-0 rounded-lg bg-muted hover:bg-muted/70 px-4 py-2 text-center text-xs font-medium text-foreground transition-colors disabled:opacity-50"
+                          className="flex-1 min-w-0 rounded-lg bg-card border border-border hover:bg-muted/70 px-4 py-2 text-center text-xs font-medium text-foreground transition-colors disabled:opacity-50"
                           title={qs.bundleRef || qs.template}
                         >
                           {qs.name || `${t('welcome.quickStart')} ${i + 2}`}
@@ -427,7 +427,7 @@ export function Welcome() {
               <button
                 type="button"
                 onClick={() => setMoreOpen(true)}
-                className="w-full rounded-lg bg-muted hover:bg-muted/70 px-6 py-3 text-center text-sm font-medium text-foreground transition-colors"
+                className="w-full rounded-lg bg-card border border-border hover:bg-muted/70 px-6 py-3 text-center text-sm font-medium text-foreground transition-colors"
               >
                 {t('welcome.more')}
               </button>
@@ -437,7 +437,7 @@ export function Welcome() {
             <button
               type="button"
               onClick={handleCreateNew}
-              className="w-full rounded-lg bg-muted hover:bg-muted/70 px-6 py-3 text-center transition-colors flex items-center justify-center gap-2"
+              className="w-full rounded-lg bg-card border border-border hover:bg-muted/70 px-6 py-3 text-center transition-colors flex items-center justify-center gap-2"
             >
               <Plus size={16} className="text-foreground" />
               <span className="text-sm font-medium text-foreground">{t('welcome.createNew')}</span>
@@ -479,7 +479,10 @@ export function Welcome() {
         onCancel={() => { setDeleteTarget(null); setDeleteError('') }}
       />
 
-      <NamespaceDialog open={moreOpen} onClose={() => setMoreOpen(false)} />
+      {/* Re-load on close: the dialog can create/delete namespaces, and without
+          a refresh a deleted one would still show among Welcome's quick-launch
+          buttons (the dialog only reloads its OWN list, not this page's). */}
+      <NamespaceDialog open={moreOpen} onClose={() => { setMoreOpen(false); loadData() }} />
 
       <NamespaceEditDialog
         open={!!nsForm}
