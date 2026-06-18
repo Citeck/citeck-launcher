@@ -37,17 +37,34 @@ function MainLayout() {
 
   useEffect(() => {
     primeDesktopModeCache()
-    useDaemonStatusStore.getState().fetch().then((s) => {
-      // Re-apply server-persisted prefs only when the local (fast-path) copy is
-      // missing — i.e. after a desktop webview localStorage wipe. A present
-      // local value is the user's explicit choice and wins.
-      if (s?.locale && !localStorage.getItem('citeck-locale')) {
+    // Re-apply server-persisted prefs only when the local (fast-path) copy is
+    // missing — i.e. after a desktop webview localStorage wipe. A present local
+    // value is the user's explicit choice and wins.
+    //
+    // Retry until the daemon answers: right after a desktop auto-update the
+    // webview reloads while the new daemon is still starting, so a single
+    // fetch() can come back null — and without the retry the theme/locale stay
+    // stuck on the OS default (the "theme reset to light after update" bug).
+    let cancelled = false
+    const applyPrefs = (s: { locale?: string; theme?: string } | null): boolean => {
+      if (!s) return false // daemon not ready yet — keep retrying
+      if (s.locale && !localStorage.getItem('citeck-locale')) {
         useI18nStore.getState().setLocale(s.locale as Locale, false)
       }
-      if (s?.theme && !localStorage.getItem(THEME_STORAGE_KEY)) {
+      if (s.theme && !localStorage.getItem(THEME_STORAGE_KEY)) {
         useThemeStore.getState().setDark(s.theme === 'dark', false)
       }
-    })
+      return true // daemon answered — prefs applied (or nothing to restore)
+    }
+    const tryRestore = (attempt: number) => {
+      if (cancelled) return
+      void useDaemonStatusStore.getState().fetch().then((s) => {
+        if (cancelled || applyPrefs(s)) return
+        if (attempt < 10) setTimeout(() => tryRestore(attempt + 1), 1000)
+      })
+    }
+    tryRestore(0)
+    return () => { cancelled = true }
   }, [])
 
   // Fetch namespace status on mount to determine which screen to show
