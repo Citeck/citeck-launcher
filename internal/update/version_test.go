@@ -12,9 +12,9 @@ func TestGreater(t *testing.T) {
 		{"2.4.0", "2.4.0", false}, // equal is NOT greater (never re-run same version)
 		{"v2.5.0", "2.4.0", true}, // tolerates "v" prefix on either side
 		{"2.5.0", "v2.5.0", false},
-		{"2.5.0", "dev", true}, // invalid current sorts lowest (dev always older)
-		{"dev", "2.5.0", false},
-		{"dev", "nightly", false}, // two invalid versions: both v0.0.0, no update
+		{"2.5.0", "dev", false},   // dev current sorts HIGHEST → no self-downgrade to a release
+		{"dev", "2.5.0", true},    // a dev build is newer than any real release
+		{"dev", "nightly", false}, // two invalid versions compare equal → no update
 		{"2.10.0", "2.9.0", true}, // numeric, not lexical
 	}
 	for _, c := range cases {

@@ -33,16 +33,27 @@ func IsValidVersion(v string) bool {
 }
 
 // Greater reports whether release a is strictly newer than release b.
-// Invalid versions (e.g. "dev" builds) sort lowest, so a dev build is always
-// considered older than any real release — updates are offered and stageable
-// during local testing. Equal versions are NOT greater.
+// Invalid versions (e.g. "dev" / local-build markers) sort HIGHEST, so a dev
+// build is always considered newer than any real release. In practice the only
+// place an invalid version appears is the *current* running version (the b
+// side); treating it as newest means a locally-built dev binary never offers
+// to "update" itself down to a published release. Equal versions are NOT
+// greater. Two invalid versions compare equal → not greater.
+//
+// Release versions discovered from GitHub are always valid semver, so the
+// "a invalid" branch only fires in pathological inputs; it stays consistent
+// (dev sorts above any real release) rather than silently flipping.
 func Greater(a, b string) bool {
 	ca, cb := canon(a), canon(b)
-	if !semver.IsValid(ca) {
-		ca = "v0.0.0"
+	aValid, bValid := semver.IsValid(ca), semver.IsValid(cb)
+	switch {
+	case !aValid && !bValid:
+		return false // both dev → equal, no update
+	case !aValid:
+		return true // a is dev → newer than any real release b
+	case !bValid:
+		return false // b is dev → nothing is newer than a dev build
+	default:
+		return semver.Compare(ca, cb) > 0
 	}
-	if !semver.IsValid(cb) {
-		cb = "v0.0.0"
-	}
-	return semver.Compare(ca, cb) > 0
 }
