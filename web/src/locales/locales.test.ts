@@ -46,7 +46,6 @@ const IDENTICAL_OK = new Set<string>([
   'welcome.error',
   'logs.title',
   'logViewer.filter', // "Filter... (*)"
-  'snapshots.importFile', // "Import .zip…"
   'table.group.core', // "Citeck Core"
   'table.group.coreExt', // "Citeck Core Extensions"
   'table.group.additional', // "Citeck Additional"

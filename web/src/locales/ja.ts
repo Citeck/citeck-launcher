@@ -482,7 +482,7 @@ const ja = {
   'snapshots.action.delete': '削除',
   'snapshots.create': 'スナップショットを作成',
   'snapshots.create.title': 'スナップショットを作成',
-  'snapshots.importFile': 'Import .zip…',
+  'snapshots.importFile': 'インポート .zip…',
   'snapshots.requireStopped': 'スナップショットを作成またはインポートするには namespace を停止してください。',
   'snapshots.openNsDir': 'NS ディレクトリを開く',
   'snapshots.rename.title': 'スナップショットの名前変更',
