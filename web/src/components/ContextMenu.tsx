@@ -109,7 +109,7 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
               // card and muted are the same colour in this theme, so a
               // hover:bg-muted highlight was invisible — use accent (a step
               // lighter) so the hovered item actually reads as selected.
-              className={`flex items-center gap-2 w-full text-left px-3 py-1.5 text-xs transition-colors ${
+              className={`flex items-center gap-2 w-full text-left px-3 py-1.5 text-xs whitespace-nowrap transition-colors ${
                 item.disabled
                   ? 'text-muted-foreground cursor-not-allowed'
                   : item.variant === 'danger'

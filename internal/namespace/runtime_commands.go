@@ -329,20 +329,39 @@ func (r *Runtime) IsFileEdited(relPath string) bool {
 	return ok
 }
 
-// editedFilesForAppLocked returns the user-edited mounted-file paths whose
-// first segment is appName. Result is a fresh slice; safe to mutate by the
-// caller. Callers MUST hold r.mu (read or write) — used by ToNamespaceDto
-// under RLock for every app DTO, so the helper deliberately skips its own
-// lock acquisition to avoid per-app RLock churn.
+// editedFilesForAppLocked returns the user-edited mounted-file paths that
+// belong to appName. Ownership is decided by the app's actual bind-mount host
+// paths — NOT a naive "appName/" prefix: webapp mounts live under
+// "./app/<name>/props/…" (host key "app/<name>/props"), so the first path
+// segment is "app", never the app name. Result is a fresh slice; safe to
+// mutate by the caller. Callers MUST hold r.mu (read or write) — used by
+// ToNamespaceDto under RLock for every app DTO, so the helper deliberately
+// skips its own lock acquisition to avoid per-app RLock churn.
 func (r *Runtime) editedFilesForAppLocked(appName string) []string {
 	if len(r.editedFileEdits) == 0 {
 		return nil
 	}
-	prefix := appName + "/"
+	def, ok := r.generatedDefForApp(appName)
+	if !ok {
+		if app, live := r.apps[appName]; live {
+			def, ok = app.Def, true
+		}
+	}
+	if !ok {
+		return nil
+	}
+	hostKeys := collectFileKeysFromVolumes(def.Volumes)
+	if len(hostKeys) == 0 {
+		return nil
+	}
 	var out []string
 	for path := range r.editedFileEdits {
-		if strings.HasPrefix(path, prefix) {
-			out = append(out, path)
+		for _, key := range hostKeys {
+			// File mount: exact match. Directory mount: any file beneath it.
+			if path == key || strings.HasPrefix(path, key+"/") {
+				out = append(out, path)
+				break
+			}
 		}
 	}
 	return out
