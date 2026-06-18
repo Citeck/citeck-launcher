@@ -25,6 +25,15 @@ func applyDeltaToYAML(templateYAML []byte, delta any, userYAML []byte) ([]byte, 
 		doc = yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{root}}
 	}
 	applyPatchToNode(root, delta)
+	// The generated baseline for an empty webapp cloud-config is the flow-style
+	// empty mapping "{}" (generator_webapp.go). A flow mapping keeps its flow
+	// style when keys are appended, so a user editing such a file would get the
+	// whole document collapsed onto one line ("{wqeqwe: [{dsds: sda}]}") — it
+	// reads like JSON. Drop flow style on the (now-populated) root so it
+	// re-encodes as conventional block YAML.
+	if root.Kind == yaml.MappingNode && root.Style&yaml.FlowStyle != 0 && len(root.Content) > 0 {
+		root.Style = 0
+	}
 	if len(userYAML) > 0 {
 		var udoc yaml.Node
 		if yaml.Unmarshal(userYAML, &udoc) == nil {

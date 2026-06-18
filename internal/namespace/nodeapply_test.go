@@ -39,6 +39,26 @@ func TestGraftCommentsCopiesUserComments(t *testing.T) {
 	}
 }
 
+// Editing a file whose generated baseline is the flow-style empty mapping
+// "{}" (the webapp cloud-config default) must NOT collapse the whole document
+// onto one line — the populated root re-encodes as block YAML, not
+// "{wqeqwe: [{dsds: sda}]}".
+func TestApplyDeltaFromEmptyFlowMappingEmitsBlock(t *testing.T) {
+	out, err := applyDeltaToYAML([]byte("{}\n"), map[string]any{
+		"wqeqwe": []any{map[string]any{"dsds": "sda"}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(out)
+	if strings.Contains(got, "{") || strings.Contains(got, "[") {
+		t.Errorf("expected block YAML, got flow:\n%s", got)
+	}
+	if !strings.Contains(got, "wqeqwe:") || !strings.Contains(got, "- dsds: sda") {
+		t.Errorf("content not preserved as block:\n%s", got)
+	}
+}
+
 func TestApplyDeltaDeletesKey(t *testing.T) {
 	out, err := applyDeltaToYAML([]byte("a: 1\nb: 2\n"), map[string]any{"b": nil}, nil)
 	if err != nil {
