@@ -299,7 +299,10 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
           transform: 'translate(-50%, -50%)',
           margin: 0,
         }}
-        onClose={onClose}
+        // Ignore a nested dialog's close bubbling up the React fiber tree (the
+        // create/rename FormDialog and delete ConfirmModal live inside this
+        // one); only this dialog's own close should fire onClose. See Modal.tsx.
+        onClose={(e) => { if (e.target === e.currentTarget) onClose() }}
       >
         <div className="flex flex-col">
           <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">

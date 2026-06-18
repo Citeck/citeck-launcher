@@ -234,7 +234,10 @@ export function FormDialog({
     <dialog
       ref={dialogRef}
       className="fixed inset-0 z-50 m-auto max-w-lg w-full rounded-lg border border-border bg-card p-0 text-foreground shadow-xl"
-      onClose={onCancel}
+      // Guard against a nested <dialog>'s `close` event bubbling up the React
+      // fiber tree to this one (it would cancel a dialog opened beneath this
+      // form). Only this dialog's own close counts. See Modal.tsx.
+      onClose={(e) => { if (e.target === e.currentTarget) onCancel() }}
     >
       <form onSubmit={handleSubmit} className="p-6">
         <h2 className="text-lg font-semibold mb-4">{title}</h2>

@@ -48,7 +48,10 @@ export function ConfirmModal({
     <dialog
       ref={dialogRef}
       className="fixed inset-0 z-50 m-auto max-w-md rounded-lg border border-border bg-card p-0 text-foreground shadow-xl"
-      onClose={onCancel}
+      // Only this dialog's own close counts — a nested <dialog>'s close event
+      // bubbles up the React fiber tree and would otherwise close this one too.
+      // See Modal.tsx.
+      onClose={(e) => { if (e.target === e.currentTarget) onCancel() }}
       onKeyDown={(e) => {
         if (e.key === 'Enter' && !loading) {
           e.preventDefault()

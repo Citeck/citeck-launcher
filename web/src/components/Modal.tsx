@@ -72,7 +72,13 @@ export function Modal({ open, title, onClose, width = 'md', children, footer, on
   return (
     <dialog
       ref={ref}
-      onClose={onClose}
+      // Only react to THIS dialog's own close event. A nested modal (e.g. a
+      // SecretEditDialog opened from a field inside this dialog) fires its own
+      // native `close`, and React bubbles that event up the fiber tree to this
+      // ancestor <dialog>'s onClose — which would otherwise close the dialog
+      // behind it too. currentTarget is this <dialog>; target is whatever
+      // actually closed.
+      onClose={(e) => { if (e.target === e.currentTarget) onClose() }}
       className={`fixed inset-0 z-50 m-auto ${widthClass} max-w-[90vw] rounded-lg border border-border bg-card p-0 text-foreground shadow-xl`}
     >
       {onSubmit ? (
