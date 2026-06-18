@@ -35,6 +35,37 @@ func TestAppProbeDef_DefaultsOnDecode(t *testing.T) {
 	assert.Equal(t, 10, pj.PeriodSeconds)
 }
 
+// WithProbeDefaults fills the same defaults a decode would, WITHOUT mutating the
+// caller's shared probe pointers — encodeDefYAML relies on it to make the
+// app-config baseline (a generator-built def, never decoded) match the patched
+// content's probe defaults.
+func TestWithProbeDefaults(t *testing.T) {
+	startProbe := &AppProbeDef{HTTP: &HTTPProbeDef{Path: "/h", Port: 17023}, PeriodSeconds: 10, FailureThreshold: 10000, TimeoutSeconds: 5}
+	liveProbe := &AppProbeDef{HTTP: &HTTPProbeDef{Path: "/h", Port: 17023}, FailureThreshold: 3, TimeoutSeconds: 5}
+	d := ApplicationDef{
+		Name:              "eapps",
+		StartupConditions: []StartupCondition{{Probe: startProbe}, {Log: &LogStartupCondition{Pattern: "ready"}}},
+		LivenessProbe:     liveProbe,
+	}
+
+	got := d.WithProbeDefaults()
+
+	// Defaults filled on the returned copy.
+	assert.Equal(t, 5, got.StartupConditions[0].Probe.InitialDelaySeconds)
+	assert.Equal(t, 10, got.StartupConditions[0].Probe.PeriodSeconds)
+	assert.Equal(t, 60, got.StartupConditions[1].Log.TimeoutSeconds)
+	assert.Equal(t, 5, got.LivenessProbe.InitialDelaySeconds)
+	assert.Equal(t, 10, got.LivenessProbe.PeriodSeconds)
+
+	// Originals untouched (no shared-pointer mutation).
+	assert.Equal(t, 0, startProbe.InitialDelaySeconds, "source startup probe mutated")
+	assert.Equal(t, 0, liveProbe.InitialDelaySeconds, "source liveness probe mutated")
+	assert.NotSame(t, startProbe, got.StartupConditions[0].Probe)
+
+	// Nil-probe / empty def is a no-op (no panic).
+	_ = ApplicationDef{Name: "x"}.WithProbeDefaults()
+}
+
 // LogStartupCondition.timeoutSeconds defaults to 60 when omitted.
 func TestLogStartupCondition_DefaultTimeout(t *testing.T) {
 	var ly LogStartupCondition

@@ -378,3 +378,60 @@ func TestEncodeDefYAML_StripsCachesAndLeadsWithMarker(t *testing.T) {
 	assert.Contains(t, out, "image: eapps:1")
 	assert.NotContains(t, out, "should-not-appear", "runtime caches must be stripped")
 }
+
+// TestAppConfigDiffSymmetry guards the app-config change gutter: the baseline
+// (a generator-built def, never decoded) and the content (a patched def decoded
+// through ApplyAppDefPatch) must agree on probe defaults. Before encodeDefYAML
+// normalized both via WithProbeDefaults, the patched side gained
+// initialDelaySeconds:5 / periodSeconds:10 from the decode while the baseline
+// kept Go zero-values, so editing any probe-bearing field painted those defaults
+// as spurious "added" lines.
+func TestAppConfigDiffSymmetry(t *testing.T) {
+	gen := appdef.ApplicationDef{
+		Name: "eapps", Image: "eapps:2",
+		StartupConditions: []appdef.StartupCondition{
+			{Probe: &appdef.AppProbeDef{
+				HTTP: &appdef.HTTPProbeDef{Path: "/management/health", Port: 17023},
+				PeriodSeconds: 10, FailureThreshold: 10000, TimeoutSeconds: 5,
+			}},
+		},
+		LivenessProbe: &appdef.AppProbeDef{
+			HTTP: &appdef.HTTPProbeDef{Path: "/management/health", Port: 17023},
+			FailureThreshold: 3, TimeoutSeconds: 5,
+		},
+		Kind: appdef.KindCiteckCore,
+	}
+	edited := gen
+	sc := *gen.StartupConditions[0].Probe
+	sc.FailureThreshold = 100001
+	edited.StartupConditions = []appdef.StartupCondition{{Probe: &sc}}
+	patch, err := namespace.DiffAppDef(gen, edited)
+	require.NoError(t, err)
+	merged, err := namespace.ApplyAppDefPatch(gen, patch)
+	require.NoError(t, err)
+
+	baseline, err := encodeDefYAML(gen)
+	require.NoError(t, err)
+	content, err := encodeDefYAML(merged)
+	require.NoError(t, err)
+
+	// encodeDefYAML must not mutate the shared cached generated def.
+	assert.Equal(t, 0, gen.StartupConditions[0].Probe.InitialDelaySeconds,
+		"encodeDefYAML mutated the caller's probe pointer")
+
+	// Only the genuinely edited line may differ.
+	base := map[string]int{}
+	for l := range strings.SplitSeq(baseline, "\n") {
+		base[l]++
+	}
+	var addedOnly []string
+	for l := range strings.SplitSeq(content, "\n") {
+		if base[l] > 0 {
+			base[l]--
+			continue
+		}
+		addedOnly = append(addedOnly, strings.TrimSpace(l))
+	}
+	assert.Equal(t, []string{"failureThreshold: 100001"}, addedOnly,
+		"only the edited probe field may diff; defaulted fields must match")
+}

@@ -416,6 +416,11 @@ func (d *Daemon) handleAppExec(w http.ResponseWriter, r *http.Request) {
 func encodeDefYAML(d appdef.ApplicationDef) (string, error) {
 	d.ImageDigest = ""
 	d.VolumesContentHash = ""
+	// Normalize probe defaults so the change-gutter baseline (a generator-built
+	// def, never decoded) and the content (a patched def, decoded through
+	// ApplyAppDefPatch) agree on initialDelaySeconds/periodSeconds instead of
+	// the patched side showing them as spurious "added" lines.
+	d = d.WithProbeDefaults()
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
