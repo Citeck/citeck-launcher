@@ -14,6 +14,7 @@ export function connectEvents(
   onOpen?: () => void,
   onResync?: ResyncHandler,
   lastSeq = 0,
+  onPing?: () => void,
 ): { close: () => void } {
   const url = lastSeq > 0 ? `/api/v1/events?lastSeq=${lastSeq}` : `/api/v1/events`
   const es = new EventSource(url)
@@ -33,6 +34,14 @@ export function connectEvents(
 
   es.addEventListener('resync', () => {
     onResync?.()
+  })
+
+  // Named keepalive from the daemon. Its arrival is the client's proof that the
+  // SSE transport actually delivers incremental frames — on the Windows WebView2
+  // asset server the stream is buffered and NO ping ever arrives, which the
+  // store uses to switch to a polling fallback. Carries no payload of interest.
+  es.addEventListener('ping', () => {
+    onPing?.()
   })
 
   es.onerror = () => {

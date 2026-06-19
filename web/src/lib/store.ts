@@ -63,10 +63,45 @@ const SSE_DISCONNECT_DISMISS_MS = 15_000
 const LONGOP_PROGRESS_STALL_MS = 30_000
 const WATCHDOG_TICK_MS = 5_000
 
+/** Polling fallback: when no SSE frame (data event OR `ping` keepalive) has
+ *  arrived within SSE_STALE_MS, the stream isn't delivering incrementally — the
+ *  Windows WebView2 asset server buffers the SSE response so EventSource never
+ *  sees live frames (WebKitGTK/browsers stream fine and keep this dormant). The
+ *  store then polls fetchData() every POLL_FALLBACK_TICK_MS so statuses stay
+ *  fresh. Must exceed the daemon's 10s ping interval so a healthy stream never
+ *  trips it. */
+const SSE_STALE_MS = 14_000
+const POLL_FALLBACK_TICK_MS = 3_000
+
 export const useDashboardStore = create<DashboardState>((set, get) => {
 
 let fetchDebounceTimer: ReturnType<typeof setTimeout> | null = null
 let watchdogTimer: ReturnType<typeof setInterval> | null = null
+// Epoch-ms of the last SSE frame (data event OR `ping`). 0 = none since the
+// stream (re)connected. Drives the polling fallback below.
+let lastSseFrameAt = 0
+let pollTimer: ReturnType<typeof setInterval> | null = null
+let pollInFlight = false
+
+const ensurePollFallback = () => {
+  if (pollTimer !== null) return
+  pollTimer = setInterval(() => {
+    if (pollInFlight) return
+    // Nothing to refresh outside an active namespace (Welcome owns its own load).
+    if (get().namespace === null) return
+    // SSE is delivering frames (events/pings) — let it drive updates.
+    if (Date.now() - lastSseFrameAt < SSE_STALE_MS) return
+    pollInFlight = true
+    void get().fetchData().finally(() => { pollInFlight = false })
+  }, POLL_FALLBACK_TICK_MS)
+}
+
+const stopPollFallback = () => {
+  if (pollTimer !== null) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
 
 const ensureWatchdog = () => {
   if (watchdogTimer !== null) return
@@ -156,9 +191,13 @@ return ({
     if (prev) prev.close()
 
     ensureWatchdog()
+    ensurePollFallback()
 
     const stream = connectEvents(
       (event) => {
+        // Any SSE frame proves the transport is delivering — keep the polling
+        // fallback dormant.
+        lastSseFrameAt = Date.now()
         // Detect sequence gap — fetch fresh state to catch up
         const { lastSeq } = get()
         if (lastSeq > 0 && event.seq > lastSeq + 1) {
@@ -320,6 +359,10 @@ return ({
         // gap detection still fires if the daemon's ring buffer wrapped
         // (the server emits an explicit `resync` event in that case and
         // also bumps Seq past lastSeq+1, both leading to fetchData()).
+        // Mark a frame so a transport that opens AND delivers (browser /
+        // WebKitGTK) holds the poll off; a buffered transport that opens but
+        // never delivers data goes stale after SSE_STALE_MS and starts polling.
+        lastSseFrameAt = Date.now()
         set({ reconnectDelay: 1000, sseConnected: true, disconnectedAt: null })
       },
       () => {
@@ -327,6 +370,10 @@ return ({
         get().fetchData()
       },
       get().lastSeq,
+      () => {
+        // `ping` keepalive — transport is alive and delivering frames.
+        lastSseFrameAt = Date.now()
+      },
     )
     set({ stream })
   },
@@ -338,6 +385,8 @@ return ({
       fetchDebounceTimer = null
     }
     stopWatchdog()
+    stopPollFallback()
+    lastSseFrameAt = 0
     set({
       stream: null, reconnectDelay: 1000, lastSeq: 0, reconnectGen: reconnectGen + 1,
       sseConnected: false, disconnectedAt: null,

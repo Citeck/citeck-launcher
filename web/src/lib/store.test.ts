@@ -207,6 +207,45 @@ describe('useDashboardStore', () => {
     useDashboardStore.getState().stopEventStream()
   })
 
+  it('polls fetchData as a fallback when the SSE stream delivers no frames (buffered transport)', async () => {
+    const namespace = { id: 'ns1', name: 'Test', status: 'STARTING', bundleRef: '', apps: [] }
+    const health = { status: 'healthy', healthy: true, checks: [] }
+    mockedGetNamespace.mockResolvedValue(namespace)
+    mockedGetHealth.mockResolvedValue(health)
+    // Active namespace (poll only refreshes when one is selected).
+    useDashboardStore.setState({ namespace })
+
+    useDashboardStore.getState().startEventStream()
+    // No onOpen / onEvent / onPing fired → the stream never delivered a frame,
+    // so after SSE_STALE_MS the poll tick (3s) must call fetchData.
+    expect(mockedGetNamespace).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(mockedGetNamespace).toHaveBeenCalled()
+
+    useDashboardStore.getState().stopEventStream()
+  })
+
+  it('does NOT poll while the SSE stream delivers ping keepalives (healthy transport)', async () => {
+    const namespace = { id: 'ns1', name: 'Test', status: 'STARTING', bundleRef: '', apps: [] }
+    mockedGetNamespace.mockResolvedValue(namespace)
+    mockedGetHealth.mockResolvedValue({ status: 'healthy', healthy: true, checks: [] })
+    useDashboardStore.setState({ namespace })
+
+    useDashboardStore.getState().startEventStream()
+    const onPing = mockedConnectEvents.mock.calls.at(-1)![5]
+    expect(onPing).toBeTypeOf('function')
+
+    // Daemon pings every 10s; simulate 30s of healthy keepalives. Each ping
+    // refreshes the freshness window so the 3s poll tick never trips.
+    for (let i = 0; i < 3; i++) {
+      onPing!()
+      await vi.advanceTimersByTimeAsync(10_000)
+    }
+    expect(mockedGetNamespace).not.toHaveBeenCalled()
+
+    useDashboardStore.getState().stopEventStream()
+  })
+
   it('pull_auth_required records the host; leaving PULL_FAILED clears the marker', () => {
     useDashboardStore.setState({ pullAuthRequired: {} })
     useDashboardStore.getState().startEventStream()

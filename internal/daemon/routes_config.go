@@ -424,7 +424,7 @@ func (d *Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	ticker := time.NewTicker(15 * time.Second)
+	ticker := time.NewTicker(sseKeepaliveInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -433,13 +433,25 @@ func (d *Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 		case evt := <-ch:
 			writeSSEEvent(w, evt)
 			flusher.Flush()
-			ticker.Reset(15 * time.Second)
+			ticker.Reset(sseKeepaliveInterval)
 		case <-ticker.C:
-			fmt.Fprint(w, ": keepalive\n\n")
+			// A NAMED `ping` event (not a bare `: comment`) so the client can
+			// OBSERVE it: the desktop client uses ping arrival to tell a live
+			// SSE stream from one the Windows WebView2 asset-server silently
+			// buffers (which delivers no incremental frames) and falls back to
+			// polling when pings stop. EventSource routes this to a `ping`
+			// listener, never to onmessage, so it carries no seq and is inert
+			// to gap detection.
+			fmt.Fprint(w, "event: ping\ndata: {}\n\n")
 			flusher.Flush()
 		}
 	}
 }
+
+// sseKeepaliveInterval is how often handleEvents emits a `ping` on an otherwise
+// idle stream. Kept below the client's SSE-staleness threshold so a healthy
+// stream never trips the desktop polling fallback (see web store SSE_STALE_MS).
+const sseKeepaliveInterval = 10 * time.Second
 
 // parseLastEventID resolves the client's last-seen Seq from either the
 // standard SSE Last-Event-ID header (browser EventSource auto-reconnect) or
