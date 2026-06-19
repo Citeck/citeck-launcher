@@ -160,14 +160,18 @@ export function SnapshotCreateDialog({
             volumes.map((v) => {
               const st = sizes[v.name]
               return (
-                <label key={v.name} className="flex items-center gap-2 px-2.5 py-1.5 text-xs cursor-pointer hover:bg-muted/30">
-                  <input
-                    type="checkbox"
-                    className="rounded border-border align-middle m-0 shrink-0"
-                    checked={selected.has(v.name)}
-                    onChange={() => toggle(v.name)}
-                  />
-                  <span className="flex-1 truncate font-mono">{v.name}</span>
+                <div key={v.name} className="flex items-center gap-2 px-2.5 py-1.5 text-xs hover:bg-muted/30">
+                  {/* Toggle only via the checkbox + name, not the whole row —
+                      clicking the size column / empty space must not flip it. */}
+                  <label className="flex min-w-0 flex-1 items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="rounded border-border align-middle m-0 shrink-0"
+                      checked={selected.has(v.name)}
+                      onChange={() => toggle(v.name)}
+                    />
+                    <span className="truncate font-mono">{v.name}</span>
+                  </label>
                   {st?.status === 'done' && st.bytes != null ? (
                     <span className="text-muted-foreground tabular-nums">{formatBytes(st.bytes)}</span>
                   ) : st?.status === 'done' ? (
@@ -176,13 +180,13 @@ export function SnapshotCreateDialog({
                     <button
                       type="button"
                       className="text-primary hover:underline disabled:opacity-50"
-                      onClick={(e) => { e.preventDefault(); computeSize(v.name) }}
+                      onClick={() => computeSize(v.name)}
                       disabled={st?.status === 'loading'}
                     >
-                      {st?.status === 'loading' ? '…' : t('volumes.size.compute')}
+                      {st?.status === 'loading' ? '…' : t('volumes.table.size')}
                     </button>
                   )}
-                </label>
+                </div>
               )
             })
           )}
