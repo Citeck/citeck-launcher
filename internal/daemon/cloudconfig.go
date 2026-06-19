@@ -99,13 +99,23 @@ func (s *CloudConfigServer) Start() error {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	listener, err := net.Listen("tcp", "127.0.0.1:8761")
+	// Bind all interfaces (Kotlin 1.x parity — Ktor's CIO server defaulted to
+	// 0.0.0.0:8761). Desktop mode runs this only for the local-debug workflow,
+	// and external microservices run OUTSIDE docker (a host process, a sibling
+	// container reaching the host via the bridge gateway, or a VM/WSL service)
+	// must reach the config server to fetch host-published broker/zk/db
+	// addresses. A loopback-only bind (127.0.0.1) refused every non-localhost
+	// connection — the 2.x regression that broke external-service config.
+	// NOTE: the served config carries the JWT secret + DB credentials; desktop
+	// mode is a single developer's machine (server mode never starts this
+	// server), the same trust boundary Kotlin assumed.
+	listener, err := net.Listen("tcp", "0.0.0.0:8761") //nolint:gosec // G102: intentional — desktop-only local-debug config server, Kotlin parity (see comment)
 	if err != nil {
 		return fmt.Errorf("cloud config server listen: %w", err)
 	}
 
 	go func() {
-		slog.Info("CloudConfigServer started", "addr", "127.0.0.1:8761")
+		slog.Info("CloudConfigServer started", "addr", "0.0.0.0:8761")
 		if err := s.server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			slog.Error("CloudConfigServer error", "err", err)
 		}
