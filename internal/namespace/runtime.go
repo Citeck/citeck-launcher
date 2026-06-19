@@ -172,6 +172,7 @@ type Runtime struct {
 	cachedBundle          *bundle.Def                      // last successfully resolved bundle (persisted)
 	retryState            map[string]retryInfo             // retry tracking for failed apps
 	pullAuthBlockedApps   map[string]bool                  // PULL_FAILED apps awaiting registry credentials — T24 backoff retry is paused for them until creds change (RetryPullFailedApps clears it)
+	lastLoggedPullErr     map[string]string                // app → last pull error already WARN-logged; dedups the per-app pull-fail log so 24 apps × T24 retries don't flood daemon.log with the same cause (cleared on pull success)
 	livenessFailures      map[string]int                   // consecutive liveness probe failure counts
 	restartCounts         map[string]int                   // total restart counts per app
 	restartEvents         []RestartEvent                   // ring buffer of restart events
@@ -554,6 +555,7 @@ func NewRuntime(cfg *Config, dockerClient docker.RuntimeClient, volumesBase stri
 		volumesBase:         volumesBase,
 		manualStoppedApps:   make(map[string]bool),
 		pullAuthBlockedApps: make(map[string]bool),
+		lastLoggedPullErr:   make(map[string]string),
 		editedAppPatches:    make(map[string]json.RawMessage),
 		editedFileEdits:     make(map[string]FileEdit),
 		generatedDefs:       make(map[string]appdef.ApplicationDef),

@@ -874,6 +874,14 @@ func (r *Runtime) handlePullResult(res workers.Result) {
 		// T6: PULLING → PULL_FAILED. T24 auto-retry runs via backoff.
 		r.recordRetryAttempt(app.Name)
 		app.StatusText = res.Err.Error()
+		// Log the cause (parity with the start/probe/init failure branches, which
+		// all WARN). Deduplicated per app+error so 24 apps × T24 backoff retries
+		// don't flood daemon.log with the same root cause — re-log only when the
+		// error text changes (e.g. registry comes back then fails differently).
+		if r.lastLoggedPullErr[app.Name] != res.Err.Error() {
+			slog.Warn("Image pull failed", "app", app.Name, "image", app.Def.Image, "err", res.Err)
+			r.lastLoggedPullErr[app.Name] = res.Err.Error()
+		}
 		r.setAppStatus(app, AppStatusPullFailed)
 		if nsactions.IsAuthError(res.Err) {
 			// Auth failure: pause the T24 backoff retry — retrying the pull
@@ -901,8 +909,10 @@ func (r *Runtime) handlePullResult(res workers.Result) {
 		}
 		return
 	}
-	// Pull succeeded — clear any auth block.
+	// Pull succeeded — clear any auth block and the pull-error log dedup so a
+	// future failure (after a successful recovery) is logged again.
 	delete(r.pullAuthBlockedApps, app.Name)
+	delete(r.lastLoggedPullErr, app.Name)
 	// T5: PULLING → READY_TO_START. Update ImageDigest from payload so the
 	// deployment hash reflects what was actually pulled.
 	if payload, pok := res.Payload.(workers.PullPayload); pok && payload.Digest != "" {
@@ -1262,6 +1272,17 @@ func (r *Runtime) handleReconcileDiffResult(res workers.Result) {
 //
 // App-level staleness guard: if the app has transitioned out of RUNNING
 // (concurrent StopApp, etc.), drop the Result silently — no counter update.
+// probeErrAttr returns the slog key/value pair ["err", err] when err is
+// non-nil, or an empty slice otherwise — so a liveness probe that ran and
+// merely reported unhealthy doesn't log a noisy err=<nil>, while a probe that
+// could not run surfaces its cause.
+func probeErrAttr(err error) []any {
+	if err == nil {
+		return nil
+	}
+	return []any{"err", err}
+}
+
 func (r *Runtime) handleLivenessProbeResult(res workers.Result) {
 	payload, ok := res.Payload.(workers.LivenessProbePayload)
 	healthy := false
@@ -1298,8 +1319,12 @@ func (r *Runtime) handleLivenessProbeResult(res workers.Result) {
 	}
 
 	if failures < threshold {
+		// Thread res.Err so a probe that ERRORED (couldn't run — exec failure,
+		// container gone) is distinguishable in the log from one that ran and
+		// reported unhealthy. probeErrAttr is err=<the error> or omitted.
 		slog.Warn("Liveness probe failed (below threshold)",
-			"app", appName, "failures", failures, "threshold", threshold)
+			append([]any{"app", appName, "failures", failures, "threshold", threshold},
+				probeErrAttr(res.Err)...)...)
 		r.mu.Unlock()
 		return
 	}
@@ -1309,7 +1334,8 @@ func (r *Runtime) handleLivenessProbeResult(res workers.Result) {
 	containerID := app.ContainerID
 	isCiteck := app.Def.Kind.IsCiteckApp()
 	slog.Error("Liveness probe failed, restarting app",
-		"app", appName, "failures", failures, "threshold", threshold)
+		append([]any{"app", appName, "failures", failures, "threshold", threshold},
+			probeErrAttr(res.Err)...)...)
 	r.mu.Unlock()
 
 	// Capture diagnostics outside lock (may run Docker commands). Use the
