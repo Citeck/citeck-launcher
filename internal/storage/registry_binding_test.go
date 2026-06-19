@@ -73,3 +73,43 @@ func TestFileStoreRegistryBindingRoundTrip(t *testing.T) {
 	got2, _ := store.ListRegistryBindings("")
 	assert.Equal(t, map[string]string{"enterprise-registry.citeck.ru": "s2"}, got2)
 }
+
+// TestSQLiteDeleteSecretCascadesBindings: deleting a secret must remove every
+// registry binding that referenced it, across ALL workspaces — otherwise the
+// credentials dialog shows a dangling "(not found)" secret for the host.
+func TestSQLiteDeleteSecretCascadesBindings(t *testing.T) {
+	store, err := NewSQLiteStore(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	// Same (global) secret bound by two workspaces; a different host bound to
+	// another secret must survive.
+	require.NoError(t, store.SetRegistryBinding("ws-a", "enterprise-registry.citeck.ru", "registry-ent"))
+	require.NoError(t, store.SetRegistryBinding("ws-b", "enterprise-registry.citeck.ru", "registry-ent"))
+	require.NoError(t, store.SetRegistryBinding("ws-a", "harbor.citeck.ru", "registry-harbor"))
+
+	require.NoError(t, store.DeleteSecret("registry-ent"))
+
+	a, _ := store.ListRegistryBindings("ws-a")
+	assert.Equal(t, map[string]string{"harbor.citeck.ru": "registry-harbor"}, a,
+		"dangling binding to the deleted secret must be gone; the other binding untouched")
+	b, _ := store.ListRegistryBindings("ws-b")
+	assert.Empty(t, b, "the deleted secret's binding must be removed in ws-b too")
+}
+
+// TestFileStoreDeleteSecretCascadesBindings mirrors the cascade for server mode.
+func TestFileStoreDeleteSecretCascadesBindings(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewFileStore(dir, filepath.Join(dir, "runtime"))
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.SetRegistryBinding("", "enterprise-registry.citeck.ru", "registry-ent"))
+	require.NoError(t, store.SetRegistryBinding("", "harbor.citeck.ru", "registry-harbor"))
+
+	require.NoError(t, store.DeleteSecret("registry-ent"))
+
+	got, _ := store.ListRegistryBindings("")
+	assert.Equal(t, map[string]string{"harbor.citeck.ru": "registry-harbor"}, got,
+		"deleting a secret must drop its dangling binding")
+}

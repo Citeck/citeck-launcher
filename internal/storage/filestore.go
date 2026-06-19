@@ -150,6 +150,22 @@ func (s *FileStore) DeleteSecret(id string) error {
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("delete secret %s: %w", id, err)
 	}
+	// Cascade: drop any registry binding that pointed at this secret, else the
+	// credentials dialog renders a dangling host→secret "(not found)" entry.
+	bindings, err := s.readRegistryBindings()
+	if err != nil {
+		return err
+	}
+	changed := false
+	for host, secretID := range bindings {
+		if secretID == id {
+			delete(bindings, host)
+			changed = true
+		}
+	}
+	if changed {
+		return s.writeRegistryBindingsLocked(bindings)
+	}
 	return nil
 }
 
@@ -199,6 +215,11 @@ func (s *FileStore) SetRegistryBinding(_, host, secretID string) error {
 	} else {
 		bindings[host] = secretID
 	}
+	return s.writeRegistryBindingsLocked(bindings)
+}
+
+// writeRegistryBindingsLocked persists the bindings map. Caller must hold s.mu.
+func (s *FileStore) writeRegistryBindingsLocked(bindings map[string]string) error {
 	data, err := json.MarshalIndent(bindings, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal registry bindings: %w", err)

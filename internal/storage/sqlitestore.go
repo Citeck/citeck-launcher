@@ -466,10 +466,27 @@ func (s *SQLiteStore) SaveSecret(secret Secret) error {
 	return nil
 }
 
-// DeleteSecret removes a secret by ID.
+// DeleteSecret removes a secret by ID, cascading to any registry bindings that
+// referenced it (across ALL workspaces — secrets are global, bindings are
+// per-workspace, and the junction table has no FK cascade). Without this a
+// deleted registry credential leaves a dangling host→secret binding that the
+// credentials dialog renders as "(not found)". Both deletes run in one
+// transaction so a failure on the second can't orphan a binding under a gone
+// secret.
 func (s *SQLiteStore) DeleteSecret(id string) error {
-	if _, err := s.db.Exec("DELETE FROM secrets WHERE id = ?", id); err != nil {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("delete secret %s: begin: %w", id, err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after a successful Commit
+	if _, err := tx.Exec("DELETE FROM secrets WHERE id = ?", id); err != nil {
 		return fmt.Errorf("delete secret %s: %w", id, err)
+	}
+	if _, err := tx.Exec("DELETE FROM registry_bindings WHERE secret_id = ?", id); err != nil {
+		return fmt.Errorf("delete secret %s registry bindings: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("delete secret %s: commit: %w", id, err)
 	}
 	return nil
 }
