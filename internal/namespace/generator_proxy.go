@@ -5,6 +5,8 @@ package namespace
 
 import (
 	"fmt"
+	"log/slog"
+	"strconv"
 	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
@@ -87,6 +89,23 @@ func generateProxy(ctx *NsGenContext) {
 			},
 		)
 		hasInitActions = true
+	}
+
+	// Register the AI app as a proxy location so call-recording / STT traffic
+	// routes through nginx. Kotlin parity (NamespaceGenerator.generateProxyApp,
+	// v1.4+). Skipped when AI is detached; a missing/invalid SERVER_PORT is
+	// logged rather than silently dropping the location.
+	if aiApp, ok := ctx.Applications[appdef.AppAi]; ok && !ctx.DetachedApps[appdef.AppAi] {
+		aiPort := 0
+		if p, ok := aiApp.Environments.Get("SERVER_PORT"); ok {
+			aiPort, _ = strconv.Atoi(p)
+		}
+		if aiPort > 0 {
+			app.AddEnv("AI_TARGET", fmt.Sprintf("%s:%d", appdef.AppAi, aiPort))
+			app.AddDependsOn(appdef.AppAi)
+		} else {
+			slog.Error("Port of 'ai' is undefined. AI location won't be registered in proxy")
+		}
 	}
 
 	app.AddEnv("RABBITMQ_TARGET", fmt.Sprintf("%s:15672", RMQHost))

@@ -566,6 +566,59 @@ func alfrescoProxyTargetFixture() (*Config, *bundle.Def, *bundle.WorkspaceConfig
 	return cfg, bun, wsCfg
 }
 
+func aiProxyTargetFixture() (*Config, *bundle.Def, *bundle.WorkspaceConfig) {
+	cfg := &Config{
+		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+	}
+	bun := &bundle.Def{
+		Applications: map[string]bundle.AppDef{
+			"gateway": {Image: "nexus.citeck.ru/gateway:1.0"},
+			"ai":      {Image: "nexus.citeck.ru/ai:1.0"},
+			"proxy":   {Image: "citeck/proxy:1.0"},
+		},
+	}
+	wsCfg := &bundle.WorkspaceConfig{
+		Webapps: []bundle.WebappConfig{{ID: "gateway"}, {ID: "ai"}},
+	}
+	return cfg, bun, wsCfg
+}
+
+// AI app must be registered as a proxy location (AI_TARGET) so call-recording /
+// STT traffic routes through nginx. Kotlin parity (NamespaceGenerator
+// .generateProxyApp, v1.4+).
+func TestProxyTarget_AIRegistered(t *testing.T) {
+	cfg, bun, wsCfg := aiProxyTargetFixture()
+
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	require.NoError(t, err)
+
+	proxy := findGeneratedApp(resp, appdef.AppProxy)
+	require.NotNil(t, proxy, "expected proxy app")
+	ai := findGeneratedApp(resp, appdef.AppAi)
+	require.NotNil(t, ai, "expected ai app")
+	aiPort := envGet(ai.Environments, "SERVER_PORT")
+	require.NotEmpty(t, aiPort, "ai app should have SERVER_PORT")
+
+	assert.Equal(t, appdef.AppAi+":"+aiPort, envGet(proxy.Environments, "AI_TARGET"))
+	assert.True(t, proxy.DependsOn.Has(appdef.AppAi), "proxy should depend on ai")
+}
+
+func TestProxyTarget_AIDetached(t *testing.T) {
+	cfg, bun, wsCfg := aiProxyTargetFixture()
+
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"}, GenerateOpts{
+		DetachedApps: map[string]bool{appdef.AppAi: true},
+	})
+	require.NoError(t, err)
+
+	proxy := findGeneratedApp(resp, appdef.AppProxy)
+	require.NotNil(t, proxy, "expected proxy app")
+	assert.Empty(t, envGet(proxy.Environments, "AI_TARGET"),
+		"detached ai must not be registered as a proxy target")
+	assert.False(t, proxy.DependsOn.Has(appdef.AppAi), "proxy must not depend on detached ai")
+}
+
 func TestProxyTarget_AlfrescoEnabled(t *testing.T) {
 	cfg, bun, wsCfg := alfrescoProxyTargetFixture()
 
