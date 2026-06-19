@@ -17,13 +17,23 @@ vi.mock('./toast', () => ({
   toast: vi.fn(),
 }))
 
+// Mock the desktop (Wails) event bridge — defaults to "not desktop" so the
+// existing tests take the EventSource path; one test flips it to true.
+vi.mock('./desktopEvents', () => ({
+  isWailsDesktop: vi.fn(() => false),
+  connectDesktopEvents: vi.fn(() => ({ close: vi.fn() })),
+}))
+
 import { getNamespace, getHealth } from './api'
 import { connectEvents } from './websocket'
+import { isWailsDesktop, connectDesktopEvents } from './desktopEvents'
 import type { EventDto } from './types'
 
 const mockedGetNamespace = vi.mocked(getNamespace)
 const mockedGetHealth = vi.mocked(getHealth)
 const mockedConnectEvents = vi.mocked(connectEvents)
+const mockedIsWailsDesktop = vi.mocked(isWailsDesktop)
+const mockedConnectDesktop = vi.mocked(connectDesktopEvents)
 
 describe('useDashboardStore', () => {
   beforeEach(() => {
@@ -265,5 +275,25 @@ describe('useDashboardStore', () => {
     expect(useDashboardStore.getState().pullAuthRequired).toEqual({})
 
     useDashboardStore.getState().stopEventStream()
+  })
+
+  it('uses the Wails bridge transport in desktop mode (not EventSource)', () => {
+    mockedIsWailsDesktop.mockReturnValue(true)
+    try {
+      useDashboardStore.getState().startEventStream()
+      expect(mockedConnectDesktop).toHaveBeenCalledTimes(1)
+      expect(mockedConnectEvents).not.toHaveBeenCalled()
+
+      // The first bridge arg is the shared event handler — a daemon event
+      // routed through it updates the store exactly like an SSE frame would.
+      const onEvent = mockedConnectDesktop.mock.calls[0][0]
+      const base: EventDto = { type: '', seq: 0, timestamp: 0, namespaceId: '', appName: '', before: '', after: '' }
+      onEvent({ ...base, type: 'disk_low', seq: 1, path: '/x', freeBytes: 1, thresholdBytes: 2 })
+      expect(useDashboardStore.getState().diskLow).toEqual({ path: '/x', freeBytes: 1, thresholdBytes: 2 })
+
+      useDashboardStore.getState().stopEventStream()
+    } finally {
+      mockedIsWailsDesktop.mockReturnValue(false)
+    }
   })
 })

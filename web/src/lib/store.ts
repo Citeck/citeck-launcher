@@ -1,7 +1,8 @@
 import { create } from 'zustand'
-import type { NamespaceDto, HealthDto } from './types'
+import type { NamespaceDto, HealthDto, EventDto } from './types'
 import { getNamespace, getHealth } from './api'
 import { connectEvents } from './websocket'
+import { connectDesktopEvents, isWailsDesktop } from './desktopEvents'
 import { toast } from './toast'
 import { t } from './i18n'
 import { useLongOpStore } from './longOp'
@@ -202,10 +203,9 @@ return ({
     ensureWatchdog()
     ensurePollFallback()
 
-    const stream = connectEvents(
-      (event) => {
-        // Any SSE frame proves the transport is delivering — mark live and
-        // keep the polling fallback dormant.
+    const handleEvent = (event: EventDto) => {
+        // Any frame (SSE or the desktop Wails bridge) proves the transport is
+        // delivering — mark live and keep the polling fallback dormant.
         lastSseFrameAt = Date.now()
         sseLive = true
         // Detect sequence gap — fetch fresh state to catch up
@@ -346,7 +346,25 @@ return ({
           fetchDebounceTimer = null
           get().fetchData()
         }, 100)
-      },
+    }
+
+    if (isWailsDesktop()) {
+      // Desktop: consume the daemon stream as native Wails events bridged by the
+      // wrapper (cmd/citeck-desktop/eventbridge.go) — no in-page EventSource
+      // (WebView2 buffers it) and no JS-side reconnect: the Go bridge owns the
+      // daemon connection and re-emits a resync on every (re)connect. The HTTP
+      // poll fallback still backs it up if the bridge ever stalls.
+      const stream = connectDesktopEvents(
+        handleEvent,
+        () => { lastSseFrameAt = Date.now(); sseLive = true; get().fetchData() }, // resync
+        () => { lastSseFrameAt = Date.now(); sseLive = true },                     // ping
+      )
+      set({ stream, sseConnected: true, disconnectedAt: null, reconnectDelay: 1000 })
+      return
+    }
+
+    const stream = connectEvents(
+      handleEvent,
       () => {
         // Only reconnect if this is still the current generation
         if (get().reconnectGen !== gen) return

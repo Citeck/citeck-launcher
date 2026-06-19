@@ -469,6 +469,13 @@ func run() error {
 		application.InvokeAsync(func() { tray.SetMenu(menu) })
 	}()
 
+	// Bridge the daemon's SSE event stream to the webview as native Wails
+	// events. On Windows the WebView2 asset server buffers streaming HTTP
+	// responses, so an in-page EventSource never sees live frames; native Wails
+	// events are plain IPC and stream identically on every platform, so the web
+	// store uses this transport in desktop mode (with the HTTP poll as fallback).
+	go streamDaemonEventsToWebview(ctx, app, socketClient, daemonReady)
+
 	// app.Run blocks until the GUI exits. As before, a run error is logged (not
 	// returned) so the process still exits 0 on a normal Wails teardown; the
 	// deferred lock release + ctx cancel fire on return.
