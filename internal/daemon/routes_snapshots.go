@@ -122,6 +122,24 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Optional volume selection from the request body. The snapshot dialog sends
+	// {"volumes": [...]} with the checked volumes (keyed by the volume-list
+	// API's Name). A missing/empty body — or an absent "volumes" field — means
+	// "all volumes" (nil include), preserving the original behavior and any
+	// older client that posts no body.
+	var includeVolumes map[string]bool
+	if r.Body != nil {
+		var body struct {
+			Volumes []string `json:"volumes"`
+		}
+		if dec := json.NewDecoder(io.LimitReader(r.Body, 64<<10)); dec.Decode(&body) == nil && body.Volumes != nil {
+			includeVolumes = make(map[string]bool, len(body.Volumes))
+			for _, v := range body.Volumes {
+				includeVolumes[v] = true
+			}
+		}
+	}
+
 	// Determine output directory: query param or default snapshots dir
 	dir := r.URL.Query().Get("output")
 	if dir != "" {
@@ -172,7 +190,7 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 				Current: current, Total: total,
 			})
 		}
-		meta, err := snapshot.Export(d.bgCtx, dc, outputPath, volumesBase, progress)
+		meta, err := snapshot.Export(d.bgCtx, dc, outputPath, volumesBase, includeVolumes, progress)
 		if err != nil {
 			slog.Error("Snapshot export failed", "err", err)
 			d.broadcastEvent(api.EventDto{

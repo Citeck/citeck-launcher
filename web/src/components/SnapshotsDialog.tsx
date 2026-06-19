@@ -4,6 +4,7 @@ import { getSnapshots, postExportSnapshot, postImportSnapshot, postImportSnapsho
 import type { SnapshotDto } from '../lib/types'
 import { ConfirmModal } from './ConfirmModal'
 import { FormDialog, type FormFieldSpec } from './FormDialog'
+import { SnapshotCreateDialog } from './SnapshotCreateDialog'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
 import { formatDateTime } from '../lib/datetime'
@@ -53,6 +54,8 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
   const [renameTarget, setRenameTarget] = useState<SnapshotRow | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<SnapshotRow | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
+  // Timestamped default name, snapshotted when the dialog opens (not per render).
+  const [createDefaultName, setCreateDefaultName] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
   // Bumped by the dashboard store on every terminal snapshot SSE event so the
   // list reloads once an async export/import actually finishes (the HTTP call
@@ -195,13 +198,12 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
     }
   }
 
-  async function handleCreate(values: Record<string, unknown>) {
-    const name = String(values.name || '').trim().replace(/\.zip$/, '')
+  async function handleCreate(name: string, volumes: string[]) {
     startLongOp('snapshot.export', t('longOp.snapshot.export'))
     let started = false
     try {
       await runWith('export', async () => {
-        const res = await postExportSnapshot(name || undefined)
+        const res = await postExportSnapshot(name || undefined, volumes)
         started = true
         toast(res.message, 'success')
         setCreateOpen(false)
@@ -241,26 +243,6 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
   // user can no-op without triggering this validation.
   const nameInvalid = (_: Record<string, unknown>, v: unknown): string =>
     typeof v === 'string' && /^[\w\-.]+$/.test(v) ? '' : t('snapshots.field.name.invalid')
-
-  const createFields: FormFieldSpec[] = [
-    {
-      key: 'name',
-      label: t('snapshots.field.name'),
-      type: 'text',
-      required: true,
-      defaultValue: defaultSnapshotName(),
-      placeholder: 'my-snapshot',
-      validations: [
-        nameInvalid,
-        (_, v) => {
-          const name = String(v || '').trim().replace(/\.zip$/, '')
-          return nsRows.some((s) => s.name.replace(/\.zip$/, '') === name)
-            ? t('snapshots.field.name.alreadyExists')
-            : ''
-        },
-      ],
-    },
-  ]
 
   const renameFields: FormFieldSpec[] = [
     {
@@ -389,7 +371,7 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
                 type="button"
                 className="rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-xs font-medium hover:bg-primary/90 disabled:opacity-50"
                 disabled={!namespaceStopped || busy === 'export'}
-                onClick={() => setCreateOpen(true)}
+                onClick={() => { setCreateDefaultName(defaultSnapshotName()); setCreateOpen(true) }}
               >
                 {busy === 'export' ? t('volumes.snapshots.exporting') : t('snapshots.create')}
               </button>
@@ -446,14 +428,13 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
         onCancel={() => setRenameTarget(null)}
         submitLabel={t('common.save')}
       />
-      <FormDialog
+      <SnapshotCreateDialog
         open={createOpen}
-        title={t('snapshots.create.title')}
-        fields={createFields}
-        onSubmit={handleCreate}
-        onCancel={() => setCreateOpen(false)}
-        submitLabel={t('snapshots.create')}
+        existingNames={nsRows.map((s) => s.name)}
+        defaultName={createDefaultName}
         loading={busy === 'export'}
+        onCancel={() => setCreateOpen(false)}
+        onCreate={handleCreate}
       />
       <ConfirmModal
         open={!!deleteTarget}

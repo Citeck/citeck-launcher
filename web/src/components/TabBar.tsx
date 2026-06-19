@@ -45,7 +45,10 @@ export function TabBar() {
         <>
           <button
             type="button"
-            className="flex items-center gap-2 px-3 text-xs hover:bg-muted/30 min-w-0 max-w-[55%] h-full"
+            // focus:outline-none — match the rest of the app; otherwise the
+            // webview leaves a focus ring around this block after the switcher
+            // dialog closes and focus returns here.
+            className="flex items-center gap-2 px-3 text-xs hover:bg-muted/30 min-w-0 max-w-[55%] h-full focus:outline-none"
             title={t('namespaces.switch')}
             onClick={() => setNsSwitcherOpen(true)}
           >
@@ -59,7 +62,7 @@ export function TabBar() {
           {/* Click → typed namespace-edit form. */}
           <button
             type="button"
-            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted"
+            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted focus:outline-none"
             title={t('dashboard.nsConfig')}
             onClick={() => setNsEditOpen(true)}
           >

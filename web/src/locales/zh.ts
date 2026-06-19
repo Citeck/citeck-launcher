@@ -482,6 +482,8 @@ const zh = {
   'snapshots.action.delete': '删除',
   'snapshots.create': '创建快照',
   'snapshots.create.title': '创建快照',
+  'snapshots.create.volumes': '要包含的卷',
+  'snapshots.create.noVolumes': '没有可快照的卷',
   'snapshots.importFile': '导入 .zip…',
   'snapshots.requireStopped': '停止 namespace 以创建或导入快照。',
   'snapshots.openNsDir': '打开 NS 目录',

@@ -79,13 +79,21 @@ func TestExportSources_DesktopUsesNamedVolumes(t *testing.T) {
 		{Name: "stray-volume", OrigName: ""}, // not launcher-managed → skipped
 	}}
 
-	srcs, err := exportSources(context.Background(), fake, "/ignored-in-desktop")
+	srcs, err := exportSources(context.Background(), fake, "/ignored-in-desktop", nil)
 	require.NoError(t, err)
 	require.Len(t, srcs, 2)
 	require.Equal(t, "postgres2", srcs[0].name)
 	require.Equal(t, "citeck_volume_postgres2_ns_ws:/source:ro", srcs[0].sourceBind)
 	require.Equal(t, "mongo", srcs[1].name)
 	require.Equal(t, "citeck_volume_mongo_ns_ws:/source:ro", srcs[1].sourceBind)
+
+	// include filter keys off the Docker volume Name (what the volume-list API
+	// and the snapshot dialog expose), not the OrigName archive entry.
+	filtered, err := exportSources(context.Background(), fake, "/ignored-in-desktop",
+		map[string]bool{"citeck_volume_mongo_ns_ws": true})
+	require.NoError(t, err)
+	require.Len(t, filtered, 1)
+	require.Equal(t, "mongo", filtered[0].name)
 }
 
 func TestExportSources_ServerScansBindDir(t *testing.T) {
@@ -94,11 +102,21 @@ func TestExportSources_ServerScansBindDir(t *testing.T) {
 	tmp := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(tmp, "volumes", "postgres2"), 0o755))
 
-	srcs, err := exportSources(context.Background(), &fakeVolumeOps{}, tmp)
+	require.NoError(t, os.MkdirAll(filepath.Join(tmp, "volumes", "mongo"), 0o755))
+
+	srcs, err := exportSources(context.Background(), &fakeVolumeOps{}, tmp, nil)
 	require.NoError(t, err)
-	require.Len(t, srcs, 1)
-	require.Equal(t, "postgres2", srcs[0].name)
-	require.Equal(t, filepath.Join(tmp, "volumes", "postgres2")+":/source:ro", srcs[0].sourceBind)
+	require.Len(t, srcs, 2)
+	require.Equal(t, "mongo", srcs[0].name)
+	require.Equal(t, "postgres2", srcs[1].name)
+
+	// include filter keys off the bind-dir name (what the volume-list API and
+	// the snapshot dialog expose in server mode).
+	filtered, err := exportSources(context.Background(), &fakeVolumeOps{}, tmp,
+		map[string]bool{"postgres2": true})
+	require.NoError(t, err)
+	require.Len(t, filtered, 1)
+	require.Equal(t, "postgres2", filtered[0].name)
 }
 
 func TestImportVolume_ServerTargetsBindDir(t *testing.T) {

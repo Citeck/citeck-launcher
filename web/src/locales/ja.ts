@@ -482,6 +482,8 @@ const ja = {
   'snapshots.action.delete': '削除',
   'snapshots.create': 'スナップショットを作成',
   'snapshots.create.title': 'スナップショットを作成',
+  'snapshots.create.volumes': '含めるボリューム',
+  'snapshots.create.noVolumes': 'ボリュームがありません',
   'snapshots.importFile': 'インポート .zip…',
   'snapshots.requireStopped': 'スナップショットを作成またはインポートするには namespace を停止してください。',
   'snapshots.openNsDir': 'NS ディレクトリを開く',

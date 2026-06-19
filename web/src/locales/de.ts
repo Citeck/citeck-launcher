@@ -482,6 +482,8 @@ const de = {
   'snapshots.action.delete': 'Löschen',
   'snapshots.create': 'Snapshot erstellen',
   'snapshots.create.title': 'Snapshot erstellen',
+  'snapshots.create.volumes': 'Einzuschließende Volumes',
+  'snapshots.create.noVolumes': 'Keine Volumes',
   'snapshots.importFile': 'Importieren .zip…',
   'snapshots.requireStopped': 'Stoppen Sie den Namespace, um Snapshots zu erstellen oder zu importieren.',
   'snapshots.openNsDir': 'NS-Verzeichnis öffnen',

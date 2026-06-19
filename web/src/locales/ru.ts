@@ -482,6 +482,8 @@ const ru = {
   'snapshots.action.delete': 'Удалить',
   'snapshots.create': 'Создать снапшот',
   'snapshots.create.title': 'Создать снапшот',
+  'snapshots.create.volumes': 'Тома в снапшоте',
+  'snapshots.create.noVolumes': 'Нет томов',
   'snapshots.importFile': 'Импорт .zip…',
   'snapshots.requireStopped': 'Остановите namespace, чтобы создавать или импортировать снапшоты.',
   'snapshots.openNsDir': 'Открыть каталог NS',

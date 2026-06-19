@@ -607,9 +607,13 @@ export async function getSnapshots(): Promise<SnapshotDto[]> {
   return request('GET', '/snapshots')
 }
 
-export async function postExportSnapshot(name?: string): Promise<ActionResultDto> {
+// volumes (optional) = the volume names to include (the snapshot dialog's
+// checked rows). Omit to snapshot every volume — the daemon treats an absent
+// list as "all".
+export async function postExportSnapshot(name?: string, volumes?: string[]): Promise<ActionResultDto> {
   const qs = name ? `?name=${enc(name)}` : ''
-  return request('POST', `/snapshots/export${qs}`, { timeout: 300_000 })
+  const body = volumes ? { volumes } : undefined
+  return request('POST', `/snapshots/export${qs}`, { timeout: 300_000, body })
 }
 
 export async function postImportSnapshot(file: File): Promise<ActionResultDto> {

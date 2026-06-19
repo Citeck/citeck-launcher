@@ -483,6 +483,8 @@ const en = {
   'snapshots.action.delete': 'Delete',
   'snapshots.create': 'Create Snapshot',
   'snapshots.create.title': 'Create snapshot',
+  'snapshots.create.volumes': 'Volumes to include',
+  'snapshots.create.noVolumes': 'No volumes to snapshot',
   'snapshots.importFile': 'Import .zip…',
   'snapshots.requireStopped': 'Stop the namespace to create or import snapshots.',
   'snapshots.openNsDir': 'Open NS Directory',

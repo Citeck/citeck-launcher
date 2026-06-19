@@ -87,7 +87,12 @@ type exportSource struct {
 // (via ListVolumes); server mode scans the {volumesBase}/volumes/ bind dirs.
 // This mirrors docker.CreateContainer's per-mode volume handling so a snapshot
 // captures the data containers really mount.
-func exportSources(ctx context.Context, dc volumeOps, volumesBase string) ([]exportSource, error) {
+// include filters the export to a chosen subset of volumes. The keys are the
+// identifiers the volume-list API exposes (desktop: the Docker volume Name;
+// server: the bind-dir name) — i.e. exactly what the snapshot dialog's
+// checkboxes send back. A nil map means "all volumes" (the historical behavior
+// and the on-the-wire default when the request omits a selection).
+func exportSources(ctx context.Context, dc volumeOps, volumesBase string, include map[string]bool) ([]exportSource, error) {
 	if config.IsDesktopMode() {
 		vols, err := dc.ListVolumes(ctx)
 		if err != nil {
@@ -97,6 +102,9 @@ func exportSources(ctx context.Context, dc volumeOps, volumesBase string) ([]exp
 		for _, v := range vols {
 			if v.OrigName == "" {
 				continue // not a launcher-managed app volume — can't round-trip
+			}
+			if include != nil && !include[v.Name] {
+				continue // deselected in the snapshot dialog
 			}
 			out = append(out, exportSource{name: v.OrigName, sourceBind: v.Name + ":/source:ro"})
 		}
@@ -110,6 +118,9 @@ func exportSources(ctx context.Context, dc volumeOps, volumesBase string) ([]exp
 	out := make([]exportSource, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() {
+			if include != nil && !include[e.Name()] {
+				continue // deselected in the snapshot dialog
+			}
 			out = append(out, exportSource{name: e.Name(), sourceBind: filepath.Join(volumesDir, e.Name()) + ":/source:ro"})
 		}
 	}
@@ -119,8 +130,8 @@ func exportSources(ctx context.Context, dc volumeOps, volumesBase string) ([]exp
 // Export creates a snapshot ZIP of all namespace volumes.
 // The namespace MUST be stopped before calling this.
 // volumesBase is the runtime directory containing volumes/ subdirectory.
-func Export(ctx context.Context, dc volumeOps, outputPath, volumesBase string, progress VolumeProgressFunc) (*NamespaceSnapshotMeta, error) {
-	sources, err := exportSources(ctx, dc, volumesBase)
+func Export(ctx context.Context, dc volumeOps, outputPath, volumesBase string, include map[string]bool, progress VolumeProgressFunc) (*NamespaceSnapshotMeta, error) {
+	sources, err := exportSources(ctx, dc, volumesBase, include)
 	if err != nil {
 		return nil, err
 	}

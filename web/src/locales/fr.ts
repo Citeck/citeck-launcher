@@ -482,6 +482,8 @@ const fr = {
   'snapshots.action.delete': 'Supprimer',
   'snapshots.create': 'Créer un snapshot',
   'snapshots.create.title': 'Créer un snapshot',
+  'snapshots.create.volumes': 'Volumes à inclure',
+  'snapshots.create.noVolumes': 'Aucun volume',
   'snapshots.importFile': 'Importer .zip…',
   'snapshots.requireStopped': 'Arrêtez le namespace pour créer ou importer des snapshots.',
   'snapshots.openNsDir': 'Ouvrir le dossier NS',
