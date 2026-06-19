@@ -63,13 +63,21 @@
       failing the install. Sequenced after InstallFinalize (the exe is on disk
       by then). Condition "NOT Installed" fires on first install and on the
       install half of a MajorUpgrade, but NOT on uninstall (Installed is true).
+
+      Return="asyncNoWait" is LOAD-BEARING: the launcher is a long-running GUI
+      process that never exits on its own, so a synchronous return ("ignore"
+      still WAITS for the process, only the exit code is ignored) leaves msiexec
+      blocked on it — the progress dialog hangs on "Cancelling…" and Windows
+      reports the install as still in progress, blocking other installers.
+      asyncNoWait spawns the exe and returns immediately so InstallFinalize
+      completes cleanly.
     -->
     <CustomAction Id="LaunchApplication"
                   FileRef="CiteckLauncherExe"
                   ExeCommand=""
                   Execute="immediate"
                   Impersonate="yes"
-                  Return="ignore" />
+                  Return="asyncNoWait" />
     <InstallExecuteSequence>
       <Custom Action="LaunchApplication" After="InstallFinalize" Condition="NOT Installed" />
     </InstallExecuteSequence>
