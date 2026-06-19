@@ -251,6 +251,13 @@ func (d *Daemon) handleAppStop(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w, err)
 		return
 	}
+	// Detaching a cross-wiring app (ai / stt-sidecar / onlyoffice) changes other
+	// apps' generated config — regenerate so the proxy drops its upstream and AI
+	// drops the STT wiring (Kotlin v1.4.1 parity). StopApp has already recorded
+	// the detach in ManualStoppedApps, which doReload's Generate reads.
+	if regenOnAttachToggle(name) {
+		d.regenAfterAttachToggleAsync(name, "detach")
+	}
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("App %s stopped", name)})
 }
 
@@ -276,6 +283,13 @@ func (d *Daemon) handleAppStart(w http.ResponseWriter, r *http.Request) {
 	if err := rt.StartApp(name); err != nil {
 		writeInternalError(w, err)
 		return
+	}
+	// Re-attaching a cross-wiring app (ai / stt-sidecar / onlyoffice) must
+	// regenerate so the proxy re-adds its upstream and AI re-acquires the STT
+	// wiring (Kotlin v1.4.1 parity). StartApp has already cleared the detach
+	// flag in ManualStoppedApps, which doReload's Generate reads.
+	if regenOnAttachToggle(name) {
+		d.regenAfterAttachToggleAsync(name, "attach")
 	}
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("App %s start requested", name)})
 }
