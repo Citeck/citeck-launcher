@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
+import { useModalDialog } from '../hooks/useModalDialog'
 import { Download, Loader2, Pencil, Trash2, X } from 'lucide-react'
 import { getSnapshots, postExportSnapshot, postImportSnapshot, postImportSnapshotByName, getWorkspaceSnapshots, getVolumes, postSnapshotDownload, renameSnapshot, deleteSnapshot, postOpenDir } from '../lib/api'
 import type { SnapshotDto } from '../lib/types'
@@ -46,7 +47,7 @@ interface SnapshotsDialogProps {
  */
 export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDialogProps) {
   const { t } = useTranslation()
-  const dialogRef = useRef<HTMLDialogElement>(null)
+  const dialogRef = useModalDialog(open)
   const [nsRows, setNsRows] = useState<SnapshotRow[]>([])
   const [wsRows, setWsRows] = useState<SnapshotRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -68,13 +69,6 @@ export function SnapshotsDialog({ open, onClose, namespaceStopped }: SnapshotsDi
     | { kind: 'file'; file: File }
     | null
   >(null)
-
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (!dialog) return
-    if (open && !dialog.open) dialog.showModal()
-    else if (!open && dialog.open) dialog.close()
-  }, [open])
 
   const reload = useCallback(() => {
     void Promise.resolve().then(() => {

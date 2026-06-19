@@ -1,6 +1,6 @@
-import { useEffect, useRef } from 'react'
 import { useTranslation } from '../lib/i18n'
 import { LoadingLabel } from './LoadingLabel'
+import { useModalDialog } from '../hooks/useModalDialog'
 
 interface ConfirmModalProps {
   open: boolean
@@ -27,17 +27,7 @@ export function ConfirmModal({
   onCancel,
 }: ConfirmModalProps) {
   const { t } = useTranslation()
-  const dialogRef = useRef<HTMLDialogElement>(null)
-
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (!dialog) return
-    if (open && !dialog.open) {
-      dialog.showModal()
-    } else if (!open && dialog.open) {
-      dialog.close()
-    }
-  }, [open])
+  const dialogRef = useModalDialog(open)
 
   const confirmStyles =
     confirmVariant === 'danger'

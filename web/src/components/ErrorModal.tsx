@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ChevronDown, ChevronRight, Download } from 'lucide-react'
 import { useTranslation } from '../lib/i18n'
+import { useModalDialog } from '../hooks/useModalDialog'
 import { useErrorModalStore } from '../lib/errorModal'
 import { triggerSystemDump } from '../lib/desktop'
 import { toast } from '../lib/toast'
@@ -15,19 +16,9 @@ interface ErrorModalProps {
 
 export function ErrorModal({ open, onClose, title, message, details }: ErrorModalProps) {
   const { t } = useTranslation()
-  const dialogRef = useRef<HTMLDialogElement>(null)
+  const dialogRef = useModalDialog(open)
   const [expanded, setExpanded] = useState(false)
   const [dumping, setDumping] = useState(false)
-
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (!dialog) return
-    if (open && !dialog.open) {
-      dialog.showModal()
-    } else if (!open && dialog.open) {
-      dialog.close()
-    }
-  }, [open])
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -35,7 +26,7 @@ export function ErrorModal({ open, onClose, title, message, details }: ErrorModa
     const handleClose = () => setExpanded(false)
     dialog.addEventListener('close', handleClose)
     return () => dialog.removeEventListener('close', handleClose)
-  }, [])
+  }, [dialogRef])
 
   async function handleDump() {
     setDumping(true)

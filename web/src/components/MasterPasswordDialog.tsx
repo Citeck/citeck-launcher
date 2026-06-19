@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { Eye, EyeOff } from 'lucide-react'
 import { ConfirmModal } from './ConfirmModal'
 import { useTranslation } from '../lib/i18n'
+import { useModalDialog } from '../hooks/useModalDialog'
 
 /**
  * MasterPasswordDialog covers the three Kotlin master-password flows:
@@ -42,13 +43,7 @@ export function MasterPasswordDialog({
   onSkip,
   onReset,
 }: MasterPasswordDialogProps) {
-  const dialogRef = useRef<HTMLDialogElement>(null)
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (!dialog) return
-    if (open && !dialog.open) dialog.showModal()
-    else if (!open && dialog.open) dialog.close()
-  }, [open])
+  const dialogRef = useModalDialog(open)
 
   return (
     <dialog

@@ -1,7 +1,7 @@
-import { useEffect, useRef } from 'react'
 import { Loader2 } from 'lucide-react'
 import { useTranslation } from '../lib/i18n'
 import { useLongOpStore, type LongOpProgress } from '../lib/longOp'
+import { useModalDialog } from '../hooks/useModalDialog'
 
 interface LoadingOverlayProps {
   open: boolean
@@ -21,14 +21,7 @@ interface LoadingOverlayProps {
  */
 export function LoadingOverlay({ open, title, progress, stalled, onDismiss }: LoadingOverlayProps) {
   const { t } = useTranslation()
-  const dialogRef = useRef<HTMLDialogElement>(null)
-
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (!dialog) return
-    if (open && !dialog.open) dialog.showModal()
-    else if (!open && dialog.open) dialog.close()
-  }, [open])
+  const dialogRef = useModalDialog(open)
 
   const pct =
     progress && progress.total > 0

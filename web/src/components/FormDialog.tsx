@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, useMemo } from 'react'
+import { useState, useMemo } from 'react'
+import { useModalDialog } from '../hooks/useModalDialog'
 import { Eye, EyeOff, RefreshCw } from 'lucide-react'
 import { useTranslation } from '../lib/i18n'
 import { Select } from './Select'
@@ -104,7 +105,7 @@ export function FormDialog({
   initialValues,
 }: FormDialogProps) {
   const { t } = useTranslation()
-  const dialogRef = useRef<HTMLDialogElement>(null)
+  const dialogRef = useModalDialog(open)
   const [values, setValues] = useState<FormValues>({})
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({})
   const [revealedPwds, setRevealedPwds] = useState<Set<string>>(new Set())
@@ -141,13 +142,6 @@ export function FormDialog({
   if (!open && open !== prevOpen) {
     setPrevOpen(open)
   }
-
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (!dialog) return
-    if (open && !dialog.open) dialog.showModal()
-    else if (!open && dialog.open) dialog.close()
-  }, [open])
 
   function setValue(key: string, value: unknown) {
     setValues((prev) => ({ ...prev, [key]: value }))

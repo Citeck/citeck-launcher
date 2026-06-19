@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo } from 'react'
+import { useModalDialog } from '../hooks/useModalDialog'
 import { Loader2, Search, X, Plus } from 'lucide-react'
 import { LoadingLabel } from './LoadingLabel'
 import { useTranslation } from '../lib/i18n'
@@ -109,17 +110,10 @@ export function JournalDialog<T extends Record<string, unknown>>({
   hideSearch = false,
 }: JournalDialogProps<T>) {
   const { t } = useTranslation()
-  const dialogRef = useRef<HTMLDialogElement>(null)
+  const dialogRef = useModalDialog(open)
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Set<string>>(() => new Set(initialSelectedKeys ?? []))
   const [buttonLoading, setButtonLoading] = useState<string | null>(null)
-
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (!dialog) return
-    if (open && !dialog.open) dialog.showModal()
-    else if (!open && dialog.open) dialog.close()
-  }, [open])
 
   // Reset selection when data identity changes (e.g. caller refreshes), seeding
   // it with the caller's pre-selected keys (the active record).

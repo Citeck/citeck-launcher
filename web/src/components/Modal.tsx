@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'react'
 import { X } from 'lucide-react'
+import { useModalDialog } from '../hooks/useModalDialog'
 
 interface ModalProps {
   open: boolean
@@ -34,14 +34,7 @@ interface ModalProps {
  * and required-asterisk styling stay uniform across dialogs.
  */
 export function Modal({ open, title, onClose, width = 'md', children, footer, onSubmit }: ModalProps) {
-  const ref = useRef<HTMLDialogElement>(null)
-
-  useEffect(() => {
-    const dlg = ref.current
-    if (!dlg) return
-    if (open && !dlg.open) dlg.showModal()
-    else if (!open && dlg.open) dlg.close()
-  }, [open])
+  const ref = useModalDialog(open)
 
   const widthClass = width === 'sm' ? 'w-[360px]' : width === 'lg' ? 'w-[640px]' : 'w-[480px]'
 

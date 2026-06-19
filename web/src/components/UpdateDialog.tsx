@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { useModalDialog } from '../hooks/useModalDialog'
 import Markdown from 'react-markdown'
 import { useTranslation } from '../lib/i18n'
 import { useUpdateStore } from '../lib/updateStore'
@@ -20,18 +21,11 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
   // manual-download notice. The changelog stays visible.
   const manualUpdate = !!status?.manualUpdateRequired
   const releasesUrl = status?.releasesUrl
-  const dialogRef = useRef<HTMLDialogElement>(null)
+  const dialogRef = useModalDialog(open)
   const [notes, setNotes] = useState<ReleaseNoteDto[]>([])
   const [loading, setLoading] = useState(false)
   const [applying, setApplying] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (!dialog) return
-    if (open && !dialog.open) dialog.showModal()
-    else if (!open && dialog.open) dialog.close()
-  }, [open])
 
   const loadChangelog = useCallback(() => {
     setLoading(true)

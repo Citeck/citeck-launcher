@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useModalDialog } from '../hooks/useModalDialog'
 import { getSecrets, listWorkspaces, postGitSkipPull, updateWorkspace } from '../lib/api'
 import { extractHost, isAuthShapedGitError } from '../lib/giturl'
 import { useTranslation } from '../lib/i18n'
@@ -46,7 +47,7 @@ interface GitPullErrorDialogProps {
  */
 export function GitPullErrorDialog({ open, repoUrl, errorMessage, skipAvailable, cancelAvailable, workspaceId, onDecide }: GitPullErrorDialogProps) {
   const { t } = useTranslation()
-  const dialogRef = useRef<HTMLDialogElement>(null)
+  const dialogRef = useModalDialog(open)
   // Selected secret id in the picker ('' = nothing picked yet).
   const [selection, setSelection] = useState('')
   // GIT_TOKEN secrets — fed by the picker's own fetch (single source).
@@ -64,13 +65,6 @@ export function GitPullErrorDialog({ open, repoUrl, errorMessage, skipAvailable,
   // Preselect the workspace's current secret only once per open — list
   // refreshes (create/delete/edit) must not clobber the user's choice.
   const preselectedRef = useRef(false)
-
-  useEffect(() => {
-    const d = dialogRef.current
-    if (!d) return
-    if (open && !d.open) d.showModal()
-    else if (!open && d.open) d.close()
-  }, [open])
 
   // Reset the token section whenever the dialog (re)opens — a stale selection
   // made for a previous failure must not leak into the next one.
