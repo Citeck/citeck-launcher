@@ -3,7 +3,6 @@ import yaml from 'js-yaml'
 import { Loader2, RotateCcw } from 'lucide-react'
 import { Modal } from './Modal'
 import { CodeEditor } from './CodeEditor'
-import { ConfirmModal } from './ConfirmModal'
 import { getWorkspaceConfig, putWorkspaceConfig, resetWorkspaceConfig } from '../lib/api'
 import { toast } from '../lib/toast'
 import { useTranslation } from '../lib/i18n'
@@ -34,7 +33,6 @@ export function WorkspaceConfigDialog({ workspaceId, onClose, onSaved }: Workspa
   const [saving, setSaving] = useState(false)
   const [resetting, setResetting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [showResetConfirm, setShowResetConfirm] = useState(false)
 
   const load = useCallback(() => {
     const controller = new AbortController()
@@ -95,13 +93,11 @@ export function WorkspaceConfigDialog({ workspaceId, onClose, onSaved }: Workspa
     setError(null)
     try {
       await resetWorkspaceConfig(workspaceId)
-      setShowResetConfirm(false)
       toast(t('workspace.config.resetSuccess'), 'success')
       onSaved()
       onClose()
     } catch (e) {
       setError((e as Error).message)
-      setShowResetConfirm(false)
     } finally {
       setResetting(false)
     }
@@ -114,7 +110,7 @@ export function WorkspaceConfigDialog({ workspaceId, onClose, onSaved }: Workspa
     <>
       <Modal
         open
-        width="lg"
+        width="xl"
         title={t('workspace.config.title')}
         onClose={onClose}
         footer={
@@ -122,11 +118,11 @@ export function WorkspaceConfigDialog({ workspaceId, onClose, onSaved }: Workspa
             <button
               type="button"
               className="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted text-muted-foreground disabled:opacity-50"
-              onClick={() => setShowResetConfirm(true)}
+              onClick={handleReset}
               disabled={busy || !loadOK}
               title={t('workspace.config.resetTooltip')}
             >
-              <RotateCcw size={12} /> {t('workspace.config.reset')}
+              {resetting ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />} {t('workspace.config.reset')}
             </button>
             <div className="flex gap-2">
               <button
@@ -181,24 +177,13 @@ export function WorkspaceConfigDialog({ workspaceId, onClose, onSaved }: Workspa
                 onChange={setContent}
                 filename={WS_CONFIG_FILE}
                 baseline={baseline}
-                height="420px"
+                height="520px"
                 autoFocus
               />
             </div>
           </>
         )}
       </Modal>
-
-      <ConfirmModal
-        open={showResetConfirm}
-        title={t('workspace.config.resetConfirmTitle')}
-        message={t('workspace.config.resetConfirmMessage')}
-        confirmLabel={t('workspace.config.reset')}
-        confirmVariant="danger"
-        loading={resetting}
-        onConfirm={handleReset}
-        onCancel={() => setShowResetConfirm(false)}
-      />
     </>
   )
 }

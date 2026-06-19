@@ -5,8 +5,8 @@ interface ModalProps {
   open: boolean
   title: string
   onClose: () => void
-  /** sm = 360px, md = 480px (default), lg = 640px. All capped at 90vw. */
-  width?: 'sm' | 'md' | 'lg'
+  /** sm = 360px, md = 480px (default), lg = 640px, xl = 920px. All capped at 90vw. */
+  width?: 'sm' | 'md' | 'lg' | 'xl'
   /** Body of the dialog — fields, content, etc. Padded + scrollable. */
   children: React.ReactNode
   /** Optional footer slot — typically a Cancel / Save button row.
@@ -36,7 +36,11 @@ interface ModalProps {
 export function Modal({ open, title, onClose, width = 'md', children, footer, onSubmit }: ModalProps) {
   const ref = useModalDialog(open)
 
-  const widthClass = width === 'sm' ? 'w-[360px]' : width === 'lg' ? 'w-[640px]' : 'w-[480px]'
+  const widthClass =
+    width === 'sm' ? 'w-[360px]'
+      : width === 'lg' ? 'w-[640px]'
+        : width === 'xl' ? 'w-[920px]'
+          : 'w-[480px]'
 
   const body = (
     <>

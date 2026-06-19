@@ -31,7 +31,11 @@ export function StatsCell({ text, percent, isActive, isWarning, isCritical, titl
   const textColor = isCritical ? 'text-red-500' : isWarning ? 'text-amber-500' : 'text-muted-foreground'
   return (
     <span
-      className={`inline-flex flex-col gap-px leading-none ${align === 'right' ? 'items-end' : 'items-start'}`}
+      // select-none: CPU/MEM values refresh ~every 2s; without it an accidental
+      // text-selection drag leaves a "stuck" selection highlight on these cells
+      // because the selected text nodes get replaced under the browser's
+      // selection range on each stats update.
+      className={`inline-flex flex-col gap-px leading-none select-none ${align === 'right' ? 'items-end' : 'items-start'}`}
       title={title}
     >
       <span className={`font-mono leading-none ${textColor}`}>{text}</span>

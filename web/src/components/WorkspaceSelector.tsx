@@ -262,7 +262,7 @@ export function WorkspaceSelector({ activeId, onChanged }: WorkspaceSelectorProp
         aria-label={t('workspace.config.title')}
         title={t('workspace.config.title')}
         disabled={!active}
-        className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted/40 disabled:opacity-40 disabled:hover:text-muted-foreground"
+        className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted/40 disabled:opacity-40 disabled:hover:text-muted-foreground focus:outline-none focus-visible:outline-none"
         onClick={() => { if (active) setConfigOpen(true) }}
       >
         <Settings size={12} />
