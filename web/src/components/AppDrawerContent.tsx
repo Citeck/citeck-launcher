@@ -6,6 +6,7 @@ import { initProgressOf } from '../lib/initProgress'
 import { openSecondaryView } from '../lib/desktop'
 import { formatDateTime } from '../lib/datetime'
 import { RegistryCredentialsDialog } from './RegistryCredentialsDialog'
+import { registryHostOf, isAuthErrorText } from '../lib/registry'
 import { RestartEvents } from './RestartEvents'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
@@ -206,24 +207,6 @@ export function AppDrawerContent({ appName }: AppDrawerContentProps) {
       <ImageDetailsModal appName={appName} open={imageModalOpen} onClose={() => setImageModalOpen(false)} />
     </div>
   )
-}
-
-/** Extracts the registry host from a Docker image reference. */
-function registryHostOf(image: string | undefined): string {
-  if (!image) return ''
-  const slash = image.indexOf('/')
-  if (slash < 0) return ''
-  const head = image.slice(0, slash)
-  // Docker convention: if first segment contains a dot or colon, it's a registry host.
-  if (!head.includes('.') && !head.includes(':')) return ''
-  return head
-}
-
-/** Heuristic: does the daemon's statusText look like a pull-auth failure? */
-function isAuthErrorText(text: string | undefined): boolean {
-  if (!text) return false
-  const t = text.toLowerCase()
-  return t.includes('authentication') || t.includes('unauthorized') || t.includes('401') || t.includes('denied')
 }
 
 function D({ l, v, dim, copy, action }: { l: string; v: string; dim?: boolean; copy?: string; action?: React.ReactNode }) {

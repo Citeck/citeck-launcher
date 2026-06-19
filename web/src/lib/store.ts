@@ -6,6 +6,7 @@ import { connectDesktopEvents, isWailsDesktop } from './desktopEvents'
 import { toast } from './toast'
 import { t } from './i18n'
 import { useLongOpStore } from './longOp'
+import { registryHostOf, isAuthErrorText } from './registry'
 
 interface EventStream {
   close: () => void
@@ -163,7 +164,22 @@ return ({
     set({ error: null })
     try {
       const [namespace, health] = await Promise.all([getNamespace(), getHealth()])
-      set({ namespace, health, loading: false })
+      // Self-heal the registry-auth banner from the app list. The daemon's
+      // `pull_auth_required` SSE event is one-shot (auth failures pause the
+      // retry loop, so it never re-fires), and a desktop reconnect / a missed
+      // frame would otherwise strand the namespace with no credential prompt.
+      // Deriving the host set from PULL_FAILED + auth-shaped apps on every fetch
+      // (and resync triggers a fetch) makes the banner appear even if the event
+      // was missed, and drop once the app recovers — same heuristic the per-app
+      // drawer button uses.
+      const pullAuthRequired: Record<string, string> = {}
+      for (const app of namespace.apps ?? []) {
+        if (app.status === 'PULL_FAILED' && isAuthErrorText(app.statusText)) {
+          const host = registryHostOf(app.image)
+          if (host) pullAuthRequired[app.name] = host
+        }
+      }
+      set({ namespace, health, loading: false, pullAuthRequired })
     } catch (err) {
       const msg = (err as Error).message
       // The daemon explicitly reports no namespace (deactivated, deleted, or
