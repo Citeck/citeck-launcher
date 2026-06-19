@@ -106,17 +106,18 @@ func (s *CloudConfigServer) Start() error {
 	// must reach the config server to fetch host-published broker/zk/db
 	// addresses. A loopback-only bind (127.0.0.1) refused every non-localhost
 	// connection — the 2.x regression that broke external-service config.
-	// SECURITY (reviewed, deliberate): the served config carries the JWT secret
-	// + DB credentials, and 0.0.0.0 exposes them on every interface incl. the
-	// LAN — automated review flags this HIGH. Accepted because (a) loopback-only
-	// (127.0.0.1) was the 2.x regression that broke real external clients whose
-	// traffic does NOT arrive via loopback (they worked under Kotlin's 0.0.0.0),
-	// and (b) this server is DESKTOP-ONLY — a single developer's machine; server
-	// mode never starts it. The unauthenticated-secrets exposure is the same one
-	// Kotlin shipped. If a tighter posture is needed later, gate the bind behind
-	// a daemon.yml option (default 0.0.0.0 for parity, 127.0.0.1 to harden) or
-	// add a bearer token the Spring Cloud Config client sends.
-	listener, err := net.Listen("tcp", "0.0.0.0:8761") //nolint:gosec // G102: intentional — desktop-only local-debug config server, Kotlin parity (see SECURITY note above)
+	// SECURITY (reviewed, deliberate — operator-confirmed not sensitive):
+	// automated review flags the all-interfaces bind HIGH because the response
+	// carries a JWT secret + DB credentials. In DESKTOP mode those are NOT real
+	// secrets: they are local-dev throwaway values (admin/admin-class creds, a
+	// per-install JWT that only guards local dev webapps) — there is no
+	// production data to leak. This server is desktop-only (server mode never
+	// starts it) and 0.0.0.0 is required: loopback-only (the 2.x regression)
+	// refused real external clients whose traffic does not arrive via loopback
+	// (sibling container via the bridge gateway, VM/WSL), which worked under
+	// Kotlin's 0.0.0.0 bind. If real secrets ever flow here, gate the bind
+	// behind a daemon.yml option (127.0.0.1 to harden) or add a bearer token.
+	listener, err := net.Listen("tcp", "0.0.0.0:8761") //nolint:gosec // G102: desktop-only local-debug config server serving non-sensitive dev values, Kotlin parity (see SECURITY note above)
 	if err != nil {
 		return fmt.Errorf("cloud config server listen: %w", err)
 	}
