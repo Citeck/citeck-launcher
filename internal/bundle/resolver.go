@@ -706,6 +706,12 @@ func (r *Resolver) loadWorkspaceConfigOverlaid(repoDir string) *WorkspaceConfig 
 // overlay, plus the dir they came from. The workspace-config editor uses this
 // to compute the git baseline the user's delta is layered on; build the
 // resolver WITHOUT an overlay so the returned bytes are the pristine reference.
+//
+// It re-reads the winning file once after resolveWorkspace already parsed it —
+// one extra os.ReadFile of a single small YAML, only on editor open. That's a
+// deliberate trade for keeping resolveWorkspace's priority-chain return shape
+// unchanged (it yields the parsed config + dir, not raw bytes); do not "optimize"
+// by collapsing the two without threading raw bytes through every priority branch.
 func (r *Resolver) ResolveWorkspaceRaw() (raw []byte, repoDir string) {
 	_, dir := r.resolveWorkspace()
 	if dir == "" {

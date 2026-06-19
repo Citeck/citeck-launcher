@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -128,8 +129,24 @@ func TestWorkspaceConfig_PutInvalidYAML(t *testing.T) {
 
 func TestWorkspaceConfig_UnknownWorkspace404(t *testing.T) {
 	_, mux := wsConfigTestMux(t, "quickStartVariants: []\n")
-	req := httptest.NewRequest("GET", "/api/v1/workspaces/nope/config", http.NoBody)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	assert.Equal(t, http.StatusNotFound, rec.Code)
+	// GET, PUT and reset must all 404 for an unknown (non-default) workspace id —
+	// mutations against a non-existent id must not silently create a delta.
+	cases := []struct {
+		method, path string
+		body         string
+	}{
+		{"GET", "/api/v1/workspaces/nope/config", ""},
+		{"PUT", "/api/v1/workspaces/nope/config", "a: 1\n"},
+		{"POST", "/api/v1/workspaces/nope/config/reset", ""},
+	}
+	for _, c := range cases {
+		var body io.Reader = http.NoBody
+		if c.body != "" {
+			body = strings.NewReader(c.body)
+		}
+		req := httptest.NewRequest(c.method, c.path, body)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusNotFound, rec.Code, "%s %s", c.method, c.path)
+	}
 }

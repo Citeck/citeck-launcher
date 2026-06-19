@@ -103,30 +103,11 @@ func (d *Daemon) refreshActiveWorkspaceConfigCache() {
 	d.configMu.Unlock()
 }
 
-// applyStoredDelta returns content = baseline + the stored delta for wsID. When
-// no delta is stored (or it fails to apply) content == baseline.
-func (d *Daemon) applyStoredDelta(wsID string, baseline []byte) []byte {
-	if d.store == nil || baseline == nil {
-		return baseline
-	}
-	blob, err := d.store.GetStateValue(wsConfigDeltaKey(wsID))
-	if err != nil || blob == "" {
-		return baseline
-	}
-	var edit namespace.FileEdit
-	if jsonErr := json.Unmarshal([]byte(blob), &edit); jsonErr != nil {
-		return baseline
-	}
-	merged, err := namespace.ApplyFileEdit(workspaceConfigFile, edit, baseline, baseline)
-	if err != nil {
-		return baseline
-	}
-	return merged
-}
-
 // handleGetWorkspaceConfig returns { content, baseline } for the workspace's
 // raw YAML: baseline is the pristine git reference, content is baseline with the
-// stored manual delta applied (what the user edits).
+// stored manual delta applied (what the user edits). Content reuses the SAME
+// overlay closure the resolver uses, so the editor preview and the live resolve
+// can never drift; on any overlay error content falls back to the baseline.
 func (d *Daemon) handleGetWorkspaceConfig(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ws, err := d.getWorkspaceWithDefault(id)
@@ -139,7 +120,12 @@ func (d *Daemon) handleGetWorkspaceConfig(w http.ResponseWriter, r *http.Request
 		return
 	}
 	baseline := d.resolveWorkspaceBaselineRaw(*ws)
-	content := d.applyStoredDelta(id, baseline)
+	content := baseline
+	if overlay := workspaceConfigOverlay(d.store, id); overlay != nil && baseline != nil {
+		if merged, oErr := overlay(baseline); oErr == nil {
+			content = merged
+		}
+	}
 	writeJSON(w, api.WorkspaceConfigDto{Content: string(content), Baseline: string(baseline)})
 }
 

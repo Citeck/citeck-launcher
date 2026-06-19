@@ -11,18 +11,25 @@ import type { EventDto } from './types'
 const DAEMON_EVENT = 'daemon:event'
 const DAEMON_PING = 'daemon:ping'
 const DAEMON_RESYNC = 'daemon:resync'
+const DAEMON_DISCONNECT = 'daemon:disconnect'
 
 type WailsGlobal = { _wails?: Record<string, unknown> }
 
+// Captured ONCE at module load — before installBridge() can create window._wails
+// itself — so desktop detection reflects the genuine Wails runtime (which injects
+// before the app bundle) and is never confused by our own _wails mutation.
+const IN_WAILS_WEBVIEW = typeof window !== 'undefined' && !!(window as WailsGlobal)._wails
+
 /** True inside the Wails desktop webview (the runtime sets window._wails). */
 export function isWailsDesktop(): boolean {
-  return typeof window !== 'undefined' && !!(window as WailsGlobal)._wails
+  return IN_WAILS_WEBVIEW
 }
 
 interface DesktopSubscriber {
   onEvent: (e: EventDto) => void
   onResync: () => void
   onPing: () => void
+  onDisconnect: () => void
 }
 
 const subscribers = new Set<DesktopSubscriber>()
@@ -37,6 +44,7 @@ function dispatchToSubscribers(name: string, data: unknown) {
       if (name === DAEMON_EVENT) s.onEvent(data as EventDto)
       else if (name === DAEMON_RESYNC) s.onResync()
       else if (name === DAEMON_PING) s.onPing()
+      else if (name === DAEMON_DISCONNECT) s.onDisconnect()
     } catch {
       // a faulty subscriber must not break delivery to the others
     }
@@ -85,9 +93,10 @@ export function connectDesktopEvents(
   onEvent: (e: EventDto) => void,
   onResync: () => void,
   onPing: () => void,
+  onDisconnect: () => void,
 ): { close: () => void } {
   installBridge()
-  const sub: DesktopSubscriber = { onEvent, onResync, onPing }
+  const sub: DesktopSubscriber = { onEvent, onResync, onPing, onDisconnect }
   subscribers.add(sub)
   return { close: () => { subscribers.delete(sub) } }
 }

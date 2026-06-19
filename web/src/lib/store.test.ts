@@ -226,8 +226,8 @@ describe('useDashboardStore', () => {
     useDashboardStore.setState({ namespace })
 
     useDashboardStore.getState().startEventStream()
-    // No onOpen / onEvent / onPing fired → the stream never delivered a frame,
-    // so after SSE_STALE_MS the poll tick (3s) must call fetchData.
+    // No onOpen / onEvent / onPing fired → the stream is never proven live, so
+    // phase 1 polls on the very first 3s tick (independent of SSE_STALE_MS).
     expect(mockedGetNamespace).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(3000)
     expect(mockedGetNamespace).toHaveBeenCalled()

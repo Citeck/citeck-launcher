@@ -356,8 +356,16 @@ return ({
       // poll fallback still backs it up if the bridge ever stalls.
       const stream = connectDesktopEvents(
         handleEvent,
-        () => { lastSseFrameAt = Date.now(); sseLive = true; get().fetchData() }, // resync
-        () => { lastSseFrameAt = Date.now(); sseLive = true },                     // ping
+        () => { // resync — bridge (re)connected to the daemon
+          lastSseFrameAt = Date.now(); sseLive = true
+          set({ sseConnected: true, disconnectedAt: null })
+          get().fetchData()
+        },
+        () => { lastSseFrameAt = Date.now(); sseLive = true }, // ping
+        () => { // disconnect — bridge's daemon connection dropped; mark it so the
+          // long-op stall watchdog fires on desktop just like an EventSource onClose
+          set({ sseConnected: false, disconnectedAt: get().disconnectedAt ?? Date.now() })
+        },
       )
       set({ stream, sseConnected: true, disconnectedAt: null, reconnectDelay: 1000 })
       return

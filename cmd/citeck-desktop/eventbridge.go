@@ -21,9 +21,10 @@ import (
 // HTTP), so they stream identically on WebView2 and WebKitGTK — real-time on
 // every platform.
 const (
-	wailsDaemonEvent  = "daemon:event"
-	wailsDaemonPing   = "daemon:ping"
-	wailsDaemonResync = "daemon:resync"
+	wailsDaemonEvent      = "daemon:event"
+	wailsDaemonPing       = "daemon:ping"
+	wailsDaemonResync     = "daemon:resync"
+	wailsDaemonDisconnect = "daemon:disconnect"
 )
 
 // streamDaemonEventsToWebview subscribes to the daemon's SSE event stream over
@@ -76,8 +77,11 @@ func streamDaemonEventsOnce(ctx context.Context, app *application.App, client *h
 		return 0
 	}
 	// Fresh connection — tell the frontend to refetch so anything missed while
-	// disconnected is reconciled.
+	// disconnected is reconciled. The paired disconnect (on this connection
+	// dropping) lets the frontend mark sseConnected=false so the long-op stall
+	// watchdog fires on desktop just as it does for an EventSource onClose.
 	app.Event.Emit(wailsDaemonResync)
+	defer app.Event.Emit(wailsDaemonDisconnect)
 
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
