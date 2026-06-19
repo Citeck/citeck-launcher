@@ -226,7 +226,8 @@ func (d *Daemon) resolveActiveWorkspaceConfig(ws storage.WorkspaceDto) (*bundle.
 	opts := buildWorkspaceRepoOpts(ws, d.secretService)
 	opts.PullPeriod = 0 // force a fresh clone/pull with the current token
 	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(ws.ID), makeTokenLookup(d.secretReaderFunc())).
-		WithWorkspaceRepo(opts)
+		WithWorkspaceRepo(opts).
+		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, ws.ID))
 	if !config.IsDesktopMode() {
 		resolver.SetOffline(true)
 	}

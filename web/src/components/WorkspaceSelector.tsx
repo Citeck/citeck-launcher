@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronDown, Loader2, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { ChevronDown, Loader2, Pencil, Plus, RefreshCw, Settings, Trash2 } from 'lucide-react'
 import { Modal, ModalField } from './Modal'
 import { Select } from './Select'
 import {
@@ -20,6 +20,7 @@ import { useIsDesktop } from '../lib/daemonStatus'
 import { toast } from '../lib/toast'
 import { showError } from '../lib/errorModal'
 import { ConfirmModal } from './ConfirmModal'
+import { WorkspaceConfigDialog } from './WorkspaceConfigDialog'
 
 interface WorkspaceSelectorProps {
   /** Current active workspace id (from /daemon/status). */
@@ -49,6 +50,7 @@ export function WorkspaceSelector({ activeId, onChanged }: WorkspaceSelectorProp
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [deleteError, setDeleteError] = useState('')
   const [forceUpdating, setForceUpdating] = useState(false)
+  const [configOpen, setConfigOpen] = useState(false)
   // Workspace-switch git failure (WS_REPO_SYNC_FAILED / auth-shaped): the
   // daemon stays on the previous workspace, so surface the actionable
   // GitPullErrorDialog targeting the FAILED workspace — its token section
@@ -252,6 +254,27 @@ export function WorkspaceSelector({ activeId, onChanged }: WorkspaceSelectorProp
       >
         {forceUpdating ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
       </button>
+
+      {/* Edit the ACTIVE workspace configuration (workspace-v1.yml) — raw-YAML
+          delta over the git reference, mirroring the per-app config editor. */}
+      <button
+        type="button"
+        aria-label={t('workspace.config.title')}
+        title={t('workspace.config.title')}
+        disabled={!active}
+        className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted/40 disabled:opacity-40 disabled:hover:text-muted-foreground"
+        onClick={() => { if (active) setConfigOpen(true) }}
+      >
+        <Settings size={12} />
+      </button>
+
+      {configOpen && active && (
+        <WorkspaceConfigDialog
+          workspaceId={active.id}
+          onClose={() => setConfigOpen(false)}
+          onSaved={onChanged}
+        />
+      )}
 
       {formMode && (
         <WorkspaceFormDialog

@@ -215,7 +215,8 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 
 	// Resolve workspace config first — needed by wizard even without a namespace.
 	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(wsID), makeTokenLookup(in.SecretService)).
-		WithWorkspaceRepo(lookupWorkspaceRepoOpts(in.Store, in.SecretService, wsID))
+		WithWorkspaceRepo(lookupWorkspaceRepoOpts(in.Store, in.SecretService, wsID)).
+		WithWorkspaceOverlay(workspaceConfigOverlay(in.Store, wsID))
 	// Server mode: never auto-pull git repos (use 'citeck workspace update' for manual sync).
 	// Desktop mode: auto-pull with throttling. --offline flag: skip git entirely.
 	if in.Offline || !config.IsDesktopMode() {

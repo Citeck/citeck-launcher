@@ -338,3 +338,8 @@ export interface AppFileContentDto {
   content: string
   baseline: string
 }
+
+export interface WorkspaceConfigDto {
+  content: string
+  baseline: string
+}

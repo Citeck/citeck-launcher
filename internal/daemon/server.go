@@ -502,7 +502,8 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate bool) error {
 	}
 
 	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(act.workspaceID), makeTokenLookup(d.secretReaderFunc())).
-		WithWorkspaceRepo(d.resolveActiveWorkspaceRepoOpts())
+		WithWorkspaceRepo(d.resolveActiveWorkspaceRepoOpts()).
+		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, act.workspaceID))
 	if forceGitPull {
 		resolver = resolver.WithForcePull()
 	}
@@ -797,6 +798,9 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/workspaces/{id}", d.handleUpdateWorkspace)
 	mux.HandleFunc("DELETE /api/v1/workspaces/{id}", d.handleDeleteWorkspace)
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/activate", d.handleActivateWorkspace)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/config", d.handleGetWorkspaceConfig)
+	mux.HandleFunc("PUT /api/v1/workspaces/{id}/config", d.handlePutWorkspaceConfig)
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/config/reset", d.handleResetWorkspaceConfig)
 
 	// Git operations
 	mux.HandleFunc("POST "+api.GitSkipPull, d.handleGitSkipPull)

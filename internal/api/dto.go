@@ -58,6 +58,14 @@ type AppConfigDto struct {
 	Baseline string `json:"baseline"`
 }
 
+// WorkspaceConfigDto carries the effective workspace-v1.yml plus the pristine
+// git baseline so the workspace-config editor can render a per-line change
+// gutter — the workspace-scoped counterpart of AppConfigDto.
+type WorkspaceConfigDto struct {
+	Content  string `json:"content"`
+	Baseline string `json:"baseline"`
+}
+
 // AppFileContentDto is the file equivalent of AppConfigDto.
 type AppFileContentDto struct {
 	Content  string `json:"content"`

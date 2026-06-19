@@ -22,6 +22,7 @@ import type {
   WorkspaceDto,
   WorkspaceCreateDto,
   WorkspaceUpdateDto,
+  WorkspaceConfigDto,
   UpdateStatusDto,
   ReleaseNoteDto,
 } from './types'
@@ -269,6 +270,22 @@ export async function deleteWorkspace(id: string): Promise<ActionResultDto> {
 
 export async function activateWorkspace(id: string): Promise<ActionResultDto> {
   return request('POST', `/workspaces/${enc(id)}/activate`)
+}
+
+export async function getWorkspaceConfig(id: string): Promise<WorkspaceConfigDto> {
+  return request('GET', `/workspaces/${enc(id)}/config`)
+}
+
+export async function putWorkspaceConfig(id: string, content: string): Promise<ActionResultDto> {
+  return request('PUT', `/workspaces/${enc(id)}/config`, { body: content, contentType: 'text/yaml' })
+}
+
+/**
+ * Discards the manual workspace-config delta so the workspace reverts to the
+ * pristine git reference. Mirrors `resetAppConfig` at workspace granularity.
+ */
+export async function resetWorkspaceConfig(id: string): Promise<ActionResultDto> {
+  return request('POST', `/workspaces/${enc(id)}/config/reset`)
 }
 
 /**

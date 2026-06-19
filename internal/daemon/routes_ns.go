@@ -305,7 +305,8 @@ func (d *Daemon) resolveLatestBundleKey(wsID, repo string, offline bool) (string
 		return "", false
 	}
 	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(wsID), makeTokenLookup(d.secretService)).
-		WithWorkspaceRepo(lookupWorkspaceRepoOpts(d.store, d.secretService, wsID))
+		WithWorkspaceRepo(lookupWorkspaceRepoOpts(d.store, d.secretService, wsID)).
+		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, wsID))
 	// Server mode never auto-pulls git; desktop may pull to find the latest tag,
 	// throttled by the repo's pullPeriod (a clone synced within the period is read
 	// without network). offline=true forces a no-pull read even on desktop.
@@ -1093,7 +1094,8 @@ func (d *Daemon) handleBundleRepoPull(w http.ResponseWriter, r *http.Request) {
 	// after the period elapses, and clone unconditionally when nothing is on
 	// disk yet. No background pulling either way.
 	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(act.workspaceID), makeTokenLookup(d.secretReaderFunc())).
-		WithWorkspaceRepo(d.resolveActiveWorkspaceRepoOpts())
+		WithWorkspaceRepo(d.resolveActiveWorkspaceRepoOpts()).
+		WithWorkspaceOverlay(workspaceConfigOverlay(d.store, act.workspaceID))
 	if r.URL.Query().Get("force") == "true" {
 		resolver = resolver.WithForcePull()
 	}

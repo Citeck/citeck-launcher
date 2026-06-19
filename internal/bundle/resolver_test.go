@@ -1,6 +1,7 @@
 package bundle
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -101,6 +102,50 @@ webapps:
 	// Webapps
 	assert.Len(t, cfg.Webapps, 1)
 	assert.Equal(t, "eproc", cfg.Webapps[0].ID)
+}
+
+// TestWorkspaceOverlay verifies the WithWorkspaceOverlay seam: the overlay
+// transforms the raw workspace-v1.yml bytes before parsing, so the resolved
+// WorkspaceConfig reflects the injected change; a nil overlay is a no-op; and
+// ResolveWorkspaceRaw returns the PRISTINE git bytes (pre-overlay).
+func TestWorkspaceOverlay(t *testing.T) {
+	dir := t.TempDir()
+	// Priority-1 manual import: repo/ without .git.
+	repoDir := filepath.Join(dir, "repo")
+	require.NoError(t, os.MkdirAll(repoDir, 0o755))
+	yml := "quickStartVariants:\n  - name: Original\n"
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "workspace-v1.yml"), []byte(yml), 0o644))
+
+	// Nil overlay: pristine config.
+	base := NewResolver(dir)
+	base.SetOffline(true)
+	cfg := base.ResolveWorkspaceOnly()
+	require.Len(t, cfg.QuickStartVariants, 1)
+	assert.Equal(t, "Original", cfg.QuickStartVariants[0].Name)
+
+	// Overlay that rewrites the quick-start name.
+	overlaid := NewResolver(dir).WithWorkspaceOverlay(func(raw []byte) ([]byte, error) {
+		return []byte("quickStartVariants:\n  - name: Overlaid\n"), nil
+	})
+	overlaid.SetOffline(true)
+	cfg = overlaid.ResolveWorkspaceOnly()
+	require.Len(t, cfg.QuickStartVariants, 1)
+	assert.Equal(t, "Overlaid", cfg.QuickStartVariants[0].Name)
+
+	// ResolveWorkspaceRaw returns the pristine git bytes even when an overlay
+	// is set (it must, so the editor baseline is the real reference).
+	raw, gotDir := overlaid.ResolveWorkspaceRaw()
+	assert.Equal(t, repoDir, gotDir)
+	assert.True(t, bytes.Equal([]byte(yml), raw), "ResolveWorkspaceRaw must return pristine git bytes")
+
+	// A failing overlay falls back to the git reference instead of erroring.
+	broken := NewResolver(dir).WithWorkspaceOverlay(func(raw []byte) ([]byte, error) {
+		return nil, assert.AnError
+	})
+	broken.SetOffline(true)
+	cfg = broken.ResolveWorkspaceOnly()
+	require.Len(t, cfg.QuickStartVariants, 1)
+	assert.Equal(t, "Original", cfg.QuickStartVariants[0].Name)
 }
 
 func TestListBundleVersions(t *testing.T) {

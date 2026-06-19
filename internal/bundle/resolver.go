@@ -312,6 +312,13 @@ type Resolver struct {
 	offline     bool         // skip all git operations, fail if local data missing
 	forcePull   bool         // bypass the per-repo PullPeriod throttle (PullPeriod=0) for "Force Update"
 	logger      *slog.Logger // nil → falls back to slog.Default()
+	// wsOverlay, when set, transforms the RAW workspace-v1.yml bytes right
+	// after they are read from disk and BEFORE parsing — the seam the daemon
+	// uses to re-apply the user's manual workspace-config delta on top of the
+	// git reference at every resolve. Living behind a plain func([]byte) keeps
+	// the structural-merge engine (internal/namespace) out of bundle's imports.
+	// Nil == today's behavior (git reference verbatim).
+	wsOverlay func(raw []byte) ([]byte, error)
 	// wsSyncErr records the LAST resolveWorkspace outcome when the workspace
 	// repo git sync failed AND no usable workspace config could be loaded from
 	// disk (the resolver fell back to an empty config). nil whenever any
@@ -336,6 +343,16 @@ func NewResolverWithAuth(dataDir string, tokenLookup TokenLookupFunc) *Resolver 
 // works. Chainable.
 func (r *Resolver) WithWorkspaceRepo(opts WorkspaceRepoOpts) *Resolver {
 	r.wsRepoOpts = &opts
+	return r
+}
+
+// WithWorkspaceOverlay installs an overlay applied to the raw workspace-v1.yml
+// bytes before parsing, in every workspace load path. Backs the manual
+// workspace-config editing feature: the daemon passes a closure that loads the
+// stored delta and re-applies it onto the freshly read git reference. A nil fn
+// (the default) preserves the historical no-overlay behavior. Chainable.
+func (r *Resolver) WithWorkspaceOverlay(fn func(raw []byte) ([]byte, error)) *Resolver {
+	r.wsOverlay = fn
 	return r
 }
 
@@ -396,7 +413,7 @@ func (r *Resolver) resolveWorkspace() (cfg *WorkspaceConfig, repoDir string) {
 
 	// Priority 1: manual / offline ZIP import (repo/ without .git).
 	if !repoIsManagedClone {
-		if wsCfg := loadWorkspaceConfig(localRepoDir, r.log()); wsCfg != nil {
+		if wsCfg := r.loadWorkspaceConfigOverlaid(localRepoDir); wsCfg != nil {
 			return wsCfg, localRepoDir
 		}
 	}
@@ -419,14 +436,14 @@ func (r *Resolver) resolveWorkspace() (cfg *WorkspaceConfig, repoDir string) {
 			syncErr = fmt.Errorf("sync workspace repo %s: %w", repoURL, err)
 		}
 	}
-	if wsCfg := loadWorkspaceConfig(defaultRepoDir, r.log()); wsCfg != nil {
+	if wsCfg := r.loadWorkspaceConfigOverlaid(defaultRepoDir); wsCfg != nil {
 		return wsCfg, defaultRepoDir
 	}
 
 	// Priority 3: last-resort fallback to a stale managed clone in repo/ when
 	// nothing else loaded (e.g. offline with no bundles/workspace clone yet).
 	if repoIsManagedClone {
-		if wsCfg := loadWorkspaceConfig(localRepoDir, r.log()); wsCfg != nil {
+		if wsCfg := r.loadWorkspaceConfigOverlaid(localRepoDir); wsCfg != nil {
 			return wsCfg, localRepoDir
 		}
 	}
@@ -623,25 +640,79 @@ func (r *Resolver) lookupRepoToken(bundleRepo *BundlesRepo) string {
 	return token
 }
 
-func loadWorkspaceConfig(repoDir string, logger *slog.Logger) *WorkspaceConfig {
-	if logger == nil {
-		logger = slog.Default()
-	}
+// loadRawWorkspaceConfig returns the raw bytes of the first existing workspace
+// config file in repoDir (workspace-v1.yml priority order), the path it was
+// read from, and whether one was found. These are the PRE-overlay bytes — the
+// pristine git reference — used both for parsing and as the editor baseline.
+func loadRawWorkspaceConfig(repoDir string) (raw []byte, path string, ok bool) {
 	candidates := []string{"workspace-v1.yml", "workspace-v1.yaml", "workspace.yml"}
 	for _, name := range candidates {
-		path := filepath.Join(repoDir, name)
-		data, err := os.ReadFile(path) //nolint:gosec // path is constructed from fixed filenames within repoDir
+		p := filepath.Join(repoDir, name)
+		data, err := os.ReadFile(p) //nolint:gosec // path is constructed from fixed filenames within repoDir
 		if err != nil {
 			continue
 		}
-		var cfg WorkspaceConfig
-		if err := yaml.Unmarshal(data, &cfg); err != nil {
-			logger.Warn("Failed to parse workspace config", "path", path, "err", err)
-			continue
-		}
-		return &cfg
+		return data, p, true
 	}
-	return nil
+	return nil, "", false
+}
+
+// parseWorkspaceConfig unmarshals raw workspace-v1.yml bytes, logging (never
+// failing hard on) a parse error so callers fall through to the next priority.
+func parseWorkspaceConfig(raw []byte, path string, logger *slog.Logger) *WorkspaceConfig {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	var cfg WorkspaceConfig
+	if err := yaml.Unmarshal(raw, &cfg); err != nil {
+		logger.Warn("Failed to parse workspace config", "path", path, "err", err)
+		return nil
+	}
+	return &cfg
+}
+
+// loadWorkspaceConfig reads + parses the workspace config from repoDir with NO
+// overlay (the pristine git reference). Kept as a package function for tests and
+// callers that explicitly want the un-overlaid config.
+func loadWorkspaceConfig(repoDir string, logger *slog.Logger) *WorkspaceConfig {
+	raw, path, ok := loadRawWorkspaceConfig(repoDir)
+	if !ok {
+		return nil
+	}
+	return parseWorkspaceConfig(raw, path, logger)
+}
+
+// loadWorkspaceConfigOverlaid reads the raw workspace config, applies the
+// configured wsOverlay (the user's manual delta) when set, then parses. An
+// overlay error is logged and the pristine git reference is parsed instead — a
+// broken delta never blocks workspace resolution.
+func (r *Resolver) loadWorkspaceConfigOverlaid(repoDir string) *WorkspaceConfig {
+	raw, path, ok := loadRawWorkspaceConfig(repoDir)
+	if !ok {
+		return nil
+	}
+	if r.wsOverlay != nil {
+		if merged, err := r.wsOverlay(raw); err != nil {
+			r.log().Warn("Workspace config overlay failed; using git reference", "path", path, "err", err)
+		} else {
+			raw = merged
+		}
+	}
+	return parseWorkspaceConfig(raw, path, r.log())
+}
+
+// ResolveWorkspaceRaw resolves the workspace repo (git-syncing exactly as the
+// normal resolve does) and returns the RAW workspace-v1.yml bytes BEFORE any
+// overlay, plus the dir they came from. The workspace-config editor uses this
+// to compute the git baseline the user's delta is layered on; build the
+// resolver WITHOUT an overlay so the returned bytes are the pristine reference.
+func (r *Resolver) ResolveWorkspaceRaw() (raw []byte, repoDir string) {
+	_, dir := r.resolveWorkspace()
+	if dir == "" {
+		return nil, ""
+	}
+	raw, _, _ = loadRawWorkspaceConfig(dir)
+	return raw, dir
 }
 
 // FindSnapshot finds a SnapshotDef by ID in the workspace config.
