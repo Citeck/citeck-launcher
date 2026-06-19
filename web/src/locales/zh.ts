@@ -88,8 +88,6 @@ const zh = {
   'workspace.config.reset': '重置为 git',
   'workspace.config.resetTooltip': '放弃您的更改并恢复到 git 基准',
   'workspace.config.resetSuccess': '工作区配置已重置为 git 基准',
-  'workspace.config.resetConfirmTitle': '重置工作区配置？',
-  'workspace.config.resetConfirmMessage': '这将放弃您的更改，并从 git 仓库恢复配置。',
   'welcome.workspace.updateFailed': '工作区更新失败：{error}',
   'welcome.workspace.create': '创建工作区...',
   'welcome.workspace.edit': '编辑',

@@ -88,8 +88,6 @@ const ru = {
   'workspace.config.reset': 'Сбросить к git',
   'workspace.config.resetTooltip': 'Отменить изменения и вернуться к git-эталону',
   'workspace.config.resetSuccess': 'Конфигурация рабочего пространства сброшена к git-эталону',
-  'workspace.config.resetConfirmTitle': 'Сбросить конфигурацию рабочего пространства?',
-  'workspace.config.resetConfirmMessage': 'Изменения будут отменены, а конфигурация восстановлена из git-репозитория.',
   'welcome.workspace.updateFailed': 'Не удалось обновить рабочее пространство: {error}',
   'welcome.workspace.create': 'Создать рабочее пространство...',
   'welcome.workspace.edit': 'Изменить',

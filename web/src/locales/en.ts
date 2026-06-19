@@ -90,8 +90,6 @@ const en = {
   'workspace.config.reset': 'Reset to git',
   'workspace.config.resetTooltip': 'Discard your changes and revert to the git reference',
   'workspace.config.resetSuccess': 'Workspace configuration reset to the git reference',
-  'workspace.config.resetConfirmTitle': 'Reset workspace configuration?',
-  'workspace.config.resetConfirmMessage': 'This discards your changes and restores the configuration from the git repository.',
   'welcome.workspace.updateFailed': 'Workspace update failed: {error}',
   'welcome.workspace.create': 'Create workspace...',
   'welcome.workspace.edit': 'Edit',

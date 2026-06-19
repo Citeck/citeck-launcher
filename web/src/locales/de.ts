@@ -88,8 +88,6 @@ const de = {
   'workspace.config.reset': 'Auf Git zurücksetzen',
   'workspace.config.resetTooltip': 'Ihre Änderungen verwerfen und zur Git-Referenz zurückkehren',
   'workspace.config.resetSuccess': 'Arbeitsbereich-Konfiguration auf die Git-Referenz zurückgesetzt',
-  'workspace.config.resetConfirmTitle': 'Arbeitsbereich-Konfiguration zurücksetzen?',
-  'workspace.config.resetConfirmMessage': 'Dadurch werden Ihre Änderungen verworfen und die Konfiguration aus dem Git-Repository wiederhergestellt.',
   'welcome.workspace.updateFailed': 'Arbeitsbereich-Aktualisierung fehlgeschlagen: {error}',
   'welcome.workspace.create': 'Arbeitsbereich erstellen...',
   'welcome.workspace.edit': 'Bearbeiten',

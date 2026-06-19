@@ -88,8 +88,6 @@ const fr = {
   'workspace.config.reset': 'Réinitialiser sur git',
   'workspace.config.resetTooltip': 'Abandonner vos modifications et revenir à la référence git',
   'workspace.config.resetSuccess': 'Configuration de l’espace de travail réinitialisée sur la référence git',
-  'workspace.config.resetConfirmTitle': 'Réinitialiser la configuration de l’espace de travail ?',
-  'workspace.config.resetConfirmMessage': 'Cela abandonne vos modifications et restaure la configuration depuis le dépôt git.',
   'welcome.workspace.updateFailed': 'Échec de la mise à jour de l’espace de travail : {error}',
   'welcome.workspace.create': 'Créer un espace de travail...',
   'welcome.workspace.edit': 'Modifier',

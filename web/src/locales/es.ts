@@ -88,8 +88,6 @@ const es = {
   'workspace.config.reset': 'Restablecer a git',
   'workspace.config.resetTooltip': 'Descartar tus cambios y volver a la referencia de git',
   'workspace.config.resetSuccess': 'Configuración del espacio de trabajo restablecida a la referencia de git',
-  'workspace.config.resetConfirmTitle': '¿Restablecer la configuración del espacio de trabajo?',
-  'workspace.config.resetConfirmMessage': 'Esto descarta tus cambios y restaura la configuración desde el repositorio de git.',
   'welcome.workspace.updateFailed': 'Error al actualizar el espacio de trabajo: {error}',
   'welcome.workspace.create': 'Crear espacio de trabajo...',
   'welcome.workspace.edit': 'Editar',
