@@ -122,6 +122,12 @@ type Config struct {
 	Webapps        map[string]WebappProps `yaml:"webapps,omitempty" json:"webapps,omitempty"`
 	Email          *EmailConfig           `yaml:"email,omitempty" json:"email,omitempty"`
 	S3             *S3Config              `yaml:"s3,omitempty" json:"s3,omitempty"`
+	// PublishAllPorts, in server mode, publishes EVERY app's host ports (desktop
+	// parity) instead of only the proxy's. This lets an external microservice on
+	// the host (e.g. citeck-uni carrying migration backend logic) join the stack
+	// by reaching zookeeper/rabbitmq/postgres/webapp ports on localhost. No effect
+	// in desktop mode (which already publishes all ports).
+	PublishAllPorts bool `yaml:"publishAllPorts,omitempty" json:"publishAllPorts,omitempty"`
 }
 
 // DefaultNamespaceConfig returns a namespace config with sensible defaults.

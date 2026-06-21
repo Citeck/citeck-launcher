@@ -101,16 +101,13 @@ func (r *Runtime) testLivenessCheckOnce(ctx context.Context) {
 	}
 }
 
-// runLivenessProbe executes a liveness probe against a container. Mirrors the
-// startup-probe target resolution in runtime_app.go so liveness uses the same
-// reachable endpoint:
-//   - HTTP probes prefer the published host port (127.0.0.1:hostPort) — the
-//     daemon runs on the host and cannot reach Docker bridge IPs on most
-//     Linux setups (`docker network` bridges are namespaced).
-//   - When no host port is published, fall back to the container's bridge IP +
-//     the container-side port. Works when the daemon happens to be on the same
-//     bridge or when bridge routing is allowed.
-//   - Exec probes go through `docker exec`, so addressing is non-issue.
+// runLivenessProbe executes a liveness probe against a container. HTTP probes go
+// through the shared probeHTTP helper (same target resolution as the startup probe
+// in runtime_app.go): a published host port is probed on 127.0.0.1; otherwise the
+// check runs INSIDE the container via docker exec — the only path that works under
+// rootless docker, where the daemon's host cannot reach Docker bridge IPs (server
+// mode publishes no host port for non-proxy apps). Exec probes go through
+// `docker exec` directly, so addressing is a non-issue.
 func (r *Runtime) runLivenessProbe(ctx context.Context, containerID string, probe *appdef.AppProbeDef) bool {
 	timeout := probe.TimeoutSeconds
 	if timeout <= 0 {
@@ -124,16 +121,8 @@ func (r *Runtime) runLivenessProbe(ctx context.Context, containerID string, prob
 		return err == nil && exitCode == 0
 	}
 	if probe.HTTP != nil {
-		probeHost := ""
-		probePort := r.docker.GetPublishedPort(probeCtx, containerID, probe.HTTP.Port)
-		if probePort <= 0 {
-			probeHost = r.docker.GetContainerIP(probeCtx, containerID)
-			probePort = probe.HTTP.Port
-		}
-		if probePort <= 0 {
-			return false
-		}
-		return httpProbeCheck(probeCtx, probeHost, probePort, probe.HTTP.Path, timeout)
+		publishedPort := r.docker.GetPublishedPort(probeCtx, containerID, probe.HTTP.Port)
+		return r.probeHTTP(probeCtx, containerID, publishedPort, probe.HTTP.Port, probe.HTTP.Path, timeout)
 	}
 	return true
 }

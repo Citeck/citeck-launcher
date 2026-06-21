@@ -116,7 +116,9 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 
 	// Server mode: only proxy publishes ports — all other apps are internal to Docker network.
 	// Desktop mode: all ports published for local debugging (CloudConfigServer, direct DB access, etc.)
-	if !config.IsDesktopMode() {
+	// PublishAllPorts opts a server-mode namespace into the desktop behaviour so an external
+	// microservice on the host (e.g. citeck-uni) can reach zookeeper/rabbitmq/webapp ports on localhost.
+	if !config.IsDesktopMode() && !ctx.Config.PublishAllPorts {
 		for _, b := range ctx.Applications {
 			if b.Name != appdef.AppProxy {
 				b.Ports = nil
