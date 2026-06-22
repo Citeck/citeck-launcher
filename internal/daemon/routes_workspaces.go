@@ -407,6 +407,21 @@ func (d *Daemon) handleDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			"cannot delete the active workspace; switch first")
 		return
 	}
+	// Purge every namespace's Docker resources (containers, named DATA volumes,
+	// network) BEFORE dropping the rows — workspace delete must reclaim the
+	// namespaces' postgres/mongo/… volumes, not just the DB + disk. Enumerate
+	// first (the rows are gone after DeleteWorkspace). Best-effort: PurgeNamespace
+	// logs and never blocks; selection is by label so the non-active workspace's
+	// resources are cleaned via the active client (single desktop engine).
+	if dc := d.active().dockerClient; dc != nil {
+		if nss, lerr := d.store.ListNamespaces(id); lerr != nil {
+			slog.Warn("Workspace delete: list namespaces for Docker purge failed", "wsID", id, "err", lerr) //nolint:gosec // G706: id passed validateID
+		} else {
+			for _, ns := range nss {
+				dc.PurgeNamespace(r.Context(), ns.ID, id)
+			}
+		}
+	}
 	if err := d.store.DeleteWorkspace(id); err != nil {
 		writeInternalError(w, err)
 		return

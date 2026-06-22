@@ -394,6 +394,13 @@ func (s *SQLiteStore) DeleteWorkspace(id string) error {
 	if _, err := tx.Exec("DELETE FROM workspaces WHERE id = ?", id); err != nil {
 		return fmt.Errorf("delete workspace %s: %w", id, err)
 	}
+	// Cascade the workspace's namespaces (config + state rows) — otherwise they
+	// orphan in the DB and, worse, keep SweepOrphans protecting their Docker
+	// volumes (the keep-set is built from stored namespaces), so the data would
+	// never be reclaimed.
+	if _, err := tx.Exec("DELETE FROM namespaces WHERE ws_id = ?", id); err != nil {
+		return fmt.Errorf("delete workspace %s namespaces: %w", id, err)
+	}
 	if _, err := tx.Exec("DELETE FROM registry_bindings WHERE ws_id = ?", id); err != nil {
 		return fmt.Errorf("delete workspace %s registry bindings: %w", id, err)
 	}

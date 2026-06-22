@@ -226,3 +226,28 @@ func TestSQLiteSchemaV6NamespacesTable(t *testing.T) {
 		require.True(t, cols[want], "missing column %q", want)
 	}
 }
+
+// TestSQLiteDeleteWorkspaceCascadesNamespaces: deleting a workspace must
+// cascade-remove its namespace rows (config + state), leaving other
+// workspaces' namespaces untouched. Without this, namespaces orphan in the DB
+// AND keep SweepOrphans protecting their Docker volumes (the keep-set is built
+// from stored namespaces), so the data would never be reclaimed.
+func TestSQLiteDeleteWorkspaceCascadesNamespaces(t *testing.T) {
+	s, err := NewSQLiteStore(t.TempDir())
+	require.NoError(t, err)
+	defer s.Close()
+
+	require.NoError(t, s.SaveNamespaceConfig("wsDel", "nsA", "Alpha", "id: nsA\n"))
+	require.NoError(t, s.SaveNamespaceConfig("wsDel", "nsB", "Beta", "id: nsB\n"))
+	require.NoError(t, s.SaveNamespaceConfig("wsKeep", "nsZ", "Zeta", "id: nsZ\n"))
+
+	require.NoError(t, s.DeleteWorkspace("wsDel"))
+
+	del, err := s.ListNamespaces("wsDel")
+	require.NoError(t, err)
+	require.Empty(t, del, "deleting a workspace must cascade-remove its namespaces")
+
+	keep, err := s.ListNamespaces("wsKeep")
+	require.NoError(t, err)
+	require.Len(t, keep, 1, "other workspaces' namespaces must be untouched")
+}
