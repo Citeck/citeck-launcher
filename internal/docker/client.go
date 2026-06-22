@@ -396,9 +396,15 @@ func buildHostConfig(
 	}
 
 	hostConfig := &container.HostConfig{
-		Binds:         binds,
-		PortBindings:  portBindings,
-		NetworkMode:   container.NetworkMode(networkName),
+		Binds:        binds,
+		PortBindings: portBindings,
+		NetworkMode:  container.NetworkMode(networkName),
+		// host.docker.internal → the host gateway, so an in-stack container can reach an EXTERNAL
+		// microservice running on the host (e.g. citeck-uni carrying migration backend logic — the §G
+		// ground truth). On Linux this is not auto-provided (unlike Docker Desktop), and under rootless
+		// docker the host's LAN IP is unreachable from the container netns; host-gateway is the portable
+		// way for the container→host hop. The external app must advertise `host.docker.internal` to match.
+		ExtraHosts:    []string{"host.docker.internal:host-gateway"},
 		RestartPolicy: restartPolicy,
 		LogConfig: container.LogConfig{
 			Type: "json-file",

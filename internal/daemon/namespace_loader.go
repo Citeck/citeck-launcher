@@ -471,10 +471,15 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	// Wire DependsOnDetachedApps so RestartApp can trigger regen for dependency apps
 	runtime.SetDependsOnDetachedApps(genResp.DependsOnDetachedApps)
 
-	// Start CloudConfigServer only in desktop mode — server-mode webapps
-	// have SPRING_CLOUD_CONFIG_ENABLED=false and don't connect to it.
+	// Start CloudConfigServer in desktop mode, OR in server mode when PublishAllPorts is set.
+	// In-stack webapps have SPRING_CLOUD_CONFIG_ENABLED=false and don't use it; but an EXTERNAL
+	// microservice on the host (e.g. citeck-uni carrying migration backend logic — the §G ground
+	// truth) bootstraps its connection config (datasource/RMQ/ZK localhost URLs + the JWT secret)
+	// from this server on :8761. PublishAllPorts is exactly the "external app joins the stack"
+	// opt-in, so it gates the cloud-config server too (the ext config already carries localhost
+	// host-port URLs — see generator_webapp.go extCloudConfig / rewriteDataSourceURLForLocalhost).
 	var cloudCfgSrv *CloudConfigServer
-	if config.IsDesktopMode() {
+	if config.IsDesktopMode() || nsCfg.PublishAllPorts {
 		cloudCfgSrv = NewCloudConfigServer()
 		cloudCfgSrv.UpdateConfig(genResp.CloudConfig, systemSecrets.JWT)
 		if startErr := cloudCfgSrv.Start(); startErr != nil {
