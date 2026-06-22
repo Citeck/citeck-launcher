@@ -22,12 +22,13 @@ type mockContainer struct {
 
 // mockDocker implements docker.RuntimeClient for behavioral tests.
 type mockDocker struct {
-	mu              sync.Mutex
-	containers      map[string]mockContainer // app name → container
-	nextID          int
-	stopRemoveCalls int      // number of StopAndRemoveContainer invocations
-	stoppedNames    []string // raw names/IDs passed to StopAndRemoveContainer (cross-namespace conflict tests)
-	removeNetCalls  int      // number of RemoveNetwork invocations
+	mu                  sync.Mutex
+	containers          map[string]mockContainer // app name → container
+	nextID              int
+	stopRemoveCalls     int      // number of StopAndRemoveContainer invocations
+	stoppedNames        []string // raw names/IDs passed to StopAndRemoveContainer (cross-namespace conflict tests)
+	removeNetCalls      int      // number of RemoveNetwork invocations
+	removedContainerIDs []string // ids passed to RemoveContainer (shutdown-sweep coverage)
 
 	// If non-nil, ListAllLauncherContainers returns this verbatim (cross-namespace
 	// port-conflict tests); otherwise it falls back to GetContainers.
@@ -102,7 +103,18 @@ func (m *mockDocker) StopContainer(ctx context.Context, id string, timeoutSec in
 	return nil
 }
 
-func (m *mockDocker) RemoveContainer(ctx context.Context, id string) error { return nil }
+func (m *mockDocker) RemoveContainer(ctx context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.removedContainerIDs = append(m.removedContainerIDs, id)
+	for name, c := range m.containers {
+		if c.id == id {
+			delete(m.containers, name)
+			break
+		}
+	}
+	return nil
+}
 
 func (m *mockDocker) StopAndRemoveContainer(ctx context.Context, name string, timeoutSec int) error {
 	m.mu.Lock()
