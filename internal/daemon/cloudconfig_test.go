@@ -190,6 +190,11 @@ func TestHandleRuntimeEventDrivesCloudConfigLifecycle(t *testing.T) {
 	d.handleRuntimeEvent(api.EventDto{Type: "namespace_status", After: string(namespace.NsStatusRunning)}, srv)
 	assert.True(t, srv.runningForTest(), "server stays up while running")
 
+	// STOPPING keeps the server up (external debug clients keep config access
+	// through a graceful shutdown — only fully STOPPED tears it down).
+	d.handleRuntimeEvent(api.EventDto{Type: "namespace_status", After: string(namespace.NsStatusStopping)}, srv)
+	assert.True(t, srv.runningForTest(), "server stays up during STOPPING")
+
 	d.handleRuntimeEvent(api.EventDto{Type: "namespace_status", After: string(namespace.NsStatusStopped)}, srv)
 	assert.False(t, srv.runningForTest(), "server stops once the namespace is STOPPED")
 

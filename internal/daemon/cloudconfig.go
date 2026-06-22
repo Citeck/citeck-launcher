@@ -147,9 +147,22 @@ func (s *CloudConfigServer) Start() error {
 	srv := s.server
 	go func() {
 		slog.Info("CloudConfigServer started", "addr", addr)
-		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
-			slog.Error("CloudConfigServer error", "err", err)
+		serveErr := srv.Serve(listener)
+		if serveErr != nil && serveErr != http.ErrServerClosed {
+			slog.Error("CloudConfigServer error", "err", serveErr)
 		}
+		// Serve returned ⇒ the port is released. Clear started so a later Start()
+		// can rebind instead of no-op'ing on a dead server. Skip when Stop()
+		// already tore this instance down (it nils s.server under the lock); the
+		// `s.server == srv` guard distinguishes a Stop-driven shutdown from a
+		// spontaneous Serve failure and ignores a stale goroutine after a
+		// Stop→Start cycle replaced the server.
+		s.lifecycleMu.Lock()
+		if s.server == srv {
+			s.started = false
+			s.server = nil
+		}
+		s.lifecycleMu.Unlock()
 	}()
 
 	return nil
