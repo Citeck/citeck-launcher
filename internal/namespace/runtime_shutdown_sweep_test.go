@@ -69,6 +69,9 @@ func TestRemoveNetworkPlanSweepsLeftoversFirst(t *testing.T) {
 
 	md.mu.Lock()
 	defer md.mu.Unlock()
-	assert.Contains(t, md.removedContainerIDs, "c-eapps", "RemoveNetwork plan must sweep leftover containers first")
+	// Exact order falsifies a swap: the leftover must be force-removed BEFORE the
+	// "net" sentinel (RemoveNetwork) — a dangling endpoint would otherwise block it.
+	assert.Equal(t, []string{"c-eapps", "net"}, md.removedContainerIDs,
+		"sweep must force-remove leftovers before removing the network")
 	assert.Equal(t, 1, md.removeNetCalls)
 }

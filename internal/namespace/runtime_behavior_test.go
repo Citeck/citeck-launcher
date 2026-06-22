@@ -70,6 +70,9 @@ func (m *mockDocker) CreateNetwork(ctx context.Context) (string, error) {
 func (m *mockDocker) RemoveNetwork(ctx context.Context) error {
 	m.mu.Lock()
 	m.removeNetCalls++
+	// Sentinel in the shared op-order list so a test can assert the shutdown
+	// sweep (RemoveContainer) ran BEFORE the network removal.
+	m.removedContainerIDs = append(m.removedContainerIDs, "net")
 	block := m.removeNetBlock
 	m.mu.Unlock()
 	if block != nil {

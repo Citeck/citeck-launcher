@@ -174,13 +174,18 @@ func (s *CloudConfigServer) Start() error {
 // namespace makes the next daemon start fail with "address already in use".
 func (s *CloudConfigServer) Stop() {
 	s.lifecycleMu.Lock()
-	defer s.lifecycleMu.Unlock()
 	if !s.started {
+		s.lifecycleMu.Unlock()
 		return
 	}
 	srv := s.server
 	s.started = false
 	s.server = nil
+	s.lifecycleMu.Unlock()
+
+	// Shutdown does blocking I/O (up to 5s) — call it OUTSIDE the lock so a
+	// racing Start() isn't stalled behind it. The Serve goroutine's exit hook
+	// skips its clear (s.server is already nil), so there's no double-teardown.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
