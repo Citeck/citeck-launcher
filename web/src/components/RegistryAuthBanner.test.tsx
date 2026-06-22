@@ -66,17 +66,18 @@ describe('RegistryAuthBanner', () => {
 
   it('binds the host immediately when a new credential is created (no separate Save)', async () => {
     useDashboardStore.setState({ pullAuthRequired: { emodel: HOST } })
-    const { container } = render(<RegistryAuthBanner />)
+    render(<RegistryAuthBanner />)
     await screen.findByText(/Pick an existing one/)
 
     // Open the secret picker dropdown, then choose "Add new…".
     fireEvent.click(screen.getByText('Select a token secret…'))
     fireEvent.click(await screen.findByText('Add new…'))
 
-    // The create form opens (Username/Password are registry-only fields).
+    // The create form opens (Username/Password are registry-only fields). The
+    // Modal portals to <body>, so query the document, not the render container.
     await screen.findByText('Username')
-    const username = container.querySelector('input[autocomplete="username"]') as HTMLInputElement
-    const password = container.querySelector('input[type="password"]') as HTMLInputElement
+    const username = document.querySelector('input[autocomplete="username"]') as HTMLInputElement
+    const password = document.querySelector('input[type="password"]') as HTMLInputElement
     fireEvent.change(username, { target: { value: 'robot' } })
     fireEvent.change(password, { target: { value: 'secret' } })
 

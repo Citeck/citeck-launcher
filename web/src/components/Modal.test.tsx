@@ -9,6 +9,30 @@ beforeEach(() => {
 })
 
 describe('Modal', () => {
+  it('portals the dialog to document.body so nested modals never nest <form>s', () => {
+    // The real-world bug: Chromium resolves a nested submit button's form owner
+    // to the OUTERMOST form. Portaling each dialog to <body> keeps every modal's
+    // form standalone. Assert the structural guarantee — the dialog is a direct
+    // body child, and an inner modal's form is NOT inside the outer modal's form.
+    render(
+      <Modal open title="Outer" onClose={() => {}} onSubmit={() => {}}>
+        <Modal open title="Inner" onClose={() => {}} onSubmit={() => {}}>
+          <button type="submit">create</button>
+        </Modal>
+      </Modal>,
+    )
+
+    const dialogs = document.body.querySelectorAll(':scope > dialog')
+    expect(dialogs.length).toBe(2) // both modals are direct body children
+
+    const createBtn = screen.getByText('create') as HTMLButtonElement
+    const innerForm = createBtn.closest('form')
+    // The button's nearest ancestor form has no <form> ancestor of its own — i.e.
+    // forms are not nested, so the submit button binds to its own (inner) form.
+    expect(innerForm).not.toBeNull()
+    expect(innerForm!.parentElement?.closest('form')).toBeNull()
+  })
+
   it('does not bubble a nested modal form submit to the outer modal form', () => {
     const outerSubmit = vi.fn((e: React.FormEvent) => e.preventDefault())
     const innerSubmit = vi.fn((e: React.FormEvent) => e.preventDefault())

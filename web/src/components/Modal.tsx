@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { useModalDialog } from '../hooks/useModalDialog'
 
@@ -36,14 +37,13 @@ interface ModalProps {
 export function Modal({ open, title, onClose, width = 'md', children, footer, onSubmit }: ModalProps) {
   const ref = useModalDialog(open)
 
-  // A nested modal opened from inside this one (e.g. SecretPicker's "Add new…"
-  // form inside the workspace-create form) renders its <form> as a DOM
-  // descendant of this modal's <form>. The native `submit` event bubbles, and
-  // React replays it up the fiber tree, so without this guard the inner form's
-  // submit would ALSO fire this outer form's onSubmit — collapsing the whole
-  // stack (and running the wrong handler). Mirror the onClose target guard:
-  // only handle THIS form's own submit, and stop it here so no ancestor form
-  // ever sees a nested submit.
+  // React replays a nested modal's <form> submit up the FIBER tree (portaling
+  // the dialog to <body> moves the DOM node but not the React-tree position), so
+  // without this guard the inner form's submit would also fire this outer form's
+  // onSubmit. Mirror the onClose target guard: only handle THIS form's own submit
+  // and stop it here so no ancestor form sees a nested submit. (The DOM-level
+  // nested-form problem — Chromium resolves a nested submit button's form owner
+  // to the OUTERMOST form — is solved separately by the body portal below.)
   const handleSubmit = onSubmit
     ? (e: React.FormEvent) => {
         if (e.target !== e.currentTarget) return
@@ -82,15 +82,21 @@ export function Modal({ open, title, onClose, width = 'md', children, footer, on
     </>
   )
 
-  return (
+  // Portal the <dialog> to <body> so a modal opened from INSIDE another modal is
+  // never a DOM descendant of the outer modal's <form>. Nested <form>s are
+  // invalid HTML, and Chromium/WebView2 resolves a nested submit button's form
+  // owner to the OUTERMOST form — so clicking "create" in an inner dialog would
+  // submit the OUTER form (e.g. the workspace-create form), collapsing the whole
+  // stack and running the wrong handler. As a body child each dialog's form is
+  // standalone, so the submit button binds to its own form. Theme tokens live on
+  // <html data-theme>, which <body> inherits, so colors are unaffected.
+  return createPortal(
     <dialog
       ref={ref}
-      // Only react to THIS dialog's own close event. A nested modal (e.g. a
-      // SecretEditDialog opened from a field inside this dialog) fires its own
-      // native `close`, and React bubbles that event up the fiber tree to this
-      // ancestor <dialog>'s onClose — which would otherwise close the dialog
-      // behind it too. currentTarget is this <dialog>; target is whatever
-      // actually closed.
+      // Only react to THIS dialog's own close event. A nested modal fires its own
+      // native `close`, and React replays it up the fiber tree to this ancestor
+      // <dialog>'s onClose — which would otherwise close the dialog behind it too.
+      // currentTarget is this <dialog>; target is whatever actually closed.
       onClose={(e) => { if (e.target === e.currentTarget) onClose() }}
       className={`fixed inset-0 z-50 m-auto ${widthClass} max-w-[90vw] rounded-lg border border-border bg-card p-0 text-foreground shadow-xl`}
     >
@@ -99,7 +105,8 @@ export function Modal({ open, title, onClose, width = 'md', children, footer, on
       ) : (
         <div className="flex flex-col">{body}</div>
       )}
-    </dialog>
+    </dialog>,
+    document.body,
   )
 }
 
