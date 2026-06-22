@@ -280,10 +280,18 @@ export function WorkspaceSelector({ activeId, onChanged }: WorkspaceSelectorProp
         <WorkspaceFormDialog
           mode={formMode}
           onClose={() => setFormMode(null)}
-          onSaved={async () => {
+          onSaved={async (createdWs) => {
             setFormMode(null)
             await refresh()
-            onChanged()
+            // Creating a workspace auto-switches to it (Kotlin 1.x parity: the
+            // create flow set the new entity as the selected workspace). Reuse
+            // handleActivate so a failed first sync surfaces the actionable git
+            // dialog. Edit keeps the active workspace unchanged.
+            if (createdWs) {
+              await handleActivate(createdWs)
+            } else {
+              onChanged()
+            }
           }}
         />
       )}
@@ -325,7 +333,9 @@ export function WorkspaceSelector({ activeId, onChanged }: WorkspaceSelectorProp
 interface WorkspaceFormDialogProps {
   mode: FormMode
   onClose: () => void
-  onSaved: () => void
+  /** Called after a successful save. On create the freshly created workspace is
+   *  passed so the parent can auto-activate it; on edit the arg is undefined. */
+  onSaved: (createdWs?: WorkspaceDto) => void
 }
 
 function WorkspaceFormDialog({ mode, onClose, onSaved }: WorkspaceFormDialogProps) {
@@ -381,6 +391,7 @@ function WorkspaceFormDialog({ mode, onClose, onSaved }: WorkspaceFormDialogProp
           update.secretId = ''
         }
         await updateWorkspace(existing!.id, update)
+        onSaved()
       } else {
         const create: WorkspaceCreateDto = {
           name: name.trim(),
@@ -390,9 +401,9 @@ function WorkspaceFormDialog({ mode, onClose, onSaved }: WorkspaceFormDialogProp
           authType,
         }
         if (authType === 'TOKEN' && secretId) create.secretId = secretId
-        await createWorkspace(create)
+        const created = await createWorkspace(create)
+        onSaved(created)
       }
-      onSaved()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
