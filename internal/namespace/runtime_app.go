@@ -119,14 +119,20 @@ func (r *Runtime) waitForProbe(ctx context.Context, containerID string, probe *a
 			}
 		}
 		if probe.HTTP != nil {
-			publishedPort := r.docker.GetPublishedPort(ctx, containerID, probe.HTTP.Port)
+			// Try published port first (localhost), fall back to container IP (Docker network)
+			probeHost := ""
+			probePort := r.docker.GetPublishedPort(ctx, containerID, probe.HTTP.Port)
+			if probePort <= 0 {
+				probeHost = r.docker.GetContainerIP(ctx, containerID)
+				probePort = probe.HTTP.Port
+			}
 			if attempt == 0 || attempt%10 == 0 {
 				slog.Info("HTTP probe", "container", shortID,
-					"containerPort", probe.HTTP.Port, "publishedPort", publishedPort,
+					"containerPort", probe.HTTP.Port, "probeHost", probeHost, "probePort", probePort,
 					"path", probe.HTTP.Path, "attempt", attempt)
 			}
-			if r.probeHTTP(ctx, containerID, publishedPort, probe.HTTP.Port, probe.HTTP.Path, probe.TimeoutSeconds) {
-				slog.Info("HTTP probe passed", "container", shortID, "attempt", attempt)
+			if probePort > 0 && httpProbeCheck(ctx, probeHost, probePort, probe.HTTP.Path, probe.TimeoutSeconds) {
+				slog.Info("HTTP probe passed", "container", shortID, "port", probePort, "attempt", attempt)
 				return nil
 			}
 		}
