@@ -36,6 +36,22 @@ interface ModalProps {
 export function Modal({ open, title, onClose, width = 'md', children, footer, onSubmit }: ModalProps) {
   const ref = useModalDialog(open)
 
+  // A nested modal opened from inside this one (e.g. SecretPicker's "Add new…"
+  // form inside the workspace-create form) renders its <form> as a DOM
+  // descendant of this modal's <form>. The native `submit` event bubbles, and
+  // React replays it up the fiber tree, so without this guard the inner form's
+  // submit would ALSO fire this outer form's onSubmit — collapsing the whole
+  // stack (and running the wrong handler). Mirror the onClose target guard:
+  // only handle THIS form's own submit, and stop it here so no ancestor form
+  // ever sees a nested submit.
+  const handleSubmit = onSubmit
+    ? (e: React.FormEvent) => {
+        if (e.target !== e.currentTarget) return
+        e.stopPropagation()
+        onSubmit(e)
+      }
+    : undefined
+
   const widthClass =
     width === 'sm' ? 'w-[360px]'
       : width === 'lg' ? 'w-[640px]'
@@ -78,8 +94,8 @@ export function Modal({ open, title, onClose, width = 'md', children, footer, on
       onClose={(e) => { if (e.target === e.currentTarget) onClose() }}
       className={`fixed inset-0 z-50 m-auto ${widthClass} max-w-[90vw] rounded-lg border border-border bg-card p-0 text-foreground shadow-xl`}
     >
-      {onSubmit ? (
-        <form onSubmit={onSubmit} className="flex flex-col">{body}</form>
+      {handleSubmit ? (
+        <form onSubmit={handleSubmit} className="flex flex-col">{body}</form>
       ) : (
         <div className="flex flex-col">{body}</div>
       )}
