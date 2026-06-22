@@ -8,6 +8,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/citeck/citeck-launcher/internal/api"
+	"github.com/citeck/citeck-launcher/internal/namespace"
 )
 
 func TestFlattenCloudConfig_Nested(t *testing.T) {
@@ -142,4 +145,56 @@ func TestHandleConfig_ServesFlattenedKeys(t *testing.T) {
 	assert.Equal(t, "jdbc:postgresql://localhost/emodel", appSrc["spring.datasource.url"])
 	_, hasNested := appSrc["spring"]
 	assert.False(t, hasNested, "nested spring key should not be present after flattening")
+}
+
+// runningForTest reads the lifecycle flag under its lock (test-only helper).
+func (s *CloudConfigServer) runningForTest() bool {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	return s.started
+}
+
+// TestCloudConfigServerStartStopIdempotent: Start/Stop are safe to call
+// repeatedly (the namespace-status lifecycle hook relies on this) and a
+// stop releases the port so a later Start can rebind.
+func TestCloudConfigServerStartStopIdempotent(t *testing.T) {
+	srv := NewCloudConfigServer()
+	srv.addr = "127.0.0.1:0" // ephemeral — don't fight for :8761 in tests
+
+	require.NoError(t, srv.Start())
+	assert.True(t, srv.runningForTest())
+	require.NoError(t, srv.Start(), "second Start is an idempotent no-op")
+	assert.True(t, srv.runningForTest())
+
+	srv.Stop()
+	assert.False(t, srv.runningForTest())
+	srv.Stop() // idempotent no-op when already stopped
+
+	require.NoError(t, srv.Start(), "Start after Stop rebinds")
+	assert.True(t, srv.runningForTest())
+	srv.Stop()
+}
+
+// TestHandleRuntimeEventDrivesCloudConfigLifecycle: a namespace_status event
+// starts the cloud-config server unless the namespace is STOPPED, in which case
+// it is stopped (so :8761 is released). A nil server must be a no-op.
+func TestHandleRuntimeEventDrivesCloudConfigLifecycle(t *testing.T) {
+	d := &Daemon{} // broadcastEvent is safe on a zero-value Daemon
+	srv := NewCloudConfigServer()
+	srv.addr = "127.0.0.1:0"
+	defer srv.Stop()
+
+	d.handleRuntimeEvent(api.EventDto{Type: "namespace_status", After: string(namespace.NsStatusStarting)}, srv)
+	assert.True(t, srv.runningForTest(), "server starts when the namespace is starting")
+
+	d.handleRuntimeEvent(api.EventDto{Type: "namespace_status", After: string(namespace.NsStatusRunning)}, srv)
+	assert.True(t, srv.runningForTest(), "server stays up while running")
+
+	d.handleRuntimeEvent(api.EventDto{Type: "namespace_status", After: string(namespace.NsStatusStopped)}, srv)
+	assert.False(t, srv.runningForTest(), "server stops once the namespace is STOPPED")
+
+	// Non-status events and a nil server must not panic or change state.
+	d.handleRuntimeEvent(api.EventDto{Type: "app_status", After: "RUNNING"}, srv)
+	assert.False(t, srv.runningForTest())
+	d.handleRuntimeEvent(api.EventDto{Type: "namespace_status", After: string(namespace.NsStatusRunning)}, nil)
 }

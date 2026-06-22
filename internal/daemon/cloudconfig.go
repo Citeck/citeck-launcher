@@ -20,12 +20,20 @@ type CloudConfigServer struct {
 	cloudConfig map[string]map[string]any // per-app ext cloud config
 	jwtSecret   string                    // JWT secret for base property source
 	version     int64                     // monotonically increasing version
-	server      *http.Server
+
+	lifecycleMu sync.Mutex   // guards started/server so Start/Stop are idempotent + reentrant
+	started     bool         // true while the HTTP listener is bound
+	server      *http.Server // the live server while started; nil otherwise
+	addr        string       // listen address; overridable in tests (default cloudConfigAddr)
 }
+
+// cloudConfigAddr is the default bind address — see the SECURITY note on the
+// 0.0.0.0 choice in Start.
+const cloudConfigAddr = "0.0.0.0:8761"
 
 // NewCloudConfigServer creates a new CloudConfigServer.
 func NewCloudConfigServer() *CloudConfigServer {
-	return &CloudConfigServer{}
+	return &CloudConfigServer{addr: cloudConfigAddr}
 }
 
 // UpdateConfig replaces the cloud config data (called after regeneration).
@@ -85,8 +93,16 @@ func flattenCloudConfig(result, source map[string]any, path string) {
 	}
 }
 
-// Start begins serving on port 8761.
+// Start begins serving on port 8761. Idempotent: a no-op (returns nil) when the
+// server is already running, so the namespace-status lifecycle hook can call it
+// freely on every transition into a running state.
 func (s *CloudConfigServer) Start() error {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.started {
+		return nil
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /config/{appName}", s.handleConfig)
 	mux.HandleFunc("GET /config/{appName}/{profiles}", s.handleConfig)
@@ -117,14 +133,21 @@ func (s *CloudConfigServer) Start() error {
 	// (sibling container via the bridge gateway, VM/WSL), which worked under
 	// Kotlin's 0.0.0.0 bind. If real secrets ever flow here, gate the bind
 	// behind a daemon.yml option (127.0.0.1 to harden) or add a bearer token.
-	listener, err := net.Listen("tcp", "0.0.0.0:8761") //nolint:gosec // G102: desktop-only local-debug config server serving non-sensitive dev values, Kotlin parity (see SECURITY note above)
+	addr := s.addr
+	if addr == "" {
+		addr = cloudConfigAddr
+	}
+	listener, err := net.Listen("tcp", addr) //nolint:gosec // G102: desktop-only local-debug config server serving non-sensitive dev values, Kotlin parity (see SECURITY note above)
 	if err != nil {
+		s.server = nil
 		return fmt.Errorf("cloud config server listen: %w", err)
 	}
+	s.started = true
 
+	srv := s.server
 	go func() {
-		slog.Info("CloudConfigServer started", "addr", "0.0.0.0:8761")
-		if err := s.server.Serve(listener); err != nil && err != http.ErrServerClosed {
+		slog.Info("CloudConfigServer started", "addr", addr)
+		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 			slog.Error("CloudConfigServer error", "err", err)
 		}
 	}()
@@ -132,14 +155,23 @@ func (s *CloudConfigServer) Start() error {
 	return nil
 }
 
-// Stop gracefully shuts down the server.
+// Stop gracefully shuts down the server and releases port 8761. Idempotent: a
+// no-op when not started, so the lifecycle hook can call it on every transition
+// into STOPPED. Releasing the port matters — a still-bound :8761 from a stopped
+// namespace makes the next daemon start fail with "address already in use".
 func (s *CloudConfigServer) Stop() {
-	if s.server != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := s.server.Shutdown(ctx); err != nil {
-			slog.Warn("CloudConfigServer shutdown error", "err", err)
-		}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if !s.started {
+		return
+	}
+	srv := s.server
+	s.started = false
+	s.server = nil
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		slog.Warn("CloudConfigServer shutdown error", "err", err)
 	}
 }
 

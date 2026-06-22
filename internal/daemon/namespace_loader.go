@@ -478,15 +478,6 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	// from this server on :8761. PublishAllPorts is exactly the "external app joins the stack"
 	// opt-in, so it gates the cloud-config server too (the ext config already carries localhost
 	// host-port URLs — see generator_webapp.go extCloudConfig / rewriteDataSourceURLForLocalhost).
-	var cloudCfgSrv *CloudConfigServer
-	if config.IsDesktopMode() || nsCfg.PublishAllPorts {
-		cloudCfgSrv = NewCloudConfigServer()
-		cloudCfgSrv.UpdateConfig(genResp.CloudConfig, systemSecrets.JWT)
-		if startErr := cloudCfgSrv.Start(); startErr != nil {
-			slog.Warn("CloudConfigServer failed to start", "err", startErr)
-		}
-	}
-
 	// Status recovery hint: caller chooses whether to act on it.
 	// - RUNNING / STARTING / STALLED → ShouldStart=true (re-adopt detached containers).
 	// - STOPPING → user-initiated stop was interrupted; finish by staying stopped.
@@ -499,6 +490,24 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		case namespace.NsStatusStopping, namespace.NsStatusStopped:
 			slog.Info("Previous namespace status was stopped — not auto-starting", "status", persistedState.Status)
 			shouldStart = false
+		}
+	}
+
+	// Create the cloud-config server, but Start it only when the namespace will
+	// actually run. A stopped namespace has no containers to serve config for,
+	// and binding :8761 while stopped is both pointless and harmful — it holds
+	// the port, so a daemon restart over a stopped namespace fails with "address
+	// already in use" (observed). The namespace-status lifecycle hook
+	// (syncCloudConfigToNsStatus) starts it when the user starts the namespace
+	// and stops it again on STOPPED.
+	var cloudCfgSrv *CloudConfigServer
+	if config.IsDesktopMode() || nsCfg.PublishAllPorts {
+		cloudCfgSrv = NewCloudConfigServer()
+		cloudCfgSrv.UpdateConfig(genResp.CloudConfig, systemSecrets.JWT)
+		if shouldStart {
+			if startErr := cloudCfgSrv.Start(); startErr != nil {
+				slog.Warn("CloudConfigServer failed to start", "err", startErr)
+			}
 		}
 	}
 
@@ -516,6 +525,29 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		WsSyncError:     wsSyncError,
 		ShouldStart:     shouldStart,
 	}, nil
+}
+
+// handleRuntimeEvent fans a runtime event out to SSE subscribers and drives the
+// desktop cloud-config server lifecycle: the :8761 config server runs only while
+// the namespace is NOT stopped. A stopped namespace has no containers to serve
+// config for, and a still-bound :8761 blocks the next daemon start ("address
+// already in use"). cloudCfg is captured per-runtime by the caller so an event
+// from a torn-down runtime can't drive a different namespace's server.
+func (d *Daemon) handleRuntimeEvent(evt api.EventDto, cloudCfg *CloudConfigServer) {
+	d.broadcastEvent(evt)
+	if evt.Type != "namespace_status" || cloudCfg == nil {
+		return
+	}
+	// Running unless STOPPED: start on STARTING/RUNNING (idempotent no-op if
+	// already up), stop only once fully STOPPED so external debug clients keep
+	// config access through a graceful shutdown.
+	if evt.After == string(namespace.NsStatusStopped) {
+		cloudCfg.Stop()
+		return
+	}
+	if err := cloudCfg.Start(); err != nil {
+		slog.Warn("CloudConfigServer start failed on namespace status change", "status", evt.After, "err", err)
+	}
 }
 
 // workspaceSyncErrorString flattens the resolver's WorkspaceSyncError into the
@@ -617,8 +649,9 @@ func (d *Daemon) installLoadedNamespace(loaded *loadedNamespace, wsID, nsID stri
 	}
 
 	if next.runtime != nil {
+		cloudCfg := next.cloudCfgServer
 		next.runtime.SetEventCallback(func(evt api.EventDto) {
-			d.broadcastEvent(evt)
+			d.handleRuntimeEvent(evt, cloudCfg)
 		})
 	}
 	d.startACMERenewalIfConfigured()

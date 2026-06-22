@@ -273,10 +273,11 @@ func Start(opts StartOptions) error {
 	// (and the dump) before it cascades. Best-effort, both modes.
 	go d.runDiskMonitor(bgCtx)
 
-	// Wire up event broadcasting
+	// Wire up event broadcasting + cloud-config lifecycle
 	if loaded.Runtime != nil {
+		cloudCfg := loaded.CloudCfgServer
 		loaded.Runtime.SetEventCallback(func(evt api.EventDto) {
-			d.broadcastEvent(evt)
+			d.handleRuntimeEvent(evt, cloudCfg)
 		})
 	}
 
