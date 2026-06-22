@@ -29,6 +29,7 @@ type mockDocker struct {
 	stoppedNames        []string // raw names/IDs passed to StopAndRemoveContainer (cross-namespace conflict tests)
 	removeNetCalls      int      // number of RemoveNetwork invocations
 	removedContainerIDs []string // ids passed to RemoveContainer (shutdown-sweep coverage)
+	removeFailFirst     int      // if >0, the next N RemoveContainer calls error (force-remove retry coverage)
 
 	// If non-nil, ListAllLauncherContainers returns this verbatim (cross-namespace
 	// port-conflict tests); otherwise it falls back to GetContainers.
@@ -107,6 +108,10 @@ func (m *mockDocker) RemoveContainer(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.removedContainerIDs = append(m.removedContainerIDs, id)
+	if m.removeFailFirst > 0 {
+		m.removeFailFirst--
+		return fmt.Errorf("mock remove: transient failure")
+	}
 	for name, c := range m.containers {
 		if c.id == id {
 			delete(m.containers, name)

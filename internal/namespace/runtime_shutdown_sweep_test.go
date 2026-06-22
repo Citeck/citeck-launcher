@@ -22,12 +22,33 @@ func TestSweepLeftoverContainersRemovesNamespaceContainers(t *testing.T) {
 	md.containers["emodel"] = mockContainer{id: "c-emodel"}
 	md.mu.Unlock()
 
-	r.sweepLeftoverContainers(context.Background())
+	r.sweepLeftoverContainers()
 
 	md.mu.Lock()
 	defer md.mu.Unlock()
 	assert.ElementsMatch(t, []string{"c-eapps", "c-emodel"}, md.removedContainerIDs)
 	assert.Empty(t, md.containers, "all namespace containers must be force-removed by the sweep")
+}
+
+// TestSweepLeftoverContainersRetriesForceRemove: a transient RemoveContainer
+// failure is retried (force-remove) until it succeeds, so a flaky remove during
+// shutdown doesn't strand the container.
+func TestSweepLeftoverContainersRetriesForceRemove(t *testing.T) {
+	md := newMockDocker()
+	r := NewRuntime(testConfig(), md, t.TempDir())
+	defer r.Shutdown()
+
+	md.mu.Lock()
+	md.containers["eapps"] = mockContainer{id: "c-eapps"}
+	md.removeFailFirst = 1 // first remove errors, retry succeeds
+	md.mu.Unlock()
+
+	r.sweepLeftoverContainers()
+
+	md.mu.Lock()
+	defer md.mu.Unlock()
+	assert.Equal(t, []string{"c-eapps", "c-eapps"}, md.removedContainerIDs, "remove is retried after a transient failure")
+	assert.Empty(t, md.containers, "container is removed once the retry succeeds")
 }
 
 // TestRemoveNetworkPlanSweepsLeftoversFirst: the terminal RemoveNetwork plan

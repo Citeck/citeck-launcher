@@ -477,17 +477,34 @@ func (r *Runtime) runInitContainerTask(
 // all graceful-shutdown groups have drained to terminal stop states. The
 // TaskID uses "" as App name — network removal is namespace-scoped, not
 // per-app, and no other worker kind competes for this slot.
+const (
+	// shutdownSweepTimeout bounds the whole terminal leftover-container sweep.
+	shutdownSweepTimeout = 30 * time.Second
+	// shutdownSweepRemoveAttempts is the force-remove retry budget per leftover.
+	shutdownSweepRemoveAttempts = 3
+	shutdownSweepRetryDelay     = 500 * time.Millisecond
+)
+
 // sweepLeftoverContainers force-removes any containers still present for this
-// namespace at the terminal shutdown step. A per-app stop+remove can leave a
-// container behind: StopAndRemoveContainer's stop can succeed while the remove
-// errors, or the stop worker's ctx is canceled after the stop but before the
-// remove — the app then lands in STOPPING_FAILED, which allAppsTerminalInGroup
-// treats as terminal, so the shutdown continuation completes and nothing ever
-// retries the remove. The leftover (e.g. a slow-stopping Java webapp like eapps)
-// is left Exited AND keeps the bridge network's endpoint alive, so RemoveNetwork
-// then fails with "still has active endpoints". This best-effort sweep closes
-// both gaps; errors are logged, not fatal (RemoveNetwork is best-effort anyway).
-func (r *Runtime) sweepLeftoverContainers(ctx context.Context) {
+// namespace at the terminal shutdown step, retrying each remove. A per-app
+// stop+remove can leave a container behind: StopAndRemoveContainer's stop can
+// succeed while the remove errors, or the stop worker's ctx is canceled after
+// the stop but before the remove — the app then lands in STOPPING_FAILED, which
+// allAppsTerminalInGroup treats as terminal, so the shutdown continuation
+// completes and nothing ever retries the remove. The leftover (e.g. a
+// slow-stopping Java webapp like eapps) is left Exited AND keeps the bridge
+// network's endpoint alive, so RemoveNetwork then fails with "still has active
+// endpoints".
+//
+// Runs on a FRESH detached context (not the graceful-shutdown parent, which may
+// already be canceled by the very deadline that caused the leftover) so cleanup
+// still happens. Safe to force here: this is the terminal step of a real
+// shutdown, so there is no concurrent recreate/supersession that a force-remove
+// could clobber. Best-effort: errors are logged, not fatal.
+func (r *Runtime) sweepLeftoverContainers() {
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownSweepTimeout)
+	defer cancel()
+
 	containers, err := r.docker.GetContainers(ctx)
 	if err != nil {
 		slog.Warn("Shutdown sweep: list containers failed (best-effort)", "err", err)
@@ -498,8 +515,23 @@ func (r *Runtime) sweepLeftoverContainers(ctx context.Context) {
 		if len(containers[i].Names) > 0 {
 			name = containers[i].Names[0]
 		}
-		if err := r.docker.RemoveContainer(ctx, containers[i].ID); err != nil {
-			slog.Warn("Shutdown sweep: remove leftover container failed", "container", name, "err", err)
+		var rmErr error
+		for attempt := range shutdownSweepRemoveAttempts {
+			if rmErr = r.docker.RemoveContainer(ctx, containers[i].ID); rmErr == nil {
+				break
+			}
+			if attempt == shutdownSweepRemoveAttempts-1 || ctx.Err() != nil {
+				break
+			}
+			timer := time.NewTimer(shutdownSweepRetryDelay)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+			}
+		}
+		if rmErr != nil {
+			slog.Warn("Shutdown sweep: force-remove leftover container failed after retries", "container", name, "err", rmErr)
 			continue
 		}
 		slog.Info("Shutdown sweep: removed leftover container", "container", name)
@@ -517,8 +549,9 @@ func (r *Runtime) makeRemoveNetworkPlan() dispatchPlan {
 				defer cancel()
 				// Force-remove any containers left behind by a failed per-app
 				// stop+remove BEFORE removing the network (a leftover endpoint
-				// would otherwise block RemoveNetwork).
-				r.sweepLeftoverContainers(netCtx)
+				// would otherwise block RemoveNetwork). Uses its own detached
+				// context so a canceled netCtx can't skip the cleanup.
+				r.sweepLeftoverContainers()
 				if err := r.docker.RemoveNetwork(netCtx); err != nil {
 					result = workers.Result{Err: err}
 					return
