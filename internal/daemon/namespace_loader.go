@@ -471,13 +471,6 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	// Wire DependsOnDetachedApps so RestartApp can trigger regen for dependency apps
 	runtime.SetDependsOnDetachedApps(genResp.DependsOnDetachedApps)
 
-	// Start CloudConfigServer in desktop mode, OR in server mode when PublishAllPorts is set.
-	// In-stack webapps have SPRING_CLOUD_CONFIG_ENABLED=false and don't use it; but an EXTERNAL
-	// microservice on the host (e.g. citeck-uni carrying migration backend logic — the §G ground
-	// truth) bootstraps its connection config (datasource/RMQ/ZK localhost URLs + the JWT secret)
-	// from this server on :8761. PublishAllPorts is exactly the "external app joins the stack"
-	// opt-in, so it gates the cloud-config server too (the ext config already carries localhost
-	// host-port URLs — see generator_webapp.go extCloudConfig / rewriteDataSourceURLForLocalhost).
 	// Status recovery hint: caller chooses whether to act on it.
 	// - RUNNING / STARTING / STALLED → ShouldStart=true (re-adopt detached containers).
 	// - STOPPING → user-initiated stop was interrupted; finish by staying stopped.
@@ -493,15 +486,16 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		}
 	}
 
-	// Create the cloud-config server, but Start it only when the namespace will
-	// actually run. A stopped namespace has no containers to serve config for,
-	// and binding :8761 while stopped is both pointless and harmful — it holds
-	// the port, so a daemon restart over a stopped namespace fails with "address
-	// already in use" (observed). The namespace-status lifecycle hook
-	// (syncCloudConfigToNsStatus) starts it when the user starts the namespace
-	// and stops it again on STOPPED.
+	// Create the cloud-config server (desktop-only — server-mode webapps have
+	// SPRING_CLOUD_CONFIG_ENABLED=false and don't use it), but Start it only when
+	// the namespace will actually run. A stopped namespace has no containers to
+	// serve config for, and binding :8761 while stopped is both pointless and
+	// harmful — it holds the port, so a daemon restart over a stopped namespace
+	// fails with "address already in use" (observed). The namespace-status
+	// lifecycle hook (handleRuntimeEvent) starts it when the user starts the
+	// namespace and stops it again on STOPPED.
 	var cloudCfgSrv *CloudConfigServer
-	if config.IsDesktopMode() || nsCfg.PublishAllPorts {
+	if config.IsDesktopMode() {
 		cloudCfgSrv = NewCloudConfigServer()
 		cloudCfgSrv.UpdateConfig(genResp.CloudConfig, systemSecrets.JWT)
 		if shouldStart {
