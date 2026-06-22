@@ -109,7 +109,6 @@ export function WorkspaceSelector({ activeId, onChanged }: WorkspaceSelectorProp
       toast(t('welcome.workspace.switched', { name: ws.name || ws.id }), 'success')
       setOpen(false)
       onChanged()
-      await refresh()
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e))
       const code = e instanceof ApiError ? e.code : ''
@@ -127,6 +126,11 @@ export function WorkspaceSelector({ activeId, onChanged }: WorkspaceSelectorProp
       }
     } finally {
       setLoading(false)
+      // Refresh on BOTH success and failure: on a failed activation the daemon
+      // stays on the previous workspace, but a just-created (and now inactive)
+      // workspace must still appear in the list — otherwise it would be missing
+      // from the dropdown until the next refresh trigger.
+      await refresh()
     }
   }
 
@@ -282,14 +286,15 @@ export function WorkspaceSelector({ activeId, onChanged }: WorkspaceSelectorProp
           onClose={() => setFormMode(null)}
           onSaved={async (createdWs) => {
             setFormMode(null)
-            await refresh()
             // Creating a workspace auto-switches to it (Kotlin 1.x parity: the
             // create flow set the new entity as the selected workspace). Reuse
             // handleActivate so a failed first sync surfaces the actionable git
-            // dialog. Edit keeps the active workspace unchanged.
+            // dialog; it refreshes the list itself (success or failure). Edit
+            // keeps the active workspace unchanged — just refresh + notify.
             if (createdWs) {
               await handleActivate(createdWs)
             } else {
+              await refresh()
               onChanged()
             }
           }}
