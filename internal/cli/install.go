@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -120,12 +119,21 @@ func runInstall(info BuildInfo, workspaceZip string, offline bool) (retErr error
 		output.PrintText("Workspace imported: %d files extracted to %s", count, destDir)
 	}
 
-	// Check Docker is available
-	dockerConn, err := net.DialTimeout("unix", "/var/run/docker.sock", 2*time.Second)
-	if err != nil {
-		return fmt.Errorf("docker is not reachable at /var/run/docker.sock — install Docker first: https://docs.docker.com/engine/install/")
+	// Check Docker is available. Use the same adaptive endpoint resolution as the
+	// daemon (DOCKER_HOST → active docker context → common socket paths) instead
+	// of probing a single hardcoded socket, so Docker Desktop / colima / rootless
+	// setups are detected too.
+	dc, derr := docker.NewClient("", "")
+	if derr != nil {
+		return fmt.Errorf("docker client: %w", derr)
 	}
-	dockerConn.Close()
+	pingCtx, pingCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	perr := dc.Ping(pingCtx)
+	pingCancel()
+	_ = dc.Close()
+	if perr != nil {
+		return fmt.Errorf("docker is not reachable — start Docker first (or set DOCKER_HOST): https://docs.docker.com/engine/install/")
+	}
 
 	// Check if already installed (both config files must exist — partial install is re-runnable)
 	nsCfgPath := config.NamespaceConfigPath()

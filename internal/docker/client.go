@@ -3,6 +3,8 @@ package docker
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -69,10 +71,15 @@ func NewClient(workspace, namespace string, options ...Option) (*Client, error) 
 	// honoring DOCKER_HOST / DOCKER_API_VERSION / DOCKER_CERT_PATH overrides.
 	opts := []client.Opt{client.FromEnv}
 
-	// If DOCKER_HOST is not set, try common socket locations
+	// If DOCKER_HOST is not set, honor the active docker CLI context first
+	// (this is what `docker` itself does — on macOS Docker Desktop the default
+	// "desktop-linux" context points at ~/.docker/run/docker.sock, and colima /
+	// Rancher Desktop use their own paths), then fall back to scanning common
+	// socket locations. Never hardcode a single path.
 	if os.Getenv("DOCKER_HOST") == "" {
-		socketPath := detectDockerSocket()
-		if socketPath != "" {
+		if host := dockerHostFromContext(); host != "" {
+			opts = append(opts, client.WithHost(host))
+		} else if socketPath := detectDockerSocket(); socketPath != "" {
 			opts = append(opts, client.WithHost("unix://"+socketPath))
 		}
 	}
@@ -91,15 +98,77 @@ func NewClient(workspace, namespace string, options ...Option) (*Client, error) 
 	return c, nil
 }
 
-// detectDockerSocket finds the Docker socket in common locations.
+// dockerHostFromContext resolves the Docker endpoint from the active docker CLI
+// context — $DOCKER_CONTEXT, else "currentContext" in ~/.docker/config.json.
+// This mirrors what the docker CLI does and adapts to whatever the user's setup
+// actually is (Docker Desktop's "desktop-linux", colima, Rancher Desktop, …)
+// instead of guessing a fixed socket path. Returns "" when there is no usable
+// context so the caller can fall back to socket auto-detection.
+func dockerHostFromContext() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	name := os.Getenv("DOCKER_CONTEXT")
+	if name == "" {
+		data, readErr := os.ReadFile(filepath.Join(home, ".docker", "config.json")) //nolint:gosec // user's own docker config
+		if readErr != nil {
+			return ""
+		}
+		var cfg struct {
+			CurrentContext string `json:"currentContext"`
+		}
+		if json.Unmarshal(data, &cfg) != nil {
+			return ""
+		}
+		name = cfg.CurrentContext
+	}
+	if name == "" || name == "default" {
+		return ""
+	}
+	// Docker stores each context under a directory named by the hex SHA-256 of
+	// the context name (see docker/cli context store digest scheme).
+	sum := sha256.Sum256([]byte(name))
+	metaPath := filepath.Join(home, ".docker", "contexts", "meta", hex.EncodeToString(sum[:]), "meta.json")
+	data, err := os.ReadFile(metaPath) //nolint:gosec // path derived from docker's own context store
+	if err != nil {
+		return ""
+	}
+	var meta struct {
+		Endpoints struct {
+			Docker struct {
+				Host string `json:"Host"`
+			} `json:"docker"`
+		} `json:"Endpoints"`
+	}
+	if json.Unmarshal(data, &meta) != nil {
+		return ""
+	}
+	host := meta.Endpoints.Docker.Host
+	// For a unix endpoint, only trust the context if the socket really exists;
+	// otherwise fall through to detectDockerSocket. Non-unix hosts (tcp://, …)
+	// are returned as-is for the client to dial.
+	if sock, ok := strings.CutPrefix(host, "unix://"); ok {
+		if fi, statErr := os.Stat(sock); statErr != nil || fi.Mode()&os.ModeSocket == 0 {
+			return ""
+		}
+	}
+	return host
+}
+
+// detectDockerSocket finds the Docker socket in common locations. This is the
+// fallback used only when there is no DOCKER_HOST and no usable docker context;
+// the list is ordered most- to least-common across the supported platforms.
 func detectDockerSocket() string {
+	home, _ := os.UserHomeDir()
 	candidates := []string{
-		"/var/run/docker.sock",
-		fmt.Sprintf("/run/user/%d/docker.sock", os.Getuid()),
-		os.Getenv("HOME") + "/.docker/desktop/docker.sock",
+		"/var/run/docker.sock",                                   // default daemon / Docker Desktop default-socket opt-in
+		filepath.Join(home, ".docker", "run", "docker.sock"),     // Docker Desktop user socket (macOS)
+		fmt.Sprintf("/run/user/%d/docker.sock", os.Getuid()),     // rootless Linux
+		filepath.Join(home, ".docker", "desktop", "docker.sock"), // legacy Docker Desktop
 	}
 	for _, path := range candidates {
-		if fi, err := os.Stat(path); err == nil && fi.Mode()&os.ModeSocket != 0 { //nolint:gosec // hardcoded socket paths
+		if fi, err := os.Stat(path); err == nil && fi.Mode()&os.ModeSocket != 0 { //nolint:gosec // well-known socket paths
 			return path
 		}
 	}
