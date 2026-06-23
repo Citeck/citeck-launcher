@@ -1,0 +1,2 @@
+## Correcciones
+- Se corrigió la aparición de la pantalla «Docker no está disponible» en macOS aunque Docker Desktop estuviera en ejecución. Ahora el lanzador detecta Docker igual que la CLI de `docker` —mediante el contexto de Docker activo (Docker Desktop, colima, Rancher Desktop)— y, si hace falta, recurre a otras ubicaciones habituales del socket en lugar de comprobar solo la ruta predeterminada.

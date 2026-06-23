@@ -1,0 +1,2 @@
+## Corrections
+- Correction de l'écran « Docker n'est pas disponible » qui s'affichait sur macOS alors même que Docker Desktop était en cours d'exécution. Le lanceur détecte désormais Docker de la même manière que la CLI `docker` — via le contexte Docker actif (Docker Desktop, colima, Rancher Desktop) — et se rabat si nécessaire sur d'autres emplacements de socket courants au lieu de sonder uniquement le chemin par défaut.
