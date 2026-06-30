@@ -16,19 +16,35 @@ the config. In **server mode** the container is internal to the Docker network
 | Field | Required | Notes |
 |---|---|---|
 | `name` | yes | Container/app name; unique; must not collide with a built-in app. |
-| `image` | yes | Full image ref (`registry/repo:tag`, or a locally-present tag). |
+| `image` | yes | Full image ref (`registry/repo:tag`, or a locally-present tag), **or a bundle-style `<repoId>/path:tag`** whose first segment is an `imageRepos` id — resolved to that registry's URL exactly like bundle apps (e.g. `core/citeck-edi-sim:0.1.0` → `nexus.citeck.ru/citeck-edi-sim:0.1.0`). Same resolution applies to `initContainers[].image`. |
 | `enabled` | no | Default `true`; set `false` to keep the definition but not deploy. |
 | `kind` | no | `CITECK_CORE` / `CITECK_CORE_EXTENSION` / `CITECK_ADDITIONAL` / `THIRD_PARTY` (default). |
 | `networkAliases` | no | Extra DNS aliases on the namespace network. |
 | `environments` | no | `KEY: value` map; `${VAR}` template variables are resolved. |
-| `cmd` | no | Override the image command. |
+| `cmd` | no | Override the image command; `${VAR}` resolved per arg. |
 | `ports` | no | `host:container` (published only in desktop mode). |
 | `volumes` | no | Docker volume / bind mounts. |
 | `dependsOn` | no | App names this container starts after (e.g. `zookeeper`). |
+| `initContainers` | no | Containers run to completion **before** the main one (wait-for, migration, fixtures). Each: `image` (required) + `environments` / `cmd` (`${VAR}` resolved) / `volumes` / `kind`. |
+| `initActions` | no | `exec` commands run inside the container right after creation (`${VAR}` resolved per arg). |
 | `startupConditions` | no | Readiness gates (`probe` / `log`). |
 | `livenessProbe` | no | HTTP/exec liveness probe. |
 | `resources` | no | `limits.memory`. |
 | `shmSize` | no | `/dev/shm` size. |
+| `stopTimeout` | no | Per-app graceful-stop budget in seconds (SIGTERM→SIGKILL); `0` = daemon default. |
+
+These cover **every container-level knob** the launcher's own app generators set, so
+any app — not just the EDI sim — is expressible by config alone. `${PG_HOST}` /
+`${PG_PORT}` / `${ZK_HOST}` / `${ZK_PORT}` / `${MONGO_HOST}` / `${RMQ_HOST}` /
+`${MAILHOG_HOST}` / `${ONLYOFFICE_HOST}` template variables are resolved in every
+string you supply (env, cmd, init-action exec, init-container env/cmd).
+
+**Boundary.** `additionalApps` defines a *container* on the namespace network. It does
+**not** auto-wire an HTTP route through the Citeck proxy, nor publish ECOS webapp
+cloud-config / `dataSources` / webapp-properties — those remain the job of the built-in
+Citeck-app generators (the `webapps:` section). A self-registering service (like the EDI
+sim, via ZooKeeper) needs none of that; a plain HTTP app that must be reachable at a
+proxy path is out of `additionalApps`' scope.
 
 ## Example — the EDI simulator (`citeck-edi-sim`)
 

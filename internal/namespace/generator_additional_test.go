@@ -74,6 +74,103 @@ func TestGenerateAdditionalApps_Disabled(t *testing.T) {
 	assert.Nil(t, findGeneratedApp(resp, "edi-sim"), "disabled additional app must not be generated")
 }
 
+// TestGenerateAdditionalApps_FullSurface proves additionalApps can express every
+// container-level ApplicationDef knob — not just the EDI-sim subset — so that
+// genuinely any app can be added by configuration alone: cmd, stopTimeout,
+// init actions and init containers, all with ${VAR} resolution.
+func TestGenerateAdditionalApps_FullSurface(t *testing.T) {
+	config.ResetDesktopMode()
+	var icEnv appdef.OrderedMap
+	icEnv.Set("PGHOST", "${PG_HOST}")
+	def := AdditionalAppProps{
+		Name:        "custom-svc",
+		Image:       "example.com/custom:1.2.3",
+		Kind:        "CITECK_ADDITIONAL",
+		Cmd:         []string{"serve", "--zk=${ZK_HOST}:${ZK_PORT}"},
+		ShmSize:     "256m",
+		StopTimeout: 45,
+		Resources:   &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "512m"}},
+		InitActions: []appdef.AppInitAction{
+			{Exec: []string{"sh", "-c", "echo ${PG_HOST}"}},
+		},
+		InitContainers: []appdef.InitContainerDef{
+			{
+				Image:        "busybox:1.36",
+				Cmd:          []string{"sh", "-c", "until nc -z ${PG_HOST} ${PG_PORT}; do sleep 1; done"},
+				Environments: icEnv,
+			},
+		},
+	}
+	cfg := &Config{
+		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+		AdditionalApps: []AdditionalAppProps{def},
+	}
+	require.NoError(t, ValidateNamespaceConfig(cfg))
+
+	resp, err := Generate(cfg, &bundle.Def{}, nil, SystemSecrets{JWT: "j", OIDC: "o"})
+	require.NoError(t, err)
+
+	app := findGeneratedApp(resp, "custom-svc")
+	require.NotNil(t, app)
+	assert.Equal(t, appdef.KindCiteckAdditional, app.Kind)
+	assert.Equal(t, "256m", app.ShmSize)
+	assert.Equal(t, 45, app.StopTimeout, "stopTimeout must propagate")
+	require.NotNil(t, app.Resources)
+	assert.Equal(t, "512m", app.Resources.Limits.Memory)
+
+	// cmd template vars resolved, no literal ${...} survives.
+	require.Len(t, app.Cmd, 2)
+	assert.NotContains(t, app.Cmd[1], "${")
+	assert.Contains(t, app.Cmd[1], ZKHost)
+
+	// init action exec resolved.
+	require.Len(t, app.InitActions, 1)
+	require.Len(t, app.InitActions[0].Exec, 3)
+	assert.Equal(t, PGHost, app.InitActions[0].Exec[2][len("echo "):])
+
+	// init container resolved (cmd + env), image/passthrough intact.
+	require.Len(t, app.InitContainers, 1)
+	ic := app.InitContainers[0]
+	assert.Equal(t, "busybox:1.36", ic.Image)
+	assert.NotContains(t, ic.Cmd[2], "${", "init-container cmd vars resolved")
+	v, ok := ic.Environments.Get("PGHOST")
+	require.True(t, ok)
+	assert.Equal(t, PGHost, v, "init-container env vars resolved")
+}
+
+// TestGenerateAdditionalApps_ImageRepoPrefix proves a bundle-style "core/foo:tag"
+// image (and init-container image) is rewritten through the workspace imageRepos,
+// exactly like the launcher's built-in apps.
+func TestGenerateAdditionalApps_ImageRepoPrefix(t *testing.T) {
+	config.ResetDesktopMode()
+	def := AdditionalAppProps{
+		Name:  "custom-svc",
+		Image: "core/citeck-edi-sim:0.1.0-SNAPSHOT",
+		InitContainers: []appdef.InitContainerDef{
+			{Image: "enterprise/wait-for:1.0"},
+		},
+	}
+	cfg := &Config{
+		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+		AdditionalApps: []AdditionalAppProps{def},
+	}
+	wsCfg := &bundle.WorkspaceConfig{ImageRepos: []bundle.ImageRepo{
+		{ID: "core", URL: "nexus.citeck.ru"},
+		{ID: "enterprise", URL: "enterprise-registry.citeck.ru"},
+	}}
+
+	resp, err := Generate(cfg, &bundle.Def{}, wsCfg, SystemSecrets{JWT: "j", OIDC: "o"})
+	require.NoError(t, err)
+
+	app := findGeneratedApp(resp, "custom-svc")
+	require.NotNil(t, app)
+	assert.Equal(t, "nexus.citeck.ru/citeck-edi-sim:0.1.0-SNAPSHOT", app.Image, "app image prefix resolved via imageRepos")
+	require.Len(t, app.InitContainers, 1)
+	assert.Equal(t, "enterprise-registry.citeck.ru/wait-for:1.0", app.InitContainers[0].Image, "init-container image prefix resolved via imageRepos")
+}
+
 func TestValidateAdditionalApps(t *testing.T) {
 	base := func(apps ...AdditionalAppProps) *Config {
 		return &Config{
@@ -92,4 +189,9 @@ func TestValidateAdditionalApps(t *testing.T) {
 	require.Error(t, ValidateNamespaceConfig(base(
 		AdditionalAppProps{Name: "dup", Image: "a:1"},
 		AdditionalAppProps{Name: "dup", Image: "b:1"})), "duplicate name")
+	require.Error(t, ValidateNamespaceConfig(base(AdditionalAppProps{
+		Name: "x", Image: "x:1",
+		InitContainers: []appdef.InitContainerDef{{Image: ""}}})), "init container without image")
+	require.Error(t, ValidateNamespaceConfig(base(AdditionalAppProps{
+		Name: "x", Image: "x:1", StopTimeout: -1})), "negative stopTimeout")
 }

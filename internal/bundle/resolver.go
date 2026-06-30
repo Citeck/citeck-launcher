@@ -797,6 +797,43 @@ func resolveImageURL(repository, tag string, imageRepoMap map[string]string) str
 	return repository + ":" + tag
 }
 
+// ResolveImageRef rewrites a bundle-style single-string image reference whose
+// first path segment is an imageRepos ID — e.g. "core/ecos-model:1.1-SNAPSHOT"
+// with imageRepos[core].url=nexus.citeck.ru → "nexus.citeck.ru/ecos-model:1.1-SNAPSHOT".
+// The tag (":1.1") and/or digest ("@sha256:…") are preserved. A reference that
+// does NOT start with a known repo ID — a full registry ref ("registry.x/y:1"),
+// a Docker Hub image ("busybox:1.36"), or a bare local tag ("edi-sim:0.1.0") —
+// is returned verbatim. A nil receiver returns the input unchanged so callers
+// without a workspace config (CLI tools, tests) stay correct.
+func (w *WorkspaceConfig) ResolveImageRef(image string) string {
+	image = strings.TrimSpace(image)
+	if w == nil || image == "" {
+		return image
+	}
+	repository, suffix := image, ""
+	// Strip an "@sha256:…" digest first so its ':' isn't mistaken for a tag.
+	if at := strings.LastIndexByte(repository, '@'); at >= 0 {
+		suffix = repository[at:]
+		repository = repository[:at]
+	}
+	// A ':' belongs to a tag only when it sits after the last '/'. A ':' before
+	// the last '/' is a registry host:port (already a full ref, left alone).
+	if i := strings.LastIndexByte(repository, ':'); i >= 0 && !strings.ContainsRune(repository[i:], '/') {
+		suffix = repository[i:] + suffix
+		repository = repository[:i]
+	}
+	prefix, rest, ok := strings.Cut(repository, "/")
+	if !ok {
+		return image // no prefix segment → nothing to map (e.g. "busybox")
+	}
+	for _, repo := range w.ImageRepos {
+		if repo.ID == prefix {
+			return repo.URL + "/" + rest + suffix
+		}
+	}
+	return image
+}
+
 func parseBundleFile(path, version string, aliasMap, imageRepoMap map[string]string, logger *slog.Logger) (*Def, error) {
 	if logger == nil {
 		logger = slog.Default()

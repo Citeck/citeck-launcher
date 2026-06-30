@@ -254,6 +254,7 @@ type AppBuilder struct {
 	Kind               appdef.ApplicationKind
 	ShmSize            string
 	InitContainers     []appdef.InitContainerDef
+	StopTimeout        int
 }
 
 // AddEnv sets an environment variable for the app.
@@ -299,5 +300,6 @@ func (b *AppBuilder) Build() appdef.ApplicationDef {
 		Kind:               b.Kind,
 		ShmSize:            b.ShmSize,
 		InitContainers:     b.InitContainers,
+		StopTimeout:        b.StopTimeout,
 	}
 }

@@ -690,3 +690,32 @@ func TestResolveBundleRepoDir_OfflineZipImportKeepsPriority(t *testing.T) {
 	got := ResolveBundleRepoDir(dataDir, wsRepoDir, repo)
 	assert.Equal(t, importCommunity, got, "manual ZIP import (no .git) must keep offline-import priority")
 }
+
+func TestResolveImageRef(t *testing.T) {
+	w := &WorkspaceConfig{ImageRepos: []ImageRepo{
+		{ID: "core", URL: "nexus.citeck.ru"},
+		{ID: "enterprise", URL: "enterprise-registry.citeck.ru"},
+	}}
+	cases := []struct{ in, want string }{
+		{"core/ecos-model:1.1-SNAPSHOT", "nexus.citeck.ru/ecos-model:1.1-SNAPSHOT"},
+		{"core/sub/path:2.0", "nexus.citeck.ru/sub/path:2.0"},
+		{"enterprise/edi:0.1.0", "enterprise-registry.citeck.ru/edi:0.1.0"},
+		{"core/ecos-model@sha256:abc123", "nexus.citeck.ru/ecos-model@sha256:abc123"},
+		{"core/ecos-model:1.1@sha256:abc123", "nexus.citeck.ru/ecos-model:1.1@sha256:abc123"},
+		{"core/ecos-model", "nexus.citeck.ru/ecos-model"}, // no tag → prefix still resolved
+		{"  core/ecos-model:1.1  ", "nexus.citeck.ru/ecos-model:1.1"}, // trimmed
+		// Verbatim: unknown prefix, full registry ref, Docker Hub, bare local tag.
+		{"unknown/foo:1.0", "unknown/foo:1.0"},
+		{"registry.citeck.ru/community/edi-sim:0.1.0", "registry.citeck.ru/community/edi-sim:0.1.0"},
+		{"busybox:1.36", "busybox:1.36"},
+		{"edi-sim:0.1.0", "edi-sim:0.1.0"},
+		{"localhost:5000/foo:1.0", "localhost:5000/foo:1.0"}, // host:port, not a prefix
+		{"", ""},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.want, w.ResolveImageRef(c.in), "ResolveImageRef(%q)", c.in)
+	}
+
+	var nilW *WorkspaceConfig
+	assert.Equal(t, "core/foo:1.0", nilW.ResolveImageRef("core/foo:1.0"), "nil receiver returns input verbatim")
+}

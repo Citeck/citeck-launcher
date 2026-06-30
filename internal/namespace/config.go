@@ -88,6 +88,17 @@ type AdditionalAppProps struct {
 	LivenessProbe     *appdef.AppProbeDef       `yaml:"livenessProbe,omitempty" json:"livenessProbe,omitempty"`
 	Resources         *appdef.AppResourcesDef   `yaml:"resources,omitempty" json:"resources,omitempty"`
 	ShmSize           string                    `yaml:"shmSize,omitempty" json:"shmSize,omitempty"`
+	// InitContainers run to completion before the main container starts (a
+	// wait-for, a schema migration, a fixture loader). Each is a full
+	// InitContainerDef (image + env + volumes + cmd); ${VAR} is resolved in env
+	// and cmd just like the main container.
+	InitContainers []appdef.InitContainerDef `yaml:"initContainers,omitempty" json:"initContainers,omitempty"`
+	// InitActions are exec commands run inside the container right after it is
+	// created (e.g. createbucket, a one-off CLI call). ${VAR} is resolved in args.
+	InitActions []appdef.AppInitAction `yaml:"initActions,omitempty" json:"initActions,omitempty"`
+	// StopTimeout is the per-app graceful-stop budget in seconds (SIGTERM→SIGKILL
+	// window); 0 falls back to the daemon default.
+	StopTimeout int `yaml:"stopTimeout,omitempty" json:"stopTimeout,omitempty"`
 }
 
 // IsEnabled reports whether the additional app should be deployed (default true).
@@ -318,6 +329,14 @@ func validateAdditionalApps(apps []AdditionalAppProps) error {
 			return fmt.Errorf("additionalApps[%q]: duplicate name", name)
 		}
 		seen[name] = true
+		for j, ic := range a.InitContainers {
+			if strings.TrimSpace(ic.Image) == "" {
+				return fmt.Errorf("additionalApps[%q].initContainers[%d]: image is required", name, j)
+			}
+		}
+		if a.StopTimeout < 0 {
+			return fmt.Errorf("additionalApps[%q]: stopTimeout must be >= 0", name)
+		}
 	}
 	return nil
 }
