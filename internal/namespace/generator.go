@@ -110,6 +110,9 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 	// in the proxy can read the resolved STT port from the apps map.
 	generateSttSidecar(ctx)
 
+	// Custom containers added by configuration alone (no dedicated generator).
+	generateAdditionalApps(ctx)
+
 	// Generate proxy (depends on gateway, onlyoffice)
 	generateProxy(ctx)
 	generateOnlyOffice(ctx)

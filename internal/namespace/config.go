@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"strings"
 
+	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"gopkg.in/yaml.v3"
 )
@@ -55,6 +57,42 @@ type MongoDbProps struct {
 type ObserverProps struct {
 	Enabled bool   `yaml:"enabled" json:"enabled"`
 	Image   string `yaml:"image" json:"image"`
+}
+
+// AdditionalAppProps declares a custom container to run in the namespace alongside
+// the built-in Citeck/infra apps — so a new service (e.g. a mock/simulator or any
+// auxiliary Go service) can be added by configuration alone, without a dedicated
+// generator in the launcher. It mirrors the generic appdef.ApplicationDef fields;
+// environment values support the same ${PG_HOST}/${ZK_HOST}/… template variables as
+// the rest of the config. In server mode the container is internal to the Docker
+// network (reachable by Name/NetworkAliases) — only the proxy publishes ports.
+type AdditionalAppProps struct {
+	// Name is the container/app name (unique; must not collide with a built-in app).
+	Name string `yaml:"name" json:"name"`
+	// Enabled defaults to true; set false to keep the definition but not deploy it.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// Image is the full Docker image reference to run (registry/repo:tag, or a
+	// locally-present tag). Pulled like any other app; registry auth comes from the
+	// workspace imageRepos by host match.
+	Image string `yaml:"image" json:"image"`
+	// Kind classifies the app (CITECK_CORE / CITECK_CORE_EXTENSION / CITECK_ADDITIONAL
+	// / THIRD_PARTY); empty defaults to THIRD_PARTY.
+	Kind              string                    `yaml:"kind,omitempty" json:"kind,omitempty"`
+	NetworkAliases    []string                  `yaml:"networkAliases,omitempty" json:"networkAliases,omitempty"`
+	Environments      map[string]string         `yaml:"environments,omitempty" json:"environments,omitempty"`
+	Cmd               []string                  `yaml:"cmd,omitempty" json:"cmd,omitempty"`
+	Ports             []string                  `yaml:"ports,omitempty" json:"ports,omitempty"`
+	Volumes           []string                  `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+	DependsOn         []string                  `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
+	StartupConditions []appdef.StartupCondition `yaml:"startupConditions,omitempty" json:"startupConditions,omitempty"`
+	LivenessProbe     *appdef.AppProbeDef       `yaml:"livenessProbe,omitempty" json:"livenessProbe,omitempty"`
+	Resources         *appdef.AppResourcesDef   `yaml:"resources,omitempty" json:"resources,omitempty"`
+	ShmSize           string                    `yaml:"shmSize,omitempty" json:"shmSize,omitempty"`
+}
+
+// IsEnabled reports whether the additional app should be deployed (default true).
+func (a AdditionalAppProps) IsEnabled() bool {
+	return a.Enabled == nil || *a.Enabled
 }
 
 // WebappProps holds per-webapp overrides in namespace config.
@@ -122,6 +160,9 @@ type Config struct {
 	Webapps        map[string]WebappProps `yaml:"webapps,omitempty" json:"webapps,omitempty"`
 	Email          *EmailConfig           `yaml:"email,omitempty" json:"email,omitempty"`
 	S3             *S3Config              `yaml:"s3,omitempty" json:"s3,omitempty"`
+	// AdditionalApps are custom containers added by configuration alone (no
+	// dedicated launcher generator). See AdditionalAppProps.
+	AdditionalApps []AdditionalAppProps `yaml:"additionalApps,omitempty" json:"additionalApps,omitempty"`
 }
 
 // DefaultNamespaceConfig returns a namespace config with sensible defaults.
@@ -237,6 +278,46 @@ func ValidateNamespaceConfig(cfg *Config) error {
 		if cfg.S3.SecretKey == "" {
 			return fmt.Errorf("s3 secret key is required")
 		}
+	}
+	if err := validateAdditionalApps(cfg.AdditionalApps); err != nil {
+		return err
+	}
+	return nil
+}
+
+// reservedAppNames are the built-in infra/core container names an additional app
+// must not reuse (reusing one would override that built-in app's definition).
+var reservedAppNames = map[string]bool{
+	appdef.AppProxy: true, appdef.AppGateway: true, appdef.AppEapps: true,
+	appdef.AppEmodel: true, appdef.AppUiserv: true, appdef.AppHistory: true,
+	appdef.AppNotifications: true, appdef.AppTransformations: true, appdef.AppEproc: true,
+	appdef.AppPostgres: true, appdef.AppZookeeper: true, appdef.AppRabbitmq: true,
+	appdef.AppMongodb: true, appdef.AppMailpit: true, appdef.AppKeycloak: true,
+	appdef.AppPgadmin: true, appdef.AppOnlyoffice: true, appdef.AppAlfresco: true,
+	appdef.AppAlfPostgres: true, appdef.AppAlfSolr: true, appdef.AppObserver: true,
+	appdef.AppObsPostgres: true, appdef.AppContent: true, appdef.AppAi: true,
+	appdef.AppSttSidecar: true,
+}
+
+// validateAdditionalApps checks each additional app has a name + image, names are
+// unique, and they do not collide with a reserved built-in container name.
+func validateAdditionalApps(apps []AdditionalAppProps) error {
+	seen := make(map[string]bool, len(apps))
+	for i, a := range apps {
+		name := strings.TrimSpace(a.Name)
+		if name == "" {
+			return fmt.Errorf("additionalApps[%d]: name is required", i)
+		}
+		if strings.TrimSpace(a.Image) == "" {
+			return fmt.Errorf("additionalApps[%q]: image is required", name)
+		}
+		if reservedAppNames[name] {
+			return fmt.Errorf("additionalApps[%q]: name collides with a built-in app; choose another", name)
+		}
+		if seen[name] {
+			return fmt.Errorf("additionalApps[%q]: duplicate name", name)
+		}
+		seen[name] = true
 	}
 	return nil
 }
