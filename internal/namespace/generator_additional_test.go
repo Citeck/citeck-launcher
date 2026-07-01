@@ -369,3 +369,36 @@ func TestGenerateAdditionalApps_PlatformVars(t *testing.T) {
 		assert.NotContains(t, get(k), "${", "no literal ${...} may survive")
 	}
 }
+
+// TestGenerateAdditionalApps_RMQUserGatedOnSecret: when the citeck SA secret is
+// unset, ${RMQ_USER} resolves to "" (not the "citeck" user), mirroring the webapp
+// infra guard — a service never gets a username with a blank password.
+func TestGenerateAdditionalApps_RMQUserGatedOnSecret(t *testing.T) {
+	config.ResetDesktopMode()
+	def := bundle.AdditionalAppProps{
+		Name:         "custom-svc",
+		Image:        "example.com/custom:1",
+		Environments: map[string]string{"RMQ_USER": "${RMQ_USER}", "RMQ_PASSWORD": "${RMQ_PASSWORD}"},
+	}
+	ws := wsWithApps([]bundle.AdditionalAppProps{def})
+
+	// No CiteckSA → both empty.
+	resp, err := Generate(basicCfg(), &bundle.Def{}, ws, SystemSecrets{JWT: "j"})
+	require.NoError(t, err)
+	app := findGeneratedApp(resp, "custom-svc")
+	require.NotNil(t, app)
+	u, _ := app.Environments.Get("RMQ_USER")
+	p, _ := app.Environments.Get("RMQ_PASSWORD")
+	assert.Empty(t, u, "${RMQ_USER} must be empty when the SA secret is unset")
+	assert.Empty(t, p, "${RMQ_PASSWORD} must be empty when the SA secret is unset")
+
+	// With CiteckSA → the SA user + password appear together.
+	resp2, err := Generate(basicCfg(), &bundle.Def{}, ws, SystemSecrets{JWT: "j", CiteckSA: "sa-x"})
+	require.NoError(t, err)
+	app2 := findGeneratedApp(resp2, "custom-svc")
+	require.NotNil(t, app2)
+	u2, _ := app2.Environments.Get("RMQ_USER")
+	p2, _ := app2.Environments.Get("RMQ_PASSWORD")
+	assert.Equal(t, CiteckSAUser, u2)
+	assert.Equal(t, "sa-x", p2)
+}

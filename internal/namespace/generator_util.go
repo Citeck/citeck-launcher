@@ -168,10 +168,11 @@ func flatMapToYAML(m map[string]any) string {
 	return buf.String()
 }
 
-// resolveTemplateVars replaces ${VAR} placeholders in datasource URLs.
-// resolveTemplateVarsWithContext resolves template variables including
-// config- and secrets-dependent ones. Used by applyWebappDefaults when
-// populating environment variables from workspace defaults.
+// resolveTemplateVarsWithContext resolves ${VAR} placeholders including the
+// config- and secrets-dependent ones (${KK_*}, ${JWT_SECRET}, ${OIDC_SECRET},
+// ${WEB_URL}, the ${RMQ_USER}/${RMQ_PASSWORD} pair, ${ADMIN_PASSWORD}). Used by
+// applyWebappDefaults for workspace webapp env and by generateAdditionalApps for
+// custom-container env/cmd/init.
 //
 // ${KK_ADMIN_USER} and ${KK_ADMIN_PASSWORD} resolve to the "citeck" service
 // account credentials. Webapps use these to authenticate to Keycloak for
@@ -196,15 +197,24 @@ func resolveTemplateVarsWithContext(s string, ctx *NsGenContext) string {
 	// (additionalApps) integrates with ECOS auth/messaging without hardcoding them
 	// in the workspace config. All resolve from the generation context; empty when
 	// ctx is nil (unit tests / pre-secret generate).
-	var jwtSecret, oidcSecret, rmqPassword, webURL, adminPassword string
+	var jwtSecret, oidcSecret, rmqUser, rmqPassword, webURL, adminPassword string
 	if ctx != nil {
 		jwtSecret = ctx.Secrets.JWT
 		oidcSecret = ctx.Secrets.OIDC
-		rmqPassword = ctx.Secrets.CiteckSA
 		webURL = ctx.ProxyBaseURL()
 		adminPassword = ctx.Secrets.AdminPasswordOrDefault()
+		// The citeck SA RabbitMQ user is only created when its secret is set
+		// (generator_infra.go guards the same way), so expose the username only
+		// alongside a real password — never a "citeck" user with a blank password.
+		if ctx.Secrets.CiteckSA != "" {
+			rmqUser = CiteckSAUser
+			rmqPassword = ctx.Secrets.CiteckSA
+		}
 	}
 
+	// KK_HOST is a plain constant kept here (rather than in the context-free
+	// resolveTemplateVars map) so it sits with the KK_* block; ${RMQ_USER} pairs with
+	// the ctx-dependent ${RMQ_PASSWORD}, both empty unless the SA secret is set.
 	s = strings.ReplaceAll(s, "${KK_ENABLED}", kkEnabled)
 	s = strings.ReplaceAll(s, "${KK_ADMIN_URL}", kkAdminURL)
 	s = strings.ReplaceAll(s, "${KK_ADMIN_USER}", kkAdminUser)
@@ -213,12 +223,15 @@ func resolveTemplateVarsWithContext(s string, ctx *NsGenContext) string {
 	s = strings.ReplaceAll(s, "${JWT_SECRET}", jwtSecret)
 	s = strings.ReplaceAll(s, "${OIDC_SECRET}", oidcSecret)
 	s = strings.ReplaceAll(s, "${WEB_URL}", webURL)
-	s = strings.ReplaceAll(s, "${RMQ_USER}", CiteckSAUser)
+	s = strings.ReplaceAll(s, "${RMQ_USER}", rmqUser)
 	s = strings.ReplaceAll(s, "${RMQ_PASSWORD}", rmqPassword)
 	s = strings.ReplaceAll(s, "${ADMIN_PASSWORD}", adminPassword)
 	return resolveTemplateVars(s)
 }
 
+// resolveTemplateVars replaces the context-free ${VAR} placeholders — the fixed
+// infra hosts/ports (${PG_HOST}, ${ZK_HOST}, …). resolveTemplateVarsWithContext
+// wraps this to also resolve the config/secrets-dependent variables.
 func resolveTemplateVars(s string) string {
 	replacements := map[string]string{
 		"${PG_HOST}":         PGHost,
