@@ -40,10 +40,20 @@ the config. In **server mode** the container is internal to the Docker network
 | `stopTimeout` | no | Per-app graceful-stop budget in seconds (SIGTERM→SIGKILL); `0` = daemon default. |
 
 These cover **every container-level knob** the launcher's own app generators set, so
-any app — not just the EDI sim — is expressible by config alone. `${PG_HOST}` /
-`${PG_PORT}` / `${ZK_HOST}` / `${ZK_PORT}` / `${MONGO_HOST}` / `${RMQ_HOST}` /
-`${MAILHOG_HOST}` / `${ONLYOFFICE_HOST}` template variables are resolved in every
-string you supply (env, cmd, init-action exec, init-container env/cmd).
+any app — not just the EDI sim — is expressible by config alone.
+
+**Template variables** (`${VAR}`) are resolved in every string you supply (env, cmd,
+init-action exec, init-container env/cmd):
+
+| Group | Variables |
+|---|---|
+| Infra hosts/ports | `${PG_HOST}` `${PG_PORT}` `${MONGO_HOST}` `${MONGO_PORT}` `${ZK_HOST}` `${ZK_PORT}` `${RMQ_HOST}` `${RMQ_PORT}` `${MAILHOG_HOST}` `${ONLYOFFICE_HOST}` `${KK_HOST}` |
+| Platform secrets / URL | `${JWT_SECRET}` (same HS512 secret the webapps/observer validate — e.g. `AUTH_JWTSECRET: "${JWT_SECRET}"` to make a service admin-only behind the gateway) · `${OIDC_SECRET}` · `${WEB_URL}` (public base URL of the namespace) · `${ADMIN_PASSWORD}` |
+| Messaging / Keycloak creds | `${RMQ_USER}` / `${RMQ_PASSWORD}` (the `citeck` service account) · `${KK_ENABLED}` `${KK_ADMIN_URL}` `${KK_ADMIN_USER}` `${KK_ADMIN_PASSWORD}` |
+
+> There is **no** single `${PG_USER}`/`${PG_PASSWORD}` (Postgres/Mongo) — the platform
+> uses a per-database `user==password==dbName` convention and `additionalApps` does not
+> provision databases. A service needing its own DB must be given one out of band.
 
 **Boundary.** `additionalApps` defines a *container* on the namespace network. It does
 **not** auto-wire an HTTP route through the Citeck proxy, nor publish ECOS webapp
@@ -66,8 +76,8 @@ additionalApps:
     dependsOn: [ zookeeper ]
     environments:
       ZOOKEEPER_HOSTS: "${ZK_HOST}:${ZK_PORT}"   # → registers under /ecos/webapps
-      DISCOVERY_APPNAME: edi-sim
-      # AUTH_JWTSECRET: "<base64 HS512>"          # optional: admin-only in-platform
+      # AUTH_JWTSECRET: "${JWT_SECRET}"           # optional: admin-only in-platform
+                                                  # (validates the JWT the gateway forwards)
     livenessProbe:
       http: { path: /health, port: 8080 }
 ```

@@ -191,10 +191,31 @@ func resolveTemplateVarsWithContext(s string, ctx *NsGenContext) string {
 	if ctx != nil && ctx.Secrets.CiteckSA != "" {
 		kkAdminPassword = ctx.Secrets.CiteckSA
 	}
+
+	// Platform-managed secrets + the public base URL, so a config-driven service
+	// (additionalApps) integrates with ECOS auth/messaging without hardcoding them
+	// in the workspace config. All resolve from the generation context; empty when
+	// ctx is nil (unit tests / pre-secret generate).
+	var jwtSecret, oidcSecret, rmqPassword, webURL, adminPassword string
+	if ctx != nil {
+		jwtSecret = ctx.Secrets.JWT
+		oidcSecret = ctx.Secrets.OIDC
+		rmqPassword = ctx.Secrets.CiteckSA
+		webURL = ctx.ProxyBaseURL()
+		adminPassword = ctx.Secrets.AdminPasswordOrDefault()
+	}
+
 	s = strings.ReplaceAll(s, "${KK_ENABLED}", kkEnabled)
 	s = strings.ReplaceAll(s, "${KK_ADMIN_URL}", kkAdminURL)
 	s = strings.ReplaceAll(s, "${KK_ADMIN_USER}", kkAdminUser)
 	s = strings.ReplaceAll(s, "${KK_ADMIN_PASSWORD}", kkAdminPassword)
+	s = strings.ReplaceAll(s, "${KK_HOST}", KKHost)
+	s = strings.ReplaceAll(s, "${JWT_SECRET}", jwtSecret)
+	s = strings.ReplaceAll(s, "${OIDC_SECRET}", oidcSecret)
+	s = strings.ReplaceAll(s, "${WEB_URL}", webURL)
+	s = strings.ReplaceAll(s, "${RMQ_USER}", CiteckSAUser)
+	s = strings.ReplaceAll(s, "${RMQ_PASSWORD}", rmqPassword)
+	s = strings.ReplaceAll(s, "${ADMIN_PASSWORD}", adminPassword)
 	return resolveTemplateVars(s)
 }
 

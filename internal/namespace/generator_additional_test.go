@@ -330,3 +330,42 @@ func TestPruneApps_DropsProxyWithoutGateway(t *testing.T) {
 	assert.Nil(t, findGeneratedApp(resp, appdef.AppProxy),
 		"proxy depends on the (absent) gateway and must be pruned")
 }
+
+// TestGenerateAdditionalApps_PlatformVars proves the context-aware ${VAR}s
+// (platform secrets + web URL + RMQ creds) resolve in an additionalApps env, so a
+// config-driven service can integrate with ECOS auth/messaging without hardcoding.
+func TestGenerateAdditionalApps_PlatformVars(t *testing.T) {
+	config.ResetDesktopMode()
+	def := bundle.AdditionalAppProps{
+		Name:  "custom-svc",
+		Image: "example.com/custom:1",
+		Environments: map[string]string{
+			"AUTH_JWTSECRET": "${JWT_SECRET}",
+			"OIDC_SECRET":    "${OIDC_SECRET}",
+			"WEB_URL":        "${WEB_URL}",
+			"RMQ_USER":       "${RMQ_USER}",
+			"RMQ_PASSWORD":   "${RMQ_PASSWORD}",
+			"KK_HOST":        "${KK_HOST}",
+			"ADMIN_PASSWORD": "${ADMIN_PASSWORD}",
+		},
+	}
+	ws := wsWithApps([]bundle.AdditionalAppProps{def})
+	secrets := SystemSecrets{JWT: "jwt-x", OIDC: "oidc-x", CiteckSA: "sa-x", AdminPassword: "adm-x"}
+
+	resp, err := Generate(basicCfg(), &bundle.Def{}, ws, secrets)
+	require.NoError(t, err)
+	app := findGeneratedApp(resp, "custom-svc")
+	require.NotNil(t, app)
+
+	get := func(k string) string { v, _ := app.Environments.Get(k); return v }
+	assert.Equal(t, "jwt-x", get("AUTH_JWTSECRET"), "${JWT_SECRET} → Secrets.JWT")
+	assert.Equal(t, "oidc-x", get("OIDC_SECRET"))
+	assert.Equal(t, "http://localhost", get("WEB_URL"), "${WEB_URL} → ProxyBaseURL")
+	assert.Equal(t, CiteckSAUser, get("RMQ_USER"))
+	assert.Equal(t, "sa-x", get("RMQ_PASSWORD"), "${RMQ_PASSWORD} → Secrets.CiteckSA")
+	assert.Equal(t, KKHost, get("KK_HOST"))
+	assert.Equal(t, "adm-x", get("ADMIN_PASSWORD"))
+	for _, k := range []string{"AUTH_JWTSECRET", "WEB_URL", "RMQ_PASSWORD"} {
+		assert.NotContains(t, get(k), "${", "no literal ${...} may survive")
+	}
+}
