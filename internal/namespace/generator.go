@@ -117,6 +117,11 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 	generateProxy(ctx)
 	generateOnlyOffice(ctx)
 
+	// All generators have run — every app name is now known. Drop any app whose
+	// dependsOn points at an app that wasn't generated (transitively); see
+	// pruneAppsWithMissingDeps.
+	pruneAppsWithMissingDeps(ctx)
+
 	// Server mode: only proxy publishes ports — all other apps are internal to Docker network.
 	// Desktop mode: all ports published for local debugging (CloudConfigServer, direct DB access, etc.)
 	if !config.IsDesktopMode() {
@@ -174,6 +179,42 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 		CloudConfig:           ctx.CloudConfig,
 		DependsOnDetachedApps: dependsOnDetached,
 	}, nil
+}
+
+// pruneAppsWithMissingDeps removes any app whose dependsOn references an app that
+// is not present in the generated set, transitively (runs to a fixpoint).
+//
+// Every built-in generator either points dependsOn at an always-generated infra/core
+// app, guards the dep on the target's existence (proxy's ai/alfresco guards), or
+// co-generates the target (alf-postgres with alfresco, stt-sidecar before the ai
+// dep). The one hard cross-app dep is proxy→gateway: the gateway is always present
+// in real bundles, and where it isn't, the proxy serves no purpose, so pruning it is
+// correct. So in practice this pass removes only additionalApps that reference a
+// non-existent dependency (a typo, a mode-disabled app, or another pruned app).
+//
+// Transitive: in a chain A→B→C where C is missing, B is removed (depends on absent
+// C), which makes A's dep B absent, so A is removed too. The outer loop re-runs
+// until a full pass removes nothing, so removals propagate regardless of map order.
+//
+// Must run after every generator has populated ctx.Applications.
+func pruneAppsWithMissingDeps(ctx *NsGenContext) {
+	for {
+		removed := false
+		for name, app := range ctx.Applications {
+			for _, dep := range app.DependsOn {
+				if _, present := ctx.Applications[dep]; !present {
+					slog.Error("app dependsOn an app not present in the generated set; excluding it from the namespace",
+						"name", name, "missingDep", dep)
+					delete(ctx.Applications, name)
+					removed = true
+					break
+				}
+			}
+		}
+		if !removed {
+			return
+		}
+	}
 }
 
 // sortedKeys returns a plain map's keys in sorted order — used at env-build

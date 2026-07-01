@@ -155,7 +155,19 @@ func generateProxy(ctx *NsGenContext) {
 	}
 	app.AddEnv("PROXY_TARGET", proxyTarget)
 	app.AddPort(fmt.Sprintf("%d:%d", ctx.Config.Proxy.Port, containerPort))
+	// The proxy hard-depends on the gateway: it exists to front it. The gateway is
+	// always present in real bundles, so this dep is satisfied in production. Where
+	// no gateway is generated (a minimal/bundleless namespace), the proxy serves no
+	// purpose, so letting the missing-dep prune pass drop it is the correct outcome
+	// — no guard needed.
 	app.AddDependsOn(appdef.AppGateway)
+	// The proxy terminates OIDC against keycloak — depend on it, but only when it is
+	// actually generated (auth mode KEYCLOAK). In BASIC mode keycloak is absent and
+	// the proxy uses htpasswd instead, so the dep is intentionally omitted (and its
+	// proxy config already differs by auth mode regardless).
+	if ctx.Applications[appdef.AppKeycloak] != nil {
+		app.AddDependsOn(appdef.AppKeycloak)
+	}
 	app.Kind = appdef.KindCiteckCore
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "128m"}}
 	app.StartupConditions = []appdef.StartupCondition{{Probe: startupProbe}}

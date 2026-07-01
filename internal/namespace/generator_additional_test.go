@@ -10,17 +10,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// basicCfg is a minimal BASIC-auth namespace config for the additionalApps tests
+// (additionalApps now live in the workspace config, not the namespace config).
+func basicCfg() *Config {
+	return &Config{
+		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+	}
+}
+
+// wsWithApps builds a workspace config carrying the given additionalApps. Optional
+// imageRepos let a test exercise the "<repoId>/path:tag" resolution.
+func wsWithApps(apps []bundle.AdditionalAppProps, imageRepos ...bundle.ImageRepo) *bundle.WorkspaceConfig {
+	return &bundle.WorkspaceConfig{AdditionalApps: apps, ImageRepos: imageRepos}
+}
+
 // ediSimAdditionalApp is the config-only definition of the EDI simulator — the
 // motivating example: a custom Go service added to a namespace by configuration
 // alone, with no dedicated launcher generator.
-func ediSimAdditionalApp() AdditionalAppProps {
-	return AdditionalAppProps{
+func ediSimAdditionalApp() bundle.AdditionalAppProps {
+	return bundle.AdditionalAppProps{
 		Name:           "edi-sim",
 		Image:          "registry.citeck.ru/community/citeck-edi-sim:0.1.0",
 		NetworkAliases: []string{"EcosEdiSimApp"},
 		DependsOn:      []string{appdef.AppZookeeper},
 		Environments: map[string]string{
-			"ZOOKEEPER_HOSTS": "${ZK_HOST}:${ZK_PORT}",
+			"ZOOKEEPER_HOSTS":   "${ZK_HOST}:${ZK_PORT}",
 			"DISCOVERY_APPNAME": "edi-sim",
 		},
 		Ports:         []string{"8080"},
@@ -30,13 +45,9 @@ func ediSimAdditionalApp() AdditionalAppProps {
 
 func TestGenerateAdditionalApps_EdiSim(t *testing.T) {
 	config.ResetDesktopMode() // server mode: only proxy publishes ports
-	cfg := &Config{
-		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
-		Proxy:          ProxyProps{Port: 80},
-		AdditionalApps: []AdditionalAppProps{ediSimAdditionalApp()},
-	}
+	ws := wsWithApps([]bundle.AdditionalAppProps{ediSimAdditionalApp()})
 
-	resp, err := Generate(cfg, &bundle.Def{}, nil, SystemSecrets{JWT: "j", OIDC: "o"})
+	resp, err := Generate(basicCfg(), &bundle.Def{}, ws, SystemSecrets{JWT: "j", OIDC: "o"})
 	require.NoError(t, err)
 
 	app := findGeneratedApp(resp, "edi-sim")
@@ -63,13 +74,10 @@ func TestGenerateAdditionalApps_EdiSim(t *testing.T) {
 func TestGenerateAdditionalApps_Disabled(t *testing.T) {
 	config.ResetDesktopMode()
 	def := ediSimAdditionalApp()
-	def.Enabled = new(false)
-	cfg := &Config{
-		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
-		Proxy:          ProxyProps{Port: 80},
-		AdditionalApps: []AdditionalAppProps{def},
-	}
-	resp, err := Generate(cfg, &bundle.Def{}, nil, SystemSecrets{JWT: "j", OIDC: "o"})
+	disabled := false
+	def.Enabled = &disabled
+	ws := wsWithApps([]bundle.AdditionalAppProps{def})
+	resp, err := Generate(basicCfg(), &bundle.Def{}, ws, SystemSecrets{JWT: "j", OIDC: "o"})
 	require.NoError(t, err)
 	assert.Nil(t, findGeneratedApp(resp, "edi-sim"), "disabled additional app must not be generated")
 }
@@ -82,7 +90,7 @@ func TestGenerateAdditionalApps_FullSurface(t *testing.T) {
 	config.ResetDesktopMode()
 	var icEnv appdef.OrderedMap
 	icEnv.Set("PGHOST", "${PG_HOST}")
-	def := AdditionalAppProps{
+	def := bundle.AdditionalAppProps{
 		Name:        "custom-svc",
 		Image:       "example.com/custom:1.2.3",
 		Kind:        "CITECK_ADDITIONAL",
@@ -101,14 +109,10 @@ func TestGenerateAdditionalApps_FullSurface(t *testing.T) {
 			},
 		},
 	}
-	cfg := &Config{
-		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
-		Proxy:          ProxyProps{Port: 80},
-		AdditionalApps: []AdditionalAppProps{def},
-	}
-	require.NoError(t, ValidateNamespaceConfig(cfg))
+	ws := wsWithApps([]bundle.AdditionalAppProps{def})
+	require.NoError(t, bundle.ValidateAdditionalApps(ws.AdditionalApps))
 
-	resp, err := Generate(cfg, &bundle.Def{}, nil, SystemSecrets{JWT: "j", OIDC: "o"})
+	resp, err := Generate(basicCfg(), &bundle.Def{}, ws, SystemSecrets{JWT: "j", OIDC: "o"})
 	require.NoError(t, err)
 
 	app := findGeneratedApp(resp, "custom-svc")
@@ -144,24 +148,19 @@ func TestGenerateAdditionalApps_FullSurface(t *testing.T) {
 // exactly like the launcher's built-in apps.
 func TestGenerateAdditionalApps_ImageRepoPrefix(t *testing.T) {
 	config.ResetDesktopMode()
-	def := AdditionalAppProps{
+	def := bundle.AdditionalAppProps{
 		Name:  "custom-svc",
 		Image: "core/citeck-edi-sim:0.1.0-SNAPSHOT",
 		InitContainers: []appdef.InitContainerDef{
 			{Image: "enterprise/wait-for:1.0"},
 		},
 	}
-	cfg := &Config{
-		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
-		Proxy:          ProxyProps{Port: 80},
-		AdditionalApps: []AdditionalAppProps{def},
-	}
-	wsCfg := &bundle.WorkspaceConfig{ImageRepos: []bundle.ImageRepo{
-		{ID: "core", URL: "nexus.citeck.ru"},
-		{ID: "enterprise", URL: "enterprise-registry.citeck.ru"},
-	}}
+	ws := wsWithApps([]bundle.AdditionalAppProps{def},
+		bundle.ImageRepo{ID: "core", URL: "nexus.citeck.ru"},
+		bundle.ImageRepo{ID: "enterprise", URL: "enterprise-registry.citeck.ru"},
+	)
 
-	resp, err := Generate(cfg, &bundle.Def{}, wsCfg, SystemSecrets{JWT: "j", OIDC: "o"})
+	resp, err := Generate(basicCfg(), &bundle.Def{}, ws, SystemSecrets{JWT: "j", OIDC: "o"})
 	require.NoError(t, err)
 
 	app := findGeneratedApp(resp, "custom-svc")
@@ -171,27 +170,163 @@ func TestGenerateAdditionalApps_ImageRepoPrefix(t *testing.T) {
 	assert.Equal(t, "enterprise-registry.citeck.ru/wait-for:1.0", app.InitContainers[0].Image, "init-container image prefix resolved via imageRepos")
 }
 
-func TestValidateAdditionalApps(t *testing.T) {
-	base := func(apps ...AdditionalAppProps) *Config {
-		return &Config{
-			Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
+// TestGenerateAdditionalApps_DoesNotOverwriteBundleWebapp guards the regression
+// where an additionalApps entry whose name matches a bundle-loaded webapp ID (not
+// in the static reservedAppNames list) silently overwrote that real webapp's image
+// via GetOrCreateApp returning the same builder. The built-in app must win and the
+// colliding additional entry must be skipped.
+func TestGenerateAdditionalApps_DoesNotOverwriteBundleWebapp(t *testing.T) {
+	config.ResetDesktopMode()
+	ws := wsWithApps([]bundle.AdditionalAppProps{{Name: "edi", Image: "evil/image:1.0"}})
+	bun := &bundle.Def{Applications: map[string]bundle.AppDef{
+		"edi": {Image: "registry.citeck.ru/real-edi:1.0.0"},
+	}}
+
+	resp, err := Generate(basicCfg(), bun, ws, SystemSecrets{JWT: "j", OIDC: "o"})
+	require.NoError(t, err)
+
+	app := findGeneratedApp(resp, "edi")
+	require.NotNil(t, app, "the real edi webapp must still be generated")
+	assert.Equal(t, "registry.citeck.ru/real-edi:1.0.0", app.Image,
+		"a colliding additionalApps entry must not overwrite the real webapp image")
+}
+
+// TestPruneAdditionalApps_MissingDep: an additionalApp depending on an app that
+// was never generated (typo / disabled-by-mode / undefined) is excluded from the
+// final set rather than silently started without its dependency.
+func TestPruneAdditionalApps_MissingDep(t *testing.T) {
+	config.ResetDesktopMode()
+	ws := wsWithApps([]bundle.AdditionalAppProps{
+		{Name: "needs-ghost", Image: "x:1", DependsOn: []string{"does-not-exist"}},
+	})
+	resp, err := Generate(basicCfg(), &bundle.Def{}, ws, SystemSecrets{JWT: "j", OIDC: "o"})
+	require.NoError(t, err)
+	assert.Nil(t, findGeneratedApp(resp, "needs-ghost"),
+		"additionalApp with a missing dependency must be excluded")
+}
+
+// TestPruneAdditionalApps_DepOnPresentApp: an additionalApp depending on a present
+// built-in (zookeeper) survives — only genuinely-missing deps cause exclusion.
+func TestPruneAdditionalApps_DepOnPresentApp(t *testing.T) {
+	config.ResetDesktopMode()
+	ws := wsWithApps([]bundle.AdditionalAppProps{
+		{Name: "needs-zk", Image: "x:1", DependsOn: []string{appdef.AppZookeeper}},
+	})
+	resp, err := Generate(basicCfg(), &bundle.Def{}, ws, SystemSecrets{JWT: "j", OIDC: "o"})
+	require.NoError(t, err)
+	require.NotNil(t, findGeneratedApp(resp, "needs-zk"),
+		"additionalApp depending on a present built-in must survive")
+}
+
+// TestPruneAdditionalApps_TransitiveChain: A→B→C where C is undefined. B (depends
+// on absent C) is pruned, which makes A's dep B absent, so A is pruned too. An
+// independent app D survives.
+func TestPruneAdditionalApps_TransitiveChain(t *testing.T) {
+	config.ResetDesktopMode()
+	ws := wsWithApps([]bundle.AdditionalAppProps{
+		{Name: "A", Image: "x:1", DependsOn: []string{"B"}},
+		{Name: "B", Image: "x:1", DependsOn: []string{"C"}}, // C is never defined
+		{Name: "D", Image: "x:1"},
+	})
+	resp, err := Generate(basicCfg(), &bundle.Def{}, ws, SystemSecrets{JWT: "j", OIDC: "o"})
+	require.NoError(t, err)
+	assert.Nil(t, findGeneratedApp(resp, "B"), "B depends on absent C → pruned")
+	assert.Nil(t, findGeneratedApp(resp, "A"), "A depends on pruned B → pruned transitively")
+	require.NotNil(t, findGeneratedApp(resp, "D"), "independent D must survive")
+}
+
+// TestGenericWebappDoesNotDependOnKeycloak locks the default rule (matching Kotlin
+// 1.x): an ordinary webapp's dependsOn is [ZK, RMQ] in BOTH auth modes — it never
+// declares a dependsOn keycloak. So it carries no phantom dep on an app absent in
+// BASIC mode, and its deployment hash is stable across KEYCLOAK ↔ BASIC. (emodel is
+// the deliberate exception — see TestKeycloakIntegratedAppsDependOnKeycloak.)
+func TestGenericWebappDoesNotDependOnKeycloak(t *testing.T) {
+	config.ResetDesktopMode()
+	bun := &bundle.Def{Applications: map[string]bundle.AppDef{
+		"gateway": {Image: "registry.citeck.ru/gateway:1.0.0"},
+		"uiserv":  {Image: "registry.citeck.ru/uiserv:1.0.0"},
+	}}
+	gen := func(auth AuthenticationType) *appdef.ApplicationDef {
+		cfg := &Config{
+			Authentication: AuthenticationProps{Type: auth, Users: []string{"admin"}},
 			Proxy:          ProxyProps{Port: 80},
-			AdditionalApps: apps,
 		}
+		resp, err := Generate(cfg, bun, nil, SystemSecrets{JWT: "j", OIDC: "o"})
+		require.NoError(t, err)
+		app := findGeneratedApp(resp, "uiserv")
+		require.NotNil(t, app, "uiserv webapp must be generated")
+		return app
+	}
+	basic := gen(AuthBasic)
+	kc := gen(AuthKeycloak)
+	assert.NotContains(t, []string(basic.DependsOn), appdef.AppKeycloak, "generic webapp must not depend on keycloak")
+	assert.NotContains(t, []string(kc.DependsOn), appdef.AppKeycloak, "generic webapp must not depend on keycloak")
+	assert.Equal(t, basic.GetHashInput(), kc.GetHashInput(),
+		"generic webapp deployment hash must be identical across BASIC and KEYCLOAK modes")
+}
+
+// TestKeycloakIntegratedAppsDependOnKeycloak: the proxy (OIDC termination) and
+// emodel (keycloak admin ops) declare dependsOn keycloak, but ONLY when keycloak is
+// generated (auth mode KEYCLOAK). In BASIC mode keycloak is absent and the dep is
+// omitted — so the prune pass never sees a phantom dep, and startup ordering is real.
+func TestKeycloakIntegratedAppsDependOnKeycloak(t *testing.T) {
+	config.ResetDesktopMode()
+	bun := &bundle.Def{Applications: map[string]bundle.AppDef{
+		"gateway": {Image: "registry.citeck.ru/gateway:1.0.0"},
+		"emodel":  {Image: "registry.citeck.ru/emodel:1.0.0"},
+	}}
+	gen := func(auth AuthenticationType) *GenResp {
+		cfg := &Config{
+			Authentication: AuthenticationProps{Type: auth, Users: []string{"admin"}},
+			Proxy:          ProxyProps{Port: 80},
+		}
+		resp, err := Generate(cfg, bun, nil, SystemSecrets{JWT: "j", OIDC: "o"})
+		require.NoError(t, err)
+		return resp
 	}
 
-	require.NoError(t, ValidateNamespaceConfig(base(ediSimAdditionalApp())))
+	kc := gen(AuthKeycloak)
+	kcProxy := findGeneratedApp(kc, appdef.AppProxy)
+	kcEmodel := findGeneratedApp(kc, appdef.AppEmodel)
+	require.NotNil(t, kcProxy)
+	require.NotNil(t, kcEmodel)
+	assert.Contains(t, []string(kcProxy.DependsOn), appdef.AppKeycloak, "proxy must depend on keycloak in KEYCLOAK mode")
+	assert.Contains(t, []string(kcEmodel.DependsOn), appdef.AppKeycloak, "emodel must depend on keycloak in KEYCLOAK mode")
 
-	require.Error(t, ValidateNamespaceConfig(base(AdditionalAppProps{Image: "x:1"})), "missing name")
-	require.Error(t, ValidateNamespaceConfig(base(AdditionalAppProps{Name: "x"})), "missing image")
-	require.Error(t, ValidateNamespaceConfig(base(
-		AdditionalAppProps{Name: appdef.AppZookeeper, Image: "x:1"})), "reserved name")
-	require.Error(t, ValidateNamespaceConfig(base(
-		AdditionalAppProps{Name: "dup", Image: "a:1"},
-		AdditionalAppProps{Name: "dup", Image: "b:1"})), "duplicate name")
-	require.Error(t, ValidateNamespaceConfig(base(AdditionalAppProps{
-		Name: "x", Image: "x:1",
-		InitContainers: []appdef.InitContainerDef{{Image: ""}}})), "init container without image")
-	require.Error(t, ValidateNamespaceConfig(base(AdditionalAppProps{
-		Name: "x", Image: "x:1", StopTimeout: -1})), "negative stopTimeout")
+	basic := gen(AuthBasic)
+	bProxy := findGeneratedApp(basic, appdef.AppProxy)
+	bEmodel := findGeneratedApp(basic, appdef.AppEmodel)
+	require.NotNil(t, bProxy)
+	require.NotNil(t, bEmodel)
+	assert.NotContains(t, []string(bProxy.DependsOn), appdef.AppKeycloak, "proxy must not depend on absent keycloak in BASIC mode")
+	assert.NotContains(t, []string(bEmodel.DependsOn), appdef.AppKeycloak, "emodel must not depend on absent keycloak in BASIC mode")
+}
+
+// TestPruneApps_KeepsBuiltinsWhenDepsPresent is the safety invariant for prune-all:
+// in a realistic generation where every built-in's dependency is present (gateway in
+// the bundle → proxy's dep satisfied), the prune pass removes NO built-in. If a
+// future generator change introduced an unguarded phantom dep on a conditionally-
+// generated app, this would go red.
+func TestPruneApps_KeepsBuiltinsWhenDepsPresent(t *testing.T) {
+	config.ResetDesktopMode()
+	bun := &bundle.Def{Applications: map[string]bundle.AppDef{
+		"gateway": {Image: "registry.citeck.ru/gateway:1.0.0"},
+		"emodel":  {Image: "registry.citeck.ru/emodel:1.0.0"},
+	}}
+	resp, err := Generate(basicCfg(), bun, nil, SystemSecrets{JWT: "j", OIDC: "o"})
+	require.NoError(t, err)
+	for _, name := range []string{appdef.AppProxy, appdef.AppGateway, "emodel", appdef.AppZookeeper, appdef.AppRabbitmq} {
+		assert.NotNil(t, findGeneratedApp(resp, name), "built-in %q must not be pruned when its deps are present", name)
+	}
+}
+
+// TestPruneApps_DropsProxyWithoutGateway documents the accepted behavior: with no
+// gateway generated (minimal/bundleless namespace), the proxy hard-depends on the
+// absent gateway and is correctly pruned — a proxy fronting nothing serves no purpose.
+func TestPruneApps_DropsProxyWithoutGateway(t *testing.T) {
+	config.ResetDesktopMode()
+	resp, err := Generate(basicCfg(), &bundle.Def{}, nil, SystemSecrets{JWT: "j", OIDC: "o"})
+	require.NoError(t, err)
+	assert.Nil(t, findGeneratedApp(resp, appdef.AppProxy),
+		"proxy depends on the (absent) gateway and must be pruned")
 }

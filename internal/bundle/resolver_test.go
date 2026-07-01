@@ -702,7 +702,7 @@ func TestResolveImageRef(t *testing.T) {
 		{"enterprise/edi:0.1.0", "enterprise-registry.citeck.ru/edi:0.1.0"},
 		{"core/ecos-model@sha256:abc123", "nexus.citeck.ru/ecos-model@sha256:abc123"},
 		{"core/ecos-model:1.1@sha256:abc123", "nexus.citeck.ru/ecos-model:1.1@sha256:abc123"},
-		{"core/ecos-model", "nexus.citeck.ru/ecos-model"}, // no tag → prefix still resolved
+		{"core/ecos-model", "nexus.citeck.ru/ecos-model"},             // no tag → prefix still resolved
 		{"  core/ecos-model:1.1  ", "nexus.citeck.ru/ecos-model:1.1"}, // trimmed
 		// Verbatim: unknown prefix, full registry ref, Docker Hub, bare local tag.
 		{"unknown/foo:1.0", "unknown/foo:1.0"},

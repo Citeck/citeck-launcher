@@ -273,6 +273,10 @@ type WorkspaceConfig struct {
 	Alfresco           AlfrescoProps       `yaml:"alfresco,omitempty"`
 	Licenses           []LicenseInstance   `yaml:"licenses,omitempty"`
 	SttSidecar         *SttSidecarProps    `yaml:"sttSidecar,omitempty"`
+	// AdditionalApps are custom containers added by configuration alone (no
+	// dedicated launcher generator), defined once here and applied to every
+	// namespace that uses this workspace. See AdditionalAppProps.
+	AdditionalApps []AdditionalAppProps `yaml:"additionalApps,omitempty"`
 }
 
 // ImageReposByHost builds a map from registry host to ImageRepo for auth lookup.
@@ -668,6 +672,13 @@ func parseWorkspaceConfig(raw []byte, path string, logger *slog.Logger) *Workspa
 		logger.Warn("Failed to parse workspace config", "path", path, "err", err)
 		return nil
 	}
+	// Validate additionalApps non-fatally: a malformed entry in the shared workspace
+	// config must not block resolution for everyone. Drop the whole section and log
+	// so the maintainer sees it; the rest of the workspace config still applies.
+	if err := ValidateAdditionalApps(cfg.AdditionalApps); err != nil {
+		logger.Warn("Invalid additionalApps in workspace config; ignoring them", "path", path, "err", err)
+		cfg.AdditionalApps = nil
+	}
 	return &cfg
 }
 
@@ -826,10 +837,10 @@ func (w *WorkspaceConfig) ResolveImageRef(image string) string {
 	if !ok {
 		return image // no prefix segment → nothing to map (e.g. "busybox")
 	}
-	for _, repo := range w.ImageRepos {
-		if repo.ID == prefix {
-			return repo.URL + "/" + rest + suffix
-		}
+	// Reuse the single imageRepos ID→URL mapping (same source as resolveImageURL's
+	// repository+tag-pair call site) instead of re-scanning ImageRepos here.
+	if registryURL, found := buildImageRepoMap(w)[prefix]; found {
+		return registryURL + "/" + rest + suffix
 	}
 	return image
 }

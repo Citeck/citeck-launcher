@@ -1,17 +1,20 @@
 package namespace
 
 import (
+	"log/slog"
 	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 )
 
-// generateAdditionalApps materializes the namespace config's AdditionalApps into
+// generateAdditionalApps materializes the workspace config's AdditionalApps into
 // ApplicationDefs. This is the generic, config-driven path: any custom container can
-// be added by configuration alone, without a dedicated per-service generator. Each
-// enabled entry becomes an app spanning every container-level ApplicationDef knob —
-// image, env, cmd, ports, volumes, dependencies, init containers, init actions,
+// be added by configuration alone, without a dedicated per-service generator. The
+// apps are declared once in the workspace config (workspace-v1.yml) and applied to
+// every namespace that uses the workspace, live on each generation — like webapps.
+// Each enabled entry becomes an app spanning every container-level ApplicationDef knob
+// — image, env, cmd, ports, volumes, dependencies, init containers, init actions,
 // probes, resources, shmSize and stopTimeout — with ${VAR} template resolution in
 // every string the user supplies (env, cmd, init-action exec, init-container env/cmd).
 // Kind defaults to THIRD_PARTY.
@@ -20,13 +23,29 @@ import (
 // to the Docker network (reachable by Name/NetworkAliases) — so a service like the EDI
 // simulator self-registers in ZooKeeper and is discovered by the platform by name.
 func generateAdditionalApps(ctx *NsGenContext) {
-	for _, def := range ctx.Config.AdditionalApps {
+	if ctx.WorkspaceConfig == nil {
+		return
+	}
+	for _, def := range ctx.WorkspaceConfig.AdditionalApps {
 		if !def.IsEnabled() {
 			continue
 		}
 		name := strings.TrimSpace(def.Name)
 		if name == "" || strings.TrimSpace(def.Image) == "" {
-			// Defensive: validation rejects these earlier; skip rather than emit a broken app.
+			// Defensive: validation rejects these at workspace-config load; skip
+			// rather than emit a broken app.
+			continue
+		}
+
+		// Collision guard: by this point ctx.Applications already holds every built-in
+		// app (infra, keycloak, bundle webapps, sidecars). A name matching one would
+		// make GetOrCreateApp return that app's builder and silently overwrite its
+		// image/kind/env — corrupting a real platform container. The static
+		// reservedAppNames check in ValidateAdditionalApps cannot see bundle-loaded
+		// webapp IDs (edi, integrations, enterprise apps …), so guard here where the
+		// full app set is known: skip (never overwrite) and log loudly.
+		if _, exists := ctx.Applications[name]; exists {
+			slog.Error("additionalApps entry collides with a built-in app; skipping to avoid overwriting it", "name", name)
 			continue
 		}
 

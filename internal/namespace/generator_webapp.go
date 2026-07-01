@@ -149,12 +149,21 @@ func generateWebapp(name string, ctx *NsGenContext) {
 	app.AddPort(fmt.Sprintf("%d:%d", port, port))
 	app.AddDependsOn(ZKHost)
 	app.AddDependsOn(RMQHost)
-	// Always declare the keycloak dependency so the webapp's deployment hash
-	// stays stable across auth-mode switches (KEYCLOAK ↔ BASIC). In BASIC mode
-	// the keycloak container is not generated; waitForDeps treats missing deps
-	// as satisfied, so startup ordering still works correctly. Without this,
-	// flipping auth mode churns every webapp container unnecessarily.
-	app.AddDependsOn(appdef.AppKeycloak)
+	// Webapps do NOT declare a dependsOn keycloak by default (matching the original
+	// Kotlin 1.x design): they reach keycloak for OIDC at runtime (with retries),
+	// not at container-start, so it is not a startup-ordering dependency, and a
+	// blanket dep would make every webapp carry a phantom dependency on an app that
+	// is absent in BASIC mode. Their dependsOn is [ZK, RMQ] in every auth mode, so
+	// the hash stays stable across KEYCLOAK ↔ BASIC.
+	//
+	// Exception — emodel runs keycloak admin operations (user/role sync via the
+	// citeck SA), so it genuinely integrates with keycloak. Declare the dep, but
+	// only when keycloak is generated (auth mode KEYCLOAK). In BASIC mode it is
+	// omitted — matching the "declare a dep only when the target is present"
+	// convention and letting the prune pass stay simple.
+	if name == appdef.AppEmodel && ctx.Applications[appdef.AppKeycloak] != nil {
+		app.AddDependsOn(appdef.AppKeycloak)
+	}
 
 	if javaOpts != "" {
 		app.AddEnv("JAVA_OPTS", strings.TrimSpace(javaOpts))
