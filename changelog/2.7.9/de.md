@@ -1,0 +1,6 @@
+## Neue Funktionen
+- **Zusätzliche Apps in der Workspace-Konfiguration.** Deklarieren Sie einen beliebigen benutzerdefinierten Container – ein Mock oder Simulator, einen Hilfsdienst, ein Sidecar – direkt in der Workspace-Konfiguration (`workspace-v1.yml` → `additionalApps:`), ohne den Launcher zu ändern. Einmal definiert, wird eine zusätzliche App an alle Namespaces verteilt, die den Workspace verwenden, und beim nächsten Reload angewendet – genau wie die integrierten `webapps`. Der gesamte Container-Funktionsumfang wird unterstützt: Image (einschließlich Registry-Auflösung im Bundle-Stil `<repoId>/path:tag`), Umgebungsvariablen mit `${VAR}`-Templating, Kommando, Ports, Volumes, `dependsOn`, Init-Container, Init-Aktionen, Probes, Ressourcen, Shared-Memory-Größe und Stopp-Timeout.
+
+## Änderungen
+- Eine App, deren `dependsOn` auf einen nicht bereitgestellten Dienst verweist, wird nun (transitiv) aus dem Namespace ausgeschlossen, anstatt ohne ihre Abhängigkeit zu starten.
+- Webanwendungen hängen nicht mehr von Keycloak ab; nur der Proxy und der Modelldienst tun dies, und nur wenn die Keycloak-Authentifizierung aktiviert ist. Ein Upgrade auf diese Version erstellt die Container der Webanwendungen einmalig neu (ihr Deployment-Hash ändert sich) – keine Aktion erforderlich.

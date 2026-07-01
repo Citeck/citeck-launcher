@@ -1,0 +1,6 @@
+## Novedades
+- **Aplicaciones adicionales en la configuración del workspace.** Declara cualquier contenedor personalizado —un mock o simulador, un servicio auxiliar, un sidecar— directamente en la configuración del workspace (`workspace-v1.yml` → `additionalApps:`), sin modificar el lanzador. Definida una sola vez, una aplicación adicional se distribuye a todos los namespaces que usan el workspace y se aplica en la siguiente recarga, igual que las `webapps` integradas. Se admite toda la superficie del contenedor: imagen (incluida la resolución de registro estilo bundle `<repoId>/path:tag`), variables de entorno con plantillas `${VAR}`, comando, puertos, volúmenes, `dependsOn`, init containers, init actions, sondas, recursos, tamaño de memoria compartida y tiempo de espera de parada.
+
+## Cambios
+- Una aplicación cuyo `dependsOn` apunta a un servicio no desplegado ahora se excluye del namespace (de forma transitiva) en lugar de arrancar sin su dependencia.
+- Las aplicaciones web ya no dependen de Keycloak; solo el proxy y el servicio de modelo dependen de él, y únicamente cuando la autenticación con Keycloak está habilitada. Actualizar a esta versión recrea una vez los contenedores de las aplicaciones web (cambia su hash de despliegue); no se requiere ninguna acción.
