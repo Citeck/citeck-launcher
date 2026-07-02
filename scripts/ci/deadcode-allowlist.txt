@@ -16,8 +16,3 @@ internal/desktop/wailswin/windows.go: unreachable func: OSDescription
 # config.IsDesktopMode() when the option is absent, so no call site injects
 # it explicitly yet (see the option's doc comment).
 internal/docker/client.go: unreachable func: WithDesktopVolumeNaming
-
-# Test-fixture accessor (base URL of the fake GitHub server); part of the
-# updatetest helper's complete API even though current tests reach the URL
-# via Options() instead.
-internal/update/updatetest/fakegithub.go: unreachable func: FakeGitHub.URL
