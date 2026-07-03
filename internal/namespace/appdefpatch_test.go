@@ -1,6 +1,7 @@
 package namespace
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
@@ -144,5 +145,69 @@ func TestAppDefPatchReorderOnlyIsCaptured(t *testing.T) {
 	}
 	if patch == nil {
 		t.Fatal("a pure reorder must be captured (order is meaningful in the editor)")
+	}
+}
+
+// Deleting a whole top-level block in the editor (e.g. removing `resources:`)
+// must produce a null-valued patch entry so the field is REMOVED on apply — not
+// silently resurrected from the freshly generated def, which still carries it.
+// This is the sticky-override contract: an explicit deletion overrides
+// generation just like an explicit value does. (Reverting to the generated
+// default is a separate action — ResetAppDef.)
+func TestAppDefPatchDeletesWholeFieldViaNull(t *testing.T) {
+	genAtEdit := appdef.ApplicationDef{Name: "rabbitmq", Image: "rabbitmq:1",
+		Resources: &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "512m"}}}
+	edited := genAtEdit
+	edited.Resources = nil // user deleted the resources block
+
+	patch, err := DiffAppDef(genAtEdit, edited)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if patch == nil {
+		t.Fatal("deleting a field must produce a non-nil patch")
+	}
+	if !bytes.Contains(patch, []byte(`"resources":null`)) {
+		t.Fatalf("patch must record the deletion as null, got %s", patch)
+	}
+
+	// Generation still provides resources; the deletion must win.
+	genNow := appdef.ApplicationDef{Name: "rabbitmq", Image: "rabbitmq:2",
+		Resources: &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "512m"}}}
+	got, err := ApplyAppDefPatch(genNow, patch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Resources != nil {
+		t.Errorf("deleted field must stay removed after apply, got %+v", got.Resources)
+	}
+	if got.Image != "rabbitmq:2" {
+		t.Errorf("untouched fields still flow from generation, got image %q", got.Image)
+	}
+}
+
+// Removing one entry from a map-valued field (keeping others) replaces the whole
+// field, so the removed key is gone after apply — the shallow patch stores the
+// edited map wholesale. Round-trip property: Apply(gen, Diff(gen, edited)) keeps
+// exactly the edited key set.
+func TestAppDefPatchDropsSingleEnvEntry(t *testing.T) {
+	gen := appdef.ApplicationDef{Name: "eapps", Image: "eapps:1",
+		Environments: appdef.OrderedMap{{Key: "KEEP", Value: "1"}, {Key: "DROP", Value: "2"}}}
+	edited := gen
+	edited.Environments = appdef.OrderedMap{{Key: "KEEP", Value: "1"}} // DROP removed
+
+	patch, err := DiffAppDef(gen, edited)
+	if err != nil || patch == nil {
+		t.Fatalf("expected env patch, err=%v patch=%s", err, patch)
+	}
+	got, err := ApplyAppDefPatch(gen, patch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Environments.Len() != 1 || got.Environments[0].Key != "KEEP" {
+		t.Errorf("removed env key must be gone after apply, got %+v", got.Environments)
+	}
+	if _, ok := got.Environments.Get("DROP"); ok {
+		t.Error("DROP must not survive the edit")
 	}
 }
