@@ -8,7 +8,7 @@ import (
 func TestOpenInEditor_DetectsChange(t *testing.T) {
 	orig := editorRunner
 	defer func() { editorRunner = orig }()
-	editorRunner = func(_ , path string) error {
+	editorRunner = func(_, path string) error {
 		return os.WriteFile(path, []byte("changed: true\n"), 0o600)
 	}
 
