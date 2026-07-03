@@ -79,6 +79,7 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 		newLogsCmd(),
 		newExecCmd(),
 		newDescribeCmd(),
+		newEditCmd(),
 		newDiagnoseCmd(),
 		newHealthCmd(),
 		newCleanCmd(),
