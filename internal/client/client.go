@@ -452,3 +452,78 @@ func (c *DaemonClient) StreamEvents(ctx context.Context) (<-chan api.EventDto, e
 
 	return ch, nil
 }
+
+// APIError is returned when the daemon responds with an HTTP error status.
+// Callers inspect Status to decide whether an error is retryable — e.g. a 400
+// from an invalid edit re-opens the editor rather than aborting.
+type APIError struct {
+	Status  int
+	Message string
+}
+
+func (e *APIError) Error() string { return e.Message }
+
+// putRaw sends body verbatim (no JSON marshaling) with the given content type.
+// Used for the app-config editor, whose PUT body is raw YAML.
+func (c *DaemonClient) putRaw(path, contentType string, body []byte, result any) error {
+	req, err := http.NewRequest(http.MethodPut, c.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create PUT request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", contentType)
+
+	resp, doErr := c.httpClient.Do(req)
+	if doErr != nil {
+		return fmt.Errorf("execute PUT %s: %w", path, doErr)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read response: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		msg := string(respBody)
+		var errDto api.ErrorDto
+		if json.Unmarshal(respBody, &errDto) == nil && errDto.Message != "" {
+			msg = errDto.Message
+		}
+		return &APIError{Status: resp.StatusCode, Message: msg}
+	}
+	if result != nil && len(respBody) > 0 {
+		if err := json.Unmarshal(respBody, result); err != nil {
+			return fmt.Errorf("decode response: %w", err)
+		}
+	}
+	return nil
+}
+
+// GetAppConfig returns the app's effective ApplicationDef YAML plus the
+// generated baseline.
+func (c *DaemonClient) GetAppConfig(name string) (*api.AppConfigDto, error) {
+	var dto api.AppConfigDto
+	if err := c.get(api.Apps+"/"+url.PathEscape(name)+"/config", &dto); err != nil {
+		return nil, fmt.Errorf("get app config: %w", err)
+	}
+	return &dto, nil
+}
+
+// PutAppConfig saves an edited ApplicationDef (raw YAML). On an HTTP error the
+// returned error wraps *APIError so a 400 (invalid YAML) can be told apart.
+func (c *DaemonClient) PutAppConfig(name string, body []byte) (*api.ActionResultDto, error) {
+	var dto api.ActionResultDto
+	if err := c.putRaw(api.Apps+"/"+url.PathEscape(name)+"/config", "text/yaml", body, &dto); err != nil {
+		return nil, fmt.Errorf("put app config: %w", err)
+	}
+	return &dto, nil
+}
+
+// ResetAppConfig clears the app's config override, restoring the generated def.
+func (c *DaemonClient) ResetAppConfig(name string) (*api.ActionResultDto, error) {
+	var dto api.ActionResultDto
+	if err := c.post(api.Apps+"/"+url.PathEscape(name)+"/config/reset", nil, &dto); err != nil {
+		return nil, fmt.Errorf("reset app config: %w", err)
+	}
+	return &dto, nil
+}
