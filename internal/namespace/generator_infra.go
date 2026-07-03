@@ -231,11 +231,21 @@ func generateRabbitMQ(ctx *NsGenContext) {
 	app.AddEnv("RABBITMQ_DEFAULT_VHOST", "/")
 	app.AddEnv("RABBITMQ_MANAGEMENT_ALLOW_WEB_ACCESS", "true")
 	app.AddVolume("rabbitmq2:/var/lib/rabbitmq")
-	// 512m (not the legacy 256m): RabbitMQ 4.x + management plus the transient
-	// Erlang VMs that the rabbitmqctl init actions spawn don't fit in 256m, so
-	// the init actions get OOM-killed (exitCode 137) and the citeck SA ends up
-	// without vhost "/" permissions → every webapp fails AMQP auth.
-	const rabbitmqMemLimit = "512m"
+	// 1g (was 512m; the legacy value was 256m) — two independent pressures set the
+	// floor:
+	//   (1) Startup: RabbitMQ 4.x + management plus the transient Erlang VMs the
+	//       rabbitmqctl init actions spawn OOM-kill (exitCode 137) below ~512m,
+	//       stranding the citeck SA without vhost "/" permissions → every webapp
+	//       fails AMQP auth.
+	//   (2) Steady state: on the enterprise bundle (24 webapps holding AMQP
+	//       connections + queues) the broker's working set (~350m) crossed the
+	//       0.6×512m=307m high-watermark and raised a memory alarm that blocks all
+	//       publishers. 1g moves the watermark to 0.6×1g=614m, well above enterprise
+	//       steady state, while keeping the 40% cgroup headroom (see
+	//       rabbitmqMemoryConf).
+	// The limit is a cap, not a reservation: community rabbit (~60-100m) never
+	// approaches it, so smaller bundles pay nothing for the enterprise headroom.
+	const rabbitmqMemLimit = "1g"
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: rabbitmqMemLimit}}
 	// Memory-override conf so the broker self-throttles below the cgroup limit
 	// instead of being OOM-killed (see rabbitmqMemoryConf). Mounted into conf.d,

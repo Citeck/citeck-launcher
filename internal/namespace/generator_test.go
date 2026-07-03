@@ -977,23 +977,24 @@ func TestGeneratorStartupThresholds(t *testing.T) {
 // TestRabbitmqMemoryConf pins the generated rabbitmq.conf snippet: the broker
 // can't read the cgroup limit in a container (it detects host RAM and sets the
 // watermark to 0.6 of that — e.g. 14 GB of a 24 GB host), then gets OOM-killed
-// at the 256m/512m cgroup hard limit. We feed it the real budget in BYTES,
-// derived from the SAME limit string that fills HostConfig.Memory, so the
-// override can never drift from the cgroup limit.
+// at the 1g cgroup hard limit. We feed it the real budget in BYTES, derived
+// from the SAME limit string that fills HostConfig.Memory, so the override can
+// never drift from the cgroup limit.
 func TestRabbitmqMemoryConf(t *testing.T) {
-	got := rabbitmqMemoryConf("512m")
-	// 512 MiB = 512 * 1024 * 1024 = 536870912 (binary, matches docker.ParseMemory).
-	want := "total_memory_available_override_value = 536870912\n" +
+	got := rabbitmqMemoryConf("1g")
+	// 1 GiB = 1024 * 1024 * 1024 = 1073741824 (binary, matches docker.ParseMemory).
+	want := "total_memory_available_override_value = 1073741824\n" +
 		"vm_memory_high_watermark.relative = 0.6\n"
 	if got != want {
-		t.Errorf("rabbitmqMemoryConf(\"512m\") =\n%q\nwant\n%q", got, want)
+		t.Errorf("rabbitmqMemoryConf(\"1g\") =\n%q\nwant\n%q", got, want)
 	}
 }
 
-// TestRabbitmqMemoryLimitAndConf verifies the RabbitMQ OOM fix: the limit is
-// raised from 256m (too small for the rabbitmqctl init actions' transient
-// Erlang VMs) to 512m, and a memory-override conf is mounted into conf.d so the
-// broker self-throttles below the cgroup limit instead of being OOM-killed.
+// TestRabbitmqMemoryLimitAndConf verifies the RabbitMQ OOM/alarm fix: the limit
+// is 1g (256m OOM-killed the rabbitmqctl init actions' transient Erlang VMs;
+// 512m self-throttled on enterprise steady state — the 0.6 watermark alarm at
+// ~307m blocked publishers), and a memory-override conf is mounted into conf.d
+// so the broker self-throttles below the cgroup limit instead of being OOM-killed.
 func TestRabbitmqMemoryLimitAndConf(t *testing.T) {
 	cfg := &Config{
 		Authentication: AuthenticationProps{Type: AuthKeycloak, Users: []string{"admin"}},
@@ -1015,10 +1016,11 @@ func TestRabbitmqMemoryLimitAndConf(t *testing.T) {
 	}
 	require.NotNil(t, rmq)
 
-	// 1. Memory raised to 512m.
+	// 1. Memory raised to 1g (256m OOM-kills init actions; 512m raises the
+	//    steady-state watermark alarm on enterprise; must be 1g).
 	require.NotNil(t, rmq.Resources)
-	assert.Equal(t, "512m", rmq.Resources.Limits.Memory,
-		"RabbitMQ 256m OOM-kills the rabbitmqctl init actions; must be 512m")
+	assert.Equal(t, "1g", rmq.Resources.Limits.Memory,
+		"RabbitMQ 256m OOM-kills init actions and 512m alarms on enterprise; must be 1g")
 
 	// 2. The override conf is mounted into conf.d (loaded after the image's
 	// own 10-defaultuser.conf).
@@ -1027,7 +1029,7 @@ func TestRabbitmqMemoryLimitAndConf(t *testing.T) {
 
 	// 3. The conf content lands in the runtime files (→ disk + VolumesContentHash),
 	// with the override byte count derived from the 512m limit.
-	assert.Equal(t, rabbitmqMemoryConf("512m"), string(resp.Files["rabbitmq/citeck-memory.conf"]),
+	assert.Equal(t, rabbitmqMemoryConf("1g"), string(resp.Files["rabbitmq/citeck-memory.conf"]),
 		"generated conf must match the limit-derived override")
 }
 
