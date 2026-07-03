@@ -160,7 +160,7 @@ func newEditCmd() *cobra.Command {
 			res, err := runEdit(o)
 			if err != nil {
 				if errors.Is(err, errNoChanges) {
-					output.PrintText("No changes, edit cancelled.")
+					output.PrintText("No changes, edit canceled.")
 					return nil
 				}
 				return err

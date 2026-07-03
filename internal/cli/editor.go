@@ -43,19 +43,19 @@ func openInEditor(initial []byte, suffix string) (edited []byte, changed bool, e
 	path := f.Name()
 	defer os.Remove(path)
 
-	if _, err := f.Write(initial); err != nil {
+	if _, err = f.Write(initial); err != nil {
 		_ = f.Close()
 		return nil, false, fmt.Errorf("write temp file: %w", err)
 	}
-	if err := f.Close(); err != nil {
+	if err = f.Close(); err != nil {
 		return nil, false, fmt.Errorf("close temp file: %w", err)
 	}
 
-	if err := editorRunner(resolveEditor(), path); err != nil {
+	if err = editorRunner(resolveEditor(), path); err != nil {
 		return nil, false, fmt.Errorf("run editor: %w", err)
 	}
 
-	edited, err = os.ReadFile(path)
+	edited, err = os.ReadFile(path) //nolint:gosec // G304: path is our own os.CreateTemp file, not user-controlled input
 	if err != nil {
 		return nil, false, fmt.Errorf("read edited file: %w", err)
 	}
