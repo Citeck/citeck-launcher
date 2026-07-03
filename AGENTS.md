@@ -204,6 +204,7 @@ Rules when changing strings:
 - `--format json` for scripting on any command
 - `--yes` to skip confirmations
 - Hidden flags: `--desktop`, `--no-ui`, `_daemon` (internal)
+- `edit <app>` opens the app's effective ApplicationDef in `$EDITOR` and saves the change as a per-app override patch (like `kubectl edit`); `--reset` drops the override, `--file -` pipes YAML from stdin. Overrides persist in `state.EditedAppPatches` (server state / desktop SQLite) and recreate the container. Mirrors the desktop gear-icon config editor.
 
 ## Agent Testing Guide (server-side)
 
