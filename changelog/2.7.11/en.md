@@ -1,0 +1,2 @@
+## Fixes
+- Raised the RabbitMQ container memory limit from 512 MB to 1 GB. On the enterprise bundle (24 web apps) the broker's steady-state working set crossed the `0.6` high-watermark (≈307 MB) and raised a memory resource alarm that blocked all message publishers. The higher limit moves the watermark to ≈614 MB — comfortably above enterprise steady state — while keeping headroom against the container's out-of-memory killer. The limit is a cap, not a reservation, so smaller (community) deployments are unaffected.

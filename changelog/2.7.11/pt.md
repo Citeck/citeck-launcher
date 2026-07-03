@@ -1,0 +1,2 @@
+## Correções
+- O limite de memória do contêiner do RabbitMQ foi aumentado de 512 MB para 1 GB. No pacote enterprise (24 aplicações web), o conjunto de trabalho do broker em regime estável ultrapassava o limiar `0.6` (high-watermark, ≈307 MB) e disparava um alarme de recurso de memória que bloqueava todos os publicadores de mensagens. O limite maior move o limiar para ≈614 MB — bem acima do regime estável do enterprise — mantendo folga em relação ao OOM killer do contêiner. O limite é um teto, não uma reserva, portanto as instalações menores (community) não são afetadas.
