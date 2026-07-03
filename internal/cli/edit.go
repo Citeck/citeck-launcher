@@ -64,7 +64,7 @@ func runEdit(o editOptions) (*api.ActionResultDto, error) {
 	for {
 		edited, changed, err := o.edit(buf)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("edit %q: %w", o.app, err)
 		}
 		if !changed {
 			return nil, errNoChanges
