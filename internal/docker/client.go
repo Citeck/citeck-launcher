@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -897,7 +898,9 @@ func (c *Client) WaitForContainerExit(ctx context.Context, containerID string, t
 	}
 }
 
-// ParseMemory converts memory strings like "128m", "1g" to bytes.
+// ParseMemory converts memory strings like "128m", "1g", "1.5g" to bytes.
+// Fractional values are supported (e.g. "1.5g" = 1610612736), so sub-GiB
+// precision can be written naturally instead of only in the smaller unit.
 // Exported so the namespace generator can derive RabbitMQ's
 // total_memory_available_override_value from the same limit string that fills
 // HostConfig.Memory, keeping the two from ever drifting.
@@ -907,7 +910,7 @@ func ParseMemory(s string) int64 {
 		return 0
 	}
 
-	multiplier := int64(1)
+	multiplier := float64(1)
 	switch {
 	case strings.HasSuffix(s, "g"):
 		multiplier = 1024 * 1024 * 1024
@@ -920,9 +923,11 @@ func ParseMemory(s string) int64 {
 		s = s[:len(s)-1]
 	}
 
-	var n int64
-	_, _ = fmt.Sscanf(s, "%d", &n)
-	return n * multiplier
+	n, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil {
+		return 0
+	}
+	return int64(n * multiplier)
 }
 
 // ContainerStat holds resource usage for a container.

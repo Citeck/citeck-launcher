@@ -59,6 +59,12 @@ func TestParseMemory(t *testing.T) {
 		{"3G", 3 * 1024 * 1024 * 1024},
 		{"", 0},
 		{"64m", 64 * 1024 * 1024},
+		// Fractional values (e.g. 1.5 GiB) must not truncate the decimal.
+		{"1.5g", 1536 * 1024 * 1024},
+		{"0.5g", 512 * 1024 * 1024},
+		{"2.5m", 2621440},
+		{"1.5G", 1536 * 1024 * 1024},
+		{"garbage", 0},
 	}
 	for _, tt := range tests {
 		got := ParseMemory(tt.input)
