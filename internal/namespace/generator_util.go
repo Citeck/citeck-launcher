@@ -296,6 +296,7 @@ func computeVolumesContentHash(app *appdef.ApplicationDef, files map[string][]by
 			}
 		}
 	}
+	keys = expandDirMountKeys(keys, files)
 	if len(keys) == 0 {
 		return ""
 	}
@@ -319,6 +320,42 @@ func computeVolumesContentHash(app *appdef.ApplicationDef, files map[string][]by
 	var buf [8]byte
 	binary.BigEndian.PutUint64(buf[:], agg.Sum64())
 	return base64.RawURLEncoding.EncodeToString(buf[:])
+}
+
+// expandDirMountKeys turns raw bind-mount source keys into the set of generated
+// file keys whose content should feed the volumes hash. A key that exactly names
+// a generated file is kept as-is; a key that names no file — i.e. a *directory*
+// mount such as Spring webapps' "app/<name>/props" — is replaced by every files
+// key beneath it (component-boundary match via the "<key>/" prefix).
+//
+// Mirrors Kotlin's NsRuntimeFiles.fillFilesForAbsPath, whose directory branch
+// the original Go port dropped. Without this, editing a file under a directory
+// mount (e.g. application-launcher.yml) never changes VolumesContentHash, so the
+// deployment hash is unchanged and the runtime never recreates the container to
+// pick up the edit — the edit silently no-ops on the running app.
+func expandDirMountKeys(keys []string, files map[string][]byte) []string {
+	out := make([]string, 0, len(keys))
+	seen := make(map[string]struct{}, len(keys))
+	add := func(k string) {
+		if _, dup := seen[k]; dup {
+			return
+		}
+		seen[k] = struct{}{}
+		out = append(out, k)
+	}
+	for _, k := range keys {
+		if _, ok := files[k]; ok {
+			add(k)
+			continue
+		}
+		prefix := k + "/"
+		for fk := range files {
+			if strings.HasPrefix(fk, prefix) {
+				add(fk)
+			}
+		}
+	}
+	return out
 }
 
 // collectFileKeysFromVolumes extracts the ctx.Files keys (e.g.

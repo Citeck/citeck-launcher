@@ -96,6 +96,70 @@ func TestComputeVolumesContentHash_EmptyWhenNoBindMountFiles(t *testing.T) {
 	}
 }
 
+// TestComputeVolumesContentHash_DirMountChangesWithContainedFile guards the
+// Kotlin-parity directory-mount expansion: Spring webapps mount their whole
+// "props/" directory (not each file), so editing application-launcher.yml must
+// still flip VolumesContentHash — otherwise the reload hash diff misses the edit
+// and the container is never recreated to pick it up.
+func TestComputeVolumesContentHash_DirMountChangesWithContainedFile(t *testing.T) {
+	app := appdef.ApplicationDef{
+		Volumes: []string{"./app/uiserv/props:/run/java.io/spring-props/"},
+	}
+	h1 := computeVolumesContentHash(&app, map[string][]byte{
+		"app/uiserv/props/application-launcher.yml": []byte("ecos: {}"),
+	})
+	h2 := computeVolumesContentHash(&app, map[string][]byte{
+		"app/uiserv/props/application-launcher.yml": []byte("ecos: {}\ndebug: true"),
+	})
+	if h1 == "" {
+		t.Fatal("dir-mounted file produced empty hash (directory not expanded)")
+	}
+	if h1 == h2 {
+		t.Error("hash didn't change when a dir-mounted file's content changed")
+	}
+}
+
+// TestComputeVolumesContentHash_DirMountPrefixIsComponentBoundary ensures the
+// directory expansion matches on a path-component boundary, not a raw string
+// prefix: "app/x/props" must not swallow files under a sibling "app/x/props2".
+func TestComputeVolumesContentHash_DirMountPrefixIsComponentBoundary(t *testing.T) {
+	app := appdef.ApplicationDef{
+		Volumes: []string{"./app/x/props:/mnt"},
+	}
+	base := map[string][]byte{"app/x/props/a.yml": []byte("a")}
+	sibling := map[string][]byte{
+		"app/x/props/a.yml":      []byte("a"),
+		"app/x/props2/other.yml": []byte("other"),
+	}
+	if computeVolumesContentHash(&app, base) != computeVolumesContentHash(&app, sibling) {
+		t.Error("sibling directory 'props2' leaked into the 'props' mount hash")
+	}
+}
+
+// TestExpandDirMountKeys covers exact-file passthrough, directory expansion,
+// and dedup across file+dir mounts that resolve to the same files.
+func TestExpandDirMountKeys(t *testing.T) {
+	files := map[string][]byte{
+		"postgres/postgresql.conf":                  {},
+		"app/uiserv/props/application-launcher.yml": {},
+		"app/uiserv/props/extra.yml":                {},
+	}
+	got := expandDirMountKeys([]string{
+		"postgres/postgresql.conf", // exact file — kept
+		"app/uiserv/props",         // directory — expands to both files under it
+		"app/uiserv/props",         // duplicate dir — deduped
+	}, files)
+	slices.Sort(got)
+	want := []string{
+		"app/uiserv/props/application-launcher.yml",
+		"app/uiserv/props/extra.yml",
+		"postgres/postgresql.conf",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("expandDirMountKeys = %v, want %v", got, want)
+	}
+}
+
 // Smoke-test to catch accidental use of strings.EqualFold etc. in future
 // refactors of collectFileKeysFromVolumes — file paths are case-sensitive.
 func TestCollectFileKeysFromVolumes_CaseSensitive(t *testing.T) {
