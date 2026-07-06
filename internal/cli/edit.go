@@ -53,7 +53,7 @@ func runEdit(o editOptions) (*api.ActionResultDto, error) {
 	}
 
 	if !o.isTTY {
-		return nil, errors.New("no terminal for the interactive editor; pipe YAML with `--file -` or use `--reset`")
+		return nil, errors.New("no terminal for the interactive editor; pipe YAML with `--from -` or use `--reset`")
 	}
 
 	cfg, err := o.cl.GetAppConfig(o.app)
@@ -115,24 +115,33 @@ func openFileInput(file string, stdin io.Reader) (io.Reader, func(), error) {
 }
 
 func newEditCmd() *cobra.Command {
-	var reset bool
-	var file string
+	var reset, listFiles, noApply bool
+	var mountedFile, from string
 
 	cmd := &cobra.Command{
 		Use:   "edit <app>",
-		Short: "Edit an app's config (memory limit, image, env, ports, …)",
-		Long: "Open an app's effective ApplicationDef in $EDITOR and save the change as a per-app\n" +
-			"override patch (like `kubectl edit`). The change is persisted and the container\n" +
-			"recreated — or applied on next start if the namespace is stopped.\n\n" +
-			"Use --reset to drop the override and restore the generated default, or\n" +
-			"--file - to pipe YAML from stdin without launching an editor.",
+		Short: "Edit an app's config or a mounted config file (memory, image, env, application-launcher.yml, …)",
+		Long: "Edit an app's effective ApplicationDef in $EDITOR and save the change as a\n" +
+			"per-app override patch (like `kubectl edit`); the container is recreated (or\n" +
+			"the change applies on next start when the namespace is stopped).\n\n" +
+			"With --file, edit a mounted config file instead (e.g. application-launcher.yml).\n" +
+			"The edit is stored as a delta over the generated content and applied via a\n" +
+			"reload; use --no-apply to save without reloading.\n\n" +
+			"  citeck edit <app>                       # edit the ApplicationDef\n" +
+			"  citeck edit <app> --reset               # drop the ApplicationDef override\n" +
+			"  citeck edit <app> --from - < def.yaml   # set the ApplicationDef from stdin\n" +
+			"  citeck edit <app> --list-files          # list editable mounted files\n" +
+			"  citeck edit <app> --file <path>         # edit a mounted file in $EDITOR\n" +
+			"  citeck edit <app> --file <path> --reset # restore that file to default\n" +
+			"  citeck edit <app> --file <path> --from - < f  # set that file from stdin",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return errors.New("app name required (e.g. `citeck edit rabbitmq`); to view namespace.yml use `citeck config`")
 			}
-			if reset && file != "" {
-				return errors.New("--reset and --file are mutually exclusive")
+			app := args[0]
+			if reset && from != "" {
+				return errors.New("--reset and --from are mutually exclusive")
 			}
 
 			c, err := client.New(clientOpts())
@@ -141,36 +150,75 @@ func newEditCmd() *cobra.Command {
 			}
 			defer c.Close()
 
+			if listFiles {
+				if reset || from != "" || mountedFile != "" {
+					return errors.New("--list-files cannot be combined with --reset/--from/--file")
+				}
+				return runListFiles(c, app)
+			}
+
+			// --file selects a mounted config file as the edit target; without
+			// it, the target is the ApplicationDef.
+			if mountedFile != "" {
+				o := editFileOptions{
+					app:   app,
+					path:  mountedFile,
+					reset: reset,
+					apply: !noApply,
+					isTTY: output.IsTTY(),
+					cl:    c,
+					edit:  func(initial []byte) ([]byte, bool, error) { return openInEditor(initial, editorSuffixFor(mountedFile)) },
+				}
+				if from != "" {
+					r, closeFn, ferr := openFileInput(from, cmd.InOrStdin())
+					if ferr != nil {
+						return ferr
+					}
+					defer closeFn()
+					o.file = r
+				}
+				return finishEdit(runEditFile(o))
+			}
+
+			if noApply {
+				return errors.New("--no-apply only applies with --file")
+			}
 			o := editOptions{
-				app:   args[0],
+				app:   app,
 				reset: reset,
 				isTTY: output.IsTTY(),
 				cl:    c,
 				edit:  func(initial []byte) ([]byte, bool, error) { return openInEditor(initial, ".yaml") },
 			}
-			if file != "" {
-				r, closeFn, ferr := openFileInput(file, cmd.InOrStdin())
+			if from != "" {
+				r, closeFn, ferr := openFileInput(from, cmd.InOrStdin())
 				if ferr != nil {
 					return ferr
 				}
 				defer closeFn()
 				o.file = r
 			}
-
-			res, err := runEdit(o)
-			if err != nil {
-				if errors.Is(err, errNoChanges) {
-					output.PrintText("No changes, edit canceled.")
-					return nil
-				}
-				return err
-			}
-			output.PrintResult(res, func() { output.PrintText(res.Message) })
-			return nil
+			return finishEdit(runEdit(o))
 		},
 	}
 
-	cmd.Flags().BoolVar(&reset, "reset", false, "Clear the app's config override, restoring the generated default")
-	cmd.Flags().StringVar(&file, "file", "", "Read new YAML from a file (or - for stdin) instead of launching an editor")
+	cmd.Flags().BoolVar(&reset, "reset", false, "Restore the target (ApplicationDef, or --file) to its generated default")
+	cmd.Flags().StringVar(&from, "from", "", "Read new content from a file (or - for stdin) instead of launching an editor")
+	cmd.Flags().StringVar(&mountedFile, "file", "", "Edit a mounted config file (e.g. app/<app>/props/application-launcher.yml) instead of the ApplicationDef")
+	cmd.Flags().BoolVar(&listFiles, "list-files", false, "List the app's editable mounted files (with a * on edited ones)")
+	cmd.Flags().BoolVar(&noApply, "no-apply", false, "With --file: save the edit without reloading (apply later with `citeck reload`)")
 	return cmd
+}
+
+// finishEdit renders the shared success/no-change output for both editors.
+func finishEdit(res *api.ActionResultDto, err error) error {
+	if err != nil {
+		if errors.Is(err, errNoChanges) {
+			output.PrintText("No changes, edit canceled.")
+			return nil
+		}
+		return err
+	}
+	output.PrintResult(res, func() { output.PrintText(res.Message) })
+	return nil
 }

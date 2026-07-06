@@ -59,8 +59,8 @@ func TestRunEdit_FileInput(t *testing.T) {
 
 func TestRunEdit_NonTTYInteractive(t *testing.T) {
 	_, err := runEdit(editOptions{app: "rabbitmq", isTTY: false, cl: &fakeConfigClient{}})
-	if err == nil || !strings.Contains(err.Error(), "--file") {
-		t.Fatalf("expected non-TTY error mentioning --file, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "--from") {
+		t.Fatalf("expected non-TTY error mentioning --from, got %v", err)
 	}
 }
 

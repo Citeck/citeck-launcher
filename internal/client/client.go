@@ -527,3 +527,57 @@ func (c *DaemonClient) ResetAppConfig(name string) (*api.ActionResultDto, error)
 	}
 	return &dto, nil
 }
+
+// escapeMountPath percent-encodes each path segment while preserving the "/"
+// separators so it lands intact on the daemon's "/files/{path...}" wildcard
+// route. Leading "./" (as returned by ListAppFiles) is stripped — the handler
+// re-adds it for bind-mount validation.
+func escapeMountPath(p string) string {
+	p = strings.TrimPrefix(p, "./")
+	segs := strings.Split(p, "/")
+	for i, s := range segs {
+		segs[i] = url.PathEscape(s)
+	}
+	return strings.Join(segs, "/")
+}
+
+// ListAppFiles returns the app's mounted files (host path + edited flag).
+func (c *DaemonClient) ListAppFiles(name string) ([]api.AppFileDto, error) {
+	var files []api.AppFileDto
+	if err := c.get(api.Apps+"/"+url.PathEscape(name)+"/files", &files); err != nil {
+		return nil, fmt.Errorf("list app files: %w", err)
+	}
+	return files, nil
+}
+
+// GetAppFile returns a single mounted file's current content plus its generated
+// baseline.
+func (c *DaemonClient) GetAppFile(name, path string) (*api.AppFileContentDto, error) {
+	var dto api.AppFileContentDto
+	if err := c.get(api.Apps+"/"+url.PathEscape(name)+"/files/"+escapeMountPath(path), &dto); err != nil {
+		return nil, fmt.Errorf("get app file: %w", err)
+	}
+	return &dto, nil
+}
+
+// PutAppFile saves new raw content for a mounted file. On an HTTP error the
+// returned error wraps *APIError so a 400 (validation) can be told apart,
+// mirroring PutAppConfig.
+func (c *DaemonClient) PutAppFile(name, path string, body []byte) (*api.ActionResultDto, error) {
+	var dto api.ActionResultDto
+	if err := c.putRaw(api.Apps+"/"+url.PathEscape(name)+"/files/"+escapeMountPath(path), "text/plain", body, &dto); err != nil {
+		return nil, fmt.Errorf("put app file: %w", err)
+	}
+	return &dto, nil
+}
+
+// ResetAppFile restores a mounted file to its generated default. The server
+// reloads on its own, re-materializing the original content.
+func (c *DaemonClient) ResetAppFile(name, path string) (*api.ActionResultDto, error) {
+	var dto api.ActionResultDto
+	q := url.Values{"path": {strings.TrimPrefix(path, "./")}}.Encode()
+	if err := c.post(api.Apps+"/"+url.PathEscape(name)+"/files/reset?"+q, nil, &dto); err != nil {
+		return nil, fmt.Errorf("reset app file: %w", err)
+	}
+	return &dto, nil
+}
