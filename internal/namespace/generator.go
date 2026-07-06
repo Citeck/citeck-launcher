@@ -28,6 +28,7 @@ type GenResp struct {
 	BaselineFiles         map[string][]byte         // generated file content BEFORE user-edit merge (baseline source for the editor + WriteEditedFile template)
 	CloudConfig           map[string]map[string]any // per-app ext cloud config for CloudConfigServer
 	DependsOnDetachedApps map[string]bool           // apps whose reattachment triggers regeneration
+	CustomLinks           []bundle.WorkspaceLink    // workspace-config custom quick links (with dependsOn gating)
 }
 
 // GenerateOpts holds optional parameters for namespace generation.
@@ -199,6 +200,11 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 		}
 	}
 
+	var customLinks []bundle.WorkspaceLink
+	if ctx.WorkspaceConfig != nil {
+		customLinks = ctx.WorkspaceConfig.Links
+	}
+
 	return &GenResp{
 		Applications:          apps,
 		BaselineApplications:  baselineApps,
@@ -206,6 +212,7 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 		BaselineFiles:         baselineFiles,
 		CloudConfig:           ctx.CloudConfig,
 		DependsOnDetachedApps: dependsOnDetached,
+		CustomLinks:           customLinks,
 	}, nil
 }
 

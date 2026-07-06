@@ -53,6 +53,13 @@ export interface LinkDto {
   category?: string
   description?: string
   descriptionKey?: string
+  alwaysEnabled?: boolean
+  // Custom workspace-config link: the daemon already computed `disabled` from
+  // its dependsOn app status, so the UI must not re-gate it on namespace-wide
+  // running state. Links whose deps are absent are omitted by the daemon.
+  custom?: boolean
+  disabled?: boolean
+  dependsOn?: string[]
 }
 
 export interface NamespaceDto {

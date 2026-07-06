@@ -146,6 +146,13 @@ type LinkDto struct {
 	Description    string  `json:"description,omitempty"`    // English fallback tooltip
 	DescriptionKey string  `json:"descriptionKey,omitempty"` // i18n key; web resolves the localized tooltip, falling back to Description
 	AlwaysEnabled  bool    `json:"alwaysEnabled,omitempty"`  // remains clickable when namespace is STOPPED (Kotlin parity)
+	// Custom marks a workspace-config-declared link (WorkspaceLink). For these
+	// the daemon computes enablement from DependsOn app status and sets Disabled
+	// directly (the UI must NOT re-gate them on namespace-wide running status);
+	// links whose dependencies are absent from the namespace are omitted entirely.
+	Custom    bool     `json:"custom,omitempty"`
+	Disabled  bool     `json:"disabled,omitempty"`  // custom link: a present dependency is not RUNNING
+	DependsOn []string `json:"dependsOn,omitempty"` // custom link: app IDs it depends on (for tooltips)
 }
 
 // EventDto represents a server-sent event for state changes.

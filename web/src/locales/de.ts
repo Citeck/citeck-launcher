@@ -43,6 +43,7 @@ const de = {
   'registryCreds.banner': 'Anmeldedaten konfigurieren',
   'registryCreds.bannerTooltip': 'Geben Sie Registry-Anmeldedaten an, damit der Launcher dieses Image herunterladen kann',
   'dashboard.links': 'Links',
+  'dashboard.linkWaitingFor': 'wartet auf',
   'dashboard.volumes': 'Volumes',
   'dashboard.secrets': 'Geheimnisse',
   'dashboard.launcherLogs': 'Launcher-Protokolle',

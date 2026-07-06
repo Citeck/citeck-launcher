@@ -43,6 +43,7 @@ const ja = {
   'registryCreds.banner': '認証情報を設定',
   'registryCreds.bannerTooltip': 'ランチャーがこのイメージを取得できるよう、レジストリの認証情報を入力してください',
   'dashboard.links': '\u30ea\u30f3\u30af',
+  'dashboard.linkWaitingFor': '待機中',
   'dashboard.volumes': '\u30dc\u30ea\u30e5\u30fc\u30e0',
   'dashboard.secrets': '\u30b7\u30fc\u30af\u30ec\u30c3\u30c8',
   'dashboard.launcherLogs': 'Launcher \u30ed\u30b0',

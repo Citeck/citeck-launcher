@@ -43,6 +43,7 @@ const fr = {
   'registryCreds.banner': 'Configurer les identifiants',
   'registryCreds.bannerTooltip': 'Fournissez les identifiants du registry pour que le launcher puisse télécharger cette image',
   'dashboard.links': 'Liens',
+  'dashboard.linkWaitingFor': 'en attente de',
   'dashboard.volumes': 'Volumes',
   'dashboard.secrets': 'Secrets',
   'dashboard.launcherLogs': 'Journaux du Launcher',

@@ -277,6 +277,24 @@ type WorkspaceConfig struct {
 	// dedicated launcher generator), defined once here and applied to every
 	// namespace that uses this workspace. See AdditionalAppProps.
 	AdditionalApps []AdditionalAppProps `yaml:"additionalApps,omitempty"`
+	// Links are custom quick links shown in the launcher sidebar alongside the
+	// built-in ones. See WorkspaceLink.
+	Links []WorkspaceLink `yaml:"links,omitempty"`
+}
+
+// WorkspaceLink is a custom quick link declared in the workspace config and
+// surfaced in the launcher sidebar. DependsOn gates its state against app
+// runtime status: the link is hidden when any dependency is absent from the
+// namespace, and disabled (shown, not clickable) when a present dependency is
+// not RUNNING. With no dependencies the link is always enabled.
+type WorkspaceLink struct {
+	Name        string   `yaml:"name"`
+	URL         string   `yaml:"url"`
+	Icon        string   `yaml:"icon,omitempty"`        // /icons/<icon>.svg in the UI; else a generic link glyph
+	Order       float64  `yaml:"order,omitempty"`       // sidebar sort key (built-ins use ~ -100..101)
+	Category    string   `yaml:"category,omitempty"`    // grouping header (e.g. "Apps", "Resources")
+	Description string   `yaml:"description,omitempty"` // hover tooltip
+	DependsOn   []string `yaml:"dependsOn,omitempty"`   // app IDs this link depends on
 }
 
 // ImageReposByHost builds a map from registry host to ImageRepo for auth lookup.

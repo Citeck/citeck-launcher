@@ -228,6 +228,39 @@ func (r *Runtime) generateLinks() []api.LinkDto {
 		api.LinkDto{Name: "AI Documentation Bot", URL: "https://t.me/haski_citeck_bot", Icon: "telegram", Order: 101, Category: catResources, Description: "Telegram bot for AI documentation assistance", DescriptionKey: "links.aiBot.tooltip", AlwaysEnabled: true},
 	)
 
+	// Workspace-config custom links. dependsOn gates each link against app
+	// runtime status: hidden (omitted) when any dependency is absent from the
+	// namespace, disabled when a present dependency is not RUNNING, enabled
+	// otherwise. With no dependencies the link is always enabled.
+	for _, cl := range r.customLinks {
+		hidden, disabled := false, false
+		for _, dep := range cl.DependsOn {
+			app, live := r.apps[dep]
+			_, configured := r.generatedDefs[dep]
+			if !live && !configured {
+				hidden = true // app not in this namespace at all
+				break
+			}
+			if !live || app.Status != AppStatusRunning {
+				disabled = true // configured but not running
+			}
+		}
+		if hidden {
+			continue
+		}
+		links = append(links, api.LinkDto{
+			Name:        cl.Name,
+			URL:         cl.URL,
+			Icon:        cl.Icon,
+			Order:       cl.Order,
+			Category:    cl.Category,
+			Description: cl.Description,
+			Custom:      true,
+			Disabled:    disabled,
+			DependsOn:   cl.DependsOn,
+		})
+	}
+
 	return links
 }
 

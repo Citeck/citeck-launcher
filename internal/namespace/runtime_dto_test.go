@@ -3,6 +3,7 @@ package namespace
 import (
 	"testing"
 
+	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/stretchr/testify/assert"
@@ -31,6 +32,51 @@ func TestResolveDisplayBundleRef(t *testing.T) {
 	// A concrete key is shown as-is, even when a cached bundle is present.
 	assert.Equal(t, "develop:2025.12",
 		ResolveDisplayBundleRef(bundle.Ref{Repo: "develop", Key: "2025.12"}, cached))
+}
+
+// TestGenerateLinksCustomDependsOn pins the workspace-config custom-link gating:
+// no deps ⇒ enabled; a RUNNING dep ⇒ enabled; a present-but-not-running dep ⇒
+// disabled; a dep absent from the namespace ⇒ link hidden (omitted).
+func TestGenerateLinksCustomDependsOn(t *testing.T) {
+	r := newRuntimeForTest(testConfig(), newMockDocker(), t.TempDir())
+
+	// "stopped" is configured (in generatedDefs) but not in r.apps (never
+	// started); "uiserv"/"eproc" are live with distinct statuses.
+	r.SetGeneratedDefs([]appdef.ApplicationDef{
+		{Name: "uiserv"}, {Name: "eproc"}, {Name: "stopped"},
+	})
+	r.SetCustomLinks([]bundle.WorkspaceLink{
+		{Name: "NoDeps", URL: "http://x/nodeps"},
+		{Name: "OnRunning", URL: "http://x/run", DependsOn: []string{"uiserv"}},
+		{Name: "OnStarting", URL: "http://x/starting", DependsOn: []string{"eproc"}},
+		{Name: "OnStopped", URL: "http://x/stopped", DependsOn: []string{"stopped"}},
+		{Name: "OnGhost", URL: "http://x/ghost", DependsOn: []string{"ghost"}},
+	})
+	r.mu.Lock()
+	r.apps["uiserv"] = &AppRuntime{Name: "uiserv", Status: AppStatusRunning}
+	r.apps["eproc"] = &AppRuntime{Name: "eproc", Status: AppStatusStarting}
+	r.mu.Unlock()
+
+	byName := map[string]api.LinkDto{}
+	for _, l := range r.ToNamespaceDto().Links {
+		byName[l.Name] = l
+	}
+
+	if l, ok := byName["NoDeps"]; !ok || l.Disabled || !l.Custom {
+		t.Errorf("NoDeps: ok=%v disabled=%v custom=%v", ok, l.Disabled, l.Custom)
+	}
+	if l, ok := byName["OnRunning"]; !ok || l.Disabled {
+		t.Errorf("OnRunning should be enabled: ok=%v disabled=%v", ok, l.Disabled)
+	}
+	if l, ok := byName["OnStarting"]; !ok || !l.Disabled {
+		t.Errorf("OnStarting should be disabled (dep not RUNNING): ok=%v disabled=%v", ok, l.Disabled)
+	}
+	if l, ok := byName["OnStopped"]; !ok || !l.Disabled {
+		t.Errorf("OnStopped should be disabled (configured, not running): ok=%v disabled=%v", ok, l.Disabled)
+	}
+	if _, ok := byName["OnGhost"]; ok {
+		t.Error("OnGhost should be hidden (dep absent from namespace)")
+	}
 }
 
 // TestToNamespaceDtoInitProgress pins the AppDto init-progress mapping:

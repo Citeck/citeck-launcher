@@ -43,6 +43,7 @@ const zh = {
   'registryCreds.banner': '配置凭据',
   'registryCreds.bannerTooltip': '提供镜像仓库凭据，以便启动器拉取此镜像',
   'dashboard.links': '链接',
+  'dashboard.linkWaitingFor': '等待',
   'dashboard.volumes': '存储卷',
   'dashboard.secrets': '密钥',
   'dashboard.launcherLogs': '启动器日志',

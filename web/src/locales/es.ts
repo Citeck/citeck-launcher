@@ -43,6 +43,7 @@ const es = {
   'registryCreds.banner': 'Configurar credenciales',
   'registryCreds.bannerTooltip': 'Proporcione las credenciales del registry para que el lanzador pueda descargar esta imagen',
   'dashboard.links': 'Enlaces',
+  'dashboard.linkWaitingFor': 'esperando',
   'dashboard.volumes': 'Volúmenes',
   'dashboard.secrets': 'Secretos',
   'dashboard.launcherLogs': 'Registros del lanzador',

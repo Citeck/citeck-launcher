@@ -45,6 +45,7 @@ const en = {
   'registryCreds.banner': 'Configure credentials',
   'registryCreds.bannerTooltip': 'Provide registry credentials so the launcher can pull this image',
   'dashboard.links': 'Links',
+  'dashboard.linkWaitingFor': 'waiting for',
   'dashboard.volumes': 'Volumes',
   'dashboard.secrets': 'Secrets',
   'dashboard.launcherLogs': 'Launcher Logs',

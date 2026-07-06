@@ -280,7 +280,11 @@ export function Dashboard() {
                   const prevCategory = i > 0 ? (serviceLinks[i - 1].category ?? '') : '__INIT__'
                   const showHeader = (l.category ?? '') !== prevCategory && l.category
                   const alwaysOn = isLinkAlwaysEnabled(l)
-                  const enabled = isRunning || alwaysOn
+                  // Custom (workspace-config) links carry their own daemon-computed
+                  // `disabled` from dependsOn app status — don't re-gate them on
+                  // the namespace-wide running flag (their deps may be up while
+                  // other apps aren't, or vice-versa).
+                  const enabled = l.custom ? !l.disabled : (isRunning || alwaysOn)
                   return (
                     <div key={l.name}>
                       {showHeader && (
@@ -288,7 +292,9 @@ export function Dashboard() {
                       )}
                       <a href={l.url} target="_blank" rel="noopener noreferrer"
                         title={/* Go-sourced links.* key — tDynamic escape hatch */
-                          l.descriptionKey ? tDynamic(l.descriptionKey) : (l.description ?? l.name)}
+                          l.custom && l.disabled && l.dependsOn?.length
+                            ? `${l.description || l.name} — ${t('dashboard.linkWaitingFor')}: ${l.dependsOn.join(', ')}`
+                            : l.descriptionKey ? tDynamic(l.descriptionKey) : (l.description ?? l.name)}
                         className={`flex items-center gap-2.5 text-[13px] rounded px-1.5 py-1 -mx-1.5 ${
                           enabled ? 'text-primary hover:bg-muted/70' : 'text-muted-foreground cursor-not-allowed'
                         }`}

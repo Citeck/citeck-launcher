@@ -170,6 +170,7 @@ type Runtime struct {
 	dependsOnDetachedApps map[string]bool                  // detached apps that trigger regen on restart
 	lastApps              []appdef.ApplicationDef          // last app defs passed to doStart
 	cachedBundle          *bundle.Def                      // last successfully resolved bundle (persisted)
+	customLinks           []bundle.WorkspaceLink           // workspace-config custom quick links (dependsOn-gated in generateLinks)
 	retryState            map[string]retryInfo             // retry tracking for failed apps
 	pullAuthBlockedApps   map[string]bool                  // PULL_FAILED apps awaiting registry credentials — T24 backoff retry is paused for them until creds change (RetryPullFailedApps clears it)
 	lastLoggedPullErr     map[string]string                // app → last pull error already WARN-logged; dedups the per-app pull-fail log so 24 apps × T24 retries don't flood daemon.log with the same cause (cleared on pull success)
@@ -499,6 +500,15 @@ func (r *Runtime) SetGeneratedDefs(defs []appdef.ApplicationDef) {
 		m[d.Name] = d
 	}
 	r.generatedDefs = m
+}
+
+// SetCustomLinks caches the workspace-config custom quick links so
+// generateLinks can surface them (dependsOn-gated) in the namespace DTO.
+// Refreshed on every load/reload alongside SetGeneratedDefs.
+func (r *Runtime) SetCustomLinks(links []bundle.WorkspaceLink) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.customLinks = links
 }
 
 // GeneratedFile returns the last generated (pre-merge) content for a canonical

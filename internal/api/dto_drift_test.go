@@ -38,10 +38,7 @@ var webSources = []string{
 // knownFieldGaps lists "Struct.jsonField" pairs intentionally absent from the
 // matching web interface. Every entry must say why and when to remove it.
 var knownFieldGaps = map[string]string{
-	// Dashboard.tsx consumes alwaysEnabled through a structural parameter
-	// type instead of the LinkDto interface (order>=100 fallback deprecation
-	// path). Add the field to LinkDto in types.ts and drop this entry.
-	"LinkDto.alwaysEnabled": "types.ts LinkDto predates the field; used structurally in Dashboard.tsx",
+	// (no gaps — LinkDto.alwaysEnabled now declared on the web interface)
 }
 
 func TestWebTypesMatchGoDTOs(t *testing.T) {

@@ -43,6 +43,7 @@ const pt = {
   'registryCreds.banner': 'Configurar credenciais',
   'registryCreds.bannerTooltip': 'Forneça as credenciais do registry para que o launcher possa baixar esta imagem',
   'dashboard.links': 'Links',
+  'dashboard.linkWaitingFor': 'aguardando',
   'dashboard.volumes': 'Volumes',
   'dashboard.secrets': 'Secrets',
   'dashboard.launcherLogs': 'Logs do Launcher',

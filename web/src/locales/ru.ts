@@ -43,6 +43,7 @@ const ru = {
   'registryCreds.banner': 'Указать учётные данные',
   'registryCreds.bannerTooltip': 'Указать креды реестра — лаунчер сможет докачать образ',
   'dashboard.links': 'Ссылки',
+  'dashboard.linkWaitingFor': 'ожидание',
   'dashboard.volumes': 'Тома',
   'dashboard.secrets': 'Секреты',
   'dashboard.launcherLogs': 'Логи лаунчера',

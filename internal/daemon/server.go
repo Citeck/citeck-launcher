@@ -574,6 +574,7 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate bool) error {
 	}
 	act.runtime.SetLastGenFiles(genResp.BaselineFiles)
 	act.runtime.SetGeneratedDefs(genResp.BaselineApplications)
+	act.runtime.SetCustomLinks(genResp.CustomLinks)
 
 	// Phase 2: update shared state briefly under write lock. In-place
 	// mutation of the live activeNamespace (not a rebuild-and-swap) so a
