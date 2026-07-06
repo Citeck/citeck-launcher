@@ -1,0 +1,8 @@
+## Novedades
+- **Enlaces personalizados en la barra lateral.** Declara tus propios enlaces rápidos en la configuración del espacio de trabajo (`workspace-v1.yml` → `links:`), cada uno con una lista opcional de dependencias `dependsOn`. Un enlace se oculta mientras una dependencia no forma parte del namespace, se deshabilita mientras una dependencia no está en ejecución y se habilita en los demás casos. Los enlaces personalizados aparecen al final de la barra lateral.
+- **Editar la configuración de una aplicación desde la línea de comandos.** `citeck edit <app>` abre la configuración efectiva de una aplicación en tu `$EDITOR` y la guarda como una anulación por aplicación (como `kubectl edit`). `--file <ruta>` edita en su lugar un archivo de configuración montado como `application-launcher.yml`, `--list-files` enumera los archivos editables, `--reset` restaura el valor predeterminado generado y `--from <archivo|->` establece el contenido sin abrir el editor.
+
+## Cambios
+- **Los archivos de configuración montados editados ahora llegan a la aplicación en ejecución.** Guardar un cambio en un archivo de configuración montado (por ejemplo `application-launcher.yml`) ahora recrea el contenedor afectado para aplicar el nuevo contenido; antes la edición se guardaba pero no surtía efecto hasta el siguiente cambio no relacionado. La actualización recrea una vez los contenedores de las aplicaciones web (cambia su hash de despliegue): no se requiere ninguna acción.
+- El límite de memoria de Keycloak se aumentó de 1 GB a 1,5 GB.
+- Los límites de memoria ahora aceptan unidades fraccionarias (por ejemplo `1.5g`).

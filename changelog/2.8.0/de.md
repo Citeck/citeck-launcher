@@ -1,0 +1,8 @@
+## Neue Funktionen
+- **Benutzerdefinierte Links in der Seitenleiste.** Deklarieren Sie eigene Schnelllinks in der Workspace-Konfiguration (`workspace-v1.yml` → `links:`), jeweils mit einer optionalen `dependsOn`-Abhängigkeitsliste. Ein Link wird ausgeblendet, solange eine Abhängigkeit nicht Teil des Namespace ist, deaktiviert, solange eine Abhängigkeit nicht läuft, und andernfalls aktiviert. Benutzerdefinierte Links erscheinen am unteren Rand der Seitenleiste.
+- **App-Konfiguration über die Befehlszeile bearbeiten.** `citeck edit <app>` öffnet die effektive Konfiguration einer App in Ihrem `$EDITOR` und speichert sie als App-spezifisches Override (wie `kubectl edit`). `--file <Pfad>` bearbeitet stattdessen eine gemountete Konfigurationsdatei wie `application-launcher.yml`, `--list-files` listet die bearbeitbaren Dateien auf, `--reset` stellt den generierten Standardwert wieder her und `--from <Datei|->` setzt den Inhalt ohne Editor.
+
+## Änderungen
+- **Bearbeitete gemountete Konfigurationsdateien erreichen jetzt die laufende Anwendung.** Das Speichern einer Änderung an einer gemounteten Konfigurationsdatei (zum Beispiel `application-launcher.yml`) erstellt jetzt den betroffenen Container neu, damit der neue Inhalt angewendet wird; zuvor wurde die Änderung gespeichert, wurde aber erst bei der nächsten unabhängigen Änderung wirksam. Beim Upgrade werden die Container der Webanwendungen einmalig neu erstellt (ihr Deployment-Hash ändert sich) – keine Aktion erforderlich.
+- Das Keycloak-Speicherlimit wurde von 1 GB auf 1,5 GB erhöht.
+- Speicherlimits akzeptieren jetzt Dezimaleinheiten (zum Beispiel `1.5g`).
