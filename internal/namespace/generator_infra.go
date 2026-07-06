@@ -297,14 +297,19 @@ func generateRabbitMQ(ctx *NsGenContext) {
 // deriveRabbitMemoryConf overwrites the RabbitMQ memory conf so its
 // total_memory_available_override_value tracks the EFFECTIVE (post-patch) memory
 // limit of the rabbitmq app, not the generator constant. Called from Generate
-// after patches are applied. Empty effective memory (operator deleted resources)
-// falls back to the const so we never emit a zero/empty override.
+// after patches are applied. A missing OR unparseable effective limit (operator
+// deleted resources, or typed a malformed value via `citeck edit`) falls back to
+// the const — the override must never be 0, or RabbitMQ believes it has no memory
+// and raises an immediate alarm that blocks all publishers.
 func deriveRabbitMemoryConf(ctx *NsGenContext, effective []appdef.ApplicationDef) {
 	mem := rabbitmqMemLimit
 	for i := range effective {
 		if effective[i].Name == appdef.AppRabbitmq {
-			if effective[i].Resources != nil && effective[i].Resources.Limits.Memory != "" {
-				mem = effective[i].Resources.Limits.Memory
+			if effective[i].Resources != nil {
+				m := effective[i].Resources.Limits.Memory
+				if m != "" && docker.ParseMemory(m) > 0 {
+					mem = m
+				}
 			}
 			ctx.Files["rabbitmq/citeck-memory.conf"] = []byte(rabbitmqMemoryConf(mem))
 			return

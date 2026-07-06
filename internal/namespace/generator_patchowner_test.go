@@ -33,12 +33,34 @@ func genWithRabbitPatch(t *testing.T, patch json.RawMessage) *GenResp {
 // parameterized by name (a generic `name` param would always receive the
 // same argument — unparam).
 func findRabbitmq(apps []appdef.ApplicationDef) *appdef.ApplicationDef {
+	return findAppByName(apps, appdef.AppRabbitmq)
+}
+
+func findAppByName(apps []appdef.ApplicationDef, name string) *appdef.ApplicationDef {
 	for i := range apps {
-		if apps[i].Name == appdef.AppRabbitmq {
+		if apps[i].Name == name {
 			return &apps[i]
 		}
 	}
 	return nil
+}
+
+// A malformed effective memory limit (e.g. an operator typo via `citeck edit`)
+// must NOT emit override=0 — RabbitMQ would then believe it has no memory and
+// raise an immediate alarm. The conf falls back to the const instead.
+func TestGenerate_MalformedRabbitMemoryFallsBackToConst(t *testing.T) {
+	resp := genWithRabbitPatch(t, json.RawMessage(`{"resources":{"limits":{"memory":"1.5.2g"}}}`))
+	assert.Equal(t, rabbitmqMemoryConf("1g"), string(resp.Files["rabbitmq/citeck-memory.conf"]),
+		"malformed memory must fall back to the const, never override=0")
+}
+
+// Pin the deliberate keycloak capacity decision (1g → 1.5g).
+func TestGenerate_KeycloakMemoryLimit(t *testing.T) {
+	resp := genWithRabbitPatch(t, nil)
+	kc := findAppByName(resp.Applications, appdef.AppKeycloak)
+	require.NotNil(t, kc)
+	require.NotNil(t, kc.Resources)
+	assert.Equal(t, "1.5g", kc.Resources.Limits.Memory)
 }
 
 func TestGenerate_EffectiveAndBaselineSplit(t *testing.T) {

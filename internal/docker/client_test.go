@@ -65,6 +65,14 @@ func TestParseMemory(t *testing.T) {
 		{"2.5m", 2621440},
 		{"1.5G", 1536 * 1024 * 1024},
 		{"garbage", 0},
+		// Invalid / dangerous inputs all map to 0 (no limit) — never a garbage,
+		// negative, or overflowed byte count reaching Docker / the rabbit override.
+		{"-1g", 0},                   // negative memory is nonsensical
+		{"infg", 0},                  // +Inf
+		{"nan", 0},                   // NaN
+		{"1.5.2g", 0},                // malformed (double dot)
+		{"99999999999999999999g", 0}, // overflows int64
+		{"1e3m", 1000 * 1024 * 1024}, // ParseFloat exponent accepted → 1000 MiB
 	}
 	for _, tt := range tests {
 		got := ParseMemory(tt.input)

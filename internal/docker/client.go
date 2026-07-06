@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -924,10 +925,18 @@ func ParseMemory(s string) int64 {
 	}
 
 	n, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
-	if err != nil {
+	// Reject anything that can't be a sane byte count: parse errors, NaN/Inf,
+	// negatives, and values that overflow int64. Float→int conversion of an
+	// out-of-range value is implementation-defined in Go (minInt64 on amd64,
+	// saturates on arm64), so guarding here keeps HostConfig.Memory / the
+	// RabbitMQ override from ever seeing a garbage/negative byte count from a
+	// user-typed `citeck edit` limit. All invalid input maps to 0 (no limit),
+	// matching the historical empty/garbage behavior.
+	v := n * multiplier
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v >= float64(math.MaxInt64) {
 		return 0
 	}
-	return int64(n * multiplier)
+	return int64(v)
 }
 
 // ContainerStat holds resource usage for a container.
