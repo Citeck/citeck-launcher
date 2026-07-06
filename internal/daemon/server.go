@@ -626,6 +626,12 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate bool) error {
 
 	currentAppCount := act.runtime.AppCount()
 	if bundleFallback && len(genResp.Applications) < currentAppCount {
+		// Reached via invokeReload from a def-edit handler too (e.g.
+		// handlePutAppConfig on a running namespace): this guard returns nil
+		// (success) without ever calling Regenerate, so the caller's "updated
+		// and applied" response is best-effort here — the persisted patch is
+		// saved and will apply on the next real reconcile, but nothing was
+		// reconciled by this call.
 		slog.Warn("Bundle fallback produced a smaller app set; preserving current runtime",
 			"current", currentAppCount, "fallback", len(genResp.Applications))
 		return nil

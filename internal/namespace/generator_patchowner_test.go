@@ -28,9 +28,13 @@ func genWithRabbitPatch(t *testing.T, patch json.RawMessage) *GenResp {
 	return resp
 }
 
-func findApp(apps []appdef.ApplicationDef, name string) *appdef.ApplicationDef {
+// findRabbitmq returns the rabbitmq ApplicationDef from a def slice. Every
+// test in this file patches/inspects rabbitmq specifically, so this is not
+// parameterized by name (a generic `name` param would always receive the
+// same argument — unparam).
+func findRabbitmq(apps []appdef.ApplicationDef) *appdef.ApplicationDef {
 	for i := range apps {
-		if apps[i].Name == name {
+		if apps[i].Name == appdef.AppRabbitmq {
 			return &apps[i]
 		}
 	}
@@ -41,8 +45,8 @@ func TestGenerate_EffectiveAndBaselineSplit(t *testing.T) {
 	patch := json.RawMessage(`{"resources":{"limits":{"memory":"2g"}}}`)
 	resp := genWithRabbitPatch(t, patch)
 
-	base := findApp(resp.BaselineApplications, appdef.AppRabbitmq)
-	eff := findApp(resp.Applications, appdef.AppRabbitmq)
+	base := findRabbitmq(resp.BaselineApplications)
+	eff := findRabbitmq(resp.Applications)
 	require.NotNil(t, base)
 	require.NotNil(t, eff)
 
@@ -57,8 +61,8 @@ func TestGenerate_EffectiveAndBaselineSplit(t *testing.T) {
 
 func TestGenerate_NoPatchIsUnchanged(t *testing.T) {
 	resp := genWithRabbitPatch(t, nil)
-	base := findApp(resp.BaselineApplications, appdef.AppRabbitmq)
-	eff := findApp(resp.Applications, appdef.AppRabbitmq)
+	base := findRabbitmq(resp.BaselineApplications)
+	eff := findRabbitmq(resp.Applications)
 	assert.Equal(t, "1g", base.Resources.Limits.Memory)
 	assert.Equal(t, "1g", eff.Resources.Limits.Memory)
 	// Conf from the const (1 GiB = 1073741824).
@@ -67,7 +71,7 @@ func TestGenerate_NoPatchIsUnchanged(t *testing.T) {
 
 func TestGenerate_DeletedResourcesFallsBackToConst(t *testing.T) {
 	resp := genWithRabbitPatch(t, json.RawMessage(`{"resources":null}`))
-	eff := findApp(resp.Applications, appdef.AppRabbitmq)
+	eff := findRabbitmq(resp.Applications)
 	assert.Nil(t, eff.Resources, "effective def has resources removed")
 	// Conf falls back to the const (never empty/zero).
 	assert.Equal(t, rabbitmqMemoryConf("1g"), string(resp.Files["rabbitmq/citeck-memory.conf"]))
@@ -104,7 +108,7 @@ func TestGenerate_FileEditSurvivesAppPatch(t *testing.T) {
 	}, opts)
 	require.NoError(t, err)
 
-	eff := findApp(resp.Applications, appdef.AppRabbitmq)
+	eff := findRabbitmq(resp.Applications)
 	require.NotNil(t, eff)
 	assert.Equal(t, "2g", eff.Resources.Limits.Memory, "app patch still applied")
 

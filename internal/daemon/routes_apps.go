@@ -564,6 +564,13 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	msg := fmt.Sprintf("App %s config saved; applies on next start", name)
 	if running {
+		// Behavior shift from the pre-refactor editor: a running config-edit used
+		// to call rt.RestartApp(name) unconditionally, so every save — even a
+		// probe/StopTimeout tweak with no effect on the container spec — paid for
+		// a restart. Now invokeReload re-runs Generate (patch applied → effective
+		// def → hash) and reconciles: the app is recreated only when the edit
+		// changed the container's hash input (image, env, volumes, ports, ...);
+		// a non-hash-affecting edit propagates to the live def with no restart.
 		if err := d.invokeReload(); err != nil {
 			writeInternalError(w, err)
 			return
