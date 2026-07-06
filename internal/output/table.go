@@ -98,6 +98,26 @@ type AppTableResult struct {
 	Failed  int
 	Stopped int
 	Total   int
+	// AnyEdited is true when at least one app carries a user config edit
+	// (an ApplicationDef override or an edited mounted file). Callers use it
+	// to print the "* config edited" legend under the table.
+	AnyEdited bool
+}
+
+// EditedMarker is the glyph appended to an app's name in the table when the app
+// has a user config edit (override patch or edited mounted file). Kept ASCII so
+// FormatTable's byte-length column alignment stays correct.
+const EditedMarker = " *"
+
+// appNameCell renders the indented app name plus a dim edited-marker when the
+// app carries a user config edit, so `citeck status` visibly flags which apps
+// diverge from their generated defaults.
+func appNameCell(app api.AppDto) string {
+	name := "  " + app.Name
+	if app.Edited || app.EditedFilesCount > 0 {
+		return name + Colorize(Dim, EditedMarker)
+	}
+	return name
 }
 
 // kindOrder defines the display order for app groups — matches the Kotlin
@@ -161,7 +181,7 @@ func FormatAppTable(apps []api.AppDto) AppTableResult {
 		rows = append(rows, []string{Colorize(Bold, g.label), "", "", "", ""})
 		for _, app := range groupApps {
 			rows = append(rows, []string{
-				"  " + app.Name,
+				appNameCell(app),
 				ColorizeStatus(app.Status),
 				app.Image,
 				app.CPU,
@@ -190,7 +210,7 @@ func FormatAppTable(apps []api.AppDto) AppTableResult {
 		rows = append(rows, []string{Colorize(Bold, "Other"), "", "", "", ""})
 		for _, app := range unknownApps {
 			rows = append(rows, []string{
-				"  " + app.Name,
+				appNameCell(app),
 				ColorizeStatus(app.Status),
 				app.Image,
 				app.CPU,
@@ -204,12 +224,21 @@ func FormatAppTable(apps []api.AppDto) AppTableResult {
 	// (e.g. STARTING → RUNNING → STOPPING_FAILED). 15 = len("STOPPING_FAILED").
 	const statusMinWidth = 15
 
+	anyEdited := false
+	for _, app := range apps {
+		if app.Edited || app.EditedFilesCount > 0 {
+			anyEdited = true
+			break
+		}
+	}
+
 	return AppTableResult{
-		Table:   FormatTable(headers, rows, 0, statusMinWidth),
-		Running: running,
-		Failed:  failed,
-		Stopped: stopped,
-		Total:   total,
+		Table:     FormatTable(headers, rows, 0, statusMinWidth),
+		Running:   running,
+		Failed:    failed,
+		Stopped:   stopped,
+		Total:     total,
+		AnyEdited: anyEdited,
 	}
 }
 

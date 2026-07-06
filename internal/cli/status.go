@@ -15,6 +15,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// editedLegend explains the "*" marker that FormatAppTable appends to apps
+// carrying a user config edit, and points at the reset command. Plain English
+// (like the surrounding "Name:"/"Status:" labels) to avoid 8-locale churn.
+const editedLegend = "* config edited — `citeck edit <app> --reset` reverts an override; " +
+	"reset an edited file in the app's config editor"
+
 func newStatusCmd() *cobra.Command {
 	var watch bool
 
@@ -88,6 +94,9 @@ func newStatusCmd() *cobra.Command {
 					fmt.Println()
 					r := output.FormatAppTable(ns.Apps)
 					output.PrintText(r.Table)
+					if r.AnyEdited {
+						output.PrintText(output.Colorize(output.Dim, editedLegend))
+					}
 				}
 			})
 
@@ -164,7 +173,11 @@ func watchEvents(c *client.DaemonClient) error {
 			output.Colorize(output.Bold, padRight("Status:", 7)), output.ColorizeStatus(ns.Status),
 			output.Colorize(output.Bold, padRight("Bundle:", 7)), ns.BundleRef,
 			urlLine)
-		table, _, _, _, _ := renderAppTable(ns.Apps)
+		r := output.FormatAppTable(ns.Apps)
+		table := r.Table
+		if r.AnyEdited {
+			table += "\n" + output.Colorize(output.Dim, editedLegend)
+		}
 
 		if tty && lastLines > 0 {
 			output.ClearLines(lastLines)
