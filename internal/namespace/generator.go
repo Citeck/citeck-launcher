@@ -154,6 +154,8 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 		if p := ctx.EditedAppPatches[base.Name]; len(p) > 0 {
 			if merged, err := ApplyAppDefPatch(base, p); err == nil {
 				apps[i] = merged
+			} else {
+				slog.Warn("Failed to apply app edit patch; using generated def", "app", base.Name, "err", err)
 			}
 		}
 	}
