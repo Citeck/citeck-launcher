@@ -77,7 +77,10 @@ func generateKeycloak(ctx *NsGenContext) error {
 			TimeoutSeconds:   5,
 		}},
 	}
-	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "1g"}}
+	// 1536m = 1.5 GiB (headroom for realm imports / enterprise auth load). NOT
+	// "1.5g": docker.ParseMemory is integer (Sscanf %d) and would truncate "1.5g"
+	// to 1 GiB — express sub-GiB precision in megabytes.
+	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "1536m"}}
 	// Publish KC management port (container 9000) on a fixed infra-admin
 	// host port — 17013 sits in the same cluster as ZK admin 17018 and
 	// Alfresco 17019 and is high enough to avoid the popular 9000 collision
