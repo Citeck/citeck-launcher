@@ -68,6 +68,10 @@ func TestGenerateLinksCustomDependsOn(t *testing.T) {
 	if l, ok := byName["OnRunning"]; !ok || l.Disabled {
 		t.Errorf("OnRunning should be enabled: ok=%v disabled=%v", ok, l.Disabled)
 	}
+	// Custom links are pinned below every built-in (max built-in order is 101).
+	if l := byName["NoDeps"]; l.Order <= 101 {
+		t.Errorf("custom link order %v should be pinned to the bottom (>101)", l.Order)
+	}
 	if l, ok := byName["OnStarting"]; !ok || !l.Disabled {
 		t.Errorf("OnStarting should be disabled (dep not RUNNING): ok=%v disabled=%v", ok, l.Disabled)
 	}

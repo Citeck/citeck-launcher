@@ -195,6 +195,10 @@ func (r *Runtime) generateLinks() []api.LinkDto {
 	// Empty category = top of the list, no header.
 	const catApps = "Apps"
 	const catResources = "Resources"
+	// customLinkOrderBase pins workspace-config custom links below every
+	// built-in link (whose orders span ~ -100..101) so they always render at
+	// the bottom of the sidebar, regardless of their configured order.
+	const customLinkOrderBase = 1000
 
 	// Icon names are looked up by `/icons/<name>.svg` in the Web UI; the SVGs
 	// are bundled from the Kotlin launcher's resources/icons/app/ folder.
@@ -248,11 +252,14 @@ func (r *Runtime) generateLinks() []api.LinkDto {
 		if hidden {
 			continue
 		}
+		// Pin custom links below every built-in (max built-in order is 101):
+		// customLinkOrderBase + the configured order keeps them at the bottom of
+		// the sidebar while preserving their relative order within the group.
 		links = append(links, api.LinkDto{
 			Name:        cl.Name,
 			URL:         cl.URL,
 			Icon:        cl.Icon,
-			Order:       cl.Order,
+			Order:       customLinkOrderBase + cl.Order,
 			Category:    cl.Category,
 			Description: cl.Description,
 			Custom:      true,
