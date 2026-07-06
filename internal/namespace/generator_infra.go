@@ -12,6 +12,12 @@ import (
 	"github.com/citeck/citeck-launcher/internal/docker"
 )
 
+// rabbitmqMemLimit is the generator's baseline RabbitMQ memory limit. See the
+// generateRabbitMQ comment for the rationale. Hoisted to package scope so
+// deriveRabbitMemoryConf can fall back to it when the effective (post-patch)
+// def has no resources.
+const rabbitmqMemLimit = "1g"
+
 func generateMailpit(ctx *NsGenContext) {
 	if ctx.Config.Email != nil {
 		return
@@ -245,7 +251,6 @@ func generateRabbitMQ(ctx *NsGenContext) {
 	//       rabbitmqMemoryConf).
 	// The limit is a cap, not a reservation: community rabbit (~60-100m) never
 	// approaches it, so smaller bundles pay nothing for the enterprise headroom.
-	const rabbitmqMemLimit = "1g"
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: rabbitmqMemLimit}}
 	// Memory-override conf so the broker self-throttles below the cgroup limit
 	// instead of being OOM-killed (see rabbitmqMemoryConf). Mounted into conf.d,
@@ -286,5 +291,23 @@ func generateRabbitMQ(ctx *NsGenContext) {
 			appdef.AppInitAction{Exec: []string{"rabbitmqctl", "set_user_tags", CiteckSAUser, "monitoring"}},
 			appdef.AppInitAction{Exec: []string{"rabbitmqctl", "set_permissions", "-p", "/", CiteckSAUser, ".*", ".*", ".*"}},
 		)
+	}
+}
+
+// deriveRabbitMemoryConf overwrites the RabbitMQ memory conf so its
+// total_memory_available_override_value tracks the EFFECTIVE (post-patch) memory
+// limit of the rabbitmq app, not the generator constant. Called from Generate
+// after patches are applied. Empty effective memory (operator deleted resources)
+// falls back to the const so we never emit a zero/empty override.
+func deriveRabbitMemoryConf(ctx *NsGenContext, effective []appdef.ApplicationDef) {
+	mem := rabbitmqMemLimit
+	for i := range effective {
+		if effective[i].Name == appdef.AppRabbitmq {
+			if effective[i].Resources != nil && effective[i].Resources.Limits.Memory != "" {
+				mem = effective[i].Resources.Limits.Memory
+			}
+			ctx.Files["rabbitmq/citeck-memory.conf"] = []byte(rabbitmqMemoryConf(mem))
+			return
+		}
 	}
 }

@@ -8,6 +8,7 @@ package namespace
 // YAML helpers, content hashing).
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -22,6 +23,7 @@ import (
 // GenResp is the result of namespace generation.
 type GenResp struct {
 	Applications          []appdef.ApplicationDef
+	BaselineApplications  []appdef.ApplicationDef // patch-free baseline for the editor gutter + DiffAppDef
 	Files                 map[string][]byte
 	BaselineFiles         map[string][]byte         // generated file content BEFORE user-edit merge (baseline source for the editor + WriteEditedFile template)
 	CloudConfig           map[string]map[string]any // per-app ext cloud config for CloudConfigServer
@@ -45,6 +47,10 @@ type GenerateOpts struct {
 	// textual conflict fallback.
 	EditedFileEdits map[string]FileEdit
 	DiskContent     map[string][]byte
+	// EditedAppPatches maps app name → the stored shallow def patch. Applied at
+	// the tail of Generate to produce the effective Applications; the patch-free
+	// set is returned as BaselineApplications. Symmetric to EditedFileEdits.
+	EditedAppPatches map[string]json.RawMessage
 }
 
 // Generate creates container definitions from a namespace config, bundle, and workspace config.
@@ -65,6 +71,7 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 		ctx.ExtraLicenses = opts[0].ExtraLicenses
 		ctx.EditedFileEdits = opts[0].EditedFileEdits
 		ctx.DiskContent = opts[0].DiskContent
+		ctx.EditedAppPatches = opts[0].EditedAppPatches
 	}
 
 	// Load embedded appfiles
@@ -132,11 +139,29 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 		}
 	}
 
-	// Build all applications
-	apps := make([]appdef.ApplicationDef, 0, len(ctx.Applications))
+	// Build baseline (patch-free) applications.
+	baselineApps := make([]appdef.ApplicationDef, 0, len(ctx.Applications))
 	for _, b := range ctx.Applications {
-		apps = append(apps, b.Build())
+		baselineApps = append(baselineApps, b.Build())
 	}
+
+	// Effective applications: overlay each stored patch onto its baseline.
+	// ApplyAppDefPatch is the same shallow merge the runtime used; a nil/failed
+	// patch leaves the baseline as the effective def.
+	apps := make([]appdef.ApplicationDef, len(baselineApps))
+	for i, base := range baselineApps {
+		apps[i] = base
+		if p := ctx.EditedAppPatches[base.Name]; len(p) > 0 {
+			if merged, err := ApplyAppDefPatch(base, p); err == nil {
+				apps[i] = merged
+			}
+		}
+	}
+
+	// Derive def-dependent files from the EFFECTIVE apps, BEFORE the BaselineFiles
+	// snapshot and file-edit merge, so the derived conf is the template a user's
+	// file-edit delta lands on top of.
+	deriveRabbitMemoryConf(ctx, apps)
 
 	// Snapshot the generated (pre-merge) file set as the baseline — the editor
 	// serves it as the change-gutter baseline and WriteEditedFile diffs against
@@ -174,6 +199,7 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 
 	return &GenResp{
 		Applications:          apps,
+		BaselineApplications:  baselineApps,
 		Files:                 ctx.Files,
 		BaselineFiles:         baselineFiles,
 		CloudConfig:           ctx.CloudConfig,

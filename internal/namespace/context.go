@@ -1,6 +1,7 @@
 package namespace
 
 import (
+	"encoding/json"
 	"fmt"
 	"sync/atomic"
 
@@ -114,7 +115,11 @@ type NsGenContext struct {
 	// YAML comment source and textual conflict fallback.
 	EditedFileEdits map[string]FileEdit
 	DiskContent     map[string][]byte
-	portsCounter    atomic.Int32
+	// EditedAppPatches maps app name → the stored shallow def patch, applied at
+	// the tail of Generate to produce the effective Applications. See
+	// GenerateOpts.EditedAppPatches.
+	EditedAppPatches map[string]json.RawMessage
+	portsCounter     atomic.Int32
 }
 
 // NewNsGenContext creates a new generation context for the given config and bundle.
