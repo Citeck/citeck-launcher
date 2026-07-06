@@ -135,6 +135,18 @@ func (r *Runtime) InjectAppsForTest(apps ...*AppRuntime) {
 	}
 }
 
+// SetStatusForTest force-sets the runtime's namespace-level status. Lets
+// out-of-package handler tests (internal/daemon) exercise a status-gated
+// branch (e.g. the running-vs-stopped routing in handlePutAppConfig) without
+// driving the full runtimeLoop via Start(), which would require a real Docker
+// client. Test wiring only — production code must never call it (r.status is
+// owned by the runtimeLoop).
+func (r *Runtime) SetStatusForTest(status NsRuntimeStatus) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.status = status
+}
+
 // AdvanceClock moves the runtime's FakeClock forward by d. Panics if the
 // runtime was not built with WithTestClock(NewFakeClock(...)).
 func (r *Runtime) AdvanceClock(d time.Duration) {

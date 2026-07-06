@@ -243,13 +243,11 @@ func (r *Runtime) UpdateAppDef(appName string, def appdef.ApplicationDef, lock b
 		app.Def = def
 	}
 	// editedAppPatches is a durable user edit. Persist inline + clear r.dirty.
+	// The daemon now drives regeneration via a full reload (Generate re-runs
+	// with the new patch fed in), so no internal cmdRegenerate enqueue here —
+	// see internal/daemon handlePutAppConfig / invokeReload.
 	r.persistState()
 	r.dirty.Store(false)
-	if len(r.lastApps) > 0 {
-		if err := r.cmdQueue.Enqueue(cmdRegenerate{apps: r.lastApps}); err != nil {
-			slog.Warn("Failed to enqueue regenerate after UpdateAppDef", "app", appName, "err", err)
-		}
-	}
 	return nil
 }
 
@@ -267,18 +265,12 @@ func (r *Runtime) ResetAppDef(appName string) error {
 		}
 	}
 	delete(r.editedAppPatches, appName)
+	// Persist inline + clear r.dirty. The daemon now drives regeneration via a
+	// full reload (Generate re-runs with the patch removed) so the original
+	// ApplicationDef is re-installed — see internal/daemon handleResetAppConfig
+	// / invokeReload. No internal cmdRegenerate enqueue here.
 	r.persistState()
 	r.dirty.Store(false)
-	// Trigger a regeneration so the original ApplicationDef is re-installed
-	// on the running runtime; without this the user would have to manually
-	// reload the namespace to see the reset take effect. Pass r.lastApps —
-	// an empty cmdRegenerate{} wipes r.apps because doRegenerate treats
-	// apps=nil as "every app removed from the desired set".
-	if len(r.lastApps) > 0 {
-		if err := r.cmdQueue.Enqueue(cmdRegenerate{apps: r.lastApps}); err != nil {
-			slog.Warn("Failed to enqueue regenerate after ResetAppDef", "app", appName, "err", err)
-		}
-	}
 	return nil
 }
 

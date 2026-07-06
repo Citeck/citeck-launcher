@@ -151,6 +151,10 @@ type Daemon struct {
 	// tests). nil in production — reloadPlanInputs() falls back to
 	// resolveReloadPlanInputs.
 	planInputsFn func(act activeNamespace) (*reloadPlanInputs, error)
+	// reloadFn is the reload entrypoint the config-edit handlers invoke; nil ⇒
+	// d.doReload. A seam so handler tests assert routing without a full
+	// store+bundle harness. Same pattern as planInputsFn.
+	reloadFn func() error
 	// wsCfgResolveFn is a test seam for the workspace-repo config resolve (real
 	// git clone/pull — unreachable from unit tests). Shared by both
 	// resolveWorkspaceConfigForSwitch (SwitchWorkspace) and
@@ -468,6 +472,17 @@ func (d *Daemon) doShutdown(leaveRunning bool) {
 // only changed apps. Thin wrapper over doReloadEx. Caller must hold reloadMu.
 func (d *Daemon) doReload() error { return d.doReloadEx(false, false) }
 
+// invokeReload is what def-edit handlers call to trigger a reload, instead of
+// d.doReload directly — the reloadFn seam lets handler tests assert routing
+// (invoked under reloadMu) without a full store+bundle harness. Caller must
+// hold reloadMu.
+func (d *Daemon) invokeReload() error {
+	if d.reloadFn != nil {
+		return d.reloadFn()
+	}
+	return d.doReload()
+}
+
 // doReloadEx is the shared reload / force-update core. Caller must hold reloadMu.
 //
 //   - forceGitPull bypasses the per-repo PullPeriod throttle so a "Force Update"
@@ -548,6 +563,7 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate bool) error {
 	fileEdits := act.runtime.FileEditsSnapshot()
 	genOpts.EditedFileEdits = fileEdits
 	genOpts.DiskContent = readDiskContent(act.volumesBase, fileEdits)
+	genOpts.EditedAppPatches = act.runtime.AppPatchesSnapshot()
 	// User-added licenses (encrypted store) merge with workspace-declared ones
 	// in the eapps cloud-config. Locked SecretService yields nil and we fall
 	// back to workspace-only licenses — reload never aborts on a locked store.
@@ -557,7 +573,7 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate bool) error {
 		return genErr
 	}
 	act.runtime.SetLastGenFiles(genResp.BaselineFiles)
-	act.runtime.SetGeneratedDefs(genResp.Applications)
+	act.runtime.SetGeneratedDefs(genResp.BaselineApplications)
 
 	// Phase 2: update shared state briefly under write lock. In-place
 	// mutation of the live activeNamespace (not a rebuild-and-swap) so a

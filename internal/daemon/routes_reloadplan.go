@@ -135,6 +135,7 @@ func (d *Daemon) resolveReloadPlanInputs(act activeNamespace) (*reloadPlanInputs
 	fileEdits := act.runtime.FileEditsSnapshot()
 	genOpts.EditedFileEdits = fileEdits
 	genOpts.DiskContent = readDiskContent(act.volumesBase, fileEdits)
+	genOpts.EditedAppPatches = act.runtime.AppPatchesSnapshot()
 	genOpts.ExtraLicenses = collectExtraLicensesFrom(d.licenses)
 	genResp, genErr := namespace.Generate(nsCfg, resolveResult.Bundle, resolveResult.Workspace, act.systemSecrets, genOpts)
 	if genErr != nil {

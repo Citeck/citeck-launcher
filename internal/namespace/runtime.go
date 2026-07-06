@@ -163,12 +163,12 @@ type Runtime struct {
 	registryAuthFn        atomic.Pointer[RegistryAuthFunc]
 	history               *OperationHistory
 	manualStoppedApps     map[string]bool
-	editedAppPatches      map[string]json.RawMessage // user-edit deltas over generated app defs (JSON merge patch)
-	editedFileEdits       map[string]FileEdit        // user-edit deltas for mounted files (key: "<app>/<rel-path>", no leading "./")
-	lastGenFiles          map[string][]byte          // last generated (pre-merge) file set; baseline source for the editor + WriteEditedFile template
+	editedAppPatches      map[string]json.RawMessage       // user-edit deltas over generated app defs (JSON merge patch)
+	editedFileEdits       map[string]FileEdit              // user-edit deltas for mounted files (key: "<app>/<rel-path>", no leading "./")
+	lastGenFiles          map[string][]byte                // last generated (pre-merge) file set; baseline source for the editor + WriteEditedFile template
 	generatedDefs         map[string]appdef.ApplicationDef // last generated (pre-patch) app defs; baseline for config view/edit when the ns is stopped/never-started
-	dependsOnDetachedApps map[string]bool            // detached apps that trigger regen on restart
-	lastApps              []appdef.ApplicationDef     // last app defs passed to doStart
+	dependsOnDetachedApps map[string]bool                  // detached apps that trigger regen on restart
+	lastApps              []appdef.ApplicationDef          // last app defs passed to doStart
 	cachedBundle          *bundle.Def                      // last successfully resolved bundle (persisted)
 	retryState            map[string]retryInfo             // retry tracking for failed apps
 	pullAuthBlockedApps   map[string]bool                  // PULL_FAILED apps awaiting registry credentials — T24 backoff retry is paused for them until creds change (RetryPullFailedApps clears it)
@@ -449,6 +449,17 @@ func (r *Runtime) FileEditsSnapshot() map[string]FileEdit {
 	out := make(map[string]FileEdit, len(r.editedFileEdits))
 	maps.Copy(out, r.editedFileEdits)
 	return out
+}
+
+// AppPatchesSnapshot returns a copy of the stored per-app def patches, for
+// feeding GenerateOpts.EditedAppPatches. Mirrors FileEditsSnapshot.
+func (r *Runtime) AppPatchesSnapshot() map[string]json.RawMessage {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.editedAppPatches) == 0 {
+		return nil
+	}
+	return maps.Clone(r.editedAppPatches)
 }
 
 // AppPatch returns the stored merge patch for an app (nil if none).

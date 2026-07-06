@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -351,6 +352,12 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		genOpts.DiskContent = readDiskContent(volumesBase, fileEdits)
 	}
 
+	// App-def patch deltas (2.7+) are applied inside Generate, producing both
+	// the effective Applications and the patch-free BaselineApplications.
+	if persistedState != nil && len(persistedState.EditedAppPatches) > 0 {
+		genOpts.EditedAppPatches = persistedState.EditedAppPatches
+	}
+
 	// LegacySkip preserves the ≤2.6 "keep on-disk, don't overwrite" behavior for
 	// the FIRST write of a pre-migration state, so legacy edits are never lost
 	// before they are migrated below. Only set when no new-model edits exist but
@@ -371,10 +378,32 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		return nil, genErr
 	}
 
-	// One-shot migration of legacy edit state (≤2.6) → patches, using the defs
-	// and baseline files we just generated.
-	migratedAppPatches := migrateLegacyAppPatches(persistedState, genResp.Applications)
+	// One-shot migration of legacy edit state (≤2.6) → patches, diffed against
+	// the patch-free BASELINE (not the effective Applications set): the
+	// migration must compute a delta over the same patch-free reference the
+	// daemon now feeds back into Generate as EditedAppPatches, or the computed
+	// patch would double-apply whatever the (still-empty, at this point)
+	// EditedAppPatches already contributed to the effective set.
+	migratedAppPatches := migrateLegacyAppPatches(persistedState, genResp.BaselineApplications)
 	migratedFileEdits := migrateLegacyFileEdits(persistedState, genResp.BaselineFiles, volumesBase)
+	if len(migratedAppPatches) > 0 {
+		// First post-upgrade boot only: fold the migrated patches into genOpts
+		// and re-run Generate once so the effective defs + derived conf +
+		// on-disk files reflect the migrated edits before the first start.
+		// Matters once Task 4 removes the runtime-side doStart/doRegenerate
+		// patch overlay: the generator becomes the ONLY place patches apply.
+		if len(genOpts.EditedAppPatches) > 0 {
+			merged := maps.Clone(genOpts.EditedAppPatches)
+			maps.Copy(merged, migratedAppPatches)
+			genOpts.EditedAppPatches = merged
+		} else {
+			genOpts.EditedAppPatches = migratedAppPatches
+		}
+		genResp, genErr = generateAndWriteRuntimeFiles(nsCfg, resolveResult, systemSecrets, genOpts, volumesBase, legacySkip)
+		if genErr != nil {
+			return nil, genErr
+		}
+	}
 	slog.Info("Generated namespace", "apps", len(genResp.Applications), "files", len(genResp.Files))
 
 	appDefs := genResp.Applications
@@ -409,7 +438,7 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	runtime := namespace.NewRuntime(nsCfg, dc, volumesBase)
 	runtime.SetStatePersister(nsStatePersister{store: in.Store, wsID: wsID, nsID: nsID})
 	runtime.SetLastGenFiles(genResp.BaselineFiles)
-	runtime.SetGeneratedDefs(genResp.Applications)
+	runtime.SetGeneratedDefs(genResp.BaselineApplications)
 
 	// Cache the successfully resolved bundle for fallback on future resolve failures
 	if !bundleDef.IsEmpty() {

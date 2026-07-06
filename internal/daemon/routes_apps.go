@@ -545,20 +545,30 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 	newDef.ImageDigest = ""
 	newDef.VolumesContentHash = ""
 
+	// Running edits apply immediately via a full reload (Generate re-runs →
+	// conf re-derives + files rewrite + reconcile). Stopped edits just persist
+	// and apply on next start. Take reloadMu BEFORE mutating so a TryLock
+	// failure (409) never leaves a persisted patch behind a reload that never
+	// ran (mirrors handleResetAppFile).
+	running := rt.Status() != namespace.NsStatusStopped
+	if running {
+		if !d.reloadMu.TryLock() {
+			writeErrorCode(w, http.StatusConflict, api.ErrCodeReloadInProgress, "reload already in progress")
+			return
+		}
+		defer d.reloadMu.Unlock()
+	}
 	if err := rt.UpdateAppDef(name, newDef, true); err != nil {
 		writeInternalError(w, err)
 		return
 	}
-	// While the namespace is stopped the edit is persisted as an override and
-	// applies on the next start, so we must NOT call RestartApp — it would
-	// error with "runtime not started" and surface a spurious failure for a
-	// save that actually succeeded. When running, restart to apply immediately.
-	msg := fmt.Sprintf("App %s config updated and restart requested", name)
-	if rt.Status() == namespace.NsStatusStopped {
-		msg = fmt.Sprintf("App %s config saved; applies on next start", name)
-	} else if err := rt.RestartApp(name); err != nil {
-		writeInternalError(w, err)
-		return
+	msg := fmt.Sprintf("App %s config saved; applies on next start", name)
+	if running {
+		if err := d.invokeReload(); err != nil {
+			writeInternalError(w, err)
+			return
+		}
+		msg = fmt.Sprintf("App %s config updated and applied", name)
 	}
 	writeJSON(w, api.ActionResultDto{Success: true, Message: msg})
 }
@@ -586,9 +596,28 @@ func (d *Daemon) handleResetAppConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Same running/reloadMu/invokeReload shape as handlePutAppConfig, applied
+	// after the patch is cleared so the conf re-derives back to the
+	// generator's default. reloadMu is taken BEFORE the mutation for the same
+	// reason as the PUT handler (a TryLock failure must never leave a cleared
+	// patch behind a reload that never ran).
+	running := rt.Status() != namespace.NsStatusStopped
+	if running {
+		if !d.reloadMu.TryLock() {
+			writeErrorCode(w, http.StatusConflict, api.ErrCodeReloadInProgress, "reload already in progress")
+			return
+		}
+		defer d.reloadMu.Unlock()
+	}
 	if err := rt.ResetAppDef(name); err != nil {
 		writeInternalError(w, err)
 		return
+	}
+	if running {
+		if err := d.invokeReload(); err != nil {
+			writeInternalError(w, err)
+			return
+		}
 	}
 	writeJSON(w, api.ActionResultDto{Success: true, Message: fmt.Sprintf("App %s config reset to default", name)})
 }
