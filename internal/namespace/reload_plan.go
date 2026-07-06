@@ -93,7 +93,8 @@ func splitHashInputLines(s string) []string {
 // no-lock + diff phases and must stay in lockstep with it so the plan never
 // lies:
 //
-//   - edited-locked apps substitute their edited definition (same override);
+//   - desired defs are already effective — the caller (Generate) has applied
+//     any per-app edit patch before PlanRegenerate ever sees them;
 //   - :snapshot images drop any cached digest (shouldPullImage rule);
 //   - missing digests resolve from the LOCAL Docker image cache via
 //     GetImageDigest — the same source doRegenerate reads after its pre-pull;
@@ -113,7 +114,6 @@ func splitHashInputLines(s string) []string {
 // (the hash is sha256 of the input) and additionally yields the line diff.
 func (r *Runtime) PlanRegenerate(ctx context.Context, desired []appdef.ApplicationDef) []ReloadPlanEntry {
 	r.mu.RLock()
-	editPatches := maps.Clone(r.editedAppPatches)
 	detached := maps.Clone(r.manualStoppedApps)
 	currentInputs := make(map[string]string, len(r.apps))
 	for name, app := range r.apps {
@@ -124,7 +124,6 @@ func (r *Runtime) PlanRegenerate(ctx context.Context, desired []appdef.Applicati
 	entries := make([]ReloadPlanEntry, 0, len(desired)+4)
 	seen := make(map[string]bool, len(desired))
 	for _, def := range desired {
-		def = applyEditPatchFrom(def, editPatches[def.Name])
 		snapshotTag := shouldPullImage(def.Kind, def.Image)
 		if snapshotTag {
 			def.ImageDigest = ""
