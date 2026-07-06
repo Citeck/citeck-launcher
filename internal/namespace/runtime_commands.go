@@ -201,16 +201,13 @@ func (r *Runtime) Regenerate(apps []appdef.ApplicationDef, cfg *Config, bundleDe
 	}
 }
 
-// generatedDefForApp returns the last freshly-generated def for appName (the
-// baseline a patch is computed against). Must be called with r.mu held.
+// generatedDefForApp returns the last freshly-generated PATCH-FREE baseline def
+// for appName (the baseline a patch is computed against, and the editor's change
+// gutter source). Reads generatedDefs only: it is refreshed on every load/reload
+// (SetGeneratedDefs), and the baseline is patch-invariant, so it stays correct
+// across edits. lastApps now holds the EFFECTIVE set and must NOT be used here.
+// Must be called with r.mu held.
 func (r *Runtime) generatedDefForApp(appName string) (appdef.ApplicationDef, bool) {
-	// Prefer the running desired set (post-start, authoritative); fall back to
-	// the load-time generated set so config view/edit works while stopped.
-	for _, d := range r.lastApps {
-		if d.Name == appName {
-			return d, true
-		}
-	}
 	if d, ok := r.generatedDefs[appName]; ok {
 		return d, true
 	}
