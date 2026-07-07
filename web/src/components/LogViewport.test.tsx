@@ -59,6 +59,53 @@ describe('LogViewport selection behaviour', () => {
     expect(onSelectingChange).toHaveBeenLastCalledWith(false)
   })
 
+  it('confines drag-selection to the log content (body select-none guard)', () => {
+    const { parentRef } = renderViewport()
+    // The viewport keeps its own subtree selectable even under the guard.
+    expect(parentRef.current!.classList.contains('select-text')).toBe(true)
+    const content = parentRef.current!.firstElementChild as HTMLElement
+    fireEvent.mouseDown(content)
+    // While the drag is active, everything OUTSIDE the viewport must not be
+    // selectable — otherwise dragging above it pulls the toolbar/window
+    // chrome into the selection.
+    expect(document.body.classList.contains('log-select-drag')).toBe(true)
+    fireEvent.mouseUp(window)
+    expect(document.body.classList.contains('log-select-drag')).toBe(false)
+  })
+
+  it('removes the body select-none guard on unmount mid-drag', () => {
+    const { parentRef, unmount } = renderViewport()
+    fireEvent.mouseDown(parentRef.current!.firstElementChild as HTMLElement)
+    expect(document.body.classList.contains('log-select-drag')).toBe(true)
+    unmount()
+    expect(document.body.classList.contains('log-select-drag')).toBe(false)
+  })
+
+  it('ignores right/middle-button mousedown (context-menu copy must not start a drag)', () => {
+    const { parentRef, onSelectingChange, selectAllRef } = renderViewport()
+    selectAllRef.current = true
+    const content = parentRef.current!.firstElementChild as HTMLElement
+    fireEvent.mouseDown(content, { button: 2 })
+    expect(onSelectingChange).not.toHaveBeenCalled()
+    expect(document.body.classList.contains('log-select-drag')).toBe(false)
+    // Right-click must keep the existing selection state for the menu's Copy.
+    expect(selectAllRef.current).toBe(true)
+    fireEvent.mouseDown(content, { button: 1 })
+    expect(onSelectingChange).not.toHaveBeenCalled()
+  })
+
+  it('ends a stuck drag when the window loses focus (missed mouseup)', () => {
+    const { parentRef, onSelectingChange } = renderViewport()
+    const content = parentRef.current!.firstElementChild as HTMLElement
+    fireEvent.mouseDown(content, { button: 0 })
+    expect(document.body.classList.contains('log-select-drag')).toBe(true)
+    // Released outside a lost window → no mouseup ever arrives; blur must
+    // clean everything up so the selection stops following the bare cursor.
+    fireEvent.blur(window)
+    expect(document.body.classList.contains('log-select-drag')).toBe(false)
+    expect(onSelectingChange).toHaveBeenLastCalledWith(false)
+  })
+
   it('cancels select-all mode on content mousedown', () => {
     const { parentRef, selectAllRef } = renderViewport()
     selectAllRef.current = true

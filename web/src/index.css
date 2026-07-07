@@ -206,3 +206,12 @@ dialog::backdrop {
   background: rgba(12, 14, 20, 0.6);
   backdrop-filter: blur(2px);
 }
+
+/* While a mouse drag-selection is in progress inside a log viewport, nothing
+   outside it may join the selection — without this, dragging above the
+   viewport extends the selection into the toolbar and window chrome. The
+   viewport re-enables selection for its own subtree via `select-text`. */
+body.log-select-drag {
+  -webkit-user-select: none;
+  user-select: none;
+}
