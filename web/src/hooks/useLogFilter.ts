@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { LogLevel } from './useLogStream'
+import type { LogEntry, LogLevel } from './useLogStream'
 import { LOG_LEVELS } from './useLogStream'
 
 // DEBUG is hidden by default — it's high-volume, low-signal for routine viewing
@@ -69,6 +69,20 @@ export function buildSearchRegex(query: string, useRegex: boolean): { safeSearch
 }
 
 /**
+ * Pure filter pass: level buckets (null level → UNKNOWN, Kotlin parity with
+ * LogsViewer.kt:151-158) + the wildcard hide-filter. Entries pass through
+ * unchanged — ids intact — so the virtualizer keeps row identity.
+ */
+export function filterEntries(entries: LogEntry[], enabledLevels: Set<LogLevel>, pattern: RegExp | null): LogEntry[] {
+  return entries.filter((e) => {
+    const bucket: LogLevel = e.level ?? 'UNKNOWN'
+    if (!enabledLevels.has(bucket)) return false
+    if (pattern && !pattern.test(e.text)) return false
+    return true
+  })
+}
+
+/**
  * useLogFilter owns everything between the raw line buffer and the rendered
  * list: level toggles, the wildcard hide-filter, the search query (plain /
  * regex) and search-match navigation.
@@ -79,7 +93,7 @@ export function buildSearchRegex(query: string, useRegex: boolean): { safeSearch
  * incidental index resets (e.g. a new chunk shifting matchIndices) don't snap
  * the viewport and lock the user out of free scrolling.
  */
-export function useLogFilter(lines: string[], levels: (LogLevel | null)[]) {
+export function useLogFilter(entries: LogEntry[]) {
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [filterText, setFilterText] = useState('')
@@ -103,24 +117,11 @@ export function useLogFilter(lines: string[], levels: (LogLevel | null)[]) {
     return () => clearTimeout(timer)
   }, [filterText])
 
-  // Kotlin parity: lines without a parsed level fall into the UNKNOWN bucket
-  // and respect its dedicated toggle (LogsViewer.kt:151-158).
-  const { filteredLines, filteredLevels, totalLineCount } = useMemo(() => {
-    const pattern = buildWildcardFilter(debouncedFilter)
-    const entries = lines
-      .map((line, i) => ({ line, level: (levels[i] ?? null) as LogLevel | null }))
-      .filter(({ line, level }) => {
-        const bucket: LogLevel = level ?? 'UNKNOWN'
-        if (!enabledLevels.has(bucket)) return false
-        if (pattern && !pattern.test(line)) return false
-        return true
-      })
-    return {
-      filteredLines: entries.map((e) => e.line),
-      filteredLevels: entries.map((e) => e.level),
-      totalLineCount: lines.length,
-    }
-  }, [lines, levels, enabledLevels, debouncedFilter])
+  const filteredEntries = useMemo(
+    () => filterEntries(entries, enabledLevels, buildWildcardFilter(debouncedFilter)),
+    [entries, enabledLevels, debouncedFilter],
+  )
+  const totalLineCount = entries.length
 
   const { safeSearchRegex, regexWarning } = useMemo(
     () => buildSearchRegex(debouncedSearch, useRegex),
@@ -133,13 +134,13 @@ export function useLogFilter(lines: string[], levels: (LogLevel | null)[]) {
       // Local copy: .test() mutates lastIndex on a /g/ regex, and memoized
       // values must not be mutated (react-compiler contract).
       const re = new RegExp(safeSearchRegex.source, safeSearchRegex.flags)
-      filteredLines.forEach((line, i) => {
+      filteredEntries.forEach((entry, i) => {
         re.lastIndex = 0
-        if (re.test(line)) matches.push(i)
+        if (re.test(entry.text)) matches.push(i)
       })
     }
     return matches
-  }, [filteredLines, safeSearchRegex])
+  }, [filteredEntries, safeSearchRegex])
 
   const safeMatchIndex = matchIndices.length > 0
     ? ((matchIndex % matchIndices.length) + matchIndices.length) % matchIndices.length
@@ -171,7 +172,7 @@ export function useLogFilter(lines: string[], levels: (LogLevel | null)[]) {
     filterText, setFilterText,
     useRegex, setUseRegex,
     enabledLevels, toggleLevel,
-    filteredLines, filteredLevels, totalLineCount,
+    filteredEntries, totalLineCount,
     safeSearchRegex, regexWarning,
     matchIndices, safeMatchIndex, setMatchIndex,
     searchNavTick, bumpSearchNav,

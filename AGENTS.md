@@ -89,6 +89,7 @@ The lists below are **load-bearing highlights, not a full inventory** — `web/s
 **Components (`web/src/components/`)** — notable:
 - `CodeEditor.tsx` — the shared CodeMirror-based code editor (YAML/JSON/JS/shell/dockerfile highlighting, in-editor search) used by WindowEditor and AppConfigEditor
 - `AppTable.tsx`, `BottomPanel.tsx`, `RightDrawer.tsx`, `LogViewer.tsx`, `DaemonLogsViewer.tsx`, `AppDrawerContent.tsx`, `AppConfigEditor.tsx`, `RestartEvents.tsx` — dashboard surfaces
+- `LogViewport.tsx` — virtualized log list (tanstack-virtual). Follow model: **breaking** follow happens on user intent (wheel-up) so a bursty stream can't swallow it via the programmatic-scroll gate; the ≤50px bottom heuristic only re-arms it. Rows are keyed by `LogEntry.id` (`getItemKey`); `shouldAdjustScrollPositionOnItemSizeChange` (an *instance* property, not a constructor option, in the pinned virtual-core) compensates re-measures above the viewport while not following. Content mousedown pauses stream flushes (via `LogViewer`'s `selecting` state) so text selection survives; Ctrl+A select-all auto-clears on Escape/`selectionchange` (stale flag used to re-select the container on every scroll — the "scroll got slow" bug)
 - `FormDialog.tsx` (spec-driven forms), `JournalDialog.tsx` (data-table dialog), `ConfirmModal.tsx`, `Modal.tsx`, `Toast.tsx`, `ContextMenu.tsx`, `Select.tsx`, `StatusBadge.tsx`, `ErrorBoundary.tsx` — reusable primitives
 - Domain dialogs: `NamespaceDialog`/`NamespaceEditDialog`, `SecretsDialog` + `SecretsUnlockGuard` + `MasterPasswordDialog`, `SnapshotsDialog`, `VolumesDialog`, `RegistryCredentialsDialog`, `GitPullErrorDialog`, `UpdateDialog`/`UpdateNotification`
 
@@ -104,8 +105,8 @@ The lists below are **load-bearing highlights, not a full inventory** — `web/s
 - `useResizeHandle.ts` — pointer-capture drag hook for bottom panel resize
 - `useContextMenu.ts` — context menu state management
 - `useInheritedTheme.ts` — desktop child windows inherit the main window's theme
-- `useLogStream.ts` — SSE log stream + level parsing/colors (`LEVEL_COLORS`)
-- `useLogFilter.ts` — client-side log level/search filtering
+- `useLogStream.ts` — log stream buffer + level parsing/colors (`LEVEL_COLORS`). Buffer is `LogEntry[]` with **monotonic per-line ids** (virtualizer row keys — row identity survives front-trims), chunks are **coalesced** (one state update per `LOG_FLUSH_INTERVAL_MS`), the window **freezes while `follow=false`** (no front-trim under a reading user; tail cap re-applied on follow resume) and **pauses while `paused=true`** (mouse drag-selection in progress). The backlog↔live seam is **lossless**: the follow stream opens BEFORE the backlog GET, its lines are held until the backlog lands, and the overlap is deduped on merge (`overlapLineCount`)
+- `useLogFilter.ts` — client-side log level/search filtering over entries (`filterEntries`)
 
 ### Entry Point
 

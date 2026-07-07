@@ -34,18 +34,21 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
   // hides the indentation cues that make stack traces and JSON-payload lines
   // scannable. User can flip "Wrap" on when they want it.
   const [wordWrap, setWordWrap] = useState(false)
+  // True while the user is drag-selecting log text — the stream hook defers
+  // applying new chunks (a DOM update mid-drag collapses the selection).
+  const [selecting, setSelecting] = useState(false)
 
-  const { lines, levels, clear } = useLogStream({ appName, source, active, tail })
+  const { entries, clear } = useLogStream({ appName, source, active, tail, follow, paused: selecting })
   const {
     search, setSearch,
     filterText, setFilterText,
     useRegex, setUseRegex,
     enabledLevels, toggleLevel,
-    filteredLines, filteredLevels, totalLineCount,
+    filteredEntries, totalLineCount,
     safeSearchRegex, regexWarning,
     matchIndices, safeMatchIndex, setMatchIndex,
     searchNavTick, bumpSearchNav,
-  } = useLogFilter(lines, levels)
+  } = useLogFilter(entries)
 
   // Scroll container — owned here so Ctrl+A can scope its selection to the
   // log viewport; passed down to LogViewport which attaches the virtualizer.
@@ -146,6 +149,9 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
       if (e.key === 'Escape') {
         setSearch('')
         searchRef.current?.blur()
+        // Also leave select-all mode — otherwise the viewport keeps
+        // re-applying the full-container selection on every scroll.
+        selectAllRef.current = false
       }
     }
     window.addEventListener('keydown', handleKeyDown)
@@ -153,7 +159,7 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
   }, [clear, active, bumpSearchNav, setMatchIndex, setSearch])
 
   function copyToClipboard() {
-    void copyText(filteredLines.join('\n'))
+    void copyText(filteredEntries.map((e) => e.text).join('\n'))
   }
 
   async function downloadLogs() {
@@ -162,7 +168,7 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
     const pad = (n: number) => String(n).padStart(2, '0')
     const ts = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
     const filename = source === 'daemon' ? `daemon_${ts}.log` : `${appName}_${ts}.log`
-    const content = filteredLines.join('\n')
+    const content = filteredEntries.map((e) => e.text).join('\n')
 
     // Desktop: the WebKitGTK webview has no download manager, so <a download> is
     // a no-op. Save server-side into Downloads, then offer to open the folder.
@@ -327,8 +333,7 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
 
       {/* Log output — virtualized list with stick-to-bottom follow. */}
       <LogViewport
-        filteredLines={filteredLines}
-        filteredLevels={filteredLevels}
+        entries={filteredEntries}
         safeSearchRegex={safeSearchRegex}
         matchIndices={matchIndices}
         safeMatchIndex={safeMatchIndex}
@@ -339,14 +344,15 @@ export function LogViewer({ appName, compact = false, active = true, source = 'a
         setFollow={setFollow}
         parentRef={parentRef}
         selectAllRef={selectAllRef}
+        onSelectingChange={setSelecting}
       />
 
       {/* Status bar */}
       <div className={`flex items-center justify-between text-xs text-muted-foreground ${compact ? 'px-2 py-0.5' : 'mt-2'}`}>
         <span>
-          {filteredLines.length !== totalLineCount
-            ? t('logViewer.linesTotal', { count: filteredLines.length, total: totalLineCount })
-            : t('logViewer.lines', { count: filteredLines.length })}
+          {filteredEntries.length !== totalLineCount
+            ? t('logViewer.linesTotal', { count: filteredEntries.length, total: totalLineCount })
+            : t('logViewer.lines', { count: filteredEntries.length })}
         </span>
         <span>
           {follow && t('logViewer.streaming')} | {t('logViewer.shortcuts')}

@@ -1,5 +1,36 @@
 import { describe, it, expect } from 'vitest'
-import { escapeRegExp, isRegexSafe, buildWildcardFilter, buildSearchRegex } from './useLogFilter'
+import { escapeRegExp, isRegexSafe, buildWildcardFilter, buildSearchRegex, filterEntries } from './useLogFilter'
+import type { LogEntry, LogLevel } from './useLogStream'
+import { LOG_LEVELS } from './useLogStream'
+
+describe('filterEntries (level buckets + wildcard hide-filter over entries)', () => {
+  const entries: LogEntry[] = [
+    { id: 0, text: '[ERROR] boom', level: 'ERROR' },
+    { id: 1, text: '  at Foo.bar', level: 'ERROR' },
+    { id: 2, text: '[INFO] hello', level: 'INFO' },
+    { id: 3, text: 'no level marker', level: null },
+  ]
+  const all = new Set<LogLevel>(LOG_LEVELS)
+
+  it('passes everything through with all levels enabled and no pattern', () => {
+    expect(filterEntries(entries, all, null)).toEqual(entries)
+  })
+
+  it('keeps entry ids intact (virtualizer row identity)', () => {
+    const out = filterEntries(entries, new Set<LogLevel>(['ERROR']), null)
+    expect(out.map((e) => e.id)).toEqual([0, 1])
+  })
+
+  it('routes null-level entries through the UNKNOWN bucket', () => {
+    const noUnknown = new Set<LogLevel>(LOG_LEVELS.filter((l) => l !== 'UNKNOWN'))
+    expect(filterEntries(entries, noUnknown, null).map((e) => e.id)).toEqual([0, 1, 2])
+  })
+
+  it('applies the wildcard pattern to entry text', () => {
+    const out = filterEntries(entries, all, buildWildcardFilter('foo*bar'))
+    expect(out.map((e) => e.id)).toEqual([1])
+  })
+})
 
 describe('escapeRegExp', () => {
   const cases: [string, string][] = [

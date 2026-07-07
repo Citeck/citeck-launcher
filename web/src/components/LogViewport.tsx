@@ -2,13 +2,13 @@ import { useEffect, useRef } from 'react'
 import type { RefObject } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ArrowDown } from 'lucide-react'
-import type { LogLevel } from '../hooks/useLogStream'
+import type { LogEntry } from '../hooks/useLogStream'
 import { LEVEL_COLORS } from '../hooks/useLogStream'
 import { useTranslation } from '../lib/i18n'
 
 export interface LogViewportProps {
-  filteredLines: string[]
-  filteredLevels: (LogLevel | null)[]
+  /** Filtered entries; ids are the stable virtualizer row keys. */
+  entries: LogEntry[]
   safeSearchRegex: RegExp | null
   matchIndices: number[]
   safeMatchIndex: number
@@ -25,18 +25,29 @@ export interface LogViewportProps {
   parentRef: RefObject<HTMLDivElement | null>
   /** Shared "select all is active" flag (set by the parent's Ctrl+A handler). */
   selectAllRef: RefObject<boolean>
+  /**
+   * Fired when the user starts/stops a mouse drag on the log content. The
+   * parent pauses applying new stream chunks while true — any DOM update
+   * during the drag would collapse the native text selection.
+   */
+  onSelectingChange: (selecting: boolean) => void
 }
 
 /**
  * LogViewport is the presentational virtual-list half of the log viewer:
  * virtualized rendering, stick-to-bottom follow behaviour, search-match
  * scrolling, select-all visuals and the floating "Follow" button. It owns no
- * data state — lines/levels/search all arrive as props from useLogStream +
+ * data state — entries/search all arrive as props from useLogStream +
  * useLogFilter via LogViewer.
+ *
+ * Follow model: BREAKING follow happens on user intent (wheel-up — see
+ * onWheel), which a programmatic scroll can never emit, so it cannot be eaten
+ * by the programmatic-scroll gate no matter how fast chunks arrive. The
+ * scroll-position heuristic in onScroll remains for scrollbar/keyboard
+ * scrolling and for RE-ARMING follow at the bottom.
  */
 export function LogViewport({
-  filteredLines,
-  filteredLevels,
+  entries,
   safeSearchRegex,
   matchIndices,
   safeMatchIndex,
@@ -47,6 +58,7 @@ export function LogViewport({
   setFollow,
   parentRef,
   selectAllRef,
+  onSelectingChange,
 }: LogViewportProps) {
   const { t } = useTranslation()
   // When we programmatically scroll (auto-stick-to-bottom, search recentre,
@@ -54,7 +66,7 @@ export function LogViewport({
   // gate the handler reads "scrollTop=0 + tall content" during the very
   // first paint and immediately disables follow — leaving the new window
   // pinned at the top instead of at the live tail. Pulse-high during the
-  // animation frame following a programmatic scroll so the onScroll handler
+  // animation frames following a programmatic scroll so the onScroll handler
   // can tell user input from layout-driven scrolling.
   const programmaticScrollRef = useRef(false)
   const followRef = useRef(follow)
@@ -62,11 +74,23 @@ export function LogViewport({
 
   // eslint-disable-next-line react-hooks/incompatible-library -- useVirtualizer returns are consumed locally, no stale UI risk
   const virtualizer = useVirtualizer({
-    count: filteredLines.length,
+    count: entries.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 20,
     overscan: 30,
+    // Key rows by the entry's monotonic id, NOT the buffer index. When the
+    // sliding window trims old lines off the front, indices shift but ids
+    // don't — React nodes and the measurement cache follow the LINE, so the
+    // content under the viewport doesn't jump and text selection survives.
+    getItemKey: (i) => entries[i]?.id ?? i,
   })
+  // When a row above the viewport is (re)measured to a different size while
+  // the user is reading (not following), compensate the scroll offset so the
+  // visible content doesn't shift — kills the upward-scroll jitter of lazy
+  // dynamic measurement. (Instance property, not a constructor option, in
+  // this virtual-core version.)
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) =>
+    !followRef.current && item.start < (instance.scrollOffset ?? 0)
 
   // While Ctrl+A "select all" is active, re-apply the full-container selection
   // whenever the virtualized range changes (scroll / new lines) so every
@@ -87,11 +111,28 @@ export function LogViewport({
     sel.addRange(range)
   }, [renderedRangeKey, selectAllRef, parentRef])
 
+  // Select-all must not outlive the selection itself: once the browser
+  // selection collapses or leaves the viewport (click on the toolbar, Esc,
+  // focus elsewhere), drop the flag. Without this the re-apply effect above
+  // kept re-selecting the whole container on EVERY scrolled range change
+  // forever — the "scrolling suddenly becomes slow" bug.
+  useEffect(() => {
+    const onSelectionChange = () => {
+      if (!selectAllRef.current) return
+      const sel = window.getSelection()
+      if (!sel || sel.rangeCount === 0 || sel.isCollapsed || !parentRef.current?.contains(sel.anchorNode)) {
+        selectAllRef.current = false
+      }
+    }
+    document.addEventListener('selectionchange', onSelectionChange)
+    return () => document.removeEventListener('selectionchange', onSelectionChange)
+  }, [selectAllRef, parentRef])
+
   // The log list is virtualized, so a native Ctrl+A selection only spans the
   // rendered rows. The copy override below hands over the FULL filtered text;
-  // the ref mirrors filteredLines for that synchronous copy-event read.
-  const filteredLinesRef = useRef(filteredLines)
-  filteredLinesRef.current = filteredLines
+  // the ref mirrors entries for that synchronous copy-event read.
+  const entriesRef = useRef(entries)
+  entriesRef.current = entries
 
   // Override copy when select-all is active and the selection sits inside the
   // log viewport: hand over every filtered line, not just the rendered slice.
@@ -101,7 +142,7 @@ export function LogViewport({
       const sel = window.getSelection()
       if (!sel || sel.rangeCount === 0 || !parentRef.current?.contains(sel.anchorNode)) return
       e.preventDefault()
-      e.clipboardData?.setData('text/plain', filteredLinesRef.current.join('\n'))
+      e.clipboardData?.setData('text/plain', entriesRef.current.map((en) => en.text).join('\n'))
     }
     document.addEventListener('copy', onCopy)
     return () => document.removeEventListener('copy', onCopy)
@@ -121,14 +162,17 @@ export function LogViewport({
   // that shifts matchIndices, hard-pinning the viewport and blocking free scroll).
   const safeMatchIndexRef = useRef(safeMatchIndex)
   safeMatchIndexRef.current = safeMatchIndex
-  const prevFollowedLengthRef = useRef(filteredLines.length)
 
   function programmaticScrollTo(idx: number, align: 'start' | 'center' | 'end') {
     programmaticScrollRef.current = true
     virtualizerRef.current.scrollToIndex(idx, { align })
-    // Clear after two animation frames so the onScroll event emitted by the
-    // browser as a result of this call has time to run + be ignored.
+    // Second pass one frame later: rows measured after the first scroll can
+    // shift the target offset (estimate 20px vs real height), leaving an
+    // 'end' align short of the actual bottom. Re-issue with fresh measurements,
+    // then clear the gate so the onScroll events emitted by both calls have
+    // had time to run + be ignored.
     requestAnimationFrame(() => {
+      virtualizerRef.current.scrollToIndex(idx, { align })
       requestAnimationFrame(() => { programmaticScrollRef.current = false })
     })
   }
@@ -137,20 +181,23 @@ export function LogViewport({
   // floating button.
   function resumeFollow() {
     setFollow(true)
-    const len = filteredLines.length
+    const len = entries.length
     if (len > 0) programmaticScrollTo(len - 1, 'end')
   }
 
-  // Auto-scroll-to-bottom: only when follow is on AND the visible row count
-  // actually grew. Plain re-renders (e.g. virtualizer re-measuring an item
-  // in view) no longer trigger a scroll.
+  // Auto-scroll-to-bottom: only when follow is on AND the newest line actually
+  // changed. Tracked by the tail entry's ID, not the array length — at the
+  // buffer cap the length is constant (trim N + append N) while the content
+  // still advances. Plain re-renders (e.g. virtualizer re-measuring an item
+  // in view) don't trigger a scroll.
+  const lastEntryId = entries.length > 0 ? entries[entries.length - 1].id : -1
+  const prevFollowedIdRef = useRef(lastEntryId)
   useEffect(() => {
-    const len = filteredLines.length
-    if (follow && len > 0 && len !== prevFollowedLengthRef.current) {
-      programmaticScrollTo(len - 1, 'end')
+    if (follow && lastEntryId >= 0 && lastEntryId !== prevFollowedIdRef.current) {
+      programmaticScrollTo(entriesRef.current.length - 1, 'end')
     }
-    prevFollowedLengthRef.current = len
-  }, [filteredLines.length, follow])
+    prevFollowedIdRef.current = lastEntryId
+  }, [lastEntryId, follow])
 
   // Keep the newest line pinned to the bottom while following when the viewport
   // resizes (window resize, panel drag, wrap toggle changing row heights).
@@ -161,7 +208,7 @@ export function LogViewport({
     if (!el || typeof ResizeObserver === 'undefined') return
     const ro = new ResizeObserver(() => {
       if (!followRef.current) return
-      const len = filteredLinesRef.current.length
+      const len = entriesRef.current.length
       if (len === 0) return
       programmaticScrollRef.current = true
       virtualizerRef.current.scrollToIndex(len - 1, { align: 'end' })
@@ -192,6 +239,13 @@ export function LogViewport({
       <div
         ref={parentRef}
         className={`h-full w-full overflow-auto rounded-lg border border-border bg-card p-4 font-mono text-xs ${wordWrap ? '' : 'overflow-x-auto'}`}
+        // Wheel-up is unambiguous user intent to stop following. Unlike the
+        // onScroll heuristic it cannot be swallowed by the programmatic-scroll
+        // gate, which on a bursty stream is high a large fraction of the time
+        // (every chunk pulses it) — the old "can't unstick from the bottom" bug.
+        onWheel={(e) => {
+          if (e.deltaY < 0 && followRef.current) setFollow(false)
+        }}
         onScroll={() => {
           if (!parentRef.current) return
           // Programmatic scroll (auto-stick / search recentre) also fires
@@ -202,7 +256,8 @@ export function LogViewport({
           if (programmaticScrollRef.current) return
           const { scrollTop, scrollHeight, clientHeight } = parentRef.current
           // Stick-to-bottom: drop follow when the user scrolls up past
-          // ~50px, re-arm it when they scroll back to the bottom.
+          // ~50px (scrollbar drag / keyboard — wheel is handled above),
+          // re-arm it when they scroll back to the bottom.
           const distFromBottom = scrollHeight - scrollTop - clientHeight
           if (distFromBottom > 50) {
             if (followRef.current) setFollow(false)
@@ -211,7 +266,7 @@ export function LogViewport({
           }
         }}
       >
-        {filteredLines.length === 0 ? (
+        {entries.length === 0 ? (
           <span className="text-muted-foreground">{t('logViewer.empty')}</span>
         ) : (
           <div
@@ -222,15 +277,20 @@ export function LogViewport({
             }}
             // mousedown on the actual content (not the scrollbar) starts a
             // manual selection → cancel the Ctrl+A "select all" so copy returns
-            // just the user's range. Scrollbar drags land on the parent, not
-            // here, so scrolling keeps select-all alive.
-            onMouseDown={() => { selectAllRef.current = false }}
+            // just the user's range, and signal the drag so the parent pauses
+            // stream flushes (a DOM update mid-drag collapses the selection).
+            // Scrollbar drags land on the parent, not here, so scrolling keeps
+            // select-all alive and doesn't pause the stream.
+            onMouseDown={() => {
+              selectAllRef.current = false
+              onSelectingChange(true)
+              window.addEventListener('mouseup', () => onSelectingChange(false), { once: true })
+            }}
           >
-            {virtualizer.getVirtualItems().map((virtualItem) => {
+            {renderedItems.map((virtualItem) => {
               const idx = virtualItem.index
-              const line = filteredLines[idx]
-              const level = filteredLevels[idx]
-              const colorClass = level ? LEVEL_COLORS[level] : 'text-foreground'
+              const entry = entries[idx]
+              const colorClass = entry.level ? LEVEL_COLORS[entry.level] : 'text-foreground'
               const isCurrentMatch = matchIndices[safeMatchIndex] === idx
 
               return (
@@ -247,7 +307,7 @@ export function LogViewport({
                   }}
                   className={`${colorClass} ${wordWrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'} ${isCurrentMatch ? 'bg-primary/10' : ''}`}
                 >
-                  {safeSearchRegex ? highlightSearch(line, safeSearchRegex, isCurrentMatch) : line}
+                  {safeSearchRegex ? highlightSearch(entry.text, safeSearchRegex, isCurrentMatch) : entry.text}
                 </div>
               )
             })}
