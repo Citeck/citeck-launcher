@@ -753,9 +753,7 @@ func (c *Client) ContainerLogs(ctx context.Context, containerID string, tail int
 	}
 	defer reader.Close()
 
-	// Use stdcopy to properly demultiplex Docker log stream headers
-	var stdout, stderr strings.Builder
-	_, err = stdcopy.StdCopy(&stdout, &stderr, reader)
+	result, err := demuxContainerLogs(reader)
 	if err != nil {
 		// Fallback: some containers use TTY mode (no multiplex headers)
 		reader2, err2 := c.cli.ContainerLogs(ctx, containerID, client.ContainerLogsOptions{
@@ -768,12 +766,26 @@ func (c *Client) ContainerLogs(ctx context.Context, containerID string, tail int
 		data, _ := io.ReadAll(io.LimitReader(reader2, 50*1024*1024)) // 50MB cap
 		return string(data), nil
 	}
-
-	result := stdout.String()
-	if s := stderr.String(); s != "" {
-		result += s
-	}
 	return result, nil
+}
+
+// demuxContainerLogs demultiplexes a Docker multiplexed log stream into a
+// single string, PRESERVING the chronological order in which frames were
+// written. Both stdout and stderr are copied to ONE sink: stdcopy.StdCopy
+// processes frames sequentially, so a single destination keeps each line in
+// wire order. Copying stdout and stderr into separate buffers and
+// concatenating them (all-stdout-then-all-stderr) reorders every stderr line
+// to the very bottom regardless of timestamp — that made a container's startup
+// stderr WARNINGs appear after runtime stdout lines hours newer, and made the
+// visible tail change with the requested tail size (the "the end of the log
+// differs per line count" bug). The live-follow path (handleAppLogsFollow)
+// already writes both streams to one response writer for the same reason.
+func demuxContainerLogs(reader io.Reader) (string, error) {
+	var combined strings.Builder
+	if _, err := stdcopy.StdCopy(&combined, &combined, reader); err != nil {
+		return "", err //nolint:wrapcheck // thin Docker SDK wrapper
+	}
+	return combined.String(), nil
 }
 
 // ExecInContainer runs a command inside a running container.
