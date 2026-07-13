@@ -10,34 +10,35 @@
 ![Platforms](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-lightgrey)
 [![Documentation](https://img.shields.io/badge/docs-readthedocs-8CA1AF?logo=readthedocs)](https://citeck-ecos.readthedocs.io/en/latest/index.html)
 
-**Installez et exécutez une plateforme Citeck complète — en tant qu'application de bureau sur votre ordinateur, ou avec une seule commande sur un serveur.**
+**Exécutez la plateforme Citeck — sur votre propre ordinateur ou sur un serveur — depuis un seul binaire.**
 
-Citeck Launcher est l'installateur officiel et le gestionnaire de conteneurs de la plateforme BPM/ECM low-code **Citeck**. Un unique binaire d'environ 24 Mo fonctionne comme outil en ligne de commande, comme démon en arrière-plan et comme application de bureau multiplateforme — exécutant chaque service Citeck (Keycloak, PostgreSQL, RabbitMQ et les applications web Citeck) en tant que conteneur Docker et les regroupant dans des espaces de noms isolés. Les applications et versions à exécuter sont définies par un **bundle** (par exemple, une édition Community ou Enterprise).
+[Citeck](https://github.com/Citeck) est une alternative auto-hébergée et open source aux suites ECM/BPM propriétaires : gérez documents et enregistrements, automatisez les circuits d'approbation avec un concepteur BPMN intégré, et créez des applications internes — portails, CRM, gestion de dossiers — avec peu ou pas de code. Utilisateurs, rôles et permissions sont inclus.
 
-[Citeck](https://github.com/Citeck) est une plateforme open source de création d'applications métier, combinant les approches **no-code, low-code et pro-code** pour gérer le contenu et les processus. Concrètement, vous l'utilisez pour **gérer des documents et des enregistrements (ECM), automatiser des processus métier et des flux d'approbation grâce à un concepteur BPMN intégré, et créer des applications internes — portails, CRM, gestion de dossiers — avec peu ou pas de code**, avec comptes utilisateurs, rôles et permissions intégrés. C'est une alternative auto-hébergée aux suites ECM/BPM propriétaires, adaptée à tous, des analystes métier aux développeurs.
+L'exécuter à la main revient à orchestrer une vingtaine de services Docker. Citeck Launcher s'en charge pour vous : un unique binaire d'environ 24 Mo qui installe la plateforme, exécute chaque service (Keycloak, PostgreSQL, RabbitMQ et les applications web Citeck) en tant que conteneur Docker, veille à leur bonne santé et les met à niveau. C'est la façon prise en charge d'exécuter Citeck — en application de bureau, ou en ligne de commande sur un serveur.
 
-L'édition **Community** est entièrement open source et gratuite — elle couvre les fonctionnalités de base de la plateforme et est conçue pour être conviviale aux extensions de tout type. Pour des configurations plus exigeantes, l'édition **Enterprise** commerciale ajoute un support professionnel et des fonctionnalités d'entreprise supplémentaires. Ce launcher installe l'une ou l'autre édition. Pour toute question ou une consultation, [contactez l'équipe Citeck](https://www.citeck.ru/contacts/).
+<!-- TODO(screenshot): add an English-locale screenshot of the launcher dashboard here, e.g.
+     ![Citeck Launcher](docs/img/dashboard.png) -->
+
+**Il vous faudra :** Docker · **16 Go** de RAM pour l'édition Community, **24 à 32 Go** pour Enterprise (~24 services) · **plus de 50 Go** d'espace disque libre pour les images et les données. Sous Windows et macOS, installez d'abord [Docker Desktop](https://www.docker.com/products/docker-desktop/).
 
 ## Bureau ou serveur ?
 
-Il existe deux façons de l'exécuter — choisissez celle qui correspond à **l'endroit** où vous souhaitez faire tourner Citeck :
+Deux façons de l'exécuter — choisissez celle qui correspond à **l'endroit** où vous voulez faire tourner Citeck :
 
 | | 🖥 **Application de bureau** | 🖧 **Serveur (CLI)** |
 |---|---|---|
 | Pour | Votre propre ordinateur | Un serveur / une VM Linux (généralement via SSH) |
 | Installation | Téléchargez un installateur, suivez l'assistant | Une seule commande `curl … \| bash` |
-| Interface | Fenêtre native de l'application (GUI) | Terminal — CLI `citeck` + assistant de configuration (TUI) |
+| Interface | Fenêtre native de l'application (GUI) | Terminal — CLI `citeck` + assistant de configuration |
 | Commencez ici | [Application de bureau](#application-de-bureau) | [Installation sur un serveur](#installation-sur-un-serveur) |
 
-> **À noter :** le démarrage rapide `curl … | bash` et la CLI `citeck` présentés dans ce README concernent les **installations sur serveur**. Sur votre propre ordinateur, exécutez Citeck via l'**application de bureau** — tout s'y fait depuis l'interface.
-
-**Prérequis :** Docker ; environ **16 Go** de RAM pour l’édition Community (**24 Go** pour les ~24 services d’Enterprise) ; et des dizaines de Go de disque pour les images.
+> **À noter :** le démarrage rapide `curl … | bash` et les commandes `citeck` de ce README concernent les **installations sur serveur**. Sur votre propre ordinateur, exécutez Citeck via l'**application de bureau** — tout s'y fait depuis l'interface.
 
 ## Application de bureau
 
-L'**application de bureau** exécute Citeck sur votre propre machine Windows, macOS ou Linux : une fenêtre d'application classique, sans ligne de commande. Citeck continue de fonctionner en arrière-plan même après la fermeture de la fenêtre.
+L'application de bureau exécute Citeck sur votre propre machine Windows, macOS ou Linux — une fenêtre d'application classique, sans ligne de commande. Citeck continue de fonctionner en arrière-plan même après la fermeture de la fenêtre.
 
-Les installateurs de bureau sont joints à chaque [version GitHub](https://github.com/Citeck/citeck-launcher/releases) — téléchargez celui correspondant à votre plateforme :
+Installez d'abord Docker Desktop, puis téléchargez l'installateur correspondant à votre plateforme depuis la [dernière version](https://github.com/Citeck/citeck-launcher/releases/latest) :
 
 | OS | Fichier | Arch |
 |----|------|------|
@@ -45,77 +46,113 @@ Les installateurs de bureau sont joints à chaque [version GitHub](https://githu
 | macOS | `citeck-desktop_<version>_darwin_<arch>.dmg` | amd64 (Intel), arm64 (Apple Silicon) |
 | Linux | `citeck-desktop_<version>_linux_<arch>.deb` / `.rpm` | amd64, arm64 |
 
-Chaque installateur dispose d'un fichier `.sha256` associé pour la vérification. Vos données sont préservées lors des mises à niveau.
+Chaque installateur est accompagné d'un fichier `.sha256` pour la vérification. Vos données sont préservées lors des mises à niveau.
 
 ## Installation sur un serveur
 
-> **Pour un serveur ou une VM Linux** — exécutez ces étapes sur le serveur, via SSH.
-
-Prérequis : un hôte Linux avec Docker en cours d'exécution.
+> **Pour un serveur ou une VM Linux** (amd64 ou arm64) — exécutez ces étapes sur le serveur, via SSH. Prérequis : Docker est installé et en cours d'exécution.
 
 ```bash
 curl -fsSL https://github.com/Citeck/citeck-launcher/releases/latest/download/install.sh | bash
 ```
 
-Le script d'installation télécharge la dernière version pour votre plateforme et l'installe dans `/usr/local/bin/`. L'assistant configure ensuite l'espace de noms et démarre la plateforme.
+Le script télécharge la dernière version pour votre plateforme, l'installe dans `/usr/local/bin/citeck`, puis lance l'assistant de configuration (`citeck install`). L'assistant est **interactif et nécessite un véritable terminal**. Il vous demande :
 
-> **Important :** La commande `citeck install` est un **assistant TUI interactif** et nécessite un véritable terminal. L'assistant affiche le mot de passe administrateur généré **une seule fois** à la fin — copiez-le et enregistrez-le, car vous ne pourrez pas le récupérer après avoir fermé l'écran. Si vous le perdez, réinitialisez-le via `citeck setup admin-password` (voir la [référence des commandes](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html)).
+- le **nom de domaine ou l'adresse IP** que vous utiliserez pour accéder à la plateforme depuis un navigateur ;
+- comment **sécuriser la connexion** — automatique, Let's Encrypt, un certificat auto-signé, votre propre certificat, ou HTTP simple. (Let's Encrypt nécessite un nom DNS public pointant vers cet hôte et le port 80 ouvert en entrée ; si l'hôte n'est pas joignable, l'assistant bascule sur un certificat auto-signé.)
+- s'il faut déployer des **données de démonstration**, et s'il faut installer un **service systemd**.
 
-Pour **mettre à niveau** une installation serveur existante, exécutez la même commande en une ligne — le script détecte la version installée, propose la mise à jour, arrête le démon et remplace le binaire (une sauvegarde est conservée dans `/usr/local/bin/citeck.bak`, restaurable via `citeck install --rollback`).
+### Premier démarrage : à quoi s'attendre
 
-## Fonctionnalités
+**Cela prend du temps — c'est normal.** Le launcher télécharge plusieurs Go d'images Docker, puis la plateforme elle-même met environ **10 à 15 minutes** à démarrer : les services démarrent dans l'ordre de leurs dépendances, et Keycloak importe son realm au premier démarrage. Regardez les applications passer une à une à l'état `RUNNING` :
 
-- **Installateur interactif** avec détection automatique de TLS (Let's Encrypt / certificat auto-signé / certificat personnalisé)
-- **i18n** avec 8 langues : anglais, russe, chinois, espagnol, allemand, français, portugais, japonais
-- **Mises à jour en temps réel** via des événements SSE (état des applications, utilisation des ressources)
-- **Instantanés de volumes** avec export/import (ZIP + tar.xz)
-- **Intégration Let's Encrypt** avec renouvellement automatique (domaines et adresses IP)
-- **Runtime auto-réparateur** avec sondes de vivacité, suivi des redémarrages et diagnostics avant redémarrage
-- **Complétion shell** pour bash, zsh, fish, PowerShell
-
-## Utilisation de la CLI (mode serveur)
-
-Ces commandes gèrent une installation en **mode serveur** depuis la CLI. (En mode bureau, les mêmes opérations sont disponibles depuis l'interface de l'application.)
-
-```
-citeck install [--workspace <zip>]        Interactive setup wizard (offline with --workspace)
-citeck start [app] [-d|--detach]          Start daemon/namespace (--detach = don't wait)
-citeck stop [app...] [-d|--detach]        Stop namespace or app(s) (--detach = don't wait)
-citeck restart [app] [-d|--detach]        Restart an app or the entire namespace (waits by default)
-citeck reload [--dry-run] [-d|--detach]   Reload config and regenerate changed containers
-citeck status [-w|--watch]                Show namespace status
-citeck ui [--no-open]                     Open/print the Web UI URL (authenticated link with token auth)
-citeck describe <app>                     Show container details (image, ports, env, volumes)
-citeck health                             Health check (exit 0=healthy, 3=daemon down, 8=unhealthy; 1=generic error)
-citeck diagnose [--fix] [--dry-run]       Run diagnostics (with optional auto-fix)
-citeck logs [app] [-f|--follow]           Stream logs (daemon if no app)
-citeck exec <app> -- <command>            Execute command in container
-citeck update [-f|--file <zip>]           Pull workspace/bundle defs (or import from ZIP)
-citeck upgrade [bundle:version] [--yes]   Switch to a different bundle version
-citeck snapshot list|export|import        Manage volume snapshots (auto stop/start)
-citeck config view|validate               Show or check namespace.yml
-citeck setup [setting]                    Configure settings (TUI menu or by ID)
-citeck setup history                      Show config change history
-citeck clean [--force] [--volumes] [--images]  Clean orphaned resources / prune images
-citeck dump-system-info [--full]          Collect diagnostics ZIP (status, logs, docker inspect, journalctl)
-citeck version [--short]                  Show version info
-citeck completion bash|zsh|fish           Generate shell completion
-citeck uninstall [--delete-data]          Remove systemd service, binary, and (optionally) data
+```bash
+citeck status -w
 ```
 
-Drapeaux globaux : `--format (text|json)`, `--yes/-y`.
+Une fois tout démarré, l'assistant affiche vos informations d'accès :
+
+```
+Citeck is ready!
+
+Open in browser:  https://<the domain you entered>/
+Login:            admin / <generated password>
+```
+
+Deux points importants à propos de cet écran :
+
+- **Le mot de passe administrateur n'est affiché qu'une seule fois.** Copiez-le — il est impossible de le récupérer ensuite. Si vous le perdez, réinitialisez-le avec `citeck setup admin-password`.
+- **Avec un certificat auto-signé, votre navigateur affichera un avertissement.** C'est attendu — cliquez sur *Avancé* → *Continuer*.
+
+Si quelque chose semble toujours bloqué après une vingtaine de minutes, commencez par `citeck diagnose` (ajoutez `--fix` pour le laisser réparer ce qu'il peut) et `citeck logs <app>`.
+
+### Mettre à niveau le launcher
+
+Réexécutez la même commande en une ligne — le script détecte la version installée, propose la mise à jour, arrête le démon et remplace le binaire. Le binaire précédent est conservé dans `/usr/local/bin/citeck.bak` et restaurable via `citeck install --rollback`. Vos données sont préservées.
+
+## Concepts
+
+Trois mots que l'on retrouve partout dans la CLI et la documentation :
+
+- **Namespace** — une instance isolée de la plateforme (ses propres conteneurs, volumes et données). Rien à voir avec les namespaces Linux ou Kubernetes ; c'est une notion propre au launcher. Un serveur typique n'en exécute qu'un seul.
+- **Bundle** — quelles applications et quelles versions composent une release de la plateforme, par exemple une release Community ou Enterprise. `citeck upgrade <bundle:version>` permet de passer de l'une à l'autre.
+- **Workspace** — l'origine de ces définitions (normalement un dépôt Git, ou un `.zip` hors ligne pour les installations en environnement isolé).
+
+## Commandes du quotidien (mode serveur)
+
+En mode bureau, les mêmes opérations sont accessibles depuis l'interface de l'application.
+
+```bash
+citeck status -w                 # suivre l'état du namespace et de chaque application
+citeck logs <app> -f             # diffuser les logs (sans application = le log du démon)
+citeck stop <app>                # arrêter une application — et la garder arrêtée après un redémarrage
+citeck start <app>               # la redémarrer (rattachement)
+citeck reload                    # appliquer les changements de config, recréer uniquement ce qui a changé
+citeck snapshot export <name>    # sauvegarder tous les volumes (arrête la plateforme, puis la relance)
+citeck upgrade <bundle:version>  # basculer vers une autre version de la plateforme
+citeck diagnose --fix            # contrôles de santé avec réparation automatique optionnelle
+citeck setup                     # modifier les paramètres (mot de passe admin, TLS, e-mail, ressources…)
+citeck edit <app>                # éditer la définition d'une application, à la manière de kubectl edit
+```
+
+Notez que `citeck stop <app>` **détache** l'application : elle reste arrêtée à travers les redémarrages et les rechargements jusqu'à ce que vous exécutiez `citeck start <app>`. C'est aussi le moyen de libérer de la mémoire sur un hôte modeste — détacher quelques applications optionnelles économise plusieurs Go.
+
+Drapeaux globaux : `--format (text|json)` pour le scripting, `--yes/-y` pour ignorer les confirmations, `-d/--detach` pour rendre la main immédiatement au lieu d'attendre. Référence complète : `citeck --help` ou la [référence des commandes](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html).
+
+## Ce que vous obtenez
+
+- **Runtime auto-réparateur** — les sondes de vivacité redémarrent les services plantés, et le launcher consigne la raison du plantage
+- **Sauvegarde et restauration** — exportez tous les volumes dans une seule archive, réimportez-les sur cet hôte ou sur un autre
+- **HTTPS prêt à l'emploi** — Let's Encrypt avec renouvellement automatique (domaines *et* adresses IP), ou votre propre certificat
+- **État et logs en direct** — utilisation des ressources et diffusion des logs pour chaque service, dans l'application de bureau ou la CLI
+- Localisé en 8 langues, avec complétion shell pour bash, zsh, fish et PowerShell
+
+## Éditions
+
+L'édition **Community** est entièrement open source et gratuite, et couvre les fonctionnalités de base de la plateforme. L'édition commerciale **Enterprise** ajoute un support professionnel et des fonctionnalités supplémentaires ; son installation nécessite une clé de licence délivrée par Citeck. Ce launcher installe l'une ou l'autre.
 
 ## Modèle de sécurité
 
-Le démon en mode serveur gère des conteneurs Docker : son API équivaut donc en pratique à des **privilèges root** sur l'hôte (par exemple, `citeck exec` exécute des commandes à l'intérieur des conteneurs). La CLI communique avec le démon via un socket Unix réservé à l'utilisateur du démon (mode 0600). Lorsque la Web UI est activée, le démon écoute aussi sur un port TCP : un bind sur localhost expose l'API complète avec pour seule protection l'anti-CSRF navigateur — ce **n'est pas** de l'authentification : tout utilisateur ou processus local pouvant atteindre le port obtient le contrôle total ; les binds hors localhost exigent des certificats clients mTLS. **En mode serveur, la Web UI est désactivée par défaut** (l'interface serveur prise en charge est la CLI/TUI). Activez-la délibérément via `server.webui.enabled: true` dans `daemon.yml` — et uniquement sur un **hôte mono-locataire (single-tenant)** dont tous les utilisateurs locaux disposent déjà d'un accès de confiance de niveau Docker/root.
+Autant le dire d'emblée : **le démon en mode serveur pilote Docker, considérez donc son API comme équivalente à root sur l'hôte** (`citeck exec`, par exemple, exécute des commandes à l'intérieur des conteneurs). C'est pourquoi l'option sûre est celle par défaut.
 
-Pour combler cette lacune sur localhost, activez l'**authentification par jeton d'API** optionnelle : définissez `api_auth.enabled: true` dans `daemon.yml`. Le démon exige alors `Authorization: Bearer <jeton>` (ou le cookie de session de navigateur délivré via `GET /auth/session?token=…`) pour chaque requête `/api` en TCP ; le jeton provient de `api_auth.token` ou est généré automatiquement dans `conf/api-token` (mode 0600) au démarrage. Exécutez `citeck ui` pour afficher — et ouvrir — un lien de navigateur authentifié. Les ressources statiques de l'interface restent publiques ; seule l'API est protégée. Le socket Unix (CLI), l'application de bureau et les clients mTLS ne sont pas concernés.
+- **La CLI** communique avec le démon via un socket Unix réservé à l'utilisateur du démon (mode 0600).
+- **La Web UI du launcher est désactivée par défaut en mode serveur** — l'interface serveur prise en charge est la CLI/TUI. Lorsque vous l'activez (`server.webui.enabled: true` dans `daemon.yml`), le démon écoute aussi sur un port TCP. Un bind sur localhost expose l'API complète avec pour seule protection l'anti-CSRF navigateur — ce **n'est pas** de l'authentification : tout utilisateur ou processus local pouvant atteindre le port obtient le contrôle total. Activez-la délibérément, et uniquement sur un **hôte mono-locataire (single-tenant)** dont tous les utilisateurs locaux disposent déjà d'un accès de confiance de niveau Docker/root. Les binds hors localhost exigent des certificats clients mTLS.
+- **Pour combler cette lacune sur localhost**, activez l'authentification par jeton d'API : `api_auth.enabled: true` dans `daemon.yml`. Chaque requête `/api` en TCP exige alors `Authorization: Bearer <token>` (ou le cookie de session de navigateur délivré par `GET /auth/session?token=…`). Le jeton provient de `api_auth.token`, ou est généré automatiquement dans `conf/api-token` (mode 0600) au démarrage. `citeck ui` affiche — et ouvre — un lien authentifié. Les ressources statiques de l'interface restent publiques ; seule l'API est protégée. Le socket Unix, l'application de bureau et les clients mTLS ne sont pas concernés.
+
+(Cette section concerne l'interface d'administration du *launcher*, et non l'interface de la plateforme Citeck à laquelle vous vous connectez après l'installation.)
 
 ## Documentation
 
-- **Mode serveur :** [Documentation du mode serveur du launcher](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server.html) — installation, configuration (`daemon.yml` / `namespace.yml`) et la [référence des commandes](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html).
-- **Application de bureau :** [Documentation du mode bureau](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher.html).
+- **Mode serveur :** [installation et configuration](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server.html) (`daemon.yml` / `namespace.yml`) et la [référence des commandes](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html)
+- **Application de bureau :** [documentation du mode bureau](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher.html)
+- **Notes de version :** [CHANGELOG.md](../CHANGELOG.md)
 
-## Licence
+## Développement
+
+Construit avec Go (démon + CLI) et React (interface web embarquée) ; l'application de bureau encapsule la même interface dans une webview Wails. Les prérequis, les cibles de build et le contrôle local complet (`make check`) sont documentés dans [AGENTS.md](../AGENTS.md).
+
+## Licence et contact
 
 Citeck Launcher est un logiciel open source sous licence **LGPL-3.0** — voir [LICENSE](../LICENSE).
+
+Pour toute question, une licence Enterprise ou une consultation, [contactez l'équipe Citeck](https://www.citeck.ru/contacts/).
