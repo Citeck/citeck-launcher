@@ -41,6 +41,14 @@ import (
 //go:embed logo.png
 var citeckLogo []byte
 
+// Menu-bar mask for macOS: monochrome glyph inscribed with padding in a 22pt
+// slot (44px @2x). AppKit uses only its alpha channel and tints it to match the
+// menu bar, so the full-color logo.png cannot serve here — and its full-bleed
+// circle would also render a size larger than every neighboring status item.
+//
+//go:embed tray-macos.png
+var citeckTrayIconMac []byte
+
 // Build metadata injected via ldflags (see Makefile build-desktop). gitCommit /
 // buildDate are forwarded to the daemon child's BuildInfo so the supervised
 // daemon reports the same version as the wrapper.
@@ -154,10 +162,20 @@ func run() error {
 		dumpInFlight: &dumpInFlight,
 	})
 
+	// Options.Icon drives the GTK window/taskbar icon on Linux and the window
+	// icon on Windows, but on macOS Wails feeds it to -[NSApp
+	// setApplicationIconImage:], which overrides the bundle's appicon.icns at
+	// runtime — the Dock then shows the raw round logo instead of the macOS-style
+	// squircle in icons/icon.icns. Leave it unset on darwin so the bundle wins.
+	appIcon := citeckLogo
+	if runtime.GOOS == "darwin" {
+		appIcon = nil
+	}
+
 	app := application.New(application.Options{
 		Name:        "Citeck Launcher",
 		Description: "Citeck Platform Launcher",
-		Icon:        citeckLogo,
+		Icon:        appIcon,
 		Assets: application.AssetOptions{
 			Handler: loadingHandler,
 		},
@@ -434,11 +452,14 @@ func run() error {
 	// tray is usable before the daemon is ready, then replace it with the
 	// backend-defined (data-driven) menu once the daemon answers.
 	tray := app.SystemTray.New()
-	tray.SetLabel("Citeck Launcher")
 	tray.SetTooltip("Citeck Launcher")
 	if runtime.GOOS == "darwin" {
-		tray.SetTemplateIcon(citeckLogo)
+		// No label: on macOS SetLabel becomes the status item's button title and
+		// the app name is rendered as text right in the menu bar, eating a strip
+		// of it next to the icon. Menu-bar items are icon-only by convention.
+		tray.SetTemplateIcon(citeckTrayIconMac)
 	} else {
+		tray.SetLabel("Citeck Launcher")
 		tray.SetIcon(citeckLogo)
 	}
 
