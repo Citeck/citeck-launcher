@@ -10,11 +10,11 @@
 ![Platforms](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-lightgrey)
 [![Documentation](https://img.shields.io/badge/docs-readthedocs-8CA1AF?logo=readthedocs)](https://citeck-ecos.readthedocs.io/en/latest/index.html)
 
-**Citeck プラットフォームを、お使いのコンピューターでもサーバーでも、単一のバイナリから実行できます。**
+**Citeck を実行するための公式の方法です。**
 
 [Citeck](https://github.com/Citeck) は、独自仕様の ECM/BPM スイートに代わるセルフホスト型のオープンソースプラットフォームです。ドキュメントやレコードを管理し、組み込みの BPMN デザイナーで承認ワークフローを自動化し、ポータル、CRM、ケース管理といった社内アプリをほとんど、あるいはまったくコードを書かずに構築できます。ユーザー、ロール、権限は標準で組み込まれています。
 
-これを手作業で動かすとなると、数十個の Docker サービスをオーケストレーションすることになります。Citeck Launcher がそれを代行します。約 24 MB の単一バイナリがプラットフォームをインストールし、すべてのサービス（Keycloak、PostgreSQL、RabbitMQ、および Citeck ウェブアプリケーション）を Docker コンテナとして実行し、正常な状態を維持し、アップグレードします。デスクトップアプリとして、あるいはサーバー上のコマンドラインから — これが Citeck をサポートされた形で実行する方法です。
+これを手作業で動かすとなると、数十個の Docker サービスをオーケストレーションすることになります。Citeck Launcher がそれを代行します。約 24 MB の単一バイナリがプラットフォームをインストールし、すべてのサービス（Keycloak、PostgreSQL、RabbitMQ、および Citeck ウェブアプリケーション）を Docker コンテナとして実行し、正常な状態を維持し、アップグレードします — お使いのコンピューター上のデスクトップアプリとして、あるいはサーバー上のコマンドラインから。
 
 <!-- TODO(screenshot): add an English-locale screenshot of the launcher dashboard here, e.g.
      ![Citeck Launcher](docs/img/dashboard.png) -->

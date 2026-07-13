@@ -10,11 +10,11 @@
 ![Platforms](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-lightgrey)
 [![Documentation](https://img.shields.io/badge/docs-readthedocs-8CA1AF?logo=readthedocs)](https://citeck-ecos.readthedocs.io/en/latest/index.html)
 
-**Ejecuta la plataforma Citeck — en tu propio equipo o en un servidor — desde un único binario.**
+**La forma oficial de ejecutar Citeck.**
 
 [Citeck](https://github.com/Citeck) es una alternativa autoalojada y de código abierto a las suites propietarias de ECM/BPM: gestiona documentos y registros, automatiza flujos de aprobación con un diseñador BPMN integrado y crea aplicaciones internas — portales, CRM, gestión de casos — con poco o ningún código. Los usuarios, roles y permisos vienen incorporados.
 
-Ejecutarla a mano implica orquestar un par de docenas de servicios Docker. Citeck Launcher lo hace por ti: un único binario de ~24 MB que instala la plataforma, ejecuta cada servicio (Keycloak, PostgreSQL, RabbitMQ y las aplicaciones web de Citeck) como un contenedor Docker, los mantiene en buen estado y los actualiza. Es la forma soportada de ejecutar Citeck — como aplicación de escritorio o desde la línea de comandos en un servidor.
+Ejecutarla a mano implica orquestar un par de docenas de servicios Docker. Citeck Launcher lo hace por ti: un único binario de ~24 MB que instala la plataforma, ejecuta cada servicio (Keycloak, PostgreSQL, RabbitMQ y las aplicaciones web de Citeck) como un contenedor Docker, los mantiene en buen estado y los actualiza — como aplicación de escritorio en tu propio equipo o desde la línea de comandos en un servidor.
 
 <!-- TODO(screenshot): add an English-locale screenshot of the launcher dashboard here, e.g.
      ![Citeck Launcher](docs/img/dashboard.png) -->

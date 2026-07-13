@@ -10,11 +10,11 @@
 ![Platforms](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-lightgrey)
 [![Documentation](https://img.shields.io/badge/docs-readthedocs-8CA1AF?logo=readthedocs)](https://citeck-ecos.readthedocs.io/en/latest/index.html)
 
-**用一个二进制文件运行 Citeck 平台——在你自己的电脑上，或者在服务器上。**
+**运行 Citeck 的官方方式。**
 
 [Citeck](https://github.com/Citeck) 是专有 ECM/BPM 套件的自托管开源替代方案：管理文档与记录，使用内置的 BPMN 设计器自动化审批流程，并以极少代码甚至无需代码构建内部应用——门户、CRM、案件管理。用户、角色和权限均已内置。
 
-手动运行它意味着要编排二十多个 Docker 服务。Citeck Launcher 替你完成这件事：一个约 24 MB 的单一二进制文件，负责安装平台、以 Docker 容器方式运行每一个服务（Keycloak、PostgreSQL、RabbitMQ 以及 Citeck Web 应用）、保持它们健康运行并进行升级。它是运行 Citeck 的官方推荐方式——既可作为桌面应用，也可在服务器上通过命令行使用。
+手动运行它意味着要编排二十多个 Docker 服务。Citeck Launcher 替你完成这件事：一个约 24 MB 的单一二进制文件，负责安装平台、以 Docker 容器方式运行每一个服务（Keycloak、PostgreSQL、RabbitMQ 以及 Citeck Web 应用）、保持它们健康运行并进行升级——既可作为你自己电脑上的桌面应用，也可在服务器上通过命令行使用。
 
 <!-- TODO(screenshot): add an English-locale screenshot of the launcher dashboard here, e.g.
      ![Citeck Launcher](docs/img/dashboard.png) -->

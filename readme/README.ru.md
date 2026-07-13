@@ -10,11 +10,11 @@
 ![Platforms](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-lightgrey)
 [![Documentation](https://img.shields.io/badge/docs-readthedocs-8CA1AF?logo=readthedocs)](https://citeck-ecos.readthedocs.io/ru/latest/index.html)
 
-**Запустите платформу Citeck — на своём компьютере или на сервере — из одного бинарника.**
+**Официальный способ запуска Citeck.**
 
 [Citeck](https://github.com/Citeck) — self-hosted open-source альтернатива проприетарным ECM/BPM-системам: управление документами и записями, автоматизация маршрутов согласования во встроенном дизайнере BPMN, создание внутренних приложений — порталов, CRM, управления обращениями — почти без кода или вообще без него. Пользователи, роли и права доступа уже встроены.
 
-Запускать это вручную — значит оркестрировать пару десятков Docker-сервисов. Citeck Launcher делает это за вас: единый бинарник ~24 МБ устанавливает платформу, запускает каждый сервис (Keycloak, PostgreSQL, RabbitMQ и веб-приложения Citeck) как Docker-контейнер, следит за их работоспособностью и обновляет их. Это штатный способ запуска Citeck — как десктопное приложение или из командной строки на сервере.
+Запускать это вручную — значит оркестрировать пару десятков Docker-сервисов. Citeck Launcher делает это за вас: единый бинарник ~24 МБ устанавливает платформу, запускает каждый сервис (Keycloak, PostgreSQL, RabbitMQ и веб-приложения Citeck) как Docker-контейнер, следит за их работоспособностью и обновляет их — как десктопное приложение на вашем компьютере или из командной строки на сервере.
 
 <!-- TODO(screenshot): add an English-locale screenshot of the launcher dashboard here, e.g.
      ![Citeck Launcher](docs/img/dashboard.png) -->
