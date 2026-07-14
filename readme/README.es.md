@@ -12,7 +12,7 @@
 
 **La forma oficial de ejecutar Citeck.**
 
-[Citeck](https://github.com/Citeck) es una alternativa autoalojada y de código abierto a las suites propietarias de ECM/BPM: gestiona documentos y registros, automatiza flujos de aprobación con un diseñador BPMN integrado y crea aplicaciones internas — portales, CRM, gestión de casos — con poco o ningún código. Los usuarios, roles y permisos vienen incorporados.
+[Citeck](https://github.com/Citeck) es una plataforma low-code autoalojada y de código abierto que reemplaza a las suites propietarias de ECM/BPM. La usas para casi cualquier tarea que involucre documentos corporativos, desde la aprobación de contratos y compras hasta procesos de RR. HH., un archivo electrónico o un portal corporativo. Dibujas la ruta de cada proceso en el diseñador BPMN integrado y configuras los tipos de documentos sin código; los usuarios, roles y permisos vienen incorporados.
 
 Ejecutarla a mano implica orquestar un par de docenas de servicios Docker. Citeck Launcher lo hace por ti: un único binario de ~24 MB que instala la plataforma, ejecuta cada servicio (Keycloak, PostgreSQL, RabbitMQ y las aplicaciones web de Citeck) como un contenedor Docker, los mantiene en buen estado y los actualiza — como aplicación de escritorio en tu propio equipo o desde la línea de comandos en un servidor.
 
