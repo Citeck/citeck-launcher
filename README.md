@@ -12,6 +12,8 @@
 
 **The official way to run Citeck.**
 
+🌐 [citeck.ru](https://www.citeck.ru) · ✉️ [Contact us](https://www.citeck.ru/contacts/) · 💬 [Telegram community](https://telegram.me/citeck)
+
 [Citeck](https://github.com/Citeck) is a self-hosted, open-source low-code platform that replaces proprietary ECM/BPM suites. You use it for almost any task involving corporate documents, from contract and purchase approvals to HR processes, an electronic archive, or a corporate portal. You draw each process's route in the built-in BPMN designer and configure document types without code; users, roles, and permissions come out of the box.
 
 Citeck Launcher is the easiest way to get the platform running and keep it that way. You download a single ~24 MB binary — it installs the platform and starts its services through Docker. From there, the launcher watches their health and restarts anything that goes down, and it makes upgrading the platform simple and predictable. On your own machine it runs as a desktop app; on a server, from the command line.
@@ -130,16 +132,6 @@ Global flags: `--format (text|json)` for scripting, `--yes/-y` to skip confirmat
 
 The **Community** edition is fully open source and free, and covers the platform's core functionality. The commercial **Enterprise** edition adds professional support and additional features; installing it requires a license key issued by Citeck. This launcher installs either one.
 
-## Security model
-
-We'd rather say this up front: **the server-mode daemon controls Docker, so treat its API as root-equivalent on the host** (`citeck exec`, for example, runs commands inside containers). That is why the safe option is the default.
-
-- **The CLI** talks to the daemon over a Unix socket restricted to the daemon's user (mode 0600).
-- **The launcher's own Web UI is disabled by default in server mode** — the CLI/TUI is the supported server interface. When you enable it (`server.webui.enabled: true` in `daemon.yml`), the daemon also listens on a TCP port. A localhost bind serves the full API with browser-CSRF protection only — that is **not** authentication, so any local user or process that can reach the port gets full control. Enable it deliberately, and only on a **single-tenant host** whose local users are all trusted with Docker/root-level access. Non-localhost binds require mTLS client certificates.
-- **To close that localhost gap**, turn on API token auth: `api_auth.enabled: true` in `daemon.yml`. Every `/api` request over TCP then needs `Authorization: Bearer <token>` (or the browser session cookie issued by `GET /auth/session?token=…`). The token comes from `api_auth.token`, or is auto-generated into `conf/api-token` (mode 0600) on startup. `citeck ui` prints — and opens — an authenticated link. Static UI assets stay public; only the API is gated. The Unix socket, the desktop app, and mTLS clients are unaffected.
-
-(This section is about the *launcher's* admin UI, not the Citeck platform UI you log into after installing.)
-
 ## Documentation
 
 - **Server mode:** [install and configuration](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server.html) (`daemon.yml` / `namespace.yml`) and the [commands reference](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html)
@@ -150,8 +142,6 @@ We'd rather say this up front: **the server-mode daemon controls Docker, so trea
 
 Built with Go (daemon + CLI) and React (embedded web UI); the desktop app wraps the same UI in a Wails webview. Prerequisites, build targets, and the full local check gate (`make check`) are documented in [AGENTS.md](AGENTS.md).
 
-## License and contact
+## License
 
 Citeck Launcher is open source under the **LGPL-3.0** license — see [LICENSE](LICENSE).
-
-For questions, Enterprise licensing, or a consultation, [get in touch with the Citeck team](https://www.citeck.ru/contacts/).

@@ -12,6 +12,8 @@
 
 **A forma oficial de executar o Citeck.**
 
+🌐 [citeck.ru](https://www.citeck.ru) · ✉️ [Fale conosco](https://www.citeck.ru/contacts/) · 💬 [Comunidade no Telegram](https://telegram.me/citeck)
+
 [Citeck](https://github.com/Citeck) é uma plataforma low-code auto-hospedada e de código aberto que substitui as suítes proprietárias de ECM/BPM. Você a usa para quase qualquer tarefa que envolva documentos corporativos, da aprovação de contratos e compras a processos de RH, um arquivo eletrônico ou um portal corporativo. Você desenha a rota de cada processo no designer BPMN integrado e configura os tipos de documento sem código; usuários, papéis e permissões já vêm prontos para uso.
 
 O Citeck Launcher é a maneira mais fácil de colocar a plataforma em funcionamento e mantê-la assim. Você baixa um único binário de ~24 MB — ele instala a plataforma e inicia seus serviços através do Docker. A partir daí, o Launcher monitora a saúde deles e reinicia automaticamente qualquer um que falhe, além de tornar a atualização da plataforma simples e previsível. No seu próprio computador, ele funciona como aplicativo desktop; em um servidor, pela linha de comando.
@@ -130,16 +132,6 @@ Flags globais: `--format (text|json)` para scripts, `--yes/-y` para pular confir
 
 A edição **Community** é totalmente de código aberto e gratuita, e cobre as funcionalidades essenciais da plataforma. A edição comercial **Enterprise** adiciona suporte profissional e recursos extras; instalá-la exige uma chave de licença emitida pela Citeck. Este launcher instala qualquer uma das duas.
 
-## Modelo de segurança
-
-É melhor dizer isso logo de início: **o daemon em modo servidor controla o Docker, portanto trate a API dele como equivalente a root no host** (`citeck exec`, por exemplo, executa comandos dentro dos contêineres). É por isso que a opção segura é o padrão.
-
-- **A CLI** se comunica com o daemon por um socket Unix restrito ao usuário do daemon (modo 0600).
-- **A Web UI do próprio launcher vem desabilitada por padrão no modo servidor** — a interface de servidor suportada é a CLI/TUI. Quando você a habilita (`server.webui.enabled: true` no `daemon.yml`), o daemon passa a escutar também em uma porta TCP. Um bind em localhost serve a API completa apenas com proteção contra CSRF de navegador — isso **não** é autenticação, então qualquer usuário ou processo local com acesso à porta obtém controle total. Habilite-a deliberadamente e apenas em um **host single-tenant**, cujos usuários locais já sejam todos confiáveis para ter acesso de nível Docker/root. Binds fora de localhost exigem certificados de cliente mTLS.
-- **Para fechar essa lacuna no localhost**, ative a autenticação por token de API: `api_auth.enabled: true` no `daemon.yml`. Toda requisição `/api` por TCP passa então a exigir `Authorization: Bearer <token>` (ou o cookie de sessão do navegador emitido por `GET /auth/session?token=…`). O token vem de `api_auth.token` ou é gerado automaticamente em `conf/api-token` (modo 0600) na inicialização. O `citeck ui` imprime — e abre — um link autenticado. Os recursos estáticos da interface continuam públicos; apenas a API é protegida. O socket Unix, o aplicativo desktop e os clientes mTLS não são afetados.
-
-(Esta seção trata da interface administrativa do *launcher*, não da interface da plataforma Citeck na qual você faz login depois da instalação.)
-
 ## Documentação
 
 - **Modo servidor:** [instalação e configuração](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server.html) (`daemon.yml` / `namespace.yml`) e a [referência de comandos](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html)
@@ -150,8 +142,6 @@ A edição **Community** é totalmente de código aberto e gratuita, e cobre as 
 
 Construído em Go (daemon + CLI) e React (Web UI embarcada); o aplicativo desktop encapsula a mesma interface em um webview Wails. Pré-requisitos, targets de build e o gate completo de verificação local (`make check`) estão documentados em [AGENTS.md](../AGENTS.md).
 
-## Licença e contato
+## Licença
 
 O Citeck Launcher é de código aberto sob a licença **LGPL-3.0** — consulte [LICENSE](../LICENSE).
-
-Para dúvidas, licenciamento Enterprise ou uma consultoria, [entre em contato com a equipe Citeck](https://www.citeck.ru/contacts/).

@@ -12,6 +12,8 @@
 
 **Der offizielle Weg, Citeck zu betreiben.**
 
+🌐 [citeck.ru](https://www.citeck.ru) · ✉️ [Kontakt](https://www.citeck.ru/contacts/) · 💬 [Telegram-Community](https://telegram.me/citeck)
+
 [Citeck](https://github.com/Citeck) ist eine selbstgehostete, quelloffene Low-Code-Plattform, die proprietäre ECM/BPM-Suiten ersetzt. Sie nutzen sie für nahezu jede Aufgabe rund um Unternehmensdokumente – von der Freigabe von Verträgen und Einkäufen bis hin zu HR-Prozessen, einem elektronischen Archiv oder einem Unternehmensportal. Den Ablauf jedes Prozesses zeichnen Sie im integrierten BPMN-Designer und konfigurieren Dokumenttypen ohne Code; Benutzer, Rollen und Berechtigungen sind von Haus aus dabei.
 
 Citeck Launcher ist der einfachste Weg, die Plattform zum Laufen zu bringen — und am Laufen zu halten. Sie laden eine einzige, etwa 24 MB große Binärdatei herunter — sie installiert die Plattform und startet ihre Dienste über Docker. Von da an überwacht der Launcher deren Zustand und startet automatisch neu, was ausfällt; außerdem macht er das Aktualisieren der Plattform einfach und vorhersehbar. Auf dem eigenen Rechner läuft er als Desktop-App, auf einem Server über die Kommandozeile.
@@ -130,16 +132,6 @@ Globale Flags: `--format (text|json)` für Skripte, `--yes/-y` zum Überspringen
 
 Die **Community**-Edition ist vollständig quelloffen und kostenlos und deckt die Kernfunktionalität der Plattform ab. Die kommerzielle **Enterprise**-Edition ergänzt sie um professionellen Support und zusätzliche Funktionen; ihre Installation erfordert einen von Citeck ausgestellten Lizenzschlüssel. Dieser Launcher installiert beide.
 
-## Sicherheitsmodell
-
-Das sagen wir lieber gleich vorweg: **Der Daemon im Servermodus steuert Docker, seine API ist daher als root-äquivalent auf dem Host zu behandeln** (`citeck exec` etwa führt Befehle innerhalb von Containern aus). Deshalb ist die sichere Variante die Voreinstellung.
-
-- **Die CLI** kommuniziert mit dem Daemon über einen Unix-Socket, der auf den Benutzer des Daemons beschränkt ist (Modus 0600).
-- **Die Web UI des Launchers ist im Servermodus standardmäßig deaktiviert** — die unterstützte Server-Schnittstelle ist die CLI/TUI. Wenn Sie sie aktivieren (`server.webui.enabled: true` in `daemon.yml`), lauscht der Daemon zusätzlich auf einem TCP-Port. Ein Localhost-Bind stellt die vollständige API nur mit Browser-CSRF-Schutz bereit — das ist **keine** Authentifizierung; jeder lokale Benutzer und jeder Prozess mit Zugriff auf den Port erhält damit volle Kontrolle. Aktivieren Sie sie also bewusst und nur auf einem **Single-Tenant-Host**, dessen lokalen Benutzern ausnahmslos Docker-/Root-Zugriff anvertraut ist. Binds außerhalb von Localhost erfordern mTLS-Client-Zertifikate.
-- **Um diese Localhost-Lücke zu schließen**, aktivieren Sie die API-Token-Authentifizierung: `api_auth.enabled: true` in `daemon.yml`. Jede `/api`-Anfrage über TCP benötigt dann `Authorization: Bearer <token>` (oder das Browser-Sitzungscookie, das `GET /auth/session?token=…` ausstellt). Das Token stammt aus `api_auth.token` oder wird beim Start automatisch in `conf/api-token` (Modus 0600) erzeugt. `citeck ui` gibt einen authentifizierten Link aus — und öffnet ihn. Statische UI-Dateien bleiben öffentlich; geschützt wird nur die API. Der Unix-Socket, die Desktop-App und mTLS-Clients sind davon nicht betroffen.
-
-(Dieser Abschnitt behandelt die Admin-Oberfläche des *Launchers*, nicht die Oberfläche der Citeck-Plattform, an der Sie sich nach der Installation anmelden.)
-
 ## Dokumentation
 
 - **Servermodus:** [Installation und Konfiguration](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server.html) (`daemon.yml` / `namespace.yml`) und die [Befehlsreferenz](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html)
@@ -150,8 +142,6 @@ Das sagen wir lieber gleich vorweg: **Der Daemon im Servermodus steuert Docker, 
 
 Gebaut aus Go (Daemon + CLI) und React (eingebettete Web UI); die Desktop-App kapselt dieselbe Oberfläche in einer Wails-Webview. Voraussetzungen, Build-Targets und das vollständige lokale Prüf-Gate (`make check`) sind in [AGENTS.md](../AGENTS.md) dokumentiert.
 
-## Lizenz und Kontakt
+## Lizenz
 
 Citeck Launcher ist quelloffen unter der **LGPL-3.0**-Lizenz — siehe [LICENSE](../LICENSE).
-
-Bei Fragen, Interesse an Enterprise-Lizenzen oder Beratungsbedarf [nehmen Sie Kontakt mit dem Citeck-Team auf](https://www.citeck.ru/contacts/).

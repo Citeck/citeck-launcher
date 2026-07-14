@@ -12,6 +12,8 @@
 
 **La façon officielle d'exécuter Citeck.**
 
+🌐 [citeck.ru](https://www.citeck.ru) · ✉️ [Nous contacter](https://www.citeck.ru/contacts/) · 💬 [Communauté Telegram](https://telegram.me/citeck)
+
 [Citeck](https://github.com/Citeck) est une plateforme low-code auto-hébergée et open source qui remplace les suites ECM/BPM propriétaires. Vous l'utilisez pour presque toutes les tâches impliquant des documents d'entreprise, de l'approbation des contrats et des achats aux processus RH, en passant par une archive électronique ou un portail d'entreprise. Vous dessinez le parcours de chaque processus dans le concepteur BPMN intégré et configurez les types de documents sans code ; utilisateurs, rôles et permissions sont fournis d'emblée.
 
 Citeck Launcher est le moyen le plus simple de mettre la plateforme en route et de l'y maintenir. Vous téléchargez un unique binaire d'environ 24 Mo : il installe la plateforme et démarre ses services via Docker. Ensuite, Launcher surveille leur état de santé et redémarre tout ce qui tombe, et il rend la mise à niveau de la plateforme simple et prévisible. Sur votre propre ordinateur, il fonctionne comme application de bureau ; sur un serveur, en ligne de commande.
@@ -130,16 +132,6 @@ Options globales : `--format (text|json)` pour le scripting, `--yes/-y` pour ig
 
 L'édition **Community** est entièrement open source et gratuite, et couvre les fonctionnalités de base de la plateforme. L'édition commerciale **Enterprise** ajoute un support professionnel et des fonctionnalités supplémentaires ; son installation nécessite une clé de licence délivrée par Citeck. Ce launcher installe l'une ou l'autre.
 
-## Modèle de sécurité
-
-Autant le dire d'emblée : **le démon en mode serveur pilote Docker, considérez donc son API comme équivalente à root sur l'hôte** (`citeck exec`, par exemple, exécute des commandes à l'intérieur des conteneurs). C'est pourquoi l'option sûre est celle par défaut.
-
-- **La CLI** communique avec le démon via un socket Unix réservé à l'utilisateur du démon (mode 0600).
-- **La Web UI du launcher est désactivée par défaut en mode serveur** — l'interface serveur prise en charge est la CLI/TUI. Lorsque vous l'activez (`server.webui.enabled: true` dans `daemon.yml`), le démon écoute aussi sur un port TCP. Un bind sur localhost expose l'API complète avec pour seule protection l'anti-CSRF navigateur — ce **n'est pas** de l'authentification : tout utilisateur ou processus local pouvant atteindre le port obtient le contrôle total. Activez-la délibérément, et uniquement sur un **hôte mono-locataire (single-tenant)** dont tous les utilisateurs locaux disposent déjà d'un accès de confiance de niveau Docker/root. Les binds hors localhost exigent des certificats clients mTLS.
-- **Pour combler cette lacune sur localhost**, activez l'authentification par jeton d'API : `api_auth.enabled: true` dans `daemon.yml`. Chaque requête `/api` en TCP exige alors `Authorization: Bearer <token>` (ou le cookie de session de navigateur délivré par `GET /auth/session?token=…`). Le jeton provient de `api_auth.token`, ou est généré automatiquement dans `conf/api-token` (mode 0600) au démarrage. `citeck ui` affiche — et ouvre — un lien authentifié. Les ressources statiques de l'interface restent publiques ; seule l'API est protégée. Le socket Unix, l'application de bureau et les clients mTLS ne sont pas concernés.
-
-(Cette section concerne l'interface d'administration du *launcher*, et non l'interface de la plateforme Citeck à laquelle vous vous connectez après l'installation.)
-
 ## Documentation
 
 - **Mode serveur :** [installation et configuration](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server.html) (`daemon.yml` / `namespace.yml`) et la [référence des commandes](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html)
@@ -150,8 +142,6 @@ Autant le dire d'emblée : **le démon en mode serveur pilote Docker, considér
 
 Construit avec Go (démon + CLI) et React (interface web embarquée) ; l'application de bureau encapsule la même interface dans une webview Wails. Les prérequis, les cibles de build et le contrôle local complet (`make check`) sont documentés dans [AGENTS.md](../AGENTS.md).
 
-## Licence et contact
+## Licence
 
 Citeck Launcher est un logiciel open source sous licence **LGPL-3.0** — voir [LICENSE](../LICENSE).
-
-Pour toute question, une licence Enterprise ou une consultation, [contactez l'équipe Citeck](https://www.citeck.ru/contacts/).
