@@ -27,12 +27,10 @@ describe('AppTable', () => {
     expect(screen.getByText('postgres')).toBeInTheDocument()
   })
 
-  it('renders column headers', () => {
+  it('renders no column-header row (labels removed — the table is self-evident)', () => {
     renderWithRouter(<AppTable apps={mockApps} />)
-    const names = screen.getAllByText('Name')
-    expect(names.length).toBeGreaterThanOrEqual(1)
-    const statuses = screen.getAllByText('Status')
-    expect(statuses.length).toBeGreaterThanOrEqual(1)
+    expect(screen.queryByText('Name')).not.toBeInTheDocument()
+    expect(screen.queryByText('Status')).not.toBeInTheDocument()
   })
 
   it('renders status badges for each app', () => {
@@ -42,9 +40,9 @@ describe('AppTable', () => {
     expect(screen.getByText('Failed')).toBeInTheDocument()
   })
 
-  it('renders empty table with header', () => {
-    renderWithRouter(<AppTable apps={[]} />)
-    expect(screen.getByText('Name')).toBeInTheDocument()
+  it('renders an empty table without crashing', () => {
+    const { container } = renderWithRouter(<AppTable apps={[]} />)
+    expect(container.querySelector('table')).toBeInTheDocument()
   })
 
   it('renders group headers', () => {

@@ -58,12 +58,6 @@ function tag(image: string) {
   return i >= 0 ? image.substring(i + 1) : 'latest'
 }
 
-function portsShort(p?: string[]) {
-  if (!p || !p.length) return ''
-  const hostPorts = p.map((s) => { const a = s.split(':'); return a.length === 2 ? a[0] : s })
-  if (hostPorts.length === 1) return hostPorts[0]
-  return `${hostPorts[0]} ..`
-}
 
 export function AppTable({ apps, highlightedApp }: AppTableProps) {
   const groups = groupByKind(apps)
@@ -90,7 +84,7 @@ export function AppTable({ apps, highlightedApp }: AppTableProps) {
           row height. */}
       <table className="w-full text-[13px] leading-tight border-collapse table-fixed whitespace-nowrap">
         {/* Column widths follow Kotlin AppTableColumns.kt: NAME / STATUS are
-            proportional (NAME wider), CPU / MEM / PORTS / TAG / ACTIONS are
+            proportional (NAME wider), CPU / MEM / TAG / ACTIONS are
             fixed in dp. table-fixed prevents a wide status-text from pushing
             the whole row sideways — long content truncates inside its cell. */}
         <colgroup>
@@ -98,34 +92,9 @@ export function AppTable({ apps, highlightedApp }: AppTableProps) {
           <col style={{ width: 'auto' }} />
           <col style={{ width: '70px' }} />
           <col style={{ width: '90px' }} />
-          <col style={{ width: '80px' }} />
           <col style={{ width: '120px' }} />
           <col style={{ width: '104px' }} />
         </colgroup>
-        {/* Sticky header — the app list scrolls (24 rows on enterprise), so the
-            column labels stay pinned to the top of the scroll container. bg +
-            bottom border live on the th cells (a sticky <tr>'s own border can
-            disappear under the scrolling body). */}
-        <thead>
-          <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-            {([
-              { k: 'table.name', c: 'pr-4' },
-              { k: 'table.status', c: 'pr-4' },
-              { k: 'table.cpu', c: 'pr-2 text-right' },
-              { k: 'table.mem', c: 'pr-4 text-right' },
-              { k: 'table.ports', c: 'pr-4' },
-              { k: 'table.tag', c: 'pr-4' },
-              { k: 'table.actions', c: 'text-right' },
-            ] as const).map((col) => (
-              <th
-                key={col.k}
-                className={`sticky top-0 z-10 bg-background py-1.5 font-medium shadow-[inset_0_-1px_0_var(--color-border)] ${col.c}`}
-              >
-                {t(col.k)}
-              </th>
-            ))}
-          </tr>
-        </thead>
         <tbody>
           {groups.map((g) => (
             <GroupRows key={g.kind} labelKey={g.labelKey} apps={g.apps} onAction={runAction} highlightedApp={highlightedApp} />
@@ -208,7 +177,7 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
             grouping signal. A label + trailing hairline keeps that clarity
             without the heavy weight, so the eye can find group boundaries in a
             24-row list. */}
-        <td colSpan={7} className="pt-3.5 pb-1">
+        <td colSpan={6} className="pt-3.5 pb-1">
           <div className="flex items-center gap-2.5">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-foreground/65">
               {/* labelKey may be a raw unknown kind (KIND_I18N fallback) — tDynamic. */}
@@ -293,9 +262,6 @@ function GroupRows({ labelKey, apps, onAction, highlightedApp }: { labelKey: str
                 isCritical={app.memoryCritical}
                 title={app.memoryCritical ? t('table.memory.critical') : app.memoryWarning ? t('table.memory.warning') : undefined}
               />
-            </td>
-            <td className="py-[2px] pr-4 font-mono text-muted-foreground whitespace-nowrap" title={app.ports?.join(', ')}>
-              {portsShort(app.ports)}
             </td>
             {/* Tag is display-only here — copying the full image+tag lives in
                 the right panel (hover copy button) and the app detail view. */}
