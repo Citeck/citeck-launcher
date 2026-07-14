@@ -14,10 +14,9 @@
 
 [Citeck](https://github.com/Citeck) ist eine selbstgehostete, quelloffene Low-Code-Plattform, die proprietäre ECM/BPM-Suiten ersetzt. Sie nutzen sie für nahezu jede Aufgabe rund um Unternehmensdokumente – von der Freigabe von Verträgen und Einkäufen bis hin zu HR-Prozessen, einem elektronischen Archiv oder einem Unternehmensportal. Den Ablauf jedes Prozesses zeichnen Sie im integrierten BPMN-Designer und konfigurieren Dokumenttypen ohne Code; Benutzer, Rollen und Berechtigungen sind von Haus aus dabei.
 
-Von Hand betrieben bedeutet das, gut zwei Dutzend Docker-Dienste zu orchestrieren. Citeck Launcher nimmt Ihnen das ab: eine einzige, etwa 24 MB große Binärdatei, die die Plattform installiert, jeden Dienst (Keycloak, PostgreSQL, RabbitMQ und die Citeck-Webanwendungen) als Docker-Container ausführt, sie gesund hält und aktualisiert — als Desktop-App auf dem eigenen Rechner oder von der Kommandozeile auf einem Server.
+Citeck Launcher ist der einfachste Weg, die Plattform zum Laufen zu bringen — und am Laufen zu halten. Sie laden eine einzige, etwa 24 MB große Binärdatei herunter — sie installiert die Plattform und startet ihre Dienste über Docker. Von da an überwacht der Launcher deren Zustand und startet automatisch neu, was ausfällt; außerdem macht er das Aktualisieren der Plattform einfach und vorhersehbar. Auf dem eigenen Rechner läuft er als Desktop-App, auf einem Server über die Kommandozeile.
 
-<!-- TODO(screenshot): add an English-locale screenshot of the launcher dashboard here, e.g.
-     ![Citeck Launcher](docs/img/dashboard.png) -->
+![Citeck Launcher dashboard](screenshots/running.png)
 
 **Sie brauchen:** Docker · **16 GB** RAM für die Community-Edition, **24–32 GB** für Enterprise (~24 Dienste) · **50+ GB** freien Plattenplatz für Images und Daten. Unter Windows und macOS installieren Sie zuerst [Docker Desktop](https://www.docker.com/products/docker-desktop/).
 
@@ -59,12 +58,12 @@ curl -fsSL https://github.com/Citeck/citeck-launcher/releases/latest/download/in
 Das Skript lädt das neueste Release für Ihre Plattform herunter, installiert es nach `/usr/local/bin/citeck` und startet anschließend den Einrichtungsassistenten (`citeck install`). Der Assistent ist **interaktiv und benötigt ein echtes Terminal**. Er fragt Sie nach:
 
 - dem **Domainnamen oder der IP-Adresse**, über die Sie die Plattform im Browser erreichen wollen;
-- der Art der **Verbindungsabsicherung** — automatisch, Let's Encrypt, ein selbstsigniertes Zertifikat, Ihr eigenes Zertifikat oder einfaches HTTP. (Let's Encrypt setzt einen öffentlichen DNS-Namen voraus, der auf diesen Host zeigt, sowie eingehenden Port 80; ist er nicht erreichbar, weicht der Assistent auf ein selbstsigniertes Zertifikat aus.)
+- der Art der **Verbindungsabsicherung** — automatisch, Let's Encrypt, ein selbstsigniertes Zertifikat, Ihr eigenes Zertifikat oder einfaches HTTP. (Let's Encrypt setzt einen öffentlichen DNS-Namen voraus, der auf diesen Host zeigt, sowie eingehende Verbindungen auf Port 80; ist der Host nicht erreichbar, weicht der Assistent auf ein selbstsigniertes Zertifikat aus.)
 - ob **Demo-Daten** eingespielt und ob ein **systemd-Service** installiert werden soll.
 
 ### Erster Start: was Sie erwartet
 
-**Es dauert eine Weile — das ist normal.** Der Launcher lädt mehrere GB an Docker-Images herunter, danach braucht die Plattform selbst rund **10–15 Minuten**, um hochzufahren: Die Dienste starten in Abhängigkeitsreihenfolge, und Keycloak importiert beim ersten Start sein Realm. Beobachten Sie, wie die Apps eine nach der anderen auf `RUNNING` umspringen:
+**Es dauert eine Weile — das ist normal.** Der Launcher lädt mehrere GB an Docker-Images herunter, danach braucht die Plattform selbst rund **10–15 Minuten**, um hochzufahren: Die Dienste starten in Abhängigkeitsreihenfolge, und Keycloak importiert beim ersten Start seinen Realm. Beobachten Sie, wie die Apps eine nach der anderen auf `RUNNING` umspringen:
 
 ```bash
 citeck status -w
@@ -115,7 +114,7 @@ citeck setup                     # Einstellungen ändern (Admin-Passwort, TLS, E
 citeck edit <app>                # die Definition einer App bearbeiten, im Stil von kubectl edit
 ```
 
-Beachten Sie: `citeck stop <app>` **löst die App ab** (detach): Sie bleibt über Neustarts und Reloads hinweg gestoppt, bis Sie `citeck start <app>` ausführen. Genau so geben Sie auf einem kleinen Host Arbeitsspeicher frei — ein paar optionale Apps abzulösen spart mehrere GB.
+Beachten Sie: `citeck stop <app>` **löst die App ab** (detach): Sie bleibt über Neustarts und Reloads hinweg gestoppt, bis Sie `citeck start <app>` ausführen. Genau so geben Sie auch auf einem kleinen Host Arbeitsspeicher frei — ein paar optionale Apps abzulösen spart mehrere GB.
 
 Globale Flags: `--format (text|json)` für Skripte, `--yes/-y` zum Überspringen von Rückfragen, `-d/--detach`, um sofort zurückzukehren statt zu warten. Vollständige Referenz: `citeck --help` oder die [Befehlsreferenz](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html).
 
@@ -136,7 +135,7 @@ Die **Community**-Edition ist vollständig quelloffen und kostenlos und deckt di
 Das sagen wir lieber gleich vorweg: **Der Daemon im Servermodus steuert Docker, seine API ist daher als root-äquivalent auf dem Host zu behandeln** (`citeck exec` etwa führt Befehle innerhalb von Containern aus). Deshalb ist die sichere Variante die Voreinstellung.
 
 - **Die CLI** kommuniziert mit dem Daemon über einen Unix-Socket, der auf den Benutzer des Daemons beschränkt ist (Modus 0600).
-- **Die Web UI des Launchers ist im Servermodus standardmäßig deaktiviert** — die unterstützte Server-Schnittstelle ist die CLI/TUI. Wenn Sie sie aktivieren (`server.webui.enabled: true` in `daemon.yml`), lauscht der Daemon zusätzlich auf einem TCP-Port. Ein Localhost-Bind stellt die vollständige API nur mit Browser-CSRF-Schutz bereit — das ist **keine** Authentifizierung; jeder lokale Benutzer und jeder Prozess mit Zugriff auf den Port erhält damit volle Kontrolle. Aktivieren Sie sie also bewusst und nur auf einem **Single-Tenant-Host**, dessen lokalen Benutzern ohnehin allen Docker-/Root-Zugriff anvertraut ist. Binds außerhalb von Localhost erfordern mTLS-Client-Zertifikate.
+- **Die Web UI des Launchers ist im Servermodus standardmäßig deaktiviert** — die unterstützte Server-Schnittstelle ist die CLI/TUI. Wenn Sie sie aktivieren (`server.webui.enabled: true` in `daemon.yml`), lauscht der Daemon zusätzlich auf einem TCP-Port. Ein Localhost-Bind stellt die vollständige API nur mit Browser-CSRF-Schutz bereit — das ist **keine** Authentifizierung; jeder lokale Benutzer und jeder Prozess mit Zugriff auf den Port erhält damit volle Kontrolle. Aktivieren Sie sie also bewusst und nur auf einem **Single-Tenant-Host**, dessen lokalen Benutzern ausnahmslos Docker-/Root-Zugriff anvertraut ist. Binds außerhalb von Localhost erfordern mTLS-Client-Zertifikate.
 - **Um diese Localhost-Lücke zu schließen**, aktivieren Sie die API-Token-Authentifizierung: `api_auth.enabled: true` in `daemon.yml`. Jede `/api`-Anfrage über TCP benötigt dann `Authorization: Bearer <token>` (oder das Browser-Sitzungscookie, das `GET /auth/session?token=…` ausstellt). Das Token stammt aus `api_auth.token` oder wird beim Start automatisch in `conf/api-token` (Modus 0600) erzeugt. `citeck ui` gibt einen authentifizierten Link aus — und öffnet ihn. Statische UI-Dateien bleiben öffentlich; geschützt wird nur die API. Der Unix-Socket, die Desktop-App und mTLS-Clients sind davon nicht betroffen.
 
 (Dieser Abschnitt behandelt die Admin-Oberfläche des *Launchers*, nicht die Oberfläche der Citeck-Plattform, an der Sie sich nach der Installation anmelden.)
@@ -155,4 +154,4 @@ Gebaut aus Go (Daemon + CLI) und React (eingebettete Web UI); die Desktop-App ka
 
 Citeck Launcher ist quelloffen unter der **LGPL-3.0**-Lizenz — siehe [LICENSE](../LICENSE).
 
-Bei Fragen, zu Enterprise-Lizenzen oder für eine Beratung [nehmen Sie Kontakt mit dem Citeck-Team auf](https://www.citeck.ru/contacts/).
+Bei Fragen, Interesse an Enterprise-Lizenzen oder Beratungsbedarf [nehmen Sie Kontakt mit dem Citeck-Team auf](https://www.citeck.ru/contacts/).

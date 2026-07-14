@@ -14,10 +14,9 @@
 
 [Citeck](https://github.com/Citeck) es una plataforma low-code autoalojada y de código abierto que reemplaza a las suites propietarias de ECM/BPM. La usas para casi cualquier tarea que involucre documentos corporativos, desde la aprobación de contratos y compras hasta procesos de RR. HH., un archivo electrónico o un portal corporativo. Dibujas la ruta de cada proceso en el diseñador BPMN integrado y configuras los tipos de documentos sin código; los usuarios, roles y permisos vienen incorporados.
 
-Ejecutarla a mano implica orquestar un par de docenas de servicios Docker. Citeck Launcher lo hace por ti: un único binario de ~24 MB que instala la plataforma, ejecuta cada servicio (Keycloak, PostgreSQL, RabbitMQ y las aplicaciones web de Citeck) como un contenedor Docker, los mantiene en buen estado y los actualiza — como aplicación de escritorio en tu propio equipo o desde la línea de comandos en un servidor.
+Citeck Launcher es la forma más sencilla de poner la plataforma en marcha y mantenerla así. Descargas un único binario de ~24 MB: instala la plataforma y arranca sus servicios a través de Docker. A partir de ahí, Launcher vigila su estado y reinicia automáticamente todo lo que se caiga, y hace que actualizar la plataforma sea simple y predecible. En tu propio equipo funciona como aplicación de escritorio; en un servidor, desde la línea de comandos.
 
-<!-- TODO(screenshot): add an English-locale screenshot of the launcher dashboard here, e.g.
-     ![Citeck Launcher](docs/img/dashboard.png) -->
+![Citeck Launcher dashboard](screenshots/running.png)
 
 **Necesitarás:** Docker · **16 GB** de RAM para la edición Community, **24–32 GB** para Enterprise (~24 servicios) · **más de 50 GB** de disco libre para imágenes y datos. En Windows y macOS, instala primero [Docker Desktop](https://www.docker.com/products/docker-desktop/).
 
@@ -70,7 +69,7 @@ El script descarga la última versión para tu plataforma, la instala en `/usr/l
 citeck status -w
 ```
 
-Cuando todo esté arriba, el asistente imprime los datos de acceso:
+Cuando todo esté en marcha, el asistente imprime tus datos de acceso:
 
 ```
 Citeck is ready!
@@ -106,7 +105,7 @@ En modo escritorio, las mismas operaciones están disponibles desde la interfaz 
 citeck status -w                 # observa el namespace y cada aplicación
 citeck logs <app> -f             # transmite los logs (sin aplicación = el log del propio demonio)
 citeck stop <app>                # detén una aplicación — y mantenla detenida entre reinicios
-citeck start <app>               # vuelve a iniciarla (re-adjuntar)
+citeck start <app>               # vuelve a iniciarla (reacoplar)
 citeck reload                    # aplica los cambios de configuración, recrea solo lo que cambió
 citeck snapshot export <name>    # respalda todos los volúmenes (detiene la plataforma y luego la reinicia)
 citeck upgrade <bundle:version>  # cambia a otra versión de la plataforma
@@ -121,7 +120,7 @@ Flags globales: `--format (text|json)` para scripting, `--yes/-y` para omitir co
 
 ## Qué obtienes
 
-- **Tiempo de ejecución autorreparable** — las sondas de actividad reinician los servicios caídos y el launcher registra por qué se cayeron
+- **Entorno de ejecución autorreparable** — las sondas de actividad reinician los servicios caídos y el launcher registra por qué se cayeron
 - **Copia de seguridad y restauración** — exporta todos los volúmenes a un único archivo e impórtalos de vuelta en este host o en otro
 - **HTTPS desde el primer momento** — Let's Encrypt con renovación automática (dominios *y* direcciones IP), o tu propio certificado
 - **Estado y logs en vivo** — uso de recursos y logs en streaming para cada servicio, en la aplicación de escritorio o en la CLI

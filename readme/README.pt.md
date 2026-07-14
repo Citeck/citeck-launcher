@@ -14,10 +14,9 @@
 
 [Citeck](https://github.com/Citeck) é uma plataforma low-code auto-hospedada e de código aberto que substitui as suítes proprietárias de ECM/BPM. Você a usa para quase qualquer tarefa que envolva documentos corporativos, da aprovação de contratos e compras a processos de RH, um arquivo eletrônico ou um portal corporativo. Você desenha a rota de cada processo no designer BPMN integrado e configura os tipos de documento sem código; usuários, papéis e permissões já vêm prontos para uso.
 
-Executá-la manualmente significa orquestrar algumas dezenas de serviços Docker. O Citeck Launcher faz isso por você: um único binário de ~24 MB que instala a plataforma, executa cada serviço (Keycloak, PostgreSQL, RabbitMQ e os aplicativos web do Citeck) como um contêiner Docker, mantém todos saudáveis e os atualiza — como aplicativo desktop no seu próprio computador ou pela linha de comando em um servidor.
+O Citeck Launcher é a maneira mais fácil de colocar a plataforma em funcionamento e mantê-la assim. Você baixa um único binário de ~24 MB — ele instala a plataforma e inicia seus serviços através do Docker. A partir daí, o Launcher monitora a saúde deles e reinicia automaticamente qualquer um que falhe, além de tornar a atualização da plataforma simples e previsível. No seu próprio computador, ele funciona como aplicativo desktop; em um servidor, pela linha de comando.
 
-<!-- TODO(screenshot): add an English-locale screenshot of the launcher dashboard here, e.g.
-     ![Citeck Launcher](docs/img/dashboard.png) -->
+![Citeck Launcher dashboard](screenshots/running.png)
 
 **Você vai precisar de:** Docker · **16 GB** de RAM para a edição Community, **24–32 GB** para a Enterprise (~24 serviços) · **mais de 50 GB** de disco livre para imagens e dados. No Windows e no macOS, instale primeiro o [Docker Desktop](https://www.docker.com/products/docker-desktop/).
 
@@ -56,7 +55,7 @@ Cada instalador tem um arquivo `.sha256` auxiliar para verificação. Seus dados
 curl -fsSL https://github.com/Citeck/citeck-launcher/releases/latest/download/install.sh | bash
 ```
 
-O script baixa a versão mais recente para sua plataforma, instala em `/usr/local/bin/citeck` e então inicia o assistente de configuração (`citeck install`). O assistente é **interativo e requer um terminal real**. Ele pergunta:
+O script baixa a versão mais recente para sua plataforma, a instala em `/usr/local/bin/citeck` e então inicia o assistente de configuração (`citeck install`). O assistente é **interativo e requer um terminal real**. Ele pergunta:
 
 - o **nome de domínio ou IP** que você usará para acessar a plataforma no navegador;
 - como **proteger a conexão** — automático, Let's Encrypt, um certificado autoassinado, seu próprio certificado ou HTTP puro. (O Let's Encrypt precisa de um nome DNS público apontando para este host e da porta 80 aberta para entrada; se não estiver acessível, o assistente recorre a um certificado autoassinado.)
@@ -88,7 +87,7 @@ Se algo continuar parecendo travado após uns 20 minutos, comece por `citeck dia
 
 ### Atualizando o launcher
 
-Execute o mesmo one-liner novamente — o script detecta a versão instalada, solicita a atualização, para o daemon e substitui o binário. O binário anterior é mantido em `/usr/local/bin/citeck.bak` e pode ser restaurado com `citeck install --rollback`. Seus dados são preservados.
+Execute o mesmo one-liner novamente — o script detecta a versão instalada, pergunta se você deseja atualizar, para o daemon e substitui o binário. O binário anterior é mantido em `/usr/local/bin/citeck.bak` e pode ser restaurado com `citeck install --rollback`. Seus dados são preservados.
 
 ## Conceitos
 
@@ -133,10 +132,10 @@ A edição **Community** é totalmente de código aberto e gratuita, e cobre as 
 
 ## Modelo de segurança
 
-É melhor dizer isso logo de início: **o daemon em modo servidor controla o Docker, portanto trate sua API como equivalente a root no host** (`citeck exec`, por exemplo, executa comandos dentro dos contêineres). É por isso que a opção segura é o padrão.
+É melhor dizer isso logo de início: **o daemon em modo servidor controla o Docker, portanto trate a API dele como equivalente a root no host** (`citeck exec`, por exemplo, executa comandos dentro dos contêineres). É por isso que a opção segura é o padrão.
 
 - **A CLI** se comunica com o daemon por um socket Unix restrito ao usuário do daemon (modo 0600).
-- **A Web UI do próprio launcher vem desabilitada por padrão no modo servidor** — a interface de servidor suportada é a CLI/TUI. Quando você a habilita (`server.webui.enabled: true` no `daemon.yml`), o daemon passa a escutar também em uma porta TCP. Um bind em localhost serve a API completa apenas com proteção contra CSRF de navegador — isso **não** é autenticação, então qualquer usuário ou processo local com acesso à porta obtém controle total. Habilite-a deliberadamente e apenas em um **host single-tenant**, cujos usuários locais já sejam todos confiáveis com acesso de nível Docker/root. Binds fora de localhost exigem certificados de cliente mTLS.
+- **A Web UI do próprio launcher vem desabilitada por padrão no modo servidor** — a interface de servidor suportada é a CLI/TUI. Quando você a habilita (`server.webui.enabled: true` no `daemon.yml`), o daemon passa a escutar também em uma porta TCP. Um bind em localhost serve a API completa apenas com proteção contra CSRF de navegador — isso **não** é autenticação, então qualquer usuário ou processo local com acesso à porta obtém controle total. Habilite-a deliberadamente e apenas em um **host single-tenant**, cujos usuários locais já sejam todos confiáveis para ter acesso de nível Docker/root. Binds fora de localhost exigem certificados de cliente mTLS.
 - **Para fechar essa lacuna no localhost**, ative a autenticação por token de API: `api_auth.enabled: true` no `daemon.yml`. Toda requisição `/api` por TCP passa então a exigir `Authorization: Bearer <token>` (ou o cookie de sessão do navegador emitido por `GET /auth/session?token=…`). O token vem de `api_auth.token` ou é gerado automaticamente em `conf/api-token` (modo 0600) na inicialização. O `citeck ui` imprime — e abre — um link autenticado. Os recursos estáticos da interface continuam públicos; apenas a API é protegida. O socket Unix, o aplicativo desktop e os clientes mTLS não são afetados.
 
 (Esta seção trata da interface administrativa do *launcher*, não da interface da plataforma Citeck na qual você faz login depois da instalação.)

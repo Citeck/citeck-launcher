@@ -14,12 +14,11 @@
 
 [Citeck](https://github.com/Citeck) is a self-hosted, open-source low-code platform that replaces proprietary ECM/BPM suites. You use it for almost any task involving corporate documents, from contract and purchase approvals to HR processes, an electronic archive, or a corporate portal. You draw each process's route in the built-in BPMN designer and configure document types without code; users, roles, and permissions come out of the box.
 
-Running it by hand means orchestrating a couple of dozen Docker services. Citeck Launcher does that for you: a single ~24 MB binary that installs the platform, runs every service (Keycloak, PostgreSQL, RabbitMQ, and the Citeck web apps) as a Docker container, keeps them healthy, and upgrades them — as a desktop app on your own machine, or from the command line on a server.
+Citeck Launcher is the easiest way to get the platform running and keep it that way. You download a single ~24 MB binary — it installs the platform and starts its services through Docker. From there, the launcher watches their health and restarts anything that goes down, and it makes upgrading the platform simple and predictable. On your own machine it runs as a desktop app; on a server, from the command line.
 
-<!-- TODO(screenshot): add an English-locale screenshot of the launcher dashboard here, e.g.
-     ![Citeck Launcher](docs/img/dashboard.png) -->
+![Citeck Launcher dashboard](readme/screenshots/running.png)
 
-**You'll need:** Docker · **16 GB** RAM for the Community edition, **24–32 GB** for Enterprise (~24 services) · **50+ GB** of free disk for images and data. On Windows and macOS, install [Docker Desktop](https://www.docker.com/products/docker-desktop/) first.
+**You'll need:** Docker · **16 GB** RAM for the Community edition, **24–32 GB** for Enterprise (~24 services) · **50+ GB** of free disk space for images and data. On Windows and macOS, install [Docker Desktop](https://www.docker.com/products/docker-desktop/) first.
 
 ## Desktop or server?
 
@@ -58,7 +57,7 @@ curl -fsSL https://github.com/Citeck/citeck-launcher/releases/latest/download/in
 
 The script downloads the latest release for your platform, installs it to `/usr/local/bin/citeck`, and then launches the setup wizard (`citeck install`). The wizard is **interactive and needs a real terminal**. It asks you for:
 
-- the **domain name or IP** you'll use to reach the platform in a browser;
+- the **domain name or IP** you'll use to reach the platform in a browser.
 - how to **secure the connection** — automatic, Let's Encrypt, a self-signed certificate, your own certificate, or plain HTTP. (Let's Encrypt needs a public DNS name pointing at this host and inbound port 80; if it isn't reachable, the wizard falls back to a self-signed certificate.)
 - whether to deploy **demo data**, and whether to install a **systemd service**.
 
@@ -88,7 +87,7 @@ If something still looks stuck after ~20 minutes, start with `citeck diagnose` (
 
 ### Upgrading the launcher
 
-Run the same one-liner again — the script detects the installed version, prompts to update, stops the daemon, and replaces the binary. The previous binary is kept at `/usr/local/bin/citeck.bak` and restorable with `citeck install --rollback`. Your data is preserved.
+Run the same one-liner again — the script detects the installed version, prompts you to update, stops the daemon, and replaces the binary. The previous binary is kept at `/usr/local/bin/citeck.bak` and can be restored with `citeck install --rollback`. Your data is preserved.
 
 ## Concepts
 
@@ -149,7 +148,7 @@ We'd rather say this up front: **the server-mode daemon controls Docker, so trea
 
 ## Development
 
-Built from Go (daemon + CLI) and React (embedded web UI); the desktop app wraps the same UI in a Wails webview. Prerequisites, build targets, and the full local check gate (`make check`) are documented in [AGENTS.md](AGENTS.md).
+Built with Go (daemon + CLI) and React (embedded web UI); the desktop app wraps the same UI in a Wails webview. Prerequisites, build targets, and the full local check gate (`make check`) are documented in [AGENTS.md](AGENTS.md).
 
 ## License and contact
 
