@@ -136,11 +136,6 @@ The **Community** edition is fully open source and free, and covers the platform
 
 - **Server mode:** [install and configuration](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server.html) (`daemon.yml` / `namespace.yml`) and the [commands reference](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html)
 - **Desktop app:** [desktop-mode docs](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher.html)
-- **Release notes:** [CHANGELOG.md](CHANGELOG.md)
-
-## Development
-
-Built with Go (daemon + CLI) and React (embedded web UI); the desktop app wraps the same UI in a Wails webview. Prerequisites, build targets, and the full local check gate (`make check`) are documented in [AGENTS.md](AGENTS.md).
 
 ## License
 

@@ -136,11 +136,6 @@ A edição **Community** é totalmente de código aberto e gratuita, e cobre as 
 
 - **Modo servidor:** [instalação e configuração](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server.html) (`daemon.yml` / `namespace.yml`) e a [referência de comandos](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher_server/commands.html)
 - **Aplicativo desktop:** [documentação do modo desktop](https://citeck-ecos.readthedocs.io/en/latest/admin/launch_setup/launcher.html)
-- **Notas de release:** [CHANGELOG.md](../CHANGELOG.md)
-
-## Desenvolvimento
-
-Construído em Go (daemon + CLI) e React (Web UI embarcada); o aplicativo desktop encapsula a mesma interface em um webview Wails. Pré-requisitos, targets de build e o gate completo de verificação local (`make check`) estão documentados em [AGENTS.md](../AGENTS.md).
 
 ## Licença
 
