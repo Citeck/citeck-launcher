@@ -142,7 +142,8 @@ type LinkDto struct {
 	URL            string  `json:"url"`
 	Icon           string  `json:"icon,omitempty"`
 	Order          float64 `json:"order"`
-	Category       string  `json:"category,omitempty"`       // grouping header in the sidebar
+	Category       string  `json:"category,omitempty"`       // grouping header in the sidebar (English fallback)
+	CategoryKey    string  `json:"categoryKey,omitempty"`    // i18n key for the built-in category header; web resolves it, falling back to Category
 	Description    string  `json:"description,omitempty"`    // English fallback tooltip
 	DescriptionKey string  `json:"descriptionKey,omitempty"` // i18n key; web resolves the localized tooltip, falling back to Description
 	AlwaysEnabled  bool    `json:"alwaysEnabled,omitempty"`  // remains clickable when namespace is STOPPED (Kotlin parity)

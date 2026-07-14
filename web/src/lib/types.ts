@@ -51,6 +51,7 @@ export interface LinkDto {
   icon?: string
   order: number
   category?: string
+  categoryKey?: string
   description?: string
   descriptionKey?: string
   alwaysEnabled?: boolean

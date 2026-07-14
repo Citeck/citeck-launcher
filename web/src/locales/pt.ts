@@ -131,6 +131,8 @@ const pt = {
   'links.pgAdmin.tooltip': 'Ferramenta de gerenciamento e design de bancos de dados Postgres.\nUsuário: admin@admin.com\nSenha: admin\nSenha do banco de dados: postgres',
   'links.documentation.tooltip': 'Documentação do Citeck',
   'links.aiBot.tooltip': 'Bot do Telegram para assistência de documentação com IA',
+  'links.category.apps': 'Aplicativos',
+  'links.category.resources': 'Recursos',
   'volumes.delete.title': 'Excluir o volume {name}?',
   'volumes.delete.message': 'Esta a\u00e7\u00e3o excluir\u00e1 permanentemente o volume e todos os seus dados.',
   'volumes.delete.success': 'Volume exclu\u00eddo',
@@ -313,7 +315,7 @@ const pt = {
   'common.retry': 'Tentar novamente',
 
   // -- Daemon Logs --
-  'daemonLogs.title': 'Logs do daemon',
+  'daemonLogs.title': 'Logs do Launcher',
 
   // -- Log Viewer --
   'logViewer.search': 'Pesquisar... (Ctrl+F)',

@@ -131,6 +131,8 @@ const ja = {
   'links.pgAdmin.tooltip': 'Postgres \u30c7\u30fc\u30bf\u30d9\u30fc\u30b9\u306e\u7ba1\u7406\u30fb\u8a2d\u8a08\u30c4\u30fc\u30eb\u3002\n\u30e6\u30fc\u30b6\u30fc\u540d: admin@admin.com\n\u30d1\u30b9\u30ef\u30fc\u30c9: admin\n\u30c7\u30fc\u30bf\u30d9\u30fc\u30b9\u306e\u30d1\u30b9\u30ef\u30fc\u30c9: postgres',
   'links.documentation.tooltip': 'Citeck \u30c9\u30ad\u30e5\u30e1\u30f3\u30c8',
   'links.aiBot.tooltip': 'AI \u30c9\u30ad\u30e5\u30e1\u30f3\u30c8\u652f\u63f4\u7528 Telegram \u30dc\u30c3\u30c8',
+  'links.category.apps': 'アプリ',
+  'links.category.resources': 'リソース',
   'volumes.delete.title': '\u30dc\u30ea\u30e5\u30fc\u30e0 {name} \u3092\u524a\u9664\u3057\u307e\u3059\u304b\uff1f',
   'volumes.delete.message': '\u30dc\u30ea\u30e5\u30fc\u30e0\u3068\u305d\u306e\u3059\u3079\u3066\u306e\u30c7\u30fc\u30bf\u304c\u5b8c\u5168\u306b\u524a\u9664\u3055\u308c\u307e\u3059\u3002',
   'volumes.delete.success': '\u30dc\u30ea\u30e5\u30fc\u30e0\u3092\u524a\u9664\u3057\u307e\u3057\u305f',
@@ -313,7 +315,7 @@ const ja = {
   'common.retry': '再試行',
 
   // -- Daemon Logs --
-  'daemonLogs.title': 'Daemon \u30ed\u30b0',
+  'daemonLogs.title': 'Launcher \u30ed\u30b0',
 
   // -- Log Viewer --
   'logViewer.search': '\u691c\u7d22... (Ctrl+F)',

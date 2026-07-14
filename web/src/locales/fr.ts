@@ -131,6 +131,8 @@ const fr = {
   'links.pgAdmin.tooltip': 'Outil de gestion et de conception de bases de données Postgres.\nUtilisateur : admin@admin.com\nMot de passe : admin\nMot de passe de la base de données : postgres',
   'links.documentation.tooltip': 'Documentation Citeck',
   'links.aiBot.tooltip': 'Bot Telegram pour l’assistance à la documentation par IA',
+  'links.category.apps': 'Applications',
+  'links.category.resources': 'Ressources',
   'volumes.delete.title': 'Supprimer le volume {name} ?',
   'volumes.delete.message': 'Cette action supprimera d\u00e9finitivement le volume et toutes ses donn\u00e9es.',
   'volumes.delete.success': 'Volume supprim\u00e9',
@@ -313,7 +315,7 @@ const fr = {
   'common.retry': 'Réessayer',
 
   // -- Daemon Logs --
-  'daemonLogs.title': 'Journaux du daemon',
+  'daemonLogs.title': 'Journaux du Launcher',
 
   // -- Log Viewer --
   'logViewer.search': 'Rechercher... (Ctrl+F)',

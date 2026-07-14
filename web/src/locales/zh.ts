@@ -131,6 +131,8 @@ const zh = {
   'links.pgAdmin.tooltip': 'Postgres 数据库管理和设计工具。\n用户名：admin@admin.com\n密码：admin\n数据库密码：postgres',
   'links.documentation.tooltip': 'Citeck 文档',
   'links.aiBot.tooltip': '用于 AI 文档帮助的 Telegram 机器人',
+  'links.category.apps': '应用',
+  'links.category.resources': '资源',
   'volumes.delete.title': '删除存储卷 {name}？',
   'volumes.delete.message': '此操作将永久删除该存储卷及其所有数据。',
   'volumes.delete.success': '存储卷已删除',
@@ -313,7 +315,7 @@ const zh = {
   'common.retry': '重试',
 
   // -- Daemon Logs --
-  'daemonLogs.title': '守护进程日志',
+  'daemonLogs.title': '启动器日志',
 
   // -- Log Viewer --
   'logViewer.search': '搜索...（Ctrl+F）',

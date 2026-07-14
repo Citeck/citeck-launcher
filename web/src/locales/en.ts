@@ -133,6 +133,8 @@ const en = {
   'links.pgAdmin.tooltip': 'Postgres database management and design tool.\nUsername: admin@admin.com\nPassword: admin\nDatabase password: postgres',
   'links.documentation.tooltip': 'Citeck documentation',
   'links.aiBot.tooltip': 'Telegram bot for AI documentation assistance',
+  'links.category.apps': 'Apps',
+  'links.category.resources': 'Resources',
   'volumes.delete.title': 'Delete volume {name}?',
   'volumes.delete.message': 'This will permanently delete the volume and all its data.',
   'volumes.delete.success': 'Volume deleted',
@@ -315,7 +317,7 @@ const en = {
   'appConfig.tabTitle': 'Config: {name}',
 
   // -- Daemon Logs --
-  'daemonLogs.title': 'Daemon Logs',
+  'daemonLogs.title': 'Launcher Logs',
 
   // -- Log Viewer --
   'logViewer.search': 'Search... (Ctrl+F)',

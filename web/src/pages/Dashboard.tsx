@@ -288,7 +288,7 @@ export function Dashboard() {
                   return (
                     <div key={l.name}>
                       {showHeader && (
-                        <div className="text-[11px] text-muted-foreground/80 mt-2 mb-0.5">{l.category}</div>
+                        <div className="text-[11px] text-muted-foreground/80 mt-2 mb-0.5">{l.categoryKey ? tDynamic(l.categoryKey) : l.category}</div>
                       )}
                       <a href={l.url} target="_blank" rel="noopener noreferrer"
                         title={/* Go-sourced links.* key — tDynamic escape hatch */

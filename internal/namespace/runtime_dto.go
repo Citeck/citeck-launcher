@@ -268,6 +268,21 @@ func (r *Runtime) generateLinks() []api.LinkDto {
 		})
 	}
 
+	// Localize the two built-in category headers ("Apps" / "Resources"). Custom
+	// workspace links keep their raw, user-authored category text (they have no
+	// i18n key), so skip them.
+	for i := range links {
+		if links[i].Custom {
+			continue
+		}
+		switch links[i].Category {
+		case catApps:
+			links[i].CategoryKey = "links.category.apps"
+		case catResources:
+			links[i].CategoryKey = "links.category.resources"
+		}
+	}
+
 	return links
 }
 

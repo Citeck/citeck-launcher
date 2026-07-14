@@ -131,6 +131,8 @@ const ru = {
   'links.pgAdmin.tooltip': 'Инструмент управления и проектирования БД Postgres.\nЛогин: admin@admin.com\nПароль: admin\nПароль БД: postgres',
   'links.documentation.tooltip': 'Документация Citeck',
   'links.aiBot.tooltip': 'Telegram-бот для помощи с документацией (AI)',
+  'links.category.apps': 'Приложения',
+  'links.category.resources': 'Ресурсы',
   'volumes.delete.title': 'Удалить том {name}?',
   'volumes.delete.message': 'Том и все его данные будут безвозвратно удалены.',
   'volumes.delete.success': 'Том удалён',
@@ -313,7 +315,7 @@ const ru = {
   'common.retry': 'Повторить',
 
   // -- Daemon Logs --
-  'daemonLogs.title': 'Логи демона',
+  'daemonLogs.title': 'Логи лаунчера',
 
   // -- Log Viewer --
   'logViewer.search': 'Поиск... (Ctrl+F)',

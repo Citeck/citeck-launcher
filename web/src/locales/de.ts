@@ -131,6 +131,8 @@ const de = {
   'links.pgAdmin.tooltip': 'Verwaltungs- und Design-Tool für Postgres-Datenbanken.\nBenutzername: admin@admin.com\nPasswort: admin\nDatenbank-Passwort: postgres',
   'links.documentation.tooltip': 'Citeck-Dokumentation',
   'links.aiBot.tooltip': 'Telegram-Bot für KI-Dokumentationshilfe',
+  'links.category.apps': 'Anwendungen',
+  'links.category.resources': 'Ressourcen',
   'volumes.delete.title': 'Volume {name} löschen?',
   'volumes.delete.message': 'Das Volume und alle zugehörigen Daten werden unwiderruflich gelöscht.',
   'volumes.delete.success': 'Volume gelöscht',
@@ -313,7 +315,7 @@ const de = {
   'common.retry': 'Wiederholen',
 
   // -- Daemon Logs --
-  'daemonLogs.title': 'Daemon-Protokolle',
+  'daemonLogs.title': 'Launcher-Protokolle',
 
   // -- Log Viewer --
   'logViewer.search': 'Suchen... (Strg+F)',
