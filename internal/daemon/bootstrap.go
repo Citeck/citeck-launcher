@@ -616,6 +616,18 @@ func (d *Daemon) serverTCPHandler(base http.Handler, tcpAddr string, mtlsActive 
 	return CORSMiddleware(h, tcpAddr)
 }
 
+// webUITCPAllowed reports whether the daemon may bind the TCP Web UI listener.
+// Desktop mode serves the UI over the Unix socket, so TCP is off unless the
+// CITECK_DESKTOP_TCP E2E hatch is set. Server mode does not offer the Web UI at
+// all: it binds only via the explicit CITECK_SERVER_WEBUI dev/E2E hatch, never
+// through daemon.yml (server.webui.enabled is inert in server mode).
+func webUITCPAllowed(desktopMode, allowDesktopTCP, allowServerTCP bool) bool {
+	if desktopMode {
+		return allowDesktopTCP
+	}
+	return allowServerTCP
+}
+
 // startWebUI binds the TCP listener for the Web UI (controlled by daemon.yml
 // and --no-ui) and returns the ready URL, or "" when the UI is disabled or
 // failed to start. Desktop mode: Wails proxies through the Unix socket
@@ -629,8 +641,19 @@ func (d *Daemon) serverTCPHandler(base http.Handler, tcpAddr string, mtlsActive 
 func (d *Daemon) startWebUI(socketMux *http.ServeMux, nsCfg *namespace.Config) (readyURL string) {
 	tcpAddr := d.daemonCfg.Server.WebUI.Listen
 	allowDesktopTCP := os.Getenv("CITECK_DESKTOP_TCP") == "1"
-	if !d.daemonCfg.Server.WebUI.Enabled || (config.IsDesktopMode() && !allowDesktopTCP) {
-		if !config.IsDesktopMode() {
+	allowServerTCP := os.Getenv("CITECK_SERVER_WEBUI") == "1"
+	desktopMode := config.IsDesktopMode()
+	// Server mode does not offer the Web UI: the CLI/TUI is the supported server
+	// interface, and this TCP listener would serve the full root-equivalent API.
+	// So server.webui.enabled is inert in production — the only way to bind it in
+	// server mode is the explicit CITECK_SERVER_WEBUI dev/E2E hatch (never via
+	// daemon.yml). Desktop serves the UI over the Unix socket; its TCP listener
+	// stays off too except the CITECK_DESKTOP_TCP hatch.
+	if !desktopMode && d.daemonCfg.Server.WebUI.Enabled && !allowServerTCP {
+		slog.Warn("Ignoring server.webui.enabled: true — the Web UI is not available in server mode; the CLI/TUI is the supported interface")
+	}
+	if !webUITCPAllowed(desktopMode, allowDesktopTCP, allowServerTCP) {
+		if !desktopMode {
 			slog.Info("Web UI disabled")
 		}
 		return ""

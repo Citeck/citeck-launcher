@@ -27,7 +27,9 @@ type ServerConfig struct {
 	WebUI WebUIConfig `yaml:"webui" json:"webui"`
 }
 
-// WebUIConfig controls the embedded web UI.
+// WebUIConfig controls the embedded web UI. Note: Enabled is inert in server
+// mode — the Web UI is not offered there and the runtime gate ignores this flag
+// (see DefaultDaemonConfig and bootstrap startWebUI).
 type WebUIConfig struct {
 	Enabled bool   `yaml:"enabled" json:"enabled"`
 	Listen  string `yaml:"listen" json:"listen"`
@@ -59,13 +61,13 @@ type DockerConfig struct {
 
 // DefaultDaemonConfig returns the default daemon configuration.
 //
-// The Web UI defaults to DISABLED: it is not released for server use yet (the
-// CLI/TUI is the supported server interface), and the TCP listener serves the
-// full privileged API, so exposing it must be a deliberate opt-in
-// (`server.webui.enabled: true` in daemon.yml) — ideally together with
-// `api_auth.enabled: true`. Desktop mode is unaffected by this default: the
-// webview talks to the daemon over the Unix socket and the TCP listener is
-// force-disabled in desktop regardless (bootstrap startWebUI).
+// The Web UI is NOT offered in server mode: the CLI/TUI is the supported server
+// interface, and the TCP listener would serve the full privileged API. The
+// `server.webui.enabled` field is retained (and still parsed) but is inert in
+// server mode — the runtime gate (bootstrap startWebUI) ignores it and only
+// binds the listener via the explicit CITECK_SERVER_WEBUI dev/E2E hatch. Desktop
+// mode is unaffected: the webview talks to the daemon over the Unix socket and
+// the TCP listener stays off there too (except the CITECK_DESKTOP_TCP hatch).
 func DefaultDaemonConfig() DaemonConfig {
 	return DaemonConfig{
 		Server: ServerConfig{

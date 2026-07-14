@@ -206,10 +206,11 @@ func TestSaveAndLoadDaemonConfig(t *testing.T) {
 	}
 }
 
-// TestLoadDaemonConfig_ExplicitWebUIEnableHonored: flipping the default to
-// disabled must not strand servers that already opted in — an explicit
-// `server.webui.enabled: true` in daemon.yml keeps the UI on.
-func TestLoadDaemonConfig_ExplicitWebUIEnableHonored(t *testing.T) {
+// TestLoadDaemonConfig_ExplicitWebUIEnableParsed: config parsing stays honest —
+// an explicit `server.webui.enabled: true` round-trips as true. (Whether the
+// listener actually binds is a separate runtime decision: in server mode the
+// Web UI is not offered and the flag is inert — see daemon.webUITCPAllowed.)
+func TestLoadDaemonConfig_ExplicitWebUIEnableParsed(t *testing.T) {
 	tmp := t.TempDir()
 	os.Setenv("CITECK_HOME", tmp)
 	defer os.Unsetenv("CITECK_HOME")
@@ -228,6 +229,6 @@ func TestLoadDaemonConfig_ExplicitWebUIEnableHonored(t *testing.T) {
 		t.Fatalf("LoadDaemonConfig() error: %v", err)
 	}
 	if !cfg.Server.WebUI.Enabled {
-		t.Error("explicit enabled: true in daemon.yml must keep the web UI on")
+		t.Error("explicit enabled: true in daemon.yml must round-trip as true (parse fidelity)")
 	}
 }

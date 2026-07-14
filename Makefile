@@ -145,8 +145,9 @@ test-integration:
 
 # Web UI end-to-end tests (Playwright, web/tests/). PREREQUISITE: a daemon
 # serving the web UI at http://127.0.0.1:7088 must already be running (see
-# web/playwright.config.ts baseURL), e.g.:
-#   dist/bin/citeck-server start --foreground   # with daemon.yml port 7088
+# web/playwright.config.ts baseURL). The server-mode Web UI is not offered in
+# production, so bind it via the dev/E2E hatch:
+#   CITECK_SERVER_WEBUI=1 dist/bin/citeck-server start --foreground   # port 7088
 # Browser binaries: cd web && pnpm exec playwright install chromium
 # CI does not run this target yet (no daemon harness — backlog).
 test-e2e: web-deps

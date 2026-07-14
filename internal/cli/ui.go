@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/config"
@@ -29,10 +30,8 @@ func newUICmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("load daemon config: %w", err)
 			}
-			if !cfg.Server.WebUI.Enabled {
-				return fmt.Errorf("web UI is disabled — it is off by default in server mode (the CLI/TUI is the supported interface); "+
-					"to opt in, set server.webui.enabled: true in %s (recommended together with api_auth.enabled: true) and restart the daemon",
-					config.DaemonConfigPath())
+			if os.Getenv("CITECK_SERVER_WEBUI") != "1" {
+				return fmt.Errorf("the Web UI is not available in server mode — the CLI/TUI is the supported server interface")
 			}
 			uiURL, err := webUIURL(cfg)
 			if err != nil {
