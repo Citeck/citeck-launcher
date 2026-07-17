@@ -13,6 +13,7 @@ import {
 import type { BundleInfoDto, NamespaceCreateDto } from '../lib/types'
 import { useTranslation } from '../lib/i18n'
 import { toast } from '../lib/toast'
+import { primeDesktopModeCache } from '../lib/desktop'
 import { Select } from './Select'
 import { Modal, ModalField } from './Modal'
 import { LoadingLabel } from './LoadingLabel'
@@ -61,6 +62,8 @@ export function NamespaceEditDialog({
   const [snapshot, setSnapshot] = useState('')
   const [authType, setAuthType] = useState('KEYCLOAK')
   const [authUsers, setAuthUsers] = useState('')
+  const [isDesktop, setIsDesktop] = useState(false)
+  const [tlsEnabled, setTlsEnabled] = useState(false)
 
   const [bundles, setBundles] = useState<BundleInfoDto[]>([])
   const [snapshots, setSnapshots] = useState<WsSnapshotOpt[]>([])
@@ -78,6 +81,8 @@ export function NamespaceEditDialog({
       setFieldErrors({})
       return
     }
+
+    primeDesktopModeCache().then(setIsDesktop).catch(() => setIsDesktop(false))
 
     setBundlesLoading(true)
     getBundles()
@@ -102,6 +107,7 @@ export function NamespaceEditDialog({
       setBundleKey('')
       setAuthType('KEYCLOAK')
       setAuthUsers('')
+      setTlsEnabled(false)
       if (nsId) {
         getNamespaceEdit(nsId)
           .then((n: NamespaceEditDto) => {
@@ -110,6 +116,7 @@ export function NamespaceEditDialog({
             setBundleKey(n.bundleKey)
             setAuthType(n.authType || 'KEYCLOAK')
             setAuthUsers((n.users ?? []).join(', '))
+            setTlsEnabled(!!n.tlsEnabled)
           })
           .catch((e) => setSubmitError((e as Error).message))
       }
@@ -125,6 +132,7 @@ export function NamespaceEditDialog({
       setSnapshot('')
       setAuthType('')
       setAuthUsers('')
+      setTlsEnabled(false)
       getNamespaceCreateDefaults()
         .then((d) => {
           setName(d.name)
@@ -249,7 +257,8 @@ export function NamespaceEditDialog({
           // host/port/TLS/pgAdmin from the form (Kotlin parity).
           host: '',
           port: 0,
-          tlsEnabled: false,
+          tlsEnabled: isDesktop ? tlsEnabled : false,
+          tlsMode: 'self-signed',
           pgAdminEnabled: false,
           workspaceId: workspaceId || undefined,
           snapshot: snapshot || undefined,
@@ -273,6 +282,7 @@ export function NamespaceEditDialog({
           // sending false here used to silently disable TLS on save).
           host: '',
           port: 0,
+          tlsEnabled: isDesktop ? tlsEnabled : undefined,
         }
         await putNamespaceEdit(nsId, payload)
         toast(t('nsEdit.saveSuccess'), 'success')
@@ -406,6 +416,23 @@ export function NamespaceEditDialog({
             placeholder="admin, user1"
           />
         </ModalField>
+      )}
+
+      {isDesktop && (
+        <div>
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="rounded border-border align-middle m-0 mt-0.5 shrink-0"
+              checked={tlsEnabled}
+              onChange={(e) => setTlsEnabled(e.target.checked)}
+            />
+            <span className="flex flex-col gap-0.5">
+              <span className="text-xs font-medium">{t('nsEdit.https.label')}</span>
+              <span className="text-[11px] text-muted-foreground">{t('nsEdit.https.hint')}</span>
+            </span>
+          </label>
+        </div>
       )}
 
       {submitError && (
