@@ -258,7 +258,9 @@ export function NamespaceEditDialog({
           host: '',
           port: 0,
           tlsEnabled: isDesktop ? tlsEnabled : false,
-          tlsMode: 'self-signed',
+          // Only meaningful when tlsEnabled; scope it so the payload's intent is
+          // explicit (the create route reads tlsMode only inside if req.TLSEnabled).
+          tlsMode: isDesktop && tlsEnabled ? 'self-signed' : undefined,
           pgAdminEnabled: false,
           workspaceId: workspaceId || undefined,
           snapshot: snapshot || undefined,
