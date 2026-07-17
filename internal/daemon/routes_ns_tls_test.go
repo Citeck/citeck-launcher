@@ -47,7 +47,7 @@ func TestApplySelfSignedTLSDefaults_ServerIsNoOp(t *testing.T) {
 
 	applySelfSignedTLSDefaults(cfg)
 
-	assert.Equal(t, "", cfg.Proxy.Host)
+	assert.Empty(t, cfg.Proxy.Host)
 	assert.Equal(t, 80, cfg.Proxy.Port)
 }
 
@@ -61,6 +61,6 @@ func TestApplySelfSignedTLSDefaults_TLSDisabledNoChange(t *testing.T) {
 
 	applySelfSignedTLSDefaults(cfg)
 
-	assert.Equal(t, "", cfg.Proxy.Host)
+	assert.Empty(t, cfg.Proxy.Host)
 	assert.Equal(t, 80, cfg.Proxy.Port)
 }
