@@ -90,11 +90,16 @@ type activeNamespace struct {
 	// instead of silently serving the built-in fallback workspace. Workspace-
 	// scoped like workspaceConfig: carried over by clearActiveNamespaceLocked,
 	// replaced by SwitchWorkspace / namespace load / reload.
-	wsSyncError    string
-	cloudCfgServer *CloudConfigServer
-	acmeRenewal    *acme.RenewalService
-	runtime        *namespace.Runtime
-	dockerClient   *docker.Client
+	wsSyncError string
+	// deferredForSecrets is true when the namespace's auto-start was withheld
+	// on load because it needs an auth-required registry pull and the
+	// user-secret vault is encrypted+locked (desktop only). Guarded by
+	// configMu like the rest of activeNamespace.
+	deferredForSecrets bool
+	cloudCfgServer     *CloudConfigServer
+	acmeRenewal        *acme.RenewalService
+	runtime            *namespace.Runtime
+	dockerClient       *docker.Client
 }
 
 // Daemon is the main daemon server.

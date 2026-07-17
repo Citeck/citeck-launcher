@@ -37,3 +37,29 @@ func TestNamespaceNeedsUserSecrets(t *testing.T) {
 		assert.False(t, namespaceNeedsUserSecrets(nil, ws))
 	})
 }
+
+type fakeVault struct{ encrypted, locked bool }
+
+func (f fakeVault) IsEncrypted() bool { return f.encrypted }
+func (f fakeVault) IsLocked() bool    { return f.locked }
+
+func TestShouldDeferStartForSecrets(t *testing.T) {
+	ws := &bundle.WorkspaceConfig{ImageRepos: []bundle.ImageRepo{
+		{ID: "ent", URL: "enterprise-registry.citeck.ru", AuthType: "BASIC"},
+	}}
+	entImg := []string{"enterprise-registry.citeck.ru/ecos/emodel:2.40.0"}
+	pubImg := []string{"postgres:17.5"}
+
+	assert.True(t, shouldDeferStartForSecrets(true, fakeVault{true, true}, entImg, ws),
+		"desktop + encrypted+locked + needs-secrets ns → defer")
+	assert.False(t, shouldDeferStartForSecrets(false, fakeVault{true, true}, entImg, ws),
+		"server mode → never defer")
+	assert.False(t, shouldDeferStartForSecrets(true, fakeVault{true, false}, entImg, ws),
+		"unlocked vault → no defer")
+	assert.False(t, shouldDeferStartForSecrets(true, fakeVault{false, false}, entImg, ws),
+		"plain (unencrypted) vault → no defer")
+	assert.False(t, shouldDeferStartForSecrets(true, fakeVault{true, true}, pubImg, ws),
+		"community ns (public images) → no defer even when locked")
+	assert.False(t, shouldDeferStartForSecrets(true, nil, entImg, ws),
+		"nil vault → no defer")
+}

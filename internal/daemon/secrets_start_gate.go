@@ -32,6 +32,25 @@ func namespaceNeedsUserSecrets(images []string, wsCfg *bundle.WorkspaceConfig) b
 	return false
 }
 
+// secretVaultState is the subset of SecretService the start gate needs
+// (satisfied by *storage.SecretService).
+type secretVaultState interface {
+	IsEncrypted() bool
+	IsLocked() bool
+}
+
+// shouldDeferStartForSecrets reports whether a namespace's auto-start must wait
+// for the user to unlock the secret vault: desktop mode, an encrypted+locked
+// vault, and a namespace that pulls from an auth-required registry. Returns
+// false in server mode, with an unlocked/plain vault, or for a namespace that
+// needs no user secrets.
+func shouldDeferStartForSecrets(desktop bool, vault secretVaultState, images []string, wsCfg *bundle.WorkspaceConfig) bool {
+	if !desktop || vault == nil || !vault.IsEncrypted() || !vault.IsLocked() {
+		return false
+	}
+	return namespaceNeedsUserSecrets(images, wsCfg)
+}
+
 // imageHost returns the registry host of an image reference, or "" for a
 // hostless Docker Hub library image. The first path segment is a host only when
 // it looks like one (contains "." or ":"), matching bundle.ImageReposByHost's

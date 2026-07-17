@@ -63,6 +63,10 @@ type loadedNamespace struct {
 	// session ended in STOPPING/STOPPED (Kotlin parity — never auto-start
 	// after an explicit stop). Caller may override.
 	ShouldStart bool
+	// DeferredForSecrets is true when auto-start was withheld because the
+	// namespace pulls from an auth-required registry and the user-secret vault
+	// is encrypted+locked. Cleared and started by handleUnlockSecrets.
+	DeferredForSecrets bool
 }
 
 // resolveBundleWithCacheFallback resolves `ref` via the prepared resolver; when
@@ -516,6 +520,21 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		}
 	}
 
+	// Desktop: withhold auto-start when the namespace pulls from an auth-required
+	// registry but the user-secret vault is still locked — the pull would fail
+	// auth and cascade into the registry-credentials prompt stacking over the
+	// master-password unlock dialog. handleUnlockSecrets starts it once unlocked.
+	deferredForSecrets := false
+	appImages := make([]string, 0, len(appDefs))
+	for _, appDef := range appDefs {
+		appImages = append(appImages, appDef.Image)
+	}
+	if shouldStart && shouldDeferStartForSecrets(config.IsDesktopMode(), in.SecretService, appImages, wsCfg) {
+		shouldStart = false
+		deferredForSecrets = true
+		slog.Info("Namespace needs user secrets but vault is locked — deferring start until unlock", "ns", nsCfg.ID)
+	}
+
 	// Create the cloud-config server (desktop-only — server-mode webapps have
 	// SPRING_CLOUD_CONFIG_ENABLED=false and don't use it), but Start it only when
 	// the namespace will actually run. A stopped namespace has no containers to
@@ -536,18 +555,19 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	}
 
 	return &loadedNamespace{
-		NsConfig:        nsCfg,
-		DockerClient:    dc,
-		BundleDef:       bundleDef,
-		WorkspaceConfig: wsCfg,
-		Runtime:         runtime,
-		AppDefs:         appDefs,
-		CloudCfgServer:  cloudCfgSrv,
-		SystemSecrets:   systemSecrets,
-		VolumesBase:     volumesBase,
-		BundleError:     bundleError,
-		WsSyncError:     wsSyncError,
-		ShouldStart:     shouldStart,
+		NsConfig:           nsCfg,
+		DockerClient:       dc,
+		BundleDef:          bundleDef,
+		WorkspaceConfig:    wsCfg,
+		Runtime:            runtime,
+		AppDefs:            appDefs,
+		CloudCfgServer:     cloudCfgSrv,
+		SystemSecrets:      systemSecrets,
+		VolumesBase:        volumesBase,
+		BundleError:        bundleError,
+		WsSyncError:        wsSyncError,
+		ShouldStart:        shouldStart,
+		DeferredForSecrets: deferredForSecrets,
 	}, nil
 }
 
@@ -639,6 +659,10 @@ func (d *Daemon) installLoadedNamespace(loaded *loadedNamespace, wsID, nsID stri
 		bundleError:     loaded.BundleError,
 		wsSyncError:     loaded.WsSyncError,
 		acmeRenewal:     nil,
+		// deferredForSecrets always false here: installLoadedNamespace serves
+		// namespace switch / auto-activate-after-create, both user-initiated —
+		// never the auto-start-on-boot path this gate defers.
+		deferredForSecrets: false,
 	}
 	// Swap the daemon-level Docker client to the one the new runtime was built
 	// with (scoped to the new namespace). Without this, volumes/inspect/snapshot
@@ -706,6 +730,10 @@ func (d *Daemon) clearActiveNamespaceLocked() *activeNamespace {
 		// the namespace) — carried over with workspaceConfig; SwitchWorkspace
 		// replaces it explicitly next to this call.
 		wsSyncError: old.wsSyncError,
+		// deferredForSecrets always false here: this clears to a namespace-less
+		// state (deactivate / delete-active / workspace-switch teardown), not a
+		// load — nothing to defer.
+		deferredForSecrets: false,
 	}
 	return old
 }
