@@ -167,6 +167,12 @@ type Daemon struct {
 	// production — both fall back to the bundle resolver. Same pattern as
 	// planInputsFn.
 	wsCfgResolveFn func(ws storage.WorkspaceDto) (*bundle.WorkspaceConfig, error)
+	// runtimeStartFn is a test seam for handleUnlockSecrets' deferred-namespace
+	// start: real namespace.Runtime.Start spins up the runtimeLoop goroutine and
+	// drives real docker workers, unreachable from unit tests. nil in
+	// production — startRuntime() falls back to rt.Start(apps). Same pattern as
+	// planInputsFn.
+	runtimeStartFn func(rt *namespace.Runtime, apps []appdef.ApplicationDef)
 	// apiAuth enforces the opt-in bearer-token/session auth on the
 	// server-mode TCP transport (daemon.yml api_auth). nil when disabled
 	// (default) — TCP then behaves exactly as before (CSRF gate only).
@@ -326,6 +332,17 @@ func (d *Daemon) rebuildAuthCaches() {
 	if retried > 0 {
 		slog.Info("Retrying pull-failed apps after secrets change", "count", retried)
 	}
+}
+
+// startRuntime starts rt with apps, routing through runtimeStartFn when set
+// (test seam — see the field doc comment). nil in production — calls
+// rt.Start(apps) directly.
+func (d *Daemon) startRuntime(rt *namespace.Runtime, apps []appdef.ApplicationDef) {
+	if d.runtimeStartFn != nil {
+		d.runtimeStartFn(rt, apps)
+		return
+	}
+	rt.Start(apps)
 }
 
 // lowDiskWarnGB / diskCriticalGB are the free-space thresholds (GB) shared by

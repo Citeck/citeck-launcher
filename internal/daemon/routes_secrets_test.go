@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/citeck/citeck-launcher/internal/api"
+	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/storage"
 )
 
@@ -260,6 +262,69 @@ func TestHandleSubmitMasterPassword_InvalidJSON(t *testing.T) {
 	d.handleSubmitMasterPassword(rec, req)
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// TestUnlockStartsDeferredNamespace: a namespace whose auto-start was
+// withheld because it needs an auth-required registry pull and the vault was
+// locked (deferredForSecrets) must be started once the vault is unlocked, and
+// the flag must be cleared so a later unlock (or any other caller) doesn't
+// start it again.
+func TestUnlockStartsDeferredNamespace(t *testing.T) {
+	d, mux := secretsTestMux(t)
+	rt := namespace.NewRuntime(&namespace.Config{ID: "ns1"}, nil, t.TempDir())
+	t.Cleanup(rt.Shutdown)
+	apps := []appdef.ApplicationDef{{Name: "app1"}}
+
+	var startCalls int
+	var startedApps []appdef.ApplicationDef
+	d.runtimeStartFn = func(_ *namespace.Runtime, gotApps []appdef.ApplicationDef) {
+		startCalls++
+		startedApps = gotApps
+	}
+	d.activeNs = &activeNamespace{
+		nsConfig:           &namespace.Config{ID: "ns1"},
+		runtime:            rt,
+		appDefs:            apps,
+		deferredForSecrets: true,
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", api.SecretsUnlock, strings.NewReader(`{"password":"test-master"}`))
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	assert.Equal(t, 1, startCalls, "deferred namespace must be started exactly once")
+	assert.Equal(t, apps, startedApps)
+	assert.False(t, d.activeNs.deferredForSecrets, "deferredForSecrets must be cleared after starting")
+}
+
+// TestUnlockDoesNotStartNamespace_WhenNotDeferred: an active namespace that
+// was never deferred (the common case) must not have its runtime started by
+// unlock — Start is only for the withheld-auto-start scenario.
+func TestUnlockDoesNotStartNamespace_WhenNotDeferred(t *testing.T) {
+	d, mux := secretsTestMux(t)
+	rt := namespace.NewRuntime(&namespace.Config{ID: "ns1"}, nil, t.TempDir())
+	t.Cleanup(rt.Shutdown)
+
+	var startCalls int
+	d.runtimeStartFn = func(_ *namespace.Runtime, _ []appdef.ApplicationDef) {
+		startCalls++
+	}
+	d.activeNs = &activeNamespace{
+		nsConfig:           &namespace.Config{ID: "ns1"},
+		runtime:            rt,
+		appDefs:            []appdef.ApplicationDef{{Name: "app1"}},
+		deferredForSecrets: false,
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", api.SecretsUnlock, strings.NewReader(`{"password":"test-master"}`))
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	assert.Zero(t, startCalls, "non-deferred namespace must not be started by unlock")
 }
 
 // TestHandleResetSecrets_ClearsPendingBlob: "drop all secrets" must also drop
