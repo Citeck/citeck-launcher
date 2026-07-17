@@ -2,7 +2,8 @@ import { render, screen, act, waitFor, fireEvent } from '@testing-library/react'
 import { describe, it, expect, beforeEach, beforeAll, vi } from 'vitest'
 import { RegistryAuthBanner } from './RegistryAuthBanner'
 import { useDashboardStore } from '../lib/store'
-import { setRegistryBinding, createSecret } from '../lib/api'
+import { useSecretsLockStore } from '../lib/secretsLock'
+import { setRegistryBinding, createSecret, getMigrationStatus } from '../lib/api'
 
 // The dialog/picker fire API calls on mount; stub the module so tests stay
 // offline and deterministic.
@@ -28,6 +29,13 @@ beforeAll(() => {
 
 beforeEach(() => {
   useDashboardStore.setState({ pullAuthRequired: {} })
+  useSecretsLockStore.setState({ epoch: 0 })
+  vi.mocked(getMigrationStatus).mockResolvedValue({ encrypted: true, locked: false, hasPendingSecrets: false, hasSecrets: true })
+  // The <dialog> content is always mounted (Modal portals it unconditionally;
+  // visibility is native `showModal()`/`close()`, stubbed above) — so text
+  // presence can't tell "open" from "closed". showModal() call-count can:
+  // useModalDialog calls it exactly once per false->true `open` transition.
+  vi.mocked(HTMLDialogElement.prototype.showModal).mockClear()
 })
 
 describe('RegistryAuthBanner', () => {
@@ -91,5 +99,41 @@ describe('RegistryAuthBanner', () => {
       expect(createSecret).toHaveBeenCalled()
       expect(setRegistryBinding).toHaveBeenCalledWith(HOST, expect.stringMatching(/^registry-/))
     })
+  })
+
+  it('does not auto-open the dialog while secrets are locked (banner still shows)', async () => {
+    vi.mocked(getMigrationStatus).mockResolvedValue({ encrypted: true, locked: true, hasPendingSecrets: false, hasSecrets: true })
+    render(<RegistryAuthBanner />)
+
+    // Let the initial locked-status fetch settle before a host shows up (this
+    // mirrors real timing: pull_auth_required arrives via SSE well after the
+    // banner mounts and its migration-status check has resolved).
+    await waitFor(() => expect(getMigrationStatus).toHaveBeenCalled())
+    await Promise.resolve()
+
+    act(() => { useDashboardStore.setState({ pullAuthRequired: { emodel: HOST } }) })
+
+    // Banner still renders (informational)...
+    await screen.findByText(/Registry credentials needed for/)
+    // ...but the dialog must not auto-open and stack over the unlock modal.
+    expect(HTMLDialogElement.prototype.showModal).not.toHaveBeenCalled()
+  })
+
+  it('auto-opens the dialog once secrets become unlocked (epoch bump)', async () => {
+    vi.mocked(getMigrationStatus).mockResolvedValue({ encrypted: true, locked: true, hasPendingSecrets: false, hasSecrets: true })
+    render(<RegistryAuthBanner />)
+
+    await waitFor(() => expect(getMigrationStatus).toHaveBeenCalled())
+    await Promise.resolve()
+
+    act(() => { useDashboardStore.setState({ pullAuthRequired: { emodel: HOST } }) })
+    await screen.findByText(/Registry credentials needed for/)
+    expect(HTMLDialogElement.prototype.showModal).not.toHaveBeenCalled()
+
+    // Unlock: the next status check reports unlocked, and the store epoch bumps.
+    vi.mocked(getMigrationStatus).mockResolvedValue({ encrypted: true, locked: false, hasPendingSecrets: false, hasSecrets: true })
+    act(() => { useSecretsLockStore.getState().markUnlocked() })
+
+    await waitFor(() => expect(HTMLDialogElement.prototype.showModal).toHaveBeenCalled())
   })
 })
