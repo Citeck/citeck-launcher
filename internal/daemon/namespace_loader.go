@@ -529,7 +529,7 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	for _, appDef := range appDefs {
 		appImages = append(appImages, appDef.Image)
 	}
-	if shouldStart && shouldDeferStartForSecrets(config.IsDesktopMode(), in.SecretService, appImages, wsCfg) {
+	if shouldStart && in.SecretService != nil && shouldDeferStartForSecrets(config.IsDesktopMode(), in.SecretService, appImages, wsCfg) {
 		shouldStart = false
 		deferredForSecrets = true
 		slog.Info("Namespace needs user secrets but vault is locked — deferring start until unlock", "ns", nsCfg.ID)
@@ -661,7 +661,9 @@ func (d *Daemon) installLoadedNamespace(loaded *loadedNamespace, wsID, nsID stri
 		acmeRenewal:     nil,
 		// deferredForSecrets always false here: installLoadedNamespace serves
 		// namespace switch / auto-activate-after-create, both user-initiated —
-		// never the auto-start-on-boot path this gate defers.
+		// never the auto-start-on-boot path this gate defers. loaded.DeferredForSecrets
+		// is available but intentionally unused here: only boot auto-start needs
+		// resume-on-unlock, not a user-initiated activate/switch.
 		deferredForSecrets: false,
 	}
 	// Swap the daemon-level Docker client to the one the new runtime was built

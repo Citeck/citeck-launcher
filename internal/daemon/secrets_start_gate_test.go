@@ -60,6 +60,11 @@ func TestShouldDeferStartForSecrets(t *testing.T) {
 		"plain (unencrypted) vault → no defer")
 	assert.False(t, shouldDeferStartForSecrets(true, fakeVault{true, true}, pubImg, ws),
 		"community ns (public images) → no defer even when locked")
+	// Only an untyped nil is exercised here. A typed-nil *storage.SecretService
+	// boxed into this interface would panic inside IsEncrypted() (nil receiver
+	// dereferences ss.mu) — production prevents that from ever reaching this
+	// helper via the `in.SecretService != nil` guard at the namespace_loader.go
+	// call site, so it's not exercised as a helper-level case.
 	assert.False(t, shouldDeferStartForSecrets(true, nil, entImg, ws),
 		"nil vault → no defer")
 }

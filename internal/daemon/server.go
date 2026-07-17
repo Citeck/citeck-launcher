@@ -54,7 +54,7 @@ type secretWriter interface {
 //     test Daemons; production allocates it at construction and it is never
 //     set back to nil (teardown swaps in a fresh struct).
 //   - Readers call d.active(), which copies the whole struct under RLock —
-//     one consistent view of all 12 fields per call.
+//     one consistent view of all 14 fields per call.
 //   - Writers hold configMu for WRITING and either mutate fields in place
 //     (doReloadEx Phase-2 commit, admin-password rotation, ACME re-arm) or
 //     swap the pointer (installLoadedNamespace, clearActiveNamespaceLocked,
