@@ -693,6 +693,7 @@ func (d *Daemon) buildNamespaceConfigFromCreate(req api.NamespaceCreateDto, wsID
 			nsCfg.Proxy.TLS.LetsEncrypt = true
 		}
 		// self-signed cert is generated at daemon startup when certPath is empty and letsEncrypt is false
+		applySelfSignedTLSDefaults(&nsCfg)
 	}
 	nsCfg.PgAdmin.Enabled = req.PgAdminEnabled
 	if req.BundleRepo != "" && req.BundleKey != "" {
@@ -1026,6 +1027,9 @@ func (d *Daemon) handlePutNamespaceEdit(w http.ResponseWriter, r *http.Request) 
 	}
 	if req.TLSEnabled != nil {
 		current.Proxy.TLS.Enabled = *req.TLSEnabled
+		if *req.TLSEnabled {
+			applySelfSignedTLSDefaults(current)
+		}
 	}
 	if req.PgAdminEnabled != nil {
 		current.PgAdmin.Enabled = *req.PgAdminEnabled
@@ -1121,4 +1125,21 @@ func (d *Daemon) resolveBundleDir(repo bundle.BundlesRepo) string {
 	}
 	wsRepoDir := filepath.Join(dataDir, "bundles", "workspace")
 	return bundle.ResolveBundleRepoDir(dataDir, wsRepoDir, repo)
+}
+
+// applySelfSignedTLSDefaults fills ergonomic proxy defaults when the desktop
+// UI turns on self-signed HTTPS: a localhost host (validation requires a
+// non-empty host when TLS is on) and port 443 (so https://localhost works).
+// A custom host/port is preserved. No-op in server mode — the server keeps its
+// existing behavior (self-signed remains a plain fallback with no rewriting).
+func applySelfSignedTLSDefaults(nsCfg *namespace.Config) {
+	if !config.IsDesktopMode() || !nsCfg.Proxy.TLS.Enabled {
+		return
+	}
+	if nsCfg.Proxy.Host == "" {
+		nsCfg.Proxy.Host = "localhost"
+	}
+	if nsCfg.Proxy.Port == 80 {
+		nsCfg.Proxy.Port = 443
+	}
 }
