@@ -8,9 +8,11 @@ import (
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/api"
+	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/git"
 	"github.com/citeck/citeck-launcher/internal/h2migrate"
+	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/storage"
 )
 
@@ -363,14 +365,20 @@ func (d *Daemon) handleUnlockSecrets(w http.ResponseWriter, r *http.Request) {
 	// registry-auth cache was just rebuilt from the readable secrets.
 	d.configMu.Lock()
 	act := d.activeNs
-	startDeferred := act != nil && act.deferredForSecrets && act.runtime != nil
+	startDeferred := act != nil && act.deferredForSecrets && act.nsConfig != nil && act.runtime != nil
+	var deferredNsID string
+	var deferredAppDefs []appdef.ApplicationDef
+	var deferredRuntime *namespace.Runtime
 	if startDeferred {
 		act.deferredForSecrets = false
+		deferredNsID = act.nsConfig.ID
+		deferredAppDefs = act.appDefs
+		deferredRuntime = act.runtime
 	}
 	d.configMu.Unlock()
 	if startDeferred {
-		slog.Info("Secrets unlocked — starting deferred namespace", "ns", act.nsConfig.ID)
-		d.startRuntime(act.runtime, act.appDefs)
+		slog.Info("Secrets unlocked — starting deferred namespace", "ns", deferredNsID)
+		d.startRuntime(deferredRuntime, deferredAppDefs)
 	}
 
 	slog.Info("Secrets unlocked successfully")
