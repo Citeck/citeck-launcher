@@ -522,6 +522,8 @@ const ru = {
 
   // -- Namespace edit dialog --
   'nsEdit.saveSuccess': 'Namespace обновлён',
+  'nsEdit.https.label': 'Включить HTTPS (самоподписанный)',
+  'nsEdit.https.hint': 'Отдавать прокси по HTTPS с самоподписанным сертификатом. При первом заходе браузер покажет предупреждение безопасности.',
 
   // -- Namespace create/edit dialog (Kotlin parity: NamespaceEntityDef.formSpec) --
   'namespace.dialog.create': 'Создать namespace',

@@ -522,6 +522,8 @@ const ja = {
 
   // -- Namespace edit dialog --
   'nsEdit.saveSuccess': '名前空間が更新されました',
+  'nsEdit.https.label': 'HTTPS を有効化（自己署名）',
+  'nsEdit.https.hint': '自己署名証明書を使用して HTTPS でプロキシを提供します。初回アクセス時にブラウザがセキュリティ警告を表示します。',
 
   // -- Namespace create/edit dialog (Kotlin parity: NamespaceEntityDef.formSpec) --
   'namespace.dialog.create': 'ネームスペースを作成',
