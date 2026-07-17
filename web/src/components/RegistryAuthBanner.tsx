@@ -122,6 +122,11 @@ export function RegistryAuthBanner() {
             // rest). Mark the chosen host handled so dismissing it doesn't
             // immediately re-pop via the auto-open effect (anti-nag).
             onClick={() => {
+              // Never open the credentials dialog while the secret vault is
+              // locked — it would stack (native <dialog> top-layer) over the
+              // master-password unlock modal, and saving a token can only fail
+              // with "secrets are locked". Same guard as the auto-open effect.
+              if (locked) return
               const host = hosts[cursorRef.current % hosts.length]
               cursorRef.current += 1
               handledRef.current.add(host)
