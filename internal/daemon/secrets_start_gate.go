@@ -1,8 +1,6 @@
 package daemon
 
 import (
-	"strings"
-
 	"github.com/citeck/citeck-launcher/internal/bundle"
 )
 
@@ -21,7 +19,7 @@ func namespaceNeedsUserSecrets(images []string, wsCfg *bundle.WorkspaceConfig) b
 		return false
 	}
 	for _, img := range images {
-		host := imageHost(img)
+		host := imageRegistryHost(img)
 		if host == "" {
 			continue
 		}
@@ -49,20 +47,4 @@ func shouldDeferStartForSecrets(desktop bool, vault secretVaultState, images []s
 		return false
 	}
 	return namespaceNeedsUserSecrets(images, wsCfg)
-}
-
-// imageHost returns the registry host of an image reference, or "" for a
-// hostless Docker Hub library image. The first path segment is a host only when
-// it looks like one (contains "." or ":"), matching bundle.ImageReposByHost's
-// host derivation (substring before the first "/").
-func imageHost(image string) string {
-	slash := strings.Index(image, "/")
-	if slash <= 0 {
-		return ""
-	}
-	first := image[:slash]
-	if strings.ContainsAny(first, ".:") {
-		return first
-	}
-	return ""
 }

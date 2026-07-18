@@ -136,4 +136,21 @@ describe('RegistryAuthBanner', () => {
 
     await waitFor(() => expect(HTMLDialogElement.prototype.showModal).toHaveBeenCalled())
   })
+
+  it('does not open the dialog on manual banner-button click while locked', async () => {
+    vi.mocked(getMigrationStatus).mockResolvedValue({ encrypted: true, locked: true, hasPendingSecrets: false, hasSecrets: true })
+    useDashboardStore.setState({ pullAuthRequired: { emodel: HOST } })
+    render(<RegistryAuthBanner />)
+
+    // Let the lock state settle before interacting (mirrors real timing).
+    await waitFor(() => expect(getMigrationStatus).toHaveBeenCalled())
+    await screen.findByText(/Registry credentials needed for/)
+    await waitFor(() => expect(HTMLDialogElement.prototype.showModal).not.toHaveBeenCalled())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set credentials' }))
+
+    // The manual button's `if (locked) return` guard must also hold — the
+    // dialog must not open even on an explicit click while still locked.
+    expect(HTMLDialogElement.prototype.showModal).not.toHaveBeenCalled()
+  })
 })

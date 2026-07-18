@@ -36,6 +36,13 @@ func TestNamespaceNeedsUserSecrets(t *testing.T) {
 	t.Run("empty images → false", func(t *testing.T) {
 		assert.False(t, namespaceNeedsUserSecrets(nil, ws))
 	})
+	t.Run("localhost auth-required host → true", func(t *testing.T) {
+		localWs := &bundle.WorkspaceConfig{ImageRepos: []bundle.ImageRepo{
+			{ID: "local", URL: "localhost", AuthType: "BASIC"},
+		}}
+		assert.True(t, namespaceNeedsUserSecrets(
+			[]string{"localhost/team/img:tag"}, localWs))
+	})
 }
 
 type fakeVault struct{ encrypted, locked bool }

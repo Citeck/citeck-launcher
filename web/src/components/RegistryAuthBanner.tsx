@@ -52,9 +52,11 @@ export function RegistryAuthBanner() {
   const cursorRef = useRef(0)
 
   // Secret-vault lock state, re-checked whenever the vault unlocks (epoch
-  // bump). Defaults to false (fail-open) until the first check resolves —
-  // the daemon-side defer is the primary guard, this is defense-in-depth.
-  const [locked, setLocked] = useState(false)
+  // bump). Defaults to true (fail-CLOSED) until the first check resolves —
+  // the daemon-side defer is the primary guard, this is defense-in-depth, and
+  // it must never assume "unlocked" during the pre-resolve window (that gap
+  // is exactly the stacking-over-unlock bug this guard exists to prevent).
+  const [locked, setLocked] = useState(true)
   const secretsEpoch = useSecretsLockStore((s) => s.epoch)
   useEffect(() => {
     let cancelled = false
@@ -63,7 +65,10 @@ export function RegistryAuthBanner() {
         if (!cancelled) setLocked(s.locked)
       })
       .catch(() => {
-        /* fail-open — keep current locked state */
+        // A transient fetch error un-gates the banner once settled — fail
+        // open only here (a resolved error), never during the pre-resolve
+        // window, so a persistent lookup failure can't wedge the gate shut.
+        if (!cancelled) setLocked(false)
       })
     return () => {
       cancelled = true
