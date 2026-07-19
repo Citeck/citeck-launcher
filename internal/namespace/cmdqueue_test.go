@@ -81,20 +81,29 @@ func TestCollapsePreservesRefreshImages(t *testing.T) {
 	require.True(t, ok)
 	assert.True(t, m.(cmdRegenerate).refreshImages, "true must survive regen(false)+regen(true)")
 
-	// start+regen keeps a Start with OR'd flag
+	// start+regen keeps a Start with OR'd flag (both orderings of the flag)
 	m, ok = collapseCommandsIfPossible(start(false), regen(true))
 	require.True(t, ok)
-	assert.True(t, m.(cmdStart).refreshImages)
+	assert.True(t, m.(cmdStart).refreshImages, "true must survive start(false)+regen(true)")
+	m, ok = collapseCommandsIfPossible(start(true), regen(false))
+	require.True(t, ok)
+	assert.True(t, m.(cmdStart).refreshImages, "true must survive start(true)+regen(false)")
 
-	// regen+start keeps b Start with OR'd flag
+	// regen+start keeps b Start with OR'd flag (both orderings of the flag)
 	m, ok = collapseCommandsIfPossible(regen(true), start(false))
 	require.True(t, ok)
-	assert.True(t, m.(cmdStart).refreshImages)
+	assert.True(t, m.(cmdStart).refreshImages, "true must survive regen(true)+start(false)")
+	m, ok = collapseCommandsIfPossible(regen(false), start(true))
+	require.True(t, ok)
+	assert.True(t, m.(cmdStart).refreshImages, "true must survive regen(false)+start(true)")
 
-	// start+start ORs
+	// start+start ORs (both orderings of the flag)
 	m, ok = collapseCommandsIfPossible(start(false), start(true))
 	require.True(t, ok)
-	assert.True(t, m.(cmdStart).refreshImages)
+	assert.True(t, m.(cmdStart).refreshImages, "true must survive start(false)+start(true)")
+	m, ok = collapseCommandsIfPossible(start(true), start(false))
+	require.True(t, ok)
+	assert.True(t, m.(cmdStart).refreshImages, "true must survive start(true)+start(false)")
 
 	// two false stay false
 	m, ok = collapseCommandsIfPossible(regen(false), regen(false))

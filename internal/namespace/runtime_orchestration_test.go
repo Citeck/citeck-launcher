@@ -168,16 +168,19 @@ func TestDoRegenerate_RefreshImagesGatesSnapshotDigestRefresh(t *testing.T) {
 			}
 
 			r.Regenerate(apps, nil, nil, tc.refreshImages)
-			// doRegenerate runs synchronously enough that a short settle wait is
-			// sufficient — no state transition is guaranteed here (unchanged-hash
-			// apps are a no-op), so poll the counter directly instead of a status
-			// wait.
-			deadline := time.Now().Add(2 * time.Second)
-			for time.Now().Before(deadline) {
-				if calls.Load() == tc.wantCalls {
-					break
-				}
-				time.Sleep(10 * time.Millisecond)
+			// Synchronize on the same STARTING→RUNNING round trip the other
+			// regenerate tests use (see TestRegeneratePreservesRunning /
+			// TestRegenerateRestartsChanged): doRegenerate flips NS status to
+			// STARTING synchronously, and refreshSnapshotDigestsFn is called
+			// (or gated away) strictly BEFORE that flip, so observing the
+			// return to RUNNING proves doRegenerate ran to completion — and
+			// in particular that the refreshImages gate was already
+			// evaluated — before we read calls.Load() below. Without this,
+			// a wantCalls=0 assertion would trivially pass even if the gate
+			// were removed, since the counter starts at 0.
+			waitForStatus(r, NsStatusStarting, 5*time.Second)
+			if !waitForStatus(r, NsStatusRunning, 15*time.Second) {
+				t.Fatalf("namespace did not return to RUNNING after regenerate, got %v", r.Status())
 			}
 
 			if got := calls.Load(); got != tc.wantCalls {
