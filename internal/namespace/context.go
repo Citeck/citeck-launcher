@@ -206,6 +206,23 @@ func (c *NsGenContext) ProxyBaseURL() string {
 	return BuildProxyBaseURL(c.Config.Proxy)
 }
 
+// EffectiveProxyPort returns the host port the proxy publishes / advertises.
+// The standard scheme ports (80, 443) — and an unset 0 — are treated as a
+// "scheme default" and derived from TLS state, so toggling HTTPS flips 80↔443
+// automatically and a leftover 443 with TLS off self-corrects to 80. Only a
+// non-standard custom port (e.g. 8443) is honored verbatim.
+func EffectiveProxyPort(p ProxyProps) int {
+	switch p.Port {
+	case 0, 80, 443:
+		if p.TLS.Enabled {
+			return 443
+		}
+		return 80
+	default:
+		return p.Port
+	}
+}
+
 // BuildProxyBaseURL builds a proxy base URL from proxy config.
 // For non-local hosts (not localhost/127.0.0.1), always uses https scheme
 // even when TLS is disabled locally — the server is assumed to be behind
@@ -224,7 +241,7 @@ func BuildProxyBaseURL(p ProxyProps) string {
 		scheme = "https"
 	}
 
-	port := p.Port
+	port := EffectiveProxyPort(p)
 
 	defaultPort := 80
 	if scheme == "https" {

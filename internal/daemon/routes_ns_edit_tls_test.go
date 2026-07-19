@@ -15,9 +15,11 @@ import (
 
 // TestNamespaceEdit_SelfSignedTLSDefaults pins that the EDIT route (not just
 // the create route) invokes applySelfSignedTLSDefaults: in desktop mode,
-// enabling TLS on a namespace whose proxy still has the default empty
-// host / port 80 rewrites them to the ergonomic localhost:443 default, and
-// never turns on Let's Encrypt as a side effect.
+// enabling TLS on a namespace whose proxy still has the default empty host
+// rewrites it to the ergonomic "localhost" default (the stored port 80 is
+// untouched — the effective published port of 443 is derived at generation
+// time via namespace.EffectiveProxyPort), and never turns on Let's Encrypt
+// as a side effect.
 func TestNamespaceEdit_SelfSignedTLSDefaults(t *testing.T) {
 	config.SetDesktopMode(true)
 	t.Cleanup(config.ResetDesktopMode)
@@ -39,5 +41,7 @@ func TestNamespaceEdit_SelfSignedTLSDefaults(t *testing.T) {
 	assert.True(t, stored.Proxy.TLS.Enabled)
 	assert.False(t, stored.Proxy.TLS.LetsEncrypt, "edit must never enable Let's Encrypt as a side effect")
 	assert.Equal(t, "localhost", stored.Proxy.Host)
-	assert.Equal(t, 443, stored.Proxy.Port)
+	// Stored port stays 80; the effective published port (443) is derived
+	// at generation time via namespace.EffectiveProxyPort.
+	assert.Equal(t, 80, stored.Proxy.Port)
 }

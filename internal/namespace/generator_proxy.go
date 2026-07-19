@@ -154,7 +154,7 @@ func generateProxy(ctx *NsGenContext) {
 		app.AddEnv("ALFRESCO_ENABLED", "false")
 	}
 	app.AddEnv("PROXY_TARGET", proxyTarget)
-	app.AddPort(fmt.Sprintf("%d:%d", ctx.Config.Proxy.Port, containerPort))
+	app.AddPort(fmt.Sprintf("%d:%d", EffectiveProxyPort(ctx.Config.Proxy), containerPort))
 	// The proxy hard-depends on the gateway: it exists to front it. The gateway is
 	// always present in real bundles, so this dep is satisfied in production. Where
 	// no gateway is generated (a minimal/bundleless namespace), the proxy serves no

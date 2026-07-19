@@ -13,9 +13,10 @@ import (
 // TestBuildNamespaceConfigFromCreate_SelfSignedTLSDefaults pins that the
 // create route's config builder actually invokes applySelfSignedTLSDefaults
 // (rather than that helper only being covered in isolation): desktop mode
-// with TLS on rewrites host/port to the ergonomic localhost:443 default,
-// server mode leaves the proxy defaults untouched, and TLS off never
-// rewrites anything.
+// with TLS on rewrites the host to the ergonomic "localhost" default (the
+// stored port stays 80 — the effective published port of 443 is derived at
+// generation time via namespace.EffectiveProxyPort), server mode leaves the
+// proxy defaults untouched, and TLS off never rewrites anything.
 func TestBuildNamespaceConfigFromCreate_SelfSignedTLSDefaults(t *testing.T) {
 	baseReq := func() api.NamespaceCreateDto {
 		return api.NamespaceCreateDto{
@@ -41,7 +42,9 @@ func TestBuildNamespaceConfigFromCreate_SelfSignedTLSDefaults(t *testing.T) {
 		assert.True(t, cfg.Proxy.TLS.Enabled)
 		assert.False(t, cfg.Proxy.TLS.LetsEncrypt)
 		assert.Equal(t, "localhost", cfg.Proxy.Host)
-		assert.Equal(t, 443, cfg.Proxy.Port)
+		// Stored port stays 80; the effective published port (443) is derived
+		// at generation time via namespace.EffectiveProxyPort.
+		assert.Equal(t, 80, cfg.Proxy.Port)
 	})
 
 	t.Run("server mode TLS enabled does not rewrite host or port", func(t *testing.T) {

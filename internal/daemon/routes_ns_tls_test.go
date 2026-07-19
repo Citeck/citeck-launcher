@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestApplySelfSignedTLSDefaults_DesktopFillsHostAndPort(t *testing.T) {
+func TestApplySelfSignedTLSDefaults_DesktopFillsHost(t *testing.T) {
 	config.SetDesktopMode(true)
 	defer config.ResetDesktopMode()
 
@@ -19,7 +19,9 @@ func TestApplySelfSignedTLSDefaults_DesktopFillsHostAndPort(t *testing.T) {
 	applySelfSignedTLSDefaults(cfg)
 
 	assert.Equal(t, "localhost", cfg.Proxy.Host)
-	assert.Equal(t, 443, cfg.Proxy.Port)
+	// The port is no longer rewritten here — the effective 443 is derived
+	// at generation time via EffectiveProxyPort; the stored port is untouched.
+	assert.Equal(t, 80, cfg.Proxy.Port)
 }
 
 func TestApplySelfSignedTLSDefaults_DesktopPreservesCustomHostPort(t *testing.T) {
