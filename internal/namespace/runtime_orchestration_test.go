@@ -189,3 +189,151 @@ func TestDoRegenerate_RefreshImagesGatesSnapshotDigestRefresh(t *testing.T) {
 		})
 	}
 }
+
+// TestDoRegenerate_ConfigEditIsSurgical proves the user-facing guarantee
+// behind refreshImages=false: a config-edit reload recreates ONLY the app
+// whose definition actually changed. A second, byte-identical app in the
+// same namespace must be reused by hash (same container, never leaves
+// RUNNING) and refreshSnapshotDigestsFn must NOT run — a config-edit reload
+// is not the explicit Update & Start action and must not pay the :snapshot
+// digest-refresh cost for apps it isn't even touching.
+func TestDoRegenerate_ConfigEditIsSurgical(t *testing.T) {
+	md := newMockDocker()
+	tmpDir := t.TempDir()
+
+	appA := simpleApp("app-a", "image-a:1")
+	appB := simpleApp("app-b", "image-b:1")
+	apps := []appdef.ApplicationDef{appA, appB}
+
+	r := NewRuntime(testConfig(), md, tmpDir)
+	defer r.Shutdown()
+	r.Start(apps, false)
+	if !waitForStatus(r, NsStatusRunning, 10*time.Second) {
+		t.Fatalf("namespace did not reach RUNNING, got %v", r.Status())
+	}
+
+	md.mu.Lock()
+	containerABefore := md.containers["app-a"].id
+	containerBBefore := md.containers["app-b"].id
+	md.mu.Unlock()
+	if containerABefore == "" || containerBBefore == "" {
+		t.Fatalf("expected both containers present before regenerate")
+	}
+
+	var calls atomic.Int32
+	r.refreshSnapshotDigestsFn = func(_ context.Context, _ []appdef.ApplicationDef) {
+		calls.Add(1)
+	}
+
+	// Edit ONLY app-a's def (add an env var, like the per-app config editor
+	// would produce). app-b's def is byte-identical to what's running.
+	appAEdited := appA
+	appAEdited.Environments = appdef.OrderedMap{{Key: "FOO", Value: "bar"}}
+	editedApps := []appdef.ApplicationDef{appAEdited, appB}
+
+	r.Regenerate(editedApps, nil, nil, false)
+
+	// Synchronize on the same STARTING→RUNNING round trip the other
+	// regenerate tests in this package use: doRegenerate flips NS status to
+	// STARTING synchronously and the per-app hash diff/recreate work happens
+	// strictly before the return to RUNNING, so observing RUNNING again
+	// proves doRegenerate — including the refreshImages gate evaluation and
+	// the per-app reuse decision — ran to completion before we read the
+	// container ids / call counter below.
+	waitForStatus(r, NsStatusStarting, 5*time.Second)
+	if !waitForStatus(r, NsStatusRunning, 15*time.Second) {
+		t.Fatalf("namespace did not return to RUNNING after regenerate, got %v", r.Status())
+	}
+	if !waitForAppStatus(r, "app-a", AppStatusRunning, 15*time.Second) {
+		t.Fatalf("app-a did not return to RUNNING after regenerate")
+	}
+	if !waitForAppStatus(r, "app-b", AppStatusRunning, 15*time.Second) {
+		t.Fatalf("app-b did not return to RUNNING after regenerate")
+	}
+
+	md.mu.Lock()
+	containerAAfter := md.containers["app-a"].id
+	containerBAfter := md.containers["app-b"].id
+	md.mu.Unlock()
+
+	if containerAAfter == containerABefore {
+		t.Fatalf("app-a (edited def) should have been recreated, container id unchanged: %s", containerAAfter)
+	}
+	if containerBAfter != containerBBefore {
+		t.Fatalf("app-b (unchanged def) should have been reused by hash, container id changed %s -> %s", containerBBefore, containerBAfter)
+	}
+
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("refreshSnapshotDigestsFn call count = %d, want 0 (refreshImages=false — a config-edit reload must never refresh :snapshot digests)", got)
+	}
+}
+
+// TestDoRegenerate_ImageChangeRecreatesWithoutDigestRefresh is the gear-icon
+// scenario the user explicitly worried about: editing an app's Image field
+// via the config editor still recreates that app's container even though
+// refreshImages=false (no :snapshot digest refresh runs). Recreation must
+// come purely from GetHashInput hashing the new image string, not from any
+// digest-refresh side channel.
+func TestDoRegenerate_ImageChangeRecreatesWithoutDigestRefresh(t *testing.T) {
+	md := newMockDocker()
+	tmpDir := t.TempDir()
+
+	// Pin BOTH image refs to the identical resolved digest. mockDocker's
+	// default GetImageDigest derives a digest from the image string itself
+	// ("sha256:mock-digest-"+img), which would make the hash differ via
+	// ImageDigest even if GetHashInput never hashed d.Image directly — that
+	// would make this test pass vacuously. Pinning isolates d.Image as the
+	// ONLY thing that can change between the two hashes.
+	const sharedDigest = "sha256:shared-digest-for-both-refs"
+	md.imageDigests = map[string]string{
+		"foo:X": sharedDigest,
+		"foo:Y": sharedDigest,
+	}
+
+	app := simpleApp("gateway", "foo:X")
+	apps := []appdef.ApplicationDef{app}
+
+	r := NewRuntime(testConfig(), md, tmpDir)
+	defer r.Shutdown()
+	r.Start(apps, false)
+	if !waitForStatus(r, NsStatusRunning, 10*time.Second) {
+		t.Fatalf("namespace did not reach RUNNING, got %v", r.Status())
+	}
+
+	md.mu.Lock()
+	containerBefore := md.containers["gateway"].id
+	md.mu.Unlock()
+	if containerBefore == "" {
+		t.Fatalf("expected gateway container present before regenerate")
+	}
+
+	var calls atomic.Int32
+	r.refreshSnapshotDigestsFn = func(_ context.Context, _ []appdef.ApplicationDef) {
+		calls.Add(1)
+	}
+
+	// Gear-icon edit: only the image reference changes (foo:X -> foo:Y),
+	// same app name, no ":snapshot" tag involved anywhere.
+	appNewImage := simpleApp("gateway", "foo:Y")
+	r.Regenerate([]appdef.ApplicationDef{appNewImage}, nil, nil, false)
+
+	waitForStatus(r, NsStatusStarting, 5*time.Second)
+	if !waitForStatus(r, NsStatusRunning, 15*time.Second) {
+		t.Fatalf("namespace did not return to RUNNING after regenerate, got %v", r.Status())
+	}
+	if !waitForAppStatus(r, "gateway", AppStatusRunning, 15*time.Second) {
+		t.Fatalf("gateway did not return to RUNNING after regenerate")
+	}
+
+	md.mu.Lock()
+	containerAfter := md.containers["gateway"].id
+	md.mu.Unlock()
+
+	if containerAfter == containerBefore {
+		t.Fatalf("app with changed Image should have been recreated, container id unchanged: %s", containerAfter)
+	}
+
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("refreshSnapshotDigestsFn call count = %d, want 0 (refreshImages=false — an image edit alone must not trigger digest refresh)", got)
+	}
+}
