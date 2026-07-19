@@ -26,7 +26,7 @@ func TestReconcilerBackoffRetryTiming(t *testing.T) {
 	defer r.Shutdown()
 
 	def := simpleApp("postgres", "postgres:17")
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 
 	require.True(t, waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second),
 		"app did not reach RUNNING for setup")
@@ -96,7 +96,7 @@ func TestLivenessProbeScheduling(t *testing.T) {
 		TimeoutSeconds:      1,
 	}
 
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 	require.True(t, waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second),
 		"app did not reach RUNNING")
 	require.True(t, waitForStatus(r, NsStatusRunning, 10*time.Second),

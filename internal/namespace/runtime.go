@@ -198,14 +198,19 @@ type Runtime struct {
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 
-	signalCh             *SignalQueue
-	cmdQueue             *CmdQueue
-	resultCh             chan workers.Result
-	dirty                atomic.Bool      // flipped by state mutators; runtimeLoop tail coalesces into one persistState per iteration.
-	nowFunc              func() time.Time // returns current time (test-injectable via WithTestClock).
-	dispatcher           *Dispatcher
-	pendingContinuations []continuation
-	shutdownComplete     chan struct{}
+	signalCh *SignalQueue
+	cmdQueue *CmdQueue
+	resultCh chan workers.Result
+	dirty    atomic.Bool      // flipped by state mutators; runtimeLoop tail coalesces into one persistState per iteration.
+	nowFunc  func() time.Time // returns current time (test-injectable via WithTestClock).
+	// refreshSnapshotDigestsFn defaults to r.refreshSnapshotDigests (wired in
+	// NewRuntime, since a method value needs r to already exist). Test-injectable
+	// seam so orchestration tests can assert doStart/doRegenerate call it iff
+	// refreshImages is set, without depending on real Docker pull semantics.
+	refreshSnapshotDigestsFn func(ctx context.Context, apps []appdef.ApplicationDef)
+	dispatcher               *Dispatcher
+	pendingContinuations     []continuation
+	shutdownComplete         chan struct{}
 	// eventBuffer is the per-iteration event accumulator. flushEvents drains it
 	// to eventCh in append order at the end of each runtimeLoop iteration.
 	// All appenders MUST hold r.mu.Lock for the duration of the append.
@@ -600,6 +605,7 @@ func NewRuntime(cfg *Config, dockerClient docker.RuntimeClient, volumesBase stri
 		longStopTimeout: defaultLongStopTimeout,
 	}
 	r.dispatcher = NewDispatcher(context.Background(), &r.wg, defaultPullConcurrency)
+	r.refreshSnapshotDigestsFn = r.refreshSnapshotDigests
 	go r.dispatchLoop()
 	return r
 }

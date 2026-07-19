@@ -426,7 +426,7 @@ func (r *Runtime) evaluateContinuations() {
 func (r *Runtime) applyCommand(cmd runtimeCmd) {
 	switch c := cmd.(type) {
 	case cmdStart:
-		r.doStart(c.apps)
+		r.doStart(c.apps, c.refreshImages)
 	case cmdRegenerate:
 		if c.cfg != nil || (c.bundleDef != nil && !c.bundleDef.IsEmpty()) {
 			r.mu.Lock()
@@ -438,7 +438,7 @@ func (r *Runtime) applyCommand(cmd runtimeCmd) {
 			}
 			r.mu.Unlock()
 		}
-		r.doRegenerate(c.apps)
+		r.doRegenerate(c.apps, c.refreshImages)
 	case cmdStop:
 		r.doStop()
 	case cmdDetach:

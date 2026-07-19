@@ -35,7 +35,7 @@ func TestWaitForInitialReconcileAfterRestart(t *testing.T) {
 	apps := []appdef.ApplicationDef{
 		simpleApp("postgres", "postgres:17"),
 	}
-	r.Start(apps)
+	r.Start(apps, false)
 
 	// Call WaitForInitialReconcile from a goroutine; it should unblock as soon
 	// as setStatus transitions out of STARTING.
@@ -157,7 +157,7 @@ func TestRestartAppAtomicRunCtxCapture(t *testing.T) {
 		simpleApp("app-a", "image-a:1"),
 		simpleApp("app-b", "image-b:1"),
 	}
-	r.Start(apps)
+	r.Start(apps, false)
 
 	// Wait briefly for the runtime to settle into RUNNING before storming it.
 	// We don't require RUNNING — only that the initial apps have been

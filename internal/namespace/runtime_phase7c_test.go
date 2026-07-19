@@ -111,7 +111,7 @@ func TestPersistCoalescesTransientStatusTransitions(t *testing.T) {
 	r.SetStatePersister(fp)
 	defer r.Shutdown()
 
-	r.Start([]appdef.ApplicationDef{simpleApp("foo", "foo:1")})
+	r.Start([]appdef.ApplicationDef{simpleApp("foo", "foo:1")}, false)
 	if !waitForAppStatus(r, "foo", AppStatusRunning, 10*time.Second) {
 		t.Fatalf("app did not reach RUNNING")
 	}
@@ -184,7 +184,7 @@ func TestStopAppBurstPersistsDetach(t *testing.T) {
 	r.SetStatePersister(fp)
 	defer r.Shutdown()
 
-	r.Start([]appdef.ApplicationDef{simpleApp("foo", "foo:1")})
+	r.Start([]appdef.ApplicationDef{simpleApp("foo", "foo:1")}, false)
 	if !waitForAppStatus(r, "foo", AppStatusRunning, 10*time.Second) {
 		t.Fatalf("app did not reach RUNNING")
 	}
@@ -219,7 +219,7 @@ func TestStopAppInlinePersistIsEager(t *testing.T) {
 	r.SetStatePersister(fp)
 	defer r.Shutdown()
 
-	r.Start([]appdef.ApplicationDef{simpleApp("foo", "foo:1")})
+	r.Start([]appdef.ApplicationDef{simpleApp("foo", "foo:1")}, false)
 	if !waitForAppStatus(r, "foo", AppStatusRunning, 10*time.Second) {
 		t.Fatalf("foo did not reach RUNNING")
 	}
@@ -249,7 +249,7 @@ func TestDirtyFlagClearedAfterLoopPersist(t *testing.T) {
 	r := NewRuntime(testConfig(), md, dir)
 	defer r.Shutdown()
 
-	r.Start([]appdef.ApplicationDef{simpleApp("foo", "foo:1")})
+	r.Start([]appdef.ApplicationDef{simpleApp("foo", "foo:1")}, false)
 	if !waitForAppStatus(r, "foo", AppStatusRunning, 10*time.Second) {
 		t.Fatalf("foo did not reach RUNNING")
 	}

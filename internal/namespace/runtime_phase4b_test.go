@@ -48,7 +48,7 @@ func TestPullFailedBackoff(t *testing.T) {
 	defer r.Shutdown()
 
 	def := simpleApp("postgres", "postgres:17")
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 
 	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
 		t.Fatalf("app did not reach RUNNING for setup")
@@ -107,7 +107,7 @@ func TestPullAuthBlockedNoAutoRetry(t *testing.T) {
 	defer r.Shutdown()
 
 	def := simpleApp("postgres", "postgres:17")
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
 		t.Fatalf("app did not reach RUNNING for setup")
 	}
@@ -151,7 +151,7 @@ func TestStartFailedBackoff(t *testing.T) {
 	defer r.Shutdown()
 
 	def := simpleApp("postgres", "postgres:17")
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
 		t.Fatalf("app did not reach RUNNING for setup")
 	}
@@ -204,7 +204,7 @@ func TestInitContainerSequence(t *testing.T) {
 		{Image: "init-a:1"},
 		{Image: "init-b:1"},
 	}
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 
 	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
 		found := r.FindApp(def.Name)
@@ -271,7 +271,7 @@ func TestInitStepEvents(t *testing.T) {
 		{Image: "registry.citeck.ru/citeck/init-a:1"},
 		{Image: "init-b:1"},
 	}
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 
 	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
 		t.Fatalf("app did not reach RUNNING")
@@ -350,7 +350,7 @@ func TestDepsWaitThenStart(t *testing.T) {
 		simpleApp("app-a", "image-a:1"),
 		simpleApp("app-b", "image-b:1", "app-a"),
 	}
-	r.Start(apps)
+	r.Start(apps, false)
 
 	// Wait for B to reach DEPS_WAITING — the pull on A is still blocked, so
 	// A is PULLING and B (image local) hits T8.

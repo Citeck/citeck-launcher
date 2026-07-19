@@ -200,7 +200,9 @@ func Start(opts StartOptions) error {
 		// clobber the namespace's live volumes — e.g. it restored a stale demo
 		// snapshot over a 1.x→2.x migrated namespace and corrupted its postgres.
 		if loaded.ShouldStart {
-			loaded.Runtime.Start(loaded.AppDefs)
+			// Boot auto-start is not the explicit Update & Start action —
+			// skip the :snapshot pre-pull digest refresh (refreshImages=false).
+			loaded.Runtime.Start(loaded.AppDefs, false)
 		}
 	}
 

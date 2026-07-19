@@ -31,7 +31,7 @@ func TestRestartAppDuringShutdownIsRejected(t *testing.T) {
 	defer r.Shutdown()
 
 	apps := []appdef.ApplicationDef{simpleApp("postgres", "postgres:17")}
-	r.Start(apps)
+	r.Start(apps, false)
 	require.True(t, waitForStatus(r, NsStatusRunning, 10*time.Second),
 		"namespace did not reach RUNNING")
 
@@ -169,7 +169,7 @@ func TestPostStartActionsWorkerIsDispatchedAfterRunning(t *testing.T) {
 			InitActions: []appdef.AppInitAction{initAction},
 		},
 	}
-	r.Start(apps)
+	r.Start(apps, false)
 
 	// Wait for app-a RUNNING — its worker started and is now blocked on exec.
 	require.True(t, waitForAppStatus(r, "app-a", AppStatusRunning, 10*time.Second),

@@ -43,7 +43,7 @@ func TestStopGroupTimeoutProceedsToNextGroup(t *testing.T) {
 		simpleApp(appdef.AppProxy, "nginx:1.27"),
 		simpleApp(appdef.AppPostgres, "postgres:17"),
 	}
-	r.Start(apps)
+	r.Start(apps, false)
 	require.True(t, waitForStatus(r, NsStatusRunning, 10*time.Second),
 		"namespace did not reach RUNNING")
 
@@ -102,7 +102,7 @@ func TestStopReleasesLockDuringNetworkRemoval(t *testing.T) {
 
 	// Simple single-app namespace so the chain reaches RemoveNetwork fast.
 	apps := []appdef.ApplicationDef{simpleApp("postgres", "postgres:17")}
-	r.Start(apps)
+	r.Start(apps, false)
 	require.True(t, waitForStatus(r, NsStatusRunning, 10*time.Second),
 		"namespace did not reach RUNNING")
 
@@ -200,7 +200,7 @@ func TestDoubleStopDoesNotDuplicateHistory(t *testing.T) {
 	defer r.Shutdown()
 
 	apps := []appdef.ApplicationDef{simpleApp("postgres", "postgres:17")}
-	r.Start(apps)
+	r.Start(apps, false)
 	require.True(t, waitForStatus(r, NsStatusRunning, 10*time.Second),
 		"namespace did not reach RUNNING")
 
@@ -287,7 +287,7 @@ func TestStartAfterStopReinitializesShutdownChan(t *testing.T) {
 	apps := []appdef.ApplicationDef{simpleApp("postgres", "postgres:17")}
 
 	// ----- First lifecycle: Start → RUNNING → Stop → STOPPED.
-	r.Start(apps)
+	r.Start(apps, false)
 	require.True(t, waitForStatus(r, NsStatusRunning, 10*time.Second),
 		"first Start: namespace did not reach RUNNING")
 
@@ -307,7 +307,7 @@ func TestStartAfterStopReinitializesShutdownChan(t *testing.T) {
 	// ----- Second lifecycle: Start again on the same Runtime instance.
 	// The reset block re-creates shutdownComplete / signalOnce / detaching so
 	// the new runtimeLoop does NOT observe the closed channel and exit early.
-	r.Start(apps)
+	r.Start(apps, false)
 	require.True(t, waitForAppStatus(r, "postgres", AppStatusRunning, 10*time.Second),
 		"second Start: postgres did not reach RUNNING; "+
 			"if the reset block in Start() is absent the new runtimeLoop exits immediately "+

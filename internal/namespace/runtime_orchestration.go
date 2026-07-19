@@ -21,7 +21,7 @@ type staleSweepPlan struct {
 	stopTimeout   int
 }
 
-func (r *Runtime) doStart(apps []appdef.ApplicationDef) { //nolint:gocyclo // orchestration with 3-phase lock pattern
+func (r *Runtime) doStart(apps []appdef.ApplicationDef, refreshImages bool) { //nolint:gocyclo // orchestration with 3-phase lock pattern
 	ctx, cancel := context.WithCancel(context.Background())
 
 	r.mu.Lock()
@@ -58,7 +58,13 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) { //nolint:gocyclo // or
 	// first. Without this, the hash-diff below would compute hash from a
 	// stale local digest — adoption would keep running the old container
 	// even though the developer pushed a new image under the same tag.
-	r.refreshSnapshotDigests(ctx, apps)
+	// Gated by refreshImages: only the explicit Update & Start path pays this
+	// cost — a plain boot auto-start (and a regular config-edit reload/regen)
+	// skips it, avoiding a hidden re-pull of unrelated apps and the resulting
+	// dead window before the hash diff.
+	if refreshImages {
+		r.refreshSnapshotDigestsFn(ctx, apps)
+	}
 
 	type appPlan struct {
 		def           appdef.ApplicationDef
@@ -277,7 +283,7 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef) { //nolint:gocyclo // or
 //     digests (Docker calls), compute hashes.
 //  2. Lock + per-app diff + state transitions + dispatch plan accumulation.
 //  3. Unlock, then dispatch stopContainer workers.
-func (r *Runtime) doRegenerate(apps []appdef.ApplicationDef) { //nolint:gocyclo // single-pass per-app diff over the new desired set
+func (r *Runtime) doRegenerate(apps []appdef.ApplicationDef, refreshImages bool) { //nolint:gocyclo // single-pass per-app diff over the new desired set
 	// Reuse the existing runCtx — the reconciler continues running against the
 	// same context and observes r.apps mutations atomically under the
 	// runtimeLoop's single-writer rule. Workers dispatched via
@@ -309,8 +315,11 @@ func (r *Runtime) doRegenerate(apps []appdef.ApplicationDef) { //nolint:gocyclo 
 	// Refresh local digests for :snapshot images before computing the hash
 	// diff. Without this, reload would never detect a dev-pushed snapshot
 	// that reuses the same tag — hash(stale local digest) would match the
-	// running container's stored hash and doRegenerate would skip it.
-	r.refreshSnapshotDigests(ctx, apps)
+	// running container's stored hash and doRegenerate would skip it. Gated
+	// by refreshImages: only Update & Start pays this cost (see doStart).
+	if refreshImages {
+		r.refreshSnapshotDigestsFn(ctx, apps)
+	}
 
 	type resolvedApp struct {
 		def  appdef.ApplicationDef

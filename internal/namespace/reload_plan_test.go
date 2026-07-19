@@ -138,7 +138,7 @@ func TestDoRegenerate_DetachedStaysStoppedOnHashChange(t *testing.T) {
 	r.apps = map[string]*AppRuntime{"det": {Name: "det", Status: AppStatusStopped, Def: oldDef}}
 	r.manualStoppedApps = map[string]bool{"det": true}
 
-	r.doRegenerate([]appdef.ApplicationDef{newDef})
+	r.doRegenerate([]appdef.ApplicationDef{newDef}, false)
 
 	app := r.apps["det"]
 	require.NotNil(t, app)

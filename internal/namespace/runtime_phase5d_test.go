@@ -21,7 +21,7 @@ func TestStoppingFailedSelfHeal(t *testing.T) {
 	defer r.Shutdown()
 
 	def := simpleApp("postgres", "postgres:17")
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
 		t.Fatalf("app did not reach RUNNING for setup")
 	}
@@ -64,7 +64,7 @@ func TestStoppingFailedDetachedNotHealed(t *testing.T) {
 	defer r.Shutdown()
 
 	def := simpleApp("postgres", "postgres:17")
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
 		t.Fatalf("app did not reach RUNNING for setup")
 	}
@@ -103,7 +103,7 @@ func TestSelfHealReusesLocalImageNoPull(t *testing.T) {
 	def := simpleApp("eapps", "nexus.example.com/ecos-apps:1-snapshot")
 	def.Kind = appdef.KindCiteckCore
 
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
 		t.Fatalf("app did not reach RUNNING for setup")
 	}
@@ -143,7 +143,7 @@ func TestSelfHealRemovedAppNotRevived(t *testing.T) {
 	defer r.Shutdown()
 
 	def := simpleApp("postgres", "postgres:17")
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
 		t.Fatalf("app did not reach RUNNING for setup")
 	}
@@ -189,7 +189,7 @@ func TestReleaseImagePresentNeverPulls(t *testing.T) {
 	def := simpleApp("eapps", "nexus.example.com/ecos-apps:2.26.10")
 	def.Kind = appdef.KindCiteckCore
 
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
 		t.Fatalf("app did not reach RUNNING for setup")
 	}

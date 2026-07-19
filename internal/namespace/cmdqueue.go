@@ -21,9 +21,12 @@ type runtimeCmd interface {
 	cmdTag() string
 }
 
-// cmdStart starts the namespace with the given desired app set.
+// cmdStart starts the namespace with the given desired app set. refreshImages
+// gates the :snapshot pre-pull digest refresh (refreshSnapshotDigests) before
+// the hash diff — true only on the explicit Update & Start path.
 type cmdStart struct {
-	apps []appdef.ApplicationDef
+	apps          []appdef.ApplicationDef
+	refreshImages bool
 }
 
 func (cmdStart) cmdTag() string { return "start" }
@@ -57,10 +60,12 @@ func (cmdRestartApp) cmdTag() string { return "restartApp" }
 
 // cmdRegenerate rebuilds the desired-set / configs and reconciles existing
 // containers (changed-hash → recreate, new → start, removed → STOPPED + GC).
+// refreshImages gates the :snapshot pre-pull digest refresh (see cmdStart).
 type cmdRegenerate struct {
-	apps      []appdef.ApplicationDef
-	cfg       *Config
-	bundleDef *bundle.Def
+	apps          []appdef.ApplicationDef
+	cfg           *Config
+	bundleDef     *bundle.Def
+	refreshImages bool
 }
 
 func (cmdRegenerate) cmdTag() string { return "regenerate" }
@@ -163,13 +168,14 @@ drain:
 func collapseCommandsIfPossible(a, b runtimeCmd) (runtimeCmd, bool) {
 	switch av := a.(type) {
 	case cmdStart:
-		_ = av
-		switch b.(type) {
-		case cmdStart, cmdStop:
+		switch bv := b.(type) {
+		case cmdStart:
+			return cmdStart{apps: bv.apps, refreshImages: av.refreshImages || bv.refreshImages}, true
+		case cmdStop:
 			return b, true
 		case cmdRegenerate:
-			// Start already covers regen; keep the earlier Start.
-			return a, true
+			// Start already covers regen; keep Start's apps, OR the flag.
+			return cmdStart{apps: av.apps, refreshImages: av.refreshImages || bv.refreshImages}, true
 		}
 	case cmdStop:
 		_ = av
@@ -178,10 +184,11 @@ func collapseCommandsIfPossible(a, b runtimeCmd) (runtimeCmd, bool) {
 			return b, true
 		}
 	case cmdRegenerate:
-		_ = av
-		switch b.(type) {
-		case cmdStart, cmdRegenerate:
-			return b, true
+		switch bv := b.(type) {
+		case cmdStart:
+			return cmdStart{apps: bv.apps, refreshImages: av.refreshImages || bv.refreshImages}, true
+		case cmdRegenerate:
+			return cmdRegenerate{apps: bv.apps, cfg: bv.cfg, bundleDef: bv.bundleDef, refreshImages: av.refreshImages || bv.refreshImages}, true
 		}
 	case cmdStopApp:
 		switch bv := b.(type) {

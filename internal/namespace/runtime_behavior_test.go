@@ -349,7 +349,7 @@ func TestStartAndStop(t *testing.T) {
 		simpleApp("emodel", "ecos-model:2.0", "postgres"),
 	}
 
-	r.Start(apps)
+	r.Start(apps, false)
 
 	if !waitForStatus(r, NsStatusRunning, 10*time.Second) {
 		t.Fatalf("namespace did not reach RUNNING, got %v", r.Status())
@@ -389,7 +389,7 @@ func TestStoppedRetainsAppDefinitions(t *testing.T) {
 		simpleApp("emodel", "ecos-model:2.0", "postgres"),
 	}
 
-	r.Start(apps)
+	r.Start(apps, false)
 	if !waitForStatus(r, NsStatusRunning, 10*time.Second) {
 		t.Fatalf("namespace did not reach RUNNING, got %v", r.Status())
 	}
@@ -421,7 +421,7 @@ func TestStoppedRetainsAppDefinitions(t *testing.T) {
 	}
 
 	// Start again: the retained STOPPED entries must not block a clean restart.
-	r.Start(apps)
+	r.Start(apps, false)
 	if !waitForStatus(r, NsStatusRunning, 10*time.Second) {
 		t.Fatalf("namespace did not reach RUNNING on restart, got %v", r.Status())
 	}
@@ -443,7 +443,7 @@ func TestWaitForDeps(t *testing.T) {
 		simpleApp("app-b", "image-b:1", "app-a"),
 	}
 
-	r.Start(apps)
+	r.Start(apps, false)
 
 	// B should eventually reach RUNNING (after A reaches RUNNING first)
 	if !waitForAppStatus(r, "app-b", AppStatusRunning, 10*time.Second) {
@@ -467,7 +467,7 @@ func TestStopAppMarksDetachedAndPersists(t *testing.T) {
 	r := NewRuntime(testConfig(), md, t.TempDir())
 	defer r.Shutdown()
 
-	r.Start([]appdef.ApplicationDef{simpleApp("foo", "foo:1")})
+	r.Start([]appdef.ApplicationDef{simpleApp("foo", "foo:1")}, false)
 	if !waitForAppStatus(r, "foo", AppStatusRunning, 10*time.Second) {
 		t.Fatalf("app did not reach RUNNING")
 	}
@@ -508,7 +508,7 @@ func TestWaitForDepsSkipsDetached(t *testing.T) {
 		simpleApp("app-a", "image-a:1"),
 		simpleApp("app-b", "image-b:1", "app-a"),
 	}
-	r.Start(apps)
+	r.Start(apps, false)
 
 	// B should reach RUNNING because detached A is treated as satisfied
 	if !waitForAppStatus(r, "app-b", AppStatusRunning, 10*time.Second) {
@@ -540,7 +540,7 @@ func TestRegeneratePreservesRunning(t *testing.T) {
 		simpleApp("postgres", "postgres:17"),
 	}
 
-	r.Start(apps)
+	r.Start(apps, false)
 	if !waitForStatus(r, NsStatusRunning, 10*time.Second) {
 		t.Fatalf("namespace did not reach RUNNING")
 	}
@@ -551,7 +551,7 @@ func TestRegeneratePreservesRunning(t *testing.T) {
 	md.mu.Unlock()
 
 	// Regenerate with same app definition — container should be preserved (hash match)
-	r.Regenerate(apps, nil, nil)
+	r.Regenerate(apps, nil, nil, false)
 
 	// Wait for regeneration to start and complete
 	waitForStatus(r, NsStatusStarting, 5*time.Second)
@@ -578,7 +578,7 @@ func TestRegenerateRestartsChanged(t *testing.T) {
 		simpleApp("postgres", "postgres:17"),
 	}
 
-	r.Start(apps)
+	r.Start(apps, false)
 	if !waitForStatus(r, NsStatusRunning, 10*time.Second) {
 		t.Fatalf("namespace did not reach RUNNING")
 	}
@@ -591,7 +591,7 @@ func TestRegenerateRestartsChanged(t *testing.T) {
 	apps2 := []appdef.ApplicationDef{
 		simpleApp("postgres", "postgres:18"),
 	}
-	r.Regenerate(apps2, nil, nil)
+	r.Regenerate(apps2, nil, nil, false)
 
 	// Wait for regeneration to start (leaves RUNNING)
 	waitForStatus(r, NsStatusStarting, 5*time.Second)
@@ -620,7 +620,7 @@ func TestStopWhileStarting(t *testing.T) {
 		simpleApp("mongo", "mongo:4"),
 	}
 
-	r.Start(apps)
+	r.Start(apps, false)
 
 	// Immediately stop — should not deadlock
 	time.Sleep(50 * time.Millisecond)
@@ -643,7 +643,7 @@ func TestDetachLeavesContainersRunning(t *testing.T) {
 		simpleApp("mongo", "mongo:4"),
 	}
 
-	r.Start(apps)
+	r.Start(apps, false)
 	if !waitForStatus(r, NsStatusRunning, 10*time.Second) {
 		t.Fatalf("namespace did not reach RUNNING, got %v", r.Status())
 	}
@@ -710,7 +710,7 @@ func TestDetachWhileStopping(t *testing.T) {
 		simpleApp("postgres", "postgres:17"),
 	}
 
-	r.Start(apps)
+	r.Start(apps, false)
 	if !waitForStatus(r, NsStatusRunning, 10*time.Second) {
 		t.Fatalf("namespace did not reach RUNNING")
 	}
@@ -754,7 +754,7 @@ func TestDetachThenAdopt(t *testing.T) {
 		simpleApp("mongo", "mongo:4"),
 	}
 
-	r1.Start(apps)
+	r1.Start(apps, false)
 	if !waitForStatus(r1, NsStatusRunning, 10*time.Second) {
 		t.Fatalf("first runtime did not reach RUNNING")
 	}
@@ -779,7 +779,7 @@ func TestDetachThenAdopt(t *testing.T) {
 	r2 := NewRuntime(testConfig(), md, tmpDir)
 	defer r2.Shutdown()
 
-	r2.Start(apps)
+	r2.Start(apps, false)
 	if !waitForStatus(r2, NsStatusRunning, 10*time.Second) {
 		t.Fatalf("second runtime did not reach RUNNING after adopt")
 	}

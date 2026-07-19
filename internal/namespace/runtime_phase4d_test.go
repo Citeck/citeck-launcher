@@ -28,7 +28,7 @@ func TestRestartDetachedDepTriggersRegenerate(t *testing.T) {
 	defer r.Shutdown()
 
 	def := simpleApp("content", "image-content:1")
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
 		t.Fatalf("app did not reach RUNNING for setup")
 	}
@@ -96,7 +96,7 @@ func TestRestartAppGoesThroughStoppingThenReadyToPull(t *testing.T) {
 	defer r.Shutdown()
 
 	def := simpleApp("web", "image-web:1")
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
 		t.Fatalf("app did not reach RUNNING for setup")
 	}
@@ -173,7 +173,7 @@ func TestRapidRestartAppDoesNotOverlapStopContainers(t *testing.T) {
 	defer r.Shutdown()
 
 	def := simpleApp("web", "image-web:1")
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
 		t.Fatalf("app did not reach RUNNING for setup")
 	}
@@ -255,7 +255,7 @@ func TestEventOrderWithinTick(t *testing.T) {
 		mu.Unlock()
 	})
 
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
 		t.Fatalf("app did not reach RUNNING for event ordering assertion")
 	}

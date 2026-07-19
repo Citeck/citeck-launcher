@@ -206,6 +206,10 @@ func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
 // apps while a stopped one is started with the fresh set. doReloadEx holds
 // reloadMu and does slow I/O, so it must not block the HTTP handler; a concurrent
 // reload already in progress (TryLock fails) is treated as satisfying the request.
+//
+// This is the sole caller that passes refreshImages=true to doReloadEx — Update
+// & Start is the one action that should pay the :snapshot pre-pull digest
+// refresh cost (it's the explicit "give me the latest" gesture).
 func (d *Daemon) updateAndStartAsync(forceGitPull, wasRunning bool) {
 	go func() {
 		if !d.reloadMu.TryLock() {
@@ -217,7 +221,7 @@ func (d *Daemon) updateAndStartAsync(forceGitPull, wasRunning bool) {
 			return
 		}
 		defer d.reloadMu.Unlock()
-		if err := d.doReloadEx(forceGitPull, !wasRunning); err != nil {
+		if err := d.doReloadEx(forceGitPull, !wasRunning, true); err != nil {
 			slog.Warn("Update and start failed", "err", err)
 		}
 	}()

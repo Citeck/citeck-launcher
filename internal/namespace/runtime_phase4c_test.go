@@ -60,7 +60,7 @@ func TestReconcilerRestartPinnedImageDoesNotPull(t *testing.T) {
 
 	def := simpleApp("postgres", "postgres:17")
 	require.Equal(t, appdef.KindThirdParty, def.Kind, "test requires KindThirdParty for !shouldPullImage path")
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 
 	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
 		t.Fatalf("app did not reach RUNNING for setup")
@@ -128,7 +128,7 @@ func TestCmdStopAppWhilePulling(t *testing.T) {
 	}()
 
 	def := simpleApp("emodel", "ecos-model:2.0")
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 
 	if !waitForAppStatus(r, def.Name, AppStatusPulling, 5*time.Second) {
 		t.Fatalf("app did not reach PULLING for T19b setup")
@@ -179,7 +179,7 @@ func TestStoppingFailedDiscardsDesiredNext(t *testing.T) {
 	defer r.Shutdown()
 
 	def := simpleApp("postgres", "postgres:17")
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
 		t.Fatalf("app did not reach RUNNING for setup")
 	}
@@ -238,7 +238,7 @@ func TestCmdStartAppOnStoppingFailedRetriesStop(t *testing.T) {
 	defer r.Shutdown()
 
 	def := simpleApp("postgres", "postgres:17")
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
 		t.Fatalf("app did not reach RUNNING for setup")
 	}
@@ -332,7 +332,7 @@ func TestReAdoptFailingContainerEmitsWarning(t *testing.T) {
 		mu.Unlock()
 	})
 
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 	if !waitForStatus(r, NsStatusRunning, 10*time.Second) {
 		t.Fatalf("namespace did not reach RUNNING")
 	}
@@ -407,7 +407,7 @@ func TestT33FiresExactlyOnceNotRepeatedly(t *testing.T) {
 		}
 	})
 
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 	if !waitForStatus(r, NsStatusRunning, 10*time.Second) {
 		t.Fatalf("namespace did not reach RUNNING")
 	}
@@ -452,7 +452,7 @@ func TestCmdStopWhilePulling(t *testing.T) {
 	})
 
 	def := simpleApp("emodel", "ecos-model:2.0")
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 
 	if !waitForAppStatus(r, def.Name, AppStatusPulling, 5*time.Second) {
 		t.Fatalf("app did not reach PULLING for cmdStop setup")
@@ -495,7 +495,7 @@ func TestCmdStopWhileStarting(t *testing.T) {
 	defer r.Shutdown()
 
 	def := simpleApp("postgres", "postgres:17")
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 	if !waitForAppStatus(r, def.Name, AppStatusRunning, 10*time.Second) {
 		t.Fatalf("app did not reach RUNNING for setup")
 	}
@@ -571,7 +571,7 @@ func TestCmdStopWhileInitContainersRunning(t *testing.T) {
 	def.InitContainers = []appdef.InitContainerDef{
 		{Image: "init-img:1"},
 	}
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 
 	// Wait for the init worker to enter the blocked WaitForContainerExit,
 	// meaning app is in STARTING with ContainerID=="" (init-phase).

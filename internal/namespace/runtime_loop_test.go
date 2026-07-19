@@ -47,7 +47,7 @@ func TestNsStatusUpdatesWithin100ms(t *testing.T) {
 		}
 	})
 
-	r.Start([]appdef.ApplicationDef{simpleApp("postgres", "postgres:17")})
+	r.Start([]appdef.ApplicationDef{simpleApp("postgres", "postgres:17")}, false)
 
 	select {
 	case runningAt := <-nsRunningCh:
@@ -110,7 +110,7 @@ func TestAppAndNsStatusEventsEmittedInOrderWithinFlush(t *testing.T) {
 		}
 	})
 
-	r.Start([]appdef.ApplicationDef{simpleApp("postgres", "postgres:17")})
+	r.Start([]appdef.ApplicationDef{simpleApp("postgres", "postgres:17")}, false)
 
 	select {
 	case <-nsRunningObserved:
@@ -160,7 +160,7 @@ func TestSignalChCoalescesRapidStatusUpdates(t *testing.T) {
 	for i := range 10 {
 		apps = append(apps, simpleApp("svc"+string(rune('0'+i)), "img:1"))
 	}
-	r.Start(apps)
+	r.Start(apps, false)
 
 	if !waitForStatus(r, NsStatusRunning, 10*time.Second) {
 		t.Fatalf("namespace did not reach RUNNING")
@@ -224,7 +224,7 @@ func TestStopFlushesStoppingEvents(t *testing.T) {
 		}
 	})
 
-	r.Start([]appdef.ApplicationDef{simpleApp("postgres", "postgres:17")})
+	r.Start([]appdef.ApplicationDef{simpleApp("postgres", "postgres:17")}, false)
 	if !waitForStatus(r, NsStatusRunning, 10*time.Second) {
 		t.Fatalf("namespace did not reach RUNNING")
 	}
@@ -268,7 +268,7 @@ func TestShutdownDoesNotLeakStatsGoroutine(t *testing.T) {
 	md := newMockDocker()
 	r := NewRuntime(testConfig(), md, t.TempDir())
 
-	r.Start([]appdef.ApplicationDef{simpleApp("postgres", "postgres:17")})
+	r.Start([]appdef.ApplicationDef{simpleApp("postgres", "postgres:17")}, false)
 	if !waitForStatus(r, NsStatusRunning, 10*time.Second) {
 		t.Fatalf("namespace did not reach RUNNING")
 	}

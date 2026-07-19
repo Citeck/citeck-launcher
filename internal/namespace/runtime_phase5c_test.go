@@ -42,7 +42,7 @@ func TestCmdRegenerateChangedHashUsesLongTimeout(t *testing.T) {
 	defer r.Shutdown()
 
 	apps := []appdef.ApplicationDef{simpleApp("postgres", "postgres:17")}
-	r.Start(apps)
+	r.Start(apps, false)
 	require.True(t, waitForStatus(r, NsStatusRunning, 10*time.Second),
 		"namespace did not reach RUNNING")
 
@@ -54,7 +54,7 @@ func TestCmdRegenerateChangedHashUsesLongTimeout(t *testing.T) {
 
 	// Regenerate with a changed image → hash mismatch → doRegenerate recreate.
 	apps2 := []appdef.ApplicationDef{simpleApp("postgres", "postgres:18")}
-	r.Regenerate(apps2, nil, nil)
+	r.Regenerate(apps2, nil, nil, false)
 
 	// The app must enter UPDATING (hash-mismatch recreate) with initialSweep=true.
 	var sawInitialSweep bool
@@ -111,12 +111,12 @@ func TestCmdRegenerateDeletesRemovedApp(t *testing.T) {
 		simpleApp("postgres", "postgres:17"),
 		simpleApp("mongo", "mongo:4"),
 	}
-	r.Start(apps)
+	r.Start(apps, false)
 	require.True(t, waitForStatus(r, NsStatusRunning, 10*time.Second),
 		"namespace did not reach RUNNING")
 
 	// Regenerate with postgres only — mongo must be dropped.
-	r.Regenerate([]appdef.ApplicationDef{simpleApp("postgres", "postgres:17")}, nil, nil)
+	r.Regenerate([]appdef.ApplicationDef{simpleApp("postgres", "postgres:17")}, nil, nil, false)
 
 	// Mongo must eventually vanish from r.apps (T32 GC).
 	deadline := time.Now().Add(10 * time.Second)
@@ -177,7 +177,7 @@ func TestDetachDoesNotMutateStatusDuringPull(t *testing.T) {
 	defer unblock()
 
 	def := simpleApp("emodel", "ecos-model:2.0")
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 
 	// Wait until the app enters PULLING (pull worker has been dispatched
 	// and is now blocked on md.pullBlock).

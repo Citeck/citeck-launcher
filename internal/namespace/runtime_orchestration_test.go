@@ -2,6 +2,7 @@ package namespace
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -47,7 +48,7 @@ func TestDoStart_ReusedContainerNotLivenessProbed(t *testing.T) {
 	// First runtime: create the container normally. doStart must not run the
 	// (removed) probe on the freshly-created container either.
 	r1 := NewRuntime(testConfig(), md, tmpDir)
-	r1.Start(apps)
+	r1.Start(apps, false)
 	if !waitForStatus(r1, NsStatusRunning, 10*time.Second) {
 		t.Fatalf("first runtime did not reach RUNNING, got %v", r1.Status())
 	}
@@ -70,7 +71,7 @@ func TestDoStart_ReusedContainerNotLivenessProbed(t *testing.T) {
 	r2 := NewRuntime(testConfig(), md, tmpDir)
 	defer r2.Shutdown()
 
-	r2.Start(apps)
+	r2.Start(apps, false)
 	if !waitForStatus(r2, NsStatusRunning, 10*time.Second) {
 		t.Fatalf("second runtime did not reach RUNNING, got %v", r2.Status())
 	}
@@ -85,5 +86,103 @@ func TestDoStart_ReusedContainerNotLivenessProbed(t *testing.T) {
 	}
 	if containersAfter != 1 {
 		t.Fatalf("expected 1 container after adopt, got %d", containersAfter)
+	}
+}
+
+// TestDoStart_RefreshImagesGatesSnapshotDigestRefresh and
+// TestDoRegenerate_RefreshImagesGatesSnapshotDigestRefresh verify that
+// doStart/doRegenerate invoke refreshSnapshotDigests (the :snapshot pre-pull
+// digest refresh) iff refreshImages is set. Every reload/config-edit path
+// (refreshImages=false) must NOT pay this cost — it caused a hidden re-pull of
+// unrelated apps and a dead window before the hash diff. Only the explicit
+// Update & Start action passes refreshImages=true.
+//
+// Seam: refreshSnapshotDigestsFn defaults to the real method (wired in
+// NewRuntime) and is overridden here with a call-counting stub, mirroring the
+// existing nowFunc/WithTestClock test-injection pattern — this avoids
+// depending on real Docker pull semantics (which mockDocker's
+// PullImageWithProgress also serves from the state-machine's own T2/T3 pull,
+// making a raw pull-call-count assertion ambiguous).
+func TestDoStart_RefreshImagesGatesSnapshotDigestRefresh(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		refreshImages bool
+		wantCalls     int32
+	}{
+		{"refreshImages=true calls refresh once", true, 1},
+		{"refreshImages=false skips refresh", false, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			md := newMockDocker()
+			tmpDir := t.TempDir()
+			app := simpleApp("gateway", "citeck/gateway:snapshot")
+			apps := []appdef.ApplicationDef{app}
+
+			r := NewRuntime(testConfig(), md, tmpDir)
+			defer r.Shutdown()
+			var calls atomic.Int32
+			r.refreshSnapshotDigestsFn = func(_ context.Context, _ []appdef.ApplicationDef) {
+				calls.Add(1)
+			}
+
+			r.Start(apps, tc.refreshImages)
+			if !waitForStatus(r, NsStatusRunning, 10*time.Second) {
+				t.Fatalf("runtime did not reach RUNNING, got %v", r.Status())
+			}
+
+			if got := calls.Load(); got != tc.wantCalls {
+				t.Fatalf("refreshSnapshotDigestsFn call count = %d, want %d", got, tc.wantCalls)
+			}
+		})
+	}
+}
+
+// TestDoRegenerate_RefreshImagesGatesSnapshotDigestRefresh mirrors
+// TestDoStart_RefreshImagesGatesSnapshotDigestRefresh for the doRegenerate
+// path (config-edit / Update & Start on an already-running namespace).
+func TestDoRegenerate_RefreshImagesGatesSnapshotDigestRefresh(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		refreshImages bool
+		wantCalls     int32
+	}{
+		{"refreshImages=true calls refresh once", true, 1},
+		{"refreshImages=false skips refresh", false, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			md := newMockDocker()
+			tmpDir := t.TempDir()
+			app := simpleApp("gateway", "citeck/gateway:snapshot")
+			apps := []appdef.ApplicationDef{app}
+
+			r := NewRuntime(testConfig(), md, tmpDir)
+			defer r.Shutdown()
+			r.Start(apps, false)
+			if !waitForStatus(r, NsStatusRunning, 10*time.Second) {
+				t.Fatalf("runtime did not reach RUNNING, got %v", r.Status())
+			}
+
+			var calls atomic.Int32
+			r.refreshSnapshotDigestsFn = func(_ context.Context, _ []appdef.ApplicationDef) {
+				calls.Add(1)
+			}
+
+			r.Regenerate(apps, nil, nil, tc.refreshImages)
+			// doRegenerate runs synchronously enough that a short settle wait is
+			// sufficient — no state transition is guaranteed here (unchanged-hash
+			// apps are a no-op), so poll the counter directly instead of a status
+			// wait.
+			deadline := time.Now().Add(2 * time.Second)
+			for time.Now().Before(deadline) {
+				if calls.Load() == tc.wantCalls {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+
+			if got := calls.Load(); got != tc.wantCalls {
+				t.Fatalf("refreshSnapshotDigestsFn call count = %d, want %d", got, tc.wantCalls)
+			}
+		})
 	}
 }

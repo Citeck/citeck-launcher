@@ -41,7 +41,7 @@ func TestAdoptDoesNotPullOnHashMatch(t *testing.T) {
 	}
 	md.mu.Unlock()
 
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 
 	if !waitForStatus(r, NsStatusRunning, 10*time.Second) {
 		t.Fatalf("namespace did not reach RUNNING, got %v", r.Status())
@@ -95,7 +95,7 @@ func TestAppStatusIsPullingDuringPull(t *testing.T) {
 	// Pin the Kind explicitly so a future change to simpleApp's default can't
 	// silently shift this test onto a different code path.
 	require.Equal(t, appdef.KindThirdParty, def.Kind, "test requires KindThirdParty so pull is driven by !ImageExists branch")
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 
 	// Poll (≤2s) for the app to reach PULLING. T2 should fire on the first
 	// stepAllApps iteration after doStart inserts it as READY_TO_PULL.
@@ -146,7 +146,7 @@ func TestAdoptDoesNotLeakLegacyPullAndStartApp(t *testing.T) {
 	baseline := runtime.NumGoroutine()
 
 	r := NewRuntime(testConfig(), md, t.TempDir())
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 
 	if !waitForStatus(r, NsStatusRunning, 10*time.Second) {
 		t.Fatalf("namespace did not reach RUNNING")

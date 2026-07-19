@@ -19,7 +19,11 @@ import (
 // bundle repos (so new bundle versions are picked up) and then starts via this
 // same path — image pulling stays normal, matching Kotlin 1.x where forceUpdate
 // only flips the git policy to REQUIRED, never the image pull policy.
-func (r *Runtime) Start(apps []appdef.ApplicationDef) {
+//
+// refreshImages gates the :snapshot pre-pull digest refresh (doStart's
+// refreshSnapshotDigests) before the hash diff — true only on the explicit
+// Update & Start path; false for a plain boot auto-start.
+func (r *Runtime) Start(apps []appdef.ApplicationDef, refreshImages bool) {
 	if r.testMode {
 		// testMode runtimes are driven exclusively via StepOnce. Spawning
 		// runtimeLoop here would race with the test driver. Catching this in
@@ -63,7 +67,7 @@ func (r *Runtime) Start(apps []appdef.ApplicationDef) {
 
 	r.wg.Add(1)
 	go r.runtimeLoop()
-	if err := r.cmdQueue.Enqueue(cmdStart{apps: apps}); err != nil {
+	if err := r.cmdQueue.Enqueue(cmdStart{apps: apps, refreshImages: refreshImages}); err != nil {
 		slog.Error("Failed to enqueue cmdStart", "err", err)
 	}
 }
@@ -195,8 +199,9 @@ func (r *Runtime) shutdownAfter(leaveRunning bool) {
 // Regenerate sends a regeneration command to the runtime loop.
 // If cfg is non-nil, the runtime config is atomically updated before regenerating.
 // If bundleDef is non-nil, it is persisted as the cached bundle for fallback on future resolve failures.
-func (r *Runtime) Regenerate(apps []appdef.ApplicationDef, cfg *Config, bundleDef *bundle.Def) {
-	if err := r.cmdQueue.Enqueue(cmdRegenerate{apps: apps, cfg: cfg, bundleDef: bundleDef}); err != nil {
+// refreshImages gates the :snapshot pre-pull digest refresh (see Start).
+func (r *Runtime) Regenerate(apps []appdef.ApplicationDef, cfg *Config, bundleDef *bundle.Def, refreshImages bool) {
+	if err := r.cmdQueue.Enqueue(cmdRegenerate{apps: apps, cfg: cfg, bundleDef: bundleDef, refreshImages: refreshImages}); err != nil {
 		slog.Error("Failed to enqueue cmdRegenerate", "err", err)
 	}
 }

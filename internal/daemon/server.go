@@ -336,13 +336,15 @@ func (d *Daemon) rebuildAuthCaches() {
 
 // startRuntime starts rt with apps, routing through runtimeStartFn when set
 // (test seam — see the field doc comment). nil in production — calls
-// rt.Start(apps) directly.
+// rt.Start(apps, false) directly. This is the deferred-namespace-start-after-
+// secrets-unlock path, not the explicit Update & Start action, so the
+// :snapshot pre-pull digest refresh is skipped (refreshImages=false).
 func (d *Daemon) startRuntime(rt *namespace.Runtime, apps []appdef.ApplicationDef) {
 	if d.runtimeStartFn != nil {
 		d.runtimeStartFn(rt, apps)
 		return
 	}
-	rt.Start(apps)
+	rt.Start(apps, false)
 }
 
 // lowDiskWarnGB / diskCriticalGB are the free-space thresholds (GB) shared by
@@ -492,7 +494,8 @@ func (d *Daemon) doShutdown(leaveRunning bool) {
 // doReload re-resolves the namespace config + bundle (respecting the per-repo
 // git pull throttle) and reconciles the already-running runtime, recreating
 // only changed apps. Thin wrapper over doReloadEx. Caller must hold reloadMu.
-func (d *Daemon) doReload() error { return d.doReloadEx(false, false) }
+// Not the explicit Update & Start action, so refreshImages=false.
+func (d *Daemon) doReload() error { return d.doReloadEx(false, false, false) }
 
 // invokeReload is what def-edit handlers call to trigger a reload, instead of
 // d.doReload directly — the reloadFn seam lets handler tests assert routing
@@ -516,7 +519,12 @@ func (d *Daemon) invokeReload() error {
 //     runtime — used by "Force Update And Start" on a STOPPED namespace, where
 //     there is nothing running to regenerate. When false the set is handed to
 //     Regenerate (recreate changed) on the running runtime.
-func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate bool) error {
+//   - refreshImages gates the :snapshot pre-pull digest refresh
+//     (refreshSnapshotDigests) before the hash diff — true only for the
+//     explicit Update & Start action (updateAndStartAsync); every other
+//     reload/regenerate path (config-edit reload, invokeReload) passes false
+//     so a routine reload doesn't hidden-re-pull unrelated apps.
+func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool) error {
 	// One consistent snapshot: nsConfig/runtime/workspaceConfig/systemSecrets/
 	// workspaceID/volumesBase all come from the same lock acquisition.
 	// (systemSecrets in particular: handleSetAdminPassword mutates it under
@@ -643,7 +651,7 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate bool) error {
 	// start the freshly-resolved set (Kotlin 1.x: forceUpdate ⇒ generate + start
 	// all apps). Images pull per the normal stage rules.
 	if startNotRegenerate {
-		act.runtime.Start(genResp.Applications)
+		act.runtime.Start(genResp.Applications, refreshImages)
 		return nil
 	}
 
@@ -659,7 +667,7 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate bool) error {
 			"current", currentAppCount, "fallback", len(genResp.Applications))
 		return nil
 	}
-	act.runtime.Regenerate(genResp.Applications, nsCfg, resolveResult.Bundle)
+	act.runtime.Regenerate(genResp.Applications, nsCfg, resolveResult.Bundle, refreshImages)
 	return nil
 }
 

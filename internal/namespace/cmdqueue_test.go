@@ -69,6 +69,39 @@ func TestCmdQueueRegenerateReplacedByStart(t *testing.T) {
 	assert.True(t, ok)
 }
 
+func TestCollapsePreservesRefreshImages(t *testing.T) {
+	regen := func(rf bool) cmdRegenerate { return cmdRegenerate{refreshImages: rf} }
+	start := func(rf bool) cmdStart { return cmdStart{refreshImages: rf} }
+
+	// two regenerates: OR the flag, keep b's payload
+	m, ok := collapseCommandsIfPossible(regen(true), regen(false))
+	require.True(t, ok)
+	assert.True(t, m.(cmdRegenerate).refreshImages, "true must survive regen(true)+regen(false)")
+	m, ok = collapseCommandsIfPossible(regen(false), regen(true))
+	require.True(t, ok)
+	assert.True(t, m.(cmdRegenerate).refreshImages, "true must survive regen(false)+regen(true)")
+
+	// start+regen keeps a Start with OR'd flag
+	m, ok = collapseCommandsIfPossible(start(false), regen(true))
+	require.True(t, ok)
+	assert.True(t, m.(cmdStart).refreshImages)
+
+	// regen+start keeps b Start with OR'd flag
+	m, ok = collapseCommandsIfPossible(regen(true), start(false))
+	require.True(t, ok)
+	assert.True(t, m.(cmdStart).refreshImages)
+
+	// start+start ORs
+	m, ok = collapseCommandsIfPossible(start(false), start(true))
+	require.True(t, ok)
+	assert.True(t, m.(cmdStart).refreshImages)
+
+	// two false stay false
+	m, ok = collapseCommandsIfPossible(regen(false), regen(false))
+	require.True(t, ok)
+	assert.False(t, m.(cmdRegenerate).refreshImages)
+}
+
 func TestCmdQueueCoalescesStopAppSameName(t *testing.T) {
 	q := NewCmdQueue()
 	require.NoError(t, q.Enqueue(cmdStopApp{name: "alfresco"}))

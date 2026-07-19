@@ -66,7 +66,7 @@ func TestInitialSweepUsesLongerTimeout(t *testing.T) {
 	stopsBefore := md.stopRemoveCalls
 	md.mu.Unlock()
 
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 
 	// The app must enter UPDATING (runtime-driven stale-container sweep)
 	// with initialSweep=true. Sample quickly before the 3s stopDelay elapses.
@@ -195,7 +195,7 @@ func TestStopAppDuringInitialSweepDetaches(t *testing.T) {
 	r.longStopTimeout = 30 * time.Second
 	defer r.Shutdown()
 
-	r.Start([]appdef.ApplicationDef{def})
+	r.Start([]appdef.ApplicationDef{def}, false)
 
 	// Wait until the app enters UPDATING with initialSweep=true (doStart has
 	// run, stopContainer worker has been dispatched and is now blocked on
