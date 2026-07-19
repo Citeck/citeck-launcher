@@ -93,20 +93,31 @@ func ensureSelfSignedCert(nsCfg *namespace.Config) {
 	generateSelfSignedCertForConfig(nsCfg)
 }
 
-// generateSelfSignedCertForConfig generates a self-signed cert and updates the config paths.
-// Called directly as LE fallback (bypassing the LetsEncrypt guard in ensureSelfSignedCert).
-func generateSelfSignedCertForConfig(nsCfg *namespace.Config) {
-	host := nsCfg.Proxy.Host
+// selfSignedCertHosts returns the SAN list for the self-signed proxy cert.
+// In desktop mode a loopback/empty host expands to localhost + 127.0.0.1 + ::1
+// so both https://localhost and https://127.0.0.1 validate. Server mode (and a
+// real hostname) keep the single-host behavior unchanged.
+func selfSignedCertHosts(host string) []string {
+	if config.IsDesktopMode() && (host == "" || host == "localhost" || host == "127.0.0.1" || host == "::1") {
+		return []string{"localhost", "127.0.0.1", "::1"}
+	}
 	if host == "" {
 		host = "localhost"
 	}
+	return []string{host}
+}
+
+// generateSelfSignedCertForConfig generates a self-signed cert and updates the config paths.
+// Called directly as LE fallback (bypassing the LetsEncrypt guard in ensureSelfSignedCert).
+func generateSelfSignedCertForConfig(nsCfg *namespace.Config) {
+	hosts := selfSignedCertHosts(nsCfg.Proxy.Host)
 	tlsDir := filepath.Join(config.ConfDir(), "tls")
 	os.MkdirAll(tlsDir, 0o755) //nolint:gosec // G301: TLS dir needs 0o755
 	certPath := filepath.Join(tlsDir, "server.crt")
 	keyPath := filepath.Join(tlsDir, "server.key")
 	if !isRegularFile(certPath) {
-		slog.Info("Generating self-signed certificate", "host", host)
-		if err := tlsutil.GenerateSelfSignedCert(certPath, keyPath, []string{host}, 365); err != nil {
+		slog.Info("Generating self-signed certificate", "hosts", hosts)
+		if err := tlsutil.GenerateSelfSignedCert(certPath, keyPath, hosts, 365); err != nil {
 			slog.Error("Failed to generate self-signed cert", "err", err)
 		}
 	}

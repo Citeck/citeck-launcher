@@ -522,6 +522,8 @@ const zh = {
 
   // -- Namespace edit dialog --
   'nsEdit.saveSuccess': '命名空间已更新',
+  'nsEdit.https.label': '启用 HTTPS（自签名）',
+  'nsEdit.https.hint': '使用自签名证书通过 HTTPS 提供代理服务。首次访问时浏览器会显示安全警告。',
 
   // -- Namespace create/edit dialog (Kotlin parity: NamespaceEntityDef.formSpec) --
   'namespace.dialog.create': '创建命名空间',

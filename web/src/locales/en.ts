@@ -528,6 +528,8 @@ const en = {
 
   // -- Namespace edit dialog --
   'nsEdit.saveSuccess': 'Namespace updated',
+  'nsEdit.https.label': 'Enable HTTPS (self-signed)',
+  'nsEdit.https.hint': 'Serve the proxy over HTTPS with a self-signed certificate. Your browser will show a security warning the first time.',
 
   // -- Namespace create/edit dialog (Kotlin parity: NamespaceEntityDef.formSpec) --
   'namespace.dialog.create': 'Create Namespace',

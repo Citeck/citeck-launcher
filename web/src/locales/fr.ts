@@ -522,6 +522,8 @@ const fr = {
 
   // -- Namespace edit dialog --
   'nsEdit.saveSuccess': 'Espace de noms mis à jour',
+  'nsEdit.https.label': 'Activer HTTPS (auto-signé)',
+  'nsEdit.https.hint': 'Servir le proxy en HTTPS avec un certificat auto-signé. Le navigateur affichera un avertissement de sécurité la première fois.',
 
   // -- Namespace create/edit dialog (Kotlin parity: NamespaceEntityDef.formSpec) --
   'namespace.dialog.create': 'Créer un namespace',

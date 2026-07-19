@@ -693,6 +693,7 @@ func (d *Daemon) buildNamespaceConfigFromCreate(req api.NamespaceCreateDto, wsID
 			nsCfg.Proxy.TLS.LetsEncrypt = true
 		}
 		// self-signed cert is generated at daemon startup when certPath is empty and letsEncrypt is false
+		applySelfSignedTLSDefaults(&nsCfg)
 	}
 	nsCfg.PgAdmin.Enabled = req.PgAdminEnabled
 	if req.BundleRepo != "" && req.BundleKey != "" {
@@ -1026,6 +1027,9 @@ func (d *Daemon) handlePutNamespaceEdit(w http.ResponseWriter, r *http.Request) 
 	}
 	if req.TLSEnabled != nil {
 		current.Proxy.TLS.Enabled = *req.TLSEnabled
+		if *req.TLSEnabled {
+			applySelfSignedTLSDefaults(current)
+		}
 	}
 	if req.PgAdminEnabled != nil {
 		current.PgAdmin.Enabled = *req.PgAdminEnabled
