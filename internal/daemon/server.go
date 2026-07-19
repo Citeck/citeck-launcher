@@ -512,9 +512,10 @@ func (d *Daemon) invokeReload() error {
 //
 //   - forceGitPull bypasses the per-repo PullPeriod throttle so a "Force Update"
 //     pulls the workspace / bundle repos unconditionally and picks up new bundle
-//     versions immediately. Kotlin 1.x parity: forceUpdate only flips the git
-//     policy to REQUIRED — image pulling stays normal (a present release tag is
-//     reused; only :snapshot tags refresh), so force never re-pulls release tags.
+//     versions immediately. It affects git only, not image pulling: a present
+//     release tag is reused regardless of forceGitPull, so force never re-pulls
+//     release tags. Whether :snapshot digests get pre-pulled before the hash
+//     diff is a separate concern, controlled by refreshImages below.
 //   - startNotRegenerate applies the freshly-resolved app set by STARTING the
 //     runtime — used by "Force Update And Start" on a STOPPED namespace, where
 //     there is nothing running to regenerate. When false the set is handed to

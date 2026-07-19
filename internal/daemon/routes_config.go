@@ -185,10 +185,12 @@ func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
 	// picks up new bundle versions instead of starting a stale set. The only
 	// difference is timing: non-force respects the per-repo PullPeriod throttle
 	// (skips the pull if the last sync is recent), force bypasses it and pulls
-	// immediately. Kotlin 1.x parity: forceUpdate flips ONLY the git policy to
-	// REQUIRED — image pulling stays normal (a present release tag is reused;
-	// only :snapshot tags refresh), so force never re-pulls release tags. Runs
-	// off the request goroutine (slow git I/O).
+	// immediately — the force flag affects git only, not image pulling. Both
+	// variants route through updateAndStartAsync, which always passes
+	// refreshImages=true to doReloadEx: that's what makes Update & Start (either
+	// variant) pre-pull :snapshot digests before the hash diff, unlike a
+	// config-edit reload or boot auto-start (refreshImages=false, cached
+	// digests only). Runs off the request goroutine (slow git I/O).
 	force := r.URL.Query().Get("force") == "true"
 	st := runtime.Status()
 	wasRunning := st == namespace.NsStatusRunning || st == namespace.NsStatusStalled

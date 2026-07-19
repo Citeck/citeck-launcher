@@ -13,16 +13,20 @@ import (
 	"github.com/citeck/citeck-launcher/internal/namespace/workers"
 )
 
-// Start begins the namespace lifecycle with the given app definitions. Images
-// are pulled per the normal stage rules (snapshot tags pulled; present release
-// tags reused). A "force update and start" forces a git pull of the workspace /
-// bundle repos (so new bundle versions are picked up) and then starts via this
-// same path — image pulling stays normal, matching Kotlin 1.x where forceUpdate
-// only flips the git policy to REQUIRED, never the image pull policy.
+// Start begins the namespace lifecycle with the given app definitions. When a
+// container is (re)created, Docker pulls its image per the normal per-app
+// stage rules (snapshot tags pulled; present release tags reused) — that part
+// is unaffected by force. A "force update and start" additionally forces a git
+// pull of the workspace / bundle repos (so new bundle versions are picked up)
+// before starting via this same path; that git-policy flip is independent of
+// image pulling.
 //
-// refreshImages gates the :snapshot pre-pull digest refresh (doStart's
-// refreshSnapshotDigests) before the hash diff — true only on the explicit
-// Update & Start path; false for a plain boot auto-start.
+// refreshImages gates a separate concern: the :snapshot pre-pull digest
+// refresh (doStart's refreshSnapshotDigests) that runs before the hash diff so
+// a same-tag dev re-push is detected and the container recreated. True only
+// on the explicit Update & Start path (both force and non-force reach here
+// with refreshImages=true via updateAndStartAsync); false for a plain boot
+// auto-start, which relies on cached digests.
 func (r *Runtime) Start(apps []appdef.ApplicationDef, refreshImages bool) {
 	if r.testMode {
 		// testMode runtimes are driven exclusively via StepOnce. Spawning

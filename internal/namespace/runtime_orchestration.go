@@ -699,7 +699,7 @@ func (r *Runtime) doDetach() {
 
 // refreshSnapshotDigests pulls :snapshot images from the registry in parallel
 // so subsequent GetImageDigest calls return the freshly-fetched digest. This
-// ensures reload/start catches dev pushes that reuse the same :snapshot tag
+// ensures Update & Start catches dev pushes that reuse the same :snapshot tag
 // without a version bump — otherwise the hash-diff would compute against a
 // stale local digest and keep the old container running.
 //
@@ -716,10 +716,12 @@ func (r *Runtime) doDetach() {
 // (snapshot images are typically small; an initial community deploy would
 // be ~60s per app, so 2m is safely inside the budget).
 //
-// A "force update and start" does NOT pre-pull release tags here. Kotlin 1.x
-// parity: forceUpdate flips only the git policy to REQUIRED (a fresh workspace /
-// bundle pull picks up new versions), never the image pull policy — a present
-// release tag is reused, only :snapshot tags are refreshed (this pass + T2).
+// This function only runs when refreshImages is true — the explicit Update &
+// Start path (see the doStart/doRegenerate call sites below); a config-edit
+// reload or boot auto-start skips it and relies on cached digests. It never
+// pre-pulls release tags regardless of the caller: a present release tag is
+// always reused, only :snapshot tags are refreshed here (plus the downstream
+// T2 pull).
 func (r *Runtime) refreshSnapshotDigests(ctx context.Context, apps []appdef.ApplicationDef) {
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 4)
