@@ -207,11 +207,27 @@ func (c *NsGenContext) ProxyBaseURL() string {
 }
 
 // EffectiveProxyPort returns the host port the proxy publishes / advertises.
-// The standard scheme ports (80, 443) — and an unset 0 — are treated as a
-// "scheme default" and derived from TLS state, so toggling HTTPS flips 80↔443
-// automatically and a leftover 443 with TLS off self-corrects to 80. Only a
-// non-standard custom port (e.g. 8443) is honored verbatim.
+//
+// For a LOCAL host (localhost / 127.0.0.1 / ::1 / empty) the standard scheme
+// ports (80, 443) — and an unset 0 — are treated as a "scheme default" derived
+// from TLS state, so toggling HTTPS flips 80↔443 automatically and a leftover
+// 443 with TLS off self-corrects to 80. A non-standard custom port (e.g. 8443)
+// is honored verbatim.
+//
+// For a NON-LOCAL host the stored port is respected verbatim (0 → scheme
+// default): such deployments sit behind an external TLS terminator / reverse
+// proxy that forwards to whatever listen port the operator configured — HTTP on
+// 443 (tls off, terminated upstream) is a legitimate setup we must NOT rewrite.
 func EffectiveProxyPort(p ProxyProps) int {
+	if !isLocalHost(p.Host) {
+		if p.Port == 0 {
+			if p.TLS.Enabled {
+				return 443
+			}
+			return 80
+		}
+		return p.Port
+	}
 	switch p.Port {
 	case 0, 80, 443:
 		if p.TLS.Enabled {
@@ -223,18 +239,23 @@ func EffectiveProxyPort(p ProxyProps) int {
 	}
 }
 
+// isLocalHost reports whether host is a loopback / empty address, matching the
+// isLocal logic in BuildProxyBaseURL.
+func isLocalHost(host string) bool {
+	return host == "" || host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
 // BuildProxyBaseURL builds a proxy base URL from proxy config.
 // For non-local hosts (not localhost/127.0.0.1), always uses https scheme
 // even when TLS is disabled locally — the server is assumed to be behind
 // a reverse proxy (Cloudflare, nginx) that terminates TLS.
 // See ProxyScheme() for the caveat about raw-IP HTTP-only deployments.
 func BuildProxyBaseURL(p ProxyProps) string {
+	isLocal := isLocalHost(p.Host)
 	host := p.Host
 	if host == "" {
 		host = "localhost"
 	}
-
-	isLocal := host == "localhost" || host == "127.0.0.1" || host == "::1"
 
 	scheme := "http"
 	if p.TLS.Enabled || !isLocal {

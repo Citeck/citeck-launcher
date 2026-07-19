@@ -66,26 +66,44 @@ func TestProxyBaseURL_HTTPS_80(t *testing.T) {
 func TestEffectiveProxyPort(t *testing.T) {
 	cases := []struct {
 		name string
+		host string
 		port int
 		tls  bool
 		want int
 	}{
-		{"zero, tls off", 0, false, 80},
-		{"zero, tls on", 0, true, 443},
-		{"80, tls off", 80, false, 80},
-		{"80, tls on", 80, true, 443},
-		{"443, tls off", 443, false, 80},
-		{"443, tls on", 443, true, 443},
-		{"custom 8443, tls on", 8443, true, 8443},
-		{"custom 8080, tls off", 8080, false, 8080},
+		// Local host: 0/80/443 are scheme defaults derived from TLS.
+		{"local zero, tls off", "localhost", 0, false, 80},
+		{"local zero, tls on", "localhost", 0, true, 443},
+		{"local 80, tls off", "localhost", 80, false, 80},
+		{"local 80, tls on", "localhost", 80, true, 443},
+		{"local 443, tls off (self-heal)", "localhost", 443, false, 80},
+		{"local 443, tls on", "localhost", 443, true, 443},
+		{"local custom 8443, tls on", "localhost", 8443, true, 8443},
+		{"empty host == local", "", 443, false, 80},
+		// Non-local host (external TLS terminator): stored port respected verbatim.
+		{"non-local 443, tls off — HTTP-on-443 preserved", "demo.example.com", 443, false, 443},
+		{"non-local 80, tls off", "demo.example.com", 80, false, 80},
+		{"non-local 8080, tls off", "demo.example.com", 8080, false, 8080},
+		{"non-local zero, tls on — derive fallback", "demo.example.com", 0, true, 443},
+		{"non-local zero, tls off — derive fallback", "demo.example.com", 0, false, 80},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			p := ProxyProps{Port: c.port, TLS: TlsConfig{Enabled: c.tls}}
+			p := ProxyProps{Port: c.port, Host: c.host, TLS: TlsConfig{Enabled: c.tls}}
 			if got := EffectiveProxyPort(p); got != c.want {
-				t.Errorf("EffectiveProxyPort(port=%d, tls=%v) = %d, want %d", c.port, c.tls, got, c.want)
+				t.Errorf("EffectiveProxyPort(host=%q, port=%d, tls=%v) = %d, want %d", c.host, c.port, c.tls, got, c.want)
 			}
 		})
+	}
+}
+
+// Pins the external-TLS-terminator scenario: a non-local host serving plain
+// HTTP on port 443 (TLS terminated upstream) keeps its listen port and still
+// advertises https:// — the port-derivation must NOT rewrite it to 80.
+func TestProxyBaseURL_NonLocalHTTPOn443Preserved(t *testing.T) {
+	ctx := makeCtx(443, "demo.example.com", false)
+	if url := ctx.ProxyBaseURL(); url != "https://demo.example.com" {
+		t.Errorf("expected https://demo.example.com, got %s", url)
 	}
 }
 
