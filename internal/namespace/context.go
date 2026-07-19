@@ -220,22 +220,25 @@ func (c *NsGenContext) ProxyBaseURL() string {
 func EffectiveProxyPort(p ProxyProps) int {
 	if !isLocalHost(p.Host) {
 		if p.Port == 0 {
-			if p.TLS.Enabled {
-				return 443
-			}
-			return 80
+			return schemeDefaultPort(p.TLS.Enabled)
 		}
 		return p.Port
 	}
 	switch p.Port {
 	case 0, 80, 443:
-		if p.TLS.Enabled {
-			return 443
-		}
-		return 80
+		return schemeDefaultPort(p.TLS.Enabled)
 	default:
 		return p.Port
 	}
+}
+
+// schemeDefaultPort returns the standard port for the scheme: 443 with TLS, 80
+// without.
+func schemeDefaultPort(tls bool) int {
+	if tls {
+		return 443
+	}
+	return 80
 }
 
 // isLocalHost reports whether host is a loopback / empty address, matching the
