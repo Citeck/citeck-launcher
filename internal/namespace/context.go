@@ -172,8 +172,7 @@ func (c *NsGenContext) TLSEnabled() bool {
 
 // IsLocalHost returns true if the proxy host is localhost/127.0.0.1/::1 or empty.
 func (c *NsGenContext) IsLocalHost() bool {
-	h := c.Config.Proxy.Host
-	return h == "" || h == "localhost" || h == "127.0.0.1" || h == "::1"
+	return isLocalHost(c.Config.Proxy.Host)
 }
 
 // ProxyScheme returns "https" or "http".
