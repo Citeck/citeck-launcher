@@ -9,6 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+
+	"github.com/citeck/citeck-launcher/internal/git"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/storage"
 	"gopkg.in/yaml.v3"
@@ -96,12 +100,27 @@ func backupKotlinStorage(h2Path string) error {
 // wasteful for a multi-MB MVStore.)
 
 // MigrateResult holds the result of an H2 → SQLite migration.
+//
+// Degraded means the migration is LOSSY, in one of two distinct ways:
+//
+//   - FallbackReason set: the pure-Go MVStore reader could not be used at all
+//     and the filesystem fallback ran, reconstructing only what the on-disk ws/
+//     tree can prove.
+//   - PartialReason set: the reader DID open the store and its layout/meta
+//     index verified, but a lenient user-data map read had to drop entries or
+//     whole sub-trees. Most data came through; some rows are simply gone.
+//
+// The two are mutually exclusive. See DegradedMigration for the durable record
+// the UI reads.
 type MigrateResult struct {
-	Workspaces int `json:"workspaces"`
-	Namespaces int `json:"namespaces"`
-	Secrets    int `json:"secrets"`
-	GitRepos   int `json:"gitRepos"`
-	Errors     int `json:"errors"`
+	Workspaces     int    `json:"workspaces"`
+	Namespaces     int    `json:"namespaces"`
+	Secrets        int    `json:"secrets"`
+	GitRepos       int    `json:"gitRepos"`
+	Errors         int    `json:"errors"`
+	Degraded       bool   `json:"degraded,omitempty"`
+	FallbackReason string `json:"fallbackReason,omitempty"`
+	PartialReason  string `json:"partialReason,omitempty"`
 }
 
 // NeedsMigration reports whether the legacy Kotlin store exists without a
@@ -155,14 +174,17 @@ func Migrate(homeDir string, store storage.Store) (*MigrateResult, error) {
 	mvs, err := OpenMVStore(h2Path)
 	if err != nil {
 		slog.Warn("Falling back to filesystem migration: open MVStore failed", "err", err)
-		return migrateFromFilesystem(homeDir, store)
+		return migrateFromFilesystem(homeDir, store, fmt.Sprintf("cannot open storage.db: %v", err))
 	}
 	defer mvs.Close()
 
 	maps, dumpErr := mvs.DumpForImport()
 	if reason := dumpFallbackReason(maps, dumpErr); reason != "" {
 		slog.Warn("Falling back to filesystem migration", "reason", reason, "source", h2Path, "err", dumpErr)
-		return migrateFromFilesystem(homeDir, store)
+		if dumpErr != nil {
+			reason = fmt.Sprintf("%s: %v", reason, dumpErr)
+		}
+		return migrateFromFilesystem(homeDir, store, reason)
 	}
 
 	slog.Info("H2 maps loaded", "count", len(maps))
@@ -177,6 +199,13 @@ func Migrate(homeDir string, store storage.Store) (*MigrateResult, error) {
 	}
 	importGitRepos(maps, store, result)
 	importState(maps, store)
+
+	// A lenient user-map read can drop entries or whole sub-trees WITHOUT
+	// failing the dump — same silent-data-loss class the strict layout/meta
+	// read closed one level up, just scoped to a single map. Surface it the
+	// same way: mark the run degraded and persist the durable record the
+	// migration-status endpoint serves to the UI. No-op when the read was clean.
+	result.recordPartialRead(homeDir, store, mvs.partialReadSummary())
 
 	slog.Info("Migration complete", "result", result)
 	return result, nil
@@ -199,17 +228,42 @@ func dumpFallbackReason(maps map[string]map[string]string, err error) string {
 
 // migrateFromFilesystem reconstructs workspace records and stub namespace.yml
 // files from the on-disk ws/ tree when storage.db is unreadable.
-func migrateFromFilesystem(homeDir string, store storage.Store) (*MigrateResult, error) {
-	result := &MigrateResult{}
-	slog.Info("Using filesystem fallback migration")
+//
+// This path is LOSSY by construction, and the loss used to be silent and total
+// for the workspace repo: the stub carried only ID and Name, so RepoURL came
+// out empty, the bundle resolver fell back to the default public GitHub
+// workspace, the namespace's real bundle repo vanished and private-registry
+// pulls failed — with no warning anywhere in the UI. Two things change that:
+//
+//  1. {homeDir}/ws/{wsID}/repo IS a git clone, so the remote URL and branch are
+//     recoverable from disk (best-effort — a missing or broken clone must never
+//     fail the migration).
+//  2. whatever remains unrecoverable is written to a durable
+//     DegradedMigration record that the daemon surfaces on the
+//     migration-status endpoint.
+func migrateFromFilesystem(homeDir string, store storage.Store, reason string) (*MigrateResult, error) {
+	result := &MigrateResult{Degraded: true, FallbackReason: reason}
+	slog.Warn("Using filesystem fallback migration — this migration is LOSSY", "reason", reason)
 
+	recoveredRepos, missingRepos, err := migrateWorkspacesFromFilesystem(homeDir, store, result)
+	if err != nil {
+		return nil, err
+	}
+	result.recordDegradation(homeDir, store, recoveredRepos, missingRepos)
+	return result, nil
+}
+
+// migrateWorkspacesFromFilesystem walks ws/ and saves every workspace plus its
+// stub namespaces, returning how many repo URLs were recovered and how many
+// workspaces are left without one.
+func migrateWorkspacesFromFilesystem(homeDir string, store storage.Store, result *MigrateResult) (recovered, missing int, _ error) {
 	wsDir := filepath.Join(homeDir, "ws")
 	entries, err := os.ReadDir(wsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return result, nil
+			return 0, 0, nil
 		}
-		return result, fmt.Errorf("read workspaces dir: %w", err)
+		return 0, 0, fmt.Errorf("read workspaces dir: %w", err)
 	}
 
 	for _, entry := range entries {
@@ -217,16 +271,27 @@ func migrateFromFilesystem(homeDir string, store storage.Store) (*MigrateResult,
 			continue
 		}
 		wsID := entry.Name()
+		repoDir := filepath.Join(wsDir, wsID, "repo")
 
-		nsDir := filepath.Join(wsDir, wsID, "ns")
-		if _, err := os.Stat(nsDir); err != nil {
-			continue
+		// RepoPullPeriod, AuthType and SecretID are genuinely unrecoverable
+		// from the filesystem and are deliberately left zero. In particular we
+		// do NOT guess AuthType from the URL scheme: an https:// remote is
+		// equally likely to be public (NONE) or token-authenticated, and a
+		// wrong TOKEN guess would send the daemon looking for a secret that
+		// does not exist and fail the pull with a misleading auth error.
+		ws := storage.WorkspaceDto{ID: wsID, Name: wsID}
+		ws.RepoURL, ws.RepoBranch = recoverWorkspaceRepo(repoDir)
+		switch {
+		case ws.RepoURL != "":
+			recovered++
+			slog.Info("Recovered workspace repo from its on-disk clone",
+				"ws", wsID, "repoUrl", ws.RepoURL, "branch", ws.RepoBranch)
+		default:
+			missing++
+			slog.Warn("Workspace repo URL could not be recovered — the bundle resolver will fall back to the default workspace",
+				"ws", wsID, "repoDir", repoDir)
 		}
 
-		ws := storage.WorkspaceDto{
-			ID:   wsID,
-			Name: wsID,
-		}
 		if err := store.SaveWorkspace(ws); err != nil {
 			slog.Warn("Failed to save workspace", "id", wsID, "err", err)
 			result.Errors++
@@ -234,45 +299,96 @@ func migrateFromFilesystem(homeDir string, store storage.Store) (*MigrateResult,
 		}
 		result.Workspaces++
 
-		defaultBundleRef := ""
-		wsCfgPath := filepath.Join(wsDir, wsID, "repo", "workspace-v1.yml")
-		if data, err := os.ReadFile(wsCfgPath); err == nil { //nolint:gosec // G304: wsCfgPath is constructed from internal workspace dir
-			defaultBundleRef = extractDefaultBundleRef(data)
-		}
-
-		nsEntries, err := os.ReadDir(nsDir)
-		if err != nil {
+		// A workspace with a clone but no ns/ directory used to be skipped
+		// BEFORE SaveWorkspace and disappeared from the migrated store
+		// entirely; it is now saved first and only its namespace walk is
+		// skipped.
+		nsDir := filepath.Join(wsDir, wsID, "ns")
+		if _, err := os.Stat(nsDir); err != nil {
 			continue
 		}
-		for _, ns := range nsEntries {
-			if !ns.IsDir() {
-				continue
-			}
-			nsID := ns.Name()
-			if _, exists, _ := store.LoadNamespaceConfig(wsID, nsID); exists {
-				result.Namespaces++
-				continue
-			}
-			stub, err := buildFallbackNamespaceYAML(nsID, defaultBundleRef)
-			if err != nil {
-				slog.Warn("Failed to build fallback namespace config", "ns", nsID, "err", err)
-				result.Errors++
-				continue
-			}
-			if _, verr := namespace.ValidateYAML(stub); verr != nil {
-				slog.Error("CRITICAL: fallback namespace config is invalid — aborting migration",
-					"ws", wsID, "ns", nsID, "err", verr)
-				return nil, fmt.Errorf("invalid fallback namespace %s/%s: %w", wsID, nsID, verr)
-			}
-			if err := store.SaveNamespaceConfig(wsID, nsID, nsID, string(stub)); err != nil {
-				return nil, fmt.Errorf("save fallback namespace %s/%s: %w", wsID, nsID, err)
-			}
-			result.Namespaces++
-			slog.Info("Created stub namespace config", "ws", wsID, "ns", nsID, "bundleRef", defaultBundleRef)
+		if err := migrateStubNamespaces(wsDir, wsID, nsDir, store, result); err != nil {
+			return recovered, missing, err
 		}
 	}
 
-	return result, nil
+	return recovered, missing, nil
+}
+
+func migrateStubNamespaces(wsDir, wsID, nsDir string, store storage.Store, result *MigrateResult) error {
+	defaultBundleRef := ""
+	wsCfgPath := filepath.Join(wsDir, wsID, "repo", "workspace-v1.yml")
+	if data, err := os.ReadFile(wsCfgPath); err == nil { //nolint:gosec // G304: wsCfgPath is constructed from internal workspace dir
+		defaultBundleRef = extractDefaultBundleRef(data)
+	}
+
+	nsEntries, err := os.ReadDir(nsDir)
+	if err != nil {
+		slog.Warn("Failed to list namespaces dir", "ws", wsID, "dir", nsDir, "err", err)
+		return nil
+	}
+	for _, ns := range nsEntries {
+		if !ns.IsDir() {
+			continue
+		}
+		nsID := ns.Name()
+		if _, exists, _ := store.LoadNamespaceConfig(wsID, nsID); exists {
+			result.Namespaces++
+			continue
+		}
+		stub, err := buildFallbackNamespaceYAML(nsID, defaultBundleRef)
+		if err != nil {
+			slog.Warn("Failed to build fallback namespace config", "ns", nsID, "err", err)
+			result.Errors++
+			continue
+		}
+		if _, verr := namespace.ValidateYAML(stub); verr != nil {
+			slog.Error("CRITICAL: fallback namespace config is invalid — aborting migration",
+				"ws", wsID, "ns", nsID, "err", verr)
+			return fmt.Errorf("invalid fallback namespace %s/%s: %w", wsID, nsID, verr)
+		}
+		if err := store.SaveNamespaceConfig(wsID, nsID, nsID, string(stub)); err != nil {
+			return fmt.Errorf("save fallback namespace %s/%s: %w", wsID, nsID, err)
+		}
+		result.Namespaces++
+		slog.Info("Created stub namespace config", "ws", wsID, "ns", nsID, "bundleRef", defaultBundleRef)
+	}
+	return nil
+}
+
+// recoverWorkspaceRepo reads the git remote and branch back out of the 1.x
+// workspace clone at {homeDir}/ws/{wsID}/repo.
+//
+// Best-effort by contract: every failure mode (no directory, not a git repo,
+// no origin remote, detached HEAD) returns empty strings rather than an error,
+// because a workspace with an unknown repo URL is still far better than a
+// migration that refuses to run. HEAD is read as a SYMBOLIC reference so an
+// unborn branch (a clone with no fetched commits) still yields its name.
+//
+// The URL half delegates to git.OriginURL — the shared origin-remote reader —
+// so this stays one of ONE implementation rather than a third near-duplicate.
+// Its error is deliberately dropped (only logged): the best-effort contract
+// above says an unreadable remote yields "", never a failed migration.
+func recoverWorkspaceRepo(repoDir string) (repoURL, branch string) {
+	if originURL, oerr := git.OriginURL(repoDir); oerr == nil {
+		repoURL = strings.TrimSpace(originURL)
+	} else {
+		slog.Debug("Workspace repo origin not readable", "dir", repoDir, "err", oerr)
+	}
+
+	repo, err := gogit.PlainOpen(repoDir)
+	if err != nil {
+		slog.Debug("Workspace repo clone not readable", "dir", repoDir, "err", err)
+		return repoURL, ""
+	}
+
+	if ref, rerr := repo.Reference(plumbing.HEAD, false); rerr == nil && ref.Type() == plumbing.SymbolicReference {
+		branch = ref.Target().Short()
+	} else if head, herr := repo.Head(); herr == nil && head.Name().IsBranch() {
+		branch = head.Name().Short()
+	}
+
+	return repoURL, branch
 }
 
 // buildFallbackNamespaceYAML produces the default Kotlin-parity namespace

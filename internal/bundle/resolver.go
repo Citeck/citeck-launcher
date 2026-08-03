@@ -11,9 +11,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/git"
 	"gopkg.in/yaml.v3"
 )
@@ -433,6 +435,14 @@ func (r *Resolver) resolveWorkspace() (cfg *WorkspaceConfig, repoDir string) {
 	// (no .git) keeps top priority and stays hands-off (never pulled).
 	repoIsManagedClone := dirIsGitClone(localRepoDir)
 
+	// Observability only (priorities below are unchanged): a legacy managed
+	// clone whose origin disagrees with the effective workspace URL is the
+	// fingerprint of a workspace repo URL lost in migration.
+	if repoIsManagedClone {
+		effectiveURL, _, _, _ := r.workspaceRepoSettings()
+		r.warnOnLegacyRepoOriginMismatch(localRepoDir, effectiveURL)
+	}
+
 	// Priority 1: manual / offline ZIP import (repo/ without .git).
 	if !repoIsManagedClone {
 		if wsCfg := r.loadWorkspaceConfigOverlaid(localRepoDir); wsCfg != nil {
@@ -489,6 +499,17 @@ func (r *Resolver) resolveWorkspace() (cfg *WorkspaceConfig, repoDir string) {
 // loudly with the repo URL + underlying git error instead of silently serving
 // the built-in fallback workspace (Kotlin 1.x parity: workspace load failed
 // hard with a retryable auth prompt — never a silent empty workspace).
+//
+// On the empty-URL gate below (deliberate, do not "fix" by widening it): an
+// empty configured URL means the DEFAULT Citeck workspace is in play, and
+// hard-failing every default-repo sync error here would break server bootstrap
+// on a fresh/offline box and turn the daemon's Welcome-data endpoints into 502s
+// (see routes_workspace.go / server.go, and TestWorkspaceSyncError_DefaultRepoStaysGraceful).
+// The real damage an empty URL causes — the launcher silently serving a
+// workspace the user never configured — is instead made visible where it
+// actually bites and where the truth is known: unknownBundleRepoError (which
+// says so in the user-facing message AND logs a one-shot WARN) and
+// warnOnLegacyRepoOriginMismatch (which reports the surviving repo/.git origin).
 func (r *Resolver) WorkspaceSyncError() error {
 	if r.wsRepoOpts == nil || r.wsRepoOpts.URL == "" {
 		return nil
@@ -539,6 +560,13 @@ func (r *Resolver) Resolve(ref Ref) (*ResolveResult, error) {
 
 	// Step 2: Resolve the actual repo URL for ref.Repo from workspace config
 	bundleRepo := findBundleRepo(wsCfg, ref.Repo)
+	if bundleRepo == nil {
+		// HARD failure. This used to fall through to syncBundleRepo with a nil
+		// entry, which defaulted the URL and cloned the canonical Citeck
+		// workspace into bundles/<unknown-id> — the launcher then served a
+		// workspace nobody configured, with no warning at all.
+		return nil, r.unknownBundleRepoError(wsCfg, ref.Repo)
+	}
 
 	localBundles := shouldUseLocalBundles(wsRepoDir, bundleRepo)
 
@@ -547,7 +575,7 @@ func (r *Resolver) Resolve(ref Ref) (*ResolveResult, error) {
 		repoDir = wsRepoDir
 		r.log().Debug("Using workspace repo for bundles (local)", "repo", ref.Repo, "dir", wsRepoDir)
 	} else {
-		repoDir = r.syncBundleRepo(ref.Repo, bundleRepo)
+		repoDir = r.syncBundleRepo(ref.Repo, *bundleRepo)
 	}
 
 	// Build alias → canonical name map
@@ -600,28 +628,41 @@ func shouldUseLocalBundles(wsRepoDir string, bundleRepo *BundlesRepo) bool {
 	return err == nil && info.IsDir()
 }
 
-// syncBundleRepo clones or pulls the bundle git repository and returns its local directory.
-func (r *Resolver) syncBundleRepo(repoID string, bundleRepo *BundlesRepo) string {
-	repoDir := filepath.Join(r.dataDir, "bundles", repoID)
-	repoURL := DefaultBundlesRepo
-	repoBranch := DefaultBundlesBranch
-	var repoToken string
-
-	if bundleRepo != nil {
-		if bundleRepo.URL != "" {
-			repoURL = bundleRepo.URL
-		}
-		if bundleRepo.Branch != "" {
-			repoBranch = bundleRepo.Branch
-		}
-		repoToken = r.lookupRepoToken(bundleRepo)
+// bundleRepoGitSettings resolves the git URL/branch for a DECLARED bundle repo
+// entry. Empty per-field values inherit the canonical Citeck defaults — a
+// documented, tested feature (a workspace may declare a repo with only a
+// branch, or with no git coordinates at all when its bundles ship inside the
+// workspace repo itself). It is only an UNKNOWN repo id — no entry at all —
+// that must never be defaulted; see unknownBundleRepoError.
+func bundleRepoGitSettings(bundleRepo BundlesRepo) (url, branch string) {
+	url, branch = DefaultBundlesRepo, DefaultBundlesBranch
+	if bundleRepo.URL != "" {
+		url = bundleRepo.URL
 	}
+	if bundleRepo.Branch != "" {
+		branch = bundleRepo.Branch
+	}
+	return url, branch
+}
+
+// syncBundleRepo clones or pulls the bundle git repository and returns its local directory.
+//
+// bundleRepo is taken BY VALUE on purpose: it must be an entry that actually
+// exists in the workspace config. The previous *BundlesRepo signature allowed a
+// nil (= repo id not found in the config) to reach here and silently clone the
+// DEFAULT workspace repo into bundles/<unknown-id>, so the launcher served a
+// workspace the user never configured. Callers now reject an unknown id first
+// (Resolve / SyncBundleRepo → unknownBundleRepoError).
+func (r *Resolver) syncBundleRepo(repoID string, bundleRepo BundlesRepo) string {
+	repoDir := filepath.Join(r.dataDir, "bundles", repoID)
+	repoURL, repoBranch := bundleRepoGitSettings(bundleRepo)
+	repoToken := r.lookupRepoToken(&bundleRepo)
 
 	if !r.offline {
 		gitCtx, gitCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		err := git.CloneOrPullWithAuth(gitCtx, git.RepoOpts{
 			URL: repoURL, Branch: repoBranch, DestDir: repoDir,
-			Token: repoToken, PullPeriod: r.bundleRepoPullPeriod(bundleRepo),
+			Token: repoToken, PullPeriod: r.bundleRepoPullPeriod(&bundleRepo),
 		})
 		gitCancel()
 		if err != nil {
@@ -773,9 +814,103 @@ func (r *Resolver) SyncBundleRepo(cfg *WorkspaceConfig, repoID string) (string, 
 	}
 	repo := findBundleRepo(cfg, repoID)
 	if repo == nil {
-		return "", fmt.Errorf("bundle repo %q not found in workspace config", repoID)
+		// The Web UI renders this string verbatim in a toast
+		// (NamespaceEditDialog), so the enrichment lands end-to-end with no
+		// frontend change.
+		return "", r.unknownBundleRepoError(cfg, repoID)
 	}
-	return r.syncBundleRepo(repoID, repo), nil
+	return r.syncBundleRepo(repoID, *repo), nil
+}
+
+// unknownBundleRepoError builds the diagnostic for a bundle repo id that the
+// loaded workspace config does not declare — the single failure message for
+// both entry points (Resolve and SyncBundleRepo).
+//
+// It must be actionable on its own, because it is what the user sees: the Web
+// UI prints it verbatim in a toast and the daemon surfaces it as the namespace
+// bundle error. So it names (a) the unknown id, (b) the ids that ARE declared,
+// and (c) the EFFECTIVE workspace repo URL + branch the declarations were read
+// from — the three facts needed to tell "typo in the ref" apart from "the
+// launcher is reading the wrong workspace".
+//
+// When the effective URL is the built-in default only because the configured
+// one is empty, that is called out explicitly: it is the actual user-facing
+// cause of the incident this diagnostic was written for (a 1.x→2.x migration
+// blanked the workspace's repo_url, so every repo id in every namespace became
+// "unknown" against the default Citeck workspace).
+func (r *Resolver) unknownBundleRepoError(cfg *WorkspaceConfig, repoID string) error {
+	ids := knownBundleRepoIDs(cfg)
+	// An empty config has two very different causes. Only one of them is the
+	// user's config; the other is a workspace-repo sync outage (network/auth),
+	// after which nothing was ever read from disk. Blaming "declares no bundle
+	// repos" there sends the user to fix a file that was never the problem, so
+	// when the resolver holds the real git error, say that instead.
+	syncFailed := len(ids) == 0 && r.wsSyncErr != nil
+	known := "the workspace config declares no bundle repos"
+	switch {
+	case len(ids) > 0:
+		known = "known ids: " + strings.Join(ids, ", ")
+	case syncFailed:
+		known = "the workspace repo could not be synced, so no workspace config was loaded at all"
+	}
+	url, branch, _, _ := r.workspaceRepoSettings()
+
+	// Name the actual YAML key: without it the reader has to already know the
+	// schema to act on this error.
+	msg := fmt.Sprintf("bundle repo %q is not declared under bundleRepos: in workspace-v1.yml (%s); "+
+		"workspace repo: %s (branch %s)", repoID, known, url, branch)
+	if syncFailed {
+		// Rendered verbatim in a Web UI toast: lead with what to do, then the
+		// underlying git error (its wording — "authentication required",
+		// "repository not found" — is what actually tells the user which).
+		msg += "; fix workspace repo access and retry — this is a sync failure, not a wrong repo id: " +
+			r.wsSyncErr.Error()
+	}
+	if r.workspaceURLDefaultedFromEmpty() {
+		msg += "; the configured workspace repo URL is empty, so the default Citeck workspace " +
+			"is being used — restore the workspace's repository URL (a 1.x→2.x migration can blank it)"
+		// Also make it visible in the daemon log, not only in the caller's
+		// error: this is the narrowest way to satisfy "empty URL + unknown
+		// bundle repo must not be silent" without touching WorkspaceSyncError
+		// (see the note there) — it fires only on this already-failing path.
+		warnOnce("empty-ws-url|"+r.dataDir+"|"+repoID, func() {
+			r.log().Warn("Namespace references an unknown bundle repo while the workspace repo URL is empty "+
+				"— the default Citeck workspace is being served",
+				"repo", repoID, "effectiveUrl", url, "effectiveBranch", branch)
+		})
+	}
+	return errors.New(msg)
+}
+
+// knownBundleRepoIDs lists the bundle repo ids declared in cfg, in declaration
+// order (the order the user sees in the workspace file and the UI picker).
+func knownBundleRepoIDs(cfg *WorkspaceConfig) []string {
+	if cfg == nil {
+		return nil
+	}
+	ids := make([]string, 0, len(cfg.BundleRepos))
+	for i := range cfg.BundleRepos {
+		if id := cfg.BundleRepos[i].ID; id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// workspaceURLDefaultedFromEmpty reports whether the resolver is falling back
+// to DefaultBundlesRepo because a workspace record EXISTS but carries an empty
+// URL (the migration-damage fingerprint). A nil wsRepoOpts is "no per-workspace
+// override configured" — legitimately the default, not damage.
+//
+// Desktop-gated, and that is not incidental. In SERVER mode FileStore
+// synthesizes a single workspace ("daemon") that never carries a repo URL, so
+// buildWorkspaceRepoOpts always yields a non-nil opts with URL == "" and this
+// would be permanently true — decorating every unknown-bundle-repo error with
+// advice to "restore the workspace's repository URL" that names a 1.x→2.x
+// migration which, per bootstrap.go, cannot even run outside desktop mode.
+// Server mode having no workspace repo record is the design, not damage.
+func (r *Resolver) workspaceURLDefaultedFromEmpty() bool {
+	return config.IsDesktopMode() && r.wsRepoOpts != nil && r.wsRepoOpts.URL == ""
 }
 
 // findBundleRepo finds a BundlesRepo entry by ID in the workspace config.
@@ -1165,6 +1300,53 @@ func ResolveBundleRepoDir(dataDir, wsRepoDir string, repo BundlesRepo) string {
 		}
 	}
 	return dir
+}
+
+// warnedOnce dedupes one-shot diagnostics. It is package-level on purpose: the
+// daemon builds a FRESH Resolver per request, so a per-Resolver flag would
+// still print on every API call. Keys are self-describing strings; the set is
+// bounded by the number of distinct workspaces times the number of diagnostics.
+var warnedOnce sync.Map // map[string]struct{}
+
+// warnOnce invokes emit only the first time key is seen in this process.
+func warnOnce(key string, emit func()) {
+	if _, loaded := warnedOnce.LoadOrStore(key, struct{}{}); !loaded {
+		emit()
+	}
+}
+
+// (Reading a clone's origin remote and comparing two git URLs both live in
+// internal/git — git.OriginURL and git.SameRepoURL. Local copies of BOTH used
+// to exist here. The comparator disagreed outright: it lowercased the WHOLE
+// URL, while git.SameRepoURL folds only scheme+host and treats path case as
+// significant, because git hosts are case-sensitive in the path. Two different
+// answers to "is this the same repo?" is a trap; there is now one of each.)
+
+// warnOnLegacyRepoOriginMismatch emits a one-shot WARN when data/repo/ is a git
+// clone whose origin remote disagrees with the effective workspace repo URL.
+//
+// Why this exists: repo/.git's origin is the highest-fidelity surviving record
+// of the workspace URL the user actually configured, and nothing else reads it.
+// When a 1.x→2.x migration loses the stored repo_url, workspaceRepoSettings
+// silently falls back to the DEFAULT Citeck workspace and the launcher serves a
+// workspace the user never asked for — a mismatch here is that situation's
+// fingerprint. Diagnostic ONLY: the priority chain is unchanged (see the
+// rationale at the top of resolveWorkspace), and recovering the stored setting
+// belongs to the migrator (internal/h2migrate), not to the resolver.
+func (r *Resolver) warnOnLegacyRepoOriginMismatch(localRepoDir, effectiveURL string) {
+	// Best-effort: a legacy clone too broken for go-git to open, or one with no
+	// origin remote, is simply "no origin" — this diagnostic must never fail
+	// loudly on the path that resolves every namespace.
+	origin, err := git.OriginURL(localRepoDir)
+	if err != nil || origin == "" || git.SameRepoURL(origin, effectiveURL) {
+		return
+	}
+	warnOnce("legacy-repo-origin|"+localRepoDir+"|"+origin+"|"+effectiveURL, func() {
+		r.log().Warn("Legacy workspace clone in repo/ points at a different git remote "+
+			"than the configured workspace repo — the workspace repo URL may have been lost "+
+			"(e.g. by a 1.x→2.x migration)",
+			"repoDir", localRepoDir, "originUrl", origin, "effectiveUrl", effectiveURL)
+	})
 }
 
 // dirIsGitClone reports whether dir is a git working clone (has a .git entry).

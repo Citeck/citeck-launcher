@@ -475,15 +475,53 @@ func migrateH2IfNeeded() error {
 		slog.Error("CRITICAL: H2 → SQLite migration failed — refusing to start", "err", migRunErr)
 		return fmt.Errorf("namespace migration failed: %w", migRunErr)
 	}
-	if result != nil {
-		slog.Info("H2 migration complete",
-			"workspaces", result.Workspaces,
-			"secrets", result.Secrets,
-			"namespaces", result.Namespaces,
-			"gitRepos", result.GitRepos,
-		)
-	}
+	logMigrationResult(result, config.HomeDir())
 	return nil
+}
+
+// logMigrationResult is the server-mode/CLI counterpart of the web UI's
+// MigrationDegradedBanner: h2migrate has already persisted a DegradedMigration
+// record that GET /api/v1/secrets/migration-status surfaces, and this makes the
+// same loss visible in the daemon log so it is never silent on either surface.
+//
+// The two lossy paths get DIFFERENT wording, mirroring the banner's branch on
+// `partial`. They used to share the fallback message, which on a partial read
+// made three claims that were all false — storage.db WAS read, nothing was
+// reconstructed from the filesystem, and secrets DID migrate — and logged the
+// empty FallbackReason, so the operator was handed no cause and the wrong
+// diagnosis.
+func logMigrationResult(result *h2migrate.MigrateResult, homeDir string) {
+	if result == nil {
+		return
+	}
+	slog.Info("H2 migration complete",
+		"workspaces", result.Workspaces,
+		"secrets", result.Secrets,
+		"namespaces", result.Namespaces,
+		"gitRepos", result.GitRepos,
+		"degraded", result.Degraded,
+	)
+
+	kind, reason := result.Degradation()
+	backup := filepath.Join(homeDir, "storage.db.kotlin-bak")
+	switch kind {
+	case h2migrate.DegradationPartial:
+		// The store opened and its layout/meta index verified; only some
+		// user-map sub-trees were undecodable. There is no ws/ tree to rebuild
+		// those rows from, so the actionable advice is "audit your data and
+		// keep the parachute", not "your database is unreadable".
+		slog.Warn("H2 migration was PARTIAL — storage.db opened and most data migrated, but some entries "+
+			"and B-tree sub-trees were undecodable and were skipped; verify that workspaces, namespaces "+
+			"and secrets are complete",
+			"reason", reason, "backup", backup)
+	case h2migrate.DegradationFallback:
+		// The filesystem fallback cannot recover secrets, workspace auth or
+		// real namespace configs.
+		slog.Warn("H2 migration was DEGRADED — storage.db could not be read and data was reconstructed "+
+			"from the filesystem; secrets and namespace configuration were NOT migrated",
+			"reason", reason, "backup", backup)
+	case h2migrate.DegradationNone:
+	}
 }
 
 // initStore opens the storage backend: SQLite in desktop mode, flat files in

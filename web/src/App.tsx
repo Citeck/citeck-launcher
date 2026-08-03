@@ -24,6 +24,7 @@ import { ToastContainer } from './components/Toast'
 import { ErrorModalHost } from './components/ErrorModal'
 import { LoadingOverlayHost } from './components/LoadingOverlay'
 import { SecretsUnlockGuard } from './components/SecretsUnlockGuard'
+import { MigrationDegradedBanner } from './components/MigrationDegradedBanner'
 import { useEffect } from 'react'
 
 function MainLayout() {
@@ -98,6 +99,9 @@ function MainLayout() {
           to creds from the unlocked SecretService. */}
       <SecretsUnlockGuard />
       <TabBar />
+      {/* A lossy 1.x migration leaves the launcher looking freshly installed;
+          without this it is reported only to the log file. */}
+      <MigrationDegradedBanner />
       <main className="flex-1 min-h-0 flex flex-col">
         <Routes>
           {/* Root: Welcome (desktop, no namespace) or Dashboard */}
@@ -109,11 +113,19 @@ function MainLayout() {
           <Route path="/diagnostics" element={<Scroll><Safe><Diagnostics /></Safe></Scroll>} />
           <Route path="/licenses" element={<Scroll><Safe><Licenses /></Safe></Scroll>} />
           <Route path="/daemon-logs" element={<Scroll><Safe><DaemonLogs /></Safe></Scroll>} />
+          {/* Settings is workspace-level, NOT namespace-level: it reads daemon
+              health, workspace git settings and registry bindings, none of
+              which are namespace-scoped. It used to sit under the guard below
+              purely by placement, which made the TabBar gear a no-op whenever
+              no namespace was open — /config redirected to "/", "/" rendered
+              Welcome, and the gear (hidden at "/") vanished with it. The same
+              redirect also swallowed a fast click during boot, while
+              `namespace` is still null. */}
+          <Route path="/config" element={<Scroll><Safe><Config /></Safe></Scroll>} />
 
           {/* Namespace-level pages (scrollable, redirect to Welcome if no namespace) */}
           <Route path="/apps/:name" element={hasNamespace ? <Scroll><Safe><AppDetail /></Safe></Scroll> : <Navigate to="/" />} />
           <Route path="/apps/:name/logs" element={hasNamespace ? <Scroll><Safe><Logs /></Safe></Scroll> : <Navigate to="/" />} />
-          <Route path="/config" element={hasNamespace ? <Scroll><Safe><Config /></Safe></Scroll> : <Navigate to="/" />} />
           <Route path="/volumes" element={hasNamespace ? <Scroll><Safe><Volumes /></Safe></Scroll> : <Navigate to="/" />} />
         </Routes>
       </main>

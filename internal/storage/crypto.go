@@ -69,12 +69,12 @@ const (
 // mutually exclusive, selected by KDF; both share Salt + KeySize.
 type CryptoKeyParams struct {
 	KDF        string `json:"kdf,omitempty"`        // "argon2id" (new) or "pbkdf2"/"" (legacy)
-	Salt       string `json:"salt"`                // base64-encoded 16-byte random salt
+	Salt       string `json:"salt"`                 // base64-encoded 16-byte random salt
 	Iterations int    `json:"iterations,omitempty"` // PBKDF2 iteration count (legacy KDF only)
 	Memory     uint32 `json:"memoryKiB,omitempty"`  // Argon2id memory cost in KiB
 	Time       uint32 `json:"time,omitempty"`       // Argon2id time cost (passes)
 	Threads    uint8  `json:"threads,omitempty"`    // Argon2id parallelism
-	KeySize    int    `json:"keySize"`             // key size in bits (256)
+	KeySize    int    `json:"keySize"`              // key size in bits (256)
 }
 
 // SecretService wraps a Store and adds transparent AES-256-GCM

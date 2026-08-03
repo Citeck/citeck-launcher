@@ -268,12 +268,27 @@ func (d *Daemon) handleGetMigrationStatus(w http.ResponseWriter, _ *http.Request
 		hasSecrets = len(secrets) > 0
 	}
 
-	writeJSON(w, map[string]any{
+	resp := map[string]any{
 		"hasPendingSecrets": hasBlob,
 		"encrypted":         encrypted,
 		"locked":            locked,
 		"hasSecrets":        hasSecrets,
-	})
+	}
+
+	// Additive, backward-compatible: the four fields above keep their exact
+	// meaning. `migrationDegraded` / `degradedMigration` report a LOSSY
+	// Kotlin-1.x migration, which is otherwise completely invisible here —
+	// the filesystem fallback never writes a secrets blob, so hasPendingSecrets
+	// stays false, no unlock prompt appears, and a user whose workspace was
+	// replaced by stubs sees what looks like a fresh install.
+	if rec, recErr := h2migrate.LoadDegradedMigration(d.store); recErr != nil {
+		slog.Warn("Failed to read the degraded-migration record", "err", recErr)
+	} else if rec != nil {
+		resp["migrationDegraded"] = true
+		resp["degradedMigration"] = rec
+	}
+
+	writeJSON(w, resp)
 }
 
 // handleSubmitMasterPassword decrypts the Kotlin secrets blob and imports individual secrets.

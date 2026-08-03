@@ -16,7 +16,6 @@ import (
 	gogit "github.com/go-git/go-git/v5"
 	gogitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/http"
 	"golang.org/x/sync/singleflight"
 )
@@ -335,13 +334,39 @@ func repoMetaPath(destDir string) string {
 func repoConfigChanged(opts RepoOpts) bool {
 	data, err := os.ReadFile(repoMetaPath(opts.DestDir))
 	if err != nil {
-		return false // no meta — assume not changed (first run after upgrade)
+		return originDiffersFromConfig(opts) // no meta (e.g. a Kotlin 1.x clone)
 	}
 	var meta repoMeta
 	if json.Unmarshal(data, &meta) != nil {
-		return false
+		// Corrupt sidecar carries no usable answer; fall back to the remote
+		// rather than silently claiming "unchanged".
+		return originDiffersFromConfig(opts)
 	}
 	return meta.URL != opts.URL || meta.Branch != opts.Branch
+}
+
+// originDiffersFromConfig is the no-sidecar fallback for repoConfigChanged.
+//
+// A clone created by the Kotlin 1.x launcher has no citeck-repo-meta.json, so
+// treating "no sidecar" as "unchanged" made URL drift invisible: the code went
+// on to doPull against the on-disk origin, and any pull failure there was
+// repaired by cloning the (drifted) configured URL over the top — i.e. one repo
+// silently replaced by another. Reading the real origin remote closes that gap.
+//
+// Only the URL is compared. The clone is shallow + single-branch, so the branch
+// it tracks is not reliably recoverable from the on-disk refspec; a branch-only
+// change therefore stays undetected until a sidecar exists (written by the next
+// successful recordSync). That is deliberate — guessing wrong here would mean
+// destroying a good clone, which is exactly the failure mode being fixed.
+//
+// If origin cannot be read at all, stay conservative and report "unchanged":
+// the repair path in doPull still handles a genuinely broken .git.
+func originDiffersFromConfig(opts RepoOpts) bool {
+	origin, err := OriginURL(opts.DestDir)
+	if err != nil {
+		return false
+	}
+	return !SameRepoURL(origin, opts.URL)
 }
 
 func saveRepoMeta(opts RepoOpts) {
@@ -457,12 +482,12 @@ func doPull(ctx context.Context, opts RepoOpts) error {
 
 	repo, err := gogit.PlainOpen(opts.DestDir)
 	if err != nil {
-		return reclone(ctx, opts, fmt.Errorf("open repo: %w", err))
+		return recloneForRepair(ctx, opts, fmt.Errorf("open repo: %w", err))
 	}
 
 	wt, err := repo.Worktree()
 	if err != nil {
-		return reclone(ctx, opts, fmt.Errorf("worktree: %w", err))
+		return recloneForRepair(ctx, opts, fmt.Errorf("worktree: %w", err))
 	}
 
 	// Hard-reset working tree to ensure clean state before pulling.
@@ -471,7 +496,7 @@ func doPull(ctx context.Context, opts RepoOpts) error {
 	if err == nil {
 		if err := wt.Reset(&gogit.ResetOptions{Commit: remoteRef.Hash(), Mode: gogit.HardReset}); err != nil {
 			// Corrupted packfile index or similar — re-clone from scratch
-			return reclone(ctx, opts, fmt.Errorf("hard reset: %w", err))
+			return recloneForRepair(ctx, opts, fmt.Errorf("hard reset: %w", err))
 		}
 	}
 
@@ -491,57 +516,19 @@ func doPull(ctx context.Context, opts RepoOpts) error {
 		if isAuthError(err) {
 			return fmt.Errorf("git auth failed for %s: %w", opts.URL, err)
 		}
-		return reclone(ctx, opts, fmt.Errorf("pull: %w", err))
-	}
-	return nil
-}
-
-// reclone clones to a temp directory and swaps on success. If clone fails, the old
-// directory is kept intact so the daemon can continue with stale data.
-func reclone(ctx context.Context, opts RepoOpts, cause error) error {
-	slog.Warn("Repo corrupted, re-cloning", "dir", opts.DestDir, "cause", cause)
-
-	tmpDir := opts.DestDir + ".tmp"
-	// Clean up any leftover temp dir from a previous failed attempt
-	_ = os.RemoveAll(tmpDir)
-
-	tmpOpts := opts
-	tmpOpts.DestDir = tmpDir
-	if err := doClone(ctx, tmpOpts); err != nil {
-		_ = os.RemoveAll(tmpDir)
-		if isAuthError(err) {
-			slog.Info("Reclone auth failed, keeping stale repo", "dir", opts.DestDir)
-		} else {
-			slog.Warn("Reclone failed, keeping stale repo", "dir", opts.DestDir, "err", err)
+		// A transient network failure (TLS handshake timeout, DNS blip, reset
+		// connection, 5xx from the git host) says NOTHING about the integrity
+		// of the local clone. Recloning on it is how a valid clone got wiped
+		// and replaced with a different repository: the pull talks to the
+		// on-disk origin while the reclone talks to opts.URL, so a momentary
+		// outage plus drifted config equals silent data loss. Keep the clone,
+		// surface the error, let the caller retry later.
+		if isTransientNetworkError(err) {
+			slog.Warn("Pull failed with a transient network error; keeping existing clone",
+				"dir", opts.DestDir, "url", opts.URL, "err", err)
+			return fmt.Errorf("git pull %s: %w", opts.URL, err)
 		}
-		return fmt.Errorf("reclone %s: %w", opts.URL, err)
-	}
-
-	if err := os.RemoveAll(opts.DestDir); err != nil {
-		_ = os.RemoveAll(tmpDir)
-		return fmt.Errorf("remove old repo %s: %w", opts.DestDir, err)
-	}
-	if err := os.Rename(tmpDir, opts.DestDir); err != nil {
-		_ = os.RemoveAll(tmpDir)
-		return fmt.Errorf("rename %s -> %s: %w", tmpDir, opts.DestDir, err)
+		return recloneForRepair(ctx, opts, fmt.Errorf("pull: %w", err))
 	}
 	return nil
-}
-
-// isAuthError reports whether an error is caused by a git authentication /
-// authorization failure (401/403). Used by the pull/reclone retry logic to
-// stop retrying on bad credentials. Workspace-repo sync failures propagate
-// their go-git wording verbatim (%w) instead — the bundle resolver and daemon
-// workspace handlers keep the "authentication required" / "unauthorized" text
-// so the Web UI's isGitPullError heuristic can match on it.
-func isAuthError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, transport.ErrAuthenticationRequired) || errors.Is(err, transport.ErrAuthorizationFailed) {
-		return true
-	}
-	// Fallback: some transports wrap auth errors without using sentinel values
-	errStr := strings.ToLower(err.Error())
-	return strings.Contains(errStr, "unauthorized") || strings.Contains(errStr, "authentication")
 }

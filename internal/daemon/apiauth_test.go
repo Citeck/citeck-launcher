@@ -61,9 +61,9 @@ func TestAPIAuthMiddleware_WrongBearer401(t *testing.T) {
 	h := newAPIAuth(testToken).Middleware(okHandler())
 	for _, header := range []string{
 		"Bearer wrong-token",
-		"Bearer ", // empty token
+		"Bearer ",            // empty token
 		"Basic " + testToken, // wrong scheme
-		testToken, // bare token without scheme
+		testToken,            // bare token without scheme
 	} {
 		req := httptest.NewRequest("GET", "/api/v1/namespace", http.NoBody)
 		req.Header.Set("Authorization", header)

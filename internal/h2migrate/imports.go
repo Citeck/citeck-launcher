@@ -41,7 +41,13 @@ func (s *MVStore) DumpForImport() (map[string]map[string]string, error) {
 		}
 		entries, err := s.ReadMap(name)
 		if err != nil {
-			slog.Warn("Failed to read map for dump", "name", name, "err", err)
+			// `continue` here drops the ENTIRE map. That used to leave nothing
+			// but a Warn in the daemon log, so a migration that lost every
+			// workspace still reported success; record it as a partial read so
+			// Migrate can mark the run degraded and tell the user.
+			slog.Warn("Failed to read map for dump", //nolint:gosec // G706: map names come from the store being migrated, not from user input
+				"name", name, "err", err)
+			s.noteMapReadFailure(name, err)
 			continue
 		}
 		if len(entries) == 0 {

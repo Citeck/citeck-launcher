@@ -20,13 +20,12 @@ func decompressLZF(compressed []byte, decompressedLen int) ([]byte, error) {
 		ctrl := int(compressed[ipos]) //nolint:gosec // bounds checked by loop condition
 		ipos++
 
-		if ctrl < 32 {
-			opos, ipos = decompressLiteral(out, compressed, opos, ipos, ctrl)
-			continue
-		}
-
 		var err error
-		opos, ipos, err = decompressBackRef(out, compressed, opos, ipos, ctrl, decompressedLen)
+		if ctrl < 32 {
+			opos, ipos, err = decompressLiteral(out, compressed, opos, ipos, ctrl)
+		} else {
+			opos, ipos, err = decompressBackRef(out, compressed, opos, ipos, ctrl, decompressedLen)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -40,10 +39,23 @@ func decompressLZF(compressed []byte, decompressedLen int) ([]byte, error) {
 }
 
 // decompressLiteral handles a literal run: copy ctrl+1 bytes from input to output.
-func decompressLiteral(out, compressed []byte, opos, ipos, ctrl int) (newOpos, newIpos int) {
+//
+// Both bounds are checked. A truncated page (the exact shape produced by a torn
+// chunk write, which is what sends the launcher down this path in the first
+// place) used to slice past the end of the input and PANIC the daemon during
+// migration instead of degrading to the filesystem fallback.
+func decompressLiteral(out, compressed []byte, opos, ipos, ctrl int) (newOpos, newIpos int, _ error) {
 	length := ctrl + 1
+	if ipos+length > len(compressed) {
+		return 0, 0, fmt.Errorf("lzf: literal run of %d bytes overflows input at ipos=%d (input len %d)",
+			length, ipos, len(compressed))
+	}
+	if opos+length > len(out) {
+		return 0, 0, fmt.Errorf("lzf: literal run of %d bytes overflows output at opos=%d (output len %d)",
+			length, opos, len(out))
+	}
 	copy(out[opos:], compressed[ipos:ipos+length])
-	return opos + length, ipos + length
+	return opos + length, ipos + length, nil
 }
 
 // decompressBackRef handles a back-reference: copy length bytes from earlier in output.

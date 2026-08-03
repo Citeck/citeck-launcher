@@ -349,6 +349,13 @@ export function NamespaceEditDialog({
           disabled={bundlesLoading}
           placeholder="—"
         />
+        {/* This is a PICKER over repos already declared in the workspace
+            config, not a place to configure one — the near-identical label two
+            levels down ("Repository URL" in workspace settings) is where the
+            git settings actually live, and users kept hunting for them here. */}
+        <p className="mt-1 text-[11px] text-muted-foreground">
+          {t('namespace.form.bundlesRepoHint')}
+        </p>
       </ModalField>
 
       <ModalField label={t('namespace.form.bundleKey')} error={fieldErrors.bundleKey} required>

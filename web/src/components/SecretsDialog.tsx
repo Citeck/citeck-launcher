@@ -16,6 +16,10 @@ interface SecretRow extends Record<string, unknown> {
   id: string
   name: string
   type: string
+  // Registry/git host the secret authenticates against. '' for the
+  // host-agnostic secrets this dialog creates — rendered as a dash, never
+  // guessed.
+  host: string
   username: string
   created: string
 }
@@ -95,8 +99,17 @@ export function SecretsDialog({ open, onClose }: SecretsDialogProps) {
     if (open) reload()
   }, [open, reload])
 
+  // Host is shown because a REGISTRY_AUTH secret bound to the wrong registry is
+  // otherwise indistinguishable from a correct one here (the picker filters on
+  // exactly this field).
   const columns: JournalColumn<SecretRow>[] = [
-    { label: t('secrets.table.name'), key: 'name', width: '60%' },
+    { label: t('secrets.table.name'), key: 'name', width: '45%' },
+    {
+      label: t('secrets.table.host'),
+      key: 'host',
+      width: '30%',
+      render: (row) => row.host || <span className="text-muted-foreground">—</span>,
+    },
     { label: t('secrets.table.type'), key: 'type' },
   ]
 
@@ -320,6 +333,7 @@ function toRow(s: SecretMetaDto): SecretRow {
     id: s.id,
     name: s.name,
     type: s.type,
+    host: s.host ?? '',
     username: s.username ?? '',
     created: s.createdAt ? formatDateTime(s.createdAt) : '',
   }

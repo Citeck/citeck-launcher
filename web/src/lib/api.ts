@@ -669,7 +669,42 @@ export async function deleteSnapshot(name: string): Promise<ActionResultDto> {
 }
 
 // Migration
-export async function getMigrationStatus(): Promise<{ hasPendingSecrets: boolean; encrypted: boolean; locked: boolean; hasSecrets: boolean }> {
+
+/** Details of a LOSSY 1.x->2.x migration: the H2 reader could not open
+ *  storage.db, so the filesystem fallback reconstructed what it could. Present
+ *  only when the last migration was degraded — absent on a clean one, so test
+ *  for presence rather than `=== false`. */
+export interface DegradedMigrationDto {
+  reason: string
+  occurredAt: string
+  backupPath?: string
+  workspaces: number
+  namespaces: number
+  secrets: number
+  recoveredRepoUrls: number
+  /** Dotted paths of what could not be reconstructed. Display list, not a
+   *  parsing contract. */
+  lostFields?: string[]
+  /** True for a PARTIAL read: storage.db opened and its layout/meta index
+   *  verified, but some user-map sub-trees could not be decoded. Distinct from
+   *  the filesystem fallback, where the store could not be opened at all —
+   *  here most data DID come through, so the wording must differ. Absent on a
+   *  fallback record. */
+  partial?: boolean
+  lostEntries?: number
+  lostSubtrees?: number
+}
+
+export interface MigrationStatusDto {
+  hasPendingSecrets: boolean
+  encrypted: boolean
+  locked: boolean
+  hasSecrets: boolean
+  migrationDegraded?: boolean
+  degradedMigration?: DegradedMigrationDto
+}
+
+export async function getMigrationStatus(): Promise<MigrationStatusDto> {
   try {
     return await request('GET', '/migration/status')
   } catch (e) {

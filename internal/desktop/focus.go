@@ -48,4 +48,3 @@ func notifyExistingInstanceCtx(ctx context.Context, socketPath string) error {
 	}
 	return nil
 }
-

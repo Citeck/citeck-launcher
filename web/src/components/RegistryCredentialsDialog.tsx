@@ -15,6 +15,11 @@ interface RegistryCredentialsDialogProps {
   onSaved?: () => void
   /** Called when the dialog is dismissed without saving (cancel / backdrop). */
   onClose: () => void
+  /** Opened from the Settings page rather than from a failed pull. The flow is
+   *  identical; only the wording changes — "Sign in to…" / "Save & Retry" imply
+   *  a stuck pull to retry, which is not the case when the user came here to
+   *  review or correct a binding on their own initiative. */
+  manage?: boolean
 }
 
 /**
@@ -27,11 +32,15 @@ interface RegistryCredentialsDialogProps {
  * the daemon then rebuilds the registry auth cache and retries every
  * pull-failed app, so the stuck pull recovers without a restart.
  */
-export function RegistryCredentialsDialog({ open, host, onSaved, onClose }: RegistryCredentialsDialogProps) {
+export function RegistryCredentialsDialog({ open, host, onSaved, onClose, manage }: RegistryCredentialsDialogProps) {
   const { t } = useTranslation()
   const [selection, setSelection] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // The binding as PERSISTED on the daemon — distinct from `selection`, which
+  // tracks whatever the user is currently pointing at. "Remove" acts on (and is
+  // enabled by) the persisted one: there is nothing to unbind otherwise.
+  const [bound, setBound] = useState('')
 
   // Preselect the secret currently bound to this host so re-opening the dialog
   // shows the active choice. Reset on each open so a stale selection from a
@@ -41,9 +50,14 @@ export function RegistryCredentialsDialog({ open, host, onSaved, onClose }: Regi
     let cancelled = false
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelection('')
+    setBound('')
     setError(null)
     getRegistryBindings()
-      .then((b) => { if (!cancelled) setSelection(b[host] ?? '') })
+      .then((b) => {
+        if (cancelled) return
+        setSelection(b[host] ?? '')
+        setBound(b[host] ?? '')
+      })
       .catch(() => { /* no daemon bindings yet — leave unselected */ })
     return () => { cancelled = true }
   }, [open, host])
@@ -75,33 +89,71 @@ export function RegistryCredentialsDialog({ open, host, onSaved, onClose }: Regi
     void bindAndFinish(secretId)
   }
 
+  // Drop the host→secret binding. The daemon treats an empty secretId as
+  // "unbind" (handleSetRegistryBinding) and rebuilds the auth caches, so the
+  // host falls back to scope-matched credentials — or to none at all, which is
+  // the point when a wrong credential was bound. Kept separate from
+  // bindAndFinish, where an empty id means "nothing picked yet".
+  async function removeBinding() {
+    if (!bound) return
+    setSaving(true)
+    setError(null)
+    try {
+      await setRegistryBinding(host, '')
+      setSelection('')
+      setBound('')
+      toast(t('registryCreds.removed'), 'success')
+      onSaved?.()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <Modal
       open={open}
-      title={t('registryCreds.title', { host })}
+      title={t(manage ? 'registryCreds.manageTitle' : 'registryCreds.title', { host })}
       onClose={onClose}
       footer={
         <>
+          {/* Destructive action pinned left, away from the primary one. Enabled
+              only when a binding actually exists — this is the only UI for the
+              daemon's unbind path. */}
           <button
             type="button"
-            className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
-            onClick={onClose}
-            disabled={saving}
+            className="rounded-md border border-destructive/40 px-3 py-1.5 text-sm text-destructive hover:bg-destructive/10 disabled:opacity-50"
+            onClick={() => void removeBinding()}
+            disabled={saving || !bound}
+            title={t('registryCreds.removeTooltip', { host })}
           >
-            {t('common.cancel')}
+            {t('registryCreds.remove')}
           </button>
-          <button
-            type="button"
-            className="rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
-            onClick={() => void bindAndFinish(selection)}
-            disabled={saving || !selection}
-          >
-            {t('registryCreds.save')}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
+              onClick={onClose}
+              disabled={saving}
+            >
+              {t('common.cancel')}
+            </button>
+            <button
+              type="button"
+              className="rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
+              onClick={() => void bindAndFinish(selection)}
+              disabled={saving || !selection}
+            >
+              {t(manage ? 'registryCreds.manageSave' : 'registryCreds.save')}
+            </button>
+          </div>
         </>
       }
     >
-      <p className="text-xs text-muted-foreground">{t('registryCreds.explain', { host })}</p>
+      <p className="text-xs text-muted-foreground">
+        {t(manage ? 'registryCreds.manageExplain' : 'registryCreds.explain', { host })}
+      </p>
       <SecretPicker
         secretType="REGISTRY_AUTH"
         host={host}

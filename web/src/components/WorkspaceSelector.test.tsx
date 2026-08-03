@@ -102,3 +102,43 @@ describe('WorkspaceSelector create flow', () => {
     await waitFor(() => expect(screen.getAllByText('Test WS').length).toBeGreaterThan(0))
   })
 })
+
+const ACTIVE_WS: WorkspaceDto = {
+  id: 'ws-1', name: 'Citeck', repoUrl: 'https://example.com/ws.git',
+  repoBranch: 'main', repoPullPeriod: 'PT2H', authType: 'NONE', active: true, namespaces: 2,
+}
+
+describe('WorkspaceSelector discoverability', () => {
+  it('does not hide the per-row edit/delete actions behind hover', async () => {
+    api.listWorkspaces.mockResolvedValue([ACTIVE_WS])
+    render(<WorkspaceSelector activeId="ws-1" onChanged={vi.fn()} />)
+    await waitFor(() => expect(api.listWorkspaces).toHaveBeenCalled())
+
+    fireEvent.click(screen.getByText('Workspace:', { exact: false }))
+    const edit = await screen.findByRole('button', { name: 'Edit' })
+    // opacity-0 made the pencil invisible until the pointer happened to land on
+    // the row — users reported never finding the git settings at all.
+    expect(edit.parentElement?.className ?? '').not.toContain('opacity-0')
+  })
+
+  it('offers an explicit workspace-settings row in the dropdown', async () => {
+    api.listWorkspaces.mockResolvedValue([ACTIVE_WS])
+    render(<WorkspaceSelector activeId="ws-1" onChanged={vi.fn()} />)
+    await waitFor(() => expect(api.listWorkspaces).toHaveBeenCalled())
+
+    fireEvent.click(screen.getByText('Workspace:', { exact: false }))
+    fireEvent.click(await screen.findByText('Workspace settings...'))
+    // The typed form, not the raw workspace-v1.yml editor.
+    expect(await screen.findByText('Repository URL')).toBeInTheDocument()
+  })
+
+  it('the always-visible gear opens the typed form, not the raw YAML editor', async () => {
+    api.listWorkspaces.mockResolvedValue([ACTIVE_WS])
+    render(<WorkspaceSelector activeId="ws-1" onChanged={vi.fn()} />)
+    await waitFor(() => expect(api.listWorkspaces).toHaveBeenCalled())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace settings' }))
+    expect(await screen.findByText('Repository URL')).toBeInTheDocument()
+    expect(screen.queryByText('Workspace configuration')).not.toBeInTheDocument()
+  })
+})

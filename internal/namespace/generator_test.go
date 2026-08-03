@@ -257,11 +257,11 @@ func TestProxyBaseURL_Port0(t *testing.T) {
 
 func TestGetHash_Deterministic(t *testing.T) {
 	def := appdef.ApplicationDef{
-		Name:  "test",
-		Image: "test:1.0",
+		Name:         "test",
+		Image:        "test:1.0",
 		Environments: appdef.OrderedMap{{Key: "A", Value: "1"}, {Key: "B", Value: "2"}},
-		Ports:   []string{"8080:8080"},
-		Volumes: []string{"/data:/data"},
+		Ports:        []string{"8080:8080"},
+		Volumes:      []string{"/data:/data"},
 	}
 	h1 := def.GetHash()
 	h2 := def.GetHash()

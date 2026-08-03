@@ -1,20 +1,19 @@
 import { test, expect } from '@playwright/test'
 
 test.describe('Config Page', () => {
-  // /config is namespace-gated (redirects to root without one), so reach it
-  // through the Settings gear after the root screen settles.
+  // /config is workspace-level (no namespace guard) and the Settings gear is
+  // always in the top bar, so this works with or without an active namespace.
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
     const sidebar = page.locator('aside')
     const welcome = page.getByText('Welcome To Citeck Launcher!')
     await expect(sidebar.or(welcome)).toBeVisible({ timeout: 15_000 })
-    test.skip(await welcome.isVisible(), 'no active namespace — /config redirects to root')
-    await page.getByRole('button', { name: 'Settings' }).click()
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await expect(page).toHaveURL('/config')
   })
 
-  test('shows the Configuration heading', async ({ page }) => {
-    await expect(page.getByRole('heading', { name: 'Configuration' })).toBeVisible()
+  test('shows the Settings heading', async ({ page }) => {
+    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
   })
 
   test('shows the system health section', async ({ page }) => {

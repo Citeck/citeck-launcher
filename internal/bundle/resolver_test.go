@@ -2,13 +2,18 @@ package bundle
 
 import (
 	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	gogit "github.com/go-git/go-git/v5"
+	gogitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/citeck/citeck-launcher/internal/config"
 )
 
 func TestLoadWorkspaceConfig(t *testing.T) {
@@ -718,4 +723,326 @@ func TestResolveImageRef(t *testing.T) {
 
 	var nilW *WorkspaceConfig
 	assert.Equal(t, "core/foo:1.0", nilW.ResolveImageRef("core/foo:1.0"), "nil receiver returns input verbatim")
+}
+
+// --- Unknown bundle repo id: hard, actionable failure (no default-URL clone) ---
+
+// writeZipImportWorkspace lays out a manual/offline workspace import
+// (data/repo/workspace-v1.yml, no .git) so resolveWorkspace takes priority 1
+// and never touches the network.
+func writeZipImportWorkspace(t *testing.T, dataDir string) string {
+	t.Helper()
+	repoDir := filepath.Join(dataDir, "repo")
+	require.NoError(t, os.MkdirAll(repoDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "workspace-v1.yml"),
+		[]byte(twoRepoWorkspaceYml), 0o644))
+	return repoDir
+}
+
+const twoRepoWorkspaceYml = `bundleRepos:
+  - id: community
+    path: community
+  - id: enterprise
+    url: https://gitlab.example.com/citeck/enterprise-bundles.git
+    path: enterprise
+`
+
+// TestResolve_UnknownBundleRepoIsHardError pins the fix for the silent
+// default-repo clone: a namespace referencing a repo id that the workspace
+// config does not declare must fail loudly, and must NOT create (or clone the
+// default Citeck workspace into) bundles/<unknown-id>.
+func TestResolve_UnknownBundleRepoIsHardError(t *testing.T) {
+	dataDir := t.TempDir()
+	writeZipImportWorkspace(t, dataDir)
+
+	r := NewResolver(dataDir)
+	res, err := r.Resolve(Ref{Repo: "develop", Key: "2026.1"})
+
+	require.Error(t, err, "an unknown repo id must be a hard error, not a default-URL clone")
+	assert.Nil(t, res)
+	msg := err.Error()
+	assert.Contains(t, msg, `"develop"`, "names the unknown repo id")
+	assert.Contains(t, msg, "community", "lists the repo ids that ARE defined")
+	assert.Contains(t, msg, "enterprise", "lists the repo ids that ARE defined")
+	assert.Contains(t, msg, DefaultBundlesRepo, "states the effective workspace repo URL")
+	assert.Contains(t, msg, DefaultBundlesBranch, "states the effective workspace repo branch")
+
+	assert.NoDirExists(t, filepath.Join(dataDir, "bundles", "develop"),
+		"no repo directory may be created for an unknown repo id")
+}
+
+// TestResolve_UnknownBundleRepoNamesEmptyWorkspaceURL: when the workspace's
+// configured repo URL is empty (the 1.x→2.x migration damage) the effective
+// URL silently becomes the default Citeck workspace — the actual user-facing
+// cause. The error must say so explicitly.
+func TestResolve_UnknownBundleRepoNamesEmptyWorkspaceURL(t *testing.T) {
+	dataDir := t.TempDir()
+	writeZipImportWorkspace(t, dataDir)
+
+	// Desktop mode explicitly: the advice names a 1.x→2.x migration, which only
+	// ever runs on desktop. See TestResolve_UnknownBundleRepo_NoMigrationAdviceInServerMode.
+	config.SetDesktopMode(true)
+	t.Cleanup(config.ResetDesktopMode)
+
+	// A workspace record exists but its repo_url is blank.
+	r := NewResolver(dataDir).WithWorkspaceRepo(WorkspaceRepoOpts{Branch: "develop"})
+	_, err := r.Resolve(Ref{Repo: "develop", Key: "2026.1"})
+
+	require.Error(t, err)
+	msg := err.Error()
+	assert.Contains(t, msg, "workspace repo URL is empty",
+		"the empty configured URL is the actual cause and must be stated")
+	assert.Contains(t, msg, DefaultBundlesRepo)
+	assert.Contains(t, msg, "develop", "the effective (overridden) branch is reported")
+}
+
+// TestResolve_UnknownBundleRepo_NoMigrationAdviceInServerMode pins the fix for
+// a defect a server-mode audit found: FileStore synthesizes a single "daemon"
+// workspace that never carries a repo URL, so buildWorkspaceRepoOpts always
+// hands the resolver a non-nil opts with URL == "". Without the desktop gate
+// EVERY unknown-bundle-repo error in server mode advised the operator to
+// "restore the workspace's repository URL" and blamed a 1.x→2.x migration that
+// cannot run there at all. Having no workspace repo record is server mode's
+// design, not damage.
+func TestResolve_UnknownBundleRepo_NoMigrationAdviceInServerMode(t *testing.T) {
+	dataDir := t.TempDir()
+	writeZipImportWorkspace(t, dataDir)
+
+	config.SetDesktopMode(false)
+	t.Cleanup(config.ResetDesktopMode)
+
+	r := NewResolver(dataDir).WithWorkspaceRepo(WorkspaceRepoOpts{Branch: "develop"})
+	_, err := r.Resolve(Ref{Repo: "develop", Key: "2026.1"})
+
+	require.Error(t, err)
+	msg := err.Error()
+	assert.NotContains(t, msg, "workspace repo URL is empty",
+		"server mode has no workspace repo record by design — this is not migration damage")
+	assert.NotContains(t, msg, "1.x")
+	// The actionable part must survive the gate.
+	assert.Contains(t, msg, "bundleRepos:", "the unknown-repo diagnostic itself must remain")
+	assert.Contains(t, msg, "community, enterprise", "known ids are still listed")
+}
+
+// TestSyncBundleRepo_UnknownRepoIDErrorIsActionable: the message rendered
+// verbatim in the Web UI toast (NamespaceEditDialog) must be actionable, and
+// the call must not clone anything.
+func TestSyncBundleRepo_UnknownRepoIDErrorIsActionable(t *testing.T) {
+	dataDir := t.TempDir()
+	cfg := &WorkspaceConfig{BundleRepos: []BundlesRepo{
+		{ID: "community", Path: "community"},
+		{ID: "enterprise", URL: "https://gitlab.example.com/citeck/enterprise-bundles.git"},
+	}}
+
+	r := NewResolver(dataDir).WithWorkspaceRepo(WorkspaceRepoOpts{URL: "https://gitlab.example.com/citeck/ws.git", Branch: "main"})
+	dir, err := r.SyncBundleRepo(cfg, "develop")
+
+	require.Error(t, err)
+	assert.Empty(t, dir)
+	msg := err.Error()
+	assert.Contains(t, msg, `"develop"`)
+	assert.Contains(t, msg, "community")
+	assert.Contains(t, msg, "enterprise")
+	assert.Contains(t, msg, "https://gitlab.example.com/citeck/ws.git", "states the effective workspace repo URL")
+	assert.NotContains(t, msg, "workspace repo URL is empty", "a configured URL must not be reported as empty")
+	assert.NoDirExists(t, filepath.Join(dataDir, "bundles", "develop"))
+}
+
+// TestSyncBundleRepo_UnknownRepoIDWithNoReposDeclared: the empty-config case
+// (workspace failed to load at all) must not print an empty id list.
+func TestSyncBundleRepo_UnknownRepoIDWithNoReposDeclared(t *testing.T) {
+	r := NewResolver(t.TempDir())
+	_, err := r.SyncBundleRepo(&WorkspaceConfig{}, "develop")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "declares no bundle repos")
+}
+
+// TestResolve_UnknownBundleRepoReportsWorkspaceSyncFailure pins the fix for a
+// misdiagnosis: when the workspace repo cannot be synced, NOTHING loads from
+// disk and the resolver falls back to an empty WorkspaceConfig — which the
+// unknown-repo diagnostic used to describe as "the workspace config declares no
+// bundle repos", i.e. it blamed the user's config/typo for what is actually a
+// network/auth outage. The real git error is held in wsSyncErr and must surface.
+func TestResolve_UnknownBundleRepoReportsWorkspaceSyncFailure(t *testing.T) {
+	dataDir := t.TempDir()
+
+	// Port 1 on loopback: connection refused immediately, no network egress.
+	const wsURL = "http://127.0.0.1:1/citeck/ws.git"
+	r := NewResolver(dataDir).WithWorkspaceRepo(WorkspaceRepoOpts{URL: wsURL, Branch: "main"})
+
+	res, err := r.Resolve(Ref{Repo: "community", Key: "2026.1"})
+	require.Error(t, err)
+	assert.Nil(t, res)
+
+	syncErr := r.WorkspaceSyncError()
+	require.Error(t, syncErr, "the resolver must have recorded the underlying sync failure")
+
+	msg := err.Error()
+	assert.Contains(t, msg, "could not be synced",
+		"a workspace-sync outage must not be reported as a config/typo problem")
+	assert.Contains(t, msg, syncErr.Error(), "the underlying git error must be visible to the user")
+	assert.Contains(t, msg, wsURL, "the workspace repo URL must be visible")
+	assert.NotContains(t, msg, "the workspace config declares no bundle repos",
+		"nothing was loaded at all — the config was never read, so it cannot be blamed")
+}
+
+// TestResolve_KnownRepoWithEmptyURLUsesWorkspaceDir guards the documented,
+// tested feature the fix must not break: a KNOWN repo whose URL is empty means
+// "bundles live in the workspace repo itself" and still resolves.
+func TestResolve_KnownRepoWithEmptyURLUsesWorkspaceDir(t *testing.T) {
+	dataDir := t.TempDir()
+	repoDir := writeZipImportWorkspace(t, dataDir)
+	require.NoError(t, os.MkdirAll(filepath.Join(repoDir, "community"), 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(repoDir, "community", "2026.1.yaml"),
+		[]byte("applications:\n  emodel:\n    image: core/ecos-model:1.1\n"), 0o644))
+
+	res, err := NewResolver(dataDir).Resolve(Ref{Repo: "community", Key: "2026.1"})
+	require.NoError(t, err, "a known repo with an empty URL must keep resolving from the workspace dir")
+	require.NotNil(t, res)
+	assert.Equal(t, "2026.1", res.Bundle.Key.Version)
+	assert.NoDirExists(t, filepath.Join(dataDir, "bundles", "community"), "no clone for a local-bundles repo")
+}
+
+// TestBundleRepoGitSettings_EmptyFieldsInheritDefaults pins the per-field
+// default inheritance for a DECLARED repo (resolver_test.go:590 sibling
+// contract): an empty url/branch on a real entry still falls back to the
+// canonical Citeck workspace repo. Only an UNKNOWN id is now an error.
+func TestBundleRepoGitSettings_EmptyFieldsInheritDefaults(t *testing.T) {
+	url, branch := bundleRepoGitSettings(BundlesRepo{ID: "community"})
+	assert.Equal(t, DefaultBundlesRepo, url, "empty URL should fall back to default")
+	assert.Equal(t, DefaultBundlesBranch, branch, "empty branch should fall back to default")
+
+	url, branch = bundleRepoGitSettings(BundlesRepo{
+		ID: "enterprise", URL: "https://gitlab.example.com/x.git", Branch: "release/2.1",
+	})
+	assert.Equal(t, "https://gitlab.example.com/x.git", url)
+	assert.Equal(t, "release/2.1", branch)
+
+	// Mixed cases are what actually pin PER-FIELD inheritance. All-empty and
+	// all-set both pass under a wholesale substitution regression
+	// (`if repo == (BundlesRepo{}) { defaults } else { as-is }`); only a repo
+	// with one field set distinguishes the two.
+	url, branch = bundleRepoGitSettings(BundlesRepo{ID: "x", Branch: "release/2.1"})
+	assert.Equal(t, DefaultBundlesRepo, url, "empty URL should still inherit the default when Branch is set")
+	assert.Equal(t, "release/2.1", branch, "explicit branch must survive URL defaulting")
+
+	url, branch = bundleRepoGitSettings(BundlesRepo{ID: "y", URL: "https://gitlab.example.com/y.git"})
+	assert.Equal(t, "https://gitlab.example.com/y.git", url, "explicit URL must survive branch defaulting")
+	assert.Equal(t, DefaultBundlesBranch, branch, "empty branch should still inherit the default when URL is set")
+}
+
+// --- Legacy repo/ clone origin mismatch (lost-migration fingerprint) ---
+
+func newCapturingResolver(t *testing.T, dataDir string) (*Resolver, *bytes.Buffer) {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	logger := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	return NewResolver(dataDir).WithLogger(logger), buf
+}
+
+// writeLegacyManagedClone lays out data/repo/ as a git clone (1.x managed
+// clone) with the given origin remote, plus a usable bundles/workspace config
+// so resolveWorkspace completes without network. An empty originURL creates the
+// clone WITHOUT an origin remote.
+//
+// It is a REAL go-git repository, not a hand-written .git/config: the origin is
+// now read via git.OriginURL (go-git), which — like the git CLI — needs HEAD
+// and the rest of the dotgit layout. A config-only fixture passed against the
+// old hand-rolled INI parser but describes no clone that can exist on disk.
+func writeLegacyManagedClone(t *testing.T, dataDir, originURL string) {
+	t.Helper()
+	repoDir := filepath.Join(dataDir, "repo")
+	require.NoError(t, os.MkdirAll(repoDir, 0o755))
+	repo, err := gogit.PlainInit(repoDir, false)
+	require.NoError(t, err)
+	if originURL != "" {
+		_, err = repo.CreateRemote(&gogitconfig.RemoteConfig{Name: "origin", URLs: []string{originURL}})
+		require.NoError(t, err)
+	}
+
+	wsDir := filepath.Join(dataDir, "bundles", "workspace")
+	require.NoError(t, os.MkdirAll(wsDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(wsDir, "workspace-v1.yml"),
+		[]byte("bundleRepos:\n  - id: community\n"), 0o644))
+}
+
+// TestResolveWorkspace_WarnsOnLegacyCloneOriginMismatch: repo/.git's origin is
+// the highest-fidelity surviving record of the user's real workspace URL. When
+// it differs from the effective URL (i.e. the stored setting was lost and the
+// DEFAULT workspace is being served), that must be observable in the log.
+func TestResolveWorkspace_WarnsOnLegacyCloneOriginMismatch(t *testing.T) {
+	dataDir := t.TempDir()
+	writeLegacyManagedClone(t, dataDir, "https://gitlab.example.com/citeck/real-ws.git")
+
+	r, logs := newCapturingResolver(t, dataDir)
+	r.SetOffline(true) // no network; the diagnostic is independent of the sync
+	cfg := r.ResolveWorkspaceOnly()
+
+	require.NotNil(t, cfg)
+	out := logs.String()
+	assert.Contains(t, out, "https://gitlab.example.com/citeck/real-ws.git", "reports the surviving origin URL")
+	assert.Contains(t, out, DefaultBundlesRepo, "reports the effective workspace URL it disagrees with")
+
+	// Once, not per resolve.
+	before := logs.Len()
+	r.ResolveWorkspaceOnly()
+	assert.Equal(t, before, logs.Len(), "the mismatch diagnostic must be logged once")
+}
+
+// A matching origin (or no legacy clone at all) must stay quiet.
+func TestResolveWorkspace_NoWarnWhenLegacyCloneOriginMatches(t *testing.T) {
+	dataDir := t.TempDir()
+	// Same remote, spelled with a trailing slash and no .git suffix.
+	writeLegacyManagedClone(t, dataDir, "https://github.com/Citeck/launcher-workspace/")
+
+	r, logs := newCapturingResolver(t, dataDir)
+	r.SetOffline(true)
+	r.ResolveWorkspaceOnly()
+
+	assert.NotContains(t, logs.String(), "different git remote",
+		"an equivalent origin URL must not raise the lost-migration warning")
+}
+
+// TestResolveWorkspace_WarnsOnLegacyCloneOriginPathCaseMismatch is the
+// discriminating test for "the resolver uses the SHARED comparator".
+//
+// The two URLs differ ONLY in the case of the PATH segment. git.SameRepoURL
+// folds scheme+host but treats path case as significant (git hosts are
+// case-sensitive in the path), so this IS a different repository and the
+// lost-migration WARN must fire. The comparator this replaced (a local
+// whole-URL lowercasing one) would call these equal and stay silent — so
+// swapping strings.EqualFold back in at the call site turns this test red,
+// which a direct git.SameRepoURL assertion could never do.
+func TestResolveWorkspace_WarnsOnLegacyCloneOriginPathCaseMismatch(t *testing.T) {
+	dataDir := t.TempDir()
+	writeLegacyManagedClone(t, dataDir, "https://github.com/Citeck/ws.git")
+
+	r, logs := newCapturingResolver(t, dataDir)
+	r = r.WithWorkspaceRepo(WorkspaceRepoOpts{URL: "https://github.com/citeck/ws.git", Branch: "main"})
+	r.SetOffline(true) // no network; the diagnostic is independent of the sync
+	require.NotNil(t, r.ResolveWorkspaceOnly())
+
+	out := logs.String()
+	assert.Contains(t, out, "different git remote",
+		"a path-case-only difference is a DIFFERENT repo and must raise the lost-migration warning")
+	assert.Contains(t, out, "https://github.com/Citeck/ws.git", "reports the surviving origin URL")
+	assert.Contains(t, out, "https://github.com/citeck/ws.git", "reports the effective workspace URL")
+}
+
+// A clone the shared origin reader cannot make sense of (here: a .git with no
+// origin remote) must be silently treated as "no origin" — the diagnostic is
+// best-effort and may never fail loudly. This is the resolver-level expression
+// of what the deleted local-origin-reader unit test used to cover;
+// origin-reading itself is now owned and tested by internal/git.
+func TestResolveWorkspace_NoWarnWhenLegacyCloneHasNoOrigin(t *testing.T) {
+	dataDir := t.TempDir()
+	writeLegacyManagedClone(t, dataDir, "") // a clone with no origin remote
+
+	r, logs := newCapturingResolver(t, dataDir)
+	r.SetOffline(true)
+	require.NotNil(t, r.ResolveWorkspaceOnly())
+
+	assert.NotContains(t, logs.String(), "different git remote",
+		"an unreadable origin must not raise the lost-migration warning")
 }

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements for citeck-launcher.app.
+
+  Notarization requires the hardened runtime (the codesign "options runtime"
+  flag), which by default forbids the JIT and the RWX mappings JavaScriptCore
+  needs. The Wails webview embeds WebKit, so without these the app notarizes
+  fine but crashes the moment it renders the UI.
+
+  Keep this list minimal: every entitlement here is attack surface, and
+  Apple's notary service flags gratuitous ones.
+-->
+<plist version="1.0">
+<dict>
+  <!-- JavaScriptCore JIT inside the embedded WebKit view. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+
+  <!-- WebKit maps unsigned executable pages for JIT-compiled JS. -->
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+</dict>
+<!--
+  NOT granted, deliberately:
+
+  com.apple.security.cs.disable-library-validation — an earlier draft included it
+  "so dyld can load the system frameworks CGO links against". That reasoning is
+  wrong: Apple's own platform frameworks are exempt from library validation, and
+  the daemon child process ships inside this bundle under the same signing
+  identity. Granting it would be real attack surface for no benefit. Add it back
+  only if a signed build actually fails to load a third-party dylib.
+
+  These entitlements only take effect on the Developer ID path, which applies the
+  hardened runtime; the ad-hoc fallback used today passes neither. So the first
+  real signed build is the first time they are exercised — if the UI renders and
+  the daemon starts, they are right. If WKWebView turns out not to need the two
+  JIT entitlements either (it hosts JS in a separate system process), drop them
+  too rather than carrying them by superstition.
+-->
+
+</plist>

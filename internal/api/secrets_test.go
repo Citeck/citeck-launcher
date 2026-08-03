@@ -32,7 +32,7 @@ func TestMaskSecretEnv(t *testing.T) {
 
 		// Non-secrets stay visible.
 		{"NORMAL_VAR=visible", "NORMAL_VAR=visible"},
-		{"MONKEY=banana", "MONKEY=banana"}, // KEY suffix only as _KEY
+		{"MONKEY=banana", "MONKEY=banana"},                             // KEY suffix only as _KEY
 		{"KEYCLOAK_URL=http://kc:8080", "KEYCLOAK_URL=http://kc:8080"}, // KEY substring must NOT mask
 		{"CLASSPATH=/opt/app", "CLASSPATH=/opt/app"},
 		{"PATH=/usr/bin", "PATH=/usr/bin"},

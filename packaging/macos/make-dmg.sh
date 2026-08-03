@@ -12,7 +12,9 @@ test -d "$APP" || { echo "missing $APP — run make-app.sh first"; exit 1; }
 
 STAGING="$(mktemp -d)"
 trap 'rm -rf "$STAGING"' EXIT
-cp -R "$APP" "$STAGING/"
+# ditto, not `cp -R`: the bundle is code-signed by this point and cp does not
+# reliably carry extended attributes / resource forks, which invalidates the seal.
+ditto "$APP" "$STAGING/$(basename "$APP")"
 ln -s /Applications "$STAGING/Applications"
 
 OUT="$ROOT/dist/citeck-desktop_${VERSION}_darwin_${ARCH}.dmg"

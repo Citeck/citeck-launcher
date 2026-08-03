@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ChevronDown, Loader2, Pencil, Plus, Trash2 } from 'lucide-react'
+import { AlertTriangle, ChevronDown, Loader2, Pencil, Plus, Trash2 } from 'lucide-react'
 import { Modal, ModalField } from './Modal'
 import { ConfirmModal } from './ConfirmModal'
 import { SecretEditDialog } from './SecretEditDialog'
@@ -56,6 +56,42 @@ interface PopupPos {
   width: number
   top?: number
   bottom?: number
+}
+
+/**
+ * Rows the popup actually renders for a host filter: the host-matched secrets,
+ * PLUS the current selection when it is tagged with a DIFFERENT host.
+ *
+ * Keeping an out-of-filter selection in the list is deliberate. It used to be
+ * dropped, which meant the closed trigger showed a perfectly normal-looking
+ * label for a binding pointing at another registry while the row was nowhere
+ * in the dropdown — the user could see nothing wrong and had nothing to click.
+ * It also guarantees the selection is always indexable, so the active row can
+ * never fall back to "some other secret".
+ */
+function visibleSecrets(
+  secrets: SecretMetaDto[],
+  host: string | undefined,
+  showAllHosts: boolean,
+  value: string,
+): SecretMetaDto[] {
+  if (!host || showAllHosts) return secrets
+  const rows = secrets.filter((s) => s.host === host)
+  const sel = secrets.find((s) => s.id === value)
+  return sel && sel.host !== host ? [sel, ...rows] : rows
+}
+
+/**
+ * Index of `value` within `rows`, falling back to the first row.
+ *
+ * activeIdx indexes into the list the popup RENDERS (`visible`), never into the
+ * unfiltered `secrets` — Enter commits `visible[activeIdx]`, so seeding it from
+ * the full list made a click-then-Enter commit a secret belonging to a
+ * different registry host. Every seed/reseed goes through this helper.
+ */
+function activeIdxFor(rows: SecretMetaDto[], value: string): number {
+  const i = rows.findIndex((s) => s.id === value)
+  return i >= 0 ? i : 0
 }
 
 /**
@@ -131,6 +167,10 @@ export function SecretPicker({
   if (host !== prevHost) {
     setPrevHost(host)
     setShowAllHosts(false)
+    // The row list changes with the host, so an activeIdx captured against the
+    // previous host points at an unrelated row (or past the end, where Enter
+    // fell through to "Add new…"). Reseed it against the NEW host's rows.
+    setActiveIdx(activeIdxFor(visibleSecrets(secrets, host, false, value), value))
   }
 
   // Internal edit/delete dialogs (edit is delegated via onEditRequest when set).
@@ -192,13 +232,20 @@ export function SecretPicker({
   const selected = secrets.find((s) => s.id === value)
   const missing = !!value && !selected
   // When a host filter is active (and not overridden), show only secrets tagged
-  // with that host; `selected` still resolves against the full list so the
-  // trigger label is correct even for an out-of-filter selection.
+  // with that host — plus the current selection if it belongs elsewhere, so a
+  // cross-host binding is visible rather than silently filtered away.
   const filteringByHost = !!host && !showAllHosts
-  const visible = filteringByHost ? secrets.filter((s) => s.host === host) : secrets
+  const visible = visibleSecrets(secrets, host, showAllHosts, value)
   const hiddenCount = secrets.length - visible.length
   // Rows: one per visible secret + the trailing "Add new…" entry.
   const rowCount = visible.length + 1
+  // `secrets` can also change under an open popup (a background reload, a
+  // delete), so clamp every read into the CURRENT row range.
+  const activeRow = activeIdx < 0 ? -1 : Math.min(activeIdx, rowCount - 1)
+  // A secret tagged with a host other than the one we're picking for. Flagged
+  // (not hidden) so the user can tell a reused credential from a wrong one.
+  const hostMismatch = (s: SecretMetaDto) => !!host && s.host !== host
+  const mismatchLabel = (s: SecretMetaDto) => t('secretPicker.hostMismatch', { host: s.host || '—' })
 
   function openPopup() {
     if (!triggerRef.current) return
@@ -266,8 +313,7 @@ export function SecretPicker({
         e.preventDefault()
         openPopup()
         setOpen(true)
-        const selIdx = visible.findIndex((s) => s.id === value)
-        setActiveIdx(selIdx >= 0 ? selIdx : 0)
+        setActiveIdx(activeIdxFor(visible, value))
       }
       return
     }
@@ -285,8 +331,8 @@ export function SecretPicker({
       setActiveIdx((i) => Math.max(i - 1, 0))
     } else if (e.key === 'Enter') {
       e.preventDefault()
-      if (activeIdx >= 0 && activeIdx < visible.length) pick(visible[activeIdx].id)
-      else if (activeIdx === visible.length) void openCreate()
+      if (activeRow >= 0 && activeRow < visible.length) pick(visible[activeRow].id)
+      else if (activeRow === visible.length) void openCreate()
     }
   }
 
@@ -390,12 +436,25 @@ export function SecretPicker({
             onClick={() => {
               if (!open) openPopup()
               setOpen((o) => !o)
-              const selIdx = secrets.findIndex((s) => s.id === value)
-              setActiveIdx(selIdx >= 0 ? selIdx : 0)
+              setActiveIdx(activeIdxFor(visible, value))
             }}
           >
             <span className="flex-1 truncate">
-              {selected ? (selected.name || selected.id) : missing ? (
+              {selected ? (
+                hostMismatch(selected) ? (
+                  // Don't render a cross-host binding as if it were fine — name
+                  // the host it actually belongs to, right in the closed trigger.
+                  <span
+                    className="inline-flex items-center gap-1 text-warning"
+                    title={mismatchLabel(selected)}
+                    aria-label={mismatchLabel(selected)}
+                  >
+                    <AlertTriangle size={12} className="shrink-0" />
+                    {selected.name || selected.id}
+                    <span className="text-xs opacity-80">({selected.host || '—'})</span>
+                  </span>
+                ) : (selected.name || selected.id)
+              ) : missing ? (
                 <span className="text-destructive">{value} {t('secretPicker.notFound')}</span>
               ) : (
                 <span className="text-muted-foreground">{t('secretPicker.placeholder')}</span>
@@ -419,22 +478,31 @@ export function SecretPicker({
             >
               {visible.map((s, idx) => {
                 const isSelected = s.id === value
+                const mismatch = hostMismatch(s)
                 return (
                   <div
                     key={s.id}
                     role="option"
                     aria-selected={isSelected}
-                    className={`group flex items-center hover:bg-muted ${idx === activeIdx ? 'bg-muted' : ''}`}
+                    className={`group flex items-center hover:bg-muted ${idx === activeRow ? 'bg-muted' : ''}`}
                     onMouseEnter={() => setActiveIdx(idx)}
                   >
                     <button
                       type="button"
                       tabIndex={-1}
-                      title={s.id}
-                      className={`min-w-0 flex-1 truncate px-2.5 py-1.5 text-left text-sm ${isSelected ? 'text-primary font-medium' : ''}`}
+                      title={mismatch ? `${s.id} — ${mismatchLabel(s)}` : s.id}
+                      className={`flex min-w-0 flex-1 items-center gap-1 truncate px-2.5 py-1.5 text-left text-sm ${isSelected ? 'text-primary font-medium' : ''}`}
                       onClick={() => pick(s.id)}
                     >
-                      {s.name || s.id}
+                      {/* Rows for other hosts are reachable (via "show all", or
+                          because they're the current binding) — tag them with
+                          the host they belong to so picking one is a choice,
+                          not an accident. */}
+                      {mismatch && <AlertTriangle size={11} className="shrink-0 text-warning" aria-hidden="true" />}
+                      <span className="truncate">{s.name || s.id}</span>
+                      {mismatch && (
+                        <span className="shrink-0 text-xs text-muted-foreground">({s.host || '—'})</span>
+                      )}
                     </button>
                     <div className="flex shrink-0 gap-0.5 pr-1.5 opacity-0 group-hover:opacity-100">
                       <button
@@ -465,7 +533,7 @@ export function SecretPicker({
                 <button
                   type="button"
                   tabIndex={-1}
-                  className={`flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-sm hover:bg-muted ${activeIdx === visible.length ? 'bg-muted' : ''}`}
+                  className={`flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-sm hover:bg-muted ${activeRow === visible.length ? 'bg-muted' : ''}`}
                   onMouseEnter={() => setActiveIdx(visible.length)}
                   onClick={() => void openCreate()}
                 >
@@ -482,7 +550,12 @@ export function SecretPicker({
                     type="button"
                     tabIndex={-1}
                     className="flex w-full items-center px-2.5 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted"
-                    onClick={() => setShowAllHosts(true)}
+                    onClick={() => {
+                      setShowAllHosts(true)
+                      // Widening the list shifts every index — reseed the active
+                      // row against the list we're about to render (all secrets).
+                      setActiveIdx(activeIdxFor(secrets, value))
+                    }}
                   >
                     {t('secretPicker.showAllHosts', { count: hiddenCount })}
                   </button>

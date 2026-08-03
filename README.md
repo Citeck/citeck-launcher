@@ -49,6 +49,11 @@ Install Docker Desktop first, then download the installer for your platform from
 
 Each installer has a `.sha256` sidecar for verification. Your data is preserved across upgrades.
 
+> **macOS: the app is not notarized by Apple yet**
+> On first launch macOS warns that *"the developer cannot be verified"*. Open the app once with
+> **right-click → Open** (or **System Settings → Privacy & Security → Open Anyway**); after that it
+> starts normally.
+
 ## Server install
 
 > **For a Linux server or VM** (amd64 or arm64) — run these steps on the server, over SSH. Prerequisite: Docker is installed and running.

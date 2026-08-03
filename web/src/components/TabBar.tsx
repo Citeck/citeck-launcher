@@ -124,24 +124,28 @@ export function TabBar() {
           above hugs the left. */}
       <div className="flex-1" />
 
-      {/* Right-side buttons — locale + theme. On non-dashboard routes the
-          Settings gear lives here as a global config affordance; on the
-          dashboard the gear is already inline next to NS identity so it
-          would be duplicate. */}
+      {/* Right-side buttons — locale + theme + the GLOBAL settings gear.
+          It is unconditional on purpose:
+            • at "/" with no namespace (Welcome) it used to be hidden, so the
+              only route into settings was a page the user had already left;
+            • with a namespace open it is the sole entry point to workspace and
+              registry settings, which the workspace picker above hides once a
+              namespace is active.
+          It does not duplicate the inline gear: that one is namespace-scoped
+          (`dashboard.nsConfig`), sits in the left identity block, and only
+          exists while a namespace is open. */}
       <div className="flex items-center border-l border-border shrink-0">
         <LanguageSelector />
         <ThemeToggle />
         <UpdateNotification />
-        {!onDashboard && (
-          <button
-            type="button"
-            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted"
-            title={t('common.settings')}
-            onClick={() => navigate('/config')}
-          >
-            <Settings size={14} />
-          </button>
-        )}
+        <button
+          type="button"
+          className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted"
+          title={t('common.settings')}
+          onClick={() => navigate('/config')}
+        >
+          <Settings size={14} />
+        </button>
       </div>
     </div>
   )
