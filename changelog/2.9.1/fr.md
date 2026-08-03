@@ -1,0 +1,10 @@
+## Nouveautés
+- **Page de paramètres.** L'icône d'engrenage ouvre désormais une véritable page de paramètres avec la configuration du dépôt Git de l'espace de travail et les identifiants des registres Docker privés — auparavant accessibles uniquement via un menu au survol ou une boîte de dialogue d'erreur.
+
+## Corrections
+- **macOS : « citeck-launcher is damaged and can't be opened ».** Les builds téléchargés n'avaient aucune signature, ce que Gatekeeper signale par ce message trompeur, sans moyen de le contourner. Le bundle est de nouveau signé : au premier lancement s'affiche l'avertissement habituel sur le développeur non identifié — ouvrez l'application une fois via clic droit → « Ouvrir ».
+- **La mise à niveau depuis 1.x ne perd plus votre espace de travail.** Lorsque l'ancienne base de données était illisible, le lanceur la remplaçait silencieusement par un espace vide. L'URL et la branche du dépôt sont maintenant récupérées depuis le clone existant, et une migration incomplète le signale au lieu de ressembler à une nouvelle installation.
+- **Une coupure réseau n'échange plus un dépôt de bundles.** Un bref délai d'attente pendant un pull Git pouvait remplacer un dépôt par le contenu d'un autre. Les erreurs réseau passagères conservent désormais la copie existante, et un reclonage est refusé s'il devait installer un dépôt différent.
+- **Les identifiants de registre peuvent être corrigés.** Un mauvais choix initial ne laissait aucun retour possible. Les associations figurent maintenant dans les paramètres, peuvent être réattribuées ou supprimées, et un identifiant appartenant à un autre hôte est signalé au lieu de paraître valide.
+- **Message plus clair pour un dépôt de bundles inconnu.** Au lieu de servir discrètement l'espace de travail Citeck par défaut, le lanceur nomme le dépôt, les identifiants déclarés et l'endroit où corriger.
+- **L'icône d'engrenage ne disparaît plus.** Un clic sans espace de noms ouvert renvoyait à l'écran d'accueil et masquait l'icône.
