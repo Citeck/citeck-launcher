@@ -391,12 +391,13 @@ const es = {
 
   // -- Namespace Controls --
   'ns.updateAndStart': 'Actualizar e iniciar',
+  'ns.updating': 'Actualizando…',
+  'ns.error.updateFailed': 'Error al actualizar e iniciar',
   'ns.forceStart': 'Forzar actualización e iniciar',
   'ns.stop': 'Detener',
   'ns.confirm.start.title': 'Iniciar namespace',
   'ns.confirm.forceStart.title': 'Forzar actualización e iniciar',
   'ns.confirm.stop.title': 'Detener namespace',
-  'ns.confirm.reload.title': 'Recargar configuración',
   'ns.toast.success': '{action} del namespace solicitado',
 
   // -- Status Badge --

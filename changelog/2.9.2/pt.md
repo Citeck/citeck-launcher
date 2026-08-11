@@ -1,0 +1,4 @@
+## Correções
+- **«Atualizar e iniciar» volta a funcionar com o namespace em execução.** Antes não fazia nada: o namespace era apenas recarregado, sem atualizar as imagens `:snapshot`, por isso nenhum serviço era recriado. Agora os repositórios do workspace e dos bundles são obtidos (respeitando o seu período de atualização), as imagens snapshot são atualizadas e apenas os serviços cuja configuração ou imagem mudou de facto são recriados.
+- **Os serviços já não ficam em «Parado» depois de os iniciar.** Todos os serviços mostravam «Parado» durante dezenas de segundos enquanto as imagens eram verificadas, e só depois começavam a mudar. Os estados são agora atualizados assim que o arranque começa.
+- **O botão já não parece não ter feito nada.** Enquanto a atualização é preparada — obtenção do repositório e geração da configuração — o botão mostra que está a trabalhar, e uma atualização falhada passa a indicar o motivo.

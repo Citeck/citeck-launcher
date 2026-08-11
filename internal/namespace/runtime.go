@@ -216,6 +216,13 @@ type Runtime struct {
 	// All appenders MUST hold r.mu.Lock for the duration of the append.
 	// flushEvents reads under r.mu.Lock, so the buffer is consistently
 	// protected by r.mu.
+	//
+	// End-of-iteration is the DEFAULT, not the only flush point: a command
+	// handler that blocks the loop for a long time (doStart / doRegenerate,
+	// whose phase-1 Docker + registry I/O can run for tens of seconds) calls
+	// flushEvents explicitly first, or its buffered events would not reach the
+	// UI until the command returns. Such a call MUST be made without holding
+	// r.mu — flushEvents acquires it.
 	eventBuffer           []api.EventDto
 	tickerPeriod          time.Duration        // housekeeping cadence (default 1s).
 	statsInterval         time.Duration        // stats dispatch cadence (default 5s).

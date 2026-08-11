@@ -393,12 +393,13 @@ const en = {
 
   // -- Namespace Controls --
   'ns.updateAndStart': 'Update & Start',
+  'ns.updating': 'Updating…',
+  'ns.error.updateFailed': 'Update & Start failed',
   'ns.forceStart': 'Force Update And Start',
   'ns.stop': 'Stop',
   'ns.confirm.start.title': 'Start Namespace',
   'ns.confirm.forceStart.title': 'Force Update And Start',
   'ns.confirm.stop.title': 'Stop Namespace',
-  'ns.confirm.reload.title': 'Reload Configuration',
   'ns.toast.success': 'Namespace {action} requested',
 
   // -- Status Badge --

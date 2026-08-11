@@ -134,6 +134,25 @@ type NamespaceDto struct {
 	// already span all cores (a container fully using N cores reads as
 	// N*100%), so the host total is the only meaningful aggregate ceiling.
 	HostCPUs int `json:"hostCpus,omitempty"`
+	// Updating is true while an "Update And Start" pass is accepted but has not
+	// yet reached the runtime — i.e. during the reloadMu wait, the git pull, the
+	// bundle resolve and the runtime-file generation. None of that touches app
+	// state, so Status/Apps still read STOPPED (or RUNNING) throughout and the
+	// click would otherwise look like it went nowhere for as long as the pull
+	// takes. It is NOT a namespace status: the state machine owns those, and
+	// faking STARTING here would lie about what the runtime is doing.
+	Updating bool `json:"updating,omitempty"`
+	// UpdateError carries why the LAST "Update And Start" pass for this namespace
+	// did not happen — a doReloadEx failure (git, bundle resolve, generate) or a
+	// refusal (the namespace was mid-stop). Without it a failed pass is
+	// byte-identical to a successful one from the UI's side: the spinner stops
+	// and nothing changed, which is the very "my click went nowhere" the
+	// Updating flag exists to prevent. Cleared when the next pass is accepted.
+	//
+	// UpdateErrorAt (epoch ms) identifies the occurrence so a client can show
+	// each failure exactly once and not re-show it on remount or reconnect.
+	UpdateError   string `json:"updateError,omitempty"`
+	UpdateErrorAt int64  `json:"updateErrorAt,omitempty"`
 }
 
 // LinkDto represents a named URL link associated with a namespace.
@@ -169,6 +188,15 @@ type LinkDto struct {
 //     count), After (short step name). Emitted only when the init step index
 //     changes during STARTING; all fields zero/empty once the init phase ends
 //     (the UI clears its "init {step}/{total}" suffix).
+//   - "namespace_updating": After holds "true"/"false". Raised while an
+//     "Update And Start" pass is accepted but has not yet reached the runtime
+//     (reloadMu wait, git pull, bundle resolve, generate) — a stretch where no
+//     namespace or app status changes, so this is the only signal the click was
+//     acted on. It carries no NamespaceID and is NOT namespace-scoped — treat it
+//     purely as a "refetch me" trigger. The namespace-scoped truth is
+//     NamespaceDto.Updating, which the daemon reports only for the namespace the
+//     pass is pinned to (see Daemon.updateInFlightNsID); a client must not infer
+//     scope from this event.
 //   - "disk_low" / "disk_ok": Path (monitored filesystem path), FreeBytes,
 //     ThresholdBytes (low-disk threshold). Emitted by the daemon's disk
 //     monitor on state CHANGE only — once when free space drops below the

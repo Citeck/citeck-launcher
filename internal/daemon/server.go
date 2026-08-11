@@ -140,10 +140,48 @@ type Daemon struct {
 	sseDropped atomic.Int64 // SSE events dropped due to slow consumers
 	logWriter  *fsutil.RotatingWriter
 	logLevel   *slog.LevelVar
-	desktop    bool             // desktop mode: log writer shared across restarts
-	reloadMu   sync.Mutex       // guards concurrent reload requests
-	licenses   *license.Service // user-added enterprise licenses
-	updateSvc  *update.Service  // desktop auto-update service (nil in server mode)
+	desktop    bool       // desktop mode: log writer shared across restarts
+	reloadMu   sync.Mutex // guards concurrent reload requests
+	// updatePending / updatePendingForce form a single-slot queue for
+	// "Update And Start". Unlike the other reloadMu users, this action must
+	// never be dropped when a reload is already in flight: that reload almost
+	// always carries refreshImages=false (config-edit / boot), so folding into
+	// it silently loses the :snapshot digest refresh that IS the action.
+	// At most one pass waits on reloadMu; further clicks fold into it, and the
+	// force flag is OR-ed so a Force click never degrades to a throttled pull.
+	updatePending      atomic.Bool
+	updatePendingForce atomic.Bool
+	// updatePendingNsID carries the namespace the LATEST click targeted. A
+	// folding click must hand its target over the same way it hands over its
+	// force flag: the pass pins a namespace so it cannot act on one the user
+	// never clicked, but if the fold dropped the new target the pass would wake,
+	// find the active namespace no longer matches the FIRST caller's id, and skip
+	// — silently doing nothing for the namespace that was actually clicked.
+	// Last click wins, which matches the queue's own rule that the pass starts
+	// after the folded clicks arrive and therefore satisfies them.
+	updatePendingNsID atomic.Pointer[string]
+	// updateInFlight is the user-facing "your click was accepted and work is
+	// happening" flag, surfaced as NamespaceDto.Updating. It is set
+	// SYNCHRONOUSLY in the request handler — before the 200 and before the
+	// worker goroutine even starts — so it is already true by the time the UI
+	// reacts, and it stays true across the reloadMu wait + git pull + generate,
+	// the whole stretch where no namespace or app status changes yet.
+	updateInFlight atomic.Bool
+	// updateInFlightNsID pins WHICH namespace the raised flag belongs to. The
+	// flag is daemon-global but a pass is namespace-pinned, so without this a
+	// namespace the user switched to while another pass sat queued would render
+	// "Updating…" and have its own Update & Start button disabled until that
+	// unrelated pass woke up and skipped. An empty/absent pin means "applies to
+	// whatever is active" — reachable only when no namespace config is resolved,
+	// since handleStartNamespace (the sole caller) always passes nsConfig.ID.
+	updateInFlightNsID atomic.Pointer[string]
+	// updateLastFailure records why the last Update & Start pass did not happen,
+	// pinned to the namespace it was aimed at (same scoping rule as
+	// updateInFlightNsID). Surfaced as NamespaceDto.UpdateError; cleared when the
+	// next pass is accepted.
+	updateLastFailure atomic.Pointer[updateFailure]
+	licenses          *license.Service // user-added enterprise licenses
+	updateSvc         *update.Service  // desktop auto-update service (nil in server mode)
 	// execClient is a test seam for handlers that drive CLI tools inside
 	// containers (kcadm.sh / rabbitmqctl / setup.py). nil in production —
 	// dockerExec() falls back to dockerClient.
@@ -160,6 +198,12 @@ type Daemon struct {
 	// d.doReload. A seam so handler tests assert routing without a full
 	// store+bundle harness. Same pattern as planInputsFn.
 	reloadFn func() error
+	// reloadExFn is the same seam for the Update & Start path, which needs the
+	// three flags asserted rather than just the routing: refreshImages MUST be
+	// true (it is what makes this action refresh :snapshot digests at all),
+	// startNotRegenerate MUST match the runtime's live status, and the force
+	// flag must survive the queue. nil ⇒ d.doReloadEx.
+	reloadExFn func(forceGitPull, startNotRegenerate, refreshImages bool) error
 	// wsCfgResolveFn is a test seam for the workspace-repo config resolve (real
 	// git clone/pull — unreachable from unit tests). Shared by both
 	// resolveWorkspaceConfigForSwitch (SwitchWorkspace) and
@@ -506,6 +550,16 @@ func (d *Daemon) invokeReload() error {
 		return d.reloadFn()
 	}
 	return d.doReload()
+}
+
+// invokeReloadEx is the Update & Start equivalent of invokeReload — see the
+// reloadExFn field for why that path needs its arguments observable. Caller must
+// hold reloadMu.
+func (d *Daemon) invokeReloadEx(forceGitPull, startNotRegen, refreshImages bool) error {
+	if d.reloadExFn != nil {
+		return d.reloadExFn(forceGitPull, startNotRegen, refreshImages)
+	}
+	return d.doReloadEx(forceGitPull, startNotRegen, refreshImages)
 }
 
 // doReloadEx is the shared reload / force-update core. Caller must hold reloadMu.

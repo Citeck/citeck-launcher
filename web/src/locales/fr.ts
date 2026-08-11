@@ -391,12 +391,13 @@ const fr = {
 
   // -- Namespace Controls --
   'ns.updateAndStart': 'Mettre \u00e0 jour et d\u00e9marrer',
+  'ns.updating': 'Mise \u00e0 jour…',
+  'ns.error.updateFailed': '\u00c9chec de la mise \u00e0 jour et du d\u00e9marrage',
   'ns.forceStart': 'Forcer la mise \u00e0 jour et d\u00e9marrer',
   'ns.stop': 'Arr\u00eater',
   'ns.confirm.start.title': 'D\u00e9marrer le namespace',
   'ns.confirm.forceStart.title': 'Forcer la mise \u00e0 jour et d\u00e9marrer',
   'ns.confirm.stop.title': 'Arr\u00eater le namespace',
-  'ns.confirm.reload.title': 'Recharger la configuration',
   'ns.toast.success': '{action} du namespace demand\u00e9',
 
   // -- Status Badge --

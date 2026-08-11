@@ -34,10 +34,15 @@ func regenOnAttachToggle(name string) bool { return attachToggleRegenApps[name] 
 // detached set. doReload re-runs Generate using the runtime's current
 // ManualStoppedApps(), which StopApp/StartApp have already updated synchronously.
 //
-// Mirrors updateAndStartAsync's reloadMu/TryLock coalescing: doReload holds
-// reloadMu and does slow resolve/generate I/O, so it must not block the HTTP
-// handler, and a reload already in progress satisfies the regeneration intent
-// (it re-generates from the same updated detached set).
+// Uses the same reloadMu/TryLock coalescing as the other async reload paths:
+// doReload holds reloadMu and does slow resolve/generate I/O, so it must not
+// block the HTTP handler, and a reload already in progress satisfies the
+// regeneration intent (it re-generates from the same updated detached set).
+//
+// Update & Start is the one path that must NOT coalesce this way — it is the
+// only caller passing refreshImages=true, so folding it into an in-flight
+// refreshImages=false reload would silently drop the :snapshot digest refresh
+// that IS the action. See updateAndStartAsync, which waits on reloadMu instead.
 func (d *Daemon) regenAfterAttachToggleAsync(app, action string) {
 	go func() {
 		if !d.reloadMu.TryLock() {

@@ -391,12 +391,13 @@ const zh = {
 
   // -- Namespace Controls --
   'ns.updateAndStart': '更新并启动',
+  'ns.updating': '正在更新…',
+  'ns.error.updateFailed': '更新并启动失败',
   'ns.forceStart': '强制更新并启动',
   'ns.stop': '停止',
   'ns.confirm.start.title': '启动 namespace',
   'ns.confirm.forceStart.title': '强制更新并启动',
   'ns.confirm.stop.title': '停止 namespace',
-  'ns.confirm.reload.title': '重新加载配置',
   'ns.toast.success': '已请求 {action} namespace',
 
   // -- Status Badge --

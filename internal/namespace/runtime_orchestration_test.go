@@ -171,9 +171,11 @@ func TestDoRegenerate_RefreshImagesGatesSnapshotDigestRefresh(t *testing.T) {
 			// Synchronize on the same STARTING→RUNNING round trip the other
 			// regenerate tests use (see TestRegeneratePreservesRunning /
 			// TestRegenerateRestartsChanged): doRegenerate flips NS status to
-			// STARTING synchronously, and refreshSnapshotDigestsFn is called
-			// (or gated away) strictly BEFORE that flip, so observing the
-			// return to RUNNING proves doRegenerate ran to completion — and
+			// STARTING synchronously (strictly BEFORE refreshSnapshotDigestsFn
+			// is called or gated away — see
+			// TestDoRegenerate_NamespaceStartingBeforeSnapshotPrePull), so
+			// observing the return to RUNNING proves doRegenerate ran to
+			// completion — and
 			// in particular that the refreshImages gate was already
 			// evaluated — before we read calls.Load() below. Without this,
 			// a wantCalls=0 assertion would trivially pass even if the gate

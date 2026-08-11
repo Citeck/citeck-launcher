@@ -391,12 +391,13 @@ const ja = {
 
   // -- Namespace Controls --
   'ns.updateAndStart': '\u66f4\u65b0\u3057\u3066\u958b\u59cb',
+  'ns.updating': '\u66f4\u65b0\u4e2d…',
+  'ns.error.updateFailed': '\u66f4\u65b0\u3068\u958b\u59cb\u306b\u5931\u6557\u3057\u307e\u3057\u305f',
   'ns.forceStart': '\u5f37\u5236\u66f4\u65b0\u3057\u3066\u958b\u59cb',
   'ns.stop': '\u505c\u6b62',
   'ns.confirm.start.title': 'namespace \u3092\u958b\u59cb',
   'ns.confirm.forceStart.title': '\u5f37\u5236\u66f4\u65b0\u3057\u3066\u958b\u59cb',
   'ns.confirm.stop.title': 'namespace \u3092\u505c\u6b62',
-  'ns.confirm.reload.title': '\u8a2d\u5b9a\u3092\u30ea\u30ed\u30fc\u30c9',
   'ns.toast.success': 'namespace \u306e{action}\u3092\u30ea\u30af\u30a8\u30b9\u30c8\u3057\u307e\u3057\u305f',
 
   // -- Status Badge --

@@ -462,9 +462,15 @@ func (r *Runtime) updateNsStatus() {
 	r.mu.Unlock()
 }
 
-// flushEvents drains r.eventBuffer into r.eventCh in append order. Runs once
-// per iteration at the end — events are emitted in the order they were
-// buffered; no re-ordering, no de-dup, no mid-iteration flush.
+// flushEvents drains r.eventBuffer into r.eventCh in append order. Normally runs
+// once per iteration at the end — events are emitted in the order they were
+// buffered; no re-ordering, no de-dup.
+//
+// A long-running command handler MAY call it mid-iteration (doStart and
+// doRegenerate do, before their multi-second phase-1 I/O, so the STARTING status
+// and the seeded app statuses reach the UI instead of waiting for the command to
+// return). Append order is still preserved; the only requirement is that the
+// caller does NOT hold r.mu, since this acquires it.
 //
 // eventCh is buffered (cap 256) but flushEvents uses unconditional blocking
 // sends to guarantee delivery — dropping a status event would surface as a UI

@@ -391,12 +391,13 @@ const ru = {
 
   // -- Namespace Controls --
   'ns.updateAndStart': 'Обновить и запустить',
+  'ns.updating': 'Обновление…',
+  'ns.error.updateFailed': 'Не удалось обновить и запустить',
   'ns.forceStart': 'Принудительно обновить и запустить',
   'ns.stop': 'Остановить',
   'ns.confirm.start.title': 'Запустить namespace',
   'ns.confirm.forceStart.title': 'Принудительно обновить и запустить',
   'ns.confirm.stop.title': 'Остановить namespace',
-  'ns.confirm.reload.title': 'Перезагрузить конфигурацию',
   'ns.toast.success': 'Запрос на {action} namespace отправлен',
 
   // -- Status Badge --

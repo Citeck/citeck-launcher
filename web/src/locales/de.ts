@@ -391,12 +391,13 @@ const de = {
 
   // -- Namespace Controls --
   'ns.updateAndStart': 'Aktualisieren & Starten',
+  'ns.updating': 'Wird aktualisiert…',
+  'ns.error.updateFailed': 'Aktualisieren & Starten fehlgeschlagen',
   'ns.forceStart': 'Aktualisieren erzwingen und starten',
   'ns.stop': 'Stoppen',
   'ns.confirm.start.title': 'Namespace starten',
   'ns.confirm.forceStart.title': 'Aktualisieren erzwingen und starten',
   'ns.confirm.stop.title': 'Namespace stoppen',
-  'ns.confirm.reload.title': 'Konfiguration neu laden',
   'ns.toast.success': 'Namespace {action} angefordert',
 
   // -- Status Badge --

@@ -1,0 +1,4 @@
+## Fixes
+- **"Update & Start" now works on a running namespace.** It previously did nothing: the namespace was only reloaded, without refreshing `:snapshot` images, so no service was ever recreated. It now pulls the workspace and bundle repositories (respecting their update period), refreshes snapshot images, and recreates only the services whose configuration or image actually changed.
+- **Services no longer sit at "Stopped" after you start them.** Every service kept showing "Stopped" for up to tens of seconds while images were being checked, and only then began to move. Statuses now update as soon as the start begins.
+- **The button no longer looks like nothing happened.** While the update is being prepared — repository pull, configuration generation — the button shows that it is working, and an update that fails now reports why instead of quietly stopping.

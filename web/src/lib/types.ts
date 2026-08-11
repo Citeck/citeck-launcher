@@ -76,6 +76,18 @@ export interface NamespaceDto {
   // cores, so per-app 100% caps were wrong by a factor of N (N apps × 100
   // is unrelated to the host's actual capacity).
   hostCpus?: number
+  // True while an Update & Start pass has been accepted but has not yet reached
+  // the runtime (reloadMu wait, git pull, bundle resolve, file generation).
+  // None of that changes `status` or app statuses, so this is the only signal
+  // that the click is being acted on. Not a status — don't render it as one.
+  updating?: boolean
+  // Why the last Update & Start pass for this namespace did not happen (a git /
+  // resolve / generate failure, or a refusal because it was mid-stop). Without
+  // it a failed pass looks exactly like a successful one: the spinner stops and
+  // nothing changed. `updateErrorAt` (epoch ms) identifies the occurrence so it
+  // is shown once and not re-raised on remount or reconnect.
+  updateError?: string
+  updateErrorAt?: number
 }
 
 export interface HealthDto {

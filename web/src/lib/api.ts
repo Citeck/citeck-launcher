@@ -189,10 +189,6 @@ export async function postNamespaceStop(): Promise<ActionResultDto> {
   return request('POST', '/namespace/stop')
 }
 
-export async function postNamespaceReload(): Promise<ActionResultDto> {
-  return request('POST', '/namespace/reload')
-}
-
 // activateNamespace switches the active namespace within the current workspace.
 // Daemon rejects with 409 if the current namespace is not STOPPED.
 export async function activateNamespace(id: string): Promise<ActionResultDto> {

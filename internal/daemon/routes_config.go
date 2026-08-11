@@ -129,6 +129,11 @@ func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dto := runtime.ToNamespaceDto()
+	// Owned by the daemon, not the runtime: it covers precisely the stretch
+	// BEFORE the runtime is handed the command (see Daemon.updateInFlight), and
+	// only for the namespace the pass is pinned to.
+	dto.Updating = d.updateInFlight.Load() && d.updatingAppliesTo(act.nsConfig)
+	dto.UpdateError, dto.UpdateErrorAt = d.updateFailureFor(act.nsConfig)
 	// Name comes from the active config, which doReload updates SYNCHRONOUSLY on
 	// edit; the runtime's own copy (ToNamespaceDto's r.config.Name) is refreshed
 	// only by the ASYNC cmdRegenerate, so a name-only edit — which changes no app
@@ -192,9 +197,29 @@ func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
 	// config-edit reload or boot auto-start (refreshImages=false, cached
 	// digests only). Runs off the request goroutine (slow git I/O).
 	force := r.URL.Query().Get("force") == "true"
-	st := runtime.Status()
-	wasRunning := st == namespace.NsStatusRunning || st == namespace.NsStatusStalled
-	d.updateAndStartAsync(force, wasRunning)
+	// Raise the "update in flight" flag SYNCHRONOUSLY, before the async pass is
+	// even spawned and before this response is written, so the UI can never
+	// observe an accepted click with no visible effect. Everything from here to
+	// the runtime handoff (reloadMu wait, git pull, bundle resolve, generate)
+	// leaves namespace and app statuses untouched, so this flag is the only
+	// feedback available during it. Ordering matters: setting it after
+	// updateAndStartAsync could race a pass that finishes and clears the flag
+	// first, leaving it stuck on with nobody left to lower it.
+	//
+	// Pin the namespace the click was aimed at first, so the flag is raised
+	// against it: the pass may sit on reloadMu for a while, and SwitchWorkspace /
+	// namespace activation can replace the active namespace underneath it — the
+	// pass must neither act on a namespace the user never clicked nor show
+	// "Updating…" on one.
+	nsID := ""
+	if act.nsConfig != nil {
+		nsID = act.nsConfig.ID
+	}
+	// A fresh click supersedes whatever the previous pass reported, so the UI
+	// never shows a stale failure next to a running update.
+	d.updateLastFailure.Store(nil)
+	d.setUpdateInFlight(true, nsID)
+	d.updateAndStartAsync(force, nsID)
 	msg := "Namespace start requested"
 	if force {
 		msg = "Force update and start requested"
@@ -202,29 +227,225 @@ func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, api.ActionResultDto{Success: true, Message: msg})
 }
 
+// updateFailure is why the last Update & Start pass did not happen, pinned to
+// the namespace it targeted. `at` (epoch ms) lets a client show each failure
+// exactly once instead of re-raising it on every refetch or remount.
+type updateFailure struct {
+	nsID string
+	msg  string
+	at   int64
+}
+
+// recordUpdateFailure stores a failure/refusal for the namespace the pass was
+// aimed at. Callers should do this BEFORE returning, so the lowering of
+// updateInFlight (and its broadcast) is what prompts the client to refetch and
+// find it.
+func (d *Daemon) recordUpdateFailure(nsID, msg string) {
+	d.updateLastFailure.Store(&updateFailure{nsID: nsID, msg: msg, at: time.Now().UnixMilli()})
+}
+
+// updateFailureFor returns the recorded failure if it belongs to this namespace.
+// Scoped like updatingAppliesTo: a failure from a pass aimed elsewhere must not
+// pop up on an unrelated namespace.
+func (d *Daemon) updateFailureFor(nsCfg *namespace.Config) (msg string, at int64) {
+	f := d.updateLastFailure.Load()
+	if f == nil {
+		return "", 0
+	}
+	if f.nsID != "" && nsCfg != nil && f.nsID != nsCfg.ID {
+		return "", 0
+	}
+	return f.msg, f.at
+}
+
+// updatingAppliesTo reports whether the in-flight update belongs to the given
+// namespace. An absent or empty pin means "applies to whatever is active".
+func (d *Daemon) updatingAppliesTo(nsCfg *namespace.Config) bool {
+	p := d.updateInFlightNsID.Load()
+	if p == nil || *p == "" || nsCfg == nil {
+		return true
+	}
+	return *p == nsCfg.ID
+}
+
+// updateStartAction is what an Update & Start pass should do with the runtime,
+// decided from the namespace's LIVE status after the reloadMu wait.
+type updateStartAction int
+
+const (
+	updateStartRegenerate updateStartAction = iota // loop alive — recreate changed apps in place
+	updateStartStart                               // loop down — hand it a fresh Start
+	updateStartSkip                                // mid-teardown — neither verb can land
+)
+
+// updateStartActionFor maps a namespace status onto that choice. Getting it
+// wrong is silent — Runtime.Start early-returns on its `running` CompareAndSwap
+// ("Runtime already running, ignoring Start()") and a cmdRegenerate posted to a
+// dead loop is never drained — so a mis-mapped status throws the whole pass
+// (git pull + resolve + generate) away after HTTP already answered 200.
+//
+// STARTING belongs with RUNNING, and that is the non-obvious one: the queue this
+// action uses deliberately creates the case (a click during an in-flight pass
+// queues a fresh one), and a real bundle sits in STARTING for minutes, so it is
+// the status a second click is most likely to sample.
+//
+// STOPPING gets neither verb. Start looks plausible because it calls
+// awaitStoppedLoopExit first, but that only waits once `shutdownComplete` is
+// CLOSED, and signalShutdown fires at the very tail of the stop chain (after
+// RemoveNetwork) — i.e. only when the status is already STOPPED. Through the
+// whole real STOPPING window (up to longStopTimeout, 60s for Java apps) the
+// channel is open, the wait returns immediately, `running` is still true and the
+// CAS drops the command. Regenerate is equally wrong: it would fight the
+// teardown. So the pass bails out loudly BEFORE paying for a git pull whose
+// result nothing would consume. The click is not honored — the user has just
+// asked for a stop — but it is refused in the log rather than silently absorbed.
+func updateStartActionFor(st namespace.NsRuntimeStatus) updateStartAction {
+	switch st {
+	case namespace.NsStatusStopped:
+		return updateStartStart
+	case namespace.NsStatusStopping:
+		return updateStartSkip
+	case namespace.NsStatusRunning, namespace.NsStatusStalled, namespace.NsStatusStarting:
+		return updateStartRegenerate
+	default:
+		slog.Warn("Update and start: unhandled namespace status, treating as running", "status", st)
+		return updateStartRegenerate
+	}
+}
+
+// setUpdateInFlight flips the Updating flag and tells every connected client at
+// once. The SSE event is what makes the feedback immediate: the web store
+// refetches on any event, so the indicator appears without waiting for the 3s
+// poll — and because the flag lives in the DTO too, a client that connects or
+// reloads mid-update still sees it.
+func (d *Daemon) setUpdateInFlight(v bool, nsID string) {
+	if v {
+		d.updateInFlightNsID.Store(&nsID)
+	} else {
+		d.updateInFlightNsID.Store(nil)
+	}
+	if d.updateInFlight.Swap(v) == v {
+		return // no transition; don't spam subscribers
+	}
+	after := "false"
+	if v {
+		after = "true"
+	}
+	d.broadcastEvent(api.EventDto{
+		Type:      "namespace_updating",
+		Timestamp: time.Now().UnixMilli(),
+		After:     after,
+	})
+}
+
 // updateAndStartAsync runs "Update And Start" / "Force Update And Start" off the
 // request goroutine: a git pull (throttled by PullPeriod unless forceGitPull
 // bypasses it) re-resolves the bundle, then a running namespace recreates changed
 // apps while a stopped one is started with the fresh set. doReloadEx holds
-// reloadMu and does slow I/O, so it must not block the HTTP handler; a concurrent
-// reload already in progress (TryLock fails) is treated as satisfying the request.
+// reloadMu and does slow I/O, so it must not block the HTTP handler.
 //
 // This is the sole caller that passes refreshImages=true to doReloadEx — Update
 // & Start is the one action that should pay the :snapshot pre-pull digest
 // refresh cost (it's the explicit "give me the latest" gesture).
-func (d *Daemon) updateAndStartAsync(forceGitPull, wasRunning bool) {
+//
+// It therefore WAITS for reloadMu instead of TryLock-and-dropping like the other
+// async reload paths. Dropping was wrong here: the in-flight reload it folded
+// into is nearly always a config-edit or boot reload with refreshImages=false,
+// so the digest refresh never happened and the user saw a click that did
+// nothing — while HTTP had already answered 200 "requested". At most one pass
+// waits (updatePending); extra clicks fold into that pass, which starts after
+// they arrive and so satisfies them.
+//
+// nsID pins the namespace the click targeted; an empty string disables the check.
+func (d *Daemon) updateAndStartAsync(forceGitPull bool, nsID string) {
+	if forceGitPull {
+		d.updatePendingForce.Store(true)
+	}
+	// Record the target BEFORE the CAS, for exactly the reason the force flag is
+	// recorded there: a click that folds still has to hand its intent to the pass
+	// that will run on its behalf.
+	d.updatePendingNsID.Store(&nsID)
+	if !d.updatePending.CompareAndSwap(false, true) {
+		slog.Info("Update-and-start folded into an already-queued update")
+		return
+	}
 	go func() {
-		if !d.reloadMu.TryLock() {
-			// A reload is already running and will pick up the freshly-pulled
-			// bundle, so the update-and-start intent is satisfied. Log it so an
-			// operator wondering "why didn't my start do anything?" can see the
-			// request was coalesced rather than dropped.
-			slog.Info("Update-and-start coalesced into in-progress reload")
+		d.reloadMu.Lock()
+		defer d.reloadMu.Unlock()
+		// Lower it on the way out — but only if no further pass is queued behind
+		// us, otherwise the indicator would blink off between two chained
+		// updates. Registered AFTER the Unlock defer so it runs BEFORE it (LIFO).
+		// This check is a best-effort narrowing, not a guarantee: the re-assert
+		// above is what actually closes the race it cannot see.
+		defer func() {
+			if !d.updatePending.Load() {
+				d.setUpdateInFlight(false, "")
+			}
+		}()
+		// Release the queue slot now that the lock is ours, so a click landing
+		// during our own run queues a fresh pass rather than being dropped.
+		//
+		// Order matters, and it is the opposite of what it looks like: clear
+		// updatePending FIRST, then consume the force flag. These are two
+		// separate atomics, so a click can land between them; only this order
+		// leaves no interleaving that strands a force.
+		//   - click before the Store: its CAS fails and it folds, but our Swap
+		//     below picks its force up and we run forced — and our doReloadEx
+		//     runs after the click, so it is honored, not swallowed.
+		//   - click between Store and Swap: its CAS succeeds (a fresh pass is
+		//     queued) AND our Swap still picks the force up, so it is honored
+		//     immediately; the queued pass just repeats throttled. Harmless.
+		//   - click after the Swap: its CAS succeeds and the pass it queues
+		//     consumes the force itself.
+		// The reverse order (Swap then Store) has a hole: a click in that gap
+		// both fails its CAS *and* misses our Swap, so updatePendingForce stays
+		// set with no pass left to consume it — leaking an unthrottled git pull
+		// into the next, unrelated plain click.
+		d.updatePending.Store(false)
+		force := d.updatePendingForce.Swap(false) || forceGitPull
+		// Same consume-after-clear ordering as the force flag, and for the same
+		// reason: a click landing in the gap either has its target picked up here
+		// or queues a pass carrying its own.
+		target := nsID
+		if p := d.updatePendingNsID.Swap(nil); p != nil {
+			target = *p
+		}
+		// Re-assert the in-flight flag, now that we know which namespace this
+		// pass is actually for. The handler raised it, but a PREVIOUS pass may
+		// have lowered it in the gap between its own updatePending check and our
+		// CAS: the raise and the CAS both run on the request goroutine, which
+		// never takes reloadMu, so holding the lock orders nothing against them.
+		// Re-raising is self-healing and idempotent (setUpdateInFlight broadcasts
+		// only on a real transition). Position inside the critical section is
+		// irrelevant to that race — the previous pass lowers while holding the
+		// lock, so it has always finished by the time we get here.
+		d.setUpdateInFlight(true, target)
+
+		// Re-sample the status here, not on the request goroutine: waiting for
+		// reloadMu can outlast the sample (the in-flight reload may itself have
+		// started or stopped the namespace), and startNotRegenerate must match
+		// the runtime's actual state or Runtime.Start early-returns
+		// ("Runtime already running") and the command is silently lost.
+		act := d.active()
+		if act.runtime == nil {
+			slog.Warn("Update and start skipped: no active namespace runtime")
+			d.recordUpdateFailure(target, "no active namespace runtime")
 			return
 		}
-		defer d.reloadMu.Unlock()
-		if err := d.doReloadEx(forceGitPull, !wasRunning, true); err != nil {
+		if target != "" && act.nsConfig != nil && act.nsConfig.ID != target {
+			slog.Info("Update and start skipped: active namespace changed while queued",
+				"clicked", target, "active", act.nsConfig.ID)
+			return
+		}
+		action := updateStartActionFor(act.runtime.Status())
+		if action == updateStartSkip {
+			slog.Warn("Update and start skipped: namespace is stopping — retry once it has stopped")
+			d.recordUpdateFailure(target, "namespace is stopping — retry once it has stopped")
+			return
+		}
+		if err := d.invokeReloadEx(force, action == updateStartStart, true); err != nil {
 			slog.Warn("Update and start failed", "err", err)
+			d.recordUpdateFailure(target, err.Error())
 		}
 	}()
 }

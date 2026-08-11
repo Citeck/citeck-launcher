@@ -391,12 +391,13 @@ const pt = {
 
   // -- Namespace Controls --
   'ns.updateAndStart': 'Atualizar e iniciar',
+  'ns.updating': 'Atualizando…',
+  'ns.error.updateFailed': 'Falha ao atualizar e iniciar',
   'ns.forceStart': 'Forçar atualização e iniciar',
   'ns.stop': 'Parar',
   'ns.confirm.start.title': 'Iniciar namespace',
   'ns.confirm.forceStart.title': 'Forçar atualização e iniciar',
   'ns.confirm.stop.title': 'Parar namespace',
-  'ns.confirm.reload.title': 'Recarregar configura\u00e7\u00e3o',
   'ns.toast.success': '{action} do namespace solicitado',
 
   // -- Status Badge --

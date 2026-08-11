@@ -24,13 +24,53 @@ type staleSweepPlan struct {
 func (r *Runtime) doStart(apps []appdef.ApplicationDef, refreshImages bool) { //nolint:gocyclo // orchestration with 3-phase lock pattern
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Publish the desired set NOW, in the very first lock block, before ANY of
+	// the phase-1 I/O below. Runtime.Start blanked r.apps, and applyCommand runs
+	// inline on the single-threaded runtimeLoop, so until doStart's phase-3
+	// commit returns there is no stepAllApps, no updateNsStatus and — decisively
+	// — no flushEvents. An empty r.apps makes the daemon backfill the whole
+	// catalog as STOPPED (routes_config.go appDefsToStoppedApps), so every
+	// service rendered "Остановлен" for the entire window while the buffered
+	// STOPPED→STARTING event sat undelivered. The window is dominated by the
+	// :snapshot pre-pull (concurrency 4, 2-minute per-image cap) but starts
+	// earlier than that: CreateNetwork, resolveHostPortConflicts (which can
+	// stop+remove foreign containers at 5s each) and buildExistingContainerMap
+	// are all Docker round-trips, and none of them touch r.apps — so the seed
+	// belongs above them, not between them.
+	//
+	// These statuses are provisional: the phase-3 commit replaces r.apps
+	// wholesale with the real adopt / recreate / sweep decisions. Seeding cannot
+	// race the state machine (the loop is blocked in here, so T2
+	// READY_TO_PULL→PULLING cannot fire early).
 	r.mu.Lock()
 	r.runCtx = ctx
 	r.cancel = cancel
 	r.lastApps = apps
 	r.livenessFailures = make(map[string]int)
 	r.setStatus(NsStatusStarting)
+	// Snapshot the detached set under the SAME lock the seed uses — the later
+	// phases reuse this copy, so every phase of this doStart pass sees one
+	// consistent view.
+	detached := make(map[string]bool, len(r.manualStoppedApps))
+	maps.Copy(detached, r.manualStoppedApps)
+	seeded := make(map[string]*AppRuntime, len(apps))
+	for _, appDef := range apps {
+		seeded[appDef.Name] = &AppRuntime{Name: appDef.Name, Status: AppStatusStopped, Def: appDef}
+	}
+	r.apps = seeded
+	for _, appDef := range apps {
+		// Detached apps are excluded from start and skipped by stepAllApps —
+		// advertising them as queued would show a service that never moves.
+		if detached[appDef.Name] {
+			continue
+		}
+		r.setAppStatus(seeded[appDef.Name], AppStatusReadyToPull)
+	}
 	r.mu.Unlock()
+	// flushEvents acquires r.mu, so it must run outside the lock. This delivers
+	// the STARTING namespace event plus the per-app STOPPED→READY_TO_PULL events
+	// immediately instead of batching them behind phase 1.
+	r.flushEvents()
 
 	// Create network
 	if _, err := r.docker.CreateNetwork(ctx); err != nil {
@@ -46,13 +86,6 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef, refreshImages bool) { //
 
 	// Check existing containers for deployment hash match
 	existingContainers := r.buildExistingContainerMap(ctx)
-
-	// No-lock phase: resolve image digests and compute hashes.
-	// This avoids holding the mutex during Docker API calls.
-	r.mu.RLock()
-	detached := make(map[string]bool, len(r.manualStoppedApps))
-	maps.Copy(detached, r.manualStoppedApps)
-	r.mu.RUnlock()
 
 	// Refresh local digests for :snapshot images by pulling from registry
 	// first. Without this, the hash-diff below would compute hash from a
@@ -305,12 +338,22 @@ func (r *Runtime) doRegenerate(apps []appdef.ApplicationDef, refreshImages bool)
 	r.lastApps = apps
 	// Clean slate for retry tracking — regeneration resets counters.
 	r.retryState = nil
-	r.mu.Unlock()
-
-	// No-lock phase: clone snapshot maps + resolve image digests.
-	r.mu.RLock()
+	// Clone the detached set here rather than in a second RLock: the loop is the
+	// single writer, so one critical section gives every phase below the same
+	// consistent view (and mirrors doStart's single seed block).
 	detached := maps.Clone(r.manualStoppedApps)
-	r.mu.RUnlock()
+	// NS status: mark STARTING before the phase-1 I/O below, not after it.
+	// updateNsStatus re-derives RUNNING once the state machine walks any
+	// recreated apps back up (an unchanged-hash-only regenerate re-derives it
+	// on the very next loop iteration — the intended tiny blip). Setting it
+	// here rather than in the phase-2 lock block is what makes Update & Start on
+	// a RUNNING namespace visibly acknowledge the click: the pre-pull below
+	// blocks this single-threaded loop, and while it does, nothing else can
+	// publish anything.
+	r.setStatus(NsStatusStarting)
+	r.mu.Unlock()
+	// Outside the lock — flushEvents acquires r.mu (see doStart).
+	r.flushEvents()
 
 	// Refresh local digests for :snapshot images before computing the hash
 	// diff. Without this, reload would never detect a dev-pushed snapshot
@@ -348,11 +391,7 @@ func (r *Runtime) doRegenerate(apps []appdef.ApplicationDef, refreshImages bool)
 	now := r.nowFunc()
 	r.mu.Lock()
 
-	// NS status: mark STARTING so updateNsStatus picks RUNNING again once the
-	// state machine walks recreated apps to RUNNING. Unchanged-hash-only
-	// regenerate will immediately re-derive RUNNING on the next
-	// updateNsStatus — acceptable tiny blip.
-	r.setStatus(NsStatusStarting)
+	// NS status was already flipped to STARTING before the phase-1 I/O above.
 
 	var stopPlans []dispatchPlan
 
