@@ -104,10 +104,21 @@ const (
 	//	eapps, integrations — OutOfMemoryError: Metaspace under a 192 MiB cap
 	//
 	// The percentage share alone produced 192 MiB at the 1 GiB default, which
-	// killed two apps outright and left four more within 6% of their cap. Hence a
-	// floor of 320 MiB: ~1.6x the largest healthy measurement. It is a CEILING,
-	// not a reservation — metaspace commits on demand — so the cost of being
-	// generous is only that the inequality below gets harder to satisfy.
+	// killed two apps outright and left four more within 6% of their cap.
+	//
+	// The floor is 384 MiB rather than something nearer those numbers because of
+	// what the same two apps did once they were UNCAPPED again: measured after
+	// 10 hours of uptime, eapps settled at 197 MiB and integrations at 275 MiB —
+	// i.e. the biggest consumer is an app that never got to report a steady state
+	// before, because the cap killed it first. 384 MiB leaves it ~40% headroom;
+	// 320 would have left 16%, which is the same mistake one release of extra
+	// code later. Going further (448) is not free either — it would push eproc's
+	// 2 GiB container back out of the budget, and that container is the whole
+	// reason this exists.
+	//
+	// Being generous is cheap in itself: this is a CEILING, not a reservation —
+	// metaspace commits on demand — so the only cost is that the inequality below
+	// gets harder to satisfy.
 	//
 	// Which it should: the honest consequence is that a 1 GiB webapp cannot be
 	// budgeted at all (classes alone want ~200 MiB, its own heap wants 256–500),
@@ -115,7 +126,7 @@ const (
 	// ran on for years. Budgeting starts to apply around 2 GiB, which is where a
 	// runaway pool actually has room to hurt.
 	budgetMetaspacePct = 12
-	budgetMetaspaceMin = 320 * mib
+	budgetMetaspaceMin = 384 * mib
 	budgetMetaspaceMax = 512 * mib
 
 	// code cache: 58 MiB used of 240 reserved on eproc.

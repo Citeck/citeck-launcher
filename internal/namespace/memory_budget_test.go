@@ -21,7 +21,7 @@ import (
 // out of five (heap), an unset MaxDirectMemorySize defaulting to the heap size
 // again, and 5760 MiB of RSS against a 6144 MiB limit.
 func TestMemoryBudgetInvariant(t *testing.T) {
-	for _, limitMiB := range []int64{2048, 3072, 4096, 6144, 8192, 12288, 16384, 32768} {
+	for _, limitMiB := range []int64{3072, 4096, 6144, 8192, 12288, 16384, 32768} {
 		t.Run(fmt.Sprintf("%dMiB", limitMiB), func(t *testing.T) {
 			limit := limitMiB * mib
 			b, ok := ComputeMemoryBudget(limit)
@@ -58,12 +58,12 @@ func TestMemoryBudgetInvariant(t *testing.T) {
 // integrations on the stand with OutOfMemoryError: Metaspace and left four other
 // apps within 6% of their cap.
 func TestMemoryBudgetRefusesLimitsTooSmallForARealWebapp(t *testing.T) {
-	for _, limitMiB := range []int64{0, 128, 256, 512, 768, 1024, 1300, 1536} {
+	for _, limitMiB := range []int64{0, 128, 256, 512, 768, 1024, 1300, 1536, 2048} {
 		_, ok := ComputeMemoryBudget(limitMiB * mib)
 		assert.Falsef(t, ok, "a %d MiB limit must not be budgeted", limitMiB)
 	}
-	_, ok := ComputeMemoryBudget(2 * gib)
-	assert.True(t, ok, "2 GiB is where a budget starts to fit honestly")
+	_, ok := ComputeMemoryBudget(3 * gib)
+	assert.True(t, ok, "3 GiB is where a budget starts to fit honestly with no heap set by hand")
 }
 
 // The same line, drawn where the stand actually stands: every 1 GiB webapp there
@@ -80,8 +80,12 @@ func TestMemoryBudgetOnTheStand(t *testing.T) {
 
 	b, ok := ComputeMemoryBudgetWith(2*gib, ManualPools{Heap: 1 * gib})
 	require.True(t, ok, "eproc: 2 GiB + a 1g heap must still be budgeted")
-	assert.GreaterOrEqual(t, b.Metaspace, int64(320)*mib,
-		"and its metaspace must clear the 205 MiB it was measured using: %s", b)
+	// 275 MiB is what integrations settled at once the cap that killed it was
+	// gone — the largest metaspace any Citeck webapp has been measured using.
+	// Clearing it is not enough on its own: the cap has to survive a release
+	// that loads more code, which is why the floor sits ~40% above it.
+	assert.GreaterOrEqual(t, b.Metaspace, int64(384)*mib,
+		"a budgeted metaspace must clear the 275 MiB measured, with room to grow: %s", b)
 }
 
 // TestMemoryBudgetGolden pins the numbers for the container that motivated this,
@@ -112,7 +116,7 @@ func TestMemoryBudgetGolden(t *testing.T) {
 // for someone who bumps a memoryLimit and expects the app to actually get more.
 func TestMemoryBudgetIsMonotonic(t *testing.T) {
 	var prev MemoryBudget
-	for _, limitMiB := range []int64{2048, 4096, 8192, 16384} {
+	for _, limitMiB := range []int64{3072, 4096, 8192, 16384} {
 		b, ok := ComputeMemoryBudget(limitMiB * mib)
 		require.True(t, ok)
 		if prev.Limit != 0 {
@@ -329,10 +333,10 @@ func TestEditedAppPatchIsBudgetedAround(t *testing.T) {
 // This is why applyJVMRuntimeDefaults runs after the patch merge. Computed
 // during generation, the budget would have been derived from the limit the app
 // used to have: the container would get 8 GiB and the heap would stay capped at
-// the 2 GiB figure — the raise would do nothing, silently.
+// the 3 GiB figure — the raise would do nothing, silently.
 func TestPatchedMemoryLimitIsBudgetedFor(t *testing.T) {
 	patch := json.RawMessage(`{"resources":{"limits":{"memory":"8g"}}}`)
-	resp := generatePatchedWebapp(t, WebappProps{MemoryLimit: "2g"}, patch)
+	resp := generatePatchedWebapp(t, WebappProps{MemoryLimit: "3g"}, patch)
 
 	app := findGeneratedApp(resp, "emodel")
 	require.NotNil(t, app)
@@ -343,7 +347,8 @@ func TestPatchedMemoryLimitIsBudgetedFor(t *testing.T) {
 	require.True(t, ok)
 	assert.Contains(t, opts, want.JavaOpts(), "the budget must follow the effective limit")
 
-	stale, _ := ComputeMemoryBudget(2 * gib)
+	stale, staleOK := ComputeMemoryBudget(3 * gib)
+	require.True(t, staleOK)
 	assert.NotContains(t, opts, stale.JavaOpts(), "the pre-patch limit must not survive")
 
 	// The baseline keeps the pre-patch budget, so the editor's change gutter
