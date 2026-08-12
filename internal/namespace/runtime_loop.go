@@ -1110,29 +1110,45 @@ func (r *Runtime) tickUnderLock() []dispatchPlan {
 	// dispatcher supersession cancels the in-flight attempt (kubelet-style).
 	if r.livenessEnabled && (r.status == NsStatusRunning || r.status == NsStatusStalled) {
 		for name, app := range r.apps {
-			if app.Status != AppStatusRunning || app.ContainerID == "" {
-				continue
+			if plan, ok := r.livenessPlanForAppUnderLock(name, app, now); ok {
+				plans = append(plans, plan)
 			}
-			if app.Def.LivenessProbe == nil {
-				continue
-			}
-			nextAt, ok := r.livenessNextAt[name]
-			if !ok {
-				// Should have been seeded by setAppStatus on RUNNING transition.
-				// Defensive: seed here so we don't spam an unseeded slot.
-				nextAt = now.Add(initialDelayForProbe(app.Def.LivenessProbe))
-				r.livenessNextAt[name] = nextAt
-				continue
-			}
-			if now.Before(nextAt) {
-				continue
-			}
-			plans = append(plans, r.makeLivenessProbePlan(name, app.ContainerID, app.Def.LivenessProbe))
-			r.livenessNextAt[name] = now.Add(r.periodForProbe(app.Def.LivenessProbe))
 		}
 	}
 
 	return plans
+}
+
+// livenessPlanForAppUnderLock decides whether one app is due for a liveness
+// probe on this tick, advancing its schedule when it is. Caller holds r.mu and
+// has already checked the namespace-level gates.
+func (r *Runtime) livenessPlanForAppUnderLock(name string, app *AppRuntime, now time.Time) (dispatchPlan, bool) {
+	if app.Status != AppStatusRunning || app.ContainerID == "" || app.Def.LivenessProbe == nil {
+		return dispatchPlan{}, false
+	}
+	if r.livenessSuspendedLocked(name) {
+		// A deliberate diagnostic is running against this app. Push the
+		// schedule out and forget the failures accumulated so far: the app
+		// spends the suspension unwatched, so what is known about it afterwards
+		// has to start from zero, and it gets a full fresh period rather than a
+		// probe that was already overdue when the diagnostic started. The loop
+		// keeps owning the schedule — nothing outside it writes livenessNextAt.
+		r.livenessNextAt[name] = now.Add(r.periodForProbe(app.Def.LivenessProbe))
+		delete(r.livenessFailures, name)
+		return dispatchPlan{}, false
+	}
+	nextAt, ok := r.livenessNextAt[name]
+	if !ok {
+		// Should have been seeded by setAppStatus on RUNNING transition.
+		// Defensive: seed here so we don't spam an unseeded slot.
+		r.livenessNextAt[name] = now.Add(initialDelayForProbe(app.Def.LivenessProbe))
+		return dispatchPlan{}, false
+	}
+	if now.Before(nextAt) {
+		return dispatchPlan{}, false
+	}
+	r.livenessNextAt[name] = now.Add(r.periodForProbe(app.Def.LivenessProbe))
+	return r.makeLivenessProbePlan(name, app.ContainerID, app.Def.LivenessProbe), true
 }
 
 // initialDelayForProbe returns the initial delay before the first liveness
@@ -1306,6 +1322,13 @@ func (r *Runtime) handleLivenessProbeResult(res workers.Result) {
 	r.mu.Lock()
 	app, exists := r.apps[appName]
 	if !exists || app.Status != AppStatusRunning {
+		r.mu.Unlock()
+		return
+	}
+	if r.livenessSuspendedLocked(appName) {
+		// Dispatched before the diagnostic started, landing during it. A
+		// stop-the-world pause does not refuse the connection — the probe just
+		// never gets an answer — so counting this would defeat the suspension.
 		r.mu.Unlock()
 		return
 	}

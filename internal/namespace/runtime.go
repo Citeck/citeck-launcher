@@ -230,6 +230,10 @@ type Runtime struct {
 	lastStatsDispatch     time.Time            // updated by tick().
 	lastReconcileDispatch time.Time            // reconciler-diff scheduling.
 	livenessNextAt        map[string]time.Time // per-app liveness probe schedule.
+	// livenessSuspended holds, per app, how many deliberate diagnostics are
+	// currently running against it (see liveness_suspend.go). While non-zero
+	// the loop neither dispatches a probe nor counts one that lands.
+	livenessSuspended map[string]int
 	// Tick-driven STOPPING budgets (T23). groupTimeout = operator-initiated
 	// cmdStopApp / cmdStop budget (default 10s); longStopTimeout = runtime-
 	// initiated recreate budget (default 60s — accommodates Java SIGTERM
@@ -607,6 +611,7 @@ func NewRuntime(cfg *Config, dockerClient docker.RuntimeClient, volumesBase stri
 		reconcilerEnabled:  true,
 		livenessEnabled:    true,
 		livenessNextAt:     make(map[string]time.Time),
+		livenessSuspended:  make(map[string]int),
 		// T23 STOPPING budgets — see field doc comment.
 		groupTimeout:    defaultGroupTimeout,
 		longStopTimeout: defaultLongStopTimeout,
