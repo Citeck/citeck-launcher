@@ -50,3 +50,6 @@ PROMPT-*.md
 
 ### Working notes (superpowers specs/plans — kept local, never committed) ###
 docs/superpowers/
+
+### Agent session state (kept local, never committed) ###
+.agents/
