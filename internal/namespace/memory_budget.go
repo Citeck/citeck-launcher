@@ -3,6 +3,8 @@ package namespace
 import (
 	"fmt"
 	"log/slog"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/docker"
@@ -65,6 +67,13 @@ const (
 	budgetReserveMin = 96 * mib
 	budgetReserveMax = 1 * gib
 
+	// The pool shares are WEIGHTS, not fractions of the limit: whatever the
+	// operator has already fixed by hand is subtracted first, and the pools that
+	// are left share what remains in these proportions. With nothing configured
+	// the weights sum to 100 and each share is simply a percentage of the
+	// budgetable space; with -Xmx set by hand the other three split what is left
+	// 13:12:6 against a remainder weight of 11. One formula covers both.
+	//
 	// heap: the largest single pool, but deliberately not "everything else".
 	budgetHeapPct = 58
 
@@ -85,6 +94,12 @@ const (
 	budgetCodeCachePct = 6
 	budgetCodeCacheMin = 48 * mib
 	budgetCodeCacheMax = 240 * mib
+
+	// budgetRemainderPct is what the weights leave for the pools that take no
+	// flag: thread stacks, G1 side structures, glibc. It is a weight like the
+	// others precisely so that it is not silently squeezed to zero when another
+	// pool is fixed by hand.
+	budgetRemainderPct = 100 - budgetHeapPct - budgetDirectPct - budgetMetaspacePct - budgetCodeCachePct
 )
 
 // MemoryBudget is the per-app division of a container memory limit. Every field
@@ -102,32 +117,94 @@ type MemoryBudget struct {
 	// None of those takes a flag, but budgeting them is what keeps the sum from
 	// being wishful.
 	Remainder int64
+
+	// manual records which pools came from the operator, so JavaOpts does not
+	// emit a second flag for a pool that already has one.
+	manual ManualPools
 }
 
-// ComputeMemoryBudget divides a container memory limit into JVM pools.
-// ok is false when the limit is too small to divide sensibly (or absent), in
-// which case the caller must leave the JVM's own defaults alone.
+// ManualPools carries the pools an operator has already sized by hand, in bytes.
+// A zero field means "not configured, derive it".
+type ManualPools struct {
+	Heap      int64
+	Direct    int64
+	Metaspace int64
+	CodeCache int64
+}
+
+func (m ManualPools) empty() bool { return m == ManualPools{} }
+
+// ComputeMemoryBudget divides a container memory limit into JVM pools, deriving
+// every one of them.
 func ComputeMemoryBudget(limit int64) (budget MemoryBudget, ok bool) {
+	return ComputeMemoryBudgetWith(limit, ManualPools{})
+}
+
+// ComputeMemoryBudgetWith divides a container memory limit into JVM pools,
+// taking the operator's own numbers as fixed and distributing what is left over
+// the pools they did not configure.
+//
+// This is the case that matters in practice: today's namespaces set heapSize and
+// nothing else, so the heap is deliberate and the non-heap pools are simply
+// unbounded — the exact shape that put eproc at 94% of its limit. Stepping aside
+// entirely there would leave the real problem untouched; overriding their -Xmx
+// would be worse. So the heap stays theirs and the rest of the box gets divided.
+//
+// ok is false when nothing is left to divide (a hand-set heap that already fills
+// the container, or a limit too small to carve a usable metaspace and code cache
+// out of) — the caller must then leave the JVM's own defaults alone.
+func ComputeMemoryBudgetWith(limit int64, manual ManualPools) (budget MemoryBudget, ok bool) {
 	if limit <= 0 {
 		return MemoryBudget{}, false // no limit configured — nothing to divide
 	}
 	reserve := clampBytes(limit*budgetReservePct/100, budgetReserveMin, budgetReserveMax)
 	budgetable := limit - reserve
 
+	// Space still to be handed out, and the weights that will share it. The
+	// remainder always keeps its weight so the unflagged pools (stacks, G1,
+	// glibc) cannot be squeezed out by a fixed heap.
+	free := budgetable - manual.Heap - manual.Direct - manual.Metaspace - manual.CodeCache
+	weights := int64(budgetRemainderPct)
+	for _, w := range []struct {
+		fixed  int64
+		weight int64
+	}{
+		{manual.Heap, budgetHeapPct},
+		{manual.Direct, budgetDirectPct},
+		{manual.Metaspace, budgetMetaspacePct},
+		{manual.CodeCache, budgetCodeCachePct},
+	} {
+		if w.fixed == 0 {
+			weights += w.weight
+		}
+	}
+	if free <= 0 {
+		return MemoryBudget{}, false
+	}
+
+	share := func(fixed, weight, lo, hi int64) int64 {
+		if fixed > 0 {
+			return fixed
+		}
+		return clampBytes(free*weight/weights, lo, hi)
+	}
+
 	b := MemoryBudget{
 		Limit:     limit,
 		Reserve:   reserve,
-		Heap:      budgetable * budgetHeapPct / 100,
-		Direct:    min(budgetable*budgetDirectPct/100, budgetDirectMax),
-		Metaspace: clampBytes(budgetable*budgetMetaspacePct/100, budgetMetaspaceMin, budgetMetaspaceMax),
-		CodeCache: clampBytes(budgetable*budgetCodeCachePct/100, budgetCodeCacheMin, budgetCodeCacheMax),
+		manual:    manual,
+		Heap:      share(manual.Heap, budgetHeapPct, 0, budgetable),
+		Direct:    share(manual.Direct, budgetDirectPct, 0, budgetDirectMax),
+		Metaspace: share(manual.Metaspace, budgetMetaspacePct, budgetMetaspaceMin, budgetMetaspaceMax),
+		CodeCache: share(manual.CodeCache, budgetCodeCachePct, budgetCodeCacheMin, budgetCodeCacheMax),
 	}
-	b.Remainder = limit - reserve - b.Heap - b.Direct - b.Metaspace - b.CodeCache
+	b.Remainder = budgetable - b.Heap - b.Direct - b.Metaspace - b.CodeCache
 
-	// The clamps are absolute, so on a small limit they overshoot and the
-	// remainder goes negative or vanishes. A budget that does not fit its own box
-	// is worse than no budget: it would promise headroom that is not there, and
-	// the app would still be killed — only now with our numbers on it.
+	// The clamps are absolute, so on a small limit — or under a hand-set heap
+	// that leaves too little behind — the remainder vanishes or goes negative. A
+	// budget that does not fit its own box is worse than no budget: it would
+	// promise headroom that is not there, and the app would still be killed —
+	// only now with our numbers on it.
 	if b.Remainder < b.Heap/64+budgetMinRemainder {
 		return MemoryBudget{}, false
 	}
@@ -146,12 +223,20 @@ func ComputeMemoryBudget(limit int64) (budget MemoryBudget, ok bool) {
 // MALLOC_ARENA_MAX is an env var rather than a flag, so applyMemoryBudget sets
 // it separately.
 func (b MemoryBudget) JavaOpts() string {
-	return strings.Join([]string{
-		fmt.Sprintf("-Xmx%dm", b.Heap/mib),
-		fmt.Sprintf("-XX:MaxDirectMemorySize=%dm", b.Direct/mib),
-		fmt.Sprintf("-XX:MaxMetaspaceSize=%dm", b.Metaspace/mib),
-		fmt.Sprintf("-XX:ReservedCodeCacheSize=%dm", b.CodeCache/mib),
-	}, " ")
+	opts := make([]string, 0, 4)
+	if b.manual.Heap == 0 {
+		opts = append(opts, fmt.Sprintf("-Xmx%dm", b.Heap/mib))
+	}
+	if b.manual.Direct == 0 {
+		opts = append(opts, fmt.Sprintf("-XX:MaxDirectMemorySize=%dm", b.Direct/mib))
+	}
+	if b.manual.Metaspace == 0 {
+		opts = append(opts, fmt.Sprintf("-XX:MaxMetaspaceSize=%dm", b.Metaspace/mib))
+	}
+	if b.manual.CodeCache == 0 {
+		opts = append(opts, fmt.Sprintf("-XX:ReservedCodeCacheSize=%dm", b.CodeCache/mib))
+	}
+	return strings.Join(opts, " ")
 }
 
 // String renders the budget for logs: one line, all pools, MiB.
@@ -160,56 +245,137 @@ func (b MemoryBudget) String() string {
 		b.Limit/mib, b.Heap/mib, b.Direct/mib, b.Metaspace/mib, b.CodeCache/mib, b.Reserve/mib, b.Remainder/mib)
 }
 
-// budgetFlagNames are the flags JavaOpts emits. If an operator has set any of
-// them by hand, that pool is theirs and the whole budget steps aside.
-var budgetFlagNames = []string{
-	"-Xmx",
-	"-XX:MaxRAMPercentage",
-	"MaxDirectMemorySize",
-	"MaxMetaspaceSize",
-	"ReservedCodeCacheSize",
-}
+// Pool flags an operator can set by hand, mapped to the ManualPools field they
+// fill. -Xmx and MaxRAMPercentage both size the heap; the percentage form is
+// resolved against the same container limit the JVM would use.
+var (
+	manualSizeFlags = []struct {
+		flag string
+		set  func(*ManualPools, int64)
+	}{
+		{"-Xmx", func(m *ManualPools, v int64) { m.Heap = v }},
+		{"-XX:MaxDirectMemorySize=", func(m *ManualPools, v int64) { m.Direct = v }},
+		{"-XX:MaxMetaspaceSize=", func(m *ManualPools, v int64) { m.Metaspace = v }},
+		{"-XX:ReservedCodeCacheSize=", func(m *ManualPools, v int64) { m.CodeCache = v }},
+	}
+	// -Xmx3g / -XX:MaxMetaspaceSize=512m / …=1073741824 — the JVM's own size
+	// syntax: digits with an optional k/m/g suffix, any case.
+	jvmSizeRe = regexp.MustCompile(`^(\d+)([kKmMgG]?)$`)
+)
 
-// hasManualMemoryOpts reports whether JAVA_OPTS already sizes a JVM pool.
-// MaxRAMPercentage counts: it sizes the heap from the limit too, and mixing the
-// two would produce a budget whose arithmetic no longer describes reality.
-func hasManualMemoryOpts(javaOpts string) bool {
-	for _, flag := range budgetFlagNames {
-		if strings.Contains(javaOpts, flag) {
-			return true
+// maxRAMPercentageFlag sizes the heap as a fraction of the container limit —
+// the same limit this budget divides, so it is read as the heap rather than
+// treated as an opaque flag.
+const maxRAMPercentageFlag = "-XX:MaxRAMPercentage="
+
+// parseManualPools extracts the pools an operator has already sized from
+// JAVA_OPTS. ok is false when a pool flag is present but its value cannot be
+// read — the budget then steps aside entirely rather than reasoning from a
+// number it does not understand.
+func parseManualPools(javaOpts string, limit int64) (pools ManualPools, ok bool) {
+	fields := strings.Fields(javaOpts)
+	for _, f := range manualSizeFlags {
+		raw, found := findFlagValue(fields, f.flag)
+		if !found {
+			continue
+		}
+		size, sizeOK := parseJVMSize(raw)
+		if !sizeOK {
+			return ManualPools{}, false
+		}
+		f.set(&pools, size)
+	}
+	// A percentage is only meaningful against a known limit. Presence with an
+	// unreadable value is refused like any other pool flag — silently ignoring a
+	// typo would have us emit our own -Xmx next to theirs.
+	if raw, found := findFlagValue(fields, maxRAMPercentageFlag); found {
+		pct, err := strconv.ParseFloat(raw, 64)
+		if err != nil || pct <= 0 || pct > 100 || limit <= 0 {
+			return ManualPools{}, false
+		}
+		// An explicit -Xmx wins over the percentage, exactly as it does in the JVM.
+		if pools.Heap == 0 {
+			pools.Heap = int64(float64(limit) * pct / 100)
 		}
 	}
-	return false
+	return pools, true
+}
+
+// findFlagValue returns the value part of the first field starting with prefix.
+func findFlagValue(fields []string, prefix string) (value string, found bool) {
+	for _, field := range fields {
+		if v, cut := strings.CutPrefix(field, prefix); cut {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// parseJVMSize reads the JVM's size syntax (1024, 512m, 3G) into bytes.
+func parseJVMSize(s string) (bytes int64, ok bool) {
+	m := jvmSizeRe.FindStringSubmatch(strings.TrimSpace(s))
+	if m == nil {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(m[1], 10, 64)
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	switch strings.ToLower(m[2]) {
+	case "k":
+		return n * 1024, true
+	case "m":
+		return n * mib, true
+	case "g":
+		return n * gib, true
+	default:
+		return n, true
+	}
 }
 
 func clampBytes(v, lo, hi int64) int64 {
 	return max(lo, min(v, hi))
 }
 
-// applyMemoryBudget appends the computed pool flags to an app's JAVA_OPTS.
+// applyMemoryBudget appends the pool flags an app does not already have.
 //
-// It is a no-op when the operator has sized any pool by hand (their number
-// wins — a budget silently overriding a deliberate -Xmx would be worse than no
-// budget at all), when the app has no memory limit, or when the limit is too
-// small to divide.
+// The common case in existing namespaces is a hand-set heapSize and nothing
+// else, which is exactly the shape that leaves direct memory, metaspace and the
+// code cache unbounded. So a configured -Xmx is taken as given and the REST of
+// the container is divided over the pools nobody sized — rather than the budget
+// stepping aside and leaving the actual problem in place.
 func applyMemoryBudget(app *AppBuilder) {
 	if app.Resources == nil || app.Resources.Limits.Memory == "" {
 		return
 	}
+	limit := docker.ParseMemory(app.Resources.Limits.Memory)
 	opts, _ := app.Environments.Get("JAVA_OPTS")
-	if hasManualMemoryOpts(opts) {
-		slog.Debug("JVM memory budget skipped: pools are configured by hand",
+
+	manual, ok := parseManualPools(opts, limit)
+	if !ok {
+		slog.Warn("JVM memory budget skipped: cannot read the configured pool sizes",
 			"app", app.Name, "javaOpts", opts)
 		return
 	}
-	limit := docker.ParseMemory(app.Resources.Limits.Memory)
-	budget, ok := ComputeMemoryBudget(limit)
+	budget, ok := ComputeMemoryBudgetWith(limit, manual)
 	if !ok {
-		slog.Debug("JVM memory budget skipped: limit too small to divide",
-			"app", app.Name, "limit", app.Resources.Limits.Memory)
+		// Worth a warning rather than a debug line when the operator's own heap
+		// is what leaves no room: that is a misconfiguration they cannot see
+		// otherwise, and it ends as a kernel OOM-kill with no Java error.
+		if !manual.empty() {
+			slog.Warn("JVM memory budget skipped: the configured heap leaves too little for the other pools",
+				"app", app.Name, "limit", app.Resources.Limits.Memory, "javaOpts", opts)
+		} else {
+			slog.Debug("JVM memory budget skipped: limit too small to divide",
+				"app", app.Name, "limit", app.Resources.Limits.Memory)
+		}
 		return
 	}
-	app.AddEnv("JAVA_OPTS", strings.TrimSpace(opts+" "+budget.JavaOpts()))
+	flags := budget.JavaOpts()
+	if flags == "" {
+		return // every pool is already sized by hand
+	}
+	app.AddEnv("JAVA_OPTS", strings.TrimSpace(opts+" "+flags))
 	// glibc grows up to 8 arenas per core by default, each up to 64 MiB of
 	// untouched-but-charged address space; on a 16-core box that is the single
 	// largest unattributed native consumer after NIO. Two arenas costs a little

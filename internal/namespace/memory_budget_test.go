@@ -128,32 +128,118 @@ func TestWebappGetsComputedMemoryBudget(t *testing.T) {
 	assert.Equal(t, "2", arenas)
 }
 
-// A hand-configured heap size wins outright. Silently overriding someone's
-// deliberate -Xmx — or worse, adding a second one — is not a service.
-func TestExplicitHeapSizeDisablesTheBudget(t *testing.T) {
+// TestConfiguredHeapKeepsTheBudgetForTheOtherPools is the case that actually
+// exists in the field: namespaces set heapSize and nothing else, so the heap is
+// deliberate while direct memory, metaspace and the code cache are unbounded —
+// precisely the shape that put eproc at 94% of its limit with one bounded pool
+// out of five.
+//
+// Stepping aside there would leave the real problem in place, and overriding
+// their -Xmx would be worse. So the heap stays theirs and the REST of the
+// container is divided over the pools nobody sized.
+func TestConfiguredHeapKeepsTheBudgetForTheOtherPools(t *testing.T) {
 	resp := generateWebappWith(t, WebappProps{MemoryLimit: "4g", HeapSize: "3g"})
 	app := findGeneratedApp(resp, "emodel")
 	require.NotNil(t, app)
 
 	opts, _ := app.Environments.Get("JAVA_OPTS")
-	assert.Contains(t, opts, "-Xmx3g")
+	assert.Contains(t, opts, "-Xmx3g", "the operator's heap is untouched")
 	assert.Equal(t, 1, strings.Count(opts, "-Xmx"), "no second heap size: %s", opts)
-	assert.NotContains(t, opts, "MaxDirectMemorySize")
-	assert.NotContains(t, opts, "MaxMetaspaceSize")
-	_, hasArenas := app.Environments.Get("MALLOC_ARENA_MAX")
-	assert.False(t, hasArenas, "the budget stepped aside, so its env must not appear either")
+	assert.Contains(t, opts, "-XX:MaxDirectMemorySize=")
+	assert.Contains(t, opts, "-XX:MaxMetaspaceSize=")
+	assert.Contains(t, opts, "-XX:ReservedCodeCacheSize=")
+
+	arenas, ok := app.Environments.Get("MALLOC_ARENA_MAX")
+	assert.True(t, ok, "the budget ran, so its env belongs with it")
+	assert.Equal(t, "2", arenas)
+
+	// And the whole point: the numbers still fit the box, with the fixed heap
+	// counted as-is rather than as a wish.
+	b, ok := ComputeMemoryBudgetWith(4*gib, ManualPools{Heap: 3 * gib})
+	require.True(t, ok)
+	assert.Equal(t, int64(3)*gib, b.Heap)
+	assert.LessOrEqual(t, b.Reserve+b.Heap+b.Direct+b.Metaspace+b.CodeCache, int64(4)*gib, "%s", b)
 }
 
-// MaxRAMPercentage sizes the heap from the limit as well, so mixing it with the
-// budget would produce arithmetic that no longer describes the container.
-func TestMaxRAMPercentageDisablesTheBudget(t *testing.T) {
+// The pools that are left shrink as the operator's heap grows — the budget
+// divides what is actually free, not what would have been free.
+func TestFixedHeapShrinksTheOtherPools(t *testing.T) {
+	small, ok := ComputeMemoryBudgetWith(6*gib, ManualPools{Heap: 2 * gib})
+	require.True(t, ok)
+	large, ok := ComputeMemoryBudgetWith(6*gib, ManualPools{Heap: 4 * gib})
+	require.True(t, ok)
+
+	assert.Greater(t, small.Direct, large.Direct)
+	assert.Greater(t, small.Metaspace, large.Metaspace)
+	assert.GreaterOrEqual(t, small.CodeCache, large.CodeCache)
+	assert.Greater(t, small.Remainder, large.Remainder)
+}
+
+// A heap that already fills the container cannot be budgeted around. Emitting
+// caps anyway would promise headroom that is not there; the app is
+// misconfigured and the warning in applyMemoryBudget is the useful output.
+func TestFixedHeapWithNoRoomLeftIsRefused(t *testing.T) {
+	_, ok := ComputeMemoryBudgetWith(4*gib, ManualPools{Heap: 4 * gib})
+	assert.False(t, ok)
+	_, ok = ComputeMemoryBudgetWith(4*gib, ManualPools{Heap: 3800 * mib})
+	assert.False(t, ok, "a heap leaving no room for metaspace must be refused too")
+}
+
+// Every pool set by hand means nothing to add — and, importantly, no duplicate
+// flags.
+func TestAllPoolsFixedEmitsNothing(t *testing.T) {
+	b, ok := ComputeMemoryBudgetWith(6*gib, ManualPools{
+		Heap: 3 * gib, Direct: 512 * mib, Metaspace: 256 * mib, CodeCache: 128 * mib,
+	})
+	require.True(t, ok)
+	assert.Empty(t, b.JavaOpts())
+}
+
+// MaxRAMPercentage sizes the heap from the same container limit the JVM would
+// use, so it is read as the heap rather than treated as an opaque flag: the
+// other three pools are then budgeted around it.
+func TestMaxRAMPercentageIsReadAsTheHeap(t *testing.T) {
 	resp := generateWebappWith(t, WebappProps{MemoryLimit: "4g", JavaOpts: "-XX:MaxRAMPercentage=70"})
 	app := findGeneratedApp(resp, "emodel")
 	require.NotNil(t, app)
 
 	opts, _ := app.Environments.Get("JAVA_OPTS")
 	assert.Contains(t, opts, "-XX:MaxRAMPercentage=70")
-	assert.NotContains(t, opts, "-Xmx")
+	assert.NotContains(t, opts, "-Xmx", "the JVM computes the heap; a second source would fight it")
+	assert.Contains(t, opts, "-XX:MaxDirectMemorySize=")
+
+	limit := int64(4) * gib
+	pools, ok := parseManualPools("-XX:MaxRAMPercentage=70", limit)
+	require.True(t, ok)
+	assert.Equal(t, int64(float64(limit)*70/100), pools.Heap)
+}
+
+func TestParseManualPools(t *testing.T) {
+	pools, ok := parseManualPools(
+		"-Xmx3g -XX:MaxDirectMemorySize=512m -XX:MaxMetaspaceSize=262144k -XX:ReservedCodeCacheSize=134217728 -Dx=y",
+		4*gib)
+	require.True(t, ok)
+	assert.Equal(t, int64(3)*gib, pools.Heap)
+	assert.Equal(t, int64(512)*mib, pools.Direct)
+	assert.Equal(t, int64(256)*mib, pools.Metaspace, "k suffix")
+	assert.Equal(t, int64(128)*mib, pools.CodeCache, "bare bytes")
+
+	// An explicit -Xmx wins over a percentage, exactly as it does in the JVM.
+	pools, ok = parseManualPools("-XX:MaxRAMPercentage=50 -Xmx1g", 4*gib)
+	require.True(t, ok)
+	assert.Equal(t, int64(1)*gib, pools.Heap)
+
+	// Nothing configured is not an error — it is the ordinary case.
+	pools, ok = parseManualPools("-Dspring.jmx.enabled=true", 4*gib)
+	require.True(t, ok)
+	assert.True(t, pools.empty())
+
+	// A value we cannot read must NOT be guessed at: reasoning from a number we
+	// do not understand is how a budget ends up describing a different container.
+	for _, opts := range []string{"-Xmx3gb", "-Xmx", "-XX:MaxMetaspaceSize=lots", "-XX:MaxRAMPercentage=abc"} {
+		_, ok := parseManualPools(opts, 4*gib)
+		assert.Falsef(t, ok, "%q must not parse", opts)
+	}
 }
 
 // The default webapp limit is 1g; anything below the floor must be left to the
@@ -232,9 +318,9 @@ func findGeneratedAppIn(apps []appdef.ApplicationDef, name string) *appdef.Appli
 }
 
 // A JAVA_OPTS set through the config's `environments` map (rather than through
-// javaOpts/heapSize) is the third way in, and it is checked the same way: the
-// budget reads the env it is about to append to, whoever wrote it.
-func TestEnvironmentsJavaOptsDisablesTheBudget(t *testing.T) {
+// javaOpts/heapSize) is the third way in, and it is read the same way: the
+// budget parses the env it is about to append to, whoever wrote it.
+func TestEnvironmentsJavaOptsHeapIsRespected(t *testing.T) {
 	resp := generateWebappWith(t, WebappProps{
 		MemoryLimit:  "4g",
 		Environments: map[string]string{"JAVA_OPTS": "-Xmx2500m -Dfoo=bar"},
@@ -245,7 +331,8 @@ func TestEnvironmentsJavaOptsDisablesTheBudget(t *testing.T) {
 	opts, _ := app.Environments.Get("JAVA_OPTS")
 	assert.Contains(t, opts, "-Xmx2500m")
 	assert.Equal(t, 1, strings.Count(opts, "-Xmx"))
-	assert.NotContains(t, opts, "MaxDirectMemorySize")
+	// …and the pools they did not set are budgeted around it.
+	assert.Contains(t, opts, "-XX:MaxDirectMemorySize=")
 }
 
 // Manual opts that do NOT size a pool are the one case where our flags join
