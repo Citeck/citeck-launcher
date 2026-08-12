@@ -601,6 +601,7 @@ const ru = {
   'update.fromTo': 'Текущая: {current} → Последняя: {latest}',
   'update.loadingChangelog': 'Загрузка списка изменений…',
   'update.noChangelog': 'Список изменений недоступен.',
+  'update.changelogFailed': 'Не удалось загрузить список изменений.',
   'update.checkNow': 'Проверить сейчас',
   'update.install': 'Обновить и перезапустить',
   'update.installing': 'Обновление…',

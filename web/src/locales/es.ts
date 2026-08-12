@@ -601,6 +601,7 @@ const es = {
   'update.fromTo': 'Actual: {current} → Última: {latest}',
   'update.loadingChangelog': 'Cargando registro de cambios…',
   'update.noChangelog': 'No hay registro de cambios disponible.',
+  'update.changelogFailed': 'No se pudo cargar la lista de cambios.',
   'update.checkNow': 'Comprobar ahora',
   'update.install': 'Actualizar y reiniciar',
   'update.installing': 'Actualizando…',

@@ -118,3 +118,32 @@ describe('UpdateDialog empty-changelog recovery', () => {
     await waitFor(() => expect(screen.getByText('appeared now')).toBeInTheDocument())
   })
 })
+
+// A fetch that failed must LOOK like a failure, with a way out. Before this the
+// only visible states were "loading" and the neutral "no changelog available" —
+// a real failure was invisible, because the daemon turned a 404 on the index
+// into an empty list.
+describe('UpdateDialog changelog failure is visible and recoverable', () => {
+  beforeEach(() => {
+    HTMLDialogElement.prototype.showModal = vi.fn()
+    HTMLDialogElement.prototype.close = vi.fn()
+    useUpdateStore.setState({
+      status: { currentVersion: '2.9.1', latestVersion: '2.9.2', available: true, applying: false },
+    })
+  })
+
+  it('reports a failed fetch in words, keeps the detail in the tooltip, and offers a retry', async () => {
+    vi.mocked(getUpdateChangelog)
+      .mockRejectedValueOnce(new Error('fetch changelog index: not found'))
+      .mockResolvedValueOnce([{ version: '2.9.2', date: '2026-08-12', markdown: '- back again' }])
+
+    render(<UpdateDialog open onClose={() => {}} />)
+
+    const failed = await screen.findByText('Could not load the changelog.')
+    // Localized line for the user; raw transport error preserved for diagnosis.
+    expect(failed).toHaveAttribute('title', 'fetch changelog index: not found')
+
+    fireEvent.click(screen.getByText('Retry'))
+    await waitFor(() => expect(screen.getByText('back again')).toBeInTheDocument())
+  })
+})

@@ -73,20 +73,47 @@ func TestChangelogNoUpdateSkipsFetch(t *testing.T) {
 	}
 }
 
-// An update IS available but its tag predates changelog/index.json → the index
-// 404s. That must degrade to an empty changelog, not a surfaced error.
-func TestChangelogMissingIndexIsGraceful(t *testing.T) {
+// An update IS available and its tag genuinely predates changelog/index.json
+// (below firstChangelogVersion) → the index 404s. That must degrade to an empty
+// changelog, not a surfaced error.
+func TestChangelogMissingIndexIsGracefulBelowFirstVersion(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r) // index.json (and everything else) 404s
 	}))
 	defer srv.Close()
 
 	c := &client{http: http.DefaultClient, rawBase: srv.URL, repo: "Citeck/citeck-launcher"}
-	notes, err := changelog(context.Background(), c, "2.4.0", Latest{Tag: "v2.6.0", Version: "2.6.0"}, "ru")
+	notes, err := changelog(context.Background(), c, "2.2.0", Latest{Tag: "v2.3.2", Version: "2.3.2"}, "ru")
 	if err != nil {
-		t.Fatalf("expected graceful empty on 404 index, got %v", err)
+		t.Fatalf("expected graceful empty on 404 index below %s, got %v", firstChangelogVersion, err)
 	}
 	if len(notes) != 0 {
 		t.Fatalf("expected empty notes, got %+v", notes)
+	}
+}
+
+// At or above firstChangelogVersion the index is always in the tree, so a 404
+// is a READ failure — mirror lag right after a release, CDN, a proxy. It must
+// surface as an error rather than degrade to an empty list: the UI renders an
+// empty list as the neutral "no changelog available", which is indistinguishable
+// from a release with genuinely no notes and leaves the user at a dead end.
+// This is what happened on 2.9.2.
+func TestChangelogUnfetchableIndexIsAnErrorAtOrAboveFirstVersion(t *testing.T) {
+	for _, tc := range []struct{ name, version, tag string }{
+		{"exactly the first version", firstChangelogVersion, "v" + firstChangelogVersion},
+		{"a later version", "2.9.2", "v2.9.2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.NotFound(w, r)
+			}))
+			defer srv.Close()
+
+			c := &client{http: http.DefaultClient, rawBase: srv.URL, repo: "Citeck/citeck-launcher"}
+			notes, err := changelog(context.Background(), c, "2.0.0", Latest{Tag: tc.tag, Version: tc.version}, "ru")
+			if err == nil {
+				t.Fatalf("a 404 index at %s must surface, got graceful empty (%+v)", tc.version, notes)
+			}
+		})
 	}
 }

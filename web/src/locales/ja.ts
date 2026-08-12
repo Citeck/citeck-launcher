@@ -601,6 +601,7 @@ const ja = {
   'update.fromTo': '現在: {current} → 最新: {latest}',
   'update.loadingChangelog': '変更履歴を読み込んでいます…',
   'update.noChangelog': '変更履歴はありません。',
+  'update.changelogFailed': '\u5909\u66f4\u5c65\u6b74\u3092\u8aad\u307f\u8fbc\u3081\u307e\u305b\u3093\u3067\u3057\u305f\u3002',
   'update.checkNow': '今すぐ確認',
   'update.install': '更新して再起動',
   'update.installing': '更新中…',

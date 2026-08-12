@@ -601,6 +601,7 @@ const de = {
   'update.fromTo': 'Aktuell: {current} → Neueste: {latest}',
   'update.loadingChangelog': 'Änderungsprotokoll wird geladen…',
   'update.noChangelog': 'Kein Änderungsprotokoll verfügbar.',
+  'update.changelogFailed': 'Das \u00c4nderungsprotokoll konnte nicht geladen werden.',
   'update.checkNow': 'Jetzt prüfen',
   'update.install': 'Aktualisieren & neu starten',
   'update.installing': 'Wird aktualisiert…',

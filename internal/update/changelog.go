@@ -15,6 +15,13 @@ type Latest struct {
 	Version string `json:"version"`
 }
 
+// firstChangelogVersion is the first release whose tree contains
+// changelog/index.json (added by "feat(changelog): per-release multi-locale
+// structure"). Below it the file genuinely does not exist; at or above it a 404
+// is a fetch failure, not absence. Verified against the tags: v2.3.2 has no
+// index.json, v2.4.0 does.
+const firstChangelogVersion = "2.4.0"
+
 // ReleaseNote is one release's changelog entry shown in the UI.
 type ReleaseNote struct {
 	Version  string `json:"version"`
@@ -48,9 +55,17 @@ func changelog(ctx context.Context, c *client, current string, latest Latest, lo
 
 	raw, err := c.fetchRaw(ctx, latest.Tag, "changelog/index.json")
 	if err != nil {
-		// A missing index (a tag from before the changelog feature) is not a
-		// real error — show an empty changelog rather than a scary fetch error.
-		if errors.Is(err, errNotFound) {
+		// A missing index is only genuine BELOW firstChangelogVersion — those
+		// tags predate the file, so an empty changelog is the honest answer.
+		//
+		// At or above it the file is always in the tree, so a 404 means we
+		// failed to READ it (mirror lag just after a release, CDN propagation,
+		// a proxy). Swallowing that renders as the neutral "no changelog
+		// available", which the UI cannot tell apart from a release that simply
+		// has no notes — the user is left at a dead end that outlives its cause.
+		// Observed on 2.9.2: the dialog showed "no changelog" for over an hour
+		// while the file was perfectly fetchable. Surface it instead.
+		if errors.Is(err, errNotFound) && Greater(firstChangelogVersion, latest.Version) {
 			return []ReleaseNote{}, nil
 		}
 		return nil, fmt.Errorf("fetch changelog index: %w", err)

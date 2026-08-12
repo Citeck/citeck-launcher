@@ -112,7 +112,23 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
         {status?.available && (
         <div className="mt-4 flex-1 overflow-auto rounded-md border border-border bg-background p-4">
           {loading && <p className="text-sm text-muted-foreground">{t('update.loadingChangelog')}</p>}
-          {!loading && error && <p className="text-sm text-destructive">{error}</p>}
+          {/* A failed fetch now reaches this branch (the daemon stopped
+              swallowing a 404 on the index at 2.4.0+), so it has to read as a
+              recoverable failure, not a wall of raw text: a localized line, the
+              transport detail kept in the tooltip for diagnosis, and the same
+              Retry the empty state offers. */}
+          {!loading && error && (
+            <div className="flex items-center gap-3">
+              <p className="text-sm text-destructive" title={error}>{t('update.changelogFailed')}</p>
+              <button
+                type="button"
+                className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted"
+                onClick={loadChangelog}
+              >
+                {t('common.retry')}
+              </button>
+            </div>
+          )}
           {/* An empty list is genuinely ambiguous: the daemon reports "no notes"
               both when a release truly has none (a tag predating the changelog
               feature) AND when changelog/index.json could not be fetched — a

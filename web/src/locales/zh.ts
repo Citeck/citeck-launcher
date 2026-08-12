@@ -601,6 +601,7 @@ const zh = {
   'update.fromTo': '当前：{current} → 最新：{latest}',
   'update.loadingChangelog': '正在加载更新日志…',
   'update.noChangelog': '没有可用的更新日志。',
+  'update.changelogFailed': '\u65e0\u6cd5\u52a0\u8f7d\u66f4\u65b0\u65e5\u5fd7\u3002',
   'update.checkNow': '立即检查',
   'update.install': '更新并重启',
   'update.installing': '正在更新…',

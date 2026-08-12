@@ -601,6 +601,7 @@ const fr = {
   'update.fromTo': 'Actuelle : {current} → Dernière : {latest}',
   'update.loadingChangelog': 'Chargement du journal des modifications…',
   'update.noChangelog': 'Aucun journal des modifications disponible.',
+  'update.changelogFailed': 'Impossible de charger la liste des modifications.',
   'update.checkNow': 'Vérifier maintenant',
   'update.install': 'Mettre à jour et redémarrer',
   'update.installing': 'Mise à jour…',

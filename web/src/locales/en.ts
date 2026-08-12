@@ -607,6 +607,7 @@ const en = {
   'update.fromTo': 'Current: {current} → Latest: {latest}',
   'update.loadingChangelog': 'Loading changelog…',
   'update.noChangelog': 'No changelog available.',
+  'update.changelogFailed': 'Could not load the changelog.',
   'update.checkNow': 'Check now',
   'update.install': 'Update & restart',
   'update.installing': 'Updating…',

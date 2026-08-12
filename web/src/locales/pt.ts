@@ -601,6 +601,7 @@ const pt = {
   'update.fromTo': 'Atual: {current} → Mais recente: {latest}',
   'update.loadingChangelog': 'Carregando registro de alterações…',
   'update.noChangelog': 'Nenhum registro de alterações disponível.',
+  'update.changelogFailed': 'N\u00e3o foi poss\u00edvel carregar a lista de altera\u00e7\u00f5es.',
   'update.checkNow': 'Verificar agora',
   'update.install': 'Atualizar e reiniciar',
   'update.installing': 'Atualizando…',
