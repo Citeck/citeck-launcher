@@ -1,10 +1,12 @@
 package namespace
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -179,4 +181,82 @@ func generateWebappWith(t *testing.T, props WebappProps) *GenResp {
 	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "j", OIDC: "o"})
 	require.NoError(t, err)
 	return resp
+}
+
+// TestEditedAppPatchOverridesTheBudget answers the question every operator will
+// ask: does the automatic budget trample a JAVA_OPTS I set by hand?
+//
+// It cannot. There are two independent layers of manual control and this pins
+// the second one — `citeck edit <app>` (and the gear icon, same endpoint), whose
+// patch is applied AFTER generation. ApplyAppDefPatch is a shallow top-level
+// merge, so a patched `environments` replaces the generated one wholesale: the
+// operator sees the effective def, edits it, and their value is final. The
+// first layer is heapSize/javaOpts config, covered by the tests above.
+func TestEditedAppPatchOverridesTheBudget(t *testing.T) {
+	cfg := &Config{
+		Authentication: AuthenticationProps{Type: AuthKeycloak, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+		Webapps:        map[string]WebappProps{"emodel": {MemoryLimit: "4g"}},
+	}
+	bun := &bundle.Def{Applications: map[string]bundle.AppDef{"emodel": {Image: "nexus.citeck.ru/emodel:1.0"}}}
+	wsCfg := &bundle.WorkspaceConfig{Webapps: []bundle.WebappConfig{{ID: "emodel"}}}
+
+	// What the operator typed into the editor, having seen the generated def.
+	patch := json.RawMessage(`{"environments":{"JAVA_OPTS":"-Xmx1g -XX:MaxDirectMemorySize=128m"}}`)
+
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "j", OIDC: "o"},
+		GenerateOpts{EditedAppPatches: map[string]json.RawMessage{"emodel": patch}})
+	require.NoError(t, err)
+
+	app := findGeneratedApp(resp, "emodel")
+	require.NotNil(t, app)
+	opts, _ := app.Environments.Get("JAVA_OPTS")
+	assert.Equal(t, "-Xmx1g -XX:MaxDirectMemorySize=128m", opts, "the operator's edit is final")
+
+	// And the untouched baseline still carries the computed budget, so the
+	// editor's change gutter shows what was overridden.
+	baseline := findGeneratedAppIn(resp.BaselineApplications, "emodel")
+	require.NotNil(t, baseline)
+	baseOpts, _ := baseline.Environments.Get("JAVA_OPTS")
+	budget, _ := ComputeMemoryBudget(4 * gib)
+	assert.Contains(t, baseOpts, budget.JavaOpts())
+}
+
+func findGeneratedAppIn(apps []appdef.ApplicationDef, name string) *appdef.ApplicationDef {
+	for i := range apps {
+		if apps[i].Name == name {
+			return &apps[i]
+		}
+	}
+	return nil
+}
+
+// A JAVA_OPTS set through the config's `environments` map (rather than through
+// javaOpts/heapSize) is the third way in, and it is checked the same way: the
+// budget reads the env it is about to append to, whoever wrote it.
+func TestEnvironmentsJavaOptsDisablesTheBudget(t *testing.T) {
+	resp := generateWebappWith(t, WebappProps{
+		MemoryLimit:  "4g",
+		Environments: map[string]string{"JAVA_OPTS": "-Xmx2500m -Dfoo=bar"},
+	})
+	app := findGeneratedApp(resp, "emodel")
+	require.NotNil(t, app)
+
+	opts, _ := app.Environments.Get("JAVA_OPTS")
+	assert.Contains(t, opts, "-Xmx2500m")
+	assert.Equal(t, 1, strings.Count(opts, "-Xmx"))
+	assert.NotContains(t, opts, "MaxDirectMemorySize")
+}
+
+// Manual opts that do NOT size a pool are the one case where our flags join
+// theirs — which is the intent: the budget is about pools nobody configured.
+func TestNonMemoryJavaOptsAreKeptAlongsideTheBudget(t *testing.T) {
+	resp := generateWebappWith(t, WebappProps{MemoryLimit: "4g", JavaOpts: "-Dspring.jmx.enabled=true"})
+	app := findGeneratedApp(resp, "emodel")
+	require.NotNil(t, app)
+
+	opts, _ := app.Environments.Get("JAVA_OPTS")
+	assert.Contains(t, opts, "-Dspring.jmx.enabled=true")
+	budget, _ := ComputeMemoryBudget(4 * gib)
+	assert.Contains(t, opts, budget.JavaOpts())
 }
