@@ -272,7 +272,7 @@ func (r *Runtime) runStartTask(
 	// every restart (crash, OOM, liveness, reload) passes through here, while a
 	// reload-only hook would miss exactly the crash loop worth capturing.
 	if appDef.Kind.IsCiteckApp() {
-		RotateHeapDumps(volumesBase, appName, r.nowFunc())
+		_, _ = RotateHeapDumps(volumesBase, appName, r.nowFunc())
 	}
 
 	var (

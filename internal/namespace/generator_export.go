@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -78,47 +79,93 @@ func applyHeapDumpOnOOM(app *AppBuilder) {
 	app.AddEnv("JAVA_OPTS", strings.TrimSpace(opts+" "+HeapDumpJavaOpts))
 }
 
-// RotateHeapDumps renames heap dumps left in an app's export dir by a previous
-// run, so the next OutOfMemoryError can write to the same fixed path.
+// RotateHeapDumps keeps exactly ONE heap dump per app — the newest — and frees
+// the fixed path the next OutOfMemoryError will write to.
 //
-// This is required, not tidy-up: HotSpot refuses to overwrite an existing dump
-// ("Unable to create …: File exists"), and HeapDumpPath has no timestamp
-// placeholder — only %p, which is useless here because the JVM gets the same pid
-// in every fresh container. Without rotation the FIRST OOM would be the only one
-// ever recorded, while every later one — including the one an operator is
-// actually watching — would be silently dropped.
+// Freeing the path is not tidy-up, it is required: HotSpot refuses to overwrite
+// an existing dump ("Unable to create …: File exists" — measured), and
+// HeapDumpPath has no timestamp placeholder (only %p, useless here since a fresh
+// container hands the JVM the same pid every time). Without this the FIRST OOM
+// would be the only one ever recorded and every later one — including the one an
+// operator is watching right now — would be dropped with a line in the app log.
 //
-// Old dumps are renamed rather than deleted: an OOM dump is often the only
-// evidence of a fault that has already happened.
-func RotateHeapDumps(volumesBase, appName string, now time.Time) int {
+// Keeping only the newest is what makes a crash loop safe: a dump is the size of
+// the live heap even gzipped, and an app that OOMs every two minutes would
+// otherwise fill the disk by morning. The order matters — the older dumps are
+// removed only while the newest one is still on disk, so there is never a moment
+// with no evidence at all. At rest exactly one dump remains; between an OOM and
+// the next container start there are two (the fresh one and the one it
+// supersedes), which is the floor for any rename-based scheme.
+//
+// Returns the file kept (base name, empty if there were none) and how many were
+// removed.
+func RotateHeapDumps(volumesBase, appName string, now time.Time) (kept string, removed int) {
 	dir := ExportDirFor(volumesBase, appName)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return 0 // no export dir yet — nothing to rotate
+		return "", 0 // no export dir yet — nothing to rotate
 	}
-	stamp := now.UTC().Format("20060102T150405Z")
-	rotated := 0
+
+	type dump struct {
+		name    string
+		modTime time.Time
+		size    int64
+	}
+	dumps := make([]dump, 0, 2)
 	for _, e := range entries {
-		if e.IsDir() {
+		if e.IsDir() || !isHeapDumpName(e.Name()) {
+			continue // not ours: a pg_dump, an operator's file, a subdirectory
+		}
+		info, err := e.Info()
+		if err != nil {
 			continue
 		}
-		base, ext, ok := splitHeapDumpName(e.Name())
-		if !ok {
-			continue
-		}
-		from := filepath.Join(dir, e.Name())
-		to := filepath.Join(dir, base+"-"+stamp+ext)
-		if from == to {
-			continue
-		}
-		if err := os.Rename(from, to); err != nil {
-			slog.Warn("Failed to rotate heap dump", "app", appName, "file", e.Name(), "err", err)
-			continue
-		}
-		slog.Info("Rotated previous heap dump", "app", appName, "from", e.Name(), "to", filepath.Base(to))
-		rotated++
+		dumps = append(dumps, dump{name: e.Name(), modTime: info.ModTime(), size: info.Size()})
 	}
-	return rotated
+	if len(dumps) == 0 {
+		return "", 0
+	}
+
+	// Newest first; the name breaks ties so the choice stays deterministic when
+	// a filesystem reports the same mtime for two files.
+	slices.SortFunc(dumps, func(a, b dump) int {
+		if c := b.modTime.Compare(a.modTime); c != 0 {
+			return c
+		}
+		return strings.Compare(b.name, a.name)
+	})
+
+	newest := dumps[0]
+	for _, d := range dumps[1:] {
+		if err := os.Remove(filepath.Join(dir, d.name)); err != nil {
+			slog.Warn("Failed to remove superseded heap dump", "app", appName, "file", d.name, "err", err)
+			continue
+		}
+		slog.Info("Removed superseded heap dump", "app", appName, "file", d.name, "bytes", d.size)
+		removed++
+	}
+
+	// Move the survivor off the path HotSpot will write to next. A dump that has
+	// already been moved keeps its name — and with it the time it was TAKEN,
+	// rather than the time it was last shuffled.
+	base, ext, ok := splitHeapDumpName(newest.name)
+	if !ok {
+		return newest.name, removed
+	}
+	from := filepath.Join(dir, newest.name)
+	to := filepath.Join(dir, base+"-"+now.UTC().Format("20060102T150405Z")+ext)
+	if err := os.Rename(from, to); err != nil {
+		slog.Warn("Failed to move heap dump off the write path", "app", appName, "file", newest.name, "err", err)
+		return newest.name, removed
+	}
+	slog.Info("Kept latest heap dump", "app", appName, "file", filepath.Base(to), "bytes", newest.size)
+	return filepath.Base(to), removed
+}
+
+// isHeapDumpName reports whether a file is a heap dump this package manages —
+// either as HotSpot wrote it, or after being moved off the write path.
+func isHeapDumpName(name string) bool {
+	return strings.HasSuffix(name, ".hprof") || strings.HasSuffix(name, ".hprof.gz")
 }
 
 // rotatedDumpName matches a name this function has already rotated, so a dump

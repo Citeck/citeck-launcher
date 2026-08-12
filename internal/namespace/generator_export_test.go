@@ -1,6 +1,7 @@
 package namespace
 
 import (
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -172,36 +173,106 @@ func TestHeapDumpOnOOMRespectsExplicitConfig(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(opts, "HeapDumpOnOutOfMemoryError"), "flags must not be duplicated")
 }
 
-// TestRotateHeapDumps: HotSpot will not overwrite an existing dump ("Unable to
-// create …: File exists" — measured), and HeapDumpPath has no timestamp
-// placeholder, so without rotation the first OOM would be the only one ever
-// recorded. Verified end-to-end against a real JVM before this was written.
-func TestRotateHeapDumps(t *testing.T) {
+// TestRotateHeapDumpsKeepsOnlyTheNewest: a dump is the size of the live heap
+// even gzipped, so an app in a crash loop would fill the disk overnight if every
+// OOM left a file behind. Only the newest survives — and the older ones are
+// removed only while it is still on disk, so there is never a window with no
+// evidence at all.
+//
+// Freeing the canonical path is separately required: HotSpot refuses to
+// overwrite an existing dump ("Unable to create …: File exists" — measured
+// against a real JVM), and HeapDumpPath has no timestamp placeholder.
+func TestRotateHeapDumpsKeepsOnlyTheNewest(t *testing.T) {
 	base := t.TempDir()
 	require.NoError(t, EnsureExportDir(base, "emodel"))
 	dir := ExportDirFor(base, "emodel")
 
-	canonical := filepath.Join(dir, "java_pid7.hprof.gz")
-	require.NoError(t, os.WriteFile(canonical, []byte("previous oom"), 0o600))
-	// Files that are not heap dumps belong to whoever put them there.
-	keep := filepath.Join(dir, "pg_dump.sql")
-	require.NoError(t, os.WriteFile(keep, []byte("select 1"), 0o600))
+	write := func(name, content string, age time.Duration) string {
+		path := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+		at := time.Now().Add(-age)
+		require.NoError(t, os.Chtimes(path, at, at))
+		return path
+	}
+	// Two dumps from earlier crashes, plus the one HotSpot has just written at
+	// its fixed path.
+	write("java_pid7-20260810T000000Z.hprof.gz", "oldest", 48*time.Hour)
+	write("java_pid7-20260811T000000Z.hprof.gz", "middle", 24*time.Hour)
+	canonical := write("java_pid7.hprof.gz", "newest", 0)
+	// Not a heap dump: someone else's file in a shared directory.
+	keep := write("pg_dump.sql", "select 1", 72*time.Hour)
 
 	at := time.Date(2026, 8, 12, 6, 30, 0, 0, time.UTC)
-	assert.Equal(t, 1, RotateHeapDumps(base, "emodel", at))
+	kept, removed := RotateHeapDumps(base, "emodel", at)
 
+	assert.Equal(t, 2, removed)
+	assert.Equal(t, "java_pid7-20260812T063000Z.hprof.gz", kept)
 	assert.NoFileExists(t, canonical, "the fixed dump path must be free for the next OOM")
-	rotated := filepath.Join(dir, "java_pid7-20260812T063000Z.hprof.gz")
-	content, err := os.ReadFile(rotated)
-	require.NoError(t, err, "the previous dump must be kept, not deleted")
-	assert.Equal(t, "previous oom", string(content))
-	assert.FileExists(t, keep)
+	assert.FileExists(t, keep, "only heap dumps are managed here")
 
-	// Nothing left to rotate — and the rotated file must not be rotated again.
-	assert.Equal(t, 0, RotateHeapDumps(base, "emodel", at.Add(time.Hour)))
-	assert.FileExists(t, rotated)
+	content, err := os.ReadFile(filepath.Join(dir, kept))
+	require.NoError(t, err)
+	assert.Equal(t, "newest", string(content), "the surviving dump must be the newest one")
+
+	dumps := listHeapDumps(t, dir)
+	assert.Len(t, dumps, 1, "exactly one dump must remain at rest, got %v", dumps)
+}
+
+// A crash loop must converge: however many times an app OOMs, the export dir
+// holds one dump, not one per crash.
+func TestRotateHeapDumpsBoundsACrashLoop(t *testing.T) {
+	base := t.TempDir()
+	require.NoError(t, EnsureExportDir(base, "eproc"))
+	dir := ExportDirFor(base, "eproc")
+
+	at := time.Date(2026, 8, 12, 6, 0, 0, 0, time.UTC)
+	for i := range 10 {
+		// Each iteration: the JVM OOMs and writes to the canonical path, then
+		// the container is restarted and rotation runs.
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "java_pid7.hprof.gz"),
+			fmt.Appendf(nil, "crash %d", i), 0o600))
+		RotateHeapDumps(base, "eproc", at.Add(time.Duration(i)*time.Minute))
+		assert.LessOrEqual(t, len(listHeapDumps(t, dir)), 1, "after restart %d", i)
+	}
+
+	dumps := listHeapDumps(t, dir)
+	require.Len(t, dumps, 1)
+	content, err := os.ReadFile(filepath.Join(dir, dumps[0]))
+	require.NoError(t, err)
+	assert.Equal(t, "crash 9", string(content), "the surviving dump must be from the LAST crash")
+}
+
+// An already-moved dump keeps its name: the stamp says when the dump was taken,
+// not when it was last shuffled, and re-stamping on every container start would
+// destroy that.
+func TestRotateHeapDumpsDoesNotRestampSurvivor(t *testing.T) {
+	base := t.TempDir()
+	require.NoError(t, EnsureExportDir(base, "emodel"))
+	dir := ExportDirFor(base, "emodel")
+	name := "java_pid7-20260812T063000Z.hprof.gz"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("dump"), 0o600))
+
+	kept, removed := RotateHeapDumps(base, "emodel", time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC))
+	assert.Equal(t, 0, removed)
+	assert.Equal(t, name, kept)
+	assert.FileExists(t, filepath.Join(dir, name))
 }
 
 func TestRotateHeapDumpsHandlesMissingDir(t *testing.T) {
-	assert.Equal(t, 0, RotateHeapDumps(t.TempDir(), "never-started", time.Now()))
+	kept, removed := RotateHeapDumps(t.TempDir(), "never-started", time.Now())
+	assert.Empty(t, kept)
+	assert.Zero(t, removed)
+}
+
+func listHeapDumps(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	var dumps []string
+	for _, e := range entries {
+		if isHeapDumpName(e.Name()) {
+			dumps = append(dumps, e.Name())
+		}
+	}
+	return dumps
 }
