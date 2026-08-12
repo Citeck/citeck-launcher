@@ -21,7 +21,7 @@ import (
 // out of five (heap), an unset MaxDirectMemorySize defaulting to the heap size
 // again, and 5760 MiB of RSS against a 6144 MiB limit.
 func TestMemoryBudgetInvariant(t *testing.T) {
-	for _, limitMiB := range []int64{1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384, 32768} {
+	for _, limitMiB := range []int64{2048, 3072, 4096, 6144, 8192, 12288, 16384, 32768} {
 		t.Run(fmt.Sprintf("%dMiB", limitMiB), func(t *testing.T) {
 			limit := limitMiB * mib
 			b, ok := ComputeMemoryBudget(limit)
@@ -46,18 +46,42 @@ func TestMemoryBudgetInvariant(t *testing.T) {
 }
 
 // A budget that does not fit its own box is worse than no budget: it promises
-// headroom that is not there. Below ~1 GiB the absolute floors (a usable
-// metaspace and code cache) leave nothing for the heap, so the JVM's own
+// headroom that is not there, and the app is still killed — only now with our
+// numbers on it. The absolute floors (a metaspace a real webapp can live in, a
+// usable code cache) leave nothing behind on a small container, so the JVM's own
 // defaults are the better answer and ok must be false.
-func TestMemoryBudgetRefusesSmallLimits(t *testing.T) {
-	for _, limitMiB := range []int64{0, 128, 256, 512, 768} {
+//
+// The 1 GiB default webapp limit is on the REFUSED side of that line, and it is
+// measurement that put it there: a Citeck webapp needs 114-205 MiB of metaspace
+// for its classes alone (see budgetMetaspaceMin) and its own heap wants 256-500
+// more. Shipping the arithmetic that "fits" a 1 GiB box killed eapps and
+// integrations on the stand with OutOfMemoryError: Metaspace and left four other
+// apps within 6% of their cap.
+func TestMemoryBudgetRefusesLimitsTooSmallForARealWebapp(t *testing.T) {
+	for _, limitMiB := range []int64{0, 128, 256, 512, 768, 1024, 1300, 1536} {
 		_, ok := ComputeMemoryBudget(limitMiB * mib)
 		assert.Falsef(t, ok, "a %d MiB limit must not be budgeted", limitMiB)
 	}
-	// 1 GiB is the default webapp limit, so it has to be on the budgeted side of
-	// the line — otherwise the feature would do nothing for most apps.
-	_, ok := ComputeMemoryBudget(1 * gib)
-	assert.True(t, ok, "the default 1 GiB webapp limit must be budgetable")
+	_, ok := ComputeMemoryBudget(2 * gib)
+	assert.True(t, ok, "2 GiB is where a budget starts to fit honestly")
+}
+
+// The same line, drawn where the stand actually stands: every 1 GiB webapp there
+// carries a hand-set -Xmx256m, which is the shape that produced the 192 MiB
+// metaspace cap two apps died under. It must now be refused outright and left
+// with the defaults it ran on for years, while eproc's 2 GiB container — the one
+// with room for an honest division — keeps its budget.
+func TestMemoryBudgetOnTheStand(t *testing.T) {
+	_, ok := ComputeMemoryBudgetWith(1*gib, ManualPools{Heap: 256 * mib})
+	assert.False(t, ok, "1 GiB + a 256m heap cannot hold a real metaspace as well")
+
+	_, ok = ComputeMemoryBudgetWith(1300*mib, ManualPools{Heap: 500 * mib})
+	assert.False(t, ok, "emodel: 1300 MiB + a 500m heap is the same story")
+
+	b, ok := ComputeMemoryBudgetWith(2*gib, ManualPools{Heap: 1 * gib})
+	require.True(t, ok, "eproc: 2 GiB + a 1g heap must still be budgeted")
+	assert.GreaterOrEqual(t, b.Metaspace, int64(320)*mib,
+		"and its metaspace must clear the 205 MiB it was measured using: %s", b)
 }
 
 // TestMemoryBudgetGolden pins the numbers for the container that motivated this,
@@ -88,7 +112,7 @@ func TestMemoryBudgetGolden(t *testing.T) {
 // for someone who bumps a memoryLimit and expects the app to actually get more.
 func TestMemoryBudgetIsMonotonic(t *testing.T) {
 	var prev MemoryBudget
-	for _, limitMiB := range []int64{1024, 2048, 4096, 8192, 16384} {
+	for _, limitMiB := range []int64{2048, 4096, 8192, 16384} {
 		b, ok := ComputeMemoryBudget(limitMiB * mib)
 		require.True(t, ok)
 		if prev.Limit != 0 {
@@ -137,13 +161,16 @@ func TestWebappGetsComputedMemoryBudget(t *testing.T) {
 // Stepping aside there would leave the real problem in place, and overriding
 // their -Xmx would be worse. So the heap stays theirs and the REST of the
 // container is divided over the pools nobody sized.
+// (A 3g heap in a 4g container is now REFUSED rather than budgeted — 697 MiB
+// left over cannot hold a real metaspace, a code cache, thread stacks and G1's
+// side structures at once. 2g in 4g is the shape that can.)
 func TestConfiguredHeapKeepsTheBudgetForTheOtherPools(t *testing.T) {
-	resp := generateWebappWith(t, WebappProps{MemoryLimit: "4g", HeapSize: "3g"})
+	resp := generateWebappWith(t, WebappProps{MemoryLimit: "4g", HeapSize: "2g"})
 	app := findGeneratedApp(resp, "emodel")
 	require.NotNil(t, app)
 
 	opts, _ := app.Environments.Get("JAVA_OPTS")
-	assert.Contains(t, opts, "-Xmx3g", "the operator's heap is untouched")
+	assert.Contains(t, opts, "-Xmx2g", "the operator's heap is untouched")
 	assert.Equal(t, 1, strings.Count(opts, "-Xmx"), "no second heap size: %s", opts)
 	assert.Contains(t, opts, "-XX:MaxDirectMemorySize=")
 	assert.Contains(t, opts, "-XX:MaxMetaspaceSize=")
@@ -155,9 +182,9 @@ func TestConfiguredHeapKeepsTheBudgetForTheOtherPools(t *testing.T) {
 
 	// And the whole point: the numbers still fit the box, with the fixed heap
 	// counted as-is rather than as a wish.
-	b, ok := ComputeMemoryBudgetWith(4*gib, ManualPools{Heap: 3 * gib})
+	b, ok := ComputeMemoryBudgetWith(4*gib, ManualPools{Heap: 2 * gib})
 	require.True(t, ok)
-	assert.Equal(t, int64(3)*gib, b.Heap)
+	assert.Equal(t, int64(2)*gib, b.Heap)
 	assert.LessOrEqual(t, b.Reserve+b.Heap+b.Direct+b.Metaspace+b.CodeCache, int64(4)*gib, "%s", b)
 }
 
@@ -183,6 +210,8 @@ func TestFixedHeapWithNoRoomLeftIsRefused(t *testing.T) {
 	assert.False(t, ok)
 	_, ok = ComputeMemoryBudgetWith(4*gib, ManualPools{Heap: 3800 * mib})
 	assert.False(t, ok, "a heap leaving no room for metaspace must be refused too")
+	_, ok = ComputeMemoryBudgetWith(4*gib, ManualPools{Heap: 3 * gib})
+	assert.False(t, ok, "3g in a 4g box leaves 697 MiB — not enough for metaspace + code cache + stacks")
 }
 
 // Every pool set by hand means nothing to add — and, importantly, no duplicate
@@ -390,7 +419,7 @@ func TestNonMemoryJavaOptsAreKeptAlongsideTheBudget(t *testing.T) {
 func TestBaselineAndEffectiveEnvsAreIndependent(t *testing.T) {
 	// heapSize means JAVA_OPTS already EXISTS, so the budget's Set writes in
 	// place — which is the case where a shared backing array actually bites.
-	resp := generateWebappWith(t, WebappProps{MemoryLimit: "4g", HeapSize: "3g"})
+	resp := generateWebappWith(t, WebappProps{MemoryLimit: "4g", HeapSize: "2g"})
 
 	app := findGeneratedApp(resp, "emodel")
 	baseline := findGeneratedAppIn(resp.BaselineApplications, "emodel")

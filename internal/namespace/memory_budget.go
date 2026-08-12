@@ -86,10 +86,36 @@ const (
 	budgetDirectPct = 13
 	budgetDirectMax = 1 * gib
 
-	// metaspace: class metadata. eproc measured 242 MiB committed, so 512 MiB is
-	// ~2x headroom for the largest app we have.
+	// metaspace: class metadata — and the one pool whose demand has NOTHING to do
+	// with the container limit. It is set by how much code the app loads, and a
+	// Citeck webapp loads the same 26–43 thousand classes whether it runs in 1 GiB
+	// or in 8.
+	//
+	// Measured on the live stand (2026-08-12, `citeck jcmd <app> VM.metaspace`,
+	// steady state, committed ≈ used within ~2 MiB in every sample):
+	//
+	//	gateway         114 MB   26042 classes
+	//	transformations 126 MB   28284
+	//	history         165 MB   36246
+	//	notifications   180 MB   38769
+	//	emodel          184 MB   39547
+	//	uiserv          186 MB   40094
+	//	eproc           205 MB   42846
+	//	eapps, integrations — OutOfMemoryError: Metaspace under a 192 MiB cap
+	//
+	// The percentage share alone produced 192 MiB at the 1 GiB default, which
+	// killed two apps outright and left four more within 6% of their cap. Hence a
+	// floor of 320 MiB: ~1.6x the largest healthy measurement. It is a CEILING,
+	// not a reservation — metaspace commits on demand — so the cost of being
+	// generous is only that the inequality below gets harder to satisfy.
+	//
+	// Which it should: the honest consequence is that a 1 GiB webapp cannot be
+	// budgeted at all (classes alone want ~200 MiB, its own heap wants 256–500),
+	// so ComputeMemoryBudgetWith refuses and the app keeps the JVM's defaults it
+	// ran on for years. Budgeting starts to apply around 2 GiB, which is where a
+	// runaway pool actually has room to hurt.
 	budgetMetaspacePct = 12
-	budgetMetaspaceMin = 96 * mib
+	budgetMetaspaceMin = 320 * mib
 	budgetMetaspaceMax = 512 * mib
 
 	// code cache: 58 MiB used of 240 reserved on eproc.

@@ -120,7 +120,15 @@ func (r *Runtime) jvmTargetContainer(appName string) (string, error) {
 		// while alfresco and solr are KindCiteckAdditional JVMs.
 		return "", fmt.Errorf("%s: %w", appName, ErrNotJVMApp)
 	}
-	if app.Status != AppStatusRunning || app.ContainerID == "" {
+	// The gate is the CONTAINER, not the RUNNING status. An app whose startup
+	// probe is still failing sits in STARTING, and a wedged one sits in
+	// STALLED/FAILED — those are precisely the moments an operator wants a
+	// thread dump, and refusing them would leave the tool useful only when
+	// nothing is wrong. Measured on the stand: `integrations` OOMed on
+	// metaspace, stayed up as a process, and the launcher reported STARTING for
+	// two hours — with a status gate, the one app worth attaching to was the one
+	// app that could not be attached to.
+	if app.ContainerID == "" || app.Status == AppStatusStopped || app.Status == AppStatusStopping {
 		return "", fmt.Errorf("%s: %w (status %s)", appName, ErrAppNotRunning, app.Status)
 	}
 	return app.ContainerID, nil

@@ -128,6 +128,33 @@ func TestJVMCommand_RefusesStoppedApp(t *testing.T) {
 	assert.Zero(t, md.execCalls)
 }
 
+// An app that is up but not healthy is the whole reason this exists. Measured on
+// the stand: integrations OOMed on metaspace, kept its container, and the
+// launcher reported STARTING for two hours — a RUNNING-only gate made the one
+// app worth attaching to the one app that could not be attached to.
+func TestJVMCommand_WorksOnAnAppThatIsUpButNotHealthy(t *testing.T) {
+	for _, status := range []AppRuntimeStatus{AppStatusStarting, AppStatusFailed, AppStatusUpdating} {
+		t.Run(string(status), func(t *testing.T) {
+			md := newMockDocker()
+			md.execFn = func(cmd []string) (string, int, error) {
+				if cmd[0] == "java" {
+					return "Full thread dump\n", 0, nil
+				}
+				return "", 0, nil
+			}
+			r := newRuntimeForTest(testConfig(), md, t.TempDir())
+			seedJVMApp(t, r, "emodel", true, AppStatusRunning)
+			r.mu.Lock()
+			r.apps["emodel"].Status = status // container still there
+			r.mu.Unlock()
+
+			out, err := r.JVMCommand(context.Background(), "emodel", "Thread.print")
+			require.NoError(t, err)
+			assert.Contains(t, out, "Full thread dump")
+		})
+	}
+}
+
 func TestJVMCommand_UnknownApp(t *testing.T) {
 	md := newMockDocker()
 	r := newRuntimeForTest(testConfig(), md, t.TempDir())
