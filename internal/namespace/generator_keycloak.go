@@ -72,7 +72,8 @@ func generateKeycloak(ctx *NsGenContext) error {
 			// Kotlin-parity: AppProbeDef.failureThreshold default is 10_000.
 			// Large realm imports on fresh DB easily exceed 10 min — keep the
 			// startup window effectively unbounded (outer 240s wait still
-			// gates container-up). Liveness threshold stays at 3 below.
+			// gates container-up). Liveness keeps its own, much smaller
+			// threshold below (livenessFailureThreshold).
 			FailureThreshold: 10000,
 			TimeoutSeconds:   5,
 		}},
@@ -88,8 +89,8 @@ func generateKeycloak(ctx *NsGenContext) error {
 	// http://<container-ip>:9000, which is unreachable from the host on
 	// rootless Docker (Linux) and Docker Desktop (macOS) — container IP
 	// isn't routed across the user-namespace / VM boundary — so liveness
-	// fails 3× ≈ 30s and KC enters a restart loop the moment auth switches
-	// to KEYCLOAK. In server mode this port is stripped by the non-proxy
+	// fails livenessFailureThreshold times in a row and KC enters a restart
+	// loop the moment auth switches to KEYCLOAK. In server mode this port is stripped by the non-proxy
 	// strip block (only proxy publishes), and the probe falls back to the
 	// container IP, which IS reachable under rootful Docker on a Linux
 	// server. The HTTP probe Port stays at the *container-side* 9000;
@@ -97,7 +98,7 @@ func generateKeycloak(ctx *NsGenContext) error {
 	app.AddPort(fmt.Sprintf("%d:%d", KCManagementHostPort, KCManagementContainerPort))
 	app.LivenessProbe = &appdef.AppProbeDef{
 		HTTP:             &appdef.HTTPProbeDef{Path: "/health/live", Port: KCManagementContainerPort},
-		FailureThreshold: 3,
+		FailureThreshold: livenessFailureThreshold,
 		TimeoutSeconds:   5,
 	}
 

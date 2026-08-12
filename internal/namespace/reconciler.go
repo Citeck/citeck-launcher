@@ -14,6 +14,32 @@ import (
 	"github.com/citeck/citeck-launcher/internal/namespace/workers"
 )
 
+// Liveness tolerance policy. The launcher recreates a RUNNING container only
+// after livenessGraceSeconds of CONTINUOUS liveness failure — every generated
+// LivenessProbe uses livenessFailureThreshold, and it is also the fallback for
+// a probe that declares no threshold of its own.
+//
+// The window is (threshold-1) × period, not threshold × period: the counter
+// starts on the FIRST failed probe, so N consecutive failures span N-1 periods.
+// Hence the +1 below — with a 10s cadence, 7 failures ≈ 60s.
+//
+// 3 failures (≈20s) was too tight for the JVM apps this launcher runs. A full
+// GC / safepoint pause does not refuse the connection, it just never answers,
+// so every probe inside the pause burns its 5s timeout and counts as a failure:
+// a deliberate diagnostic (measured 2026-08-12: a GC.heap_dump on citeck_eproc
+// paused it past 3 failures in 16s) or an ordinary long pause under load got the
+// container recreated mid-work. Restarting a busy-but-alive app is worse than
+// carrying a genuinely dead one for another 40s, and the crash/OOM path in the
+// reconciler — which does not wait on probes — still catches actual deaths.
+//
+// The period stays a per-app / daemon.yml knob (periodForProbe); an operator who
+// lowers it deliberately shortens the window with it.
+const (
+	livenessGraceSeconds       = 60
+	livenessProbePeriodSeconds = 10
+	livenessFailureThreshold   = livenessGraceSeconds/livenessProbePeriodSeconds + 1
+)
+
 // ReconcilerConfig holds reconciliation settings from daemon.yml.
 // SetReconcilerConfig wires IntervalSeconds / LivenessPeriod into the
 // runtime's reconcilerInterval / liveness defaults.
@@ -30,7 +56,12 @@ func DefaultReconcilerConfig() ReconcilerConfig {
 		Enabled:         true,
 		IntervalSeconds: 60,
 		LivenessEnabled: true,
-		LivenessPeriod:  30 * time.Second,
+		// Matches periodForProbe's own fallback. They used to disagree (30s
+		// here, 10s there) and this struct is only wired in when daemon.yml
+		// actually carries a `reconciler:` section — so setting an unrelated
+		// key like `reconciler.interval` silently tripled the probe period,
+		// and with it the tolerance window derived from it.
+		LivenessPeriod: livenessProbePeriodSeconds * time.Second,
 	}
 }
 

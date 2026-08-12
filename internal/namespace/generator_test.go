@@ -3,6 +3,7 @@ package namespace
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
@@ -972,6 +973,62 @@ func TestGeneratorStartupThresholds(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestGeneratorLivenessTolerance pins the liveness tolerance policy: a RUNNING
+// container is recreated only after ~60s of continuous failure, and EVERY
+// generated liveness probe carries the same threshold — a probe left at a
+// hand-written 3 would restart a merely-busy JVM app in ~20s (the window is
+// (threshold-1) × period, since the counter starts on the first failed probe).
+//
+// The threshold is asserted per app rather than centrally because each
+// generator writes its own AppProbeDef; nothing but this test stops a new one
+// from inventing a tighter value.
+func TestGeneratorLivenessTolerance(t *testing.T) {
+	// The arithmetic itself: 7 failures × 10s cadence = 6 whole periods ≈ 60s.
+	assert.Equal(t, 7, livenessFailureThreshold)
+	assert.GreaterOrEqual(t,
+		(livenessFailureThreshold-1)*livenessProbePeriodSeconds, livenessGraceSeconds,
+		"threshold/period must give at least the intended grace window")
+	// periodForProbe's own fallback must agree with the constant the window is
+	// derived from, and so must the daemon.yml default that can replace it.
+	r := &Runtime{}
+	assert.Equal(t, livenessProbePeriodSeconds*time.Second, r.periodForProbe(nil))
+	assert.Equal(t, livenessProbePeriodSeconds*time.Second, DefaultReconcilerConfig().LivenessPeriod)
+
+	cfg := &Config{
+		Authentication: AuthenticationProps{Type: AuthKeycloak, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+		Observer:       ObserverProps{Enabled: true, Image: "citeck/observer:1.0"},
+	}
+	bun := &bundle.Def{
+		Applications: map[string]bundle.AppDef{
+			"emodel": {Image: "nexus.citeck.ru/emodel:1.0"},
+		},
+	}
+	wsCfg := &bundle.WorkspaceConfig{
+		Webapps: []bundle.WebappConfig{
+			{ID: "emodel"},
+		},
+	}
+
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	require.NoError(t, err)
+
+	probed := 0
+	for _, app := range resp.Applications {
+		if app.LivenessProbe == nil {
+			continue
+		}
+		probed++
+		assert.Equalf(t, livenessFailureThreshold, app.LivenessProbe.FailureThreshold,
+			"liveness probe on %s must use livenessFailureThreshold", app.Name)
+		// Left unset on purpose: the cadence stays an operator knob
+		// (daemon.yml reconciler.livenessPeriod), the tolerance does not.
+		assert.Zerof(t, app.LivenessProbe.PeriodSeconds,
+			"liveness probe on %s must leave PeriodSeconds to periodForProbe", app.Name)
+	}
+	assert.GreaterOrEqual(t, probed, 4, "expected several apps to carry a liveness probe")
 }
 
 // TestRabbitmqMemoryConf pins the generated rabbitmq.conf snippet: the broker

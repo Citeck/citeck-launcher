@@ -65,7 +65,7 @@ func generateMongoDB(ctx *NsGenContext) {
 	}
 	app.LivenessProbe = &appdef.AppProbeDef{
 		Exec:             &appdef.ExecProbeDef{Command: []string{"mongo", "--quiet", "--eval", "db.adminCommand('ping')"}},
-		FailureThreshold: 3,
+		FailureThreshold: livenessFailureThreshold,
 		TimeoutSeconds:   5,
 	}
 }
@@ -149,7 +149,7 @@ func generatePostgres(ctx *NsGenContext) {
 	app.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "1g"}}
 	app.LivenessProbe = &appdef.AppProbeDef{
 		Exec:             &appdef.ExecProbeDef{Command: []string{"pg_isready", "-U", "postgres"}},
-		FailureThreshold: 3,
+		FailureThreshold: livenessFailureThreshold,
 		TimeoutSeconds:   5,
 	}
 }
@@ -197,7 +197,7 @@ func generateZookeeper(ctx *NsGenContext) {
 	}
 	app.LivenessProbe = &appdef.AppProbeDef{
 		HTTP:             &appdef.HTTPProbeDef{Path: "/commands/ruok", Port: 8080},
-		FailureThreshold: 3,
+		FailureThreshold: livenessFailureThreshold,
 		TimeoutSeconds:   5,
 	}
 	app.InitContainers = []appdef.InitContainerDef{{

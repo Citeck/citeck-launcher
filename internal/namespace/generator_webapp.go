@@ -192,8 +192,8 @@ func configureWebappProbes(name string, app *AppBuilder, ctx *NsGenContext, port
 	// 10_000 — effectively unbounded retries. The real ceiling is the outer
 	// 240s container-running wait in waitStartup; a probe-side 90×10s = 15min
 	// cap silently killed long-startup webapps (Alfresco, big realm imports,
-	// first-boot eapps) and left them stuck in a restart loop. Liveness keeps
-	// its conservative 3-failure threshold below.
+	// first-boot eapps) and left them stuck in a restart loop. Liveness has its
+	// own, much smaller threshold below (livenessFailureThreshold).
 	app.StartupConditions = []appdef.StartupCondition{
 		{Probe: &appdef.AppProbeDef{
 			HTTP: &appdef.HTTPProbeDef{
@@ -213,7 +213,7 @@ func configureWebappProbes(name string, app *AppBuilder, ctx *NsGenContext, port
 	if !livenessDisabled {
 		app.LivenessProbe = &appdef.AppProbeDef{
 			HTTP:             &appdef.HTTPProbeDef{Path: "/management/health", Port: port},
-			FailureThreshold: 3,
+			FailureThreshold: livenessFailureThreshold,
 			TimeoutSeconds:   5,
 		}
 	}
@@ -695,7 +695,7 @@ func generateObserver(ctx *NsGenContext) {
 	obsPg.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "512m"}}
 	obsPg.LivenessProbe = &appdef.AppProbeDef{
 		Exec:             &appdef.ExecProbeDef{Command: []string{"pg_isready", "-U", obsDBUser}},
-		FailureThreshold: 3,
+		FailureThreshold: livenessFailureThreshold,
 		TimeoutSeconds:   5,
 	}
 
@@ -769,7 +769,7 @@ func generateObserver(ctx *NsGenContext) {
 	obs.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "512m"}}
 	obs.LivenessProbe = &appdef.AppProbeDef{
 		HTTP:             &appdef.HTTPProbeDef{Path: "/health", Port: obsHTTP},
-		FailureThreshold: 3,
+		FailureThreshold: livenessFailureThreshold,
 		TimeoutSeconds:   5,
 	}
 

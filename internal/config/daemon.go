@@ -49,7 +49,7 @@ type APIAuthConfig struct {
 // ReconcilerConfig holds reconciler tuning.
 type ReconcilerConfig struct {
 	IntervalSeconds  int   `yaml:"interval,omitempty" json:"interval,omitempty"`               // default 60
-	LivenessPeriodMs int   `yaml:"livenessPeriod,omitempty" json:"livenessPeriod,omitempty"`   // default 30000
+	LivenessPeriodMs int   `yaml:"livenessPeriod,omitempty" json:"livenessPeriod,omitempty"`   // default 10000
 	LivenessEnabled  *bool `yaml:"livenessEnabled,omitempty" json:"livenessEnabled,omitempty"` // default true
 }
 

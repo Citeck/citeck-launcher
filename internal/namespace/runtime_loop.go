@@ -1321,7 +1321,7 @@ func (r *Runtime) handleLivenessProbeResult(res workers.Result) {
 	failures := r.livenessFailures[appName]
 	threshold := app.Def.LivenessProbe.FailureThreshold
 	if threshold <= 0 {
-		threshold = 3
+		threshold = livenessFailureThreshold
 	}
 
 	if failures < threshold {
