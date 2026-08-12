@@ -45,8 +45,14 @@ type mockDocker struct {
 	imageDigests   map[string]string // optional override; nil keeps "sha256:mock-digest-{img}" default
 
 	// Test knobs for ExecInContainer.
-	execCalls int           // incremented on each ExecInContainer call
-	execBlock chan struct{} // if non-nil, ExecInContainer blocks until close or ctx.Done
+	execCalls int                                     // incremented on each ExecInContainer call
+	execBlock chan struct{}                           // if non-nil, ExecInContainer blocks until close or ctx.Done
+	execCmds  [][]string                              // every command passed to ExecInContainer, in order
+	execFn    func(cmd []string) (string, int, error) // if non-nil, supplies the result
+
+	// Test knobs for ContainerLogs (pre-restart diagnostics coverage).
+	logsTail int    // last tail value ContainerLogs was called with
+	logsOut  string // returned verbatim by ContainerLogs
 
 	// Test knob for init-container worker (T19c / T20c coverage).
 	// If non-nil, WaitForContainerExit blocks until close or ctx.Done — lets
@@ -225,19 +231,27 @@ func (m *mockDocker) GetImageDigest(ctx context.Context, img string) string {
 	return "sha256:mock-digest-" + img
 }
 
-func (m *mockDocker) ContainerLogs(_ context.Context, _ string, _ int) (string, error) {
-	return "", nil
+func (m *mockDocker) ContainerLogs(_ context.Context, _ string, tail int) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.logsTail = tail
+	return m.logsOut, nil
 }
 
 func (m *mockDocker) ContainerLogsFollow(ctx context.Context, containerID string, tail int) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("")), nil
 }
 
-func (m *mockDocker) ExecInContainer(ctx context.Context, _ string, _ []string) (output string, exitCode int, err error) {
+func (m *mockDocker) ExecInContainer(ctx context.Context, _ string, cmd []string) (output string, exitCode int, err error) {
 	m.mu.Lock()
 	m.execCalls++
+	m.execCmds = append(m.execCmds, cmd)
 	block := m.execBlock
+	fn := m.execFn
 	m.mu.Unlock()
+	if fn != nil {
+		return fn(cmd)
+	}
 	if block != nil {
 		select {
 		case <-block:

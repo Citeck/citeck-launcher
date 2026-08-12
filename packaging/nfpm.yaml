@@ -14,7 +14,12 @@ vendor: "Citeck LLC"
 homepage: "https://github.com/Citeck/citeck-launcher"
 description: |
   Citeck Launcher — manage Citeck namespaces and Docker containers.
-license: "Citeck"
+# SPDX identifier, matching the LICENSE file at the repo root. "Citeck" was
+# neither an SPDX id nor the actual license, so deb/rpm metadata claimed a
+# proprietary product where the project is LGPL-3.0. "-only": the project has
+# never published an "or (at your option) any later version" election, and
+# metadata must not grant more than the license text does.
+license: "LGPL-3.0-only"
 contents:
   - src: ./dist/bin/citeck-launcher
     dst: /usr/bin/citeck-launcher

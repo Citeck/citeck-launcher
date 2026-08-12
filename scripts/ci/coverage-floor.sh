@@ -16,6 +16,10 @@ mod=github.com/citeck/citeck-launcher
 # package suffix -> minimum coverage percent
 floors=(
   "internal/appdef:80"
+  # jvmattach measured 80.5% on 2026-08-12. It speaks a wire protocol against
+  # a JVM that is not present in CI, so the fake-procfs/fake-listener tests are
+  # the only thing standing between a refactor and a silently empty capture.
+  "internal/jvmattach:70"
   "internal/namespace:70"
   "internal/storage:60"
   "internal/daemon:35"

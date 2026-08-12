@@ -2,6 +2,7 @@ package namespace
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
+	"github.com/citeck/citeck-launcher/internal/jvmattach"
 	"github.com/citeck/citeck-launcher/internal/namespace/workers"
 )
 
@@ -169,6 +171,115 @@ func (r *Runtime) runLivenessProbe(ctx context.Context, containerID string, prob
 	return true
 }
 
+// Pre-restart diagnostics tuning.
+const (
+	diagLogTailLines = 500
+	// A thread dump delivered through the container's stdout is 1500–2500
+	// lines on a real webapp (132–225 threads), so the ordinary 500-line tail
+	// would show its middle and nothing else — not the dump's start, not the
+	// failure that preceded it.
+	diagLogTailWithDump = 3000
+	// The JVM is a child of the image's `sh -c /entrypoint.sh`, so the search
+	// starts one generation down; 3 covers a wrapper script or two.
+	diagJVMSearchDepth = 3
+	// findJavaPIDScript locates the JVM inside the container. It matches on the
+	// executable rather than on the command line: the scanning shell's OWN
+	// cmdline contains the string "java" (it is in this script), so a cmdline
+	// match reports the shell and the dump is then sent to the wrong process.
+	findJavaPIDScript = `for p in /proc/[0-9]*; do case "$(readlink $p/exe 2>/dev/null)" in */java) echo ${p#/proc/}; break;; esac; done`
+)
+
+// diagSignalSettle is the time given to the JVM to finish writing a SIGQUIT
+// dump to stdout before the log tail is read. A var so tests don't sleep.
+var diagSignalSettle = 2 * time.Second
+
+// captureThreadDump obtains a thread dump from a containerized JVM.
+//
+// It returns either the dump itself, or inLog=true meaning the JVM was asked to
+// write the dump to its own stdout (the caller must then widen the log tail).
+//
+// Two mechanisms, because the images ship a JRE — there is no `jcmd`, `jmap` or
+// `jstack` in `/opt/java/openjdk/bin`, and the previous implementation's
+// `jcmd 1 Thread.print` was wrong twice over: the binary is absent AND pid 1 is
+// the entrypoint shell, not the JVM. So:
+//
+//  1. The HotSpot attach protocol, spoken from the host (internal/jvmattach).
+//     Needs nothing inside the container and keeps the dump out of the app's
+//     log. Linux hosts only, and only when the daemon can signal the JVM's uid.
+//  2. SIGQUIT to the JVM inside the container. Works everywhere Docker does —
+//     including desktop on macOS/Windows, where the containers live in a VM and
+//     the host has no /proc entry to attach through.
+func (r *Runtime) captureThreadDump(ctx context.Context, containerID string) (dump string, inLog bool, err error) {
+	if jvmattach.Supported {
+		dump, attachErr := r.attachThreadDump(ctx, containerID)
+		if attachErr == nil {
+			return dump, false, nil
+		}
+		// Not an error yet — the fallback below covers the common reasons
+		// (uid mismatch, no /proc visibility, a JVM too wedged to answer).
+		slog.Debug("Attach thread dump failed, falling back to SIGQUIT",
+			"container", containerID, "err", attachErr)
+	}
+	if err := r.signalThreadDump(ctx, containerID); err != nil {
+		return "", false, err
+	}
+	return "", true, nil
+}
+
+// attachThreadDump speaks the attach protocol to the JVM behind containerID.
+func (r *Runtime) attachThreadDump(ctx context.Context, containerID string) (string, error) {
+	info, err := r.docker.InspectContainer(ctx, containerID)
+	if err != nil {
+		return "", fmt.Errorf("inspect container: %w", err)
+	}
+	if info.State == nil || info.State.Pid <= 0 {
+		return "", errors.New("container has no host pid")
+	}
+	att := jvmattach.New()
+	pid, err := att.FindJVM(info.State.Pid, diagJVMSearchDepth)
+	if err != nil {
+		return "", fmt.Errorf("find jvm under pid %d: %w", info.State.Pid, err)
+	}
+	dump, err := att.ThreadDump(ctx, pid)
+	if err != nil {
+		return "", fmt.Errorf("attach to jvm pid %d: %w", pid, err)
+	}
+	return dump, nil
+}
+
+// signalThreadDump asks the JVM to dump its threads to stdout, from inside the
+// container. The dump lands in the container log, which captureDiagnostics
+// reads right after.
+func (r *Runtime) signalThreadDump(ctx context.Context, containerID string) error {
+	out, code, err := r.docker.ExecInContainer(ctx, containerID, []string{"sh", "-c", findJavaPIDScript})
+	if err != nil {
+		return fmt.Errorf("locate jvm in container: %w", err)
+	}
+	pid := strings.TrimSpace(out)
+	if code != 0 || pid == "" {
+		return fmt.Errorf("locate jvm in container: exit=%d out=%q", code, truncateForLog(out))
+	}
+	// `kill` is a shell builtin — the images have no /bin/kill, no pgrep, no ps.
+	if _, code, err := r.docker.ExecInContainer(ctx, containerID, []string{"sh", "-c", "kill -3 " + pid}); err != nil || code != 0 {
+		return fmt.Errorf("send SIGQUIT to pid %s: exit=%d err=%w", pid, code, err)
+	}
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("waiting for SIGQUIT dump: %w", ctx.Err())
+	case <-time.After(diagSignalSettle):
+	}
+	return nil
+}
+
+func truncateForLog(s string) string {
+	const maxLen = 120
+	s = strings.TrimSpace(s)
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "…"
+}
+
 // captureDiagnostics captures thread dump and logs before restarting a container.
 // Returns the path to the diagnostics file, or "" if capture fails.
 func (r *Runtime) captureDiagnostics(ctx context.Context, appName, containerID string, isCiteck bool, reason string) string {
@@ -183,21 +294,28 @@ func (r *Runtime) captureDiagnostics(ctx context.Context, appName, containerID s
 	fmt.Fprintf(&buf, "Container: %s\n\n", containerID)
 
 	// Thread dump for Java apps
+	logTail := diagLogTailLines
 	if isCiteck {
-		output, exitCode, err := r.docker.ExecInContainer(diagCtx, containerID, []string{"jcmd", "1", "Thread.print"})
-		if err == nil && exitCode == 0 && output != "" {
-			fmt.Fprintf(&buf, "=== THREAD DUMP ===\n%s\n\n", output)
-		} else {
-			fmt.Fprintf(&buf, "=== THREAD DUMP ===\n(jcmd failed: exit=%d err=%v)\n\n", exitCode, err)
+		dump, inLog, err := r.captureThreadDump(diagCtx, containerID)
+		switch {
+		case err != nil:
+			fmt.Fprintf(&buf, "=== THREAD DUMP ===\n(unavailable: %v)\n\n", err)
+		case inLog:
+			// The JVM wrote it to its own stdout, so it is already on its way
+			// into the log section below — which must then be long enough to
+			// hold both the dump and the failure that preceded it.
+			logTail = diagLogTailWithDump
+			fmt.Fprintf(&buf, "=== THREAD DUMP ===\n(sent SIGQUIT — the dump is in the log section below)\n\n")
+		default:
+			fmt.Fprintf(&buf, "=== THREAD DUMP ===\n%s\n\n", dump)
 		}
 	}
 
-	// Last 500 log lines
-	logs, err := r.containerLogs(diagCtx, containerID, 500)
+	logs, err := r.containerLogs(diagCtx, containerID, logTail)
 	if err == nil && logs != "" {
-		fmt.Fprintf(&buf, "=== LAST 500 LOG LINES ===\n%s\n", logs)
+		fmt.Fprintf(&buf, "=== LAST %d LOG LINES ===\n%s\n", logTail, logs)
 	} else {
-		fmt.Fprintf(&buf, "=== LAST 500 LOG LINES ===\n(failed: %v)\n", err)
+		fmt.Fprintf(&buf, "=== LAST %d LOG LINES ===\n(failed: %v)\n", logTail, err)
 	}
 
 	// Save to file
