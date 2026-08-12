@@ -20,6 +20,13 @@ type mockContainer struct {
 	labels map[string]string
 }
 
+// mockCopiedFile records one CopyFileToContainer call.
+type mockCopiedFile struct {
+	destDir string
+	name    string
+	data    []byte
+}
+
 // mockDocker implements docker.RuntimeClient for behavioral tests.
 type mockDocker struct {
 	mu                  sync.Mutex
@@ -49,6 +56,11 @@ type mockDocker struct {
 	execBlock chan struct{}                           // if non-nil, ExecInContainer blocks until close or ctx.Done
 	execCmds  [][]string                              // every command passed to ExecInContainer, in order
 	execFn    func(cmd []string) (string, int, error) // if non-nil, supplies the result
+
+	// Test knobs for CopyFileToContainer (JVM attach-client delivery).
+	copiedFiles []mockCopiedFile // every file copied in, in order
+	copyErr     error            // if non-nil, every copy fails with it
+	opLog       []string         // copies and execs interleaved, in order — the delivery path's ORDER is the contract
 
 	// Test knobs for ContainerLogs (pre-restart diagnostics coverage).
 	logsTail int    // last tail value ContainerLogs was called with
@@ -242,10 +254,22 @@ func (m *mockDocker) ContainerLogsFollow(ctx context.Context, containerID string
 	return io.NopCloser(strings.NewReader("")), nil
 }
 
+func (m *mockDocker) CopyFileToContainer(_ context.Context, _, destDir, name string, data []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.opLog = append(m.opLog, "copy "+destDir+"/"+name)
+	if m.copyErr != nil {
+		return m.copyErr
+	}
+	m.copiedFiles = append(m.copiedFiles, mockCopiedFile{destDir: destDir, name: name, data: data})
+	return nil
+}
+
 func (m *mockDocker) ExecInContainer(ctx context.Context, _ string, cmd []string) (output string, exitCode int, err error) {
 	m.mu.Lock()
 	m.execCalls++
 	m.execCmds = append(m.execCmds, cmd)
+	m.opLog = append(m.opLog, "exec "+strings.Join(cmd, " "))
 	block := m.execBlock
 	fn := m.execFn
 	m.mu.Unlock()

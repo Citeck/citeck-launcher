@@ -198,30 +198,44 @@ var diagSignalSettle = 2 * time.Second
 // It returns either the dump itself, or inLog=true meaning the JVM was asked to
 // write the dump to its own stdout (the caller must then widen the log tail).
 //
-// Two mechanisms, because the images ship a JRE — there is no `jcmd`, `jmap` or
-// `jstack` in `/opt/java/openjdk/bin`, and the previous implementation's
+// Three mechanisms, because the images ship a JRE — there is no `jcmd`, `jmap`
+// or `jstack` in `/opt/java/openjdk/bin`, and the previous implementation's
 // `jcmd 1 Thread.print` was wrong twice over: the binary is absent AND pid 1 is
-// the entrypoint shell, not the JVM. So:
+// the entrypoint shell, not the JVM. So, in order of how good the answer is:
 //
 //  1. The HotSpot attach protocol, spoken from the host (internal/jvmattach).
 //     Needs nothing inside the container and keeps the dump out of the app's
 //     log. Linux hosts only, and only when the daemon can signal the JVM's uid.
-//  2. SIGQUIT to the JVM inside the container. Works everywhere Docker does —
-//     including desktop on macOS/Windows, where the containers live in a VM and
-//     the host has no /proc entry to attach through.
+//  2. The same protocol spoken from INSIDE the container by the embedded
+//     attach class, run by the image's own java (internal/appfiles). Also
+//     returns the dump directly, and unlike (1) it works where the host has no
+//     /proc entry for the JVM: macOS/Windows desktop, remote DOCKER_HOST.
+//  3. SIGQUIT to the JVM inside the container. Works everywhere Docker does,
+//     but the JVM answers into its own stdout, so the dump must be read back
+//     out of the container log (inLog=true).
 func (r *Runtime) captureThreadDump(ctx context.Context, containerID string) (dump string, inLog bool, err error) {
 	if jvmattach.Supported {
-		dump, attachErr := r.attachThreadDump(ctx, containerID)
+		hostDump, attachErr := r.attachThreadDump(ctx, containerID)
 		if attachErr == nil {
-			return dump, false, nil
+			return hostDump, false, nil
 		}
-		// Not an error yet — the fallback below covers the common reasons
+		// Not an error yet — the paths below cover the common reasons
 		// (uid mismatch, no /proc visibility, a JVM too wedged to answer).
-		slog.Debug("Attach thread dump failed, falling back to SIGQUIT",
+		slog.Debug("Host attach thread dump failed, trying the in-container client",
 			"container", containerID, "err", attachErr)
 	}
-	if err := r.signalThreadDump(ctx, containerID); err != nil {
-		return "", false, err
+	classDump, classErr := r.runAttachInContainer(ctx, containerID, attachThreadDumpCmd)
+	if classErr == nil {
+		return classDump, false, nil
+	}
+	slog.Debug("In-container attach thread dump failed, falling back to SIGQUIT",
+		"container", containerID, "err", classErr)
+
+	if sigErr := r.signalThreadDump(ctx, containerID); sigErr != nil {
+		// Both failures are reported: whoever reads the diagnostics file later
+		// cannot see the debug log, and "why did the class not work" is the
+		// half that says whether the image or the JVM is the problem.
+		return "", false, fmt.Errorf("in-container attach: %w; signal: %w", classErr, sigErr)
 	}
 	return "", true, nil
 }

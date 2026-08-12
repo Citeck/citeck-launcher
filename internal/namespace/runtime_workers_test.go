@@ -231,6 +231,10 @@ func (m *workerMockDocker) ExecInContainer(_ context.Context, _ string, cmd []st
 	return "", 0, nil
 }
 
+func (m *workerMockDocker) CopyFileToContainer(_ context.Context, _, _, _ string, _ []byte) error {
+	return nil
+}
+
 func (m *workerMockDocker) GetPublishedPort(_ context.Context, _ string, p int) int { return p }
 func (m *workerMockDocker) GetContainerIP(_ context.Context, _ string) string       { return "1.2.3.4" }
 

@@ -1,7 +1,9 @@
 package docker
 
 import (
+	"archive/tar"
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -827,6 +829,56 @@ func (c *Client) ExecInContainer(ctx context.Context, containerID string, cmd []
 	}
 
 	return output, inspectResp.ExitCode, nil
+}
+
+// copiedFileMode is the mode every file the launcher copies into a container
+// is written with: readable by whatever user the image runs as, and never
+// executable.
+const copiedFileMode = 0o644
+
+// CopyFileToContainer writes one regular file into a running container.
+//
+// The Docker API takes a tar stream, so the tar header — not the API call —
+// carries the mode and the ownership. Both are deliberate: uid/gid 0 (the
+// default when CopyUIDGID is off) with mode 0644, so the file is readable by
+// whatever user the image runs as (postgres 999, keycloak 1000, webapps root)
+// and is NOT executable. The launcher's only user of this is the JVM attach
+// class, and it must stay true that the launcher never drops an executable into
+// a running production container.
+func (c *Client) CopyFileToContainer(ctx context.Context, containerID, destDir, name string, data []byte) error {
+	buf, err := tarSingleFile(name, data)
+	if err != nil {
+		return err
+	}
+	if _, err := c.cli.CopyToContainer(ctx, containerID, client.CopyToContainerOptions{
+		DestinationPath: destDir,
+		Content:         buf,
+	}); err != nil {
+		return fmt.Errorf("copy %s into %s: %w", name, destDir, err)
+	}
+	return nil
+}
+
+// tarSingleFile builds the one-entry tar archive CopyFileToContainer sends.
+func tarSingleFile(name string, data []byte) (*bytes.Buffer, error) {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	if err := tw.WriteHeader(&tar.Header{
+		Name:     name,
+		Mode:     copiedFileMode,
+		Size:     int64(len(data)),
+		ModTime:  time.Now(),
+		Typeflag: tar.TypeReg,
+	}); err != nil {
+		return nil, fmt.Errorf("tar header for %s: %w", name, err)
+	}
+	if _, err := tw.Write(data); err != nil {
+		return nil, fmt.Errorf("tar body for %s: %w", name, err)
+	}
+	if err := tw.Close(); err != nil {
+		return nil, fmt.Errorf("finish tar for %s: %w", name, err)
+	}
+	return &buf, nil
 }
 
 // GetPublishedPort returns the host port for a container's exposed port.

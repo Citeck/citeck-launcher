@@ -32,6 +32,7 @@ type RuntimeClient interface {
 	ContainerLogs(ctx context.Context, containerID string, tail int) (string, error)
 	ContainerLogsFollow(ctx context.Context, containerID string, tail int) (io.ReadCloser, error)
 	ExecInContainer(ctx context.Context, containerID string, cmd []string) (string, int, error)
+	CopyFileToContainer(ctx context.Context, containerID, destDir, name string, data []byte) error
 	GetPublishedPort(ctx context.Context, containerID string, containerPort int) int
 	GetContainerIP(ctx context.Context, containerID string) string
 	ContainerStats(ctx context.Context, containerID string) (*ContainerStat, error)
