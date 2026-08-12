@@ -97,7 +97,24 @@ func (c *DaemonClient) post(path string, body, result any) error {
 	return decodeResponse(resp, result)
 }
 
+// postLong is post() over the streaming (timeout-free) client, for requests
+// whose duration is the JVM's to decide — a heap dump on a large heap runs for
+// minutes, and cutting it off at the client would leave a half-written file on
+// the daemon's host with nobody waiting for the answer.
+func (c *DaemonClient) postLong(path string, body, result any) error {
+	resp, err := c.doRequestWith(c.streamClient, http.MethodPost, path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return decodeResponse(resp, result)
+}
+
 func (c *DaemonClient) doRequest(method, path string, body any) (*http.Response, error) {
+	return c.doRequestWith(c.httpClient, method, path, body)
+}
+
+func (c *DaemonClient) doRequestWith(hc *http.Client, method, path string, body any) (*http.Response, error) {
 	var bodyReader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -117,7 +134,7 @@ func (c *DaemonClient) doRequest(method, path string, body any) (*http.Response,
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, doErr := c.httpClient.Do(req)
+	resp, doErr := hc.Do(req)
 	if doErr != nil {
 		return nil, fmt.Errorf("execute %s %s: %w", method, path, doErr)
 	}

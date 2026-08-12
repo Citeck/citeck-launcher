@@ -872,6 +872,8 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/apps/{name}/config", d.handlePutAppConfig)
 	mux.HandleFunc("POST /api/v1/apps/{name}/config/reset", d.handleResetAppConfig)
 	mux.HandleFunc("DELETE /api/v1/apps/{name}/restart-events", d.handleClearAppRestartEvents)
+	mux.HandleFunc("POST /api/v1/apps/{name}/jcmd", d.handleAppJVMCommand)
+	mux.HandleFunc("POST /api/v1/apps/{name}/heap-dump", d.handleAppHeapDump)
 	mux.HandleFunc("GET /api/v1/apps/{name}/export", d.handleListAppExports)
 	mux.HandleFunc("GET /api/v1/apps/{name}/export/{file}", d.handleGetAppExport)
 	mux.HandleFunc("DELETE /api/v1/apps/{name}/export/{file}", d.handleDeleteAppExport)

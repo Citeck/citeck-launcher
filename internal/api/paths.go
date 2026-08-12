@@ -134,6 +134,18 @@ func AppExportFile(name, file string) string {
 	return fmt.Sprintf("%s/%s/export/%s", Apps, name, url.PathEscape(file))
 }
 
+// AppJVMCommand returns the API path for running a jcmd-style command against
+// an app's JVM.
+func AppJVMCommand(name string) string {
+	return fmt.Sprintf("%s/%s/jcmd", Apps, name)
+}
+
+// AppHeapDump returns the API path for writing a heap dump into an app's
+// export directory.
+func AppHeapDump(name string) string {
+	return fmt.Sprintf("%s/%s/heap-dump", Apps, name)
+}
+
 // AppRestart returns the API path for restarting an app.
 func AppRestart(name string) string {
 	return fmt.Sprintf("%s/%s/restart", Apps, name)

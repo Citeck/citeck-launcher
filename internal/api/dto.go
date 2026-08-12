@@ -702,3 +702,30 @@ type ExportFileDto struct {
 	Modified string `json:"modified"`
 	HostPath string `json:"hostPath,omitempty"`
 }
+
+// --- JVM diagnostics ---
+
+// JVMCommandRequestDto is the body of the per-app jcmd endpoint. Command is a
+// jcmd verb ("Thread.print", "GC.class_histogram", "help"); Args are its
+// options. They are joined into a single attach argument by the daemon —
+// HotSpot's attach protocol takes the whole jcmd line in one slot.
+type JVMCommandRequestDto struct {
+	Command string   `json:"command"`
+	Args    []string `json:"args,omitempty"`
+}
+
+// JVMCommandResponseDto carries the JVM's own output verbatim.
+type JVMCommandResponseDto struct {
+	App     string `json:"app"`
+	Command string `json:"command"`
+	Output  string `json:"output"`
+}
+
+// HeapDumpResponseDto names the dump that was written into the app's export
+// directory. The file is fetched through the export API — the only route that
+// also works when the daemon is on another host.
+type HeapDumpResponseDto struct {
+	App  string `json:"app"`
+	File string `json:"file"`
+	Size int64  `json:"size"`
+}

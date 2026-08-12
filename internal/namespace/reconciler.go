@@ -2,7 +2,6 @@ package namespace
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -240,25 +239,11 @@ func (r *Runtime) captureThreadDump(ctx context.Context, containerID string) (du
 	return "", true, nil
 }
 
-// attachThreadDump speaks the attach protocol to the JVM behind containerID.
+// attachThreadDump speaks the attach protocol to the JVM behind containerID,
+// from this host. `threaddump` is HotSpot's own verb for it (see attachJcmd for
+// the jcmd-spelled commands the operator can ask for).
 func (r *Runtime) attachThreadDump(ctx context.Context, containerID string) (string, error) {
-	info, err := r.docker.InspectContainer(ctx, containerID)
-	if err != nil {
-		return "", fmt.Errorf("inspect container: %w", err)
-	}
-	if info.State == nil || info.State.Pid <= 0 {
-		return "", errors.New("container has no host pid")
-	}
-	att := jvmattach.New()
-	pid, err := att.FindJVM(info.State.Pid, diagJVMSearchDepth)
-	if err != nil {
-		return "", fmt.Errorf("find jvm under pid %d: %w", info.State.Pid, err)
-	}
-	dump, err := att.ThreadDump(ctx, pid)
-	if err != nil {
-		return "", fmt.Errorf("attach to jvm pid %d: %w", pid, err)
-	}
-	return dump, nil
+	return r.attachHostCommand(ctx, containerID, attachThreadDumpCmd)
 }
 
 // signalThreadDump asks the JVM to dump its threads to stdout, from inside the

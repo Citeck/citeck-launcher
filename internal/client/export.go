@@ -51,3 +51,30 @@ func (c *DaemonClient) DeleteAppExport(name, file string) error {
 	defer func() { _ = resp.Body.Close() }()
 	return decodeResponse(resp, nil)
 }
+
+// --- JVM diagnostics ---
+
+// JVMCommand runs one jcmd-style command against an app's JVM.
+//
+// It goes through the streaming (timeout-free) client: several of these are
+// stop-the-world operations whose duration scales with the heap, and the
+// ordinary 120s request timeout would abandon a dump that is still being
+// written.
+func (c *DaemonClient) JVMCommand(name, command string, args []string) (api.JVMCommandResponseDto, error) {
+	var out api.JVMCommandResponseDto
+	err := c.postLong(api.AppJVMCommand(name), api.JVMCommandRequestDto{Command: command, Args: args}, &out)
+	if err != nil {
+		return out, fmt.Errorf("jcmd %s on %q: %w", command, name, err)
+	}
+	return out, nil
+}
+
+// HeapDump asks the daemon to write a gzipped heap dump into the app's export
+// directory and returns its name.
+func (c *DaemonClient) HeapDump(name string) (api.HeapDumpResponseDto, error) {
+	var out api.HeapDumpResponseDto
+	if err := c.postLong(api.AppHeapDump(name), nil, &out); err != nil {
+		return out, fmt.Errorf("heap dump of %q: %w", name, err)
+	}
+	return out, nil
+}
