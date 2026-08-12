@@ -168,8 +168,10 @@ func generateWebapp(name string, ctx *NsGenContext) {
 	if javaOpts != "" {
 		app.AddEnv("JAVA_OPTS", strings.TrimSpace(javaOpts))
 	}
-	// Must come after every other JAVA_OPTS writer above, since it appends to
-	// whatever they left behind.
+	// Both append to whatever the writers above left behind, so they come last.
+	// The budget runs first: applyHeapDumpOnOOM only looks for heap-dump flags,
+	// while the budget steps aside when it finds a hand-configured -Xmx.
+	applyMemoryBudget(app)
 	applyHeapDumpOnOOM(app)
 
 	processWebappDataSources(name, app, ctx)
