@@ -125,6 +125,42 @@ func generateSelfSignedCertForConfig(nsCfg *namespace.Config) {
 	nsCfg.Proxy.TLS.KeyPath = keyPath
 }
 
+// resolveProxyTLSPathsForPlan wires nsCfg.Proxy.TLS.{CertPath,KeyPath} to a cert
+// that is ALREADY on disk, without obtaining, renewing or generating anything.
+//
+// It exists because the reload PLAN re-reads the stored namespace.yml, where the
+// paths are empty for every self-signed and Let's Encrypt namespace — the daemon
+// fills them in memory when it provisions the cert. Without this the plan
+// generates an HTTP proxy and reports that a reload will strip ENABLE_HTTPS,
+// SERVER_TLS_CERT and the 443 binding, i.e. that `citeck reload` is about to
+// turn HTTPS off. It will not: the real reload runs ensureProxyTLSCerts first.
+// Measured on the test stand — the proxy was the only app the plan wanted to
+// recreate, on a namespace where nothing had changed.
+//
+// A namespace whose cert does not exist yet is left alone: the plan cannot know
+// what an obtain would produce, and a first run recreates the proxy anyway.
+func resolveProxyTLSPathsForPlan(nsCfg *namespace.Config) {
+	if nsCfg == nil || !nsCfg.Proxy.TLS.Enabled || nsCfg.Proxy.TLS.CertPath != "" {
+		return
+	}
+	if nsCfg.Proxy.TLS.LetsEncrypt && nsCfg.Proxy.Host != "" && nsCfg.Proxy.Host != "localhost" {
+		acmeClient := acme.NewClient(config.DataDir(), config.ConfDir(), nsCfg.Proxy.Host)
+		if acmeClient.CertMatchesHost() {
+			nsCfg.Proxy.TLS.CertPath = acmeClient.CertPath()
+			nsCfg.Proxy.TLS.KeyPath = acmeClient.KeyPath()
+			return
+		}
+		// LE configured but not provisioned: the daemon falls back to the
+		// self-signed pair below, so the plan follows it there.
+	}
+	certPath := filepath.Join(config.ConfDir(), "tls", "server.crt")
+	keyPath := filepath.Join(config.ConfDir(), "tls", "server.key")
+	if isRegularFile(certPath) && isRegularFile(keyPath) {
+		nsCfg.Proxy.TLS.CertPath = certPath
+		nsCfg.Proxy.TLS.KeyPath = keyPath
+	}
+}
+
 // isRegularFile returns true if path exists and is a regular file.
 func isRegularFile(path string) bool {
 	fi, err := os.Stat(path)

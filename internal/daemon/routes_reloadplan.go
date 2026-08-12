@@ -119,6 +119,11 @@ func (d *Daemon) resolveReloadPlanInputs(act activeNamespace) (*reloadPlanInputs
 	if err != nil {
 		return nil, fmt.Errorf("reload config: %w", err)
 	}
+	// The stored config carries no cert paths for a self-signed / LE namespace —
+	// the daemon fills them when it provisions the cert. Point them at what is
+	// already on disk (no obtain, no renew, no generate) so the plan does not
+	// claim a reload is about to turn HTTPS off.
+	resolveProxyTLSPathsForPlan(nsCfg)
 
 	resolver := bundle.NewResolverWithAuth(config.BundlesDataDir(act.workspaceID), makeTokenLookup(d.secretReaderFunc())).
 		WithWorkspaceRepo(d.resolveActiveWorkspaceRepoOpts()).
