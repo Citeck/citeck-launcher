@@ -132,6 +132,16 @@ func generateAndWriteRuntimeFiles(
 		return nil, fmt.Errorf("generate namespace %q: %w", nsCfg.ID, err)
 	}
 	writeRuntimeFiles(volumesBase, genResp.Files, edited)
+	// Export dirs are not generated FILES, so writeRuntimeFiles never sees them.
+	// They must exist (and be writable by the container's user) before the
+	// container starts, or Docker creates the bind-mount source itself as root
+	// and a non-root app silently cannot write to it.
+	for i := range genResp.Applications {
+		if err := namespace.EnsureExportDir(volumesBase, genResp.Applications[i].Name); err != nil {
+			// Not fatal: an app that cannot export still runs perfectly well.
+			slog.Warn("Failed to prepare export dir", "app", genResp.Applications[i].Name, "err", err)
+		}
+	}
 	return genResp, nil
 }
 

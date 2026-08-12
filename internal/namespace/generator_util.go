@@ -296,7 +296,12 @@ func computeVolumesContentHash(app *appdef.ApplicationDef, files map[string][]by
 			}
 		}
 	}
-	keys = expandDirMountKeys(keys, files)
+	// The export dir is the container's OUTPUT (heap dumps, pg_dumps): hashing it
+	// would let an app recreate itself simply by writing a file. Today nothing
+	// under export/ can reach the generated file map anyway, so this filter is
+	// belt and braces — but it is the line that makes the input/output split a
+	// rule rather than an accident of how `files` happens to be built.
+	keys = slices.DeleteFunc(expandDirMountKeys(keys, files), isExportKey)
 	if len(keys) == 0 {
 		return ""
 	}

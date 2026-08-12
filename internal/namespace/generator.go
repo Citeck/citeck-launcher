@@ -140,6 +140,11 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 		}
 	}
 
+	// Every app gets the export directory (see attachExportDir).
+	for _, b := range ctx.Applications {
+		attachExportDir(b)
+	}
+
 	// Build baseline (patch-free) applications.
 	baselineApps := make([]appdef.ApplicationDef, 0, len(ctx.Applications))
 	for _, b := range ctx.Applications {
