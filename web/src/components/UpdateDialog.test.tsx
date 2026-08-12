@@ -2,7 +2,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useUpdateStore } from '../lib/updateStore'
 import { UpdateDialog } from './UpdateDialog'
-import { openExternal } from '../lib/api'
+import { openExternal, getUpdateChangelog } from '../lib/api'
 
 vi.mock('../lib/api', () => ({
   getUpdateChangelog: vi.fn().mockResolvedValue([
@@ -71,5 +71,50 @@ describe('UpdateDialog', () => {
     // in desktop mode via openExternal).
     fireEvent.click(screen.getByText('Open releases page'))
     expect(vi.mocked(openExternal)).toHaveBeenCalledWith(releasesUrl)
+  })
+})
+
+// The daemon reports "no notes" both when a release genuinely has none and when
+// changelog/index.json could not be fetched (a 404 there is deliberately not an
+// error). Right after a release the second case is the likely one — and since
+// the dialog only loads notes on the open transition, an empty result outlives
+// the condition that caused it. Observed in the wild on 2.9.2: the dialog sat on
+// "No changelog available" for over an hour while the file was fetchable.
+describe('UpdateDialog empty-changelog recovery', () => {
+  beforeEach(() => {
+    HTMLDialogElement.prototype.showModal = vi.fn()
+    HTMLDialogElement.prototype.close = vi.fn()
+    useUpdateStore.setState({
+      status: { currentVersion: '2.9.1', latestVersion: '2.9.2', available: true, applying: false },
+    })
+  })
+
+  it('offers a retry on the empty state that actually re-fetches', async () => {
+    vi.mocked(getUpdateChangelog)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ version: '2.9.2', date: '2026-08-12', markdown: '- recovered entry' }])
+
+    render(<UpdateDialog open onClose={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Retry')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByText('Retry'))
+    await waitFor(() => expect(screen.getByText('recovered entry')).toBeInTheDocument())
+  })
+
+  it('re-fetches the changelog on "Check now", not just the release status', async () => {
+    const check = vi.fn().mockResolvedValue(undefined)
+    useUpdateStore.setState({ check })
+    vi.mocked(getUpdateChangelog)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ version: '2.9.2', date: '2026-08-12', markdown: '- appeared now' }])
+
+    render(<UpdateDialog open onClose={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Retry')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByText('Check now'))
+    await waitFor(() => expect(check).toHaveBeenCalled())
+    // Checking alone used to leave the dead end in place: the notes are loaded
+    // only by the on-open effect, so the button could not fix what it sat next to.
+    await waitFor(() => expect(screen.getByText('appeared now')).toBeInTheDocument())
   })
 })

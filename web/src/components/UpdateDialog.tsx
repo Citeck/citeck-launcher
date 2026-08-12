@@ -113,8 +113,24 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
         <div className="mt-4 flex-1 overflow-auto rounded-md border border-border bg-background p-4">
           {loading && <p className="text-sm text-muted-foreground">{t('update.loadingChangelog')}</p>}
           {!loading && error && <p className="text-sm text-destructive">{error}</p>}
+          {/* An empty list is genuinely ambiguous: the daemon reports "no notes"
+              both when a release truly has none (a tag predating the changelog
+              feature) AND when changelog/index.json could not be fetched — a
+              404 there is deliberately not treated as an error. Right after a
+              release the second case is the likely one, and the dialog only
+              fetches on open, so without a retry here the message is a dead end
+              that outlives the condition that caused it. */}
           {!loading && !error && notes.length === 0 && (
-            <p className="text-sm text-muted-foreground">{t('update.noChangelog')}</p>
+            <div className="flex items-center gap-3">
+              <p className="text-sm text-muted-foreground">{t('update.noChangelog')}</p>
+              <button
+                type="button"
+                className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted"
+                onClick={loadChangelog}
+              >
+                {t('common.retry')}
+              </button>
+            </div>
           )}
           {!loading &&
             !error &&
@@ -136,7 +152,13 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
           <button
             type="button"
             className="rounded-md border border-border px-4 py-2 text-sm hover:bg-muted disabled:opacity-50"
-            onClick={() => void check()}
+            // Re-check the release AND re-fetch the notes. Checking alone left
+            // the one affordance offered next to an empty changelog unable to
+            // fix it: `check()` only refreshes the release status, and the
+            // notes are loaded solely by the on-open effect. Order matters —
+            // the daemon's Changelog() reads the cached latest, so refresh that
+            // first.
+            onClick={() => { void check().then(loadChangelog).catch(loadChangelog) }}
             disabled={applying}
           >
             {t('update.checkNow')}
