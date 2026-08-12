@@ -120,6 +120,7 @@ func ApplyAppDefPatch(base appdef.ApplicationDef, patch json.RawMessage) (appdef
 		return base, fmt.Errorf("unmarshal merged appdef: %w", err)
 	}
 	out.IsInit = base.IsInit // json:"-" — absent from the marshaled form
+	out.IsJVM = base.IsJVM   // same: a patch cannot make an app a JVM or stop it being one
 	out.ImageDigest = ""
 	out.VolumesContentHash = base.VolumesContentHash
 	return out, nil

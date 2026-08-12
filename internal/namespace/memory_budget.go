@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/docker"
 )
 
@@ -344,17 +346,21 @@ func clampBytes(v, lo, hi int64) int64 {
 // code cache unbounded. So a configured -Xmx is taken as given and the REST of
 // the container is divided over the pools nobody sized — rather than the budget
 // stepping aside and leaving the actual problem in place.
-func applyMemoryBudget(app *AppBuilder) {
-	if app.Resources == nil || app.Resources.Limits.Memory == "" {
+//
+// Runs on the EFFECTIVE def, after any `citeck edit` patch: the patch can change
+// resources.limits.memory, and budgeting the JVM for a limit the container no
+// longer has is how someone raises memoryLimit to 8g and gets a 1 GiB heap.
+func applyMemoryBudget(def *appdef.ApplicationDef) {
+	if def.Resources == nil || def.Resources.Limits.Memory == "" {
 		return
 	}
-	limit := docker.ParseMemory(app.Resources.Limits.Memory)
-	opts, _ := app.Environments.Get("JAVA_OPTS")
+	limit := docker.ParseMemory(def.Resources.Limits.Memory)
+	opts, _ := def.Environments.Get("JAVA_OPTS")
 
 	manual, ok := parseManualPools(opts, limit)
 	if !ok {
 		slog.Warn("JVM memory budget skipped: cannot read the configured pool sizes",
-			"app", app.Name, "javaOpts", opts)
+			"app", def.Name, "javaOpts", opts)
 		return
 	}
 	budget, ok := ComputeMemoryBudgetWith(limit, manual)
@@ -364,10 +370,10 @@ func applyMemoryBudget(app *AppBuilder) {
 		// otherwise, and it ends as a kernel OOM-kill with no Java error.
 		if !manual.empty() {
 			slog.Warn("JVM memory budget skipped: the configured heap leaves too little for the other pools",
-				"app", app.Name, "limit", app.Resources.Limits.Memory, "javaOpts", opts)
+				"app", def.Name, "limit", def.Resources.Limits.Memory, "javaOpts", opts)
 		} else {
 			slog.Debug("JVM memory budget skipped: limit too small to divide",
-				"app", app.Name, "limit", app.Resources.Limits.Memory)
+				"app", def.Name, "limit", def.Resources.Limits.Memory)
 		}
 		return
 	}
@@ -375,11 +381,28 @@ func applyMemoryBudget(app *AppBuilder) {
 	if flags == "" {
 		return // every pool is already sized by hand
 	}
-	app.AddEnv("JAVA_OPTS", strings.TrimSpace(opts+" "+flags))
+	def.Environments.Set("JAVA_OPTS", strings.TrimSpace(opts+" "+flags))
 	// glibc grows up to 8 arenas per core by default, each up to 64 MiB of
 	// untouched-but-charged address space; on a 16-core box that is the single
 	// largest unattributed native consumer after NIO. Two arenas costs a little
 	// malloc contention and buys a bounded term in the inequality above.
-	app.AddEnv("MALLOC_ARENA_MAX", "2")
-	slog.Info("Computed JVM memory budget", "app", app.Name, "budget", budget.String())
+	def.Environments.Set("MALLOC_ARENA_MAX", "2")
+	slog.Info("Computed JVM memory budget", "app", def.Name, "budget", budget.String())
+}
+
+// applyJVMRuntimeDefaults applies everything that depends on the app's EFFECTIVE
+// memory limit and JAVA_OPTS, so it runs after the edit patch has been merged.
+func applyJVMRuntimeDefaults(def *appdef.ApplicationDef) {
+	if !def.IsJVM {
+		return
+	}
+	// An effective def that carries no patch is a struct COPY of its baseline, so
+	// the two share one Environments backing array: setting JAVA_OPTS on the
+	// baseline would rewrite it in the effective def as well, and the second pass
+	// would then read its own output back as operator configuration and add
+	// nothing. Clone before mutating.
+	def.Environments = slices.Clone(def.Environments)
+	applyMemoryBudget(def)
+	// Appends, so it has to come after every other JAVA_OPTS writer.
+	applyHeapDumpOnOOM(def)
 }

@@ -297,6 +297,7 @@ type AppBuilder struct {
 	LivenessProbe      *appdef.AppProbeDef
 	Resources          *appdef.AppResourcesDef
 	Kind               appdef.ApplicationKind
+	IsJVM              bool
 	ShmSize            string
 	InitContainers     []appdef.InitContainerDef
 	StopTimeout        int
@@ -343,6 +344,7 @@ func (b *AppBuilder) Build() appdef.ApplicationDef {
 		LivenessProbe:      b.LivenessProbe,
 		Resources:          b.Resources,
 		Kind:               b.Kind,
+		IsJVM:              b.IsJVM,
 		ShmSize:            b.ShmSize,
 		InitContainers:     b.InitContainers,
 		StopTimeout:        b.StopTimeout,

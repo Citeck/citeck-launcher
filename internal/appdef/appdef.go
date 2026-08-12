@@ -159,8 +159,14 @@ type ApplicationDef struct {
 	Kind               ApplicationKind    `json:"kind" yaml:"kind"`
 	ShmSize            string             `json:"shmSize,omitempty" yaml:"shmSize,omitempty"`
 	InitContainers     []InitContainerDef `json:"initContainers,omitempty" yaml:"initContainers,omitempty"`
-	IsInit             bool               `json:"-" yaml:"-"`                                         // true for init containers (no restart policy)
-	StopTimeout        int                `json:"stopTimeout,omitempty" yaml:"stopTimeout,omitempty"` // seconds; 0 = default (15s webapps, 30s infra)
+	IsInit             bool               `json:"-" yaml:"-"` // true for init containers (no restart policy)
+	// IsJVM marks an app the launcher may size JVM pools for. Kind is not a
+	// substitute: the proxy is KindCiteckCore and runs nginx, while alfresco and
+	// solr are KindCiteckAdditional and are JVMs. json:"-" keeps it out of the
+	// deployment hash and out of the config editor — it describes the image, not
+	// the deployment.
+	IsJVM       bool `json:"-" yaml:"-"`
+	StopTimeout int  `json:"stopTimeout,omitempty" yaml:"stopTimeout,omitempty"` // seconds; 0 = default (15s webapps, 30s infra)
 }
 
 // GetHashInput returns the string used to compute the application definition hash (for debugging).

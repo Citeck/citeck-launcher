@@ -269,43 +269,76 @@ func generateWebappWith(t *testing.T, props WebappProps) *GenResp {
 	return resp
 }
 
-// TestEditedAppPatchOverridesTheBudget answers the question every operator will
+// TestEditedAppPatchIsBudgetedAround answers the question every operator will
 // ask: does the automatic budget trample a JAVA_OPTS I set by hand?
 //
-// It cannot. There are two independent layers of manual control and this pins
-// the second one — `citeck edit <app>` (and the gear icon, same endpoint), whose
-// patch is applied AFTER generation. ApplyAppDefPatch is a shallow top-level
-// merge, so a patched `environments` replaces the generated one wholesale: the
-// operator sees the effective def, edits it, and their value is final. The
-// first layer is heapSize/javaOpts config, covered by the tests above.
-func TestEditedAppPatchOverridesTheBudget(t *testing.T) {
-	cfg := &Config{
-		Authentication: AuthenticationProps{Type: AuthKeycloak, Users: []string{"admin"}},
-		Proxy:          ProxyProps{Port: 80},
-		Webapps:        map[string]WebappProps{"emodel": {MemoryLimit: "4g"}},
-	}
-	bun := &bundle.Def{Applications: map[string]bundle.AppDef{"emodel": {Image: "nexus.citeck.ru/emodel:1.0"}}}
-	wsCfg := &bundle.WorkspaceConfig{Webapps: []bundle.WebappConfig{{ID: "emodel"}}}
-
-	// What the operator typed into the editor, having seen the generated def.
+// It cannot override one. The pools the operator names are taken as given; the
+// ones they left alone are budgeted around them. This is the third route in —
+// `citeck edit <app>` (and the gear icon, same endpoint), whose patch is applied
+// AFTER generation, which is exactly why the budget is computed after the merge
+// rather than during it.
+func TestEditedAppPatchIsBudgetedAround(t *testing.T) {
 	patch := json.RawMessage(`{"environments":{"JAVA_OPTS":"-Xmx1g -XX:MaxDirectMemorySize=128m"}}`)
-
-	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "j", OIDC: "o"},
-		GenerateOpts{EditedAppPatches: map[string]json.RawMessage{"emodel": patch}})
-	require.NoError(t, err)
+	resp := generatePatchedWebapp(t, WebappProps{MemoryLimit: "4g"}, patch)
 
 	app := findGeneratedApp(resp, "emodel")
 	require.NotNil(t, app)
 	opts, _ := app.Environments.Get("JAVA_OPTS")
-	assert.Equal(t, "-Xmx1g -XX:MaxDirectMemorySize=128m", opts, "the operator's edit is final")
 
-	// And the untouched baseline still carries the computed budget, so the
-	// editor's change gutter shows what was overridden.
+	assert.Contains(t, opts, "-Xmx1g", "the operator's heap is untouched")
+	assert.Equal(t, 1, strings.Count(opts, "-Xmx"))
+	assert.Contains(t, opts, "-XX:MaxDirectMemorySize=128m", "and their direct memory too")
+	assert.Equal(t, 1, strings.Count(opts, "MaxDirectMemorySize"))
+	// The two pools they did NOT name are the ones this exists for.
+	assert.Contains(t, opts, "-XX:MaxMetaspaceSize=")
+	assert.Contains(t, opts, "-XX:ReservedCodeCacheSize=")
+}
+
+// TestPatchedMemoryLimitIsBudgetedFor: raising memoryLimit through the app
+// editor must actually give the JVM more memory.
+//
+// This is why applyJVMRuntimeDefaults runs after the patch merge. Computed
+// during generation, the budget would have been derived from the limit the app
+// used to have: the container would get 8 GiB and the heap would stay capped at
+// the 2 GiB figure — the raise would do nothing, silently.
+func TestPatchedMemoryLimitIsBudgetedFor(t *testing.T) {
+	patch := json.RawMessage(`{"resources":{"limits":{"memory":"8g"}}}`)
+	resp := generatePatchedWebapp(t, WebappProps{MemoryLimit: "2g"}, patch)
+
+	app := findGeneratedApp(resp, "emodel")
+	require.NotNil(t, app)
+	assert.Equal(t, "8g", app.Resources.Limits.Memory)
+
+	opts, _ := app.Environments.Get("JAVA_OPTS")
+	want, ok := ComputeMemoryBudget(8 * gib)
+	require.True(t, ok)
+	assert.Contains(t, opts, want.JavaOpts(), "the budget must follow the effective limit")
+
+	stale, _ := ComputeMemoryBudget(2 * gib)
+	assert.NotContains(t, opts, stale.JavaOpts(), "the pre-patch limit must not survive")
+
+	// The baseline keeps the pre-patch budget, so the editor's change gutter
+	// still shows what the patch actually changed.
 	baseline := findGeneratedAppIn(resp.BaselineApplications, "emodel")
 	require.NotNil(t, baseline)
 	baseOpts, _ := baseline.Environments.Get("JAVA_OPTS")
-	budget, _ := ComputeMemoryBudget(4 * gib)
-	assert.Contains(t, baseOpts, budget.JavaOpts())
+	assert.Contains(t, baseOpts, stale.JavaOpts())
+}
+
+func generatePatchedWebapp(t *testing.T, props WebappProps, patch json.RawMessage) *GenResp {
+	t.Helper()
+	cfg := &Config{
+		Authentication: AuthenticationProps{Type: AuthKeycloak, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+		Webapps:        map[string]WebappProps{"emodel": props},
+	}
+	bun := &bundle.Def{Applications: map[string]bundle.AppDef{"emodel": {Image: "nexus.citeck.ru/emodel:1.0"}}}
+	wsCfg := &bundle.WorkspaceConfig{Webapps: []bundle.WebappConfig{{ID: "emodel"}}}
+
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "j", OIDC: "o"},
+		GenerateOpts{EditedAppPatches: map[string]json.RawMessage{"emodel": patch}})
+	require.NoError(t, err)
+	return resp
 }
 
 func findGeneratedAppIn(apps []appdef.ApplicationDef, name string) *appdef.ApplicationDef {
@@ -346,4 +379,73 @@ func TestNonMemoryJavaOptsAreKeptAlongsideTheBudget(t *testing.T) {
 	assert.Contains(t, opts, "-Dspring.jmx.enabled=true")
 	budget, _ := ComputeMemoryBudget(4 * gib)
 	assert.Contains(t, opts, budget.JavaOpts())
+}
+
+// The effective def of an app with no patch is a struct COPY of its baseline, so
+// the two share one Environments backing array. Without a clone, budgeting the
+// baseline would rewrite JAVA_OPTS in the effective def too — and the second
+// pass would then read its own output back as operator configuration and add
+// nothing (observed: MALLOC_ARENA_MAX went missing while the flags appeared
+// anyway, purely by aliasing).
+func TestBaselineAndEffectiveEnvsAreIndependent(t *testing.T) {
+	// heapSize means JAVA_OPTS already EXISTS, so the budget's Set writes in
+	// place — which is the case where a shared backing array actually bites.
+	resp := generateWebappWith(t, WebappProps{MemoryLimit: "4g", HeapSize: "3g"})
+
+	app := findGeneratedApp(resp, "emodel")
+	baseline := findGeneratedAppIn(resp.BaselineApplications, "emodel")
+	require.NotNil(t, app)
+	require.NotNil(t, baseline)
+
+	for _, def := range []*appdef.ApplicationDef{app, baseline} {
+		opts, ok := def.Environments.Get("JAVA_OPTS")
+		require.True(t, ok)
+		assert.Equal(t, 1, strings.Count(opts, "-Xmx"), "each def budgeted exactly once: %s", opts)
+		assert.Contains(t, opts, "-XX:MaxDirectMemorySize=", "%s", opts)
+		arenas, ok := def.Environments.Get("MALLOC_ARENA_MAX")
+		assert.True(t, ok, "both defs must carry the full result, not a half-applied one")
+		assert.Equal(t, "2", arenas)
+	}
+}
+
+// TestOnlyJVMAppsAreBudgeted: the discriminator is IsJVM, not Kind. The proxy is
+// KindCiteckCore and runs nginx; the stt sidecar is KindCiteckAdditional and is
+// not a JVM either — neither should collect JAVA_OPTS it will never read, and
+// neither should appear in the editor carrying flags for a runtime it does not
+// have. Conversely alfresco and solr ARE JVMs despite being "additional".
+func TestOnlyJVMAppsAreBudgeted(t *testing.T) {
+	cfg := &Config{
+		Authentication: AuthenticationProps{Type: AuthKeycloak, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+	}
+	bun := &bundle.Def{Applications: map[string]bundle.AppDef{
+		"emodel":   {Image: "nexus.citeck.ru/emodel:1.0"},
+		"gateway":  {Image: "nexus.citeck.ru/gateway:1.0"}, // the proxy depends on it
+		"alfresco": {Image: "nexus.citeck.ru/alfresco:1.0"},
+	}}
+	wsCfg := &bundle.WorkspaceConfig{
+		Webapps:  []bundle.WebappConfig{{ID: "emodel"}, {ID: "gateway"}},
+		Alfresco: bundle.AlfrescoProps{Enabled: true},
+	}
+
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "j", OIDC: "o"})
+	require.NoError(t, err)
+
+	for _, app := range resp.Applications {
+		_, hasOpts := app.Environments.Get("JAVA_OPTS")
+		if app.IsJVM {
+			assert.Truef(t, hasOpts, "%s is a JVM app and must be budgeted", app.Name)
+			continue
+		}
+		assert.Falsef(t, hasOpts, "%s is not a JVM app and must not get JAVA_OPTS", app.Name)
+		_, hasArenas := app.Environments.Get("MALLOC_ARENA_MAX")
+		assert.Falsef(t, hasArenas, "%s is not a JVM app and must not get MALLOC_ARENA_MAX", app.Name)
+	}
+
+	// postgres and the proxy are the two that would have slipped through a
+	// Kind-based check (KindThirdParty and KindCiteckCore respectively).
+	proxy := findGeneratedApp(resp, appdef.AppProxy)
+	require.NotNil(t, proxy)
+	assert.False(t, proxy.IsJVM, "the proxy runs nginx")
+	assert.True(t, proxy.Kind.IsCiteckApp(), "…and is nonetheless a Citeck-kind app")
 }

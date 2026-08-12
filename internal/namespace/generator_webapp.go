@@ -53,6 +53,7 @@ func generateWebapp(name string, ctx *NsGenContext) {
 	app := ctx.GetOrCreateApp(name)
 	app.Image = bundleApp.Image
 	app.Kind = webappKind(name)
+	app.IsJVM = true
 
 	// Computed locals seeded from the workspace layers, then overridden by the
 	// namespace config below. Everything is guarded on a set value, so a layer
@@ -168,11 +169,6 @@ func generateWebapp(name string, ctx *NsGenContext) {
 	if javaOpts != "" {
 		app.AddEnv("JAVA_OPTS", strings.TrimSpace(javaOpts))
 	}
-	// Both append to whatever the writers above left behind, so they come last.
-	// The budget runs first: applyHeapDumpOnOOM only looks for heap-dump flags,
-	// while the budget steps aside when it finds a hand-configured -Xmx.
-	applyMemoryBudget(app)
-	applyHeapDumpOnOOM(app)
 
 	processWebappDataSources(name, app, ctx)
 	configureWebappProbes(name, app, ctx, port)
@@ -577,6 +573,7 @@ func generateAlfresco(ctx *NsGenContext) {
 	alfApp := ctx.GetOrCreateApp(appdef.AppAlfresco)
 	alfApp.Image = alfImage
 	alfApp.Kind = appdef.KindCiteckAdditional
+	alfApp.IsJVM = true
 	alfPort := 17019 // fixed port for alfresco — not part of webapp counter
 	alfApp.AddPort(fmt.Sprintf("%d:8080", alfPort))
 	alfApp.AddDependsOn(appdef.AppAlfPostgres)
@@ -631,6 +628,7 @@ func generateAlfresco(ctx *NsGenContext) {
 	alfSolr := ctx.GetOrCreateApp(appdef.AppAlfSolr)
 	alfSolr.Image = "nexus.citeck.ru/ess:1.1.0"
 	alfSolr.Kind = appdef.KindCiteckAdditional
+	alfSolr.IsJVM = true
 	alfSolr.AddPort("38080:8080")
 	alfSolr.AddVolume("alf_solr_data:/opt/solr4_data")
 	alfSolr.AddEnv("TWEAK_SOLR", "true")

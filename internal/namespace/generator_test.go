@@ -541,8 +541,13 @@ func TestAlfrescoContainerDefs(t *testing.T) {
 	if alfSolr.Kind != appdef.KindCiteckAdditional {
 		t.Errorf("expected alf-solr kind=KindCiteckAdditional, got %d", alfSolr.Kind)
 	}
-	if envGet(alfSolr.Environments, "JAVA_OPTS") != "-Xms1G -Xmx1G" {
-		t.Errorf("expected solr JAVA_OPTS=-Xms1G -Xmx1G, got %q", envGet(alfSolr.Environments, "JAVA_OPTS"))
+	// Solr is a JVM, so it gets the OOM heap-dump flags appended like any other.
+	// Its own -Xms/-Xmx are untouched; the memory budget declines here because
+	// -Xmx1G already equals the 1g container limit (logged as a warning — that is
+	// a real misconfiguration, not something to paper over with caps).
+	if got := envGet(alfSolr.Environments, "JAVA_OPTS"); !strings.HasPrefix(got, "-Xms1G -Xmx1G ") ||
+		!strings.Contains(got, HeapDumpJavaOpts) {
+		t.Errorf("expected solr JAVA_OPTS to keep -Xms1G -Xmx1G and gain the heap-dump flags, got %q", got)
 	}
 }
 

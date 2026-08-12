@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/citeck/citeck-launcher/internal/appdef"
 )
 
 // The export directory: one bind mount, present on EVERY generated container,
@@ -71,12 +73,12 @@ const HeapDumpJavaOpts = "-XX:+HeapDumpOnOutOfMemoryError" +
 // applyHeapDumpOnOOM appends HeapDumpJavaOpts to the app's JAVA_OPTS, unless the
 // bundle or the user configured heap dumping themselves — an explicit
 // HeapDumpPath elsewhere must win, or we would silently redirect it.
-func applyHeapDumpOnOOM(app *AppBuilder) {
-	opts, _ := app.Environments.Get("JAVA_OPTS")
+func applyHeapDumpOnOOM(def *appdef.ApplicationDef) {
+	opts, _ := def.Environments.Get("JAVA_OPTS")
 	if strings.Contains(opts, "HeapDumpOnOutOfMemoryError") || strings.Contains(opts, "HeapDumpPath") {
 		return
 	}
-	app.AddEnv("JAVA_OPTS", strings.TrimSpace(opts+" "+HeapDumpJavaOpts))
+	def.Environments.Set("JAVA_OPTS", strings.TrimSpace(opts+" "+HeapDumpJavaOpts))
 }
 
 // RotateHeapDumps keeps exactly ONE heap dump per app — the newest — and frees

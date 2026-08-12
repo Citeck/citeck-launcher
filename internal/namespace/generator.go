@@ -166,6 +166,19 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 		}
 	}
 
+	// Memory budget + OOM heap-dump flags last, on the EFFECTIVE defs: both are
+	// derived from resources.limits.memory and from JAVA_OPTS, and a `citeck edit`
+	// patch can change either. Computing them during generation would budget the
+	// JVM for the limit the app used to have — raising memoryLimit to 8g would
+	// leave the heap capped for 2g. The baseline gets the same treatment so the
+	// editor's change gutter still diffs like for like.
+	for i := range baselineApps {
+		applyJVMRuntimeDefaults(&baselineApps[i])
+	}
+	for i := range apps {
+		applyJVMRuntimeDefaults(&apps[i])
+	}
+
 	// Derive def-dependent files from the EFFECTIVE apps, BEFORE the BaselineFiles
 	// snapshot and file-edit merge, so the derived conf is the template a user's
 	// file-edit delta lands on top of.
