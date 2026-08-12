@@ -115,10 +115,17 @@ func TestJmap_DumpsFetchesAndCleansUp(t *testing.T) {
 // only useful because the JVM's own answer arrives unedited.
 func TestJVMCommandClient_ReturnsOutputVerbatim(t *testing.T) {
 	const help = "The following commands are available:\nGC.heap_dump\nThread.print\n"
-	var gotBody api.JVMCommandRequestDto
+	var (
+		bodyMu    sync.Mutex
+		gotBody   api.JVMCommandRequestDto
+		decodeErr error
+	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotBody))
-		_ = json.NewEncoder(w).Encode(api.JVMCommandResponseDto{App: "emodel", Command: gotBody.Command, Output: help})
+		bodyMu.Lock()
+		decodeErr = json.NewDecoder(r.Body).Decode(&gotBody)
+		cmd := gotBody.Command
+		bodyMu.Unlock()
+		_ = json.NewEncoder(w).Encode(api.JVMCommandResponseDto{App: "emodel", Command: cmd, Output: help})
 	}))
 	defer srv.Close()
 
@@ -128,6 +135,7 @@ func TestJVMCommandClient_ReturnsOutputVerbatim(t *testing.T) {
 
 	res, err := c.JVMCommand("emodel", "help", nil)
 	require.NoError(t, err)
+	require.NoError(t, decodeErr)
 	assert.Equal(t, help, res.Output)
 	assert.Equal(t, "help", gotBody.Command)
 
@@ -135,5 +143,6 @@ func TestJVMCommandClient_ReturnsOutputVerbatim(t *testing.T) {
 	// slot HotSpot expects.
 	_, err = c.JVMCommand("emodel", "Thread.print", []string{"-l"})
 	require.NoError(t, err)
+	require.NoError(t, decodeErr)
 	assert.Equal(t, []string{"-l"}, gotBody.Args)
 }
