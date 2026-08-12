@@ -168,6 +168,9 @@ func generateWebapp(name string, ctx *NsGenContext) {
 	if javaOpts != "" {
 		app.AddEnv("JAVA_OPTS", strings.TrimSpace(javaOpts))
 	}
+	// Must come after every other JAVA_OPTS writer above, since it appends to
+	// whatever they left behind.
+	applyHeapDumpOnOOM(app)
 
 	processWebappDataSources(name, app, ctx)
 	configureWebappProbes(name, app, ctx, port)

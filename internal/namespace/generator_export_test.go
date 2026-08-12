@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/stretchr/testify/assert"
@@ -114,4 +115,93 @@ func TestEnsureExportDirIsWritableByAnyUser(t *testing.T) {
 	info, err = os.Stat(dir)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o777), info.Mode().Perm())
+}
+
+// TestHeapDumpOnOOMIsEnabledByDefault: an OutOfMemoryError is the one failure
+// where the evidence has to be collected at the moment it happens — nobody gets
+// to attach afterwards. So the flags ship on by default rather than as
+// something an operator must have thought of in advance.
+func TestHeapDumpOnOOMIsEnabledByDefault(t *testing.T) {
+	cfg := &Config{
+		Authentication: AuthenticationProps{Type: AuthKeycloak, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+		Webapps:        map[string]WebappProps{"emodel": {HeapSize: "2g"}},
+	}
+	bun := &bundle.Def{Applications: map[string]bundle.AppDef{"emodel": {Image: "nexus.citeck.ru/emodel:1.0"}}}
+	wsCfg := &bundle.WorkspaceConfig{Webapps: []bundle.WebappConfig{{ID: "emodel"}}}
+
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "j", OIDC: "o"})
+	require.NoError(t, err)
+	app := findGeneratedApp(resp, "emodel")
+	require.NotNil(t, app)
+
+	opts, ok := app.Environments.Get("JAVA_OPTS")
+	require.True(t, ok)
+	assert.Contains(t, opts, "-XX:+HeapDumpOnOutOfMemoryError")
+	// The dump must land in the export dir — that is the whole point: it lives on
+	// the host and outlives the container that produced it.
+	assert.Contains(t, opts, "-XX:HeapDumpPath="+ExportMountPath)
+	// Gzip, because an ungzipped dump is as large as the heap and is written
+	// exactly when the box is already under pressure.
+	assert.Contains(t, opts, "-XX:HeapDumpGzipLevel=1")
+	// Configured opts must survive: appending must not replace.
+	assert.Contains(t, opts, "-Xmx2g")
+}
+
+// An explicitly configured heap-dump path wins — silently redirecting someone
+// else's dump somewhere they are not looking is worse than not helping.
+func TestHeapDumpOnOOMRespectsExplicitConfig(t *testing.T) {
+	cfg := &Config{
+		Authentication: AuthenticationProps{Type: AuthKeycloak, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+		Webapps: map[string]WebappProps{
+			"emodel": {JavaOpts: "-XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/mnt/dumps"},
+		},
+	}
+	bun := &bundle.Def{Applications: map[string]bundle.AppDef{"emodel": {Image: "nexus.citeck.ru/emodel:1.0"}}}
+	wsCfg := &bundle.WorkspaceConfig{Webapps: []bundle.WebappConfig{{ID: "emodel"}}}
+
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "j", OIDC: "o"})
+	require.NoError(t, err)
+	app := findGeneratedApp(resp, "emodel")
+	require.NotNil(t, app)
+
+	opts, _ := app.Environments.Get("JAVA_OPTS")
+	assert.Contains(t, opts, "-XX:HeapDumpPath=/mnt/dumps")
+	assert.NotContains(t, opts, "-XX:HeapDumpPath="+ExportMountPath)
+	assert.Equal(t, 1, strings.Count(opts, "HeapDumpOnOutOfMemoryError"), "flags must not be duplicated")
+}
+
+// TestRotateHeapDumps: HotSpot will not overwrite an existing dump ("Unable to
+// create …: File exists" — measured), and HeapDumpPath has no timestamp
+// placeholder, so without rotation the first OOM would be the only one ever
+// recorded. Verified end-to-end against a real JVM before this was written.
+func TestRotateHeapDumps(t *testing.T) {
+	base := t.TempDir()
+	require.NoError(t, EnsureExportDir(base, "emodel"))
+	dir := ExportDirFor(base, "emodel")
+
+	canonical := filepath.Join(dir, "java_pid7.hprof.gz")
+	require.NoError(t, os.WriteFile(canonical, []byte("previous oom"), 0o600))
+	// Files that are not heap dumps belong to whoever put them there.
+	keep := filepath.Join(dir, "pg_dump.sql")
+	require.NoError(t, os.WriteFile(keep, []byte("select 1"), 0o600))
+
+	at := time.Date(2026, 8, 12, 6, 30, 0, 0, time.UTC)
+	assert.Equal(t, 1, RotateHeapDumps(base, "emodel", at))
+
+	assert.NoFileExists(t, canonical, "the fixed dump path must be free for the next OOM")
+	rotated := filepath.Join(dir, "java_pid7-20260812T063000Z.hprof.gz")
+	content, err := os.ReadFile(rotated)
+	require.NoError(t, err, "the previous dump must be kept, not deleted")
+	assert.Equal(t, "previous oom", string(content))
+	assert.FileExists(t, keep)
+
+	// Nothing left to rotate — and the rotated file must not be rotated again.
+	assert.Equal(t, 0, RotateHeapDumps(base, "emodel", at.Add(time.Hour)))
+	assert.FileExists(t, rotated)
+}
+
+func TestRotateHeapDumpsHandlesMissingDir(t *testing.T) {
+	assert.Equal(t, 0, RotateHeapDumps(t.TempDir(), "never-started", time.Now()))
 }

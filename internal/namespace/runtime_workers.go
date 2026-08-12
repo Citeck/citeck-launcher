@@ -266,6 +266,15 @@ func (r *Runtime) runStartTask(
 	// are intentionally dropped — the container may not exist (fresh start).
 	_ = r.docker.StopAndRemoveContainer(ctx, containerName, 0)
 
+	// Free the fixed -XX:HeapDumpPath target before the JVM starts: HotSpot
+	// refuses to overwrite an existing dump, so without this only the FIRST OOM
+	// of an app would ever be recorded. Container start is the right moment —
+	// every restart (crash, OOM, liveness, reload) passes through here, while a
+	// reload-only hook would miss exactly the crash loop worth capturing.
+	if appDef.Kind.IsCiteckApp() {
+		RotateHeapDumps(volumesBase, appName, r.nowFunc())
+	}
+
 	var (
 		id      string
 		lastErr error

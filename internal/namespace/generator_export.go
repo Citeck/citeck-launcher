@@ -2,9 +2,12 @@ package namespace
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"time"
 )
 
 // The export directory: one bind mount, present on EVERY generated container,
@@ -44,6 +47,100 @@ const (
 func attachExportDir(b *AppBuilder) {
 	b.AddVolume(fmt.Sprintf("./%s/%s:%s", ExportDirName, b.Name, ExportMountPath))
 	b.AddEnv(ExportDirEnv, ExportMountPath)
+}
+
+// HeapDumpJavaOpts is appended to every Citeck webapp's JAVA_OPTS so that a Java
+// OutOfMemoryError leaves evidence behind without anyone having to prepare for
+// it. The dump lands in the export dir, i.e. on the host, and survives the
+// container that produced it.
+//
+// GzipLevel=1 is not a detail: an ungzipped dump is as large as the live heap
+// (4 GiB for the bigger webapps), and it is written at the worst possible moment
+// for disk pressure. Level 1 is the cheapest setting that still cuts it several
+// times over — measured 1.34 MB for a 32 MiB heap.
+//
+// What this does NOT catch: a container OOM-kill. The cgroup limit is enforced
+// by the kernel against the whole container, and the JVM never gets to run a
+// handler — so an app that dies from unbounded direct memory or metaspace leaves
+// nothing here. Only a Java-level OutOfMemoryError produces a dump.
+const HeapDumpJavaOpts = "-XX:+HeapDumpOnOutOfMemoryError" +
+	" -XX:HeapDumpPath=" + ExportMountPath +
+	" -XX:HeapDumpGzipLevel=1"
+
+// applyHeapDumpOnOOM appends HeapDumpJavaOpts to the app's JAVA_OPTS, unless the
+// bundle or the user configured heap dumping themselves — an explicit
+// HeapDumpPath elsewhere must win, or we would silently redirect it.
+func applyHeapDumpOnOOM(app *AppBuilder) {
+	opts, _ := app.Environments.Get("JAVA_OPTS")
+	if strings.Contains(opts, "HeapDumpOnOutOfMemoryError") || strings.Contains(opts, "HeapDumpPath") {
+		return
+	}
+	app.AddEnv("JAVA_OPTS", strings.TrimSpace(opts+" "+HeapDumpJavaOpts))
+}
+
+// RotateHeapDumps renames heap dumps left in an app's export dir by a previous
+// run, so the next OutOfMemoryError can write to the same fixed path.
+//
+// This is required, not tidy-up: HotSpot refuses to overwrite an existing dump
+// ("Unable to create …: File exists"), and HeapDumpPath has no timestamp
+// placeholder — only %p, which is useless here because the JVM gets the same pid
+// in every fresh container. Without rotation the FIRST OOM would be the only one
+// ever recorded, while every later one — including the one an operator is
+// actually watching — would be silently dropped.
+//
+// Old dumps are renamed rather than deleted: an OOM dump is often the only
+// evidence of a fault that has already happened.
+func RotateHeapDumps(volumesBase, appName string, now time.Time) int {
+	dir := ExportDirFor(volumesBase, appName)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0 // no export dir yet — nothing to rotate
+	}
+	stamp := now.UTC().Format("20060102T150405Z")
+	rotated := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		base, ext, ok := splitHeapDumpName(e.Name())
+		if !ok {
+			continue
+		}
+		from := filepath.Join(dir, e.Name())
+		to := filepath.Join(dir, base+"-"+stamp+ext)
+		if from == to {
+			continue
+		}
+		if err := os.Rename(from, to); err != nil {
+			slog.Warn("Failed to rotate heap dump", "app", appName, "file", e.Name(), "err", err)
+			continue
+		}
+		slog.Info("Rotated previous heap dump", "app", appName, "from", e.Name(), "to", filepath.Base(to))
+		rotated++
+	}
+	return rotated
+}
+
+// rotatedDumpName matches a name this function has already rotated, so a dump
+// does not collect a new timestamp on every container start (and stops carrying
+// a stamp that says when it was last MOVED rather than when it was written).
+var rotatedDumpName = regexp.MustCompile(`-\d{8}T\d{6}Z$`)
+
+// splitHeapDumpName splits "java_pid7.hprof.gz" into ("java_pid7", ".hprof.gz").
+// Only the names HotSpot itself writes are rotated — anything else in the export
+// dir was put there by a user or an app and is none of our business.
+func splitHeapDumpName(name string) (base, ext string, ok bool) {
+	for _, suffix := range []string{".hprof.gz", ".hprof"} {
+		trimmed, found := strings.CutSuffix(name, suffix)
+		if !found {
+			continue
+		}
+		if rotatedDumpName.MatchString(trimmed) {
+			return "", "", false
+		}
+		return trimmed, suffix, true
+	}
+	return "", "", false
 }
 
 // isExportKey reports whether a runtime-files key belongs to the export tree.
