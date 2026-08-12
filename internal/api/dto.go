@@ -685,3 +685,20 @@ type OpenDirResponseDto struct {
 	Mode    string `json:"mode"`
 	Message string `json:"message,omitempty"`
 }
+
+// --- Export directory (per-app outbound artifacts) ---
+
+// ExportFileDto describes one file in an app's export directory — the
+// container's OUTPUT mount (/citeck/export), where a heap dump, a pg_dump or a
+// thread dump lands so a human can take it off the box.
+//
+// HostPath is the file's absolute path on the daemon's host. It is here so a
+// CLI running on that same host can move the file instead of streaming it
+// through the daemon (a heap dump is heap-sized); a remote client simply
+// ignores it and downloads.
+type ExportFileDto struct {
+	Name     string `json:"name"`
+	Size     int64  `json:"size"`
+	Modified string `json:"modified"`
+	HostPath string `json:"hostPath,omitempty"`
+}

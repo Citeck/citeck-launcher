@@ -1,6 +1,9 @@
 package api
 
-import "fmt"
+import (
+	"fmt"
+	"net/url"
+)
 
 // APIV1 is the base path prefix for all v1 API routes.
 const APIV1 = "/api/v1"
@@ -117,6 +120,18 @@ func NamespaceEditPath(id string) string {
 // AppLogs returns the API path for streaming an app's container logs.
 func AppLogs(name string) string {
 	return fmt.Sprintf("%s/%s/logs", Apps, name)
+}
+
+// AppExport returns the API path for listing an app's export directory.
+func AppExport(name string) string {
+	return fmt.Sprintf("%s/%s/export", Apps, name)
+}
+
+// AppExportFile returns the API path for one file in an app's export
+// directory. The file name is escaped: it comes from the container, not from
+// the launcher, and a heap dump's name carries a timestamp with colons.
+func AppExportFile(name, file string) string {
+	return fmt.Sprintf("%s/%s/export/%s", Apps, name, url.PathEscape(file))
 }
 
 // AppRestart returns the API path for restarting an app.
