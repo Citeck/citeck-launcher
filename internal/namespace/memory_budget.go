@@ -402,29 +402,58 @@ func applyMemoryBudget(def *appdef.ApplicationDef) {
 	}
 	budget, ok := ComputeMemoryBudgetWith(limit, manual)
 	if !ok {
-		// Worth a warning rather than a debug line when the operator's own heap
-		// is what leaves no room: that is a misconfiguration they cannot see
-		// otherwise, and it ends as a kernel OOM-kill with no Java error.
-		if !manual.empty() {
-			slog.Warn("JVM memory budget skipped: the configured heap leaves too little for the other pools",
-				"app", def.Name, "limit", def.Resources.Limits.Memory, "javaOpts", opts)
-		} else {
-			slog.Debug("JVM memory budget skipped: limit too small to divide",
-				"app", def.Name, "limit", def.Resources.Limits.Memory)
-		}
+		applyPartialMemoryBudget(def, limit, manual, opts)
 		return
 	}
-	flags := budget.JavaOpts()
-	if flags == "" {
-		return // every pool is already sized by hand
+	if flags := budget.JavaOpts(); flags != "" {
+		def.Environments.Set("JAVA_OPTS", strings.TrimSpace(opts+" "+flags))
 	}
-	def.Environments.Set("JAVA_OPTS", strings.TrimSpace(opts+" "+flags))
-	// glibc grows up to 8 arenas per core by default, each up to 64 MiB of
-	// untouched-but-charged address space; on a 16-core box that is the single
-	// largest unattributed native consumer after NIO. Two arenas costs a little
-	// malloc contention and buys a bounded term in the inequality above.
-	def.Environments.Set("MALLOC_ARENA_MAX", "2")
+	setMallocArenaMax(def)
 	slog.Info("Computed JVM memory budget", "app", def.Name, "budget", budget.String())
+}
+
+// applyPartialMemoryBudget handles the container the full budget refuses. It
+// lowers the ceilings that can be lowered without inventing a way for the app to
+// fail, and says out loud which pools are still unbounded — see partial_budget.go
+// for why the refusal is no longer the end of the story.
+func applyPartialMemoryBudget(def *appdef.ApplicationDef, limit int64, manual ManualPools, opts string) {
+	p := ComputePartialBudget(limit, manual)
+	if flags := p.JavaOpts(); flags != "" {
+		def.Environments.Set("JAVA_OPTS", strings.TrimSpace(opts+" "+flags))
+	}
+	setMallocArenaMax(def)
+
+	// Worth a warning rather than an info line when the operator's own heap is
+	// what leaves no room: that is a misconfiguration they cannot see otherwise,
+	// and its other symptom is a kernel OOM-kill with no Java error.
+	msg := "JVM memory budget partial: limit too small for a full budget"
+	if !manual.empty() {
+		msg = "JVM memory budget partial: the configured heap leaves too little for a full budget"
+	}
+	log := slog.Info
+	if !manual.empty() {
+		log = slog.Warn
+	}
+	log(msg, "app", def.Name, "limit", def.Resources.Limits.Memory,
+		"capped", p.String(), "unbounded", p.Unbounded())
+}
+
+// setMallocArenaMax bounds the glibc arenas for every JVM app the launcher gives
+// a memory limit — including the ones that get no budget, which is where it
+// matters most: they have no other ceiling at all.
+//
+// glibc grows up to 8 arenas per core by default, each up to 64 MiB, and memory
+// freed in one arena is not reusable by another — the classic "RSS grows well
+// past the heap" shape in containerized JVMs. Two arenas costs a little malloc
+// contention (the JVM allocates from its own heaps, so the effect is small) and
+// removes an unbounded native term.
+//
+// An operator who set it by hand meant it: this never overwrites their value.
+func setMallocArenaMax(def *appdef.ApplicationDef) {
+	if _, ok := def.Environments.Get("MALLOC_ARENA_MAX"); ok {
+		return
+	}
+	def.Environments.Set("MALLOC_ARENA_MAX", "2")
 }
 
 // applyJVMRuntimeDefaults applies everything that depends on the app's EFFECTIVE
