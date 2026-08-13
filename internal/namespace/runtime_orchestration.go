@@ -21,6 +21,30 @@ type staleSweepPlan struct {
 	stopTimeout   int
 }
 
+// proxyMustFollowGatewayRecreate reports whether the proxy has to be recreated
+// because the gateway is.
+//
+// nginx resolves its upstreams once, at startup. A proxy left running against a
+// recreated gateway keeps sending traffic to a container IP that no longer
+// exists, so every gateway-backed page 502s — while the launcher reports both
+// apps RUNNING, both probes passing and the namespace green. The failure is
+// invisible from inside and looks like a mass product regression from outside.
+//
+// BOTH reload paths need this rule: doStart (namespace start, Update & Start)
+// and doRegenerate (`citeck reload`, the gear-icon config editor, `citeck edit
+// <app>`). It lived only in doStart until 2026-08-13, which meant the routine
+// case — edit an app's config and reload — was exactly the one that opened a
+// silent 502 window. Measured on a live stack that day: gateway recreated twice
+// through the edit path while the proxy stayed on its original container for the
+// following 33 minutes.
+//
+// It is deliberately narrow. Recreating the proxy on every reload would throw
+// away its writable layer (the generated basic-auth htpasswd among other things)
+// for nothing.
+func proxyMustFollowGatewayRecreate(appName string, gatewayRecreated bool) bool {
+	return gatewayRecreated && appName == appdef.AppProxy
+}
+
 func (r *Runtime) doStart(apps []appdef.ApplicationDef, refreshImages bool) { //nolint:gocyclo // orchestration with 3-phase lock pattern
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -133,8 +157,8 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef, refreshImages bool) { //
 		plans = append(plans, plan)
 	}
 
-	// If gateway is being recreated, proxy must also be recreated — nginx caches
-	// upstream DNS at startup and won't follow gateway's new IP.
+	// If gateway is being recreated, proxy must also be recreated — see
+	// proxyMustFollowGatewayRecreate.
 	gatewayRecreated := false
 	for _, p := range plans {
 		if p.def.Name == appdef.AppGateway && !p.reuse {
@@ -142,14 +166,12 @@ func (r *Runtime) doStart(apps []appdef.ApplicationDef, refreshImages bool) { //
 			break
 		}
 	}
-	if gatewayRecreated {
-		for i, p := range plans {
-			if p.def.Name == appdef.AppProxy && p.reuse {
-				slog.Info("Recreating proxy because gateway was recreated (nginx DNS cache)")
-				plans[i].reuse = false
-				plans[i].containerID = ""
-				break
-			}
+	for i, p := range plans {
+		if p.reuse && proxyMustFollowGatewayRecreate(p.def.Name, gatewayRecreated) {
+			slog.Info("Recreating proxy because gateway was recreated (nginx DNS cache)")
+			plans[i].reuse = false
+			plans[i].containerID = ""
+			break
 		}
 	}
 
@@ -393,6 +415,19 @@ func (r *Runtime) doRegenerate(apps []appdef.ApplicationDef, refreshImages bool)
 
 	// NS status was already flipped to STARTING before the phase-1 I/O above.
 
+	// Whether this pass recreates the gateway decides the proxy's fate too, and
+	// it has to be known before the per-app loop reaches the proxy — the desired
+	// set has no guaranteed order. Reads r.apps, so it belongs under the lock.
+	gatewayRecreated := false
+	for _, ra := range resolved {
+		if ra.def.Name != appdef.AppGateway || detached[ra.def.Name] {
+			continue
+		}
+		existing, inApps := r.apps[ra.def.Name]
+		gatewayRecreated = !inApps || existing.Def.GetHash() != ra.hash
+		break
+	}
+
 	var stopPlans []dispatchPlan
 
 	for _, ra := range resolved {
@@ -429,10 +464,14 @@ func (r *Runtime) doRegenerate(apps []appdef.ApplicationDef, refreshImages bool)
 		}
 
 		// Existing app: hash unchanged → no-op (refresh def so non-hash
-		// fields like progress text don't clobber).
+		// fields like progress text don't clobber) — unless this is the proxy
+		// and the gateway is being recreated underneath it.
 		if existing.Def.GetHash() == ra.hash {
-			existing.Def = ra.def
-			continue
+			if !proxyMustFollowGatewayRecreate(ra.def.Name, gatewayRecreated) {
+				existing.Def = ra.def
+				continue
+			}
+			slog.Info("Recreating proxy because gateway was recreated (nginx DNS cache)")
 		}
 
 		// Hash changed: queue a recreate via UPDATING + desiredNext=READY_TO_PULL.
