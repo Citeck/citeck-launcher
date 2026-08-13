@@ -4,6 +4,10 @@
 #
 # Credentials: see scripts/dev/ssh.sh (sourced from $CITECK_TEST_ENV_FILE).
 set -e
+# Without pipefail, `make build-fast | tail -1` reports tail's exit status, so a
+# failed build is silently followed by an scp of whatever stale binary is still
+# in dist/ — the deploy then "succeeds" and the server runs the wrong code.
+set -o pipefail
 
 CREDS_FILE="${CITECK_TEST_ENV_FILE:-$HOME/.config/citeck-launcher/test-creds.env}"
 if [ -z "${CITECK_TEST_SSH_HOST:-}" ] && [ -f "$CREDS_FILE" ]; then
@@ -23,7 +27,16 @@ SSH_OPTS="-o PreferredAuthentications=password -o PubkeyAuthentication=no -o Str
 BINARY="dist/bin/citeck-server"
 TARGET="/usr/local/bin/citeck"
 
-cd "$(dirname "$0")/.."
+# The repo root is two levels up: this script lives in scripts/dev/. One level
+# lands in scripts/, where there is no Makefile — `make build-fast` then fails
+# with "No rule to make target", scp uploads nothing, and the run still ends by
+# printing the version of whatever binary is already on the server, which reads
+# exactly like a successful deploy.
+cd "$(dirname "$0")/../.."
+if [ ! -f Makefile ]; then
+    echo "Error: no Makefile in $PWD — expected the repository root." >&2
+    exit 1
+fi
 
 echo "Building..."
 export PATH="$HOME/go/bin:/usr/local/go/bin:$PATH"
