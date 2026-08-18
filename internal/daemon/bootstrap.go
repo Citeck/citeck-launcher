@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	goruntime "runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -262,10 +261,14 @@ func Start(opts StartOptions) error {
 
 	// Desktop auto-update service: discovers the GitHub `latest`
 	// release and stages payloads. Server mode has no wrapper to apply a swap, so
-	// the routes + service are desktop-only. Scope is linux-first: only linux
-	// publishes the bare-binary payload, so gating here keeps the macOS/Windows
-	// UI from showing an update it cannot install (the routes 404 when nil).
-	if config.IsDesktopMode() && goruntime.GOOS == "linux" {
+	// the routes + service are desktop-only — but NOT linux-only any more: the
+	// release workflow cross-compiles the bare-binary payload for darwin and
+	// windows too, which is the only thing the old GOOS gate was standing in for.
+	// Nothing in the apply path is platform-specific, because it never touches the
+	// installed bundle: the payload lands in UpdatesDir and SelectDaemonBinary
+	// hands it to the supervisor on the next spawn, so the notarized macOS .app
+	// keeps its seal and Windows never has to overwrite a running .exe.
+	if config.IsDesktopMode() {
 		d.updateSvc = update.NewService(opts.Version, config.UpdatesDir())
 		go d.updateSvc.RunPeriodic(bgCtx)
 	}

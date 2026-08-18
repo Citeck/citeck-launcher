@@ -255,13 +255,14 @@ func (s *Service) Stage(ctx context.Context) (string, error) {
 
 	c := s.dataClient()
 	// Reuse the server release tarball — the desktop daemon is the server binary,
-	// so there is no separate desktop payload to build or ship. Desktop
-	// auto-update is Linux-only today; runtime.GOOS is "linux" here and matches
-	// the server tarball naming (citeck_<ver>_<os>_<arch>.tar.gz).
-	asset := fmt.Sprintf("citeck_%s_%s_%s.tar.gz", latest.Version, runtime.GOOS, runtime.GOARCH)
+	// so there is no separate desktop payload to build or ship. The release
+	// workflow cross-compiles that tarball for every desktop platform
+	// (linux/darwin/windows x amd64/arm64) and names it after GOOS/GOARCH, so the
+	// same line resolves the right payload wherever the wrapper runs.
+	asset := PayloadAssetName(latest.Version, runtime.GOOS, runtime.GOARCH)
 	verDir := filepath.Join(s.updatesDir, latest.Version)
 	targz := filepath.Join(verDir, asset)
-	binPath := filepath.Join(verDir, "citeck")
+	binPath := filepath.Join(verDir, DaemonBinaryName(runtime.GOOS))
 
 	if err := c.downloadFile(ctx, c.assetURL(latest.Tag, asset), targz); err != nil {
 		return "", err
@@ -399,4 +400,35 @@ func extractDaemonBinary(targz, dst string) error {
 		return nil
 	}
 	return errors.New("no regular file in payload archive")
+}
+
+// PayloadAssetName is the release asset the updater downloads for a platform.
+// It is the SERVER tarball: the desktop wrapper supervises the server binary as
+// its daemon, so there is no separate desktop payload to build or ship. What
+// this name must match is what packaging/release-server.sh publishes for the
+// same GOOS/GOARCH — a platform the release matrix does not build is a platform
+// whose installed launcher can never update itself, which is exactly the state
+// macOS and Windows were in (and the reason for the old GOOS gate in
+// daemon/bootstrap.go). Two tests hold that contract from both ends:
+// TestReleaseMatrixBuildsAPayloadForEveryPlatformTheUpdaterAsksFor (every
+// installer platform is built) and
+// TestPayloadAssetNameMatchesWhatTheReleaseScriptPublishes (the name here and
+// the one release-server.sh writes are the same string).
+func PayloadAssetName(version, goos, goarch string) string {
+	return fmt.Sprintf("citeck_%s_%s_%s.tar.gz", version, goos, goarch)
+}
+
+// DaemonBinaryName is the file name a staged payload is extracted to. On Windows
+// it MUST carry the .exe suffix: os/exec resolves an absolute path through
+// lookExtensions → findExecutable, which (with a non-empty PATHEXT) only ever
+// tries "<name><ext>" and never the extension-less file — so a payload written
+// as plain "citeck" would leave the supervisor with exec.ErrNotFound and no
+// daemon at all, one restart after a successful, verified download.
+//
+// Takes the GOOS so both branches are testable from any host.
+func DaemonBinaryName(goos string) string {
+	if goos == "windows" {
+		return "citeck.exe"
+	}
+	return "citeck"
 }

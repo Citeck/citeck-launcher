@@ -84,7 +84,7 @@ func TestServiceCheckAndStage(t *testing.T) {
 	if version != "2.6.0" {
 		t.Fatalf("staged version = %q", version)
 	}
-	staged := filepath.Join(dir, "2.6.0", "citeck")
+	staged := filepath.Join(dir, "2.6.0", DaemonBinaryName(runtime.GOOS))
 	got, _ := os.ReadFile(staged)
 	if string(got) != "new-daemon-binary" {
 		t.Fatalf("staged binary = %q", got)
