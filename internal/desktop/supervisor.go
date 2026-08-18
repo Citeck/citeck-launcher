@@ -375,7 +375,19 @@ func (s *Supervisor) Restart(ctx context.Context, healthTimeout time.Duration) e
 	s.Wait(daemonStopGrace) // force-kill if it doesn't exit; superviseLoop respawns
 	s.ready.Store(false)
 
-	deadline := time.Now().Add(healthTimeout)
+	if err := s.WaitReady(ctx, healthTimeout); err != nil {
+		return err
+	}
+	return nil
+}
+
+// WaitReady polls readiness up to timeout. It is the health gate itself, split
+// out of Restart because the same gate has to run at BOOT for a payload that was
+// staged but never gated (see GatePendingPayload) — a swap that was interrupted
+// between staging and the wrapper's restart leaves such a payload selected, and
+// nothing else would ever judge it.
+func (s *Supervisor) WaitReady(ctx context.Context, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if s.Ready() {
 			return nil
@@ -386,7 +398,7 @@ func (s *Supervisor) Restart(ctx context.Context, healthTimeout time.Duration) e
 		case <-time.After(readyPollInterval):
 		}
 	}
-	return fmt.Errorf("supervisor: daemon not ready within %s after restart", healthTimeout)
+	return fmt.Errorf("supervisor: daemon not ready within %s", timeout)
 }
 
 // --- default production ReadyCheck / shutdown POST over the unix socket ---

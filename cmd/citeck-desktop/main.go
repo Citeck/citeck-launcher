@@ -403,6 +403,17 @@ func run() error {
 		return fmt.Errorf("start daemon supervisor: %w", startErr)
 	}
 
+	// An update that was staged but never health-gated (the wrapper died, or the
+	// apply verb never arrived) leaves a `pending` payload that SelectBest picks
+	// on every start with nothing to judge it. Judge it now — promote it or roll
+	// it back — instead of leaving a possibly-dead daemon selected forever.
+	go func() {
+		if desktop.GatePendingPayload(ctx, supervisor, config.UpdatesDir(), version, desktop.UpdateHealthTimeout) {
+			window.Reload() // rolled back: the webview is talking to the old daemon now
+			refreshWindowTitle(socketClient, window)
+		}
+	}()
+
 	// Wait for the daemon to become ready, then open the readiness gate. Mirror
 	// the historical behavior: after 30s, proxy anyway (do NOT hard-fail) so a
 	// slow-but-eventually-ready daemon still gets through.

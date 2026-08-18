@@ -117,9 +117,19 @@ func MarkState(updatesDir, version string, state State) error {
 // present on disk. ok=false when none qualifies — the caller falls back to the
 // bundled executable.
 func SelectBest(updatesDir, currentVersion string) (path string, ok bool) {
+	e, found := SelectBestEntry(updatesDir, currentVersion)
+	return e.Path, found
+}
+
+// SelectBestEntry is SelectBest with the whole entry, so a caller can see the
+// STATE it selected. That matters at boot: a `pending` payload is one that was
+// staged and applied but never health-gated (the wrapper died, or the apply verb
+// never reached it), and it is selected on every subsequent start with nothing
+// to judge it — see GatePendingPayload in internal/desktop.
+func SelectBestEntry(updatesDir, currentVersion string) (entry Entry, ok bool) {
 	m, err := Load(updatesDir)
 	if err != nil {
-		return "", false
+		return Entry{}, false
 	}
 	best := ""
 	for _, e := range m.Entries {
@@ -133,10 +143,10 @@ func SelectBest(updatesDir, currentVersion string) (path string, ok bool) {
 			continue
 		}
 		if best == "" || Greater(e.Version, best) {
-			best, path = e.Version, e.Path
+			best, entry = e.Version, e
 		}
 	}
-	return path, best != ""
+	return entry, best != ""
 }
 
 // IsVersionFailed reports whether the given version is recorded as a failed
