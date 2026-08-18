@@ -409,7 +409,13 @@ func applyMemoryBudget(def *appdef.ApplicationDef) {
 		def.Environments.Set("JAVA_OPTS", strings.TrimSpace(opts+" "+flags))
 	}
 	setMallocArenaMax(def)
-	slog.Info("Computed JVM memory budget", "app", def.Name, "budget", budget.String())
+	// DEBUG for the same reason as the partial path: the result is not a finding,
+	// it is configuration, and it is already visible where configuration is read.
+	// applyJVMRuntimeDefaults runs inside Generate on the effective AND baseline
+	// defs, so every flag below is in the def that `citeck edit <app>` / the gear
+	// editor serve (GET /apps/{name}/config) and in the container's own env. At
+	// INFO this was 24 lines per reload restating that.
+	slog.Debug("Computed JVM memory budget", "app", def.Name, "budget", budget.String())
 }
 
 // applyPartialMemoryBudget handles the container the full budget refuses. It
@@ -423,18 +429,18 @@ func applyPartialMemoryBudget(def *appdef.ApplicationDef, limit int64, manual Ma
 	}
 	setMallocArenaMax(def)
 
-	// Worth a warning rather than an info line when the operator's own heap is
-	// what leaves no room: that is a misconfiguration they cannot see otherwise,
-	// and its other symptom is a kernel OOM-kill with no Java error.
+	// DEBUG, not WARN or INFO. A partial budget is the ordinary shape of a real
+	// namespace — a 1 GiB webapp, with or without a hand-set -Xmx — and it stops
+	// nothing: the ceilings below are applied and the app starts either way. The
+	// line is emitted per app on every generation, so at INFO a 24-app namespace
+	// buries whatever the operator actually needs to see in a reload's output.
+	// Keep both spellings: at debug level, WHY the full budget was refused is the
+	// only part that is not derivable from the numbers.
 	msg := "JVM memory budget partial: limit too small for a full budget"
 	if !manual.empty() {
 		msg = "JVM memory budget partial: the configured heap leaves too little for a full budget"
 	}
-	log := slog.Info
-	if !manual.empty() {
-		log = slog.Warn
-	}
-	log(msg, "app", def.Name, "limit", def.Resources.Limits.Memory,
+	slog.Debug(msg, "app", def.Name, "limit", def.Resources.Limits.Memory,
 		"capped", p.String(), "unbounded", p.Unbounded())
 }
 
