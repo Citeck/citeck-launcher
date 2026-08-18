@@ -298,6 +298,7 @@ type AppBuilder struct {
 	Resources          *appdef.AppResourcesDef
 	Kind               appdef.ApplicationKind
 	IsJVM              bool
+	JVMMajor           int
 	ShmSize            string
 	InitContainers     []appdef.InitContainerDef
 	StopTimeout        int
@@ -345,6 +346,7 @@ func (b *AppBuilder) Build() appdef.ApplicationDef {
 		Resources:          b.Resources,
 		Kind:               b.Kind,
 		IsJVM:              b.IsJVM,
+		JVMMajor:           b.JVMMajor,
 		ShmSize:            b.ShmSize,
 		InitContainers:     b.InitContainers,
 		StopTimeout:        b.StopTimeout,

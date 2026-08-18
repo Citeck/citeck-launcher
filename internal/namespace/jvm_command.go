@@ -43,7 +43,7 @@ const heapDumpTimeFormat = "20060102T150405Z"
 // tolerates, and restarting an app because it was busy answering us would be
 // an own goal.
 func (r *Runtime) JVMCommand(ctx context.Context, appName, command string, args ...string) (string, error) {
-	containerID, err := r.jvmTargetContainer(appName)
+	containerID, _, err := r.jvmTargetContainer(appName)
 	if err != nil {
 		return "", err
 	}
@@ -59,15 +59,21 @@ func (r *Runtime) JVMCommand(ctx context.Context, appName, command string, args 
 	return out, nil
 }
 
-// HeapDump writes a gzipped heap dump into the app's export directory and
-// returns its file name and size (not the path — the caller reaches the file
-// through the export API, which is the only route that also works when the
-// daemon is on another host).
+// HeapDump writes a heap dump into the app's export directory and returns its
+// file name and size (not the path — the caller reaches the file through the
+// export API, which is the only route that also works when the daemon is on
+// another host).
 //
-// Gzip is not optional: an uncompressed dump is the size of the live heap.
-// Measured on a running webapp — 57 MB in 3.2 s at level 1.
+// Gzip is used wherever the JVM has it: an uncompressed dump is the size of the
+// live heap (measured on a running webapp — 57 MB in 3.2 s at level 1). It is
+// not available everywhere, though: `GC.heap_dump -gz=1` on Java 8 fails the
+// whole command with "Unknown argument ... in diagnostic command" (measured on
+// temurin-1.8.0_482), so a legacy image gets a plain .hprof rather than an
+// error. The suffix follows the actual format, since that file goes on to be
+// downloaded by name.
 func (r *Runtime) HeapDump(ctx context.Context, appName string, now time.Time) (file string, size int64, err error) {
-	if _, targetErr := r.jvmTargetContainer(appName); targetErr != nil {
+	_, jvmMajor, targetErr := r.jvmTargetContainer(appName)
+	if targetErr != nil {
 		return "", 0, targetErr
 	}
 	if r.volumesBase == "" {
@@ -80,8 +86,14 @@ func (r *Runtime) HeapDump(ctx context.Context, appName string, now time.Time) (
 		return "", 0, dirErr
 	}
 
-	file = fmt.Sprintf("%s-%s.hprof.gz", appName, now.UTC().Format(heapDumpTimeFormat))
-	out, cmdErr := r.JVMCommand(ctx, appName, "GC.heap_dump", "-gz=1", ExportMountPath+"/"+file)
+	stamp := now.UTC().Format(heapDumpTimeFormat)
+	args := []string{"-gz=1"}
+	file = fmt.Sprintf("%s-%s.hprof.gz", appName, stamp)
+	if !SupportsGzipHeapDump(jvmMajor) {
+		args = nil
+		file = fmt.Sprintf("%s-%s.hprof", appName, stamp)
+	}
+	out, cmdErr := r.JVMCommand(ctx, appName, "GC.heap_dump", append(args, ExportMountPath+"/"+file)...)
 	if cmdErr != nil {
 		return "", 0, cmdErr
 	}
@@ -99,7 +111,7 @@ func (r *Runtime) HeapDump(ctx context.Context, appName string, now time.Time) (
 
 // jvmTargetContainer resolves the container to attach to, refusing plainly
 // when the app is not a JVM or is not running.
-func (r *Runtime) jvmTargetContainer(appName string) (string, error) {
+func (r *Runtime) jvmTargetContainer(appName string) (containerID string, jvmMajor int, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	app, ok := r.apps[appName]
@@ -109,16 +121,16 @@ func (r *Runtime) jvmTargetContainer(appName string) (string, error) {
 		// no such app" versus "it is not running right now".
 		if def, known := r.generatedDefForApp(appName); known {
 			if !def.IsJVM {
-				return "", fmt.Errorf("%s: %w", appName, ErrNotJVMApp)
+				return "", 0, fmt.Errorf("%s: %w", appName, ErrNotJVMApp)
 			}
-			return "", fmt.Errorf("%s: %w", appName, ErrAppNotRunning)
+			return "", 0, fmt.Errorf("%s: %w", appName, ErrAppNotRunning)
 		}
-		return "", fmt.Errorf("%s: %w", appName, ErrAppUnknown)
+		return "", 0, fmt.Errorf("%s: %w", appName, ErrAppUnknown)
 	}
 	if !app.Def.IsJVM {
 		// Kind is the wrong test — the proxy is KindCiteckCore running nginx,
 		// while alfresco and solr are KindCiteckAdditional JVMs.
-		return "", fmt.Errorf("%s: %w", appName, ErrNotJVMApp)
+		return "", 0, fmt.Errorf("%s: %w", appName, ErrNotJVMApp)
 	}
 	// The gate is the CONTAINER, not the RUNNING status. An app whose startup
 	// probe is still failing sits in STARTING, and a wedged one sits in
@@ -129,9 +141,9 @@ func (r *Runtime) jvmTargetContainer(appName string) (string, error) {
 	// two hours — with a status gate, the one app worth attaching to was the one
 	// app that could not be attached to.
 	if app.ContainerID == "" || app.Status == AppStatusStopped || app.Status == AppStatusStopping {
-		return "", fmt.Errorf("%s: %w (status %s)", appName, ErrAppNotRunning, app.Status)
+		return "", 0, fmt.Errorf("%s: %w (status %s)", appName, ErrAppNotRunning, app.Status)
 	}
-	return app.ContainerID, nil
+	return app.ContainerID, app.Def.JVMMajor, nil
 }
 
 // attachJcmd speaks the `jcmd` attach verb, from the host if this host can see

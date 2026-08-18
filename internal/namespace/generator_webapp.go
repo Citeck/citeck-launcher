@@ -83,7 +83,7 @@ func generateWebapp(name string, ctx *NsGenContext) {
 	// Java opts from namespace config (overrides workspace defaults)
 	if wp, ok := ctx.Config.Webapps[name]; ok { //nolint:nestif // config override logic is inherently nested
 		if wp.HeapSize != "" {
-			javaOpts = fmt.Sprintf("-Xmx%s -Xms%s", wp.HeapSize, wp.HeapSize)
+			javaOpts = heapFlagFor(wp.HeapSize)
 		}
 		if wp.JavaOpts != "" {
 			javaOpts += " " + wp.JavaOpts
@@ -327,6 +327,19 @@ func addWebappInfraEnv(app *AppBuilder, ctx *NsGenContext) {
 
 // applyWebappDefaults applies a WebappDefaultProps layer to an app builder
 // (image, environments, JAVA_OPTS from heapSize/javaOpts, memory limit).
+// heapFlagFor turns a configured heapSize into the one flag it actually means.
+//
+// The config field is a MAXIMUM, so it maps to -Xmx and to nothing else. 1.x also
+// wrote `-Xms<heapSize>` next to it (NamespaceGenerator.kt:356), which nobody
+// asked for: the runtime images add -XX:+AlwaysPreTouch, so a pinned initial heap
+// makes every JVM claim AND touch its whole heap during startup — on an
+// enterprise namespace that is 24 apps doing it at once on a 16 GB box. Same
+// reasoning as MemoryBudget.JavaOpts, which deliberately emits no -Xms either;
+// the launcher sizes ceilings, it does not reserve memory up front.
+func heapFlagFor(heapSize string) string {
+	return "-Xmx" + heapSize
+}
+
 func applyWebappDefaults(app *AppBuilder, props *bundle.WebappDefaultProps, ctx *NsGenContext) {
 	if props == nil {
 		return
@@ -340,7 +353,7 @@ func applyWebappDefaults(app *AppBuilder, props *bundle.WebappDefaultProps, ctx 
 	if props.HeapSize != "" || props.JavaOpts != "" {
 		javaOpts := ""
 		if props.HeapSize != "" {
-			javaOpts = fmt.Sprintf("-Xmx%s -Xms%s", props.HeapSize, props.HeapSize)
+			javaOpts = heapFlagFor(props.HeapSize)
 		}
 		if props.JavaOpts != "" {
 			javaOpts = strings.TrimSpace(javaOpts + " " + props.JavaOpts)
@@ -574,6 +587,12 @@ func generateAlfresco(ctx *NsGenContext) {
 	alfApp.Image = alfImage
 	alfApp.Kind = appdef.KindCiteckAdditional
 	alfApp.IsJVM = true
+	// Pinned to Java 8 and not being updated, so every flag the launcher adds
+	// must exist in 8 — an unknown -XX option makes HotSpot refuse to start
+	// (verified: `-XX:HeapDumpGzipLevel=1` on temurin-1.8.0_482 →
+	// "Unrecognized VM option"). The memory-budget flags are all Java 8 vintage;
+	// the gzip ones are not, and HeapDumpJavaOptsFor drops them here.
+	alfApp.JVMMajor = 8
 	alfPort := 17019 // fixed port for alfresco — not part of webapp counter
 	alfApp.AddPort(fmt.Sprintf("%d:8080", alfPort))
 	alfApp.AddDependsOn(appdef.AppAlfPostgres)
@@ -611,7 +630,16 @@ func generateAlfresco(ctx *NsGenContext) {
 	alfApp.AddEnv("FLOWABLE_DB_NAME", "alf_flowable")
 	alfApp.AddEnv("FLOWABLE_DB_USERNAME", "alf_flowable")
 	alfApp.AddEnv("FLOWABLE_DB_PASSWORD", "alf_flowable")
-	alfApp.AddEnv("JAVA_OPTS", "-Xms4G -Xmx4G -Duser.country=EN -Duser.language=en -Djava.security.egd=file:///dev/urandom -Djavamelody.authorized-users=admin:admin")
+	alfApp.AddEnv("JAVA_OPTS", "-Duser.country=EN -Duser.language=en -Djava.security.egd=file:///dev/urandom -Djavamelody.authorized-users=admin:admin")
+	// The heap is NOT pinned here. 1.x hardcoded `-Xms4G -Xmx4G` with no container
+	// limit at all, which is the shape memory_budget.go exists to remove: one pool
+	// sized by hand, every other pool unbounded, and no ceiling for the kernel to
+	// hold them against. What the launcher owns is the LIMIT (it already invents
+	// one for every webapp), so declare that and let applyMemoryBudget derive
+	// -Xmx/direct/metaspace/codecache from it. 8g is chosen so the derived heap
+	// (4371m) is not smaller than the 4G 1.x pinned — pinned by
+	// TestAlfrescoHeapComesFromTheBudgetNotTheGenerator.
+	alfApp.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "8g"}}
 
 	// Substitute RMQ credentials in alfresco properties (embedded appfile
 	// has hardcoded "admin" — replace with the generated admin password).
@@ -629,15 +657,23 @@ func generateAlfresco(ctx *NsGenContext) {
 	alfSolr.Image = "nexus.citeck.ru/ess:1.1.0"
 	alfSolr.Kind = appdef.KindCiteckAdditional
 	alfSolr.IsJVM = true
+	alfSolr.JVMMajor = 8 // Java 8, same as alfresco — see the note there
 	alfSolr.AddPort("38080:8080")
 	alfSolr.AddVolume("alf_solr_data:/opt/solr4_data")
 	alfSolr.AddEnv("TWEAK_SOLR", "true")
-	alfSolr.AddEnv("JAVA_OPTS", "-Xms1G -Xmx1G")
 	alfSolr.AddEnv("ALFRESCO_HOST", appdef.AppAlfresco)
 	alfSolr.AddEnv("ALFRESCO_PORT", "8080")
 	alfSolr.AddEnv("ALFRESCO_INDEX_TRANSFORM_CONTENT", "false")
 	alfSolr.AddEnv("ALFRESCO_RECORD_UNINDEXED_NODES", "false")
-	alfSolr.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "1g"}}
+	// 1.x paired a hardcoded `-Xms1G -Xmx1G` with a 1g limit — a heap that exactly
+	// equals the container, i.e. a guaranteed kernel OOM-kill as soon as metaspace,
+	// the code cache and thread stacks are added on top (and no Java error to show
+	// for it). The heap is no longer written here; the limit is raised to the
+	// smallest value that lets the budget size it, and the derived heap (1366m)
+	// then exceeds the 1G solr used to ask for. 2560m rather than the 2208m
+	// minimum leaves room for the budget formula to move without silently
+	// dropping solr onto the partial path.
+	alfSolr.Resources = &appdef.AppResourcesDef{Limits: appdef.LimitsDef{Memory: "2560m"}}
 }
 
 func generateObserver(ctx *NsGenContext) {

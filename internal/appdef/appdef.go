@@ -165,8 +165,17 @@ type ApplicationDef struct {
 	// solr are KindCiteckAdditional and are JVMs. json:"-" keeps it out of the
 	// deployment hash and out of the config editor — it describes the image, not
 	// the deployment.
-	IsJVM       bool `json:"-" yaml:"-"`
-	StopTimeout int  `json:"stopTimeout,omitempty" yaml:"stopTimeout,omitempty"` // seconds; 0 = default (15s webapps, 30s infra)
+	IsJVM bool `json:"-" yaml:"-"`
+	// JVMMajor is the Java feature release the app's image runs, when the
+	// launcher knows it and it is OLD enough to matter; 0 means "current" and is
+	// what every Citeck webapp uses. It exists because a flag the JVM does not
+	// recognize is not ignored — HotSpot refuses to start at all — so a legacy
+	// image must not be handed a modern flag. Only ever set for images we pin
+	// ourselves (alfresco + alf-solr are Java 8 and are not being updated).
+	// json:"-" for the same reason as IsJVM: it describes the image, not the
+	// deployment, so it stays out of the hash and out of the config editor.
+	JVMMajor    int `json:"-" yaml:"-"`
+	StopTimeout int `json:"stopTimeout,omitempty" yaml:"stopTimeout,omitempty"` // seconds; 0 = default (15s webapps, 30s infra)
 }
 
 // GetHashInput returns the string used to compute the application definition hash (for debugging).

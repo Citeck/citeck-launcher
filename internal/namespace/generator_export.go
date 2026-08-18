@@ -66,11 +66,46 @@ func attachExportDir(b *AppBuilder) {
 // by the kernel against the whole container, and the JVM never gets to run a
 // handler — so an app that dies from unbounded direct memory or metaspace leaves
 // nothing here. Only a Java-level OutOfMemoryError produces a dump.
-const HeapDumpJavaOpts = "-XX:+HeapDumpOnOutOfMemoryError" +
-	" -XX:HeapDumpPath=" + ExportMountPath +
-	" -XX:HeapDumpGzipLevel=1"
+const HeapDumpJavaOpts = heapDumpBaseJavaOpts + " -XX:HeapDumpGzipLevel=1"
 
-// applyHeapDumpOnOOM appends HeapDumpJavaOpts to the app's JAVA_OPTS, unless the
+// heapDumpBaseJavaOpts is the part every HotSpot since 6 understands.
+const heapDumpBaseJavaOpts = "-XX:+HeapDumpOnOutOfMemoryError" +
+	" -XX:HeapDumpPath=" + ExportMountPath
+
+// GzipHeapDumpMinJVM is the Java feature release from which the launcher assumes
+// gzipped heap dumps exist — both the -XX:HeapDumpGzipLevel flag and the `-gz=`
+// option of the GC.heap_dump jcmd command.
+//
+// This is a floor, not a discovery: an unknown -XX flag does NOT get ignored,
+// HotSpot refuses to start on it ("Unrecognized VM option 'HeapDumpGzipLevel=1'"
+// — measured on temurin-1.8.0_482), and jcmd rejects the whole command
+// ("Unknown argument ... in diagnostic command" — measured on the same JVM). So
+// the cost of setting this too LOW is an app that will not boot, while the cost
+// of setting it too HIGH is only a dump that is not compressed. The option is
+// documented as arriving in JDK 15 (JDK-8237354); 17 is the oldest release the
+// flag has actually been verified present on here, and nothing we run is on
+// 15/16, so the floor sits on verified ground rather than on documentation.
+const GzipHeapDumpMinJVM = 17
+
+// SupportsGzipHeapDump reports whether an app's JVM understands the gzip options.
+// jvmMajor 0 means "current" — every Citeck webapp — and only images the
+// launcher pins itself carry an explicit old version (see appdef.JVMMajor).
+func SupportsGzipHeapDump(jvmMajor int) bool {
+	return jvmMajor == 0 || jvmMajor >= GzipHeapDumpMinJVM
+}
+
+// HeapDumpJavaOptsFor returns the on-OOM dump flags an app's JVM can actually
+// accept. A Java 8 image (alfresco, alf-solr) gets an uncompressed dump — worse,
+// but the alternative is not "a compressed dump", it is a container that never
+// starts.
+func HeapDumpJavaOptsFor(jvmMajor int) string {
+	if SupportsGzipHeapDump(jvmMajor) {
+		return HeapDumpJavaOpts
+	}
+	return heapDumpBaseJavaOpts
+}
+
+// applyHeapDumpOnOOM appends the dump flags to the app's JAVA_OPTS, unless the
 // bundle or the user configured heap dumping themselves — an explicit
 // HeapDumpPath elsewhere must win, or we would silently redirect it.
 func applyHeapDumpOnOOM(def *appdef.ApplicationDef) {
@@ -78,7 +113,7 @@ func applyHeapDumpOnOOM(def *appdef.ApplicationDef) {
 	if strings.Contains(opts, "HeapDumpOnOutOfMemoryError") || strings.Contains(opts, "HeapDumpPath") {
 		return
 	}
-	def.Environments.Set("JAVA_OPTS", strings.TrimSpace(opts+" "+HeapDumpJavaOpts))
+	def.Environments.Set("JAVA_OPTS", strings.TrimSpace(opts+" "+HeapDumpJavaOptsFor(def.JVMMajor)))
 }
 
 // RotateHeapDumps keeps exactly ONE heap dump per app — the newest — and frees

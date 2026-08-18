@@ -1,6 +1,7 @@
 package namespace
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -541,13 +543,71 @@ func TestAlfrescoContainerDefs(t *testing.T) {
 	if alfSolr.Kind != appdef.KindCiteckAdditional {
 		t.Errorf("expected alf-solr kind=KindCiteckAdditional, got %d", alfSolr.Kind)
 	}
-	// Solr is a JVM, so it gets the OOM heap-dump flags appended like any other.
-	// Its own -Xms/-Xmx are untouched; the memory budget declines here because
-	// -Xmx1G already equals the 1g container limit (logged as a warning — that is
-	// a real misconfiguration, not something to paper over with caps).
-	if got := envGet(alfSolr.Environments, "JAVA_OPTS"); !strings.HasPrefix(got, "-Xms1G -Xmx1G ") ||
-		!strings.Contains(got, HeapDumpJavaOpts) {
-		t.Errorf("expected solr JAVA_OPTS to keep -Xms1G -Xmx1G and gain the heap-dump flags, got %q", got)
+	// Solr is a JVM, so it gets the computed budget and the OOM heap-dump flags
+	// like any other — but it is a Java 8 image, so the flags are the Java 8
+	// subset (no gzip) and no hand-written heap from the generator.
+	got := envGet(alfSolr.Environments, "JAVA_OPTS")
+	if !strings.Contains(got, HeapDumpJavaOptsFor(8)) {
+		t.Errorf("expected solr JAVA_OPTS to gain the heap-dump flags, got %q", got)
+	}
+	if strings.Contains(got, "-Xms") {
+		t.Errorf("solr must not get an -Xms pinned by the generator, got %q", got)
+	}
+}
+
+// TestAlfrescoHeapComesFromTheBudgetNotTheGenerator pins the rule that the
+// generator declares the container LIMIT and nothing else: 1.x hardcoded
+// `-Xms4G -Xmx4G` for alfresco (with no limit at all) and `-Xms1G -Xmx1G` for
+// solr (with a 1g limit — a heap the size of its own container), which is exactly
+// the "one pool sized by hand, the rest unbounded" shape the memory budget
+// exists to remove. The heap must now be DERIVED, and deriving it must not hand
+// either app less heap than the number it used to be pinned at.
+func TestAlfrescoHeapComesFromTheBudgetNotTheGenerator(t *testing.T) {
+	cfg := &Config{
+		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+	}
+	bun := &bundle.Def{
+		Applications: map[string]bundle.AppDef{"alfresco": {Image: "citeck/alfresco:1.0"}},
+	}
+	wsCfg := &bundle.WorkspaceConfig{Alfresco: bundle.AlfrescoProps{Enabled: true}}
+
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "test-jwt", OIDC: "test-oidc"})
+	require.NoError(t, err)
+
+	cases := []struct {
+		app string
+		// pinnedIn1x is the heap the generator used to write by hand.
+		pinnedIn1x int64
+	}{
+		{appdef.AppAlfresco, 4096 * mib},
+		{appdef.AppAlfSolr, 1024 * mib},
+	}
+	for _, tc := range cases {
+		t.Run(tc.app, func(t *testing.T) {
+			app := findGeneratedApp(resp, tc.app)
+			require.NotNil(t, app, "expected app %s", tc.app)
+			require.True(t, app.IsJVM, "%s must stay a JVM app or nothing budgets it", tc.app)
+			require.NotNil(t, app.Resources, "%s needs a memory limit for the budget to derive from", tc.app)
+
+			limit := docker.ParseMemory(app.Resources.Limits.Memory)
+			budget, ok := ComputeMemoryBudget(limit)
+			require.True(t, ok, "limit %s must be large enough for a full budget",
+				app.Resources.Limits.Memory)
+
+			opts := envGet(app.Environments, "JAVA_OPTS")
+			assert.NotContains(t, opts, "-Xms", "the generator must not pin the initial heap")
+			for _, want := range []string{
+				fmt.Sprintf("-Xmx%dm", budget.Heap/mib),
+				fmt.Sprintf("-XX:MaxDirectMemorySize=%dm", budget.Direct/mib),
+				fmt.Sprintf("-XX:MaxMetaspaceSize=%dm", budget.Metaspace/mib),
+				fmt.Sprintf("-XX:ReservedCodeCacheSize=%dm", budget.CodeCache/mib),
+			} {
+				assert.Contains(t, opts, want, "%s should carry the derived pool", tc.app)
+			}
+			assert.GreaterOrEqual(t, budget.Heap, tc.pinnedIn1x,
+				"the derived heap must not be smaller than the one 1.x pinned")
+		})
 	}
 }
 
@@ -1324,3 +1384,47 @@ func TestGenerateWebapp_SetsWebUrl(t *testing.T) {
 
 // envGet is a test helper: read a value from an OrderedMap env by key.
 func envGet(m appdef.OrderedMap, k string) string { v, _ := m.Get(k); return v }
+
+// TestJava8AppsGetNoFlagFromANewerJVM is the whole point of appdef.JVMMajor: an
+// -XX option a JVM does not know is not ignored, it is fatal at startup —
+// measured on temurin-1.8.0_482, `-XX:HeapDumpGzipLevel=1` gives "Unrecognized
+// VM option 'HeapDumpGzipLevel=1' / Could not create the Java Virtual Machine".
+// alfresco and alf-solr are pinned to Java 8 and are not being updated, so every
+// flag the launcher writes for them has to exist in 8. The memory budget's four
+// flags all do (verified on the same JVM); the gzip dump flag does not.
+func TestJava8AppsGetNoFlagFromANewerJVM(t *testing.T) {
+	cfg := &Config{
+		Authentication: AuthenticationProps{Type: AuthBasic, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+	}
+	bun := &bundle.Def{Applications: map[string]bundle.AppDef{"alfresco": {Image: "citeck/alfresco:1.0"}}}
+	wsCfg := &bundle.WorkspaceConfig{Alfresco: bundle.AlfrescoProps{Enabled: true}}
+
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "j", OIDC: "o"})
+	require.NoError(t, err)
+
+	for _, name := range []string{appdef.AppAlfresco, appdef.AppAlfSolr} {
+		app := findGeneratedApp(resp, name)
+		require.NotNil(t, app, "expected app %s", name)
+		assert.Equal(t, 8, app.JVMMajor, "%s must be marked as the Java 8 image it is", name)
+
+		opts := envGet(app.Environments, "JAVA_OPTS")
+		assert.NotContains(t, opts, "HeapDumpGzipLevel",
+			"%s runs Java 8: this flag makes HotSpot refuse to start", name)
+		// The dump itself must still be armed — losing the evidence is not the
+		// point, losing the flag Java 8 cannot parse is.
+		assert.Contains(t, opts, "-XX:+HeapDumpOnOutOfMemoryError", "%s", name)
+		assert.Contains(t, opts, "-XX:HeapDumpPath="+ExportMountPath, "%s", name)
+		// Every budget flag exists in Java 8, so budgeting is unaffected.
+		assert.Contains(t, opts, "-Xmx", "%s", name)
+	}
+}
+
+// A patch cannot lie about the image's Java version — same rule as IsJVM.
+func TestAppDefPatchCannotChangeTheJVMVersion(t *testing.T) {
+	base := appdef.ApplicationDef{Name: "alf-solr", IsJVM: true, JVMMajor: 8}
+	out, err := ApplyAppDefPatch(base, []byte(`{"name":"alf-solr"}`))
+	require.NoError(t, err)
+	assert.Equal(t, 8, out.JVMMajor)
+	assert.True(t, out.IsJVM)
+}

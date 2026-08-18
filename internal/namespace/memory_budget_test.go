@@ -138,6 +138,40 @@ func TestMemoryBudgetDoesNotPinInitialHeap(t *testing.T) {
 	assert.NotContains(t, b.JavaOpts(), "-Xms")
 }
 
+// TestConfiguredHeapSizeBecomesXmxOnly pins the other half of that rule, on the
+// path where the operator DID size the heap. `heapSize` is a maximum, so it maps
+// to -Xmx and to nothing else — 1.x emitted `-Xms<heapSize>` beside it
+// (NamespaceGenerator.kt:356), which nobody configured and which makes every JVM
+// pre-touch its whole heap at startup under the images' AlwaysPreTouch. Both
+// config layers are covered: the workspace defaults (applyWebappDefaults) and the
+// namespace override.
+func TestConfiguredHeapSizeBecomesXmxOnly(t *testing.T) {
+	cfg := &Config{
+		Authentication: AuthenticationProps{Type: AuthKeycloak, Users: []string{"admin"}},
+		Proxy:          ProxyProps{Port: 80},
+		Webapps:        map[string]WebappProps{"emodel": {HeapSize: "300m", MemoryLimit: "1g"}},
+	}
+	bun := &bundle.Def{Applications: map[string]bundle.AppDef{
+		"emodel":  {Image: "nexus.citeck.ru/emodel:1.0"},
+		"gateway": {Image: "nexus.citeck.ru/gateway:1.0"},
+	}}
+	wsCfg := &bundle.WorkspaceConfig{
+		DefaultWebappProps: bundle.WebappDefaultProps{HeapSize: "256m", MemoryLimit: "1g"},
+		Webapps:            []bundle.WebappConfig{{ID: "emodel"}, {ID: "gateway"}},
+	}
+
+	resp, err := Generate(cfg, bun, wsCfg, SystemSecrets{JWT: "j", OIDC: "o"})
+	require.NoError(t, err)
+
+	for app, wantHeap := range map[string]string{"gateway": "-Xmx256m", "emodel": "-Xmx300m"} {
+		def := findGeneratedApp(resp, app)
+		require.NotNil(t, def, "expected app %s", app)
+		opts, _ := def.Environments.Get("JAVA_OPTS")
+		assert.Contains(t, opts, wantHeap, "%s should carry the configured heap as -Xmx", app)
+		assert.NotContains(t, opts, "-Xms", "%s: the configured heapSize must not pin -Xms too", app)
+	}
+}
+
 func TestWebappGetsComputedMemoryBudget(t *testing.T) {
 	resp := generateWebappWith(t, WebappProps{MemoryLimit: "4g"})
 	app := findGeneratedApp(resp, "emodel")
