@@ -158,7 +158,7 @@ func generatePostgres(ctx *NsGenContext) {
 }
 
 func generateZookeeper(ctx *NsGenContext) {
-	fallback := "zookeeper:3.9.4"
+	fallback := "zookeeper:3.9.5"
 	if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.Zookeeper.Image != "" {
 		fallback = ctx.WorkspaceConfig.Zookeeper.Image
 	}
