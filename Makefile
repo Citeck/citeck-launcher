@@ -61,8 +61,12 @@ check:
 	cd web && pnpm install --frozen-lockfile && pnpm vitest run && pnpm audit --prod --audit-level high && pnpm lint
 	@echo "==> [8/10] build server binary (tsc + vite + go build via 'make build')"
 	$(MAKE) build
-	@echo "==> [9/10] cross-compile check (linux/arm64)"
+	@echo "==> [9/10] cross-compile check (linux/arm64, windows/amd64)"
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o /tmp/citeck-check-arm64 ./cmd/citeck && rm -f /tmp/citeck-check-arm64
+# Windows-tagged sources (supervisor_proc_windows.go and its test) are invisible
+# to every step above, and the release tag is otherwise the first thing that
+# compiles them. `vet` rather than `build` so the _test.go files are covered too.
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go vet ./internal/...
 	@echo "==> [10/10] PASS — full local gate green (superset of CI)"
 
 help:

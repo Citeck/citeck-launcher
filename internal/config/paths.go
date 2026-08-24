@@ -169,6 +169,19 @@ func DaemonLogPath() string {
 	return filepath.Join(LogDir(), "daemon.log")
 }
 
+// LauncherLogPath returns the path to the desktop wrapper's own log file. It is
+// deliberately separate from daemon.log: the wrapper and the daemon are two
+// processes with two lifecycles, and the lines that matter here (which daemon
+// binary was selected, whether the child came up, why a startup aborted) are
+// written precisely when there is no daemon to write them.
+//
+// The file exists because the wrapper has no console to fall back on. On Windows
+// it is linked -H windowsgui and therefore has no stdout/stderr at all; on Linux
+// and macOS a GUI-launched app's stderr goes nowhere a user can find either.
+func LauncherLogPath() string {
+	return filepath.Join(LogDir(), "launcher.log")
+}
+
 // DaemonConfigPath returns the path to daemon.yml.
 func DaemonConfigPath() string {
 	return filepath.Join(ConfDir(), "daemon.yml")

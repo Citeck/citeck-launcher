@@ -7,11 +7,34 @@ import (
 	"syscall"
 )
 
-// sysProcAttrSetsid returns empty process attributes on Windows. The Setsid
-// field does not exist there; orphan reaping relies on the persisted daemon.pid
-// (ReapOrphanDaemon) on next launch since there is no Pdeathsig equivalent.
+// createNoWindow is CREATE_NO_WINDOW from the Win32 process-creation flags.
+// Hardcoded rather than pulled from golang.org/x/sys/windows so this file needs
+// no import that the other platforms do not already carry.
+const createNoWindow = 0x08000000
+
+// sysProcAttrSetsid returns the process attributes for the supervised daemon on
+// Windows. Setsid does not exist there; orphan reaping relies on the persisted
+// daemon.pid (ReapOrphanDaemon) on next launch since there is no Pdeathsig
+// equivalent.
+//
+// CREATE_NO_WINDOW is load-bearing and pairs with the wrapper's own -H
+// windowsgui (packaging/windows/release.sh). The daemon is a console-subsystem
+// binary, and CreateProcess gives such a child a BRAND NEW console — with a
+// visible window — whenever the parent has none. So the moment the wrapper
+// stopped being a console app, the console the user complained about would have
+// come straight back, this time owned by the daemon. Redirecting the child's
+// stdout/stderr (which the supervisor already does, into LogWriter) does not
+// prevent the allocation: the window is created before anything is written to
+// it.
+//
+// Grandchildren inherit the console-less state, so any console-subsystem
+// process the DAEMON spawns would allocate a window of its own too. As of this
+// change there are none: the daemon talks to Docker through the SDK, to git
+// through go-git, and the only thing it execs on Windows is explorer.exe
+// (routes_workspace.go), which is GUI-subsystem. Anything console-subsystem
+// added there needs this flag as well.
 func sysProcAttrSetsid() *syscall.SysProcAttr {
-	return &syscall.SysProcAttr{}
+	return &syscall.SysProcAttr{CreationFlags: createNoWindow}
 }
 
 // isProcessAlive reports whether a process with the given pid exists. On Windows

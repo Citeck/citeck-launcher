@@ -18,8 +18,14 @@ mkdir -p dist/bin
 go run github.com/akavel/rsrc@v0.10.2 -ico icons/logo.ico -arch "$ARCH" \
   -o "cmd/citeck-desktop/rsrc_windows_${ARCH}.syso"
 
+# -H windowsgui marks the .exe as GUI-subsystem. Without it Go emits a
+# console-subsystem PE and Windows opens a console window alongside the webview
+# on every launch — see TestWindowsDesktopReleaseLinksAGUISubsystemBinary, which
+# links a stub with these very flags and reads the subsystem byte back. The
+# wrapper writes its own log file (config.LogDir()/launcher.log), so nothing
+# diagnostic is lost with the console gone.
 CGO_ENABLED=0 GOARCH="$ARCH" go build -tags desktop \
-  -ldflags "-s -w -X main.version=${VERSION}" \
+  -ldflags "-s -w -H windowsgui -X main.version=${VERSION}" \
   -o dist/bin/citeck-launcher.exe ./cmd/citeck-desktop
 
 wixArch="x64"; [ "$ARCH" = "arm64" ] && wixArch="arm64"

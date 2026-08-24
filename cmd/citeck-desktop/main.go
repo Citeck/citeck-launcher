@@ -92,6 +92,11 @@ func run() error {
 	// Set desktop mode early so config paths are correct
 	config.SetDesktopMode(true)
 
+	// Then give the wrapper somewhere to log: on Windows it is linked
+	// -H windowsgui and has no stderr at all, so everything below — including a
+	// fatal startup error — would otherwise vanish.
+	setupWrapperLogging()
+
 	// Single instance check
 	lock, err := desktop.AcquireInstanceLock()
 	if err != nil {
@@ -176,6 +181,11 @@ func run() error {
 		Name:        "Citeck Launcher",
 		Description: "Citeck Platform Launcher",
 		Icon:        appIcon,
+		// Wails' own logger otherwise writes its banner and asset-server lines
+		// to stdout, which under -H windowsgui goes nowhere. Route it into the
+		// same launcher.log the wrapper uses so the file is a full replacement
+		// for the console this build no longer opens.
+		Logger: slog.Default(),
 		Assets: application.AssetOptions{
 			Handler: loadingHandler,
 		},

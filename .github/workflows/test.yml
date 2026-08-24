@@ -62,7 +62,10 @@ jobs:
       - name: Build server binary
         run: make build
 
-      - name: Cross-compile check (linux/arm64)
+      - name: Cross-compile check (linux/arm64, windows/amd64)
         run: |
           GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o /tmp/citeck-ci-arm64 ./cmd/citeck
           rm /tmp/citeck-ci-arm64
+          # Windows-tagged sources compile nowhere else in this job; without
+          # this the release tag is the first thing that builds them.
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go vet ./internal/...
