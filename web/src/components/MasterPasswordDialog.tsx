@@ -98,7 +98,19 @@ function MasterPasswordForm({ mode, loading, error, onSubmit, onSkip, onReset }:
     void onSubmit(password)
   }
 
-  const showError = error ?? localError
+  // `||`, not `??`: every caller holds the `error` prop as `useState('')`, and
+  // an empty string is not nullish — with `??` the parent's "no error" value won
+  // the merge and swallowed every message this form raises for itself (the
+  // mismatch and the empty-password check both went silent, so Confirm looked
+  // like it did nothing at all).
+  //
+  // localError comes first because it is always the newer verdict: submit()
+  // clears it before handing off, so it is non-null only when THIS click was
+  // refused locally and never reached the parent. The parent's error, by
+  // contrast, survives until its next attempt — after a rejected password, a
+  // following mismatch would otherwise be reported as whatever the daemon said
+  // last time.
+  const showError = localError || error
 
   return (
     <>
