@@ -37,9 +37,14 @@ coverage.html
 ### Claude Code ###
 .claude/
 
-### Binaries (prevent accidental root-dir builds) ###
-/citeck
-/citeck-launcher
+### Binaries ###
+# Only the real output directory. A binary in the REPO ROOT is deliberately NOT
+# ignored: it can only get there from a wrong build — `go build ./cmd/<pkg>`
+# with no -o (which names the output after the package directory), or a
+# hand-typed -o. Every supported path writes into dist/bin, so an artifact at
+# the root is a mistake, and ignoring it just hides the mistake — a 40 MB
+# citeck-desktop sat untracked in the root for days that way. Let it show up in
+# git status instead.
 /dist/
 
 ### Prompt files ###
