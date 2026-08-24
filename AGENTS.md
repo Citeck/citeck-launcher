@@ -62,6 +62,28 @@ failing** is fatal — on a macOS runner that means a broken toolchain or a malf
 continuing would publish the very "is damaged" artifact the script exists to prevent. Do not
 "soften" that into a warning: a green release that silently contains the bug is worse than a red
 one, and nobody reads `::warning::` on a passing build.
+
+**Windows: the wrapper is GUI-subsystem and the daemon child gets `CREATE_NO_WINDOW`.**
+These two are one decision, and dropping either brings back the same symptom — a second,
+black console window next to the launcher (reported on 2.11.0). Windows takes the decision
+from a single byte in the PE optional header: Go emits `IMAGE_SUBSYSTEM_WINDOWS_CUI` (3)
+by default and only `-H windowsgui` in `packaging/windows/release.sh` flips it to GUI (2).
+But a GUI parent has no console, and `CreateProcess` answers that by allocating a **brand
+new console, window and all**, for any console-subsystem child — which the daemon is. So
+`sysProcAttrSetsid` (`internal/desktop/supervisor_proc_windows.go`) must pass
+`CREATE_NO_WINDOW`; redirecting the child's stdout/stderr does not help, since the window
+is created before anything is written to it. The same applies to anything the *daemon*
+execs (today only `explorer.exe`, which is GUI-subsystem, so nothing else needs it yet).
+`TestWindowsDesktopReleaseLinksAGUISubsystemBinary` does not grep for the flag — it
+extracts the real link flags out of the release script, links a stub with them and reads
+the subsystem byte back, so a typo or a quoting slip fails too. Since the wrapper then has
+no stderr at all, it writes `config.LauncherLogPath()` (`<LogDir>/launcher.log`, teed to
+stderr only when `stderrUsable()`); Wails' own logger is pointed at the same handler via
+`application.Options.Logger`. Without that file a failed startup — a held instance lock, a
+daemon binary that will not spawn — would be an app that does nothing, silently, with no
+trace anywhere. Windows-tagged sources compile nowhere else in the test job, so `make
+check` / test.yml run `GOOS=windows go vet ./internal/...`.
+
 A `v*.*.*` tag builds all installers via `.github/workflows/release-go.yml` and attaches
 them to the GitHub Release alongside the server tarballs. Release artifacts are named
 `citeck-desktop_<version>_<os>_<arch>.<ext>` (the package/app *identity* stays `citeck-launcher`
