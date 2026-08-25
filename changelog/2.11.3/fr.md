@@ -1,0 +1,3 @@
+## Corrections
+- **La migration depuis la 1.x ne ressuscite plus les namespaces supprimés.** Ils apparaissaient dans la liste sous forme d'identifiants nus, sans nom ni bundle, et leur ouverture renvoyait `namespace "..." not found`. Supprimer un namespace en 1.x laissait une partie de son état derrière lui, et la migration transformait chaque résidu en entrée à part entière. S'ils sont déjà dans votre liste, supprimez-les avec l'icône corbeille — rien d'autre n'est touché.
+- Les namespaces de l'ancien workspace par défaut conservent après la migration l'état des applications arrêtées et le bundle mémorisé.
