@@ -191,9 +191,20 @@ func (d *Daemon) reresolveActiveWorkspace() error {
 	if err != nil {
 		return fmt.Errorf("lookup workspace: %w", err)
 	}
-	if ws == nil || ws.RepoURL == "" {
+	if ws == nil {
 		return nil
 	}
+	// An empty RepoURL is NOT "nothing to resolve": it is the built-in
+	// `default` workspace, whose synthetic record carries no URL because the
+	// resolver substitutes DefaultBundlesRepo for it. Bailing here excluded
+	// exactly that workspace from the one path that can recover its config —
+	// and SwitchWorkspace deliberately skips the resolve for default-repo
+	// workspaces too ("config then loads lazily via the namespace auto-load").
+	// A default-repo workspace with NO namespaces therefore had nothing that
+	// would ever resolve it, which is the state migration leaves `default` in
+	// once the user's namespaces live in another workspace: an empty
+	// "Bundle repository" dropdown that cannot be filled, and a Quick Start
+	// that produces a namespace with an empty bundle ref.
 
 	wsCfg, syncErr := d.resolveActiveWorkspaceConfig(*ws)
 
@@ -238,6 +249,19 @@ func (d *Daemon) resolveActiveWorkspaceConfig(ws storage.WorkspaceDto) (*bundle.
 	return wsCfg, nil
 }
 
+// workspaceConfigResolved reports whether the active workspace's config has
+// been resolved at all. A NIL config is not "an empty workspace" — it is
+// "nobody has looked yet": SwitchWorkspace assigns `a.workspaceConfig = wsCfg`
+// and wsCfg is nil for default-repo workspaces, deferring the resolve to the
+// namespace auto-load. A workspace with no namespaces never gets that, so the
+// read surfaces must resolve it themselves instead of serving nil as an answer.
+//
+// Deliberately nil-only, not "has bundleRepos": a config that resolved to
+// something thin is a settled answer and must not re-run git I/O on every read.
+func workspaceConfigResolved(cfg *bundle.WorkspaceConfig) bool {
+	return cfg != nil
+}
+
 // activeWorkspaceConfigForRead returns the active workspace config for the
 // read-only Welcome surfaces (quick starts, namespace list, snapshots). When a
 // sync error is cached it re-resolves once against the CURRENT secret store —
@@ -254,18 +278,20 @@ func (d *Daemon) resolveActiveWorkspaceConfig(ws storage.WorkspaceDto) (*bundle.
 // resolveLatestBundleKey for the quick-start LATEST display. Steady state (no
 // error cached, bundle repo fresh) does zero git I/O.
 func (d *Daemon) activeWorkspaceConfigForRead() (cfg *bundle.WorkspaceConfig, syncErr string) {
-	if act := d.active(); act.wsSyncError == "" {
+	if act := d.active(); act.wsSyncError == "" && workspaceConfigResolved(act.workspaceConfig) {
 		return act.workspaceConfig, ""
 	}
-	// A failure is cached — retry under the reload lock. If it's held (a reload
+	// A failure is cached, or the config was never resolved at all (a
+	// default-repo workspace with no namespaces has no other trigger) —
+	// resolve under the reload lock. If it's held (a reload
 	// or another retry is in flight) return the cached value rather than block.
 	if !d.reloadMu.TryLock() {
 		act := d.active()
 		return act.workspaceConfig, act.wsSyncError
 	}
 	defer d.reloadMu.Unlock()
-	if act := d.active(); act.wsSyncError == "" { // fixed by a concurrent retry
-		return act.workspaceConfig, ""
+	if act := d.active(); act.wsSyncError == "" && workspaceConfigResolved(act.workspaceConfig) {
+		return act.workspaceConfig, "" // fixed by a concurrent retry
 	}
 	_ = d.reresolveActiveWorkspace() // updates the cached state; result read below
 	act := d.active()
