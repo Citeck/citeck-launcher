@@ -122,7 +122,7 @@ func TestImportNamespacesAbortsOnInvalidConfig(t *testing.T) {
 		"entities/ws1!namespace": {"nsBad": bad},
 	}
 	res := &MigrateResult{}
-	err = importNamespaces(maps, s, res)
+	_, err = importNamespaces(maps, s, res)
 	require.Error(t, err)
 	require.Equal(t, 0, res.Namespaces)
 	_, ok, _ := s.LoadNamespaceConfig("ws1", "nsBad")

@@ -38,7 +38,19 @@ const runtimeStateMapPrefix = "namespace-runtime-state!"
 // resolve. The Go server already implements the same fallback rule at
 // daemon/server.go (uses state.CachedBundle when bundlesService can't find
 // the ref); we just need to seed it from the Kotlin store.
-func importRuntimeState(homeDir string, maps map[string]map[string]string, store storage.Store, result *MigrateResult) error {
+//
+// A runtime-state map with NO namespace config is an orphan and is skipped.
+// Deleting a namespace in 1.x removed only the DATA repo — NamespacesService's
+// delete listener calls deleteRepo(scope, "<ws>:<ns>") and never touches the
+// "<ws>:<ns>/changedRuntimeFiles" inner repo — so every namespace a user ever
+// deleted leaves its file-overlay map in storage.db forever. Importing those
+// wrote a namespace row with no name, no bundle and no config (SaveNamespaceState
+// INSERTs), which the launcher then listed as a bare id that answered
+// `namespace "..." not found in workspace "..."` when opened. One real store
+// carried 11 of them.
+func importRuntimeState(homeDir string, maps map[string]map[string]string, known migratedNamespaces,
+	store storage.Store, result *MigrateResult,
+) error {
 	// First pass: locate the file-overlay maps separately so we can fold them
 	// into the same per-namespace state struct.
 	dataMaps := make(map[string]map[string]string) // wsId:nsId -> entries
@@ -71,20 +83,34 @@ func importRuntimeState(homeDir string, maps map[string]map[string]string, store
 		repoKeys[k] = struct{}{}
 	}
 
+	orphans := 0
 	for repoKey := range repoKeys {
-		wsID, nsID, ok := splitNsRepoKey(repoKey)
+		diskWsID, nsID, ok := splitNsRepoKey(repoKey)
 		if !ok {
 			slog.Warn("Skipping runtime-state map with unexpected key", "repoKey", repoKey)
 			continue
 		}
 
-		state := loadOrInitState(homeDir, wsID, nsID)
+		// The store row must be the namespace's OWN row, so the workspace id
+		// comes from the config; the on-disk rtfiles tree keeps the spelling
+		// 1.x actually created it with (WorkspacesService.getWorkspaceDir uses
+		// the real workspace id, never the upper-case entity-scope alias), so
+		// those two are deliberately not the same variable.
+		wsID, live := known.configWorkspace(diskWsID, nsID)
+		if !live {
+			orphans++
+			slog.Debug("Skipping orphaned runtime state — no namespace config (deleted in 1.x)",
+				"ws", diskWsID, "ns", nsID)
+			continue
+		}
+
+		state := loadOrInitState(homeDir, diskWsID, nsID)
 
 		if data := dataMaps[repoKey]; data != nil {
 			applyDataRepoEntries(data, state, wsID, nsID)
 		}
 
-		volumesBase := resolveVolumesBaseForMigration(homeDir, wsID, nsID)
+		volumesBase := resolveVolumesBaseForMigration(homeDir, diskWsID, nsID)
 		if files := fileOverlayMaps[repoKey]; len(files) > 0 {
 			applyChangedRuntimeFiles(files, volumesBase, state, wsID, nsID, result)
 		}
@@ -114,6 +140,12 @@ func importRuntimeState(homeDir string, maps map[string]map[string]string, store
 			"editedFiles", len(state.EditedFiles),
 			"cachedBundle", bundleVersion,
 		)
+	}
+	if orphans > 0 {
+		// Not a degradation: these namespaces were deleted by the user in 1.x
+		// and their leftover file-overlay maps are junk, not lost data.
+		slog.Info("Skipped orphaned namespace runtime states left by 1.x namespace deletions",
+			"count", orphans)
 	}
 	return nil
 }

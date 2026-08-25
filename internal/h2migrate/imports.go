@@ -88,15 +88,47 @@ func importWorkspaces(maps map[string]map[string]string, store storage.Store, re
 	}
 }
 
+// migratedNamespaces indexes the namespace configs importNamespaces actually
+// wrote, so importRuntimeState can tell a live namespace from an orphaned
+// runtime-state map — and can file a namespace's state on the SAME store row as
+// its config even when the two disagree on how the workspace id is spelled.
+//
+// The workspace id is folded to lower case for lookup because Kotlin's
+// WORKSPACE_ALIASES (EntitiesService) gives the legacy `default` / `global`
+// workspaces an upper-case alias for the ENTITY scope only: the config lives in
+// `entities/DEFAULT!namespace` while the runtime-state repo key stays
+// `default:<ns>`. Namespace ids are generated and case-sensitive, so those are
+// matched exactly.
+type migratedNamespaces map[string]string
+
+func nsIndexKey(wsID, nsID string) string {
+	return strings.ToLower(wsID) + "\x00" + nsID
+}
+
+func (m migratedNamespaces) add(wsID, nsID string) {
+	m[nsIndexKey(wsID, nsID)] = wsID
+}
+
+// configWorkspace returns the workspace id the namespace's CONFIG was stored
+// under, or ok=false when no config was imported for it at all.
+func (m migratedNamespaces) configWorkspace(wsID, nsID string) (string, bool) {
+	ws, ok := m[nsIndexKey(wsID, nsID)]
+	return ws, ok
+}
+
 // importNamespaces translates every Kotlin namespace entity, validates the
 // marshaled YAML, and writes it to the store as a row. Validation is hard:
 // any invalid config (bad input OR a serializer defect) aborts the whole
 // migration with an error so the defect is fixed rather than silently stored.
-func importNamespaces(maps map[string]map[string]string, store storage.Store, result *MigrateResult) error {
+//
+// It returns the index of what it wrote; importRuntimeState needs it to avoid
+// resurrecting namespaces the user deleted back in 1.x.
+func importNamespaces(maps map[string]map[string]string, store storage.Store, result *MigrateResult) (migratedNamespaces, error) {
 	type staged struct {
 		wsID, nsID, name, yaml string
 	}
 	var rows []staged
+	index := make(migratedNamespaces)
 
 	for mapName, entries := range maps {
 		if !strings.HasSuffix(mapName, "!namespace") {
@@ -120,12 +152,12 @@ func importNamespaces(maps map[string]map[string]string, store storage.Store, re
 			}
 			yamlBytes, err := yaml.Marshal(nsCfg)
 			if err != nil {
-				return fmt.Errorf("marshal migrated namespace %s/%s: %w", wsID, nsID, err)
+				return nil, fmt.Errorf("marshal migrated namespace %s/%s: %w", wsID, nsID, err)
 			}
 			if _, verr := namespace.ValidateYAML(yamlBytes); verr != nil {
 				slog.Error("CRITICAL: migrated namespace config is invalid — aborting migration",
 					"ws", wsID, "ns", nsID, "err", verr)
-				return fmt.Errorf("invalid migrated namespace %s/%s: %w", wsID, nsID, verr)
+				return nil, fmt.Errorf("invalid migrated namespace %s/%s: %w", wsID, nsID, verr)
 			}
 			name, _ := nsCfg["name"].(string)
 			rows = append(rows, staged{wsID: wsID, nsID: nsID, name: name, yaml: string(yamlBytes)})
@@ -134,12 +166,13 @@ func importNamespaces(maps map[string]map[string]string, store storage.Store, re
 
 	for _, r := range rows {
 		if err := store.SaveNamespaceConfig(r.wsID, r.nsID, r.name, r.yaml); err != nil {
-			return fmt.Errorf("save migrated namespace %s/%s: %w", r.wsID, r.nsID, err)
+			return nil, fmt.Errorf("save migrated namespace %s/%s: %w", r.wsID, r.nsID, err)
 		}
+		index.add(r.wsID, r.nsID)
 		result.Namespaces++
 		slog.Info("Migrated namespace", "ws", r.wsID, "ns", r.nsID, "name", r.name)
 	}
-	return nil
+	return index, nil
 }
 
 // buildNamespaceYAMLMap turns a Kotlin Jackson-serialized NamespaceConfig blob

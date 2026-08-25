@@ -190,11 +190,12 @@ func Migrate(homeDir string, store storage.Store) (*MigrateResult, error) {
 	slog.Info("H2 maps loaded", "count", len(maps))
 
 	importWorkspaces(maps, store, result)
-	if err := importNamespaces(maps, store, result); err != nil {
+	migrated, err := importNamespaces(maps, store, result)
+	if err != nil {
 		return nil, err
 	}
 	importSecrets(maps, store, result)
-	if err := importRuntimeState(homeDir, maps, store, result); err != nil {
+	if err := importRuntimeState(homeDir, maps, migrated, store, result); err != nil {
 		return nil, err
 	}
 	importGitRepos(maps, store, result)

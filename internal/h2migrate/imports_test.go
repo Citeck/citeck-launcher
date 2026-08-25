@@ -20,9 +20,10 @@ func runImports(t *testing.T, homeDir string, maps map[string]map[string]string,
 	t.Helper()
 	result := &MigrateResult{}
 	importWorkspaces(maps, store, result)
-	require.NoError(t, importNamespaces(maps, store, result))
+	migrated, err := importNamespaces(maps, store, result)
+	require.NoError(t, err)
 	importSecrets(maps, store, result)
-	require.NoError(t, importRuntimeState(homeDir, maps, store, result))
+	require.NoError(t, importRuntimeState(homeDir, maps, migrated, store, result))
 	importGitRepos(maps, store, result)
 	importState(maps, store)
 	return result
@@ -344,6 +345,11 @@ func TestImportRuntimeStatePreservesDetachAndEdits(t *testing.T) {
 	})
 
 	maps := map[string]map[string]string{
+		// The namespace must exist as an entity: runtime state whose namespace
+		// has no config is an orphan left by a 1.x deletion and is skipped.
+		"entities/ws1!namespace": {
+			"nsA": nsEntity(t, "nsA", "ns A"),
+		},
 		"namespace-runtime-state!ws1:nsA": {
 			"manualStoppedApps":   base64.StdEncoding.EncodeToString(manualStopped),
 			"editedAndLockedApps": base64.StdEncoding.EncodeToString(locked),
@@ -423,6 +429,9 @@ func TestImportRuntimeStateRejectsPathTraversal(t *testing.T) {
 	homeDir := t.TempDir()
 
 	maps := map[string]map[string]string{
+		"entities/ws1!namespace": {
+			"nsA": nsEntity(t, "nsA", "ns A"),
+		},
 		"namespace-runtime-state!ws1:nsA/changedRuntimeFiles": {
 			"../../etc/evil": base64.StdEncoding.EncodeToString([]byte("pwned")),
 			"good/file":      base64.StdEncoding.EncodeToString([]byte("ok")),
