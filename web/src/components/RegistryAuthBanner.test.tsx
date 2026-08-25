@@ -119,6 +119,28 @@ describe('RegistryAuthBanner', () => {
     expect(HTMLDialogElement.prototype.showModal).not.toHaveBeenCalled()
   })
 
+  // The state that exists ONLY on the first boot after a 1.x → 2.x migration:
+  // the migrated secrets are still one opaque blob awaiting the master
+  // password, so the vault is neither encrypted nor locked — it is empty, and
+  // `locked` comes back false. Keying the guard on `locked` alone let the
+  // credentials dialog stack over the master-password prompt, which is a dead
+  // end: there is no vault to pick a secret from and saving a token answers
+  // 423. Reported by a migrating user.
+  it('does not auto-open the dialog while migrated secrets are still pending', async () => {
+    vi.mocked(getMigrationStatus).mockResolvedValue({
+      encrypted: false, locked: false, hasPendingSecrets: true, hasSecrets: false,
+    })
+    render(<RegistryAuthBanner />)
+
+    await waitFor(() => expect(getMigrationStatus).toHaveBeenCalled())
+    await Promise.resolve()
+
+    act(() => { useDashboardStore.setState({ pullAuthRequired: { emodel: HOST } }) })
+
+    await screen.findByText(/Registry credentials needed for/)
+    expect(HTMLDialogElement.prototype.showModal).not.toHaveBeenCalled()
+  })
+
   it('auto-opens the dialog once secrets become unlocked (epoch bump)', async () => {
     vi.mocked(getMigrationStatus).mockResolvedValue({ encrypted: true, locked: true, hasPendingSecrets: false, hasSecrets: true })
     render(<RegistryAuthBanner />)

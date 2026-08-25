@@ -345,11 +345,46 @@ func (d *Daemon) handleSubmitMasterPassword(w http.ResponseWriter, r *http.Reque
 
 	d.rebuildAuthCaches()
 
+	// The start gate defers a namespace whose images need an auth-required
+	// registry while a Kotlin secrets blob is still pending — the credentials
+	// are on disk but unreadable. This is the moment they become readable, and
+	// it is a DIFFERENT handler from handleUnlockSecrets (that one unlocks an
+	// already-imported vault; this one imports for the first time). Without the
+	// resume here the deferral would be permanent: the user enters the master
+	// password and the namespace simply never starts.
+	d.startNamespaceDeferredForSecrets("secrets imported")
+
 	slog.Info("Master password accepted, secrets imported and encrypted", "count", count)
 	writeJSON(w, api.ActionResultDto{
 		Success: true,
 		Message: fmt.Sprintf("%d secrets imported and encrypted", count),
 	})
+}
+
+// startNamespaceDeferredForSecrets starts the active namespace if its auto-start
+// was withheld by the secrets gate. Shared by the two paths that can make the
+// vault readable: importing the migrated Kotlin blob (handleSubmitMasterPassword)
+// and unlocking an existing vault (handleUnlockSecrets). Callers must have
+// rebuilt the registry-auth cache first, so the pull sees the credentials.
+func (d *Daemon) startNamespaceDeferredForSecrets(why string) {
+	d.configMu.Lock()
+	act := d.activeNs
+	startDeferred := act != nil && act.deferredForSecrets && act.nsConfig != nil && act.runtime != nil
+	var deferredNsID string
+	var deferredAppDefs []appdef.ApplicationDef
+	var deferredRuntime *namespace.Runtime
+	if startDeferred {
+		act.deferredForSecrets = false
+		deferredNsID = act.nsConfig.ID
+		deferredAppDefs = act.appDefs
+		deferredRuntime = act.runtime
+	}
+	d.configMu.Unlock()
+	if !startDeferred {
+		return
+	}
+	slog.Info("Starting namespace deferred for secrets", "ns", deferredNsID, "reason", why)
+	d.startRuntime(deferredRuntime, deferredAppDefs)
 }
 
 // --- Secrets Encryption ---
@@ -378,23 +413,7 @@ func (d *Daemon) handleUnlockSecrets(w http.ResponseWriter, r *http.Request) {
 	// A namespace whose start was deferred because it needs user secrets (an
 	// auth-required registry) can now run — the vault is unlocked and the
 	// registry-auth cache was just rebuilt from the readable secrets.
-	d.configMu.Lock()
-	act := d.activeNs
-	startDeferred := act != nil && act.deferredForSecrets && act.nsConfig != nil && act.runtime != nil
-	var deferredNsID string
-	var deferredAppDefs []appdef.ApplicationDef
-	var deferredRuntime *namespace.Runtime
-	if startDeferred {
-		act.deferredForSecrets = false
-		deferredNsID = act.nsConfig.ID
-		deferredAppDefs = act.appDefs
-		deferredRuntime = act.runtime
-	}
-	d.configMu.Unlock()
-	if startDeferred {
-		slog.Info("Secrets unlocked — starting deferred namespace", "ns", deferredNsID)
-		d.startRuntime(deferredRuntime, deferredAppDefs)
-	}
+	d.startNamespaceDeferredForSecrets("secrets unlocked")
 
 	slog.Info("Secrets unlocked successfully")
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "secrets unlocked"})

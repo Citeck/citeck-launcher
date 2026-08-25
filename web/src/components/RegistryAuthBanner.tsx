@@ -25,12 +25,20 @@ import { RegistryCredentialsDialog } from './RegistryCredentialsDialog'
  *     via the persistent banner, so a blinking marker never re-pops the dialog.
  *
  * Locked-secrets guard: the native `<dialog>` top-layer stacks by open-order,
- * so if this dialog auto-opens while the secret vault is locked it covers the
- * `SecretsUnlockGuard` master-password modal underneath. The daemon defers
- * namespace start while locked (so `pull_auth_required` should rarely fire in
- * that window), but this is defense-in-depth: auto-open is suppressed while
- * `locked` is true, and re-armed once `useSecretsLockStore`'s `epoch` bumps
- * (unlock) and a fresh `getMigrationStatus()` confirms `locked: false`.
+ * so if this dialog auto-opens while the secret vault is unreadable it covers
+ * the `SecretsUnlockGuard` master-password modal underneath. The daemon defers
+ * namespace start in that window (so `pull_auth_required` should rarely fire),
+ * but this is defense-in-depth: auto-open is suppressed while the vault is
+ * unreadable, and re-armed once `useSecretsLockStore`'s `epoch` bumps and a
+ * fresh `getMigrationStatus()` says it is readable.
+ *
+ * "Unreadable" is `locked || hasPendingSecrets`, NOT `locked` alone. On the
+ * first boot after a 1.x → 2.x migration the migrated secrets are still one
+ * opaque blob awaiting the master password, so the vault is neither encrypted
+ * NOR locked — it is empty, and `locked` is false. Keying on `locked` alone let
+ * exactly the stacking this guard exists to prevent through: a migrating user
+ * was asked to pick a registry secret (from a vault that did not exist yet)
+ * before being asked for the master password.
  */
 export function RegistryAuthBanner() {
   const pullAuthRequired = useDashboardStore((s) => s.pullAuthRequired)
@@ -62,7 +70,9 @@ export function RegistryAuthBanner() {
     let cancelled = false
     getMigrationStatus()
       .then((s) => {
-        if (!cancelled) setLocked(s.locked)
+        // See the doc comment: a pending Kotlin blob is as unreadable as a
+        // locked vault, and reports locked:false.
+        if (!cancelled) setLocked(s.locked || s.hasPendingSecrets)
       })
       .catch(() => {
         // A transient fetch error un-gates the banner once settled — fail

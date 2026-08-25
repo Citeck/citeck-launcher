@@ -539,10 +539,21 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	for _, appDef := range appDefs {
 		appImages = append(appImages, appDef.Image)
 	}
-	if shouldStart && in.SecretService != nil && shouldDeferStartForSecrets(config.IsDesktopMode(), in.SecretService, appImages, wsCfg) {
+	// A pending Kotlin secrets blob counts as "vault not usable yet" even though
+	// SecretService reports neither encrypted nor locked — see the gate's doc.
+	pendingKotlinImport := hasPendingKotlinSecrets(in.Store)
+	// Box the pointer only when it is non-nil: a typed-nil *SecretService in the
+	// interface is non-nil to `vault != nil` and panics inside IsEncrypted().
+	var vault secretVaultState
+	if in.SecretService != nil {
+		vault = in.SecretService
+	}
+	if shouldStart && shouldDeferStartForSecrets(config.IsDesktopMode(), vault,
+		pendingKotlinImport, appImages, wsCfg) {
 		shouldStart = false
 		deferredForSecrets = true
-		slog.Info("Namespace needs user secrets but vault is locked — deferring start until unlock", "ns", nsCfg.ID)
+		slog.Info("Namespace needs user secrets but the vault is not readable yet — deferring start",
+			"ns", nsCfg.ID, "pendingKotlinImport", pendingKotlinImport)
 	}
 
 	// Create the cloud-config server (desktop-only — server-mode webapps have

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"github.com/citeck/citeck-launcher/internal/bundle"
+	"github.com/citeck/citeck-launcher/internal/storage"
 )
 
 // namespaceNeedsUserSecrets reports whether any of the namespace's app images
@@ -38,13 +39,48 @@ type secretVaultState interface {
 }
 
 // shouldDeferStartForSecrets reports whether a namespace's auto-start must wait
-// for the user to unlock the secret vault: desktop mode, an encrypted+locked
-// vault, and a namespace that pulls from an auth-required registry. Returns
-// false in server mode, with an unlocked/plain vault, or for a namespace that
-// needs no user secrets.
-func shouldDeferStartForSecrets(desktop bool, vault secretVaultState, images []string, wsCfg *bundle.WorkspaceConfig) bool {
-	if !desktop || vault == nil || !vault.IsEncrypted() || !vault.IsLocked() {
+// for the user to hand over the master password: desktop mode, a vault the user
+// cannot read from yet, and a namespace that pulls from an auth-required
+// registry. Returns false in server mode, with a readable vault, or for a
+// namespace that needs no user secrets.
+//
+// There are TWO ways the vault can be unusable, and keying only on the first is
+// what let the reported bug through:
+//
+//   - encrypted && locked — the steady state, a custom master password not yet
+//     entered this session.
+//   - pendingKotlinImport — the state that exists ONLY on the first boot after a
+//     1.x → 2.x migration: the migrated secrets are still one opaque blob
+//     waiting for the master password, so SecretService is neither encrypted NOR
+//     locked, it is EMPTY. `encrypted && locked` is false, the namespace
+//     auto-started, its private-registry pulls failed auth, and the
+//     registry-credentials dialog opened on TOP of the master-password prompt —
+//     a dead end, since picking a secret needs a vault that does not exist yet
+//     and saving a token answers 423.
+//
+// A pending import gates on its own, without consulting the vault: at that
+// point there is nothing in it to consult.
+func shouldDeferStartForSecrets(desktop bool, vault secretVaultState, pendingKotlinImport bool,
+	images []string, wsCfg *bundle.WorkspaceConfig,
+) bool {
+	if !desktop {
+		return false
+	}
+	lockedOut := vault != nil && vault.IsEncrypted() && vault.IsLocked()
+	if !lockedOut && !pendingKotlinImport {
 		return false
 	}
 	return namespaceNeedsUserSecrets(images, wsCfg)
+}
+
+// hasPendingKotlinSecrets reports whether a migrated 1.x secrets blob is still
+// waiting for the master password. While it is, the user's registry credentials
+// exist on disk but are unreadable — the same practical state as a locked vault,
+// and the reason the start gate cannot key on encrypted+locked alone.
+func hasPendingKotlinSecrets(store storage.Store) bool {
+	if store == nil {
+		return false
+	}
+	blob, err := store.GetSecretBlob()
+	return err == nil && blob != ""
 }
