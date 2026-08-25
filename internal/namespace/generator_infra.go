@@ -23,7 +23,7 @@ func generateMailpit(ctx *NsGenContext) {
 		return
 	}
 	app := ctx.GetOrCreateApp(appdef.AppMailpit)
-	app.Image = bundleImageOr(ctx, appdef.AppMailpit, "axllent/mailpit:v1.30.1")
+	app.Image = bundleImageOr(ctx, appdef.AppMailpit, "axllent/mailpit:v1.31.0")
 	app.Kind = appdef.KindThirdParty
 	// Keep the legacy "mailhog" network alias so the SMTP wiring resolves
 	// without per-app rewiring: webapps connect via SPRING_MAIL_HOST=mailhog
@@ -89,7 +89,10 @@ func generatePgAdmin(ctx *NsGenContext) {
 		if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.PgAdmin.Image != "" {
 			img = ctx.WorkspaceConfig.PgAdmin.Image
 		} else {
-			img = bundleImageOr(ctx, appdef.AppPgadmin, "dpage/pgadmin4:9.15.0")
+			// Minor tag, not a patch tag: upstream stopped publishing "<major>.<minor>.0"
+			// tags after 9.15 (9.16 and 9.17 exist only as "9.16"/"9.17"), so pinning a
+			// patch here would name an image that does not exist on Docker Hub.
+			img = bundleImageOr(ctx, appdef.AppPgadmin, "dpage/pgadmin4:9.17")
 		}
 	}
 	app := ctx.GetOrCreateApp(appdef.AppPgadmin)
@@ -155,7 +158,7 @@ func generatePostgres(ctx *NsGenContext) {
 }
 
 func generateZookeeper(ctx *NsGenContext) {
-	fallback := "zookeeper:3.9.4"
+	fallback := "zookeeper:3.9.5"
 	if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.Zookeeper.Image != "" {
 		fallback = ctx.WorkspaceConfig.Zookeeper.Image
 	}
