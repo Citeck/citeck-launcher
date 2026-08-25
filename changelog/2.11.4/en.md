@@ -1,0 +1,4 @@
+## Fixes
+- **Changing an app's version through the gear icon now takes effect right away.** The editor showed the new version but the container kept running the old one until you stopped and started the app by hand. It only misbehaved for a version you had not pulled before — which is every real version bump.
+- **The bundle in the header now updates when you switch it.** The namespaces dialog showed the new bundle while the header kept the old one, and on a stopped namespace it stayed wrong until you reopened the namespace.
+- **After upgrading from 1.x the launcher asks for the master password first.** It used to start the namespace before the migrated secrets were readable, so a registry sign-in dialog appeared on top of the master-password prompt — with no secret to pick and nothing that could be saved.

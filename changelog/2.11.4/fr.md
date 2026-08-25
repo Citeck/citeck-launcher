@@ -1,0 +1,4 @@
+## Corrections
+- **Changer la version d'une application via l'icône d'engrenage prend effet immédiatement.** L'éditeur affichait la nouvelle version mais le conteneur continuait de tourner avec l'ancienne jusqu'à un arrêt/démarrage manuel. Le problème ne survenait que pour une version jamais téléchargée — c'est-à-dire à chaque vraie montée de version.
+- **Le bundle affiché dans l'en-tête se met à jour lorsqu'on en change.** La boîte de dialogue des namespaces montrait le nouveau bundle alors que l'en-tête gardait l'ancien ; sur un namespace arrêté, il restait erroné jusqu'à la réouverture du namespace.
+- **Après une migration depuis la 1.x, le lanceur demande d'abord le mot de passe maître.** Auparavant le namespace démarrait avant que les secrets migrés ne soient lisibles, et une fenêtre de connexion au registre s'ouvrait par-dessus la demande du mot de passe maître — sans secret à choisir ni possibilité d'enregistrer.

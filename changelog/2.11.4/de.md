@@ -1,0 +1,4 @@
+## Fehlerbehebungen
+- **Das Ändern der Version einer Anwendung über das Zahnrad wirkt jetzt sofort.** Der Editor zeigte die neue Version, der Container lief aber weiter mit der alten, bis man die Anwendung von Hand stoppte und startete. Betroffen war nur eine Version, die noch nicht heruntergeladen war — also jede echte Aktualisierung.
+- **Das Bundle in der Kopfzeile wird beim Wechsel aktualisiert.** Der Namespace-Dialog zeigte das neue Bundle, die Kopfzeile das alte; bei einem gestoppten Namespace blieb sie falsch, bis der Namespace erneut geöffnet wurde.
+- **Nach dem Wechsel von 1.x fragt der Launcher zuerst nach dem Master-Passwort.** Zuvor startete der Namespace, bevor die übernommenen Zugangsdaten lesbar waren, sodass sich ein Registry-Anmeldefenster über die Master-Passwort-Abfrage legte — ohne auswählbares Secret und ohne Möglichkeit zu speichern.

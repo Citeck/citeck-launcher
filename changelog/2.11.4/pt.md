@@ -1,0 +1,4 @@
+## Correções
+- **Alterar a versão de uma aplicação pelo ícone de engrenagem passa a ter efeito imediato.** O editor mostrava a versão nova mas o contentor continuava com a antiga até ser parado e arrancado à mão. Só falhava com uma versão ainda não descarregada — ou seja, em qualquer atualização real.
+- **O bundle no cabeçalho é atualizado quando o troca.** A caixa de diálogo de namespaces mostrava o novo bundle enquanto o cabeçalho mantinha o antigo; num namespace parado continuava errado até reabrir o namespace.
+- **Depois da migração a partir da 1.x, o launcher pede primeiro a palavra-passe mestra.** Antes o namespace arrancava antes de os segredos migrados ficarem legíveis, e abria-se uma janela de início de sessão no registo por cima do pedido da palavra-passe mestra — sem segredo para escolher nem forma de guardar.

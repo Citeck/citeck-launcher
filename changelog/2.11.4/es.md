@@ -1,0 +1,4 @@
+## Correcciones
+- **Cambiar la versión de una aplicación desde el icono de engranaje surte efecto de inmediato.** El editor mostraba la versión nueva pero el contenedor seguía con la antigua hasta pararlo y arrancarlo a mano. Solo fallaba con una versión que aún no se había descargado, es decir, en cualquier actualización real.
+- **El bundle de la cabecera se actualiza al cambiarlo.** El diálogo de namespaces mostraba el nuevo bundle mientras la cabecera mantenía el anterior; en un namespace detenido seguía siendo incorrecto hasta volver a abrirlo.
+- **Tras migrar desde 1.x, el lanzador pide primero la contraseña maestra.** Antes el namespace arrancaba antes de que los secretos migrados fueran legibles, y aparecía una ventana de acceso al registro sobre la petición de contraseña maestra — sin ningún secreto que elegir ni forma de guardar nada.
