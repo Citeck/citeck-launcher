@@ -1143,13 +1143,51 @@ func inflatePagePayload(comp []byte, expanded int) ([]byte, error) {
 	return out, nil
 }
 
+// VersionedValueType's per-PAGE mode flag, written once ahead of a leaf's whole
+// value block (org.h2.mvstore.tx.VersionedValueType#write(buff, storage, len)).
+const (
+	// versionedFastPath: every value on the page is committed and non-null, so
+	// the values follow back to back with no per-entry header at all.
+	versionedFastPath = 0
+	// versionedSlowPath: at least one value is uncommitted or null, so each
+	// entry carries `varLong(operationId)` and, when that id is non-zero, a
+	// flags byte selecting which of {current, committed} were written.
+	versionedSlowPath = 1
+)
+
+// VersionedValueType slow-path flags: which of the two values were written.
+const (
+	versionedFlagCurrent   = 1
+	versionedFlagCommitted = 2
+)
+
 // parseLeafKeysValues reads keyCount string keys followed by keyCount values.
-// When `versioned` is true, each value is wrapped in VersionedValueType
-// (`varLong(operationId) || committedValue`). For operationId == 0 (the
-// committed/no-in-flight-tx case that holds for any cleanly closed store)
-// the committed value follows immediately. Non-zero operationId indicates
-// an uncommitted version with an undoLog reference — we skip those entries
-// to avoid surfacing torn data.
+//
+// When `versioned` is true the values were written by H2's VersionedValueType,
+// whose wire shape is decided ONCE FOR THE WHOLE PAGE, not per entry:
+//
+//	byte mode
+//	mode == 0 (fast path): value × keyCount, back to back, nothing in between
+//	mode == 1 (slow path): per entry `varLong(operationId)`, then either the
+//	                       committed value (id == 0) or `byte flags` followed by
+//	                       the current value (flags&1) and the committed value
+//	                       (flags&2)
+//
+// This reader used to assume a per-ENTRY operation-id varint and no page-level
+// mode byte, which is what silently gutted the 1.x → 2.x migration. On a fast-
+// path page the leading 0x00 was consumed as entry 0's operation id, entry 0
+// decoded correctly, and entry 1 then read the first byte of its own length
+// prefix as a non-zero operation id and skipped itself — so exactly ONE entry
+// per leaf page survived, with no error and nothing recorded as lost. On a
+// slow-path page it was worse than lossy: the 0x01 mode byte was consumed as
+// entry 0's operation id, so every value landed under its PREDECESSOR's key
+// and the migration wrote one namespace's config under another's name.
+//
+// An uncommitted entry resolves to its COMMITTED value, because that is what
+// the launcher itself would have shown: TransactionStore.init() rolls open
+// transactions back on open, so a key that only ever existed inside the open
+// transaction (no committed value) never existed for the user either and is
+// dropped rather than surfaced.
 func parseLeafKeysValues(payload []byte, keyCount int, opts pageOpts, result map[string][]byte) (map[string][]byte, error) {
 	pos := 0
 	keys := make([]string, keyCount)
@@ -1165,6 +1203,28 @@ func parseLeafKeysValues(payload []byte, keyCount int, opts pageOpts, result map
 		pos += n
 		keys[i] = str
 	}
+
+	perEntryOpIDs := false
+	if opts.versioned && keyCount > 0 {
+		if pos >= len(payload) {
+			return result, opts.rejectEntries(keyCount,
+				fmt.Errorf("leaf payload ends before the versioned-value mode byte (%d keys)", keyCount))
+		}
+		mode := payload[pos]
+		pos++
+		switch mode {
+		case versionedFastPath:
+		case versionedSlowPath:
+			perEntryOpIDs = true
+		default:
+			// Not a shape we know how to walk. Guessing would shift every
+			// value onto a neighboring key — the exact corruption this
+			// decoder exists to prevent — so drop the page and say so.
+			return result, opts.rejectEntries(keyCount,
+				fmt.Errorf("leaf value block declares unknown versioned-value mode %d", mode))
+		}
+	}
+
 	for i := range keyCount {
 		// Values are length-prefixed back to back, so the first unreadable one
 		// takes every value after it down with it: keyCount-i entries lost.
@@ -1172,38 +1232,91 @@ func parseLeafKeysValues(payload []byte, keyCount int, opts pageOpts, result map
 			return result, opts.rejectEntries(keyCount-i,
 				fmt.Errorf("leaf payload ends after %d of %d values", i, keyCount))
 		}
-		if opts.versioned {
-			opID, n, err := readVarLong(payload, pos)
+
+		if !perEntryOpIDs {
+			value, n, err := readLeafValue(payload, pos)
 			if err != nil {
 				return result, opts.rejectEntries(keyCount-i,
-					fmt.Errorf("leaf value %d of %d: operation id: %w", i, keyCount, err))
+					fmt.Errorf("leaf value %d of %d: %w", i, keyCount, err))
 			}
 			pos += n
-			if opID != 0 {
-				// Uncommitted version: the on-disk shape carries an undoLog
-				// reference rather than the committed value. Skip rather
-				// than misinterpret bytes from the next value.
-				continue
-			}
+			result[keys[i]] = value
+			continue
 		}
-		valLen, n, err := readVarInt(payload, pos)
+
+		opID, n, err := readVarLong(payload, pos)
 		if err != nil {
 			return result, opts.rejectEntries(keyCount-i,
-				fmt.Errorf("leaf value %d of %d: length: %w", i, keyCount, err))
+				fmt.Errorf("leaf value %d of %d: operation id: %w", i, keyCount, err))
 		}
 		pos += n
-		vLen := int(valLen)
-		if vLen < 0 || pos+vLen > len(payload) {
-			return result, opts.rejectEntries(keyCount-i,
-				fmt.Errorf("leaf value %d of %d declares %d bytes, %d remain",
-					i, keyCount, vLen, len(payload)-pos))
+
+		if opID == 0 {
+			value, n, err := readLeafValue(payload, pos)
+			if err != nil {
+				return result, opts.rejectEntries(keyCount-i,
+					fmt.Errorf("leaf value %d of %d: %w", i, keyCount, err))
+			}
+			pos += n
+			result[keys[i]] = value
+			continue
 		}
-		value := make([]byte, vLen)
-		copy(value, payload[pos:pos+vLen])
-		pos += vLen
-		result[keys[i]] = value
+
+		// Uncommitted: `byte flags` then the present values, in order. Both
+		// must be consumed even when unused, or the next entry reads garbage.
+		if pos >= len(payload) {
+			return result, opts.rejectEntries(keyCount-i,
+				fmt.Errorf("leaf value %d of %d: payload ends before the uncommitted flags byte", i, keyCount))
+		}
+		flags := payload[pos]
+		pos++
+		var committed []byte
+		for _, present := range [...]struct {
+			flag      byte
+			committed bool
+		}{
+			{versionedFlagCurrent, false},
+			{versionedFlagCommitted, true},
+		} {
+			if flags&present.flag == 0 {
+				continue
+			}
+			value, n, err := readLeafValue(payload, pos)
+			if err != nil {
+				return result, opts.rejectEntries(keyCount-i,
+					fmt.Errorf("leaf value %d of %d: uncommitted value: %w", i, keyCount, err))
+			}
+			pos += n
+			if present.committed {
+				committed = value
+			}
+		}
+		if committed != nil {
+			result[keys[i]] = committed
+		}
+		// No committed value means the key was created inside the still-open
+		// transaction. H2 rolls that back on open, so it is not data — leaving
+		// it out is the same answer the launcher itself would give.
 	}
 	return result, nil
+}
+
+// readLeafValue reads one `varInt(byteLength) || bytes` value, the wire shape
+// of H2's ByteArrayDataType — what the Kotlin launcher stored in every data
+// map (values are Jackson JSON bytes; see Database.kt RepoImpl.set).
+func readLeafValue(payload []byte, pos int) (value []byte, consumed int, _ error) {
+	valLen, n, err := readVarInt(payload, pos)
+	if err != nil {
+		return nil, 0, fmt.Errorf("length: %w", err)
+	}
+	pos += n
+	vLen := int(valLen)
+	if vLen < 0 || pos+vLen > len(payload) {
+		return nil, 0, fmt.Errorf("declares %d bytes, %d remain", vLen, len(payload)-pos)
+	}
+	value = make([]byte, vLen)
+	copy(value, payload[pos:pos+vLen])
+	return value, n + vLen, nil
 }
 
 // readInternalNode reads an internal B-tree node and recursively collects all

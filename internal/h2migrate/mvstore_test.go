@@ -68,10 +68,16 @@ func encodeLeaf(mapID int, kv [][2]string, versioned bool) []byte {
 	for _, e := range kv {
 		encodeVarString(body, e[0])
 	}
+	// VersionedValueType writes ONE fast-path mode byte for the whole value
+	// block, then the values back to back — NOT a per-entry operation id.
+	// This encoder used to emit the per-entry shape, which is how a decoder
+	// that agreed with it passed every test while dropping all but the first
+	// entry of each leaf out of real Kotlin stores. Cross-checked against
+	// testdata/txnstore_h2.db, written by H2 itself.
+	if versioned {
+		body.WriteByte(versionedFastPath)
+	}
 	for _, e := range kv {
-		if versioned {
-			putVarUint(body, 0) // operationId
-		}
 		putVarUint(body, uint64(len(e[1])))
 		body.WriteString(e[1])
 	}

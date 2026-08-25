@@ -42,6 +42,16 @@ func readVarString(data []byte, pos int) (s string, n int, _ error) {
 	pos += n
 	total := n
 
+	// Size the buffer from what the payload can actually contain, never from
+	// the declared count alone. Every modified-UTF8 character is at least one
+	// byte, so a count larger than the bytes remaining is corrupt by
+	// construction — and taking it at face value turned a misaligned page into
+	// a multi-terabyte make() and a Go runtime "out of memory" FATAL error,
+	// which no amount of leniency downstream can catch.
+	if charCount < 0 || charCount > int64(len(data)-pos) {
+		return "", 0, io.ErrUnexpectedEOF
+	}
+
 	// Read charCount characters in modified UTF-8
 	buf := make([]byte, 0, int(charCount))
 	for range charCount {
