@@ -1,8 +1,8 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { useUpdateStore } from '../lib/updateStore'
 import { UpdateDialog } from './UpdateDialog'
-import { openExternal, getUpdateChangelog } from '../lib/api'
+import { openExternal, getUpdateChangelog, applyUpdate, getUpdateStatus } from '../lib/api'
 
 vi.mock('../lib/api', () => ({
   getUpdateChangelog: vi.fn().mockResolvedValue([
@@ -145,5 +145,98 @@ describe('UpdateDialog changelog failure is visible and recoverable', () => {
 
     fireEvent.click(screen.getByText('Retry'))
     await waitFor(() => expect(screen.getByText('back again')).toBeInTheDocument())
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Escaping the "installing" state.
+//
+// applyUpdate() only stages the payload; the daemon swap and the webview
+// reload happen on the wrapper. On macOS that reload never arrived (Wails'
+// WebviewWindow.Reload is an unimplemented stub there), and because the dialog
+// had no timeout and disabled Cancel while applying, the launcher sat behind a
+// modal with every button dead until the user quit it. Reported against
+// 2.11.0.
+// ---------------------------------------------------------------------------
+describe('UpdateDialog — surviving a swap that never reloads us', () => {
+  beforeEach(() => {
+    HTMLDialogElement.prototype.showModal = vi.fn()
+    HTMLDialogElement.prototype.close = vi.fn()
+    useUpdateStore.setState({
+      status: { currentVersion: '2.4.0', latestVersion: '2.5.0', available: true, applying: false },
+    })
+    vi.mocked(applyUpdate).mockResolvedValue({ applying: true, version: '2.5.0' })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('keeps Cancel usable while installing', async () => {
+    const onClose = vi.fn()
+    render(<UpdateDialog open onClose={onClose} />)
+    await waitFor(() => expect(screen.getByText('a changelog entry')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByText('Update & restart'))
+    await waitFor(() => expect(applyUpdate).toHaveBeenCalled())
+
+    const cancel = screen.getByText('Cancel')
+    expect(cancel).not.toBeDisabled()
+    fireEvent.click(cancel)
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('keeps the primary button label fixed so the row cannot re-flow', async () => {
+    render(<UpdateDialog open onClose={() => {}} />)
+    await waitFor(() => expect(screen.getByText('a changelog entry')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByText('Update & restart'))
+    await waitFor(() => expect(applyUpdate).toHaveBeenCalled())
+
+    // Same words, still one button: progress is carried by the icon, so the
+    // right-aligned button row keeps its geometry.
+    expect(screen.getByText('Update & restart')).toBeInTheDocument()
+    expect(screen.queryByText('Updating…')).toBeNull()
+  })
+
+  it('reloads once a DIFFERENT daemon version answers', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const reload = vi.fn()
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { reload },
+    })
+    // Still the old daemon, then the swapped one.
+    vi.mocked(getUpdateStatus)
+      .mockResolvedValueOnce({ currentVersion: '2.4.0', available: false, applying: true })
+      .mockResolvedValue({ currentVersion: '2.5.0', available: false, applying: false })
+
+    render(<UpdateDialog open onClose={() => {}} />)
+    fireEvent.click(await screen.findByText('Update & restart'))
+    await waitFor(() => expect(applyUpdate).toHaveBeenCalled())
+
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(reload).not.toHaveBeenCalled() // same version — not the swap yet
+
+    await vi.advanceTimersByTimeAsync(2_000)
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(1))
+  })
+
+  it('stops spinning and says what to do when no new daemon ever answers', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    // The daemon never comes back — every poll fails.
+    vi.mocked(getUpdateStatus).mockRejectedValue(new Error('connection refused'))
+
+    render(<UpdateDialog open onClose={() => {}} />)
+    fireEvent.click(await screen.findByText('Update & restart'))
+    await waitFor(() => expect(applyUpdate).toHaveBeenCalled())
+
+    await vi.advanceTimersByTimeAsync(150_000)
+
+    await waitFor(() =>
+      expect(screen.getByText(/Restart the launcher to finish installing it/)).toBeInTheDocument(),
+    )
+    // And the action is offered again rather than left permanently disabled.
+    expect(screen.getByText('Update & restart')).not.toBeDisabled()
   })
 })

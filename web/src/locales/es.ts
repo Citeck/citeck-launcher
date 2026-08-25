@@ -605,6 +605,7 @@ const es = {
   'update.checkNow': 'Comprobar ahora',
   'update.install': 'Actualizar y reiniciar',
   'update.installing': 'Actualizando…',
+  'update.restartRequired': 'La actualización se ha descargado, pero la ventana no se actualizó. Reinicie el lanzador para terminar de instalarla.',
   'update.failed': 'Error al actualizar: {error}',
   'update.manualNotice': 'Esta versión no puede instalar actualizaciones automáticamente. Para obtener las últimas funciones, descargue la nueva versión manualmente desde GitHub: solo le llevará un par de minutos.',
   'update.openReleases': 'Abrir la página de versiones',

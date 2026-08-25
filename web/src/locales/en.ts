@@ -611,6 +611,7 @@ const en = {
   'update.checkNow': 'Check now',
   'update.install': 'Update & restart',
   'update.installing': 'Updating…',
+  'update.restartRequired': 'The update has been downloaded, but the window did not refresh. Restart the launcher to finish installing it.',
   'update.failed': 'Update failed: {error}',
   'update.manualNotice': 'This version cannot install updates automatically. To get the latest features, download the new version from GitHub — it only takes a couple of minutes.',
   'update.openReleases': 'Open releases page',

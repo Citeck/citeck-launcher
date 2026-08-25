@@ -605,6 +605,7 @@ const pt = {
   'update.checkNow': 'Verificar agora',
   'update.install': 'Atualizar e reiniciar',
   'update.installing': 'Atualizando…',
+  'update.restartRequired': 'A atualização foi baixada, mas a janela não foi atualizada. Reinicie o launcher para concluir a instalação.',
   'update.failed': 'Falha na atualização: {error}',
   'update.manualNotice': 'Esta versão não consegue instalar atualizações automaticamente. Para obter os recursos mais recentes, baixe a nova versão manualmente do GitHub — leva apenas alguns minutos.',
   'update.openReleases': 'Abrir a página de versões',

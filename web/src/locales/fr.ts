@@ -605,6 +605,7 @@ const fr = {
   'update.checkNow': 'Vérifier maintenant',
   'update.install': 'Mettre à jour et redémarrer',
   'update.installing': 'Mise à jour…',
+  'update.restartRequired': 'La mise à jour a été téléchargée, mais la fenêtre ne s\'est pas actualisée. Redémarrez le lanceur pour terminer l\'installation.',
   'update.failed': 'Échec de la mise à jour : {error}',
   'update.manualNotice': 'Cette version ne peut pas installer les mises à jour automatiquement. Pour profiter des dernières fonctionnalités, téléchargez la nouvelle version manuellement depuis GitHub — cela ne prend que quelques minutes.',
   'update.openReleases': 'Ouvrir la page des versions',

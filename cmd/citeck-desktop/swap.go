@@ -42,7 +42,7 @@ func applyDaemonSwap(ctx context.Context, version string, window *application.We
 		}
 		slog.Info("Daemon update applied", "version", version)
 	}
-	window.Reload() // re-request assets through the proxy → the now-running daemon
+	reloadWebview(window) // re-request assets through the proxy → the now-running daemon
 	// Whether the swap stuck or rolled back, sync the title to whatever daemon
 	// version is actually running now.
 	refreshWindowTitle(socketClient, window)

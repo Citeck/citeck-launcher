@@ -419,7 +419,7 @@ func run() error {
 	// it back — instead of leaving a possibly-dead daemon selected forever.
 	go func() {
 		if desktop.GatePendingPayload(ctx, supervisor, config.UpdatesDir(), version, desktop.UpdateHealthTimeout) {
-			window.Reload() // rolled back: the webview is talking to the old daemon now
+			reloadWebview(window) // rolled back: the webview is talking to the old daemon now
 			refreshWindowTitle(socketClient, window)
 		}
 	}()

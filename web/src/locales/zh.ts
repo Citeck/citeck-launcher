@@ -605,6 +605,7 @@ const zh = {
   'update.checkNow': '立即检查',
   'update.install': '更新并重启',
   'update.installing': '正在更新…',
+  'update.restartRequired': '更新已下载，但窗口未刷新。请重启启动器以完成安装。',
   'update.failed': '更新失败：{error}',
   'update.manualNotice': '此版本无法自动安装更新。要获取最新功能，请从 GitHub 手动下载新版本——只需几分钟。',
   'update.openReleases': '打开发布页面',

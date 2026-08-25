@@ -605,6 +605,7 @@ const ja = {
   'update.checkNow': '今すぐ確認',
   'update.install': '更新して再起動',
   'update.installing': '更新中…',
+  'update.restartRequired': '更新はダウンロードされましたが、ウィンドウが再読み込みされませんでした。インストールを完了するにはランチャーを再起動してください。',
   'update.failed': '更新に失敗しました: {error}',
   'update.manualNotice': 'このバージョンでは更新を自動的にインストールできません。最新の機能を利用するには、GitHub から新しいバージョンを手動でダウンロードしてください。数分で完了します。',
   'update.openReleases': 'リリースページを開く',

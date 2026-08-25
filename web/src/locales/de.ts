@@ -605,6 +605,7 @@ const de = {
   'update.checkNow': 'Jetzt prüfen',
   'update.install': 'Aktualisieren & neu starten',
   'update.installing': 'Wird aktualisiert…',
+  'update.restartRequired': 'Das Update wurde heruntergeladen, aber das Fenster wurde nicht aktualisiert. Starten Sie den Launcher neu, um die Installation abzuschließen.',
   'update.failed': 'Aktualisierung fehlgeschlagen: {error}',
   'update.manualNotice': 'Diese Version kann Updates nicht automatisch installieren. Um die neuesten Funktionen zu erhalten, laden Sie die neue Version einfach manuell von GitHub herunter — das dauert nur ein paar Minuten.',
   'update.openReleases': 'Release-Seite öffnen',
