@@ -1,0 +1,5 @@
+## Fixes
+- **The default workspace now loads its settings when it has no namespaces.** Its bundle list stayed empty and could not be filled, so a namespace could not be created — and Quick Start produced one with no bundle at all: seven third-party containers reporting RUNNING without any Citeck services in them. Most visible after upgrading from 1.x, which leaves the default workspace empty.
+- **Creating a namespace without a bundle is refused** instead of producing one that starts and looks healthy with none of the product in it.
+- **The registry credentials check before start now sees the apps of a namespace that has not been started yet.** It reported "nothing missing" and the pull then failed on authorization anyway.
+- **Links in the sidebar follow an edited namespace.** After changing the proxy host, port or the HTTPS toggle on a stopped namespace they kept pointing at the previous address until the namespace was reopened. The PG Admin link also appears now before the first start.

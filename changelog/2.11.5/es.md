@@ -1,0 +1,5 @@
+## Correcciones
+- **El workspace predeterminado ya carga su configuración aunque no tenga namespaces.** Su lista de bundles quedaba vacía y no había forma de rellenarla, así que no se podía crear un namespace — y el Inicio rápido creaba uno sin bundle alguno: siete contenedores de terceros en estado «En ejecución» y sin ningún servicio de Citeck. Se nota sobre todo tras migrar desde 1.x, que deja vacío el workspace predeterminado.
+- **Se rechaza crear un namespace sin bundle**, en lugar de producir uno que arranca y parece sano sin nada del producto dentro.
+- **La comprobación de credenciales del registro antes de arrancar ya ve las aplicaciones de un namespace que nunca se ha iniciado.** Informaba de que no faltaba nada y luego la descarga de imágenes fallaba igualmente por autorización.
+- **Los enlaces de la barra lateral siguen al namespace editado.** Tras cambiar el host, el puerto del proxy o el interruptor HTTPS en un namespace detenido, seguían apuntando a la dirección anterior hasta volver a abrirlo. El enlace de PG Admin también aparece ya antes del primer arranque.

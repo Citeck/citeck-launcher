@@ -1,0 +1,5 @@
+## Fehlerbehebungen
+- **Der Standard-Workspace lädt seine Einstellungen jetzt auch ohne Namespaces.** Seine Bundle-Liste blieb leer und ließ sich nicht füllen, sodass kein Namespace angelegt werden konnte — und der Schnellstart erzeugte einen ganz ohne Bundle: sieben Drittanbieter-Container im Status „Läuft“ und ohne jeden Citeck-Dienst. Am deutlichsten nach dem Wechsel von 1.x, der den Standard-Workspace leer zurücklässt.
+- **Das Anlegen eines Namespace ohne Bundle wird abgelehnt**, statt einen zu erzeugen, der startet und gesund aussieht, aber nichts vom Produkt enthält.
+- **Die Registry-Zugangsdatenprüfung vor dem Start sieht jetzt die Anwendungen eines noch nie gestarteten Namespace.** Sie meldete „nichts fehlt“, und der Image-Download scheiterte danach trotzdem an der Anmeldung.
+- **Links in der Seitenleiste folgen einem bearbeiteten Namespace.** Nach dem Ändern von Proxy-Host, Port oder dem HTTPS-Schalter an einem gestoppten Namespace zeigten sie bis zum erneuten Öffnen auf die alte Adresse. Der PG-Admin-Link erscheint jetzt auch schon vor dem ersten Start.
