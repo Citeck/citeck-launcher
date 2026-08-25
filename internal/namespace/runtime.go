@@ -424,6 +424,29 @@ func (r *Runtime) unsubscribeNsStatus(ch chan NsRuntimeStatus) {
 	r.mu.Unlock()
 }
 
+// SetConfig publishes a freshly loaded namespace config to the runtime.
+//
+// Deliberately SYNCHRONOUS, like SetGeneratedDefs / SetCachedBundle next to it,
+// even though cmdRegenerate also carries the config. r.config is read ONLY by
+// runtime_dto.go — the namespace DTO's name and bundle, the sidebar links'
+// proxy host/scheme, the Keycloak link's auth type, AppliedConfig — and by
+// nothing in the state machine, workers or orchestration, so refreshing it out
+// of band cannot race a transition or reorder a decision.
+//
+// Relying on cmdRegenerate alone made every one of those fields stale exactly
+// when the namespace is STOPPED: the runtime loop is not running, so the queued
+// command is never applied, and an edit to the bundle, the proxy host/port or
+// the TLS toggle kept showing the pre-edit value until the namespace was
+// re-activated. Reported for the bundle in the header.
+func (r *Runtime) SetConfig(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.config = cfg
+}
+
 // SetCachedBundle updates the cached bundle definition (persisted for fallback on resolve failures).
 func (r *Runtime) SetCachedBundle(def *bundle.Def) {
 	r.mu.Lock()

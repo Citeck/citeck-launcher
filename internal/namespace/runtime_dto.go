@@ -3,6 +3,7 @@ package namespace
 import (
 	"fmt"
 	goruntime "runtime"
+	"sort"
 	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/api"
@@ -139,28 +140,46 @@ func (r *Runtime) AppliedConfig() *Config {
 // pre-start check so it prompts only for registries those images pull from,
 // not every auth-declared workspace repo, and never for a registry used solely
 // by a detached app that won't start.
+//
+// r.apps is EMPTY until the namespace has been started once — a freshly loaded
+// namespace, or one whose auto-start the secrets gate withheld. Reading only
+// r.apps therefore returned nothing for exactly the namespace the registry
+// pre-start check exists for: it reported "no credentials missing", the user
+// pressed Start, and the pulls failed on auth anyway. The generated defs are
+// the authoritative catalog in that state (SetGeneratedDefs runs synchronously
+// on every load and reload) — the same reason handleGetNamespace backfills its
+// app list from them.
 func (r *Runtime) StartableAppImages() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+
 	seen := make(map[string]struct{}, len(r.apps))
 	out := make([]string, 0, len(r.apps))
-	for _, app := range r.apps {
-		if r.manualStoppedApps[app.Name] {
-			continue // detached — not pulled/started
-		}
-		if app.markedForRemoval {
-			continue // being GC'd — won't be pulled/started
-		}
-		img := app.Def.Image
-		if img == "" {
-			continue
+	add := func(name, img string) {
+		if img == "" || r.manualStoppedApps[name] {
+			return // detached apps are not pulled or started
 		}
 		if _, ok := seen[img]; ok {
-			continue
+			return
 		}
 		seen[img] = struct{}{}
 		out = append(out, img)
 	}
+
+	if len(r.apps) > 0 {
+		for _, app := range r.apps {
+			if app.markedForRemoval {
+				continue // being GC'd — won't be pulled/started
+			}
+			add(app.Name, app.Def.Image)
+		}
+	} else {
+		for name, def := range r.generatedDefs {
+			add(name, def.Image)
+		}
+	}
+	// Both sources are maps, so sort for a stable answer.
+	sort.Strings(out)
 	return out
 }
 
@@ -219,8 +238,13 @@ func (r *Runtime) generateLinks() []api.LinkDto {
 		})
 	}
 
-	// PgAdmin link (if app exists)
-	if _, ok := r.apps["pgadmin"]; ok {
+	// PgAdmin link (if the app is part of this namespace). Presence follows the
+	// same rule as the custom links below — live OR configured — because r.apps
+	// is empty until the namespace has been started once, and the link would
+	// otherwise be missing on a freshly loaded or just-edited stopped namespace.
+	_, pgLive := r.apps["pgadmin"]
+	_, pgConfigured := r.generatedDefs["pgadmin"]
+	if pgLive || pgConfigured {
 		links = append(links, api.LinkDto{
 			Name: "PG Admin", URL: fmt.Sprintf("http://%s:5050", proxyHost), Icon: "postgres", Order: 0, Category: catApps, DescriptionKey: "links.pgAdmin.tooltip",
 		})

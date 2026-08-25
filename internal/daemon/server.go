@@ -660,6 +660,12 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool
 	act.runtime.SetLastGenFiles(genResp.BaselineFiles)
 	act.runtime.SetGeneratedDefs(genResp.BaselineApplications)
 	act.runtime.SetCustomLinks(genResp.CustomLinks)
+	// Synchronously, alongside the other generated inputs above: the Regenerate
+	// call at the end of this function also carries nsCfg, but it is applied by
+	// the runtime LOOP, which is not running on a stopped namespace — so the
+	// links, the header and AppliedConfig would keep the pre-edit config until
+	// the namespace was re-activated. See Runtime.SetConfig.
+	act.runtime.SetConfig(nsCfg)
 
 	// Phase 2: update shared state briefly under write lock. In-place
 	// mutation of the live activeNamespace (not a rebuild-and-swap) so a
