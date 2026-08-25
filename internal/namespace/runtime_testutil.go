@@ -147,6 +147,16 @@ func (r *Runtime) SetStatusForTest(status NsRuntimeStatus) {
 	r.status = status
 }
 
+// SetConfigForTest replaces the runtime's own copy of the namespace config,
+// standing in for the async cmdRegenerate that normally refreshes it. Tests
+// use it to model the state the daemon sees when that command has NOT been
+// applied — a stopped namespace, where nothing drains the command queue.
+func (r *Runtime) SetConfigForTest(cfg *Config) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.config = cfg
+}
+
 // AdvanceClock moves the runtime's FakeClock forward by d. Panics if the
 // runtime was not built with WithTestClock(NewFakeClock(...)).
 func (r *Runtime) AdvanceClock(d time.Duration) {

@@ -248,7 +248,26 @@ func (r *Runtime) UpdateAppDef(appName string, def appdef.ApplicationDef, lock b
 	} else {
 		r.editedAppPatches[appName] = patch
 	}
-	if appLive {
+	// `app.Def` is the ONLY record doRegenerate has of what the running
+	// container was built from — its whole diff is
+	// `existing.Def.GetHash() != newHash`. Writing the edit here made that
+	// comparison compare the new def against itself, so a gear edit that bumped
+	// an app's image updated the editor and the stored patch and then quietly
+	// did nothing to the container; the user had to stop and start the app by
+	// hand before the new version was pulled.
+	//
+	// It looked like it worked whenever the new tag happened to be in the local
+	// image cache already: handlePutAppConfig clears ImageDigest on save and
+	// doRegenerate re-resolves it, so the digest carried the difference the
+	// image string should have carried. For a version not pulled yet — every
+	// real bump — it resolves to "" on both sides and the hashes match.
+	//
+	// With no container there is nothing to protect (and when the namespace is
+	// stopped no reload follows), so propagate immediately and keep the app
+	// table's version column honest. While a container exists, the reload the
+	// caller runs next re-derives the live def on both the changed and the
+	// unchanged path.
+	if appLive && app.ContainerID == "" {
 		app.Def = def
 	}
 	// editedAppPatches is a durable user edit. Persist inline + clear r.dirty.

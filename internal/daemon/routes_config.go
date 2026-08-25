@@ -134,13 +134,24 @@ func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 	// only for the namespace the pass is pinned to.
 	dto.Updating = d.updateInFlight.Load() && d.updatingAppliesTo(act.nsConfig)
 	dto.UpdateError, dto.UpdateErrorAt = d.updateFailureFor(act.nsConfig)
-	// Name comes from the active config, which doReload updates SYNCHRONOUSLY on
-	// edit; the runtime's own copy (ToNamespaceDto's r.config.Name) is refreshed
-	// only by the ASYNC cmdRegenerate, so a name-only edit — which changes no app
-	// state and emits no events — would otherwise leave the header showing the
-	// previous name until something else happened to re-resolve the runtime.
+	// Name and BundleRef come from the active config, which doReload updates
+	// SYNCHRONOUSLY on edit; the runtime's own copy (ToNamespaceDto reads
+	// r.config) is refreshed only by the ASYNC cmdRegenerate, so a name-only
+	// edit — which changes no app state and emits no events — would otherwise
+	// leave the header showing the previous name until something else happened
+	// to re-resolve the runtime.
+	//
+	// BundleRef had the same defect and was left behind when Name was fixed:
+	// switching a namespace's bundle updated the namespaces dialog (it reads the
+	// store) while the header kept the old one. It is worse than Name on a
+	// STOPPED namespace, where the runtime loop is not running at all, so the
+	// cmdRegenerate carrying the new config is never applied and the header
+	// stays wrong until the namespace is re-activated. These two are the only
+	// config-derived fields in the DTO — keep them reading from the same
+	// authoritative place.
 	if act.nsConfig != nil {
 		dto.Name = act.nsConfig.Name
+		dto.BundleRef = namespace.ResolveDisplayBundleRef(act.nsConfig.BundleRef, act.bundleDef)
 	}
 	if bundleErr != "" {
 		dto.BundleError = bundleErr
