@@ -709,6 +709,21 @@ func (d *Daemon) buildNamespaceConfigFromCreate(req api.NamespaceCreateDto, wsID
 		nsCfg.Snapshot = req.Snapshot
 	}
 
+	// No bundle at all is the same class of broken as an unpinnable "LATEST"
+	// below, and worse in how it presents: every Citeck service comes from the
+	// bundle, while the infra apps are generated unconditionally with hardcoded
+	// fallback images — so the namespace would come up as seven third-party
+	// containers reporting RUNNING with none of the product in it. Refuse it
+	// here rather than persist a namespace that cannot work.
+	if nsCfg.BundleRef.IsEmpty() {
+		return nil, &createNamespaceError{
+			status: http.StatusConflict,
+			code:   api.ErrCodeNoBundleConfigured,
+			message: "no bundle is configured for this workspace — its config has no bundleRepos, " +
+				"so the namespace would start without any Citeck services; sync the workspace repo and retry",
+		}
+	}
+
 	// Resolve a symbolic "LATEST" bundle key to the concrete latest version and
 	// PIN it. The launcher never persists a raw "LATEST" — that would silently
 	// auto-update the namespace between bundle versions on reload, which we

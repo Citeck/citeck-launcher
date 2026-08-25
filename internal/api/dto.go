@@ -373,6 +373,17 @@ const (
 	// (that would silently auto-update between versions on reload), so it
 	// refuses to create a namespace in that broken state — sync the repo first.
 	ErrCodeBundleNotSynced = "BUNDLE_NOT_SYNCED"
+	// ErrCodeNoBundleConfigured is returned (HTTP 409) when a namespace create
+	// ends up with no bundle ref at all — neither from the request nor from the
+	// workspace's namespace template nor from its first bundle repo. Every
+	// Citeck service comes from the bundle, while the infra apps (postgres,
+	// mongo, rabbitmq, zookeeper, mailpit, pgadmin, onlyoffice) are generated
+	// unconditionally with hardcoded fallback images, so such a namespace comes
+	// up as seven third-party containers reporting RUNNING with none of the
+	// product in it. Refused at create rather than persisted, like an
+	// unpinnable "LATEST" above. In practice it means the workspace config is
+	// unusable (no bundleRepos) — sync the workspace repo first.
+	ErrCodeNoBundleConfigured = "NO_BUNDLE_CONFIGURED"
 )
 
 // UpgradeRequestDto is the request body for the namespace upgrade endpoint.

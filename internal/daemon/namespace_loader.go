@@ -242,7 +242,7 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	// resilience is preserved — the daemon still boots — but the Welcome-data
 	// endpoints surface it as 502 WS_REPO_SYNC_FAILED instead of silently
 	// serving the built-in fallback workspace (the empty config above).
-	wsSyncError := workspaceSyncErrorString(resolver)
+	wsSyncError := workspaceSyncErrorString(resolver, wsCfg)
 
 	// Load namespace config from the store (desktop: DB row; server: file).
 	raw, ok, cfgErr := in.Store.LoadNamespaceConfig(wsID, nsID)
@@ -293,9 +293,24 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	wsCfg = resolveResult.Workspace
 	// Resolve() re-ran the workspace sync — refresh the recorded error so the
 	// surfaced state reflects the freshest pass (a recovered repo clears it).
-	wsSyncError = workspaceSyncErrorString(resolver)
+	wsSyncError = workspaceSyncErrorString(resolver, wsCfg)
 
 	slog.Info("Using bundle", "ref", nsCfg.BundleRef, "apps", len(bundleDef.Applications))
+	// A bundle with no applications is never a working namespace: every Citeck
+	// service comes from the bundle, while the infra apps (postgres, mongo,
+	// rabbitmq, zookeeper, mailpit, pgadmin, onlyoffice) are generated
+	// unconditionally with hardcoded fallback images. The namespace therefore
+	// starts, every container comes up, and it reports RUNNING with none of the
+	// product in it — the most misleading state the launcher can be in. Record
+	// it as a bundle error so it is not silent. (An outright resolve failure
+	// already set bundleError above; this catches the paths that "succeed" with
+	// nothing, chiefly an empty bundle ref.)
+	if bundleError == "" && bundleDef.IsEmpty() {
+		bundleError = fmt.Sprintf("bundle %q resolved to no applications — this namespace would start "+
+			"only third-party infrastructure, without any Citeck services", nsCfg.BundleRef)
+		slog.Error("Bundle resolved to ZERO applications — no Citeck services will be generated",
+			"ns", nsID, "ref", nsCfg.BundleRef)
+	}
 
 	// Certs (self-signed when TLS is on without LE; Let's Encrypt obtain when
 	// configured). The acme.Client is discarded here — startup arms renewal
@@ -617,9 +632,23 @@ func (d *Daemon) handleRuntimeEvent(evt api.EventDto, cloudCfg *CloudConfigServe
 
 // workspaceSyncErrorString flattens the resolver's WorkspaceSyncError into the
 // string carried by loadedNamespace / activeNamespace ("" when healthy).
-func workspaceSyncErrorString(resolver *bundle.Resolver) string {
+func workspaceSyncErrorString(resolver *bundle.Resolver, wsCfg *bundle.WorkspaceConfig) string {
 	if err := resolver.WorkspaceSyncError(); err != nil {
 		return err.Error()
+	}
+	// The built-in Citeck workspace repo fails GRACEFULLY by design (booting
+	// must not depend on reaching github.com), so WorkspaceSyncError reports
+	// nothing for it. That is right only while the fallback config is still
+	// USABLE. A failed sync that left no bundleRepos breaks every surface built
+	// on it, silently: the create dialog's bundle-repository dropdown is empty
+	// and cannot be filled, and Quick Start creates a namespace with an empty
+	// bundle ref — which comes up as seven third-party containers reporting
+	// RUNNING with none of the product in them, because the infra apps are
+	// generated unconditionally and every Citeck service comes from the bundle.
+	if wsCfg == nil || len(wsCfg.BundleRepos) == 0 {
+		if err := resolver.WorkspaceSyncErrorAny(); err != nil {
+			return err.Error()
+		}
 	}
 	return ""
 }

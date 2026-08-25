@@ -517,6 +517,23 @@ func (r *Resolver) WorkspaceSyncError() error {
 	return r.wsSyncErr
 }
 
+// WorkspaceSyncErrorAny returns the recorded sync error for ANY workspace repo,
+// including the built-in Citeck default that WorkspaceSyncError deliberately
+// stays quiet about.
+//
+// The quiet default is right for booting — the daemon must come up without
+// reaching github.com — but not for deciding whether a resulting EMPTY config
+// is normal. A user whose network reaches gitlab.citeck.ru but not github.com
+// got a `default` workspace with no bundleRepos and no error anywhere: the
+// create dialog's bundle-repository dropdown was empty and unfillable, and
+// Quick Start produced a namespace with an empty bundle ref — seven
+// third-party containers reporting RUNNING with none of the product in them.
+// Callers pair this with "and the config is unusable"; see
+// workspaceSyncErrorString.
+func (r *Resolver) WorkspaceSyncErrorAny() error {
+	return r.wsSyncErr
+}
+
 // workspaceRepoSettings resolves the URL/branch/pullPeriod/token to use for
 // the workspace repo clone, layering WithWorkspaceRepo overrides on top of
 // the hardcoded defaults. Empty override fields keep the corresponding
@@ -553,7 +570,19 @@ func (r *Resolver) ResolveWorkspaceOnly() *WorkspaceConfig {
 // Resolve fetches and parses a bundle definition along with workspace config.
 func (r *Resolver) Resolve(ref Ref) (*ResolveResult, error) {
 	if ref.IsEmpty() {
-		return &ResolveResult{Bundle: &EmptyDef, Workspace: &WorkspaceConfig{}}, nil
+		// A namespace with no bundle ref is a broken config, not a reason to
+		// forget the workspace. Returning a blank WorkspaceConfig here was
+		// SILENTLY REPLACING the caller's real one — the daemon assigns it
+		// verbatim (`a.workspaceConfig = resolveResult.Workspace`) — leaving it
+		// with no bundleRepos, no imageRepos and no namespace templates. The
+		// next namespace created then got an empty bundle ref too (the
+		// applyDefaultTemplate fallback needs BundleRepos), the secrets start
+		// gate saw no auth-required registries, and registry auth resolved
+		// nothing: one broken namespace poisoned the launcher. Note the
+		// resolve-FAILURE path in namespace_loader.go preserves the workspace
+		// for precisely this reason; this branch was the one that did not.
+		wsCfg, _ := r.resolveWorkspace()
+		return &ResolveResult{Bundle: &EmptyDef, Workspace: wsCfg}, nil
 	}
 
 	wsCfg, wsRepoDir := r.resolveWorkspace()
