@@ -1,0 +1,3 @@
+## Fixes
+- **A namespace with no Citeck services in it now says so.** Every Citeck service comes from the bundle, while the infrastructure containers (PostgreSQL, MongoDB, RabbitMQ, ZooKeeper, Mailpit, PG Admin, OnlyOffice) start regardless — so a namespace whose bundle failed to resolve, or resolved to no applications at all, came up green and reported RUNNING with none of the product in it, and nothing anywhere said why. A banner now names the reason.
+- **That warning also appears after a reload,** not only at startup: switching a namespace to a bundle that contains no applications used to go through silently.

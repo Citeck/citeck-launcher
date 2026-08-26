@@ -1,0 +1,3 @@
+## Correcciones
+- **Un espacio de nombres sin servicios de Citeck ahora lo indica.** Todos los servicios de Citeck provienen del paquete, mientras que los contenedores de infraestructura (PostgreSQL, MongoDB, RabbitMQ, ZooKeeper, Mailpit, PG Admin, OnlyOffice) se inician de todos modos: por eso un espacio de nombres cuyo paquete no se pudo resolver, o se resolvió sin ninguna aplicación, arrancaba en verde e informaba EN EJECUCIÓN sin nada del producto dentro, y en ningún sitio se explicaba por qué. Ahora un aviso indica la causa.
+- **Ese aviso también aparece tras una recarga,** no solo al iniciar: cambiar un espacio de nombres a un paquete sin aplicaciones pasaba antes en silencio.

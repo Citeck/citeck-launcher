@@ -1,0 +1,3 @@
+## Corrections
+- **Un espace de noms sans aucun service Citeck le signale désormais.** Tous les services Citeck proviennent du bundle, tandis que les conteneurs d’infrastructure (PostgreSQL, MongoDB, RabbitMQ, ZooKeeper, Mailpit, PG Admin, OnlyOffice) démarrent quoi qu’il arrive : un espace de noms dont le bundle n’a pas pu être résolu, ou s’est résolu sans la moindre application, démarrait donc au vert en indiquant EN COURS sans rien du produit à l’intérieur, et nulle part la raison n’était donnée. Une bannière l’indique maintenant.
+- **Cet avertissement apparaît aussi après un rechargement,** et pas seulement au démarrage : basculer un espace de noms vers un bundle sans applications passait jusqu’ici en silence.

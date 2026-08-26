@@ -1,0 +1,3 @@
+## Fehlerbehebungen
+- **Ein Namespace ohne Citeck-Dienste sagt das jetzt.** Alle Citeck-Dienste stammen aus dem Bundle, während die Infrastruktur-Container (PostgreSQL, MongoDB, RabbitMQ, ZooKeeper, Mailpit, PG Admin, OnlyOffice) ohnehin starten — ein Namespace, dessen Bundle nicht aufgelöst werden konnte oder gar keine Anwendungen enthielt, kam deshalb grün hoch und meldete LÄUFT, ohne etwas vom Produkt darin, und nirgends stand der Grund. Ein Hinweisbanner nennt ihn jetzt.
+- **Diese Warnung erscheint auch nach einem Neuladen,** nicht nur beim Start: das Umstellen eines Namespace auf ein Bundle ohne Anwendungen lief bisher stillschweigend durch.

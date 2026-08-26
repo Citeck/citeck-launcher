@@ -1,0 +1,3 @@
+## Correções
+- **Um namespace sem serviços do Citeck agora avisa.** Todos os serviços do Citeck vêm do bundle, enquanto os contêineres de infraestrutura (PostgreSQL, MongoDB, RabbitMQ, ZooKeeper, Mailpit, PG Admin, OnlyOffice) sobem de qualquer forma — por isso um namespace cujo bundle não pôde ser resolvido, ou foi resolvido sem nenhuma aplicação, subia verde e informava EM EXECUÇÃO sem nada do produto dentro, e em lugar nenhum se dizia o motivo. Agora um aviso indica a causa.
+- **Esse aviso também aparece depois de uma recarga,** não só na inicialização: trocar um namespace para um bundle sem aplicações passava despercebido antes.
