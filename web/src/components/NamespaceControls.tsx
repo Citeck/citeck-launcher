@@ -45,6 +45,12 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
   // over SSE/refetch, so the button reacts on the very first frame.
   const [clickEcho, setClickEcho] = useState(false)
   const echoTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // The post-click refetch is a SECOND pending timer, and half a second is
+  // easily long enough to click Update & Start and then navigate away (the
+  // gear, an app page, a namespace switch) — so it has to be cancellable too.
+  // Left untracked it fires into a component that no longer exists: a refetch
+  // nobody is waiting for, and a state update on an unmounted tree.
+  const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   function stopEcho() {
     setClickEcho(false)
@@ -64,7 +70,10 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
   // echo false a second time, and any new click resets the timer anyway.
   if (clickEcho && (updating || status === 'STARTING' || status === 'STOPPING')) setClickEcho(false)
 
-  useEffect(() => () => { if (echoTimer.current) clearTimeout(echoTimer.current) }, [])
+  useEffect(() => () => {
+    if (echoTimer.current) clearTimeout(echoTimer.current)
+    if (refetchTimer.current) clearTimeout(refetchTimer.current)
+  }, [])
 
   const { t } = useTranslation()
   // A pass that fails leaves the UI byte-identical to one that succeeded — the
@@ -137,7 +146,23 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
       // for the full timeout. Releasing here is safe in both directions: if the
       // pass IS still running the refetch returns updating:true and that keeps
       // the button busy on its own.
-      setTimeout(() => { void fetchData().finally(stopEcho) }, 500)
+      if (refetchTimer.current) clearTimeout(refetchTimer.current)
+      refetchTimer.current = setTimeout(() => {
+        refetchTimer.current = null
+        // NOT `void fetchData().finally(stopEcho)`: `.finally` returns a NEW
+        // promise that rejects with whatever the refetch rejected with, and
+        // voiding it turns a failed refetch into an unhandled rejection — a
+        // console error in the browser, and a red vitest run in which every
+        // single test passed. Swallow it here instead: the refetch is
+        // best-effort (the poll and the SSE stream both retry on their own),
+        // while releasing the echo is not optional.
+        void (async () => {
+          try {
+            await fetchData()
+          } catch { /* best-effort refresh; the echo must be released anyway */ }
+          stopEcho()
+        })()
+      }, 500)
     } catch (err) {
       // The request itself failed — nothing is running server-side, so drop the
       // echo immediately instead of leaving a button that looks busy.

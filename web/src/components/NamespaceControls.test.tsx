@@ -158,6 +158,56 @@ describe('NamespaceControls click feedback', () => {
     expect(showError).toHaveBeenCalledTimes(1)
   })
 
+  // Half a second is easily long enough to click Update & Start and then leave
+  // the dashboard (the gear, an app page, a namespace switch). The pending
+  // refetch used to survive that unmount: it re-fetched for a view nobody was
+  // looking at and set state on a dead component — and in a test environment it
+  // ran after the DOM it belonged to was gone.
+  it('cancels the pending post-click refetch when the view is unmounted', async () => {
+    const originalFetch = useDashboardStore.getState().fetchData
+    vi.useFakeTimers()
+    try {
+      const fetchData = vi.fn().mockResolvedValue(undefined)
+      useDashboardStore.setState({ fetchData, namespace: null })
+
+      const { unmount } = render(<NamespaceControls status="STOPPED" />)
+      await act(async () => { screen.getAllByRole('button')[0].click() })
+      unmount()
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+      expect(fetchData).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+      useDashboardStore.setState({ fetchData: originalFetch })
+    }
+  })
+
+  // The refetch is best-effort — the poll and the SSE stream both retry on
+  // their own — but its rejection must not escape the handler: `void
+  // p.finally(cb)` returns a promise that rejects with whatever `p` rejected
+  // with, and an unhandled rejection reds the ENTIRE vitest run while every
+  // test in it passes. This test is its own assertion: were the rejection
+  // re-raised, the run would fail on the unhandled error, not on an expect().
+  it('swallows a failed post-click refetch instead of re-raising it', async () => {
+    const originalFetch = useDashboardStore.getState().fetchData
+    vi.useFakeTimers()
+    try {
+      const fetchData = vi.fn().mockRejectedValue(new Error('daemon went away'))
+      useDashboardStore.setState({ fetchData, namespace: null })
+
+      render(<NamespaceControls status="STOPPED" />)
+      await act(async () => { screen.getAllByRole('button')[0].click() })
+      await act(async () => { await vi.advanceTimersByTimeAsync(600) })
+
+      expect(fetchData).toHaveBeenCalled()
+      // The echo is released whether the refetch succeeded or not.
+      expect(screen.getAllByRole('button')[0]).not.toBeDisabled()
+    } finally {
+      vi.useRealTimers()
+      useDashboardStore.setState({ fetchData: originalFetch })
+    }
+  })
+
   it('drops the echo when the request itself fails, so the button is usable again', async () => {
     vi.mocked(postNamespaceStart).mockRejectedValueOnce(new Error('boom'))
     render(<NamespaceControls status="STOPPED" />)
