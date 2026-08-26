@@ -680,8 +680,11 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool
 	a.appDefs = genResp.Applications
 	// Reload succeeded with a freshly-resolved bundle — clear any boot-time
 	// bundle resolution error so the UI banner doesn't survive a successful
-	// reload until the next namespace activation.
-	a.bundleError = ""
+	// reload until the next namespace activation. "Succeeded" is not the same
+	// as "has any Citeck services in it", though: a bundle edited to a ref that
+	// resolves to zero applications returns no error at all, so re-derive the
+	// empty-bundle verdict here instead of clearing unconditionally.
+	a.bundleError = emptyBundleError(resolveResult.Bundle, nsCfg.BundleRef, nsID)
 	// Update ACME renewal service under lock to prevent data race with shutdown
 	if a.acmeRenewal != nil {
 		a.acmeRenewal.Stop()

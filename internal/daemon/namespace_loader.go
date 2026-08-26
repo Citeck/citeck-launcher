@@ -296,20 +296,10 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	wsSyncError = workspaceSyncErrorString(resolver, wsCfg)
 
 	slog.Info("Using bundle", "ref", nsCfg.BundleRef, "apps", len(bundleDef.Applications))
-	// A bundle with no applications is never a working namespace: every Citeck
-	// service comes from the bundle, while the infra apps (postgres, mongo,
-	// rabbitmq, zookeeper, mailpit, pgadmin, onlyoffice) are generated
-	// unconditionally with hardcoded fallback images. The namespace therefore
-	// starts, every container comes up, and it reports RUNNING with none of the
-	// product in it — the most misleading state the launcher can be in. Record
-	// it as a bundle error so it is not silent. (An outright resolve failure
-	// already set bundleError above; this catches the paths that "succeed" with
-	// nothing, chiefly an empty bundle ref.)
-	if bundleError == "" && bundleDef.IsEmpty() {
-		bundleError = fmt.Sprintf("bundle %q resolved to no applications — this namespace would start "+
-			"only third-party infrastructure, without any Citeck services", nsCfg.BundleRef)
-		slog.Error("Bundle resolved to ZERO applications — no Citeck services will be generated",
-			"ns", nsID, "ref", nsCfg.BundleRef)
+	// An outright resolve failure already set bundleError above; this catches
+	// the paths that "succeed" with nothing, chiefly an empty bundle ref.
+	if bundleError == "" {
+		bundleError = emptyBundleError(bundleDef, nsCfg.BundleRef, nsID)
 	}
 
 	// Certs (self-signed when TLS is on without LE; Let's Encrypt obtain when
@@ -756,6 +746,32 @@ func (d *Daemon) installLoadedNamespace(loaded *loadedNamespace, wsID, nsID stri
 	}
 	d.startACMERenewalIfConfigured()
 	return nil
+}
+
+// emptyBundleError returns the bundleError text for a bundle that resolved
+// without an error but carries no applications, or "" when it has some.
+//
+// A bundle with no applications is never a working namespace: every Citeck
+// service comes from the bundle, while the infra apps (postgres, mongo,
+// rabbitmq, zookeeper, mailpit, pgadmin, onlyoffice) are generated
+// unconditionally with hardcoded fallback images. The namespace therefore
+// starts, every container comes up, and it reports RUNNING with none of the
+// product in it — the most misleading state the launcher can be in.
+//
+// Both the load path and the RELOAD path need this verdict. The reload used to
+// clear bundleError unconditionally on success, which is right for a namespace
+// whose bundle recovered but silently wrong for one that was edited (or whose
+// workspace repo changed) into resolving to zero applications: no resolve error
+// is returned for that, so the state that most needs saying was the one state
+// the banner could never reach after boot.
+func emptyBundleError(bundleDef *bundle.Def, ref bundle.Ref, nsID string) string {
+	if bundleDef == nil || !bundleDef.IsEmpty() {
+		return ""
+	}
+	slog.Error("Bundle resolved to ZERO applications — no Citeck services will be generated",
+		"ns", nsID, "ref", ref)
+	return fmt.Sprintf("bundle %q resolved to no applications — this namespace would start "+
+		"only third-party infrastructure, without any Citeck services", ref)
 }
 
 // clearActiveNamespaceLocked swaps in a fresh activeNamespace that resets the

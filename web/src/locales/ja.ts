@@ -69,6 +69,9 @@ const ja = {
   'dashboard.diskLow.dismiss': '閉じる',
   'dashboard.registryAuth.message': '次のレジストリの認証情報が必要です: {hosts}',
   'dashboard.registryAuth.action': '認証情報を設定',
+  'dashboard.bundleError.title': 'この名前空間には Citeck のサービスがありません',
+  'dashboard.bundleError.reason': '原因: {reason}',
+  'dashboard.bundleError.hint': 'サードパーティのインフラのみが起動します。名前空間の設定でバンドルのリポジトリとバージョンを確認してください。',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'まだ読み込み中です... 想定より時間がかかっています。\n問題の診断にご協力いただくため、「Dump System Info」ボタンをクリックして、データをメンテナーに送信してください。',

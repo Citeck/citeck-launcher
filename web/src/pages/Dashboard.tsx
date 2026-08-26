@@ -23,6 +23,7 @@ import { NamespaceControls } from '../components/NamespaceControls'
 import { BottomPanel } from '../components/BottomPanel'
 import { DiskLowBanner } from '../components/DiskLowBanner'
 import { RegistryAuthBanner } from '../components/RegistryAuthBanner'
+import { BundleErrorBanner } from '../components/BundleErrorBanner'
 import { RightDrawer } from '../components/RightDrawer'
 import { AppDrawerContent } from '../components/AppDrawerContent'
 import { LogViewer } from '../components/LogViewer'
@@ -219,6 +220,10 @@ export function Dashboard() {
       {/* Registry auth prompt — auto-opens the credentials dialog on a pull
           auth failure and persists as a banner until resolved. */}
       <RegistryAuthBanner />
+      {/* Bundle resolution failed (or produced zero applications): without this
+          the app table below simply shows the seven infra containers going
+          green, and nothing says the product is missing from them. */}
+      <BundleErrorBanner />
       {/* Top: sidebar + table + drawer overlay */}
       <div className="flex flex-1 min-h-0 relative">
         {/* Left info panel */}

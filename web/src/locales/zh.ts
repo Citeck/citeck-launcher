@@ -69,6 +69,9 @@ const zh = {
   'dashboard.diskLow.dismiss': '关闭',
   'dashboard.registryAuth.message': '需要以下镜像仓库的凭据：{hosts}',
   'dashboard.registryAuth.action': '设置凭据',
+  'dashboard.bundleError.title': '此命名空间中没有 Citeck 服务',
+  'dashboard.bundleError.reason': '原因：{reason}',
+  'dashboard.bundleError.hint': '将只会启动第三方基础设施。请在命名空间设置中检查捆绑包仓库和版本。',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': '仍在加载…耗时比预期更长。\n为帮助我们诊断问题，请点击“系统转储”按钮，并将数据发送给维护人员。',

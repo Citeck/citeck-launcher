@@ -69,6 +69,9 @@ const ru = {
   'dashboard.diskLow.dismiss': 'Скрыть',
   'dashboard.registryAuth.message': 'Нужны учётные данные реестра для: {hosts}',
   'dashboard.registryAuth.action': 'Указать креды',
+  'dashboard.bundleError.title': 'В этом неймспейсе нет сервисов Citeck',
+  'dashboard.bundleError.reason': 'Причина: {reason}',
+  'dashboard.bundleError.hint': 'Запустится только стороннее окружение. Проверьте репозиторий и версию бандла в настройках неймспейса.',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'Загрузка занимает больше времени, чем обычно.\nЧтобы мы помогли разобраться, нажмите «Dump System Info» и отправьте дамп нам.',

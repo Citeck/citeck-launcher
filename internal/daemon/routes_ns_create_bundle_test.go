@@ -67,3 +67,26 @@ func TestCreateFillsTheBundleRefFromTheWorkspace(t *testing.T) {
 	require.Equal(t, bundle.Ref{Repo: "community", Key: "2026.2"}, cfg.BundleRef)
 	require.NotEmpty(t, cfg.ID)
 }
+
+// TestEmptyBundleErrorNamesTheRefAndStaysQuietOtherwise pins the verdict both
+// the load path and the reload path derive their bundleError from.
+//
+// The reload used to clear bundleError unconditionally on success, which is
+// right for a namespace whose bundle recovered and silently wrong for one
+// edited into resolving to zero applications — that resolve returns no error,
+// so the banner could never reach the state it exists for after boot.
+func TestEmptyBundleErrorNamesTheRefAndStaysQuietOtherwise(t *testing.T) {
+	ref := bundle.Ref{Repo: "community", Key: "2026.2"}
+
+	withApps := &bundle.Def{Applications: map[string]bundle.AppDef{"emodel": {}}}
+	require.Empty(t, emptyBundleError(withApps, ref, "ns1"),
+		"a bundle carrying Citeck services is not an error")
+
+	empty := emptyBundleError(&bundle.Def{}, ref, "ns1")
+	require.NotEmpty(t, empty, "a bundle with zero applications must not be silent")
+	require.Contains(t, empty, ref.String(), "the message has to name the ref that resolved to nothing")
+
+	// A nil bundle reaches here only from a resolve failure, which already
+	// recorded its own error — do not overwrite it with this one.
+	require.Empty(t, emptyBundleError(nil, ref, "ns1"))
+}

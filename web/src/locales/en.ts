@@ -71,6 +71,9 @@ const en = {
   'dashboard.diskLow.dismiss': 'Dismiss',
   'dashboard.registryAuth.message': 'Registry credentials needed for: {hosts}',
   'dashboard.registryAuth.action': 'Set credentials',
+  'dashboard.bundleError.title': 'This namespace has no Citeck services',
+  'dashboard.bundleError.reason': 'Cause: {reason}',
+  'dashboard.bundleError.hint': 'Only third-party infrastructure would start. Check the bundle repository and version in the namespace settings.',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'Still loading... This is taking longer than expected.\nTo help us diagnose the issue, please click the \'Dump System Info\' button and send the data to the maintainers.',

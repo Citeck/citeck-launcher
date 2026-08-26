@@ -69,6 +69,9 @@ const es = {
   'dashboard.diskLow.dismiss': 'Descartar',
   'dashboard.registryAuth.message': 'Se necesitan credenciales del registro para: {hosts}',
   'dashboard.registryAuth.action': 'Configurar credenciales',
+  'dashboard.bundleError.title': 'Este espacio de nombres no tiene servicios de Citeck',
+  'dashboard.bundleError.reason': 'Causa: {reason}',
+  'dashboard.bundleError.hint': 'Solo se iniciaría la infraestructura de terceros. Revise el repositorio y la versión del paquete en la configuración del espacio de nombres.',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'Aún cargando... Esto está tardando más de lo esperado.\nPara ayudarnos a diagnosticar el problema, haga clic en el botón «Dump System Info» y envíe los datos a los mantenedores.',

@@ -69,6 +69,9 @@ const de = {
   'dashboard.diskLow.dismiss': 'Ausblenden',
   'dashboard.registryAuth.message': 'Registry-Zugangsdaten erforderlich für: {hosts}',
   'dashboard.registryAuth.action': 'Zugangsdaten festlegen',
+  'dashboard.bundleError.title': 'Dieser Namespace enthält keine Citeck-Dienste',
+  'dashboard.bundleError.reason': 'Ursache: {reason}',
+  'dashboard.bundleError.hint': 'Es würde nur die Infrastruktur von Drittanbietern starten. Prüfen Sie Bundle-Repository und -Version in den Namespace-Einstellungen.',
 
   // -- Loading 30s hint --
   'loadingHint.stillLoading': 'Lädt noch... Dies dauert länger als erwartet.\nUm uns bei der Diagnose des Problems zu helfen, klicken Sie bitte auf „Systeminfo ausgeben“ und senden Sie die Daten an die Betreuer.',
