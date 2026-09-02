@@ -2,11 +2,32 @@ package namespace
 
 import (
 	"context"
+	"net"
 	"testing"
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+// closedLocalPort returns a TCP port on 127.0.0.1 with nothing listening on it,
+// by binding one and immediately giving it back.
+//
+// A liveness test whose whole premise is "this probe fails" must not hardcode a
+// port: mockDocker.GetPublishedPort echoes the container port back, so the probe
+// really does hit 127.0.0.1 on the developer's machine, and the fixed 8094 is
+// emodel's own port. Running a Citeck webapp locally — the single most likely
+// thing for someone working on this repo to be doing — answered
+// /management/health with 200 and turned every "failure" in these tests into a
+// success, with no hint that the environment was the cause.
+func closedLocalPort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := l.Addr().(*net.TCPAddr).Port
+	require.NoError(t, l.Close())
+	return port
+}
 
 func TestGracefulShutdownOrder(t *testing.T) {
 	apps := []*AppRuntime{
@@ -84,7 +105,7 @@ func TestCheckLivenessFailureCounting(t *testing.T) {
 			Name: "emodel",
 			Kind: appdef.KindCiteckCore,
 			LivenessProbe: &appdef.AppProbeDef{
-				HTTP:             &appdef.HTTPProbeDef{Path: "/management/health", Port: 8094},
+				HTTP:             &appdef.HTTPProbeDef{Path: "/management/health", Port: closedLocalPort(t)},
 				FailureThreshold: 3,
 				TimeoutSeconds:   1,
 			},
@@ -145,7 +166,7 @@ func TestCheckLivenessRunsInStalledState(t *testing.T) {
 			Name: "emodel",
 			Kind: appdef.KindCiteckCore,
 			LivenessProbe: &appdef.AppProbeDef{
-				HTTP:             &appdef.HTTPProbeDef{Path: "/management/health", Port: 8094},
+				HTTP:             &appdef.HTTPProbeDef{Path: "/management/health", Port: closedLocalPort(t)},
 				FailureThreshold: 1, // Restart on first failure
 				TimeoutSeconds:   1,
 			},
