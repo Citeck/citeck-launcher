@@ -557,7 +557,7 @@ const ja = {
   'nsEdit.tab.general': '一般',
   'nsEdit.tab.advanced': '詳細',
   'nsEdit.mongo.label': 'MongoDB を有効にする',
-  'nsEdit.mongo.hint': 'この名前空間で MongoDB のコンテナを実行します。使用していたのは ecos-process だけで、新しい名前空間では作成されません。無効にするとコンテナが取り除かれ、ecos-process は MongoDB を無効にした状態で起動します。',
+  'nsEdit.mongo.hint': 'MongoDB には ecos-process のプロセス定義とインスタンスが保存されていましたが、PostgreSQL へ移行された後は不要な負担でしかないため、新しい名前空間では作成されません。ecos-process 2.33.0 以降が必要です。この名前空間にすでにプロセスがある場合は、移行が完了するまで有効のままにしてください。データが未移行のまま MongoDB を無効にすると ecos-process は起動しません。',
   'nsEdit.https.label': 'HTTPS を有効化（自己署名）',
   'nsEdit.https.hint': '自己署名証明書を使用して HTTPS でプロキシを提供します。初回アクセス時にブラウザがセキュリティ警告を表示します。',
 

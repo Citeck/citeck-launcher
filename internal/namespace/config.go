@@ -50,10 +50,14 @@ type PgAdminProps struct {
 
 // MongoDbProps holds MongoDB settings.
 //
-// Enabled is a POINTER because "absent" is a third, load-bearing state: only
-// eproc ever used mongo, newer bundles do not need it at all, and a plain bool
-// would read every pre-existing namespace.yml (none of which has the key) as
-// "disabled" and silently delete the database container out from under a
+// eproc is the only app that ever used mongo: it kept process definitions and
+// instances there until `mongo-to-ecos-data-migration2` moved them into
+// PostgreSQL, after which the container is dead weight. eproc 2.33.0 added the
+// `ecos-process.mongo.enabled` switch that lets it run without one at all.
+//
+// Enabled is a POINTER because "absent" is a third, load-bearing state: a plain
+// bool would read every pre-existing namespace.yml (none of which has the key)
+// as "disabled" and silently delete the database container out from under a
 // running stand. Absent therefore means "ask the config version" — see
 // Config.MongoEnabled.
 type MongoDbProps struct {
@@ -186,9 +190,9 @@ func (c *Config) Version() int {
 // An explicit `mongodb.enabled` in the YAML always wins — including on a new
 // namespace, so the flag stays honest for anyone who sets it by hand or from a
 // workspace template. With the key absent the answer comes from the config
-// generation: namespaces created before generation 2 keep mongo (eproc was
-// wired to it and removing it under them would break a working stand), newer
-// ones do without it.
+// generation: namespaces created before generation 2 keep mongo (their eproc
+// may predate 2.33.0, and may still hold unmigrated data — turning it off under
+// them would break a working stand), newer ones do without it.
 func (c *Config) MongoEnabled() bool {
 	if c.MongoDB.Enabled != nil {
 		return *c.MongoDB.Enabled

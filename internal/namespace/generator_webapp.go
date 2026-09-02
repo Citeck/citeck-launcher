@@ -542,12 +542,15 @@ func processWebappDataSources(appName string, app *AppBuilder, ctx *NsGenContext
 	}
 
 	// eproc reads mongo through its own switch, not just through the datasource
-	// list, so dropping the datasource above is not enough — without this it
-	// still tries to open a mongo client at startup and fails. Written AFTER
-	// the three-level merge on purpose: with no mongo container in the
-	// namespace there is no configuration layer that could legitimately turn
-	// it back on, and a workspace default saying otherwise would be describing
-	// a container that is not there.
+	// list, so dropping the datasource above is not enough — without this its
+	// Spring auto-configuration still opens a mongo client at startup and
+	// fails. The property is `ecos-process.mongo.enabled` (eproc 2.33.0+,
+	// MongoDisabledEnvironmentPostProcessor), and eproc defaults it to TRUE, so
+	// saying nothing is not the same as saying false. Written AFTER the
+	// three-level merge on purpose: with no mongo container in the namespace
+	// there is no configuration layer that could legitimately turn it back on,
+	// and a workspace default saying otherwise would be describing a container
+	// that is not there.
 	if appName == appdef.AppEproc && !ctx.Config.MongoEnabled() {
 		webappCloudConfig["ecos-process.mongo.enabled"] = false
 	}

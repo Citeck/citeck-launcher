@@ -557,7 +557,7 @@ const es = {
   'nsEdit.tab.general': 'General',
   'nsEdit.tab.advanced': 'Avanzado',
   'nsEdit.mongo.label': 'Habilitar MongoDB',
-  'nsEdit.mongo.hint': 'Ejecuta un contenedor de MongoDB para este espacio de nombres. Solo ecos-process lo usaba; los espacios de nombres nuevos se crean sin él. Al desactivarlo se elimina el contenedor y ecos-process arranca con MongoDB deshabilitado.',
+  'nsEdit.mongo.hint': 'MongoDB guardaba las definiciones e instancias de procesos de ecos-process hasta que se migraron a PostgreSQL; después de eso el contenedor es peso muerto, por lo que los espacios de nombres nuevos se crean sin él. Requiere ecos-process 2.33.0 o posterior. Si este espacio de nombres ya tiene procesos, déjelo activado hasta que termine la migración: con MongoDB desactivado y datos sin migrar, ecos-process no arranca.',
   'nsEdit.https.label': 'Habilitar HTTPS (autofirmado)',
   'nsEdit.https.hint': 'Servir el proxy por HTTPS con un certificado autofirmado. El navegador mostrará una advertencia de seguridad la primera vez.',
 

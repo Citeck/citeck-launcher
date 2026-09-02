@@ -557,7 +557,7 @@ const pt = {
   'nsEdit.tab.general': 'Geral',
   'nsEdit.tab.advanced': 'Avançado',
   'nsEdit.mongo.label': 'Ativar o MongoDB',
-  'nsEdit.mongo.hint': 'Executa um contêiner do MongoDB para este namespace. Só o ecos-process o usava; namespaces novos são criados sem ele. Ao desativar, o contêiner é removido e o ecos-process sobe com o MongoDB desativado.',
+  'nsEdit.mongo.hint': 'O MongoDB guardava as definições e instâncias de processos do ecos-process até serem migradas para o PostgreSQL; depois disso o contêiner é peso morto, por isso namespaces novos são criados sem ele. Requer o ecos-process 2.33.0 ou mais recente. Se este namespace já tem processos, mantenha-o ligado até a migração terminar: com o MongoDB desligado e dados não migrados, o ecos-process não sobe.',
   'nsEdit.https.label': 'Ativar HTTPS (autoassinado)',
   'nsEdit.https.hint': 'Servir o proxy por HTTPS com um certificado autoassinado. O navegador mostrará um aviso de segurança na primeira vez.',
 

@@ -557,7 +557,7 @@ const zh = {
   'nsEdit.tab.general': '常规',
   'nsEdit.tab.advanced': '高级',
   'nsEdit.mongo.label': '启用 MongoDB',
-  'nsEdit.mongo.hint': '为该命名空间运行 MongoDB 容器。只有 ecos-process 用到它，新的命名空间不再创建它。关闭后容器会被移除，ecos-process 将在禁用 MongoDB 的情况下启动。',
+  'nsEdit.mongo.hint': '在迁移到 PostgreSQL 之前，ecos-process 的流程定义和实例都保存在 MongoDB 中；迁移之后该容器就成了无用负担，因此新的命名空间不再创建它。需要 ecos-process 2.33.0 或更高版本。如果该命名空间已有流程，请保持开启直到迁移完成：数据尚未迁移时关闭 MongoDB 会导致 ecos-process 无法启动。',
   'nsEdit.https.label': '启用 HTTPS（自签名）',
   'nsEdit.https.hint': '使用自签名证书通过 HTTPS 提供代理服务。首次访问时浏览器会显示安全警告。',
 

@@ -557,7 +557,7 @@ const de = {
   'nsEdit.tab.general': 'Allgemein',
   'nsEdit.tab.advanced': 'Erweitert',
   'nsEdit.mongo.label': 'MongoDB aktivieren',
-  'nsEdit.mongo.hint': 'Startet einen MongoDB-Container für diesen Namespace. Nur ecos-process hat ihn genutzt; neue Namespaces werden ohne ihn angelegt. Beim Deaktivieren wird der Container entfernt und ecos-process startet mit deaktiviertem MongoDB.',
+  'nsEdit.mongo.hint': 'In MongoDB lagen die Prozessdefinitionen und -instanzen von ecos-process, bis sie nach PostgreSQL migriert wurden; danach ist der Container totes Gewicht, deshalb werden neue Namespaces ohne ihn angelegt. Erfordert ecos-process 2.33.0 oder neuer. Hat dieser Namespace bereits Prozesse, lassen Sie es aktiviert, bis die Migration abgeschlossen ist: mit deaktiviertem MongoDB und nicht migrierten Daten startet ecos-process nicht.',
   'nsEdit.https.label': 'HTTPS aktivieren (selbstsigniert)',
   'nsEdit.https.hint': 'Den Proxy über HTTPS mit einem selbstsignierten Zertifikat bereitstellen. Der Browser zeigt beim ersten Mal eine Sicherheitswarnung.',
 

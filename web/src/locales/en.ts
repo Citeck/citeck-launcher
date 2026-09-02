@@ -563,7 +563,7 @@ const en = {
   'nsEdit.tab.general': 'General',
   'nsEdit.tab.advanced': 'Advanced',
   'nsEdit.mongo.label': 'Enable MongoDB',
-  'nsEdit.mongo.hint': 'Runs a MongoDB container for this namespace. Only ecos-process used it; newer namespaces are created without it. Turning it off removes the container and starts ecos-process with MongoDB disabled.',
+  'nsEdit.mongo.hint': 'MongoDB held ecos-process definitions and instances until they were migrated to PostgreSQL; after that the container is dead weight, so newer namespaces are created without it. Needs ecos-process 2.33.0 or newer. If this namespace already has processes, leave it on until the migration has completed — ecos-process refuses to start with MongoDB off and unmigrated data.',
   'nsEdit.https.label': 'Enable HTTPS (self-signed)',
   'nsEdit.https.hint': 'Serve the proxy over HTTPS with a self-signed certificate. Your browser will show a security warning the first time.',
 
