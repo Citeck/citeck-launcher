@@ -1,0 +1,3 @@
+## Alterações
+- **Namespaces novos são criados sem o MongoDB.** O ecos-process guardava ali as definições e instâncias de processos até que foram migradas para o PostgreSQL; desde então o contêiner é peso morto. Namespaces existentes não são alterados: mantêm o MongoDB e os seus dados.
+- **Um namespace existente também pode dispensá-lo**, na nova aba «Avançado» do diálogo de configurações. Requer o ecos-process 2.33.0 ou mais recente e, se o namespace já tiver processos, mantenha o MongoDB ligado até o ecos-process informar que a migração terminou — com o MongoDB desligado e dados não migrados ele não sobe. O volume do MongoDB é preservado de qualquer forma; só o contêiner é removido.

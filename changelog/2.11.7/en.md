@@ -1,0 +1,3 @@
+## Changes
+- **New namespaces are created without MongoDB.** ecos-process kept its process definitions and instances there until they were migrated to PostgreSQL; since then the container has been dead weight. Existing namespaces are untouched — they keep MongoDB and their data.
+- **An existing namespace can drop it too**, from the new Advanced tab of the namespace settings dialog. Requires ecos-process 2.33.0 or newer, and if the namespace already has processes, leave MongoDB on until ecos-process reports its migration complete — it refuses to start with MongoDB off and unmigrated data. The MongoDB volume is kept either way; only the container goes.

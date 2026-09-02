@@ -1,0 +1,3 @@
+## Cambios
+- **Los espacios de nombres nuevos se crean sin MongoDB.** ecos-process guardaba allí sus definiciones e instancias de procesos hasta que se migraron a PostgreSQL; desde entonces el contenedor es peso muerto. Los espacios de nombres existentes no se tocan: conservan MongoDB y sus datos.
+- **Un espacio de nombres existente también puede prescindir de él**, desde la nueva pestaña «Avanzado» del diálogo de configuración. Requiere ecos-process 2.33.0 o posterior y, si el espacio de nombres ya tiene procesos, mantenga MongoDB activado hasta que ecos-process indique que su migración terminó: con MongoDB desactivado y datos sin migrar no arranca. El volumen de MongoDB se conserva en cualquier caso; solo se elimina el contenedor.

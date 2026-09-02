@@ -1,0 +1,3 @@
+## Änderungen
+- **Neue Namespaces werden ohne MongoDB angelegt.** ecos-process hielt dort seine Prozessdefinitionen und -instanzen, bis sie nach PostgreSQL migriert wurden; seitdem ist der Container totes Gewicht. Bestehende Namespaces bleiben unverändert — MongoDB und ihre Daten bleiben erhalten.
+- **Auch ein bestehender Namespace kann darauf verzichten**, über den neuen Reiter „Erweitert“ im Namespace-Dialog. Erfordert ecos-process 2.33.0 oder neuer; hat der Namespace bereits Prozesse, lassen Sie MongoDB aktiviert, bis ecos-process die Migration als abgeschlossen meldet — mit deaktiviertem MongoDB und nicht migrierten Daten startet es nicht. Das MongoDB-Volume bleibt in jedem Fall erhalten, entfernt wird nur der Container.
