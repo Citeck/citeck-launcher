@@ -653,6 +653,17 @@ type NamespaceEditDto struct {
 	// only an explicit true/false applies. GET always fills both.
 	TLSEnabled     *bool `json:"tlsEnabled,omitempty"`
 	PgAdminEnabled *bool `json:"pgAdminEnabled,omitempty"`
+	// MongoEnabled follows the same pointer convention. GET reports the
+	// EFFECTIVE answer (the stored flag when set, otherwise the default for
+	// this namespace's config generation), so the form shows what the
+	// namespace actually runs rather than the absence of a key.
+	MongoEnabled *bool `json:"mongoEnabled,omitempty"`
+	// ConfigVersion is the namespace-config generation (namespace.yml
+	// `apiVersion`), 1 for everything created before the field carried meaning.
+	// The UI uses it to decide which legacy toggles are worth showing at all:
+	// a namespace created at generation 2+ never has MongoDB, so offering the
+	// checkbox there would be offering a switch with nothing behind it.
+	ConfigVersion int `json:"configVersion,omitempty"`
 }
 
 // BundleInfoDto describes a bundle repository and its available versions.

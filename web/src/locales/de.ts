@@ -554,6 +554,10 @@ const de = {
 
   // -- Namespace edit dialog --
   'nsEdit.saveSuccess': 'Namespace aktualisiert',
+  'nsEdit.tab.general': 'Allgemein',
+  'nsEdit.tab.advanced': 'Erweitert',
+  'nsEdit.mongo.label': 'MongoDB aktivieren',
+  'nsEdit.mongo.hint': 'Startet einen MongoDB-Container für diesen Namespace. Nur ecos-process hat ihn genutzt; neue Namespaces werden ohne ihn angelegt. Beim Deaktivieren wird der Container entfernt und ecos-process startet mit deaktiviertem MongoDB.',
   'nsEdit.https.label': 'HTTPS aktivieren (selbstsigniert)',
   'nsEdit.https.hint': 'Den Proxy über HTTPS mit einem selbstsignierten Zertifikat bereitstellen. Der Browser zeigt beim ersten Mal eine Sicherheitswarnung.',
 

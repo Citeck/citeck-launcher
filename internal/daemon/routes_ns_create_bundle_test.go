@@ -7,6 +7,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/bundle"
+	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/storage"
 )
 
@@ -89,4 +90,31 @@ func TestEmptyBundleErrorNamesTheRefAndStaysQuietOtherwise(t *testing.T) {
 	// A nil bundle reaches here only from a resolve failure, which already
 	// recorded its own error — do not overwrite it with this one.
 	require.Empty(t, emptyBundleError(nil, ref, "ns1"))
+}
+
+// A namespace created now must be stamped with the current config generation:
+// that stamp is the only thing distinguishing it from every namespace created
+// before, and the defaults that changed between generations (today: no MongoDB
+// container) are resolved from it on every load.
+func TestCreateStampsTheCurrentConfigGeneration(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+
+	d := testDaemon(t, store)
+	d.activeNs = &activeNamespace{
+		workspaceConfig: &bundle.WorkspaceConfig{
+			BundleRepos: []bundle.BundlesRepo{{ID: "community"}},
+			NamespaceTemplates: []bundle.NamespaceTemplate{
+				{ID: "default", Config: map[string]any{"bundleRef": "community:2026.2"}},
+			},
+		},
+	}
+
+	cfg, err := d.buildNamespaceConfigFromCreate(api.NamespaceCreateDto{Name: "Citeck Default"}, "ws1")
+	require.NoError(t, err)
+	require.Equal(t, namespace.CurrentAPIVersion(), cfg.APIVersion)
+	require.False(t, cfg.MongoEnabled(), "new namespaces run without mongo")
+	require.Nil(t, cfg.MongoDB.Enabled,
+		"the generation decides it — writing the flag would freeze today's default into the file")
 }

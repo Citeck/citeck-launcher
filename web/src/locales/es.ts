@@ -554,6 +554,10 @@ const es = {
 
   // -- Namespace edit dialog --
   'nsEdit.saveSuccess': 'Espacio de nombres actualizado',
+  'nsEdit.tab.general': 'General',
+  'nsEdit.tab.advanced': 'Avanzado',
+  'nsEdit.mongo.label': 'Habilitar MongoDB',
+  'nsEdit.mongo.hint': 'Ejecuta un contenedor de MongoDB para este espacio de nombres. Solo ecos-process lo usaba; los espacios de nombres nuevos se crean sin él. Al desactivarlo se elimina el contenedor y ecos-process arranca con MongoDB deshabilitado.',
   'nsEdit.https.label': 'Habilitar HTTPS (autofirmado)',
   'nsEdit.https.hint': 'Servir el proxy por HTTPS con un certificado autofirmado. El navegador mostrará una advertencia de seguridad la primera vez.',
 

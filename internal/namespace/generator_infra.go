@@ -36,6 +36,12 @@ func generateMailpit(ctx *NsGenContext) {
 }
 
 func generateMongoDB(ctx *NsGenContext) {
+	// Only eproc ever used mongo, and namespaces created from generation 2
+	// onwards run without it (Config.MongoEnabled resolves the flag against
+	// the config version, so an existing namespace keeps its database).
+	if !ctx.Config.MongoEnabled() {
+		return
+	}
 	img := ctx.Config.MongoDB.Image
 	if img == "" {
 		img = "mongo:4.0.2"

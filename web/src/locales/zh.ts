@@ -554,6 +554,10 @@ const zh = {
 
   // -- Namespace edit dialog --
   'nsEdit.saveSuccess': '命名空间已更新',
+  'nsEdit.tab.general': '常规',
+  'nsEdit.tab.advanced': '高级',
+  'nsEdit.mongo.label': '启用 MongoDB',
+  'nsEdit.mongo.hint': '为该命名空间运行 MongoDB 容器。只有 ecos-process 用到它，新的命名空间不再创建它。关闭后容器会被移除，ecos-process 将在禁用 MongoDB 的情况下启动。',
   'nsEdit.https.label': '启用 HTTPS（自签名）',
   'nsEdit.https.hint': '使用自签名证书通过 HTTPS 提供代理服务。首次访问时浏览器会显示安全警告。',
 

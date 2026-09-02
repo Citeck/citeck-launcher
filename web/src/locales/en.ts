@@ -560,6 +560,10 @@ const en = {
 
   // -- Namespace edit dialog --
   'nsEdit.saveSuccess': 'Namespace updated',
+  'nsEdit.tab.general': 'General',
+  'nsEdit.tab.advanced': 'Advanced',
+  'nsEdit.mongo.label': 'Enable MongoDB',
+  'nsEdit.mongo.hint': 'Runs a MongoDB container for this namespace. Only ecos-process used it; newer namespaces are created without it. Turning it off removes the container and starts ecos-process with MongoDB disabled.',
   'nsEdit.https.label': 'Enable HTTPS (self-signed)',
   'nsEdit.https.hint': 'Serve the proxy over HTTPS with a self-signed certificate. Your browser will show a security warning the first time.',
 

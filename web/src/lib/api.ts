@@ -474,6 +474,13 @@ export interface NamespaceEditDto {
   port: number
   tlsEnabled?: boolean
   pgAdminEnabled?: boolean
+  /** Same pointer convention. GET reports the EFFECTIVE value (the stored flag
+   *  when set, otherwise the default for this namespace's config generation). */
+  mongoEnabled?: boolean
+  /** namespace.yml `apiVersion`, 1 for everything created before the field
+   *  carried meaning. Decides which legacy toggles are worth showing: a
+   *  namespace created at generation 2+ never has MongoDB. */
+  configVersion?: number
 }
 
 /**

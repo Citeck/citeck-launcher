@@ -554,6 +554,10 @@ const ru = {
 
   // -- Namespace edit dialog --
   'nsEdit.saveSuccess': 'Namespace обновлён',
+  'nsEdit.tab.general': 'Основное',
+  'nsEdit.tab.advanced': 'Дополнительно',
+  'nsEdit.mongo.label': 'Включить MongoDB',
+  'nsEdit.mongo.hint': 'Запускает контейнер MongoDB для этого неймспейса. Он нужен был только ecos-process; новые неймспейсы создаются без него. Если выключить, контейнер убирается, а ecos-process запускается с отключённой MongoDB.',
   'nsEdit.https.label': 'Включить HTTPS (самоподписанный)',
   'nsEdit.https.hint': 'Отдавать прокси по HTTPS с самоподписанным сертификатом. При первом заходе браузер покажет предупреждение безопасности.',
 

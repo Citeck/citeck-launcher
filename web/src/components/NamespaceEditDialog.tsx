@@ -34,6 +34,14 @@ interface NamespaceEditDialogProps {
   onSaved?: () => void
 }
 
+/**
+ * The namespace-config generation that stopped shipping MongoDB. Namespaces
+ * created at this generation or later never have the container (only eproc
+ * ever used it), so the toggle is offered on OLDER namespaces only — where it
+ * is a real choice about a container that is really there.
+ */
+const MONGO_DROPPED_IN_CONFIG_VERSION = 2
+
 interface WsSnapshotOpt {
   id: string
   name: string
@@ -64,6 +72,12 @@ export function NamespaceEditDialog({
   const [authUsers, setAuthUsers] = useState('')
   const [isDesktop, setIsDesktop] = useState(false)
   const [tlsEnabled, setTlsEnabled] = useState(false)
+  const [mongoEnabled, setMongoEnabled] = useState(false)
+  // namespace.yml `apiVersion`. 0 = not loaded yet (create mode, or the GET
+  // still in flight) — treated as the CURRENT generation, so a legacy-only
+  // toggle never flashes on a form that has no business showing it.
+  const [configVersion, setConfigVersion] = useState(0)
+  const [tab, setTab] = useState<'general' | 'advanced'>('general')
 
   const [bundles, setBundles] = useState<BundleInfoDto[]>([])
   const [snapshots, setSnapshots] = useState<WsSnapshotOpt[]>([])
@@ -82,6 +96,7 @@ export function NamespaceEditDialog({
       return
     }
 
+    setTab('general')
     primeDesktopModeCache().then(setIsDesktop).catch(() => setIsDesktop(false))
 
     setBundlesLoading(true)
@@ -108,6 +123,8 @@ export function NamespaceEditDialog({
       setAuthType('KEYCLOAK')
       setAuthUsers('')
       setTlsEnabled(false)
+      setMongoEnabled(false)
+      setConfigVersion(0)
       if (nsId) {
         getNamespaceEdit(nsId)
           .then((n: NamespaceEditDto) => {
@@ -117,6 +134,8 @@ export function NamespaceEditDialog({
             setAuthType(n.authType || 'KEYCLOAK')
             setAuthUsers((n.users ?? []).join(', '))
             setTlsEnabled(!!n.tlsEnabled)
+            setMongoEnabled(!!n.mongoEnabled)
+            setConfigVersion(n.configVersion ?? 1)
           })
           .catch((e) => setSubmitError((e as Error).message))
       }
@@ -222,6 +241,16 @@ export function NamespaceEditDialog({
     }
   }
 
+  // Legacy-only question — see MONGO_DROPPED_IN_CONFIG_VERSION. configVersion
+  // 0 means "create mode, or the GET has not landed yet": hide it, so a toggle
+  // that may not apply never flashes into view and back out.
+  const showMongoToggle = mode === 'edit'
+    && configVersion > 0
+    && configVersion < MONGO_DROPPED_IN_CONFIG_VERSION
+  // The tab strip appears only when Advanced has something in it; an empty
+  // second tab is worse than no tabs.
+  const hasAdvanced = showMongoToggle
+
   function validate(): boolean {
     const errors: Record<string, string> = {}
     if (!name.trim()) errors.name = t('namespace.form.required')
@@ -238,7 +267,12 @@ export function NamespaceEditDialog({
 
   async function handleSubmit(e?: React.FormEvent) {
     e?.preventDefault()
-    if (!validate()) return
+    if (!validate()) {
+      // Every validated field lives on the General tab; leaving the user on
+      // Advanced would show a form that refuses to submit and says nothing.
+      setTab('general')
+      return
+    }
     setLoading(true)
     setSubmitError(null)
     try {
@@ -285,6 +319,10 @@ export function NamespaceEditDialog({
           host: '',
           port: 0,
           tlsEnabled: isDesktop ? tlsEnabled : undefined,
+          // Same "absent = unchanged" contract: only sent while the toggle is
+          // actually offered, so saving a namespace that has no MongoDB
+          // question cannot write an answer to it.
+          mongoEnabled: showMongoToggle ? mongoEnabled : undefined,
         }
         await putNamespaceEdit(nsId, payload)
         toast(t('nsEdit.saveSuccess'), 'success')
@@ -329,6 +367,46 @@ export function NamespaceEditDialog({
         </>
       }
     >
+      {hasAdvanced && (
+        <div className="flex gap-1 border-b border-border -mt-1">
+          {(['general', 'advanced'] as const).map((id) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={tab === id}
+              className={`px-3 py-1.5 text-xs border-b-2 -mb-px ${
+                tab === id
+                  ? 'border-primary text-foreground font-medium'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+              onClick={() => setTab(id)}
+            >
+              {t(`nsEdit.tab.${id}`)}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {tab === 'advanced' ? (
+        <>
+          {showMongoToggle && (
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="rounded border-border align-middle m-0 mt-0.5 shrink-0"
+                checked={mongoEnabled}
+                onChange={(e) => setMongoEnabled(e.target.checked)}
+              />
+              <span className="flex flex-col gap-0.5">
+                <span className="text-xs font-medium">{t('nsEdit.mongo.label')}</span>
+                <span className="text-[11px] text-muted-foreground">{t('nsEdit.mongo.hint')}</span>
+              </span>
+            </label>
+          )}
+        </>
+      ) : (
+        <>
       <ModalField label={t('namespace.form.name')} error={fieldErrors.name} required>
         <input
           type="text"
@@ -442,6 +520,9 @@ export function NamespaceEditDialog({
             </span>
           </label>
         </div>
+      )}
+
+        </>
       )}
 
       {submitError && (

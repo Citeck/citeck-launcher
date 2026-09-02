@@ -554,6 +554,10 @@ const ja = {
 
   // -- Namespace edit dialog --
   'nsEdit.saveSuccess': '名前空間が更新されました',
+  'nsEdit.tab.general': '一般',
+  'nsEdit.tab.advanced': '詳細',
+  'nsEdit.mongo.label': 'MongoDB を有効にする',
+  'nsEdit.mongo.hint': 'この名前空間で MongoDB のコンテナを実行します。使用していたのは ecos-process だけで、新しい名前空間では作成されません。無効にするとコンテナが取り除かれ、ecos-process は MongoDB を無効にした状態で起動します。',
   'nsEdit.https.label': 'HTTPS を有効化（自己署名）',
   'nsEdit.https.hint': '自己署名証明書を使用して HTTPS でプロキシを提供します。初回アクセス時にブラウザがセキュリティ警告を表示します。',
 

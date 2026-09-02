@@ -554,6 +554,10 @@ const pt = {
 
   // -- Namespace edit dialog --
   'nsEdit.saveSuccess': 'Namespace atualizado',
+  'nsEdit.tab.general': 'Geral',
+  'nsEdit.tab.advanced': 'Avançado',
+  'nsEdit.mongo.label': 'Ativar o MongoDB',
+  'nsEdit.mongo.hint': 'Executa um contêiner do MongoDB para este namespace. Só o ecos-process o usava; namespaces novos são criados sem ele. Ao desativar, o contêiner é removido e o ecos-process sobe com o MongoDB desativado.',
   'nsEdit.https.label': 'Ativar HTTPS (autoassinado)',
   'nsEdit.https.hint': 'Servir o proxy por HTTPS com um certificado autoassinado. O navegador mostrará um aviso de segurança na primeira vez.',
 

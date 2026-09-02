@@ -485,6 +485,15 @@ func processWebappDataSources(appName string, app *AppBuilder, ctx *NsGenContext
 				app.AddEnv("SPRING_DATASOURCE_URL", url)
 			}
 		} else if strings.HasPrefix(url, "mongodb:") {
+			// With mongo switched off the container does not exist, so the
+			// datasource has to disappear WHOLE: a leftover depends_on would
+			// park the webapp in waitForDeps forever, and a leftover URL (env
+			// or cloud config) would point Spring at a host that no longer
+			// resolves. The workspace config still declares it — the namespace
+			// is what opted out.
+			if !ctx.Config.MongoEnabled() {
+				continue
+			}
 			app.AddDependsOn(appdef.AppMongodb)
 
 			webappCloudConfig[dsPrefix+".url"] = url
@@ -530,6 +539,17 @@ func processWebappDataSources(appName string, app *AppBuilder, ctx *NsGenContext
 	if appName == appdef.AppEapps && ctx.WorkspaceConfig != nil {
 		mergedLicenses := mergeLicenses(ctx.WorkspaceConfig.Licenses, ctx.ExtraLicenses)
 		injectLicensesAndBundleKey(mergedLicenses, ctx.Bundle, webappCloudConfig, extCloudConfig)
+	}
+
+	// eproc reads mongo through its own switch, not just through the datasource
+	// list, so dropping the datasource above is not enough — without this it
+	// still tries to open a mongo client at startup and fails. Written AFTER
+	// the three-level merge on purpose: with no mongo container in the
+	// namespace there is no configuration layer that could legitimately turn
+	// it back on, and a workspace default saying otherwise would be describing
+	// a container that is not there.
+	if appName == appdef.AppEproc && !ctx.Config.MongoEnabled() {
+		webappCloudConfig["ecos-process.mongo.enabled"] = false
 	}
 
 	// Always write cloud config YAML and mount props directory (matching Kotlin behavior).

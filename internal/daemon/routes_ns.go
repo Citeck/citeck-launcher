@@ -657,6 +657,13 @@ func (d *Daemon) buildNamespaceConfigFromCreate(req api.NamespaceCreateDto, wsID
 		}
 	}
 
+	// Stamp the config generation AFTER the template merge, so the launcher
+	// owns the field and a stale workspace template cannot pin a new namespace
+	// to an older generation's defaults. The template may still set
+	// `mongodb.enabled` explicitly — that wins, because MongoEnabled only
+	// consults the version when the key is absent.
+	nsCfg.APIVersion = namespace.CurrentAPIVersion()
+
 	nsCfg.Name = req.Name
 	// Opaque random ID — the human Name and the on-disk ID are decoupled
 	// (Kotlin parity: IdUtils.createStrId). Retry a few times to dodge an
@@ -875,6 +882,10 @@ func (d *Daemon) handleGetNamespaceEdit(w http.ResponseWriter, r *http.Request) 
 	}
 	tlsEnabled := nsCfg.Proxy.TLS.Enabled
 	pgAdminEnabled := nsCfg.PgAdmin.Enabled
+	// Effective, not stored: the key is absent on every namespace that predates
+	// it, and reporting that absence as "off" would show a cleared checkbox for
+	// a namespace whose mongo container is right there in the app table.
+	mongoEnabled := nsCfg.MongoEnabled()
 	dto := api.NamespaceEditDto{
 		Name:           nsCfg.Name,
 		BundleRepo:     nsCfg.BundleRef.Repo,
@@ -885,6 +896,8 @@ func (d *Daemon) handleGetNamespaceEdit(w http.ResponseWriter, r *http.Request) 
 		Port:           nsCfg.Proxy.Port,
 		TLSEnabled:     &tlsEnabled,
 		PgAdminEnabled: &pgAdminEnabled,
+		MongoEnabled:   &mongoEnabled,
+		ConfigVersion:  nsCfg.Version(),
 	}
 	writeJSON(w, dto)
 }
@@ -1048,6 +1061,13 @@ func (d *Daemon) handlePutNamespaceEdit(w http.ResponseWriter, r *http.Request) 
 	}
 	if req.PgAdminEnabled != nil {
 		current.PgAdmin.Enabled = *req.PgAdminEnabled
+	}
+	if req.MongoEnabled != nil {
+		// Persisted EXPLICITLY, both ways: writing the flag is what pins the
+		// answer for a namespace whose generation would otherwise decide it,
+		// so a stand that keeps mongo keeps it across a later default change.
+		enabled := *req.MongoEnabled
+		current.MongoDB.Enabled = &enabled
 	}
 
 	if valErr := namespace.ValidateNamespaceConfig(current); valErr != nil {

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"gopkg.in/yaml.v3"
@@ -46,9 +48,17 @@ type PgAdminProps struct {
 	Image   string `yaml:"image" json:"image"`
 }
 
-// MongoDbProps holds MongoDB image configuration.
+// MongoDbProps holds MongoDB settings.
+//
+// Enabled is a POINTER because "absent" is a third, load-bearing state: only
+// eproc ever used mongo, newer bundles do not need it at all, and a plain bool
+// would read every pre-existing namespace.yml (none of which has the key) as
+// "disabled" and silently delete the database container out from under a
+// running stand. Absent therefore means "ask the config version" — see
+// Config.MongoEnabled.
 type MongoDbProps struct {
-	Image string `yaml:"image" json:"image"`
+	Enabled *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Image   string `yaml:"image" json:"image"`
 }
 
 // ObserverProps holds citeck-observer settings.
@@ -106,6 +116,18 @@ type S3Config struct {
 	Region    string `yaml:"region,omitempty" json:"region,omitempty"`
 }
 
+// ConfigVersionCurrent is the namespace-config generation this launcher
+// creates. It is written into namespace.yml as `apiVersion: v<N>` at CREATE
+// time only — never on load, and never as an upgrade of an existing file, so
+// the field answers exactly one question: was this namespace created before or
+// after a given launcher release? Defaults that changed between generations
+// (today: whether MongoDB is part of the namespace) are resolved from it.
+//
+// It must NOT be seeded in DefaultNamespaceConfig: ParseNamespaceConfig starts
+// from those defaults, so a version set there would silently promote every
+// existing namespace on load and hand it the new defaults.
+const ConfigVersionCurrent = 2
+
 // Config is the top-level namespace configuration (namespace.yml).
 type Config struct {
 	APIVersion     string                 `yaml:"apiVersion,omitempty" json:"apiVersion,omitempty"`
@@ -135,6 +157,43 @@ func DefaultNamespaceConfig() Config {
 		PgAdmin: PgAdminProps{Enabled: true},
 		Proxy:   ProxyProps{Port: 80},
 	}
+}
+
+// CurrentAPIVersion is the apiVersion string a newly created namespace is
+// stamped with. Only CREATE paths may call it — see ConfigVersionCurrent.
+func CurrentAPIVersion() string {
+	return fmt.Sprintf("v%d", ConfigVersionCurrent)
+}
+
+// Version reports the namespace-config generation this config was created with.
+// An absent or unparsable apiVersion is generation 1 — every namespace written
+// before the field carried meaning, including everything migrated from the
+// Kotlin 1.x launcher.
+func (c *Config) Version() int {
+	v := strings.TrimPrefix(strings.TrimSpace(c.APIVersion), "v")
+	if v == "" {
+		return 1
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return 1
+	}
+	return n
+}
+
+// MongoEnabled reports whether this namespace includes the MongoDB container.
+//
+// An explicit `mongodb.enabled` in the YAML always wins — including on a new
+// namespace, so the flag stays honest for anyone who sets it by hand or from a
+// workspace template. With the key absent the answer comes from the config
+// generation: namespaces created before generation 2 keep mongo (eproc was
+// wired to it and removing it under them would break a working stand), newer
+// ones do without it.
+func (c *Config) MongoEnabled() bool {
+	if c.MongoDB.Enabled != nil {
+		return *c.MongoDB.Enabled
+	}
+	return c.Version() < 2
 }
 
 // LoadNamespaceConfig reads and parses a namespace config from the given file path.

@@ -12,6 +12,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/namespace"
 	"github.com/citeck/citeck-launcher/internal/storage"
 )
 
@@ -342,4 +343,66 @@ func TestNamespaceCreateDefaults_Fallbacks(t *testing.T) {
 	assert.Equal(t, "BASIC", dto.AuthType)
 	// Kotlin AuthenticationProps.DEFAULT = setOf("admin", "fet").
 	assert.Equal(t, []string{"admin", "fet"}, dto.Users)
+}
+
+// TestNamespaceEdit_MongoToggle pins the contract the Advanced tab is built on.
+//
+// The stored `mongodb.enabled` key is absent on every namespace that predates
+// it, so the two halves have to agree: GET reports the EFFECTIVE answer (from
+// the config generation) rather than the absent key, and PUT writes the flag
+// explicitly so the user's choice survives a later change of default.
+func TestNamespaceEdit_MongoToggle(t *testing.T) {
+	d, mux := newNsCrudTestDaemon(t)
+	legacy := "id: nslegacy\nname: Legacy\nbundleRef: community:LATEST\n" +
+		"authentication:\n  type: BASIC\n  users: [admin]\nproxy:\n  port: 80\n"
+	require.NoError(t, d.persistNamespaceConfig("wsMain", "nslegacy", []byte(legacy)))
+	require.NoError(t, d.persistNamespaceConfig("wsMain", "nsnew",
+		[]byte("apiVersion: "+namespace.CurrentAPIVersion()+"\n"+strings.Replace(legacy, "nslegacy", "nsnew", 1))))
+
+	getEdit := func(id string) api.NamespaceEditDto {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest("GET", api.NamespaceEditPath(id), http.NoBody))
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+		var dto api.NamespaceEditDto
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dto))
+		return dto
+	}
+
+	t.Run("GET reports the generation default when the key is absent", func(t *testing.T) {
+		legacyDto := getEdit("nslegacy")
+		require.NotNil(t, legacyDto.MongoEnabled)
+		assert.True(t, *legacyDto.MongoEnabled, "an old namespace still runs mongo")
+		assert.Equal(t, 1, legacyDto.ConfigVersion)
+
+		newDto := getEdit("nsnew")
+		require.NotNil(t, newDto.MongoEnabled)
+		assert.False(t, *newDto.MongoEnabled)
+		// The version is what tells the UI not to offer the toggle at all.
+		assert.Equal(t, namespace.ConfigVersionCurrent, newDto.ConfigVersion)
+	})
+
+	t.Run("PUT applies and persists the choice explicitly", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest("PUT", api.NamespaceEditPath("nslegacy"),
+			strings.NewReader(`{"mongoEnabled":false}`)))
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+		stored, err := d.loadNamespaceConfigFromStore("wsMain", "nslegacy")
+		require.NoError(t, err)
+		require.NotNil(t, stored.MongoDB.Enabled, "the choice must be written, not inferred later")
+		assert.False(t, *stored.MongoDB.Enabled)
+		assert.False(t, stored.MongoEnabled())
+	})
+
+	t.Run("PUT without the field leaves the stored choice alone", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest("PUT", api.NamespaceEditPath("nslegacy"),
+			strings.NewReader(`{"name":"Legacy renamed"}`)))
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+		stored, err := d.loadNamespaceConfigFromStore("wsMain", "nslegacy")
+		require.NoError(t, err)
+		require.NotNil(t, stored.MongoDB.Enabled)
+		assert.False(t, *stored.MongoDB.Enabled, "an absent field means unchanged, as for tls/pgAdmin")
+	})
 }

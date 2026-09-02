@@ -202,6 +202,10 @@ func runInstall(info BuildInfo, workspaceZip string, offline bool) (retErr error
 	}
 
 	nsCfg := namespace.DefaultNamespaceConfig()
+	// Stamp the config generation the same way the create API does — this is a
+	// brand-new namespace, so it gets the current generation's defaults (today:
+	// no MongoDB container). See namespace.ConfigVersionCurrent.
+	nsCfg.APIVersion = namespace.CurrentAPIVersion()
 	nsCfg.Template = "default"    // links to workspace template for detachedApps on first start
 	nsCfg.PgAdmin.Enabled = false // default off (use pgAdmin separately if needed)
 	isOffline := offline || workspaceZip != ""
