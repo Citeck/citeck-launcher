@@ -69,11 +69,10 @@ type fakeDepsDocker struct {
 	volSize    map[string]int64
 	removedVol []string
 
-	pulled     []string
-	pullPct    []int
-	pullErr    error
-	pullAuth   *docker.RegistryAuth
-	pullCalled bool
+	pulled   []string
+	pullPct  []int
+	pullErr  error
+	pullAuth *docker.RegistryAuth
 }
 
 func newFakeDepsDocker() *fakeDepsDocker {
@@ -153,7 +152,6 @@ func (f *fakeDepsDocker) PullImageWithProgress(_ context.Context, img string,
 	f.mu.Lock()
 	f.pulled = append(f.pulled, img)
 	f.pullAuth = auth
-	f.pullCalled = true
 	f.mu.Unlock()
 	if fn != nil {
 		for _, pct := range f.pullPct {
@@ -227,10 +225,6 @@ func newTestDepsEnv(t *testing.T, fake *fakeDepsDocker) (env *depsEnv, volumesBa
 	env.dc = fake
 	env.probe.dc = fake
 	return env, base
-}
-
-func TestDepsEnvImplementsMigrateEnv(t *testing.T) {
-	var _ migrate.Env = (*depsEnv)(nil)
 }
 
 // --- containers ------------------------------------------------------------
