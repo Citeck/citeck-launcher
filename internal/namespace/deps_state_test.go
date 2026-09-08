@@ -2,6 +2,7 @@ package namespace
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -110,4 +111,41 @@ func TestPersistedStateWithoutDependencyKeysStillParses(t *testing.T) {
 	st := decodeState(t, `{"status":"STOPPED","manualStoppedApps":["edi"]}`)
 	assert.Nil(t, st.Dependencies)
 	assert.Nil(t, st.DependencyMigration)
+}
+
+// errPersistFailed is the sentinel a failingPersister answers with, so a test
+// can assert that a failed write reaches the migration engine's caller.
+var errPersistFailed = errors.New("save namespace state failed")
+
+// failingPersister is an NsStatePersister whose every write fails. It exists
+// because fakePersister always succeeds, which cannot tell "returns the persist
+// error" apart from "returns nil".
+type failingPersister struct{}
+
+func (failingPersister) SaveNamespaceState(_, _ string) error { return errPersistFailed }
+
+// A migration write that did not reach disk must be reported: the engine rolls
+// back on it, and a swallowed error would leave a journal-less migration in
+// flight (or a pin the next boot never sees) with the UI reporting success.
+func TestMigrationWritesReportAFailedPersist(t *testing.T) {
+	newRuntime := func() *Runtime {
+		t.Helper()
+		r := NewRuntime(&Config{ID: "nsX"}, nil, t.TempDir())
+		r.SetStatePersister(failingPersister{})
+		return r
+	}
+
+	t.Run("SetMigrationJournal", func(t *testing.T) {
+		err := newRuntime().SetMigrationJournal(&deps.MigrationJournal{ID: deps.Postgres, Step: "pull-image"})
+		require.ErrorIs(t, err, errPersistFailed)
+	})
+	t.Run("CommitMigration", func(t *testing.T) {
+		err := newRuntime().CommitMigration(deps.Postgres, "postgres:18",
+			deps.MigrationResult{ID: deps.Postgres, From: "postgres:17.5", To: "postgres:18"})
+		require.ErrorIs(t, err, errPersistFailed)
+	})
+	t.Run("RecordMigrationFailure", func(t *testing.T) {
+		err := newRuntime().RecordMigrationFailure(deps.MigrationResult{ID: deps.Postgres, Error: "restore failed"})
+		require.ErrorIs(t, err, errPersistFailed)
+	})
 }
