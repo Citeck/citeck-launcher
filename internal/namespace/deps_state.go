@@ -109,8 +109,19 @@ func (r *Runtime) RecordMigrationFailure(res deps.MigrationResult) error {
 // It marks r.dirty instead of persisting: the loop tail coalesces the write
 // with everything else the iteration changed.
 //
+// This is the spec's pin writer #1, and it coexists with CommitMigration
+// (writer #2) on one precondition: a migration commits its pin only while the
+// namespace is STOPPED, under the long-operation lock, so the loop is not
+// running and can never observe the pre-migration container after
+// CommitMigration and undo it. The journal guard below is defense in depth for
+// that precondition — while a migration is open its dependency's pin belongs
+// to the migration, whatever happens to be running mid-flight.
+//
 // Caller must hold r.mu.Lock.
 func (r *Runtime) syncDependencyPinsUnderLock() {
+	if r.migrationJournal != nil {
+		return
+	}
 	for _, d := range deps.All() {
 		app, ok := r.apps[d.AppName()]
 		// An empty image says nothing about what the data runs on; blanking

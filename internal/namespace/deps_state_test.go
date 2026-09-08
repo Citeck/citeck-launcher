@@ -202,3 +202,55 @@ func TestSyncPinsIgnoresAnEmptyImage(t *testing.T) {
 	assert.Equal(t, "postgres:17.5", r.DependencyPins()[deps.Postgres], "an empty image must not clear the pin")
 	assert.False(t, r.dirty.Load())
 }
+
+// An open migration owns its dependency's pin: mid-flight the target container
+// may legitimately be running either version, and CommitMigration is the single
+// write that makes the move real. The hook must stand aside until then.
+func TestSyncPinsStandsAsideForAnOpenMigration(t *testing.T) {
+	r := NewRuntime(&Config{ID: "nsX"}, nil, t.TempDir())
+	r.SetStatePersister(&fakePersister{})
+	r.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}}, nil, nil)
+	require.NoError(t, r.SetMigrationJournal(&deps.MigrationJournal{
+		ID: deps.Postgres, From: "postgres:17.5", To: "postgres:18", Step: "restore"}))
+	r.InjectAppsForTest(&AppRuntime{Name: "postgres", Status: AppStatusRunning,
+		Def: appdef.ApplicationDef{Name: "postgres", Image: "postgres:18"}})
+
+	r.mu.Lock()
+	r.syncDependencyPinsUnderLock()
+	r.mu.Unlock()
+
+	assert.Equal(t, "postgres:17.5", r.DependencyPins()[deps.Postgres],
+		"a pin under an open migration is the migration's to move")
+	assert.False(t, r.dirty.Load())
+}
+
+// TestLoopTailRePinsARunningDependency pins the CALL SITE, not the hook: it
+// drives the real runtimeLoop (mock Docker, same harness as
+// TestStartAfterStopReinitializesShutdownChan) and asserts both halves of the
+// contract — the pin follows the container, and the loop tail's dirty-flag
+// persist writes it. Deleting the syncDependencyPinsUnderLock call from
+// runtimeLoop fails this test and nothing else.
+func TestLoopTailRePinsARunningDependency(t *testing.T) {
+	md := newMockDocker()
+	r := NewRuntime(testConfig(), md, t.TempDir())
+	r.tickerPeriod = 20 * time.Millisecond
+	fp := &fakePersister{}
+	r.SetStatePersister(fp)
+	r.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}}, nil, nil)
+	defer r.Shutdown()
+
+	r.Start([]appdef.ApplicationDef{simpleApp("postgres", "postgres:17.11")}, false)
+	require.True(t, waitForAppStatus(r, "postgres", AppStatusRunning, 10*time.Second),
+		"postgres did not reach RUNNING")
+
+	require.True(t, waitUntil(5*time.Second, func() bool {
+		return r.DependencyPins()[deps.Postgres] == "postgres:17.11"
+	}), "the loop tail never re-pinned postgres to the image it actually runs — "+
+		"is syncDependencyPinsUnderLock still called in runtimeLoop?")
+
+	require.True(t, waitUntil(5*time.Second, func() bool {
+		var st NsPersistedState
+		return json.Unmarshal([]byte(fp.lastJSON()), &st) == nil &&
+			st.Dependencies[deps.Postgres].Image == "postgres:17.11"
+	}), "the tail's dirty-flag persist never wrote the new pin to the state record")
+}
