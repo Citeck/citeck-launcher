@@ -88,6 +88,19 @@ func TestPreflightProblems(t *testing.T) {
 		assert.False(t, res.OK)
 		assert.Contains(t, strings.Join(res.Problems, "\n"), "downgrade")
 	})
+	// Two majors that share one data volume (anything below 18) would have the
+	// plan build the new cluster in the volume holding the old data — and then
+	// offer to DELETE it as a leftover. The migrator only ever moves data into
+	// a separate volume, so it refuses instead.
+	t.Run("target major shares the old volume", func(t *testing.T) {
+		env := envWith17Data()
+		env.Volumes[oldVol]["PG_VERSION"] = "16\n"
+		res := PostgresMigrator{}.Preflight(ctx, env, "postgres:16", "postgres:17")
+		assert.False(t, res.OK)
+		assert.Contains(t, strings.Join(res.Problems, "\n"), "separate volume")
+		assert.Nil(t, res.ExistingTargetVolume, "the source volume is not offered for deletion")
+		assert.Empty(t, res.Warnings)
+	})
 	t.Run("data major mismatch", func(t *testing.T) {
 		env := envWith17Data()
 		env.Volumes[oldVol]["PG_VERSION"] = "16\n"

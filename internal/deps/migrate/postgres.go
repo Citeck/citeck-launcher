@@ -50,6 +50,18 @@ func (PostgresMigrator) Preflight(ctx context.Context, env Env, from, to string)
 	}
 	oldLayout := deps.PostgresLayoutFor(fromV.Major)
 	newLayout := deps.PostgresLayoutFor(toV.Major)
+	// The whole design rests on the new cluster being built NEXT TO the old
+	// data: that is what makes the rollback a deletion and the old version
+	// still bootable. Two majors that share one volume (any pair below 18)
+	// would have this build the new cluster on top of the source — and offer
+	// to delete it first, as an existing target volume. Refuse, before the
+	// existing-volume warning can name the user's own data.
+	if newLayout.Volume == oldLayout.Volume {
+		res.Problems = append(res.Problems, fmt.Sprintf(
+			"%s → %s keeps the data in volume %s; this migration builds the new cluster in a separate volume and cannot run in place",
+			from, to, oldLayout.Volume))
+		return res
+	}
 
 	res.checkDataVersion(ctx, env, oldLayout, fromV.Major, from)
 	res.checkSpace(ctx, env, oldLayout.Volume)
