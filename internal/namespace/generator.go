@@ -116,6 +116,22 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 	}
 	sort.Strings(webappNames)
 	for _, name := range webappNames {
+		// Collision guard, same rule as generateAdditionalApps: every infra app
+		// (postgres, rabbitmq, zookeeper, keycloak, mongo, mailpit, pgadmin) plus
+		// alfresco and observer already has a builder by now, and GetOrCreateApp
+		// would hand generateWebapp THAT builder to overwrite. It bites whenever
+		// the workspace config lists no webapps at all — the filter above then
+		// admits every bundle application, infra included — and it is not merely
+		// cosmetic: it lands AFTER resolveDependencyImage has decided which image
+		// the dependency's data may run on, so a bundle entry named "postgres"
+		// would put the held-back candidate into the container while GenResp
+		// still reports the pin as effective. An infra/core app cannot be
+		// redefined as a webapp: skip it, never overwrite, and say so loudly.
+		if _, exists := ctx.Applications[name]; exists {
+			slog.Error("bundle application collides with a built-in app; skipping it as a webapp to avoid overwriting the built-in definition",
+				"name", name)
+			continue
+		}
 		generateWebapp(name, ctx)
 	}
 

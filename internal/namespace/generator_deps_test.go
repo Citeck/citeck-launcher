@@ -201,3 +201,32 @@ func TestUnparsableTagKeepsTheLegacyLayout(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "/var/lib/postgresql/data", pgData)
 }
+
+// TestPinSurvivesAWorkspaceConfigWithNoWebapps closes the one way the gate could
+// be bypassed silently. Generate's webapp loop admits EVERY bundle application
+// when the workspace config lists no webapps, and GetOrCreateApp then returns
+// the infra builder — so without the collision guard a bundle entry named
+// "postgres" overwrote the pin-resolved image AFTER resolveDependencyImage had
+// recorded the hold: the container ran the breaking candidate while GenResp
+// reported it held back, which is worse than either outcome alone.
+func TestPinSurvivesAWorkspaceConfigWithNoWebapps(t *testing.T) {
+	bun := &bundle.Def{Applications: map[string]bundle.AppDef{appdef.AppPostgres: {Image: "postgres:18"}}}
+	resp, err := Generate(depsTestConfig(), bun, &bundle.WorkspaceConfig{}, SystemSecrets{JWT: "j", OIDC: "o"},
+		GenerateOpts{DependencyPins: map[deps.ID]string{deps.Postgres: "postgres:17.5"}})
+	require.NoError(t, err)
+
+	pg := appByName(t, resp, appdef.AppPostgres)
+	require.NotNil(t, pg)
+	assert.Equal(t, "postgres:17.5", pg.Image, "the emitted def must run the pin, not the held-back candidate")
+	assert.Contains(t, pg.Volumes, "postgres2:/var/lib/postgresql/data")
+	pgData, hasPGData := pg.Environments.Get("PGDATA")
+	assert.True(t, hasPGData)
+	assert.Equal(t, "/var/lib/postgresql/data", pgData)
+	assert.Equal(t, appdef.KindThirdParty, pg.Kind, "postgres must stay infra, not be redefined as a webapp")
+	assert.False(t, pg.IsJVM, "postgres must stay infra, not be redefined as a webapp")
+
+	up := upgradeFor(t, resp, deps.Postgres)
+	require.NotNil(t, up, "the hold must still be reported")
+	assert.Equal(t, "postgres:18", up.To)
+	assert.Equal(t, DependencyGen{Effective: "postgres:17.5", Candidate: "postgres:18"}, resp.Dependencies[deps.Postgres])
+}
