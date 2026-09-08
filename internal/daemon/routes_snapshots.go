@@ -101,7 +101,7 @@ func (d *Daemon) handleListSnapshots(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
-	if !d.snapshotMu.TryLock() {
+	if !d.longOpMu.TryLock() {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeSnapshotInProgress, "another snapshot operation is in progress")
 		return
 	}
@@ -110,14 +110,14 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 	// workspace/namespace switch happens mid-export.
 	act := d.active()
 	if act.runtime != nil && act.runtime.Status() != namespace.NsStatusStopped {
-		d.snapshotMu.Unlock()
+		d.longOpMu.Unlock()
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeNamespaceRunning, "namespace must be stopped before export")
 		return
 	}
 	dc := act.dockerClient
 	volumesBase := act.volumesBase
 	if dc == nil {
-		d.snapshotMu.Unlock()
+		d.longOpMu.Unlock()
 		writeError(w, http.StatusServiceUnavailable, "docker client not available")
 		return
 	}
@@ -145,7 +145,7 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 	if dir != "" {
 		dir = filepath.Clean(dir)
 		if !filepath.IsAbs(dir) {
-			d.snapshotMu.Unlock()
+			d.longOpMu.Unlock()
 			writeError(w, http.StatusBadRequest, "output path must be absolute")
 			return
 		}
@@ -153,13 +153,13 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 		var dirErr error
 		dir, dirErr = d.snapshotsDir()
 		if dirErr != nil {
-			d.snapshotMu.Unlock()
+			d.longOpMu.Unlock()
 			writeError(w, http.StatusBadRequest, dirErr.Error())
 			return
 		}
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // snapshot dirs need 0o755 for container access
-		d.snapshotMu.Unlock()
+		d.longOpMu.Unlock()
 		writeInternalError(w, err)
 		return
 	}
@@ -169,7 +169,7 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 	// ".zip" is stripped before validation; reject duplicates.
 	fileName, nameErr := d.resolveSnapshotFileName(dir, strings.TrimSpace(r.URL.Query().Get("name")))
 	if nameErr != nil {
-		d.snapshotMu.Unlock()
+		d.longOpMu.Unlock()
 		writeError(w, nameErr.code, nameErr.Error())
 		return
 	}
@@ -178,7 +178,7 @@ func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 	nsID := d.activeNsID()
 	// Lock ownership transferred to goroutine — unlocked when export completes
 	d.bgWg.Go(func() {
-		defer d.snapshotMu.Unlock()
+		defer d.longOpMu.Unlock()
 		d.broadcastEvent(api.EventDto{
 			Type: "snapshot_export", Timestamp: time.Now().UnixMilli(),
 			NamespaceID: nsID, After: fmt.Sprintf("exporting to %s", fileName),
@@ -240,7 +240,7 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if !d.snapshotMu.TryLock() {
+	if !d.longOpMu.TryLock() {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeSnapshotInProgress, "another snapshot operation is in progress")
 		return
 	}
@@ -249,14 +249,14 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 	// workspace/namespace switch happens mid-import.
 	act := d.active()
 	if act.runtime != nil && act.runtime.Status() != namespace.NsStatusStopped {
-		d.snapshotMu.Unlock()
+		d.longOpMu.Unlock()
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeNamespaceRunning, "namespace must be stopped before import")
 		return
 	}
 	dc := act.dockerClient
 	volumesBase := act.volumesBase
 	if dc == nil {
-		d.snapshotMu.Unlock()
+		d.longOpMu.Unlock()
 		writeError(w, http.StatusServiceUnavailable, "docker client not available")
 		return
 	}
@@ -264,13 +264,13 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 	if snapshotName == "" {
 		// Accept file upload
 		if err := r.ParseMultipartForm(32 << 20); err != nil { // 32MB in memory, Go spills to disk
-			d.snapshotMu.Unlock()
+			d.longOpMu.Unlock()
 			writeError(w, http.StatusBadRequest, "invalid multipart form")
 			return
 		}
 		file, _, err := r.FormFile("file")
 		if err != nil {
-			d.snapshotMu.Unlock()
+			d.longOpMu.Unlock()
 			writeError(w, http.StatusBadRequest, "file field required")
 			return
 		}
@@ -278,7 +278,7 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 
 		tmpFile, err := os.CreateTemp("", "citeck-snapshot-upload-*.zip")
 		if err != nil {
-			d.snapshotMu.Unlock()
+			d.longOpMu.Unlock()
 			writeInternalError(w, err)
 			return
 		}
@@ -286,7 +286,7 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 		if _, err := io.Copy(tmpFile, file); err != nil {
 			_ = tmpFile.Close()
 			_ = os.Remove(tmpFile.Name())
-			d.snapshotMu.Unlock()
+			d.longOpMu.Unlock()
 			writeInternalError(w, err)
 			return
 		}
@@ -299,7 +299,7 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 	// Lock ownership transferred to goroutine.
 	importPath := zipPath
 	d.bgWg.Go(func() {
-		defer d.snapshotMu.Unlock()
+		defer d.longOpMu.Unlock()
 		if tmpPath != "" {
 			defer os.Remove(tmpPath)
 		}

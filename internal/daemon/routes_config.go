@@ -190,6 +190,11 @@ func appDefsToStoppedApps(defs []appdef.ApplicationDef, runtime *namespace.Runti
 }
 
 func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
+	release, ok := d.tryLongOp(w)
+	if !ok {
+		return
+	}
+	defer release()
 	act := d.active()
 	runtime, appDefs := act.runtime, act.appDefs
 	if runtime == nil || appDefs == nil {
@@ -230,6 +235,13 @@ func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
 	// never shows a stale failure next to a running update.
 	d.updateLastFailure.Store(nil)
 	d.setUpdateInFlight(true, nsID)
+	// Let go of the long-operation lock BEFORE handing the work off. The pass
+	// TryLocks the same mutex once it owns reloadMu, so a handler still holding
+	// it here would make the click refuse itself — the pass would report "a
+	// snapshot or dependency migration is in progress" when the only thing
+	// holding the lock was the request that started it. release is idempotent,
+	// so the defer above stays correct for every path that returns earlier.
+	release()
 	d.updateAndStartAsync(force, nsID)
 	msg := "Namespace start requested"
 	if force {
@@ -454,6 +466,22 @@ func (d *Daemon) updateAndStartAsync(forceGitPull bool, nsID string) {
 			d.recordUpdateFailure(target, "namespace is stopping — retry once it has stopped")
 			return
 		}
+		// Second layer of the long-operation gate. handleStartNamespace refuses
+		// a click that arrives while a snapshot or a dependency migration is
+		// running, but this pass may have been queued on reloadMu BEFORE the
+		// long operation took the lock — and a migration recreates the very
+		// containers this reload would drive. Claim the lock for the whole pass
+		// rather than probing it: a probe is check-then-act, and a migration
+		// accepted one instruction later would run concurrently with
+		// doReloadEx. TryLock never blocks, so holding reloadMu here cannot
+		// deadlock against a long operation that takes reloadMu after longOpMu.
+		// HTTP answered 200 long ago, so the refusal has to be reported.
+		if !d.longOpMu.TryLock() {
+			slog.Warn("Update and start skipped: " + longOpBusyMessage)
+			d.recordUpdateFailure(target, longOpBusyMessage+" — retry once it has finished")
+			return
+		}
+		defer d.longOpMu.Unlock()
 		if err := d.invokeReloadEx(force, action == updateStartStart, true); err != nil {
 			slog.Warn("Update and start failed", "err", err)
 			d.recordUpdateFailure(target, err.Error())
@@ -462,6 +490,11 @@ func (d *Daemon) updateAndStartAsync(forceGitPull bool, nsID string) {
 }
 
 func (d *Daemon) handleStopNamespace(w http.ResponseWriter, r *http.Request) {
+	release, ok := d.tryLongOp(w)
+	if !ok {
+		return
+	}
+	defer release()
 	runtime := d.active().runtime
 	if runtime == nil {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
@@ -472,6 +505,11 @@ func (d *Daemon) handleStopNamespace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
+	release, ok := d.tryLongOp(w)
+	if !ok {
+		return
+	}
+	defer release()
 	if !d.reloadMu.TryLock() {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeReloadInProgress, "reload already in progress")
 		return
@@ -501,6 +539,12 @@ func (d *Daemon) handleUpgradeNamespace(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid bundleRef: %v", err))
 		return
 	}
+
+	release, ok := d.tryLongOp(w)
+	if !ok {
+		return
+	}
+	defer release()
 
 	if !d.reloadMu.TryLock() {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeReloadInProgress, "reload already in progress")

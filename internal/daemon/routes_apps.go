@@ -216,6 +216,11 @@ func (d *Daemon) handleAppRestart(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
+	release, ok := d.tryLongOp(w)
+	if !ok {
+		return
+	}
+	defer release()
 	rt := d.requireRuntime(w)
 	if rt == nil {
 		return
@@ -238,6 +243,11 @@ func (d *Daemon) handleAppStop(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
+	release, ok := d.tryLongOp(w)
+	if !ok {
+		return
+	}
+	defer release()
 	rt := d.requireRuntime(w)
 	if rt == nil {
 		return
@@ -266,6 +276,11 @@ func (d *Daemon) handleAppStart(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
+	release, ok := d.tryLongOp(w)
+	if !ok {
+		return
+	}
+	defer release()
 	rt := d.requireRuntime(w)
 	if rt == nil {
 		return
@@ -500,6 +515,11 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
+	release, ok := d.tryLongOp(w)
+	if !ok {
+		return
+	}
+	defer release()
 	rt := d.requireRuntime(w)
 	if rt == nil {
 		return
@@ -598,6 +618,11 @@ func (d *Daemon) handleResetAppConfig(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
+	release, ok := d.tryLongOp(w)
+	if !ok {
+		return
+	}
+	defer release()
 	// One snapshot for both the lookup and the mutation. NOTE: deliberately no
 	// requireRuntime here (pinned by tests) — a nil runtime surfaces as
 	// app-not-found, mirroring the historical findApp-first behavior.
@@ -763,6 +788,11 @@ func (d *Daemon) handlePutAppFile(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
+	release, ok := d.tryLongOp(w)
+	if !ok {
+		return
+	}
+	defer release()
 	filePath := r.PathValue("path")
 	// One snapshot: app lookup, volumesBase, and the edited-file write below
 	// must all target the same active namespace.
@@ -826,6 +856,11 @@ func (d *Daemon) handleResetAppFile(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
+	release, ok := d.tryLongOp(w)
+	if !ok {
+		return
+	}
+	defer release()
 	rt := d.requireRuntime(w)
 	if rt == nil {
 		return

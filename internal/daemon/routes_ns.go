@@ -103,6 +103,15 @@ func (d *Daemon) handleDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Before the mode check: "the daemon is busy" is true in server mode too,
+	// and a 404/400 there would say the request was malformed when it was only
+	// mistimed.
+	release, ok := d.tryLongOp(w)
+	if !ok {
+		return
+	}
+	defer release()
+
 	if !config.IsDesktopMode() {
 		writeError(w, http.StatusBadRequest, "cannot delete namespace in server mode")
 		return
@@ -336,6 +345,13 @@ func (d *Daemon) resolveLatestBundleKey(wsID, repo string, offline bool) (string
 //     persist the selection in LauncherState.SelectedNs[wsID]. The new
 //     namespace is loaded in STOPPED state — the user clicks Start to run it.
 func (d *Daemon) handleActivateNamespace(w http.ResponseWriter, r *http.Request) {
+	// Before requireDesktop: the lock says "the daemon is busy", which is true
+	// regardless of mode.
+	release, ok := d.tryLongOp(w)
+	if !ok {
+		return
+	}
+	defer release()
 	if !d.requireDesktop(w) {
 		return
 	}
@@ -425,6 +441,12 @@ func (d *Daemon) handleActivateNamespace(w http.ResponseWriter, r *http.Request)
 // Refuses while the current namespace is not STOPPED (mirrors switch).
 func (d *Daemon) handleDeactivateNamespace(w http.ResponseWriter, r *http.Request) {
 	_ = r
+	// Before requireDesktop, for the same reason as handleActivateNamespace.
+	release, ok := d.tryLongOp(w)
+	if !ok {
+		return
+	}
+	defer release()
 	if !d.requireDesktop(w) {
 		return
 	}
@@ -1014,6 +1036,12 @@ func (d *Daemon) handlePutNamespaceEdit(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+
+	release, ok := d.tryLongOp(w)
+	if !ok {
+		return
+	}
+	defer release()
 
 	if !d.reloadMu.TryLock() {
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeReloadInProgress, "reload already in progress")

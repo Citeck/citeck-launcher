@@ -192,11 +192,11 @@ func TestSnapshotExport_ConcurrentInProgress(t *testing.T) {
 	d, mux, _ := newSnapshotsTestDaemon(t)
 
 	// Simulate another snapshot op holding the mutex.
-	d.snapshotMu.Lock()
+	d.longOpMu.Lock()
 	t.Cleanup(func() {
 		// Try to release; if another path already did, ignore.
 		defer func() { _ = recover() }()
-		d.snapshotMu.Unlock()
+		d.longOpMu.Unlock()
 	})
 
 	rec := httptest.NewRecorder()
@@ -265,10 +265,10 @@ func TestSnapshotImport_ConcurrentInProgress(t *testing.T) {
 	d, mux, snapDir := newSnapshotsTestDaemon(t)
 	require.NoError(t, os.WriteFile(filepath.Join(snapDir, "real.zip"), []byte("data"), 0o644))
 
-	d.snapshotMu.Lock()
+	d.longOpMu.Lock()
 	t.Cleanup(func() {
 		defer func() { _ = recover() }()
-		d.snapshotMu.Unlock()
+		d.longOpMu.Unlock()
 	})
 
 	rec := httptest.NewRecorder()
@@ -664,17 +664,17 @@ func TestSafeSnapshotFileName(t *testing.T) {
 	}
 }
 
-// --- Concurrency smoke: snapshotMu serializes export/import ---------------
+// --- Concurrency smoke: longOpMu serializes export/import ---------------
 
 // TestSnapshot_MutexSerializes spins up two parallel requests to the export
 // endpoint with a held mutex and asserts both either succeed or return 409 —
 // never a panic / nil-pointer in the validation path. Belt-and-braces for the
-// snapshotMu invariant documented in the handler.
+// longOpMu invariant documented in the handler.
 func TestSnapshot_MutexSerializes(t *testing.T) {
 	d, mux, _ := newSnapshotsTestDaemon(t)
 
-	d.snapshotMu.Lock()
-	defer d.snapshotMu.Unlock()
+	d.longOpMu.Lock()
+	defer d.longOpMu.Unlock()
 
 	const N = 4
 	var wg sync.WaitGroup

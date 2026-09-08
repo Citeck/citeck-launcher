@@ -392,6 +392,15 @@ const (
 	// would put PostgreSQL 18 on a 17 data directory with no migration and no
 	// rollback. The message names `citeck deps upgrade <id>`.
 	ErrCodeDependencyVersionLocked = "DEPENDENCY_VERSION_LOCKED"
+	// ErrCodeLongOpInProgress is returned (HTTP 409) by every route that
+	// starts, reshapes or destroys the namespace while a long operation —
+	// snapshot export/import or a dependency migration — holds the daemon's
+	// long-operation lock. A migration stops the namespace itself, so the
+	// "namespace must be stopped" guards those routes already had are exactly
+	// the state a migration puts it in; this code is what keeps a Start, a
+	// config edit or a namespace delete from racing the migration's containers
+	// and volumes.
+	ErrCodeLongOpInProgress = "LONG_OP_IN_PROGRESS"
 )
 
 // UpgradeRequestDto is the request body for the namespace upgrade endpoint.

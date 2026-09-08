@@ -111,6 +111,11 @@ func (d *Daemon) handleDeleteVolume(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
+	release, ok := d.tryLongOp(w)
+	if !ok {
+		return
+	}
+	defer release()
 	// One snapshot: the running-check and the volume delete must describe the
 	// same active namespace.
 	act := d.active()
