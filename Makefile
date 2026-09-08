@@ -67,6 +67,10 @@ check:
 # to every step above, and the release tag is otherwise the first thing that
 # compiles them. `vet` rather than `build` so the _test.go files are covered too.
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go vet ./internal/...
+# Same argument for the `integration` build tag: those files are opt-in
+# (make test-integration-deps, real Docker) and compile in no other step, so
+# without this they rot silently until somebody runs them by hand.
+	go vet -tags integration ./internal/daemon/ ./tests/...
 	@echo "==> [10/10] PASS — full local gate green (superset of CI)"
 
 help:

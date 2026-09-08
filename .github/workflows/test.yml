@@ -69,3 +69,6 @@ jobs:
           # Windows-tagged sources compile nowhere else in this job; without
           # this the release tag is the first thing that builds them.
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go vet ./internal/...
+          # Same for the opt-in `integration` tag (real-Docker tests): nothing
+          # else in CI compiles those files, so they rot invisibly.
+          go vet -tags integration ./internal/daemon/ ./tests/...

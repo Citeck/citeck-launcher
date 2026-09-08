@@ -22,7 +22,10 @@ floors=(
   "internal/jvmattach:70"
   "internal/namespace:70"
   "internal/storage:60"
-  "internal/daemon:35"
+  # The daemon measured 54.9% on 2026-09-09 (35 was set when the package was
+  # far thinner). Raised to 50 so the margin is a real one: at 35 an entire
+  # feature's worth of handlers could lose their tests without the gate moving.
+  "internal/daemon:50"
 )
 
 fail=0

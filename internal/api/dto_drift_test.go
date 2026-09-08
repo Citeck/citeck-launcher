@@ -41,8 +41,22 @@ var knownFieldGaps = map[string]string{
 	// (no gaps — LinkDto.alwaysEnabled now declared on the web interface)
 }
 
+// goSources are the Go files holding the DTO structs the web UI consumes.
+// preflight.go is not in this package: migrate.PreflightResult and
+// migrate.ExistingVolume are served verbatim by GET …/dependencies/{id}/preflight
+// and rendered by the confirm dialog, so they are as much a wire contract as
+// anything in dto.go — they were simply defined next to the migrator that
+// fills them. The gate follows the types rather than moving them.
+var goSources = []string{
+	"dto.go",
+	filepath.Join("..", "deps", "migrate", "preflight.go"),
+}
+
 func TestWebTypesMatchGoDTOs(t *testing.T) {
-	goStructs := parseDTOStructs(t, "dto.go")
+	goStructs := map[string][]string{}
+	for _, src := range goSources {
+		maps.Copy(goStructs, parseDTOStructs(t, src))
+	}
 	tsIfaces := map[string]map[string]bool{}
 	for _, src := range webSources {
 		data, err := os.ReadFile(src)
