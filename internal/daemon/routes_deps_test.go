@@ -465,3 +465,22 @@ func TestPreflightDuringARunningMigrationDoesNotProbe(t *testing.T) {
 	assert.Contains(t, pre.Problems[0], "already running")
 	assert.NotContains(t, pre.Problems[0], "rollback")
 }
+
+// A dependency the last generation did NOT emit is not listed, even when a pin
+// survives from when it did run: turning mongo off leaves the pin behind (the
+// volume is deliberately kept), and a row for it would carry an empty target
+// and claim "up-to-date" about a container that no longer exists.
+func TestListDependenciesOmitsAPinnedButUngeneratedDependency(t *testing.T) {
+	d, mux, rt := newDepsRoutesDaemon(t)
+	rt.RestoreDependencyState(map[deps.ID]deps.DependencyState{
+		deps.Postgres: {Image: "postgres:17.5"},
+		deps.MongoDB:  {Image: "mongo:6.0"},
+	}, nil, nil)
+	require.NotContains(t, d.activeNs.dependencies, deps.MongoDB, "the fixture's generation has no mongo")
+
+	dto := decodeDependencies(t, depsGet(mux, api.Dependencies))
+	for _, it := range dto.Items {
+		assert.NotEqual(t, string(deps.MongoDB), it.ID, "an ungenerated dependency must not be listed")
+		assert.NotEmpty(t, it.TargetImage, "every listed dependency has something to move to")
+	}
+}

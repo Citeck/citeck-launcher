@@ -80,10 +80,10 @@ func (d *Daemon) currentDepsMigration(nsID string) *api.DependencyMigrationDto {
 // runtime's PINS (what the data runs on), the last generation's
 // effective-vs-candidate images, and the upgrades that generation held back.
 //
-// A dependency the namespace does not run at all (mongo on a v2 namespace,
-// keycloak with authentication off) is left out entirely: it has neither a
-// generated image nor a pin, and listing it would offer an upgrade for a
-// container that does not exist.
+// A dependency the LAST GENERATION did not emit (mongo on a v2 namespace,
+// keycloak with authentication off) is left out entirely — including one that
+// still carries a pin from when it did run, since the pin describes a volume
+// nobody is mounting and the list would show a row with no target.
 func dependencyItems(act activeNamespace) []api.DependencyDto {
 	pins := map[deps.ID]string{}
 	if act.runtime != nil {
@@ -96,10 +96,16 @@ func dependencyItems(act activeNamespace) []api.DependencyDto {
 	items := make([]api.DependencyDto, 0, len(deps.All()))
 	for _, desc := range deps.All() {
 		gen, generated := act.dependencies[desc.ID()]
-		pin := pins[desc.ID()]
-		if !generated && pin == "" {
+		if !generated {
+			// Not part of this namespace's LAST generation, so there is
+			// nothing to offer: no candidate image, no container, no upgrade.
+			// A leftover PIN is not enough — a namespace whose mongo was turned
+			// off keeps the pin (the volume is deliberately left alone) and
+			// would otherwise be listed "up-to-date" with an empty target,
+			// i.e. a row about a container that no longer exists.
 			continue
 		}
+		pin := pins[desc.ID()]
 		current := pin
 		if current == "" {
 			current = gen.Effective

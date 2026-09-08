@@ -275,29 +275,7 @@ func Start(opts StartOptions) error {
 	}
 
 	if nsCfg != nil {
-		// A migration journal surviving into this process means the previous
-		// one died mid-migration: roll it back BEFORE the runtime touches
-		// anything, because one of the temp containers the journal describes
-		// has the namespace's own data volume mounted. It also decides the
-		// restart: an interrupted migration stopped the namespace on the
-		// user's behalf, so giving it back running is the rollback's contract.
-		// Synchronous on purpose — everything below this line assumes the
-		// namespace's volumes are its own again.
-		if d.recoverLoadedMigration(context.Background(), loaded, wsID) {
-			loaded.ShouldStart = true
-		}
-		// Snapshot import is a USER action only — namespace creation with a
-		// selected snapshot (handleCreateNamespace) or an explicit import from the
-		// snapshots list. There is deliberately NO auto-import on daemon start: a
-		// `snapshot:` field in the config is just a record of which snapshot the
-		// namespace was created from, not a trigger. Re-importing it on boot would
-		// clobber the namespace's live volumes — e.g. it restored a stale demo
-		// snapshot over a 1.x→2.x migrated namespace and corrupted its postgres.
-		if loaded.ShouldStart {
-			// Boot auto-start is not the explicit Update & Start action —
-			// skip the :snapshot pre-pull digest refresh (refreshImages=false).
-			loaded.Runtime.Start(loaded.AppDefs, false)
-		}
+		d.recoverThenStartLoadedNamespace(context.Background(), loaded, wsID)
 	}
 
 	// Start ACME renewal service if Let's Encrypt is enabled

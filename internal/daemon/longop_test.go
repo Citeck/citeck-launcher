@@ -34,8 +34,16 @@ type gatedRoute struct {
 }
 
 // gatedRoutes is THE list of routes that start, reshape or destroy the
-// namespace. A handler missing from it is not a passing test, it is an ungated
-// route: every long-operation test below is driven from this one table.
+// namespace THROUGH tryLongOp. A handler missing from it is not a passing test,
+// it is an ungated route: every long-operation test below is driven from this
+// one table.
+//
+// One gated handler is deliberately absent: handleDependencyMigrate claims the
+// lock itself as longOpMigration (tryLongOp would mislabel it longOpRequest,
+// which the lifecycle routes tolerate) and hands ownership to a background
+// goroutine, so it fits none of the table's shapes — its refusal and its
+// release are covered by TestMigrateRefusals / TestMigrateAcceptsRunsAndBroadcasts
+// in routes_deps_test.go.
 func gatedRoutes() []gatedRoute {
 	return []gatedRoute{
 		{handler: "handleStartNamespace", method: "POST", path: api.NamespaceStart, tolerantOfLifecycle: true},

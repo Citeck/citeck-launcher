@@ -14,6 +14,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/deps/migrate"
 	"github.com/citeck/citeck-launcher/internal/deps/migrate/migratetest"
 	"github.com/citeck/citeck-launcher/internal/namespace"
+	"github.com/citeck/citeck-launcher/internal/storage"
 )
 
 // recoveryFixture is a loaded-but-not-yet-started namespace whose migrate.Env
@@ -144,4 +145,146 @@ func TestRecoveryKeepsTheScratchDirWhileAJournalIsOpen(t *testing.T) {
 func TestRecoveryIsANoOpWithoutARuntime(t *testing.T) {
 	d := &Daemon{}
 	assert.False(t, d.recoverInterruptedMigration(context.Background(), activeNamespace{}))
+}
+
+// observingEnv decorates the SHARED fake (never replaces it) with one hook: it
+// reports what the world looked like at the moment the rollback removed the
+// half-built target volume. That instant is what the two production entry
+// points are about — recovery must reach it before the runtime is started and
+// before the namespace is installed.
+type observingEnv struct {
+	*migratetest.FakeEnv
+	onRollback func()
+}
+
+func (e observingEnv) RemoveVolume(ctx context.Context, v string) error {
+	if e.onRollback != nil {
+		e.onRollback()
+	}
+	return e.FakeEnv.RemoveVolume(ctx, v) //nolint:wrapcheck // decorator must return the fake's error verbatim
+}
+
+// bootFixture is a namespace as the boot path has it: loaded, not started.
+func bootFixture(t *testing.T, journal *deps.MigrationJournal, shouldStart bool) (*Daemon, *loadedNamespace, *recoveryFixture) {
+	t.Helper()
+	f := newRecoveryFixture(t)
+	if journal != nil {
+		f.openJournal(journal)
+	}
+	loaded := &loadedNamespace{
+		NsConfig:    &namespace.Config{ID: "ns1"},
+		Runtime:     f.rt,
+		AppDefs:     []appdef.ApplicationDef{{Name: "postgres"}},
+		VolumesBase: f.act.volumesBase,
+		ShouldStart: shouldStart,
+	}
+	return f.d, loaded, f
+}
+
+// The boot path's contract, in one order: roll back, THEN start — and start at
+// all only because the rollback said the namespace had been running.
+func TestBootRollsBackBeforeItStartsAndInheritsTheRestart(t *testing.T) {
+	d, loaded, f := bootFixture(t, &deps.MigrationJournal{ID: deps.Postgres, From: "postgres:17.5",
+		To: "postgres:18", CreatedVolume: "postgres3", WasRunning: true}, false)
+
+	var starts int
+	var startsAtRollback = -1
+	var journalOpenAtStart bool
+	d.runtimeStartFn = func(rt *namespace.Runtime, apps []appdef.ApplicationDef) {
+		starts++
+		journalOpenAtStart = rt.MigrationJournal() != nil
+		assert.Equal(t, []appdef.ApplicationDef{{Name: "postgres"}}, apps)
+	}
+	base := f.env
+	d.depsEnvFn = func(activeNamespace) migrate.Env {
+		return observingEnv{FakeEnv: base, onRollback: func() { startsAtRollback = starts }}
+	}
+
+	d.recoverThenStartLoadedNamespace(context.Background(), loaded, "ws1")
+
+	assert.Equal(t, 0, startsAtRollback, "the rollback must run BEFORE the namespace is started")
+	assert.Equal(t, 1, starts, "a namespace the migration had stopped is handed back running")
+	assert.False(t, journalOpenAtStart, "the runtime starts only once the journal is closed")
+	assert.True(t, loaded.ShouldStart)
+}
+
+// A rollback that FAILED leaves leftovers (a temp container still holding the
+// old data volume), so the boot path must not start the namespace at all —
+// whatever the journal's WasRunning says.
+func TestBootDoesNotStartWhenTheRollbackFailed(t *testing.T) {
+	d, loaded, f := bootFixture(t, &deps.MigrationJournal{ID: deps.Postgres, From: "postgres:17.5",
+		To: "postgres:18", CreatedVolume: "postgres3", WasRunning: true}, false)
+	f.env.FailOn["rmvol:postgres3"] = errors.New("volume is in use")
+	var starts int
+	d.runtimeStartFn = func(*namespace.Runtime, []appdef.ApplicationDef) { starts++ }
+
+	d.recoverThenStartLoadedNamespace(context.Background(), loaded, "ws1")
+
+	assert.Zero(t, starts)
+	assert.False(t, loaded.ShouldStart)
+	assert.NotNil(t, f.rt.MigrationJournal())
+}
+
+// The ordinary boot — no journal — is unchanged: the persisted-status hint
+// alone decides, and the stale scratch dir is swept before the start.
+func TestBootWithoutAJournalStartsOnThePersistedHint(t *testing.T) {
+	d, loaded, f := bootFixture(t, nil, true)
+	var starts int
+	var dirAtStart bool
+	d.runtimeStartFn = func(*namespace.Runtime, []appdef.ApplicationDef) {
+		starts++
+		dirAtStart = f.env.Dirs[f.env.DumpRoot]
+	}
+
+	d.recoverThenStartLoadedNamespace(context.Background(), loaded, "ws1")
+
+	assert.Equal(t, 1, starts)
+	assert.False(t, dirAtStart, "the stale scratch dir is swept before the runtime starts")
+
+	// …and a namespace the user had stopped stays stopped.
+	d2, loaded2, _ := bootFixture(t, nil, false)
+	var starts2 int
+	d2.runtimeStartFn = func(*namespace.Runtime, []appdef.ApplicationDef) { starts2++ }
+	d2.recoverThenStartLoadedNamespace(context.Background(), loaded2, "ws1")
+	assert.Zero(t, starts2)
+}
+
+// The switch/activate path: recovery must finish BEFORE the pointer swap, so
+// the namespace is never reachable — and therefore never startable — while a
+// temp container still holds its data volume.
+func TestInstallLoadedNamespaceRecoversBeforeTheSwap(t *testing.T) {
+	f := newRecoveryFixture(t)
+	f.openJournal(&deps.MigrationJournal{ID: deps.Postgres, From: "postgres:17.5", To: "postgres:18",
+		CreatedVolume: "postgres3", WasRunning: true})
+
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+
+	d := f.d
+	d.store = store
+	d.activeNs = &activeNamespace{workspaceID: "ws1", nsConfig: &namespace.Config{ID: "ns-old"}}
+
+	activeAtRollback := "<not called>"
+	base := f.env
+	d.depsEnvFn = func(activeNamespace) migrate.Env {
+		return observingEnv{FakeEnv: base, onRollback: func() {
+			activeAtRollback = namespaceIDOf(d.active())
+		}}
+	}
+
+	loaded := &loadedNamespace{
+		NsConfig:    &namespace.Config{ID: "ns1"},
+		Runtime:     f.rt,
+		AppDefs:     []appdef.ApplicationDef{{Name: "postgres"}},
+		VolumesBase: f.act.volumesBase,
+		ShouldStart: true, // ignored here: an activate never auto-starts
+	}
+	require.NoError(t, d.installLoadedNamespace(loaded, "ws1", "ns1"))
+
+	assert.Equal(t, "ns-old", activeAtRollback,
+		"the rollback must finish before the new namespace becomes reachable")
+	assert.Equal(t, "ns1", namespaceIDOf(d.active()), "and the swap still happens")
+	assert.Nil(t, f.rt.MigrationJournal(), "the interrupted migration was closed on the way in")
+	assert.NotContains(t, f.env.Volumes, "postgres3")
 }

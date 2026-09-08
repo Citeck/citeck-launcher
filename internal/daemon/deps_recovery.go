@@ -85,6 +85,37 @@ func (d *Daemon) recoverLoadedMigration(ctx context.Context, loaded *loadedNames
 	return d.recoverInterruptedMigration(ctx, recoveryActiveNamespace(loaded, wsID))
 }
 
+// recoverThenStartLoadedNamespace is the BOOT path's post-load sequence, and
+// the order is the whole point of the function: an interrupted migration is
+// rolled back BEFORE the runtime is allowed to touch anything, because one of
+// the temp containers the journal describes has the namespace's own data
+// volume mounted — starting the namespace over it would put a second server on
+// one PGDATA. The rollback also decides the start: an interrupted migration
+// stopped the namespace on the user's behalf, so handing it back running is
+// the rollback's contract (and a rollback that FAILED hands back nothing).
+//
+// Extracted from Start so that order is testable; keeping the two statements
+// inline made deleting either of them a silent, test-free change.
+//
+// Note what this deliberately does NOT do: import a snapshot. That is a USER
+// action only — namespace creation with a selected snapshot, or an explicit
+// import — and a `snapshot:` field in the config is a record of where the
+// namespace came from, not a trigger. Re-importing it on boot would clobber
+// the namespace's live volumes.
+func (d *Daemon) recoverThenStartLoadedNamespace(ctx context.Context, loaded *loadedNamespace, wsID string) {
+	if loaded == nil || loaded.Runtime == nil {
+		return
+	}
+	if d.recoverLoadedMigration(ctx, loaded, wsID) {
+		loaded.ShouldStart = true
+	}
+	if loaded.ShouldStart {
+		// Boot auto-start is not the explicit Update & Start action — no
+		// :snapshot pre-pull digest refresh (startRuntime passes false).
+		d.startRuntime(loaded.Runtime, loaded.AppDefs)
+	}
+}
+
 // recoveryActiveNamespace is the activeNamespace snapshot a freshly loaded
 // namespace would have. Recovery runs BEFORE the namespace is installed (it
 // must precede the runtime), so it cannot read d.active() — but it must still
