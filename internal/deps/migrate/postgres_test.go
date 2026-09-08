@@ -2,6 +2,7 @@ package migrate
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -67,6 +68,61 @@ func TestPreflightHappyPath(t *testing.T) {
 	assert.Equal(t, env.FreeHost, res.FreeHostBytes)
 	assert.Equal(t, env.FreeVolume, res.FreeVolumeBytes)
 	assert.Nil(t, res.ExistingTargetVolume)
+}
+
+// Problems and Warnings cross the API as arrays: the web dialog maps over both
+// without a nil guard, so a clean preflight marshalling `"problems":null` is
+// the confirm screen crashing in the ORDINARY case.
+func TestPreflightMarshalsEmptyListsNotNull(t *testing.T) {
+	env := envWith17Data()
+	res := PostgresMigrator{}.Preflight(context.Background(), env, from17, to18)
+	require.True(t, res.OK, res.Problems)
+	raw, err := json.Marshal(res)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"problems":[]`)
+	assert.Contains(t, string(raw), `"warnings":[]`)
+	assert.NotContains(t, string(raw), "null")
+}
+
+// The existing target volume is reported ONCE, through the structured field
+// both consumers render; the English prose duplicate it used to append showed
+// up next to its own localized restatement on the confirm screen.
+func TestExistingTargetVolumeIsReportedOnlyAsAStructuredField(t *testing.T) {
+	env := envWith17Data()
+	env.Volumes[newVol] = map[string]string{"18/docker/PG_VERSION": "18\n"}
+	env.VolSize[newVol] = 1 << 30
+	res := PostgresMigrator{}.Preflight(context.Background(), env, from17, to18)
+	require.NotNil(t, res.ExistingTargetVolume)
+	assert.Equal(t, newVol, res.ExistingTargetVolume.Name)
+	assert.Equal(t, "18", res.ExistingTargetVolume.Version)
+	assert.Empty(t, res.Warnings, "no prose restatement of the structured field")
+	assert.True(t, res.OK, "an existing target volume is a confirmation, not a problem")
+}
+
+// A pair whose two majors share one volume because this launcher has no layout
+// for the newer one is NOT the in-place case: telling the operator about
+// volumes sends them after a disk problem they do not have.
+func TestPreflightRefusesAnUnsupportedPairAsALauncherUpdate(t *testing.T) {
+	env := envWith17Data()
+	env.Volumes[newVol] = map[string]string{"18/docker/PG_VERSION": "18\n"}
+	res := PostgresMigrator{}.Preflight(context.Background(), env, to18, "postgres:19")
+	assert.False(t, res.OK)
+	joined := strings.Join(res.Problems, "\n")
+	assert.Contains(t, joined, "update the launcher")
+	assert.NotContains(t, joined, "separate volume")
+}
+
+// Supports is the migrator's own precondition — different volumes, forwards —
+// and it is what the daemon asks before it offers an upgrade at all.
+func TestPostgresMigratorSupports(t *testing.T) {
+	v := func(major int) deps.Version { return deps.Version{Major: major} }
+	m := PostgresMigrator{}
+	assert.True(t, m.Supports(v(17), v(18)), "the pair the launcher was built for")
+	assert.True(t, m.Supports(v(16), v(18)))
+	assert.False(t, m.Supports(v(18), v(19)), "no layout for 19 yet")
+	assert.False(t, m.Supports(v(16), v(17)), "one volume: in place, not a migration")
+	assert.False(t, m.Supports(v(18), v(17)), "backwards")
+	assert.False(t, m.Supports(v(18), v(18)))
 }
 
 func TestPreflightProblems(t *testing.T) {
@@ -139,7 +195,7 @@ func TestPreflightProblems(t *testing.T) {
 		assert.True(t, res.OK, "an existing volume is confirmable, not fatal")
 		require.NotNil(t, res.ExistingTargetVolume)
 		assert.Equal(t, ExistingVolume{Name: newVol, SizeBytes: 7 << 20, Version: "18"}, *res.ExistingTargetVolume)
-		assert.NotEmpty(t, res.Warnings)
+		assert.Empty(t, res.Warnings, "the structured field IS the warning; see TestExistingTargetVolumeIsReportedOnlyAsAStructuredField")
 	})
 	t.Run("existing but empty target volume reports no version", func(t *testing.T) {
 		env := envWith17Data()
@@ -163,6 +219,11 @@ func TestPostgresPlanHappyPath(t *testing.T) {
 		return i
 	}
 	assert.Less(t, idx("stopns"), idx("pull:"+to18))
+	// The scratch directory is created (mode 1777) BEFORE the container that
+	// writes the dump into it: Docker would otherwise create the bind source
+	// itself, root-owned, and pg_dumpall -f would die with Permission denied
+	// after the namespace has already been stopped.
+	assert.Less(t, idx("mkdir:/host/deps-migration/postgres"), idx("run:"+SrcContainer))
 	assert.Less(t, idx("pull:"+to18), idx("run:"+SrcContainer+":"+from17))
 	assert.Less(t, idx("run:"+SrcContainer), idx("rm:"+SrcContainer))
 	assert.Less(t, idx("rm:"+SrcContainer), idx("createvol:"+newVol))
@@ -191,6 +252,20 @@ func TestPostgresPlanHappyPath(t *testing.T) {
 		"stop-namespace", "pull-image", "start-source", "dump", "stop-source",
 		"stop-source", "create-volume", "start-target", "restore", "verify", "stop-target",
 	}, st.steps()[1:])
+}
+
+// PostgresStepIDs is what the CLI's locale keys, the integration test and the
+// web dialog's step list are all built from, so it has to BE the plan — not a
+// copy that drifts the first time a step is renamed.
+func TestPostgresStepIDsAreThePlansOwnSteps(t *testing.T) {
+	env := envWith17Data()
+	plan, _, err := PostgresMigrator{}.Plan(context.Background(), env, from17, to18, PlanOptions{})
+	require.NoError(t, err)
+	ids := make([]string, 0, len(plan.Steps))
+	for _, st := range plan.Steps {
+		ids = append(ids, st.ID)
+	}
+	assert.Equal(t, PostgresStepIDs(), ids)
 }
 
 func TestPostgresPlanStoppedNamespaceIsNotStarted(t *testing.T) {
@@ -398,13 +473,41 @@ func TestRollbackDoesNotRemoveAVolumeItDidNotJournal(t *testing.T) {
 func TestRollbackReportsEveryFailureItHit(t *testing.T) {
 	env := envWith17Data()
 	env.FailOn["rmvol:"+newVol] = errors.New("volume in use")
-	env.FailOn["reload:"] = errors.New("docker is down")
+	env.FailOn["rmdir:"+env.DumpDir(deps.Postgres)] = errors.New("scratch busy")
 	j := &deps.MigrationJournal{ID: deps.Postgres, From: from17, To: to18,
 		CreatedVolume: newVol, DumpDir: env.DumpDir(deps.Postgres), WasRunning: true}
 	err := RollbackPostgres(context.Background(), env, j)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "volume in use")
-	assert.Contains(t, err.Error(), "docker is down")
+	assert.Contains(t, err.Error(), "scratch busy")
+}
+
+// A restart that fails is reported like every other half of the rollback —
+// the cleanup itself succeeded, so attempting it was right.
+func TestRollbackReportsAFailedRestart(t *testing.T) {
+	env := envWith17Data()
+	env.FailOn["reload:"] = errors.New("docker is down")
+	j := &deps.MigrationJournal{ID: deps.Postgres, From: from17, To: to18,
+		CreatedVolume: newVol, DumpDir: env.DumpDir(deps.Postgres), WasRunning: true}
+	require.ErrorContains(t, RollbackPostgres(context.Background(), env, j), "docker is down")
+}
+
+// depsmig-src mounts the namespace's OWN data volume read-write. A rollback
+// that could not remove it must NOT hand the namespace back running: the
+// postmaster.pid interlock does not hold across PID/IPC namespaces, so the
+// namespace's postgres would start a second server on the user's only copy of
+// the data. The journal stays open and the next launcher start retries.
+func TestRollbackLeavesTheNamespaceStoppedWhenATempContainerSurvived(t *testing.T) {
+	env := envWith17Data()
+	env.Containers[SrcContainer] = env.Defs[from17]
+	env.FailOn["rm:"+SrcContainer] = errors.New("container is locked")
+	j := &deps.MigrationJournal{ID: deps.Postgres, From: from17, To: to18,
+		CreatedVolume: newVol, DumpDir: env.DumpDir(deps.Postgres), WasRunning: true}
+	err := RollbackPostgres(context.Background(), env, j)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "container is locked")
+	assert.Contains(t, err.Error(), "namespace left stopped")
+	assert.Empty(t, env.Reloads(), "no second postmaster on the old volume")
 }
 
 func TestPlanRefusesWhenPreflightFails(t *testing.T) {

@@ -29,6 +29,14 @@ func (v Version) String() string {
 // ("host:5000/repo:17") must not be mistaken for a tag. Anything without a
 // leading number ("latest", a digest, a custom name) is unknown: ok=false.
 // Unknown is the safe answer — the caller treats it as a breaking change.
+//
+// A digest reference is unknown even when it carries a readable tag
+// ("postgres:17@sha256:…"): the digest is what Docker resolves, the tag beside
+// it is a label anyone can move, so believing it would pin the version off a
+// string that does not decide what runs. The consequence is worth stating
+// plainly — a namespace whose dependency is pinned by digest is held back
+// PERMANENTLY (deps.Breaking answers true for every candidate) and the only
+// way out is an edit that gives it a readable tag.
 func ParseImageVersion(image string) (Version, bool) {
 	if image == "" {
 		return Version{}, false
@@ -51,8 +59,10 @@ func ParseImageVersion(image string) (Version, bool) {
 	for end < len(tag) && (tag[end] == '.' || (tag[end] >= '0' && tag[end] <= '9')) {
 		end++
 	}
+	// strings.Split never answers an empty slice, so parts[0] is the whole
+	// test: it is "" for a tag with no leading digit ("latest", "alpine").
 	parts := strings.Split(strings.TrimSuffix(tag[:end], "."), ".")
-	if len(parts) == 0 || parts[0] == "" {
+	if parts[0] == "" {
 		return Version{}, false
 	}
 	nums := make([]int, 0, 3)
@@ -74,4 +84,27 @@ func ParseImageVersion(image string) (Version, bool) {
 		v.Patch = nums[2]
 	}
 	return v, true
+}
+
+// SplitImageRef splits a tagged image reference into its repository and tag,
+// by the same rule ParseImageVersion uses to find the tag (the last ':' after
+// the last '/', so a registry port is never mistaken for one).
+//
+// ok=false for a digest reference or a reference with no tag: neither has a
+// repository that can be swapped without changing WHICH image runs, and that
+// is the only thing callers use this for.
+func SplitImageRef(image string) (repo, tag string, ok bool) {
+	if image == "" || strings.Contains(image, "@") {
+		return "", "", false
+	}
+	name := image
+	prefix := ""
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		prefix, name = name[:i+1], name[i+1:]
+	}
+	i := strings.LastIndex(name, ":")
+	if i <= 0 || i == len(name)-1 {
+		return "", "", false
+	}
+	return prefix + name[:i], name[i+1:], true
 }

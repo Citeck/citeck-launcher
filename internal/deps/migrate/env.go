@@ -10,8 +10,10 @@ import (
 // Env is everything a migration plan may do to the world, narrowed so a plan
 // can be exercised end to end against a fake. The daemon implements it over
 // *docker.Client, the filesystem and the namespace Runtime (deps_env.go);
-// migratetest.FakeEnv is the in-memory implementation the plan, recovery and
-// integration tests share.
+// migratetest.FakeEnv is the in-memory implementation the plan tests and the
+// daemon's crash-recovery tests share. The integration test does NOT use it —
+// it runs the daemon's real depsEnv against real containers, which is the
+// point of it.
 type Env interface {
 	// NamespaceID names the namespace, for messages only.
 	NamespaceID() string

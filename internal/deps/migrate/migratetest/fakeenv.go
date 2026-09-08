@@ -1,7 +1,9 @@
 // Package migratetest provides the in-memory migrate.Env every test that
-// exercises a migration plan uses: the plan tests, the daemon's crash-recovery
-// tests and the integration harness share ONE fake, so a change to the Env
-// seam is felt in one place instead of three.
+// exercises a migration plan against a fake world uses: the plan tests and the
+// daemon's crash-recovery tests share ONE fake, so a change to the Env seam is
+// felt in one place instead of two. The integration test (build tag
+// integration) deliberately does not come here — it drives the daemon's real
+// Env against real PostgreSQL containers.
 //
 // It deliberately does not import the migrate package — that keeps in-package
 // (package migrate) tests free to use it without an import cycle. The proof
@@ -262,9 +264,9 @@ func (f *FakeEnv) DumpDir(id deps.ID) string {
 }
 
 // EnsureDir records the directory. The real Env creates it mode 1777 so the
-// container's own uid can write the dump into it; there is no mode to model
-// in memory, so the fake records the creation and the plan tests assert that
-// it happened before the container that writes there was started.
+// container's own uid can write the dump into it; there is no mode to model in
+// memory, so the fake records the creation and TestPostgresPlanHappyPath
+// asserts that "mkdir:" precedes "run:depsmig-src" in the call log.
 func (f *FakeEnv) EnsureDir(p string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -41,25 +41,45 @@ type PostgresMigrator struct{}
 
 // Preflight checks everything that can be checked before anything is stopped
 // or created. It never mutates.
+//
+// Problems and Warnings are ALWAYS non-nil: they cross the API as JSON arrays
+// and the web dialog maps over both, so a nil slice — the ordinary happy path
+// — would marshal as `null` and crash the confirm screen into the error
+// boundary. See NewPreflightResult.
 func (PostgresMigrator) Preflight(ctx context.Context, env Env, from, to string) PreflightResult {
-	res := PreflightResult{From: from, To: to, WasRunning: env.IsRunning()}
+	res := NewPreflightResult(from, to)
+	res.WasRunning = env.IsRunning()
 	fromV, toV, problems := postgresVersionProblems(from, to)
 	if len(problems) > 0 {
-		res.Problems = problems
+		res.Problems = append(res.Problems, problems...)
 		return res
 	}
 	oldLayout := deps.PostgresLayoutFor(fromV.Major)
 	newLayout := deps.PostgresLayoutFor(toV.Major)
 	// The whole design rests on the new cluster being built NEXT TO the old
 	// data: that is what makes the rollback a deletion and the old version
-	// still bootable. Two majors that share one volume (any pair below 18)
-	// would have this build the new cluster on top of the source — and offer
-	// to delete it first, as an existing target volume. Refuse, before the
-	// existing-volume warning can name the user's own data.
+	// still bootable. Two majors that share one volume would have this build
+	// the new cluster on top of the source — and offer to delete it first, as
+	// an existing target volume. Refuse, before the existing-volume warning can
+	// name the user's own data.
+	//
+	// The two shapes of that refusal are NOT interchangeable, and the layouts
+	// themselves tell them apart. IDENTICAL layouts (16 → 17: one volume, one
+	// cluster at its root) mean the new data would be the very same directory
+	// as the old — a genuine in-place upgrade, which is not what this does.
+	// Layouts that differ but SHARE a volume (18 → 19, which PostgresLayoutFor
+	// separates by subdirectory) are a pair this release simply has no plan
+	// for: the generator holds the version back and reports it, so telling the
+	// operator about volumes sends them after a disk problem they do not have
+	// — what they need is a newer launcher.
 	if newLayout.Volume == oldLayout.Volume {
-		res.Problems = append(res.Problems, fmt.Sprintf(
-			"%s → %s keeps the data in volume %s; this migration builds the new cluster in a separate volume and cannot run in place",
-			from, to, oldLayout.Volume))
+		if newLayout == oldLayout {
+			res.Problems = append(res.Problems, fmt.Sprintf(
+				"%s → %s keeps the data in volume %s; this migration builds the new cluster in a separate volume and cannot run in place",
+				from, to, oldLayout.Volume))
+		} else {
+			res.Problems = append(res.Problems, UnsupportedPairProblem(from, to))
+		}
 		return res
 	}
 
@@ -69,6 +89,32 @@ func (PostgresMigrator) Preflight(ctx context.Context, env Env, from, to string)
 
 	res.OK = len(res.Problems) == 0
 	return res
+}
+
+// Supports reports whether THIS launcher's PostgreSQL plan can move the data
+// from one version to the other. It is the migrator's half of the question the
+// registry's Migratable() answers for the dependency as a whole: the registry
+// says "PostgreSQL is migratable", this says "…and 17 → 19 is a pair I know
+// how to do".
+//
+// The rule is the plan's own precondition, stated once: the new cluster is
+// built NEXT TO the old data, so the two majors must land in DIFFERENT
+// VOLUMES — a subdirectory of the same volume is not enough, since the
+// rollback is "delete the volume we made" — and the move must go forwards.
+// Anything else is reported to the operator as "update the launcher" rather
+// than offered and then refused by the preflight with a message about volumes.
+//
+// WHEN A THIRD LAYOUT IS ADDED (a PostgreSQL major that moves the data again),
+// exactly three places change together: deps.PostgresLayoutFor (the volume,
+// mount path, PGDATA and PG_VERSION path of the new layout), the pin-seeding
+// probe (deps_seed.go's postgresPinFromData, which walks the layouts looking
+// for PG_VERSION) — and nothing here, because this and the preflight's
+// same-volume refusal both derive from PostgresLayoutFor.
+func (PostgresMigrator) Supports(from, to deps.Version) bool {
+	if to.Major <= from.Major {
+		return false
+	}
+	return deps.PostgresLayoutFor(from.Major).Volume != deps.PostgresLayoutFor(to.Major).Volume
 }
 
 // postgresVersionProblems answers whether this move is one the migrator is
@@ -168,10 +214,11 @@ func (res *PreflightResult) checkExistingTarget(ctx context.Context, env Env, la
 	if v, rerr := env.ReadVolumeFile(ctx, layout.Volume, layout.PGVersionRel); rerr == nil {
 		ev.Version = strings.TrimSpace(v)
 	}
+	// Only the STRUCTURED field: both consumers render ExistingTargetVolume
+	// themselves — the CLI through deps.preflight.existingVolume and the dialog
+	// through the replace-volume checkbox's label — so an English prose warning
+	// beside it is the same sentence twice, once untranslated.
 	res.ExistingTargetVolume = &ev
-	res.Warnings = append(res.Warnings, fmt.Sprintf(
-		"volume %s already exists (%s, PostgreSQL %s); it will be DELETED and recreated if you confirm",
-		ev.Name, fsutil.FormatBytes(ev.SizeBytes), ev.Version))
 }
 
 // pgRun is the state one plan run carries between its steps: the paths it
@@ -443,6 +490,15 @@ func removeScratch(env Env, dumpDir string) error {
 // It reports every failure it hit rather than stopping at the first: a
 // half-done rollback is what the engine keeps the journal open for, and the
 // operator needs to know which halves.
+//
+// The namespace is handed back RUNNING only when the cleanup left nothing
+// behind. depsmig-src mounts the namespace's own data volume read-write, so a
+// restart over a temp container that could not be removed would put a SECOND
+// postmaster on the user's only copy of the data — the postmaster.pid
+// interlock does not hold across PID/IPC namespaces, so nothing would stop it.
+// This is the same rule the boot recovery already follows (it hands the
+// namespace back running only when the rollback succeeded); a stopped
+// namespace with an open journal is recoverable, a corrupted cluster is not.
 func RollbackPostgres(ctx context.Context, env Env, j *deps.MigrationJournal) error {
 	var errs []error
 	for _, c := range []string{SrcContainer, DstContainer} {
@@ -459,8 +515,14 @@ func RollbackPostgres(ctx context.Context, env Env, j *deps.MigrationJournal) er
 		errs = append(errs, err)
 	}
 	if j.WasRunning {
-		if err := env.ReloadAndStart(ctx, true); err != nil {
-			errs = append(errs, fmt.Errorf("restart namespace: %w", err))
+		switch {
+		case len(errs) > 0:
+			errs = append(errs, errors.New(
+				"namespace left stopped: the rollback could not remove its temp containers"))
+		default:
+			if err := env.ReloadAndStart(ctx, true); err != nil {
+				errs = append(errs, fmt.Errorf("restart namespace: %w", err))
+			}
 		}
 	}
 	return errors.Join(errs...)

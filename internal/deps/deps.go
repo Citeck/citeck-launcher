@@ -84,6 +84,12 @@ func ByApp(app string) (Descriptor, bool) {
 // Otherwise an unparsable tag on either side is breaking: keeping the pin and
 // reporting is the safe direction, the alternative is a silent swap onto data
 // we do not understand.
+//
+// Consequence of the first rule that a caller must not misread: Breaking(d,
+// "", "") is FALSE. It says "these two references are the same", not "the pin
+// is valid" — an unpinned dependency (the ordinary state before seeding) is
+// the caller's own question, and answering it from here would report every
+// fresh namespace as up to date.
 func Breaking(d Descriptor, pinned, candidate string) bool {
 	if pinned == candidate {
 		return false
