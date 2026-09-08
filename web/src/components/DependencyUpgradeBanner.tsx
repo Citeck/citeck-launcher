@@ -27,6 +27,10 @@ interface Props {
 export function DependencyUpgradeBanner({ onDetails }: Props) {
   const upgrades = useDashboardStore((s) => s.namespace?.dependencyUpgrades)
   const nsID = useDashboardStore((s) => s.namespace?.id ?? '')
+  // Object identity, not a field: `fetchData` publishes a NEW namespace object
+  // on every successful fetch, which is the only observable "the daemon just
+  // told us something" the store has.
+  const namespace = useDashboardStore((s) => s.namespace)
   const dismissedKey = useDepsStore((s) => s.dismissedKey)
   const dismissBanner = useDepsStore((s) => s.dismissBanner)
   const refresh = useDepsStore((s) => s.refresh)
@@ -36,11 +40,22 @@ export function DependencyUpgradeBanner({ onDetails }: Props) {
   const resultAt = useDepsStore((s) => s.result?.at ?? 0)
   const { t } = useTranslation()
 
+  const upgradeKey = upgradeSetKey(upgrades)
+  // While the alarm is UP, follow every namespace fetch. A pending rollback is
+  // normally cleared by the daemon's load-time recovery
+  // (`recoverInterruptedMigration`), which emits no deps_migration_* event and
+  // produces no result — so mount / namespace / verdict triggers alone would
+  // leave a red, deliberately non-dismissible banner standing after its cause
+  // was gone, until the user opened the dialog or switched namespace. Gated on
+  // the alarm because `fetchData` is debounced at 100ms: following every fetch
+  // unconditionally would roughly double the dashboard's request rate during a
+  // start, for a state that is quiet the rest of the time.
+  const alarmRevision = rollbackPending ? namespace : null
   useEffect(() => {
     // Best-effort: the daemon answers this from memory, and a failure here has
     // no user-facing action (the dialog reports its own).
     void refresh().catch(() => {})
-  }, [refresh, nsID, resultAt])
+  }, [refresh, nsID, resultAt, upgradeKey, alarmRevision])
 
   if (rollbackPending) {
     return (
@@ -59,8 +74,7 @@ export function DependencyUpgradeBanner({ onDetails }: Props) {
     )
   }
 
-  const key = upgradeSetKey(upgrades)
-  if (!upgrades?.length || dismissedKey === key) return null
+  if (!upgrades?.length || dismissedKey === upgradeKey) return null
 
   const migratable = upgrades.filter((u) => u.migratable)
   const needLauncher = upgrades.filter((u) => !u.migratable)
@@ -86,7 +100,7 @@ export function DependencyUpgradeBanner({ onDetails }: Props) {
         aria-label={t('deps.banner.dismiss')}
         title={t('deps.banner.dismiss')}
         className="shrink-0 rounded p-0.5 hover:bg-sky-500/20"
-        onClick={() => dismissBanner(key)}
+        onClick={() => dismissBanner(upgradeKey)}
       >
         <X size={14} />
       </button>

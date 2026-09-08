@@ -97,6 +97,42 @@ describe('DependenciesDialog', () => {
     await waitFor(() => expect(showError).toHaveBeenCalled())
   })
 
+  // The daemon launches the migration goroutine BEFORE writing the 202, so a
+  // fast failure can be over by the time the POST answers. Restarting an empty
+  // migration then would null the verdict and strand the dialog on a progress
+  // screen for something that already finished.
+  it('does not resurrect an empty migration over a verdict that already arrived', async () => {
+    vi.mocked(postDependencyMigrate).mockImplementation(async () => {
+      useDepsStore.getState().onStart('postgres', 10)
+      useDepsStore.getState().onError('postgres', 'restore failed')
+      return { success: true, message: 'started' }
+    })
+    render(<DependenciesDialog open onClose={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: /^upgrade$/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /start migration/i }))
+    expect(await screen.findByTestId('deps-result')).toHaveTextContent('restore failed')
+    expect(screen.queryByTestId('deps-progress')).toBeNull()
+  })
+
+  // The optimistic start must never REPLACE a migration it did not start: it
+  // carries no step, no count and no history, so adopting it over live state
+  // would blank the progress list.
+  it('never replaces a migration already in the store', async () => {
+    vi.mocked(postDependencyMigrate).mockImplementation(async () => {
+      useDepsStore.getState().onStart('rabbitmq', 10)
+      useDepsStore.getState().onProgress({ appName: 'rabbitmq', phase: 'dump', current: 4, total: 10, percent: 42, after: '' })
+      return { success: true, message: 'started' }
+    })
+    render(<DependenciesDialog open onClose={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: /^upgrade$/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /start migration/i }))
+    await screen.findByTestId('deps-progress')
+    const m = useDepsStore.getState().migration!
+    expect(m.id).toBe('rabbitmq')
+    expect(m.step).toBe('dump')
+    expect(m.stepCount).toBe(10)
+  })
+
   it('shows progress from the store and the result at the end', async () => {
     render(<DependenciesDialog open onClose={() => {}} />)
     await screen.findByTestId('dep-postgres')

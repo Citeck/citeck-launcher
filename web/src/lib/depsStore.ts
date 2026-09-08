@@ -119,10 +119,14 @@ export const useDepsStore = create<DepsState>((set, get) => ({
       return
     }
     const cur = get().migration
+    // Whatever is carried over belongs to THIS migration only: a different id
+    // is a different run, and its checkmarks and messages would be somebody
+    // else's history.
+    const same = !!cur && cur.id === dto.id
     // The DTO is a snapshot from when the fetch was answered; SSE is live. If
     // both describe the same step, the events are the newer truth — adopting
     // the DTO would drag percent/message backwards on every refetch.
-    if (cur && cur.id === dto.id && cur.step === dto.step) return
+    if (same && cur!.step === dto.step) return
     set({
       migration: {
         id: dto.id,
@@ -131,8 +135,8 @@ export const useDepsStore = create<DepsState>((set, get) => ({
         stepCount: dto.stepCount,
         percent: dto.percent ?? 0,
         message: dto.message ?? '',
-        done: cur?.done ?? [],
-        messages: cur?.messages ?? [],
+        done: same ? cur!.done : [],
+        messages: same ? cur!.messages : [],
       },
     })
   },

@@ -87,6 +87,18 @@ describe('depsStore', () => {
     expect(useDepsStore.getState().migration!.percent).toBe(42)
   })
 
+  it('does not carry one migration\'s history into another', () => {
+    const s = useDepsStore.getState()
+    s.onStart('postgres', 10)
+    s.onProgress({ appName: 'postgres', phase: 'dump', current: 4, total: 10, percent: 42, after: 'dumping' })
+    s.onProgress({ appName: 'postgres', phase: 'restore', current: 8, total: 10, percent: 0, after: '' })
+    s.hydrate({ id: 'rabbitmq', step: 'dump', stepIndex: 1, stepCount: 5 })
+    const m = useDepsStore.getState().migration!
+    expect(m.id).toBe('rabbitmq')
+    expect(m.done).toEqual([])
+    expect(m.messages).toEqual([])
+  })
+
   it('builds a stable key for the upgrade set', () => {
     expect(upgradeSetKey(undefined)).toBe('')
     expect(upgradeSetKey([{ id: 'postgres', app: 'postgres', from: 'a', to: 'b', migratable: true }])).toBe('postgres:b')

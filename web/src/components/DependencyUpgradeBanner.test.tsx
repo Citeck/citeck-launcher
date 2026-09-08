@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { DependencyUpgradeBanner } from './DependencyUpgradeBanner'
 import { useDashboardStore } from '../lib/store'
@@ -72,6 +72,22 @@ describe('DependencyUpgradeBanner', () => {
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('rollback pending')
     expect(screen.queryByLabelText(/dismiss/i)).toBeNull()
+  })
+
+  // The daemon's load-time recovery retries the rollback and, on success,
+  // clears the journal — with NO deps_migration_* event and no result. Nothing
+  // else would ever take the red banner down, and it is deliberately not
+  // dismissible, so it has to follow the namespace fetches instead.
+  it('takes the rollback notice down once a namespace refetch reports it cleared', async () => {
+    setUpgrades([])
+    vi.mocked(getDependencies).mockResolvedValue({ items: [], rollbackPending: 'rollback pending' })
+    render(<DependencyUpgradeBanner onDetails={() => {}} />)
+    await screen.findByRole('alert')
+
+    vi.mocked(getDependencies).mockResolvedValue({ items: [] })
+    // Exactly what fetchData does on success: publish a NEW namespace object.
+    act(() => { setUpgrades([]) })
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
   })
 
   it('offers the update dialog on desktop and names the CLI command in the server web UI', () => {

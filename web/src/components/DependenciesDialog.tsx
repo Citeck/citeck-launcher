@@ -93,13 +93,29 @@ export function DependenciesDialog({ open, onClose }: Props) {
 
   const start = async (item: DependencyDto) => {
     setStarting(true)
+    const clickedAt = Date.now()
     try {
       await postDependencyMigrate(item.id, replaceVolume)
       // The daemon answers 202 once the plan is built and has already
       // broadcast `deps_migration_start` — but a client that missed the frame
-      // would otherwise sit on the confirm screen with nothing happening. The
-      // store keeps whatever progress already arrived (see onStart).
-      useDepsStore.getState().onStart(item.id, 0)
+      // would otherwise sit on the confirm screen with nothing happening.
+      //
+      // Only when there is nothing better to show. The whole migration can be
+      // over before the 202 lands (the goroutine is launched before the
+      // response is written), and an unconditional start would then null a
+      // verdict that had already arrived: an empty progress screen forever,
+      // with the error lost. A migration already in the store needs no help
+      // either — `onStart` would be a no-op with worse information.
+      const s = useDepsStore.getState()
+      const settled = !!s.result && s.result.id === item.id && s.result.at >= clickedAt
+      if (settled) {
+        // Nothing rendered between the start and the end, so the render-time
+        // derivation below never saw a progress screen to leave — show the
+        // verdict from here, where the intent (this click) is known.
+        setView({ kind: 'result' })
+      } else if (!s.migration) {
+        s.onStart(item.id, 0)
+      }
     } catch (e) {
       showError(e as Error)
     } finally {
