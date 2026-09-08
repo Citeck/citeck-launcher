@@ -35,8 +35,6 @@ const (
 	compressionExt = "zst" // zstd by default
 )
 
-var launcherUtilsImage = config.UtilsImage()
-
 // NamespaceSnapshotMeta is the top-level snapshot metadata.
 type NamespaceSnapshotMeta struct {
 	Volumes   []VolumeSnapshotMeta `json:"volumes"`
@@ -70,8 +68,10 @@ type volumeOps interface {
 	CreateVolume(ctx context.Context, originalName string) (string, error)
 	ListVolumes(ctx context.Context) ([]docker.VolumeInfo, error)
 	RunUtilsContainer(ctx context.Context, cmd, binds []string) (output string, exitCode int, err error)
-	ImageExists(ctx context.Context, img string) bool
-	PullImage(ctx context.Context, img string, auth *docker.RegistryAuth) error
+	// EnsureUtilsImage is the shared preamble of every RunUtilsContainer
+	// caller (docker.Client.EnsureUtilsImage) rather than a local
+	// ImageExists/PullImage pair: four copies of it had drifted apart.
+	EnsureUtilsImage(ctx context.Context) error
 }
 
 // exportSource is one volume to archive: name is the snapshot volume name (the
@@ -140,8 +140,8 @@ func Export(ctx context.Context, dc volumeOps, outputPath, volumesBase string, i
 	}
 
 	// Ensure launcher-utils image is available
-	if utilsErr := ensureUtilsImage(ctx, dc); utilsErr != nil {
-		return nil, utilsErr
+	if utilsErr := dc.EnsureUtilsImage(ctx); utilsErr != nil {
+		return nil, fmt.Errorf("ensure utils image: %w", utilsErr)
 	}
 
 	// Create temp dir for export
@@ -252,8 +252,8 @@ func Import(ctx context.Context, dc volumeOps, zipPath, volumesBase string, prog
 	}
 
 	// Ensure launcher-utils image
-	if utilsErr := ensureUtilsImage(ctx, dc); utilsErr != nil {
-		return nil, utilsErr
+	if utilsErr := dc.EnsureUtilsImage(ctx); utilsErr != nil {
+		return nil, fmt.Errorf("ensure utils image: %w", utilsErr)
 	}
 
 	// Restore onto a clean slate so leftover files can't mix with the snapshot
@@ -427,18 +427,6 @@ func importVolume(ctx context.Context, dc volumeOps, vol VolumeSnapshotMeta, tar
 		return fmt.Errorf("import container exited with code %d: %s", exitCode, output)
 	}
 
-	return nil
-}
-
-// ensureUtilsImage pulls the launcher-utils image if not present.
-func ensureUtilsImage(ctx context.Context, dc volumeOps) error {
-	if dc.ImageExists(ctx, launcherUtilsImage) {
-		return nil
-	}
-	slog.Info("Pulling launcher-utils image", "image", launcherUtilsImage)
-	if err := dc.PullImage(ctx, launcherUtilsImage, nil); err != nil {
-		return fmt.Errorf("pull utils image: %w", err)
-	}
 	return nil
 }
 

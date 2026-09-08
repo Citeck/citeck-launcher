@@ -39,10 +39,7 @@ func (f *fakeVolumeOps) RunUtilsContainer(_ context.Context, cmd, binds []string
 	f.lastBinds = binds
 	return "", 0, nil
 }
-func (f *fakeVolumeOps) ImageExists(_ context.Context, _ string) bool { return true }
-func (f *fakeVolumeOps) PullImage(_ context.Context, _ string, _ *docker.RegistryAuth) error {
-	return nil
-}
+func (f *fakeVolumeOps) EnsureUtilsImage(_ context.Context) error { return nil }
 
 func TestImportVolume_DesktopTargetsNamedVolume(t *testing.T) {
 	config.SetDesktopMode(true)

@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 
@@ -52,6 +53,26 @@ func (c *Client) ListVolumes(ctx context.Context) ([]VolumeInfo, error) {
 	return out, nil
 }
 
+// EnsureUtilsImage makes sure the launcher-utils image is on the host, pulling
+// it if it is not. It is the shared preamble of EVERY caller of
+// RunUtilsContainer — volume sizing, snapshot export/import, the dependency
+// data probe and a dependency migration's free-space check — because a utils
+// container started against a missing image fails in a way that reads as the
+// QUESTION failing (a volume of unknown size, a data probe that "could not
+// read", a migration refused for lack of space) rather than as a missing
+// image. Keeping one copy is what keeps those four answers consistent.
+func (c *Client) EnsureUtilsImage(ctx context.Context) error {
+	img := config.UtilsImage()
+	if c.ImageExists(ctx, img) {
+		return nil
+	}
+	slog.Info("Pulling launcher-utils image", "image", img)
+	if err := c.PullImage(ctx, img, nil); err != nil {
+		return fmt.Errorf("pull utils image %s: %w", img, err)
+	}
+	return nil
+}
+
 // VolumeSize computes the on-disk size (in bytes) of a SINGLE named volume by
 // running `du` in a throwaway utils container that mounts the volume read-only.
 // Unlike Docker's /system/df — which walks every volume and takes 10-25s — this
@@ -59,11 +80,8 @@ func (c *Client) ListVolumes(ctx context.Context) ([]VolumeInfo, error) {
 // demand. The utils container is the same one snapshots use to read volume data,
 // so it can read the contents under rootless Docker.
 func (c *Client) VolumeSize(ctx context.Context, name string) (int64, error) {
-	utilsImage := config.UtilsImage()
-	if !c.ImageExists(ctx, utilsImage) {
-		if err := c.PullImage(ctx, utilsImage, nil); err != nil {
-			return 0, fmt.Errorf("pull utils image: %w", err)
-		}
+	if err := c.EnsureUtilsImage(ctx); err != nil {
+		return 0, err
 	}
 	// busybox du: -s summarize, -k 1024-byte blocks (portable; busybox has no -b).
 	out, _, err := c.RunUtilsContainer(ctx, []string{"du", "-sk", "/vol"}, []string{name + ":/vol:ro"})

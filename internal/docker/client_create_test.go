@@ -118,6 +118,21 @@ func TestEffectiveNameFeedsTheContainerNameNotJustTheLabels(t *testing.T) {
 	assert.Equal(t, []string{"depsmig-src"}, networkAliases(app, name))
 }
 
+// TestAnOverriddenContainerDoesNotAnswerToTheAppByHostnameEither is the third
+// identity a name override has to move, and the least obvious one: moby
+// registers a container's HOSTNAME as a DNS name on a user-defined network, so
+// a temp container whose Config.Hostname was still "postgres" would keep
+// answering to it even with the aliases cleared — the same silent traffic
+// split networkAliases exists to prevent, arriving through a different door.
+func TestAnOverriddenContainerDoesNotAnswerToTheAppByHostnameEither(t *testing.T) {
+	app := appdef.ApplicationDef{Name: "postgres", Image: "postgres:17.5"}
+
+	cfg := buildContainerConfig(app, effectiveName(app, ContainerCreateOpts{Name: "depsmig-src"}), nil, nil, nil)
+
+	assert.Equal(t, "depsmig-src", cfg.Hostname)
+	assert.NotEqual(t, app.Name, cfg.Hostname)
+}
+
 // TestEffectiveNameWithoutAnOverrideIsTheAppName pins the existing caller:
 // CreateContainer passes the zero opts and must keep getting app.Name.
 func TestEffectiveNameWithoutAnOverrideIsTheAppName(t *testing.T) {

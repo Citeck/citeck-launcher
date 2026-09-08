@@ -14,7 +14,7 @@ import (
 // without it every recreate boots a fresh DB and loses the citeck SA + perms.
 func TestBuildContainerConfig_SetsStableHostname(t *testing.T) {
 	app := appdef.ApplicationDef{Name: "rabbitmq", Image: "rabbitmq:4.1.2-management"}
-	cfg := buildContainerConfig(app, nil, nil, nil)
+	cfg := buildContainerConfig(app, effectiveName(app, ContainerCreateOpts{}), nil, nil, nil)
 	if cfg.Hostname != "rabbitmq" {
 		t.Errorf("Hostname = %q, want %q (stable node name across recreate)", cfg.Hostname, "rabbitmq")
 	}

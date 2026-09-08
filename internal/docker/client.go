@@ -415,7 +415,7 @@ func (c *Client) CreateContainerWith(ctx context.Context, app appdef.Application
 		shmSize = ParseMemory(app.ShmSize)
 	}
 
-	ctrConfig := buildContainerConfig(app, env, exposedPorts, labels)
+	ctrConfig := buildContainerConfig(app, name, env, exposedPorts, labels)
 	hostConfig := buildHostConfig(app, binds, portBindings, networkName, memoryBytes, shmSize)
 
 	aliases := networkAliases(app, name)
@@ -510,20 +510,30 @@ func (c *Client) containerLabels(app appdef.ApplicationDef, name string, extra m
 }
 
 // buildContainerConfig assembles the container.Config for app. It sets
-// Hostname to the app name (Kotlin 1.x parity — AppStartAction.withHostName).
-// Docker otherwise defaults the hostname to the container ID, which for images
-// that derive identity from the hostname — notably RabbitMQ, whose node name is
-// rabbit@<hostname> and whose Mnesia data lives under mnesia/rabbit@<hostname>/
-// — means every container recreate lands in a fresh data dir and silently
-// abandons the previous state (users, permissions, queues).
+// Hostname to the EFFECTIVE container name (Kotlin 1.x parity —
+// AppStartAction.withHostName). Docker otherwise defaults the hostname to the
+// container ID, which for images that derive identity from the hostname —
+// notably RabbitMQ, whose node name is rabbit@<hostname> and whose Mnesia data
+// lives under mnesia/rabbit@<hostname>/ — means every container recreate lands
+// in a fresh data dir and silently abandons the previous state (users,
+// permissions, queues).
+//
+// It is the effective name and not app.Name for the same reason the network
+// aliases are (see networkAliases): moby registers a container's HOSTNAME as a
+// DNS name on a user-defined network, so a temp container created under an
+// override would still answer to "postgres" on the namespace network and take
+// a share of the real container's traffic, one connection at a time and with
+// no error anywhere. Without an override the two are the same string, so the
+// namespace's own containers are unaffected.
 func buildContainerConfig(
 	app appdef.ApplicationDef,
+	name string,
 	env []string,
 	exposedPorts network.PortSet,
 	labels map[string]string,
 ) *container.Config {
 	return &container.Config{
-		Hostname:     app.Name,
+		Hostname:     name,
 		Image:        app.Image,
 		Env:          env,
 		Cmd:          app.Cmd,
