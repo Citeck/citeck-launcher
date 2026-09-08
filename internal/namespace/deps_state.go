@@ -1,6 +1,7 @@
 package namespace
 
 import (
+	"log/slog"
 	"maps"
 
 	"github.com/citeck/citeck-launcher/internal/deps"
@@ -96,6 +97,35 @@ func (r *Runtime) RecordMigrationFailure(res deps.MigrationResult) error {
 	err := r.persistState()
 	r.dirty.Store(false)
 	return err
+}
+
+// syncDependencyPinsUnderLock re-pins every registered dependency whose app
+// is RUNNING on an image different from its pin. Running is the proof the
+// data accepted that version, so this is where a non-breaking bump (17.5 →
+// 17.11) becomes the new baseline. One place covers both RUNNING entries —
+// a fresh start (commitRunningUnderLock) and container adoption in doStart —
+// which is why it runs in the loop tail rather than in either of them.
+//
+// It marks r.dirty instead of persisting: the loop tail coalesces the write
+// with everything else the iteration changed.
+//
+// Caller must hold r.mu.Lock.
+func (r *Runtime) syncDependencyPinsUnderLock() {
+	for _, d := range deps.All() {
+		app, ok := r.apps[d.AppName()]
+		// An empty image says nothing about what the data runs on; blanking
+		// the pin would lose the only record of the version the volume was
+		// created by.
+		if !ok || app.Status != AppStatusRunning || app.Def.Image == "" {
+			continue
+		}
+		if r.dependencyPins[d.ID()].Image == app.Def.Image {
+			continue
+		}
+		slog.Info("Dependency pin updated from running container", "dependency", d.ID(), "image", app.Def.Image)
+		r.dependencyPins[d.ID()] = deps.DependencyState{Image: app.Def.Image}
+		r.dirty.Store(true)
+	}
 }
 
 func cloneJournal(j *deps.MigrationJournal) *deps.MigrationJournal {

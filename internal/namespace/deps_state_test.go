@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/deps"
 )
 
@@ -148,4 +149,56 @@ func TestMigrationWritesReportAFailedPersist(t *testing.T) {
 		err := newRuntime().RecordMigrationFailure(deps.MigrationResult{ID: deps.Postgres, Error: "restore failed"})
 		require.ErrorIs(t, err, errPersistFailed)
 	})
+}
+
+func TestRunningDependencyUpdatesPin(t *testing.T) {
+	r := NewRuntime(&Config{ID: "nsX"}, nil, t.TempDir())
+	fp := &fakePersister{}
+	r.SetStatePersister(fp)
+	r.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}}, nil, nil)
+	r.InjectAppsForTest(
+		&AppRuntime{Name: "postgres", Status: AppStatusRunning, Def: appdef.ApplicationDef{Name: "postgres", Image: "postgres:17.11"}},
+		&AppRuntime{Name: "rabbitmq", Status: AppStatusStarting, Def: appdef.ApplicationDef{Name: "rabbitmq", Image: "rabbitmq:4.2.9-management"}},
+		&AppRuntime{Name: "gateway", Status: AppStatusRunning, Def: appdef.ApplicationDef{Name: "gateway", Image: "gw:1"}},
+	)
+
+	r.mu.Lock()
+	r.syncDependencyPinsUnderLock()
+	r.mu.Unlock()
+
+	pins := r.DependencyPins()
+	assert.Equal(t, "postgres:17.11", pins[deps.Postgres], "RUNNING dependency re-pins to what actually runs")
+	_, hasRabbit := pins[deps.RabbitMQ]
+	assert.False(t, hasRabbit, "a STARTING dependency must not be pinned yet")
+	// gateway is RUNNING with an image, and is not a registered dependency:
+	// only the pin the dependency registry knows about may appear.
+	assert.Len(t, pins, 1, "an app outside the dependency registry is never pinned")
+	assert.True(t, r.dirty.Load(), "a pin change marks the state dirty for the loop-tail persist")
+	assert.Equal(t, 0, fp.callCount(), "the hook never persists itself; the loop tail drains r.dirty")
+}
+
+func TestSyncPinsIsIdempotent(t *testing.T) {
+	r := NewRuntime(&Config{ID: "nsX"}, nil, t.TempDir())
+	r.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}}, nil, nil)
+	r.InjectAppsForTest(&AppRuntime{Name: "postgres", Status: AppStatusRunning, Def: appdef.ApplicationDef{Name: "postgres", Image: "postgres:17.5"}})
+	r.mu.Lock()
+	r.syncDependencyPinsUnderLock()
+	r.mu.Unlock()
+	assert.False(t, r.dirty.Load())
+}
+
+// A RUNNING container whose def carries no image tells us nothing about what
+// the data runs on. Overwriting the pin with "" would lose the only record of
+// the version the volume was created by, and the generator gate reads it.
+func TestSyncPinsIgnoresAnEmptyImage(t *testing.T) {
+	r := NewRuntime(&Config{ID: "nsX"}, nil, t.TempDir())
+	r.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}}, nil, nil)
+	r.InjectAppsForTest(&AppRuntime{Name: "postgres", Status: AppStatusRunning, Def: appdef.ApplicationDef{Name: "postgres"}})
+
+	r.mu.Lock()
+	r.syncDependencyPinsUnderLock()
+	r.mu.Unlock()
+
+	assert.Equal(t, "postgres:17.5", r.DependencyPins()[deps.Postgres], "an empty image must not clear the pin")
+	assert.False(t, r.dirty.Load())
 }

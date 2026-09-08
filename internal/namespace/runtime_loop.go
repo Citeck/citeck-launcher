@@ -83,6 +83,11 @@ func (r *Runtime) runtimeLoop() {
 		}
 		r.stepAllApps()
 		r.evaluateContinuations()
+		// Pins follow what actually runs; must precede the dirty-flag persist
+		// at the end of this iteration (see syncDependencyPinsUnderLock).
+		r.mu.Lock()
+		r.syncDependencyPinsUnderLock()
+		r.mu.Unlock()
 		r.updateNsStatus()
 		r.flushEvents()
 		// Coalesce per-iteration state mutations into a single persistState.
