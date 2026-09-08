@@ -120,6 +120,50 @@ func TestPersistedStateWithoutDependencyKeysStillParses(t *testing.T) {
 	assert.Nil(t, st.DependencyMigration)
 }
 
+// A commit whose write failed must leave NOTHING moved in memory either: the
+// engine treats a failed CommitMigration as a migration failure and rolls back,
+// removing the volume it created — so a runtime that already believed the pin
+// had moved would generate the new version's layout onto a volume that no
+// longer exists, an empty cluster beside the intact old data.
+func TestCommitMigrationDoesNotMoveMemoryWhenThePersistFails(t *testing.T) {
+	r := NewRuntime(&Config{ID: "nsX"}, nil, t.TempDir())
+	journal := &deps.MigrationJournal{ID: deps.Postgres, From: "postgres:17.5", To: "postgres:18",
+		Step: "restore", CreatedVolume: "postgres3"}
+	last := &deps.MigrationResult{ID: deps.Postgres, Error: "an older attempt"}
+	r.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}}, journal, last)
+	r.SetStatePersister(failingPersister{})
+
+	err := r.CommitMigration(deps.Postgres, "postgres:18", deps.MigrationResult{
+		ID: deps.Postgres, From: "postgres:17.5", To: "postgres:18", OldVolume: "postgres2"})
+	require.ErrorIs(t, err, errPersistFailed)
+
+	assert.Equal(t, map[deps.ID]string{deps.Postgres: "postgres:17.5"}, r.DependencyPins(),
+		"the pin must not move on a commit that was never written")
+	j := r.MigrationJournal()
+	require.NotNil(t, j, "the journal must survive so the rollback still has its record")
+	assert.Equal(t, "restore", j.Step)
+	assert.Equal(t, "postgres3", j.CreatedVolume)
+	lm := r.LastDependencyMigration()
+	require.NotNil(t, lm)
+	assert.Equal(t, "an older attempt", lm.Error, "the verdict must not be published either")
+}
+
+// The same, for a dependency that had no pin yet: restoring must remove the
+// entry, not leave the new image behind under a "previous" value that never
+// existed.
+func TestCommitMigrationRestoresAnAbsentPinWhenThePersistFails(t *testing.T) {
+	r := NewRuntime(&Config{ID: "nsX"}, nil, t.TempDir())
+	r.RestoreDependencyState(nil, &deps.MigrationJournal{ID: deps.Postgres, Step: "restore"}, nil)
+	r.SetStatePersister(failingPersister{})
+
+	require.ErrorIs(t, r.CommitMigration(deps.Postgres, "postgres:18",
+		deps.MigrationResult{ID: deps.Postgres}), errPersistFailed)
+
+	assert.Empty(t, r.DependencyPins())
+	assert.Nil(t, r.LastDependencyMigration())
+	require.NotNil(t, r.MigrationJournal())
+}
+
 // A rollback that failed must NOT close the migration: the leftovers it could
 // not remove are still on the host, and the journal is the only record of them.
 func TestRecordRollbackFailureKeepsTheJournal(t *testing.T) {

@@ -1,6 +1,7 @@
 package namespace
 
 import (
+	"fmt"
 	"log/slog"
 	"maps"
 
@@ -76,13 +77,34 @@ func (r *Runtime) LastDependencyMigration() *deps.MigrationResult {
 // moves to the new image, the journal is cleared and the verdict recorded,
 // all in one persist so no crash can leave a pin without a cleared journal
 // or the other way round.
+//
+// It is atomic IN MEMORY as well as on disk: a failed persist restores the
+// three previous values. Otherwise a commit whose write failed would leave the
+// runtime believing the pin had moved while the engine's failAndRollback
+// removes the new volume — and the next generation would emit the new
+// version's layout onto a volume that no longer exists, i.e. an empty cluster
+// standing beside the intact old data.
 func (r *Runtime) CommitMigration(id deps.ID, image string, res deps.MigrationResult) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	prevPin, hadPin := r.dependencyPins[id]
+	prevJournal, prevLast := r.migrationJournal, r.lastMigration
+
 	r.dependencyPins[id] = deps.DependencyState{Image: image}
 	r.migrationJournal = nil
 	r.lastMigration = cloneResult(&res)
+
 	err := r.persistState()
+	if err != nil {
+		if hadPin {
+			r.dependencyPins[id] = prevPin
+		} else {
+			delete(r.dependencyPins, id)
+		}
+		r.migrationJournal = prevJournal
+		r.lastMigration = prevLast
+		err = fmt.Errorf("commit migration of %s: %w", id, err)
+	}
 	r.dirty.Store(false)
 	return err
 }

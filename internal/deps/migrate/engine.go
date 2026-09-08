@@ -223,6 +223,11 @@ func recordVerdict(store JournalStore, res deps.MigrationResult, rbErr error) er
 // A rollback that succeeds clears the journal; one that fails keeps it (with
 // the verdict recorded), so the next start finds the record and tries again —
 // the alternative is a target volume and temp containers nobody knows about.
+//
+// rolledBack means the rollback was ATTEMPTED, not that it restored anything:
+// on a failed rollback it is true AND err is non-nil, with the journal still
+// open. A caller that restarts the namespace on the journal's WasRunning must
+// therefore key that on err == nil, not on rolledBack.
 func RollbackInterrupted(ctx context.Context, store JournalStore, rollback func(context.Context, *deps.MigrationJournal) error) (bool, error) {
 	j := store.MigrationJournal()
 	if j == nil {
