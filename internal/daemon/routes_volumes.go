@@ -167,6 +167,12 @@ func isNotFoundErr(err error) bool {
 	// Fallback: VolumeRemove can return a plain error ("Error response from
 	// daemon: get <name>: no such volume") that does NOT implement the errdefs
 	// NotFound interface, so the typed check above misses it. Match the message.
+	// "no such container" is here for the same reason: ContainerInspect on a
+	// modern engine returns a typed NotFound, but an older one (or a proxy in
+	// between) can answer with a plain string, and dependency-pin seeding must
+	// read "the container is simply not there" as absence, not as a probe
+	// failure that would fall back to the legacy image.
 	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "no such volume") || strings.Contains(msg, "volume not found")
+	return strings.Contains(msg, "no such volume") || strings.Contains(msg, "volume not found") ||
+		strings.Contains(msg, "no such container")
 }

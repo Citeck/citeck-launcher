@@ -19,6 +19,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/license"
@@ -100,6 +101,13 @@ type activeNamespace struct {
 	acmeRenewal        *acme.RenewalService
 	runtime            *namespace.Runtime
 	dockerClient       *docker.Client
+	// dependencyUpgrades / dependencies are the last generation's verdict per
+	// infra dependency: which candidate images were held back by a pin, and
+	// the effective-vs-candidate image of each. Recomputed by every generation
+	// (load and reload) — the runtime owns the PINS, this owns what the
+	// generator did with them.
+	dependencyUpgrades []namespace.DependencyUpgrade
+	dependencies       map[deps.ID]namespace.DependencyGen
 }
 
 // Daemon is the main daemon server.
@@ -640,7 +648,20 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool
 		})
 	}
 
+	// Dependency pins, re-resolved through the same helper the load path uses:
+	// a namespace whose data appeared since it was loaded (a snapshot import,
+	// a volume restored by hand) gets its pin before this generation runs.
+	// Persisting here is right, unlike on the load path: the runtime exists
+	// and its status is live, so a persist writes the truth.
+	pins, seededPins := resolveDependencyPins(d.bgCtx, act.runtime.DependencyPins(),
+		dockerDependencyProbe{dc: act.dockerClient, volumesBase: act.volumesBase})
+	for id, img := range seededPins {
+		slog.Info("Dependency pin seeded on reload", "ns", nsID, "dependency", id, "image", img)
+		act.runtime.SetDependencyPin(id, img)
+	}
+
 	var genOpts namespace.GenerateOpts
+	genOpts.DependencyPins = pins
 	genOpts.SecretReader = d.nsSecretReader()
 	genOpts.DetachedApps = act.runtime.ManualStoppedApps()
 	// File edits are merged onto their templates inside Generate (both disk and
@@ -678,6 +699,8 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool
 	a.workspaceConfig = resolveResult.Workspace
 	a.wsSyncError = wsSyncError
 	a.appDefs = genResp.Applications
+	a.dependencyUpgrades = genResp.DependencyUpgrades
+	a.dependencies = genResp.Dependencies
 	// Reload succeeded with a freshly-resolved bundle — clear any boot-time
 	// bundle resolution error so the UI banner doesn't survive a successful
 	// reload until the next namespace activation. "Succeeded" is not the same

@@ -98,6 +98,10 @@ func TestIsNotFoundErr(t *testing.T) {
 	assert.False(t, isNotFoundErr(errors.New("connection refused")))
 	assert.True(t, isNotFoundErr(errors.New("Error response from daemon: get foo: no such volume")))
 	assert.True(t, isNotFoundErr(fmt.Errorf("wrap: %w", notFoundErr{})))
+	// Dependency-pin seeding inspects containers through the same helper: a
+	// plain-string "no such container" must read as absence, not as a probe
+	// failure (which would seed the legacy image over a fresh namespace).
+	assert.True(t, isNotFoundErr(errors.New("Error response from daemon: No such container: citeck_postgres_ns1")))
 }
 
 // notFoundErr implements the docker errdefs NotFound contract.

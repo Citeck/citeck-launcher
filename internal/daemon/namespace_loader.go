@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/license"
 	"github.com/citeck/citeck-launcher/internal/namespace"
@@ -67,6 +69,12 @@ type loadedNamespace struct {
 	// namespace pulls from an auth-required registry and the user-secret vault
 	// is encrypted+locked. Cleared and started by handleUnlockSecrets.
 	DeferredForSecrets bool
+	// DependencyUpgrades are the infra images this generation held back
+	// because applying them to the existing data would be breaking;
+	// Dependencies is the effective-vs-candidate image of every registered
+	// dependency. Both are recomputed by every generation (load and reload).
+	DependencyUpgrades []namespace.DependencyUpgrade
+	Dependencies       map[deps.ID]namespace.DependencyGen
 }
 
 // resolveBundleWithCacheFallback resolves `ref` via the prepared resolver; when
@@ -335,7 +343,66 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	// Detached apps must be known BEFORE Generate() so the generator can
 	// exclude them from proxy upstreams and compute DependsOnDetachedApps.
 	persistedState := loadNsStateFromStore(in.Store, wsID, nsID)
+
+	// Bind the runtime to a Docker client scoped to THIS namespace. The live
+	// switch/create paths pass a nil DockerClient so a fresh one is built here:
+	// reusing the previously-active namespace's client (the bug) made the new
+	// runtime adopt the OLD namespace's containers and emit its network name
+	// (header showed nsB while containers were nsA). Startup passes its
+	// already-built client.
+	// Derive the Docker client from the namespace being loaded — never trust an
+	// injected one blindly. An injected client is REUSED only if it is already
+	// scoped to exactly (dockerWorkspace, nsID); otherwise it is rebuilt. This is
+	// the single choke-point that makes the whole "client scoped to a stale/other
+	// namespace" bug class structurally impossible, no matter which caller (start,
+	// create, namespace switch, workspace switch) hands us what.
+	// Derived HERE, before the generator runs, because dependency-pin seeding
+	// below probes this namespace's containers and volumes through it.
+	dockerWorkspace := ""
+	if config.IsDesktopMode() {
+		dockerWorkspace = wsID
+	}
+	dc := in.DockerClient
+	if !dockerClientScoped(dc, dockerWorkspace, nsID) {
+		if dc != nil {
+			slog.Error("loadNamespace: injected docker client scoped to wrong target; rebuilding",
+				"wantWs", dockerWorkspace, "wantNs", nsID, "gotWs", dc.Workspace(), "gotNs", dc.Namespace())
+		}
+		var dcErr error
+		dc, dcErr = docker.NewClient(dockerWorkspace, nsID)
+		if dcErr != nil {
+			return nil, fmt.Errorf("create docker client for namespace %q: %w", nsID, dcErr)
+		}
+	}
+	// The generator runs BELOW this point and can fail; a client we built here
+	// would then leak its connections (an injected one belongs to the caller,
+	// so it is never closed by us). On the happy path the runtime takes it over
+	// and closeOwnedDockerClient is not called.
+	closeOwnedDockerClient := func() {
+		if dc != in.DockerClient {
+			_ = dc.Close()
+		}
+	}
+
+	// Dependency pins: the image each infra dependency's DATA runs on. Seeded
+	// from the container / the data itself when absent (a namespace created
+	// before pins existed, or one whose volumes a snapshot import just filled)
+	// and handed to Generate, so a bundle's newer image is held back when
+	// applying it would be breaking.
+	persistedPins := make(map[deps.ID]string)
+	if persistedState != nil {
+		for id, st := range persistedState.Dependencies {
+			persistedPins[id] = st.Image
+		}
+	}
+	pins, seededPins := resolveDependencyPins(context.Background(),
+		persistedPins, dockerDependencyProbe{dc: dc, volumesBase: volumesBase})
+	for id, img := range seededPins {
+		slog.Info("Dependency pin seeded", "ns", nsID, "dependency", id, "image", img)
+	}
+
 	var genOpts namespace.GenerateOpts
+	genOpts.DependencyPins = pins
 	genOpts.SecretReader = &secretReaderAdapter{svc: in.SecretService}
 	// User-added licenses: locked SecretService yields nil and the generator
 	// falls back to workspace-only licenses — never aborts startup.
@@ -394,6 +461,7 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 	// source of truth; never overwritten by a separate embed re-extract.
 	genResp, genErr := generateAndWriteRuntimeFiles(nsCfg, resolveResult, systemSecrets, genOpts, volumesBase, legacySkip)
 	if genErr != nil {
+		closeOwnedDockerClient()
 		return nil, genErr
 	}
 
@@ -420,40 +488,13 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		}
 		genResp, genErr = generateAndWriteRuntimeFiles(nsCfg, resolveResult, systemSecrets, genOpts, volumesBase, legacySkip)
 		if genErr != nil {
+			closeOwnedDockerClient()
 			return nil, genErr
 		}
 	}
 	slog.Info("Generated namespace", "apps", len(genResp.Applications), "files", len(genResp.Files))
 
 	appDefs := genResp.Applications
-	// Bind the runtime to a Docker client scoped to THIS namespace. The live
-	// switch/create paths pass a nil DockerClient so a fresh one is built here:
-	// reusing the previously-active namespace's client (the bug) made the new
-	// runtime adopt the OLD namespace's containers and emit its network name
-	// (header showed nsB while containers were nsA). Startup passes its
-	// already-built client. No error return follows, so no leak on the happy path.
-	// Derive the Docker client from the namespace being loaded — never trust an
-	// injected one blindly. An injected client is REUSED only if it is already
-	// scoped to exactly (dockerWorkspace, nsID); otherwise it is rebuilt. This is
-	// the single choke-point that makes the whole "client scoped to a stale/other
-	// namespace" bug class structurally impossible, no matter which caller (start,
-	// create, namespace switch, workspace switch) hands us what.
-	dockerWorkspace := ""
-	if config.IsDesktopMode() {
-		dockerWorkspace = wsID
-	}
-	dc := in.DockerClient
-	if !dockerClientScoped(dc, dockerWorkspace, nsID) {
-		if dc != nil {
-			slog.Error("loadNamespace: injected docker client scoped to wrong target; rebuilding",
-				"wantWs", dockerWorkspace, "wantNs", nsID, "gotWs", dc.Workspace(), "gotNs", dc.Namespace())
-		}
-		var dcErr error
-		dc, dcErr = docker.NewClient(dockerWorkspace, nsID)
-		if dcErr != nil {
-			return nil, fmt.Errorf("create docker client for namespace %q: %w", nsID, dcErr)
-		}
-	}
 	runtime := namespace.NewRuntime(nsCfg, dc, volumesBase)
 	runtime.SetStatePersister(nsStatePersister{store: in.Store, wsID: wsID, nsID: nsID})
 	runtime.SetLastGenFiles(genResp.BaselineFiles)
@@ -517,6 +558,27 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		// First start with template detached apps — apply to runtime
 		runtime.SetManualStoppedApps(genOpts.DetachedApps)
 	}
+
+	// Dependency state, always (a namespace with no persisted state still has
+	// the pins seeded above). Installed through RestoreDependencyState, which
+	// does NOT persist: persistState writes r.status, and at load time that is
+	// STOPPED — writing here would overwrite the stored status the caller has
+	// not acted on yet (ShouldStart). The seeded pins reach disk with the next
+	// ordinary persist (the loop tail once the namespace runs, a stop, an
+	// edit); until then the namespace simply re-seeds on the next load, which
+	// is why "no pin" is never a settled answer.
+	var journal *deps.MigrationJournal
+	var lastMigration *deps.MigrationResult
+	if persistedState != nil {
+		journal = persistedState.DependencyMigration
+		lastMigration = persistedState.LastDependencyMigration
+	}
+	restoredPins := make(map[deps.ID]deps.DependencyState, len(pins))
+	for id, img := range pins {
+		restoredPins[id] = deps.DependencyState{Image: img}
+	}
+	runtime.RestoreDependencyState(restoredPins, journal, lastMigration)
+
 	// Wire DependsOnDetachedApps so RestartApp can trigger regen for dependency apps
 	runtime.SetDependsOnDetachedApps(genResp.DependsOnDetachedApps)
 
@@ -594,6 +656,8 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		WsSyncError:        wsSyncError,
 		ShouldStart:        shouldStart,
 		DeferredForSecrets: deferredForSecrets,
+		DependencyUpgrades: genResp.DependencyUpgrades,
+		Dependencies:       genResp.Dependencies,
 	}, nil
 }
 
@@ -698,7 +762,11 @@ func (d *Daemon) installLoadedNamespace(loaded *loadedNamespace, wsID, nsID stri
 		volumesBase:     loaded.VolumesBase,
 		bundleError:     loaded.BundleError,
 		wsSyncError:     loaded.WsSyncError,
-		acmeRenewal:     nil,
+		// Same rule as bundleError: recomputed by the generation this load
+		// just ran, so it must travel with it.
+		dependencyUpgrades: loaded.DependencyUpgrades,
+		dependencies:       loaded.Dependencies,
+		acmeRenewal:        nil,
 		// deferredForSecrets always false here: installLoadedNamespace serves
 		// namespace switch / auto-activate-after-create, both user-initiated —
 		// never the auto-start-on-boot path this gate defers. loaded.DeferredForSecrets

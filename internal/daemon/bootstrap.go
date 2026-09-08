@@ -222,6 +222,8 @@ func Start(opts StartOptions) error {
 			bundleError:        loaded.BundleError,
 			wsSyncError:        loaded.WsSyncError,
 			deferredForSecrets: loaded.DeferredForSecrets,
+			dependencyUpgrades: loaded.DependencyUpgrades,
+			dependencies:       loaded.Dependencies,
 		},
 		store:         store,
 		secretService: secretSvc,

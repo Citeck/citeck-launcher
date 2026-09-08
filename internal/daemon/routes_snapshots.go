@@ -321,6 +321,16 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		slog.Info("Snapshot import completed", "volumes", len(meta.Volumes)) //nolint:gosec // G706: meta.Volumes is internal count, not user-controlled
+		// The imported data may run on a different version than what this
+		// namespace was pinned to (a 17 snapshot over an 18 namespace). The
+		// pin describes the DATA, so it follows the data in.
+		if rt := act.runtime; rt != nil {
+			names := make([]string, 0, len(meta.Volumes))
+			for _, v := range meta.Volumes {
+				names = append(names, v.Name)
+			}
+			reseedAfterSnapshotImport(d.bgCtx, rt, dockerDependencyProbe{dc: dc, volumesBase: volumesBase}, names)
+		}
 		d.broadcastEvent(api.EventDto{
 			Type: "snapshot_complete", Timestamp: time.Now().UnixMilli(),
 			NamespaceID: nsID, After: fmt.Sprintf("imported %d volumes", len(meta.Volumes)),
