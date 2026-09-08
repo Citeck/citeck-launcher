@@ -191,6 +191,27 @@ func (d *Daemon) journalBlocker(act activeNamespace) string {
 	return rollbackPendingMessage(j, rt.LastDependencyMigration())
 }
 
+// rollbackBlocker is journalBlocker's second arm on its own: an open journal
+// that NO running migration owns, i.e. an interrupted migration whose rollback
+// has not succeeded. "" means there is nothing pending.
+//
+// It exists because a pending rollback refuses more than a new migration. What
+// the journal describes is still on the host, and depsmig-src mounts the
+// namespace's OWN data volume read-write: starting the namespace over it puts
+// a second postmaster on one PGDATA (the postmaster.pid interlock does not
+// hold across PID/IPC namespaces). The long-op lock does not cover this —
+// nobody holds it once the failed migration's goroutine has returned — so
+// every path that STARTS the namespace on the user's behalf asks here.
+//
+// A migration running right now is deliberately NOT reported: it holds the
+// long-op lock, which refuses those paths already and with a better message.
+func (d *Daemon) rollbackBlocker(act activeNamespace) string {
+	if d.currentDepsMigration(namespaceIDOf(act)) != nil {
+		return ""
+	}
+	return d.journalBlocker(act)
+}
+
 func (d *Daemon) handleListDependencies(w http.ResponseWriter, _ *http.Request) {
 	act := d.active()
 	if act.runtime == nil {

@@ -128,19 +128,42 @@ func (d *Daemon) handleAppImagePull(w http.ResponseWriter, r *http.Request) {
 		}
 		d.imagePulls.Store(ref, &imagePullState{done: true, err: errMsg})
 		if errMsg == "" {
-			// The pull may have replaced the local image (new digest under the
-			// same tag). Regenerate so the hash-diff recreates any running app
-			// using it — auto-update after an explicit pull. Best-effort: skip
-			// if a reload is already running (it will pick up the new image).
-			if d.reloadMu.TryLock() {
-				defer d.reloadMu.Unlock()
-				if err := d.doReload(); err != nil {
-					slog.Warn("Reload after image pull failed", "err", err)
-				}
-			}
+			d.reloadAfterImagePull(ref)
 		}
 	})
 	writeJSON(w, api.ActionResultDto{Success: true, Message: "pull started"})
+}
+
+// reloadAfterImagePull regenerates once an explicit pull has replaced the local
+// image (a new digest under the same tag), so the hash diff recreates any
+// running app using it. Best effort throughout: whatever it skips, the next
+// reload or start picks the new image up.
+//
+// It claims the long-operation lock, and reloadMu is not a substitute for it. A
+// dependency migration rewrites this namespace's runtime files and recreates
+// its containers WITHOUT holding reloadMu for its whole run — the same reason
+// the attach-toggle regeneration claims the lock — so a reload landing in the
+// middle regenerates underneath the very containers the migration is moving.
+// The lock is CLAIMED rather than probed, because a probe is check-then-act and
+// a migration accepted one instruction later would run concurrently; it is
+// claimed as longOpUpdatePass because that is what this is — an asynchronous
+// pass re-driving the namespace — and Start/Stop must keep working beside it.
+func (d *Daemon) reloadAfterImagePull(ref string) {
+	if !d.longOp.TryLock(longOpUpdatePass) {
+		//nolint:gosec // G706: the message is a constant plus busyMessage()'s fixed vocabulary
+		slog.Warn("Reload after image pull skipped: "+d.longOp.Holder().busyMessage()+
+			"; the new image is picked up by the next reload or start", "image", ref)
+		return
+	}
+	defer d.longOp.Unlock()
+	// A reload already running will pick the new image up itself.
+	if !d.reloadMu.TryLock() {
+		return
+	}
+	defer d.reloadMu.Unlock()
+	if err := d.invokeReload(); err != nil {
+		slog.Warn("Reload after image pull failed", "err", err)
+	}
 }
 
 // resolveRegistryAuth resolves Docker registry credentials for an image using

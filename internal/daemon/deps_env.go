@@ -602,7 +602,8 @@ func (e *depsEnv) ReloadAndStart(_ context.Context, start bool) error {
 // same config binds and the same layout the namespace's own container would
 // get for that version.
 //
-// It writes NOTHING: no runtime files, no runtime state. The config files the
+// The returned def is GUARANTEED to carry the requested image — see the check
+// at the tail. It writes NOTHING: no runtime files, no runtime state. The config files the
 // returned def binds are already on disk from the last real reload, and they
 // do not depend on the dependency's version (postgres' postgresql.conf,
 // pg_hba.conf and init_db_and_user.sh are the same files for every major —
@@ -640,9 +641,21 @@ func (e *depsEnv) GenerateDefFor(id deps.ID, image string) (appdef.ApplicationDe
 		return appdef.ApplicationDef{}, fmt.Errorf("generate namespace %q: %w", e.act.nsConfig.ID, err)
 	}
 	for _, a := range resp.Applications {
-		if a.Name == d.AppName() {
-			return a, nil
+		if a.Name != d.AppName() {
+			continue
 		}
+		// The forced pin must survive the whole generation. It does today only
+		// because the plan asks for a BREAKING version, which the pin gate
+		// therefore emits verbatim — a non-breaking `to` would be resolved to
+		// the bundle's candidate instead, and the caller would silently get a
+		// temp container running a different image from the one it named. That
+		// is a container started on somebody's data under a false name, so it
+		// is an error, not a surprise to debug later.
+		if a.Image != image {
+			return appdef.ApplicationDef{}, fmt.Errorf(
+				"the generator resolved %s to %q, not to the requested %q", d.AppName(), a.Image, image)
+		}
+		return a, nil
 	}
 	return appdef.ApplicationDef{}, fmt.Errorf("the generator produced no %s app", d.AppName())
 }

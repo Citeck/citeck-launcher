@@ -217,6 +217,16 @@ func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeNotConfigured, "no namespace configured")
 		return
 	}
+	// A migration whose ROLLBACK failed leaves its temp containers on the host,
+	// and depsmig-src mounts the namespace's own data volume read-write. The
+	// long-op lock is already gone by then — the failed migration's goroutine
+	// returned — so nothing but this refuses a Start that would put a second
+	// postmaster on one PGDATA. The launcher retries the rollback at every
+	// start; until it succeeds the namespace stays down deliberately.
+	if pending := d.rollbackBlocker(act); pending != "" {
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyMigrationInProgress, pending)
+		return
+	}
 	// Both "Update And Start" (primary) and "Force Update And Start" (RMB menu)
 	// pull the workspace / bundle repos before starting, so a stopped namespace
 	// picks up new bundle versions instead of starting a stale set. The only
@@ -474,6 +484,15 @@ func (d *Daemon) updateAndStartAsync(forceGitPull bool, nsID string) {
 		if target != "" && act.nsConfig != nil && act.nsConfig.ID != target {
 			slog.Info("Update and start skipped: active namespace changed while queued",
 				"clicked", target, "active", act.nsConfig.ID)
+			return
+		}
+		// Same refusal as handleStartNamespace, re-checked here because this
+		// pass may have been queued before the rollback failed — and because
+		// HTTP answered 200 long ago, so it has to be reported rather than
+		// returned.
+		if pending := d.rollbackBlocker(act); pending != "" {
+			slog.Warn("Update and start skipped: a dependency migration rollback is pending")
+			d.recordUpdateFailure(target, pending)
 			return
 		}
 		action := updateStartActionFor(act.runtime.Status())

@@ -367,6 +367,22 @@ func (d *Daemon) handleSubmitMasterPassword(w http.ResponseWriter, r *http.Reque
 // and unlocking an existing vault (handleUnlockSecrets). Callers must have
 // rebuilt the registry-auth cache first, so the pull sees the credentials.
 func (d *Daemon) startNamespaceDeferredForSecrets(why string) {
+	// This start does not go through handleStartNamespace, so it consults the
+	// long-operation lock itself. A migration started on the deferred (STOPPED)
+	// namespace owns its data volumes — depsmig-src has postgres2 mounted
+	// read-write — and unlocking the vault a moment later would start the
+	// namespace right over it. The two holders this must NOT run beside are
+	// exactly the two the lifecycle routes refuse; a free lock (longOpNone) is
+	// the ordinary case and must not be mistaken for one of them.
+	//
+	// Checked BEFORE the deferred flag is cleared, so the namespace stays
+	// marked as deferred and the operator's own Start (or the next unlock) can
+	// still act on it once the long operation has finished.
+	if holder := d.longOp.Holder(); holder != longOpNone && !tolerateLifecycleWork.allows(holder) {
+		slog.Warn("Namespace deferred for secrets was not started: "+holder.busyMessage()+
+			"; start it once that has finished", "reason", why)
+		return
+	}
 	d.configMu.Lock()
 	act := d.activeNs
 	startDeferred := act != nil && act.deferredForSecrets && act.nsConfig != nil && act.runtime != nil

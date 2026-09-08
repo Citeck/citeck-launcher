@@ -118,9 +118,10 @@ func (d *Daemon) recoverThenStartLoadedNamespace(ctx context.Context, loaded *lo
 
 // recoveryActiveNamespace is the activeNamespace snapshot a freshly loaded
 // namespace would have. Recovery runs BEFORE the namespace is installed (it
-// must precede the runtime), so it cannot read d.active() — but it must still
-// build its Env through newDepsEnv, which is what wires the Docker client, the
-// seeding probe and the stop-wait budget together.
+// must precede the runtime), so d.active() would answer about the PREVIOUS
+// active namespace — or about nothing at all on the boot path — but the Env
+// must still be built through newDepsEnv, which is what wires the Docker
+// client, the seeding probe and the stop-wait budget together.
 func recoveryActiveNamespace(loaded *loadedNamespace, wsID string) activeNamespace {
 	return activeNamespace{
 		workspaceID:     wsID,

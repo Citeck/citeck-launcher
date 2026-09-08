@@ -416,9 +416,12 @@ func (d *Daemon) rebuildAuthCaches() {
 
 // startRuntime starts rt with apps, routing through runtimeStartFn when set
 // (test seam — see the field doc comment). nil in production — calls
-// rt.Start(apps, false) directly. This is the deferred-namespace-start-after-
-// secrets-unlock path, not the explicit Update & Start action, so the
-// :snapshot pre-pull digest refresh is skipped (refreshImages=false).
+// rt.Start(apps, false) directly.
+//
+// Two callers, and neither is the explicit Update & Start action: the boot
+// auto-start (recoverThenStartLoadedNamespace, after crash recovery) and the
+// deferred start after the secrets vault is unlocked. So the :snapshot pre-pull
+// digest refresh is skipped (refreshImages=false) on both.
 func (d *Daemon) startRuntime(rt *namespace.Runtime, apps []appdef.ApplicationDef) {
 	if d.runtimeStartFn != nil {
 		d.runtimeStartFn(rt, apps)

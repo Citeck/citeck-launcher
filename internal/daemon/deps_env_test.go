@@ -835,6 +835,36 @@ func TestGenerateDefForRefusesWhatItCannotAnswer(t *testing.T) {
 	require.Error(t, err, "an unregistered dependency has no app to generate")
 }
 
+// The forced pin survives the generation only because the plan asks for a
+// BREAKING version, which the pin gate emits verbatim. A non-breaking one is
+// resolved to the bundle's candidate instead, and the caller would silently get
+// a temp container running an image it did not name — started on somebody's
+// data, under a name that lies about it. It is refused rather than returned.
+func TestGenerateDefForRefusesADefTheGeneratorRehomed(t *testing.T) {
+	rt := namespace.NewRuntime(&namespace.Config{ID: "ns1"}, planStubDocker{}, t.TempDir())
+	t.Cleanup(rt.Shutdown)
+	rt.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}}, nil, nil)
+	env := (&Daemon{}).newDepsEnv(activeNamespace{
+		runtime: rt,
+		nsConfig: &namespace.Config{
+			ID:             "ns1",
+			Authentication: namespace.AuthenticationProps{Type: namespace.AuthBasic, Users: []string{"admin"}},
+			Proxy:          namespace.ProxyProps{Port: 80},
+		},
+		// The bundle offers the same major from a mirror, so the gate rehomes
+		// the pin — the def comes back on the mirror, not on what was asked for.
+		bundleDef: &bundle.Def{Applications: map[string]bundle.AppDef{
+			appdef.AppPostgres: {Image: "mirror.example.com/postgres:18"},
+		}},
+		workspaceConfig: &bundle.WorkspaceConfig{},
+		systemSecrets:   namespace.SystemSecrets{JWT: "j", OIDC: "o"},
+		volumesBase:     t.TempDir(),
+	})
+	_, err := env.GenerateDefFor(deps.Postgres, "postgres:17.5")
+	require.ErrorContains(t, err, "not to the requested")
+	require.ErrorContains(t, err, "mirror.example.com/postgres:17.5")
+}
+
 // ReloadAndStart reloads whatever namespace is ACTIVE, so an Env built for a
 // different one must refuse instead. Two callers make that reachable: crash
 // recovery, whose Env describes a namespace that is not installed yet, and a
