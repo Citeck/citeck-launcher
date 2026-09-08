@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/citeck/citeck-launcher/internal/api"
+	"github.com/citeck/citeck-launcher/internal/deps/migrate"
 )
 
 // DaemonClient communicates with a running Citeck daemon over Unix socket or TCP.
@@ -103,6 +104,21 @@ func (c *DaemonClient) post(path string, body, result any) error {
 // the daemon's host with nobody waiting for the answer.
 func (c *DaemonClient) postLong(path string, body, result any) error {
 	resp, err := c.doRequestWith(c.streamClient, http.MethodPost, path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return decodeResponse(resp, result)
+}
+
+// getLong is get() over the streaming (timeout-free) client, for reads whose
+// duration is the data's to decide. The dependency preflight measures a data
+// volume — a directory walk, or `du` inside the Docker VM — which on a real
+// cluster outlives any fixed timeout; the daemon lifts its own write deadline
+// for the same reason (see handleDependencyPreflight), and a client that gave
+// up at 120s would throw away the only number the confirm prompt has to show.
+func (c *DaemonClient) getLong(path string, result any) error {
+	resp, err := c.doRequestWith(c.streamClient, http.MethodGet, path, nil)
 	if err != nil {
 		return err
 	}
@@ -325,6 +341,36 @@ func (c *DaemonClient) ExportSnapshot(outputDir string) (*api.ActionResultDto, e
 func (c *DaemonClient) ImportSnapshot(name string) (*api.ActionResultDto, error) {
 	var dto api.ActionResultDto
 	err := c.post(api.SnapshotsImport+"?name="+url.QueryEscape(name), nil, &dto)
+	return &dto, err
+}
+
+// GetDependencies lists the active namespace's infrastructure dependencies
+// with the version its data runs on, the version the bundle offers, and
+// whatever a migration has left behind (one running now, the last verdict, an
+// unfinished rollback).
+func (c *DaemonClient) GetDependencies() (*api.DependenciesDto, error) {
+	var dto api.DependenciesDto
+	err := c.get(api.Dependencies, &dto)
+	return &dto, err
+}
+
+// DependencyPreflight runs one dependency's migration pre-checks. It changes
+// nothing — it measures the data, the two filesystems and an existing target
+// volume — so it is safe to call before asking the user to confirm.
+func (c *DaemonClient) DependencyPreflight(id string) (*migrate.PreflightResult, error) {
+	var res migrate.PreflightResult
+	err := c.getLong(api.DependencyPreflightPath(id), &res)
+	return &res, err
+}
+
+// MigrateDependency starts a dependency migration. The daemon answers 202 once
+// the plan is built (which runs the preflight's measurement again, hence the
+// timeout-free client); progress arrives as deps_migration_* events on
+// StreamEvents, so callers that want to follow it must subscribe FIRST.
+func (c *DaemonClient) MigrateDependency(id string, replaceExisting bool) (*api.ActionResultDto, error) {
+	var dto api.ActionResultDto
+	err := c.postLong(api.DependencyMigratePath(id),
+		api.DependencyMigrateRequestDto{ReplaceExistingVolume: replaceExisting}, &dto)
 	return &dto, err
 }
 

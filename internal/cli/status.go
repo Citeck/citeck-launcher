@@ -70,6 +70,16 @@ func newStatusCmd() *cobra.Command {
 				licStatus = nil
 			}
 
+			// Dependency versions are best-effort for the same reason: an older
+			// daemon has no endpoint and a namespace that is not configured yet
+			// answers 400. Fetched (rather than read off the namespace DTO)
+			// because a PENDING ROLLBACK lives only in the dependencies DTO,
+			// and it is the one dependency state the operator must act on.
+			depsDto, depsErr := c.GetDependencies()
+			if depsErr != nil {
+				depsDto = nil
+			}
+
 			output.PrintResult(ns, func() {
 				// Pad labels to the width of the longest ("License:" = 8)
 				// so the values line up visually. padRight (shared with the
@@ -82,6 +92,9 @@ func newStatusCmd() *cobra.Command {
 				}
 				if line := formatLicenseLine(licStatus); line != "" {
 					output.PrintText("%s  %s", output.Colorize(output.Bold, padRight("License:", 8)), line)
+				}
+				if hint := dependencyHintLine(ns, depsDto); hint != "" {
+					output.PrintText("%s  %s", output.Colorize(output.Bold, padRight("Deps:", 8)), hint)
 				}
 				for _, link := range ns.Links {
 					if link.Name == "Citeck UI" {
