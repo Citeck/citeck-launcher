@@ -26,7 +26,7 @@ endif
 GOLANGCI_LINT=$(GOBIN)/golangci-lint
 
 .PHONY: all check build build-fast build-web build-desktop run test test-unit test-race test-coverage \
-        test-e2e lint fmt tidy tools clean help dev-daemon dev-desktop web-deps deadcode \
+        test-e2e test-integration test-integration-deps lint fmt tidy tools clean help dev-daemon dev-desktop web-deps deadcode \
         release-server release-desktop-linux release-desktop-windows release-desktop-macos \
         jvm-attach-class
 
@@ -81,6 +81,7 @@ help:
 	@echo "  make test-race      - Go tests with race detector + timeout"
 	@echo "  make test-coverage  - Go tests with coverage report"
 	@echo "  make test-e2e       - Web UI Playwright e2e (needs a running daemon, see target)"
+	@echo "  make test-integration-deps - Real-Docker PostgreSQL 17->18 migration (opt-in, see target)"
 	@echo "  make lint           - Run Go + Web linters"
 	@echo "  make deadcode       - Dead-code analysis vs scripts/ci/deadcode-allowlist.txt"
 	@echo "  make fmt            - Format Go code"
@@ -147,6 +148,16 @@ test-coverage:
 
 test-integration:
 	go test -tags=integration ./tests/...
+
+# Real-Docker PostgreSQL 17 → 18 migration + rollback (opt-in, ~3-5 min).
+# Needs a Docker engine and pulls postgres:17.5 / postgres:18 / alpine:3.
+# Under ROOTLESS Docker the test process cannot read what a container wrote
+# into a bind-mounted data volume (server mode assumes the root daemon a
+# server install runs), so run it inside a user namespace that maps the
+# subuid range:
+#   unshare --user --map-auto --map-root-user make test-integration-deps
+test-integration-deps:
+	go test -tags integration -run 'TestIntegration_' -timeout 30m -v ./internal/daemon/
 
 # Web UI end-to-end tests (Playwright, web/tests/). PREREQUISITE: a daemon
 # serving the web UI at http://127.0.0.1:7088 must already be running (see
