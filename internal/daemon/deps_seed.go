@@ -21,8 +21,10 @@ import (
 // dependencySeedTimeout bounds one seeding pass. Seeding runs SYNCHRONOUSLY
 // inside loadNamespace and doReloadEx and performs up to a handful of Docker
 // calls per dependency; a hung engine must cost the namespace load a bounded
-// wait (after which every dependency falls back to its legacy image, the
-// pre-feature behavior) rather than hanging it forever.
+// wait rather than hanging it forever. What the expired deadline then yields
+// is the same as any other probe failure — see seedDependencyPins: the legacy
+// image where data MIGHT exist, no pin where the filesystem could still prove
+// it does not.
 const dependencySeedTimeout = 30 * time.Second
 
 // errVolumeFileNotFound is the probe's "that file is not there" answer, as
@@ -118,6 +120,19 @@ func (p dockerDependencyProbe) ReadVolumeFile(ctx context.Context, volume, rel s
 	if v == nil {
 		return "", fmt.Errorf("%s in %s: %w", rel, volume, errVolumeFileNotFound)
 	}
+	// The read runs in the launcher-utils container, so the image must be on
+	// the host first — same order as docker.Client.VolumeSize and the snapshot
+	// package's ensureUtilsImage. Without it, the first data probe on a host
+	// that never pulled the image would report a read FAILURE, and every
+	// dependency would be seeded to its legacy image. A pull that fails IS a
+	// probe failure (the caller then assumes the legacy image), which is why
+	// the error is returned rather than swallowed.
+	utilsImage := config.UtilsImage()
+	if !p.dc.ImageExists(ctx, utilsImage) {
+		if pullErr := p.dc.PullImage(ctx, utilsImage, nil); pullErr != nil {
+			return "", fmt.Errorf("pull utils image %s: %w", utilsImage, pullErr)
+		}
+	}
 	out, code, err := p.dc.RunUtilsContainer(ctx, []string{"cat", "/vol/" + rel}, []string{v.Name + ":/vol:ro"})
 	if err != nil {
 		return "", fmt.Errorf("read %s in %s: %w", rel, volume, err)
@@ -185,14 +200,27 @@ const (
 // add. Order of evidence: the container (survives launcher upgrades), then the
 // data itself (PostgreSQL's PG_VERSION), then the descriptor's legacy image.
 //
-// Only a complete, SUCCESSFUL "there is nothing here" answer yields no pin.
-// Any probe failure degrades to the legacy image instead, with a WARN naming
-// the probe that failed: seeding only ever runs where no pin exists, i.e. on
-// pre-feature data, and the legacy image is exactly what that data has been
-// running on. Leaving no pin would instead hand the namespace to the candidate
-// image — a transient Docker error would start PostgreSQL 18 on an empty
-// new-layout volume beside the untouched 17 data, and the RUNNING re-pin hook
-// would then settle the pin at 18.
+// The rule for failures is per EVIDENCE, not per probe, because the two
+// mistakes are not symmetric. A pin that is wrongly LEGACY holds a namespace
+// back from an upgrade it could have taken; a pin that is wrongly ABSENT hands
+// the data to the candidate image — PostgreSQL 18 started on an empty
+// new-layout volume beside untouched 17 data, with the RUNNING re-pin hook
+// then settling the pin at 18. So:
+//
+//   - a probe failure that leaves the DATA question open (seedUnknown: the
+//     volume lookup itself failed) ⇒ the legacy image, with a WARN. Seeding
+//     only ever runs where no pin exists, i.e. on pre-feature data, and the
+//     legacy image is exactly what that data has been running on;
+//   - a SUCCESSFUL "there is nothing here" (seedNoData) ⇒ no pin, so the
+//     candidate applies — even when the container probe failed. A container
+//     cannot exist without its data volume (server mode creates
+//     <volumesBase>/volumes/<vol> at container creation), so an absent volume,
+//     answered without error, proves there is nothing to protect. This is the
+//     fresh namespace first loaded while Docker is down: pinning it to the
+//     legacy images would hold every minor-breaking dependency (rabbitmq at
+//     4.1 against a 4.2 bundle) with no path back. On DESKTOP the same outage
+//     also fails the volume lookup, which is seedUnknown, so the legacy
+//     fallback still covers it there.
 //
 // preferVolumes marks volumes a snapshot import just restored; when both
 // postgres layouts hold a cluster the imported one is the truth.
@@ -249,10 +277,12 @@ func seedDependencyPins(ctx context.Context, existing map[deps.ID]string, probe 
 				"dependency", d.ID(), "image", d.LegacyImage())
 			out[d.ID()] = d.LegacyImage()
 		case seedNoData:
+			// No pin either way — see the rule above. The warning is worth
+			// keeping when the container probe failed, because that is the
+			// one case where the conclusion rests on the filesystem alone.
 			if containerFailed {
-				slog.Warn("Dependency seed: container inspect failed and no data was found; assuming the legacy image",
-					"dependency", d.ID(), "image", d.LegacyImage())
-				out[d.ID()] = d.LegacyImage()
+				slog.Warn("Dependency seed: container inspect failed, but the data volume is absent; leaving it unpinned",
+					"dependency", d.ID())
 			}
 		}
 	}

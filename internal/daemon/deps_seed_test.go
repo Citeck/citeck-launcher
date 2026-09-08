@@ -150,25 +150,54 @@ func TestSeedKeycloakFollowsThePostgresData(t *testing.T) {
 	assert.False(t, pinned, "no postgres cluster → keycloak has no data either")
 }
 
-// Ruling 6, arm 1: an inspect failure says nothing about the data, so it must
-// NOT read as "fresh namespace" — that would hand every dependency to the
-// candidate image and start PostgreSQL 18 beside untouched 17 data.
-func TestSeedAssumesTheLegacyImageWhenTheContainerProbeFails(t *testing.T) {
-	p := fakeProbe{containerErr: errors.New("dial unix /var/run/docker.sock: connection refused")}
+// An inspect failure over data that DOES exist must not read as "fresh" — that
+// would hand the namespace to the candidate image and start PostgreSQL 18
+// beside untouched 17 data.
+func TestSeedAssumesTheLegacyImageWhenTheContainerProbeFailsOverExistingData(t *testing.T) {
+	p := fakeProbe{
+		containerErr: errors.New("dial unix /var/run/docker.sock: connection refused"),
+		volumes: map[string]map[string]string{
+			"postgres2": {"PG_VERSION": "17\n"}, "rabbitmq2": {}, "zookeeper2": {}, "mongo2": {},
+		},
+	}
 	got := seedDependencyPins(context.Background(), nil, p, nil)
+	assert.Equal(t, "postgres:17", got[deps.Postgres], "the data still answers when the container probe cannot")
 	for _, d := range deps.All() {
+		if d.ID() == deps.Postgres {
+			continue
+		}
 		assert.Equal(t, d.LegacyImage(), got[d.ID()], string(d.ID()))
 	}
 }
 
-// Ruling 6, arm 2: same for a failed volume lookup (a transient VolumeList
-// error on desktop, or the seed deadline expiring).
+// A failed volume lookup (a transient VolumeList error on desktop, or the seed
+// deadline expiring) leaves the data question OPEN, so it assumes the legacy
+// image — including when the container probe failed too, which is the shape of
+// a desktop Docker outage.
 func TestSeedAssumesTheLegacyImageWhenTheVolumeProbeFails(t *testing.T) {
-	p := fakeProbe{volumeErr: context.DeadlineExceeded}
-	got := seedDependencyPins(context.Background(), nil, p, nil)
-	for _, d := range deps.All() {
-		assert.Equal(t, d.LegacyImage(), got[d.ID()], string(d.ID()))
+	for name, p := range map[string]fakeProbe{
+		"volume probe alone":    {volumeErr: context.DeadlineExceeded},
+		"docker down (desktop)": {volumeErr: context.DeadlineExceeded, containerErr: errors.New("connection refused")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := seedDependencyPins(context.Background(), nil, p, nil)
+			for _, d := range deps.All() {
+				assert.Equal(t, d.LegacyImage(), got[d.ID()], string(d.ID()))
+			}
+		})
 	}
+}
+
+// The other half of that rule: when the FILESYSTEM can still answer — server
+// mode stats <volumesBase>/volumes/<vol> without Docker — an absent volume
+// proves there is nothing to protect, because a container cannot exist without
+// its data volume. A fresh namespace first loaded during a Docker outage must
+// therefore stay UNPINNED; pinning it to the legacy images would hold every
+// minor-breaking dependency back (rabbitmq at 4.1 against a 4.2 bundle) with
+// no path forward.
+func TestSeedLeavesAFreshNamespaceUnpinnedWhenOnlyTheContainerProbeFails(t *testing.T) {
+	p := fakeProbe{containerErr: errors.New("dial unix /var/run/docker.sock: connection refused")}
+	assert.Empty(t, seedDependencyPins(context.Background(), nil, p, nil))
 }
 
 // Ruling 6, arm 3 (already true before, kept explicit): a PG_VERSION that
@@ -273,6 +302,41 @@ func TestDesktopCatFailureClassification(t *testing.T) {
 	require.Error(t, denied)
 	require.NotErrorIs(t, denied, errVolumeFileNotFound, "a permission error is a read failure")
 	assert.Contains(t, denied.Error(), "Permission denied", "the reason must survive into the warning")
+}
+
+// The desktop read runs `cat` inside the launcher-utils container, so the image
+// has to be on the host first — otherwise the first data probe on a host that
+// never pulled it reports a read FAILURE and every dependency is seeded to its
+// legacy image. The call needs a real engine, so the ORDER is checked
+// structurally (ImageExists/PullImage before RunUtilsContainer), the same way
+// docker.Client.VolumeSize does it.
+func TestDesktopReadEnsuresTheUtilsImageBeforeRunningIt(t *testing.T) {
+	fn := parseFuncDecl(t, "deps_seed.go", "ReadVolumeFile")
+	existsPos, pullPos, runPos := -1, -1, -1
+	ast.Inspect(fn, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		switch sel.Sel.Name {
+		case "ImageExists":
+			existsPos = int(call.Pos())
+		case "PullImage":
+			pullPos = int(call.Pos())
+		case "RunUtilsContainer":
+			runPos = int(call.Pos())
+		}
+		return true
+	})
+	require.NotEqual(t, -1, runPos, "the desktop read no longer runs a utils container — this guard is out of date")
+	require.NotEqual(t, -1, existsPos, "ReadVolumeFile must check the utils image is present")
+	require.NotEqual(t, -1, pullPos, "ReadVolumeFile must pull the utils image when it is missing")
+	assert.Less(t, existsPos, runPos, "the image check must come before the container runs")
+	assert.Less(t, pullPos, runPos, "the pull must come before the container runs")
 }
 
 // The wiring helper both the load path and the reload path go through: what
