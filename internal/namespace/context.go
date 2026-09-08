@@ -7,6 +7,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
+	"github.com/citeck/citeck-launcher/internal/deps"
 )
 
 // Infrastructure host/port constants.
@@ -119,7 +120,13 @@ type NsGenContext struct {
 	// the tail of Generate to produce the effective Applications. See
 	// GenerateOpts.EditedAppPatches.
 	EditedAppPatches map[string]json.RawMessage
-	portsCounter     atomic.Int32
+	// DependencyPins is what each infra dependency's data currently runs on;
+	// DependencyUpgrades / DependencyImages are filled by
+	// resolveDependencyImage. See internal/deps and generator_deps.go.
+	DependencyPins     map[deps.ID]string
+	DependencyUpgrades []DependencyUpgrade
+	DependencyImages   map[deps.ID]DependencyGen
+	portsCounter       atomic.Int32
 }
 
 // NewNsGenContext creates a new generation context for the given config and bundle.

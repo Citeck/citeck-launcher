@@ -8,6 +8,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/appfiles"
+	"github.com/citeck/citeck-launcher/internal/deps"
 )
 
 func generateKeycloak(ctx *NsGenContext) error {
@@ -28,7 +29,7 @@ func generateKeycloak(ctx *NsGenContext) error {
 	if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.Keycloak.Image != "" {
 		kcFallback = ctx.WorkspaceConfig.Keycloak.Image
 	}
-	img := bundleImageOr(ctx, appdef.AppKeycloak, kcFallback)
+	img := resolveDependencyImage(ctx, deps.Keycloak, bundleImageOr(ctx, appdef.AppKeycloak, kcFallback))
 	app := ctx.GetOrCreateApp(appdef.AppKeycloak)
 	app.Image = img
 	app.Kind = appdef.KindThirdParty

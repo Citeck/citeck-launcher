@@ -9,6 +9,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/docker"
 )
 
@@ -47,6 +48,7 @@ func generateMongoDB(ctx *NsGenContext) {
 	if img == "" {
 		img = "mongo:4.0.2"
 	}
+	img = resolveDependencyImage(ctx, deps.MongoDB, img)
 	app := ctx.GetOrCreateApp(appdef.AppMongodb)
 	app.Image = img
 	app.Kind = appdef.KindThirdParty
@@ -122,20 +124,36 @@ func generatePgAdmin(ctx *NsGenContext) {
 }
 
 func generatePostgres(ctx *NsGenContext) {
-	fallback := "postgres:17.5"
+	fallback := "postgres:18"
 	if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.Postgres.Image != "" {
 		fallback = ctx.WorkspaceConfig.Postgres.Image
 	}
-	img := bundleImageOr(ctx, appdef.AppPostgres, fallback)
+	img := resolveDependencyImage(ctx, deps.Postgres, bundleImageOr(ctx, appdef.AppPostgres, fallback))
+	// The data layout follows the major of the image that will RUN — never the
+	// candidate's. For a pinned namespace that is the pin, so an existing 17
+	// keeps postgres2 and its explicit PGDATA byte for byte
+	// (TestPostgres17PinnedDefIsByteStable); reading the candidate instead
+	// would hand a 17 server the 18 layout and an empty volume.
+	// An unparsable effective tag (":latest", a digest) falls back to the
+	// LEGACY layout: it is the layout every namespace that predates PostgreSQL
+	// 18 already has, so guessing it keeps existing data mounted, while
+	// guessing 18 would silently start a brand-new empty cluster next to it.
+	major := 17
+	if v, ok := deps.ParseImageVersion(img); ok {
+		major = v.Major
+	}
+	layout := deps.PostgresLayoutFor(major)
 	app := ctx.GetOrCreateApp(appdef.AppPostgres)
 	app.Image = img
 	app.Kind = appdef.KindThirdParty
 	app.ShmSize = "128m"
 	app.AddEnv("POSTGRES_USER", "postgres")
 	app.AddEnv("POSTGRES_PASSWORD", "postgres")
-	app.AddEnv("PGDATA", "/var/lib/postgresql/data")
+	if layout.PGData != "" {
+		app.AddEnv("PGDATA", layout.PGData)
+	}
 	app.AddPort(fmt.Sprintf("14523:%d", PGPort))
-	app.AddVolume("postgres2:/var/lib/postgresql/data")
+	app.AddVolume(layout.Volume + ":" + layout.MountPath)
 	app.AddVolume("./postgres/init_db_and_user.sh:/init_db_and_user.sh")
 	app.AddVolume("./postgres/postgresql.conf:/etc/postgresql/postgresql.conf")
 	app.AddVolume("./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf")
@@ -169,7 +187,7 @@ func generateZookeeper(ctx *NsGenContext) {
 	if ctx.WorkspaceConfig != nil && ctx.WorkspaceConfig.Zookeeper.Image != "" {
 		fallback = ctx.WorkspaceConfig.Zookeeper.Image
 	}
-	img := bundleImageOr(ctx, appdef.AppZookeeper, fallback)
+	img := resolveDependencyImage(ctx, deps.Zookeeper, bundleImageOr(ctx, appdef.AppZookeeper, fallback))
 	app := ctx.GetOrCreateApp(appdef.AppZookeeper)
 	app.Image = img
 	app.Kind = appdef.KindThirdParty
@@ -236,7 +254,7 @@ func rabbitmqMemoryConf(memLimit string) string {
 }
 
 func generateRabbitMQ(ctx *NsGenContext) {
-	img := bundleImageOr(ctx, appdef.AppRabbitmq, "rabbitmq:4.1.2-management")
+	img := resolveDependencyImage(ctx, deps.RabbitMQ, bundleImageOr(ctx, appdef.AppRabbitmq, "rabbitmq:4.1.2-management"))
 	app := ctx.GetOrCreateApp(appdef.AppRabbitmq)
 	app.Image = img
 	app.Kind = appdef.KindThirdParty

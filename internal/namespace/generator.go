@@ -18,6 +18,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
+	"github.com/citeck/citeck-launcher/internal/deps"
 )
 
 // GenResp is the result of namespace generation.
@@ -29,6 +30,8 @@ type GenResp struct {
 	CloudConfig           map[string]map[string]any // per-app ext cloud config for CloudConfigServer
 	DependsOnDetachedApps map[string]bool           // apps whose reattachment triggers regeneration
 	CustomLinks           []bundle.WorkspaceLink    // workspace-config custom quick links (with dependsOn gating)
+	DependencyUpgrades    []DependencyUpgrade       // candidates held back by a pin (registry order)
+	Dependencies          map[deps.ID]DependencyGen // effective vs candidate image per dependency
 }
 
 // GenerateOpts holds optional parameters for namespace generation.
@@ -52,6 +55,9 @@ type GenerateOpts struct {
 	// the tail of Generate to produce the effective Applications; the patch-free
 	// set is returned as BaselineApplications. Symmetric to EditedFileEdits.
 	EditedAppPatches map[string]json.RawMessage
+	// DependencyPins: image each infra dependency's data last ran on
+	// (Runtime.DependencyPins). Nil for a namespace with no data yet.
+	DependencyPins map[deps.ID]string
 }
 
 // Generate creates container definitions from a namespace config, bundle, and workspace config.
@@ -73,6 +79,7 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 		ctx.EditedFileEdits = opts[0].EditedFileEdits
 		ctx.DiskContent = opts[0].DiskContent
 		ctx.EditedAppPatches = opts[0].EditedAppPatches
+		ctx.DependencyPins = opts[0].DependencyPins
 	}
 
 	// Load embedded appfiles
@@ -231,6 +238,8 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 		CloudConfig:           ctx.CloudConfig,
 		DependsOnDetachedApps: dependsOnDetached,
 		CustomLinks:           customLinks,
+		DependencyUpgrades:    sortedUpgrades(ctx),
+		Dependencies:          ctx.DependencyImages,
 	}, nil
 }
 
