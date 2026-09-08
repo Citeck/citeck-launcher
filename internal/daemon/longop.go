@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"net/http"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -94,40 +95,71 @@ func (l *longOpLock) Holder() longOpKind {
 	return k
 }
 
+// longOpTolerance is the SET of holder kinds a route may proceed ALONGSIDE.
+// The split it encodes is between the two daemon-owned long operations that
+// take the namespace's data away from under everyone — a snapshot restoring
+// volumes, a dependency migration rewriting them — and ordinary namespace
+// lifecycle work, which the launcher has always allowed to overlap.
+type longOpTolerance []longOpKind
+
+// allows reports whether a route with this policy may run beside holder.
+// longOpNone is not a member of any policy, so a holder that let go between the
+// failed TryLock and the read is refused like any unknown one — the lock being
+// genuinely free is the plain TryLock's case, not this one.
+func (t longOpTolerance) allows(holder longOpKind) bool {
+	return slices.Contains(t, holder)
+}
+
+var (
+	// tolerateNothing refuses whoever holds the lock. The policy of 17 of the
+	// 19 gated routes: an app edit, a namespace delete, a volume delete or a
+	// workspace switch beside ANY long operation is exactly what the gate is
+	// for.
+	tolerateNothing longOpTolerance
+	// tolerateLifecycleWork is the policy of handleStartNamespace and
+	// handleStopNamespace ONLY. They are refused by longOpSnapshot and
+	// longOpMigration — the two operations that own the namespace's data — and
+	// tolerate the two that are just the launcher working on the namespace:
+	//
+	//   - longOpUpdatePass: an ordinary start. A second click must FOLD into
+	//     the single-slot update queue (the documented contract, force OR-ed)
+	//     rather than 409, and Stop is the escape hatch from a pass stuck in a
+	//     slow git pull. Refusing either would turn the git-pull/generate
+	//     window of a normal start into a daemon-wide refusal.
+	//   - longOpRequest: another synchronous mutating handler. handleReload-
+	//     Namespace holds the lock for the whole of doReload — minutes on an
+	//     enterprise namespace — and Stop during a reload has been accepted by
+	//     every release before this feature (Runtime.Stop only enqueues a
+	//     command). Refusing it would be a new, unexplained dead end.
+	tolerateLifecycleWork = longOpTolerance{longOpUpdatePass, longOpRequest}
+)
+
 // tryLongOp claims the long-operation lock for the duration of a synchronous
 // handler. ok=false means the daemon is busy with something that owns the
 // namespace, the 409 naming that holder has already been written, and the
 // caller must return immediately. Callers `defer release()`.
 //
-// tolerate is the policy: the ONE holder kind this route may proceed ALONGSIDE
-// (longOpNone ⇒ tolerate nothing). A tolerated holder returns ok=true with a
-// no-op release — the route runs WITHOUT the lock, exactly as it did before
-// this feature existed. Only handleStartNamespace and handleStopNamespace use
-// it, and only for longOpUpdatePass:
-//
-//   - Start must fold into the single-slot update queue (the documented
-//     click-folding contract, force OR-ed) instead of 409-ing the second click;
-//   - Stop is the escape hatch from a pass stuck in a slow git pull, and taking
-//     it away is strictly worse than letting the stop race a reload, which is
-//     what every release before this one did anyway.
+// tolerate is the policy (see longOpTolerance). A tolerated holder returns
+// ok=true with a NO-OP release — the route runs WITHOUT the lock, exactly as it
+// did before this feature existed.
 //
 // The check-then-act window that opens on the tolerated path is deliberate and
-// harmless: the pass re-checks the lock itself and reports the refusal through
-// recordUpdateFailure, so nothing is silently lost.
+// harmless: the update pass re-checks the lock itself and reports the refusal
+// through recordUpdateFailure, so nothing is silently lost.
 //
 // release is IDEMPOTENT. A handler that hands work to a background goroutine
 // must let go of the lock before the hand-off (handleStartNamespace,
 // handleAppStart/Stop) while still deferring the release for its early returns;
 // without idempotence that pattern is an "unlock of unlocked mutex" panic
 // waiting for the first error path to be added.
-func (d *Daemon) tryLongOp(w http.ResponseWriter, tolerate longOpKind) (release func(), ok bool) {
+func (d *Daemon) tryLongOp(w http.ResponseWriter, tolerate longOpTolerance) (release func(), ok bool) {
 	if d.longOp.TryLock(longOpRequest) {
 		return sync.OnceFunc(d.longOp.Unlock), true
 	}
 	// ONE read of the holder: it feeds both the policy check and the message,
 	// and a second read could see a different (or no) holder.
 	holder := d.longOp.Holder()
-	if tolerate != longOpNone && holder == tolerate {
+	if tolerate.allows(holder) {
 		return func() {}, true
 	}
 	writeErrorCode(w, http.StatusConflict, api.ErrCodeLongOpInProgress,

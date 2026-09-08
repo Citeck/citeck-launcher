@@ -190,10 +190,11 @@ func appDefsToStoppedApps(defs []appdef.ApplicationDef, runtime *namespace.Runti
 }
 
 func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
-	// Tolerates an in-flight update pass: a second click must FOLD into the
-	// single-slot queue (force OR-ed), which is the documented contract, not be
-	// refused at the HTTP layer.
-	release, ok := d.tryLongOp(w, longOpUpdatePass)
+	// tolerateLifecycleWork: a second click must FOLD into the single-slot
+	// queue (force OR-ed), which is the documented contract, not be refused at
+	// the HTTP layer — and that holds beside a synchronous reload too. Only a
+	// snapshot or a migration, which own the namespace's data, refuse a Start.
+	release, ok := d.tryLongOp(w, tolerateLifecycleWork)
 	if !ok {
 		return
 	}
@@ -498,10 +499,11 @@ func (d *Daemon) updateAndStartAsync(forceGitPull bool, nsID string) {
 }
 
 func (d *Daemon) handleStopNamespace(w http.ResponseWriter, r *http.Request) {
-	// Tolerates an in-flight update pass: Stop is the escape hatch from a pass
-	// stuck in a slow git pull, and refusing it is worse than the reload race
-	// every release before this one already allowed.
-	release, ok := d.tryLongOp(w, longOpUpdatePass)
+	// tolerateLifecycleWork: Stop is the escape hatch from a pass stuck in a
+	// slow git pull or a reload grinding through a 24-app namespace, and
+	// refusing it is worse than the race every release before this one already
+	// allowed (Runtime.Stop only enqueues a command).
+	release, ok := d.tryLongOp(w, tolerateLifecycleWork)
 	if !ok {
 		return
 	}
@@ -516,7 +518,7 @@ func (d *Daemon) handleStopNamespace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
-	release, ok := d.tryLongOp(w, longOpNone)
+	release, ok := d.tryLongOp(w, tolerateNothing)
 	if !ok {
 		return
 	}
@@ -551,7 +553,7 @@ func (d *Daemon) handleUpgradeNamespace(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	release, ok := d.tryLongOp(w, longOpNone)
+	release, ok := d.tryLongOp(w, tolerateNothing)
 	if !ok {
 		return
 	}

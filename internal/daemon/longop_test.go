@@ -17,14 +17,16 @@ import (
 	"github.com/citeck/citeck-launcher/internal/namespace"
 )
 
-// gatedRoute is one row of the long-operation route gate. tolerantOfUpdatePass
-// marks the two routes that proceed ALONGSIDE an in-flight update pass.
+// gatedRoute is one row of the long-operation route gate. tolerantOfLifecycle
+// marks the two routes that proceed ALONGSIDE ordinary lifecycle work (an
+// update pass, another synchronous handler) and are refused only by the two
+// data-owning holders, snapshot and migration.
 type gatedRoute struct {
 	handler      string
 	method, path string
 	body         string
 
-	tolerantOfUpdatePass bool
+	tolerantOfLifecycle bool
 }
 
 // gatedRoutes is THE list of routes that start, reshape or destroy the
@@ -32,8 +34,8 @@ type gatedRoute struct {
 // route: every long-operation test below is driven from this one table.
 func gatedRoutes() []gatedRoute {
 	return []gatedRoute{
-		{handler: "handleStartNamespace", method: "POST", path: api.NamespaceStart, tolerantOfUpdatePass: true},
-		{handler: "handleStopNamespace", method: "POST", path: api.NamespaceStop, tolerantOfUpdatePass: true},
+		{handler: "handleStartNamespace", method: "POST", path: api.NamespaceStart, tolerantOfLifecycle: true},
+		{handler: "handleStopNamespace", method: "POST", path: api.NamespaceStop, tolerantOfLifecycle: true},
 		{handler: "handleReloadNamespace", method: "POST", path: api.NamespaceReload},
 		{handler: "handleAppStart", method: "POST", path: api.AppStart("postgres")},
 		{handler: "handleAppStop", method: "POST", path: api.AppStop("postgres")},
@@ -158,11 +160,11 @@ func TestSnapshotRoutesKeepTheirOwnCodeOnTheSharedLock(t *testing.T) {
 func TestTryLongOpIsExclusiveAndReleases(t *testing.T) {
 	d := &Daemon{}
 
-	release, ok := d.tryLongOp(httptest.NewRecorder(), longOpNone)
+	release, ok := d.tryLongOp(httptest.NewRecorder(), tolerateNothing)
 	require.True(t, ok)
 
 	rec := httptest.NewRecorder()
-	blocked, ok2 := d.tryLongOp(rec, longOpNone)
+	blocked, ok2 := d.tryLongOp(rec, tolerateNothing)
 	require.False(t, ok2, "the lock must not be handed out twice")
 	assert.Nil(t, blocked, "a refused claim must not return a release func")
 	assert.Equal(t, http.StatusConflict, rec.Code)
@@ -170,7 +172,7 @@ func TestTryLongOpIsExclusiveAndReleases(t *testing.T) {
 
 	release()
 
-	release2, ok3 := d.tryLongOp(httptest.NewRecorder(), longOpNone)
+	release2, ok3 := d.tryLongOp(httptest.NewRecorder(), tolerateNothing)
 	require.True(t, ok3, "the lock must be claimable again after release")
 	release2()
 }
@@ -292,38 +294,44 @@ func doGatedRequest(t *testing.T, mux *http.ServeMux, rtc gatedRoute) *httptest.
 	return rec
 }
 
-// TestGatedRoutesRefuseAnUpdatePassExceptStartAndStop is the fix for the
+// TestGatedRoutesRefuseLifecycleWorkExceptStartAndStop is the fix for the
 // regression the first cut shipped: holding the lock for the Update & Start
 // pass made EVERY gated route 409 during the git-pull/generate window of an
 // ORDINARY start — with a message naming a snapshot and a migration that were
-// not happening. Start and Stop must survive that window (see the two tests
-// below for what they must actually DO); everything else is genuinely unsafe
-// beside a pass that is regenerating and recreating containers.
-func TestGatedRoutesRefuseAnUpdatePassExceptStartAndStop(t *testing.T) {
-	d, mux := newGateTestDaemon(t)
-	require.True(t, d.longOp.TryLock(longOpUpdatePass))
-	t.Cleanup(d.longOp.Unlock)
+// not happening — and the same applies to a synchronous reload, which holds the
+// lock for the whole of doReload (minutes on an enterprise namespace). Start
+// and Stop must survive both windows (see the tests below for what they must
+// actually DO); everything else is genuinely unsafe beside a pass that is
+// regenerating and recreating containers.
+func TestGatedRoutesRefuseLifecycleWorkExceptStartAndStop(t *testing.T) {
+	for _, holder := range []longOpKind{longOpUpdatePass, longOpRequest} {
+		t.Run(string(holder), func(t *testing.T) {
+			d, mux := newGateTestDaemon(t)
+			require.True(t, d.longOp.TryLock(holder))
+			t.Cleanup(d.longOp.Unlock)
 
-	tolerated := 0
-	for _, rtc := range gatedRoutes() {
-		t.Run(rtc.handler, func(t *testing.T) {
-			rec := doGatedRequest(t, mux, rtc)
-			if rtc.tolerantOfUpdatePass {
-				assert.NotEqual(t, http.StatusConflict, rec.Code,
-					"%s must proceed alongside an update pass", rtc.handler)
-				assert.NotContains(t, rec.Body.String(), api.ErrCodeLongOpInProgress)
-				return
+			tolerated := 0
+			for _, rtc := range gatedRoutes() {
+				t.Run(rtc.handler, func(t *testing.T) {
+					rec := doGatedRequest(t, mux, rtc)
+					if rtc.tolerantOfLifecycle {
+						assert.NotEqual(t, http.StatusConflict, rec.Code,
+							"%s must proceed alongside %s", rtc.handler, holder)
+						assert.NotContains(t, rec.Body.String(), api.ErrCodeLongOpInProgress)
+						return
+					}
+					require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+					assert.Contains(t, rec.Body.String(), api.ErrCodeLongOpInProgress)
+					assert.Contains(t, rec.Body.String(), holder.busyMessage(),
+						"the refusal must name the real holder, not an imaginary snapshot")
+				})
+				if rtc.tolerantOfLifecycle {
+					tolerated++
+				}
 			}
-			require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
-			assert.Contains(t, rec.Body.String(), api.ErrCodeLongOpInProgress)
-			assert.Contains(t, rec.Body.String(), "an update pass is in progress",
-				"the refusal must name the update pass, not an imaginary snapshot")
+			assert.Equal(t, 2, tolerated, "exactly Start and Stop tolerate lifecycle work")
 		})
-		if rtc.tolerantOfUpdatePass {
-			tolerated++
-		}
 	}
-	assert.Equal(t, 2, tolerated, "exactly Start and Stop tolerate an update pass")
 }
 
 // TestStartAndStopAreStillRefusedByASnapshot: the tolerance is for the update
@@ -337,7 +345,7 @@ func TestStartAndStopAreStillRefusedByASnapshot(t *testing.T) {
 			t.Cleanup(d.longOp.Unlock)
 
 			for _, rtc := range gatedRoutes() {
-				if !rtc.tolerantOfUpdatePass {
+				if !rtc.tolerantOfLifecycle {
 					continue
 				}
 				rec := doGatedRequest(t, mux, rtc)
@@ -355,49 +363,61 @@ func TestStartAndStopAreStillRefusedByASnapshot(t *testing.T) {
 // narrowed: extra clicks fold into the single-slot queue and the Force flag is
 // OR-ed. Driving updateAndStartAsync directly — as every other queue test does
 // — cannot see a handler that refuses the click before the queue is reached.
+// Both tolerated holders are exercised: an in-flight update pass, and a
+// synchronous handler (a reload) holding the lock.
 func TestSecondUpdateClickFoldsInsteadOfBeing409ed(t *testing.T) {
-	d, mux := newGateTestDaemon(t)
-	got := captureReloadEx(d)
+	for _, holder := range []longOpKind{longOpUpdatePass, longOpRequest} {
+		t.Run(string(holder), func(t *testing.T) {
+			d, mux := newGateTestDaemon(t)
+			got := captureReloadEx(d)
 
-	// A pass is mid-flight: it owns reloadMu (so a new pass would queue behind
-	// it) and the long-operation lock (its git pull / generate window).
-	d.reloadMu.Lock()
-	require.True(t, d.longOp.TryLock(longOpUpdatePass))
+			// Something is mid-flight: it owns reloadMu (so a new pass would
+			// queue behind it) and the long-operation lock.
+			d.reloadMu.Lock()
+			require.True(t, d.longOp.TryLock(holder))
 
-	rec := doGatedRequest(t, mux, gatedRoute{method: "POST", path: api.NamespaceStart})
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	require.Eventually(t, func() bool { return d.updatePending.Load() }, time.Second, 5*time.Millisecond,
-		"the click must occupy the queue slot, not be refused")
+			rec := doGatedRequest(t, mux, gatedRoute{method: "POST", path: api.NamespaceStart})
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			require.Eventually(t, func() bool { return d.updatePending.Load() }, time.Second, 5*time.Millisecond,
+				"the click must occupy the queue slot, not be refused")
 
-	rec2 := doGatedRequest(t, mux, gatedRoute{method: "POST", path: api.NamespaceStart + "?force=true"})
-	require.Equal(t, http.StatusOK, rec2.Code, rec2.Body.String())
-	assert.True(t, d.updatePending.Load(), "the second click folds into the queued pass")
-	assert.True(t, d.updatePendingForce.Load(), "the folded Force click's intent must be OR-ed in")
+			rec2 := doGatedRequest(t, mux, gatedRoute{method: "POST", path: api.NamespaceStart + "?force=true"})
+			require.Equal(t, http.StatusOK, rec2.Code, rec2.Body.String())
+			assert.True(t, d.updatePending.Load(), "the second click folds into the queued pass")
+			assert.True(t, d.updatePendingForce.Load(), "the folded Force click's intent must be OR-ed in")
 
-	// Let the mid-flight pass finish; the queued one must then actually run.
-	d.longOp.Unlock()
-	d.reloadMu.Unlock()
-	select {
-	case args := <-got:
-		assert.True(t, args.refreshImages)
-		assert.True(t, args.force, "the folded Force click must be honored")
-	case <-time.After(5 * time.Second):
-		msg, _ := d.updateFailureFor(&namespace.Config{ID: "ns1"})
-		t.Fatalf("the folded click never ran; recorded failure: %q", msg)
+			// Let the mid-flight work finish; the queued pass must then run.
+			d.longOp.Unlock()
+			d.reloadMu.Unlock()
+			select {
+			case args := <-got:
+				assert.True(t, args.refreshImages)
+				assert.True(t, args.force, "the folded Force click must be honored")
+			case <-time.After(5 * time.Second):
+				msg, _ := d.updateFailureFor(&namespace.Config{ID: "ns1"})
+				t.Fatalf("the folded click never ran; recorded failure: %q", msg)
+			}
+		})
 	}
 }
 
-// TestStopIsAcceptedDuringAnUpdatePass: Stop is the escape hatch from a pass
-// stuck in a slow git pull. Refusing it leaves the operator with a namespace
-// they cannot stop and a 409 blaming a snapshot nobody took.
-func TestStopIsAcceptedDuringAnUpdatePass(t *testing.T) {
-	d, mux := newGateTestDaemon(t)
-	require.True(t, d.longOp.TryLock(longOpUpdatePass))
-	t.Cleanup(d.longOp.Unlock)
+// TestStopIsAcceptedDuringLifecycleWork: Stop is the escape hatch from a pass
+// stuck in a slow git pull, and from a reload grinding through a 24-app
+// namespace. Refusing it leaves the operator with a namespace they cannot stop
+// and a 409 blaming a snapshot nobody took. Accepting it is also what every
+// release before this feature did — Runtime.Stop only enqueues a command.
+func TestStopIsAcceptedDuringLifecycleWork(t *testing.T) {
+	for _, holder := range []longOpKind{longOpUpdatePass, longOpRequest} {
+		t.Run(string(holder), func(t *testing.T) {
+			d, mux := newGateTestDaemon(t)
+			require.True(t, d.longOp.TryLock(holder))
+			t.Cleanup(d.longOp.Unlock)
 
-	rec := doGatedRequest(t, mux, gatedRoute{method: "POST", path: api.NamespaceStop})
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.Contains(t, rec.Body.String(), "stop requested")
+			rec := doGatedRequest(t, mux, gatedRoute{method: "POST", path: api.NamespaceStop})
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			assert.Contains(t, rec.Body.String(), "stop requested")
+		})
+	}
 }
 
 // TestGatedRoutesReleaseTheLockOnTheSuccessPath: a gate whose release is never
@@ -424,4 +444,24 @@ func TestGatedRoutesReleaseTheLockOnTheSuccessPath(t *testing.T) {
 				"%s left the long-operation lock held (holder=%q)", rtc.handler, d.longOp.Holder())
 		})
 	}
+}
+
+// TestLongOpToleranceAllows pins the policy sets themselves: which holder a
+// Start or a Stop may run beside is the whole of this feature's behavior, and
+// it is a property of these two values rather than of any one route.
+func TestLongOpToleranceAllows(t *testing.T) {
+	assert.False(t, tolerateNothing.allows(longOpUpdatePass))
+	assert.False(t, tolerateNothing.allows(longOpRequest))
+	assert.False(t, tolerateNothing.allows(longOpSnapshot))
+	assert.False(t, tolerateNothing.allows(longOpMigration))
+
+	assert.True(t, tolerateLifecycleWork.allows(longOpUpdatePass))
+	assert.True(t, tolerateLifecycleWork.allows(longOpRequest))
+	assert.False(t, tolerateLifecycleWork.allows(longOpSnapshot),
+		"a snapshot is restoring the volumes under the namespace")
+	assert.False(t, tolerateLifecycleWork.allows(longOpMigration),
+		"a migration is rewriting the volumes and recreating the containers")
+	// A holder that let go between the failed TryLock and the read is refused
+	// like any non-member: the free-lock case belongs to the plain TryLock.
+	assert.False(t, tolerateLifecycleWork.allows(longOpNone))
 }

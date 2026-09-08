@@ -216,7 +216,7 @@ func (d *Daemon) handleAppRestart(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	release, ok := d.tryLongOp(w, longOpNone)
+	release, ok := d.tryLongOp(w, tolerateNothing)
 	if !ok {
 		return
 	}
@@ -243,7 +243,7 @@ func (d *Daemon) handleAppStop(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	release, ok := d.tryLongOp(w, longOpNone)
+	release, ok := d.tryLongOp(w, tolerateNothing)
 	if !ok {
 		return
 	}
@@ -281,7 +281,7 @@ func (d *Daemon) handleAppStart(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	release, ok := d.tryLongOp(w, longOpNone)
+	release, ok := d.tryLongOp(w, tolerateNothing)
 	if !ok {
 		return
 	}
@@ -525,7 +525,7 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	release, ok := d.tryLongOp(w, longOpNone)
+	release, ok := d.tryLongOp(w, tolerateNothing)
 	if !ok {
 		return
 	}
@@ -628,7 +628,7 @@ func (d *Daemon) handleResetAppConfig(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	release, ok := d.tryLongOp(w, longOpNone)
+	release, ok := d.tryLongOp(w, tolerateNothing)
 	if !ok {
 		return
 	}
@@ -798,7 +798,7 @@ func (d *Daemon) handlePutAppFile(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	release, ok := d.tryLongOp(w, longOpNone)
+	release, ok := d.tryLongOp(w, tolerateNothing)
 	if !ok {
 		return
 	}
@@ -866,7 +866,7 @@ func (d *Daemon) handleResetAppFile(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	release, ok := d.tryLongOp(w, longOpNone)
+	release, ok := d.tryLongOp(w, tolerateNothing)
 	if !ok {
 		return
 	}

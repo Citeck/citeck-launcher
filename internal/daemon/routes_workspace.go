@@ -149,7 +149,7 @@ func lookupWorkspaceRepoOpts(store storage.Store, secretSvc secretValueReader, w
 // config changes are picked up immediately. Kotlin parity: "Force Update" RMB
 // menu on the Welcome screen (WelcomeScreen.kt).
 func (d *Daemon) handleWorkspaceUpdate(w http.ResponseWriter, _ *http.Request) {
-	release, ok := d.tryLongOp(w, longOpNone)
+	release, ok := d.tryLongOp(w, tolerateNothing)
 	if !ok {
 		return
 	}
