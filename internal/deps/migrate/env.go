@@ -59,6 +59,11 @@ type Env interface {
 	DumpDir(id deps.ID) string
 	EnsureDir(path string) error
 	RemoveDir(path string) error
+	// RemoveDirIfEmpty removes the directory only if it holds nothing. A
+	// directory that is not empty is left alone and is NOT an error: the
+	// scratch parent ("<volumes>/deps-migration") is shared, so a migration
+	// tidying up after itself must not delete another dependency's dump.
+	RemoveDirIfEmpty(path string) error
 	FileSize(path string) (int64, error)
 	HostFreeBytes() (int64, error)
 

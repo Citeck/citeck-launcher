@@ -30,6 +30,12 @@ type fakeStore struct {
 	setErr   error // injected SetMigrationJournal failure
 	setErrAt int   // fail the Nth (1-based) SetMigrationJournal call
 	setCalls int
+	// onSet observes every persisted journal as it happens. It is how a test
+	// interleaves journal writes with what the Env was asked to do — the two
+	// are otherwise recorded in two unrelated sequences, and "written ahead of"
+	// is a claim about their ORDER. It runs under the store's lock, so it must
+	// only touch things outside the store.
+	onSet func(deps.MigrationJournal)
 }
 
 func (s *fakeStore) MigrationJournal() *deps.MigrationJournal {
@@ -56,6 +62,9 @@ func (s *fakeStore) SetMigrationJournal(j *deps.MigrationJournal) error {
 	c := *j
 	s.journal = &c
 	s.journals = append(s.journals, c)
+	if s.onSet != nil {
+		s.onSet(c)
+	}
 	return nil
 }
 

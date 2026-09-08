@@ -113,13 +113,49 @@ func TestTheFakeRoutesExecThroughExecFn(t *testing.T) {
 	assert.Equal(t, -1, code)
 }
 
-func TestTheFakeRefusesADefWhosePortsWereNotStripped(t *testing.T) {
+// Stripping the published ports is the ENV's job (two temp containers and the
+// namespace's own postgres would fight over the same host port), so the fake
+// does it rather than refusing the def — a plan that pre-stripped them would
+// hide a real Env that does not.
+func TestTheFakeStripsPublishedPortsItself(t *testing.T) {
 	f := New()
 	def, err := f.GenerateDefFor(deps.Postgres, "postgres:18")
 	require.NoError(t, err)
+	require.NotEmpty(t, def.Ports)
 	_, err = f.RunAppDef(context.Background(), def, "pg-dst", nil)
-	require.ErrorContains(t, err, "ports must be stripped")
-	assert.Empty(t, f.Log(), "a refused call is not recorded")
+	require.NoError(t, err)
+	assert.Empty(t, f.Containers["pg-dst"].Ports, "the started container has no published port")
+	assert.Equal(t, 1, f.PortsStripped())
+	assert.Equal(t, []string{"strip-ports:pg-dst", "run:pg-dst:postgres:18:"}, f.Log())
+
+	// A def that never had ports is not counted, so the counter really means
+	// "the env had to strip something".
+	_, err = f.RunAppDef(context.Background(), appdef.ApplicationDef{Image: "postgres:18"}, "pg-src", nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, f.PortsStripped())
+}
+
+func TestTheFakeKeepsANonEmptyDirectory(t *testing.T) {
+	f := New()
+	require.NoError(t, f.EnsureDir("/host/deps-migration"))
+	require.NoError(t, f.EnsureDir("/host/deps-migration/rabbitmq"))
+	f.Files["/host/deps-migration/postgres/dump.sql"] = 1 << 20
+
+	require.NoError(t, f.RemoveDirIfEmpty("/host/deps-migration"))
+	assert.Contains(t, f.Dirs, "/host/deps-migration", "another dependency still has a dump dir there")
+
+	require.NoError(t, f.RemoveDir("/host/deps-migration/rabbitmq"))
+	require.NoError(t, f.RemoveDirIfEmpty("/host/deps-migration"))
+	assert.Contains(t, f.Dirs, "/host/deps-migration", "a file below it counts as well")
+
+	delete(f.Files, "/host/deps-migration/postgres/dump.sql")
+	require.NoError(t, f.RemoveDirIfEmpty("/host/deps-migration"))
+	assert.NotContains(t, f.Dirs, "/host/deps-migration")
+	assert.Equal(t, []string{
+		"mkdir:/host/deps-migration", "mkdir:/host/deps-migration/rabbitmq",
+		"rmdirempty-kept:/host/deps-migration", "rmdir:/host/deps-migration/rabbitmq",
+		"rmdirempty-kept:/host/deps-migration", "rmdirempty:/host/deps-migration",
+	}, f.Log())
 }
 
 func TestTheFakeInjectsAnErrorPerCall(t *testing.T) {
@@ -135,6 +171,7 @@ func TestTheFakeInjectsAnErrorPerCall(t *testing.T) {
 	f.FailOn["pull:postgres:18"] = boom
 	f.FailOn["mkdir:/host/x"] = boom
 	f.FailOn["rmdir:/host/x"] = boom
+	f.FailOn["rmdirempty:/host/x"] = boom
 	f.FailOn["readfile:postgres2/PG_VERSION"] = boom
 	f.FailOn["gendef:postgres:18"] = boom
 	f.FailOn["stopns:"] = boom
@@ -148,6 +185,7 @@ func TestTheFakeInjectsAnErrorPerCall(t *testing.T) {
 	require.ErrorIs(t, f.PullImage(ctx, "postgres:18", nil), boom)
 	require.ErrorIs(t, f.EnsureDir("/host/x"), boom)
 	require.ErrorIs(t, f.RemoveDir("/host/x"), boom)
+	require.ErrorIs(t, f.RemoveDirIfEmpty("/host/x"), boom)
 	_, err = f.ReadVolumeFile(ctx, "postgres2", "PG_VERSION")
 	require.ErrorIs(t, err, boom)
 	_, err = f.GenerateDefFor(deps.Postgres, "postgres:18")

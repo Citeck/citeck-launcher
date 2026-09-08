@@ -11,7 +11,6 @@ package migratetest
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -55,12 +54,14 @@ type FakeEnv struct {
 	// FailOn injects an error into a single method call, keyed "op:arg" —
 	// "run:pg-src", "createvol:postgres3", "pull:postgres:18", "stopns:",
 	// "reload:", "rmvol:postgres3", "rm:pg-src", "mkdir:/host/x",
-	// "rmdir:/host/x", "gendef:postgres:18", "readfile:postgres2/PG_VERSION".
+	// "rmdir:/host/x", "rmdirempty:/host/x", "gendef:postgres:18",
+	// "readfile:postgres2/PG_VERSION".
 	FailOn map[string]error
 
-	log     []string
-	pulled  []string
-	reloads []bool
+	log           []string
+	pulled        []string
+	reloads       []bool
+	portsStripped int
 }
 
 // New returns a FakeEnv with empty inventories and plenty of free space.
@@ -101,6 +102,14 @@ func (f *FakeEnv) Pulled() []string {
 	return append([]string(nil), f.pulled...)
 }
 
+// PortsStripped counts the RunAppDef calls whose def carried published ports
+// the env had to strip.
+func (f *FakeEnv) PortsStripped() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.portsStripped
+}
+
 // Reloads returns the start flag of every ReloadAndStart, in order.
 func (f *FakeEnv) Reloads() []bool {
 	f.mu.Lock()
@@ -118,8 +127,10 @@ func (f *FakeEnv) NamespaceID() string {
 	return f.NS
 }
 
-// RunAppDef records a started container; it refuses a def whose published
-// ports were not stripped, which is the real Env's job and not the plan's.
+// RunAppDef records a started container, stripping the def's published ports
+// first — that is the real Env's job, not the plan's, so the fake does it too
+// and records that it did (a "strip-ports:<name>" log entry and the
+// PortsStripped counter) instead of making the plan pre-strip them.
 func (f *FakeEnv) RunAppDef(_ context.Context, def appdef.ApplicationDef, name string, extra []string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -127,7 +138,9 @@ func (f *FakeEnv) RunAppDef(_ context.Context, def appdef.ApplicationDef, name s
 		return "", err
 	}
 	if len(def.Ports) != 0 {
-		return "", errors.New("fake: ports must be stripped by the env, not by the plan")
+		def.Ports = nil
+		f.portsStripped++
+		f.log = append(f.log, "strip-ports:"+name)
 	}
 	f.Containers[name] = def
 	f.log = append(f.log, "run:"+name+":"+def.Image+":"+strings.Join(extra, ","))
@@ -266,6 +279,33 @@ func (f *FakeEnv) RemoveDir(p string) error {
 	return nil
 }
 
+// RemoveDirIfEmpty forgets the directory only when nothing else the fake
+// knows about (a directory or a file) lives under it; a non-empty directory is
+// kept and is not an error, exactly as os.Remove's ENOTEMPTY is ignored.
+func (f *FakeEnv) RemoveDirIfEmpty(p string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.failUnderLock("rmdirempty", p); err != nil {
+		return err
+	}
+	prefix := strings.TrimSuffix(p, "/") + "/"
+	for d := range f.Dirs {
+		if strings.HasPrefix(d, prefix) {
+			f.log = append(f.log, "rmdirempty-kept:"+p)
+			return nil
+		}
+	}
+	for file := range f.Files {
+		if strings.HasPrefix(file, prefix) {
+			f.log = append(f.log, "rmdirempty-kept:"+p)
+			return nil
+		}
+	}
+	delete(f.Dirs, p)
+	f.log = append(f.log, "rmdirempty:"+p)
+	return nil
+}
+
 // FileSize answers from Files (0 for an unknown path).
 func (f *FakeEnv) FileSize(p string) (int64, error) {
 	f.mu.Lock()
@@ -329,7 +369,8 @@ func (f *FakeEnv) ReloadAndStart(_ context.Context, start bool) error {
 }
 
 // GenerateDefFor answers from Defs, or a default postgres def carrying a
-// published port so a plan that forgets to let the env strip it is caught.
+// published port, so every plan that runs a generated def exercises the
+// stripping RunAppDef owes it.
 func (f *FakeEnv) GenerateDefFor(_ deps.ID, image string) (appdef.ApplicationDef, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
