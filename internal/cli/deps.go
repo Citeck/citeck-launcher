@@ -365,13 +365,19 @@ func confirmMigration(id string, pre *migrate.PreflightResult) bool {
 // printed whether or not the checks passed — a refusal the user cannot see the
 // reason for is worse than no check at all.
 func preflightLines(pre *migrate.PreflightResult) []string {
-	lines := []string{
-		t("deps.preflight.title", "from", pre.From, "to", pre.To),
-		"  " + t("deps.preflight.data", "size", fsutil.FormatBytes(pre.DataSizeBytes)),
-		"  " + t("deps.preflight.host",
-			"need", fsutil.FormatBytes(pre.RequiredHostBytes), "free", fsutil.FormatBytes(pre.FreeHostBytes)),
-		"  " + t("deps.preflight.volume",
-			"need", fsutil.FormatBytes(pre.RequiredVolumeBytes), "free", fsutil.FormatBytes(pre.FreeVolumeBytes)),
+	lines := []string{t("deps.preflight.title", "from", pre.From, "to", pre.To)}
+	// A preflight the daemon refused before it touched Docker measured
+	// nothing, and its zeros are not facts: printing them says the namespace
+	// holds no data and the host has no free space, above the line that gives
+	// the actual reason.
+	if pre.Measured() {
+		lines = append(lines,
+			"  "+t("deps.preflight.data", "size", fsutil.FormatBytes(pre.DataSizeBytes)),
+			"  "+t("deps.preflight.host",
+				"need", fsutil.FormatBytes(pre.RequiredHostBytes), "free", fsutil.FormatBytes(pre.FreeHostBytes)),
+			"  "+t("deps.preflight.volume",
+				"need", fsutil.FormatBytes(pre.RequiredVolumeBytes), "free", fsutil.FormatBytes(pre.FreeVolumeBytes)),
+		)
 	}
 	if pre.WasRunning {
 		lines = append(lines, "  "+t("deps.preflight.willStop"))

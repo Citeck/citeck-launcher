@@ -143,19 +143,25 @@ func dependencyItems(act activeNamespace) []api.DependencyDto {
 	return items
 }
 
-// unsupportedPair reports a version pair the launcher UNDERSTANDS and still
-// cannot migrate: PostgresMigrator.Supports says no, because the two majors
-// would share a data volume (this plan builds the new cluster next to the old
-// data, which is what makes the rollback a deletion) or the move goes
-// backwards. 18 → 19 is the case that exists today — PostgresLayoutFor maps
-// every major from 18 up to postgres3 — and without this the row said "upgrade
-// available: citeck deps upgrade postgres" and the preflight then refused it
-// with a message about volumes, sending the operator after a disk problem they
-// do not have.
+// unsupportedPair reports a version pair the launcher UNDERSTANDS, could
+// plausibly migrate one day, and cannot migrate TODAY: the two majors would
+// share a data volume, so this plan — which builds the new cluster next to the
+// old data, and whose rollback is therefore a deletion — has nowhere to put it.
+// 18 → 19 is the case that exists (PostgresLayoutFor maps every major from 18
+// up to postgres3), and without this the row said "upgrade available: citeck
+// deps upgrade postgres" and the preflight then refused it with a message about
+// volumes, sending the operator after a disk problem they do not have.
 //
-// An UNPARSABLE tag is deliberately not one of these. It is refused by the
-// preflight with a message about the tag, which is what the operator needs;
-// reporting "update the launcher" for it would name the wrong fix.
+// The answer this drives is "update the launcher", so everything a NEWER
+// LAUNCHER WOULD NOT FIX has to be carved out and left to the preflight, which
+// has the accurate message for each:
+//
+//   - an UNPARSABLE tag — refused with a message about the tag;
+//   - a DOWNGRADE — refused with "the launcher does not migrate data
+//     backwards", which is a policy, not a missing feature. Supports() answers
+//     false for it (it demands a forward move), so without this carve-out both
+//     routes told the operator to go and update a launcher that will never
+//     grow the ability, and the real message became unreachable.
 func unsupportedPair(id deps.ID, from, to string) bool {
 	if id != deps.Postgres {
 		return false
@@ -163,6 +169,9 @@ func unsupportedPair(id deps.ID, from, to string) bool {
 	fromV, okFrom := deps.ParseImageVersion(from)
 	toV, okTo := deps.ParseImageVersion(to)
 	if !okFrom || !okTo {
+		return false
+	}
+	if toV.Major < fromV.Major {
 		return false
 	}
 	return !migrate.PostgresMigrator{}.Supports(fromV, toV)
@@ -318,14 +327,21 @@ func (d *Daemon) resolveMigration(w http.ResponseWriter, act activeNamespace, id
 // being rewritten.
 func (d *Daemon) preMigrationProblems(act activeNamespace) []string {
 	var problems []string
-	if blocked := d.journalBlocker(act); blocked != "" {
+	blocked := d.journalBlocker(act)
+	if blocked != "" {
 		problems = append(problems, blocked)
 	}
 	// A read, not a claim: this route mutates nothing, and the migrate route
 	// does its own TryLock. The window between them is the same check-then-act
 	// tryLongOp documents — worst case the confirm screen looks clear and the
 	// click is refused with the same message.
-	if holder := d.longOp.Holder(); holder != longOpNone {
+	//
+	// Skipped when the journal already spoke, because during a migration the
+	// two describe ONE condition from two angles ("a migration of postgres is
+	// already running" and "a dependency migration is in progress") and a
+	// confirm screen that lists the same fact twice reads as two problems.
+	// The journal's wording wins: it names the dependency.
+	if holder := d.longOp.Holder(); holder != longOpNone && blocked == "" {
 		problems = append(problems, holder.busyMessage()+" — wait for it to finish")
 	}
 	if act.runtime != nil {

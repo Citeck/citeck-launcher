@@ -60,7 +60,7 @@ function isPreparing(migration: DepsMigrationView): boolean {
 
 /** The step id the daemon publishes while it has no plan yet (Go:
  *  api.DependencyMigrationStepPreparing). */
-const PREPARING_STEP = 'preparing' 
+const PREPARING_STEP = 'preparing'
 
 /**
  * What each infrastructure dependency runs on, what the bundle offers, and the
@@ -284,9 +284,20 @@ export function DependenciesDialog({ open, onClose }: Props) {
           {preflight && (
             <>
               <ul className="list-disc space-y-0.5 pl-5 text-xs">
-                <li>{t('deps.preflight.data', { size: formatBytes(preflight.dataSizeBytes) })}</li>
-                <li>{t('deps.preflight.host', { need: formatBytes(preflight.requiredHostBytes), free: formatBytes(preflight.freeHostBytes) })}</li>
-                <li>{t('deps.preflight.volume', { need: formatBytes(preflight.requiredVolumeBytes), free: formatBytes(preflight.freeVolumeBytes) })}</li>
+                {/* A preflight the daemon refused before it touched Docker
+                    measured nothing, and its zeros are not facts: rendering
+                    them claims the namespace holds no data and the host has no
+                    free space, above the line with the actual reason.
+                    requiredHostBytes is the discriminator (Go: Measured()) —
+                    the space check always sets it to the data size plus the
+                    margin, so a measured result cannot have it at zero. */}
+                {preflight.requiredHostBytes > 0 && (
+                  <>
+                    <li>{t('deps.preflight.data', { size: formatBytes(preflight.dataSizeBytes) })}</li>
+                    <li>{t('deps.preflight.host', { need: formatBytes(preflight.requiredHostBytes), free: formatBytes(preflight.freeHostBytes) })}</li>
+                    <li>{t('deps.preflight.volume', { need: formatBytes(preflight.requiredVolumeBytes), free: formatBytes(preflight.freeVolumeBytes) })}</li>
+                  </>
+                )}
                 {preflight.wasRunning && <li>{t('deps.preflight.willStop')}</li>}
                 <li>{t('deps.preflight.oldKept')}</li>
               </ul>

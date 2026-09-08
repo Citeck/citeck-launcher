@@ -14,8 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/citeck/citeck-launcher/internal/api"
+	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/deps/migrate"
+	"github.com/citeck/citeck-launcher/internal/deps/migrate/migratetest"
 	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 )
@@ -318,6 +320,69 @@ func TestAnUnsupportedPairIsReportedAsALauncherUpdate(t *testing.T) {
 	}
 }
 
+// The BANNER reads NamespaceDto.dependencyUpgrades, not the dependency list, and
+// it headlines the two cases differently — "Dependency upgrade available"
+// against "Newer launcher needed for". Built straight from the generator's
+// per-DEPENDENCY verdict it advertised an 18 → 19 held back for want of a
+// layout as a click away from migrating.
+func TestNamespaceDtoMarksAnUnsupportedPairAsNotMigratable(t *testing.T) {
+	d, mux, rt := newDepsRoutesDaemon(t)
+	rt.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:18"}}, nil, nil)
+	d.activeNs.dependencyUpgrades[0] = namespace.DependencyUpgrade{
+		ID: deps.Postgres, App: "postgres", From: "postgres:18", To: "postgres:19", Migratable: true,
+	}
+	d.activeNs.appDefs = []appdef.ApplicationDef{{Name: "postgres"}}
+
+	rec := depsGet(mux, api.Namespace)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var dto api.NamespaceDto
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dto))
+	require.Len(t, dto.DependencyUpgrades, 2)
+	assert.Equal(t, "postgres", dto.DependencyUpgrades[0].ID)
+	assert.False(t, dto.DependencyUpgrades[0].Migratable,
+		"18 → 19 has no plan in this release — the banner must say 'newer launcher'")
+	// The pair the launcher WAS built for still reaches the banner as an offer.
+	d.activeNs.dependencyUpgrades[0].From, d.activeNs.dependencyUpgrades[0].To = "postgres:17.5", "postgres:18"
+	rec = depsGet(mux, api.Namespace)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dto))
+	assert.True(t, dto.DependencyUpgrades[0].Migratable)
+}
+
+// A DOWNGRADE is not a missing feature — no launcher will ever grow it — so it
+// must NOT be answered with "update the launcher". Supports() rejects it (it
+// demands a forward move), which is exactly why it needs its own carve-out:
+// without one the preflight's accurate wording was unreachable through both
+// routes.
+func TestADowngradeGetsItsOwnMessageNotALauncherUpdate(t *testing.T) {
+	d, mux, rt := newDepsRoutesDaemon(t)
+	rt.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:18"}}, nil, nil)
+	d.activeNs.dependencyUpgrades[0] = namespace.DependencyUpgrade{
+		ID: deps.Postgres, App: "postgres", From: "postgres:18", To: "postgres:17", Migratable: true,
+	}
+	d.activeNs.dependencies[deps.Postgres] = namespace.DependencyGen{
+		Effective: "postgres:18", Candidate: "postgres:17",
+	}
+	assert.False(t, unsupportedPair(deps.Postgres, "postgres:18", "postgres:17"), "a downgrade is not a launcher problem")
+	assert.True(t, unsupportedPair(deps.Postgres, "postgres:18", "postgres:19"), "a forward pair with no layout is")
+
+	// The route lets it through instead of short-circuiting: it gets as far as
+	// the Docker probe (503 on this daemon, which has no client), where an
+	// unsupported forward pair is refused with 409 NOT_MIGRATABLE first.
+	rec := depsGet(mux, api.DependencyPreflightPath("postgres"))
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "update the launcher")
+	rec = depsPost(mux, api.DependencyMigratePath("postgres"), "{}")
+	assert.NotContains(t, rec.Body.String(), api.ErrCodeDependencyNotMigratable)
+
+	// And the message it will get is the accurate one, which had become
+	// unreachable through both routes.
+	env := migratetest.New()
+	env.Volumes[deps.PostgresVolumeV18] = map[string]string{"18/docker/PG_VERSION": "18\n"}
+	pre := migrate.PostgresMigrator{}.Preflight(context.Background(), env, "postgres:18", "postgres:17")
+	assert.False(t, pre.OK)
+	assert.Contains(t, strings.Join(pre.Problems, "\n"), "does not migrate data backwards")
+}
+
 // The pair the launcher WAS built for stays offered — the guard above must not
 // swallow the feature it guards.
 func TestTheSupportedPairIsStillOffered(t *testing.T) {
@@ -347,6 +412,21 @@ func TestPreflightReportsEveryRefusalItCanAnswerWithoutDocker(t *testing.T) {
 		require.Len(t, pre.Problems, 1)
 		assert.Contains(t, pre.Problems[0], "start or stop it")
 	})
+	// One condition, one line. During a migration the journal and the lock
+	// describe the same fact from two angles, and a confirm screen listing it
+	// twice reads as two problems.
+	t.Run("a running migration is reported once", func(t *testing.T) {
+		d, mux, rt := newDepsRoutesDaemon(t)
+		rt.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}},
+			&deps.MigrationJournal{ID: deps.Postgres, From: "postgres:17.5", To: "postgres:18"}, nil)
+		d.setDepsMigration("ns1", &api.DependencyMigrationDto{ID: "postgres", Step: "dump"})
+		t.Cleanup(func() { d.setDepsMigration("ns1", nil) })
+		require.True(t, d.longOp.TryLock(longOpMigration))
+		t.Cleanup(d.longOp.Unlock)
+		pre := decodePreflight(t, depsGet(mux, api.DependencyPreflightPath("postgres")))
+		require.Len(t, pre.Problems, 1)
+		assert.Contains(t, pre.Problems[0], "already running", "the journal's wording wins: it names the dependency")
+	})
 	// It answers WITHOUT Docker: there is no client on this daemon, and a
 	// refusal that first tried to probe would 503 instead.
 	t.Run("without touching docker", func(t *testing.T) {
@@ -370,6 +450,17 @@ func TestRefusedPreflightMarshalsArraysNotNull(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Contains(t, rec.Body.String(), `"warnings":[]`)
 	assert.NotContains(t, rec.Body.String(), "null")
+}
+
+// A refusal answered without Docker measured nothing, and its zeros must not
+// be rendered as facts — see PreflightResult.Measured.
+func TestARefusedPreflightReportsItMeasuredNothing(t *testing.T) {
+	_, mux, rt := newDepsRoutesDaemon(t)
+	rt.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}},
+		&deps.MigrationJournal{ID: deps.Postgres, From: "postgres:17.5", To: "postgres:18"}, nil)
+	pre := decodePreflight(t, depsGet(mux, api.DependencyPreflightPath("postgres")))
+	assert.False(t, pre.Measured())
+	assert.Zero(t, pre.RequiredHostBytes)
 }
 
 func decodePreflight(t *testing.T, rec *httptest.ResponseRecorder) migrate.PreflightResult {

@@ -162,7 +162,15 @@ func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 	// for the namespace it belongs to, exactly like Updating.
 	for _, u := range act.dependencyUpgrades {
 		dto.DependencyUpgrades = append(dto.DependencyUpgrades, api.DependencyUpgradeDto{
-			ID: string(u.ID), App: u.App, From: u.From, To: u.To, Migratable: u.Migratable,
+			ID: string(u.ID), App: u.App, From: u.From, To: u.To,
+			// Two questions, exactly as dependencyItems asks them: is the
+			// DEPENDENCY migratable (the generator's answer, carried on the
+			// upgrade) and is THIS PAIR one this release has a plan for. The
+			// banner headlines the two cases differently — "Dependency upgrade
+			// available" against "Newer launcher needed for" — so an 18 → 19
+			// held back for want of a layout was being advertised as a click
+			// away from migrating.
+			Migratable: u.Migratable && !unsupportedPair(u.ID, u.From, u.To),
 		})
 	}
 	if act.nsConfig != nil {

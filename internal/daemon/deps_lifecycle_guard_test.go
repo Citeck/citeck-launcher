@@ -42,6 +42,44 @@ func TestStartIsRefusedWhileARollbackIsPending(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "rollback pending")
 }
 
+// The per-app play button and `citeck start postgres` are the same door: they
+// start the namespace's own postgres, on the PGDATA depsmig-src may still hold
+// read-write. Stop is deliberately NOT guarded — it is the escape hatch, and
+// stopping a container over that volume is what the operator wants.
+func TestPerAppStartAndRestartAreRefusedWhileARollbackIsPending(t *testing.T) {
+	for _, path := range []string{api.AppStart("postgres"), api.AppRestart("postgres")} {
+		t.Run(path, func(t *testing.T) {
+			d, mux := newGateTestDaemon(t)
+			require.NoError(t, d.active().runtime.SetMigrationJournal(openJournal()))
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, http.NoBody))
+			require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+			assert.Contains(t, rec.Body.String(), api.ErrCodeDependencyMigrationInProgress)
+			assert.Contains(t, rec.Body.String(), "rollback pending")
+		})
+	}
+	// Stop stays open: it is how the operator gets the container off the
+	// volume in the first place.
+	d, mux := newGateTestDaemon(t)
+	require.NoError(t, d.active().runtime.SetMigrationJournal(openJournal()))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, api.AppStop("postgres"), http.NoBody))
+	assert.NotEqual(t, http.StatusConflict, rec.Code, rec.Body.String())
+}
+
+// With a clear journal the guard lets the request through to the ordinary app
+// lookup. This runtime has never been started, so that lookup answers 404 —
+// which is the point: the refusal above happens BEFORE it, so a 404 here is
+// proof the guard stood aside rather than that the route works by accident.
+func TestPerAppStartIsAcceptedWithNoOpenJournal(t *testing.T) {
+	d, mux := newGateTestDaemon(t)
+	require.Nil(t, d.active().runtime.MigrationJournal())
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, api.AppStart("postgres"), http.NoBody))
+	require.NotEqual(t, http.StatusConflict, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), api.ErrCodeAppNotFound)
+}
+
 // The same namespace with a CLEAR journal must still start — the guard is
 // about leftovers, not about the feature being present.
 func TestStartIsAcceptedWithNoOpenJournal(t *testing.T) {

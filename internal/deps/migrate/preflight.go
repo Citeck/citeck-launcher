@@ -52,6 +52,15 @@ type PlanOptions struct {
 // measured size and what the restore's WAL and indexes need on top.
 const SpaceMargin int64 = 512 << 20
 
+// Measured reports whether the space checks actually ran. A result built by
+// RefusedPreflight never probed anything, so every size on it is a zero that
+// means "not measured" — and rendered verbatim that reads as a namespace with
+// no data and a full disk ("Data size: 0 B", "Host (dump): need 0 B, free
+// 0 B") printed above the real reason. RequiredHostBytes is the discriminator
+// because checkSpace always sets it to the data size plus SpaceMargin, so a
+// measured result cannot have it at zero.
+func (r PreflightResult) Measured() bool { return r.RequiredHostBytes > 0 }
+
 // NewPreflightResult is the only way a PreflightResult should be built: it
 // gives Problems and Warnings the empty-slice value the wire contract demands
 // (see the type's doc), which a struct literal silently would not.

@@ -319,6 +319,31 @@ func TestPreflightLines(t *testing.T) {
 	assert.Contains(t, bad, "18")
 }
 
+// A preflight the daemon refused before it touched Docker measured nothing.
+// Its zeros are not facts, and printed above the reason they claim the
+// namespace holds no data and the host has no free space — which is what a
+// real stand showed ("Data size: 0 B", "Host (dump): need 0 B, free 0 B").
+func TestPreflightLines_UnmeasuredSizesAreNotPrinted(t *testing.T) {
+	depsTestSetup(t)
+	refused := migrate.RefusedPreflight("postgres:17.5", "postgres:18",
+		"a previous migration of postgres left a rollback pending")
+	joined := strings.Join(preflightLines(&refused), "\n")
+	assert.Contains(t, joined, "rollback pending", "the reason is still the point of the block")
+	assert.NotContains(t, joined, "0 B")
+	assert.NotContains(t, joined, tHelper("deps.preflight.data", "size", "0 B"))
+
+	// A preflight that DID run still reports every number.
+	measured := migrate.NewPreflightResult("postgres:17.5", "postgres:18")
+	measured.OK = true
+	measured.DataSizeBytes = 2 << 30
+	measured.RequiredHostBytes = 2<<30 + migrate.SpaceMargin
+	measured.RequiredVolumeBytes = measured.RequiredHostBytes
+	measured.FreeHostBytes, measured.FreeVolumeBytes = 100<<30, 100<<30
+	joined = strings.Join(preflightLines(&measured), "\n")
+	assert.Contains(t, joined, "2.0 GiB")
+	assert.Contains(t, joined, "100.0 GiB")
+}
+
 func TestDepsListLines_TableAndNotices(t *testing.T) {
 	depsTestSetup(t)
 	dto := &api.DependenciesDto{

@@ -226,6 +226,17 @@ func (d *Daemon) handleAppRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
+	// The per-app path is the last door of the "second postmaster" class the
+	// namespace-level Start already closed: a migration whose ROLLBACK failed
+	// leaves depsmig-src on the host with the namespace's own data volume
+	// mounted read-write, and `citeck start postgres` (or the play button in
+	// the app table) would start the namespace's postgres on that same PGDATA.
+	// The long-op lock is gone by then — the failed migration's goroutine has
+	// returned — so the journal is the only thing that still knows.
+	if pending := d.rollbackBlocker(d.active()); pending != "" {
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyMigrationInProgress, pending)
+		return
+	}
 	rt := d.requireRuntime(w)
 	if rt == nil {
 		return
@@ -303,6 +314,17 @@ func (d *Daemon) handleAppStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
+	// The per-app path is the last door of the "second postmaster" class the
+	// namespace-level Start already closed: a migration whose ROLLBACK failed
+	// leaves depsmig-src on the host with the namespace's own data volume
+	// mounted read-write, and `citeck start postgres` (or the play button in
+	// the app table) would start the namespace's postgres on that same PGDATA.
+	// The long-op lock is gone by then — the failed migration's goroutine has
+	// returned — so the journal is the only thing that still knows.
+	if pending := d.rollbackBlocker(d.active()); pending != "" {
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyMigrationInProgress, pending)
+		return
+	}
 	rt := d.requireRuntime(w)
 	if rt == nil {
 		return

@@ -211,6 +211,31 @@ describe('DependenciesDialog', () => {
     expect(await screen.findByRole('button', { name: /start migration/i })).toBeEnabled()
   })
 
+  // A preflight the daemon refused before it touched Docker measured nothing;
+  // its zeros would claim the namespace holds no data and the host has no free
+  // space, above the line that gives the actual reason.
+  it('does not render the size block of a preflight that measured nothing', async () => {
+    vi.mocked(getDependencyPreflight).mockResolvedValue({
+      ok: false, problems: ['a previous migration of postgres left a rollback pending'], warnings: [],
+      from: 'postgres:17.5', to: 'postgres:18',
+      dataSizeBytes: 0, requiredHostBytes: 0, requiredVolumeBytes: 0,
+      freeHostBytes: 0, freeVolumeBytes: 0, wasRunning: false,
+    })
+    render(<DependenciesDialog open onClose={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: /^upgrade$/i }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('rollback pending')
+    expect(screen.queryByText(/Data size:/)).toBeNull()
+    expect(screen.queryByText(/Host \(dump\):/)).toBeNull()
+    // The rest of the confirm screen is untouched.
+    expect(screen.getByText(/current data volume is kept untouched/i)).toBeInTheDocument()
+  })
+
+  it('renders the size block of a preflight that did measure', async () => {
+    render(<DependenciesDialog open onClose={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: /^upgrade$/i }))
+    expect(await screen.findByText(/Host \(dump\):/)).toBeInTheDocument()
+  })
+
   // "empty" is the daemon's sentinel for a volume with no cluster in it — the
   // common leftover case — and it is not a version: interpolating it reads as
   // "PostgreSQL empty" in every locale.
