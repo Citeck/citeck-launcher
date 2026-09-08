@@ -58,3 +58,6 @@ docs/superpowers/
 
 ### Agent session state (kept local, never committed) ###
 .agents/
+
+# SDD scratch workspace (ledger, briefs, review packages)
+.superpowers/
