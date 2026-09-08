@@ -1,6 +1,9 @@
 package daemon
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -66,6 +69,46 @@ func gatedRoutes() []gatedRoute {
 		{handler: "handleUpgradeNamespace", method: "POST", path: api.NamespaceUpgrade, body: `{"bundleRef":"citeck:community-2.0.0"}`},
 		{handler: "handleWorkspaceUpdate", method: "POST", path: api.WorkspaceUpdate},
 	}
+}
+
+// The table above is hand-written, and a hand-written table of "every gated
+// route" is exactly the thing that silently stops being every gated route. A
+// handler added with tryLongOp and not listed here would be covered by none of
+// the tests below, and they would all still pass.
+//
+// So the SOURCE is counted: one tryLongOp CALL per row. It is deliberately a
+// count and not a name match — the call site does not carry the handler's name
+// in any form an AST walk can read reliably — which means it catches an
+// addition or a removal, and it is the row's `handler` field that keeps the
+// table honest about WHICH one. handleDependencyMigrate is excluded from both
+// sides: it claims the lock itself (see the doc above), never through
+// tryLongOp, so it is not a call site either.
+func TestGatedRoutesTableCoversEveryTryLongOpCallSite(t *testing.T) {
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
+		return !strings.HasSuffix(fi.Name(), "_test.go")
+	}, parser.SkipObjectResolution)
+	require.NoError(t, err)
+	require.Contains(t, pkgs, "daemon")
+
+	calls := 0
+	for _, f := range pkgs["daemon"].Files {
+		ast.Inspect(f, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "tryLongOp" {
+				calls++
+			}
+			return true
+		})
+	}
+	require.NotZero(t, calls, "no tryLongOp call site found — the walk is broken, not the table")
+	assert.Equal(t, len(gatedRoutes()), calls,
+		"gatedRoutes() lists %d routes but the package has %d tryLongOp call sites: "+
+			"a gated route missing from the table is tested by nothing",
+		len(gatedRoutes()), calls)
 }
 
 // TestMutatingRoutesRefuseDuringALongOperation pins the route gate: every route

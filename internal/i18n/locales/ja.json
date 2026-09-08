@@ -406,6 +406,7 @@
   "deps.cancelled": "キャンセルしました",
   "deps.failed": "移行に失敗し、ロールバックしました: {error}",
   "deps.streamClosed": "移行が完了する前にデーモンとの接続が切れました — 結果は `citeck deps` で確認してください",
+  "deps.step.preparing": "準備しています（データと空き容量を確認しています）",
   "deps.step.stop-namespace": "名前空間を停止しています",
   "deps.step.pull-image": "新しいイメージを取得しています",
   "deps.step.start-source": "現在のデータベースを起動しています",

@@ -244,6 +244,27 @@ func TestIsMigrationEventFor(t *testing.T) {
 	assert.False(t, isMigrationEventFor(api.EventDto{Type: "pull_progress", AppName: "postgres"}, "postgres"))
 }
 
+// The daemon publishes "preparing" with no step count while it builds the
+// plan — the `du` of the data volume is minutes on a real cluster, and until
+// this the command printed nothing at all for it. "[0/0]" would read as a
+// broken counter, so the title carries the line on its own.
+func TestRenderMigrationEvent_PreparingHasNoStepCounter(t *testing.T) {
+	depsTestSetup(t)
+	line, terminal, failed := renderMigrationEvent(api.EventDto{
+		Type:  api.EventDepsMigrationProgress,
+		Phase: api.DependencyMigrationStepPreparing,
+		After: "postgres:17.5 → postgres:18",
+	})
+	assert.Contains(t, line, tHelper("deps.step."+api.DependencyMigrationStepPreparing))
+	assert.NotContains(t, line, "[0/0]")
+	assert.Contains(t, line, "postgres:17.5 → postgres:18")
+	assert.False(t, terminal)
+	assert.False(t, failed)
+	// And it is a translated sentence, not the raw id.
+	assert.NotEqual(t, api.DependencyMigrationStepPreparing,
+		stepTitle(api.DependencyMigrationStepPreparing))
+}
+
 func TestStepTitle_FallsBackToTheRawStepID(t *testing.T) {
 	depsTestSetup(t)
 	assert.Equal(t, tHelper("deps.step.restore"), stepTitle("restore"))

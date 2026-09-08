@@ -406,6 +406,7 @@
   "deps.cancelled": "Abgebrochen",
   "deps.failed": "Migration fehlgeschlagen und zurückgerollt: {error}",
   "deps.streamClosed": "Die Verbindung zum Daemon wurde vor dem Ende der Migration geschlossen – führen Sie `citeck deps` aus, um das Ergebnis zu sehen",
+  "deps.step.preparing": "Vorbereitung (Daten und freier Speicherplatz werden geprüft)",
   "deps.step.stop-namespace": "Namespace wird gestoppt",
   "deps.step.pull-image": "Neues Image wird geladen",
   "deps.step.start-source": "Aktuelle Datenbank wird gestartet",

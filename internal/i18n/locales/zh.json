@@ -406,6 +406,7 @@
   "deps.cancelled": "已取消",
   "deps.failed": "迁移失败并已回滚：{error}",
   "deps.streamClosed": "迁移完成前与守护进程的连接已关闭 — 请运行 `citeck deps` 查看结果",
+  "deps.step.preparing": "正在准备（正在检查数据和可用空间）",
   "deps.step.stop-namespace": "正在停止命名空间",
   "deps.step.pull-image": "正在拉取新镜像",
   "deps.step.start-source": "正在启动当前数据库",

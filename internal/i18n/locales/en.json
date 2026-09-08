@@ -406,6 +406,7 @@
   "deps.cancelled": "Cancelled",
   "deps.failed": "Migration failed and was rolled back: {error}",
   "deps.streamClosed": "The connection to the daemon closed before the migration finished — run `citeck deps` for the result",
+  "deps.step.preparing": "Preparing (checking the data and free space)",
   "deps.step.stop-namespace": "Stopping the namespace",
   "deps.step.pull-image": "Pulling the new image",
   "deps.step.start-source": "Starting the current database",

@@ -412,10 +412,9 @@ func TestIntegration_Postgres17To18(t *testing.T) {
 	require.NoError(t, runErr)
 	t.Logf("migration %s → %s took %s", itFromImage, itToImage, total.Round(time.Millisecond))
 
-	assert.Equal(t, []string{
-		"stop-namespace", "pull-image", "start-source", "dump", "stop-source",
-		"create-volume", "start-target", "restore", "verify", "stop-target",
-	}, steps)
+	// The plan's own exported list, never a copy: a step renamed in postgres.go
+	// must fail HERE rather than quietly stop being asserted.
+	assert.Equal(t, migrate.PostgresStepIDs(), steps)
 
 	// The evidence the fakes cannot produce: what psql actually printed while
 	// replaying a real pg_dumpall script into PostgreSQL 18.

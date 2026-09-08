@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -284,6 +285,101 @@ func TestPreflightReportsAPendingRollbackAsAProblem(t *testing.T) {
 	assert.Equal(t, "postgres:18", pre.To)
 }
 
+// 18 → 19 is held back by the generator like any breaking change, but this
+// release has no layout for 19 — PostgresLayoutFor maps every major from 18 up
+// to one volume, and this plan builds the new cluster in a SEPARATE one. The
+// row must say "update the launcher" rather than offer a button that ends in a
+// message about volumes.
+func TestAnUnsupportedPairIsReportedAsALauncherUpdate(t *testing.T) {
+	d, mux, rt := newDepsRoutesDaemon(t)
+	rt.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:18"}}, nil, nil)
+	d.activeNs.dependencyUpgrades[0] = namespace.DependencyUpgrade{
+		ID: deps.Postgres, App: "postgres", From: "postgres:18", To: "postgres:19", Migratable: true,
+	}
+	d.activeNs.dependencies[deps.Postgres] = namespace.DependencyGen{
+		Effective: "postgres:18", Candidate: "postgres:19",
+	}
+
+	dto := decodeDependencies(t, depsGet(mux, api.Dependencies))
+	require.NotEmpty(t, dto.Items)
+	assert.Equal(t, api.DependencyRequiresLauncherUpdate, dto.Items[0].Status)
+	assert.True(t, dto.Items[0].Migratable, "the DEPENDENCY is migratable; this PAIR is not")
+
+	// Both routes refuse it, and the message names the versions — "postgres
+	// cannot be migrated" would contradict the 17 → 18 this same launcher does.
+	for _, rec := range []*httptest.ResponseRecorder{
+		depsGet(mux, api.DependencyPreflightPath("postgres")),
+		depsPost(mux, api.DependencyMigratePath("postgres"), "{}"),
+	} {
+		assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+		assert.Contains(t, rec.Body.String(), api.ErrCodeDependencyNotMigratable)
+		assert.Contains(t, rec.Body.String(), "update the launcher")
+		assert.Contains(t, rec.Body.String(), "postgres:19")
+	}
+}
+
+// The pair the launcher WAS built for stays offered — the guard above must not
+// swallow the feature it guards.
+func TestTheSupportedPairIsStillOffered(t *testing.T) {
+	_, mux, _ := newDepsRoutesDaemon(t)
+	dto := decodeDependencies(t, depsGet(mux, api.Dependencies))
+	assert.Equal(t, api.DependencyUpgradeAvailable, dto.Items[0].Status, "17.5 → 18")
+}
+
+// Every condition that will 409 the click is the confirm screen's own input.
+// Reporting them one 409 at a time, after the user has read a green preflight
+// and pressed the button, is the shape this exists to avoid.
+func TestPreflightReportsEveryRefusalItCanAnswerWithoutDocker(t *testing.T) {
+	t.Run("another long operation", func(t *testing.T) {
+		d, mux, _ := newDepsRoutesDaemon(t)
+		require.True(t, d.longOp.TryLock(longOpSnapshot))
+		t.Cleanup(d.longOp.Unlock)
+		pre := decodePreflight(t, depsGet(mux, api.DependencyPreflightPath("postgres")))
+		assert.False(t, pre.OK)
+		require.Len(t, pre.Problems, 1)
+		assert.Contains(t, pre.Problems[0], "a snapshot is in progress")
+	})
+	t.Run("a namespace mid-transition", func(t *testing.T) {
+		_, mux, rt := newDepsRoutesDaemon(t)
+		rt.SetStatusForTest(namespace.NsStatusStarting)
+		pre := decodePreflight(t, depsGet(mux, api.DependencyPreflightPath("postgres")))
+		assert.False(t, pre.OK)
+		require.Len(t, pre.Problems, 1)
+		assert.Contains(t, pre.Problems[0], "start or stop it")
+	})
+	// It answers WITHOUT Docker: there is no client on this daemon, and a
+	// refusal that first tried to probe would 503 instead.
+	t.Run("without touching docker", func(t *testing.T) {
+		d, mux, _ := newDepsRoutesDaemon(t)
+		require.Nil(t, d.active().dockerClient)
+		require.True(t, d.longOp.TryLock(longOpMigration))
+		t.Cleanup(d.longOp.Unlock)
+		rec := depsGet(mux, api.DependencyPreflightPath("postgres"))
+		assert.Equal(t, http.StatusOK, rec.Code, "a 503 would mean it went looking for Docker")
+	})
+}
+
+// Problems and Warnings are ARRAYS on the wire. The dialog maps over both
+// without a nil guard, so a hand-built refusal that marshals `"warnings":null`
+// crashes the confirm screen into the error boundary.
+func TestRefusedPreflightMarshalsArraysNotNull(t *testing.T) {
+	_, mux, rt := newDepsRoutesDaemon(t)
+	rt.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}},
+		&deps.MigrationJournal{ID: deps.Postgres, From: "postgres:17.5", To: "postgres:18"}, nil)
+	rec := depsGet(mux, api.DependencyPreflightPath("postgres"))
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"warnings":[]`)
+	assert.NotContains(t, rec.Body.String(), "null")
+}
+
+func decodePreflight(t *testing.T, rec *httptest.ResponseRecorder) migrate.PreflightResult {
+	t.Helper()
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var pre migrate.PreflightResult
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &pre))
+	return pre
+}
+
 type fakeMigrator struct {
 	pre    migrate.PreflightResult
 	plan   *migrate.Plan
@@ -430,6 +526,74 @@ func TestMigrateReportsAFailedRunAsAnErrorEvent(t *testing.T) {
 // A plan that cannot be built (the preflight inside it refused) is a
 // SYNCHRONOUS refusal: nothing was started, so it must answer on the request
 // rather than 202-and-an-error-event, and it must hand the lock back.
+// Building the plan runs the whole preflight — a `du` of the data volume,
+// minutes on a real cluster — after the click and before the 202. Without a
+// published state that stretch is a dead button: no progress, no spinner, no
+// event. StepCount stays 0, which is what tells a client "no plan yet".
+func TestMigratePublishesPreparingBeforeThePlanExists(t *testing.T) {
+	d, mux, _ := newDepsRoutesDaemon(t)
+	d.activeNs.dockerClient = &docker.Client{}
+	d.bgCtx, d.bgCancel = context.WithCancel(context.Background())
+	t.Cleanup(d.bgCancel)
+
+	planning := make(chan struct{})
+	release := make(chan struct{})
+	var duringPlan *api.DependencyMigrationDto
+	d.depsMigratorFn = func(migrate.Env) depsMigrator {
+		return fakeMigrator{
+			onPlan: func(string, string, migrate.PlanOptions) {
+				duringPlan = d.currentDepsMigration("ns1")
+				close(planning)
+				<-release
+			},
+			err: errors.New("preflight failed: not enough space"),
+		}
+	}
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- depsPost(mux, api.DependencyMigratePath("postgres"), "{}") }()
+	<-planning
+	require.NotNil(t, duringPlan, "nothing was published while the plan was being built")
+	assert.Equal(t, "postgres", duringPlan.ID)
+	assert.Equal(t, api.DependencyMigrationStepPreparing, duringPlan.Step)
+	assert.Zero(t, duringPlan.StepCount, "no plan yet — a client renders a spinner, not a list")
+
+	close(release)
+	rec := <-done
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	// The refusal is the answer to this request, so the preparing state goes
+	// with it: a migration that is not happening must not be shown to every
+	// client until the next one starts.
+	assert.Nil(t, d.currentDepsMigration("ns1"))
+}
+
+// The CLI subscribes to the event stream BEFORE it posts, so the preparing
+// state has to reach it as an event too — the 202 it is waiting for is exactly
+// what the plan is delaying.
+func TestMigrateBroadcastsPreparingBeforeThePlanExists(t *testing.T) {
+	d, mux, _ := newDepsRoutesDaemon(t)
+	d.activeNs.dockerClient = &docker.Client{}
+	d.bgCtx, d.bgCancel = context.WithCancel(context.Background())
+	t.Cleanup(d.bgCancel)
+	events, _, ok := d.addSubscriber()
+	require.True(t, ok)
+	t.Cleanup(func() { d.removeSubscriber(events) })
+	d.depsMigratorFn = func(migrate.Env) depsMigrator {
+		return fakeMigrator{err: errors.New("preflight failed")}
+	}
+
+	depsPost(mux, api.DependencyMigratePath("postgres"), "{}")
+	select {
+	case evt := <-events:
+		assert.Equal(t, api.EventDepsMigrationProgress, evt.Type)
+		assert.Equal(t, api.DependencyMigrationStepPreparing, evt.Phase)
+		assert.Equal(t, "postgres", evt.AppName)
+		assert.Equal(t, "ns1", evt.NamespaceID)
+	case <-time.After(2 * time.Second):
+		t.Fatal("no preparing event reached a client that was already listening")
+	}
+}
+
 func TestMigrateReportsAPlanRefusalSynchronously(t *testing.T) {
 	d, mux, _ := newDepsRoutesDaemon(t)
 	d.activeNs.dockerClient = &docker.Client{}

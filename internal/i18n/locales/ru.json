@@ -406,6 +406,7 @@
   "deps.cancelled": "Отменено",
   "deps.failed": "Миграция не удалась, выполнен откат: {error}",
   "deps.streamClosed": "Соединение с демоном закрылось до завершения миграции — результат смотрите в `citeck deps`",
+  "deps.step.preparing": "Подготовка (проверка данных и свободного места)",
   "deps.step.stop-namespace": "Остановка пространства имён",
   "deps.step.pull-image": "Загрузка нового образа",
   "deps.step.start-source": "Запуск текущей базы данных",

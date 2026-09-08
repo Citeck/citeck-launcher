@@ -120,7 +120,9 @@ func dependencyItems(act activeNamespace) []api.DependencyDto {
 			// read off it rather than off the candidate: they agree today only
 			// because both come from one generation.
 			item.TargetImage = held[desc.ID()].To
-			if desc.Migratable() {
+			// Two questions, both of which must be yes: does the launcher ship
+			// a migration for this DEPENDENCY, and does it know this PAIR?
+			if desc.Migratable() && !unsupportedPair(desc.ID(), held[desc.ID()].From, item.TargetImage) {
 				item.Status = api.DependencyUpgradeAvailable
 			} else {
 				item.Status = api.DependencyRequiresLauncherUpdate
@@ -139,6 +141,31 @@ func dependencyItems(act activeNamespace) []api.DependencyDto {
 		items = append(items, item)
 	}
 	return items
+}
+
+// unsupportedPair reports a version pair the launcher UNDERSTANDS and still
+// cannot migrate: PostgresMigrator.Supports says no, because the two majors
+// would share a data volume (this plan builds the new cluster next to the old
+// data, which is what makes the rollback a deletion) or the move goes
+// backwards. 18 → 19 is the case that exists today — PostgresLayoutFor maps
+// every major from 18 up to postgres3 — and without this the row said "upgrade
+// available: citeck deps upgrade postgres" and the preflight then refused it
+// with a message about volumes, sending the operator after a disk problem they
+// do not have.
+//
+// An UNPARSABLE tag is deliberately not one of these. It is refused by the
+// preflight with a message about the tag, which is what the operator needs;
+// reporting "update the launcher" for it would name the wrong fix.
+func unsupportedPair(id deps.ID, from, to string) bool {
+	if id != deps.Postgres {
+		return false
+	}
+	fromV, okFrom := deps.ParseImageVersion(from)
+	toV, okTo := deps.ParseImageVersion(to)
+	if !okFrom || !okTo {
+		return false
+	}
+	return !migrate.PostgresMigrator{}.Supports(fromV, toV)
 }
 
 // resultDto renders the last migration verdict for the wire.
@@ -269,7 +296,45 @@ func (d *Daemon) resolveMigration(w http.ResponseWriter, act activeNamespace, id
 			fmt.Sprintf("this launcher cannot migrate %s — update the launcher", id))
 		return "", "", false
 	}
+	// The dependency is migratable but this PAIR is not one this release has a
+	// plan for (see unsupportedPair). Same code, same answer — update the
+	// launcher — but the message names the versions, because "postgres cannot
+	// be migrated" would contradict the 17 → 18 the same launcher performs.
+	if unsupportedPair(desc.ID(), upgrade.From, upgrade.To) {
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyNotMigratable,
+			migrate.UnsupportedPairProblem(upgrade.From, upgrade.To))
+		return "", "", false
+	}
 	return upgrade.From, upgrade.To, true
+}
+
+// preMigrationProblems collects everything that would refuse a migration of
+// this namespace WITHOUT touching Docker. It is what the confirm screen shows
+// as its own input: a condition that will 409 the click belongs in the dialog
+// the user is reading, not in an error modal after they pressed the button.
+//
+// Not touching Docker matters for the running-migration arm too — probing
+// volumes and containers in the middle of a migration measures a world that is
+// being rewritten.
+func (d *Daemon) preMigrationProblems(act activeNamespace) []string {
+	var problems []string
+	if blocked := d.journalBlocker(act); blocked != "" {
+		problems = append(problems, blocked)
+	}
+	// A read, not a claim: this route mutates nothing, and the migrate route
+	// does its own TryLock. The window between them is the same check-then-act
+	// tryLongOp documents — worst case the confirm screen looks clear and the
+	// click is refused with the same message.
+	if holder := d.longOp.Holder(); holder != longOpNone {
+		problems = append(problems, holder.busyMessage()+" — wait for it to finish")
+	}
+	if act.runtime != nil {
+		if st := act.runtime.Status(); !migratableNsStatus(st) {
+			problems = append(problems, fmt.Sprintf(
+				"the namespace is %s — start or stop it before migrating", st))
+		}
+	}
+	return problems
 }
 
 func (d *Daemon) handleDependencyPreflight(w http.ResponseWriter, r *http.Request) {
@@ -279,13 +344,8 @@ func (d *Daemon) handleDependencyPreflight(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	// A condition that will refuse the migration belongs in the confirm
-	// dialog's own input, not in a 409 after the user clicked through a green
-	// preflight. Answered without touching Docker — and that matters for the
-	// running-migration arm too: probing volumes and containers in the middle
-	// of a migration would measure a world that is being rewritten.
-	if blocked := d.journalBlocker(act); blocked != "" {
-		writeJSON(w, migrate.PreflightResult{OK: false, From: from, To: to, Problems: []string{blocked}})
+	if problems := d.preMigrationProblems(act); len(problems) > 0 {
+		writeJSON(w, migrate.RefusedPreflight(from, to, problems...))
 		return
 	}
 	if act.dockerClient == nil {
@@ -367,6 +427,24 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 		writeInternalError(w, fmt.Errorf("no migrator wired for dependency %q", id))
 		return
 	}
+	evt := func(typ, phase string, cur, total int, pct float64, msg string) api.EventDto {
+		return api.EventDto{
+			Type: typ, Timestamp: time.Now().UnixMilli(), NamespaceID: nsID,
+			AppName: string(id), Phase: phase, Current: cur, Total: total, Percent: pct, After: msg,
+		}
+	}
+	// Building the plan runs the whole preflight — including a `du` of the data
+	// volume, which on a real cluster is minutes — and it happens AFTER the
+	// click and BEFORE the 202. Until this, nothing existed to show for that
+	// stretch: the button did nothing, visibly, for as long as the measurement
+	// took. Publish the state (and broadcast it, for the CLI, which subscribes
+	// before it posts) with StepCount 0, which is how a client tells "no plan
+	// yet" from a plan of zero steps: render a spinner, not an empty list.
+	d.setDepsMigration(nsID, &api.DependencyMigrationDto{
+		ID: string(id), Step: api.DependencyMigrationStepPreparing,
+	})
+	d.broadcastEvent(evt(api.EventDepsMigrationProgress, api.DependencyMigrationStepPreparing,
+		0, 0, 0, fmt.Sprintf("%s → %s", from, to)))
 	// The plan is built on the REQUEST's context on purpose: it only probes
 	// (preflight), it changes nothing, and a client that gave up should not
 	// leave it running. Everything after the 202 runs on the daemon's
@@ -378,6 +456,10 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 		ReplaceExistingVolume: req.ReplaceExistingVolume,
 	})
 	if err != nil {
+		// The refusal is the answer to THIS request, so the preparing state
+		// goes with it — leaving it published would show a migration that is
+		// not happening to every client until the next one starts.
+		d.setDepsMigration(nsID, nil)
 		d.longOp.Unlock()
 		writeErrorCode(w, http.StatusConflict, api.ErrCodeDependencyPreflightFailed, err.Error())
 		return
@@ -388,12 +470,6 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 	d.bgWg.Go(func() {
 		defer d.longOp.Unlock()
 		defer d.setDepsMigration(nsID, nil)
-		evt := func(typ, phase string, cur, total int, pct float64, msg string) api.EventDto {
-			return api.EventDto{
-				Type: typ, Timestamp: time.Now().UnixMilli(), NamespaceID: nsID,
-				AppName: string(id), Phase: phase, Current: cur, Total: total, Percent: pct, After: msg,
-			}
-		}
 		d.broadcastEvent(evt(api.EventDepsMigrationStart, "", 0, steps, 0, fmt.Sprintf("%s → %s", from, to)))
 		progress := func(step string, i, n int, pct float64, msg string) {
 			d.setDepsMigration(nsID, &api.DependencyMigrationDto{

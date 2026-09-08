@@ -235,7 +235,14 @@ func renderMigrationEvent(evt api.EventDto) (line string, terminal, failed bool)
 	case depsEventStart:
 		return evt.After, false, false
 	case depsEventProgress:
-		line = fmt.Sprintf("[%d/%d] %s", evt.Current, evt.Total, stepTitle(evt.Phase))
+		// Total 0 means there is no plan yet — the "preparing" state the daemon
+		// publishes while it builds one. "[0/0]" would read as a counter that
+		// has gone wrong; the step's own title is the whole message.
+		if evt.Total == 0 {
+			line = stepTitle(evt.Phase)
+		} else {
+			line = fmt.Sprintf("[%d/%d] %s", evt.Current, evt.Total, stepTitle(evt.Phase))
+		}
 		// Percent 0 means "indeterminate" (the step has no measurable
 		// sub-progress), which is not the same as "0% done".
 		if evt.Percent > 0 {
