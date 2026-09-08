@@ -25,6 +25,14 @@ import (
 // pre-feature behavior) rather than hanging it forever.
 const dependencySeedTimeout = 30 * time.Second
 
+// errVolumeFileNotFound is the probe's "that file is not there" answer, as
+// opposed to "I could not read it". The difference decides a pin: a volume
+// with no PG_VERSION holds no cluster (server mode creates the bind directory
+// before the first container start, and removing the container leaves it
+// empty), so the candidate image applies — while a read that FAILED says
+// nothing about the data and must fall back to the legacy image.
+var errVolumeFileNotFound = errors.New("volume file not found")
+
 // dependencyProbe is what seeding needs from Docker and the filesystem,
 // narrowed so the rules are unit-testable without an engine.
 type dependencyProbe interface {
@@ -33,7 +41,9 @@ type dependencyProbe interface {
 	ContainerImage(ctx context.Context, app string) (image string, ok bool, err error)
 	// VolumeExists reports whether the plain-named data volume exists.
 	VolumeExists(ctx context.Context, volume string) (bool, error)
-	// ReadVolumeFile returns the content of a file inside a data volume.
+	// ReadVolumeFile returns the content of a file inside a data volume. A
+	// file (or volume) that is not there is reported as errVolumeFileNotFound;
+	// every other error means the read failed.
 	ReadVolumeFile(ctx context.Context, volume, rel string) (string, error)
 }
 
@@ -90,6 +100,9 @@ func (p dockerDependencyProbe) ReadVolumeFile(ctx context.Context, volume, rel s
 	if !config.IsDesktopMode() {
 		//nolint:gosec // G304: path is the launcher-owned volumesBase plus registry-known volume/file names
 		data, err := os.ReadFile(filepath.Join(p.volumesBase, "volumes", volume, filepath.FromSlash(rel)))
+		if errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("%s in %s: %w", rel, volume, errVolumeFileNotFound)
+		}
 		if err != nil {
 			return "", fmt.Errorf("read %s in %s: %w", rel, volume, err)
 		}
@@ -103,16 +116,29 @@ func (p dockerDependencyProbe) ReadVolumeFile(ctx context.Context, volume, rel s
 		return "", fmt.Errorf("lookup volume %s: %w", volume, err)
 	}
 	if v == nil {
-		return "", fmt.Errorf("volume %s: %w", volume, os.ErrNotExist)
+		return "", fmt.Errorf("%s in %s: %w", rel, volume, errVolumeFileNotFound)
 	}
 	out, code, err := p.dc.RunUtilsContainer(ctx, []string{"cat", "/vol/" + rel}, []string{v.Name + ":/vol:ro"})
 	if err != nil {
 		return "", fmt.Errorf("read %s in %s: %w", rel, volume, err)
 	}
 	if code != 0 {
-		return "", fmt.Errorf("cat %s in %s: exit %d: %s", rel, volume, code, strings.TrimSpace(out))
+		return "", classifyCatFailure(volume, rel, code, out)
 	}
 	return out, nil
+}
+
+// classifyCatFailure turns a non-zero `cat` inside the utils container into
+// either the not-found sentinel or a read failure. The distinction cannot be
+// taken from the exit code — busybox `cat` exits 1 for both a missing file and
+// a permission error — so it is taken from the message, which is the same
+// wording in busybox and coreutils ("No such file or directory").
+func classifyCatFailure(volume, rel string, code int, out string) error {
+	msg := strings.TrimSpace(out)
+	if strings.Contains(strings.ToLower(msg), "no such file") {
+		return fmt.Errorf("%s in %s: %w", rel, volume, errVolumeFileNotFound)
+	}
+	return fmt.Errorf("cat %s in %s: exit %d: %s", rel, volume, code, msg)
 }
 
 // resolveDependencyPins turns "what this namespace has persisted" into "what
@@ -140,59 +166,127 @@ func resolveDependencyPins(ctx context.Context, persisted map[deps.ID]string, pr
 	return pins, seeded
 }
 
+// seedVerdict is what the evidence for one dependency adds up to.
+type seedVerdict int
+
+const (
+	// seedNoData: every probe answered, and none of them found data. The
+	// namespace is fresh for this dependency, so the candidate image applies
+	// and no pin is written.
+	seedNoData seedVerdict = iota
+	// seedFound: an image was determined from the data.
+	seedFound
+	// seedUnknown: a probe FAILED, so nothing can be concluded.
+	seedUnknown
+)
+
 // seedDependencyPins answers "what does this namespace's data run on?" for
 // every registered dependency that has no pin yet, and returns the pins to
 // add. Order of evidence: the container (survives launcher upgrades), then the
 // data itself (PostgreSQL's PG_VERSION), then the descriptor's legacy image.
-// No data at all means no pin — the namespace is fresh and the candidate
-// applies. preferVolumes marks volumes a snapshot import just restored; when
-// both postgres layouts exist on disk the imported one is the truth.
 //
-// Every probe failure degrades to the legacy image rather than to "no pin":
-// seeding runs only where no pin exists, i.e. on pre-feature data, and the
-// legacy image is exactly what that data has been running on. "No pin" would
-// instead let a Docker outage start PostgreSQL 18 on an empty new-layout
-// volume and settle the pin there, orphaning the 17 data.
+// Only a complete, SUCCESSFUL "there is nothing here" answer yields no pin.
+// Any probe failure degrades to the legacy image instead, with a WARN naming
+// the probe that failed: seeding only ever runs where no pin exists, i.e. on
+// pre-feature data, and the legacy image is exactly what that data has been
+// running on. Leaving no pin would instead hand the namespace to the candidate
+// image — a transient Docker error would start PostgreSQL 18 on an empty
+// new-layout volume beside the untouched 17 data, and the RUNNING re-pin hook
+// would then settle the pin at 18.
+//
+// preferVolumes marks volumes a snapshot import just restored; when both
+// postgres layouts hold a cluster the imported one is the truth.
 func seedDependencyPins(ctx context.Context, existing map[deps.ID]string, probe dependencyProbe, preferVolumes map[string]bool) map[deps.ID]string {
 	out := make(map[deps.ID]string)
+	// Read at most once, and only if something needs it: the postgres data
+	// answers for Keycloak too, whose state lives in that same database rather
+	// than in a volume of its own.
+	var pgPin string
+	var pgVerdict seedVerdict
+	pgRead := false
+	postgresEvidence := func() (string, seedVerdict) {
+		if !pgRead {
+			pgPin, pgVerdict = postgresPinFromData(ctx, probe, preferVolumes)
+			pgRead = true
+		}
+		return pgPin, pgVerdict
+	}
+
 	for _, d := range deps.All() {
 		if img := existing[d.ID()]; img != "" {
 			continue
 		}
+		containerFailed := false
 		img, ok, err := probe.ContainerImage(ctx, d.AppName())
 		if err != nil {
+			containerFailed = true
 			slog.Warn("Dependency seed: container inspect failed", "dependency", d.ID(), "err", err)
 		}
 		if ok && img != "" {
 			out[d.ID()] = img
 			continue
 		}
-		if d.ID() == deps.Postgres {
-			if pin, found := postgresPinFromData(ctx, probe, preferVolumes); found {
-				out[d.ID()] = pin
-			}
-			continue
+
+		var pin string
+		var verdict seedVerdict
+		if d.ID() == deps.Postgres || d.ID() == deps.Keycloak {
+			pin, verdict = postgresEvidence()
+		} else {
+			pin, verdict = volumePinFromData(ctx, probe, d)
 		}
-		volume := legacyVolumeFor(d.ID())
-		if volume == "" {
-			continue
+		if d.ID() == deps.Keycloak && verdict == seedFound {
+			// Keycloak's own version is not recoverable from postgres data;
+			// what the data proves is that this namespace HAS been running,
+			// so it ran on the legacy image.
+			pin = d.LegacyImage()
 		}
-		exists, err := probe.VolumeExists(ctx, volume)
-		if err != nil {
-			slog.Warn("Dependency seed: volume check failed", "dependency", d.ID(), "volume", volume, "err", err)
-		}
-		if exists {
-			slog.Warn("Dependency seed: no container and no version file; assuming the legacy image",
+
+		switch verdict {
+		case seedFound:
+			out[d.ID()] = pin
+		case seedUnknown:
+			slog.Warn("Dependency seed: data probe failed; assuming the legacy image",
 				"dependency", d.ID(), "image", d.LegacyImage())
 			out[d.ID()] = d.LegacyImage()
+		case seedNoData:
+			if containerFailed {
+				slog.Warn("Dependency seed: container inspect failed and no data was found; assuming the legacy image",
+					"dependency", d.ID(), "image", d.LegacyImage())
+				out[d.ID()] = d.LegacyImage()
+			}
 		}
 	}
 	return out
 }
 
+// volumePinFromData answers the data question for the dependencies whose data
+// is a volume with no readable version marker: the volume's existence is the
+// whole evidence, so it can only ever mean "the legacy image" or "nothing".
+func volumePinFromData(ctx context.Context, probe dependencyProbe, d deps.Descriptor) (string, seedVerdict) {
+	volume := legacyVolumeFor(d.ID())
+	if volume == "" {
+		// A dependency with no volume of its own. Never probe with an empty
+		// name: in server mode that stats <volumesBase>/volumes/, which always
+		// exists, and every namespace would be pinned to the legacy image.
+		return "", seedNoData
+	}
+	exists, err := probe.VolumeExists(ctx, volume)
+	if err != nil {
+		slog.Warn("Dependency seed: volume check failed", "dependency", d.ID(), "volume", volume, "err", err)
+		return "", seedUnknown
+	}
+	if !exists {
+		return "", seedNoData
+	}
+	slog.Warn("Dependency seed: no container and no version file; assuming the legacy image",
+		"dependency", d.ID(), "image", d.LegacyImage())
+	return d.LegacyImage(), seedFound
+}
+
 // legacyVolumeFor is the data volume each non-postgres dependency has always
 // used (generator_infra.go / generator_keycloak.go). Keycloak keeps its state
-// in postgres, so it has no volume and is seeded only from a container.
+// in postgres, so it has no volume of its own and answers to the postgres
+// evidence instead.
 func legacyVolumeFor(id deps.ID) string {
 	switch id {
 	case deps.RabbitMQ:
@@ -207,36 +301,45 @@ func legacyVolumeFor(id deps.ID) string {
 }
 
 // postgresPinFromData reads PG_VERSION out of whichever postgres volume holds
-// data. found=false only when neither volume exists.
-func postgresPinFromData(ctx context.Context, probe dependencyProbe, preferVolumes map[string]bool) (string, bool) {
+// a cluster. A volume that exists but has no PG_VERSION holds no cluster (an
+// empty bind dir left by a removed container) and is skipped; seedNoData means
+// neither layout holds one, seedUnknown that a probe failed and the caller
+// must assume rather than conclude.
+func postgresPinFromData(ctx context.Context, probe dependencyProbe, preferVolumes map[string]bool) (string, seedVerdict) {
 	layouts := []deps.PostgresLayout{deps.PostgresLayoutFor(18), deps.PostgresLayoutFor(17)}
 	if preferVolumes[deps.PostgresVolumeLegacy] && !preferVolumes[deps.PostgresVolumeV18] {
 		layouts[0], layouts[1] = layouts[1], layouts[0]
 	}
+	verdict := seedNoData
 	for _, l := range layouts {
 		exists, err := probe.VolumeExists(ctx, l.Volume)
 		if err != nil {
 			slog.Warn("Dependency seed: postgres volume check failed", "volume", l.Volume, "err", err)
+			verdict = seedUnknown
 			continue
 		}
 		if !exists {
 			continue
 		}
 		raw, err := probe.ReadVolumeFile(ctx, l.Volume, l.PGVersionRel)
+		if errors.Is(err, errVolumeFileNotFound) {
+			// The volume is there but empty — no cluster in this layout.
+			continue
+		}
 		if err != nil {
 			slog.Warn("Dependency seed: PG_VERSION unreadable; assuming the legacy image",
 				"volume", l.Volume, "err", err, "image", deps.PostgresLegacyImage)
-			return deps.PostgresLegacyImage, true
+			return deps.PostgresLegacyImage, seedFound
 		}
 		major, err := strconv.Atoi(strings.TrimSpace(raw))
 		if err != nil {
 			slog.Warn("Dependency seed: PG_VERSION not a number; assuming the legacy image",
 				"volume", l.Volume, "raw", raw, "image", deps.PostgresLegacyImage)
-			return deps.PostgresLegacyImage, true
+			return deps.PostgresLegacyImage, seedFound
 		}
-		return "postgres:" + strconv.Itoa(major), true
+		return "postgres:" + strconv.Itoa(major), seedFound
 	}
-	return "", false
+	return "", verdict
 }
 
 // reseedAfterSnapshotImport re-derives the pins of every dependency whose
@@ -250,9 +353,12 @@ func reseedAfterSnapshotImport(ctx context.Context, rt *namespace.Runtime, probe
 	existing := rt.DependencyPins()
 	for _, d := range deps.All() {
 		touched := false
-		if d.ID() == deps.Postgres {
+		switch d.ID() {
+		case deps.Postgres, deps.Keycloak:
+			// Keycloak's state lives in the postgres data, so a restored
+			// postgres volume moves its pin too.
 			touched = imported[deps.PostgresVolumeLegacy] || imported[deps.PostgresVolumeV18]
-		} else {
+		default:
 			touched = imported[legacyVolumeFor(d.ID())]
 		}
 		if touched {

@@ -3,15 +3,19 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 )
@@ -19,10 +23,16 @@ import (
 type fakeProbe struct {
 	containers map[string]string            // app → image
 	volumes    map[string]map[string]string // volume → rel path → content
-	readErr    error
+	// containerErr / volumeErr / readErr make one probe FAIL, which is a
+	// different answer from "nothing found" — see the ruling-6 arms below.
+	containerErr error
+	volumeErr    error
+	readErr      error
 	// seenCtx records the context the last probe call was made with, so a test
 	// can assert seeding is bounded.
 	seenCtx *context.Context
+	// askedVolumes records every volume name the probe was asked about.
+	askedVolumes *[]string
 }
 
 func (f fakeProbe) record(ctx context.Context) {
@@ -33,12 +43,21 @@ func (f fakeProbe) record(ctx context.Context) {
 
 func (f fakeProbe) ContainerImage(ctx context.Context, app string) (image string, ok bool, err error) {
 	f.record(ctx)
+	if f.containerErr != nil {
+		return "", false, f.containerErr
+	}
 	img, ok := f.containers[app]
 	return img, ok, nil
 }
 
 func (f fakeProbe) VolumeExists(ctx context.Context, volume string) (bool, error) {
 	f.record(ctx)
+	if f.askedVolumes != nil {
+		*f.askedVolumes = append(*f.askedVolumes, volume)
+	}
+	if f.volumeErr != nil {
+		return false, f.volumeErr
+	}
 	_, ok := f.volumes[volume]
 	return ok, nil
 }
@@ -50,11 +69,11 @@ func (f fakeProbe) ReadVolumeFile(ctx context.Context, volume, rel string) (stri
 	}
 	files, ok := f.volumes[volume]
 	if !ok {
-		return "", errors.New("no such volume")
+		return "", fmt.Errorf("%s: %w", volume, errVolumeFileNotFound)
 	}
 	c, ok := files[rel]
 	if !ok {
-		return "", errors.New("no such file")
+		return "", fmt.Errorf("%s in %s: %w", rel, volume, errVolumeFileNotFound)
 	}
 	return c, nil
 }
@@ -111,15 +130,75 @@ func TestSeedLeavesExistingPinsAlone(t *testing.T) {
 // (the volumes DIRECTORY exists), and every namespace would silently be pinned
 // to the legacy Keycloak image forever.
 func TestSeedNeverAsksAboutAnEmptyVolumeName(t *testing.T) {
-	p := volumeAlwaysExistsProbe{}
-	got := seedDependencyPins(context.Background(), nil, p, nil)
-	_, pinned := got[deps.Keycloak]
-	assert.False(t, pinned, "keycloak has no volume; it must be seeded from a container only")
+	var asked []string
+	p := fakeProbe{askedVolumes: &asked}
+	seedDependencyPins(context.Background(), nil, p, nil)
+	assert.NotEmpty(t, asked, "the seeder no longer probes volumes at all — this guard is out of date")
+	assert.NotContains(t, asked, "", "an empty volume name matches the volumes ROOT in server mode")
 }
 
-type volumeAlwaysExistsProbe struct{ fakeProbe }
+// Keycloak's data IS the postgres data. A namespace with a postgres cluster has
+// been running, so keycloak ran on the legacy image; one without any postgres
+// data is fresh and takes the candidate.
+func TestSeedKeycloakFollowsThePostgresData(t *testing.T) {
+	withData := fakeProbe{volumes: map[string]map[string]string{"postgres2": {"PG_VERSION": "17\n"}}}
+	assert.Equal(t, "keycloak/keycloak:26",
+		seedDependencyPins(context.Background(), nil, withData, nil)[deps.Keycloak])
 
-func (volumeAlwaysExistsProbe) VolumeExists(context.Context, string) (bool, error) { return true, nil }
+	empty := fakeProbe{volumes: map[string]map[string]string{"postgres2": {}}}
+	_, pinned := seedDependencyPins(context.Background(), nil, empty, nil)[deps.Keycloak]
+	assert.False(t, pinned, "no postgres cluster → keycloak has no data either")
+}
+
+// Ruling 6, arm 1: an inspect failure says nothing about the data, so it must
+// NOT read as "fresh namespace" — that would hand every dependency to the
+// candidate image and start PostgreSQL 18 beside untouched 17 data.
+func TestSeedAssumesTheLegacyImageWhenTheContainerProbeFails(t *testing.T) {
+	p := fakeProbe{containerErr: errors.New("dial unix /var/run/docker.sock: connection refused")}
+	got := seedDependencyPins(context.Background(), nil, p, nil)
+	for _, d := range deps.All() {
+		assert.Equal(t, d.LegacyImage(), got[d.ID()], string(d.ID()))
+	}
+}
+
+// Ruling 6, arm 2: same for a failed volume lookup (a transient VolumeList
+// error on desktop, or the seed deadline expiring).
+func TestSeedAssumesTheLegacyImageWhenTheVolumeProbeFails(t *testing.T) {
+	p := fakeProbe{volumeErr: context.DeadlineExceeded}
+	got := seedDependencyPins(context.Background(), nil, p, nil)
+	for _, d := range deps.All() {
+		assert.Equal(t, d.LegacyImage(), got[d.ID()], string(d.ID()))
+	}
+}
+
+// Ruling 6, arm 3 (already true before, kept explicit): a PG_VERSION that
+// cannot be READ is a failure, not an absence.
+func TestSeedAssumesTheLegacyImageWhenPGVersionIsGarbage(t *testing.T) {
+	p := fakeProbe{volumes: map[string]map[string]string{"postgres2": {"PG_VERSION": "seventeen"}}}
+	assert.Equal(t, deps.PostgresLegacyImage,
+		seedDependencyPins(context.Background(), nil, p, nil)[deps.Postgres])
+}
+
+// Ruling 2: a volume that exists but holds no PG_VERSION holds no cluster —
+// server mode creates the bind dir before the first container start, and a
+// removed container leaves it empty. That is an absence, not a read failure,
+// so the candidate applies.
+func TestSeedTreatsAVolumeWithoutPGVersionAsEmpty(t *testing.T) {
+	p := fakeProbe{volumes: map[string]map[string]string{"postgres2": {}, "postgres3": {}}}
+	got := seedDependencyPins(context.Background(), nil, p, nil)
+	_, pinned := got[deps.Postgres]
+	assert.False(t, pinned, "an empty volume must not pin the namespace to the legacy image")
+}
+
+// ...and an empty NEW-layout volume beside a real 17 cluster must not shadow
+// it: the 18 layout is checked first, finds no cluster, and the 17 data wins.
+func TestSeedSkipsAnEmptyLayoutAndKeepsLookingForTheCluster(t *testing.T) {
+	p := fakeProbe{volumes: map[string]map[string]string{
+		"postgres3": {},
+		"postgres2": {"PG_VERSION": "17\n"},
+	}}
+	assert.Equal(t, "postgres:17", seedDependencyPins(context.Background(), nil, p, nil)[deps.Postgres])
+}
 
 func TestSeedNothingForAFreshNamespace(t *testing.T) {
 	assert.Empty(t, seedDependencyPins(context.Background(), nil, fakeProbe{}, nil))
@@ -142,6 +221,60 @@ func TestReseedAfterSnapshotImportReplacesThePinOfImportedVolumes(t *testing.T) 
 	assert.Equal(t, "rabbitmq:4.2.9-management", pins[deps.RabbitMQ], "untouched dependency keeps its pin")
 }
 
+// The server-mode probe: the not-found arm must be distinguishable from a read
+// FAILURE, because the two lead to opposite pins (candidate vs legacy).
+func TestServerProbeDistinguishesAMissingFileFromAFailedRead(t *testing.T) {
+	config.SetDesktopMode(false)
+	t.Cleanup(config.ResetDesktopMode)
+
+	base := t.TempDir()
+	volDir := filepath.Join(base, "volumes", "postgres2")
+	require.NoError(t, os.MkdirAll(volDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(volDir, "PG_VERSION"), []byte("17\n"), 0o600))
+	// A directory where a file is expected reads back as a failure (EISDIR),
+	// which is exactly the shape of "the data is there but unreadable".
+	require.NoError(t, os.MkdirAll(filepath.Join(base, "volumes", "postgres3", "18", "docker", "PG_VERSION"), 0o755))
+
+	p := dockerDependencyProbe{volumesBase: base}
+	ctx := context.Background()
+
+	exists, err := p.VolumeExists(ctx, "postgres2")
+	require.NoError(t, err)
+	assert.True(t, exists)
+	exists, err = p.VolumeExists(ctx, "rabbitmq2")
+	require.NoError(t, err)
+	assert.False(t, exists, "a missing volume is an answer, not an error")
+
+	raw, err := p.ReadVolumeFile(ctx, "postgres2", "PG_VERSION")
+	require.NoError(t, err)
+	assert.Equal(t, "17\n", raw)
+
+	_, err = p.ReadVolumeFile(ctx, "postgres3", "18/docker/PG_VERSION")
+	require.Error(t, err)
+	require.NotErrorIs(t, err, errVolumeFileNotFound, "an unreadable file is NOT an absent one")
+
+	_, err = p.ReadVolumeFile(ctx, "postgres2", "nope/PG_VERSION")
+	require.ErrorIs(t, err, errVolumeFileNotFound)
+	_, err = p.ReadVolumeFile(ctx, "no-such-volume", "PG_VERSION")
+	require.ErrorIs(t, err, errVolumeFileNotFound)
+}
+
+// The desktop probe reads through `cat` in a utils container, so its
+// not-found/failure split is a classification of the command's output. busybox
+// and coreutils both say "No such file or directory" and both exit 1, so the
+// exit code cannot carry the distinction.
+func TestDesktopCatFailureClassification(t *testing.T) {
+	notFound := classifyCatFailure("postgres3", "18/docker/PG_VERSION", 1,
+		"cat: can't open '/vol/18/docker/PG_VERSION': No such file or directory")
+	require.ErrorIs(t, notFound, errVolumeFileNotFound)
+
+	denied := classifyCatFailure("postgres2", "PG_VERSION", 1,
+		"cat: can't open '/vol/PG_VERSION': Permission denied")
+	require.Error(t, denied)
+	require.NotErrorIs(t, denied, errVolumeFileNotFound, "a permission error is a read failure")
+	assert.Contains(t, denied.Error(), "Permission denied", "the reason must survive into the warning")
+}
+
 // The wiring helper both the load path and the reload path go through: what
 // Generate is told is the persisted pins PLUS whatever seeding found, and the
 // seeded half is reported separately so the caller can log/persist it.
@@ -155,8 +288,11 @@ func TestResolveDependencyPinsMergesPersistedWithSeeded(t *testing.T) {
 
 	assert.Equal(t, "postgres:17.5", pins[deps.Postgres], "a persisted pin is never re-derived")
 	assert.Equal(t, "rabbitmq:4.1.2-management", pins[deps.RabbitMQ], "a missing pin is seeded from the data")
-	assert.Equal(t, map[deps.ID]string{deps.RabbitMQ: "rabbitmq:4.1.2-management"}, seeded,
-		"only the additions are reported as seeded")
+	assert.Equal(t, map[deps.ID]string{
+		deps.RabbitMQ: "rabbitmq:4.1.2-management",
+		// keycloak's data is the postgres cluster this fixture has.
+		deps.Keycloak: "keycloak/keycloak:26",
+	}, seeded, "only the additions are reported as seeded")
 }
 
 func TestResolveDependencyPinsDoesNotAliasThePersistedMap(t *testing.T) {
@@ -203,6 +339,16 @@ func TestPinsAreWiredIntoEveryGenerateCallSite(t *testing.T) {
 			if c.wantResolveFn {
 				assert.True(t, callsFunc(fn, "resolveDependencyPins"),
 					"%s must resolve pins through the shared helper", c.fn)
+			}
+			if c.fn == "loadNamespace" {
+				// SetDependencyPin persists, and persistState writes
+				// Status: r.status — STOPPED at load time, before the caller
+				// has acted on ShouldStart. The load path installs pins
+				// through the non-persisting RestoreDependencyState instead.
+				assert.False(t, callsMethod(fn, "SetDependencyPin"),
+					"loadNamespace must not persist pins: that would overwrite the stored namespace status")
+				assert.True(t, callsMethod(fn, "RestoreDependencyState"),
+					"loadNamespace must install the resolved pins into the runtime")
 			}
 		})
 	}
@@ -268,6 +414,22 @@ func assignsField(fn *ast.FuncDecl, recv, field string) bool {
 			if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == recv {
 				found = true
 			}
+		}
+		return true
+	})
+	return found
+}
+
+// callsMethod reports whether fn contains a call to any <x>.<name>(...).
+func callsMethod(fn *ast.FuncDecl, name string) bool {
+	found := false
+	ast.Inspect(fn, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == name {
+			found = true
 		}
 		return true
 	})
