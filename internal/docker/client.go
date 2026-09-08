@@ -45,6 +45,12 @@ const (
 	// namespace app. It carries the namespace labels too, so PurgeNamespace
 	// removes it with everything else, but nothing adopts it as an app.
 	LabelTemp = "citeck.launcher.temp"
+	// LabelTempValue is the value LabelTemp is set to. Docker's label filter
+	// matches a bare key as "present with ANY value", so every filter and
+	// every lookup in the launcher is key-only and does not depend on this —
+	// but a writer must set it, and must set it through this constant, so the
+	// two halves cannot drift into "temp=1" vs "temp=true".
+	LabelTempValue = "true"
 )
 
 // Client wraps the Docker SDK client with Citeck-specific operations.
@@ -330,10 +336,7 @@ func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef,
 // postgres def under another name, next to (not instead of) the namespace's
 // own container.
 func (c *Client) CreateContainerWith(ctx context.Context, app appdef.ApplicationDef, volumesBaseDir string, opts ContainerCreateOpts) (string, error) {
-	name := app.Name
-	if opts.Name != "" {
-		name = opts.Name
-	}
+	name := effectiveName(app, opts)
 	containerName := c.ContainerName(name)
 	networkName := c.NetworkName()
 
@@ -415,10 +418,7 @@ func (c *Client) CreateContainerWith(ctx context.Context, app appdef.Application
 	ctrConfig := buildContainerConfig(app, env, exposedPorts, labels)
 	hostConfig := buildHostConfig(app, binds, portBindings, networkName, memoryBytes, shmSize)
 
-	// Network aliases: app name + any additional aliases
-	aliases := make([]string, 0, 1+len(app.NetworkAliases))
-	aliases = append(aliases, app.Name)
-	aliases = append(aliases, app.NetworkAliases...)
+	aliases := networkAliases(app, name)
 
 	networkConfig := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
@@ -441,6 +441,41 @@ func (c *Client) CreateContainerWith(ctx context.Context, app appdef.Application
 	return resp.ID, nil
 }
 
+// effectiveName is the name a container is created UNDER: the override when
+// one is given, else the app's own name. It is the single source for all three
+// places that name has to appear — the Docker container name, the LabelAppName
+// label and the primary network alias — because a disagreement between them is
+// precisely the accident this seam exists to prevent: a temp container created
+// as citeck_postgres_<ns> would collide with (or, worse, be adopted as) the
+// namespace's real postgres container.
+func effectiveName(app appdef.ApplicationDef, opts ContainerCreateOpts) string {
+	if opts.Name != "" {
+		return opts.Name
+	}
+	return app.Name
+}
+
+// networkAliases is the DNS identity the container takes on the namespace
+// network: its effective name plus the def's additional aliases.
+//
+// Under a name override BOTH of the app's own identities are dropped — its
+// name and its extra aliases — and the container answers only to the override.
+// Docker permits duplicate aliases on one network and round-robins between the
+// endpoints that hold them, so a temp container that also answered to
+// "postgres" would silently take a share of the real container's traffic, one
+// connection at a time and with no error anywhere. Clearing
+// def.NetworkAliases at the call site would not have been enough: the primary
+// alias comes from app.Name, not from that field.
+func networkAliases(app appdef.ApplicationDef, name string) []string {
+	if name != app.Name {
+		return []string{name}
+	}
+	aliases := make([]string, 0, 1+len(app.NetworkAliases))
+	aliases = append(aliases, app.Name)
+	aliases = append(aliases, app.NetworkAliases...)
+	return aliases
+}
+
 // containerLabels builds the launcher labels for a container (they must match
 // Kotlin DockerLabels for backward compatibility). LabelWorkspace holds the
 // workspace ID (Kotlin contract); in server mode it is empty, and the label is
@@ -457,15 +492,20 @@ func (c *Client) CreateContainerWith(ctx context.Context, app appdef.Application
 // filters on LabelNamespace plus the workspace, never on LabelAppName — still
 // removes it with everything else.
 func (c *Client) containerLabels(app appdef.ApplicationDef, name string, extra map[string]string) map[string]string {
-	labels := map[string]string{
-		LabelLauncher:    "true",
-		LabelWorkspace:   c.workspace,
-		LabelNamespace:   c.namespace,
-		LabelAppName:     name,
-		LabelAppHash:     app.GetHash(),
-		LabelComposeProj: c.composeProject(),
-	}
+	// The extra labels are seeded FIRST and the launcher's own are written over
+	// them, so a caller can add labels but can never take one away. The
+	// direction matters most for LabelNamespace: PurgeNamespace finds a
+	// container only by that label, so a container that lost it would survive
+	// the purge holding a data volume, invisible to every launcher surface —
+	// exactly the leak a temp container must not be able to cause.
+	labels := make(map[string]string, len(extra)+6)
 	maps.Copy(labels, extra)
+	labels[LabelLauncher] = "true"
+	labels[LabelWorkspace] = c.workspace
+	labels[LabelNamespace] = c.namespace
+	labels[LabelAppName] = name
+	labels[LabelAppHash] = app.GetHash()
+	labels[LabelComposeProj] = c.composeProject()
 	return labels
 }
 
