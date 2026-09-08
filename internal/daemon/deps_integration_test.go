@@ -33,8 +33,11 @@ package daemon
 //
 //	unshare --user --map-auto --map-root-user make test-integration-deps
 //
-// requireReadableCluster below fails with that instruction rather than letting
-// the permission error surface as an unrelated preflight problem.
+// With a ROOTFUL daemon a docker-group user hits the same EACCES (uid 999 is a
+// real uid there, PGDATA is 0700) and a user namespace does NOT help — that
+// case is `sudo make test-integration-deps`. requireReadableCluster below
+// fails with both instructions rather than letting the permission error
+// surface as an unrelated preflight problem.
 
 import (
 	"context"
@@ -127,6 +130,18 @@ func (o *observedEnv) Exec(ctx context.Context, name string, cmd []string) (stdo
 	}
 	//nolint:wrapcheck // a transparent observer must hand the Env's error back untouched
 	return stdout, stderr, exitCode, err
+}
+
+// recordedCommands lists the command lines that produced stderr — what a
+// failed stderrFor lookup has to show to be diagnosable.
+func (o *observedEnv) recordedCommands() []string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	out := make([]string, 0, len(o.logs))
+	for _, l := range o.logs {
+		out = append(out, l.cmd)
+	}
+	return out
 }
 
 // stderrFor returns the recorded stderr of the last command whose line starts
@@ -275,9 +290,12 @@ func (e *itEnv) requireReadableCluster(ctx context.Context, t *testing.T) {
 	_, err := e.env.ReadVolumeFile(ctx, deps.PostgresVolumeLegacy, "PG_VERSION")
 	if errors.Is(err, fs.ErrPermission) {
 		t.Fatalf("cannot read %s/PG_VERSION as this user: %v\n"+
-			"Server mode expects the launcher to own what the container wrote (a root daemon, or rootful Docker).\n"+
-			"Under rootless Docker run the test in a user namespace that maps the subuid range:\n"+
-			"  unshare --user --map-auto --map-root-user make test-integration-deps",
+			"Server mode expects the launcher to own what the container wrote (the root daemon a server install runs).\n"+
+			"Under ROOTLESS Docker, run the test in a user namespace that maps the subuid range:\n"+
+			"  unshare --user --map-auto --map-root-user make test-integration-deps\n"+
+			"With a ROOTFUL daemon a docker-group user hits the same EACCES (uid 999 is a real uid there and\n"+
+			"PGDATA is 0700) and a user namespace does not help — run it as root instead:\n"+
+			"  sudo make test-integration-deps",
 			deps.PostgresVolumeLegacy, err)
 	}
 	require.NoError(t, err)
@@ -401,13 +419,18 @@ func TestIntegration_Postgres17To18(t *testing.T) {
 
 	// The evidence the fakes cannot produce: what psql actually printed while
 	// replaying a real pg_dumpall script into PostgreSQL 18.
-	if log, ok := e.env.stderrFor("psql -h 127.0.0.1 -U postgres -d postgres -q -o /dev/null"); ok {
-		t.Logf("restore stderr (exit %d):\n%s", log.code, strings.TrimSpace(log.stderr))
-		assert.Contains(t, log.stderr, `role "postgres" already exists`,
-			"the one error the restore tolerates is the one a real dump always produces")
-	} else {
-		t.Log("restore produced no stderr")
-	}
+	//
+	// The prefix comes from the plan's own exported builder, never a copy: a
+	// flag added or reordered there would silently stop matching, and a miss
+	// must FAIL rather than skip — "no stderr recorded" is exactly what a
+	// broken lookup looks like, and it would delete this assertion with a
+	// green run.
+	restoreLog, ok := e.env.stderrFor(strings.Join(migrate.RestoreCommandPrefix(), " "))
+	require.Truef(t, ok, "no command matching the restore prefix %q produced stderr; recorded: %v",
+		strings.Join(migrate.RestoreCommandPrefix(), " "), e.env.recordedCommands())
+	t.Logf("restore stderr (exit %d):\n%s", restoreLog.code, strings.TrimSpace(restoreLog.stderr))
+	assert.Contains(t, restoreLog.stderr, `role "postgres" already exists`,
+		"the one error the restore tolerates is the one a real dump always produces")
 
 	// --- the pin, the journal and the verdict --------------------------------
 	assert.Equal(t, itToImage, e.rt.DependencyPins()[deps.Postgres])
@@ -496,7 +519,11 @@ func TestIntegration_RollbackOnBadTarget(t *testing.T) {
 			}
 			// Pulls, starts, and is not a PostgreSQL server — so the target
 			// container EXISTS and runs when the step fails, which is what the
-			// rollback has to clean up.
+			// rollback has to clean up. alpine:3 is a PROP, and this closure
+			// deliberately short-circuits the real start-target step's
+			// readiness wait (migrate.waitReady would poll an image that never
+			// answers for its full 5-minute budget) — so the wording below is
+			// the TEST's, and must never be mistaken for the engine's.
 			def.Image = itBadImage
 			// PID 1 with no signal handler ignores SIGTERM, so the rollback's
 			// stop pays the full graceful-stop grace before the kill — the
@@ -507,7 +534,8 @@ func TestIntegration_RollbackOnBadTarget(t *testing.T) {
 				return fmt.Errorf("start the sabotaged target: %w", runErr)
 			}
 			dstRunning, _ = e.env.ContainerRunning(ctx, migrate.DstContainer)
-			return fmt.Errorf("container %s never became a PostgreSQL server", migrate.DstContainer)
+			return fmt.Errorf("test sabotage: %s runs %s, which is not a PostgreSQL server",
+				migrate.DstContainer, itBadImage)
 		}
 	}
 	require.True(t, sabotaged, "the plan has no start-target step to sabotage")

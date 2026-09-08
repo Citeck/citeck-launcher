@@ -2,6 +2,21 @@ package migrate
 
 import "strings"
 
+// RestoreCommandPrefix is the psql invocation the restore step runs, minus its
+// "-f <dump>" tail. It is EXPORTED because the real-Docker integration test
+// (internal/daemon/deps_integration_test.go) has to pick the restore's own
+// stderr out of every command the migration ran, and it identifies it by this
+// prefix. A hand-copied literal there would stop matching the day a flag is
+// added or reordered — and, since a missed match means "no stderr recorded",
+// it would silently delete the assertion that the tolerated
+// `role "postgres" already exists` error is what a real dump produces. One
+// source, used by the step and by the test.
+//
+// A fresh slice per call: the caller appends its own tail to it.
+func RestoreCommandPrefix() []string {
+	return []string{"psql", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres", "-q", "-o", "/dev/null"}
+}
+
 // restoreErrors extracts the ERROR lines psql printed on STDERR while
 // replaying a pg_dumpall script into a fresh cluster.
 //

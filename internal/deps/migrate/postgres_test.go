@@ -251,6 +251,31 @@ func TestVolumeIsJournaledBeforeItIsCreated(t *testing.T) {
 	require.Len(t, st.failures, 1)
 }
 
+// The restore's command line must BE the exported prefix, not merely resemble
+// it: the integration test picks the restore's stderr out of every command the
+// migration ran by matching RestoreCommandPrefix, and a step that quietly
+// stopped using it would leave that lookup matching nothing — which reads as
+// "the restore printed nothing", not as a failure.
+func TestRestoreRunsTheExportedCommandPrefix(t *testing.T) {
+	env := envWith17Data()
+	base := env.ExecFn
+	var restoreCmd string
+	env.ExecFn = func(c, cmd string) (string, string, int, error) {
+		if strings.HasPrefix(cmd, "psql") && strings.Contains(cmd, " -f ") {
+			restoreCmd = cmd
+		}
+		return base(c, cmd)
+	}
+	_, err := runPlan(t, env, PlanOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, restoreCmd, "the plan ran no restore")
+	assert.True(t, strings.HasPrefix(restoreCmd, strings.Join(RestoreCommandPrefix(), " ")),
+		"restore ran %q, which does not start with the exported prefix %q",
+		restoreCmd, strings.Join(RestoreCommandPrefix(), " "))
+	assert.True(t, strings.HasSuffix(restoreCmd, " -f /citeck/depsmig/dump.sql"),
+		"the prefix carries everything but the dump: %q", restoreCmd)
+}
+
 func TestRestoreErrorRollsBackEverything(t *testing.T) {
 	env := envWith17Data()
 	base := env.ExecFn

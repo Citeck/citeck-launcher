@@ -366,10 +366,8 @@ func (r *pgRun) createVolume(ctx context.Context, j *Journal, _ StepProgress) er
 func (r *pgRun) restore(ctx context.Context, _ *Journal, p StepProgress) error {
 	size, _ := r.env.FileSize(r.dumpHostPath)
 	p(0, "restoring a "+fsutil.FormatBytes(size)+" dump")
-	_, stderr, code, err := r.env.Exec(ctx, DstContainer, []string{
-		"psql", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres",
-		"-q", "-o", "/dev/null", "-f", r.dumpInContainer,
-	})
+	_, stderr, code, err := r.env.Exec(ctx, DstContainer,
+		append(RestoreCommandPrefix(), "-f", r.dumpInContainer))
 	if err != nil {
 		return fmt.Errorf("psql: %w", err)
 	}

@@ -149,13 +149,15 @@ test-coverage:
 test-integration:
 	go test -tags=integration ./tests/...
 
-# Real-Docker PostgreSQL 17 → 18 migration + rollback (opt-in, ~3-5 min).
-# Needs a Docker engine and pulls postgres:17.5 / postgres:18 / alpine:3.
-# Under ROOTLESS Docker the test process cannot read what a container wrote
-# into a bind-mounted data volume (server mode assumes the root daemon a
-# server install runs), so run it inside a user namespace that maps the
-# subuid range:
+# Real-Docker PostgreSQL 17 -> 18 migration + rollback (opt-in). Measured at
+# ~70 s for the pair with the images already local; add the first-time pull of
+# postgres:17.5 / postgres:18 / alpine:3 (~1.5 GB) on a cold machine.
+# The test process must be able to READ what a container wrote into a
+# bind-mounted data volume (server mode assumes the root daemon a server
+# install runs). Under ROOTLESS Docker, run it in a user namespace that maps
+# the subuid range; with a ROOTFUL daemon, run it as root:
 #   unshare --user --map-auto --map-root-user make test-integration-deps
+#   sudo make test-integration-deps
 test-integration-deps:
 	go test -tags integration -run 'TestIntegration_' -timeout 30m -v ./internal/daemon/
 
