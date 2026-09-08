@@ -38,10 +38,15 @@ func TestBreakingRules(t *testing.T) {
 		{Postgres, "postgres:18", "postgres:17.5", true}, // downgrade is a change too
 		{Postgres, "postgres:17.5", "postgres:latest", true},
 		{Postgres, "custom/pg:v17", "postgres:17.5", true},
-		// Two unknown tags are NOT compared numerically: an unparsable tag
-		// yields a zero Version, so without the ok guard this pair would read
-		// as "major 0 to major 0", i.e. not breaking.
-		{Postgres, "postgres:latest", "postgres:edge", true},
+		// The SAME image cannot move the data, whatever its tag says. Without
+		// this an unknown tag would report a permanent, un-actionable upgrade
+		// from X to X.
+		{Postgres, "postgres:latest", "postgres:latest", false},
+		// Two DIFFERENT unknown tags are still breaking, and are NOT compared
+		// numerically: an unparsable tag yields a zero Version, so without the
+		// ok guard this pair would read as "major 0 to major 0", i.e. not
+		// breaking.
+		{Postgres, "postgres:latest", "postgres:foo", true},
 		{RabbitMQ, "rabbitmq:4.1.2-management", "rabbitmq:4.1.9-management", false},
 		{RabbitMQ, "rabbitmq:4.1.2-management", "rabbitmq:4.2.9-management", true},
 		{RabbitMQ, "rabbitmq:4.1.2-management", "rabbitmq:5.0.0-management", true},

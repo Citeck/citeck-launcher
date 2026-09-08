@@ -74,10 +74,20 @@ func ByApp(app string) (Descriptor, bool) {
 }
 
 // Breaking answers the generator's question for two image references.
-// An unparsable tag on either side is breaking: keeping the pin and reporting
-// is the safe direction, the alternative is a silent swap onto data we do not
-// understand.
+//
+// The same image reference on both sides is never breaking, whatever its tag
+// says: it is the image the data already runs on, so it cannot move the data
+// to another version. That check comes FIRST, because otherwise a namespace
+// pinned to an unparsable tag (":latest") would report a permanent,
+// un-actionable "held back" upgrade from X to X.
+//
+// Otherwise an unparsable tag on either side is breaking: keeping the pin and
+// reporting is the safe direction, the alternative is a silent swap onto data
+// we do not understand.
 func Breaking(d Descriptor, pinned, candidate string) bool {
+	if pinned == candidate {
+		return false
+	}
 	from, okFrom := d.ParseVersion(pinned)
 	to, okTo := d.ParseVersion(candidate)
 	if !okFrom || !okTo {
