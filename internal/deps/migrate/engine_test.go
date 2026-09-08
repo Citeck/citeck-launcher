@@ -1,0 +1,414 @@
+package migrate
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/citeck/citeck-launcher/internal/deps"
+	"github.com/citeck/citeck-launcher/internal/deps/migrate/migratetest"
+)
+
+// The shared fake Env lives in migratetest so the plan tests, the daemon
+// crash-recovery tests and the integration harness reuse one implementation;
+// the engine only has to know it really is an Env.
+var _ Env = (*migratetest.FakeEnv)(nil)
+
+type fakeStore struct {
+	mu       sync.Mutex
+	journal  *deps.MigrationJournal
+	journals []deps.MigrationJournal // every SetMigrationJournal payload
+	commits  []deps.MigrationResult
+	failures []deps.MigrationResult
+	pin      string
+	setErr   error // injected SetMigrationJournal failure
+	setErrAt int   // fail the Nth (1-based) SetMigrationJournal call
+	setCalls int
+}
+
+func (s *fakeStore) MigrationJournal() *deps.MigrationJournal {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.journal == nil {
+		return nil
+	}
+	c := *s.journal
+	return &c
+}
+
+func (s *fakeStore) SetMigrationJournal(j *deps.MigrationJournal) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.setCalls++
+	if s.setErr != nil && s.setCalls == s.setErrAt {
+		return s.setErr
+	}
+	if j == nil {
+		s.journal = nil
+		return nil
+	}
+	c := *j
+	s.journal = &c
+	s.journals = append(s.journals, c)
+	return nil
+}
+
+func (s *fakeStore) CommitMigration(_ deps.ID, image string, res deps.MigrationResult) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pin = image
+	s.journal = nil
+	s.commits = append(s.commits, res)
+	return nil
+}
+
+func (s *fakeStore) RecordMigrationFailure(res deps.MigrationResult) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.journal = nil
+	s.failures = append(s.failures, res)
+	return nil
+}
+
+func (s *fakeStore) steps() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, 0, len(s.journals))
+	for _, j := range s.journals {
+		out = append(out, j.Step)
+	}
+	return out
+}
+
+func step(id string, fn func(j *deps.MigrationJournal) error) Step {
+	return Step{ID: id, Run: func(_ context.Context, j *Journal, _ StepProgress) error { return fn(&j.MigrationJournal) }}
+}
+
+func baseJournal() deps.MigrationJournal {
+	return deps.MigrationJournal{ID: deps.Postgres, From: "postgres:17.5", To: "postgres:18", StartedAt: time.Now()}
+}
+
+func TestRunJournalsEveryStepThenCommitsOnce(t *testing.T) {
+	st := &fakeStore{}
+	var order []string
+	plan := &Plan{
+		Steps: []Step{
+			step("a", func(*deps.MigrationJournal) error { order = append(order, "a"); return nil }),
+			step("b", func(j *deps.MigrationJournal) error {
+				j.CreatedVolume = "postgres3"
+				order = append(order, "b")
+				return nil
+			}),
+		},
+		Rollback: func(context.Context, *deps.MigrationJournal) error { order = append(order, "rollback"); return nil },
+		Result: func(j *deps.MigrationJournal) deps.MigrationResult {
+			return deps.MigrationResult{ID: j.ID, OldVolume: "postgres2"}
+		},
+		Finalize: func(context.Context, *deps.MigrationJournal) error { order = append(order, "finalize"); return nil },
+	}
+	var progress []string
+	err := Run(context.Background(), st, baseJournal(), plan, func(id string, _, _ int, _ float64, _ string) {
+		progress = append(progress, id)
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a", "b", "finalize"}, order)
+	assert.Equal(t, []string{"a", "b"}, progress)
+	// write-ahead: "" before a, "a" after a, "b" after b
+	assert.Equal(t, []string{"", "a", "b"}, st.steps())
+	assert.Equal(t, "postgres3", st.journals[2].CreatedVolume, "journal carries what steps record")
+	require.Len(t, st.commits, 1)
+	assert.Equal(t, "postgres2", st.commits[0].OldVolume)
+	assert.False(t, st.commits[0].FinishedAt.IsZero(), "the engine stamps the result")
+	assert.Equal(t, "postgres:18", st.pin)
+	assert.Nil(t, st.journal)
+	assert.Empty(t, st.failures)
+}
+
+// Ruling 5: the pin, the journal id and the result's identity are one source
+// of truth — the journal — whatever the plan's Result left blank.
+func TestCommitCarriesTheJournalsIdentity(t *testing.T) {
+	st := &fakeStore{}
+	plan := &Plan{
+		Steps:    []Step{step("a", func(*deps.MigrationJournal) error { return nil })},
+		Rollback: func(context.Context, *deps.MigrationJournal) error { return nil },
+		Result:   func(*deps.MigrationJournal) deps.MigrationResult { return deps.MigrationResult{OldVolume: "postgres2"} },
+	}
+	require.NoError(t, Run(context.Background(), st, baseJournal(), plan, nil))
+	require.Len(t, st.commits, 1)
+	assert.Equal(t, deps.Postgres, st.commits[0].ID)
+	assert.Equal(t, "postgres:17.5", st.commits[0].From)
+	assert.Equal(t, "postgres:18", st.commits[0].To)
+	assert.Equal(t, "postgres:18", st.pin)
+}
+
+// A step that creates something records it and asks for a persist BEFORE
+// creating it; the engine must write that journal there and then, not only
+// once the step returns.
+func TestAStepCanPersistTheJournalBeforeItActs(t *testing.T) {
+	st := &fakeStore{}
+	plan := &Plan{
+		Steps: []Step{{ID: "create", Run: func(_ context.Context, j *Journal, _ StepProgress) error {
+			j.CreatedVolume = "postgres3"
+			if err := j.Persist(); err != nil {
+				return err
+			}
+			// The write-ahead entry is visible to a crash-recovery reader now.
+			cur := st.MigrationJournal()
+			require.NotNil(t, cur)
+			assert.Equal(t, "postgres3", cur.CreatedVolume)
+			assert.Empty(t, cur.Step, "the step has not completed yet")
+			return nil
+		}}},
+		Rollback: func(context.Context, *deps.MigrationJournal) error { return nil },
+		Result:   func(j *deps.MigrationJournal) deps.MigrationResult { return deps.MigrationResult{ID: j.ID} },
+	}
+	require.NoError(t, Run(context.Background(), st, baseJournal(), plan, nil))
+	assert.Equal(t, []string{"", "", "create"}, st.steps())
+}
+
+func TestStepFailureRollsBackWithTheJournalAsItWas(t *testing.T) {
+	st := &fakeStore{}
+	var seen *deps.MigrationJournal
+	plan := &Plan{
+		Steps: []Step{
+			step("a", func(j *deps.MigrationJournal) error { j.CreatedVolume = "postgres3"; return nil }),
+			step("b", func(*deps.MigrationJournal) error { return errors.New("dump failed") }),
+			step("c", func(*deps.MigrationJournal) error { t.Error("must not run"); return nil }),
+		},
+		Rollback: func(_ context.Context, j *deps.MigrationJournal) error { c := *j; seen = &c; return nil },
+		Result:   func(j *deps.MigrationJournal) deps.MigrationResult { return deps.MigrationResult{ID: j.ID} },
+	}
+	err := Run(context.Background(), st, baseJournal(), plan, nil)
+	require.ErrorContains(t, err, "dump failed")
+	require.NotNil(t, seen)
+	assert.Equal(t, "a", seen.Step)
+	assert.Equal(t, "postgres3", seen.CreatedVolume)
+	require.Len(t, st.failures, 1)
+	assert.Contains(t, st.failures[0].Error, "dump failed")
+	assert.Equal(t, deps.Postgres, st.failures[0].ID)
+	assert.Equal(t, "postgres:17.5", st.failures[0].From)
+	assert.Equal(t, "postgres:18", st.failures[0].To)
+	assert.Empty(t, st.commits)
+	assert.Empty(t, st.pin, "pin must not move on failure")
+	assert.Nil(t, st.journal, "journal cleared after rollback")
+}
+
+func TestRollbackFailureIsReportedAlongsideTheCause(t *testing.T) {
+	st := &fakeStore{}
+	plan := &Plan{
+		Steps:    []Step{step("a", func(*deps.MigrationJournal) error { return errors.New("boom") })},
+		Rollback: func(context.Context, *deps.MigrationJournal) error { return errors.New("rm volume: busy") },
+		Result:   func(j *deps.MigrationJournal) deps.MigrationResult { return deps.MigrationResult{ID: j.ID} },
+	}
+	err := Run(context.Background(), st, baseJournal(), plan, nil)
+	require.ErrorContains(t, err, "boom")
+	require.ErrorContains(t, err, "rm volume: busy")
+	require.Len(t, st.failures, 1)
+	assert.Contains(t, st.failures[0].Error, "boom")
+	assert.Contains(t, st.failures[0].Error, "rollback failed")
+}
+
+func TestCancelledContextRollsBackOnAnUncancelledOne(t *testing.T) {
+	st := &fakeStore{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var rollbackCtxErr error
+	var hasDeadline bool
+	plan := &Plan{
+		Steps: []Step{
+			step("a", func(*deps.MigrationJournal) error { cancel(); return nil }), // daemon shutdown mid-step
+			step("b", func(*deps.MigrationJournal) error { t.Error("must not run after cancel"); return nil }),
+		},
+		Rollback: func(rctx context.Context, _ *deps.MigrationJournal) error {
+			rollbackCtxErr = rctx.Err()
+			_, hasDeadline = rctx.Deadline()
+			return nil
+		},
+		Result: func(j *deps.MigrationJournal) deps.MigrationResult { return deps.MigrationResult{ID: j.ID} },
+	}
+	err := Run(ctx, st, baseJournal(), plan, nil)
+	require.ErrorIs(t, err, context.Canceled)
+	require.NoError(t, rollbackCtxErr, "rollback context must not inherit the cancellation")
+	assert.True(t, hasDeadline, "rollback runs under its own bounded timeout")
+	require.Len(t, st.failures, 1)
+	assert.Empty(t, st.commits)
+}
+
+// The commit is the point of no return, so a cancellation that lands after the
+// LAST step still rolls back rather than moving the pin.
+func TestCancellationAfterTheLastStepDoesNotCommit(t *testing.T) {
+	st := &fakeStore{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rolledBack := false
+	plan := &Plan{
+		Steps:    []Step{step("only", func(*deps.MigrationJournal) error { cancel(); return nil })},
+		Rollback: func(context.Context, *deps.MigrationJournal) error { rolledBack = true; return nil },
+		Result:   func(j *deps.MigrationJournal) deps.MigrationResult { return deps.MigrationResult{ID: j.ID} },
+		Finalize: func(context.Context, *deps.MigrationJournal) error {
+			t.Error("no finalize without a commit")
+			return nil
+		},
+	}
+	err := Run(ctx, st, baseJournal(), plan, nil)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.True(t, rolledBack)
+	assert.Empty(t, st.commits)
+	assert.Empty(t, st.pin)
+}
+
+func TestJournalPersistFailureBeforeTheFirstStepRunsNothing(t *testing.T) {
+	st := &fakeStore{setErr: errors.New("disk full"), setErrAt: 1}
+	plan := &Plan{
+		Steps:    []Step{step("a", func(*deps.MigrationJournal) error { t.Error("must not run"); return nil })},
+		Rollback: func(context.Context, *deps.MigrationJournal) error { t.Error("nothing to roll back"); return nil },
+		Result:   func(j *deps.MigrationJournal) deps.MigrationResult { return deps.MigrationResult{ID: j.ID} },
+	}
+	err := Run(context.Background(), st, baseJournal(), plan, nil)
+	require.ErrorContains(t, err, "disk full")
+	assert.Empty(t, st.commits)
+	assert.Empty(t, st.failures)
+}
+
+// A journal that cannot be written after a step is as dangerous as a failed
+// step: the record of what to undo is already stale, so the engine rolls back.
+func TestJournalPersistFailureAfterAStepRollsBack(t *testing.T) {
+	st := &fakeStore{setErr: errors.New("disk full"), setErrAt: 2}
+	rolledBack := false
+	plan := &Plan{
+		Steps: []Step{
+			step("a", func(*deps.MigrationJournal) error { return nil }),
+			step("b", func(*deps.MigrationJournal) error { t.Error("must not run"); return nil }),
+		},
+		Rollback: func(context.Context, *deps.MigrationJournal) error { rolledBack = true; return nil },
+		Result:   func(j *deps.MigrationJournal) deps.MigrationResult { return deps.MigrationResult{ID: j.ID} },
+	}
+	err := Run(context.Background(), st, baseJournal(), plan, nil)
+	require.ErrorContains(t, err, "disk full")
+	assert.True(t, rolledBack)
+	assert.Empty(t, st.commits)
+}
+
+func TestFinalizeFailureIsAFinalizeErrorAfterCommit(t *testing.T) {
+	st := &fakeStore{}
+	plan := &Plan{
+		Steps:    []Step{step("a", func(*deps.MigrationJournal) error { return nil })},
+		Rollback: func(context.Context, *deps.MigrationJournal) error { t.Error("no rollback after commit"); return nil },
+		Result:   func(j *deps.MigrationJournal) deps.MigrationResult { return deps.MigrationResult{ID: j.ID} },
+		Finalize: func(context.Context, *deps.MigrationJournal) error { return errors.New("start failed") },
+	}
+	err := Run(context.Background(), st, baseJournal(), plan, nil)
+	var fe *FinalizeError
+	require.ErrorAs(t, err, &fe)
+	require.ErrorContains(t, err, "start failed")
+	assert.Equal(t, "postgres:18", st.pin)
+	require.Len(t, st.commits, 1)
+	assert.Empty(t, st.failures, "a finalize failure is not a migration failure")
+}
+
+func TestRunRefusesAMalformedPlan(t *testing.T) {
+	ok := step("a", func(*deps.MigrationJournal) error { return nil })
+	rollback := func(context.Context, *deps.MigrationJournal) error { return nil }
+	result := func(j *deps.MigrationJournal) deps.MigrationResult { return deps.MigrationResult{ID: j.ID} }
+	cases := map[string]*Plan{
+		"no steps":           {Rollback: rollback, Result: result},
+		"no rollback":        {Steps: []Step{ok}, Result: result},
+		"no result":          {Steps: []Step{ok}, Rollback: rollback},
+		"step without a run": {Steps: []Step{{ID: "a"}}, Rollback: rollback, Result: result},
+		"step without an id": {Steps: []Step{{Run: ok.Run}}, Rollback: rollback, Result: result},
+	}
+	for name, plan := range cases {
+		t.Run(name, func(t *testing.T) {
+			st := &fakeStore{}
+			err := Run(context.Background(), st, baseJournal(), plan, nil)
+			require.Error(t, err)
+			assert.Empty(t, st.journals, "a malformed plan must not open a journal")
+			assert.Empty(t, st.commits)
+			assert.Empty(t, st.failures)
+		})
+	}
+	t.Run("no plan", func(t *testing.T) {
+		require.Error(t, Run(context.Background(), &fakeStore{}, baseJournal(), nil, nil))
+	})
+}
+
+func TestRollbackInterruptedRunsOnlyWithAJournal(t *testing.T) {
+	st := &fakeStore{}
+	called := 0
+	var seen *deps.MigrationJournal
+	rb := func(_ context.Context, j *deps.MigrationJournal) error {
+		called++
+		c := *j
+		seen = &c
+		return nil
+	}
+	ok, err := RollbackInterrupted(context.Background(), st, rb)
+	require.NoError(t, err)
+	assert.False(t, ok)
+	assert.Zero(t, called)
+	assert.Empty(t, st.failures)
+
+	j := baseJournal()
+	j.Step = "dump"
+	require.NoError(t, st.SetMigrationJournal(&j))
+	ok, err = RollbackInterrupted(context.Background(), st, rb)
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, 1, called)
+	require.NotNil(t, seen)
+	assert.Equal(t, "dump", seen.Step, "rollback sees the journal as it was left")
+	require.Len(t, st.failures, 1)
+	assert.Contains(t, st.failures[0].Error, "interrupted")
+	assert.Equal(t, deps.Postgres, st.failures[0].ID)
+	assert.Nil(t, st.journal)
+	assert.Empty(t, st.pin, "an interrupted migration never moves the pin")
+}
+
+func TestRollbackInterruptedReportsARollbackFailure(t *testing.T) {
+	st := &fakeStore{}
+	j := baseJournal()
+	j.CreatedVolume = "postgres3"
+	require.NoError(t, st.SetMigrationJournal(&j))
+	ok, err := RollbackInterrupted(context.Background(), st, func(context.Context, *deps.MigrationJournal) error {
+		return errors.New("rm volume: busy")
+	})
+	assert.True(t, ok)
+	require.ErrorContains(t, err, "rm volume: busy")
+	require.Len(t, st.failures, 1)
+	assert.Contains(t, st.failures[0].Error, "rollback failed")
+	assert.Nil(t, st.journal, "the verdict is recorded even when the rollback failed")
+}
+
+func TestRollbackInterruptedRunsOnAnUncancelledContext(t *testing.T) {
+	st := &fakeStore{}
+	j := baseJournal()
+	require.NoError(t, st.SetMigrationJournal(&j))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var rbErr error
+	var hasDeadline bool
+	ok, err := RollbackInterrupted(ctx, st, func(rctx context.Context, _ *deps.MigrationJournal) error {
+		rbErr = rctx.Err()
+		_, hasDeadline = rctx.Deadline()
+		return nil
+	})
+	require.NoError(t, err)
+	assert.True(t, ok)
+	require.NoError(t, rbErr)
+	assert.True(t, hasDeadline)
+}
+
+func TestRollbackInterruptedNeedsARollback(t *testing.T) {
+	st := &fakeStore{}
+	j := baseJournal()
+	require.NoError(t, st.SetMigrationJournal(&j))
+	ok, err := RollbackInterrupted(context.Background(), st, nil)
+	require.Error(t, err)
+	assert.False(t, ok)
+	assert.NotNil(t, st.journal, "the journal survives so a later run can still undo it")
+}

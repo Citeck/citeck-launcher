@@ -11,7 +11,13 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/deps"
+	"github.com/citeck/citeck-launcher/internal/deps/migrate"
 )
+
+// The migration engine drives the journal through this Runtime and nothing
+// else; the seam is one-way (migrate must not import namespace), so the
+// assertion lives here.
+var _ migrate.JournalStore = (*Runtime)(nil)
 
 func decodeState(t *testing.T, js string) NsPersistedState {
 	t.Helper()
