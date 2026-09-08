@@ -142,11 +142,13 @@ type Daemon struct {
 	// dependency migration, and of an asynchronous update pass (ownership is
 	// transferred into the background goroutine in each case). Every route that
 	// starts, reshapes or destroys the namespace TryLocks it via tryLongOp and
-	// answers 409 LONG_OP_IN_PROGRESS naming the holder — except Start and
-	// Stop, which are refused ONLY by the two data-owning holders (snapshot,
-	// migration) and tolerate ordinary lifecycle work (an update pass, another
-	// synchronous handler) so click-folding and the stop escape hatch keep
-	// working. See longop.go (longOpTolerance).
+	// answers 409 LONG_OP_IN_PROGRESS naming the holder — except the five
+	// LIFECYCLE routes (namespace Start/Stop and the per-app Start/Stop/
+	// Restart), which are refused ONLY by the two data-owning holders
+	// (snapshot, migration) and tolerate ordinary lifecycle work (an update
+	// pass, another synchronous handler) so click-folding, the stop escape
+	// hatch and a burst of per-app toggles keep working. See longop.go
+	// (longOpTolerance).
 	longOp    longOpLock
 	daemonCfg config.DaemonConfig
 	// eventSeq is the monotonic SSE event counter. All mutations (.Add) and

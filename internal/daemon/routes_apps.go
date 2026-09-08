@@ -216,12 +216,11 @@ func (d *Daemon) handleAppRestart(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	// tolerateLifecycleWork, like the namespace-level Start/Stop: the
-	// attach-toggle regeneration this route can spawn holds the lock as
-	// longOpUpdatePass for its whole doReload, so under tolerateNothing the
-	// documented memory-relief recipe — `citeck stop onlyoffice attorneys ecom
-	// …` — would 409 on every app after the first. Only a snapshot or a
-	// migration, which own the namespace's data, refuse a per-app toggle.
+	// tolerateLifecycleWork, like the namespace-level Start/Stop. Restart
+	// spawns no regeneration of its own; it is plain lifecycle work that was
+	// ungated before this feature, and refusing it beside a reload or an update
+	// pass would be a new dead end. Only a snapshot or a migration, which own
+	// the namespace's data, refuse it.
 	release, ok := d.tryLongOp(w, tolerateLifecycleWork)
 	if !ok {
 		return

@@ -36,9 +36,10 @@ const (
 	longOpMigration longOpKind = "migration"
 	// longOpUpdatePass is an asynchronous pass that re-drives the namespace on
 	// the user's behalf — the queued Update & Start pass, and the attach-toggle
-	// regeneration. It is the one holder Start and Stop tolerate (see
-	// tryLongOp): the pass IS a start, and refusing Stop would take away the
-	// escape hatch for a pass that is stuck in a slow git pull.
+	// regeneration. Together with longOpRequest it is tolerated by the five
+	// lifecycle routes (see tolerateLifecycleWork): the pass IS a start,
+	// refusing Stop would take away the escape hatch for a pass stuck in a slow
+	// git pull, and refusing the per-app toggles would break a burst of them.
 	longOpUpdatePass longOpKind = "update-pass"
 	// longOpRequest is a synchronous mutating handler holding the lock for its
 	// own duration (a reload, a namespace edit, a delete).
@@ -128,26 +129,34 @@ func (t longOpTolerance) allows(holder longOpKind) bool {
 }
 
 var (
-	// tolerateNothing refuses whoever holds the lock. The policy of 17 of the
-	// 19 gated routes: an app edit, a namespace delete, a volume delete or a
-	// workspace switch beside ANY long operation is exactly what the gate is
-	// for.
+	// tolerateNothing refuses whoever holds the lock. The policy of 14 of the
+	// 19 gated routes — everything that is not lifecycle work: an app config or
+	// file edit, a reload, a bundle upgrade, a namespace edit/delete/activate,
+	// a workspace switch or delete, a volume delete. Any of those beside ANY
+	// long operation is exactly what the gate is for.
 	tolerateNothing longOpTolerance
-	// tolerateLifecycleWork is the policy of handleStartNamespace and
-	// handleStopNamespace ONLY. They are refused by longOpSnapshot and
-	// longOpMigration — the two operations that own the namespace's data — and
-	// tolerate the two that are just the launcher working on the namespace:
+	// tolerateLifecycleWork is the policy of the five LIFECYCLE routes:
+	// handleStartNamespace, handleStopNamespace, and the three per-app toggles
+	// handleAppStart, handleAppStop, handleAppRestart. They are refused by
+	// longOpSnapshot and longOpMigration — the two operations that own the
+	// namespace's data — and tolerate the two that are just the launcher
+	// working on the namespace:
 	//
-	//   - longOpUpdatePass: an ordinary start. A second click must FOLD into
-	//     the single-slot update queue (the documented contract, force OR-ed)
-	//     rather than 409, and Stop is the escape hatch from a pass stuck in a
-	//     slow git pull. Refusing either would turn the git-pull/generate
-	//     window of a normal start into a daemon-wide refusal.
+	//   - longOpUpdatePass: an ordinary start, or an attach-toggle
+	//     regeneration. A second namespace click must FOLD into the single-slot
+	//     update queue (the documented contract, force OR-ed) rather than 409,
+	//     and Stop is the escape hatch from a pass stuck in a slow git pull.
+	//     Refusing either would turn the git-pull/generate window of a normal
+	//     start into a daemon-wide refusal — and for the per-app toggles it
+	//     would 409 every app after the first in `citeck stop onlyoffice
+	//     attorneys ecom …`, since the first toggle's regeneration holds the
+	//     lock for its whole doReload.
 	//   - longOpRequest: another synchronous mutating handler. handleReload-
 	//     Namespace holds the lock for the whole of doReload — minutes on an
-	//     enterprise namespace — and Stop during a reload has been accepted by
-	//     every release before this feature (Runtime.Stop only enqueues a
-	//     command). Refusing it would be a new, unexplained dead end.
+	//     enterprise namespace — and a Stop, or a per-app toggle, during a
+	//     reload has been accepted by every release before this feature
+	//     (Runtime.Stop only enqueues a command). Refusing it would be a new,
+	//     unexplained dead end.
 	tolerateLifecycleWork = longOpTolerance{longOpUpdatePass, longOpRequest}
 )
 
