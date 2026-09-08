@@ -9,6 +9,10 @@
 //   - any step error, a journal write that fails, or a context cancellation
 //     runs Plan.Rollback on a context that is NOT canceled (bounded by
 //     RollbackTimeout) and records a failure; the pin never moves;
+//   - a rollback that SUCCEEDS clears the journal, a rollback that FAILS keeps
+//     it: what the journal describes (the new volume, the temp containers) is
+//     still out there, so the next start must find the record and retry the
+//     rollback rather than inherit untracked leftovers;
 //   - after the last step the store's CommitMigration is the single write that
 //     moves the pin, clears the journal and records the result; Plan.Finalize
 //     then does the irreversible tidy (delete scratch, restart the namespace),
@@ -42,7 +46,12 @@ type JournalStore interface {
 	MigrationJournal() *deps.MigrationJournal
 	SetMigrationJournal(j *deps.MigrationJournal) error
 	CommitMigration(id deps.ID, image string, res deps.MigrationResult) error
+	// RecordMigrationFailure closes a migration that was fully rolled back:
+	// the verdict is recorded and the journal cleared.
 	RecordMigrationFailure(res deps.MigrationResult) error
+	// RecordRollbackFailure records the verdict of a migration whose ROLLBACK
+	// failed and leaves the journal in place, so the next start retries it.
+	RecordRollbackFailure(res deps.MigrationResult) error
 }
 
 // StepProgress reports sub-progress of the running step (percent 0..100, or
@@ -183,7 +192,7 @@ func failAndRollback(ctx context.Context, store JournalStore, plan *Plan, jj *Jo
 		slog.Error("Dependency migration rollback failed", "dependency", jj.ID, "err", rbErr)
 		res.Error += "; rollback failed: " + rbErr.Error()
 	}
-	if err := store.RecordMigrationFailure(res); err != nil {
+	if err := recordVerdict(store, res, rbErr); err != nil {
 		slog.Error("Failed to record migration failure", "dependency", jj.ID, "err", err)
 	}
 	if rbErr != nil {
@@ -192,8 +201,28 @@ func failAndRollback(ctx context.Context, store JournalStore, plan *Plan, jj *Jo
 	return cause
 }
 
+// recordVerdict is the one place that decides what happens to the journal: a
+// clean rollback closes the migration, a failed one keeps the journal so the
+// next start can retry it against the leftovers it still describes.
+func recordVerdict(store JournalStore, res deps.MigrationResult, rbErr error) error {
+	if rbErr != nil {
+		if err := store.RecordRollbackFailure(res); err != nil {
+			return fmt.Errorf("record rollback failure: %w", err)
+		}
+		return nil
+	}
+	if err := store.RecordMigrationFailure(res); err != nil {
+		return fmt.Errorf("record migration failure: %w", err)
+	}
+	return nil
+}
+
 // RollbackInterrupted undoes a migration whose journal survived a daemon
 // restart. rolledBack=false when there was nothing to do.
+//
+// A rollback that succeeds clears the journal; one that fails keeps it (with
+// the verdict recorded), so the next start finds the record and tries again —
+// the alternative is a target volume and temp containers nobody knows about.
 func RollbackInterrupted(ctx context.Context, store JournalStore, rollback func(context.Context, *deps.MigrationJournal) error) (bool, error) {
 	j := store.MigrationJournal()
 	if j == nil {
@@ -207,18 +236,19 @@ func RollbackInterrupted(ctx context.Context, store JournalStore, rollback func(
 	slog.Warn("Interrupted dependency migration found; rolling back", "dependency", j.ID, "step", j.Step)
 	rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), RollbackTimeout)
 	defer cancel()
-	res := deps.MigrationResult{
-		ID: j.ID, From: j.From, To: j.To, FinishedAt: time.Now(),
-		Error: "migration interrupted by a launcher restart; rolled back",
-	}
+	res := deps.MigrationResult{ID: j.ID, From: j.From, To: j.To, FinishedAt: time.Now()}
 	rbErr := rollback(rbCtx, j)
 	if rbErr != nil {
 		slog.Error("Rollback of an interrupted dependency migration failed", "dependency", j.ID, "err", rbErr)
-		res.Error += "; rollback failed: " + rbErr.Error()
+		// Do not claim it was rolled back when it was not: the journal stays,
+		// and the verdict has to say why.
+		res.Error = "migration interrupted by a launcher restart; rollback failed: " + rbErr.Error()
 		rbErr = fmt.Errorf("rollback failed: %w", rbErr)
+	} else {
+		res.Error = "migration interrupted by a launcher restart; rolled back"
 	}
-	if err := store.RecordMigrationFailure(res); err != nil {
-		return true, errors.Join(rbErr, fmt.Errorf("record migration failure: %w", err))
+	if err := recordVerdict(store, res, rbErr); err != nil {
+		return true, errors.Join(rbErr, err)
 	}
 	return true, rbErr
 }

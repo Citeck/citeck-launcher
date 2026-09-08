@@ -99,6 +99,21 @@ func (r *Runtime) RecordMigrationFailure(res deps.MigrationResult) error {
 	return err
 }
 
+// RecordRollbackFailure closes nothing: it records the verdict of a migration
+// whose ROLLBACK failed and deliberately LEAVES THE JOURNAL in place. What the
+// journal describes — the half-created target volume, the temp containers — is
+// still on the host, so clearing it would strand those leftovers with no record
+// and no way for a later start to retry. One write, like every other mutation
+// here.
+func (r *Runtime) RecordRollbackFailure(res deps.MigrationResult) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastMigration = cloneResult(&res)
+	err := r.persistState()
+	r.dirty.Store(false)
+	return err
+}
+
 // syncDependencyPinsUnderLock re-pins every registered dependency whose app
 // is RUNNING on an image different from its pin. Running is the proof the
 // data accepted that version, so this is where a non-breaking bump (17.5 →

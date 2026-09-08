@@ -120,6 +120,32 @@ func TestPersistedStateWithoutDependencyKeysStillParses(t *testing.T) {
 	assert.Nil(t, st.DependencyMigration)
 }
 
+// A rollback that failed must NOT close the migration: the leftovers it could
+// not remove are still on the host, and the journal is the only record of them.
+func TestRecordRollbackFailureKeepsTheJournal(t *testing.T) {
+	r := NewRuntime(&Config{ID: "nsX"}, nil, t.TempDir())
+	fp := &fakePersister{}
+	r.SetStatePersister(fp)
+	r.RestoreDependencyState(map[deps.ID]deps.DependencyState{deps.Postgres: {Image: "postgres:17.5"}},
+		&deps.MigrationJournal{ID: deps.Postgres, Step: "create-volume", CreatedVolume: "postgres3"}, nil)
+
+	require.NoError(t, r.RecordRollbackFailure(deps.MigrationResult{ID: deps.Postgres,
+		Error: "restore failed; rollback failed: rm volume: busy"}))
+
+	require.Equal(t, 1, fp.callCount(), "one write, like every other migration mutation")
+	st := decodeState(t, fp.lastJSON())
+	assert.Equal(t, "postgres:17.5", st.Dependencies[deps.Postgres].Image, "the pin never moves on failure")
+	require.NotNil(t, st.DependencyMigration, "the journal survives a failed rollback")
+	assert.Equal(t, "postgres3", st.DependencyMigration.CreatedVolume)
+	require.NotNil(t, st.LastDependencyMigration)
+	assert.Contains(t, st.LastDependencyMigration.Error, "rollback failed")
+
+	// And it is still readable in memory, so the next start's recovery sees it.
+	j := r.MigrationJournal()
+	require.NotNil(t, j)
+	assert.Equal(t, "create-volume", j.Step)
+}
+
 // errPersistFailed is the sentinel a failingPersister answers with, so a test
 // can assert that a failed write reaches the migration engine's caller.
 var errPersistFailed = errors.New("save namespace state failed")
@@ -153,6 +179,10 @@ func TestMigrationWritesReportAFailedPersist(t *testing.T) {
 	})
 	t.Run("RecordMigrationFailure", func(t *testing.T) {
 		err := newRuntime().RecordMigrationFailure(deps.MigrationResult{ID: deps.Postgres, Error: "restore failed"})
+		require.ErrorIs(t, err, errPersistFailed)
+	})
+	t.Run("RecordRollbackFailure", func(t *testing.T) {
+		err := newRuntime().RecordRollbackFailure(deps.MigrationResult{ID: deps.Postgres, Error: "rollback failed"})
 		require.ErrorIs(t, err, errPersistFailed)
 	})
 }

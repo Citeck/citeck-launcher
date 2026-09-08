@@ -25,6 +25,7 @@ type fakeStore struct {
 	journals []deps.MigrationJournal // every SetMigrationJournal payload
 	commits  []deps.MigrationResult
 	failures []deps.MigrationResult
+	rbFails  []deps.MigrationResult
 	pin      string
 	setErr   error // injected SetMigrationJournal failure
 	setErrAt int   // fail the Nth (1-based) SetMigrationJournal call
@@ -72,6 +73,15 @@ func (s *fakeStore) RecordMigrationFailure(res deps.MigrationResult) error {
 	defer s.mu.Unlock()
 	s.journal = nil
 	s.failures = append(s.failures, res)
+	return nil
+}
+
+// RecordRollbackFailure records the verdict WITHOUT clearing the journal —
+// the store's half of the "a failed rollback keeps the record" contract.
+func (s *fakeStore) RecordRollbackFailure(res deps.MigrationResult) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rbFails = append(s.rbFails, res)
 	return nil
 }
 
@@ -195,7 +205,8 @@ func TestStepFailureRollsBackWithTheJournalAsItWas(t *testing.T) {
 	assert.Equal(t, "postgres:18", st.failures[0].To)
 	assert.Empty(t, st.commits)
 	assert.Empty(t, st.pin, "pin must not move on failure")
-	assert.Nil(t, st.journal, "journal cleared after rollback")
+	assert.Empty(t, st.rbFails)
+	assert.Nil(t, st.journal, "journal cleared after a clean rollback")
 }
 
 func TestRollbackFailureIsReportedAlongsideTheCause(t *testing.T) {
@@ -208,9 +219,16 @@ func TestRollbackFailureIsReportedAlongsideTheCause(t *testing.T) {
 	err := Run(context.Background(), st, baseJournal(), plan, nil)
 	require.ErrorContains(t, err, "boom")
 	require.ErrorContains(t, err, "rm volume: busy")
-	require.Len(t, st.failures, 1)
-	assert.Contains(t, st.failures[0].Error, "boom")
-	assert.Contains(t, st.failures[0].Error, "rollback failed")
+	require.Len(t, st.rbFails, 1)
+	assert.Contains(t, st.rbFails[0].Error, "boom")
+	assert.Contains(t, st.rbFails[0].Error, "rollback failed")
+	assert.Empty(t, st.failures, "a failed rollback does not close the migration")
+	// The volume the rollback could not remove is still out there, so the
+	// record of it must survive for the next start to retry.
+	require.NotNil(t, st.journal, "a failed rollback keeps the journal")
+	assert.Equal(t, deps.Postgres, st.journal.ID)
+	assert.Empty(t, st.commits)
+	assert.Empty(t, st.pin)
 }
 
 func TestCancelledContextRollsBackOnAnUncancelledOne(t *testing.T) {
@@ -365,7 +383,8 @@ func TestRollbackInterruptedRunsOnlyWithAJournal(t *testing.T) {
 	require.Len(t, st.failures, 1)
 	assert.Contains(t, st.failures[0].Error, "interrupted")
 	assert.Equal(t, deps.Postgres, st.failures[0].ID)
-	assert.Nil(t, st.journal)
+	assert.Empty(t, st.rbFails)
+	assert.Nil(t, st.journal, "a clean rollback closes the migration")
 	assert.Empty(t, st.pin, "an interrupted migration never moves the pin")
 }
 
@@ -379,9 +398,12 @@ func TestRollbackInterruptedReportsARollbackFailure(t *testing.T) {
 	})
 	assert.True(t, ok)
 	require.ErrorContains(t, err, "rm volume: busy")
-	require.Len(t, st.failures, 1)
-	assert.Contains(t, st.failures[0].Error, "rollback failed")
-	assert.Nil(t, st.journal, "the verdict is recorded even when the rollback failed")
+	require.Len(t, st.rbFails, 1)
+	assert.Contains(t, st.rbFails[0].Error, "interrupted")
+	assert.Contains(t, st.rbFails[0].Error, "rollback failed")
+	assert.Empty(t, st.failures)
+	require.NotNil(t, st.journal, "the journal survives so the next start retries the rollback")
+	assert.Equal(t, "postgres3", st.journal.CreatedVolume)
 }
 
 func TestRollbackInterruptedRunsOnAnUncancelledContext(t *testing.T) {
