@@ -41,6 +41,10 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
   // `status` is deliberately unchanged, and — unlike a purely local flag —
   // it also shows up in other windows and survives a page reload.
   const updating = useDashboardStore((s) => s.namespace?.updating ?? false)
+  // A dependency migration stops the namespace, rewrites a data volume and
+  // starts it again — driving start/stop into the middle of that is exactly
+  // what the daemon's long-op lock refuses, so the buttons must not offer it.
+  const migrating = useDashboardStore((s) => !!s.namespace?.dependencyMigration)
   // Local echo bridging the few ms between the click and that flag coming back
   // over SSE/refetch, so the button reacts on the very first frame.
   const [clickEcho, setClickEcho] = useState(false)
@@ -119,7 +123,7 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
   // hole: the echo alone would lie about other clients and die on reload, the
   // server flag alone has an SSE round-trip of latency at the very moment the
   // user is looking for a reaction.
-  const busy = clickEcho || updating
+  const busy = clickEcho || updating || migrating
 
   async function exec(a: Action) {
     // Start the echo here rather than in run(): a click that is still sitting
@@ -217,7 +221,7 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
           // pass), and gating it here would make that path unreachable from the
           // UI.
           onContextMenu={(e) => { e.preventDefault(); if (primaryEnabled && !isStarting) showContextMenu(e, primaryContextItems()) }}
-          title={busy ? t('ns.updating') : t('ns.updateAndStart')}
+          title={migrating ? t('deps.controls.migrating') : busy ? t('ns.updating') : t('ns.updateAndStart')}
         >
           {/* Only the icon swaps; the label is deliberately left alone. Replacing
               the text would resize the control — RU measures 53px for the
@@ -235,15 +239,15 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
         </button>
         <button
           type="button"
-          disabled={!stopEnabled}
+          disabled={!stopEnabled || migrating}
           className={`flex items-center justify-center gap-1.5 px-2 py-1 text-xs leading-tight text-center ${
-            stopEnabled
+            stopEnabled && !migrating
               ? 'text-destructive hover:bg-destructive/10'
               : 'text-muted-foreground/40 cursor-not-allowed'
           }`}
           style={{ flex: 3 }}
           onClick={() => { void run('stop') }}
-          title={t('ns.stop')}
+          title={migrating ? t('deps.controls.migrating') : t('ns.stop')}
         >
           <Square size={12} className="shrink-0" /> {t('ns.stop')}
         </button>

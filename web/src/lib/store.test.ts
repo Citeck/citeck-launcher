@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { useDashboardStore } from './store'
+import { useDepsStore } from './depsStore'
 
 // Mock the api module
 vi.mock('./api', () => ({
@@ -275,6 +276,60 @@ describe('useDashboardStore', () => {
     expect(useDashboardStore.getState().pullAuthRequired).toEqual({})
 
     useDashboardStore.getState().stopEventStream()
+  })
+
+  // The dependency-migration lifecycle is owned by depsStore; the dashboard
+  // store is only its SSE transport. Without this routing the Dependencies
+  // dialog would show a migration that never moves.
+  it('routes deps_migration_* events into the deps store', () => {
+    useDepsStore.setState({ migration: null, result: null })
+    useDashboardStore.getState().startEventStream()
+    const onEvent = mockedConnectEvents.mock.calls[0][0]
+    const base: EventDto = { type: '', seq: 0, timestamp: 0, namespaceId: 'ns1', appName: 'postgres', before: '', after: '' }
+
+    onEvent({ ...base, type: 'deps_migration_start', seq: 1, total: 10, after: 'postgres:17.5 → postgres:18' })
+    expect(useDepsStore.getState().migration).toMatchObject({ id: 'postgres', stepCount: 10 })
+
+    onEvent({ ...base, type: 'deps_migration_progress', seq: 2, phase: 'dump', current: 4, total: 10, percent: 42, after: 'dumping' })
+    expect(useDepsStore.getState().migration).toMatchObject({ step: 'dump', stepIndex: 4, percent: 42, message: 'dumping' })
+
+    onEvent({ ...base, type: 'deps_migration_error', seq: 3, after: 'restore failed' })
+    expect(useDepsStore.getState().migration).toBeNull()
+    expect(useDepsStore.getState().result).toMatchObject({ id: 'postgres', success: false, message: 'restore failed' })
+
+    onEvent({ ...base, type: 'deps_migration_start', seq: 4, total: 10 })
+    onEvent({ ...base, type: 'deps_migration_complete', seq: 5, current: 10, total: 10, after: 'postgres migrated to postgres:18' })
+    expect(useDepsStore.getState().result).toMatchObject({ success: true, message: 'postgres migrated to postgres:18' })
+
+    useDashboardStore.getState().stopEventStream()
+  })
+
+  // A client that connects or reloads mid-migration never saw the start event;
+  // NamespaceDto.dependencyMigration is the namespace-scoped truth for it.
+  it('hydrates the deps store from the namespace DTO, and clears it when the namespace goes away', async () => {
+    const namespace = {
+      id: 'ns1', name: 'x', status: 'STOPPED', bundleRef: '', apps: [],
+      dependencyMigration: { id: 'postgres', step: 'dump', stepIndex: 4, stepCount: 10 },
+    }
+    mockedGetNamespace.mockResolvedValueOnce(namespace)
+    mockedGetHealth.mockResolvedValueOnce({ status: 'healthy', healthy: true, checks: [] })
+    await useDashboardStore.getState().fetchData()
+    expect(useDepsStore.getState().migration).toMatchObject({ id: 'postgres', step: 'dump' })
+
+    // A namespace with no migration clears it...
+    mockedGetNamespace.mockResolvedValueOnce({ ...namespace, dependencyMigration: undefined })
+    mockedGetHealth.mockResolvedValueOnce({ status: 'healthy', healthy: true, checks: [] })
+    await useDashboardStore.getState().fetchData()
+    expect(useDepsStore.getState().migration).toBeNull()
+
+    // ...and so does a deactivated/deleted namespace, which never reaches the
+    // success path at all — otherwise a stale migration view survives the
+    // switch and blocks the controls of a namespace it has nothing to do with.
+    useDepsStore.getState().hydrate({ id: 'postgres', step: 'dump', stepIndex: 4, stepCount: 10 })
+    mockedGetNamespace.mockRejectedValueOnce(new Error('no namespace configured'))
+    mockedGetHealth.mockRejectedValueOnce(new Error('no namespace configured'))
+    await useDashboardStore.getState().fetchData()
+    expect(useDepsStore.getState().migration).toBeNull()
   })
 
   it('uses the Wails bridge transport in desktop mode (not EventSource)', () => {

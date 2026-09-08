@@ -218,3 +218,31 @@ describe('NamespaceControls click feedback', () => {
     expect(screen.getByTitle('Update & Start')).toBeDefined()
   })
 })
+
+// A dependency migration stops the namespace, rewrites a data volume and
+// starts it again. Letting the user drive Start/Stop into the middle of that
+// is how a half-migrated volume happens — the daemon refuses it, but the
+// button must not offer it in the first place.
+describe('NamespaceControls during a dependency migration', () => {
+  it('disables both start and stop while a migration runs, and says why', () => {
+    // RUNNING on purpose: on a STOPPED namespace the stop button is disabled
+    // anyway, so the migration gate on it would go unmeasured.
+    setNamespace({ status: 'RUNNING', dependencyMigration: { id: 'postgres', step: 'dump', stepIndex: 4, stepCount: 10 } })
+    render(<NamespaceControls status="RUNNING" />)
+    const [primary, stop] = screen.getAllByRole('button')
+    expect(primary).toBeDisabled()
+    expect(stop).toBeDisabled()
+    // Both halves say why, and neither label changed (the RU-width rule).
+    expect(screen.getAllByTitle('A dependency migration is running')).toHaveLength(2)
+    expect(primary).toHaveTextContent('Update & Start')
+    expect(stop).toHaveTextContent('Stop')
+  })
+
+  it('leaves the controls alone when no migration is running', () => {
+    setNamespace({ status: 'RUNNING' })
+    render(<NamespaceControls status="RUNNING" />)
+    const [primary, stop] = screen.getAllByRole('button')
+    expect(primary).not.toBeDisabled()
+    expect(stop).not.toBeDisabled()
+  })
+})

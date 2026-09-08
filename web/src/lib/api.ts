@@ -25,12 +25,23 @@ import type {
   WorkspaceConfigDto,
   UpdateStatusDto,
   ReleaseNoteDto,
+  DependenciesDto,
+  DependencyMigrateRequestDto,
+  PreflightResult,
 } from './types'
 import { notifyAuthRequired } from './authGate'
 
 export const API_BASE = '/api/v1'
 
 const CSRF_HEADER = { 'X-Citeck-CSRF': '1' }
+
+/**
+ * Timeout for the two dependency endpoints that size a Docker volume before
+ * answering. `du` over a multi-GB PostgreSQL volume routinely outlives the 30s
+ * default, and the daemon clears its own write deadline for exactly that
+ * reason — a client-side abort would report a failure for work that succeeds.
+ */
+const DEPS_LONG_TIMEOUT_MS = 10 * 60_000
 
 /**
  * ApiError is the single error shape thrown by every API helper in this
@@ -380,6 +391,35 @@ export async function getVolumeSize(name: string): Promise<{ size: number }> {
 
 export async function deleteVolume(name: string): Promise<ActionResultDto> {
   return request('DELETE', `/volumes/${enc(name)}`)
+}
+
+/**
+ * The active namespace's infrastructure dependencies (postgres, rabbitmq, …):
+ * what the data runs on, what the bundle offers, the running migration and the
+ * last verdict. Cheap — the daemon answers it from in-memory state.
+ */
+export async function getDependencies(): Promise<DependenciesDto> {
+  return request('GET', '/namespace/dependencies')
+}
+
+/**
+ * Read-only verdict for one dependency's migration: sizes, free space and the
+ * blocking problems. It measures a live Docker volume (`du`), which the daemon
+ * deliberately runs without a write deadline — so the client must not abort it
+ * at the default 30s either.
+ */
+export async function getDependencyPreflight(id: string): Promise<PreflightResult> {
+  return request('GET', `/namespace/dependencies/${enc(id)}/preflight`, { timeout: DEPS_LONG_TIMEOUT_MS })
+}
+
+/**
+ * Starts one dependency's migration. Answers 202 once the plan is built — the
+ * migration itself runs on the daemon and reports over `deps_migration_*` SSE
+ * events. Building the plan re-runs the preflight, hence the same timeout.
+ */
+export async function postDependencyMigrate(id: string, replaceExistingVolume: boolean): Promise<ActionResultDto> {
+  const body: DependencyMigrateRequestDto = { replaceExistingVolume }
+  return request('POST', `/namespace/dependencies/${enc(id)}/migrate`, { body, timeout: DEPS_LONG_TIMEOUT_MS })
 }
 
 export async function getAppConfig(name: string): Promise<AppConfigDto> {

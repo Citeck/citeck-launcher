@@ -7,6 +7,7 @@ import { toast } from './toast'
 import { t } from './i18n'
 import { useLongOpStore } from './longOp'
 import { registryHostOf, isAuthErrorText } from './registry'
+import { useDepsStore } from './depsStore'
 
 interface EventStream {
   close: () => void
@@ -180,6 +181,10 @@ return ({
         }
       }
       set({ namespace, health, loading: false, pullAuthRequired })
+      // The namespace DTO is the namespace-scoped truth about a running
+      // dependency migration — the deps_migration_* events only reach clients
+      // that were already listening, so a reload or a reconnect needs this.
+      useDepsStore.getState().hydrate(namespace.dependencyMigration)
     } catch (err) {
       const msg = (err as Error).message
       // The daemon explicitly reports no namespace (deactivated, deleted, or
@@ -189,6 +194,10 @@ return ({
       // breaks the Welcome-at-root routing.
       if (msg.includes('no namespace configured') || msg.includes('NOT_CONFIGURED')) {
         set({ namespace: null, health: null, error: null, loading: false })
+        // Same reason as on the success path, and it matters more here: a
+        // migration view left over from the namespace that just went away
+        // would keep the controls disabled for whatever is selected next.
+        useDepsStore.getState().hydrate(null)
         return
       }
       // Daemon still starting — retry silently instead of showing error
@@ -288,6 +297,35 @@ return ({
         // quiet during quiet periods of a long-running op (e.g. between
         // volumes during a large snapshot import).
         useLongOpStore.getState().markProgress()
+
+        // Dependency migration lifecycle — owned by the Dependencies dialog
+        // (progress list) and the namespace controls (disabled while running).
+        // AppName carries the DEPENDENCY id, Phase the step id, Current/Total
+        // the step index/count, Percent the step's own sub-progress.
+        if (event.type === 'deps_migration_start') {
+          useDepsStore.getState().onStart(event.appName, event.total ?? 0)
+          return
+        }
+        if (event.type === 'deps_migration_progress') {
+          useDepsStore.getState().onProgress({
+            appName: event.appName,
+            phase: event.phase ?? '',
+            current: event.current ?? 0,
+            total: event.total ?? 0,
+            percent: event.percent ?? 0,
+            after: event.after ?? '',
+          })
+          return
+        }
+        if (event.type === 'deps_migration_complete' || event.type === 'deps_migration_error') {
+          if (event.type === 'deps_migration_complete') useDepsStore.getState().onComplete(event.appName, event.after ?? '')
+          else useDepsStore.getState().onError(event.appName, event.after ?? '')
+          // The migration moved the version pin, the container and (on
+          // success) the upgrade list — refetch rather than wait for the
+          // debounce below, which this early return skips.
+          void get().fetchData()
+          return
+        }
 
         // Pull progress — store-side transient annotation, no AppDto change.
         // Backend throttles to ≤1/sec per app so we can update synchronously

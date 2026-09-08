@@ -24,6 +24,8 @@ import { BottomPanel } from '../components/BottomPanel'
 import { DiskLowBanner } from '../components/DiskLowBanner'
 import { RegistryAuthBanner } from '../components/RegistryAuthBanner'
 import { BundleErrorBanner } from '../components/BundleErrorBanner'
+import { DependencyUpgradeBanner } from '../components/DependencyUpgradeBanner'
+import { DependenciesDialog } from '../components/DependenciesDialog'
 import { RightDrawer } from '../components/RightDrawer'
 import { AppDrawerContent } from '../components/AppDrawerContent'
 import { LogViewer } from '../components/LogViewer'
@@ -31,7 +33,7 @@ import { DaemonLogsViewer } from '../components/DaemonLogsViewer'
 import { AppConfigEditor } from '../components/AppConfigEditor'
 import type { BottomPanelTab } from '../lib/panels'
 import { toast } from '../lib/toast'
-import { ExternalLink, FolderOpen, Globe, AlertTriangle, HardDrive, Key, FileText, ArrowLeft, ShieldCheck } from 'lucide-react'
+import { ExternalLink, FolderOpen, Globe, AlertTriangle, HardDrive, Key, FileText, ArrowLeft, ShieldCheck, Package } from 'lucide-react'
 import { LoadingHint } from '../components/LoadingHint'
 import { postOpenDir } from '../lib/api'
 
@@ -60,6 +62,7 @@ export function Dashboard() {
   const [volumesDialogOpen, setVolumesDialogOpen] = useState(false)
   const [secretsDialogOpen, setSecretsDialogOpen] = useState(false)
   const [snapshotsDialogOpen, setSnapshotsDialogOpen] = useState(false)
+  const [depsDialogOpen, setDepsDialogOpen] = useState(false)
   // nsEditOpen + nsSwitcherOpen live in the panel store so the global TabBar
   // can open them without prop-drilling through Dashboard.
   const nsEditOpen = usePanelStore((s) => s.nsEditOpen)
@@ -224,6 +227,10 @@ export function Dashboard() {
           the app table below simply shows the seven infra containers going
           green, and nothing says the product is missing from them. */}
       <BundleErrorBanner />
+      {/* Infra dependency (postgres, rabbitmq, …) upgrades the generator held
+          back because applying them to existing data would break it — plus the
+          pending-rollback state, which nothing else surfaces. */}
+      <DependencyUpgradeBanner onDetails={() => setDepsDialogOpen(true)} />
       {/* Top: sidebar + table + drawer overlay */}
       <div className="flex flex-1 min-h-0 relative">
         {/* Left info panel */}
@@ -370,6 +377,9 @@ export function Dashboard() {
             <SidebarIconBtn icon={HardDrive}
               tooltip={t('dashboard.volumes')}
               onClick={() => setVolumesDialogOpen(true)} />
+            <SidebarIconBtn icon={Package}
+              tooltip={t('dashboard.dependencies')}
+              onClick={() => setDepsDialogOpen(true)} />
             <SidebarIconBtn icon={Key}
               tooltip={t('dashboard.secrets')}
               onClick={() => setSecretsDialogOpen(true)} />
@@ -412,6 +422,10 @@ export function Dashboard() {
         open={snapshotsDialogOpen}
         onClose={() => setSnapshotsDialogOpen(false)}
         namespaceStopped={namespace?.status === 'STOPPED'}
+      />
+      <DependenciesDialog
+        open={depsDialogOpen}
+        onClose={() => setDepsDialogOpen(false)}
       />
       <SecretsDialog
         open={secretsDialogOpen}
