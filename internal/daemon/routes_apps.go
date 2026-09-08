@@ -545,6 +545,16 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 	newDef.ImageDigest = ""
 	newDef.VolumesContentHash = ""
 
+	// The generator's pin gate cannot see this edit: patches are applied at the
+	// tail of Generate, after the infra generators have already resolved the
+	// pinned image. Refuse here instead, before anything is persisted.
+	if id, pinned, locked := dependencyEditLocked(rt, name, newDef); locked {
+		writeErrorCode(w, http.StatusBadRequest, api.ErrCodeDependencyVersionLocked,
+			fmt.Sprintf("%s runs on %s; moving its data to %s is a version migration — run `citeck deps upgrade %s` (or use the Dependencies dialog) instead of editing the image",
+				name, pinned, newDef.Image, id))
+		return
+	}
+
 	// Running edits apply immediately via a full reload (Generate re-runs →
 	// conf re-derives + files rewrite + reconcile). Stopped edits just persist
 	// and apply on next start. Take reloadMu BEFORE mutating so a TryLock

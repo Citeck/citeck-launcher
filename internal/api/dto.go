@@ -384,6 +384,14 @@ const (
 	// unpinnable "LATEST" above. In practice it means the workspace config is
 	// unusable (no bundleRepos) — sync the workspace repo first.
 	ErrCodeNoBundleConfigured = "NO_BUNDLE_CONFIGURED"
+	// ErrCodeDependencyVersionLocked is returned (HTTP 400) by PUT
+	// /apps/{name}/config when the edit would move a registered infra
+	// dependency (postgres, rabbitmq, …) to an image that is a BREAKING change
+	// against the version its data runs on. Patches are applied after the
+	// generator's pin gate, so without this a `citeck edit postgres` to 18
+	// would put PostgreSQL 18 on a 17 data directory with no migration and no
+	// rollback. The message names `citeck deps upgrade <id>`.
+	ErrCodeDependencyVersionLocked = "DEPENDENCY_VERSION_LOCKED"
 )
 
 // UpgradeRequestDto is the request body for the namespace upgrade endpoint.
