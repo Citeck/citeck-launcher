@@ -51,12 +51,50 @@ func resolveDependencyImage(ctx *NsGenContext, id deps.ID, candidate string) str
 		ctx.DependencyImages[id] = DependencyGen{Effective: candidate, Candidate: candidate}
 		return candidate
 	}
-	slog.Info("Dependency image held back by pin", "dependency", id, "pinned", pinned, "candidate", candidate)
-	ctx.DependencyImages[id] = DependencyGen{Effective: pinned, Candidate: candidate}
+	effective := rehomePin(d, pinned, candidate)
+	slog.Info("Dependency image held back by pin",
+		"dependency", id, "pinned", pinned, "candidate", candidate, "effective", effective)
+	ctx.DependencyImages[id] = DependencyGen{Effective: effective, Candidate: candidate}
 	ctx.DependencyUpgrades = append(ctx.DependencyUpgrades, DependencyUpgrade{
-		ID: id, App: d.AppName(), From: pinned, To: candidate, Migratable: d.Migratable(),
+		ID: id, App: d.AppName(), From: effective, To: candidate, Migratable: d.Migratable(),
 	})
-	return pinned
+	return effective
+}
+
+// rehomePin keeps a HELD-BACK dependency on the registry the bundle is pulling
+// from, without moving its version.
+//
+// A pin is not always evidence of where the image came from. The two data-
+// derived seeds — the descriptor's LegacyImage and the "postgres:<major>" read
+// out of PG_VERSION — are Docker Hub references, invented because there was no
+// container to inspect. On a private-registry or air-gapped stand that is a
+// reference the host may not be able to pull at all: the gate would emit
+// "postgres:17" for a namespace whose every other image comes from
+// mirror.example.com/, and the held-back dependency — the one case where the
+// launcher deliberately does NOT follow the bundle — would be the one that
+// cannot start.
+//
+// So when the pin still carries the DEFAULT repository (i.e. nobody has ever
+// seen the real one) and the candidate carries a different one, the candidate's
+// repository is adopted and the pin's TAG is kept: same version, reachable
+// registry. A pin derived from an actual container already names the real
+// repository and is left exactly as it is — and so is everything else, which
+// is what keeps a same-repository namespace byte-identical to what the
+// previous launcher emitted (the hash-stability golden).
+func rehomePin(d deps.Descriptor, pinned, candidate string) string {
+	pinRepo, pinTag, ok := deps.SplitImageRef(pinned)
+	if !ok {
+		return pinned
+	}
+	defaultRepo, _, okDefault := deps.SplitImageRef(d.LegacyImage())
+	if !okDefault || pinRepo != defaultRepo {
+		return pinned
+	}
+	candidateRepo, _, okCandidate := deps.SplitImageRef(candidate)
+	if !okCandidate || candidateRepo == pinRepo {
+		return pinned
+	}
+	return candidateRepo + ":" + pinTag
 }
 
 // sortedUpgrades returns ctx.DependencyUpgrades in registry order regardless

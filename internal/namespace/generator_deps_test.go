@@ -27,13 +27,64 @@ func depsTestConfig() *Config {
 // depsTestWorkspace declares one webapp id so Generate's webapp loop keeps its
 // production shape. That loop treats EVERY bundle application as a webapp when
 // the workspace config lists none (`len(wsWebapps) > 0 && !wsWebapps[name]`),
-// and generateWebapp has no collision guard — so an empty workspace config
-// would hand the bundle's `postgres:` entry to GetOrCreateApp("postgres") and
-// overwrite the infra builder's image after the gate had already resolved it.
-// A real workspace config always lists its webapps, and infra is never among
-// them; gateway is not in these bundles, so nothing extra is generated.
+// so an empty workspace config would send the bundle's `postgres:` entry into
+// the webapp loop — where the collision guard added in 7047c51 now skips it
+// with an error rather than overwriting the infra builder. Keeping the real
+// shape here means these tests exercise the gate, not that guard (which has
+// its own test below). A real workspace config always lists its webapps, and
+// infra is never among them; gateway is not in these bundles, so nothing extra
+// is generated.
 func depsTestWorkspace() *bundle.WorkspaceConfig {
 	return &bundle.WorkspaceConfig{Webapps: []bundle.WebappConfig{{ID: appdef.AppGateway}}}
+}
+
+// A data-derived pin is a Docker Hub reference the launcher INVENTED (the
+// descriptor's legacy image, or "postgres:<major>" read out of PG_VERSION). On
+// a stand that pulls from a mirror, emitting it verbatim would make the
+// held-back dependency the one container that cannot be pulled.
+func TestHeldBackPinFollowsTheCandidatesRepository(t *testing.T) {
+	bun := &bundle.Def{Applications: map[string]bundle.AppDef{
+		appdef.AppPostgres: {Image: "mirror.example.com/library/postgres:18"},
+	}}
+	resp := generateWithPins(t, bun, map[deps.ID]string{deps.Postgres: deps.PostgresLegacyImage})
+	assert.Equal(t, "mirror.example.com/library/postgres:17", appByName(t, resp, appdef.AppPostgres).Image)
+	assert.Equal(t, "mirror.example.com/library/postgres:17", resp.Dependencies[deps.Postgres].Effective)
+	u := upgradeFor(t, resp, deps.Postgres)
+	assert.Equal(t, "mirror.example.com/library/postgres:17", u.From,
+		"the migration's source container is built from the image that can actually be pulled")
+	assert.Equal(t, "mirror.example.com/library/postgres:18", u.To)
+}
+
+// The same-repository case is every ordinary namespace, and it must stay
+// BYTE-identical — this is the other half of the hash-stability golden.
+func TestHeldBackPinOnTheSameRepositoryIsUntouched(t *testing.T) {
+	bun := &bundle.Def{Applications: map[string]bundle.AppDef{
+		appdef.AppPostgres: {Image: "postgres:18"},
+	}}
+	resp := generateWithPins(t, bun, map[deps.ID]string{deps.Postgres: deps.PostgresLegacyImage})
+	assert.Equal(t, deps.PostgresLegacyImage, appByName(t, resp, appdef.AppPostgres).Image)
+}
+
+// A pin read off a real CONTAINER already names the registry the image came
+// from — including a mirror the bundle has since moved away from — so it is
+// evidence, not a guess, and nothing here may rewrite it.
+func TestAContainerDerivedPinKeepsItsOwnRepository(t *testing.T) {
+	bun := &bundle.Def{Applications: map[string]bundle.AppDef{
+		appdef.AppPostgres: {Image: "mirror.example.com/library/postgres:18"},
+	}}
+	resp := generateWithPins(t, bun, map[deps.ID]string{deps.Postgres: "old-registry.example.com/postgres:17"})
+	assert.Equal(t, "old-registry.example.com/postgres:17", appByName(t, resp, appdef.AppPostgres).Image)
+}
+
+// A pin the launcher cannot split (a digest reference) has no tag to keep, so
+// it is emitted exactly as it stands.
+func TestAnUnsplittablePinIsNotRehomed(t *testing.T) {
+	const digestPin = "postgres@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	bun := &bundle.Def{Applications: map[string]bundle.AppDef{
+		appdef.AppPostgres: {Image: "mirror.example.com/library/postgres:18"},
+	}}
+	resp := generateWithPins(t, bun, map[deps.ID]string{deps.Postgres: digestPin})
+	assert.Equal(t, digestPin, appByName(t, resp, appdef.AppPostgres).Image)
 }
 
 func generateWithPins(t *testing.T, bun *bundle.Def, pins map[deps.ID]string) *GenResp {

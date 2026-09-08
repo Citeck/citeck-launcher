@@ -39,7 +39,14 @@ func (r *Runtime) SetDependencyPin(id deps.ID, image string) {
 }
 
 // RestoreDependencyState installs the persisted dependency state (called
-// before first start, like RestoreRestartState). No persist.
+// before first start, like RestoreRestartState). No persist: the load path
+// runs before the caller has acted on ShouldStart, and persisting there would
+// write r.status while it is still STOPPED.
+//
+// It REPLACES all three fields, so a nil journal or a nil last result CLEARS
+// whatever the runtime held — which is what a restore must do (the state file
+// is the truth), and what makes passing a partially-filled state a way to
+// silently drop an open journal.
 func (r *Runtime) RestoreDependencyState(pins map[deps.ID]deps.DependencyState, journal *deps.MigrationJournal, last *deps.MigrationResult) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -77,6 +84,12 @@ func (r *Runtime) LastDependencyMigration() *deps.MigrationResult {
 // moves to the new image, the journal is cleared and the verdict recorded,
 // all in one persist so no crash can leave a pin without a cleared journal
 // or the other way round.
+//
+// The caller does not choose the identity: the engine calls this with id and
+// res.ID taken from the same journal, so a commit can never file one
+// dependency's verdict under another's pin. (Nothing here re-checks it —
+// there is one caller, migrate.Run's commit, and it is the journal that
+// decides both.)
 //
 // It is atomic IN MEMORY as well as on disk: a failed persist restores the
 // three previous values. Otherwise a commit whose write failed would leave the
