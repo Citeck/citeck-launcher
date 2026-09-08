@@ -157,6 +157,13 @@ func (e *depsEnv) RunAppDef(ctx context.Context, def appdef.ApplicationDef, name
 	id, err := e.dc.CreateContainerWith(ctx, def, e.act.volumesBase, docker.ContainerCreateOpts{
 		Name:        name,
 		ExtraLabels: map[string]string{docker.LabelTemp: docker.LabelTempValue},
+		// A temp container belongs to THIS operation and must never outlive it
+		// on Docker's initiative. Without this it inherits the def's
+		// unless-stopped policy, and a launcher killed mid-migration (or a host
+		// reboot) would have Docker restart the target container with the NEW
+		// data volume mounted — so the next start of the namespace's own
+		// postgres would put a second server on that same PGDATA.
+		NoRestart: true,
 	})
 	if err != nil {
 		return "", fmt.Errorf("create %s: %w", name, err)
@@ -517,6 +524,15 @@ func (e *depsEnv) IsRunning() bool {
 // namespace that will not stop FAILS the step: the plan has created nothing at
 // that point, so there is nothing to roll back, while carrying on would dump a
 // cluster that is still being written to.
+//
+// What it CANNOT tell apart is a slow stop from a stop that was never going to
+// happen: Runtime.Stop only ENQUEUES cmdStop, and a runtime whose loop is not
+// running drains nothing — so a namespace that is not stopping at all costs the
+// full timeout before failing, with the same error. That precondition — start a
+// migration only when the runtime loop is alive or the namespace is already
+// STOPPED — belongs to the route that starts one (Task 12), not here: this
+// method has no way to ask whether a command it enqueued will ever be read. The
+// same trap is documented for the Update & Start queue's STOPPING arm.
 func (e *depsEnv) StopNamespace(ctx context.Context) error {
 	rt := e.act.runtime
 	if rt == nil || rt.Status() == namespace.NsStatusStopped {

@@ -266,6 +266,9 @@ func TestRunAppDefRunsTheContainerAndNothingAroundIt(t *testing.T) {
 	got := fake.created[0]
 	assert.Equal(t, migrate.SrcContainer, got.opts.Name)
 	assert.Equal(t, docker.LabelTempValue, got.opts.ExtraLabels[docker.LabelTemp])
+	assert.True(t, got.opts.NoRestart,
+		"a temp container must not be restarted by Docker after the launcher is gone: "+
+			"it would come back with a migration's data volume mounted and contend with the namespace's own server")
 	assert.Equal(t, base, got.volumesBase)
 	assert.Nil(t, got.def.Ports, "published ports are stripped")
 	assert.Nil(t, got.def.NetworkAliases, "the temp container answers only to its own name")

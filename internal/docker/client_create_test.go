@@ -3,8 +3,10 @@ package docker
 import (
 	"testing"
 
-	"github.com/citeck/citeck-launcher/internal/appdef"
+	"github.com/moby/moby/api/types/container"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/citeck/citeck-launcher/internal/appdef"
 )
 
 // TestContainerNameOverrideIsScopedLikeAnApp pins that a name override goes
@@ -166,6 +168,42 @@ func TestAnOverriddenContainerDoesNotAnswerToTheAppOnTheNetwork(t *testing.T) {
 	assert.NotContains(t, aliases, "postgres")
 	assert.NotContains(t, aliases, "db")
 	assert.NotContains(t, aliases, "primary")
+}
+
+// TestATempContainerIsCreatedWithNoRestartPolicy is the guard against an
+// interrupted migration outliving the launcher. A temp container belongs to
+// ONE operation, but it is created from the namespace's real def, so without
+// an override it inherits unless-stopped: a launcher killed mid-migration — or
+// a host reboot — would have Docker bring citeck_depsmig-dst_<ns> back with
+// the TARGET data volume mounted, and the next start of the namespace's own
+// postgres would put a second server on that same PGDATA. Nothing reads
+// LabelTemp, so this policy is the only thing preventing that.
+func TestATempContainerIsCreatedWithNoRestartPolicy(t *testing.T) {
+	app := appdef.ApplicationDef{Name: "postgres", Image: "postgres:17.5"}
+
+	hc := buildHostConfig(app, ContainerCreateOpts{Name: "depsmig-dst", NoRestart: true},
+		nil, nil, "citeck_net", 0, 0)
+
+	assert.Equal(t, container.RestartPolicyDisabled, hc.RestartPolicy.Name)
+}
+
+// TestTheRestartPolicyIsUnchangedForEveryOtherContainer pins the two policies
+// the launcher has always used, so the new override cannot leak into the
+// namespace's own containers: an ordinary app restarts unless-stopped (that is
+// what survives a host reboot), an init container runs once.
+func TestTheRestartPolicyIsUnchangedForEveryOtherContainer(t *testing.T) {
+	app := appdef.ApplicationDef{Name: "postgres"}
+	initApp := appdef.ApplicationDef{Name: "keycloak-init", IsInit: true}
+
+	assert.Equal(t, container.RestartPolicyUnlessStopped,
+		restartPolicyFor(app, ContainerCreateOpts{}).Name)
+	assert.Equal(t, container.RestartPolicyUnlessStopped,
+		restartPolicyFor(app, ContainerCreateOpts{Name: "depsmig-src"}).Name,
+		"a name override alone is not a reason to change the policy")
+	assert.Equal(t, container.RestartPolicyDisabled,
+		restartPolicyFor(initApp, ContainerCreateOpts{}).Name)
+	assert.Equal(t, container.RestartPolicyDisabled,
+		restartPolicyFor(initApp, ContainerCreateOpts{NoRestart: true}).Name)
 }
 
 // TestContainerLabelsDoesNotMutateTheCallersExtraMap guards the seam against

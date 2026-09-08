@@ -324,6 +324,20 @@ type ContainerCreateOpts struct {
 	Name string
 	// ExtraLabels are merged over the standard launcher labels.
 	ExtraLabels map[string]string
+	// NoRestart creates the container with restart policy "no", so Docker
+	// never brings it back on its own.
+	//
+	// It exists for containers that belong to ONE launcher operation rather
+	// than to the namespace: a dependency migration's temp containers. The
+	// default (unless-stopped) is right for an app the launcher intends to
+	// keep running and wrong for those — a launcher killed mid-migration, or a
+	// host reboot, would have Docker restart citeck_depsmig-dst_<ns>
+	// indefinitely with the TARGET data volume mounted, and the next start of
+	// the namespace's own postgres would put a SECOND server on that same data
+	// directory. Nothing reads LabelTemp yet, so the policy is the only thing
+	// standing between an interrupted migration and two servers contending for
+	// one PGDATA.
+	NoRestart bool
 }
 
 // CreateContainer creates a container from an ApplicationDef.
@@ -416,7 +430,7 @@ func (c *Client) CreateContainerWith(ctx context.Context, app appdef.Application
 	}
 
 	ctrConfig := buildContainerConfig(app, name, env, exposedPorts, labels)
-	hostConfig := buildHostConfig(app, binds, portBindings, networkName, memoryBytes, shmSize)
+	hostConfig := buildHostConfig(app, opts, binds, portBindings, networkName, memoryBytes, shmSize)
 
 	aliases := networkAliases(app, name)
 
@@ -542,30 +556,38 @@ func buildContainerConfig(
 	}
 }
 
-// buildHostConfig assembles the container.HostConfig for app. Init containers
-// get no restart policy; main containers restart unless-stopped. When a memory
-// limit is set, swap is pinned equal to it (MemorySwap == Memory) so the limit
-// is a hard RAM cap with NO swap — Kotlin 1.x parity (AppStartAction
-// .withMemorySwap(memory)). Docker otherwise defaults MemorySwap to 2×Memory,
-// letting a capped container spill into swap (thrashing instead of a clean cap;
-// bad for brokers and DBs).
+// restartPolicyFor is the restart policy a container is created with: none for
+// an init container (it is meant to run once) and none for a caller that asked
+// for NoRestart (see ContainerCreateOpts — a container belonging to one
+// launcher operation must never outlive it on Docker's initiative); every
+// other container restarts unless-stopped, which is what keeps a namespace up
+// across a host reboot.
+func restartPolicyFor(app appdef.ApplicationDef, opts ContainerCreateOpts) container.RestartPolicy {
+	if app.IsInit || opts.NoRestart {
+		return container.RestartPolicy{Name: container.RestartPolicyDisabled}
+	}
+	return container.RestartPolicy{Name: container.RestartPolicyUnlessStopped}
+}
+
+// buildHostConfig assembles the container.HostConfig for app. The restart
+// policy is restartPolicyFor's. When a memory limit is set, swap is pinned
+// equal to it (MemorySwap == Memory) so the limit is a hard RAM cap with NO
+// swap — Kotlin 1.x parity (AppStartAction.withMemorySwap(memory)). Docker
+// otherwise defaults MemorySwap to 2×Memory, letting a capped container spill
+// into swap (thrashing instead of a clean cap; bad for brokers and DBs).
 func buildHostConfig(
 	app appdef.ApplicationDef,
+	opts ContainerCreateOpts,
 	binds []string,
 	portBindings network.PortMap,
 	networkName string,
 	memoryBytes, shmSize int64,
 ) *container.HostConfig {
-	restartPolicy := container.RestartPolicy{Name: container.RestartPolicyUnlessStopped}
-	if app.IsInit {
-		restartPolicy = container.RestartPolicy{Name: container.RestartPolicyDisabled}
-	}
-
 	hostConfig := &container.HostConfig{
 		Binds:         binds,
 		PortBindings:  portBindings,
 		NetworkMode:   container.NetworkMode(networkName),
-		RestartPolicy: restartPolicy,
+		RestartPolicy: restartPolicyFor(app, opts),
 		LogConfig: container.LogConfig{
 			Type: "json-file",
 			Config: map[string]string{

@@ -28,7 +28,7 @@ func TestBuildContainerConfig_SetsStableHostname(t *testing.T) {
 func TestBuildHostConfig_PinsSwapToMemory(t *testing.T) {
 	const limit = 512 * 1024 * 1024
 	app := appdef.ApplicationDef{Name: "rabbitmq"}
-	hc := buildHostConfig(app, nil, nil, "citeck_net", limit, 0)
+	hc := buildHostConfig(app, ContainerCreateOpts{}, nil, nil, "citeck_net", limit, 0)
 	if hc.Memory != limit {
 		t.Errorf("Memory = %d, want %d", hc.Memory, limit)
 	}
@@ -41,7 +41,7 @@ func TestBuildHostConfig_PinsSwapToMemory(t *testing.T) {
 // when there's no memory limit (leaving Docker defaults untouched).
 func TestBuildHostConfig_NoMemoryLimitLeavesSwapUnset(t *testing.T) {
 	app := appdef.ApplicationDef{Name: "x"}
-	hc := buildHostConfig(app, nil, nil, "citeck_net", 0, 0)
+	hc := buildHostConfig(app, ContainerCreateOpts{}, nil, nil, "citeck_net", 0, 0)
 	if hc.Memory != 0 || hc.MemorySwap != 0 {
 		t.Errorf("Memory=%d MemorySwap=%d, want both 0 when no limit", hc.Memory, hc.MemorySwap)
 	}
