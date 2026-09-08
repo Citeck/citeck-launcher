@@ -22,6 +22,18 @@ type Env interface {
 	// container), with published ports stripped, the launcher's temp label,
 	// and extraBinds appended ("<host dir>:<container path>"). The namespace
 	// network is created if missing.
+	//
+	// It runs the CONTAINER and nothing around it: the def's InitActions must
+	// NOT be executed, and neither must its startup/liveness probes. This is a
+	// hard precondition of the PostgreSQL plan, not a simplification. The
+	// generated postgres def carries one `/init_db_and_user.sh <db>` init
+	// action per webapp datasource plus one for Keycloak
+	// (generator_webapp.go, generator_keycloak.go), so running them against
+	// the destination would pre-create every role and database before the
+	// dump is replayed — and the restore would then fail on 100% of real
+	// migrations with `role "citeck_emodel" already exists`, an error the
+	// parser deliberately does not tolerate. The dump already carries every
+	// role and database; the temp container only has to serve it.
 	RunAppDef(ctx context.Context, def appdef.ApplicationDef, name string, extraBinds []string) (containerID string, err error)
 	// ContainerRunning reports whether the named container exists and runs.
 	ContainerRunning(ctx context.Context, name string) (bool, error)
@@ -57,6 +69,14 @@ type Env interface {
 	// --- host files --------------------------------------------------------
 	// DumpDir is the host directory a migration may use for scratch files.
 	DumpDir(id deps.ID) string
+	// EnsureDir creates the directory (parents included) so that the CONTAINER
+	// can write into it once it is bind-mounted: mode 1777, sticky and
+	// world-writable, the same rule as EnsureExportDir. The daemon runs as
+	// root while an image runs as its own uid (postgres is 999), so a
+	// directory left with the daemon's ownership makes
+	// `pg_dumpall -f /citeck/depsmig/dump.sql` die with Permission denied —
+	// after the namespace has already been stopped. The sticky bit keeps one
+	// dependency's migration from deleting another's dump.
 	EnsureDir(path string) error
 	RemoveDir(path string) error
 	// RemoveDirIfEmpty removes the directory only if it holds nothing. A

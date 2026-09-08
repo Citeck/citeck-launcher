@@ -72,17 +72,23 @@ func (PostgresMigrator) Preflight(ctx context.Context, env Env, from, to string)
 }
 
 // postgresVersionProblems answers whether this move is one the migrator is
-// for. The rule is stated in terms of the MAJOR because everything downstream
-// is: the on-disk layout, the dump/restore pair, the target volume's name.
+// for. "Significant enough to need a migration" is asked of the REGISTRY's
+// descriptor, not restated here: the generator holds a namespace back on
+// exactly that rule, so a migrator with its own copy of it could offer to
+// migrate something the generator applies silently, or refuse something the
+// generator is holding.
 func postgresVersionProblems(from, to string) (fromV, toV deps.Version, problems []string) {
 	fromV, okFrom := deps.ParseImageVersion(from)
 	toV, okTo := deps.ParseImageVersion(to)
+	d, registered := deps.Lookup(deps.Postgres)
 	switch {
+	case !registered:
+		problems = append(problems, "PostgreSQL is not a registered dependency")
 	case !okFrom:
 		problems = append(problems, fmt.Sprintf("cannot read a version out of the current image %q", from))
 	case !okTo:
 		problems = append(problems, fmt.Sprintf("cannot read a version out of the target image %q", to))
-	case fromV.Major == toV.Major:
+	case !d.IsBreaking(fromV, toV):
 		problems = append(problems, fmt.Sprintf(
 			"%s → %s is not a major upgrade; it applies on the next start without a migration", from, to))
 	case toV.Major < fromV.Major:

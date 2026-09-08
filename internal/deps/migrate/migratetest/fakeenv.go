@@ -131,6 +131,12 @@ func (f *FakeEnv) NamespaceID() string {
 // first — that is the real Env's job, not the plan's, so the fake does it too
 // and records that it did (a "strip-ports:<name>" log entry and the
 // PortsStripped counter) instead of making the plan pre-strip them.
+//
+// It models the other half of the real Env's contract by omission: the def's
+// InitActions and probes are NOT run. A real postgres def carries an
+// init_db_and_user.sh action per datasource, and running those against the
+// destination would pre-create every role and database and make the restore
+// fail — so a fake that ran them would be modeling a broken Env.
 func (f *FakeEnv) RunAppDef(_ context.Context, def appdef.ApplicationDef, name string, extra []string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -255,7 +261,10 @@ func (f *FakeEnv) DumpDir(id deps.ID) string {
 	return filepath.Join(f.DumpRoot, string(id))
 }
 
-// EnsureDir records the directory.
+// EnsureDir records the directory. The real Env creates it mode 1777 so the
+// container's own uid can write the dump into it; there is no mode to model
+// in memory, so the fake records the creation and the plan tests assert that
+// it happened before the container that writes there was started.
 func (f *FakeEnv) EnsureDir(p string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

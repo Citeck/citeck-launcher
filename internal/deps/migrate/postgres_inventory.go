@@ -17,12 +17,17 @@ type pgInventory struct {
 	Tables    map[string]int // database → user-table count
 }
 
-// psqlArgs builds a psql invocation against the TCP server. Everything goes
-// over 127.0.0.1 rather than the Unix socket: `docker exec` runs as the
-// image's default user (root), which peer authentication would reject, and
-// during first-time init the socket is answered by a TEMPORARY server that is
-// torn down again — the embedded pg_hba.conf trusts 127.0.0.1, and only the
-// real server listens there.
+// psqlArgs builds a psql invocation against the TCP server. Everything the
+// migration runs — the readiness probes, pg_dumpall, the restore and these
+// queries — goes over 127.0.0.1 rather than the Unix socket, for one reason:
+// during first-time init the image's entrypoint answers the SOCKET with a
+// TEMPORARY server that is torn down again, so a socket connection proves
+// nothing about the server the data will end up in. Only the final server
+// listens on TCP, and the mounted pg_hba.conf trusts it
+// (`host all all 127.0.0.1/32 trust`). Authentication is not the issue on
+// either transport — the same file has `local all all trust`, so peer auth
+// never runs and `docker exec`'s uid does not matter; using one transport
+// throughout is simply what keeps every command talking to the same server.
 //
 // -q silences the greeting, -At prints unaligned, header-less rows: one value
 // per line, which is what makes the output machine-parsable.
