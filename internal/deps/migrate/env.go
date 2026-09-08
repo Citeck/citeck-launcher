@@ -46,8 +46,9 @@ type Env interface {
 	//
 	// The split is a contract, not a convenience: PostgreSQL's tools write
 	// results to stdout and diagnostics to stderr, so an inventory query
-	// (row counts, database and role lists) must be parsed from stdout ONLY —
-	// a concatenated stream would make a stray notice part of the answer —
+	// (the database and role lists, the per-database user-table count) must be
+	// parsed from stdout ONLY — a concatenated stream would make a stray
+	// notice part of the answer —
 	// while a restore's errors are scanned on stderr, where psql prints them
 	// even on an exit code of 0.
 	Exec(ctx context.Context, name string, cmd []string) (stdout, stderr string, exitCode int, err error)
