@@ -165,8 +165,11 @@ export interface DependencyMigrateRequestDto {
  *  Problems block the migration; warnings need an explicit confirmation. */
 export interface PreflightResult {
   ok: boolean
-  problems: string[]
-  warnings: string[]
+  /** Arrays on the wire, `| null` here by the dto_drift_test convention: a Go
+   *  slice marshals as null when it is nil, and this pair has been nil on the
+   *  happy path. Read them as `?? []`. */
+  problems: string[] | null
+  warnings: string[] | null
   from: string
   to: string
   dataSizeBytes: number

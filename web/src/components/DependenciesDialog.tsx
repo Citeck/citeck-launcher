@@ -21,8 +21,12 @@ type View =
   | { kind: 'result' }
 
 /**
- * The steps of the PostgreSQL plan (internal/deps/migrate/postgres.go), in
- * order. Rendering the whole list up front — rather than only the step that is
+ * The steps of the PostgreSQL plan, in order. Keep in sync with
+ * `migrate.PostgresStepIDs()` (internal/deps/migrate/preflight.go), which is
+ * the list the plan itself is built from and which the Go tests and the CLI's
+ * locale keys read; TypeScript cannot import it.
+ *
+ * Rendering the whole list up front — rather than only the step that is
  * running — is what makes the wait legible: the user can see what is still to
  * come and that nothing has been skipped. A step id the launcher does not know
  * (a newer plan on an older UI) is appended rather than dropped.
@@ -45,6 +49,20 @@ function stepIdsFor(migration: DepsMigrationView): string[] {
 }
 
 /**
+ * A step count of 0 means the daemon has no plan yet — the "preparing" state
+ * it publishes while it runs the preflight, which on a real cluster is minutes
+ * of `du`. The step list is meaningless then (nothing in it has been decided,
+ * let alone started), so the dialog shows one spinner line instead.
+ */
+function isPreparing(migration: DepsMigrationView): boolean {
+  return migration.stepCount === 0
+}
+
+/** The step id the daemon publishes while it has no plan yet (Go:
+ *  api.DependencyMigrationStepPreparing). */
+const PREPARING_STEP = 'preparing' 
+
+/**
  * What each infrastructure dependency runs on, what the bundle offers, and the
  * migration flow (confirm → progress → result) for the ones the launcher can
  * migrate. Closing never cancels a migration; reopening shows the current step
@@ -52,6 +70,16 @@ function stepIdsFor(migration: DepsMigrationView): string[] {
  */
 export function DependenciesDialog({ open, onClose }: Props) {
   const { t, tDynamic } = useTranslation()
+  /**
+   * A step id this launcher has no key for — a newer daemon's plan — renders as
+   * the raw ID, never as the bare "deps.step.<id>" lookup key, which is what
+   * tDynamic answers for a miss. Same rule as the CLI's stepTitle.
+   */
+  const stepLabel = (id: string) => {
+    const key = `deps.step.${id}`
+    const label = tDynamic(key)
+    return label === key ? id : label
+  }
   const migration = useDepsStore((s) => s.migration)
   const result = useDepsStore((s) => s.result)
   const clearResult = useDepsStore((s) => s.clearResult)
@@ -79,7 +107,14 @@ export function DependenciesDialog({ open, onClose }: Props) {
   // way to adjust state from changed inputs) rather than in an effect, which
   // would cascade a second render and trips react-hooks/set-state-in-effect.
   if (migration && view.kind !== 'progress') setView({ kind: 'progress' })
-  else if (!migration && result && view.kind === 'progress') setView({ kind: 'result' })
+  else if (!migration && view.kind === 'progress') {
+    // A migration can vanish WITHOUT a verdict: the daemon died mid-migration
+    // and its restart's recovery rolled back silently, or the namespace went
+    // away under us — hydrate(null) then clears it. Without this arm the
+    // dialog sat on a progress screen with nothing to render: a blank modal
+    // body and no way to tell what happened.
+    setView(result ? { kind: 'result' } : { kind: 'list' })
+  }
 
   const rollbackPending = data?.rollbackPending ?? ''
   const lastResult = data?.lastResult
@@ -255,12 +290,12 @@ export function DependenciesDialog({ open, onClose }: Props) {
                 {preflight.wasRunning && <li>{t('deps.preflight.willStop')}</li>}
                 <li>{t('deps.preflight.oldKept')}</li>
               </ul>
-              {preflight.warnings.map((w) => (
+              {(preflight.warnings ?? []).map((w) => (
                 <p key={w} className="flex items-start gap-1 text-xs text-amber-600 dark:text-amber-400">
                   <AlertTriangle size={14} className="mt-0.5 shrink-0" />{w}
                 </p>
               ))}
-              {preflight.problems.map((p) => (
+              {(preflight.problems ?? []).map((p) => (
                 <p key={p} role="alert" className="flex items-start gap-1 text-xs text-destructive">
                   <AlertTriangle size={14} className="mt-0.5 shrink-0" />{p}
                 </p>
@@ -272,11 +307,20 @@ export function DependenciesDialog({ open, onClose }: Props) {
                     checked={replaceVolume}
                     onChange={(e) => setReplaceVolume(e.target.checked)}
                   />
-                  <span>{t('deps.preflight.replaceVolume', {
-                    volume: preflight.existingTargetVolume.name,
-                    size: formatBytes(preflight.existingTargetVolume.sizeBytes),
-                    version: preflight.existingTargetVolume.version,
-                  })}</span>
+                  {/* "empty" is the daemon's sentinel for a volume with no
+                      PG_VERSION in it — the common leftover case — and it is
+                      not a version, so interpolating it reads as "PostgreSQL
+                      empty" in every locale. */}
+                  <span>{preflight.existingTargetVolume.version === 'empty'
+                    ? t('deps.preflight.replaceVolumeEmpty', {
+                      volume: preflight.existingTargetVolume.name,
+                      size: formatBytes(preflight.existingTargetVolume.sizeBytes),
+                    })
+                    : t('deps.preflight.replaceVolume', {
+                      volume: preflight.existingTargetVolume.name,
+                      size: formatBytes(preflight.existingTargetVolume.sizeBytes),
+                      version: preflight.existingTargetVolume.version,
+                    })}</span>
                 </label>
               )}
             </>
@@ -287,6 +331,13 @@ export function DependenciesDialog({ open, onClose }: Props) {
       {view.kind === 'progress' && migration && (
         <div className="space-y-2 text-sm" data-testid="deps-progress">
           <p className="text-xs text-muted-foreground">{t('deps.progress.title', { id: migration.id })}</p>
+          {isPreparing(migration) && (
+            <p data-testid="deps-preparing" className="flex items-center gap-2 text-xs">
+              <Loader2 size={14} className="shrink-0 animate-spin" />
+              <span>{stepLabel(migration.step || PREPARING_STEP)}</span>
+            </p>
+          )}
+          {!isPreparing(migration) && (
           <ol className="space-y-1">
             {(() => {
               const ids = stepIdsFor(migration)
@@ -311,7 +362,7 @@ export function DependenciesDialog({ open, onClose }: Props) {
                     : active
                       ? <Loader2 size={14} className="shrink-0 animate-spin" />
                       : <span className="inline-block w-3.5 shrink-0" />}
-                  <span>{tDynamic(`deps.step.${id}`)}</span>
+                  <span>{stepLabel(id)}</span>
                   {active && migration.percent > 0 && (
                     <span className="ml-auto tabular-nums">{Math.round(migration.percent)}%</span>
                   )}
@@ -320,6 +371,7 @@ export function DependenciesDialog({ open, onClose }: Props) {
               })
             })()}
           </ol>
+          )}
           {migration.percent > 0 && (
             <div className="h-1 w-full overflow-hidden rounded bg-muted">
               <div className="h-full bg-primary transition-all" style={{ width: `${Math.min(100, Math.round(migration.percent))}%` }} />

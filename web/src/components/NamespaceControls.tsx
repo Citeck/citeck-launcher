@@ -220,7 +220,14 @@ export function NamespaceControls({ status }: NamespaceControlsProps) {
           // folding queue supports (the force flag is OR-ed into the queued
           // pass), and gating it here would make that path unreachable from the
           // UI.
-          onContextMenu={(e) => { e.preventDefault(); if (primaryEnabled && !isStarting) showContextMenu(e, primaryContextItems()) }}
+          //
+          // It IS gated on `migrating`, and that exception is the point: a
+          // dependency migration is not a pass a Force can fold into — it holds
+          // the long-operation lock and answers a Start with 409, so the menu
+          // could only ever produce an error modal. The primary button is
+          // already disabled for it (primaryEnabled); without this the right
+          // click was the one way past that.
+          onContextMenu={(e) => { e.preventDefault(); if (primaryEnabled && !isStarting && !migrating) showContextMenu(e, primaryContextItems()) }}
           title={migrating ? t('deps.controls.migrating') : busy ? t('ns.updating') : t('ns.updateAndStart')}
         >
           {/* Only the icon swaps; the label is deliberately left alone. Replacing

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, act } from '@testing-library/react'
+import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { NamespaceControls } from './NamespaceControls'
 import { useDashboardStore } from '../lib/store'
@@ -244,5 +244,24 @@ describe('NamespaceControls during a dependency migration', () => {
     const [primary, stop] = screen.getAllByRole('button')
     expect(primary).not.toBeDisabled()
     expect(stop).not.toBeDisabled()
+  })
+
+  // The right-click menu is deliberately NOT gated on `busy` — escalating a
+  // queued pass to a Force is what the daemon's folding queue is for. A
+  // migration is the exception: it holds the long-operation lock and answers
+  // Start with a 409, so Force start could only ever produce an error modal,
+  // and this was the one way past the disabled button.
+  it('does not offer Force start on right-click during a migration', () => {
+    setNamespace({ status: 'RUNNING', dependencyMigration: { id: 'postgres', step: 'dump', stepIndex: 4, stepCount: 10 } })
+    render(<NamespaceControls status="RUNNING" />)
+    fireEvent.contextMenu(screen.getAllByRole('button')[0])
+    expect(screen.queryByText('Force Update And Start')).toBeNull()
+  })
+
+  it('still offers Force start on right-click when no migration is running', () => {
+    setNamespace({ status: 'RUNNING' })
+    render(<NamespaceControls status="RUNNING" />)
+    fireEvent.contextMenu(screen.getAllByRole('button')[0])
+    expect(screen.getByText('Force Update And Start')).toBeInTheDocument()
   })
 })

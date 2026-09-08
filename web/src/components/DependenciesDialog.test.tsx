@@ -197,6 +197,82 @@ describe('DependenciesDialog', () => {
     expect(last).toHaveTextContent('postgres:18')
   })
 
+  // The confirm screen maps over both lists. The daemon leaves them nil on the
+  // ORDINARY happy path, and a nil Go slice marshals as `null` — so an
+  // unguarded map is the confirm screen crashing in the common case.
+  it('renders a preflight whose problem and warning lists are null', async () => {
+    vi.mocked(getDependencyPreflight).mockResolvedValue({
+      ...okPreflight,
+      problems: null as unknown as string[],
+      warnings: null as unknown as string[],
+    })
+    render(<DependenciesDialog open onClose={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: /^upgrade$/i }))
+    expect(await screen.findByRole('button', { name: /start migration/i })).toBeEnabled()
+  })
+
+  // "empty" is the daemon's sentinel for a volume with no cluster in it — the
+  // common leftover case — and it is not a version: interpolating it reads as
+  // "PostgreSQL empty" in every locale.
+  it('describes an empty leftover volume without calling it a PostgreSQL version', async () => {
+    vi.mocked(getDependencyPreflight).mockResolvedValue({
+      ...okPreflight,
+      existingTargetVolume: { name: 'postgres3', sizeBytes: 1024, version: 'empty' },
+    })
+    render(<DependenciesDialog open onClose={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: /^upgrade$/i }))
+    const label = await screen.findByText(/postgres3/)
+    expect(label).toHaveTextContent(/no cluster in it/i)
+    expect(label).not.toHaveTextContent(/PostgreSQL empty/i)
+  })
+
+  // A step id this launcher has no key for — a newer daemon's plan — must read
+  // as the id, never as the bare lookup key.
+  it('renders an unknown step id as the id, not as its locale key', async () => {
+    render(<DependenciesDialog open onClose={() => {}} />)
+    await screen.findByTestId('dep-postgres')
+    act(() => {
+      useDepsStore.getState().onStart('postgres', 11)
+      useDepsStore.getState().onProgress({ appName: 'postgres', phase: 'reindex', current: 11, total: 11, percent: 0, after: '' })
+    })
+    const step = await screen.findByTestId('deps-step-reindex')
+    expect(step).toHaveTextContent('reindex')
+    expect(step).not.toHaveTextContent('deps.step.reindex')
+  })
+
+  // The daemon publishes "preparing" with no step count while it builds the
+  // plan (a `du` of the data volume, minutes on a real cluster). The step list
+  // is meaningless then — nothing in it has been decided, let alone started.
+  it('shows a spinner line, not a step list, while the daemon is preparing', async () => {
+    render(<DependenciesDialog open onClose={() => {}} />)
+    await screen.findByTestId('dep-postgres')
+    act(() => useDepsStore.getState().onStart('postgres', 0))
+    expect(await screen.findByTestId('deps-preparing')).toHaveTextContent(/preparing/i)
+    expect(screen.queryByTestId('deps-step-dump')).toBeNull()
+
+    // Once the plan exists the list takes over.
+    act(() => useDepsStore.getState().onProgress({
+      appName: 'postgres', phase: 'dump', current: 4, total: 10, percent: 0, after: '',
+    }))
+    expect(await screen.findByTestId('deps-step-dump')).toHaveAttribute('data-state', 'active')
+    expect(screen.queryByTestId('deps-preparing')).toBeNull()
+  })
+
+  // A migration can vanish WITHOUT a verdict — the daemon died mid-migration
+  // and its restart's recovery rolled it back silently. The dialog used to sit
+  // on a progress screen with nothing in it: a blank modal body.
+  it('falls back to the list when a migration disappears with no verdict', async () => {
+    render(<DependenciesDialog open onClose={() => {}} />)
+    await screen.findByTestId('dep-postgres')
+    act(() => useDepsStore.getState().onStart('postgres', 0))
+    await screen.findByTestId('deps-progress')
+
+    act(() => useDepsStore.getState().hydrate(null))
+    await waitFor(() => expect(screen.queryByTestId('deps-progress')).toBeNull())
+    expect(await screen.findByTestId('dep-postgres')).toBeInTheDocument()
+    expect(screen.queryByTestId('deps-result')).toBeNull()
+  })
+
   it('surfaces a failed list fetch on the shared error modal', async () => {
     vi.mocked(getDependencies).mockRejectedValue(new Error('daemon is gone'))
     render(<DependenciesDialog open onClose={() => {}} />)
