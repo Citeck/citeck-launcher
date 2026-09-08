@@ -1,6 +1,6 @@
 //go:build windows
 
-package snapshot
+package fsutil
 
 import (
 	"syscall"
@@ -12,9 +12,9 @@ var (
 	getDiskFreeSpaceExW = kernel32.NewProc("GetDiskFreeSpaceExW")
 )
 
-// availableDiskSpace returns available bytes at the given path, or 0 if unknown.
+// AvailableDiskSpace returns available bytes at the given path, or 0 if unknown.
 // Uses the Win32 GetDiskFreeSpaceExW API (free bytes available to the caller).
-func availableDiskSpace(path string) int64 {
+func AvailableDiskSpace(path string) int64 {
 	p, err := syscall.UTF16PtrFromString(path)
 	if err != nil {
 		return 0

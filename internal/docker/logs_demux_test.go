@@ -58,3 +58,38 @@ func TestDemuxContainerLogs_PreservesInterleavedOrder(t *testing.T) {
 		t.Errorf("newest stdout line is not last; stderr was reordered to the bottom: %q", got)
 	}
 }
+
+// TestDemuxExecOutput_SplitsTheTwoStreams pins the seam migrate.Env.Exec is
+// defined over: an exec's stdout and stderr must come back SEPARATELY. The
+// PostgreSQL plan parses machine-readable output (database and role lists, row
+// counts) from stdout only — psql prints notices and warnings on stderr even
+// when it exits 0, and a concatenated stream would make one of those part of
+// the answer. Each stream keeps its own write order.
+func TestDemuxExecOutput_SplitsTheTwoStreams(t *testing.T) {
+	var buf bytes.Buffer
+	buf.Write(frame(stdcopy.Stdout, "citeck_emodel\n"))
+	buf.Write(frame(stdcopy.Stderr, "NOTICE: extension already exists\n"))
+	buf.Write(frame(stdcopy.Stdout, "citeck_uiserv\n"))
+	buf.Write(frame(stdcopy.Stderr, "WARNING: no privileges were granted\n"))
+
+	stdout, stderr, err := demuxExecOutput(&buf)
+	if err != nil {
+		t.Fatalf("demuxExecOutput: %v", err)
+	}
+	if want := "citeck_emodel\nciteck_uiserv\n"; stdout != want {
+		t.Errorf("stdout = %q, want %q", stdout, want)
+	}
+	if want := "NOTICE: extension already exists\nWARNING: no privileges were granted\n"; stderr != want {
+		t.Errorf("stderr = %q, want %q", stderr, want)
+	}
+}
+
+// TestDemuxExecOutput_ReportsAnUnframedStream pins the TTY case: a stream
+// without frame headers is not demultiplexable, and the caller must learn that
+// (it falls back to reading the stream raw) rather than receive empty output.
+func TestDemuxExecOutput_ReportsAnUnframedStream(t *testing.T) {
+	_, _, err := demuxExecOutput(strings.NewReader("plain tty output, no frame header\n"))
+	if err == nil {
+		t.Fatal("demuxExecOutput accepted an unframed stream; the TTY fallback would never run")
+	}
+}

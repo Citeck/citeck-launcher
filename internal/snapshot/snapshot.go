@@ -212,7 +212,7 @@ func Import(ctx context.Context, dc volumeOps, zipPath, volumesBase string, prog
 	// Estimate needed space (3x ZIP size) and check available disk
 	if zipInfo, err := os.Stat(zipPath); err == nil {
 		needed := zipInfo.Size() * 3
-		if avail := availableDiskSpace(volumesBase); avail > 0 && avail < needed {
+		if avail := fsutil.AvailableDiskSpace(volumesBase); avail > 0 && avail < needed {
 			return nil, fmt.Errorf("insufficient disk space: need ~%d MB, available %d MB",
 				needed/(1024*1024), avail/(1024*1024))
 		}

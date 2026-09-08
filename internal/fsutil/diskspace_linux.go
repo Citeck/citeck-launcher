@@ -1,11 +1,11 @@
 //go:build linux
 
-package snapshot
+package fsutil
 
 import "syscall"
 
-// availableDiskSpace returns available bytes at the given path, or 0 if unknown.
-func availableDiskSpace(path string) int64 {
+// AvailableDiskSpace returns available bytes at the given path, or 0 if unknown.
+func AvailableDiskSpace(path string) int64 {
 	var stat syscall.Statfs_t
 	if err := syscall.Statfs(path, &stat); err != nil {
 		return 0

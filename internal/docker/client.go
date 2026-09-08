@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -39,6 +40,11 @@ const (
 	LabelAppHash     = "citeck.launcher.app.hash" // Kotlin: DockerLabels.APP_HASH
 	LabelOrigName    = "citeck.launcher.original-name"
 	LabelComposeProj = "com.docker.compose.project" // Docker Desktop grouping
+	// LabelTemp marks a container the launcher created for one of its OWN
+	// operations (a dependency migration's source/target cluster), not a
+	// namespace app. It carries the namespace labels too, so PurgeNamespace
+	// removes it with everything else, but nothing adopts it as an app.
+	LabelTemp = "citeck.launcher.temp"
 )
 
 // Client wraps the Docker SDK client with Citeck-specific operations.
@@ -304,9 +310,31 @@ func (c *Client) ListLauncherNetworks(ctx context.Context) ([]network.Summary, e
 	return result.Items, nil
 }
 
+// ContainerCreateOpts customizes CreateContainerWith. The zero value is the
+// namespace app container CreateContainer has always created.
+type ContainerCreateOpts struct {
+	// Name overrides the container name (scoped through ContainerName) and,
+	// with it, the LabelAppName label; "" = app.Name.
+	Name string
+	// ExtraLabels are merged over the standard launcher labels.
+	ExtraLabels map[string]string
+}
+
 // CreateContainer creates a container from an ApplicationDef.
 func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef, volumesBaseDir string) (string, error) {
-	containerName := c.ContainerName(app.Name)
+	return c.CreateContainerWith(ctx, app, volumesBaseDir, ContainerCreateOpts{})
+}
+
+// CreateContainerWith is CreateContainer with a name override and extra
+// labels — what a dependency migration needs to run the namespace's real
+// postgres def under another name, next to (not instead of) the namespace's
+// own container.
+func (c *Client) CreateContainerWith(ctx context.Context, app appdef.ApplicationDef, volumesBaseDir string, opts ContainerCreateOpts) (string, error) {
+	name := app.Name
+	if opts.Name != "" {
+		name = opts.Name
+	}
+	containerName := c.ContainerName(name)
 	networkName := c.NetworkName()
 
 	// Environment
@@ -370,20 +398,7 @@ func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef,
 		binds = append(binds, v)
 	}
 
-	// Labels (must match Kotlin DockerLabels for backward compatibility).
-	// LabelWorkspace holds the workspace ID (Kotlin contract).
-	// In server mode the workspace ID is empty; we set
-	// the label to "" rather than mis-attribute it to the namespace value,
-	// which would falsely identify containers as belonging to a workspace
-	// named after their namespace.
-	labels := map[string]string{
-		LabelLauncher:    "true",
-		LabelWorkspace:   c.workspace,
-		LabelNamespace:   c.namespace,
-		LabelAppName:     app.Name,
-		LabelAppHash:     app.GetHash(),
-		LabelComposeProj: c.composeProject(),
-	}
+	labels := c.containerLabels(app, name, opts.ExtraLabels)
 
 	// Memory limit
 	var memoryBytes int64
@@ -424,6 +439,34 @@ func (c *Client) CreateContainer(ctx context.Context, app appdef.ApplicationDef,
 	}
 
 	return resp.ID, nil
+}
+
+// containerLabels builds the launcher labels for a container (they must match
+// Kotlin DockerLabels for backward compatibility). LabelWorkspace holds the
+// workspace ID (Kotlin contract); in server mode it is empty, and the label is
+// set to "" rather than mis-attributed to the namespace value, which would
+// falsely identify containers as belonging to a workspace named after their
+// namespace.
+//
+// name is the EFFECTIVE container name, which for a temp container is the
+// override rather than app.Name — and it must land in LabelAppName, because
+// that label is how the runtime indexes the namespace's containers
+// (buildExistingContainerMap, runReconcileDiffTask). A leftover temp container
+// still labeled with the app's name would be adopted as THE app's container.
+// The namespace/workspace labels stay as they are, so PurgeNamespace — which
+// filters on LabelNamespace plus the workspace, never on LabelAppName — still
+// removes it with everything else.
+func (c *Client) containerLabels(app appdef.ApplicationDef, name string, extra map[string]string) map[string]string {
+	labels := map[string]string{
+		LabelLauncher:    "true",
+		LabelWorkspace:   c.workspace,
+		LabelNamespace:   c.namespace,
+		LabelAppName:     name,
+		LabelAppHash:     app.GetHash(),
+		LabelComposeProj: c.composeProject(),
+	}
+	maps.Copy(labels, extra)
+	return labels
 }
 
 // buildContainerConfig assembles the container.Config for app. It sets
@@ -790,8 +833,43 @@ func demuxContainerLogs(reader io.Reader) (string, error) {
 	return combined.String(), nil
 }
 
-// ExecInContainer runs a command inside a running container.
+// demuxExecOutput demultiplexes a Docker exec attach stream into its two
+// streams, kept SEPARATE (unlike demuxContainerLogs, whose readers want one
+// chronological transcript). Each stream keeps its own write order; the
+// relative order of the two is not recoverable from the frames and no caller
+// needs it. A non-multiplexed (TTY-mode) stream has no frame headers and is
+// reported as an error so the caller can fall back to reading it raw.
+func demuxExecOutput(reader io.Reader) (stdout, stderr string, err error) {
+	var out, errOut strings.Builder
+	if _, err := stdcopy.StdCopy(&out, &errOut, reader); err != nil {
+		return "", "", err //nolint:wrapcheck // thin Docker SDK wrapper
+	}
+	return out.String(), errOut.String(), nil
+}
+
+// ExecInContainer runs a command inside a running container and returns its
+// output with stdout and stderr CONCATENATED (stdout first). Callers that must
+// tell the two apart — anything parsing machine-readable output — want
+// ExecInContainerSplit instead.
 func (c *Client) ExecInContainer(ctx context.Context, containerID string, cmd []string) (output string, exitCode int, err error) {
+	stdout, stderr, exitCode, err := c.ExecInContainerSplit(ctx, containerID, cmd)
+	return stdout + stderr, exitCode, err
+}
+
+// ExecInContainerSplit runs a command inside a running container and returns
+// its two output streams separately, plus the exit code.
+//
+// err is reserved for a failure to run the command AT ALL (no such container,
+// the daemon refused, the context expired): a command that ran and failed
+// reports exitCode != 0 with a nil err, so a caller asking "did it work?" must
+// look at the code and never at err alone.
+//
+// The split is what a dependency migration is defined over (migrate.Env.Exec):
+// PostgreSQL's tools write results to stdout and diagnostics to stderr, so an
+// inventory query must be parsed from stdout only — a concatenated stream would
+// make a stray notice part of the answer — while a restore's errors are scanned
+// on stderr, where psql prints them even on an exit code of 0.
+func (c *Client) ExecInContainerSplit(ctx context.Context, containerID string, cmd []string) (stdout, stderr string, exitCode int, err error) {
 	execConfig := client.ExecCreateOptions{
 		Cmd:          cmd,
 		AttachStdout: true,
@@ -800,35 +878,32 @@ func (c *Client) ExecInContainer(ctx context.Context, containerID string, cmd []
 
 	execResp, err := c.cli.ExecCreate(ctx, containerID, execConfig)
 	if err != nil {
-		return "", -1, err //nolint:wrapcheck // thin Docker SDK wrapper
+		return "", "", -1, err //nolint:wrapcheck // thin Docker SDK wrapper
 	}
 
 	attachResp, err := c.cli.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
 	if err != nil {
-		return "", -1, err //nolint:wrapcheck // thin Docker SDK wrapper
+		return "", "", -1, err //nolint:wrapcheck // thin Docker SDK wrapper
 	}
 	defer attachResp.Close()
 
-	// Demultiplex exec output
-	var stdout, stderr strings.Builder
-	_, err = stdcopy.StdCopy(&stdout, &stderr, attachResp.Reader)
+	stdout, stderr, err = demuxExecOutput(attachResp.Reader)
 	if err != nil {
-		// Fallback for TTY-mode exec
+		// Fallback for TTY-mode exec: the stream carries no frame headers, so
+		// there is nothing to split — everything the exec wrote is reported as
+		// stdout, which is also what the concatenating caller used to get.
 		data, _ := io.ReadAll(attachResp.Reader)
-		output = string(data)
 		inspectResp, _ := c.cli.ExecInspect(ctx, execResp.ID, client.ExecInspectOptions{})
-		return output, inspectResp.ExitCode, nil
+		return string(data), "", inspectResp.ExitCode, nil
 	}
-
-	output = stdout.String() + stderr.String()
 
 	// Get exit code
 	inspectResp, err := c.cli.ExecInspect(ctx, execResp.ID, client.ExecInspectOptions{})
 	if err != nil {
-		return output, -1, err //nolint:wrapcheck // thin Docker SDK wrapper
+		return stdout, stderr, -1, err //nolint:wrapcheck // thin Docker SDK wrapper
 	}
 
-	return output, inspectResp.ExitCode, nil
+	return stdout, stderr, inspectResp.ExitCode, nil
 }
 
 // copiedFileMode is the mode every file the launcher copies into a container
