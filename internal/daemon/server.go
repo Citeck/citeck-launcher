@@ -137,13 +137,15 @@ type Daemon struct {
 	bgCtx        context.Context // canceled on daemon shutdown
 	bgCancel     context.CancelFunc
 	bgWg         sync.WaitGroup // tracks background goroutines (snapshot, downloads)
-	// longOpMu is THE exclusive long-operation lock: held for the whole of a
-	// snapshot export/import and of a dependency migration (ownership is
-	// transferred into the background goroutine). Daemon-global — one active
-	// namespace per daemon — so a migration also blocks an unrelated snapshot
-	// action, which is intended. Every route that starts, reshapes or destroys
-	// the namespace TryLocks it (tryLongOp) and answers 409 LONG_OP_IN_PROGRESS.
-	longOpMu  sync.Mutex
+	// longOp is THE exclusive long-operation lock, and it records WHO holds it
+	// (longOpKind). Held for the whole of a snapshot export/import, of a
+	// dependency migration, and of an asynchronous update pass (ownership is
+	// transferred into the background goroutine in each case). Every route that
+	// starts, reshapes or destroys the namespace TryLocks it via tryLongOp and
+	// answers 409 LONG_OP_IN_PROGRESS naming the holder — except Start and
+	// Stop, which TOLERATE an update-pass holder so click-folding and the stop
+	// escape hatch keep working. See longop.go.
+	longOp    longOpLock
 	daemonCfg config.DaemonConfig
 	// eventSeq is the monotonic SSE event counter. All mutations (.Add) and
 	// the cutoff Load happen under eventMu — the atomic type is retained

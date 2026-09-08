@@ -190,7 +190,10 @@ func appDefsToStoppedApps(defs []appdef.ApplicationDef, runtime *namespace.Runti
 }
 
 func (d *Daemon) handleStartNamespace(w http.ResponseWriter, r *http.Request) {
-	release, ok := d.tryLongOp(w)
+	// Tolerates an in-flight update pass: a second click must FOLD into the
+	// single-slot queue (force OR-ed), which is the documented contract, not be
+	// refused at the HTTP layer.
+	release, ok := d.tryLongOp(w, longOpUpdatePass)
 	if !ok {
 		return
 	}
@@ -474,14 +477,19 @@ func (d *Daemon) updateAndStartAsync(forceGitPull bool, nsID string) {
 		// rather than probing it: a probe is check-then-act, and a migration
 		// accepted one instruction later would run concurrently with
 		// doReloadEx. TryLock never blocks, so holding reloadMu here cannot
-		// deadlock against a long operation that takes reloadMu after longOpMu.
+		// deadlock against a long operation that takes reloadMu after longOp.
 		// HTTP answered 200 long ago, so the refusal has to be reported.
-		if !d.longOpMu.TryLock() {
-			slog.Warn("Update and start skipped: " + longOpBusyMessage)
-			d.recordUpdateFailure(target, longOpBusyMessage+" — retry once it has finished")
+		//
+		// The pass owns the lock as longOpUpdatePass, which Start and Stop
+		// tolerate: an ordinary start must not 409 the next click (it folds
+		// into the queue) nor the stop that cancels it.
+		if !d.longOp.TryLock(longOpUpdatePass) {
+			reason := d.longOp.Holder().busyMessage()
+			slog.Warn("Update and start skipped: " + reason)
+			d.recordUpdateFailure(target, reason+" — retry once it has finished")
 			return
 		}
-		defer d.longOpMu.Unlock()
+		defer d.longOp.Unlock()
 		if err := d.invokeReloadEx(force, action == updateStartStart, true); err != nil {
 			slog.Warn("Update and start failed", "err", err)
 			d.recordUpdateFailure(target, err.Error())
@@ -490,7 +498,10 @@ func (d *Daemon) updateAndStartAsync(forceGitPull bool, nsID string) {
 }
 
 func (d *Daemon) handleStopNamespace(w http.ResponseWriter, r *http.Request) {
-	release, ok := d.tryLongOp(w)
+	// Tolerates an in-flight update pass: Stop is the escape hatch from a pass
+	// stuck in a slow git pull, and refusing it is worse than the reload race
+	// every release before this one already allowed.
+	release, ok := d.tryLongOp(w, longOpUpdatePass)
 	if !ok {
 		return
 	}
@@ -505,7 +516,7 @@ func (d *Daemon) handleStopNamespace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleReloadNamespace(w http.ResponseWriter, r *http.Request) {
-	release, ok := d.tryLongOp(w)
+	release, ok := d.tryLongOp(w, longOpNone)
 	if !ok {
 		return
 	}
@@ -540,7 +551,7 @@ func (d *Daemon) handleUpgradeNamespace(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	release, ok := d.tryLongOp(w)
+	release, ok := d.tryLongOp(w, longOpNone)
 	if !ok {
 		return
 	}

@@ -216,7 +216,7 @@ func (d *Daemon) handleAppRestart(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	release, ok := d.tryLongOp(w)
+	release, ok := d.tryLongOp(w, longOpNone)
 	if !ok {
 		return
 	}
@@ -243,7 +243,7 @@ func (d *Daemon) handleAppStop(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	release, ok := d.tryLongOp(w)
+	release, ok := d.tryLongOp(w, longOpNone)
 	if !ok {
 		return
 	}
@@ -265,6 +265,11 @@ func (d *Daemon) handleAppStop(w http.ResponseWriter, r *http.Request) {
 	// apps' generated config — regenerate so the proxy drops its upstream and AI
 	// drops the STT wiring (Kotlin v1.4.1 parity). StopApp has already recorded
 	// the detach in ManualStoppedApps, which doReload's Generate reads.
+	// Let go of the long-operation lock BEFORE the hand-off: the regeneration
+	// pass TryLocks the same lock, so a handler still holding it here would
+	// make the toggle skip its own regeneration. release is idempotent, so the
+	// defer above stays correct for every path that returned earlier.
+	release()
 	if regenOnAttachToggle(name) {
 		d.regenAfterAttachToggleAsync(name, "detach")
 	}
@@ -276,7 +281,7 @@ func (d *Daemon) handleAppStart(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	release, ok := d.tryLongOp(w)
+	release, ok := d.tryLongOp(w, longOpNone)
 	if !ok {
 		return
 	}
@@ -303,6 +308,11 @@ func (d *Daemon) handleAppStart(w http.ResponseWriter, r *http.Request) {
 	// regenerate so the proxy re-adds its upstream and AI re-acquires the STT
 	// wiring (Kotlin v1.4.1 parity). StartApp has already cleared the detach
 	// flag in ManualStoppedApps, which doReload's Generate reads.
+	// Let go of the long-operation lock BEFORE the hand-off: the regeneration
+	// pass TryLocks the same lock, so a handler still holding it here would
+	// make the toggle skip its own regeneration. release is idempotent, so the
+	// defer above stays correct for every path that returned earlier.
+	release()
 	if regenOnAttachToggle(name) {
 		d.regenAfterAttachToggleAsync(name, "attach")
 	}
@@ -515,7 +525,7 @@ func (d *Daemon) handlePutAppConfig(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	release, ok := d.tryLongOp(w)
+	release, ok := d.tryLongOp(w, longOpNone)
 	if !ok {
 		return
 	}
@@ -618,7 +628,7 @@ func (d *Daemon) handleResetAppConfig(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	release, ok := d.tryLongOp(w)
+	release, ok := d.tryLongOp(w, longOpNone)
 	if !ok {
 		return
 	}
@@ -788,7 +798,7 @@ func (d *Daemon) handlePutAppFile(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	release, ok := d.tryLongOp(w)
+	release, ok := d.tryLongOp(w, longOpNone)
 	if !ok {
 		return
 	}
@@ -856,7 +866,7 @@ func (d *Daemon) handleResetAppFile(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	release, ok := d.tryLongOp(w)
+	release, ok := d.tryLongOp(w, longOpNone)
 	if !ok {
 		return
 	}

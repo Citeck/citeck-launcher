@@ -17,10 +17,47 @@ import (
 	"github.com/citeck/citeck-launcher/internal/namespace"
 )
 
+// gatedRoute is one row of the long-operation route gate. tolerantOfUpdatePass
+// marks the two routes that proceed ALONGSIDE an in-flight update pass.
+type gatedRoute struct {
+	handler      string
+	method, path string
+	body         string
+
+	tolerantOfUpdatePass bool
+}
+
+// gatedRoutes is THE list of routes that start, reshape or destroy the
+// namespace. A handler missing from it is not a passing test, it is an ungated
+// route: every long-operation test below is driven from this one table.
+func gatedRoutes() []gatedRoute {
+	return []gatedRoute{
+		{handler: "handleStartNamespace", method: "POST", path: api.NamespaceStart, tolerantOfUpdatePass: true},
+		{handler: "handleStopNamespace", method: "POST", path: api.NamespaceStop, tolerantOfUpdatePass: true},
+		{handler: "handleReloadNamespace", method: "POST", path: api.NamespaceReload},
+		{handler: "handleAppStart", method: "POST", path: api.AppStart("postgres")},
+		{handler: "handleAppStop", method: "POST", path: api.AppStop("postgres")},
+		{handler: "handleAppRestart", method: "POST", path: api.AppRestart("postgres")},
+		{handler: "handlePutAppConfig", method: "PUT", path: "/api/v1/apps/postgres/config", body: "name: postgres\n"},
+		{handler: "handleResetAppConfig", method: "POST", path: "/api/v1/apps/postgres/config/reset"},
+		{handler: "handlePutAppFile", method: "PUT", path: "/api/v1/apps/postgres/files/postgres/pg_hba.conf", body: "x"},
+		{handler: "handleResetAppFile", method: "POST", path: "/api/v1/apps/postgres/files/reset?path=postgres/pg_hba.conf"},
+		{handler: "handlePutNamespaceEdit", method: "PUT", path: api.NamespaceEditPath("ns1"), body: "{}"},
+		{handler: "handleDeleteNamespace", method: "DELETE", path: "/api/v1/namespaces/ns1"},
+		{handler: "handleActivateNamespace", method: "POST", path: "/api/v1/namespaces/ns2/activate"},
+		{handler: "handleDeactivateNamespace", method: "POST", path: "/api/v1/namespaces/deactivate"},
+		{handler: "handleActivateWorkspace", method: "POST", path: "/api/v1/workspaces/ws2/activate"},
+		{handler: "handleDeleteWorkspace", method: "DELETE", path: "/api/v1/workspaces/ws2"},
+		{handler: "handleDeleteVolume", method: "DELETE", path: "/api/v1/volumes/postgres2"},
+		{handler: "handleUpgradeNamespace", method: "POST", path: api.NamespaceUpgrade, body: `{"bundleRef":"citeck:community-2.0.0"}`},
+		{handler: "handleWorkspaceUpdate", method: "POST", path: api.WorkspaceUpdate},
+	}
+}
+
 // TestMutatingRoutesRefuseDuringALongOperation pins the route gate: every route
 // that starts, reshapes or destroys the namespace must refuse while a long
 // operation — a snapshot export/import or a dependency migration — holds
-// longOpMu. A migration stops the namespace, reshapes its volumes and recreates
+// the long-operation lock. A migration stops the namespace, reshapes its volumes and recreates
 // its containers; a Start, a config edit or a namespace delete landing in the
 // middle of that races the very state it is rewriting.
 //
@@ -50,36 +87,12 @@ func TestMutatingRoutesRefuseDuringALongOperation(t *testing.T) {
 	mux := http.NewServeMux()
 	d.registerRoutes(mux)
 
-	d.longOpMu.Lock()
-	t.Cleanup(d.longOpMu.Unlock)
+	require.True(t, d.longOp.TryLock(longOpMigration))
+	t.Cleanup(d.longOp.Unlock)
 
 	baseSeq := d.eventSeq.Load()
 
-	routes := []struct {
-		handler      string
-		method, path string
-		body         string
-	}{
-		{"handleStartNamespace", "POST", api.NamespaceStart, ""},
-		{"handleStopNamespace", "POST", api.NamespaceStop, ""},
-		{"handleReloadNamespace", "POST", api.NamespaceReload, ""},
-		{"handleAppStart", "POST", api.AppStart("postgres"), ""},
-		{"handleAppStop", "POST", api.AppStop("postgres"), ""},
-		{"handleAppRestart", "POST", api.AppRestart("postgres"), ""},
-		{"handlePutAppConfig", "PUT", "/api/v1/apps/postgres/config", "name: postgres\n"},
-		{"handleResetAppConfig", "POST", "/api/v1/apps/postgres/config/reset", ""},
-		{"handlePutAppFile", "PUT", "/api/v1/apps/postgres/files/postgres/pg_hba.conf", "x"},
-		{"handleResetAppFile", "POST", "/api/v1/apps/postgres/files/reset?path=postgres/pg_hba.conf", ""},
-		{"handlePutNamespaceEdit", "PUT", api.NamespaceEditPath("ns1"), "{}"},
-		{"handleDeleteNamespace", "DELETE", "/api/v1/namespaces/ns1", ""},
-		{"handleActivateNamespace", "POST", "/api/v1/namespaces/ns2/activate", ""},
-		{"handleDeactivateNamespace", "POST", "/api/v1/namespaces/deactivate", ""},
-		{"handleActivateWorkspace", "POST", "/api/v1/workspaces/ws2/activate", ""},
-		{"handleDeleteWorkspace", "DELETE", "/api/v1/workspaces/ws2", ""},
-		{"handleDeleteVolume", "DELETE", "/api/v1/volumes/postgres2", ""},
-		{"handleUpgradeNamespace", "POST", api.NamespaceUpgrade, `{"bundleRef":"citeck:community-2.0.0"}`},
-		{"handleWorkspaceUpdate", "POST", api.WorkspaceUpdate, ""},
-	}
+	routes := gatedRoutes()
 	for _, rtc := range routes {
 		t.Run(rtc.handler, func(t *testing.T) {
 			req := httptest.NewRequest(rtc.method, rtc.path, strings.NewReader(rtc.body))
@@ -87,6 +100,9 @@ func TestMutatingRoutesRefuseDuringALongOperation(t *testing.T) {
 			RecoveryMiddleware(mux).ServeHTTP(rec, req)
 			require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
 			assert.Contains(t, rec.Body.String(), api.ErrCodeLongOpInProgress)
+			assert.Contains(t, rec.Body.String(), "a dependency migration is in progress",
+				"the refusal must name the ACTUAL holder — naming a snapshot that nobody took "+
+					"sends the operator hunting for an operation that does not exist")
 		})
 	}
 
@@ -119,8 +135,8 @@ func TestSnapshotRoutesKeepTheirOwnCodeOnTheSharedLock(t *testing.T) {
 	mux := http.NewServeMux()
 	d.registerRoutes(mux)
 
-	d.longOpMu.Lock()
-	t.Cleanup(d.longOpMu.Unlock)
+	require.True(t, d.longOp.TryLock(longOpMigration))
+	t.Cleanup(d.longOp.Unlock)
 
 	for _, path := range []string{api.SnapshotsExport, api.SnapshotsImport} {
 		t.Run(path, func(t *testing.T) {
@@ -142,11 +158,11 @@ func TestSnapshotRoutesKeepTheirOwnCodeOnTheSharedLock(t *testing.T) {
 func TestTryLongOpIsExclusiveAndReleases(t *testing.T) {
 	d := &Daemon{}
 
-	release, ok := d.tryLongOp(httptest.NewRecorder())
+	release, ok := d.tryLongOp(httptest.NewRecorder(), longOpNone)
 	require.True(t, ok)
 
 	rec := httptest.NewRecorder()
-	blocked, ok2 := d.tryLongOp(rec)
+	blocked, ok2 := d.tryLongOp(rec, longOpNone)
 	require.False(t, ok2, "the lock must not be handed out twice")
 	assert.Nil(t, blocked, "a refused claim must not return a release func")
 	assert.Equal(t, http.StatusConflict, rec.Code)
@@ -154,7 +170,7 @@ func TestTryLongOpIsExclusiveAndReleases(t *testing.T) {
 
 	release()
 
-	release2, ok3 := d.tryLongOp(httptest.NewRecorder())
+	release2, ok3 := d.tryLongOp(httptest.NewRecorder(), longOpNone)
 	require.True(t, ok3, "the lock must be claimable again after release")
 	release2()
 }
@@ -213,8 +229,8 @@ func TestUpdateAndStartPassRefusesWhileALongOperationHoldsTheLock(t *testing.T) 
 	d := newUpdateStartTestDaemon(t, "ns1", namespace.NsStatusStopped)
 	got := captureReloadEx(d)
 
-	d.longOpMu.Lock()
-	t.Cleanup(d.longOpMu.Unlock)
+	require.True(t, d.longOp.TryLock(longOpMigration))
+	t.Cleanup(d.longOp.Unlock)
 
 	d.setUpdateInFlight(true, "ns1")
 	d.updateAndStartAsync(false, "ns1")
@@ -245,4 +261,167 @@ func TestUpdateAndStartPassRefusesWhileALongOperationHoldsTheLock(t *testing.T) 
 		}
 		return false
 	}, 5*time.Second, 5*time.Millisecond, "the refused pass must release reloadMu")
+}
+
+// newGateTestDaemon builds the daemon the route-gate tests drive over HTTP: a
+// real (stopped) runtime, a namespace, and both reload seams captured so no
+// test can reach real git/Docker I/O on a success path.
+func newGateTestDaemon(t *testing.T) (*Daemon, *http.ServeMux) {
+	t.Helper()
+	rt := namespace.NewRuntime(&namespace.Config{ID: "ns1"}, planStubDocker{}, t.TempDir())
+	t.Cleanup(rt.Shutdown)
+	d := &Daemon{activeNs: &activeNamespace{
+		runtime:     rt,
+		nsConfig:    &namespace.Config{ID: "ns1"},
+		workspaceID: "ws1",
+		volumesBase: t.TempDir(),
+		appDefs:     []appdef.ApplicationDef{{Name: "postgres"}},
+	}}
+	d.reloadFn = func() error { return nil }
+	d.reloadExFn = func(_, _, _ bool) error { return nil }
+	mux := http.NewServeMux()
+	d.registerRoutes(mux)
+	return d, mux
+}
+
+func doGatedRequest(t *testing.T, mux *http.ServeMux, rtc gatedRoute) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(rtc.method, rtc.path, strings.NewReader(rtc.body))
+	rec := httptest.NewRecorder()
+	RecoveryMiddleware(mux).ServeHTTP(rec, req)
+	return rec
+}
+
+// TestGatedRoutesRefuseAnUpdatePassExceptStartAndStop is the fix for the
+// regression the first cut shipped: holding the lock for the Update & Start
+// pass made EVERY gated route 409 during the git-pull/generate window of an
+// ORDINARY start — with a message naming a snapshot and a migration that were
+// not happening. Start and Stop must survive that window (see the two tests
+// below for what they must actually DO); everything else is genuinely unsafe
+// beside a pass that is regenerating and recreating containers.
+func TestGatedRoutesRefuseAnUpdatePassExceptStartAndStop(t *testing.T) {
+	d, mux := newGateTestDaemon(t)
+	require.True(t, d.longOp.TryLock(longOpUpdatePass))
+	t.Cleanup(d.longOp.Unlock)
+
+	tolerated := 0
+	for _, rtc := range gatedRoutes() {
+		t.Run(rtc.handler, func(t *testing.T) {
+			rec := doGatedRequest(t, mux, rtc)
+			if rtc.tolerantOfUpdatePass {
+				assert.NotEqual(t, http.StatusConflict, rec.Code,
+					"%s must proceed alongside an update pass", rtc.handler)
+				assert.NotContains(t, rec.Body.String(), api.ErrCodeLongOpInProgress)
+				return
+			}
+			require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+			assert.Contains(t, rec.Body.String(), api.ErrCodeLongOpInProgress)
+			assert.Contains(t, rec.Body.String(), "an update pass is in progress",
+				"the refusal must name the update pass, not an imaginary snapshot")
+		})
+		if rtc.tolerantOfUpdatePass {
+			tolerated++
+		}
+	}
+	assert.Equal(t, 2, tolerated, "exactly Start and Stop tolerate an update pass")
+}
+
+// TestStartAndStopAreStillRefusedByASnapshot: the tolerance is for the update
+// pass ONLY. A snapshot is restoring volumes under the namespace, so starting
+// it — or racing its stop — is exactly what the lock exists to prevent.
+func TestStartAndStopAreStillRefusedByASnapshot(t *testing.T) {
+	for _, holder := range []longOpKind{longOpSnapshot, longOpMigration} {
+		t.Run(string(holder), func(t *testing.T) {
+			d, mux := newGateTestDaemon(t)
+			require.True(t, d.longOp.TryLock(holder))
+			t.Cleanup(d.longOp.Unlock)
+
+			for _, rtc := range gatedRoutes() {
+				if !rtc.tolerantOfUpdatePass {
+					continue
+				}
+				rec := doGatedRequest(t, mux, rtc)
+				require.Equal(t, http.StatusConflict, rec.Code, "%s: %s", rtc.handler, rec.Body.String())
+				assert.Contains(t, rec.Body.String(), api.ErrCodeLongOpInProgress)
+				assert.Contains(t, rec.Body.String(), holder.busyMessage())
+			}
+			assert.False(t, d.updatePending.Load(), "a refused Start must not queue a pass")
+		})
+	}
+}
+
+// TestSecondUpdateClickFoldsInsteadOfBeing409ed pins the documented
+// click-folding contract at the HTTP layer, which is where it was silently
+// narrowed: extra clicks fold into the single-slot queue and the Force flag is
+// OR-ed. Driving updateAndStartAsync directly — as every other queue test does
+// — cannot see a handler that refuses the click before the queue is reached.
+func TestSecondUpdateClickFoldsInsteadOfBeing409ed(t *testing.T) {
+	d, mux := newGateTestDaemon(t)
+	got := captureReloadEx(d)
+
+	// A pass is mid-flight: it owns reloadMu (so a new pass would queue behind
+	// it) and the long-operation lock (its git pull / generate window).
+	d.reloadMu.Lock()
+	require.True(t, d.longOp.TryLock(longOpUpdatePass))
+
+	rec := doGatedRequest(t, mux, gatedRoute{method: "POST", path: api.NamespaceStart})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Eventually(t, func() bool { return d.updatePending.Load() }, time.Second, 5*time.Millisecond,
+		"the click must occupy the queue slot, not be refused")
+
+	rec2 := doGatedRequest(t, mux, gatedRoute{method: "POST", path: api.NamespaceStart + "?force=true"})
+	require.Equal(t, http.StatusOK, rec2.Code, rec2.Body.String())
+	assert.True(t, d.updatePending.Load(), "the second click folds into the queued pass")
+	assert.True(t, d.updatePendingForce.Load(), "the folded Force click's intent must be OR-ed in")
+
+	// Let the mid-flight pass finish; the queued one must then actually run.
+	d.longOp.Unlock()
+	d.reloadMu.Unlock()
+	select {
+	case args := <-got:
+		assert.True(t, args.refreshImages)
+		assert.True(t, args.force, "the folded Force click must be honored")
+	case <-time.After(5 * time.Second):
+		msg, _ := d.updateFailureFor(&namespace.Config{ID: "ns1"})
+		t.Fatalf("the folded click never ran; recorded failure: %q", msg)
+	}
+}
+
+// TestStopIsAcceptedDuringAnUpdatePass: Stop is the escape hatch from a pass
+// stuck in a slow git pull. Refusing it leaves the operator with a namespace
+// they cannot stop and a 409 blaming a snapshot nobody took.
+func TestStopIsAcceptedDuringAnUpdatePass(t *testing.T) {
+	d, mux := newGateTestDaemon(t)
+	require.True(t, d.longOp.TryLock(longOpUpdatePass))
+	t.Cleanup(d.longOp.Unlock)
+
+	rec := doGatedRequest(t, mux, gatedRoute{method: "POST", path: api.NamespaceStop})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "stop requested")
+}
+
+// TestGatedRoutesReleaseTheLockOnTheSuccessPath: a gate whose release is never
+// reached wedges every mutating route in the daemon, permanently and silently —
+// the failure mode is "the launcher stopped responding to buttons", with no
+// error anywhere. Replaying the whole table against a FREE lock and finding it
+// free afterwards is the only cheap proof that all 19 defer their release.
+func TestGatedRoutesReleaseTheLockOnTheSuccessPath(t *testing.T) {
+	d, mux := newGateTestDaemon(t)
+
+	for _, rtc := range gatedRoutes() {
+		t.Run(rtc.handler, func(t *testing.T) {
+			// Whatever the handler answers (404, 400, 500 — the stub daemon has
+			// no store and no Docker), it must not keep the lock. A panic
+			// recovered by the middleware must not keep it either.
+			doGatedRequest(t, mux, rtc)
+			require.Eventually(t, func() bool {
+				if d.longOp.TryLock(longOpRequest) {
+					d.longOp.Unlock()
+					return true
+				}
+				return false
+			}, 5*time.Second, 5*time.Millisecond,
+				"%s left the long-operation lock held (holder=%q)", rtc.handler, d.longOp.Holder())
+		})
+	}
 }

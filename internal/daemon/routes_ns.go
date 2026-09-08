@@ -106,7 +106,7 @@ func (d *Daemon) handleDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 	// Before the mode check: "the daemon is busy" is true in server mode too,
 	// and a 404/400 there would say the request was malformed when it was only
 	// mistimed.
-	release, ok := d.tryLongOp(w)
+	release, ok := d.tryLongOp(w, longOpNone)
 	if !ok {
 		return
 	}
@@ -347,7 +347,7 @@ func (d *Daemon) resolveLatestBundleKey(wsID, repo string, offline bool) (string
 func (d *Daemon) handleActivateNamespace(w http.ResponseWriter, r *http.Request) {
 	// Before requireDesktop: the lock says "the daemon is busy", which is true
 	// regardless of mode.
-	release, ok := d.tryLongOp(w)
+	release, ok := d.tryLongOp(w, longOpNone)
 	if !ok {
 		return
 	}
@@ -442,7 +442,7 @@ func (d *Daemon) handleActivateNamespace(w http.ResponseWriter, r *http.Request)
 func (d *Daemon) handleDeactivateNamespace(w http.ResponseWriter, r *http.Request) {
 	_ = r
 	// Before requireDesktop, for the same reason as handleActivateNamespace.
-	release, ok := d.tryLongOp(w)
+	release, ok := d.tryLongOp(w, longOpNone)
 	if !ok {
 		return
 	}
@@ -1037,7 +1037,7 @@ func (d *Daemon) handlePutNamespaceEdit(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	release, ok := d.tryLongOp(w)
+	release, ok := d.tryLongOp(w, longOpNone)
 	if !ok {
 		return
 	}

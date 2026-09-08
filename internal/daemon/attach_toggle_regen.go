@@ -43,15 +43,34 @@ func regenOnAttachToggle(name string) bool { return attachToggleRegenApps[name] 
 // only caller passing refreshImages=true, so folding it into an in-flight
 // refreshImages=false reload would silently drop the :snapshot digest refresh
 // that IS the action. See updateAndStartAsync, which waits on reloadMu instead.
+//
+// It is gated at PASS level on the long-operation lock, exactly like the
+// Update & Start pass and for the same reason: the spawning handler
+// (handleAppStart / handleAppStop) has released the lock by the time this runs,
+// so a migration can take it in between — and this goroutine re-runs Generate,
+// which seeds dependency pins and rewrites the runtime files a migration is
+// reading and rewriting. It is not a benign reload. A lost race is SAFE to
+// skip: the attach/detach is already persisted in ManualStoppedApps, so the
+// next reload or start regenerates from it; the WARN is there because nothing
+// else would tell the operator the proxy is briefly stale.
 func (d *Daemon) regenAfterAttachToggleAsync(app, action string) {
 	go func() {
+		if !d.longOp.TryLock(longOpUpdatePass) {
+			//nolint:gosec // G706: app is validated by validateAppName and gated to the constant attachToggleRegenApps set; action is a caller literal
+			slog.Warn("Attach-toggle regeneration skipped: "+d.longOp.Holder().busyMessage(),
+				"app", app, "action", action)
+			return
+		}
+		defer d.longOp.Unlock()
 		if !d.reloadMu.TryLock() {
 			//nolint:gosec // G706: app is validated by validateAppName and gated to the constant attachToggleRegenApps set; action is a caller literal
 			slog.Info("Attach-toggle regeneration coalesced into in-progress reload", "app", app, "action", action)
 			return
 		}
 		defer d.reloadMu.Unlock()
-		if err := d.doReload(); err != nil {
+		// invokeReload, not doReload: the daemon-wide reload seam, so a test can
+		// observe that this pass ran AND that it held the lock while it did.
+		if err := d.invokeReload(); err != nil {
 			//nolint:gosec // G706: app is validated by validateAppName and gated to the constant attachToggleRegenApps set; action is a caller literal
 			slog.Warn("Attach-toggle regeneration failed", "app", app, "action", action, "err", err)
 		}
