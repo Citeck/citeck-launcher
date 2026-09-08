@@ -71,6 +71,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/api"
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
+	"github.com/citeck/citeck-launcher/internal/deps"
 	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/namespace/workers"
 )
@@ -177,6 +178,9 @@ type Runtime struct {
 	livenessFailures      map[string]int                   // consecutive liveness probe failure counts
 	restartCounts         map[string]int                   // total restart counts per app
 	restartEvents         []RestartEvent                   // ring buffer of restart events
+	dependencyPins        map[deps.ID]deps.DependencyState // see NsPersistedState.Dependencies
+	migrationJournal      *deps.MigrationJournal           // see NsPersistedState.DependencyMigration
+	lastMigration         *deps.MigrationResult            // see NsPersistedState.LastDependencyMigration
 	reconcilerCfg         *ReconcilerConfig                // optional override from daemon.yml
 	reconcilerEnabled     bool                             // gate for reconcile-diff dispatch from tickUnderLock; default true, flipped by SetReconcilerConfig when daemon.yml sets reconciler.enabled: false.
 	livenessEnabled       bool                             // gate for per-app liveness probe dispatch from tickUnderLock; default true, flipped by SetReconcilerConfig when daemon.yml sets reconciler.livenessEnabled: false.
@@ -621,6 +625,7 @@ func NewRuntime(cfg *Config, dockerClient docker.RuntimeClient, volumesBase stri
 		generatedDefs:       make(map[string]appdef.ApplicationDef),
 		livenessFailures:    make(map[string]int),
 		restartCounts:       make(map[string]int),
+		dependencyPins:      make(map[deps.ID]deps.DependencyState),
 		eventCh:             make(chan api.EventDto, 256),
 
 		signalCh:           NewSignalQueue(),

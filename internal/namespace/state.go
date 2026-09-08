@@ -7,6 +7,7 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/appdef"
 	"github.com/citeck/citeck-launcher/internal/bundle"
+	"github.com/citeck/citeck-launcher/internal/deps"
 )
 
 // NsPersistedState holds runtime state that survives daemon restarts.
@@ -29,6 +30,18 @@ type NsPersistedState struct {
 	CachedBundle  *bundle.Def    `json:"cachedBundle,omitempty"`
 	RestartEvents []RestartEvent `json:"restartEvents,omitempty"`
 	RestartCounts map[string]int `json:"restartCounts,omitempty"`
+
+	// Dependencies pins, per infra dependency, the image the namespace's data
+	// last ran on successfully. The generator holds a bundle's newer image back
+	// when moving to it would be a breaking change (see internal/deps), so a
+	// bundle bump never silently recreates postgres onto a data directory it
+	// cannot read. Absent for a namespace that has no data yet.
+	Dependencies map[deps.ID]deps.DependencyState `json:"dependencies,omitempty"`
+	// DependencyMigration is the write-ahead journal of a migration in flight;
+	// non-nil on load means the daemon died mid-migration and must roll back.
+	DependencyMigration *deps.MigrationJournal `json:"dependencyMigration,omitempty"`
+	// LastDependencyMigration is the verdict of the most recent migration.
+	LastDependencyMigration *deps.MigrationResult `json:"lastDependencyMigration,omitempty"`
 }
 
 // statePath returns the path to the persisted state file (namespace-scoped).

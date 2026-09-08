@@ -2,11 +2,13 @@ package namespace
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"maps"
 	"time"
 
 	"github.com/citeck/citeck-launcher/internal/api"
+	"github.com/citeck/citeck-launcher/internal/deps"
 )
 
 // persistState saves the current runtime state to disk. Must be called with r.mu held.
@@ -18,9 +20,13 @@ import (
 // inline because they record durable user intent that must survive a crash
 // between loop iterations. After an inline persist, the caller clears
 // r.dirty.Store(false) so the loop tail does not redundantly re-persist.
-func (r *Runtime) persistState() {
+//
+// The error is returned for callers that must report a failed write to the
+// user (the dependency-migration methods in deps_state.go); it is also logged
+// here, so the state-machine callers that only ever log may keep discarding it.
+func (r *Runtime) persistState() error {
 	if r.statePersister == nil {
-		return
+		return nil
 	}
 	state := &NsPersistedState{
 		Status: r.status,
@@ -47,14 +53,28 @@ func (r *Runtime) persistState() {
 		state.RestartCounts = make(map[string]int, len(r.restartCounts))
 		maps.Copy(state.RestartCounts, r.restartCounts)
 	}
+	if len(r.dependencyPins) > 0 {
+		state.Dependencies = make(map[deps.ID]deps.DependencyState, len(r.dependencyPins))
+		maps.Copy(state.Dependencies, r.dependencyPins)
+	}
+	if r.migrationJournal != nil {
+		j := *r.migrationJournal
+		state.DependencyMigration = &j
+	}
+	if r.lastMigration != nil {
+		l := *r.lastMigration
+		state.LastDependencyMigration = &l
+	}
 	data, err := json.Marshal(state)
 	if err != nil {
 		slog.Warn("Failed to marshal namespace state", "err", err)
-		return
+		return fmt.Errorf("marshal namespace state: %w", err)
 	}
 	if err := r.statePersister.SaveNamespaceState(string(state.Status), string(data)); err != nil {
 		slog.Warn("Failed to persist namespace state", "err", err)
+		return fmt.Errorf("persist namespace state: %w", err)
 	}
+	return nil
 }
 
 type retryInfo struct {
