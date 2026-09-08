@@ -308,11 +308,11 @@ func TestDesktopCatFailureClassification(t *testing.T) {
 // has to be on the host first — otherwise the first data probe on a host that
 // never pulled it reports a read FAILURE and every dependency is seeded to its
 // legacy image. The call needs a real engine, so the ORDER is checked
-// structurally (ImageExists/PullImage before RunUtilsContainer), the same way
-// docker.Client.VolumeSize does it.
+// structurally: the shared docker.Client.EnsureUtilsImage before
+// RunUtilsContainer, the same way volume sizing and snapshots do it.
 func TestDesktopReadEnsuresTheUtilsImageBeforeRunningIt(t *testing.T) {
 	fn := parseFuncDecl(t, "deps_seed.go", "ReadVolumeFile")
-	existsPos, pullPos, runPos := -1, -1, -1
+	ensurePos, runPos := -1, -1
 	ast.Inspect(fn, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
@@ -323,20 +323,16 @@ func TestDesktopReadEnsuresTheUtilsImageBeforeRunningIt(t *testing.T) {
 			return true
 		}
 		switch sel.Sel.Name {
-		case "ImageExists":
-			existsPos = int(call.Pos())
-		case "PullImage":
-			pullPos = int(call.Pos())
+		case "EnsureUtilsImage":
+			ensurePos = int(call.Pos())
 		case "RunUtilsContainer":
 			runPos = int(call.Pos())
 		}
 		return true
 	})
 	require.NotEqual(t, -1, runPos, "the desktop read no longer runs a utils container — this guard is out of date")
-	require.NotEqual(t, -1, existsPos, "ReadVolumeFile must check the utils image is present")
-	require.NotEqual(t, -1, pullPos, "ReadVolumeFile must pull the utils image when it is missing")
-	assert.Less(t, existsPos, runPos, "the image check must come before the container runs")
-	assert.Less(t, pullPos, runPos, "the pull must come before the container runs")
+	require.NotEqual(t, -1, ensurePos, "ReadVolumeFile must ensure the utils image is present")
+	assert.Less(t, ensurePos, runPos, "the image check must come before the container runs")
 }
 
 // The wiring helper both the load path and the reload path go through: what

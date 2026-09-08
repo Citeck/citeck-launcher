@@ -337,7 +337,7 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 			for _, v := range meta.Volumes {
 				names = append(names, v.Name)
 			}
-			reseedAfterSnapshotImport(d.bgCtx, rt, dockerDependencyProbe{dc: dc, volumesBase: volumesBase}, names)
+			reseedAfterSnapshotImport(d.bgCtx, rt, dockerDependencyProbe{dc: depsDockerOf(dc), volumesBase: volumesBase}, names)
 		}
 		d.broadcastEvent(api.EventDto{
 			Type: "snapshot_complete", Timestamp: time.Now().UnixMilli(),

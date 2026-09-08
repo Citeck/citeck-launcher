@@ -14,7 +14,6 @@ import (
 
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/deps"
-	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/namespace"
 )
 
@@ -55,9 +54,21 @@ type dependencyProbe interface {
 // them), server mode in a bind directory under <volumesBase>/volumes/<name>.
 // Everything else — seeding, and later the migration engine — goes through the
 // interface, so that rule cannot drift into a second copy.
+//
+// dc is the narrow depsDocker seam rather than *docker.Client so the probe and
+// the migration Env (deps_env.go) share one fake — box a possibly-nil client
+// with depsDockerOf, never by assigning the pointer directly: a typed nil
+// would pass the `dc == nil` guards below.
 type dockerDependencyProbe struct {
-	dc          *docker.Client
+	dc          depsDocker
 	volumesBase string
+}
+
+// volumeDir is where a plain-named data volume lives in SERVER mode. The one
+// place that spelling exists; the migration Env asks for it rather than
+// re-deriving it.
+func (p dockerDependencyProbe) volumeDir(volume string) string {
+	return filepath.Join(p.volumesBase, "volumes", volume)
 }
 
 func (p dockerDependencyProbe) ContainerImage(ctx context.Context, app string) (image string, ok bool, err error) {
@@ -79,7 +90,7 @@ func (p dockerDependencyProbe) ContainerImage(ctx context.Context, app string) (
 
 func (p dockerDependencyProbe) VolumeExists(ctx context.Context, volume string) (bool, error) {
 	if !config.IsDesktopMode() {
-		_, err := os.Stat(filepath.Join(p.volumesBase, "volumes", volume))
+		_, err := os.Stat(p.volumeDir(volume))
 		if errors.Is(err, os.ErrNotExist) {
 			return false, nil
 		}
@@ -101,7 +112,7 @@ func (p dockerDependencyProbe) VolumeExists(ctx context.Context, volume string) 
 func (p dockerDependencyProbe) ReadVolumeFile(ctx context.Context, volume, rel string) (string, error) {
 	if !config.IsDesktopMode() {
 		//nolint:gosec // G304: path is the launcher-owned volumesBase plus registry-known volume/file names
-		data, err := os.ReadFile(filepath.Join(p.volumesBase, "volumes", volume, filepath.FromSlash(rel)))
+		data, err := os.ReadFile(filepath.Join(p.volumeDir(volume), filepath.FromSlash(rel)))
 		if errors.Is(err, os.ErrNotExist) {
 			return "", fmt.Errorf("%s in %s: %w", rel, volume, errVolumeFileNotFound)
 		}
@@ -121,17 +132,14 @@ func (p dockerDependencyProbe) ReadVolumeFile(ctx context.Context, volume, rel s
 		return "", fmt.Errorf("%s in %s: %w", rel, volume, errVolumeFileNotFound)
 	}
 	// The read runs in the launcher-utils container, so the image must be on
-	// the host first — same order as docker.Client.VolumeSize and the snapshot
-	// package's ensureUtilsImage. Without it, the first data probe on a host
-	// that never pulled the image would report a read FAILURE, and every
-	// dependency would be seeded to its legacy image. A pull that fails IS a
-	// probe failure (the caller then assumes the legacy image), which is why
-	// the error is returned rather than swallowed.
-	utilsImage := config.UtilsImage()
-	if !p.dc.ImageExists(ctx, utilsImage) {
-		if pullErr := p.dc.PullImage(ctx, utilsImage, nil); pullErr != nil {
-			return "", fmt.Errorf("pull utils image %s: %w", utilsImage, pullErr)
-		}
+	// the host first — the shared docker.Client.EnsureUtilsImage, same as
+	// volume sizing, snapshots and the migration Env. Without it, the first
+	// data probe on a host that never pulled the image would report a read
+	// FAILURE, and every dependency would be seeded to its legacy image. A pull
+	// that fails IS a probe failure (the caller then assumes the legacy image),
+	// which is why the error is returned rather than swallowed.
+	if imgErr := p.dc.EnsureUtilsImage(ctx); imgErr != nil {
+		return "", fmt.Errorf("ensure utils image for %s: %w", volume, imgErr)
 	}
 	out, code, err := p.dc.RunUtilsContainer(ctx, []string{"cat", "/vol/" + rel}, []string{v.Name + ":/vol:ro"})
 	if err != nil {

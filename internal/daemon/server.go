@@ -666,7 +666,7 @@ func (d *Daemon) doReloadEx(forceGitPull, startNotRegenerate, refreshImages bool
 	// Persisting here is right, unlike on the load path: the runtime exists
 	// and its status is live, so a persist writes the truth.
 	pins, seededPins := resolveDependencyPins(d.bgCtx, act.runtime.DependencyPins(),
-		dockerDependencyProbe{dc: act.dockerClient, volumesBase: act.volumesBase})
+		dockerDependencyProbe{dc: depsDockerOf(act.dockerClient), volumesBase: act.volumesBase})
 	for id, img := range seededPins {
 		slog.Info("Dependency pin seeded on reload", "ns", nsID, "dependency", id, "image", img)
 		act.runtime.SetDependencyPin(id, img)

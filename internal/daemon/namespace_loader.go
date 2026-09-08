@@ -396,7 +396,7 @@ func loadNamespace(in loadNamespaceInput) (*loadedNamespace, error) {
 		}
 	}
 	pins, seededPins := resolveDependencyPins(context.Background(),
-		persistedPins, dockerDependencyProbe{dc: dc, volumesBase: volumesBase})
+		persistedPins, dockerDependencyProbe{dc: depsDockerOf(dc), volumesBase: volumesBase})
 	for id, img := range seededPins {
 		slog.Info("Dependency pin seeded", "ns", nsID, "dependency", id, "image", img)
 	}
