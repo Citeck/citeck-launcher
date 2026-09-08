@@ -71,7 +71,7 @@ func TestPreflightHappyPath(t *testing.T) {
 }
 
 // Problems and Warnings cross the API as arrays: the web dialog maps over both
-// without a nil guard, so a clean preflight marshalling `"problems":null` is
+// without a nil guard, so a clean preflight marshaling `"problems":null` is
 // the confirm screen crashing in the ORDINARY case.
 func TestPreflightMarshalsEmptyListsNotNull(t *testing.T) {
 	env := envWith17Data()

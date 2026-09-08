@@ -84,15 +84,17 @@ func gatedRoutes() []gatedRoute {
 // sides: it claims the lock itself (see the doc above), never through
 // tryLongOp, so it is not a call site either.
 func TestGatedRoutesTableCoversEveryTryLongOpCallSite(t *testing.T) {
-	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, parser.SkipObjectResolution)
+	entries, err := os.ReadDir(".")
 	require.NoError(t, err)
-	require.Contains(t, pkgs, "daemon")
-
+	fset := token.NewFileSet()
 	calls := 0
-	for _, f := range pkgs["daemon"].Files {
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, perr := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
+		require.NoError(t, perr, name)
 		ast.Inspect(f, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
 			if !ok {

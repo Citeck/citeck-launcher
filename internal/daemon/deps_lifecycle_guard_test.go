@@ -36,7 +36,7 @@ func TestStartIsRefusedWhileARollbackIsPending(t *testing.T) {
 	require.NoError(t, d.active().runtime.SetMigrationJournal(openJournal()))
 
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, api.NamespaceStart, nil))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, api.NamespaceStart, http.NoBody))
 	require.Equal(t, http.StatusConflict, rec.Code)
 	assert.Contains(t, rec.Body.String(), api.ErrCodeDependencyMigrationInProgress)
 	assert.Contains(t, rec.Body.String(), "rollback pending")
@@ -49,7 +49,7 @@ func TestStartIsAcceptedWithNoOpenJournal(t *testing.T) {
 	require.Nil(t, d.active().runtime.MigrationJournal())
 
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, api.NamespaceStart, nil))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, api.NamespaceStart, http.NoBody))
 	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }
 
