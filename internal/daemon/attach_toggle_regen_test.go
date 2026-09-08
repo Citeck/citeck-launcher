@@ -129,6 +129,9 @@ func TestAttachToggleRegenSkipsWhenALongOperationHoldsTheLock(t *testing.T) {
 	out := logs.String()
 	assert.Contains(t, out, "level=WARN", "a silently dropped regeneration is how a stale proxy goes unnoticed")
 	assert.Contains(t, out, "a dependency migration is in progress", "the skip must name the holder")
+	assert.Contains(t, out, "regenerated on the next reload or start",
+		"the WARN must say when the wiring comes back — otherwise a skip reads as permanent breakage, "+
+			"and under the memory-relief recipe (a burst of toggles) it is the ordinary case")
 
 	select {
 	case <-reloads:

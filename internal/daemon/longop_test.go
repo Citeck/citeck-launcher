@@ -18,9 +18,13 @@ import (
 )
 
 // gatedRoute is one row of the long-operation route gate. tolerantOfLifecycle
-// marks the two routes that proceed ALONGSIDE ordinary lifecycle work (an
-// update pass, another synchronous handler) and are refused only by the two
-// data-owning holders, snapshot and migration.
+// marks the five LIFECYCLE routes — namespace Start/Stop and the three per-app
+// toggles — that proceed ALONGSIDE ordinary lifecycle work (an update pass,
+// another synchronous handler) and are refused only by the two data-owning
+// holders, snapshot and migration. The per-app toggles are in that set because
+// each one can spawn an attach-toggle regeneration that holds the lock for its
+// whole doReload, and `citeck stop onlyoffice attorneys ecom …` — the
+// documented memory-relief recipe — is a burst of exactly those calls.
 type gatedRoute struct {
 	handler      string
 	method, path string
@@ -37,9 +41,9 @@ func gatedRoutes() []gatedRoute {
 		{handler: "handleStartNamespace", method: "POST", path: api.NamespaceStart, tolerantOfLifecycle: true},
 		{handler: "handleStopNamespace", method: "POST", path: api.NamespaceStop, tolerantOfLifecycle: true},
 		{handler: "handleReloadNamespace", method: "POST", path: api.NamespaceReload},
-		{handler: "handleAppStart", method: "POST", path: api.AppStart("postgres")},
-		{handler: "handleAppStop", method: "POST", path: api.AppStop("postgres")},
-		{handler: "handleAppRestart", method: "POST", path: api.AppRestart("postgres")},
+		{handler: "handleAppStart", method: "POST", path: api.AppStart("postgres"), tolerantOfLifecycle: true},
+		{handler: "handleAppStop", method: "POST", path: api.AppStop("postgres"), tolerantOfLifecycle: true},
+		{handler: "handleAppRestart", method: "POST", path: api.AppRestart("postgres"), tolerantOfLifecycle: true},
 		{handler: "handlePutAppConfig", method: "PUT", path: "/api/v1/apps/postgres/config", body: "name: postgres\n"},
 		{handler: "handleResetAppConfig", method: "POST", path: "/api/v1/apps/postgres/config/reset"},
 		{handler: "handlePutAppFile", method: "PUT", path: "/api/v1/apps/postgres/files/postgres/pg_hba.conf", body: "x"},
@@ -128,26 +132,35 @@ func TestMutatingRoutesRefuseDuringALongOperation(t *testing.T) {
 	d.reloadMu.Unlock()
 }
 
-// TestSnapshotRoutesKeepTheirOwnCodeOnTheSharedLock: snapshot export/import now
-// share the mutex with everything else, but their answer is unchanged — the Web
-// UI's snapshot dialog keys on SNAPSHOT_IN_PROGRESS. The rename must not become
-// a wire-format change.
+// TestSnapshotRoutesKeepTheirOwnCodeOnTheSharedLock: snapshot export/import
+// share the mutex with everything else, and their CODE is unchanged — the Web
+// UI's snapshot dialog keys on SNAPSHOT_IN_PROGRESS. The TEXT, however, must
+// name whoever actually holds the lock: "another snapshot operation is in
+// progress" while a dependency migration holds it sends the operator hunting
+// for a snapshot nobody took.
 func TestSnapshotRoutesKeepTheirOwnCodeOnTheSharedLock(t *testing.T) {
-	d := &Daemon{activeNs: &activeNamespace{}}
-	mux := http.NewServeMux()
-	d.registerRoutes(mux)
+	for _, holder := range []longOpKind{longOpSnapshot, longOpMigration, longOpUpdatePass} {
+		t.Run(string(holder), func(t *testing.T) {
+			d := &Daemon{activeNs: &activeNamespace{}}
+			mux := http.NewServeMux()
+			d.registerRoutes(mux)
 
-	require.True(t, d.longOp.TryLock(longOpMigration))
-	t.Cleanup(d.longOp.Unlock)
+			require.True(t, d.longOp.TryLock(holder))
+			t.Cleanup(d.longOp.Unlock)
 
-	for _, path := range []string{api.SnapshotsExport, api.SnapshotsImport} {
-		t.Run(path, func(t *testing.T) {
-			req := httptest.NewRequest("POST", path, strings.NewReader(""))
-			rec := httptest.NewRecorder()
-			RecoveryMiddleware(mux).ServeHTTP(rec, req)
-			require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
-			assert.Contains(t, rec.Body.String(), api.ErrCodeSnapshotInProgress)
-			assert.NotContains(t, rec.Body.String(), api.ErrCodeLongOpInProgress)
+			for _, path := range []string{api.SnapshotsExport, api.SnapshotsImport} {
+				t.Run(path, func(t *testing.T) {
+					req := httptest.NewRequest("POST", path, strings.NewReader(""))
+					rec := httptest.NewRecorder()
+					RecoveryMiddleware(mux).ServeHTTP(rec, req)
+					require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+					assert.Contains(t, rec.Body.String(), api.ErrCodeSnapshotInProgress,
+						"the snapshot dialog keys on this code; it must not change")
+					assert.NotContains(t, rec.Body.String(), api.ErrCodeLongOpInProgress)
+					assert.Contains(t, rec.Body.String(), holder.busyMessage(),
+						"the text must name the real holder, not assume a snapshot")
+				})
+			}
 		})
 	}
 }
@@ -294,7 +307,7 @@ func doGatedRequest(t *testing.T, mux *http.ServeMux, rtc gatedRoute) *httptest.
 	return rec
 }
 
-// TestGatedRoutesRefuseLifecycleWorkExceptStartAndStop is the fix for the
+// TestGatedRoutesRefuseLifecycleWorkExceptTheLifecycleRoutes is the fix for the
 // regression the first cut shipped: holding the lock for the Update & Start
 // pass made EVERY gated route 409 during the git-pull/generate window of an
 // ORDINARY start — with a message naming a snapshot and a migration that were
@@ -303,7 +316,7 @@ func doGatedRequest(t *testing.T, mux *http.ServeMux, rtc gatedRoute) *httptest.
 // and Stop must survive both windows (see the tests below for what they must
 // actually DO); everything else is genuinely unsafe beside a pass that is
 // regenerating and recreating containers.
-func TestGatedRoutesRefuseLifecycleWorkExceptStartAndStop(t *testing.T) {
+func TestGatedRoutesRefuseLifecycleWorkExceptTheLifecycleRoutes(t *testing.T) {
 	for _, holder := range []longOpKind{longOpUpdatePass, longOpRequest} {
 		t.Run(string(holder), func(t *testing.T) {
 			d, mux := newGateTestDaemon(t)
@@ -329,15 +342,17 @@ func TestGatedRoutesRefuseLifecycleWorkExceptStartAndStop(t *testing.T) {
 					tolerated++
 				}
 			}
-			assert.Equal(t, 2, tolerated, "exactly Start and Stop tolerate lifecycle work")
+			assert.Equal(t, 5, tolerated,
+				"exactly namespace Start/Stop and the three per-app toggles tolerate lifecycle work")
 		})
 	}
 }
 
-// TestStartAndStopAreStillRefusedByASnapshot: the tolerance is for the update
-// pass ONLY. A snapshot is restoring volumes under the namespace, so starting
-// it — or racing its stop — is exactly what the lock exists to prevent.
-func TestStartAndStopAreStillRefusedByASnapshot(t *testing.T) {
+// TestLifecycleRoutesAreStillRefusedByASnapshot: the tolerance is for ordinary
+// lifecycle work ONLY. A snapshot is restoring the volumes under the namespace
+// and a migration is rewriting them, so starting the namespace, stopping it, or
+// toggling an app beside either is exactly what the lock exists to prevent.
+func TestLifecycleRoutesAreStillRefusedByASnapshot(t *testing.T) {
 	for _, holder := range []longOpKind{longOpSnapshot, longOpMigration} {
 		t.Run(string(holder), func(t *testing.T) {
 			d, mux := newGateTestDaemon(t)

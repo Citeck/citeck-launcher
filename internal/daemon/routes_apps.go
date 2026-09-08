@@ -216,7 +216,13 @@ func (d *Daemon) handleAppRestart(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	release, ok := d.tryLongOp(w, tolerateNothing)
+	// tolerateLifecycleWork, like the namespace-level Start/Stop: the
+	// attach-toggle regeneration this route can spawn holds the lock as
+	// longOpUpdatePass for its whole doReload, so under tolerateNothing the
+	// documented memory-relief recipe — `citeck stop onlyoffice attorneys ecom
+	// …` — would 409 on every app after the first. Only a snapshot or a
+	// migration, which own the namespace's data, refuse a per-app toggle.
+	release, ok := d.tryLongOp(w, tolerateLifecycleWork)
 	if !ok {
 		return
 	}
@@ -243,7 +249,13 @@ func (d *Daemon) handleAppStop(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	release, ok := d.tryLongOp(w, tolerateNothing)
+	// tolerateLifecycleWork, like the namespace-level Start/Stop: the
+	// attach-toggle regeneration this route can spawn holds the lock as
+	// longOpUpdatePass for its whole doReload, so under tolerateNothing the
+	// documented memory-relief recipe — `citeck stop onlyoffice attorneys ecom
+	// …` — would 409 on every app after the first. Only a snapshot or a
+	// migration, which own the namespace's data, refuse a per-app toggle.
+	release, ok := d.tryLongOp(w, tolerateLifecycleWork)
 	if !ok {
 		return
 	}
@@ -281,7 +293,13 @@ func (d *Daemon) handleAppStart(w http.ResponseWriter, r *http.Request) {
 	if !validateAppName(w, name) {
 		return
 	}
-	release, ok := d.tryLongOp(w, tolerateNothing)
+	// tolerateLifecycleWork, like the namespace-level Start/Stop: the
+	// attach-toggle regeneration this route can spawn holds the lock as
+	// longOpUpdatePass for its whole doReload, so under tolerateNothing the
+	// documented memory-relief recipe — `citeck stop onlyoffice attorneys ecom
+	// …` — would 409 on every app after the first. Only a snapshot or a
+	// migration, which own the namespace's data, refuse a per-app toggle.
+	release, ok := d.tryLongOp(w, tolerateLifecycleWork)
 	if !ok {
 		return
 	}

@@ -102,7 +102,11 @@ func (d *Daemon) handleListSnapshots(w http.ResponseWriter, _ *http.Request) {
 
 func (d *Daemon) handleExportSnapshot(w http.ResponseWriter, r *http.Request) {
 	if !d.longOp.TryLock(longOpSnapshot) {
-		writeErrorCode(w, http.StatusConflict, api.ErrCodeSnapshotInProgress, "another snapshot operation is in progress")
+		// The CODE stays SNAPSHOT_IN_PROGRESS (the snapshot dialog keys on it),
+		// but the text names whoever actually holds the shared lock — telling
+		// the operator "another snapshot operation is in progress" while a
+		// dependency migration holds it sends them looking for a snapshot.
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeSnapshotInProgress, d.longOp.Holder().busyMessage())
 		return
 	}
 	// Validation + capture from ONE snapshot: the background export keeps
@@ -241,7 +245,11 @@ func (d *Daemon) handleImportSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !d.longOp.TryLock(longOpSnapshot) {
-		writeErrorCode(w, http.StatusConflict, api.ErrCodeSnapshotInProgress, "another snapshot operation is in progress")
+		// The CODE stays SNAPSHOT_IN_PROGRESS (the snapshot dialog keys on it),
+		// but the text names whoever actually holds the shared lock — telling
+		// the operator "another snapshot operation is in progress" while a
+		// dependency migration holds it sends them looking for a snapshot.
+		writeErrorCode(w, http.StatusConflict, api.ErrCodeSnapshotInProgress, d.longOp.Holder().busyMessage())
 		return
 	}
 	// Validation + capture from ONE snapshot: the background import keeps

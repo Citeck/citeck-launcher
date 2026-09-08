@@ -25,6 +25,14 @@ const (
 	longOpSnapshot longOpKind = "snapshot"
 	// longOpMigration is a dependency migration: it stops the namespace,
 	// rewrites volumes and recreates containers, so it excludes everything.
+	//
+	// TRAP for whoever wires the migration engine: it MUST claim the lock
+	// itself — d.longOp.TryLock(longOpMigration), ownership transferred into
+	// the background goroutine — and must NOT go through tryLongOp, which
+	// labels its holder longOpRequest. longOpRequest is in
+	// tolerateLifecycleWork, so a migration mislabelled that way would let
+	// namespace Start/Stop and the per-app toggles run right beside the volume
+	// rewrite it exists to protect, with no error anywhere.
 	longOpMigration longOpKind = "migration"
 	// longOpUpdatePass is an asynchronous pass that re-drives the namespace on
 	// the user's behalf — the queued Update & Start pass, and the attach-toggle
@@ -73,6 +81,15 @@ type longOpLock struct {
 // Lock: a mutating request must be refused while a long operation runs, not
 // queued behind it — a migration recreates containers for minutes and an HTTP
 // client waiting that long has already given up.
+//
+// Between the mutex being taken and the owner being stored there is a window,
+// nanoseconds wide, in which a concurrent reader sees the lock held and the
+// owner still longOpNone. It fails CLOSED both ways: the refusal message
+// degrades to the vague wording, and a TOLERATED route (Start, Stop, a per-app
+// toggle) is refused with a spurious 409 instead of proceeding, because
+// longOpNone is in no tolerance set. Refusing a click that a retry fixes is the
+// right side to fail on; the alternative — storing the owner before the lock —
+// would let a reader attribute the lock to a kind that never held it.
 func (l *longOpLock) TryLock(kind longOpKind) bool {
 	if !l.mu.TryLock() {
 		return false

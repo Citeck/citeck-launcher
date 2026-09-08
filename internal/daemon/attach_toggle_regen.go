@@ -52,12 +52,17 @@ func regenOnAttachToggle(name string) bool { return attachToggleRegenApps[name] 
 // reading and rewriting. It is not a benign reload. A lost race is SAFE to
 // skip: the attach/detach is already persisted in ManualStoppedApps, so the
 // next reload or start regenerates from it; the WARN is there because nothing
-// else would tell the operator the proxy is briefly stale.
+// else would tell the operator the proxy is briefly stale, and it says when the
+// wiring comes back. This is the SAME staleness window the reloadMu coalescing
+// below has always had — and it is the ordinary case for the documented
+// memory-relief recipe (`citeck stop onlyoffice attorneys ecom …`), where each
+// toggle after the first finds the previous one still regenerating.
 func (d *Daemon) regenAfterAttachToggleAsync(app, action string) {
 	go func() {
 		if !d.longOp.TryLock(longOpUpdatePass) {
 			//nolint:gosec // G706: app is validated by validateAppName and gated to the constant attachToggleRegenApps set; action is a caller literal
-			slog.Warn("Attach-toggle regeneration skipped: "+d.longOp.Holder().busyMessage(),
+			slog.Warn("Attach-toggle regeneration skipped: "+d.longOp.Holder().busyMessage()+
+				"; the proxy / AI wiring is regenerated on the next reload or start",
 				"app", app, "action", action)
 			return
 		}
