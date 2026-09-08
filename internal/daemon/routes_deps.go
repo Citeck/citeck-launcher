@@ -271,6 +271,10 @@ func (d *Daemon) handleDependencyPreflight(w http.ResponseWriter, r *http.Reques
 		writeInternalError(w, fmt.Errorf("no migrator wired for dependency %q", id))
 		return
 	}
+	// Measuring a data volume means walking it (or running `du` inside the
+	// Docker VM), which on a real cluster outlives the socket server's 120s
+	// write deadline — and the result is the only thing the confirm dialog has.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 	writeJSON(w, m.Preflight(r.Context(), env, from, to))
 }
 
@@ -340,6 +344,9 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 	// (preflight), it changes nothing, and a client that gave up should not
 	// leave it running. Everything after the 202 runs on the daemon's
 	// background context instead — the migration must survive the request.
+	// Same measurement as the preflight route, and the same deadline problem:
+	// the 202 is written only after the plan is built.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 	plan, journal, err := m.Plan(r.Context(), env, from, to, migrate.PlanOptions{
 		ReplaceExistingVolume: req.ReplaceExistingVolume,
 	})
