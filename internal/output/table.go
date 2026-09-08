@@ -68,9 +68,47 @@ func FormatTable(headers []string, rows [][]string, minWidths ...int) string {
 	return strings.TrimRight(sb.String(), "\n")
 }
 
-// visibleLen returns the visible length of a string, excluding ANSI escape codes.
+// visibleLen returns the visible width of a string, excluding ANSI escape codes.
 func visibleLen(s string) int {
-	return len(ansiRE.ReplaceAllString(s, ""))
+	return DisplayWidth(ansiRE.ReplaceAllString(s, ""))
+}
+
+// DisplayWidth returns the terminal display width of a string: RUNES, not
+// bytes, with East Asian Wide characters counted as the two columns they
+// actually occupy. Byte length is wrong for every table whose cells or headers
+// are translated — "Зависимость" is 11 columns and 22 bytes, so a byte-padded
+// column is a table whose rows do not line up with their own header in five of
+// the eight locales.
+func DisplayWidth(s string) int {
+	w := 0
+	for _, r := range s {
+		if isWideRune(r) {
+			w += 2
+		} else {
+			w++
+		}
+	}
+	return w
+}
+
+// isWideRune reports whether r is an East Asian Wide character (CJK
+// ideographs, kana, Hangul, fullwidth forms), which a terminal renders in two
+// columns.
+func isWideRune(r rune) bool {
+	return (r >= 0x1100 && r <= 0x115F) || // Hangul Jamo
+		r == 0x2329 || r == 0x232A || // angle brackets
+		(r >= 0x2E80 && r <= 0x303E) || // CJK Radicals, Kangxi, CJK Symbols
+		(r >= 0x3040 && r <= 0x33BF) || // Hiragana, Katakana, Bopomofo, CJK Compat
+		(r >= 0x3400 && r <= 0x4DBF) || // CJK Unified Ext A
+		(r >= 0x4E00 && r <= 0xA4CF) || // CJK Unified, Yi
+		(r >= 0xA960 && r <= 0xA97C) || // Hangul Jamo Extended-A
+		(r >= 0xAC00 && r <= 0xD7A3) || // Hangul Syllables
+		(r >= 0xF900 && r <= 0xFAFF) || // CJK Compat Ideographs
+		(r >= 0xFE30 && r <= 0xFE6B) || // CJK Compat Forms
+		(r >= 0xFF01 && r <= 0xFF60) || // Fullwidth Forms
+		(r >= 0xFFE0 && r <= 0xFFE6) || // Fullwidth Signs
+		(r >= 0x20000 && r <= 0x2FFFD) || // CJK Ext B-F
+		(r >= 0x30000 && r <= 0x3FFFD) // CJK Ext G+
 }
 
 // padVisible pads a string to the given visible width, accounting for ANSI codes.
@@ -105,8 +143,7 @@ type AppTableResult struct {
 }
 
 // EditedMarker is the glyph appended to an app's name in the table when the app
-// has a user config edit (override patch or edited mounted file). Kept ASCII so
-// FormatTable's byte-length column alignment stays correct.
+// has a user config edit (override patch or edited mounted file).
 const EditedMarker = " *"
 
 // appNameCell renders the indented app name plus a dim edited-marker when the

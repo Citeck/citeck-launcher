@@ -336,3 +336,43 @@ func TestColorizeStatus_NoANSIWhenColorsDisabled(t *testing.T) {
 		t.Errorf("ColorizeStatus must drop ANSI when colors are off, got %q", got)
 	}
 }
+
+// A table whose headers are translated must line up with its own rows: the
+// column width is a display width, not a byte count. Before this, "Зависимость"
+// measured 22 and every row under it was padded 11 columns too far — the table
+// was misaligned in five of the eight locales the CLI ships.
+func TestFormatTable_NonASCIIHeadersAlign(t *testing.T) {
+	prev := colorsEnabled
+	SetColorsEnabled(false)
+	defer SetColorsEnabled(prev)
+
+	table := FormatTable(
+		[]string{"Зависимость", "依存関係", "Status"},
+		[][]string{{"postgres", "17.5", "up to date"}},
+	)
+	lines := strings.Split(table, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected a header and one row, got %q", table)
+	}
+	// The row's second column must start in the same column as the header's.
+	headerCol := DisplayWidth("Зависимость") + 2
+	rowCol := DisplayWidth("postgres") + strings.Index(lines[1][len("postgres"):], "17.5")
+	if rowCol != headerCol {
+		t.Errorf("second column starts at %d in the row and %d in the header:\n%s", rowCol, headerCol, table)
+	}
+}
+
+func TestDisplayWidth(t *testing.T) {
+	cases := map[string]int{
+		"":            0,
+		"abc":         3,
+		"Зависимость": 11, // 22 bytes, 11 columns
+		"依存関係":        8,  // 4 wide runes
+		"ab依":         4,
+	}
+	for in, want := range cases {
+		if got := DisplayWidth(in); got != want {
+			t.Errorf("DisplayWidth(%q) = %d, want %d", in, got, want)
+		}
+	}
+}
