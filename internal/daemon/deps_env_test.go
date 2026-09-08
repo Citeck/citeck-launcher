@@ -834,3 +834,27 @@ func TestGenerateDefForRefusesWhatItCannotAnswer(t *testing.T) {
 	_, err = env.GenerateDefFor(deps.ID("nope"), "whatever:1")
 	require.Error(t, err, "an unregistered dependency has no app to generate")
 }
+
+// ReloadAndStart reloads whatever namespace is ACTIVE, so an Env built for a
+// different one must refuse instead. Two callers make that reachable: crash
+// recovery, whose Env describes a namespace that is not installed yet, and a
+// namespace switch racing a migration. Without the guard the recovery of a
+// namespace nobody activated would start a STRANGER.
+func TestReloadAndStartRefusesANamespaceThatIsNotActive(t *testing.T) {
+	d := &Daemon{activeNs: &activeNamespace{nsConfig: &namespace.Config{ID: "active-ns"}}}
+	var reloads int
+	d.reloadFn = func() error { reloads++; return nil }
+	d.reloadExFn = func(bool, bool, bool) error { reloads++; return nil }
+
+	env := d.newDepsEnv(activeNamespace{nsConfig: &namespace.Config{ID: "other-ns"}})
+	err := env.ReloadAndStart(context.Background(), true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "other-ns")
+	assert.Contains(t, err.Error(), "active-ns")
+	assert.Zero(t, reloads, "the wrong namespace must not be reloaded at all")
+
+	// The migration's own namespace is served as before.
+	env = d.newDepsEnv(activeNamespace{nsConfig: &namespace.Config{ID: "active-ns"}})
+	require.NoError(t, env.ReloadAndStart(context.Background(), true))
+	assert.Equal(t, 1, reloads)
+}

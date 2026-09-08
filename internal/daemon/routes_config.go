@@ -156,6 +156,18 @@ func (d *Daemon) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 	if bundleErr != "" {
 		dto.BundleError = bundleErr
 	}
+	// Dependency state is the daemon's, not the runtime's: the held-back
+	// upgrades come from the last generation (activeNamespace) and the running
+	// migration is a daemon-global, namespace-pinned field — reported here only
+	// for the namespace it belongs to, exactly like Updating.
+	for _, u := range act.dependencyUpgrades {
+		dto.DependencyUpgrades = append(dto.DependencyUpgrades, api.DependencyUpgradeDto{
+			ID: string(u.ID), App: u.App, From: u.From, To: u.To, Migratable: u.Migratable,
+		})
+	}
+	if act.nsConfig != nil {
+		dto.DependencyMigration = d.currentDepsMigration(act.nsConfig.ID)
+	}
 	// When namespace is stopped, runtime clears the app list. Populate from
 	// the resolved config so the UI always shows the full service catalog.
 	if len(dto.Apps) == 0 && len(appDefs) > 0 {

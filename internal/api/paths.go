@@ -27,6 +27,13 @@ const (
 	NamespaceAdminPassword  = APIV1 + "/namespace/admin-password"
 	RestartEvents           = APIV1 + "/namespace/restart-events"
 
+	// Dependencies lists the ACTIVE namespace's infrastructure dependencies
+	// (internal/deps: postgres, rabbitmq, zookeeper, keycloak, mongodb) with
+	// the image each one's data runs on, the image the bundle wants, and
+	// whether this launcher can migrate the difference. Namespace-scoped like
+	// the rest of this block — the daemon has one active namespace.
+	Dependencies = APIV1 + "/namespace/dependencies"
+
 	Events = APIV1 + "/events"
 	Apps   = APIV1 + "/apps"
 	Health = APIV1 + "/health"
@@ -115,6 +122,20 @@ const (
 // (the client-side counterpart of the NamespaceEdit routing pattern).
 func NamespaceEditPath(id string) string {
 	return fmt.Sprintf("%s/%s/edit", Namespaces, id)
+}
+
+// DependencyPreflightPath returns the read-only preflight endpoint for one
+// dependency id (internal/deps ids: postgres, rabbitmq, …). It checks disk
+// space, the data's on-disk version and an existing target volume, and
+// changes nothing.
+func DependencyPreflightPath(id string) string {
+	return fmt.Sprintf("%s/%s/preflight", Dependencies, id)
+}
+
+// DependencyMigratePath returns the endpoint that STARTS one dependency's
+// migration (202 + SSE progress; see the deps_migration_* events).
+func DependencyMigratePath(id string) string {
+	return fmt.Sprintf("%s/%s/migrate", Dependencies, id)
 }
 
 // AppLogs returns the API path for streaming an app's container logs.

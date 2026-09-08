@@ -565,6 +565,19 @@ func (e *depsEnv) StopNamespace(ctx context.Context) error {
 // claiming the long-operation lock again would deadlock the finalize step. See
 // the type's lock-order note.
 func (e *depsEnv) ReloadAndStart(_ context.Context, start bool) error {
+	// The reload acts on whatever namespace is ACTIVE, so an Env built for a
+	// different one must refuse rather than reload a stranger. Two callers make
+	// that reachable: crash recovery, whose Env describes a namespace that is
+	// not installed yet (it clears WasRunning precisely so this stays
+	// unreachable), and a namespace switch racing a migration. Refusing is the
+	// only safe answer — a migration's finalize reports it as a warning, and
+	// the data has already moved by then.
+	if e.d == nil {
+		return errors.New("reload: no daemon")
+	}
+	if active := namespaceIDOf(e.d.active()); active != e.NamespaceID() {
+		return fmt.Errorf("reload of namespace %q refused: %q is active", e.NamespaceID(), active)
+	}
 	e.d.reloadMu.Lock()
 	defer e.d.reloadMu.Unlock()
 	if start {

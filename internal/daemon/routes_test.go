@@ -124,6 +124,10 @@ func TestAllRoutesRegistered(t *testing.T) {
 		{"POST", api.NamespaceStart},
 		{"POST", api.NamespaceStop},
 		{"POST", api.NamespaceReload},
+		// Dependencies (infra pins + migrations)
+		{"GET", api.Dependencies},
+		{"GET", api.DependencyPreflightPath("postgres")},
+		{"POST", api.DependencyMigratePath("postgres")},
 		// Config
 		{"GET", api.Config},
 		{"PUT", api.Config},

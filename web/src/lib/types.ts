@@ -88,6 +88,106 @@ export interface NamespaceDto {
   // is shown once and not re-raised on remount or reconnect.
   updateError?: string
   updateErrorAt?: number
+  // Infrastructure images (postgres, rabbitmq, …) the generator held back
+  // because applying them to this namespace's existing data would be a
+  // breaking change. Recomputed on every load and reload.
+  dependencyUpgrades?: DependencyUpgradeDto[]
+  // Set while a dependency migration runs for THIS namespace, so a client that
+  // connects or reloads mid-way still sees it (the deps_migration_* events
+  // only reach clients already listening).
+  dependencyMigration?: DependencyMigrationDto
+}
+
+/** One infrastructure dependency of the active namespace. */
+export interface DependencyDto {
+  id: string
+  app: string
+  /** What the DATA runs on (the pin), or the last generated image when unpinned. */
+  currentImage: string
+  currentVersion?: string
+  /** What the user would move to: the held-back upgrade, else the candidate. */
+  targetImage: string
+  targetVersion?: string
+  /** up-to-date | pending-minor | upgrade-available | requires-launcher-update */
+  status: string
+  /** Whether THIS launcher ships a migration plan for the dependency at all. */
+  migratable: boolean
+}
+
+/** Live progress of the running migration. `percent` is the STEP's own
+ *  sub-progress (0 = indeterminate), never an overall percentage. */
+export interface DependencyMigrationDto {
+  id: string
+  step: string
+  stepIndex: number
+  stepCount: number
+  percent?: number
+  message?: string
+}
+
+/** Verdict of the last migration, kept until the next one replaces it. */
+export interface DependencyMigrationResultDto {
+  id: string
+  from: string
+  to: string
+  finishedAt: number
+  success: boolean
+  error?: string
+  /** Volume the previous data was left in (success only) — never deleted. */
+  oldVolume?: string
+}
+
+export interface DependenciesDto {
+  items: DependencyDto[]
+  migration?: DependencyMigrationDto
+  lastResult?: DependencyMigrationResultDto
+  /** Non-empty when an interrupted migration's rollback has not succeeded:
+   *  the launcher retries it at every start, the version is frozen meanwhile,
+   *  and no new migration is accepted. */
+  rollbackPending?: string
+}
+
+export interface DependencyUpgradeDto {
+  id: string
+  app: string
+  from: string
+  to: string
+  migratable: boolean
+}
+
+export interface DependencyMigrateRequestDto {
+  /** Confirms deleting a target volume that already exists (a leftover from an
+   *  earlier attempt). Without it the migration refuses. */
+  replaceExistingVolume: boolean
+}
+
+/** Result of GET …/dependencies/{id}/preflight (Go: migrate.PreflightResult).
+ *  Problems block the migration; warnings need an explicit confirmation. */
+export interface PreflightResult {
+  ok: boolean
+  problems: string[]
+  warnings: string[]
+  from: string
+  to: string
+  dataSizeBytes: number
+  requiredHostBytes: number
+  requiredVolumeBytes: number
+  /** Free space where the dump is written (the host). */
+  freeHostBytes: number
+  /** Free space where the data volumes live — the Docker VM's disk on a
+   *  macOS/Windows desktop, which is NOT the host's. */
+  freeVolumeBytes: number
+  existingTargetVolume?: ExistingVolume
+  wasRunning: boolean
+}
+
+/** A target volume that is already there — size and version are what let the
+ *  user tell a leftover apart from somebody else's data. */
+export interface ExistingVolume {
+  name: string
+  sizeBytes: number
+  /** PG_VERSION content, or "empty". */
+  version: string
 }
 
 export interface HealthDto {

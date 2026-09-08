@@ -256,7 +256,11 @@ func TestUpdateAndStartPassRefusesWhileALongOperationHoldsTheLock(t *testing.T) 
 	}, 5*time.Second, 5*time.Millisecond, "the refused pass must report why it did not run")
 
 	msg, _ := d.updateFailureFor(&namespace.Config{ID: "ns1"})
-	assert.Contains(t, msg, "migration")
+	// The recorded reason is the HOLDER's own wording (busyMessage), not a
+	// generic "busy": a refusal that named a snapshot nobody took is what that
+	// message exists to prevent.
+	assert.Contains(t, msg, longOpMigration.busyMessage())
+	assert.Contains(t, msg, "a dependency migration is in progress")
 
 	select {
 	case args := <-got:

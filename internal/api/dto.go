@@ -153,6 +153,110 @@ type NamespaceDto struct {
 	// each failure exactly once and not re-show it on remount or reconnect.
 	UpdateError   string `json:"updateError,omitempty"`
 	UpdateErrorAt int64  `json:"updateErrorAt,omitempty"`
+	// DependencyUpgrades lists the infrastructure images (see internal/deps)
+	// the generator held back because applying them to THIS namespace's
+	// existing data would be a breaking change. Recomputed by every load and
+	// reload; empty on a namespace with no data yet, since the first
+	// generation simply adopts the bundle's versions.
+	DependencyUpgrades []DependencyUpgradeDto `json:"dependencyUpgrades,omitempty"`
+	// DependencyMigration is set while a dependency migration runs for THIS
+	// namespace, so a client that connects or reloads mid-way still sees it
+	// (the deps_migration_* events only reach clients already listening). It
+	// is scoped to the migrating namespace exactly like Updating: the daemon
+	// runs one migration at a time, and a namespace switch must not show it
+	// on a namespace it has nothing to do with.
+	DependencyMigration *DependencyMigrationDto `json:"dependencyMigration,omitempty"`
+}
+
+// Dependency status values carried by DependencyDto.Status.
+const (
+	// DependencyUpToDate: the generator emits what the data already runs on.
+	DependencyUpToDate = "up-to-date"
+	// DependencyPendingMinor: a non-breaking bump the next start applies on
+	// its own (the pin follows the container once it is RUNNING).
+	DependencyPendingMinor = "pending-minor"
+	// DependencyUpgradeAvailable: breaking, and this launcher can migrate it.
+	DependencyUpgradeAvailable = "upgrade-available"
+	// DependencyRequiresLauncherUpdate: breaking, and this launcher has no
+	// migration for it — the pin holds the old image until one ships.
+	DependencyRequiresLauncherUpdate = "requires-launcher-update"
+)
+
+// DependencyDto is one infrastructure dependency of the active namespace.
+type DependencyDto struct {
+	ID  string `json:"id"`  // internal/deps id ("postgres")
+	App string `json:"app"` // generated container name ("postgres")
+	// CurrentImage is what the DATA runs on (the pin), falling back to the
+	// image the last generation emitted when nothing is pinned yet.
+	CurrentImage   string `json:"currentImage"`
+	CurrentVersion string `json:"currentVersion,omitempty"`
+	// TargetImage is what the user would move to: the held-back upgrade when
+	// there is one, otherwise the candidate the generator emitted.
+	TargetImage   string `json:"targetImage"`
+	TargetVersion string `json:"targetVersion,omitempty"`
+	Status        string `json:"status"`
+	// Migratable reports whether this LAUNCHER has a migration plan for the
+	// dependency at all — independent of whether one is pending.
+	Migratable bool `json:"migratable"`
+}
+
+// DependencyMigrationDto is the live progress of the running migration.
+// Percent is the STEP's own sub-progress (0 = indeterminate), not the overall
+// one: the steps are wildly uneven (a dump is minutes, a volume create is
+// milliseconds), so a percentage across them would be a lie.
+type DependencyMigrationDto struct {
+	ID        string  `json:"id"`
+	Step      string  `json:"step"`
+	StepIndex int     `json:"stepIndex"`
+	StepCount int     `json:"stepCount"`
+	Percent   float64 `json:"percent,omitempty"`
+	Message   string  `json:"message,omitempty"`
+}
+
+// DependencyMigrationResultDto is the verdict of the last migration, kept
+// until the next one replaces it.
+type DependencyMigrationResultDto struct {
+	ID         string `json:"id"`
+	From       string `json:"from"`
+	To         string `json:"to"`
+	FinishedAt int64  `json:"finishedAt"` // epoch ms
+	Success    bool   `json:"success"`
+	Error      string `json:"error,omitempty"`
+	// OldVolume names the volume the previous data was left in (success
+	// only) — the launcher never deletes it, so this is what the user needs
+	// to reclaim the space once they trust the new version.
+	OldVolume string `json:"oldVolume,omitempty"`
+}
+
+// DependenciesDto is the dependency list plus whatever a migration has left
+// behind: one running now, the last verdict, and an unfinished rollback.
+type DependenciesDto struct {
+	Items      []DependencyDto               `json:"items"`
+	Migration  *DependencyMigrationDto       `json:"migration,omitempty"`
+	LastResult *DependencyMigrationResultDto `json:"lastResult,omitempty"`
+	// RollbackPending is non-empty when an interrupted migration's journal is
+	// still open: its rollback has not succeeded, the launcher retries it at
+	// every start, and until it does the dependency's pin is frozen (the
+	// runtime's RUNNING re-pin hook stands aside while a journal exists) and
+	// no new migration is accepted.
+	RollbackPending string `json:"rollbackPending,omitempty"`
+}
+
+// DependencyUpgradeDto is one held-back upgrade, as carried by NamespaceDto.
+type DependencyUpgradeDto struct {
+	ID         string `json:"id"`
+	App        string `json:"app"`
+	From       string `json:"from"`
+	To         string `json:"to"`
+	Migratable bool   `json:"migratable"`
+}
+
+// DependencyMigrateRequestDto is the body of POST …/dependencies/{id}/migrate.
+type DependencyMigrateRequestDto struct {
+	// ReplaceExistingVolume confirms deleting a target volume that already
+	// exists (a leftover from an earlier attempt). Without it the migration
+	// refuses rather than overwrite data it did not create.
+	ReplaceExistingVolume bool `json:"replaceExistingVolume"`
 }
 
 // LinkDto represents a named URL link associated with a namespace.
@@ -201,6 +305,15 @@ type LinkDto struct {
 //     ThresholdBytes (low-disk threshold). Emitted by the daemon's disk
 //     monitor on state CHANGE only — once when free space drops below the
 //     threshold and once on recovery, never re-emitted while the state holds.
+//   - "deps_migration_start" / "deps_migration_progress" /
+//     "deps_migration_complete" / "deps_migration_error": AppName holds the
+//     DEPENDENCY id ("postgres"), Phase the step id, Current/Total the step
+//     index/count, Percent the step's own sub-progress (0 = indeterminate),
+//     After a human message — on start "<from> → <to>", on error the reason
+//     (the rollback has already run by the time it is sent), on complete
+//     after a finalize failure the warning. NamespaceID is set; the
+//     namespace-scoped truth for a client that connects mid-migration is
+//     NamespaceDto.DependencyMigration.
 type EventDto struct {
 	Type        string  `json:"type"`
 	Seq         int64   `json:"seq"`
@@ -401,6 +514,37 @@ const (
 	// config edit or a namespace delete from racing the migration's containers
 	// and volumes.
 	ErrCodeLongOpInProgress = "LONG_OP_IN_PROGRESS"
+	// ErrCodeDependencyUnknown is returned (HTTP 404) when the {id} path
+	// segment names no registered dependency (internal/deps.Lookup).
+	ErrCodeDependencyUnknown = "DEPENDENCY_UNKNOWN"
+	// ErrCodeDependencyNotMigratable is returned (HTTP 409) when the
+	// dependency exists but THIS launcher ships no migration plan for it — the
+	// pin holds the old image and the answer is to update the launcher.
+	ErrCodeDependencyNotMigratable = "DEPENDENCY_NOT_MIGRATABLE"
+	// ErrCodeDependencyUpToDate is returned (HTTP 409) when nothing is being
+	// held back for that dependency, so there is nothing to migrate to.
+	ErrCodeDependencyUpToDate = "DEPENDENCY_UP_TO_DATE"
+	// ErrCodeDependencyPreflightFailed is returned (HTTP 409) when the plan
+	// could not be built: the preflight found a blocking problem (too little
+	// disk, a data version that is not what the pin claims) or an existing
+	// target volume the caller has not confirmed replacing. The message is the
+	// preflight's own, and nothing has been touched.
+	ErrCodeDependencyPreflightFailed = "DEPENDENCY_PREFLIGHT_FAILED"
+	// ErrCodeDependencyMigrationInProgress is returned (HTTP 409) when a
+	// migration journal is open for this namespace. That covers two states,
+	// and the message tells them apart: a migration running right now, or an
+	// interrupted one whose ROLLBACK has not succeeded — the launcher retries
+	// that at every start, and until it does, the leftovers the journal
+	// describes are still on the host, so starting a second migration over
+	// them is exactly what the journal exists to prevent.
+	ErrCodeDependencyMigrationInProgress = "DEPENDENCY_MIGRATION_IN_PROGRESS"
+	// ErrCodeDependencyNamespaceBusy is returned (HTTP 409) when the namespace
+	// is neither plainly RUNNING nor plainly STOPPED. A migration's first step
+	// stops the namespace, and Runtime.Stop only ENQUEUES that command: a
+	// runtime mid-transition may never read it (the same trap as the Update &
+	// Start queue's STOPPING arm), so the migration would burn its whole stop
+	// timeout and fail after the user confirmed it.
+	ErrCodeDependencyNamespaceBusy = "DEPENDENCY_NAMESPACE_BUSY"
 )
 
 // UpgradeRequestDto is the request body for the namespace upgrade endpoint.

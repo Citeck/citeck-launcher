@@ -744,6 +744,15 @@ func (d *Daemon) installLoadedNamespace(loaded *loadedNamespace, wsID, nsID stri
 		return fmt.Errorf("persist namespace selection: %w", err)
 	}
 
+	// An interrupted migration's leftovers are rolled back BEFORE this runtime
+	// becomes the active one: one of the temp containers the journal describes
+	// holds the namespace's own data volume, so the first Start after the swap
+	// would put a second server on it. The restart hint is ignored here — a
+	// user-initiated switch/activate never auto-starts a namespace (Kotlin
+	// parity), and a rollback that fails leaves the journal open, which the
+	// dependency list reports and the migrate route refuses on.
+	d.recoverLoadedMigration(context.Background(), loaded, wsID)
+
 	// Build the complete replacement activeNamespace and swap the pointer in
 	// one shot — readers holding an old d.active() snapshot keep a consistent
 	// (stale) view; nobody can observe a half-installed namespace.

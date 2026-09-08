@@ -20,6 +20,7 @@ import (
 	"github.com/citeck/citeck-launcher/internal/bundle"
 	"github.com/citeck/citeck-launcher/internal/config"
 	"github.com/citeck/citeck-launcher/internal/deps"
+	"github.com/citeck/citeck-launcher/internal/deps/migrate"
 	"github.com/citeck/citeck-launcher/internal/docker"
 	"github.com/citeck/citeck-launcher/internal/fsutil"
 	"github.com/citeck/citeck-launcher/internal/license"
@@ -246,6 +247,21 @@ type Daemon struct {
 	// popup, keyed by image ref → *imagePullState. Decoupled from the runtime
 	// state machine: the UI polls the inspect endpoint for pulling/error state.
 	imagePulls sync.Map
+	// depsMigration is the running dependency migration's progress, pinned to
+	// the namespace it belongs to (depsMigrationState). Written by the engine's
+	// progress callback from the migration goroutine and read by every handler
+	// that reports it, hence the atomic; cleared in that goroutine's defer.
+	// Surfaced as NamespaceDto.DependencyMigration and DependenciesDto.Migration.
+	depsMigration atomic.Pointer[depsMigrationState]
+	// depsMigratorFn is a test seam for the descriptor→migrator lookup (the
+	// real PostgresMigrator drives containers, dumps and volumes — unreachable
+	// from unit tests). nil in production, where migratorFor answers from the
+	// registry. Same pattern as planInputsFn.
+	depsMigratorFn func(env migrate.Env) depsMigrator
+	// depsEnvFn is the same kind of seam for the migration Env itself, used by
+	// the crash-recovery tests (migratetest.FakeEnv). nil in production —
+	// depsEnvFor falls back to newDepsEnv.
+	depsEnvFn func(act activeNamespace) migrate.Env
 }
 
 // active returns ONE consistent value-copy snapshot of the active-namespace
@@ -891,6 +907,11 @@ func (d *Daemon) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+api.NamespaceCreateDefaults, d.handleNamespaceCreateDefaults)
 	mux.HandleFunc("POST "+api.NamespaceAdminPassword, d.handleSetAdminPassword)
 	mux.HandleFunc("GET "+api.RestartEvents, d.handleRestartEvents)
+
+	// Dependencies (infra version pins + migrations)
+	mux.HandleFunc("GET "+api.Dependencies, d.handleListDependencies)
+	mux.HandleFunc("GET /api/v1/namespace/dependencies/{id}/preflight", d.handleDependencyPreflight)
+	mux.HandleFunc("POST /api/v1/namespace/dependencies/{id}/migrate", d.handleDependencyMigrate)
 	mux.HandleFunc("GET /api/v1/diagnostics-file", d.handleDiagnosticsFile)
 
 	// Config
