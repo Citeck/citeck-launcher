@@ -20,13 +20,16 @@ import (
 
 // The deps_migration_* SSE events (see api.EventDto): AppName is the dependency
 // id, Phase the step id, Current/Total the step index/count, Percent the step's
-// own sub-progress and After a human message.
+// own sub-progress and After a human message. The names are api's, not this
+// package's: the daemon broadcasts the same constants, and a private copy here
+// is a typo away from a command that waits for a terminal event that never
+// matches.
 const (
-	depsEventPrefix   = "deps_migration_"
-	depsEventStart    = depsEventPrefix + "start"
-	depsEventProgress = depsEventPrefix + "progress"
-	depsEventComplete = depsEventPrefix + "complete"
-	depsEventError    = depsEventPrefix + "error"
+	depsEventPrefix   = api.EventDepsMigrationPrefix
+	depsEventStart    = api.EventDepsMigrationStart
+	depsEventProgress = api.EventDepsMigrationProgress
+	depsEventComplete = api.EventDepsMigrationComplete
+	depsEventError    = api.EventDepsMigrationError
 )
 
 // depsMigrationTimeout bounds the event stream, not the migration: the daemon
@@ -35,6 +38,10 @@ const (
 // cluster is measured in hours, and giving up on the stream early would report
 // a failure the daemon never had.
 const depsMigrationTimeout = 6 * time.Hour
+
+// depsPollInterval is how often the follow loop asks the daemon what it thinks,
+// instead of trusting that every event reached it. See pollMigrationVerdict.
+const depsPollInterval = 15 * time.Second
 
 func newDepsCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -404,26 +411,73 @@ func migrateAndFollow(c *client.DaemonClient, id string, replaceExisting bool) e
 		return fmt.Errorf("connect to event stream: %w", err)
 	}
 
+	clickedAt := time.Now()
 	res, err := startMigration(c, id, replaceExisting)
 	if err != nil {
 		return err
 	}
 	output.PrintText("%s", res.Message)
 
-	for evt := range events {
-		if !isMigrationEventFor(evt, id) {
-			continue
-		}
-		line, terminal, failed := renderMigrationEvent(evt)
-		if line != "" {
-			output.PrintText("%s", line)
-		}
-		if terminal {
-			if failed {
-				return errors.New(t("deps.failed", "error", evt.After))
+	poll := time.NewTicker(depsPollInterval)
+	defer poll.Stop()
+	for {
+		select {
+		case evt, open := <-events:
+			if !open {
+				return errors.New(t("deps.streamClosed"))
 			}
-			return nil
+			if !isMigrationEventFor(evt, id) {
+				continue
+			}
+			line, terminal, failed := renderMigrationEvent(evt)
+			if line != "" {
+				output.PrintText("%s", line)
+			}
+			if terminal {
+				if failed {
+					return errors.New(t("deps.failed", "error", evt.After))
+				}
+				return nil
+			}
+		case <-poll.C:
+			if done, verdict := pollMigrationVerdict(c.GetDependencies, id, clickedAt); done {
+				return verdict
+			}
+		case <-ctx.Done():
+			return errors.New(t("deps.streamClosed"))
 		}
 	}
-	return errors.New(t("deps.streamClosed"))
+}
+
+// pollMigrationVerdict is the safety net under the event stream. The daemon
+// DROPS an event rather than block when a subscriber's channel is full
+// (internal/daemon/sse.go), and a migration's own stop/start burst — every app
+// of the namespace going down and coming back — is the most likely thing in
+// the launcher to fill it. A dropped terminal event used to leave this command
+// waiting up to depsMigrationTimeout (six hours) for a migration that had
+// finished minutes earlier, with no output and no way to tell.
+//
+// done=true means stop following; verdict is the error to report, or nil for a
+// success. The two conditions are both required: the daemon must say nothing
+// is running any more AND the recorded result must be NEWER than this click,
+// because a verdict left behind by a previous migration of the same dependency
+// would otherwise be reported as this one's. Anything the poll cannot answer
+// (a failed request, a result that is not ours) simply keeps the loop going —
+// the events are still the primary source.
+func pollMigrationVerdict(fetch func() (*api.DependenciesDto, error), id string, clickedAt time.Time) (done bool, verdict error) {
+	dto, err := fetch()
+	if err != nil || dto == nil || dto.Migration != nil {
+		return false, nil
+	}
+	r := dto.LastResult
+	if r == nil || r.ID != id || r.FinishedAt < clickedAt.UnixMilli() {
+		return false, nil
+	}
+	for _, line := range lastResultLines(r) {
+		output.PrintText("%s", line)
+	}
+	if !r.Success {
+		return true, errors.New(t("deps.failed", "error", r.Error))
+	}
+	return true, nil
 }

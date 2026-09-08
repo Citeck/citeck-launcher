@@ -373,12 +373,12 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 				AppName: string(id), Phase: phase, Current: cur, Total: total, Percent: pct, After: msg,
 			}
 		}
-		d.broadcastEvent(evt("deps_migration_start", "", 0, steps, 0, fmt.Sprintf("%s → %s", from, to)))
+		d.broadcastEvent(evt(api.EventDepsMigrationStart, "", 0, steps, 0, fmt.Sprintf("%s → %s", from, to)))
 		progress := func(step string, i, n int, pct float64, msg string) {
 			d.setDepsMigration(nsID, &api.DependencyMigrationDto{
 				ID: string(id), Step: step, StepIndex: i, StepCount: n, Percent: pct, Message: msg,
 			})
-			d.broadcastEvent(evt("deps_migration_progress", step, i, n, pct, msg))
+			d.broadcastEvent(evt(api.EventDepsMigrationProgress, step, i, n, pct, msg))
 		}
 		runErr := migrate.Run(d.bgCtx, rt, journal, plan, progress)
 		var fe *migrate.FinalizeError
@@ -386,19 +386,19 @@ func (d *Daemon) handleDependencyMigrate(w http.ResponseWriter, r *http.Request)
 		case runErr == nil:
 			//nolint:gosec // G706: id passed deps.Lookup (a fixed registry) and the images come from the resolved bundle/pins
 			slog.Info("Dependency migration finished", "dependency", id, "from", from, "to", to)
-			d.broadcastEvent(evt("deps_migration_complete", "", steps, steps, 100,
+			d.broadcastEvent(evt(api.EventDepsMigrationComplete, "", steps, steps, 100,
 				fmt.Sprintf("%s migrated to %s", id, to)))
 		case errors.As(runErr, &fe):
 			// The data has moved and the pin says so; only the tidy-up or the
 			// restart failed, so this is a completion with a warning.
 			//nolint:gosec // G706: id passed deps.Lookup (a fixed registry)
 			slog.Warn("Dependency migration committed with a finalize failure", "dependency", id, "err", fe.Err)
-			d.broadcastEvent(evt("deps_migration_complete", "", steps, steps, 100,
+			d.broadcastEvent(evt(api.EventDepsMigrationComplete, "", steps, steps, 100,
 				fmt.Sprintf("%s migrated to %s; %v", id, to, fe.Err)))
 		default:
 			//nolint:gosec // G706: id passed deps.Lookup (a fixed registry)
 			slog.Error("Dependency migration failed", "dependency", id, "err", runErr)
-			d.broadcastEvent(evt("deps_migration_error", "", 0, steps, 0, runErr.Error()))
+			d.broadcastEvent(evt(api.EventDepsMigrationError, "", 0, steps, 0, runErr.Error()))
 		}
 	})
 	w.Header().Set("Content-Type", "application/json")

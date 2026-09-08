@@ -281,8 +281,14 @@ func seedDependencyPins(ctx context.Context, existing map[deps.ID]string, probe 
 		case seedFound:
 			out[d.ID()] = pin
 		case seedUnknown:
+			// The legacy image is a Docker Hub reference the launcher invented
+			// because it could not see a container, so on a private-registry
+			// stand it may not even be pullable. The generator's rehomePin
+			// covers the held-back case; naming the manual way out here covers
+			// the rest, and it is not obvious from the outside.
 			slog.Warn("Dependency seed: data probe failed; assuming the legacy image",
-				"dependency", d.ID(), "image", d.LegacyImage())
+				"dependency", d.ID(), "image", d.LegacyImage(),
+				"recovery", "`citeck edit "+d.AppName()+"` with a same-major image of the right registry is not a breaking change and replaces this guess")
 			out[d.ID()] = d.LegacyImage()
 		case seedNoData:
 			// No pin either way — see the rule above. The warning is worth
@@ -317,7 +323,8 @@ func volumePinFromData(ctx context.Context, probe dependencyProbe, d deps.Descri
 		return "", seedNoData
 	}
 	slog.Warn("Dependency seed: no container and no version file; assuming the legacy image",
-		"dependency", d.ID(), "image", d.LegacyImage())
+		"dependency", d.ID(), "image", d.LegacyImage(),
+		"recovery", "`citeck edit "+d.AppName()+"` with a same-major image of the right registry is not a breaking change and replaces this guess")
 	return d.LegacyImage(), seedFound
 }
 

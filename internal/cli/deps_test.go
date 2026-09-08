@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -148,6 +149,90 @@ func TestRenderMigrationEvent(t *testing.T) {
 	assert.False(t, failed)
 }
 
+// The event types this command selects on are the daemon's own constants. A
+// private copy that drifts by one character is a `citeck deps upgrade` that
+// prints nothing and waits for a terminal event that never matches.
+func TestMigrationEventTypesAreTheAPIConstants(t *testing.T) {
+	depsTestSetup(t)
+	assert.True(t, isMigrationEventFor(
+		api.EventDto{Type: api.EventDepsMigrationProgress, AppName: "postgres"}, "postgres"))
+	for _, tc := range []struct {
+		typ      string
+		terminal bool
+		failed   bool
+	}{
+		{api.EventDepsMigrationStart, false, false},
+		{api.EventDepsMigrationProgress, false, false},
+		{api.EventDepsMigrationComplete, true, false},
+		{api.EventDepsMigrationError, true, true},
+	} {
+		_, terminal, failed := renderMigrationEvent(api.EventDto{Type: tc.typ, After: "x"})
+		assert.Equal(t, tc.terminal, terminal, tc.typ)
+		assert.Equal(t, tc.failed, failed, tc.typ)
+	}
+}
+
+// The daemon drops an event rather than block a full subscriber channel, and a
+// migration's stop/start burst is what fills it. Without the poll a dropped
+// terminal event left the command waiting six hours on a finished migration.
+func TestPollMigrationVerdict(t *testing.T) {
+	depsTestSetup(t)
+	clickedAt := time.Now()
+	fetchOf := func(dto *api.DependenciesDto, err error) func() (*api.DependenciesDto, error) {
+		return func() (*api.DependenciesDto, error) { return dto, err }
+	}
+	result := func(id string, success bool, finished time.Time) *api.DependencyMigrationResultDto {
+		return &api.DependencyMigrationResultDto{
+			ID: id, From: "postgres:17", To: "postgres:18",
+			Success: success, Error: "boom", FinishedAt: finished.UnixMilli(),
+		}
+	}
+
+	t.Run("a finished migration ends the wait", func(t *testing.T) {
+		done, verdict := pollMigrationVerdict(fetchOf(&api.DependenciesDto{
+			LastResult: result("postgres", true, clickedAt.Add(time.Minute)),
+		}, nil), "postgres", clickedAt)
+		assert.True(t, done)
+		require.NoError(t, verdict)
+	})
+	t.Run("a failed migration ends it with the reason", func(t *testing.T) {
+		done, verdict := pollMigrationVerdict(fetchOf(&api.DependenciesDto{
+			LastResult: result("postgres", false, clickedAt.Add(time.Minute)),
+		}, nil), "postgres", clickedAt)
+		assert.True(t, done)
+		require.ErrorContains(t, verdict, "boom")
+	})
+	t.Run("a running migration keeps following", func(t *testing.T) {
+		done, _ := pollMigrationVerdict(fetchOf(&api.DependenciesDto{
+			Migration:  &api.DependencyMigrationDto{ID: "postgres", Step: "dump"},
+			LastResult: result("postgres", true, clickedAt.Add(time.Minute)),
+		}, nil), "postgres", clickedAt)
+		assert.False(t, done, "the daemon still reports it running")
+	})
+	// The result of a PREVIOUS migration of the same dependency must never be
+	// reported as this run's verdict.
+	t.Run("a verdict older than the click is not ours", func(t *testing.T) {
+		done, _ := pollMigrationVerdict(fetchOf(&api.DependenciesDto{
+			LastResult: result("postgres", true, clickedAt.Add(-time.Hour)),
+		}, nil), "postgres", clickedAt)
+		assert.False(t, done)
+	})
+	t.Run("another dependency's verdict is not ours", func(t *testing.T) {
+		done, _ := pollMigrationVerdict(fetchOf(&api.DependenciesDto{
+			LastResult: result("rabbitmq", true, clickedAt.Add(time.Minute)),
+		}, nil), "postgres", clickedAt)
+		assert.False(t, done)
+	})
+	t.Run("a failed poll keeps following", func(t *testing.T) {
+		done, _ := pollMigrationVerdict(fetchOf(nil, errors.New("socket closed")), "postgres", clickedAt)
+		assert.False(t, done)
+	})
+	t.Run("no verdict at all keeps following", func(t *testing.T) {
+		done, _ := pollMigrationVerdict(fetchOf(&api.DependenciesDto{}, nil), "postgres", clickedAt)
+		assert.False(t, done)
+	})
+}
+
 func TestIsMigrationEventFor(t *testing.T) {
 	assert.True(t, isMigrationEventFor(api.EventDto{Type: "deps_migration_progress", AppName: "postgres"}, "postgres"))
 	assert.True(t, isMigrationEventFor(api.EventDto{Type: "deps_migration_error", AppName: "postgres"}, "postgres"))
@@ -172,10 +257,7 @@ func TestStepTitle_FallsBackToTheRawStepID(t *testing.T) {
 // degrades the progress output to a raw id for the whole migration.
 func TestEveryPostgresStepHasATitle(t *testing.T) {
 	depsTestSetup(t)
-	for _, id := range []string{
-		"stop-namespace", "pull-image", "start-source", "dump", "stop-source",
-		"create-volume", "start-target", "restore", "verify", "stop-target",
-	} {
+	for _, id := range migrate.PostgresStepIDs() {
 		assert.NotEqual(t, id, stepTitle(id), "step %q has no deps.step.%s locale key", id, id)
 	}
 }

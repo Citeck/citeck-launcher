@@ -314,6 +314,10 @@ type LinkDto struct {
 //     after a finalize failure the warning. NamespaceID is set; the
 //     namespace-scoped truth for a client that connects mid-migration is
 //     NamespaceDto.DependencyMigration.
+//
+// The four deps_migration_* type strings are the constants below; the daemon
+// broadcasts them and the CLI selects on them. The web store cannot import Go,
+// so it keeps its own literals with a comment naming these.
 type EventDto struct {
 	Type        string  `json:"type"`
 	Seq         int64   `json:"seq"`
@@ -332,6 +336,31 @@ type EventDto struct {
 	FreeBytes      int64  `json:"freeBytes,omitempty"`
 	ThresholdBytes int64  `json:"thresholdBytes,omitempty"`
 }
+
+// The dependency-migration event types. They lived as separate literals in the
+// daemon and as a second set in the CLI, where a typo on either side is a
+// migration that streams no progress and a `citeck deps upgrade` that waits
+// for a terminal event which never matches.
+//
+// EventDepsMigrationPrefix is the family: the CLI selects this dependency's
+// events off the shared stream with it (the stream also carries every app
+// status and pull event of the namespace being stopped and started).
+const (
+	EventDepsMigrationPrefix   = "deps_migration_"
+	EventDepsMigrationStart    = EventDepsMigrationPrefix + "start"
+	EventDepsMigrationProgress = EventDepsMigrationPrefix + "progress"
+	EventDepsMigrationComplete = EventDepsMigrationPrefix + "complete"
+	EventDepsMigrationError    = EventDepsMigrationPrefix + "error"
+)
+
+// DependencyMigrationStepPreparing is the step id published BEFORE the plan
+// exists. Building a plan runs the whole preflight — including a `du` of the
+// data volume, minutes on a real cluster — and until this the UI and the CLI
+// had nothing at all between the click and the first real step: a dead button.
+// It is not one of the plan's steps (migrate.PostgresStepIDs), and it is
+// published with StepCount 0, which is how a client tells the two apart: a
+// step count of zero means "no plan yet", so render a spinner, not a list.
+const DependencyMigrationStepPreparing = "preparing"
 
 // HealthDto reports the overall daemon health status.
 type HealthDto struct {

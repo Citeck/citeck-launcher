@@ -302,6 +302,12 @@ return ({
         // (progress list) and the namespace controls (disabled while running).
         // AppName carries the DEPENDENCY id, Phase the step id, Current/Total
         // the step index/count, Percent the step's own sub-progress.
+        //
+        // The four type strings are Go constants — api.EventDepsMigrationStart
+        // / …Progress / …Complete / …Error in internal/api/dto.go, which the
+        // daemon broadcasts and the CLI selects on. TypeScript cannot import
+        // them, so they are spelled out here; change them there and here
+        // together.
         if (event.type === 'deps_migration_start') {
           useDepsStore.getState().onStart(event.appName, event.total ?? 0)
           return
