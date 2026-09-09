@@ -1546,6 +1546,13 @@ func sortedFileKeys(files map[string][]byte) []string {
 // namespace when a gating app is attached/detached; without a dynamic set here
 // it would have to hardcode app names, which is exactly what this field
 // replaces (see internal/daemon/attach_toggle_regen.go).
+//
+// Also pins onlyoffice and alfresco as gating (generateProxy.MarkGatingApp),
+// asserting directly on resp.GatingApps rather than on proxy env vars — the
+// existing TestProxyTarget_AlfrescoEnabled/AIRegistered/etc tests exercise the
+// same code paths but only check ONLYOFFICE_TARGET/AI_TARGET/PROXY_TARGET and
+// DependsOn, never resp.GatingApps, so they would NOT catch a regression that
+// drops the MarkGatingApp call while leaving the env-var wiring intact.
 func TestGatingApps_ReportedByGenerator(t *testing.T) {
 	config.ResetDesktopMode()
 	bun := &bundle.Def{Applications: map[string]bundle.AppDef{
@@ -1559,4 +1566,8 @@ func TestGatingApps_ReportedByGenerator(t *testing.T) {
 
 	assert.True(t, resp.GatingApps["ai"],
 		"переключение ai меняет состав неймспейса, значит требует регенерации")
+	assert.True(t, resp.GatingApps[appdef.AppOnlyoffice],
+		"переключение onlyoffice меняет ONLYOFFICE_TARGET на proxy, значит требует регенерации")
+	assert.True(t, resp.GatingApps[appdef.AppAlfresco],
+		"переключение alfresco меняет PROXY_TARGET/ALFRESCO_ENABLED на proxy, значит требует регенерации")
 }

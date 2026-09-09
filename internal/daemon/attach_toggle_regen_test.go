@@ -31,10 +31,16 @@ import (
 // dependsOnDetachedApps set consulted by NamespaceRuntime.detachedAppsChanged,
 // v1.4.1 changelog). That hardcode is exactly what internal/namespace/generator.go's
 // GatingApps field replaces, so pinning it here would just reintroduce the
-// hardcode in the test. The real Kotlin-parity set is still pinned — from the
-// generator side, where it is actually produced — by
-// TestGatingApps_ReportedByGenerator and the onlyoffice/alfresco assertions in
-// internal/namespace/generator_test.go.
+// hardcode in the test. The real Kotlin-parity set is pinned on
+// resp.GatingApps directly — from the generator side, where it is actually
+// produced — by TestGatingApps_ReportedByGenerator in
+// internal/namespace/generator_test.go, which asserts all three of
+// GatingApps["ai"], GatingApps[appdef.AppOnlyoffice] and
+// GatingApps[appdef.AppAlfresco]. (The pre-existing
+// TestProxyTarget_AIRegistered/AlfrescoEnabled/AlfrescoDetached tests in that
+// same file do NOT cover this — they assert proxy env vars and DependsOn,
+// never resp.GatingApps, so they would not catch a regression that drops a
+// MarkGatingApp call while leaving the env-var wiring intact.)
 func TestRegenOnAttachToggle_ReadsRuntimeGatingApps(t *testing.T) {
 	rt := namespace.NewRuntime(&namespace.Config{ID: "test"}, nil, t.TempDir())
 	rt.SetGatingApps(map[string]bool{"rag": true, appdef.AppAi: true})
