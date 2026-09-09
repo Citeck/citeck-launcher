@@ -1,3 +1,9 @@
+# Release 1.4.2
+
+## New features
+
+* Added RAG support: enterprise bundles now include a new `rag` application (disabled by default). Enabling it automatically starts a Qdrant vector database and grants the AI assistant access to the knowledge base.
+
 # Release 1.4.1
 
 ## Fixes
