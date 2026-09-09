@@ -261,4 +261,6 @@ const (
 	AppContent         = "content"
 	AppAi              = "ai"
 	AppSttSidecar      = "stt-sidecar"
+	AppRag             = "rag"
+	AppQdrant          = "qdrant"
 )

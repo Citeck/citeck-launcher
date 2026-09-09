@@ -262,6 +262,13 @@ type SttSidecarProps struct {
 	Port        int    `yaml:"port,omitempty"`
 }
 
+// QdrantProps configures the Qdrant vector store that backs the rag webapp.
+// There is deliberately no image key: the version is pinned by the bundle.
+type QdrantProps struct {
+	MemoryLimit string `yaml:"memoryLimit,omitempty"`
+	GrpcPort    int    `yaml:"grpcPort,omitempty"`
+}
+
 // WorkspaceConfig is the top-level workspace-v1.yml structure.
 type WorkspaceConfig struct {
 	QuickStartVariants []QuickStartVariant `yaml:"quickStartVariants,omitempty"`
@@ -280,6 +287,7 @@ type WorkspaceConfig struct {
 	Alfresco           AlfrescoProps       `yaml:"alfresco,omitempty"`
 	Licenses           []LicenseInstance   `yaml:"licenses,omitempty"`
 	SttSidecar         *SttSidecarProps    `yaml:"sttSidecar,omitempty"`
+	Qdrant             *QdrantProps        `yaml:"qdrant,omitempty"`
 	// Dependencies is the workspace's `dependencies:` section: third-party
 	// infrastructure images (postgres, rabbitmq, zookeeper, keycloak, mailpit,
 	// pgadmin, onlyoffice…) named for every namespace of this workspace at

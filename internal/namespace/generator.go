@@ -136,6 +136,10 @@ func Generate(cfg *Config, bun *bundle.Def, wsCfg *bundle.WorkspaceConfig, secre
 	// in the proxy can read the resolved STT port from the apps map.
 	generateSttSidecar(ctx)
 
+	// Qdrant vector store for the rag webapp — same "runs after the webapp it
+	// augments" ordering as generateSttSidecar above (injects env + dep onto rag).
+	generateQdrant(ctx)
+
 	// Custom containers added by configuration alone (no dedicated generator).
 	generateAdditionalApps(ctx)
 
