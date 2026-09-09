@@ -205,8 +205,16 @@ type Runtime struct {
 	signalCh *SignalQueue
 	cmdQueue *CmdQueue
 	resultCh chan workers.Result
-	dirty    atomic.Bool      // flipped by state mutators; runtimeLoop tail coalesces into one persistState per iteration.
-	nowFunc  func() time.Time // returns current time (test-injectable via WithTestClock).
+	dirty    atomic.Bool // flipped by state mutators; runtimeLoop tail coalesces into one persistState per iteration.
+	// Persist-failure bookkeeping, all guarded by r.mu (written only from
+	// persistUnderLock / notePersistOutcomeUnderLock). See persist_retry.go:
+	// r.dirty stays set when a write fails, so these keep the resulting
+	// per-iteration retry from flooding the log and from pinning the loop
+	// inside a store that fails slowly.
+	persistFailStreak int              // consecutive failed state writes; 0 when the last one landed.
+	persistRetryAt    time.Time        // earliest time the loop tail may retry; zero when no streak is open.
+	persistRetryBase  time.Duration    // first retry delay, doubling per failure (default defaultPersistRetryBase).
+	nowFunc           func() time.Time // returns current time (test-injectable via WithTestClock).
 	// refreshSnapshotDigestsFn defaults to r.refreshSnapshotDigests (wired in
 	// NewRuntime, since a method value needs r to already exist). Test-injectable
 	// seam so orchestration tests can assert doStart/doRegenerate call it iff
@@ -595,9 +603,9 @@ func (r *Runtime) ClearRestartEvents(appName string) {
 			app.RestartCount = 0
 		}
 	}
-	// Persist inline + clear r.dirty so the loop tail does not re-persist.
-	r.persistState()
-	r.dirty.Store(false)
+	// Persist inline; on success the loop tail does not re-persist, on failure
+	// the badge reset stays owed and the tail retries it.
+	_ = r.persistUnderLock("clear-restart-events")
 }
 
 // SetDependsOnDetachedApps stores which detached apps trigger regeneration when restarted.
@@ -634,6 +642,7 @@ func NewRuntime(cfg *Config, dockerClient docker.RuntimeClient, volumesBase stri
 		nowFunc:            time.Now,
 		shutdownComplete:   make(chan struct{}),
 		tickerPeriod:       1 * time.Second,
+		persistRetryBase:   defaultPersistRetryBase,
 		statsInterval:      5 * time.Second,
 		reconcilerInterval: 60 * time.Second,
 		reconcilerEnabled:  true,

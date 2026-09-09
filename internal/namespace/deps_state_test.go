@@ -409,9 +409,9 @@ func TestAPinWriteThatFailedIsStillOwed(t *testing.T) {
 
 // armedFailPersister fails the next n writes and succeeds afterwards, which is
 // the one sequence the retry is about: a write that does not reach disk,
-// followed by a store that works again. A toggle would race the loop tail
-// (which today clears r.dirty even when its own write fails), so the failure
-// budget is armed instead of switched off.
+// followed by a store that works again. The budget is ARMED rather than
+// switched off so a test can say exactly how many attempts must fail — the
+// loop tail retries on its own schedule, so a toggle would race it.
 type armedFailPersister struct {
 	mu     sync.Mutex
 	armed  int

@@ -14,16 +14,12 @@ import (
 // persistState saves the current runtime state to disk. Must be called with r.mu held.
 // Synchronous — small JSON struct, fast I/O, correct ordering guaranteed.
 //
-// Most state mutators set r.dirty.Store(true); runtimeLoop invokes persistState
-// once per iteration via the dirty-flag tail. Direct callers (StopApp /
-// StartApp / UpdateAppDef / doDetach / RestartApp) persist
-// inline because they record durable user intent that must survive a crash
-// between loop iterations. After an inline persist, the caller clears
-// r.dirty.Store(false) so the loop tail does not redundantly re-persist.
-//
-// The error is returned for callers that must report a failed write to the
-// user (the dependency-migration methods in deps_state.go); it is also logged
-// here, so the state-machine callers that only ever log may keep discarding it.
+// It writes and reports, and does nothing else: it neither touches r.dirty nor
+// logs. Both belong to persistUnderLock, which is what every production caller
+// goes through — the dirty flag because settling it is the whole point of that
+// helper, and the logging because a permanently failing store is retried on
+// every runtime-loop iteration and a line per attempt would bury the daemon
+// log (see notePersistOutcomeUnderLock).
 func (r *Runtime) persistState() error {
 	if r.statePersister == nil {
 		return nil
@@ -67,14 +63,51 @@ func (r *Runtime) persistState() error {
 	}
 	data, err := json.Marshal(state)
 	if err != nil {
-		slog.Warn("Failed to marshal namespace state", "err", err)
 		return fmt.Errorf("marshal namespace state: %w", err)
 	}
 	if err := r.statePersister.SaveNamespaceState(string(state.Status), string(data)); err != nil {
-		slog.Warn("Failed to persist namespace state", "err", err)
 		return fmt.Errorf("persist namespace state: %w", err)
 	}
 	return nil
+}
+
+// persistUnderLock writes the whole record and settles the dirty flag
+// honestly: a write that SUCCEEDED covers everything the runtime holds, so the
+// loop tail has nothing left to do; a write that FAILED reached nothing, so
+// the runtime still owes it and r.dirty stays set for the tail to retry — on
+// every iteration, until one lands. persistState rebuilds the record from
+// Runtime fields, so the retry needs nothing kept aside.
+//
+// Every production persist goes through here, the loop tail included. Two
+// separate defects live in the alternative:
+//
+//   - An inline mutator that cleared r.dirty on a failed write lost the
+//     mutation AND whatever unrelated change was pending with it. For a
+//     dependency pin that is how 17 data reaches 18: after SetDependencyPin
+//     the in-memory pin already equals the running container's image, so
+//     syncDependencyPinsUnderLock (pin writer #1) finds nothing to re-flag and
+//     the pin survives in memory only, until the process restarts.
+//   - The loop TAIL clearing r.dirty after its own failed write capped the
+//     whole scheme at "retried once per marking": one failed retry dropped the
+//     debt, so a store that was unavailable for two seconds lost the record as
+//     thoroughly as one that was unavailable forever.
+//
+// The retry cannot deadlock or recurse: r.dirty is an atomic flag the
+// runtimeLoop tail drains under its OWN r.mu.Lock, and persistState touches
+// neither the flag nor the queue.
+//
+// Scope of the promise: the collector is the loop, so on a STOPPED namespace
+// (where per-app config and mounted files are still editable) nothing retries
+// until the next Start — whose first dirty tail then writes the CURRENT
+// record, not a stale replay. That is still strictly better than dropping the
+// debt, and it is what the log line says.
+//
+// mutation names the write for the log. Caller must hold r.mu.Lock.
+func (r *Runtime) persistUnderLock(mutation string) error {
+	err := r.persistState()
+	r.notePersistOutcomeUnderLock(mutation, err)
+	r.dirty.Store(err != nil)
+	return err
 }
 
 type retryInfo struct {

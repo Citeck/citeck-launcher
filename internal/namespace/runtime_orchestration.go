@@ -757,9 +757,24 @@ func (r *Runtime) doDetach() {
 	}
 
 	r.mu.Lock()
-	// Final persist on detach: runtimeLoop is about to exit, so the dirty-flag
-	// tail will not run again. Persist inline + clear r.dirty.
-	r.persistState()
+	// Final persist on detach. This is the LAST write of this runtime: the
+	// containers are left running for the next daemon to adopt, and the state
+	// record is the only thing that tells it what it is adopting.
+	//
+	// It deliberately does NOT go through persistUnderLock, and a failure here
+	// deliberately does NOT mark r.dirty. Measured on the real loop, exactly
+	// one more tail runs after doDetach returns (the loop finishes the current
+	// iteration and only then observes the closed shutdownComplete), so the
+	// flag would buy exactly ONE retry and then be abandoned by a loop that no
+	// longer exists — and a retry capped at one is not a retry. Marking a debt
+	// nothing will ever collect would make r.dirty mean two different things.
+	// So the failure is reported instead, at the level it deserves: the
+	// operator is mid-binary-upgrade, and the state the next daemon reads is
+	// the one from the previous successful write.
+	if err := r.persistState(); err != nil {
+		slog.Error("Namespace state was NOT saved on detach; nothing will retry it — the next daemon adopts these containers with the state of the last successful write",
+			"namespace", r.nsID, "err", err)
+	}
 	r.dirty.Store(false)
 	leftRunning := len(r.apps)
 	r.mu.Unlock()

@@ -270,12 +270,15 @@ func (r *Runtime) UpdateAppDef(appName string, def appdef.ApplicationDef, lock b
 	if appLive && app.ContainerID == "" {
 		app.Def = def
 	}
-	// editedAppPatches is a durable user edit. Persist inline + clear r.dirty.
-	// The daemon now drives regeneration via a full reload (Generate re-runs
-	// with the new patch fed in), so no internal cmdRegenerate enqueue here —
-	// see internal/daemon handlePutAppConfig / invokeReload.
-	r.persistState()
-	r.dirty.Store(false)
+	// editedAppPatches is a durable user edit: persist inline rather than wait
+	// for the loop tail, which does not run at all on a stopped namespace. A
+	// refused write stays owed (persistUnderLock keeps r.dirty set) — the
+	// caller gets no error because the edit itself succeeded and it has
+	// nothing to do about the store; the loop retries it.
+	// The daemon drives regeneration via a full reload (Generate re-runs with
+	// the new patch fed in), so no internal cmdRegenerate enqueue here — see
+	// internal/daemon handlePutAppConfig / invokeReload.
+	_ = r.persistUnderLock("update-app-def")
 	return nil
 }
 
@@ -293,12 +296,12 @@ func (r *Runtime) ResetAppDef(appName string) error {
 		}
 	}
 	delete(r.editedAppPatches, appName)
-	// Persist inline + clear r.dirty. The daemon now drives regeneration via a
-	// full reload (Generate re-runs with the patch removed) so the original
-	// ApplicationDef is re-installed — see internal/daemon handleResetAppConfig
-	// / invokeReload. No internal cmdRegenerate enqueue here.
-	r.persistState()
-	r.dirty.Store(false)
+	// Persist inline; a refused write stays owed for the loop tail. The daemon
+	// drives regeneration via a full reload (Generate re-runs with the patch
+	// removed) so the original ApplicationDef is re-installed — see
+	// internal/daemon handleResetAppConfig / invokeReload. No internal
+	// cmdRegenerate enqueue here.
+	_ = r.persistUnderLock("reset-app-def")
 	return nil
 }
 
@@ -322,8 +325,7 @@ func (r *Runtime) WriteEditedFile(relPath, absPath string, content, template []b
 		return fmt.Errorf("write %s: %w", absPath, err)
 	}
 	r.editedFileEdits[relPath] = edit
-	r.persistState()
-	r.dirty.Store(false)
+	_ = r.persistUnderLock("write-edited-file")
 	// MUST pass the current desired set: an empty cmdRegenerate{} wipes
 	// r.apps because doRegenerate treats apps=nil as "every app removed from
 	// the desired set" (same gotcha as ResetAppDef / ResetEditedFile). Skip
@@ -402,8 +404,7 @@ func (r *Runtime) ResetEditedFile(appName, relPath string) error {
 		}
 	}
 	delete(r.editedFileEdits, relPath)
-	r.persistState()
-	r.dirty.Store(false)
+	_ = r.persistUnderLock("reset-edited-file")
 	// Trigger a regeneration so the original file content is written back to
 	// disk on the next writeRuntimeFiles. MUST pass r.lastApps — an empty
 	// cmdRegenerate{} makes doRegenerate treat every existing app as
@@ -502,10 +503,10 @@ func (r *Runtime) StopApp(appName string) error { //nolint:gocyclo // single-pas
 	}
 
 	// StopApp records durable detach intent (manualStoppedApps) that must
-	// survive a crash. Persist inline and clear r.dirty so the loop tail does
-	// not redundantly re-persist the same state.
-	r.persistState()
-	r.dirty.Store(false)
+	// survive a crash. Persist inline; persistUnderLock clears r.dirty on
+	// success so the loop tail does not redundantly re-persist the same state,
+	// and leaves it set on failure so the tail retries the detach.
+	_ = r.persistUnderLock("stop-app")
 	r.mu.Unlock()
 
 	if dispatchStop {
@@ -580,9 +581,9 @@ func (r *Runtime) StartApp(appName string) error {
 		return r.RestartApp(appName)
 	}
 
-	// Persist inline + clear r.dirty to avoid a redundant tail write.
-	r.persistState()
-	r.dirty.Store(false)
+	// Persist inline; a successful write skips the redundant tail persist, a
+	// refused one is left for the tail to retry.
+	_ = r.persistUnderLock("start-app")
 	r.mu.Unlock()
 
 	if dispatchStop {
@@ -728,12 +729,12 @@ func (r *Runtime) RestartApp(appName string) error { //nolint:gocyclo // single-
 		containerID := app.ContainerID
 		r.setAppStatus(app, AppStatusUpdating)
 		// RestartApp clears manualStoppedApps (re-attach) — durable intent.
-		// Persist inline + clear r.dirty. A user restart (incl. applying edited
-		// config to a running app) is deliberate, not an abnormal/unscheduled
-		// restart, so it emits NO restart_event AND does NOT bump the restart
-		// counter (the red "↻N" badge tracks crash/oom/liveness restarts only).
-		r.persistState()
-		r.dirty.Store(false)
+		// Persist inline; a refused write stays owed for the loop tail. A user
+		// restart (incl. applying edited config to a running app) is
+		// deliberate, not an abnormal/unscheduled restart, so it emits NO
+		// restart_event AND does NOT bump the restart counter (the red "↻N"
+		// badge tracks crash/oom/liveness restarts only).
+		_ = r.persistUnderLock("restart-app")
 		r.mu.Unlock()
 		if containerID != "" {
 			plan = r.makeStopPlan(appName, containerName, stopTimeout)
@@ -758,9 +759,8 @@ func (r *Runtime) RestartApp(appName string) error { //nolint:gocyclo // single-
 		// Direct re-entry to READY_TO_PULL — no container in flight. A user
 		// restart is deliberate: no restart_event and no restart-counter bump.
 		r.setAppStatus(app, AppStatusReadyToPull)
-		// Durable detach-clear. Persist inline + clear r.dirty.
-		r.persistState()
-		r.dirty.Store(false)
+		// Durable detach-clear. Persist inline; a refused write stays owed.
+		_ = r.persistUnderLock("restart-app")
 		r.mu.Unlock()
 	case AppStatusPulling, AppStatusReadyToStart, AppStatusDepsWaiting:
 		// Already on the path; no-op. No restart_event emitted — the user's

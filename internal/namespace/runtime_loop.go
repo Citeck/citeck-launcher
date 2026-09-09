@@ -93,12 +93,21 @@ func (r *Runtime) runtimeLoop() {
 		// Coalesce per-iteration state mutations into a single persistState.
 		// Mutators flip r.dirty under Lock; the tail below drains once per
 		// iteration. Mutators that record durable user intent (StopApp /
-		// StartApp / UpdateAppDef / doDetach / RestartApp)
-		// persist inline AND clear dirty to skip this redundant write.
+		// StartApp / UpdateAppDef / RestartApp) persist inline through the
+		// same helper, which clears dirty on success and skips this write.
+		//
+		// persistUnderLock leaves r.dirty SET when its own write fails, so a
+		// refused write is retried on the next iteration and the one after
+		// that, until one lands. The error is handled there (logged once per
+		// failure streak); there is no caller here to return it to.
 		if r.dirty.Load() {
 			r.mu.Lock()
-			r.persistState()
-			r.dirty.Store(false)
+			// persistRetryDueUnderLock is true unless a failure streak is
+			// open, so an ordinary persist is never delayed; while the store
+			// is broken it spaces the retries out (persist_retry.go).
+			if r.persistRetryDueUnderLock() {
+				_ = r.persistUnderLock("loop-tail")
+			}
 			r.mu.Unlock()
 		}
 	}

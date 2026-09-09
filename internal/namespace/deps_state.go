@@ -15,42 +15,6 @@ import (
 // goes through these methods and persists inline (durable intent, like
 // StopApp / UpdateAppDef).
 
-// persistDepsStateUnderLock writes the whole record and settles the dirty flag
-// honestly: a write that SUCCEEDED covers everything the runtime holds, so the
-// loop tail has nothing left to do; a write that FAILED reached nothing, so the
-// runtime still owes it and r.dirty stays set for the tail to retry.
-// persistState rebuilds the record from Runtime fields, so the retry needs
-// nothing kept aside — which is also why the inline persist here must stay
-// (see the package comment above): the retry is a safety net, not the write.
-//
-// Clearing r.dirty on a failed write is what loses a pin. After
-// SetDependencyPin the in-memory pin already equals the running container's
-// image, so syncDependencyPinsUnderLock (pin writer #1) finds nothing to
-// re-flag: the pin would then survive in memory only, until the image changes
-// or the process restarts — and a restart with no pin is exactly how 17 data
-// gets handed to 18. It also drops any unrelated change that was pending when
-// this method was called.
-//
-// The retry cannot deadlock or recurse: r.dirty is an atomic flag that the
-// runtimeLoop tail drains under its OWN r.mu.Lock, and persistState touches
-// neither the flag nor the queue. Note the tail retries ONCE per marking — it
-// clears r.dirty whatever its own write returns — so two consecutive failed
-// writes still lose the record; that call site is judged separately.
-//
-// Caller must hold r.mu.Lock.
-func (r *Runtime) persistDepsStateUnderLock(mutation string) error {
-	if err := r.persistState(); err != nil {
-		// persistState logs the I/O error; this line says what was lost and
-		// that the runtime has not given up on it.
-		slog.Warn("Dependency state write failed; still owed, retrying at the next runtime-loop iteration",
-			"namespace", r.nsID, "mutation", mutation, "err", err)
-		r.dirty.Store(true)
-		return err
-	}
-	r.dirty.Store(false)
-	return nil
-}
-
 // DependencyPins returns a copy of the pinned images by dependency id.
 func (r *Runtime) DependencyPins() map[deps.ID]string {
 	r.mu.RLock()
@@ -70,8 +34,8 @@ func (r *Runtime) SetDependencyPin(id deps.ID, image string) {
 	r.dependencyPins[id] = deps.DependencyState{Image: image}
 	// The caller has nothing to do with a failed write (there is no pin to
 	// fall back to), so the error is not returned — but it is not forgotten
-	// either: persistDepsStateUnderLock leaves the write owed.
-	_ = r.persistDepsStateUnderLock("set-pin")
+	// either: persistUnderLock leaves the write owed.
+	_ = r.persistUnderLock("set-pin")
 }
 
 // RestoreDependencyState installs the persisted dependency state (called
@@ -104,7 +68,7 @@ func (r *Runtime) SetMigrationJournal(j *deps.MigrationJournal) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.migrationJournal = cloneJournal(j)
-	return r.persistDepsStateUnderLock("set-journal")
+	return r.persistUnderLock("set-journal")
 }
 
 // LastDependencyMigration returns a copy of the last verdict, or nil.
@@ -141,7 +105,7 @@ func (r *Runtime) CommitMigration(id deps.ID, image string, res deps.MigrationRe
 	r.migrationJournal = nil
 	r.lastMigration = cloneResult(&res)
 
-	err := r.persistDepsStateUnderLock("commit-migration")
+	err := r.persistUnderLock("commit-migration")
 	if err != nil {
 		if hadPin {
 			r.dependencyPins[id] = prevPin
@@ -162,7 +126,7 @@ func (r *Runtime) RecordMigrationFailure(res deps.MigrationResult) error {
 	defer r.mu.Unlock()
 	r.migrationJournal = nil
 	r.lastMigration = cloneResult(&res)
-	return r.persistDepsStateUnderLock("record-migration-failure")
+	return r.persistUnderLock("record-migration-failure")
 }
 
 // RecordRollbackFailure closes nothing: it records the verdict of a migration
@@ -175,7 +139,7 @@ func (r *Runtime) RecordRollbackFailure(res deps.MigrationResult) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.lastMigration = cloneResult(&res)
-	return r.persistDepsStateUnderLock("record-rollback-failure")
+	return r.persistUnderLock("record-rollback-failure")
 }
 
 // syncDependencyPinsUnderLock re-pins every registered dependency whose app
